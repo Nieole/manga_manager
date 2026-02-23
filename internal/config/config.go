@@ -1,0 +1,63 @@
+package config
+
+import (
+	"fmt"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Config struct {
+	Server struct {
+		Port int `yaml:"port"`
+	} `yaml:"server"`
+	Database struct {
+		Path string `yaml:"path"`
+	} `yaml:"database"`
+	Library struct {
+		Paths []string `yaml:"paths"`
+	} `yaml:"library"`
+	Cache struct {
+		Dir string `yaml:"dir"`
+	} `yaml:"cache"`
+}
+
+func LoadConfig(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return createDefaultConfig(path)
+		}
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+func createDefaultConfig(path string) (*Config, error) {
+	cfg := &Config{}
+	cfg.Server.Port = 8080
+	cfg.Database.Path = "./data/manga.db"
+	cfg.Library.Paths = []string{}
+	cfg.Cache.Dir = "./data/cache"
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll("./data", 0755); err != nil {
+		return nil, err
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
