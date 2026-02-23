@@ -21,7 +21,7 @@ type Querier interface {
 	ListBooksByLibrary(ctx context.Context, libraryID string) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID string) ([]Book, error)
 	ListLibraries(ctx context.Context) ([]Library, error)
-	ListSeriesByLibrary(ctx context.Context, libraryID string) ([]Series, error)
+	ListSeriesByLibrary(ctx context.Context, libraryID string) ([]ListSeriesByLibraryRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 }
 

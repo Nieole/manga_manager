@@ -13,6 +13,7 @@ interface Series {
     name: string;
     title?: NullString;
     summary?: NullString;
+    cover_path?: NullString;
 }
 
 export default function Home() {
@@ -68,10 +69,12 @@ export default function Home() {
                             className="group relative flex flex-col rounded-xl overflow-hidden bg-komgaSurface border border-gray-800 hover:border-komgaPrimary/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10 cursor-pointer"
                         >
                             <div className="aspect-[2/3] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
-                                <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100" />
-                                {/* 缩略图待实现： */}
-                                {/* <img src={`/api/series/${s.id}/thumbnail`} className="absolute inset-0 w-full h-full object-cover" /> */}
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                                {s.cover_path?.Valid ? (
+                                    <img src={`/api/thumbnails/${s.cover_path.String}`} alt="cover" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                                ) : (
+                                    <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
+                                )}
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
                             </div>
                             <div className="p-4 flex-1 flex flex-col justify-between">
                                 <div>

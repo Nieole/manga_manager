@@ -428,18 +428,40 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 }
 
 const listSeriesByLibrary = `-- name: ListSeriesByLibrary :many
-SELECT id, library_id, name, path, title, summary, publisher, status, created_at, updated_at FROM series WHERE library_id = ? ORDER BY name
+SELECT s.id, s.library_id, s.name, s.path, s.title, s.summary, s.publisher, s.status, s.created_at, s.updated_at, 
+       (SELECT b.cover_path 
+        FROM books b 
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL 
+        ORDER BY b.sort_number, b.name 
+        LIMIT 1) as cover_path 
+FROM series s 
+WHERE s.library_id = ? 
+ORDER BY s.name
 `
 
-func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID string) ([]Series, error) {
+type ListSeriesByLibraryRow struct {
+	ID        string         `json:"id"`
+	LibraryID string         `json:"library_id"`
+	Name      string         `json:"name"`
+	Path      string         `json:"path"`
+	Title     sql.NullString `json:"title"`
+	Summary   sql.NullString `json:"summary"`
+	Publisher sql.NullString `json:"publisher"`
+	Status    sql.NullString `json:"status"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	CoverPath sql.NullString `json:"cover_path"`
+}
+
+func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID string) ([]ListSeriesByLibraryRow, error) {
 	rows, err := q.query(ctx, q.listSeriesByLibraryStmt, listSeriesByLibrary, libraryID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Series
+	var items []ListSeriesByLibraryRow
 	for rows.Next() {
-		var i Series
+		var i ListSeriesByLibraryRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.LibraryID,
@@ -451,6 +473,7 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID string) ([]
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CoverPath,
 		); err != nil {
 			return nil, err
 		}

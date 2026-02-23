@@ -204,9 +204,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 			if processed, _, err := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
 				Width:   400, // 提供极佳的海量图片显示分辨率，但不拖慢首次加载
 				Quality: 82,  // 质量折中
-				Format:  "jpeg",
+				Format:  "webp",
 			}); err == nil {
-				fileName := bookID + ".jpg"
+				fileName := bookID + ".webp"
 				fullPath := filepath.Join(thumbDir, fileName)
 				if err := os.WriteFile(fullPath, processed, 0644); err == nil {
 					coverPath = sql.NullString{String: fileName, Valid: true}

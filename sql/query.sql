@@ -21,7 +21,15 @@ RETURNING *;
 SELECT * FROM series WHERE id = ? LIMIT 1;
 
 -- name: ListSeriesByLibrary :many
-SELECT * FROM series WHERE library_id = ? ORDER BY name;
+SELECT s.*, 
+       (SELECT b.cover_path 
+        FROM books b 
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL 
+        ORDER BY b.sort_number, b.name 
+        LIMIT 1) as cover_path 
+FROM series s 
+WHERE s.library_id = ? 
+ORDER BY s.name;
 
 -- name: CreateBook :one
 INSERT INTO books (

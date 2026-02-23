@@ -52,16 +52,35 @@ export default function BookReader() {
     useEffect(() => {
         if (!bookId) return;
 
-        axios.get(`/api/pages/${bookId}`)
-            .then(res => {
-                const sorted = res.data.sort((a: Page, b: Page) => a.number - b.number);
-                setPages(sorted);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Failed to load pages", err);
-                setLoading(false);
-            });
+        Promise.all([
+            axios.get(`/api/pages/${bookId}`),
+            axios.get(`/api/books/info/${bookId}`)
+        ]).then(([pagesRes, infoRes]) => {
+            const sorted = pagesRes.data.sort((a: Page, b: Page) => a.number - b.number);
+            setPages(sorted);
+
+            // 恢复上次阅读进度
+            const lastPage = infoRes.data.last_read_page?.Valid ? infoRes.data.last_read_page.Int64 : 1;
+            if (lastPage > 1) {
+                if (readMode === 'paged') {
+                    // 页码为 1-based, 数组 index 为 0-based
+                    setCurrentPageIndex(lastPage - 1);
+                } else {
+                    // 对于瀑布流，图片加载完后需滚动（放在宏任务延迟稍等布局挂载）
+                    setTimeout(() => {
+                        const targetImg = document.querySelector(`img[data-page-number="${lastPage}"]`);
+                        if (targetImg) {
+                            targetImg.scrollIntoView({ behavior: 'auto', block: 'start' });
+                        }
+                    }, 500);
+                }
+            }
+
+            setLoading(false);
+        }).catch(err => {
+            console.error("Failed to load book data", err);
+            setLoading(false);
+        });
     }, [bookId]);
 
     // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)

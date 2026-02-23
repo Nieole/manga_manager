@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"strings"
 
+	"github.com/chai2010/webp"
 	"github.com/nfnt/resize"
 	golangWebp "golang.org/x/image/webp"
 
@@ -50,6 +51,13 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	case "png":
 		err = png.Encode(&buf, newImg)
 		newContentType = "image/png"
+	case "webp":
+		opt := &webp.Options{Lossless: false, Quality: float32(opts.Quality)}
+		if opt.Quality <= 0 {
+			opt.Quality = 85 // 默认质量
+		}
+		err = webp.Encode(&buf, newImg, opt)
+		newContentType = "image/webp"
 	default:
 		// Fallback everything else to JPEG to save space
 		opt := &jpeg.Options{Quality: opts.Quality}

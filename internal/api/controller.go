@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
@@ -84,6 +85,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Route("/books", func(r chi.Router) {
 			r.Get("/{seriesId}", c.getBooksBySeries)
+			r.Get("/info/{bookId}", c.getBookInfo)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
 		})
 
@@ -94,6 +96,14 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Route("/covers", func(r chi.Router) {
 			r.Get("/{bookId}", c.serveCoverImage)
+		})
+
+		// 通用静态直接下发，适配首卷封面作为系列代表图
+		thumbDir := filepath.Join(".", "data", "thumbnails")
+		r.Get("/thumbnails/{filename}", func(w http.ResponseWriter, r *http.Request) {
+			filename := chi.URLParam(r, "filename")
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			http.ServeFile(w, r, filepath.Join(thumbDir, filename))
 		})
 	})
 }
@@ -218,7 +228,7 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if series == nil {
-		series = []database.Series{}
+		series = []database.ListSeriesByLibraryRow{}
 	}
 	jsonResponse(w, http.StatusOK, series)
 }
@@ -237,6 +247,19 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 		books = []database.Book{}
 	}
 	jsonResponse(w, http.StatusOK, books)
+}
+
+func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	bookID := chi.URLParam(r, "bookId")
+
+	book, err := c.store.GetBook(ctx, bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Book not found")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, book)
 }
 
 type UpdateProgressRequest struct {
