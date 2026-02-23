@@ -203,6 +203,15 @@ func (q *Queries) DeleteBookByPath(ctx context.Context, path string) error {
 	return err
 }
 
+const deleteLibrary = `-- name: DeleteLibrary :exec
+DELETE FROM libraries WHERE id = ?
+`
+
+func (q *Queries) DeleteLibrary(ctx context.Context, id string) error {
+	_, err := q.exec(ctx, q.deleteLibraryStmt, deleteLibrary, id)
+	return err
+}
+
 const deletePagesByBookPath = `-- name: DeletePagesByBookPath :exec
 DELETE FROM book_pages WHERE book_id IN (SELECT id FROM books WHERE path = ?)
 `

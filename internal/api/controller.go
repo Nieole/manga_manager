@@ -5,7 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
@@ -78,6 +82,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
+		r.Delete("/libraries/{libraryId}", c.deleteLibrary)
+		r.Get("/browse-dirs", c.browseDirs)
 
 		r.Route("/series", func(r chi.Router) {
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
@@ -154,6 +160,19 @@ func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 		libs = []database.Library{} // 保证 JSON 数组非 null
 	}
 	jsonResponse(w, http.StatusOK, libs)
+}
+
+func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	libraryID := chi.URLParam(r, "libraryId")
+
+	err := c.store.DeleteLibrary(ctx, libraryID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to delete library")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 type CreateLibraryRequest struct {
@@ -356,4 +375,70 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 		pages = []database.BookPage{}
 	}
 	jsonResponse(w, http.StatusOK, pages)
+}
+
+func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
+	reqPath := r.URL.Query().Get("path")
+
+	// 如果没有传路径，返回系统根目录
+	if reqPath == "" {
+		if runtime.GOOS == "windows" {
+			reqPath = "C:\\"
+		} else {
+			reqPath = "/"
+		}
+	}
+
+	// 确保路径存在且是目录
+	info, err := os.Stat(reqPath)
+	if err != nil || !info.IsDir() {
+		jsonError(w, http.StatusBadRequest, "Path is not a valid directory")
+		return
+	}
+
+	entries, err := os.ReadDir(reqPath)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Cannot read directory")
+		return
+	}
+
+	type DirEntry struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+
+	var dirs []DirEntry
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// 跳过隐藏文件夹
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		dirs = append(dirs, DirEntry{
+			Name: entry.Name(),
+			Path: filepath.Join(reqPath, entry.Name()),
+		})
+	}
+
+	sort.Slice(dirs, func(i, j int) bool {
+		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
+	})
+
+	result := struct {
+		Current string     `json:"current"`
+		Parent  string     `json:"parent"`
+		Dirs    []DirEntry `json:"dirs"`
+	}{
+		Current: reqPath,
+		Parent:  filepath.Dir(reqPath),
+		Dirs:    dirs,
+	}
+
+	if result.Dirs == nil {
+		result.Dirs = []DirEntry{}
+	}
+
+	jsonResponse(w, http.StatusOK, result)
 }

@@ -39,6 +39,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteBookByPathStmt, err = db.PrepareContext(ctx, deleteBookByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteBookByPath: %w", err)
 	}
+	if q.deleteLibraryStmt, err = db.PrepareContext(ctx, deleteLibrary); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteLibrary: %w", err)
+	}
 	if q.deletePagesByBookPathStmt, err = db.PrepareContext(ctx, deletePagesByBookPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeletePagesByBookPath: %w", err)
 	}
@@ -106,6 +109,11 @@ func (q *Queries) Close() error {
 	if q.deleteBookByPathStmt != nil {
 		if cerr := q.deleteBookByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteBookByPathStmt: %w", cerr)
+		}
+	}
+	if q.deleteLibraryStmt != nil {
+		if cerr := q.deleteLibraryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteLibraryStmt: %w", cerr)
 		}
 	}
 	if q.deletePagesByBookPathStmt != nil {
@@ -217,6 +225,7 @@ type Queries struct {
 	createLibraryStmt         *sql.Stmt
 	createSeriesStmt          *sql.Stmt
 	deleteBookByPathStmt      *sql.Stmt
+	deleteLibraryStmt         *sql.Stmt
 	deletePagesByBookPathStmt *sql.Stmt
 	getBookStmt               *sql.Stmt
 	getBookByPathStmt         *sql.Stmt
@@ -241,6 +250,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createLibraryStmt:         q.createLibraryStmt,
 		createSeriesStmt:          q.createSeriesStmt,
 		deleteBookByPathStmt:      q.deleteBookByPathStmt,
+		deleteLibraryStmt:         q.deleteLibraryStmt,
 		deletePagesByBookPathStmt: q.deletePagesByBookPathStmt,
 		getBookStmt:               q.getBookStmt,
 		getBookByPathStmt:         q.getBookByPathStmt,

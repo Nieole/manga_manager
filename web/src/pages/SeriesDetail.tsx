@@ -11,6 +11,7 @@ interface NullString {
 interface Book {
     id: string;
     name: string;
+    library_id: string;
     title?: NullString;
     summary?: NullString;
     page_count: number;
@@ -43,7 +44,14 @@ export default function SeriesDetail() {
         <div className="p-6 lg:p-10">
             <div className="mb-6">
                 <button
-                    onClick={() => navigate(-1)}
+                    onClick={() => {
+                        const libId = books.length > 0 ? books[0].library_id : null;
+                        if (libId) {
+                            navigate(`/library/${libId}`);
+                        } else {
+                            navigate('/');
+                        }
+                    }}
                     className="flex items-center text-komgaPrimary hover:text-purple-400 transition-colors text-sm font-medium mb-4"
                 >
                     <ArrowLeft className="w-4 h-4 mr-1" />

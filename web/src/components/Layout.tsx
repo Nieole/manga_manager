@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2 } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -18,6 +18,12 @@ export default function Layout() {
     const [adding, setAdding] = useState(false);
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+    // 文件夹浏览器状态
+    const [browsing, setBrowsing] = useState(false);
+    const [browseDirs, setBrowseDirs] = useState<any[]>([]);
+    const [browseCurrent, setBrowseCurrent] = useState('');
+    const [browseParent, setBrowseParent] = useState('');
 
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -199,6 +205,21 @@ export default function Layout() {
                                     >
                                         <RefreshCw className="w-4 h-4" />
                                     </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (confirm(`确定要删除资源库「${lib.name}」吗？\n所有关联的系列、书籍和阅读记录都将被清除。`)) {
+                                                axios.delete(`/api/libraries/${lib.id}`)
+                                                    .then(() => { fetchLibraries(); navigate('/'); })
+                                                    .catch(() => alert('删除失败'));
+                                            }
+                                        }}
+                                        className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                                        title="删除此资源库"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
                                 </Link>
                             ))
                         )}
@@ -234,15 +255,63 @@ export default function Layout() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-400 mb-1">绝对路径</label>
-                                    <input
-                                        type="text"
-                                        required
-                                        value={newLibPath}
-                                        onChange={e => setNewLibPath(e.target.value)}
-                                        placeholder="例如: /Users/nicoer/comic"
-                                        className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
-                                    />
+                                    <label className="block text-sm font-medium text-gray-400 mb-1">路径</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            required
+                                            value={newLibPath}
+                                            onChange={e => setNewLibPath(e.target.value)}
+                                            placeholder="点击「浏览」选择文件夹"
+                                            className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setBrowsing(true);
+                                                axios.get('/api/browse-dirs')
+                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); })
+                                                    .catch(() => { });
+                                            }}
+                                            className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
+                                        >
+                                            <FolderOpen className="w-4 h-4 inline mr-1" />浏览
+                                        </button>
+                                    </div>
+                                    {browsing && (
+                                        <div className="mt-3 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                                            <div className="px-3 py-2 bg-gray-800 flex items-center justify-between text-xs">
+                                                <span className="text-gray-400 truncate flex-1 mr-2" title={browseCurrent}>{browseCurrent}</span>
+                                                <div className="flex gap-1">
+                                                    <button type="button" onClick={() => {
+                                                        setNewLibPath(browseCurrent);
+                                                        setBrowsing(false);
+                                                    }} className="px-2 py-1 bg-komgaPrimary hover:bg-purple-600 text-white rounded text-xs transition-colors">选择此目录</button>
+                                                    <button type="button" onClick={() => setBrowsing(false)} className="px-2 py-1 text-gray-400 hover:text-white transition-colors">关闭</button>
+                                                </div>
+                                            </div>
+                                            <div className="max-h-48 overflow-y-auto">
+                                                {browseCurrent !== browseParent && (
+                                                    <button type="button" onClick={() => {
+                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(browseParent)}`)
+                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); });
+                                                    }} className="w-full text-left px-3 py-2 text-sm text-yellow-400 hover:bg-gray-800 transition-colors flex items-center">
+                                                        ↑ ..
+                                                    </button>
+                                                )}
+                                                {browseDirs.length === 0 ? (
+                                                    <div className="px-3 py-3 text-xs text-gray-500 text-center">此目录下无子文件夹</div>
+                                                ) : browseDirs.map((d: any) => (
+                                                    <button key={d.path} type="button" onClick={() => {
+                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(d.path)}`)
+                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); });
+                                                    }} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-komgaPrimary transition-colors flex items-center">
+                                                        <FolderOpen className="w-4 h-4 mr-2 text-komgaPrimary/60" />{d.name}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                             <div className="mt-8 flex justify-end space-x-3">

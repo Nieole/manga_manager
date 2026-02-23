@@ -9,6 +9,9 @@ SELECT * FROM libraries WHERE id = ? LIMIT 1;
 -- name: ListLibraries :many
 SELECT * FROM libraries ORDER BY name;
 
+-- name: DeleteLibrary :exec
+DELETE FROM libraries WHERE id = ?;
+
 -- name: CreateSeries :one
 INSERT INTO series (
     id, library_id, name, path, title, summary, publisher, status
