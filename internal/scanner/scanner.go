@@ -201,12 +201,24 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 		_ = os.MkdirAll(thumbDir, 0755)
 
 		if pageData, err := arc.ReadPage(pages[0].Name); err == nil {
-			if processed, _, err := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-				Width:   400, // 提供极佳的海量图片显示分辨率，但不拖慢首次加载
-				Quality: 82,  // 质量折中
-				Format:  "webp",
-			}); err == nil {
-				fileName := bookID + ".webp"
+			// 优先尝试 WebP（体积小画质高），失败则降级到 JPEG（纯 Go 实现，跨平台无忧）
+			var processed []byte
+			var fileName string
+			if webpData, _, webpErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+				Width: 400, Quality: 82, Format: "webp",
+			}); webpErr == nil && len(webpData) > 0 {
+				processed = webpData
+				fileName = bookID + ".webp"
+			} else {
+				if jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+					Width: 400, Quality: 82, Format: "jpeg",
+				}); jpegErr == nil {
+					processed = jpegData
+					fileName = bookID + ".jpg"
+				}
+			}
+
+			if len(processed) > 0 && fileName != "" {
 				fullPath := filepath.Join(thumbDir, fileName)
 				if err := os.WriteFile(fullPath, processed, 0644); err == nil {
 					coverPath = sql.NullString{String: fileName, Valid: true}

@@ -1,4 +1,4 @@
-import { Outlet, Link, useParams, useNavigate } from 'react-router-dom';
+import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search } from 'lucide-react';
@@ -24,6 +24,7 @@ export default function Layout() {
 
     const { libId } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
 
     useEffect(() => {
         if (!searchQuery.trim()) {
@@ -49,8 +50,8 @@ export default function Layout() {
         axios.get('/api/libraries')
             .then(res => {
                 setLibraries(res.data);
-                if (res.data.length > 0 && !libId) {
-                    // 默认挑战到第一个库
+                if (res.data.length > 0 && !libId && location.pathname === '/') {
+                    // 仅在首页时默认跳转到第一个资源库，避免覆盖 /series/xxx 等子路由
                     navigate(`/library/${res.data[0].id}`, { replace: true });
                 }
                 setLoading(false);

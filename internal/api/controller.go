@@ -84,11 +84,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		})
 
 		r.Route("/books", func(r chi.Router) {
-			r.Get("/info/{bookId}", c.getBookInfo)
-			r.Get("/next/{bookId}", c.getNextBook)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
 			r.Get("/{seriesId}", c.getBooksBySeries)
 		})
+
+		// 独立路径，避免与 /books/{seriesId} 通配符冲突
+		r.Get("/book-info/{bookId}", c.getBookInfo)
+		r.Get("/book-next/{bookId}", c.getNextBook)
 
 		r.Route("/pages", func(r chi.Router) {
 			r.Get("/{bookId}", c.getPagesByBook)
