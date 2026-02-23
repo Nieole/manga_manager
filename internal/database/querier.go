@@ -14,8 +14,11 @@ type Querier interface {
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
 	CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error)
 	DeleteBookByPath(ctx context.Context, path string) error
+	DeletePagesByBookPath(ctx context.Context, path string) error
 	GetBook(ctx context.Context, id string) (Book, error)
+	GetBookByPath(ctx context.Context, path string) (Book, error)
 	GetLibrary(ctx context.Context, id string) (Library, error)
+	GetNextBookInSeries(ctx context.Context, id string) (Book, error)
 	GetSeries(ctx context.Context, id string) (Series, error)
 	ListBookPages(ctx context.Context, bookID string) ([]BookPage, error)
 	ListBooksByLibrary(ctx context.Context, libraryID string) ([]ListBooksByLibraryRow, error)
@@ -23,6 +26,7 @@ type Querier interface {
 	ListLibraries(ctx context.Context) ([]Library, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID string) ([]ListSeriesByLibraryRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
+	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) error
 }
 
 var _ Querier = (*Queries)(nil)

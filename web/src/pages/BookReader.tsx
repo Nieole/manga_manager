@@ -40,6 +40,9 @@ export default function BookReader() {
     const [showSettings, setShowSettings] = useState(false);
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
+    // Book context for navigation
+    const [seriesId, setSeriesId] = useState<string | null>(null);
+    const [nextBookId, setNextBookId] = useState<string | null>(null);
 
     // 回传阅读进度
     const updateProgress = useCallback((pageNumber: number) => {
@@ -52,6 +55,13 @@ export default function BookReader() {
     useEffect(() => {
         if (!bookId) return;
 
+        // 切换书籍时重置所有运行时状态
+        setPages([]);
+        setLoading(true);
+        setCurrentPageIndex(0);
+        setNextBookId(null);
+        setSeriesId(null);
+
         Promise.all([
             axios.get(`/api/pages/${bookId}`),
             axios.get(`/api/books/info/${bookId}`)
@@ -61,6 +71,12 @@ export default function BookReader() {
 
             // 恢复上次阅读进度
             const lastPage = infoRes.data.last_read_page?.Valid ? infoRes.data.last_read_page.Int64 : 1;
+            setSeriesId(infoRes.data.series_id || null);
+
+            // 获取下一本
+            axios.get(`/api/books/next/${bookId}`)
+                .then(res => setNextBookId(res.data.id))
+                .catch(() => setNextBookId(null));
             if (lastPage > 1) {
                 if (readMode === 'paged') {
                     // 页码为 1-based, 数组 index 为 0-based
@@ -133,6 +149,13 @@ export default function BookReader() {
     // 页码控制
     const handleNext = () => {
         let step = doublePage ? 2 : 1;
+        if (currentPageIndex + step >= pages.length) {
+            // 已到最后一页，尝试跳转下一本
+            if (nextBookId) {
+                navigate(`/reader/${nextBookId}`, { replace: true });
+            }
+            return;
+        }
         setCurrentPageIndex(prev => Math.min(prev + step, pages.length - 1));
     };
 
@@ -177,7 +200,7 @@ export default function BookReader() {
             <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
                 <div className="flex items-center justify-between w-full">
                     <button
-                        onClick={() => navigate(-1)}
+                        onClick={() => seriesId ? navigate(`/series/${seriesId}`) : navigate(-1)}
                         className="text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg"
                     >
                         <ArrowLeft className="w-5 h-5 mr-2" />
@@ -244,6 +267,15 @@ export default function BookReader() {
                                 alt={`Page ${page.number}`}
                             />
                         ))}
+                        {/* 瀑布流模式的续卷提示 */}
+                        {nextBookId && (
+                            <button
+                                onClick={() => navigate(`/reader/${nextBookId}`, { replace: true })}
+                                className="my-10 px-8 py-4 bg-komgaPrimary hover:bg-purple-600 text-white font-bold rounded-xl shadow-2xl text-lg transition-all duration-300 hover:scale-105"
+                            >
+                                ▶ 继续阅读下一本
+                            </button>
+                        )}
                     </div>
                 ) : (
                     /* 翻页模式 */

@@ -84,9 +84,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		})
 
 		r.Route("/books", func(r chi.Router) {
-			r.Get("/{seriesId}", c.getBooksBySeries)
 			r.Get("/info/{bookId}", c.getBookInfo)
+			r.Get("/next/{bookId}", c.getNextBook)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
+			r.Get("/{seriesId}", c.getBooksBySeries)
 		})
 
 		r.Route("/pages", func(r chi.Router) {
@@ -260,6 +261,19 @@ func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, book)
+}
+
+func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	bookID := chi.URLParam(r, "bookId")
+
+	nextBook, err := c.store.GetNextBookInSeries(ctx, bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "No next book")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, nextBook)
 }
 
 type UpdateProgressRequest struct {

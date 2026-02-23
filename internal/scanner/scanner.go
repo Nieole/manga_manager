@@ -292,16 +292,40 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 				}
 				res.book.SeriesID = seriesID
 
-				// 清理老旧同 Path 书籍记录从而安全地覆盖（避免重写异常）
-				_ = q.DeleteBookByPath(ctx, res.book.Path)
-
-				_, err := q.CreateBook(ctx, res.book)
+				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at
+				err := q.UpsertBookByPath(ctx, database.UpsertBookByPathParams{
+					ID:             res.book.ID,
+					SeriesID:       res.book.SeriesID,
+					LibraryID:      res.book.LibraryID,
+					Name:           res.book.Name,
+					Path:           res.book.Path,
+					Size:           res.book.Size,
+					FileModifiedAt: res.book.FileModifiedAt,
+					Title:          res.book.Title,
+					Summary:        res.book.Summary,
+					Number:         res.book.Number,
+					SortNumber:     res.book.SortNumber,
+					PageCount:      res.book.PageCount,
+					CoverPath:      res.book.CoverPath,
+				})
 				if err != nil {
-					log.Printf("Failed to insert book %q: %v", res.book.Path, err)
+					log.Printf("Failed to upsert book %q: %v", res.book.Path, err)
 					continue
 				}
+
+				// Upsert 后回查真实的 book ID（已有记录时 ID 不变）
+				existingBook, err := q.GetBookByPath(ctx, res.book.Path)
+				if err != nil {
+					log.Printf("Failed to get book by path %q: %v", res.book.Path, err)
+					continue
+				}
+				actualBookID := existingBook.ID
+
+				// 用真实 ID 清理旧 Pages 再重建
+				_ = q.DeletePagesByBookPath(ctx, res.book.Path)
 				for _, p := range res.pages {
-					_, _ = q.CreateBookPage(ctx, p) // 忽略外键单次报错避免事务塌方
+					p.BookID = actualBookID
+					_, _ = q.CreateBookPage(ctx, p)
 				}
 
 				if s.engine != nil {

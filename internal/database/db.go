@@ -39,11 +39,20 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteBookByPathStmt, err = db.PrepareContext(ctx, deleteBookByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteBookByPath: %w", err)
 	}
+	if q.deletePagesByBookPathStmt, err = db.PrepareContext(ctx, deletePagesByBookPath); err != nil {
+		return nil, fmt.Errorf("error preparing query DeletePagesByBookPath: %w", err)
+	}
 	if q.getBookStmt, err = db.PrepareContext(ctx, getBook); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBook: %w", err)
 	}
+	if q.getBookByPathStmt, err = db.PrepareContext(ctx, getBookByPath); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBookByPath: %w", err)
+	}
 	if q.getLibraryStmt, err = db.PrepareContext(ctx, getLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLibrary: %w", err)
+	}
+	if q.getNextBookInSeriesStmt, err = db.PrepareContext(ctx, getNextBookInSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query GetNextBookInSeries: %w", err)
 	}
 	if q.getSeriesStmt, err = db.PrepareContext(ctx, getSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeries: %w", err)
@@ -65,6 +74,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.updateBookProgressStmt, err = db.PrepareContext(ctx, updateBookProgress); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateBookProgress: %w", err)
+	}
+	if q.upsertBookByPathStmt, err = db.PrepareContext(ctx, upsertBookByPath); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertBookByPath: %w", err)
 	}
 	return &q, nil
 }
@@ -96,14 +108,29 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteBookByPathStmt: %w", cerr)
 		}
 	}
+	if q.deletePagesByBookPathStmt != nil {
+		if cerr := q.deletePagesByBookPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deletePagesByBookPathStmt: %w", cerr)
+		}
+	}
 	if q.getBookStmt != nil {
 		if cerr := q.getBookStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBookStmt: %w", cerr)
 		}
 	}
+	if q.getBookByPathStmt != nil {
+		if cerr := q.getBookByPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBookByPathStmt: %w", cerr)
+		}
+	}
 	if q.getLibraryStmt != nil {
 		if cerr := q.getLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getLibraryStmt: %w", cerr)
+		}
+	}
+	if q.getNextBookInSeriesStmt != nil {
+		if cerr := q.getNextBookInSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getNextBookInSeriesStmt: %w", cerr)
 		}
 	}
 	if q.getSeriesStmt != nil {
@@ -139,6 +166,11 @@ func (q *Queries) Close() error {
 	if q.updateBookProgressStmt != nil {
 		if cerr := q.updateBookProgressStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateBookProgressStmt: %w", cerr)
+		}
+	}
+	if q.upsertBookByPathStmt != nil {
+		if cerr := q.upsertBookByPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertBookByPathStmt: %w", cerr)
 		}
 	}
 	return err
@@ -178,41 +210,49 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                      DBTX
-	tx                      *sql.Tx
-	createBookStmt          *sql.Stmt
-	createBookPageStmt      *sql.Stmt
-	createLibraryStmt       *sql.Stmt
-	createSeriesStmt        *sql.Stmt
-	deleteBookByPathStmt    *sql.Stmt
-	getBookStmt             *sql.Stmt
-	getLibraryStmt          *sql.Stmt
-	getSeriesStmt           *sql.Stmt
-	listBookPagesStmt       *sql.Stmt
-	listBooksByLibraryStmt  *sql.Stmt
-	listBooksBySeriesStmt   *sql.Stmt
-	listLibrariesStmt       *sql.Stmt
-	listSeriesByLibraryStmt *sql.Stmt
-	updateBookProgressStmt  *sql.Stmt
+	db                        DBTX
+	tx                        *sql.Tx
+	createBookStmt            *sql.Stmt
+	createBookPageStmt        *sql.Stmt
+	createLibraryStmt         *sql.Stmt
+	createSeriesStmt          *sql.Stmt
+	deleteBookByPathStmt      *sql.Stmt
+	deletePagesByBookPathStmt *sql.Stmt
+	getBookStmt               *sql.Stmt
+	getBookByPathStmt         *sql.Stmt
+	getLibraryStmt            *sql.Stmt
+	getNextBookInSeriesStmt   *sql.Stmt
+	getSeriesStmt             *sql.Stmt
+	listBookPagesStmt         *sql.Stmt
+	listBooksByLibraryStmt    *sql.Stmt
+	listBooksBySeriesStmt     *sql.Stmt
+	listLibrariesStmt         *sql.Stmt
+	listSeriesByLibraryStmt   *sql.Stmt
+	updateBookProgressStmt    *sql.Stmt
+	upsertBookByPathStmt      *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                      tx,
-		tx:                      tx,
-		createBookStmt:          q.createBookStmt,
-		createBookPageStmt:      q.createBookPageStmt,
-		createLibraryStmt:       q.createLibraryStmt,
-		createSeriesStmt:        q.createSeriesStmt,
-		deleteBookByPathStmt:    q.deleteBookByPathStmt,
-		getBookStmt:             q.getBookStmt,
-		getLibraryStmt:          q.getLibraryStmt,
-		getSeriesStmt:           q.getSeriesStmt,
-		listBookPagesStmt:       q.listBookPagesStmt,
-		listBooksByLibraryStmt:  q.listBooksByLibraryStmt,
-		listBooksBySeriesStmt:   q.listBooksBySeriesStmt,
-		listLibrariesStmt:       q.listLibrariesStmt,
-		listSeriesByLibraryStmt: q.listSeriesByLibraryStmt,
-		updateBookProgressStmt:  q.updateBookProgressStmt,
+		db:                        tx,
+		tx:                        tx,
+		createBookStmt:            q.createBookStmt,
+		createBookPageStmt:        q.createBookPageStmt,
+		createLibraryStmt:         q.createLibraryStmt,
+		createSeriesStmt:          q.createSeriesStmt,
+		deleteBookByPathStmt:      q.deleteBookByPathStmt,
+		deletePagesByBookPathStmt: q.deletePagesByBookPathStmt,
+		getBookStmt:               q.getBookStmt,
+		getBookByPathStmt:         q.getBookByPathStmt,
+		getLibraryStmt:            q.getLibraryStmt,
+		getNextBookInSeriesStmt:   q.getNextBookInSeriesStmt,
+		getSeriesStmt:             q.getSeriesStmt,
+		listBookPagesStmt:         q.listBookPagesStmt,
+		listBooksByLibraryStmt:    q.listBooksByLibraryStmt,
+		listBooksBySeriesStmt:     q.listBooksBySeriesStmt,
+		listLibrariesStmt:         q.listLibrariesStmt,
+		listSeriesByLibraryStmt:   q.listSeriesByLibraryStmt,
+		updateBookProgressStmt:    q.updateBookProgressStmt,
+		upsertBookByPathStmt:      q.upsertBookByPathStmt,
 	}
 }

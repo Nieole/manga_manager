@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS books (
 
 CREATE INDEX IF NOT EXISTS idx_books_series_id ON books(series_id);
 CREATE INDEX IF NOT EXISTS idx_books_library_id ON books(library_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path);
 
 CREATE TABLE IF NOT EXISTS book_pages (
     id TEXT PRIMARY KEY,

@@ -203,12 +203,50 @@ func (q *Queries) DeleteBookByPath(ctx context.Context, path string) error {
 	return err
 }
 
+const deletePagesByBookPath = `-- name: DeletePagesByBookPath :exec
+DELETE FROM book_pages WHERE book_id IN (SELECT id FROM books WHERE path = ?)
+`
+
+func (q *Queries) DeletePagesByBookPath(ctx context.Context, path string) error {
+	_, err := q.exec(ctx, q.deletePagesByBookPathStmt, deletePagesByBookPath, path)
+	return err
+}
+
 const getBook = `-- name: GetBook :one
 SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetBook(ctx context.Context, id string) (Book, error) {
 	row := q.queryRow(ctx, q.getBookStmt, getBook, id)
+	var i Book
+	err := row.Scan(
+		&i.ID,
+		&i.SeriesID,
+		&i.LibraryID,
+		&i.Name,
+		&i.Path,
+		&i.Size,
+		&i.FileModifiedAt,
+		&i.Title,
+		&i.Summary,
+		&i.Number,
+		&i.SortNumber,
+		&i.PageCount,
+		&i.CoverPath,
+		&i.LastReadPage,
+		&i.LastReadAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getBookByPath = `-- name: GetBookByPath :one
+SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE path = ? LIMIT 1
+`
+
+func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) {
+	row := q.queryRow(ctx, q.getBookByPathStmt, getBookByPath, path)
 	var i Book
 	err := row.Scan(
 		&i.ID,
@@ -243,6 +281,40 @@ func (q *Queries) GetLibrary(ctx context.Context, id string) (Library, error) {
 		&i.ID,
 		&i.Name,
 		&i.Path,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getNextBookInSeries = `-- name: GetNextBookInSeries :one
+SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.created_at, nb.updated_at FROM books nb
+INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
+WHERE (nb.sort_number > cb.sort_number)
+   OR (nb.sort_number = cb.sort_number AND nb.name > cb.name)
+ORDER BY nb.sort_number, nb.name
+LIMIT 1
+`
+
+func (q *Queries) GetNextBookInSeries(ctx context.Context, id string) (Book, error) {
+	row := q.queryRow(ctx, q.getNextBookInSeriesStmt, getNextBookInSeries, id)
+	var i Book
+	err := row.Scan(
+		&i.ID,
+		&i.SeriesID,
+		&i.LibraryID,
+		&i.Name,
+		&i.Path,
+		&i.Size,
+		&i.FileModifiedAt,
+		&i.Title,
+		&i.Summary,
+		&i.Number,
+		&i.SortNumber,
+		&i.PageCount,
+		&i.CoverPath,
+		&i.LastReadPage,
+		&i.LastReadAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -501,5 +573,62 @@ type UpdateBookProgressParams struct {
 
 func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
 	_, err := q.exec(ctx, q.updateBookProgressStmt, updateBookProgress, arg.LastReadPage, arg.ID)
+	return err
+}
+
+const upsertBookByPath = `-- name: UpsertBookByPath :exec
+INSERT INTO books (
+    id, series_id, library_id, name, path, size, file_modified_at, 
+    title, summary, number, sort_number, page_count, cover_path
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+ON CONFLICT(path) DO UPDATE SET
+    series_id = excluded.series_id,
+    library_id = excluded.library_id,
+    name = excluded.name,
+    size = excluded.size,
+    file_modified_at = excluded.file_modified_at,
+    title = excluded.title,
+    summary = excluded.summary,
+    number = excluded.number,
+    sort_number = excluded.sort_number,
+    page_count = excluded.page_count,
+    cover_path = excluded.cover_path,
+    updated_at = CURRENT_TIMESTAMP
+`
+
+type UpsertBookByPathParams struct {
+	ID             string          `json:"id"`
+	SeriesID       string          `json:"series_id"`
+	LibraryID      string          `json:"library_id"`
+	Name           string          `json:"name"`
+	Path           string          `json:"path"`
+	Size           int64           `json:"size"`
+	FileModifiedAt time.Time       `json:"file_modified_at"`
+	Title          sql.NullString  `json:"title"`
+	Summary        sql.NullString  `json:"summary"`
+	Number         sql.NullString  `json:"number"`
+	SortNumber     sql.NullFloat64 `json:"sort_number"`
+	PageCount      int64           `json:"page_count"`
+	CoverPath      sql.NullString  `json:"cover_path"`
+}
+
+func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) error {
+	_, err := q.exec(ctx, q.upsertBookByPathStmt, upsertBookByPath,
+		arg.ID,
+		arg.SeriesID,
+		arg.LibraryID,
+		arg.Name,
+		arg.Path,
+		arg.Size,
+		arg.FileModifiedAt,
+		arg.Title,
+		arg.Summary,
+		arg.Number,
+		arg.SortNumber,
+		arg.PageCount,
+		arg.CoverPath,
+	)
 	return err
 }
