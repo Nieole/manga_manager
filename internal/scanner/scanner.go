@@ -84,7 +84,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath st
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, libraryID, job, results)
+				s.workerProcess(ctx, libraryID, rootPath, job, results)
 			}
 		}()
 	}
@@ -146,7 +146,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath st
 	return walkErr
 }
 
-func (s *Scanner) workerProcess(ctx context.Context, libraryID string, job scanJob, results chan<- scanResult) {
+func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath string, job scanJob, results chan<- scanResult) {
 	arc, err := parser.OpenArchive(job.path)
 	if err != nil {
 		log.Printf("Failed to open archive %s (may be corrupted): %v", job.path, err)
@@ -167,8 +167,24 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, job scanJ
 		Valid:  true,
 	}
 
-	seriesPath := filepath.Dir(job.path)
-	seriesName := filepath.Base(seriesPath)
+	var seriesName, seriesPath string
+	relPath, err := filepath.Rel(rootPath, job.path)
+	if err == nil {
+		parts := strings.Split(relPath, string(filepath.Separator))
+		if len(parts) > 1 {
+			// 第一级目录作为 Series
+			seriesName = parts[0]
+			seriesPath = filepath.Join(rootPath, seriesName)
+		} else {
+			// 如果直接放在资源库根目录，则以去后缀的文件名作为 Series
+			seriesName = strings.TrimSuffix(parts[0], filepath.Ext(parts[0]))
+			seriesPath = filepath.Join(rootPath, seriesName)
+		}
+	} else {
+		// Fallback
+		seriesPath = filepath.Dir(job.path)
+		seriesName = filepath.Base(seriesPath)
+	}
 
 	// 尝试解析文件名中的第一个可能代表卷号的数字作为自然排序依据 (Komga 默认策略之一)
 	var sortNumber float64 = 0
