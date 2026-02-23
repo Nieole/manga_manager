@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useOutletContext } from 'react-router-dom';
 import { ArrowLeft, BookImage } from 'lucide-react';
 
 interface NullString {
@@ -19,6 +19,7 @@ interface Book {
 export default function SeriesDetail() {
     const { seriesId } = useParams();
     const navigate = useNavigate();
+    const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
     const [books, setBooks] = useState<Book[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -34,7 +35,7 @@ export default function SeriesDetail() {
                     setLoading(false);
                 });
         }
-    }, [seriesId]);
+    }, [seriesId, refreshTrigger]);
 
     return (
         <div className="p-6 lg:p-10">

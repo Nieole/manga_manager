@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useOutletContext } from 'react-router-dom';
 import { ImageIcon } from 'lucide-react';
 
 interface NullString {
@@ -17,6 +17,7 @@ interface Series {
 
 export default function Home() {
     const { libId } = useParams();
+    const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
     const [series, setSeries] = useState<Series[]>([]);
     const [loading, setLoading] = useState(false);
 
@@ -33,7 +34,7 @@ export default function Home() {
                     setLoading(false);
                 });
         }
-    }, [libId]);
+    }, [libId, refreshTrigger]);
 
     if (!libId) {
         return (

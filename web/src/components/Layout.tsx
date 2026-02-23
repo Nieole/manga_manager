@@ -16,6 +16,8 @@ export default function Layout() {
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
     const [adding, setAdding] = useState(false);
+    // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
+    const [refreshTrigger, setRefreshTrigger] = useState(0);
 
     const { libId } = useParams();
     const navigate = useNavigate();
@@ -47,6 +49,8 @@ export default function Layout() {
             if (event.data === "refresh") {
                 console.log("Receive SSE refresh signal, reloading libraries...");
                 fetchLibraries();
+                // 收到后端推送后自增刷新信号以便子组件重新拉取元数据
+                setRefreshTrigger(prev => prev + 1);
             }
         };
 
@@ -84,6 +88,7 @@ export default function Layout() {
             setNewLibPath("");
             // 由于有 SSE 监听，这里甚至可以不需要主动 fetch，但为了增强即时感先拉一下基本信息
             fetchLibraries();
+            setRefreshTrigger(prev => prev + 1);
         } catch (error) {
             console.error(error);
             alert("添加库失败，请检查路径是否正确及服务端状态");
@@ -149,7 +154,7 @@ export default function Layout() {
                 </aside>
 
                 <div className="flex-1 overflow-y-auto bg-komgaDark relative">
-                    <Outlet />
+                    <Outlet context={{ refreshTrigger }} />
                 </div>
             </main>
 
