@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/search"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -17,6 +19,7 @@ type Controller struct {
 	store      database.Store
 	imageCache *lru.Cache[string, []byte]
 	scanner    *scanner.Scanner
+	engine     *search.Engine
 
 	// SSE Broker
 	clients        map[chan string]bool
@@ -25,12 +28,13 @@ type Controller struct {
 	messages       chan string
 }
 
-func NewController(store database.Store, scan *scanner.Scanner) *Controller {
+func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine) *Controller {
 	cache, _ := lru.New[string, []byte](256)
 	c := &Controller{
 		store:          store,
 		imageCache:     cache,
 		scanner:        scan,
+		engine:         engine,
 		clients:        make(map[chan string]bool),
 		newClients:     make(chan chan string),
 		defunctClients: make(chan chan string),
@@ -69,6 +73,7 @@ func (c *Controller) PublishEvent(event string) {
 func (c *Controller) SetupRoutes(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/events", c.sseHandler)
+		r.Get("/search", c.searchBooks)
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
@@ -79,11 +84,16 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Route("/books", func(r chi.Router) {
 			r.Get("/{seriesId}", c.getBooksBySeries)
+			r.Post("/{bookId}/progress", c.updateBookProgress)
 		})
 
 		r.Route("/pages", func(r chi.Router) {
 			r.Get("/{bookId}", c.getPagesByBook)
 			r.Get("/{bookId}/{pageNumber}", c.servePageImage)
+		})
+
+		r.Route("/covers", func(r chi.Router) {
+			r.Get("/{bookId}", c.serveCoverImage)
 		})
 	})
 }
@@ -92,6 +102,27 @@ func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+func (c *Controller) searchBooks(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"hits": []interface{}{}})
+		return
+	}
+
+	if c.engine == nil {
+		jsonError(w, http.StatusServiceUnavailable, "Search engine not initialized")
+		return
+	}
+
+	res, err := c.engine.Search(query, 20)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Search failed")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, res)
 }
 
 func jsonError(w http.ResponseWriter, status int, message string) {
@@ -206,6 +237,33 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 		books = []database.Book{}
 	}
 	jsonResponse(w, http.StatusOK, books)
+}
+
+type UpdateProgressRequest struct {
+	Page int64 `json:"page"`
+}
+
+func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	bookID := chi.URLParam(r, "bookId")
+
+	var req UpdateProgressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	params := database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: req.Page, Valid: true},
+		ID:           bookID,
+	}
+
+	if err := c.store.UpdateBookProgress(ctx, params); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to update progress")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})
 }
 
 func (c *Controller) sseHandler(w http.ResponseWriter, r *http.Request) {

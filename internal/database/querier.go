@@ -22,6 +22,7 @@ type Querier interface {
 	ListBooksBySeries(ctx context.Context, seriesID string) ([]Book, error)
 	ListLibraries(ctx context.Context) ([]Library, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID string) ([]Series, error)
+	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 }
 
 var _ Querier = (*Queries)(nil)

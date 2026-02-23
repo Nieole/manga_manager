@@ -14,20 +14,24 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/images"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/search"
 
 	"github.com/google/uuid"
 )
 
 type Scanner struct {
-	store database.Store
+	store  database.Store
+	engine *search.Engine
 	// 批量插入结束后的回调播送机制
 	onBatchIngested func(action string)
 }
 
-func NewScanner(store database.Store) *Scanner {
+func NewScanner(store database.Store, engine *search.Engine) *Scanner {
 	return &Scanner{
-		store: store,
+		store:  store,
+		engine: engine,
 	}
 }
 
@@ -174,6 +178,27 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, job scanJ
 		}
 	}
 
+	// 尝试生成冷热分离封面缓存图
+	var coverPath sql.NullString
+	if len(pages) > 0 {
+		thumbDir := filepath.Join(".", "data", "thumbnails")
+		_ = os.MkdirAll(thumbDir, 0755)
+
+		if pageData, err := arc.ReadPage(pages[0].Name); err == nil {
+			if processed, _, err := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+				Width:   400, // 提供极佳的海量图片显示分辨率，但不拖慢首次加载
+				Quality: 82,  // 质量折中
+				Format:  "jpeg",
+			}); err == nil {
+				fileName := bookID + ".jpg"
+				fullPath := filepath.Join(thumbDir, fileName)
+				if err := os.WriteFile(fullPath, processed, 0644); err == nil {
+					coverPath = sql.NullString{String: fileName, Valid: true}
+				}
+			}
+		}
+	}
+
 	book := database.CreateBookParams{
 		ID:             bookID,
 		LibraryID:      libraryID,
@@ -184,6 +209,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, job scanJ
 		Title:          bookTitle,
 		PageCount:      int64(len(pages)),
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
+		CoverPath:      coverPath,
 	}
 
 	var pageParams []database.CreateBookPageParams
@@ -260,6 +286,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 				}
 				for _, p := range res.pages {
 					_, _ = q.CreateBookPage(ctx, p) // 忽略外键单次报错避免事务塌方
+				}
+
+				if s.engine != nil {
+					_ = s.engine.IndexBook(res.book, res.seriesName)
 				}
 			}
 			return nil

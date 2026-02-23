@@ -14,11 +14,11 @@ import (
 const createBook = `-- name: CreateBook :one
 INSERT INTO books (
     id, series_id, library_id, name, path, size, file_modified_at, 
-    title, summary, number, sort_number, page_count
+    title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at
 `
 
 type CreateBookParams struct {
@@ -34,6 +34,7 @@ type CreateBookParams struct {
 	Number         sql.NullString  `json:"number"`
 	SortNumber     sql.NullFloat64 `json:"sort_number"`
 	PageCount      int64           `json:"page_count"`
+	CoverPath      sql.NullString  `json:"cover_path"`
 }
 
 func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, error) {
@@ -50,6 +51,7 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		arg.Number,
 		arg.SortNumber,
 		arg.PageCount,
+		arg.CoverPath,
 	)
 	var i Book
 	err := row.Scan(
@@ -65,6 +67,9 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		&i.Number,
 		&i.SortNumber,
 		&i.PageCount,
+		&i.CoverPath,
+		&i.LastReadPage,
+		&i.LastReadAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -199,7 +204,7 @@ func (q *Queries) DeleteBookByPath(ctx context.Context, path string) error {
 }
 
 const getBook = `-- name: GetBook :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, created_at, updated_at FROM books WHERE id = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetBook(ctx context.Context, id string) (Book, error) {
@@ -218,6 +223,9 @@ func (q *Queries) GetBook(ctx context.Context, id string) (Book, error) {
 		&i.Number,
 		&i.SortNumber,
 		&i.PageCount,
+		&i.CoverPath,
+		&i.LastReadPage,
+		&i.LastReadAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -301,14 +309,15 @@ func (q *Queries) ListBookPages(ctx context.Context, bookID string) ([]BookPage,
 }
 
 const listBooksByLibrary = `-- name: ListBooksByLibrary :many
-SELECT id, path, file_modified_at, size FROM books WHERE library_id = ?
+SELECT id, path, file_modified_at, size, cover_path FROM books WHERE library_id = ?
 `
 
 type ListBooksByLibraryRow struct {
-	ID             string    `json:"id"`
-	Path           string    `json:"path"`
-	FileModifiedAt time.Time `json:"file_modified_at"`
-	Size           int64     `json:"size"`
+	ID             string         `json:"id"`
+	Path           string         `json:"path"`
+	FileModifiedAt time.Time      `json:"file_modified_at"`
+	Size           int64          `json:"size"`
+	CoverPath      sql.NullString `json:"cover_path"`
 }
 
 func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID string) ([]ListBooksByLibraryRow, error) {
@@ -325,6 +334,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID string) ([]L
 			&i.Path,
 			&i.FileModifiedAt,
 			&i.Size,
+			&i.CoverPath,
 		); err != nil {
 			return nil, err
 		}
@@ -340,7 +350,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID string) ([]L
 }
 
 const listBooksBySeries = `-- name: ListBooksBySeries :many
-SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, created_at, updated_at FROM books WHERE series_id = ? ORDER BY sort_number, name
+SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE series_id = ? ORDER BY sort_number, name
 `
 
 func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID string) ([]Book, error) {
@@ -365,6 +375,9 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID string) ([]Boo
 			&i.Number,
 			&i.SortNumber,
 			&i.PageCount,
+			&i.CoverPath,
+			&i.LastReadPage,
+			&i.LastReadAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -450,4 +463,20 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID string) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateBookProgress = `-- name: UpdateBookProgress :exec
+UPDATE books 
+SET last_read_page = ?, last_read_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateBookProgressParams struct {
+	LastReadPage sql.NullInt64 `json:"last_read_page"`
+	ID           string        `json:"id"`
+}
+
+func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
+	_, err := q.exec(ctx, q.updateBookProgressStmt, updateBookProgress, arg.LastReadPage, arg.ID)
+	return err
 }

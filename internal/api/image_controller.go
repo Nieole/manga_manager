@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"manga-manager/internal/images"
@@ -118,4 +120,27 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
 
 	w.Write(finalData)
+}
+
+func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	bookID := chi.URLParam(r, "bookId")
+
+	book, err := c.store.GetBook(ctx, bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Book entity not found")
+		return
+	}
+
+	if book.CoverPath.Valid && book.CoverPath.String != "" {
+		thumbDir := filepath.Join(".", "data", "thumbnails")
+		fullPath := filepath.Join(thumbDir, book.CoverPath.String)
+		if _, err := os.Stat(fullPath); err == nil {
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			http.ServeFile(w, r, fullPath)
+			return
+		}
+	}
+
+	jsonError(w, http.StatusNotFound, "Cover cache missing or invalid")
 }

@@ -22,6 +22,9 @@ type Book struct {
 	Number         sql.NullString  `json:"number"`
 	SortNumber     sql.NullFloat64 `json:"sort_number"`
 	PageCount      int64           `json:"page_count"`
+	CoverPath      sql.NullString  `json:"cover_path"`
+	LastReadPage   sql.NullInt64   `json:"last_read_page"`
+	LastReadAt     sql.NullTime    `json:"last_read_at"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }

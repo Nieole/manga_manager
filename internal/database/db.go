@@ -63,6 +63,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSeriesByLibraryStmt, err = db.PrepareContext(ctx, listSeriesByLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSeriesByLibrary: %w", err)
 	}
+	if q.updateBookProgressStmt, err = db.PrepareContext(ctx, updateBookProgress); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateBookProgress: %w", err)
+	}
 	return &q, nil
 }
 
@@ -133,6 +136,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSeriesByLibraryStmt: %w", cerr)
 		}
 	}
+	if q.updateBookProgressStmt != nil {
+		if cerr := q.updateBookProgressStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateBookProgressStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -185,6 +193,7 @@ type Queries struct {
 	listBooksBySeriesStmt   *sql.Stmt
 	listLibrariesStmt       *sql.Stmt
 	listSeriesByLibraryStmt *sql.Stmt
+	updateBookProgressStmt  *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -204,5 +213,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listBooksBySeriesStmt:   q.listBooksBySeriesStmt,
 		listLibrariesStmt:       q.listLibrariesStmt,
 		listSeriesByLibraryStmt: q.listSeriesByLibraryStmt,
+		updateBookProgressStmt:  q.updateBookProgressStmt,
 	}
 }

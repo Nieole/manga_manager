@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -19,8 +19,30 @@ export default function Layout() {
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
     const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchResults, setSearchResults] = useState<any[]>([]);
+
     const { libId } = useParams();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        if (!searchQuery.trim()) {
+            setSearchResults([]);
+            return;
+        }
+        const timer = setTimeout(() => {
+            axios.get(`/api/search?q=${encodeURIComponent(searchQuery)}`)
+                .then(res => {
+                    if (res.data && res.data.hits) {
+                        setSearchResults(res.data.hits);
+                    } else {
+                        setSearchResults([]);
+                    }
+                })
+                .catch(err => console.error("Search failed:", err));
+        }, 300); // 防抖 300ms
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
 
     const fetchLibraries = () => {
         setLoading(true);
@@ -99,12 +121,41 @@ export default function Layout() {
 
     return (
         <div className="min-h-screen bg-komgaDark text-gray-200 font-sans flex flex-col relative">
-            <header className="bg-komgaSurface shadow-md sticky top-0 z-10 px-6 py-4 flex items-center justify-between border-b border-gray-800">
-                <Link to="/" className="flex items-center space-x-3">
+            <header className="bg-komgaSurface shadow-md sticky top-0 z-20 px-6 py-4 flex items-center justify-between border-b border-gray-800">
+                <Link to="/" className="flex items-center space-x-3 w-64">
                     <BookOpen className="text-komgaPrimary h-8 w-8" />
                     <h1 className="text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition">Manga Manager</h1>
                 </Link>
-                <div className="text-sm text-gray-400">
+
+                <div className="flex-1 max-w-xl relative">
+                    <div className="relative group">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-komgaPrimary transition-colors" />
+                        <input
+                            type="text"
+                            placeholder="跨库模糊搜索漫画名称、连载系列..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full bg-gray-900 border border-gray-800 rounded-full pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 focus:border-transparent transition-all placeholder-gray-500"
+                        />
+                    </div>
+                    {searchResults.length > 0 && searchQuery.trim() !== "" && (
+                        <div className="absolute top-full mt-2 w-full bg-komgaSurface border border-gray-800 rounded-lg shadow-2xl overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                            {searchResults.map((hit: any) => (
+                                <Link
+                                    key={hit.id}
+                                    to={`/reader/${hit.id}`}
+                                    onClick={() => { setSearchQuery(""); setSearchResults([]); }}
+                                    className="block px-4 py-3 hover:bg-gray-800 transition-colors"
+                                >
+                                    <div className="text-sm font-medium text-white truncate">{hit.fields?.title || hit.id}</div>
+                                    <div className="text-xs text-komgaPrimary mt-1 truncate">{hit.fields?.series_name || "未知系列"} | 匹配度: {hit.score?.toFixed(2)}</div>
+                                </Link>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="text-sm text-gray-400 w-64 text-right hidden lg:block">
                     Superfast & 100% Go Native
                 </div>
             </header>

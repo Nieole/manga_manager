@@ -26,9 +26,9 @@ SELECT * FROM series WHERE library_id = ? ORDER BY name;
 -- name: CreateBook :one
 INSERT INTO books (
     id, series_id, library_id, name, path, size, file_modified_at, 
-    title, summary, number, sort_number, page_count
+    title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -50,7 +50,12 @@ RETURNING *;
 SELECT * FROM book_pages WHERE book_id = ? ORDER BY number;
 
 -- name: ListBooksByLibrary :many
-SELECT id, path, file_modified_at, size FROM books WHERE library_id = ?;
+SELECT id, path, file_modified_at, size, cover_path FROM books WHERE library_id = ?;
 
 -- name: DeleteBookByPath :exec
 DELETE FROM books WHERE path = ?;
+
+-- name: UpdateBookProgress :exec
+UPDATE books 
+SET last_read_page = ?, last_read_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
