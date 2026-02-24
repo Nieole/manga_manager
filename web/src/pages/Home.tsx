@@ -33,6 +33,7 @@ export default function Home() {
     const [activeTag, setActiveTag] = useState<string | null>(null);
     const [activeAuthor, setActiveAuthor] = useState<string | null>(null);
     const [activeStatus, setActiveStatus] = useState<string | null>(null);
+    const [activeLetter, setActiveLetter] = useState<string | null>(null);
     const [page, setPage] = useState(1);
 
     const [allTags, setAllTags] = useState<{ name: string }[]>([]);
@@ -57,7 +58,8 @@ export default function Home() {
 
     useEffect(() => {
         if (libId) {
-            setLoading(true);
+            // 防闪烁：仅当没有数据时才显示大面积 Loading，否则在后台静默获取
+            setLoading(allSeries.length === 0);
             const params = new URLSearchParams();
             params.append('libraryId', libId);
             params.append('limit', PAGE_SIZE.toString());
@@ -65,6 +67,7 @@ export default function Home() {
             if (activeTag) params.append('tags', activeTag);
             if (activeAuthor) params.append('authors', activeAuthor);
             if (activeStatus) params.append('status', activeStatus);
+            if (activeLetter) params.append('letter', activeLetter);
 
             axios.get(`/api/series/search?${params.toString()}`)
                 .then(res => {
@@ -77,13 +80,13 @@ export default function Home() {
                     setLoading(false);
                 });
         }
-    }, [libId, refreshTrigger, activeTag, activeAuthor, activeStatus, page]);
+    }, [libId, refreshTrigger, activeTag, activeAuthor, activeStatus, activeLetter, page]);
 
     // 分页逻辑
     const totalPages = Math.max(1, Math.ceil(totalSeries / PAGE_SIZE));
 
     // 当筛选条件变化时重置到第一页
-    useEffect(() => { setPage(1); }, [activeTag, activeAuthor, activeStatus]);
+    useEffect(() => { setPage(1); }, [activeTag, activeAuthor, activeStatus, activeLetter]);
 
     if (!libId) {
         return (
@@ -191,7 +194,26 @@ export default function Home() {
                 )}
             </div>
 
-            {loading ? (
+            {/* 首字母筛选条 */}
+            <div className="mb-8 flex flex-wrap gap-1 items-center justify-center">
+                <button
+                    onClick={() => setActiveLetter(null)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${activeLetter === null ? 'bg-komgaPrimary text-white shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                >
+                    全部
+                </button>
+                {'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').map(letter => (
+                    <button
+                        key={letter}
+                        onClick={() => setActiveLetter(letter)}
+                        className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-md transition-colors ${activeLetter === letter ? 'bg-komgaPrimary text-white shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                    >
+                        {letter}
+                    </button>
+                ))}
+            </div>
+
+            {loading && allSeries.length === 0 ? (
                 <div className="text-center py-20 text-gray-400 animate-pulse">正在加载目录与元数据...</div>
             ) : allSeries.length === 0 ? (
                 <div className="text-center py-20 text-gray-500">无匹配的系列</div>

@@ -213,44 +213,53 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 			log.Printf("Failed to mkdir thumbDir %s: %v", thumbDir, err)
 		}
 
-		pageData, err := arc.ReadPage(pages[0].Name)
-		if err == nil {
-			// 优先尝试 WebP（体积小画质高），失败则降级到 JPEG（纯 Go 实现，跨平台无忧）
-			var processed []byte
-			var fileName string
-			webpData, _, webpErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-				Width: 400, Quality: 82, Format: "webp",
-			})
-			if webpErr == nil && len(webpData) > 0 {
-				processed = webpData
-				fileName = bookHash + ".webp"
-			} else {
-				if webpErr != nil {
-					log.Printf("WebP generation failed for %s: %v", job.path, webpErr)
-				}
-				jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-					Width: 400, Quality: 82, Format: "jpeg",
-				})
-				if jpegErr == nil {
-					processed = jpegData
-					fileName = bookHash + ".jpg"
-				} else {
-					log.Printf("JPEG generation failed for %s: %v", job.path, jpegErr)
-				}
-			}
+		webpPath := filepath.Join(thumbDir, bookHash+".webp")
+		jpgPath := filepath.Join(thumbDir, bookHash+".jpg")
 
-			if len(processed) > 0 && fileName != "" {
-				fullPath := filepath.Join(thumbDir, fileName)
-				if err := os.WriteFile(fullPath, processed, 0644); err == nil {
-					coverPath = sql.NullString{String: fileName, Valid: true}
+		if _, err := os.Stat(webpPath); err == nil {
+			coverPath = sql.NullString{String: bookHash + ".webp", Valid: true}
+		} else if _, err := os.Stat(jpgPath); err == nil {
+			coverPath = sql.NullString{String: bookHash + ".jpg", Valid: true}
+		} else {
+			pageData, err := arc.ReadPage(pages[0].Name)
+			if err == nil {
+				// 优先尝试 WebP（体积小画质高），失败则降级到 JPEG（纯 Go 实现，跨平台无忧）
+				var processed []byte
+				var fileName string
+				webpData, _, webpErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+					Width: 400, Quality: 82, Format: "webp",
+				})
+				if webpErr == nil && len(webpData) > 0 {
+					processed = webpData
+					fileName = bookHash + ".webp"
 				} else {
-					log.Printf("Failed to write thumbnail file %s: %v", fullPath, err)
+					if webpErr != nil {
+						log.Printf("WebP generation failed for %s: %v", job.path, webpErr)
+					}
+					jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+						Width: 400, Quality: 82, Format: "jpeg",
+					})
+					if jpegErr == nil {
+						processed = jpegData
+						fileName = bookHash + ".jpg"
+					} else {
+						log.Printf("JPEG generation failed for %s: %v", job.path, jpegErr)
+					}
+				}
+
+				if len(processed) > 0 && fileName != "" {
+					fullPath := filepath.Join(thumbDir, fileName)
+					if err := os.WriteFile(fullPath, processed, 0644); err == nil {
+						coverPath = sql.NullString{String: fileName, Valid: true}
+					} else {
+						log.Printf("Failed to write thumbnail file %s: %v", fullPath, err)
+					}
+				} else {
+					log.Printf("No processed thumbnail data for %s", job.path)
 				}
 			} else {
-				log.Printf("No processed thumbnail data for %s", job.path)
+				log.Printf("Failed to ReadPage %s from %s: %v", pages[0].Name, job.path, err)
 			}
-		} else {
-			log.Printf("Failed to ReadPage %s from %s: %v", pages[0].Name, job.path, err)
 		}
 	} else {
 		log.Printf("No pages found in %s to extract cover", job.path)

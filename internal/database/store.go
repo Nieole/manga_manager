@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"runtime"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -18,7 +19,7 @@ type Store interface {
 	Close() error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
-	SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string) ([]SearchSeriesPagedRow, int, error)
+	SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string, letter string) ([]SearchSeriesPagedRow, int, error)
 }
 
 type SearchSeriesPagedRow struct {
@@ -103,7 +104,7 @@ func Migrate(dbPath string) error {
 }
 
 // SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页
-func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string) ([]SearchSeriesPagedRow, int, error) {
+func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string, letter string) ([]SearchSeriesPagedRow, int, error) {
 	// 构建动态 SQL
 	baseQuery := `
 		SELECT 
@@ -138,6 +139,17 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, limit
 		baseQuery += ` AND s.status = ?`
 		countFilters += ` AND s.status = ?`
 		args = append(args, status)
+	}
+
+	if letter != "" {
+		if letter == "#" {
+			baseQuery += ` AND UPPER(SUBSTR(s.name, 1, 1)) NOT BETWEEN 'A' AND 'Z'`
+			countFilters += ` AND UPPER(SUBSTR(s.name, 1, 1)) NOT BETWEEN 'A' AND 'Z'`
+		} else {
+			baseQuery += ` AND UPPER(SUBSTR(s.name, 1, 1)) = ?`
+			countFilters += ` AND UPPER(SUBSTR(s.name, 1, 1)) = ?`
+			args = append(args, strings.ToUpper(letter))
+		}
 	}
 
 	if len(tags) > 0 {

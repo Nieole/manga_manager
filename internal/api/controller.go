@@ -317,8 +317,9 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
+	letter := r.URL.Query().Get("letter")
 
-	series, total, err := c.store.SearchSeriesPaged(ctx, libID, limit, offset, tags, authors, status)
+	series, total, err := c.store.SearchSeriesPaged(ctx, libID, limit, offset, tags, authors, status, letter)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
 		return
