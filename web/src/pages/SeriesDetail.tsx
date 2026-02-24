@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock } from 'lucide-react';
 
 interface NullString {
     String: string;
@@ -24,6 +24,7 @@ interface Series {
     rating?: NullFloat64;
     language?: NullString;
     book_count: number;
+    locked_fields: string;
 }
 
 interface MetaTag {
@@ -59,6 +60,10 @@ export default function SeriesDetail() {
     const [books, setBooks] = useState<Book[]>([]);
     const [loading, setLoading] = useState(true);
 
+    const [isEditing, setIsEditing] = useState(false);
+    const [editForm, setEditForm] = useState<Partial<Series>>({});
+    const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
+
     // 当前如果是阅读某个卷下的内容，记录被选中的卷名
     const [selectedVolume, setSelectedVolume] = useState<string | null>(null);
 
@@ -73,9 +78,22 @@ export default function SeriesDetail() {
             ])
                 .then(([booksRes, infoRes, tagsRes, authorsRes]) => {
                     setBooks(booksRes.data || []);
-                    setSeriesInfo(infoRes.data);
+                    const info = infoRes.data;
+                    setSeriesInfo(info);
                     setTags(tagsRes.data || []);
                     setAuthors(authorsRes.data || []);
+
+                    if (info) {
+                        setLockedFields(new Set(info.locked_fields ? info.locked_fields.split(',') : []));
+                        setEditForm({
+                            title: info.title,
+                            summary: info.summary,
+                            publisher: info.publisher,
+                            status: info.status,
+                            rating: info.rating,
+                            language: info.language,
+                        });
+                    }
                 })
                 .catch(err => {
                     console.error("Failed to load series context", err);
@@ -132,6 +150,58 @@ export default function SeriesDetail() {
         }
     };
 
+    const handleSaveMetadata = async () => {
+        if (!seriesInfo) return;
+        try {
+            await axios.put(`/api/series/info/${seriesId}`, {
+                title: editForm.title?.String || '',
+                summary: editForm.summary?.String || '',
+                publisher: editForm.publisher?.String || '',
+                status: editForm.status?.String || '',
+                rating: editForm.rating?.Float64 || 0,
+                language: editForm.language?.String || '',
+                locked_fields: Array.from(lockedFields).join(',')
+            });
+            // Reload info
+            const infoRes = await axios.get(`/api/series/info/${seriesId}`);
+            setSeriesInfo(infoRes.data);
+            setIsEditing(false);
+        } catch (err) {
+            console.error("Failed to update metadata", err);
+            alert("保存失败");
+        }
+    };
+
+    const toggleLock = (field: string) => {
+        setLockedFields(prev => {
+            const next = new Set(prev);
+            if (next.has(field)) {
+                next.delete(field);
+            } else {
+                next.add(field);
+            }
+            return next;
+        });
+    };
+
+    const handleFormChange = (field: string, value: string | number) => {
+        setEditForm(prev => {
+            const next = { ...prev };
+            if (field === 'rating') {
+                next.rating = { Float64: Number(value), Valid: Number(value) > 0 };
+            } else {
+                (next as any)[field] = { String: String(value), Valid: String(value).trim() !== '' };
+            }
+            return next;
+        });
+        // 自动锁定被随意修改的字段
+        setLockedFields(prev => {
+            const next = new Set(prev);
+            next.add(field);
+            return next;
+        });
+    };
+
     const renderBookCard = (book: Book) => (
         <Link
             to={`/reader/${book.id}`}
@@ -185,6 +255,15 @@ export default function SeriesDetail() {
                                 </>
                             ) : (
                                 seriesInfo?.title?.Valid ? seriesInfo.title.String : (seriesInfo?.name || "系列总览")
+                            )}
+                            {!selectedVolume && seriesInfo && (
+                                <button
+                                    onClick={() => setIsEditing(true)}
+                                    className="ml-4 p-1.5 text-gray-500 hover:text-komgaPrimary hover:bg-komgaPrimary/10 rounded transition-colors"
+                                    title="编辑元数据"
+                                >
+                                    <Edit className="w-5 h-5" />
+                                </button>
                             )}
                         </div>
 
@@ -264,6 +343,76 @@ export default function SeriesDetail() {
                     </p>
                 </div>
             </div>
+
+            {/* 编辑元数据弹窗 */}
+            {isEditing && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                    <div className="bg-komgaSurface border border-gray-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                        <div className="flex items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50">
+                            <h3 className="text-xl font-bold text-white">编辑系列元数据</h3>
+                            <button onClick={() => setIsEditing(false)} className="text-gray-400 hover:text-white transition-colors">
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+                        <div className="p-6 overflow-y-auto space-y-6 flex-1">
+                            {/* Form Fields */}
+                            {[
+                                { id: 'title', label: '系列标题 (Title)', type: 'text', val: editForm.title?.String || '' },
+                                { id: 'summary', label: '简介 (Summary)', type: 'textarea', val: editForm.summary?.String || '' },
+                                { id: 'publisher', label: '出版商 (Publisher)', type: 'text', val: editForm.publisher?.String || '' },
+                                { id: 'status', label: '连载状态 (Status)', type: 'text', val: editForm.status?.String || '' },
+                                { id: 'language', label: '语言 (Language ISO)', type: 'text', val: editForm.language?.String || '' },
+                                { id: 'rating', label: '评分 (Rating 0-5)', type: 'number', val: editForm.rating?.Float64 || 0, step: "0.1" },
+                            ].map(f => (
+                                <div key={f.id} className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-sm font-medium text-gray-300">{f.label}</label>
+                                        <button
+                                            onClick={() => toggleLock(f.id)}
+                                            className={`flex items-center text-xs px-2 py-1 rounded transition-colors ${lockedFields.has(f.id)
+                                                    ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                                                    : 'text-gray-500 hover:text-gray-300'
+                                                }`}
+                                            title={lockedFields.has(f.id) ? "该字段已被锁定，扫描时不会被自动覆盖" : "点击锁定该字段，防止被扫描器覆盖"}
+                                        >
+                                            {lockedFields.has(f.id) ? <><Lock className="w-3 h-3 mr-1" /> 已锁定防覆盖</> : <><Unlock className="w-3 h-3 mr-1" /> 未锁定</>}
+                                        </button>
+                                    </div>
+                                    {f.type === 'textarea' ? (
+                                        <textarea
+                                            value={f.val}
+                                            onChange={e => handleFormChange(f.id, e.target.value)}
+                                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all min-h-[100px]"
+                                        />
+                                    ) : (
+                                        <input
+                                            type={f.type}
+                                            step={f.step}
+                                            value={f.val}
+                                            onChange={e => handleFormChange(f.id, e.target.value)}
+                                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                                        />
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                        <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex justify-end gap-3">
+                            <button
+                                onClick={() => setIsEditing(false)}
+                                className="px-5 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleSaveMetadata}
+                                className="px-5 py-2 rounded-lg text-sm font-medium bg-komgaPrimary text-white hover:bg-komgaPrimary/80 transition-colors shadow-lg shadow-komgaPrimary/20"
+                            >
+                                保存更改
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {loading ? (
                 <div className="text-center py-20 text-gray-500 animate-pulse">正在提取书籍关系元数据...</div>

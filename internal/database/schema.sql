@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS series (
     rating REAL,
     language TEXT,
     book_count INTEGER NOT NULL DEFAULT 0,
+    locked_fields TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE

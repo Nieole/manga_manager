@@ -88,6 +88,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Route("/series", func(r chi.Router) {
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
 			r.Get("/info/{seriesId}", c.getSeriesInfo)
+			r.Put("/info/{seriesId}", c.updateSeriesInfo)
 			r.Get("/{seriesId}/tags", c.getSeriesTags)
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 		})
@@ -266,6 +267,44 @@ func (c *Controller) getSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, series)
+}
+
+type UpdateSeriesRequest struct {
+	Title        string  `json:"title"`
+	Summary      string  `json:"summary"`
+	Publisher    string  `json:"publisher"`
+	Status       string  `json:"status"`
+	Rating       float64 `json:"rating"`
+	Language     string  `json:"language"`
+	LockedFields string  `json:"locked_fields"`
+}
+
+func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
+	seriesID := chi.URLParam(r, "seriesId")
+
+	var req UpdateSeriesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	updated, err := c.store.UpdateSeriesMetadata(r.Context(), database.UpdateSeriesMetadataParams{
+		Title:        sql.NullString{String: req.Title, Valid: req.Title != ""},
+		Summary:      sql.NullString{String: req.Summary, Valid: req.Summary != ""},
+		Publisher:    sql.NullString{String: req.Publisher, Valid: req.Publisher != ""},
+		Status:       sql.NullString{String: req.Status, Valid: req.Status != ""},
+		Rating:       sql.NullFloat64{Float64: req.Rating, Valid: req.Rating > 0},
+		Language:     sql.NullString{String: req.Language, Valid: req.Language != ""},
+		LockedFields: req.LockedFields,
+		ID:           seriesID,
+	})
+
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to update series metadata")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, updated)
 }
 
 func (c *Controller) getSeriesTags(w http.ResponseWriter, r *http.Request) {

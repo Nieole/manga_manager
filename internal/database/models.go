@@ -58,19 +58,20 @@ type Library struct {
 }
 
 type Series struct {
-	ID        string          `json:"id"`
-	LibraryID string          `json:"library_id"`
-	Name      string          `json:"name"`
-	Path      string          `json:"path"`
-	Title     sql.NullString  `json:"title"`
-	Summary   sql.NullString  `json:"summary"`
-	Publisher sql.NullString  `json:"publisher"`
-	Status    sql.NullString  `json:"status"`
-	Rating    sql.NullFloat64 `json:"rating"`
-	Language  sql.NullString  `json:"language"`
-	BookCount int64           `json:"book_count"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID           string          `json:"id"`
+	LibraryID    string          `json:"library_id"`
+	Name         string          `json:"name"`
+	Path         string          `json:"path"`
+	Title        sql.NullString  `json:"title"`
+	Summary      sql.NullString  `json:"summary"`
+	Publisher    sql.NullString  `json:"publisher"`
+	Status       sql.NullString  `json:"status"`
+	Rating       sql.NullFloat64 `json:"rating"`
+	Language     sql.NullString  `json:"language"`
+	BookCount    int64           `json:"book_count"`
+	LockedFields string          `json:"locked_fields"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type SeriesAuthor struct {

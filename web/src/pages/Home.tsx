@@ -13,8 +13,13 @@ interface Series {
     name: string;
     title?: NullString;
     summary?: NullString;
+    rating?: { Float64: number, Valid: boolean };
     cover_path?: NullString;
     tags_string?: string | null;
+    volume_count: number;
+    actual_book_count: number;
+    read_count: number;
+    total_pages: { Float64: number, Valid: boolean };
 }
 
 const PAGE_SIZE = 30;
@@ -227,13 +232,41 @@ export default function Home() {
                                     ) : (
                                         <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
                                     )}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                                    <div className="absolute inset-x-0 top-0 p-3 z-20 pointer-events-none flex justify-between items-start">
+                                        {s.rating?.Valid && s.rating.Float64 > 0 && (
+                                            <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md">
+                                                ★ {s.rating.Float64.toFixed(1)}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
+                                        <div className="flex justify-between text-[11px] font-medium text-gray-300">
+                                            <span>
+                                                {s.volume_count > 0 ? `${s.volume_count}卷 · ` : ''}{s.actual_book_count}话
+                                            </span>
+                                            <span>{s.total_pages?.Valid ? s.total_pages.Float64 : 0} P</span>
+                                        </div>
+                                        {/* 阅读进度条 */}
+                                        {s.actual_book_count > 0 && (
+                                            <div className="w-full h-1 bg-gray-700/60 rounded-full mt-1.5 overflow-hidden">
+                                                <div
+                                                    className={`h-full ${s.read_count === s.actual_book_count ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+                                                    style={{ width: `${(s.read_count / s.actual_book_count) * 100}%` }}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="p-4 flex-1 flex flex-col justify-between">
                                     <div>
-                                        <h3 className="text-sm font-medium text-white line-clamp-2 leading-tight group-hover:text-komgaPrimary transition-colors">
+                                        <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
                                             {s.title?.Valid ? s.title.String : s.name}
-                                        </h3>
+                                        </h4>
+                                        {s.summary?.Valid && (
+                                            <p className="mt-2 text-xs text-gray-500 line-clamp-2">
+                                                {s.summary.String}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
                                         <span>系列</span>

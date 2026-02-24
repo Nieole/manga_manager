@@ -15,6 +15,7 @@ var schemaSQL string
 type Store interface {
 	Querier
 	Close() error
+	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
 }
 

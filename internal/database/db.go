@@ -69,6 +69,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getSeriesStmt, err = db.PrepareContext(ctx, getSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeries: %w", err)
 	}
+	if q.getSeriesByLibraryStmt, err = db.PrepareContext(ctx, getSeriesByLibrary); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSeriesByLibrary: %w", err)
+	}
 	if q.getTagsForSeriesStmt, err = db.PrepareContext(ctx, getTagsForSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTagsForSeries: %w", err)
 	}
@@ -95,6 +98,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.updateBookProgressStmt, err = db.PrepareContext(ctx, updateBookProgress); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateBookProgress: %w", err)
+	}
+	if q.updateSeriesMetadataStmt, err = db.PrepareContext(ctx, updateSeriesMetadata); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateSeriesMetadata: %w", err)
 	}
 	if q.upsertAuthorStmt, err = db.PrepareContext(ctx, upsertAuthor); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertAuthor: %w", err)
@@ -188,6 +194,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getSeriesStmt: %w", cerr)
 		}
 	}
+	if q.getSeriesByLibraryStmt != nil {
+		if cerr := q.getSeriesByLibraryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSeriesByLibraryStmt: %w", cerr)
+		}
+	}
 	if q.getTagsForSeriesStmt != nil {
 		if cerr := q.getTagsForSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getTagsForSeriesStmt: %w", cerr)
@@ -231,6 +242,11 @@ func (q *Queries) Close() error {
 	if q.updateBookProgressStmt != nil {
 		if cerr := q.updateBookProgressStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateBookProgressStmt: %w", cerr)
+		}
+	}
+	if q.updateSeriesMetadataStmt != nil {
+		if cerr := q.updateSeriesMetadataStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateSeriesMetadataStmt: %w", cerr)
 		}
 	}
 	if q.upsertAuthorStmt != nil {
@@ -307,6 +323,7 @@ type Queries struct {
 	getLibraryStmt            *sql.Stmt
 	getNextBookInSeriesStmt   *sql.Stmt
 	getSeriesStmt             *sql.Stmt
+	getSeriesByLibraryStmt    *sql.Stmt
 	getTagsForSeriesStmt      *sql.Stmt
 	linkSeriesAuthorStmt      *sql.Stmt
 	linkSeriesTagStmt         *sql.Stmt
@@ -316,6 +333,7 @@ type Queries struct {
 	listLibrariesStmt         *sql.Stmt
 	listSeriesByLibraryStmt   *sql.Stmt
 	updateBookProgressStmt    *sql.Stmt
+	updateSeriesMetadataStmt  *sql.Stmt
 	upsertAuthorStmt          *sql.Stmt
 	upsertBookByPathStmt      *sql.Stmt
 	upsertSeriesByPathStmt    *sql.Stmt
@@ -341,6 +359,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getLibraryStmt:            q.getLibraryStmt,
 		getNextBookInSeriesStmt:   q.getNextBookInSeriesStmt,
 		getSeriesStmt:             q.getSeriesStmt,
+		getSeriesByLibraryStmt:    q.getSeriesByLibraryStmt,
 		getTagsForSeriesStmt:      q.getTagsForSeriesStmt,
 		linkSeriesAuthorStmt:      q.linkSeriesAuthorStmt,
 		linkSeriesTagStmt:         q.linkSeriesTagStmt,
@@ -350,6 +369,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listLibrariesStmt:         q.listLibrariesStmt,
 		listSeriesByLibraryStmt:   q.listSeriesByLibraryStmt,
 		updateBookProgressStmt:    q.updateBookProgressStmt,
+		updateSeriesMetadataStmt:  q.updateSeriesMetadataStmt,
 		upsertAuthorStmt:          q.upsertAuthorStmt,
 		upsertBookByPathStmt:      q.upsertBookByPathStmt,
 		upsertSeriesByPathStmt:    q.upsertSeriesByPathStmt,

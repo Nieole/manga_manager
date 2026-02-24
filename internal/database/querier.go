@@ -24,6 +24,7 @@ type Querier interface {
 	GetLibrary(ctx context.Context, id string) (Library, error)
 	GetNextBookInSeries(ctx context.Context, id string) (Book, error)
 	GetSeries(ctx context.Context, id string) (Series, error)
+	GetSeriesByLibrary(ctx context.Context, libraryID string) ([]GetSeriesByLibraryRow, error)
 	GetTagsForSeries(ctx context.Context, seriesID string) ([]Tag, error)
 	LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error
 	LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error
@@ -33,6 +34,7 @@ type Querier interface {
 	ListLibraries(ctx context.Context) ([]Library, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID string) ([]ListSeriesByLibraryRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
+	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
 	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) error
 	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) error

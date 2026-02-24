@@ -283,13 +283,23 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 }
 
 func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <-chan scanResult) {
-	// 系列关系缓存，避免每个文件频繁发起 SELECT 检测
+	// 系列关系缓存：路径 -> ID
 	seriesCache := make(map[string]string)
+	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
+	lockedFieldsCache := make(map[string]map[string]bool)
 
 	// 预加载已有的 Series，使得写入过程中不发生主键重复
 	existingSeries, _ := s.store.ListSeriesByLibrary(ctx, libraryID)
 	for _, series := range existingSeries {
 		seriesCache[series.Path] = series.ID
+
+		lfMap := make(map[string]bool)
+		if series.LockedFields != "" {
+			for _, f := range strings.Split(series.LockedFields, ",") {
+				lfMap[strings.TrimSpace(f)] = true
+			}
+		}
+		lockedFieldsCache[series.ID] = lfMap
 	}
 
 	var batch []scanResult
@@ -342,19 +352,29 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 					seriesCache[res.seriesPath] = seriesID
 				} else {
 					// 已存在的系列，利用 UpsertSeriesByPath 去更新其累积统计和元数据（仅当有新元数据时增补）
-					// 这里先简单不覆盖老数据，或者后续做一个专用 Update
 					if res.comicInfo != nil {
+						// 检查字段锁定机制
+						locks := lockedFieldsCache[seriesID]
+						if locks == nil {
+							locks = make(map[string]bool)
+						}
+
+						// 若被锁定则沿用空值（或使用一个专门的 update query，这里我们如果用 Upsert, 空的 NullString 不会覆盖已有值，或者可以传已有值）
+						// 更安全的做法是只有当没有触发 lock 时才写入 Valid = true。在已有的 Upsert 语义中，如果是 Valid=true 则覆盖。
 						_ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
 							ID:        seriesID,
 							LibraryID: libraryID,
 							Name:      res.seriesName,
 							Path:      res.seriesPath,
 							Title:     sql.NullString{String: res.seriesName, Valid: true},
-							Summary:   sql.NullString{String: rSummary, Valid: rSummary != ""},
-							Publisher: sql.NullString{String: rPublisher, Valid: rPublisher != ""},
-							Status:    sql.NullString{String: rStatus, Valid: rStatus != ""},
-							Rating:    sql.NullFloat64{Float64: float64(res.comicInfo.CommunityRating), Valid: res.comicInfo.CommunityRating > 0},
-							Language:  sql.NullString{String: rLang, Valid: rLang != ""},
+							Summary:   sql.NullString{String: rSummary, Valid: rSummary != "" && !locks["summary"]},
+							Publisher: sql.NullString{String: rPublisher, Valid: rPublisher != "" && !locks["publisher"]},
+							Status:    sql.NullString{String: rStatus, Valid: rStatus != "" && !locks["status"]},
+							Rating:    sql.NullFloat64{Float64: float64(res.comicInfo.CommunityRating), Valid: res.comicInfo.CommunityRating > 0 && !locks["rating"]},
+							Language:  sql.NullString{String: rLang, Valid: rLang != "" && !locks["language"]},
+							// LockedFields 这里应该保持原样，所以 Valid 设为 false 让 Upsert 判定或传旧值
+							// 因为我们的 Upsert 里会用 excluded.locked_fields 覆盖，为了不丢掉我们传回现有的锁。
+							LockedFields: getKeys(locks),
 						})
 					}
 				}
@@ -440,4 +460,13 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 			flush() // 按时间自然聚合，避免低频挂起锁
 		}
 	}
+}
+
+// 提取 locks 字典的所有 key 重组成字符串
+func getKeys(m map[string]bool) string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return strings.Join(keys, ",")
 }

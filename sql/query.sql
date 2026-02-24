@@ -14,9 +14,9 @@ DELETE FROM libraries WHERE id = ?;
 
 -- name: CreateSeries :one
 INSERT INTO series (
-    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count
+    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count, locked_fields
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -101,9 +101,9 @@ WHERE id = ?;
 
 -- name: UpsertSeriesByPath :exec
 INSERT INTO series (
-    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count
+    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count, locked_fields
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     library_id = excluded.library_id,
@@ -115,7 +115,22 @@ ON CONFLICT(path) DO UPDATE SET
     rating = excluded.rating,
     language = excluded.language,
     book_count = excluded.book_count,
+    locked_fields = excluded.locked_fields,
     updated_at = CURRENT_TIMESTAMP;
+
+-- name: UpdateSeriesMetadata :one
+UPDATE series
+SET 
+    title = ?,
+    summary = ?,
+    publisher = ?,
+    status = ?,
+    rating = ?,
+    language = ?,
+    locked_fields = ?,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING *;
 
 -- name: UpsertTag :one
 INSERT INTO tags (id, name) VALUES (?, ?)
@@ -124,6 +139,22 @@ RETURNING *;
 
 -- name: LinkSeriesTag :exec
 INSERT OR IGNORE INTO series_tags (series_id, tag_id) VALUES (?, ?);
+
+-- name: GetSeriesByLibrary :many
+SELECT 
+    s.*, 
+    GROUP_CONCAT(DISTINCT t.name) as tags_string,
+    COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
+    COUNT(DISTINCT b.id) as actual_book_count,
+    COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) as read_count,
+    SUM(b.page_count) as total_pages
+FROM series s
+LEFT JOIN series_tags st ON s.id = st.series_id
+LEFT JOIN tags t ON st.tag_id = t.id
+LEFT JOIN books b ON s.id = b.series_id
+WHERE s.library_id = ? 
+GROUP BY s.id
+ORDER BY s.name;
 
 -- name: GetTagsForSeries :many
 SELECT t.* FROM tags t
