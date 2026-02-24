@@ -20,6 +20,15 @@ func (q *Queries) ClearSeriesAuthors(ctx context.Context, seriesID int64) error 
 	return err
 }
 
+const clearSeriesLinks = `-- name: ClearSeriesLinks :exec
+DELETE FROM series_links WHERE series_id = ?
+`
+
+func (q *Queries) ClearSeriesLinks(ctx context.Context, seriesID int64) error {
+	_, err := q.exec(ctx, q.clearSeriesLinksStmt, clearSeriesLinks, seriesID)
+	return err
+}
+
 const clearSeriesTags = `-- name: ClearSeriesTags :exec
 DELETE FROM series_tags WHERE series_id = ?
 `
@@ -359,6 +368,39 @@ func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
 	return i, err
 }
 
+const getLinksForSeries = `-- name: GetLinksForSeries :many
+SELECT id, series_id, name, url, created_at FROM series_links WHERE series_id = ? ORDER BY id ASC
+`
+
+func (q *Queries) GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error) {
+	rows, err := q.query(ctx, q.getLinksForSeriesStmt, getLinksForSeries, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeriesLink
+	for rows.Next() {
+		var i SeriesLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.SeriesID,
+			&i.Name,
+			&i.Url,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNextBookInSeries = `-- name: GetNextBookInSeries :one
 SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.created_at, nb.updated_at FROM books nb
 INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
@@ -540,6 +582,30 @@ type LinkSeriesAuthorParams struct {
 func (q *Queries) LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error {
 	_, err := q.exec(ctx, q.linkSeriesAuthorStmt, linkSeriesAuthor, arg.SeriesID, arg.AuthorID)
 	return err
+}
+
+const linkSeriesLink = `-- name: LinkSeriesLink :one
+INSERT INTO series_links (series_id, name, url) VALUES (?, ?, ?)
+RETURNING id, series_id, name, url, created_at
+`
+
+type LinkSeriesLinkParams struct {
+	SeriesID int64  `json:"series_id"`
+	Name     string `json:"name"`
+	Url      string `json:"url"`
+}
+
+func (q *Queries) LinkSeriesLink(ctx context.Context, arg LinkSeriesLinkParams) (SeriesLink, error) {
+	row := q.queryRow(ctx, q.linkSeriesLinkStmt, linkSeriesLink, arg.SeriesID, arg.Name, arg.Url)
+	var i SeriesLink
+	err := row.Scan(
+		&i.ID,
+		&i.SeriesID,
+		&i.Name,
+		&i.Url,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const linkSeriesTag = `-- name: LinkSeriesTag :exec

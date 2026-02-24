@@ -184,3 +184,13 @@ SELECT * FROM tags ORDER BY name;
 
 -- name: GetAllAuthors :many
 SELECT * FROM authors ORDER BY name;
+
+-- name: LinkSeriesLink :one
+INSERT INTO series_links (series_id, name, url) VALUES (?, ?, ?)
+RETURNING *;
+
+-- name: ClearSeriesLinks :exec
+DELETE FROM series_links WHERE series_id = ?;
+
+-- name: GetLinksForSeries :many
+SELECT * FROM series_links WHERE series_id = ? ORDER BY id ASC;

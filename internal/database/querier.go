@@ -10,6 +10,7 @@ import (
 
 type Querier interface {
 	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
+	ClearSeriesLinks(ctx context.Context, seriesID int64) error
 	ClearSeriesTags(ctx context.Context, seriesID int64) error
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
@@ -22,11 +23,13 @@ type Querier interface {
 	GetBook(ctx context.Context, id int64) (Book, error)
 	GetBookByPath(ctx context.Context, path string) (Book, error)
 	GetLibrary(ctx context.Context, id int64) (Library, error)
+	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
 	GetSeries(ctx context.Context, id int64) (Series, error)
 	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
 	GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, error)
 	LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error
+	LinkSeriesLink(ctx context.Context, arg LinkSeriesLinkParams) (SeriesLink, error)
 	LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error
 	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)

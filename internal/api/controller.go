@@ -88,11 +88,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/browse-dirs", c.browseDirs)
 
 		r.Route("/series", func(r chi.Router) {
+			r.Get("/search", c.searchSeriesPaged)
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
 			r.Get("/info/{seriesId}", c.getSeriesInfo)
 			r.Put("/info/{seriesId}", c.updateSeriesInfo)
 			r.Get("/{seriesId}/tags", c.getSeriesTags)
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
+			r.Get("/{seriesId}/links", c.getSeriesLinks)
 		})
 
 		r.Route("/books", func(r chi.Router) {
@@ -282,6 +284,58 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, series)
 }
 
+func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	libIDStr := r.URL.Query().Get("libraryId")
+	libID, err := strconv.ParseInt(libIDStr, 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 {
+		limit = 50
+	}
+
+	pageStr := r.URL.Query().Get("page")
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+
+	var tags []string
+	if tagsParam := r.URL.Query().Get("tags"); tagsParam != "" {
+		tags = strings.Split(tagsParam, ",")
+	}
+
+	var authors []string
+	if authorsParam := r.URL.Query().Get("authors"); authorsParam != "" {
+		authors = strings.Split(authorsParam, ",")
+	}
+
+	status := r.URL.Query().Get("status")
+
+	series, total, err := c.store.SearchSeriesPaged(ctx, libID, limit, offset, tags, authors, status)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
+		return
+	}
+
+	if series == nil {
+		series = []database.SearchSeriesPagedRow{}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"items": series,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
+}
+
 func (c *Controller) getSeriesInfo(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
@@ -301,6 +355,11 @@ type UpdateAuthorRequest struct {
 	Role string `json:"role"`
 }
 
+type UpdateLinkRequest struct {
+	Name string `json:"name"`
+	Url  string `json:"url"`
+}
+
 type UpdateSeriesRequest struct {
 	Title        string                `json:"title"`
 	Summary      string                `json:"summary"`
@@ -311,6 +370,7 @@ type UpdateSeriesRequest struct {
 	LockedFields string                `json:"locked_fields"`
 	Tags         []string              `json:"tags"`
 	Authors      []UpdateAuthorRequest `json:"authors"`
+	Links        []UpdateLinkRequest   `json:"links"`
 }
 
 func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
@@ -365,6 +425,20 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if req.Links != nil {
+			_ = q.ClearSeriesLinks(r.Context(), seriesID)
+			for _, link := range req.Links {
+				if strings.TrimSpace(link.Name) == "" || strings.TrimSpace(link.Url) == "" {
+					continue
+				}
+				_, _ = q.LinkSeriesLink(r.Context(), database.LinkSeriesLinkParams{
+					SeriesID: seriesID,
+					Name:     link.Name,
+					Url:      link.Url,
+				})
+			}
+		}
+
 		return nil
 	})
 
@@ -404,6 +478,23 @@ func (c *Controller) getSeriesAuthors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, authors)
+}
+
+func (c *Controller) getSeriesLinks(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+	links, err := c.store.GetLinksForSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get links")
+		return
+	}
+	if links == nil {
+		links = []database.SeriesLink{}
+	}
+	jsonResponse(w, http.StatusOK, links)
 }
 
 func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {

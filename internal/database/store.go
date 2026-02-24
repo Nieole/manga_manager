@@ -18,6 +18,17 @@ type Store interface {
 	Close() error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
+	SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string) ([]SearchSeriesPagedRow, int, error)
+}
+
+type SearchSeriesPagedRow struct {
+	Series
+	CoverPath       sql.NullString  `json:"cover_path"`
+	TagsString      *string         `json:"tags_string"`
+	VolumeCount     int             `json:"volume_count"`
+	ActualBookCount int             `json:"actual_book_count"`
+	ReadCount       int             `json:"read_count"`
+	TotalPages      sql.NullFloat64 `json:"total_pages"`
 }
 
 type sqlStore struct {
@@ -89,4 +100,131 @@ func Migrate(dbPath string) error {
 
 	_, err = db.Exec(schemaSQL)
 	return err
+}
+
+// SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页
+func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string) ([]SearchSeriesPagedRow, int, error) {
+	// 构建动态 SQL
+	baseQuery := `
+		SELECT 
+            s.*,
+            (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
+            GROUP_CONCAT(DISTINCT t.name) as tags_string,
+            COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
+            COUNT(DISTINCT b.id) as actual_book_count,
+            COALESCE(SUM(CASE WHEN b.last_read_page > 1 THEN b.last_read_page ELSE 0 END), 0) as read_count,
+            SUM(b.page_count) as total_pages
+		FROM series s
+		LEFT JOIN series_tags st ON s.id = st.series_id
+		LEFT JOIN tags t ON st.tag_id = t.id
+		LEFT JOIN series_authors sa ON s.id = sa.series_id
+		LEFT JOIN authors a ON sa.author_id = a.id
+        LEFT JOIN books b ON s.id = b.series_id
+		WHERE s.library_id = ?
+	`
+	// 因为使用了 GROUP BY，所以不能再外层 COUNT(DISTINCT s.id)，我们需要一个单独的包裹写法
+	countFilters := `
+		FROM series s
+		LEFT JOIN series_tags st ON s.id = st.series_id
+		LEFT JOIN tags t ON st.tag_id = t.id
+		LEFT JOIN series_authors sa ON s.id = sa.series_id
+		LEFT JOIN authors a ON sa.author_id = a.id
+		WHERE s.library_id = ?
+	`
+
+	args := []interface{}{libraryID}
+
+	if status != "" {
+		baseQuery += ` AND s.status = ?`
+		countFilters += ` AND s.status = ?`
+		args = append(args, status)
+	}
+
+	if len(tags) > 0 {
+		baseQuery += ` AND t.name IN (`
+		countFilters += ` AND t.name IN (`
+		for i, tag := range tags {
+			if i > 0 {
+				baseQuery += `, `
+				countFilters += `, `
+			}
+			baseQuery += `?`
+			countFilters += `?`
+			args = append(args, tag)
+		}
+		baseQuery += `)`
+		countFilters += `)`
+	}
+
+	if len(authors) > 0 {
+		baseQuery += ` AND a.name IN (`
+		countFilters += ` AND a.name IN (`
+		for i, author := range authors {
+			if i > 0 {
+				baseQuery += `, `
+				countFilters += `, `
+			}
+			baseQuery += `?`
+			countFilters += `?`
+			args = append(args, author)
+		}
+		baseQuery += `)`
+		countFilters += `)`
+	}
+
+	countQuery := `SELECT COUNT(DISTINCT s.id) ` + countFilters
+
+	// Fetch Total Count First
+	var total int
+	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Finish Paginated Query
+	baseQuery += ` GROUP BY s.id ORDER BY s.name LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, baseQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var items []SearchSeriesPagedRow
+	for rows.Next() {
+		var i SearchSeriesPagedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Publisher,
+			&i.Status,
+			&i.Rating,
+			&i.Language,
+			&i.LockedFields,
+			&i.Path,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CoverPath,
+			&i.TagsString,
+			&i.VolumeCount,
+			&i.ActualBookCount,
+			&i.ReadCount,
+			&i.TotalPages,
+		); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
 }

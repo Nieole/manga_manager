@@ -65,6 +65,14 @@ type SeriesAuthor struct {
 	AuthorID int64 `json:"author_id"`
 }
 
+type SeriesLink struct {
+	ID        int64        `json:"id"`
+	SeriesID  int64        `json:"series_id"`
+	Name      string       `json:"name"`
+	Url       string       `json:"url"`
+	CreatedAt sql.NullTime `json:"created_at"`
+}
+
 type SeriesTag struct {
 	SeriesID int64 `json:"series_id"`
 	TagID    int64 `json:"tag_id"`

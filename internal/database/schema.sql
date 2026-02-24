@@ -81,3 +81,12 @@ CREATE TABLE IF NOT EXISTS books (
 CREATE INDEX IF NOT EXISTS idx_books_series_id ON books(series_id);
 CREATE INDEX IF NOT EXISTS idx_books_library_id ON books(library_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path);
+
+CREATE TABLE IF NOT EXISTS series_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
+);

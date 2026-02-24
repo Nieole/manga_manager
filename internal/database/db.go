@@ -27,6 +27,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.clearSeriesAuthorsStmt, err = db.PrepareContext(ctx, clearSeriesAuthors); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesAuthors: %w", err)
 	}
+	if q.clearSeriesLinksStmt, err = db.PrepareContext(ctx, clearSeriesLinks); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearSeriesLinks: %w", err)
+	}
 	if q.clearSeriesTagsStmt, err = db.PrepareContext(ctx, clearSeriesTags); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesTags: %w", err)
 	}
@@ -63,6 +66,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getLibraryStmt, err = db.PrepareContext(ctx, getLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLibrary: %w", err)
 	}
+	if q.getLinksForSeriesStmt, err = db.PrepareContext(ctx, getLinksForSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLinksForSeries: %w", err)
+	}
 	if q.getNextBookInSeriesStmt, err = db.PrepareContext(ctx, getNextBookInSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextBookInSeries: %w", err)
 	}
@@ -77,6 +83,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.linkSeriesAuthorStmt, err = db.PrepareContext(ctx, linkSeriesAuthor); err != nil {
 		return nil, fmt.Errorf("error preparing query LinkSeriesAuthor: %w", err)
+	}
+	if q.linkSeriesLinkStmt, err = db.PrepareContext(ctx, linkSeriesLink); err != nil {
+		return nil, fmt.Errorf("error preparing query LinkSeriesLink: %w", err)
 	}
 	if q.linkSeriesTagStmt, err = db.PrepareContext(ctx, linkSeriesTag); err != nil {
 		return nil, fmt.Errorf("error preparing query LinkSeriesTag: %w", err)
@@ -119,6 +128,11 @@ func (q *Queries) Close() error {
 	if q.clearSeriesAuthorsStmt != nil {
 		if cerr := q.clearSeriesAuthorsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearSeriesAuthorsStmt: %w", cerr)
+		}
+	}
+	if q.clearSeriesLinksStmt != nil {
+		if cerr := q.clearSeriesLinksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearSeriesLinksStmt: %w", cerr)
 		}
 	}
 	if q.clearSeriesTagsStmt != nil {
@@ -181,6 +195,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getLibraryStmt: %w", cerr)
 		}
 	}
+	if q.getLinksForSeriesStmt != nil {
+		if cerr := q.getLinksForSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLinksForSeriesStmt: %w", cerr)
+		}
+	}
 	if q.getNextBookInSeriesStmt != nil {
 		if cerr := q.getNextBookInSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getNextBookInSeriesStmt: %w", cerr)
@@ -204,6 +223,11 @@ func (q *Queries) Close() error {
 	if q.linkSeriesAuthorStmt != nil {
 		if cerr := q.linkSeriesAuthorStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing linkSeriesAuthorStmt: %w", cerr)
+		}
+	}
+	if q.linkSeriesLinkStmt != nil {
+		if cerr := q.linkSeriesLinkStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing linkSeriesLinkStmt: %w", cerr)
 		}
 	}
 	if q.linkSeriesTagStmt != nil {
@@ -301,6 +325,7 @@ type Queries struct {
 	db                       DBTX
 	tx                       *sql.Tx
 	clearSeriesAuthorsStmt   *sql.Stmt
+	clearSeriesLinksStmt     *sql.Stmt
 	clearSeriesTagsStmt      *sql.Stmt
 	createBookStmt           *sql.Stmt
 	createLibraryStmt        *sql.Stmt
@@ -313,11 +338,13 @@ type Queries struct {
 	getBookStmt              *sql.Stmt
 	getBookByPathStmt        *sql.Stmt
 	getLibraryStmt           *sql.Stmt
+	getLinksForSeriesStmt    *sql.Stmt
 	getNextBookInSeriesStmt  *sql.Stmt
 	getSeriesStmt            *sql.Stmt
 	getSeriesByLibraryStmt   *sql.Stmt
 	getTagsForSeriesStmt     *sql.Stmt
 	linkSeriesAuthorStmt     *sql.Stmt
+	linkSeriesLinkStmt       *sql.Stmt
 	linkSeriesTagStmt        *sql.Stmt
 	listBooksByLibraryStmt   *sql.Stmt
 	listBooksBySeriesStmt    *sql.Stmt
@@ -336,6 +363,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		db:                       tx,
 		tx:                       tx,
 		clearSeriesAuthorsStmt:   q.clearSeriesAuthorsStmt,
+		clearSeriesLinksStmt:     q.clearSeriesLinksStmt,
 		clearSeriesTagsStmt:      q.clearSeriesTagsStmt,
 		createBookStmt:           q.createBookStmt,
 		createLibraryStmt:        q.createLibraryStmt,
@@ -348,11 +376,13 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBookStmt:              q.getBookStmt,
 		getBookByPathStmt:        q.getBookByPathStmt,
 		getLibraryStmt:           q.getLibraryStmt,
+		getLinksForSeriesStmt:    q.getLinksForSeriesStmt,
 		getNextBookInSeriesStmt:  q.getNextBookInSeriesStmt,
 		getSeriesStmt:            q.getSeriesStmt,
 		getSeriesByLibraryStmt:   q.getSeriesByLibraryStmt,
 		getTagsForSeriesStmt:     q.getTagsForSeriesStmt,
 		linkSeriesAuthorStmt:     q.linkSeriesAuthorStmt,
+		linkSeriesLinkStmt:       q.linkSeriesLinkStmt,
 		linkSeriesTagStmt:        q.linkSeriesTagStmt,
 		listBooksByLibraryStmt:   q.listBooksByLibraryStmt,
 		listBooksBySeriesStmt:    q.listBooksBySeriesStmt,

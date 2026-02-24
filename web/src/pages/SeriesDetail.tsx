@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink } from 'lucide-react';
 
 interface NullString {
     String: string;
@@ -38,6 +38,12 @@ interface Author {
     role: string;
 }
 
+interface SeriesLink {
+    id: number;
+    name: string;
+    url: string;
+}
+
 interface Book {
     id: number;
     name: string;
@@ -59,13 +65,14 @@ export default function SeriesDetail() {
     const [tags, setTags] = useState<MetaTag[]>([]);
     const [authors, setAuthors] = useState<Author[]>([]);
     const [books, setBooks] = useState<Book[]>([]);
+    const [links, setLinks] = useState<SeriesLink[]>([]);
     const [loading, setLoading] = useState(true);
 
     const [allTags, setAllTags] = useState<MetaTag[]>([]);
     const [allAuthors, setAllAuthors] = useState<Author[]>([]);
 
     const [isEditing, setIsEditing] = useState(false);
-    const [editForm, setEditForm] = useState<Partial<Series> & { tagsInput?: string[], authorsInput?: { name: string, role: string }[] }>({});
+    const [editForm, setEditForm] = useState<Partial<Series> & { tagsInput?: string[], authorsInput?: { name: string, role: string }[], linksInput?: { name: string, url: string }[] }>({});
     const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
 
     // 当前如果是阅读某个卷下的内容，记录被选中的卷名
@@ -88,16 +95,19 @@ export default function SeriesDetail() {
                 axios.get(`/api/series/info/${seriesId}`),
                 axios.get(`/api/series/${seriesId}/tags`),
                 axios.get(`/api/series/${seriesId}/authors`),
+                axios.get(`/api/series/${seriesId}/links`),
             ])
-                .then(([booksRes, infoRes, tagsRes, authorsRes]) => {
+                .then(([booksRes, infoRes, tagsRes, authorsRes, linksRes]) => {
                     setBooks(booksRes.data || []);
                     const info = infoRes.data;
                     setSeriesInfo(info);
 
                     const tagsData = tagsRes.data || [];
                     const authorsData = authorsRes.data || [];
+                    const linksData = linksRes.data || [];
                     setTags(tagsData);
                     setAuthors(authorsData);
+                    setLinks(linksData);
 
                     if (info) {
                         setLockedFields(new Set(info.locked_fields?.Valid && info.locked_fields.String ? info.locked_fields.String.split(',') : []));
@@ -109,7 +119,8 @@ export default function SeriesDetail() {
                             rating: info.rating,
                             language: info.language,
                             tagsInput: tagsData.map((t: MetaTag) => t.name),
-                            authorsInput: authorsData.map((a: Author) => ({ name: a.name, role: a.role }))
+                            authorsInput: authorsData.map((a: Author) => ({ name: a.name, role: a.role })),
+                            linksInput: linksData.map((l: SeriesLink) => ({ name: l.name, url: l.url }))
                         });
                     }
                 })
@@ -192,17 +203,20 @@ export default function SeriesDetail() {
                 language: editForm.language?.String || '',
                 locked_fields: Array.from(lockedFields).join(','),
                 tags: editForm.tagsInput || [],
-                authors: editForm.authorsInput || []
+                authors: editForm.authorsInput || [],
+                links: editForm.linksInput || []
             });
             // Reload info
-            const [infoRes, tagsRes, authorsRes] = await Promise.all([
+            const [infoRes, tagsRes, authorsRes, linksRes] = await Promise.all([
                 axios.get(`/api/series/info/${seriesId}`),
                 axios.get(`/api/series/${seriesId}/tags`),
                 axios.get(`/api/series/${seriesId}/authors`),
+                axios.get(`/api/series/${seriesId}/links`),
             ]);
             setSeriesInfo(infoRes.data);
             setTags(tagsRes.data || []);
             setAuthors(authorsRes.data || []);
+            setLinks(linksRes.data || []);
             setIsEditing(false);
         } catch (err) {
             console.error("Failed to update metadata", err);
@@ -227,7 +241,7 @@ export default function SeriesDetail() {
             const next: any = { ...prev };
             if (field === 'rating') {
                 next.rating = { Float64: Number(value), Valid: Number(value) > 0 };
-            } else if (field === 'tagsInput' || field === 'authorsInput') {
+            } else if (field === 'tagsInput' || field === 'authorsInput' || field === 'linksInput') {
                 next[field] = value;
             } else {
                 next[field] = { String: String(value), Valid: String(value).trim() !== '' };
@@ -459,6 +473,18 @@ export default function SeriesDetail() {
                         </p>
                     )}
 
+                    {/* External Links */}
+                    {!selectedVolume && links.length > 0 && (
+                        <div className="mt-5 flex flex-wrap gap-3">
+                            {links.map((lnk, idx) => (
+                                <a key={idx} href={lnk.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-xs font-semibold px-4 py-2 bg-gray-800 hover:bg-komgaPrimary hover:text-white text-gray-300 border border-gray-700/50 hover:border-komgaPrimary/50 rounded-lg transition-all shadow-sm group">
+                                    <ExternalLink className="w-3.5 h-3.5 mr-2 opacity-60 group-hover:opacity-100" />
+                                    {lnk.name}
+                                </a>
+                            ))}
+                        </div>
+                    )}
+
                     {!selectedVolume && (tags.length > 0 || authors.length > 0) && (
                         <div className="mt-5 flex flex-col gap-3">
                             {authors.length > 0 && (
@@ -514,7 +540,7 @@ export default function SeriesDetail() {
                                 { id: 'title', label: '系列标题 (Title)', type: 'text', val: editForm.title?.String || '' },
                                 { id: 'summary', label: '简介 (Summary)', type: 'textarea', val: editForm.summary?.String || '' },
                                 { id: 'publisher', label: '出版商 (Publisher)', type: 'text', val: editForm.publisher?.String || '' },
-                                { id: 'status', label: '连载状态 (Status)', type: 'text', val: editForm.status?.String || '' },
+                                { id: 'status', label: '连载状态 (Status)', type: 'select', val: editForm.status?.String || '', options: ['已完结', '连载中', '已放弃', '有生之年'] },
                                 { id: 'language', label: '语言 (Language ISO)', type: 'text', val: editForm.language?.String || '' },
                                 { id: 'rating', label: '评分 (Rating 0-10)', type: 'number', val: editForm.rating?.Float64 || 0, step: "0.1", max: 10 },
                             ].map(f => (
@@ -538,6 +564,17 @@ export default function SeriesDetail() {
                                             onChange={e => handleFormChange(f.id, e.target.value)}
                                             className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all min-h-[100px]"
                                         />
+                                    ) : f.type === 'select' ? (
+                                        <select
+                                            value={f.val}
+                                            onChange={e => handleFormChange(f.id, e.target.value)}
+                                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all cursor-pointer"
+                                        >
+                                            <option value="">- 无状态 -</option>
+                                            {f.options?.map(opt => (
+                                                <option key={opt} value={opt}>{opt}</option>
+                                            ))}
+                                        </select>
                                     ) : (
                                         <input
                                             type={f.type}
@@ -583,6 +620,34 @@ export default function SeriesDetail() {
                                     </button>
                                 </div>
                                 <AutoCompleteAuthors />
+                            </div>
+                            {/* Links Input */}
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-gray-300">外部链接 (External Links)</label>
+                                <div className="space-y-3">
+                                    {(editForm.linksInput || []).map((lnk, idx) => (
+                                        <div key={idx} className="flex gap-2 items-center">
+                                            <input type="text" value={lnk.name} onChange={e => {
+                                                const newLinks = [...(editForm.linksInput || [])];
+                                                newLinks[idx].name = e.target.value;
+                                                handleFormChange('linksInput', newLinks);
+                                            }} placeholder="Link Name (e.g. Anilist)" className="flex-1 bg-gray-900 border border-gray-700 rounded p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary" />
+                                            <input type="text" value={lnk.url} onChange={e => {
+                                                const newLinks = [...(editForm.linksInput || [])];
+                                                newLinks[idx].url = e.target.value;
+                                                handleFormChange('linksInput', newLinks);
+                                            }} placeholder="URL" className="flex-[2] bg-gray-900 border border-gray-700 rounded p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary" />
+                                            <button onClick={() => {
+                                                const newLinks = (editForm.linksInput || []).filter((_, i) => i !== idx);
+                                                handleFormChange('linksInput', newLinks);
+                                            }} className="p-2 text-red-400 hover:bg-gray-800 rounded"><X className="w-4 h-4" /></button>
+                                        </div>
+                                    ))}
+                                    <button onClick={() => {
+                                        const newLinks = [...(editForm.linksInput || []), { name: '', url: '' }];
+                                        handleFormChange('linksInput', newLinks);
+                                    }} className="text-xs text-komgaPrimary font-medium border border-komgaPrimary/30 bg-komgaPrimary/10 hover:bg-komgaPrimary/20 px-3 py-1.5 rounded transition-colors block w-full text-center">+ 添加外部链接</button>
+                                </div>
                             </div>
                         </div>
                         <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex justify-end gap-3">
