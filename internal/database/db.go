@@ -51,6 +51,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deletePagesByBookPathStmt, err = db.PrepareContext(ctx, deletePagesByBookPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeletePagesByBookPath: %w", err)
 	}
+	if q.getAllAuthorsStmt, err = db.PrepareContext(ctx, getAllAuthors); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAllAuthors: %w", err)
+	}
+	if q.getAllTagsStmt, err = db.PrepareContext(ctx, getAllTags); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAllTags: %w", err)
+	}
 	if q.getAuthorsForSeriesStmt, err = db.PrepareContext(ctx, getAuthorsForSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAuthorsForSeries: %w", err)
 	}
@@ -162,6 +168,16 @@ func (q *Queries) Close() error {
 	if q.deletePagesByBookPathStmt != nil {
 		if cerr := q.deletePagesByBookPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deletePagesByBookPathStmt: %w", cerr)
+		}
+	}
+	if q.getAllAuthorsStmt != nil {
+		if cerr := q.getAllAuthorsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAllAuthorsStmt: %w", cerr)
+		}
+	}
+	if q.getAllTagsStmt != nil {
+		if cerr := q.getAllTagsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAllTagsStmt: %w", cerr)
 		}
 	}
 	if q.getAuthorsForSeriesStmt != nil {
@@ -317,6 +333,8 @@ type Queries struct {
 	deleteBookByPathStmt      *sql.Stmt
 	deleteLibraryStmt         *sql.Stmt
 	deletePagesByBookPathStmt *sql.Stmt
+	getAllAuthorsStmt         *sql.Stmt
+	getAllTagsStmt            *sql.Stmt
 	getAuthorsForSeriesStmt   *sql.Stmt
 	getBookStmt               *sql.Stmt
 	getBookByPathStmt         *sql.Stmt
@@ -353,6 +371,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteBookByPathStmt:      q.deleteBookByPathStmt,
 		deleteLibraryStmt:         q.deleteLibraryStmt,
 		deletePagesByBookPathStmt: q.deletePagesByBookPathStmt,
+		getAllAuthorsStmt:         q.getAllAuthorsStmt,
+		getAllTagsStmt:            q.getAllTagsStmt,
 		getAuthorsForSeriesStmt:   q.getAuthorsForSeriesStmt,
 		getBookStmt:               q.getBookStmt,
 		getBookByPathStmt:         q.getBookByPathStmt,

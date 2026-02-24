@@ -187,3 +187,9 @@ WHERE (nb.sort_number > cb.sort_number)
    OR (nb.sort_number = cb.sort_number AND nb.name > cb.name)
 ORDER BY nb.sort_number, nb.name
 LIMIT 1;
+
+-- name: GetAllTags :many
+SELECT * FROM tags ORDER BY name;
+
+-- name: GetAllAuthors :many
+SELECT * FROM authors ORDER BY name;

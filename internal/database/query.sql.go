@@ -254,6 +254,65 @@ func (q *Queries) DeletePagesByBookPath(ctx context.Context, path string) error 
 	return err
 }
 
+const getAllAuthors = `-- name: GetAllAuthors :many
+SELECT id, name, role, created_at FROM authors ORDER BY name
+`
+
+func (q *Queries) GetAllAuthors(ctx context.Context) ([]Author, error) {
+	rows, err := q.query(ctx, q.getAllAuthorsStmt, getAllAuthors)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Author
+	for rows.Next() {
+		var i Author
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Role,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllTags = `-- name: GetAllTags :many
+SELECT id, name, created_at FROM tags ORDER BY name
+`
+
+func (q *Queries) GetAllTags(ctx context.Context) ([]Tag, error) {
+	rows, err := q.query(ctx, q.getAllTagsStmt, getAllTags)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Tag
+	for rows.Next() {
+		var i Tag
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAuthorsForSeries = `-- name: GetAuthorsForSeries :many
 SELECT a.id, a.name, a.role, a.created_at FROM authors a
 JOIN series_authors sa ON a.id = sa.author_id

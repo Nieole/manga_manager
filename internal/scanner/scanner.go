@@ -283,15 +283,15 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 }
 
 func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <-chan scanResult) {
-	// 系列关系缓存：路径 -> ID
-	seriesCache := make(map[string]string)
+	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
+	seriesCache := make(map[string]database.ListSeriesByLibraryRow)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
 	lockedFieldsCache := make(map[string]map[string]bool)
 
-	// 预加载已有的 Series，使得写入过程中不发生主键重复
+	// 预加载已有的 Series
 	existingSeries, _ := s.store.ListSeriesByLibrary(ctx, libraryID)
 	for _, series := range existingSeries {
-		seriesCache[series.Path] = series.ID
+		seriesCache[series.Path] = series
 
 		lfMap := make(map[string]bool)
 		if series.LockedFields != "" {
@@ -313,7 +313,11 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 		err := s.store.ExecTx(ctx, func(q *database.Queries) error {
 			for _, res := range batch {
 				// 获取或创建/更新归属系列
-				seriesID, ok := seriesCache[res.seriesPath]
+				var seriesID string
+				existingS, ok := seriesCache[res.seriesPath]
+				if ok {
+					seriesID = existingS.ID
+				}
 
 				// 提取元数据准备
 				var rSummary, rPublisher, rStatus, rLang string
@@ -349,7 +353,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 						log.Printf("Failed to create/upsert series %q: %v", res.seriesName, err)
 						continue
 					}
-					seriesCache[res.seriesPath] = seriesID
+					// 为了保持下文逻辑，我们塞一个临时的进去
+					seriesCache[res.seriesPath] = database.ListSeriesByLibraryRow{ID: seriesID, Path: res.seriesPath}
 				} else {
 					// 已存在的系列，利用 UpsertSeriesByPath 去更新其累积统计和元数据（仅当有新元数据时增补）
 					if res.comicInfo != nil {
@@ -359,19 +364,42 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 							locks = make(map[string]bool)
 						}
 
-						// 若被锁定则沿用空值（或使用一个专门的 update query，这里我们如果用 Upsert, 空的 NullString 不会覆盖已有值，或者可以传已有值）
-						// 更安全的做法是只有当没有触发 lock 时才写入 Valid = true。在已有的 Upsert 语义中，如果是 Valid=true 则覆盖。
+						// 若被锁定则沿用旧有库中的数据，不被更新的 NULL 覆盖掉
+						getStr := func(field string, newVal string) sql.NullString {
+							if locks[field] {
+								// 从缓存的老对象中读
+								switch field {
+								case "summary":
+									return existingS.Summary
+								case "publisher":
+									return existingS.Publisher
+								case "status":
+									return existingS.Status
+								case "language":
+									return existingS.Language
+								}
+							}
+							return sql.NullString{String: newVal, Valid: newVal != ""}
+						}
+
+						getRating := func() sql.NullFloat64 {
+							if locks["rating"] {
+								return existingS.Rating
+							}
+							return sql.NullFloat64{Float64: rating, Valid: rating > 0}
+						}
+
 						_ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
 							ID:        seriesID,
 							LibraryID: libraryID,
 							Name:      res.seriesName,
 							Path:      res.seriesPath,
 							Title:     sql.NullString{String: res.seriesName, Valid: true},
-							Summary:   sql.NullString{String: rSummary, Valid: rSummary != "" && !locks["summary"]},
-							Publisher: sql.NullString{String: rPublisher, Valid: rPublisher != "" && !locks["publisher"]},
-							Status:    sql.NullString{String: rStatus, Valid: rStatus != "" && !locks["status"]},
-							Rating:    sql.NullFloat64{Float64: float64(res.comicInfo.CommunityRating), Valid: res.comicInfo.CommunityRating > 0 && !locks["rating"]},
-							Language:  sql.NullString{String: rLang, Valid: rLang != "" && !locks["language"]},
+							Summary:   getStr("summary", rSummary),
+							Publisher: getStr("publisher", rPublisher),
+							Status:    getStr("status", rStatus),
+							Rating:    getRating(),
+							Language:  getStr("language", rLang),
 							// LockedFields 这里应该保持原样，所以 Valid 设为 false 让 Upsert 判定或传旧值
 							// 因为我们的 Upsert 里会用 excluded.locked_fields 覆盖，为了不丢掉我们传回现有的锁。
 							LockedFields: getKeys(locks),

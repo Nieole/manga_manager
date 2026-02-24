@@ -98,6 +98,14 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{seriesId}", c.getBooksBySeries)
 		})
 
+		r.Route("/tags", func(r chi.Router) {
+			r.Get("/all", c.getAllTags)
+		})
+
+		r.Route("/authors", func(r chi.Router) {
+			r.Get("/all", c.getAllAuthors)
+		})
+
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)
 		r.Get("/book-next/{bookId}", c.getNextBook)
@@ -269,14 +277,21 @@ func (c *Controller) getSeriesInfo(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, series)
 }
 
+type UpdateAuthorRequest struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
 type UpdateSeriesRequest struct {
-	Title        string  `json:"title"`
-	Summary      string  `json:"summary"`
-	Publisher    string  `json:"publisher"`
-	Status       string  `json:"status"`
-	Rating       float64 `json:"rating"`
-	Language     string  `json:"language"`
-	LockedFields string  `json:"locked_fields"`
+	Title        string                `json:"title"`
+	Summary      string                `json:"summary"`
+	Publisher    string                `json:"publisher"`
+	Status       string                `json:"status"`
+	Rating       float64               `json:"rating"`
+	Language     string                `json:"language"`
+	LockedFields string                `json:"locked_fields"`
+	Tags         []string              `json:"tags"`
+	Authors      []UpdateAuthorRequest `json:"authors"`
 }
 
 func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
@@ -288,15 +303,46 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := c.store.UpdateSeriesMetadata(r.Context(), database.UpdateSeriesMetadataParams{
-		Title:        sql.NullString{String: req.Title, Valid: req.Title != ""},
-		Summary:      sql.NullString{String: req.Summary, Valid: req.Summary != ""},
-		Publisher:    sql.NullString{String: req.Publisher, Valid: req.Publisher != ""},
-		Status:       sql.NullString{String: req.Status, Valid: req.Status != ""},
-		Rating:       sql.NullFloat64{Float64: req.Rating, Valid: req.Rating > 0},
-		Language:     sql.NullString{String: req.Language, Valid: req.Language != ""},
-		LockedFields: req.LockedFields,
-		ID:           seriesID,
+	err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
+		_, err := q.UpdateSeriesMetadata(r.Context(), database.UpdateSeriesMetadataParams{
+			Title:        sql.NullString{String: req.Title, Valid: req.Title != ""},
+			Summary:      sql.NullString{String: req.Summary, Valid: req.Summary != ""},
+			Publisher:    sql.NullString{String: req.Publisher, Valid: req.Publisher != ""},
+			Status:       sql.NullString{String: req.Status, Valid: req.Status != ""},
+			Rating:       sql.NullFloat64{Float64: req.Rating, Valid: req.Rating > 0},
+			Language:     sql.NullString{String: req.Language, Valid: req.Language != ""},
+			LockedFields: req.LockedFields,
+			ID:           seriesID,
+		})
+		if err != nil {
+			return err
+		}
+
+		if req.Tags != nil {
+			_ = q.ClearSeriesTags(r.Context(), seriesID)
+			for _, t := range req.Tags {
+				if strings.TrimSpace(t) == "" {
+					continue
+				}
+				if inserted, err := q.UpsertTag(r.Context(), database.UpsertTagParams{ID: uuid.New().String(), Name: t}); err == nil {
+					_ = q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
+				}
+			}
+		}
+
+		if req.Authors != nil {
+			_ = q.ClearSeriesAuthors(r.Context(), seriesID)
+			for _, a := range req.Authors {
+				if strings.TrimSpace(a.Name) == "" {
+					continue
+				}
+				if inserted, err := q.UpsertAuthor(r.Context(), database.UpsertAuthorParams{ID: uuid.New().String(), Name: a.Name, Role: a.Role}); err == nil {
+					_ = q.LinkSeriesAuthor(r.Context(), database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID})
+				}
+			}
+		}
+
+		return nil
 	})
 
 	if err != nil {
@@ -304,6 +350,8 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch updated details for response
+	updated, _ := c.store.GetSeries(r.Context(), seriesID)
 	jsonResponse(w, http.StatusOK, updated)
 }
 
@@ -323,6 +371,30 @@ func (c *Controller) getSeriesAuthors(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get authors")
 		return
+	}
+	jsonResponse(w, http.StatusOK, authors)
+}
+
+func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {
+	tags, err := c.store.GetAllTags(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch all tags")
+		return
+	}
+	if tags == nil {
+		tags = []database.Tag{}
+	}
+	jsonResponse(w, http.StatusOK, tags)
+}
+
+func (c *Controller) getAllAuthors(w http.ResponseWriter, r *http.Request) {
+	authors, err := c.store.GetAllAuthors(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch all authors")
+		return
+	}
+	if authors == nil {
+		authors = []database.Author{}
 	}
 	jsonResponse(w, http.StatusOK, authors)
 }

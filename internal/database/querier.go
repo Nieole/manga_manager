@@ -18,6 +18,8 @@ type Querier interface {
 	DeleteBookByPath(ctx context.Context, path string) error
 	DeleteLibrary(ctx context.Context, id string) error
 	DeletePagesByBookPath(ctx context.Context, path string) error
+	GetAllAuthors(ctx context.Context) ([]Author, error)
+	GetAllTags(ctx context.Context) ([]Tag, error)
 	GetAuthorsForSeries(ctx context.Context, seriesID string) ([]Author, error)
 	GetBook(ctx context.Context, id string) (Book, error)
 	GetBookByPath(ctx context.Context, path string) (Book, error)
