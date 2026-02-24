@@ -9,6 +9,13 @@ import (
 	"time"
 )
 
+type Author struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Book struct {
 	ID             string          `json:"id"`
 	SeriesID       string          `json:"series_id"`
@@ -51,14 +58,33 @@ type Library struct {
 }
 
 type Series struct {
-	ID        string         `json:"id"`
-	LibraryID string         `json:"library_id"`
-	Name      string         `json:"name"`
-	Path      string         `json:"path"`
-	Title     sql.NullString `json:"title"`
-	Summary   sql.NullString `json:"summary"`
-	Publisher sql.NullString `json:"publisher"`
-	Status    sql.NullString `json:"status"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID        string          `json:"id"`
+	LibraryID string          `json:"library_id"`
+	Name      string          `json:"name"`
+	Path      string          `json:"path"`
+	Title     sql.NullString  `json:"title"`
+	Summary   sql.NullString  `json:"summary"`
+	Publisher sql.NullString  `json:"publisher"`
+	Status    sql.NullString  `json:"status"`
+	Rating    sql.NullFloat64 `json:"rating"`
+	Language  sql.NullString  `json:"language"`
+	BookCount int64           `json:"book_count"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+type SeriesAuthor struct {
+	SeriesID string `json:"series_id"`
+	AuthorID string `json:"author_id"`
+}
+
+type SeriesTag struct {
+	SeriesID string `json:"series_id"`
+	TagID    string `json:"tag_id"`
+}
+
+type Tag struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }

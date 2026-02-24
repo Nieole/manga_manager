@@ -15,12 +15,46 @@ CREATE TABLE IF NOT EXISTS series (
     summary TEXT,
     publisher TEXT,
     status TEXT,
+    rating REAL,
+    language TEXT,
+    book_count INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_series_library_id ON series(library_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_series_path ON series(path);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS series_tags (
+    series_id TEXT NOT NULL,
+    tag_id TEXT NOT NULL,
+    PRIMARY KEY (series_id, tag_id),
+    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
+    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS authors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, role)
+);
+
+CREATE TABLE IF NOT EXISTS series_authors (
+    series_id TEXT NOT NULL,
+    author_id TEXT NOT NULL,
+    PRIMARY KEY (series_id, author_id),
+    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
+    FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS books (
     id TEXT PRIMARY KEY,

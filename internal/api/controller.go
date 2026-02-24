@@ -87,6 +87,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Route("/series", func(r chi.Router) {
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
+			r.Get("/info/{seriesId}", c.getSeriesInfo)
+			r.Get("/{seriesId}/tags", c.getSeriesTags)
+			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 		})
 
 		r.Route("/books", func(r chi.Router) {
@@ -253,6 +256,36 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 		series = []database.ListSeriesByLibraryRow{}
 	}
 	jsonResponse(w, http.StatusOK, series)
+}
+
+func (c *Controller) getSeriesInfo(w http.ResponseWriter, r *http.Request) {
+	seriesID := chi.URLParam(r, "seriesId")
+	series, err := c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+	jsonResponse(w, http.StatusOK, series)
+}
+
+func (c *Controller) getSeriesTags(w http.ResponseWriter, r *http.Request) {
+	seriesID := chi.URLParam(r, "seriesId")
+	tags, err := c.store.GetTagsForSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get tags")
+		return
+	}
+	jsonResponse(w, http.StatusOK, tags)
+}
+
+func (c *Controller) getSeriesAuthors(w http.ResponseWriter, r *http.Request) {
+	seriesID := chi.URLParam(r, "seriesId")
+	authors, err := c.store.GetAuthorsForSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get authors")
+		return
+	}
+	jsonResponse(w, http.StatusOK, authors)
 }
 
 func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {

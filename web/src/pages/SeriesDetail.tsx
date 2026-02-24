@@ -1,11 +1,40 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info } from 'lucide-react';
 
 interface NullString {
     String: string;
     Valid: boolean;
+}
+
+interface NullFloat64 {
+    Float64: number;
+    Valid: boolean;
+}
+
+interface Series {
+    id: string;
+    name: string;
+    library_id: string;
+    title?: NullString;
+    summary?: NullString;
+    publisher?: NullString;
+    status?: NullString;
+    rating?: NullFloat64;
+    language?: NullString;
+    book_count: number;
+}
+
+interface MetaTag {
+    id: string;
+    name: string;
+}
+
+interface Author {
+    id: string;
+    name: string;
+    role: string;
 }
 
 interface Book {
@@ -24,6 +53,9 @@ export default function SeriesDetail() {
     const { seriesId } = useParams();
     const navigate = useNavigate();
     const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
+    const [seriesInfo, setSeriesInfo] = useState<Series | null>(null);
+    const [tags, setTags] = useState<MetaTag[]>([]);
+    const [authors, setAuthors] = useState<Author[]>([]);
     const [books, setBooks] = useState<Book[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -32,13 +64,23 @@ export default function SeriesDetail() {
 
     useEffect(() => {
         if (seriesId) {
-            axios.get(`/api/books/${seriesId}`)
-                .then(res => {
-                    setBooks(res.data);
-                    setLoading(false);
+            setLoading(true);
+            Promise.all([
+                axios.get(`/api/books/${seriesId}`),
+                axios.get(`/api/series/info/${seriesId}`),
+                axios.get(`/api/series/${seriesId}/tags`),
+                axios.get(`/api/series/${seriesId}/authors`),
+            ])
+                .then(([booksRes, infoRes, tagsRes, authorsRes]) => {
+                    setBooks(booksRes.data || []);
+                    setSeriesInfo(infoRes.data);
+                    setTags(tagsRes.data || []);
+                    setAuthors(authorsRes.data || []);
                 })
                 .catch(err => {
-                    console.error("Failed to load books", err);
+                    console.error("Failed to load series context", err);
+                })
+                .finally(() => {
                     setLoading(false);
                 });
         }
@@ -134,15 +176,87 @@ export default function SeriesDetail() {
                         <ArrowLeft className="w-4 h-4 mr-1" />
                         {selectedVolume ? "返回系列总览" : "返回资源库"}
                     </button>
-                    <h2 className="text-3xl font-bold text-white tracking-tight flex items-center">
-                        {selectedVolume ? (
-                            <>
-                                <FolderOpen className="w-8 h-8 mr-3 text-komgaPrimary" />
-                                {selectedVolume}
-                            </>
-                        ) : "系列总览"}
+                    <h2 className="text-3xl font-bold text-white tracking-tight flex flex-col sm:flex-row sm:items-center gap-4">
+                        <div className="flex items-center">
+                            {selectedVolume ? (
+                                <>
+                                    <FolderOpen className="w-8 h-8 mr-3 text-komgaPrimary" />
+                                    {selectedVolume}
+                                </>
+                            ) : (
+                                seriesInfo?.title?.Valid ? seriesInfo.title.String : (seriesInfo?.name || "系列总览")
+                            )}
+                        </div>
+
+                        {/* Rating, Language, Status Badges */}
+                        {!selectedVolume && seriesInfo && (
+                            <div className="flex flex-wrap items-center gap-2 text-sm font-normal mt-2 sm:mt-0">
+                                {seriesInfo.rating?.Valid && (
+                                    <span className="flex items-center text-yellow-500 bg-yellow-500/10 px-2.5 py-1 rounded-md border border-yellow-500/20 shadow-sm">
+                                        <Star className="w-4 h-4 mr-1 fill-current" />
+                                        {seriesInfo.rating.Float64.toFixed(1)}
+                                    </span>
+                                )}
+                                {seriesInfo.status?.Valid && (
+                                    <span className="flex items-center text-green-400 bg-green-400/10 px-2.5 py-1 rounded-md border border-green-400/20 shadow-sm">
+                                        <Info className="w-4 h-4 mr-1" />
+                                        {seriesInfo.status.String}
+                                    </span>
+                                )}
+                                {seriesInfo.language?.Valid && (
+                                    <span className="flex items-center text-blue-400 bg-blue-400/10 px-2.5 py-1 rounded-md border border-blue-400/20 shadow-sm uppercase font-semibold tracking-wider">
+                                        <Globe className="w-4 h-4 mr-1" />
+                                        {seriesInfo.language.String}
+                                    </span>
+                                )}
+                                {seriesInfo.publisher?.Valid && (
+                                    <span className="flex items-center text-purple-400 bg-purple-400/10 px-2.5 py-1 rounded-md border border-purple-400/20 shadow-sm">
+                                        <Building2 className="w-4 h-4 mr-1" />
+                                        {seriesInfo.publisher.String}
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </h2>
-                    <p className="text-gray-400 mt-2 text-sm">
+
+                    {!selectedVolume && seriesInfo?.summary?.Valid && (
+                        <p className="text-gray-400 mt-5 text-sm leading-relaxed max-w-4xl line-clamp-3 hover:line-clamp-none transition-all cursor-pointer bg-gray-900/50 p-4 rounded-xl border border-gray-800/50 relative group">
+                            <span className="absolute -left-2 top-4 w-1 h-1/2 bg-gray-700 rounded-full group-hover:bg-komgaPrimary transition-colors opacity-0 group-hover:opacity-100"></span>
+                            {seriesInfo.summary.String}
+                        </p>
+                    )}
+
+                    {!selectedVolume && (tags.length > 0 || authors.length > 0) && (
+                        <div className="mt-5 flex flex-col gap-3">
+                            {authors.length > 0 && (
+                                <div className="flex items-start gap-3">
+                                    <User className="w-4 h-4 text-gray-500 mt-1 shrink-0" />
+                                    <div className="flex flex-wrap gap-2">
+                                        {authors.map(a => (
+                                            <span key={a.id} className="text-xs text-gray-300 bg-gray-800/80 px-2 py-1 rounded-md border border-gray-700 shadow-sm hover:bg-gray-700 transition-colors">
+                                                {a.name} <span className="text-gray-500 ml-1.5 inline-block scale-90">({a.role})</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {tags.length > 0 && (
+                                <div className="flex items-start gap-3">
+                                    <Tag className="w-4 h-4 text-komgaPrimary/60 mt-1 shrink-0" />
+                                    <div className="flex flex-wrap gap-2">
+                                        {tags.map(t => (
+                                            <span key={t.id} className="text-xs text-komgaPrimary bg-komgaPrimary/10 px-2 py-1 rounded-md border border-komgaPrimary/20 shadow-sm hover:bg-komgaPrimary/20 transition-colors cursor-pointer">
+                                                {t.name}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <p className="text-gray-500 mt-6 text-sm font-medium flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-komgaPrimary/50"></div>
                         {selectedVolume
                             ? `含 ${activeVolumeBooks.length} 话 · 总共 ${activeVolumeBooks.reduce((acc, b) => acc + b.page_count, 0)} 页`
                             : `共 ${books.length} 项资源 (${volumes.length} 卷, ${standaloneBooks.length} 独立册)`

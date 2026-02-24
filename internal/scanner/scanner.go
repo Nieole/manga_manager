@@ -50,6 +50,7 @@ type scanResult struct {
 	seriesPath string
 	book       database.CreateBookParams
 	pages      []database.CreateBookPageParams
+	comicInfo  *parser.ComicInfo
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
@@ -259,11 +260,20 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 		})
 	}
 
+	// 尝试提取 ComicInfo.xml
+	var cInfo *parser.ComicInfo
+	if xmlData, err := arc.ReadMetadataFile("ComicInfo.xml"); err == nil {
+		if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
+			cInfo = parsed
+		}
+	}
+
 	res := scanResult{
 		seriesName: seriesName,
 		seriesPath: seriesPath,
 		book:       database.CreateBookParams(book),
 		pages:      pageParams,
+		comicInfo:  cInfo,
 	}
 
 	select {
@@ -292,24 +302,81 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 
 		err := s.store.ExecTx(ctx, func(q *database.Queries) error {
 			for _, res := range batch {
-				// 获取或创建归属系列
+				// 获取或创建/更新归属系列
 				seriesID, ok := seriesCache[res.seriesPath]
+
+				// 提取元数据准备
+				var rSummary, rPublisher, rStatus, rLang string
+				if res.comicInfo != nil {
+					rSummary = res.comicInfo.Summary
+					rPublisher = res.comicInfo.Publisher
+					// Map Manga Status
+					// ComicInfo 并没有标准的连载状态字段，通常约定写在 Web 或 Notes 里，这里先留空或从其他地方推断
+					rLang = res.comicInfo.LanguageISO
+					// rRating = res.comicInfo.Rating // 原本提取为字符串，现已改用 float64 分数 CommunityRating
+				}
+				var rating float64
+				if res.comicInfo != nil && res.comicInfo.CommunityRating > 0 {
+					rating = float64(res.comicInfo.CommunityRating)
+				}
+
 				if !ok {
 					seriesID = uuid.New().String()
-					_, err := q.CreateSeries(ctx, database.CreateSeriesParams{
+					// 初次创建
+					err := q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
 						ID:        seriesID,
 						LibraryID: libraryID,
 						Name:      res.seriesName,
 						Path:      res.seriesPath,
 						Title:     sql.NullString{String: res.seriesName, Valid: true},
+						Summary:   sql.NullString{String: rSummary, Valid: rSummary != ""},
+						Publisher: sql.NullString{String: rPublisher, Valid: rPublisher != ""},
+						Status:    sql.NullString{String: rStatus, Valid: rStatus != ""},
+						Rating:    sql.NullFloat64{Float64: rating, Valid: rating > 0},
+						Language:  sql.NullString{String: rLang, Valid: rLang != ""},
 					})
 					if err != nil {
-						log.Printf("Failed to create series %q: %v", res.seriesName, err)
+						log.Printf("Failed to create/upsert series %q: %v", res.seriesName, err)
 						continue
 					}
 					seriesCache[res.seriesPath] = seriesID
+				} else {
+					// 已存在的系列，利用 UpsertSeriesByPath 去更新其累积统计和元数据（仅当有新元数据时增补）
+					// 这里先简单不覆盖老数据，或者后续做一个专用 Update
+					if res.comicInfo != nil {
+						_ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
+							ID:        seriesID,
+							LibraryID: libraryID,
+							Name:      res.seriesName,
+							Path:      res.seriesPath,
+							Title:     sql.NullString{String: res.seriesName, Valid: true},
+							Summary:   sql.NullString{String: rSummary, Valid: rSummary != ""},
+							Publisher: sql.NullString{String: rPublisher, Valid: rPublisher != ""},
+							Status:    sql.NullString{String: rStatus, Valid: rStatus != ""},
+							Rating:    sql.NullFloat64{Float64: float64(res.comicInfo.CommunityRating), Valid: res.comicInfo.CommunityRating > 0},
+							Language:  sql.NullString{String: rLang, Valid: rLang != ""},
+						})
+					}
 				}
 				res.book.SeriesID = seriesID
+
+				// 维护系列与标签、作者的多对多关系 (在单卷有新元数据时重刷)
+				if res.comicInfo != nil {
+					// 为每个卷提取补充，由于事务中，且中间表用 INSERT OR IGNORE, 不会报错。
+					tags := res.comicInfo.GetTags()
+					for _, t := range tags {
+						if inserted, err := q.UpsertTag(ctx, database.UpsertTagParams{ID: uuid.New().String(), Name: t}); err == nil {
+							_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
+						}
+					}
+
+					authors := res.comicInfo.GetAuthors()
+					for _, a := range authors {
+						if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{ID: uuid.New().String(), Name: a.Name, Role: a.Role}); err == nil {
+							_ = q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID})
+						}
+					}
+				}
 
 				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at
 				err := q.UpsertBookByPath(ctx, database.UpsertBookByPathParams(res.book))

@@ -11,6 +11,24 @@ import (
 	"time"
 )
 
+const clearSeriesAuthors = `-- name: ClearSeriesAuthors :exec
+DELETE FROM series_authors WHERE series_id = ?
+`
+
+func (q *Queries) ClearSeriesAuthors(ctx context.Context, seriesID string) error {
+	_, err := q.exec(ctx, q.clearSeriesAuthorsStmt, clearSeriesAuthors, seriesID)
+	return err
+}
+
+const clearSeriesTags = `-- name: ClearSeriesTags :exec
+DELETE FROM series_tags WHERE series_id = ?
+`
+
+func (q *Queries) ClearSeriesTags(ctx context.Context, seriesID string) error {
+	_, err := q.exec(ctx, q.clearSeriesTagsStmt, clearSeriesTags, seriesID)
+	return err
+}
+
 const createBook = `-- name: CreateBook :one
 INSERT INTO books (
     id, series_id, library_id, name, path, size, file_modified_at, 
@@ -152,22 +170,25 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 
 const createSeries = `-- name: CreateSeries :one
 INSERT INTO series (
-    id, library_id, name, path, title, summary, publisher, status
+    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, library_id, name, path, title, summary, publisher, status, created_at, updated_at
+RETURNING id, library_id, name, path, title, summary, publisher, status, rating, language, book_count, created_at, updated_at
 `
 
 type CreateSeriesParams struct {
-	ID        string         `json:"id"`
-	LibraryID string         `json:"library_id"`
-	Name      string         `json:"name"`
-	Path      string         `json:"path"`
-	Title     sql.NullString `json:"title"`
-	Summary   sql.NullString `json:"summary"`
-	Publisher sql.NullString `json:"publisher"`
-	Status    sql.NullString `json:"status"`
+	ID        string          `json:"id"`
+	LibraryID string          `json:"library_id"`
+	Name      string          `json:"name"`
+	Path      string          `json:"path"`
+	Title     sql.NullString  `json:"title"`
+	Summary   sql.NullString  `json:"summary"`
+	Publisher sql.NullString  `json:"publisher"`
+	Status    sql.NullString  `json:"status"`
+	Rating    sql.NullFloat64 `json:"rating"`
+	Language  sql.NullString  `json:"language"`
+	BookCount int64           `json:"book_count"`
 }
 
 func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error) {
@@ -180,6 +201,9 @@ func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Ser
 		arg.Summary,
 		arg.Publisher,
 		arg.Status,
+		arg.Rating,
+		arg.Language,
+		arg.BookCount,
 	)
 	var i Series
 	err := row.Scan(
@@ -191,6 +215,9 @@ func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Ser
 		&i.Summary,
 		&i.Publisher,
 		&i.Status,
+		&i.Rating,
+		&i.Language,
+		&i.BookCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -222,6 +249,40 @@ DELETE FROM book_pages WHERE book_id IN (SELECT id FROM books WHERE path = ?)
 func (q *Queries) DeletePagesByBookPath(ctx context.Context, path string) error {
 	_, err := q.exec(ctx, q.deletePagesByBookPathStmt, deletePagesByBookPath, path)
 	return err
+}
+
+const getAuthorsForSeries = `-- name: GetAuthorsForSeries :many
+SELECT a.id, a.name, a.role, a.created_at FROM authors a
+JOIN series_authors sa ON a.id = sa.author_id
+WHERE sa.series_id = ? ORDER BY a.role, a.name
+`
+
+func (q *Queries) GetAuthorsForSeries(ctx context.Context, seriesID string) ([]Author, error) {
+	rows, err := q.query(ctx, q.getAuthorsForSeriesStmt, getAuthorsForSeries, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Author
+	for rows.Next() {
+		var i Author
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Role,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getBook = `-- name: GetBook :one
@@ -337,7 +398,7 @@ func (q *Queries) GetNextBookInSeries(ctx context.Context, id string) (Book, err
 }
 
 const getSeries = `-- name: GetSeries :one
-SELECT id, library_id, name, path, title, summary, publisher, status, created_at, updated_at FROM series WHERE id = ? LIMIT 1
+SELECT id, library_id, name, path, title, summary, publisher, status, rating, language, book_count, created_at, updated_at FROM series WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetSeries(ctx context.Context, id string) (Series, error) {
@@ -352,10 +413,70 @@ func (q *Queries) GetSeries(ctx context.Context, id string) (Series, error) {
 		&i.Summary,
 		&i.Publisher,
 		&i.Status,
+		&i.Rating,
+		&i.Language,
+		&i.BookCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getTagsForSeries = `-- name: GetTagsForSeries :many
+SELECT t.id, t.name, t.created_at FROM tags t
+JOIN series_tags st ON t.id = st.tag_id
+WHERE st.series_id = ? ORDER BY t.name
+`
+
+func (q *Queries) GetTagsForSeries(ctx context.Context, seriesID string) ([]Tag, error) {
+	rows, err := q.query(ctx, q.getTagsForSeriesStmt, getTagsForSeries, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Tag
+	for rows.Next() {
+		var i Tag
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const linkSeriesAuthor = `-- name: LinkSeriesAuthor :exec
+INSERT OR IGNORE INTO series_authors (series_id, author_id) VALUES (?, ?)
+`
+
+type LinkSeriesAuthorParams struct {
+	SeriesID string `json:"series_id"`
+	AuthorID string `json:"author_id"`
+}
+
+func (q *Queries) LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error {
+	_, err := q.exec(ctx, q.linkSeriesAuthorStmt, linkSeriesAuthor, arg.SeriesID, arg.AuthorID)
+	return err
+}
+
+const linkSeriesTag = `-- name: LinkSeriesTag :exec
+INSERT OR IGNORE INTO series_tags (series_id, tag_id) VALUES (?, ?)
+`
+
+type LinkSeriesTagParams struct {
+	SeriesID string `json:"series_id"`
+	TagID    string `json:"tag_id"`
+}
+
+func (q *Queries) LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error {
+	_, err := q.exec(ctx, q.linkSeriesTagStmt, linkSeriesTag, arg.SeriesID, arg.TagID)
+	return err
 }
 
 const listBookPages = `-- name: ListBookPages :many
@@ -516,7 +637,7 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 }
 
 const listSeriesByLibrary = `-- name: ListSeriesByLibrary :many
-SELECT s.id, s.library_id, s.name, s.path, s.title, s.summary, s.publisher, s.status, s.created_at, s.updated_at, 
+SELECT s.id, s.library_id, s.name, s.path, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.book_count, s.created_at, s.updated_at, 
        (SELECT b.cover_path 
         FROM books b 
         WHERE b.series_id = s.id AND b.cover_path IS NOT NULL 
@@ -528,17 +649,20 @@ ORDER BY s.name
 `
 
 type ListSeriesByLibraryRow struct {
-	ID        string         `json:"id"`
-	LibraryID string         `json:"library_id"`
-	Name      string         `json:"name"`
-	Path      string         `json:"path"`
-	Title     sql.NullString `json:"title"`
-	Summary   sql.NullString `json:"summary"`
-	Publisher sql.NullString `json:"publisher"`
-	Status    sql.NullString `json:"status"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	CoverPath sql.NullString `json:"cover_path"`
+	ID        string          `json:"id"`
+	LibraryID string          `json:"library_id"`
+	Name      string          `json:"name"`
+	Path      string          `json:"path"`
+	Title     sql.NullString  `json:"title"`
+	Summary   sql.NullString  `json:"summary"`
+	Publisher sql.NullString  `json:"publisher"`
+	Status    sql.NullString  `json:"status"`
+	Rating    sql.NullFloat64 `json:"rating"`
+	Language  sql.NullString  `json:"language"`
+	BookCount int64           `json:"book_count"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	CoverPath sql.NullString  `json:"cover_path"`
 }
 
 func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID string) ([]ListSeriesByLibraryRow, error) {
@@ -559,6 +683,9 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID string) ([]
 			&i.Summary,
 			&i.Publisher,
 			&i.Status,
+			&i.Rating,
+			&i.Language,
+			&i.BookCount,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CoverPath,
@@ -590,6 +717,30 @@ type UpdateBookProgressParams struct {
 func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
 	_, err := q.exec(ctx, q.updateBookProgressStmt, updateBookProgress, arg.LastReadPage, arg.ID)
 	return err
+}
+
+const upsertAuthor = `-- name: UpsertAuthor :one
+INSERT INTO authors (id, name, role) VALUES (?, ?, ?)
+ON CONFLICT(name, role) DO UPDATE SET name = excluded.name, role=excluded.role
+RETURNING id, name, role, created_at
+`
+
+type UpsertAuthorParams struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+func (q *Queries) UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error) {
+	row := q.queryRow(ctx, q.upsertAuthorStmt, upsertAuthor, arg.ID, arg.Name, arg.Role)
+	var i Author
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const upsertBookByPath = `-- name: UpsertBookByPath :exec
@@ -650,4 +801,72 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 		arg.CoverPath,
 	)
 	return err
+}
+
+const upsertSeriesByPath = `-- name: UpsertSeriesByPath :exec
+INSERT INTO series (
+    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+ON CONFLICT(path) DO UPDATE SET
+    library_id = excluded.library_id,
+    name = excluded.name,
+    title = excluded.title,
+    summary = excluded.summary,
+    publisher = excluded.publisher,
+    status = excluded.status,
+    rating = excluded.rating,
+    language = excluded.language,
+    book_count = excluded.book_count,
+    updated_at = CURRENT_TIMESTAMP
+`
+
+type UpsertSeriesByPathParams struct {
+	ID        string          `json:"id"`
+	LibraryID string          `json:"library_id"`
+	Name      string          `json:"name"`
+	Path      string          `json:"path"`
+	Title     sql.NullString  `json:"title"`
+	Summary   sql.NullString  `json:"summary"`
+	Publisher sql.NullString  `json:"publisher"`
+	Status    sql.NullString  `json:"status"`
+	Rating    sql.NullFloat64 `json:"rating"`
+	Language  sql.NullString  `json:"language"`
+	BookCount int64           `json:"book_count"`
+}
+
+func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) error {
+	_, err := q.exec(ctx, q.upsertSeriesByPathStmt, upsertSeriesByPath,
+		arg.ID,
+		arg.LibraryID,
+		arg.Name,
+		arg.Path,
+		arg.Title,
+		arg.Summary,
+		arg.Publisher,
+		arg.Status,
+		arg.Rating,
+		arg.Language,
+		arg.BookCount,
+	)
+	return err
+}
+
+const upsertTag = `-- name: UpsertTag :one
+INSERT INTO tags (id, name) VALUES (?, ?)
+ON CONFLICT(name) DO UPDATE SET name = excluded.name
+RETURNING id, name, created_at
+`
+
+type UpsertTagParams struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) UpsertTag(ctx context.Context, arg UpsertTagParams) (Tag, error) {
+	row := q.queryRow(ctx, q.upsertTagStmt, upsertTag, arg.ID, arg.Name)
+	var i Tag
+	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	return i, err
 }

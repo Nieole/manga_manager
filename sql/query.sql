@@ -14,9 +14,9 @@ DELETE FROM libraries WHERE id = ?;
 
 -- name: CreateSeries :one
 INSERT INTO series (
-    id, library_id, name, path, title, summary, publisher, status
+    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -98,6 +98,56 @@ ON CONFLICT(path) DO UPDATE SET
 UPDATE books 
 SET last_read_page = ?, last_read_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
+
+-- name: UpsertSeriesByPath :exec
+INSERT INTO series (
+    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+ON CONFLICT(path) DO UPDATE SET
+    library_id = excluded.library_id,
+    name = excluded.name,
+    title = excluded.title,
+    summary = excluded.summary,
+    publisher = excluded.publisher,
+    status = excluded.status,
+    rating = excluded.rating,
+    language = excluded.language,
+    book_count = excluded.book_count,
+    updated_at = CURRENT_TIMESTAMP;
+
+-- name: UpsertTag :one
+INSERT INTO tags (id, name) VALUES (?, ?)
+ON CONFLICT(name) DO UPDATE SET name = excluded.name
+RETURNING *;
+
+-- name: LinkSeriesTag :exec
+INSERT OR IGNORE INTO series_tags (series_id, tag_id) VALUES (?, ?);
+
+-- name: GetTagsForSeries :many
+SELECT t.* FROM tags t
+JOIN series_tags st ON t.id = st.tag_id
+WHERE st.series_id = ? ORDER BY t.name;
+
+-- name: UpsertAuthor :one
+INSERT INTO authors (id, name, role) VALUES (?, ?, ?)
+ON CONFLICT(name, role) DO UPDATE SET name = excluded.name, role=excluded.role
+RETURNING *;
+
+-- name: LinkSeriesAuthor :exec
+INSERT OR IGNORE INTO series_authors (series_id, author_id) VALUES (?, ?);
+
+-- name: GetAuthorsForSeries :many
+SELECT a.* FROM authors a
+JOIN series_authors sa ON a.id = sa.author_id
+WHERE sa.series_id = ? ORDER BY a.role, a.name;
+
+-- name: ClearSeriesTags :exec
+DELETE FROM series_tags WHERE series_id = ?;
+
+-- name: ClearSeriesAuthors :exec
+DELETE FROM series_authors WHERE series_id = ?;
 
 -- name: GetNextBookInSeries :one
 SELECT nb.* FROM books nb

@@ -14,6 +14,7 @@ interface Series {
     title?: NullString;
     summary?: NullString;
     cover_path?: NullString;
+    tags_string?: string | null;
 }
 
 const PAGE_SIZE = 30;
@@ -32,6 +33,7 @@ export default function Home() {
     const [loading, setLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [activeLetter, setActiveLetter] = useState<string | null>(null);
+    const [activeTag, setActiveTag] = useState<string | null>(null);
     const [page, setPage] = useState(1);
 
     useEffect(() => {
@@ -39,6 +41,7 @@ export default function Home() {
             setLoading(true);
             setSearchQuery('');
             setActiveLetter(null);
+            setActiveTag(null);
             setPage(1);
             axios.get(`/api/series/${libId}`)
                 .then(res => {
@@ -60,6 +63,13 @@ export default function Home() {
             result = result.filter(s => getFirstChar(s) === activeLetter);
         }
 
+        if (activeTag) {
+            result = result.filter(s => {
+                const tags = s.tags_string ? s.tags_string.split(',') : [];
+                return tags.includes(activeTag);
+            });
+        }
+
         if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
             result = result.filter(s => {
@@ -69,14 +79,31 @@ export default function Home() {
         }
 
         return result;
-    }, [allSeries, activeLetter, searchQuery]);
+    }, [allSeries, activeLetter, activeTag, searchQuery]);
 
     // 分页逻辑
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     // 当筛选条件变化时重置到第一页
-    useEffect(() => { setPage(1); }, [activeLetter, searchQuery]);
+    useEffect(() => { setPage(1); }, [activeLetter, activeTag, searchQuery]);
+
+    // 统计目前资源下的全部去重标签和分布频次
+    const allUniqueTags = useMemo(() => {
+        const counts = new Map<string, number>();
+        allSeries.forEach(s => {
+            if (s.tags_string) {
+                const parts = s.tags_string.split(',');
+                parts.forEach(t => {
+                    counts.set(t, (counts.get(t) || 0) + 1);
+                });
+            }
+        });
+        const entries = Array.from(counts.entries());
+        // 按照名字排序或按照出现次数排序
+        entries.sort((a, b) => b[1] - a[1]);
+        return entries;
+    }, [allSeries]);
 
     // 统计每个字母有多少系列
     const letterCounts = useMemo(() => {
@@ -123,8 +150,8 @@ export default function Home() {
                 <button
                     onClick={() => setActiveLetter(null)}
                     className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${activeLetter === null
-                            ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                        ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
+                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
                         }`}
                 >
                     全部
@@ -137,10 +164,10 @@ export default function Home() {
                             disabled={count === 0}
                             onClick={() => setActiveLetter(letter === activeLetter ? null : letter)}
                             className={`px-2 py-1 text-xs font-medium rounded transition-colors ${activeLetter === letter
-                                    ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                    : count > 0
-                                        ? 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
-                                        : 'bg-gray-900 text-gray-700 cursor-not-allowed'
+                                ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
+                                : count > 0
+                                    ? 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                                    : 'bg-gray-900 text-gray-700 cursor-not-allowed'
                                 }`}
                             title={count > 0 ? `${count} 项` : '无匹配'}
                         >
@@ -149,6 +176,37 @@ export default function Home() {
                     );
                 })}
             </div>
+
+            {/* 标签聚合导航栏 (若有) */}
+            {allUniqueTags.length > 0 && (
+                <div className="mb-6 pb-2 grid grid-cols-[auto_1fr] items-start gap-4">
+                    <span className="text-gray-500 text-sm mt-1 whitespace-nowrap">分类标签:</span>
+                    <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
+                        <button
+                            onClick={() => setActiveTag(null)}
+                            className={`px-3 py-1 text-xs font-medium rounded-full transition-colors border ${activeTag === null
+                                ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
+                                : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'
+                                }`}
+                        >
+                            全部题材
+                        </button>
+                        {allUniqueTags.map(([tname, tcount]) => (
+                            <button
+                                key={tname}
+                                onClick={() => setActiveTag(tname === activeTag ? null : tname)}
+                                className={`px-3 py-1 text-xs font-medium rounded-full transition-all border flex items-center gap-1.5 ${activeTag === tname
+                                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
+                                    : 'bg-transparent border-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-200 bg-gray-900/40'
+                                    }`}
+                            >
+                                {tname}
+                                <span className={activeTag === tname ? 'text-white/70' : 'text-gray-600'}>{tcount}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {loading ? (
                 <div className="text-center py-20 text-gray-400 animate-pulse">正在加载目录与元数据...</div>
@@ -211,8 +269,8 @@ export default function Home() {
                                             key={p}
                                             onClick={() => setPage(p)}
                                             className={`min-w-[36px] h-9 rounded-lg text-sm font-medium transition-colors ${page === p
-                                                    ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                                                ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
+                                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
                                                 }`}
                                         >
                                             {p}

@@ -9,6 +9,8 @@ import (
 )
 
 type Querier interface {
+	ClearSeriesAuthors(ctx context.Context, seriesID string) error
+	ClearSeriesTags(ctx context.Context, seriesID string) error
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
 	CreateBookPage(ctx context.Context, arg CreateBookPageParams) (BookPage, error)
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
@@ -16,18 +18,25 @@ type Querier interface {
 	DeleteBookByPath(ctx context.Context, path string) error
 	DeleteLibrary(ctx context.Context, id string) error
 	DeletePagesByBookPath(ctx context.Context, path string) error
+	GetAuthorsForSeries(ctx context.Context, seriesID string) ([]Author, error)
 	GetBook(ctx context.Context, id string) (Book, error)
 	GetBookByPath(ctx context.Context, path string) (Book, error)
 	GetLibrary(ctx context.Context, id string) (Library, error)
 	GetNextBookInSeries(ctx context.Context, id string) (Book, error)
 	GetSeries(ctx context.Context, id string) (Series, error)
+	GetTagsForSeries(ctx context.Context, seriesID string) ([]Tag, error)
+	LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error
+	LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error
 	ListBookPages(ctx context.Context, bookID string) ([]BookPage, error)
 	ListBooksByLibrary(ctx context.Context, libraryID string) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID string) ([]Book, error)
 	ListLibraries(ctx context.Context) ([]Library, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID string) ([]ListSeriesByLibraryRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
+	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
 	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) error
+	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) error
+	UpsertTag(ctx context.Context, arg UpsertTagParams) (Tag, error)
 }
 
 var _ Querier = (*Queries)(nil)
