@@ -14,11 +14,11 @@ import (
 const createBook = `-- name: CreateBook :one
 INSERT INTO books (
     id, series_id, library_id, name, path, size, file_modified_at, 
-    title, summary, number, sort_number, page_count, cover_path
+    volume, title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at
 `
 
 type CreateBookParams struct {
@@ -29,6 +29,7 @@ type CreateBookParams struct {
 	Path           string          `json:"path"`
 	Size           int64           `json:"size"`
 	FileModifiedAt time.Time       `json:"file_modified_at"`
+	Volume         string          `json:"volume"`
 	Title          sql.NullString  `json:"title"`
 	Summary        sql.NullString  `json:"summary"`
 	Number         sql.NullString  `json:"number"`
@@ -46,6 +47,7 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		arg.Path,
 		arg.Size,
 		arg.FileModifiedAt,
+		arg.Volume,
 		arg.Title,
 		arg.Summary,
 		arg.Number,
@@ -62,6 +64,7 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		&i.Path,
 		&i.Size,
 		&i.FileModifiedAt,
+		&i.Volume,
 		&i.Title,
 		&i.Summary,
 		&i.Number,
@@ -222,7 +225,7 @@ func (q *Queries) DeletePagesByBookPath(ctx context.Context, path string) error 
 }
 
 const getBook = `-- name: GetBook :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE id = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetBook(ctx context.Context, id string) (Book, error) {
@@ -236,6 +239,7 @@ func (q *Queries) GetBook(ctx context.Context, id string) (Book, error) {
 		&i.Path,
 		&i.Size,
 		&i.FileModifiedAt,
+		&i.Volume,
 		&i.Title,
 		&i.Summary,
 		&i.Number,
@@ -251,7 +255,7 @@ func (q *Queries) GetBook(ctx context.Context, id string) (Book, error) {
 }
 
 const getBookByPath = `-- name: GetBookByPath :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE path = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE path = ? LIMIT 1
 `
 
 func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) {
@@ -265,6 +269,7 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 		&i.Path,
 		&i.Size,
 		&i.FileModifiedAt,
+		&i.Volume,
 		&i.Title,
 		&i.Summary,
 		&i.Number,
@@ -297,7 +302,7 @@ func (q *Queries) GetLibrary(ctx context.Context, id string) (Library, error) {
 }
 
 const getNextBookInSeries = `-- name: GetNextBookInSeries :one
-SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.created_at, nb.updated_at FROM books nb
+SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.created_at, nb.updated_at FROM books nb
 INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
 WHERE (nb.sort_number > cb.sort_number)
    OR (nb.sort_number = cb.sort_number AND nb.name > cb.name)
@@ -316,6 +321,7 @@ func (q *Queries) GetNextBookInSeries(ctx context.Context, id string) (Book, err
 		&i.Path,
 		&i.Size,
 		&i.FileModifiedAt,
+		&i.Volume,
 		&i.Title,
 		&i.Summary,
 		&i.Number,
@@ -431,7 +437,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID string) ([]L
 }
 
 const listBooksBySeries = `-- name: ListBooksBySeries :many
-SELECT id, series_id, library_id, name, path, size, file_modified_at, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE series_id = ? ORDER BY sort_number, name
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE series_id = ? ORDER BY sort_number, name
 `
 
 func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID string) ([]Book, error) {
@@ -451,6 +457,7 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID string) ([]Boo
 			&i.Path,
 			&i.Size,
 			&i.FileModifiedAt,
+			&i.Volume,
 			&i.Title,
 			&i.Summary,
 			&i.Number,
@@ -588,9 +595,9 @@ func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgress
 const upsertBookByPath = `-- name: UpsertBookByPath :exec
 INSERT INTO books (
     id, series_id, library_id, name, path, size, file_modified_at, 
-    title, summary, number, sort_number, page_count, cover_path
+    volume, title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     series_id = excluded.series_id,
@@ -598,6 +605,7 @@ ON CONFLICT(path) DO UPDATE SET
     name = excluded.name,
     size = excluded.size,
     file_modified_at = excluded.file_modified_at,
+    volume = excluded.volume,
     title = excluded.title,
     summary = excluded.summary,
     number = excluded.number,
@@ -615,6 +623,7 @@ type UpsertBookByPathParams struct {
 	Path           string          `json:"path"`
 	Size           int64           `json:"size"`
 	FileModifiedAt time.Time       `json:"file_modified_at"`
+	Volume         string          `json:"volume"`
 	Title          sql.NullString  `json:"title"`
 	Summary        sql.NullString  `json:"summary"`
 	Number         sql.NullString  `json:"number"`
@@ -632,6 +641,7 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 		arg.Path,
 		arg.Size,
 		arg.FileModifiedAt,
+		arg.Volume,
 		arg.Title,
 		arg.Summary,
 		arg.Number,

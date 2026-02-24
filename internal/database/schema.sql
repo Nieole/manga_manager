@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS books (
     path TEXT NOT NULL,
     size INTEGER NOT NULL,
     file_modified_at DATETIME NOT NULL,
+    volume TEXT NOT NULL DEFAULT '',
     title TEXT,
     summary TEXT,
     number TEXT,

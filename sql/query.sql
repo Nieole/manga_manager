@@ -37,9 +37,9 @@ ORDER BY s.name;
 -- name: CreateBook :one
 INSERT INTO books (
     id, series_id, library_id, name, path, size, file_modified_at, 
-    title, summary, number, sort_number, page_count, cover_path
+    volume, title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -75,9 +75,9 @@ DELETE FROM book_pages WHERE book_id IN (SELECT id FROM books WHERE path = ?);
 -- name: UpsertBookByPath :exec
 INSERT INTO books (
     id, series_id, library_id, name, path, size, file_modified_at, 
-    title, summary, number, sort_number, page_count, cover_path
+    volume, title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     series_id = excluded.series_id,
@@ -85,6 +85,7 @@ ON CONFLICT(path) DO UPDATE SET
     name = excluded.name,
     size = excluded.size,
     file_modified_at = excluded.file_modified_at,
+    volume = excluded.volume,
     title = excluded.title,
     summary = excluded.summary,
     number = excluded.number,

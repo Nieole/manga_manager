@@ -41,8 +41,10 @@ export default function BookReader() {
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
     // Book context for navigation
+    const seriesIdRef = useRef<string | null>(null);
     const [nextBookId, setNextBookId] = useState<string | null>(null);
     const nextBookIdRef = useRef<string | null>(null);
+    const [bookTitle, setBookTitle] = useState<string>('');
 
     // 回传阅读进度
     const updateProgress = useCallback((pageNumber: number) => {
@@ -60,6 +62,7 @@ export default function BookReader() {
         setLoading(true);
         setCurrentPageIndex(0);
         setNextBookId(null);
+        setBookTitle('');
 
         Promise.all([
             axios.get(`/api/pages/${bookId}`),
@@ -70,7 +73,8 @@ export default function BookReader() {
 
             // 恢复上次阅读进度
             const lastPage = infoRes.data.last_read_page?.Valid ? infoRes.data.last_read_page.Int64 : 1;
-
+            seriesIdRef.current = infoRes.data.series_id || null;
+            setBookTitle(infoRes.data.title?.Valid ? infoRes.data.title.String : infoRes.data.name);
             // 获取下一本
             axios.get(`/api/book-next/${bookId}`)
                 .then(res => { setNextBookId(res.data.id); nextBookIdRef.current = res.data.id; })
@@ -114,6 +118,7 @@ export default function BookReader() {
                     const pageNumStr = entry.target.getAttribute('data-page-number');
                     if (pageNumStr) {
                         const pageNum = parseInt(pageNumStr, 10);
+                        setCurrentPageIndex(pageNum - 1);
                         clearTimeout(debounceTimeout);
                         debounceTimeout = window.setTimeout(() => {
                             updateProgress(pageNum);
@@ -198,33 +203,23 @@ export default function BookReader() {
         <div className="absolute inset-0 bg-black flex flex-col z-50 overflow-hidden font-sans">
             {/* 顶栏控制面板区悬浮感应 */}
             <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
-                <div className="flex items-center justify-between w-full">
+                <div className="flex items-center justify-between w-full relative">
                     <button
-                        onClick={() => {
-                            if (bookId) {
-                                axios.get(`/api/book-info/${bookId}`)
-                                    .then(res => {
-                                        const sid = res.data.series_id;
-                                        if (sid) {
-                                            navigate(`/series/${sid}`);
-                                        } else {
-                                            navigate('/');
-                                        }
-                                    })
-                                    .catch(() => navigate('/'));
-                            } else {
-                                navigate('/');
-                            }
-                        }}
-                        className="text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg"
+                        onClick={() => seriesIdRef.current ? navigate(`/series/${seriesIdRef.current}`) : navigate('/')}
+                        className="text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
                     >
                         <ArrowLeft className="w-5 h-5 mr-2" />
-                        退出阅读
+                        返回
                     </button>
+
+                    {/* 绝对居中书名 */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-32">
+                        <span className="text-white font-medium truncate drop-shadow-md text-center">{bookTitle}</span>
+                    </div>
 
                     <button
                         onClick={() => setShowSettings(!showSettings)}
-                        className={`text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+                        className={`text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10 ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
                     >
                         <Settings className="w-5 h-5" />
                     </button>
@@ -297,10 +292,10 @@ export default function BookReader() {
                     <div className="flex items-center justify-center w-full h-full bg-black relative">
                         {/* 左触控区/按钮 */}
                         <div
-                            className="absolute left-0 inset-y-0 w-1/4 sm:w-32 z-10 flex items-center justify-start sm:px-4 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100"
+                            className="absolute left-0 inset-y-0 w-2/5 sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
                             onClick={() => readDirection === 'ltr' ? handlePrev() : handleNext()}
                         >
-                            <ChevronLeft className="w-10 h-10 text-white/50 drop-shadow-lg" />
+                            <ChevronLeft className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors" />
                         </div>
 
                         {/* 图像容器 - 根据数量排列 */}
@@ -318,20 +313,38 @@ export default function BookReader() {
 
                         {/* 右触控区/按钮 */}
                         <div
-                            className="absolute right-0 inset-y-0 w-1/4 sm:w-32 z-10 flex items-center justify-end sm:px-4 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100"
+                            className="absolute right-0 inset-y-0 w-2/5 sm:w-1/3 z-10 flex items-center justify-end sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
                             onClick={() => readDirection === 'ltr' ? handleNext() : handlePrev()}
                         >
-                            <ChevronRight className="w-10 h-10 text-white/50 drop-shadow-lg" />
+                            <ChevronRight className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors" />
                         </div>
 
-                        {/* 进度底边栏 */}
-                        <div className="absolute bottom-6 inset-x-0 flex justify-center pointer-events-none">
-                            <span className="bg-black/80 backdrop-blur text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/10 shadow-lg pointer-events-auto">
-                                {currentPageIndex + 1} / {pages.length}
-                            </span>
-                        </div>
                     </div>
                 )}
+
+                {/* 底部进度与拖动条悬浮托盘 */}
+                <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pb-8 pt-16 px-6 sm:px-12 flex flex-col items-center transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
+                    <div className="w-full max-w-2xl flex items-center gap-4 bg-black/60 px-6 py-3 rounded-2xl backdrop-blur border border-white/10 shadow-2xl">
+                        <span className="text-white font-medium text-sm whitespace-nowrap w-8 text-right drop-shadow-md">{currentPageIndex + 1}</span>
+                        <input
+                            type="range"
+                            min={1}
+                            max={pages.length}
+                            value={currentPageIndex + 1}
+                            onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                if (readMode === 'paged') {
+                                    setCurrentPageIndex(val - 1);
+                                } else {
+                                    const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
+                                    if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
+                                }
+                            }}
+                            className="flex-1 accent-komgaPrimary h-1.5 bg-gray-700/50 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <span className="text-gray-400 font-medium text-sm whitespace-nowrap w-8 drop-shadow-md">{pages.length}</span>
+                    </div>
+                </div>
             </div>
         </div>
     );

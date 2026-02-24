@@ -168,11 +168,17 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 	}
 
 	var seriesName, seriesPath string
+	var volumeName string
 	relPath, err := filepath.Rel(rootPath, job.path)
 	if err == nil {
 		parts := strings.Split(relPath, string(filepath.Separator))
-		if len(parts) > 1 {
-			// 第一级目录作为 Series
+		if len(parts) > 2 {
+			// 第一级目录作为 Series，第二级目录作为 Volume
+			seriesName = parts[0]
+			seriesPath = filepath.Join(rootPath, seriesName)
+			volumeName = parts[1]
+		} else if len(parts) > 1 {
+			// 第一级目录作为 Series，无 Volume
 			seriesName = parts[0]
 			seriesPath = filepath.Join(rootPath, seriesName)
 		} else {
@@ -227,13 +233,14 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 		}
 	}
 
-	book := database.CreateBookParams{
+	book := database.UpsertBookByPathParams{
 		ID:             bookID,
 		LibraryID:      libraryID,
 		Name:           baseName,
 		Path:           job.path,
 		Size:           job.info.Size(),
 		FileModifiedAt: job.info.ModTime(),
+		Volume:         volumeName,
 		Title:          bookTitle,
 		PageCount:      int64(len(pages)),
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
@@ -255,7 +262,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 	res := scanResult{
 		seriesName: seriesName,
 		seriesPath: seriesPath,
-		book:       book,
+		book:       database.CreateBookParams(book),
 		pages:      pageParams,
 	}
 
@@ -305,21 +312,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 				res.book.SeriesID = seriesID
 
 				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at
-				err := q.UpsertBookByPath(ctx, database.UpsertBookByPathParams{
-					ID:             res.book.ID,
-					SeriesID:       res.book.SeriesID,
-					LibraryID:      res.book.LibraryID,
-					Name:           res.book.Name,
-					Path:           res.book.Path,
-					Size:           res.book.Size,
-					FileModifiedAt: res.book.FileModifiedAt,
-					Title:          res.book.Title,
-					Summary:        res.book.Summary,
-					Number:         res.book.Number,
-					SortNumber:     res.book.SortNumber,
-					PageCount:      res.book.PageCount,
-					CoverPath:      res.book.CoverPath,
-				})
+				err := q.UpsertBookByPath(ctx, database.UpsertBookByPathParams(res.book))
 				if err != nil {
 					log.Printf("Failed to upsert book %q: %v", res.book.Path, err)
 					continue

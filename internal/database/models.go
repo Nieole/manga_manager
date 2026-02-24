@@ -17,6 +17,7 @@ type Book struct {
 	Path           string          `json:"path"`
 	Size           int64           `json:"size"`
 	FileModifiedAt time.Time       `json:"file_modified_at"`
+	Volume         string          `json:"volume"`
 	Title          sql.NullString  `json:"title"`
 	Summary        sql.NullString  `json:"summary"`
 	Number         sql.NullString  `json:"number"`

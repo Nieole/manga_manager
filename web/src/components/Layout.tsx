@@ -168,8 +168,8 @@ export default function Layout() {
             </header>
 
             <main className="flex-1 flex overflow-hidden">
-                <aside className="w-64 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 hidden md:flex">
-                    <div className="px-6 mb-4 flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <aside className="w-64 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 hidden md:flex h-full overflow-hidden">
+                    <div className="px-6 mb-4 flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">
                         <span>Libraries</span>
                         <button
                             onClick={() => setShowAddModal(true)}
@@ -226,7 +226,7 @@ export default function Layout() {
                     </nav>
                 </aside>
 
-                <div className="flex-1 overflow-y-auto bg-komgaDark relative">
+                <div className="flex-1 overflow-y-auto bg-komgaDark relative h-full">
                     <Outlet context={{ refreshTrigger }} />
                 </div>
             </main>
