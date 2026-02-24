@@ -89,7 +89,8 @@ export default function SeriesDetail() {
 
     useEffect(() => {
         if (seriesId) {
-            setLoading(true);
+            // 防闪烁：如果是重新刷新且已经有数据，则不显示全屏 loading
+            setLoading(!seriesInfo && books.length === 0);
             Promise.all([
                 axios.get(`/api/books/${seriesId}`),
                 axios.get(`/api/series/info/${seriesId}`),
