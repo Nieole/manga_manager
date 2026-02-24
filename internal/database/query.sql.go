@@ -679,7 +679,7 @@ const listSeriesByLibrary = `-- name: ListSeriesByLibrary :many
 SELECT s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, 
        (SELECT b.cover_path 
         FROM books b 
-        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL 
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
         ORDER BY b.sort_number, b.name 
         LIMIT 1) as cover_path 
 FROM series s 

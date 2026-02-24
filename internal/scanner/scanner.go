@@ -208,23 +208,34 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	var coverPath sql.NullString
 	if len(pages) > 0 {
 		thumbDir := filepath.Join(".", "data", "thumbnails")
-		_ = os.MkdirAll(thumbDir, 0755)
+		err = os.MkdirAll(thumbDir, 0755)
+		if err != nil {
+			log.Printf("Failed to mkdir thumbDir %s: %v", thumbDir, err)
+		}
 
-		if pageData, err := arc.ReadPage(pages[0].Name); err == nil {
+		pageData, err := arc.ReadPage(pages[0].Name)
+		if err == nil {
 			// 优先尝试 WebP（体积小画质高），失败则降级到 JPEG（纯 Go 实现，跨平台无忧）
 			var processed []byte
 			var fileName string
-			if webpData, _, webpErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+			webpData, _, webpErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
 				Width: 400, Quality: 82, Format: "webp",
-			}); webpErr == nil && len(webpData) > 0 {
+			})
+			if webpErr == nil && len(webpData) > 0 {
 				processed = webpData
 				fileName = bookHash + ".webp"
 			} else {
-				if jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+				if webpErr != nil {
+					log.Printf("WebP generation failed for %s: %v", job.path, webpErr)
+				}
+				jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
 					Width: 400, Quality: 82, Format: "jpeg",
-				}); jpegErr == nil {
+				})
+				if jpegErr == nil {
 					processed = jpegData
 					fileName = bookHash + ".jpg"
+				} else {
+					log.Printf("JPEG generation failed for %s: %v", job.path, jpegErr)
 				}
 			}
 
@@ -232,9 +243,17 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 				fullPath := filepath.Join(thumbDir, fileName)
 				if err := os.WriteFile(fullPath, processed, 0644); err == nil {
 					coverPath = sql.NullString{String: fileName, Valid: true}
+				} else {
+					log.Printf("Failed to write thumbnail file %s: %v", fullPath, err)
 				}
+			} else {
+				log.Printf("No processed thumbnail data for %s", job.path)
 			}
+		} else {
+			log.Printf("Failed to ReadPage %s from %s: %v", pages[0].Name, job.path, err)
 		}
+	} else {
+		log.Printf("No pages found in %s to extract cover", job.path)
 	}
 
 	book := database.UpsertBookByPathParams{

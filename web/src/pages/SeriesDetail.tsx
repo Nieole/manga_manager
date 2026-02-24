@@ -24,7 +24,7 @@ interface Series {
     rating?: NullFloat64;
     language?: NullString;
     book_count: number;
-    locked_fields: string;
+    locked_fields: NullString;
 }
 
 interface MetaTag {
@@ -90,7 +90,7 @@ export default function SeriesDetail() {
                     setAuthors(authorsData);
 
                     if (info) {
-                        setLockedFields(new Set(info.locked_fields ? info.locked_fields.split(',') : []));
+                        setLockedFields(new Set(info.locked_fields?.Valid && info.locked_fields.String ? info.locked_fields.String.split(',') : []));
                         setEditForm({
                             title: info.title,
                             summary: info.summary,
@@ -142,8 +142,8 @@ export default function SeriesDetail() {
         const volumeArr = Array.from(volumeMap.entries()).map(([volName, volBooks]) => ({
             name: volName,
             books: volBooks,
-            cover_path: volBooks.find(b => b.cover_path?.Valid)?.cover_path,
-            cover_book_id: volBooks.find(b => b.cover_path?.Valid)?.id,
+            cover_path: volBooks.find(b => b.cover_path?.Valid && b.cover_path?.String)?.cover_path,
+            cover_book_id: volBooks.find(b => b.cover_path?.Valid && b.cover_path?.String)?.id,
             total_pages: volBooks.reduce((sum, b) => sum + b.page_count, 0)
         }));
 
@@ -616,7 +616,7 @@ export default function SeriesDetail() {
                                         className="group flex flex-col rounded-xl overflow-hidden bg-gray-900 border border-gray-800 hover:border-komgaPrimary/50 hover:bg-gray-800 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10 cursor-pointer"
                                     >
                                         <div className="aspect-[3/4] w-full bg-komgaDark flex items-center justify-center relative overflow-hidden">
-                                            {vol.cover_path?.Valid && vol.cover_book_id ? (
+                                            {vol.cover_path?.Valid && vol.cover_path?.String && vol.cover_book_id ? (
                                                 <img src={`/api/covers/${vol.cover_book_id}`} className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
                                             ) : (
                                                 <FolderOpen className="w-16 h-16 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />

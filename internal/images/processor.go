@@ -14,6 +14,8 @@ import (
 
 	// Init defaults for read fallback
 	_ "image/gif"
+
+	_ "github.com/gen2brain/avif"
 )
 
 // ProcessOptions 用于接受前端动态要求的尺寸转换

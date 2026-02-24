@@ -227,7 +227,7 @@ export default function Home() {
                                 className="group relative flex flex-col rounded-xl overflow-hidden bg-komgaSurface border border-gray-800 hover:border-komgaPrimary/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10 cursor-pointer"
                             >
                                 <div className="aspect-[2/3] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
-                                    {s.cover_path?.Valid ? (
+                                    {s.cover_path?.Valid && s.cover_path?.String ? (
                                         <img src={`/api/thumbnails/${s.cover_path.String}`} alt="cover" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                                     ) : (
                                         <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />

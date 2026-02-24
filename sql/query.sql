@@ -27,7 +27,7 @@ SELECT * FROM series WHERE id = ? LIMIT 1;
 SELECT s.*, 
        (SELECT b.cover_path 
         FROM books b 
-        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL 
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
         ORDER BY b.sort_number, b.name 
         LIMIT 1) as cover_path 
 FROM series s 
