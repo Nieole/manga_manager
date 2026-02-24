@@ -9,38 +9,35 @@ import (
 )
 
 type Querier interface {
-	ClearSeriesAuthors(ctx context.Context, seriesID string) error
-	ClearSeriesTags(ctx context.Context, seriesID string) error
+	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
+	ClearSeriesTags(ctx context.Context, seriesID int64) error
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
-	CreateBookPage(ctx context.Context, arg CreateBookPageParams) (BookPage, error)
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
 	CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error)
 	DeleteBookByPath(ctx context.Context, path string) error
-	DeleteLibrary(ctx context.Context, id string) error
-	DeletePagesByBookPath(ctx context.Context, path string) error
+	DeleteLibrary(ctx context.Context, id int64) error
 	GetAllAuthors(ctx context.Context) ([]Author, error)
 	GetAllTags(ctx context.Context) ([]Tag, error)
-	GetAuthorsForSeries(ctx context.Context, seriesID string) ([]Author, error)
-	GetBook(ctx context.Context, id string) (Book, error)
+	GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Author, error)
+	GetBook(ctx context.Context, id int64) (Book, error)
 	GetBookByPath(ctx context.Context, path string) (Book, error)
-	GetLibrary(ctx context.Context, id string) (Library, error)
-	GetNextBookInSeries(ctx context.Context, id string) (Book, error)
-	GetSeries(ctx context.Context, id string) (Series, error)
-	GetSeriesByLibrary(ctx context.Context, libraryID string) ([]GetSeriesByLibraryRow, error)
-	GetTagsForSeries(ctx context.Context, seriesID string) ([]Tag, error)
+	GetLibrary(ctx context.Context, id int64) (Library, error)
+	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
+	GetSeries(ctx context.Context, id int64) (Series, error)
+	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
+	GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, error)
 	LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error
 	LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error
-	ListBookPages(ctx context.Context, bookID string) ([]BookPage, error)
-	ListBooksByLibrary(ctx context.Context, libraryID string) ([]ListBooksByLibraryRow, error)
-	ListBooksBySeries(ctx context.Context, seriesID string) ([]Book, error)
+	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
+	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)
 	ListLibraries(ctx context.Context) ([]Library, error)
-	ListSeriesByLibrary(ctx context.Context, libraryID string) ([]ListSeriesByLibraryRow, error)
+	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
-	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) error
-	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) error
-	UpsertTag(ctx context.Context, arg UpsertTagParams) (Tag, error)
+	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error)
+	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error)
+	UpsertTag(ctx context.Context, name string) (Tag, error)
 }
 
 var _ Querier = (*Queries)(nil)

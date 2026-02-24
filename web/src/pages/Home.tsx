@@ -9,7 +9,7 @@ interface NullString {
 }
 
 interface Series {
-    id: string;
+    id: number;
     name: string;
     title?: NullString;
     summary?: NullString;

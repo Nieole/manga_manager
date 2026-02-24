@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -17,8 +19,6 @@ import (
 	"manga-manager/internal/images"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/search"
-
-	"github.com/google/uuid"
 )
 
 type Scanner struct {
@@ -48,20 +48,23 @@ type scanJob struct {
 type scanResult struct {
 	seriesName string
 	seriesPath string
-	book       database.CreateBookParams
-	pages      []database.CreateBookPageParams
+	book       database.UpsertBookByPathParams
 	comicInfo  *parser.ComicInfo
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath string, force bool) error {
-	log.Printf("Starting ultra-fast concurrent scan for library [%s] at: %s (force=%v)", libraryID, rootPath, force)
+	libIDInt, err := strconv.ParseInt(libraryID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid library ID: %v", err)
+	}
+	log.Printf("Starting ultra-fast concurrent scan for library [%d] at: %s (force=%v)", libIDInt, rootPath, force)
 
 	// Step 0: Pre-load cache for increment scanning
 	bookCache := make(map[string]time.Time)
 
 	if !force {
-		existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
+		existingBooks, err := s.store.ListBooksByLibrary(ctx, libIDInt)
 		if err != nil {
 			log.Printf("Failed to load existing books cache: %v", err)
 			return err
@@ -85,7 +88,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath st
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, libraryID, rootPath, job, results)
+				s.workerProcess(ctx, libIDInt, rootPath, job, results)
 			}
 		}()
 	}
@@ -96,7 +99,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath st
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, libraryID, results)
+		s.ingestResults(ctx, libIDInt, results)
 	}()
 
 	// 第 1 阶段：发现者 (The Discoverer)
@@ -147,7 +150,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath st
 	return walkErr
 }
 
-func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath string, job scanJob, results chan<- scanResult) {
+func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, results chan<- scanResult) {
 	arc, err := parser.OpenArchive(job.path)
 	if err != nil {
 		log.Printf("Failed to open archive %s (may be corrupted): %v", job.path, err)
@@ -161,7 +164,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 		return
 	}
 
-	bookID := uuid.New().String()
+	bookHash := fmt.Sprintf("%x", sha1.Sum([]byte(job.path)))
 	baseName := filepath.Base(job.path)
 	bookTitle := sql.NullString{
 		String: strings.TrimSuffix(baseName, filepath.Ext(baseName)),
@@ -215,13 +218,13 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 				Width: 400, Quality: 82, Format: "webp",
 			}); webpErr == nil && len(webpData) > 0 {
 				processed = webpData
-				fileName = bookID + ".webp"
+				fileName = bookHash + ".webp"
 			} else {
 				if jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
 					Width: 400, Quality: 82, Format: "jpeg",
 				}); jpegErr == nil {
 					processed = jpegData
-					fileName = bookID + ".jpg"
+					fileName = bookHash + ".jpg"
 				}
 			}
 
@@ -235,8 +238,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 	}
 
 	book := database.UpsertBookByPathParams{
-		ID:             bookID,
-		LibraryID:      libraryID,
+		LibraryID:      libIDInt,
 		Name:           baseName,
 		Path:           job.path,
 		Size:           job.info.Size(),
@@ -246,18 +248,6 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 		PageCount:      int64(len(pages)),
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
 		CoverPath:      coverPath,
-	}
-
-	var pageParams []database.CreateBookPageParams
-	for i, page := range pages {
-		pageParams = append(pageParams, database.CreateBookPageParams{
-			ID:        uuid.New().String(),
-			BookID:    bookID,
-			FileName:  page.Name,
-			MediaType: page.MediaType,
-			Number:    int64(i + 1),
-			Size:      page.Size,
-		})
 	}
 
 	// 尝试提取 ComicInfo.xml
@@ -271,8 +261,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 	res := scanResult{
 		seriesName: seriesName,
 		seriesPath: seriesPath,
-		book:       database.CreateBookParams(book),
-		pages:      pageParams,
+		book:       book,
 		comicInfo:  cInfo,
 	}
 
@@ -282,20 +271,20 @@ func (s *Scanner) workerProcess(ctx context.Context, libraryID string, rootPath 
 	}
 }
 
-func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <-chan scanResult) {
+func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult) {
 	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
 	seriesCache := make(map[string]database.ListSeriesByLibraryRow)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
-	lockedFieldsCache := make(map[string]map[string]bool)
+	lockedFieldsCache := make(map[int64]map[string]bool)
 
 	// 预加载已有的 Series
-	existingSeries, _ := s.store.ListSeriesByLibrary(ctx, libraryID)
+	existingSeries, _ := s.store.ListSeriesByLibrary(ctx, libIDInt)
 	for _, series := range existingSeries {
 		seriesCache[series.Path] = series
 
 		lfMap := make(map[string]bool)
-		if series.LockedFields != "" {
-			for _, f := range strings.Split(series.LockedFields, ",") {
+		if series.LockedFields.Valid && series.LockedFields.String != "" {
+			for _, f := range strings.Split(series.LockedFields.String, ",") {
 				lfMap[strings.TrimSpace(f)] = true
 			}
 		}
@@ -313,7 +302,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 		err := s.store.ExecTx(ctx, func(q *database.Queries) error {
 			for _, res := range batch {
 				// 获取或创建/更新归属系列
-				var seriesID string
+				var seriesID int64
 				existingS, ok := seriesCache[res.seriesPath]
 				if ok {
 					seriesID = existingS.ID
@@ -324,10 +313,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 				if res.comicInfo != nil {
 					rSummary = res.comicInfo.Summary
 					rPublisher = res.comicInfo.Publisher
-					// Map Manga Status
-					// ComicInfo 并没有标准的连载状态字段，通常约定写在 Web 或 Notes 里，这里先留空或从其他地方推断
 					rLang = res.comicInfo.LanguageISO
-					// rRating = res.comicInfo.Rating // 原本提取为字符串，现已改用 float64 分数 CommunityRating
 				}
 				var rating float64
 				if res.comicInfo != nil && res.comicInfo.CommunityRating > 0 {
@@ -335,11 +321,9 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 				}
 
 				if !ok {
-					seriesID = uuid.New().String()
 					// 初次创建
-					err := q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
-						ID:        seriesID,
-						LibraryID: libraryID,
+					createdSeries, err := q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
+						LibraryID: libIDInt,
 						Name:      res.seriesName,
 						Path:      res.seriesPath,
 						Title:     sql.NullString{String: res.seriesName, Valid: true},
@@ -353,6 +337,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 						log.Printf("Failed to create/upsert series %q: %v", res.seriesName, err)
 						continue
 					}
+					seriesID = createdSeries.ID
 					// 为了保持下文逻辑，我们塞一个临时的进去
 					seriesCache[res.seriesPath] = database.ListSeriesByLibraryRow{ID: seriesID, Path: res.seriesPath}
 				} else {
@@ -389,9 +374,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 							return sql.NullFloat64{Float64: rating, Valid: rating > 0}
 						}
 
-						_ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
-							ID:        seriesID,
-							LibraryID: libraryID,
+						_, _ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
+							LibraryID: libIDInt,
 							Name:      res.seriesName,
 							Path:      res.seriesPath,
 							Title:     sql.NullString{String: res.seriesName, Valid: true},
@@ -402,7 +386,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 							Language:  getStr("language", rLang),
 							// LockedFields 这里应该保持原样，所以 Valid 设为 false 让 Upsert 判定或传旧值
 							// 因为我们的 Upsert 里会用 excluded.locked_fields 覆盖，为了不丢掉我们传回现有的锁。
-							LockedFields: getKeys(locks),
+							LockedFields: sql.NullString{String: getKeys(locks), Valid: true},
 						})
 					}
 				}
@@ -413,43 +397,28 @@ func (s *Scanner) ingestResults(ctx context.Context, libraryID string, results <
 					// 为每个卷提取补充，由于事务中，且中间表用 INSERT OR IGNORE, 不会报错。
 					tags := res.comicInfo.GetTags()
 					for _, t := range tags {
-						if inserted, err := q.UpsertTag(ctx, database.UpsertTagParams{ID: uuid.New().String(), Name: t}); err == nil {
+						if inserted, err := q.UpsertTag(ctx, t); err == nil {
 							_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
 						}
 					}
 
 					authors := res.comicInfo.GetAuthors()
 					for _, a := range authors {
-						if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{ID: uuid.New().String(), Name: a.Name, Role: a.Role}); err == nil {
+						if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{Name: a.Name, Role: a.Role}); err == nil {
 							_ = q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID})
 						}
 					}
 				}
 
-				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at
-				err := q.UpsertBookByPath(ctx, database.UpsertBookByPathParams(res.book))
+				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at，返回带主键的对象
+				actualBook, err := q.UpsertBookByPath(ctx, res.book)
 				if err != nil {
 					log.Printf("Failed to upsert book %q: %v", res.book.Path, err)
 					continue
 				}
 
-				// Upsert 后回查真实的 book ID（已有记录时 ID 不变）
-				existingBook, err := q.GetBookByPath(ctx, res.book.Path)
-				if err != nil {
-					log.Printf("Failed to get book by path %q: %v", res.book.Path, err)
-					continue
-				}
-				actualBookID := existingBook.ID
-
-				// 用真实 ID 清理旧 Pages 再重建
-				_ = q.DeletePagesByBookPath(ctx, res.book.Path)
-				for _, p := range res.pages {
-					p.BookID = actualBookID
-					_, _ = q.CreateBookPage(ctx, p)
-				}
-
 				if s.engine != nil {
-					_ = s.engine.IndexBook(res.book, res.seriesName)
+					_ = s.engine.IndexBook(actualBook, res.seriesName)
 				}
 			}
 			return nil

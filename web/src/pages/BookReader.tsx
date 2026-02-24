@@ -41,9 +41,9 @@ export default function BookReader() {
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
     // Book context for navigation
-    const seriesIdRef = useRef<string | null>(null);
-    const [nextBookId, setNextBookId] = useState<string | null>(null);
-    const nextBookIdRef = useRef<string | null>(null);
+    const seriesIdRef = useRef<number | null>(null);
+    const [nextBookId, setNextBookId] = useState<number | null>(null);
+    const nextBookIdRef = useRef<number | null>(null);
     const [bookTitle, setBookTitle] = useState<string>('');
 
     // 回传阅读进度

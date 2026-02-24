@@ -14,9 +14,9 @@ interface NullFloat64 {
 }
 
 interface Series {
-    id: string;
+    id: number;
     name: string;
-    library_id: string;
+    library_id: number;
     title?: NullString;
     summary?: NullString;
     publisher?: NullString;
@@ -28,20 +28,20 @@ interface Series {
 }
 
 interface MetaTag {
-    id: string;
+    id: number;
     name: string;
 }
 
 interface Author {
-    id: string;
+    id: number;
     name: string;
     role: string;
 }
 
 interface Book {
-    id: string;
+    id: number;
     name: string;
-    library_id: string;
+    library_id: number;
     volume: string;
     title?: NullString;
     summary?: NullString;

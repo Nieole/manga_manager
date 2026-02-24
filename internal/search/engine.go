@@ -1,6 +1,7 @@
 package search
 
 import (
+	"fmt"
 	"log"
 	"manga-manager/internal/database"
 	"os"
@@ -58,7 +59,7 @@ type BookDocument struct {
 }
 
 // IndexBook 将书籍及其系列名推入分词引擎打标
-func (e *Engine) IndexBook(book database.CreateBookParams, seriesName string) error {
+func (e *Engine) IndexBook(book database.Book, seriesName string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -68,7 +69,7 @@ func (e *Engine) IndexBook(book database.CreateBookParams, seriesName string) er
 	}
 
 	doc := BookDocument{
-		ID:         book.ID,
+		ID:         fmt.Sprintf("%d", book.ID),
 		Type:       "book",
 		Title:      title,
 		SeriesName: seriesName,

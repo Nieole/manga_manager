@@ -10,16 +10,16 @@ import (
 )
 
 type Author struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64        `json:"id"`
+	Name      string       `json:"name"`
+	Role      string       `json:"role"`
+	CreatedAt sql.NullTime `json:"created_at"`
 }
 
 type Book struct {
-	ID             string          `json:"id"`
-	SeriesID       string          `json:"series_id"`
-	LibraryID      string          `json:"library_id"`
+	ID             int64           `json:"id"`
+	SeriesID       int64           `json:"series_id"`
+	LibraryID      int64           `json:"library_id"`
 	Name           string          `json:"name"`
 	Path           string          `json:"path"`
 	Size           int64           `json:"size"`
@@ -37,55 +37,41 @@ type Book struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
-type BookPage struct {
-	ID        string        `json:"id"`
-	BookID    string        `json:"book_id"`
-	FileName  string        `json:"file_name"`
-	MediaType string        `json:"media_type"`
-	Number    int64         `json:"number"`
-	Size      int64         `json:"size"`
-	Width     sql.NullInt64 `json:"width"`
-	Height    sql.NullInt64 `json:"height"`
-	CreatedAt time.Time     `json:"created_at"`
-}
-
 type Library struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64        `json:"id"`
+	Name      string       `json:"name"`
+	Path      string       `json:"path"`
+	CreatedAt sql.NullTime `json:"created_at"`
 }
 
 type Series struct {
-	ID           string          `json:"id"`
-	LibraryID    string          `json:"library_id"`
+	ID           int64           `json:"id"`
+	LibraryID    int64           `json:"library_id"`
 	Name         string          `json:"name"`
-	Path         string          `json:"path"`
 	Title        sql.NullString  `json:"title"`
 	Summary      sql.NullString  `json:"summary"`
 	Publisher    sql.NullString  `json:"publisher"`
 	Status       sql.NullString  `json:"status"`
 	Rating       sql.NullFloat64 `json:"rating"`
 	Language     sql.NullString  `json:"language"`
-	BookCount    int64           `json:"book_count"`
-	LockedFields string          `json:"locked_fields"`
+	LockedFields sql.NullString  `json:"locked_fields"`
+	Path         string          `json:"path"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type SeriesAuthor struct {
-	SeriesID string `json:"series_id"`
-	AuthorID string `json:"author_id"`
+	SeriesID int64 `json:"series_id"`
+	AuthorID int64 `json:"author_id"`
 }
 
 type SeriesTag struct {
-	SeriesID string `json:"series_id"`
-	TagID    string `json:"tag_id"`
+	SeriesID int64 `json:"series_id"`
+	TagID    int64 `json:"tag_id"`
 }
 
 type Tag struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64        `json:"id"`
+	Name      string       `json:"name"`
+	CreatedAt sql.NullTime `json:"created_at"`
 }

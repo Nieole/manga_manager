@@ -15,18 +15,16 @@ import (
 
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	bookID := chi.URLParam(r, "bookId")
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
 	pageNumberStr := chi.URLParam(r, "pageNumber")
 
 	pageNumber, err := strconv.ParseInt(pageNumberStr, 10, 64)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid page number")
-		return
-	}
-
-	pages, err := c.store.ListBookPages(ctx, bookID)
-	if err != nil || len(pages) == 0 {
-		jsonError(w, http.StatusNotFound, "Book not found or empty")
 		return
 	}
 
@@ -36,21 +34,26 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find requested page details
-	var targetPage string
-	var targetMediaType string
-	for _, p := range pages {
-		if p.Number == pageNumber {
-			targetPage = p.FileName
-			targetMediaType = p.MediaType
-			break
-		}
+	archiver, err := parser.OpenArchive(book.Path)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
+		return
+	}
+	defer archiver.Close()
+
+	pagesInfo, err := archiver.GetPages()
+	if err != nil || len(pagesInfo) == 0 {
+		jsonError(w, http.StatusNotFound, "Book not found or empty")
+		return
 	}
 
-	if targetPage == "" {
+	if pageNumber < 1 || int(pageNumber) > len(pagesInfo) {
 		jsonError(w, http.StatusNotFound, "Page not found")
 		return
 	}
+
+	targetPage := pagesInfo[pageNumber-1].Name
+	targetMediaType := pagesInfo[pageNumber-1].MediaType
 
 	// 图片参数判断
 	qualityStr := r.URL.Query().Get("q")
@@ -59,7 +62,7 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	heightStr := r.URL.Query().Get("h")
 
 	// 构建缓存 Key：bookId-pageNumber-width-height-format-q
-	cacheKey := fmt.Sprintf("%s-%d-%s-%s-%s-%s", bookID, pageNumber, widthStr, heightStr, format, qualityStr)
+	cacheKey := fmt.Sprintf("%d-%d-%s-%s-%s-%s", bookID, pageNumber, widthStr, heightStr, format, qualityStr)
 
 	// 如果是请求特定画幅或经过缩放的，则进行缓存查找以极度加速。原始图片则不查内存以防 OOM。
 	isThumbnailReq := widthStr != "" || heightStr != ""
@@ -72,13 +75,6 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	archiver, err := parser.OpenArchive(book.Path)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
-		return
-	}
-	defer archiver.Close()
 
 	data, err := archiver.ReadPage(targetPage)
 	if err != nil {
@@ -124,7 +120,11 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	bookID := chi.URLParam(r, "bookId")
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
 
 	book, err := c.store.GetBook(ctx, bookID)
 	if err != nil {

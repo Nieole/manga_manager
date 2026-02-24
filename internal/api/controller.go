@@ -4,19 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
@@ -174,11 +176,19 @@ func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, libs)
 }
 
+func parseID(r *http.Request, param string) (int64, error) {
+	return strconv.ParseInt(chi.URLParam(r, param), 10, 64)
+}
+
 func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	libraryID := chi.URLParam(r, "libraryId")
+	libraryID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
 
-	err := c.store.DeleteLibrary(ctx, libraryID)
+	err = c.store.DeleteLibrary(ctx, libraryID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete library")
 		return
@@ -204,9 +214,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	newLibID := uuid.New().String()
 	libParams := database.CreateLibraryParams{
-		ID:   newLibID,
 		Name: req.Name,
 		Path: req.Path,
 	}
@@ -220,7 +228,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	// 触发异步扫描任务，不阻塞前端 API 响应
 	go func() {
 		// 使用独立 context 避免跟随请求自动取消，创建库默认全量
-		err := c.scanner.ScanLibrary(context.Background(), newLibID, req.Path, false)
+		err := c.scanner.ScanLibrary(context.Background(), fmt.Sprintf("%d", createdLib.ID), req.Path, false)
 		if err != nil {
 			// 在生产环境需要接入日志中心打印
 			_ = err
@@ -232,7 +240,11 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	libID := chi.URLParam(r, "libraryId")
+	libID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
 
 	lib, err := c.store.GetLibrary(ctx, libID)
 	if err != nil {
@@ -241,8 +253,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		// 点击重扫由于需要重推书籍属性甚至修复旧元数据，赋予强扫标识进行 Upsert
-		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, true)
+		err := c.scanner.ScanLibrary(context.Background(), fmt.Sprintf("%d", lib.ID), lib.Path, true)
 		if err != nil {
 			_ = err
 		}
@@ -253,7 +264,11 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	libID := chi.URLParam(r, "libraryId")
+	libID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
 
 	series, err := c.store.ListSeriesByLibrary(ctx, libID)
 	if err != nil {
@@ -268,7 +283,11 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 }
 
 func (c *Controller) getSeriesInfo(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "seriesId")
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
 	series, err := c.store.GetSeries(r.Context(), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Series not found")
@@ -295,7 +314,11 @@ type UpdateSeriesRequest struct {
 }
 
 func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "seriesId")
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
 
 	var req UpdateSeriesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -303,7 +326,7 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
+	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
 		_, err := q.UpdateSeriesMetadata(r.Context(), database.UpdateSeriesMetadataParams{
 			Title:        sql.NullString{String: req.Title, Valid: req.Title != ""},
 			Summary:      sql.NullString{String: req.Summary, Valid: req.Summary != ""},
@@ -311,7 +334,7 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 			Status:       sql.NullString{String: req.Status, Valid: req.Status != ""},
 			Rating:       sql.NullFloat64{Float64: req.Rating, Valid: req.Rating > 0},
 			Language:     sql.NullString{String: req.Language, Valid: req.Language != ""},
-			LockedFields: req.LockedFields,
+			LockedFields: sql.NullString{String: req.LockedFields, Valid: true},
 			ID:           seriesID,
 		})
 		if err != nil {
@@ -324,7 +347,7 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 				if strings.TrimSpace(t) == "" {
 					continue
 				}
-				if inserted, err := q.UpsertTag(r.Context(), database.UpsertTagParams{ID: uuid.New().String(), Name: t}); err == nil {
+				if inserted, err := q.UpsertTag(r.Context(), t); err == nil {
 					_ = q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
 				}
 			}
@@ -336,7 +359,7 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 				if strings.TrimSpace(a.Name) == "" {
 					continue
 				}
-				if inserted, err := q.UpsertAuthor(r.Context(), database.UpsertAuthorParams{ID: uuid.New().String(), Name: a.Name, Role: a.Role}); err == nil {
+				if inserted, err := q.UpsertAuthor(r.Context(), database.UpsertAuthorParams{Name: a.Name, Role: a.Role}); err == nil {
 					_ = q.LinkSeriesAuthor(r.Context(), database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID})
 				}
 			}
@@ -356,7 +379,11 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) getSeriesTags(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "seriesId")
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
 	tags, err := c.store.GetTagsForSeries(r.Context(), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get tags")
@@ -366,7 +393,11 @@ func (c *Controller) getSeriesTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) getSeriesAuthors(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "seriesId")
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
 	authors, err := c.store.GetAuthorsForSeries(r.Context(), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get authors")
@@ -401,7 +432,11 @@ func (c *Controller) getAllAuthors(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	seriesID := chi.URLParam(r, "seriesId")
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
 
 	books, err := c.store.ListBooksBySeries(ctx, seriesID)
 	if err != nil {
@@ -417,7 +452,11 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	bookID := chi.URLParam(r, "bookId")
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
 
 	book, err := c.store.GetBook(ctx, bookID)
 	if err != nil {
@@ -430,7 +469,11 @@ func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	bookID := chi.URLParam(r, "bookId")
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
 
 	nextBook, err := c.store.GetNextBookInSeries(ctx, bookID)
 	if err != nil {
@@ -447,7 +490,11 @@ type UpdateProgressRequest struct {
 
 func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	bookID := chi.URLParam(r, "bookId")
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
 
 	var req UpdateProgressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -507,17 +554,44 @@ func (c *Controller) sseHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	bookID := chi.URLParam(r, "bookId")
-
-	pages, err := c.store.ListBookPages(ctx, bookID)
+	bookID, err := parseID(r, "bookId")
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch pages")
+		jsonError(w, http.StatusBadRequest, "Invalid Book ID")
 		return
 	}
 
-	if pages == nil {
-		pages = []database.BookPage{}
+	book, err := c.store.GetBook(ctx, bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Book not found")
+		return
 	}
+
+	arc, err := parser.OpenArchive(book.Path)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to open archive")
+		return
+	}
+	defer arc.Close()
+
+	pagesInfo, err := arc.GetPages()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
+		return
+	}
+
+	type PageResponse struct {
+		Number int64  `json:"number"`
+		URL    string `json:"url"`
+	}
+
+	var pages []PageResponse
+	for i := range pagesInfo {
+		pages = append(pages, PageResponse{
+			Number: int64(i + 1),
+			URL:    fmt.Sprintf("/api/books/page/%d/%d", bookID, i+1),
+		})
+	}
+
 	jsonResponse(w, http.StatusOK, pages)
 }
 

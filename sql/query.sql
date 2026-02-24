@@ -1,6 +1,6 @@
 -- name: CreateLibrary :one
-INSERT INTO libraries (id, name, path)
-VALUES (?, ?, ?)
+INSERT INTO libraries (name, path)
+VALUES (?, ?)
 RETURNING *;
 
 -- name: GetLibrary :one
@@ -14,9 +14,9 @@ DELETE FROM libraries WHERE id = ?;
 
 -- name: CreateSeries :one
 INSERT INTO series (
-    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count, locked_fields
+    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -36,10 +36,10 @@ ORDER BY s.name;
 
 -- name: CreateBook :one
 INSERT INTO books (
-    id, series_id, library_id, name, path, size, file_modified_at, 
+    series_id, library_id, name, path, size, file_modified_at, 
     volume, title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -52,16 +52,7 @@ SELECT * FROM books WHERE path = ? LIMIT 1;
 -- name: ListBooksBySeries :many
 SELECT * FROM books WHERE series_id = ? ORDER BY sort_number, name;
 
--- name: CreateBookPage :one
-INSERT INTO book_pages (
-    id, book_id, file_name, media_type, number, size, width, height
-) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?
-)
-RETURNING *;
 
--- name: ListBookPages :many
-SELECT * FROM book_pages WHERE book_id = ? ORDER BY number;
 
 -- name: ListBooksByLibrary :many
 SELECT id, path, file_modified_at, size, cover_path FROM books WHERE library_id = ?;
@@ -69,15 +60,14 @@ SELECT id, path, file_modified_at, size, cover_path FROM books WHERE library_id 
 -- name: DeleteBookByPath :exec
 DELETE FROM books WHERE path = ?;
 
--- name: DeletePagesByBookPath :exec
-DELETE FROM book_pages WHERE book_id IN (SELECT id FROM books WHERE path = ?);
 
--- name: UpsertBookByPath :exec
+
+-- name: UpsertBookByPath :one
 INSERT INTO books (
-    id, series_id, library_id, name, path, size, file_modified_at, 
+    series_id, library_id, name, path, size, file_modified_at, 
     volume, title, summary, number, sort_number, page_count, cover_path
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     series_id = excluded.series_id,
@@ -92,18 +82,19 @@ ON CONFLICT(path) DO UPDATE SET
     sort_number = excluded.sort_number,
     page_count = excluded.page_count,
     cover_path = excluded.cover_path,
-    updated_at = CURRENT_TIMESTAMP;
+    updated_at = CURRENT_TIMESTAMP
+RETURNING *;
 
 -- name: UpdateBookProgress :exec
 UPDATE books 
 SET last_read_page = ?, last_read_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: UpsertSeriesByPath :exec
+-- name: UpsertSeriesByPath :one
 INSERT INTO series (
-    id, library_id, name, path, title, summary, publisher, status, rating, language, book_count, locked_fields
+    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     library_id = excluded.library_id,
@@ -114,9 +105,9 @@ ON CONFLICT(path) DO UPDATE SET
     status = excluded.status,
     rating = excluded.rating,
     language = excluded.language,
-    book_count = excluded.book_count,
     locked_fields = excluded.locked_fields,
-    updated_at = CURRENT_TIMESTAMP;
+    updated_at = CURRENT_TIMESTAMP
+RETURNING *;
 
 -- name: UpdateSeriesMetadata :one
 UPDATE series
@@ -133,7 +124,7 @@ WHERE id = ?
 RETURNING *;
 
 -- name: UpsertTag :one
-INSERT INTO tags (id, name) VALUES (?, ?)
+INSERT INTO tags (name) VALUES (?)
 ON CONFLICT(name) DO UPDATE SET name = excluded.name
 RETURNING *;
 
@@ -162,7 +153,7 @@ JOIN series_tags st ON t.id = st.tag_id
 WHERE st.series_id = ? ORDER BY t.name;
 
 -- name: UpsertAuthor :one
-INSERT INTO authors (id, name, role) VALUES (?, ?, ?)
+INSERT INTO authors (name, role) VALUES (?, ?)
 ON CONFLICT(name, role) DO UPDATE SET name = excluded.name, role=excluded.role
 RETURNING *;
 
