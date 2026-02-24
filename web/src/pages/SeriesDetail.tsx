@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { useParams, Link, useNavigate, useOutletContext } from 'react-router-dom';
+import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
 import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock } from 'lucide-react';
 
 interface NullString {
@@ -53,6 +53,7 @@ interface Book {
 export default function SeriesDetail() {
     const { seriesId } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
     const [seriesInfo, setSeriesInfo] = useState<Series | null>(null);
     const [tags, setTags] = useState<MetaTag[]>([]);
@@ -69,6 +70,15 @@ export default function SeriesDetail() {
 
     // 当前如果是阅读某个卷下的内容，记录被选中的卷名
     const [selectedVolume, setSelectedVolume] = useState<string | null>(null);
+
+    // 解析 URL 上的 volume 返回参
+    useEffect(() => {
+        const queryParams = new URLSearchParams(location.search);
+        const vol = queryParams.get('volume');
+        if (vol) {
+            setSelectedVolume(vol);
+        }
+    }, [location.search]);
 
     useEffect(() => {
         if (seriesId) {

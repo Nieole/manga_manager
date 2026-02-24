@@ -45,6 +45,7 @@ export default function BookReader() {
     const [nextBookId, setNextBookId] = useState<number | null>(null);
     const nextBookIdRef = useRef<number | null>(null);
     const [bookTitle, setBookTitle] = useState<string>('');
+    const [bookVolume, setBookVolume] = useState<string>('');
 
     // 回传阅读进度
     const updateProgress = useCallback((pageNumber: number) => {
@@ -75,6 +76,7 @@ export default function BookReader() {
             const lastPage = infoRes.data.last_read_page?.Valid ? infoRes.data.last_read_page.Int64 : 1;
             seriesIdRef.current = infoRes.data.series_id || null;
             setBookTitle(infoRes.data.title?.Valid ? infoRes.data.title.String : infoRes.data.name);
+            setBookVolume(infoRes.data.volume || '');
             // 获取下一本
             axios.get(`/api/book-next/${bookId}`)
                 .then(res => { setNextBookId(res.data.id); nextBookIdRef.current = res.data.id; })
@@ -205,7 +207,17 @@ export default function BookReader() {
             <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
                 <div className="flex items-center justify-between w-full relative">
                     <button
-                        onClick={() => seriesIdRef.current ? navigate(`/series/${seriesIdRef.current}`) : navigate('/')}
+                        onClick={() => {
+                            if (seriesIdRef.current) {
+                                if (bookVolume) {
+                                    navigate(`/series/${seriesIdRef.current}?volume=${encodeURIComponent(bookVolume)}`);
+                                } else {
+                                    navigate(`/series/${seriesIdRef.current}`);
+                                }
+                            } else {
+                                navigate('/');
+                            }
+                        }}
                         className="text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
                     >
                         <ArrowLeft className="w-5 h-5 mr-2" />
