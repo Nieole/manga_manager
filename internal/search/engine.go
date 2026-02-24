@@ -83,7 +83,9 @@ func (e *Engine) Search(queryStr string, limit int) (*bleve.SearchResult, error)
 	defer e.mu.RUnlock()
 
 	// 使用支持模糊或包含切词的 Query String
-	query := bleve.NewQueryStringQuery(queryStr)
+	// 补充两侧星号支持任意位置的子串模糊匹配（这对于中文切词和连载名截断非常重要）
+	qStr := "*" + queryStr + "*"
+	query := bleve.NewQueryStringQuery(qStr)
 	searchRequest := bleve.NewSearchRequest(query)
 	searchRequest.Size = limit
 	// 要求返回哪些切片字段

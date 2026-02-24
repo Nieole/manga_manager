@@ -94,11 +94,11 @@ export default function Layout() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleScanLibrary = async (e: React.MouseEvent, id: string) => {
+    const handleScanLibrary = async (e: React.MouseEvent, id: string, force: boolean = false) => {
         e.preventDefault();
         e.stopPropagation();
         try {
-            await axios.post(`/api/libraries/${id}/scan`);
+            await axios.post(`/api/libraries/${id}/scan?force=${force}`);
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
         } catch (error) {
             console.error("Trigger scan failed", error);
@@ -199,9 +199,23 @@ export default function Layout() {
                                         <span className="truncate">{lib.name}</span>
                                     </div>
                                     <button
-                                        onClick={(e) => handleScanLibrary(e, lib.id)}
+                                        onClick={(e) => handleScanLibrary(e, String(lib.id), false)}
                                         className="text-gray-500 hover:text-komgaPrimary opacity-0 group-hover:opacity-100 transition-opacity p-1"
                                         title="重新扫描库内的变动"
+                                    >
+                                        <RefreshCw className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            if (confirm("强制重新扫描将会耗费更长时间并全量读取覆盖所有元数据。是否继续？")) {
+                                                handleScanLibrary(e, String(lib.id), true);
+                                            } else {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                            }
+                                        }}
+                                        className="text-gray-500 hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                                        title="强制全量读取"
                                     >
                                         <RefreshCw className="w-4 h-4" />
                                     </button>

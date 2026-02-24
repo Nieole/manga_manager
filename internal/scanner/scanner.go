@@ -327,6 +327,12 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			return
 		}
 
+		type indexTask struct {
+			book       database.Book
+			seriesName string
+		}
+		var tasks []indexTask
+
 		err := s.store.ExecTx(ctx, func(q *database.Queries) error {
 			for _, res := range batch {
 				// 获取或创建/更新归属系列
@@ -446,7 +452,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 
 				if s.engine != nil {
-					_ = s.engine.IndexBook(actualBook, res.seriesName)
+					tasks = append(tasks, indexTask{book: actualBook, seriesName: res.seriesName})
 				}
 			}
 			return nil
@@ -455,6 +461,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		if err != nil {
 			log.Printf("Batch ingest transaction failed: %v", err)
 		} else {
+			// 在事务外并发建立检索，释放数据库写锁，解救由于更新阅读进度卡死的连接
+			for _, t := range tasks {
+				_ = s.engine.IndexBook(t.book, t.seriesName)
+			}
 			log.Printf("Successfully ingested batch of %d books.", len(batch))
 			if s.onBatchIngested != nil {
 				s.onBatchIngested("batch_inserted")

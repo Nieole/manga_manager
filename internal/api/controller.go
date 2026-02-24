@@ -254,8 +254,11 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	forceParam := r.URL.Query().Get("force")
+	isForce := forceParam == "true"
+
 	go func() {
-		err := c.scanner.ScanLibrary(context.Background(), fmt.Sprintf("%d", lib.ID), lib.Path, true)
+		err := c.scanner.ScanLibrary(context.Background(), fmt.Sprintf("%d", lib.ID), lib.Path, isForce)
 		if err != nil {
 			_ = err
 		}
