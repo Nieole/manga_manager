@@ -69,10 +69,24 @@ func (e *Engine) IndexBook(book database.Book, seriesName string) error {
 	}
 
 	doc := BookDocument{
-		ID:         fmt.Sprintf("%d", book.ID),
+		ID:         fmt.Sprintf("b_%d", book.ID),
 		Type:       "book",
 		Title:      title,
 		SeriesName: seriesName,
+	}
+
+	return e.index.Index(doc.ID, doc)
+}
+
+func (e *Engine) IndexSeries(id int64, name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	doc := BookDocument{
+		ID:         fmt.Sprintf("s_%d", id),
+		Type:       "series",
+		Title:      name,
+		SeriesName: name,
 	}
 
 	return e.index.Index(doc.ID, doc)
@@ -82,20 +96,28 @@ func (e *Engine) Search(queryStr string, target string, limit int) (*bleve.Searc
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	// 使用自带分词切片的 MatchQuery 进行宽泛匹配
-	query := bleve.NewMatchQuery(queryStr)
-	query.Fuzziness = 1 // 允许1个字符的模糊编辑距离，增加容错
+	// 使用带分词的短语匹配，要求词语顺序与字面一致，防止"N和S"被过度容错拆解成包含单字的高分文档
+	query := bleve.NewMatchPhraseQuery(queryStr)
+
+	var searchRequest *bleve.SearchRequest
 
 	if target == "series" {
 		query.SetField("series_name")
+		typeQuery := bleve.NewMatchQuery("series")
+		typeQuery.SetField("type")
+		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(query, typeQuery))
 	} else if target == "book" || target == "title" {
 		query.SetField("title")
+		typeQuery := bleve.NewMatchQuery("book")
+		typeQuery.SetField("type")
+		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(query, typeQuery))
+	} else {
+		searchRequest = bleve.NewSearchRequest(query)
 	}
 
-	searchRequest := bleve.NewSearchRequest(query)
 	searchRequest.Size = limit
 	// 要求返回哪些切片字段
-	searchRequest.Fields = []string{"id", "title", "series_name"}
+	searchRequest.Fields = []string{"id", "title", "series_name", "type"}
 
 	return e.index.Search(searchRequest)
 }

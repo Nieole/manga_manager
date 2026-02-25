@@ -481,8 +481,13 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			log.Printf("Batch ingest transaction failed: %v", err)
 		} else {
 			// 在事务外并发建立检索，释放数据库写锁，解救由于更新阅读进度卡死的连接
+			seriesIdxMap := make(map[int64]string)
 			for _, t := range tasks {
 				_ = s.engine.IndexBook(t.book, t.seriesName)
+				seriesIdxMap[t.book.SeriesID] = t.seriesName
+			}
+			for sid, sname := range seriesIdxMap {
+				_ = s.engine.IndexSeries(sid, sname)
 			}
 			log.Printf("Successfully ingested batch of %d books.", len(batch))
 			if s.onBatchIngested != nil {
