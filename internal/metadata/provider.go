@@ -1,8 +1,6 @@
 package metadata
 
-import (
-	"context"
-)
+import "context"
 
 // Provider 定义了一个外部元数据服务需要实现的标准获取接口
 type Provider interface {
@@ -10,7 +8,7 @@ type Provider interface {
 	FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error)
 }
 
-// 供多数据源统一返回的内部使用的数据承载对象
+// SeriesMetadata 供多数据源统一返回的内部使用的数据承载对象
 type SeriesMetadata struct {
 	Title     string
 	Summary   string
@@ -19,31 +17,5 @@ type SeriesMetadata struct {
 	CoverURL  string
 	Rating    float64
 	Tags      []string
-	SourceID  int // 外部数据源条目 ID
-}
-
-// ============================================================
-// LLMProvider (保留原有 stub)
-// ============================================================
-
-type LLMProvider struct {
-	Endpoint string
-	APIKey   string
-}
-
-func NewLLMProvider(endpoint, apiKey string) *LLMProvider {
-	return &LLMProvider{
-		Endpoint: endpoint,
-		APIKey:   apiKey,
-	}
-}
-
-func (l *LLMProvider) Name() string {
-	return "LLM Reasoner"
-}
-
-func (l *LLMProvider) FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error) {
-	// 结合 LLM SDK（比如 github.com/sashabaranov/go-openai）
-	// prompt 例子: "您是一个漫画数据整理专家，请根据书名或可能的别名【{title}】推荐其作者、出版商及简介摘要..."
-	return nil, nil
+	SourceID  int // 外部数据源条目 ID（如 Bangumi subject ID）
 }

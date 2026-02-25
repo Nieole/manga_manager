@@ -78,6 +78,32 @@ export default function SeriesDetail() {
     // 当前如果是阅读某个卷下的内容，记录被选中的卷名
     const [selectedVolume, setSelectedVolume] = useState<string | null>(null);
     const [isScraping, setIsScraping] = useState(false);
+    const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
+    const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+    const showToast = (text: string, type: 'success' | 'error') => {
+        setToastMsg({ text, type });
+        setTimeout(() => setToastMsg(null), 3000);
+    };
+
+    const handleScrape = async (providerKey: string) => {
+        if (!seriesId) return;
+        setScrapeMenuOpen(false);
+        setIsScraping(true);
+        try {
+            const res = await axios.post(`/api/series/${seriesId}/scrape`, { provider: providerKey });
+            if (res.data.scraped) {
+                showToast(`[${res.data.provider}] ${res.data.message}`, 'success');
+                setTimeout(() => window.location.reload(), 1500); // 留点时间看提示
+            } else {
+                showToast(res.data.message || '未找到匹配的元数据', 'error');
+            }
+        } catch (err: any) {
+            showToast('刮削失败: ' + (err.response?.data?.error || err.message), 'error');
+        } finally {
+            setIsScraping(false);
+        }
+    };
 
     // 解析 URL 上的 volume 返回参
     useEffect(() => {
@@ -435,34 +461,46 @@ export default function SeriesDetail() {
                                     >
                                         <Edit className="w-5 h-5" />
                                     </button>
-                                    <button
-                                        onClick={async () => {
-                                            if (!seriesId) return;
-                                            setIsScraping(true);
-                                            try {
-                                                const res = await axios.post(`/api/series/${seriesId}/scrape`);
-                                                if (res.data.scraped) {
-                                                    alert(res.data.message);
-                                                    window.location.reload();
-                                                } else {
-                                                    alert(res.data.message || '未找到匹配的元数据');
-                                                }
-                                            } catch (err: any) {
-                                                alert('刮削失败: ' + (err.response?.data?.error || err.message));
-                                            } finally {
-                                                setIsScraping(false);
-                                            }
-                                        }}
-                                        disabled={isScraping}
-                                        className="ml-1 p-1.5 text-gray-500 hover:text-green-400 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="从 Bangumi 刮削元数据"
-                                    >
-                                        {isScraping ? (
-                                            <div className="w-5 h-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
-                                        ) : (
-                                            <Download className="w-5 h-5" />
+                                    <div className="relative ml-1">
+                                        <button
+                                            onClick={() => setScrapeMenuOpen(!scrapeMenuOpen)}
+                                            disabled={isScraping}
+                                            className="p-1.5 text-gray-500 hover:text-green-400 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="刮削元数据"
+                                        >
+                                            {isScraping ? (
+                                                <div className="w-5 h-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
+                                            ) : (
+                                                <Download className="w-5 h-5" />
+                                            )}
+                                        </button>
+
+                                        {scrapeMenuOpen && !isScraping && (
+                                            <>
+                                                <div
+                                                    className="fixed inset-0 z-40"
+                                                    onClick={() => setScrapeMenuOpen(false)}
+                                                />
+                                                <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                    <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
+                                                        选择刮削来源
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleScrape('bangumi')}
+                                                        className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                    >
+                                                        Bangumi (推荐)
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleScrape('ollama')}
+                                                        className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-700"
+                                                    >
+                                                        Ollama LLM
+                                                    </button>
+                                                </div>
+                                            </>
                                         )}
-                                    </button>
+                                    </div>
                                 </>
                             )}
                         </div>
@@ -765,6 +803,17 @@ export default function SeriesDetail() {
                     {books.length === 0 && (
                         <div className="text-center py-20 text-gray-500">此系列尚未包含任何资源</div>
                     )}
+                </div>
+            )}
+
+            {/* Toast 通知 */}
+            {toastMsg && (
+                <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
+                    <div className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 border ${toastMsg.type === 'success' ? 'bg-green-900 border-green-700 text-green-100' : 'bg-red-900 border-red-700 text-red-100'
+                        }`}>
+                        <span className="text-sm font-medium">{toastMsg.text}</span>
+                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
+                    </div>
                 </div>
             )}
         </div>

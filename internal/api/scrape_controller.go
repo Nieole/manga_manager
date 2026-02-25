@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +14,27 @@ import (
 	"manga-manager/internal/metadata"
 )
 
+// getProvider 根据名称返回对应的 Provider 实例
+func (c *Controller) getProvider(name string) metadata.Provider {
+	switch strings.ToLower(name) {
+	case "ollama", "llm":
+		endpoint := c.config.Ollama.Endpoint
+		model := c.config.Ollama.Model
+		return metadata.NewOllamaProvider(endpoint, model)
+	default:
+		return metadata.NewBangumiProvider()
+	}
+}
+
+// availableProviders 返回可用的 provider 列表供前端展示
+func (c *Controller) listProviders(w http.ResponseWriter, r *http.Request) {
+	providers := []map[string]string{
+		{"id": "bangumi", "name": "Bangumi", "description": "从 Bangumi 番组计划获取漫画元数据"},
+		{"id": "ollama", "name": "Ollama LLM", "description": "通过本地 Ollama 大语言模型推理生成元数据"},
+	}
+	jsonResponse(w, http.StatusOK, providers)
+}
+
 func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -20,20 +42,23 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider := metadata.NewBangumiProvider()
+	providerName := r.URL.Query().Get("provider")
+	provider := c.getProvider(providerName)
+
 	result, err := provider.FetchSeriesMetadata(r.Context(), query)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("Bangumi search failed: %v", err))
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s search failed: %v", provider.Name(), err))
 		return
 	}
 
 	if result == nil {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"found": false, "message": "未在 Bangumi 上找到匹配的条目"})
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"found": false, "message": fmt.Sprintf("未在 %s 上找到匹配的条目", provider.Name())})
 		return
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"found":     true,
+		"provider":  provider.Name(),
 		"title":     result.Title,
 		"summary":   result.Summary,
 		"publisher": result.Publisher,
@@ -50,6 +75,14 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// 从请求体解析 provider 参数
+	var reqBody struct {
+		Provider string `json:"provider"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&reqBody)
+
+	provider := c.getProvider(reqBody.Provider)
+
 	series, err := c.store.GetSeries(r.Context(), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Series not found")
@@ -62,17 +95,16 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		searchTitle = series.Title.String
 	}
 
-	provider := metadata.NewBangumiProvider()
 	result, err := provider.FetchSeriesMetadata(r.Context(), searchTitle)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("Bangumi 刮削失败: %v", err))
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 刮削失败: %v", provider.Name(), err))
 		return
 	}
 
 	if result == nil {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"scraped": false,
-			"message": fmt.Sprintf("在 Bangumi 上未找到与『%s』匹配的条目", searchTitle),
+			"message": fmt.Sprintf("在 %s 上未找到与『%s』匹配的条目", provider.Name(), searchTitle),
 		})
 		return
 	}
@@ -87,10 +119,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 
 	// 在事务内更新系列元数据
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		// 准备更新参数，尊重已锁定的字段
-		updateParams := database.UpdateSeriesMetadataParams{
-			ID: seriesID,
-		}
+		updateParams := database.UpdateSeriesMetadataParams{ID: seriesID}
 
 		if !lockedSet["title"] && result.Title != "" {
 			updateParams.Title = sql.NullString{String: result.Title, Valid: true}
@@ -126,34 +155,39 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 			return err
 		}
 
-		// 刮削到的标签自动追加（不清空已有的，做增量合并）
-		if len(result.Tags) > 0 {
-			for _, tagName := range result.Tags {
-				if strings.TrimSpace(tagName) == "" {
-					continue
-				}
-				if inserted, err := q.UpsertTag(r.Context(), tagName); err == nil {
-					_ = q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
-				}
+		// 刮削到的标签自动追加（增量合并）
+		for _, tagName := range result.Tags {
+			if strings.TrimSpace(tagName) == "" {
+				continue
+			}
+			if inserted, err := q.UpsertTag(r.Context(), tagName); err == nil {
+				_ = q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
 			}
 		}
 
-		// 添加 Bangumi 链接（先检查是否已存在，避免重复）
+		// 添加来源链接（先检查是否已存在，避免重复）
 		if result.SourceID > 0 {
-			existingLinks, _ := q.GetLinksForSeries(r.Context(), seriesID)
-			hasBangumiLink := false
-			for _, l := range existingLinks {
-				if l.Name == "Bangumi" {
-					hasBangumiLink = true
-					break
-				}
+			linkName := provider.Name()
+			linkURL := ""
+			if strings.ToLower(reqBody.Provider) != "ollama" && strings.ToLower(reqBody.Provider) != "llm" {
+				linkURL = fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
 			}
-			if !hasBangumiLink {
-				_, _ = q.LinkSeriesLink(r.Context(), database.LinkSeriesLinkParams{
-					SeriesID: seriesID,
-					Name:     "Bangumi",
-					Url:      fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID),
-				})
+			if linkURL != "" {
+				existingLinks, _ := q.GetLinksForSeries(r.Context(), seriesID)
+				hasLink := false
+				for _, l := range existingLinks {
+					if l.Name == linkName {
+						hasLink = true
+						break
+					}
+				}
+				if !hasLink {
+					_, _ = q.LinkSeriesLink(r.Context(), database.LinkSeriesLinkParams{
+						SeriesID: seriesID,
+						Name:     linkName,
+						Url:      linkURL,
+					})
+				}
 			}
 		}
 
@@ -165,11 +199,11 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 刮削成功后返回最新的系列信息
 	updated, _ := c.store.GetSeries(r.Context(), seriesID)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"scraped":  true,
-		"message":  fmt.Sprintf("成功从 Bangumi 刮削了『%s』的元数据", result.Title),
+		"provider": provider.Name(),
+		"message":  fmt.Sprintf("成功从 %s 刮削了『%s』的元数据", provider.Name(), result.Title),
 		"series":   updated,
 		"metadata": result,
 	})
@@ -179,13 +213,20 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// 从请求体读取 provider 参数
+	var reqBody struct {
+		Provider string `json:"provider"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&reqBody)
+
+	provider := c.getProvider(reqBody.Provider)
+
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list libraries")
 		return
 	}
 
-	// 收集所有系列
 	type seriesEntry struct {
 		ID   int64
 		Name string
@@ -211,22 +252,22 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 在后台异步执行批量刮削
 	totalCount := len(allSeries)
+	providerName := provider.Name()
+
 	go func() {
-		provider := metadata.NewBangumiProvider()
 		successCount := 0
 
 		for i, entry := range allSeries {
-			log.Printf("[批量刮削] (%d/%d) 正在刮削: %s", i+1, totalCount, entry.Name)
+			log.Printf("[批量刮削·%s] (%d/%d) 正在刮削: %s", providerName, i+1, totalCount, entry.Name)
 
 			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
 			if err != nil {
-				log.Printf("[批量刮削] 刮削『%s』失败: %v", entry.Name, err)
+				log.Printf("[批量刮削·%s] 刮削『%s』失败: %v", providerName, entry.Name, err)
 				continue
 			}
 			if result == nil {
-				log.Printf("[批量刮削] 未找到『%s』的 Bangumi 条目", entry.Name)
+				log.Printf("[批量刮削·%s] 未找到『%s』的条目", providerName, entry.Name)
 				continue
 			}
 
@@ -235,7 +276,6 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 				continue
 			}
 
-			// 解析已锁定字段
 			lockedSet := make(map[string]bool)
 			if series.LockedFields.Valid && series.LockedFields.String != "" {
 				for _, f := range strings.Split(series.LockedFields.String, ",") {
@@ -275,7 +315,6 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 					return err
 				}
 
-				// 标签增量合并
 				for _, tagName := range result.Tags {
 					if strings.TrimSpace(tagName) == "" {
 						continue
@@ -285,21 +324,22 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 					}
 				}
 
-				// Bangumi 链接
-				if result.SourceID > 0 {
+				// 来源链接
+				if result.SourceID > 0 && strings.ToLower(reqBody.Provider) != "ollama" && strings.ToLower(reqBody.Provider) != "llm" {
+					linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
 					existingLinks, _ := q.GetLinksForSeries(context.Background(), entry.ID)
-					hasBangumiLink := false
+					hasLink := false
 					for _, l := range existingLinks {
-						if l.Name == "Bangumi" {
-							hasBangumiLink = true
+						if l.Name == providerName {
+							hasLink = true
 							break
 						}
 					}
-					if !hasBangumiLink {
+					if !hasLink {
 						_, _ = q.LinkSeriesLink(context.Background(), database.LinkSeriesLinkParams{
 							SeriesID: entry.ID,
-							Name:     "Bangumi",
-							Url:      fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID),
+							Name:     providerName,
+							Url:      linkURL,
 						})
 					}
 				}
@@ -309,19 +349,20 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 
 			if err == nil {
 				successCount++
-				log.Printf("[批量刮削] 成功刮削: %s (Bangumi ID: %d)", result.Title, result.SourceID)
+				log.Printf("[批量刮削·%s] 成功刮削: %s", providerName, result.Title)
 			}
 
-			// 简单的速率限制，避免频繁请求 Bangumi API
+			// 速率限制
 			time.Sleep(500 * time.Millisecond)
 		}
 
-		log.Printf("[批量刮削] 全部完成！成功 %d/%d", successCount, totalCount)
+		log.Printf("[批量刮削·%s] 全部完成！成功 %d/%d", providerName, successCount, totalCount)
 		c.PublishEvent("scrape_complete")
 	}()
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"message": fmt.Sprintf("批量刮削任务已异步启动，共 %d 个系列将逐一处理，请关注控制台日志", totalCount),
-		"total":   totalCount,
+		"message":  fmt.Sprintf("批量刮削(%s)已异步启动，共 %d 个系列将逐一处理", providerName, totalCount),
+		"total":    totalCount,
+		"provider": providerName,
 	})
 }

@@ -17,6 +17,19 @@ const Settings: React.FC = () => {
     const [config, setConfig] = useState<Config | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: React.ReactNode;
+        isDanger?: boolean;
+        onConfirm: () => void;
+    } | null>(null);
+    const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+    const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+        setToastMsg({ text, type });
+        setTimeout(() => setToastMsg(null), 3000);
+    };
 
     useEffect(() => {
         fetchConfig();
@@ -38,46 +51,87 @@ const Settings: React.FC = () => {
         setSaving(true);
         try {
             const res = await axios.post('/api/system/config', config);
-            alert(res.data.message || "配置已保存，请重启应用以生效");
+            showToast(res.data.message || "配置已保存，请重启应用以生效", 'success');
         } catch (error) {
             console.error(error);
-            alert("保存失败");
+            showToast("保存失败", 'error');
         } finally {
             setSaving(false);
         }
     };
 
-    const handleRebuildIndex = async () => {
-        if (!confirm("这将会彻底擦除并重建所有搜索分词缓存，可能导致暂时的搜索瘫痪。确定执行？")) return;
-        try {
-            const res = await axios.post('/api/system/rebuild-index');
-            alert(res.data.message || "重建指令已发出");
-        } catch (error) {
-            console.error(error);
-            alert("执行重建失败");
-        }
+    const handleRebuildIndex = () => {
+        setConfirmModal({
+            isOpen: true,
+            title: "全量重建搜索索引",
+            message: "这将会彻底擦除并重建所有搜索分词缓存，可能导致暂时的搜索瘫痪。确定执行？",
+            isDanger: true,
+            onConfirm: async () => {
+                setConfirmModal(null);
+                try {
+                    const res = await axios.post('/api/system/rebuild-index');
+                    showToast(res.data.message || "重建指令已发出", 'success');
+                } catch (error) {
+                    console.error(error);
+                    showToast("执行重建失败", 'error');
+                }
+            }
+        });
     };
 
-    const handleRebuildThumbnails = async () => {
-        if (!confirm("这将会清空全站缩略图并重新跑一遍全量提取，这会极大消耗 CPU 并引起磁盘 IO 风暴！确认执行？")) return;
-        try {
-            const res = await axios.post('/api/system/rebuild-thumbnails');
-            alert(res.data.message || "重抽指令已发出");
-        } catch (error) {
-            console.error(error);
-            alert("执行重建失败");
-        }
+    const handleRebuildThumbnails = () => {
+        setConfirmModal({
+            isOpen: true,
+            title: "全量重构封面图",
+            message: "这将会清空全站缩略图并重新跑一遍全量提取，这会极大消耗 CPU 并引起磁盘 IO 风暴！确认执行？",
+            isDanger: true,
+            onConfirm: async () => {
+                setConfirmModal(null);
+                try {
+                    const res = await axios.post('/api/system/rebuild-thumbnails');
+                    showToast(res.data.message || "重抽指令已发出", 'success');
+                } catch (error) {
+                    console.error(error);
+                    showToast("执行重构失败", 'error');
+                }
+            }
+        });
     };
 
-    const handleBatchScrape = async () => {
-        if (!confirm("将按顺序对所有漫画系列向 Bangumi 发起元数据刮削，这可能需要较长时间。确定执行？")) return;
-        try {
-            const res = await axios.post('/api/system/batch-scrape');
-            alert(res.data.message || "批量刮削已启动");
-        } catch (error) {
-            console.error(error);
-            alert("执行批量刮削失败");
-        }
+    const handleBatchScrape = () => {
+        setConfirmModal({
+            isOpen: true,
+            title: "批量刮削元数据",
+            message: (
+                <div className="space-y-4">
+                    <p className="text-sm text-gray-300">将按顺序对所有漫画系列发起元数据刮削，这可能需要较长时间。</p>
+                    <div>
+                        <label className="block text-gray-400 mb-2 text-sm">选择数据来源：</label>
+                        <select
+                            id="batch-scrape-provider"
+                            className="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 outline-none focus:border-komgaPrimary transition"
+                            defaultValue="bangumi"
+                        >
+                            <option value="bangumi">Bangumi (推荐)</option>
+                            <option value="ollama">Ollama LLM</option>
+                        </select>
+                    </div>
+                </div>
+            ),
+            isDanger: false,
+            onConfirm: async () => {
+                const selectElement = document.getElementById('batch-scrape-provider') as HTMLSelectElement;
+                const provider = selectElement?.value || 'bangumi';
+                setConfirmModal(null);
+                try {
+                    const res = await axios.post('/api/system/batch-scrape', { provider });
+                    showToast(res.data.message || "批量刮削已后台异步启动", 'success');
+                } catch (error) {
+                    console.error(error);
+                    showToast("执行批量刮削失败", 'error');
+                }
+            }
+        });
     };
 
     if (loading) {
@@ -259,6 +313,45 @@ const Settings: React.FC = () => {
                     <span>{saving ? '正在复写...' : '保存更改并提示重启'}</span>
                 </button>
             </div>
+
+            {/* Confirm Modal */}
+            {confirmModal && confirmModal.isOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setConfirmModal(null)} />
+                    <div className="relative bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
+                        <h3 className="text-xl font-semibold text-white mb-4">{confirmModal.title}</h3>
+                        <div className="text-gray-300 mb-8">{confirmModal.message}</div>
+                        <div className="flex justify-end space-x-3">
+                            <button
+                                onClick={() => setConfirmModal(null)}
+                                className="px-5 py-2.5 rounded-lg text-gray-400 font-medium hover:text-white hover:bg-white/10 transition-colors"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={confirmModal.onConfirm}
+                                className={`px-5 py-2.5 rounded-lg text-white font-medium transition-colors shadow-lg ${confirmModal.isDanger
+                                        ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20'
+                                        : 'bg-komgaPrimary hover:bg-komgaPrimary/90 shadow-komgaPrimary/20'
+                                    }`}
+                            >
+                                确认执行
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Toast 通知 */}
+            {toastMsg && (
+                <div className="fixed bottom-24 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
+                    <div className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 border ${toastMsg.type === 'success' ? 'bg-green-900 border-green-700 text-green-100' : 'bg-red-900 border-red-700 text-red-100'
+                        }`}>
+                        <span className="text-sm font-medium">{toastMsg.text}</span>
+                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

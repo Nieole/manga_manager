@@ -24,6 +24,10 @@ type Config struct {
 		Workers         int    `yaml:"workers" json:"workers"`
 		ThumbnailFormat string `yaml:"thumbnail_format" json:"thumbnail_format"`
 	} `yaml:"scanner" json:"scanner"`
+	Ollama struct {
+		Endpoint string `yaml:"endpoint" json:"endpoint"`
+		Model    string `yaml:"model" json:"model"`
+	} `yaml:"ollama" json:"ollama"`
 }
 
 func LoadConfig(path string) (*Config, error) {

@@ -88,13 +88,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/events", c.sseHandler)
 		r.Get("/search", c.searchBooks)
-		r.Get("/metadata/search", c.searchMetadata)
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Delete("/libraries/{libraryId}", c.deleteLibrary)
 		r.Get("/browse-dirs", c.browseDirs)
-
+		r.Get("/metadata/search", c.searchMetadata)
+		r.Get("/metadata/providers", c.listProviders)
 		r.Route("/series", func(r chi.Router) {
 			r.Get("/search", c.searchSeriesPaged)
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
