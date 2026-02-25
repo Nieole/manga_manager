@@ -501,7 +501,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		batch = batch[:0]
 	}
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
