@@ -53,18 +53,12 @@ type scanResult struct {
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
-func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath string, force bool) error {
-	libIDInt, err := strconv.ParseInt(libraryID, 10, 64)
-	if err != nil {
-		return fmt.Errorf("invalid library ID: %v", err)
-	}
-	log.Printf("Starting ultra-fast concurrent scan for library [%d] at: %s (force=%v)", libIDInt, rootPath, force)
-
+func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
 	// Step 0: Pre-load cache for increment scanning
 	bookCache := make(map[string]time.Time)
 
 	if !force {
-		existingBooks, err := s.store.ListBooksByLibrary(ctx, libIDInt)
+		existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
 		if err != nil {
 			log.Printf("Failed to load existing books cache: %v", err)
 			return err
@@ -88,7 +82,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath st
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, libIDInt, rootPath, job, results)
+				s.workerProcess(ctx, libraryID, rootPath, job, results)
 			}
 		}()
 	}
@@ -99,7 +93,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID string, rootPath st
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, libIDInt, results)
+		s.ingestResults(ctx, libraryID, results)
 	}()
 
 	// 第 1 阶段：发现者 (The Discoverer)

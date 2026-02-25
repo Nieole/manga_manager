@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
@@ -27,6 +30,8 @@ type Controller struct {
 	imageCache *lru.Cache[string, []byte]
 	scanner    *scanner.Scanner
 	engine     *search.Engine
+	config     *config.Config
+	configPath string
 
 	// SSE Broker
 	clients        map[chan string]bool
@@ -35,13 +40,15 @@ type Controller struct {
 	messages       chan string
 }
 
-func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine) *Controller {
+func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Config, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
 	c := &Controller{
 		store:          store,
 		imageCache:     cache,
 		scanner:        scan,
 		engine:         engine,
+		config:         cfg,
+		configPath:     cfgPath,
 		clients:        make(map[chan string]bool),
 		newClients:     make(chan chan string),
 		defunctClients: make(chan chan string),
@@ -109,6 +116,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Route("/authors", func(r chi.Router) {
 			r.Get("/all", c.getAllAuthors)
 		})
+
+		r.Get("/system/config", c.getSystemConfig)
+		r.Post("/system/config", c.updateSystemConfig)
 
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)
@@ -230,7 +240,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	// 触发异步扫描任务，不阻塞前端 API 响应
 	go func() {
 		// 使用独立 context 避免跟随请求自动取消，创建库默认全量
-		err := c.scanner.ScanLibrary(context.Background(), fmt.Sprintf("%d", createdLib.ID), req.Path, false)
+		err := c.scanner.ScanLibrary(context.Background(), createdLib.ID, req.Path, false)
 		if err != nil {
 			// 在生产环境需要接入日志中心打印
 			_ = err
@@ -258,7 +268,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 	isForce := forceParam == "true"
 
 	go func() {
-		err := c.scanner.ScanLibrary(context.Background(), fmt.Sprintf("%d", lib.ID), lib.Path, isForce)
+		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, isForce)
 		if err != nil {
 			_ = err
 		}
@@ -754,4 +764,32 @@ func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, result)
+}
+
+func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, http.StatusOK, c.config)
+}
+
+func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
+	var newCfg config.Config
+	if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid configuration format")
+		return
+	}
+
+	data, err := yaml.Marshal(&newCfg)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to marshal configuration")
+		return
+	}
+
+	if err := os.WriteFile(c.configPath, data, 0644); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to write configuration file")
+		return
+	}
+
+	// Update in-memory config
+	*c.config = newCfg
+
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "Configuration saved. Please restart the server for all changes to take effect."})
 }

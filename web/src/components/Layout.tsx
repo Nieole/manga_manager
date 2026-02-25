@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -38,7 +38,7 @@ export default function Layout() {
             return;
         }
         const timer = setTimeout(() => {
-            axios.get(`/api/search?q=${encodeURIComponent(searchQuery)}`)
+            axios.get(`/ api / search ? q = ${encodeURIComponent(searchQuery)} `)
                 .then(res => {
                     if (res.data && res.data.hits) {
                         setSearchResults(res.data.hits);
@@ -58,7 +58,7 @@ export default function Layout() {
                 setLibraries(res.data);
                 if (res.data.length > 0 && !libId && location.pathname === '/') {
                     // 仅在首页时默认跳转到第一个资源库，避免覆盖 /series/xxx 等子路由
-                    navigate(`/library/${res.data[0].id}`, { replace: true });
+                    navigate(`/ library / ${res.data[0].id} `, { replace: true });
                 }
                 setLoading(false);
             })
@@ -98,7 +98,7 @@ export default function Layout() {
         e.preventDefault();
         e.stopPropagation();
         try {
-            await axios.post(`/api/libraries/${id}/scan?force=${force}`);
+            await axios.post(`/ api / libraries / ${id}/scan?force=${force}`);
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
         } catch (error) {
             console.error("Trigger scan failed", error);
@@ -144,6 +144,14 @@ export default function Layout() {
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full bg-gray-900 border border-gray-800 rounded-full pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 focus:border-transparent transition-all placeholder-gray-500"
                         />
+                        {searchQuery && (
+                            <button
+                                onClick={() => { setSearchQuery(""); setSearchResults([]); }}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
                     </div>
                     {searchResults.length > 0 && searchQuery.trim() !== "" && (
                         <div className="absolute top-full mt-2 w-full bg-komgaSurface border border-gray-800 rounded-lg shadow-2xl overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -162,8 +170,14 @@ export default function Layout() {
                     )}
                 </div>
 
-                <div className="text-sm text-gray-400 w-64 text-right hidden lg:block">
-                    Superfast & 100% Go Native
+                <div className="w-64 flex justify-end">
+                    <Link
+                        to="/settings"
+                        className="p-2 text-gray-400 hover:text-komgaPrimary hover:bg-gray-800 rounded-full transition-colors"
+                        title="系统设定"
+                    >
+                        <SettingsIcon className="w-6 h-6" />
+                    </Link>
                 </div>
             </header>
 
