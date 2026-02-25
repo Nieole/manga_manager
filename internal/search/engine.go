@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search/query"
 )
 
 type Engine struct {
@@ -104,26 +105,63 @@ func (e *Engine) Search(queryStr string, target string, limit int) (*bleve.Searc
 	cleanQuery := strings.ToLower(strings.TrimSpace(queryStr))
 	qWild := bleve.NewWildcardQuery("*" + cleanQuery + "*")
 
+	// 针对诸如 "NS" -> "N和S" 的缩写/跳字查询
+	var qAcronym *query.ConjunctionQuery
+	runes := []rune(cleanQuery)
+	if len(runes) > 1 && len(runes) <= 6 && !strings.Contains(cleanQuery, " ") {
+		var charQueries []query.Query
+		for _, ch := range runes {
+			charQueries = append(charQueries, bleve.NewMatchQuery(string(ch)))
+		}
+		qAcronym = bleve.NewConjunctionQuery(charQueries...)
+	}
+
 	var searchRequest *bleve.SearchRequest
 
-	if target == "series" {
-		qPhrase.SetField("series_name")
-		qWild.SetField("series_name")
-		baseQuery := bleve.NewDisjunctionQuery(qPhrase, qWild)
+	buildBaseQuery := func(field string) query.Query {
+		qPhrase.SetField(field)
+		qWild.SetField(field)
+		if qAcronym != nil {
+			for _, child := range qAcronym.Conjuncts {
+				if m, ok := child.(*query.MatchQuery); ok {
+					m.SetField(field)
+				}
+			}
+			return bleve.NewDisjunctionQuery(qPhrase, qWild, qAcronym)
+		}
+		return bleve.NewDisjunctionQuery(qPhrase, qWild)
+	}
 
+	if target == "series" {
+		baseQuery := buildBaseQuery("series_name")
 		typeQuery := bleve.NewMatchQuery("series")
 		typeQuery.SetField("type")
 		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(baseQuery, typeQuery))
 	} else if target == "book" || target == "title" {
-		qPhrase.SetField("title")
-		qWild.SetField("title")
-		baseQuery := bleve.NewDisjunctionQuery(qPhrase, qWild)
-
+		baseQuery := buildBaseQuery("title")
 		typeQuery := bleve.NewMatchQuery("book")
 		typeQuery.SetField("type")
 		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(baseQuery, typeQuery))
 	} else {
-		baseQuery := bleve.NewDisjunctionQuery(qPhrase, qWild)
+		var baseQuery query.Query
+		if qAcronym != nil {
+			var qs []query.Query
+			qs = append(qs, bleve.NewMatchPhraseQuery(queryStr))
+			qs = append(qs, bleve.NewWildcardQuery("*"+cleanQuery+"*"))
+			for _, child := range qAcronym.Conjuncts {
+				qs = append(qs, child) // wait, qAcronym is already a query so we append it directly
+			}
+			// Let's just create a new one safely
+			qGlobalAcronym := bleve.NewConjunctionQuery()
+			for _, child := range qAcronym.Conjuncts {
+				if m, ok := child.(*query.MatchQuery); ok {
+					qGlobalAcronym.AddQuery(bleve.NewMatchQuery(m.Match))
+				}
+			}
+			baseQuery = bleve.NewDisjunctionQuery(bleve.NewMatchPhraseQuery(queryStr), bleve.NewWildcardQuery("*"+cleanQuery+"*"), qGlobalAcronym)
+		} else {
+			baseQuery = bleve.NewDisjunctionQuery(bleve.NewMatchPhraseQuery(queryStr), bleve.NewWildcardQuery("*"+cleanQuery+"*"))
+		}
 		searchRequest = bleve.NewSearchRequest(baseQuery)
 	}
 
