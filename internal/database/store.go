@@ -19,7 +19,7 @@ type Store interface {
 	Close() error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
-	SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string, letter string) ([]SearchSeriesPagedRow, int, error)
+	SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 }
 
 type SearchSeriesPagedRow struct {
@@ -30,6 +30,7 @@ type SearchSeriesPagedRow struct {
 	ActualBookCount int             `json:"actual_book_count"`
 	ReadCount       int             `json:"read_count"`
 	TotalPages      sql.NullFloat64 `json:"total_pages"`
+	IsFavorite      bool            `json:"is_favorite"`
 }
 
 type sqlStore struct {
@@ -104,17 +105,18 @@ func Migrate(dbPath string) error {
 }
 
 // SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页
-func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, limit, offset int, tags, authors []string, status string, letter string) ([]SearchSeriesPagedRow, int, error) {
+func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
 	// 构建动态 SQL
 	baseQuery := `
-		SELECT 
+		SELECT
             s.*,
             (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
             GROUP_CONCAT(DISTINCT t.name) as tags_string,
             COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
             COUNT(DISTINCT b.id) as actual_book_count,
             COALESCE(SUM(CASE WHEN b.last_read_page > 1 THEN b.last_read_page ELSE 0 END), 0) as read_count,
-            SUM(b.page_count) as total_pages
+            SUM(b.page_count) as total_pages,
+            EXISTS(SELECT 1 FROM user_series_favorites usf WHERE usf.series_id = s.id AND usf.user_id = ?) AS is_favorite
 		FROM series s
 		LEFT JOIN series_tags st ON s.id = st.series_id
 		LEFT JOIN tags t ON st.tag_id = t.id
@@ -133,7 +135,7 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, limit
 		WHERE s.library_id = ?
 	`
 
-	args := []interface{}{libraryID}
+	args := []interface{}{0, libraryID} // Placeholder for user_id in EXISTS, then libraryID
 
 	if status != "" {
 		baseQuery += ` AND s.status = ?`
@@ -188,13 +190,32 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, limit
 
 	// Fetch Total Count First
 	var total int
-	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	err := s.db.QueryRowContext(ctx, countQuery, args[1:]...).Scan(&total) // Exclude the user_id placeholder for count query
 	if err != nil {
 		return nil, 0, err
 	}
 
+	// Dynamic Ordering
+	orderClause := "s.name ASC" // Default Sort fallback
+	switch sortBy {
+	case "rating_desc":
+		orderClause = "s.rating DESC, s.name ASC"
+	case "books_desc":
+		orderClause = "actual_book_count DESC, s.name ASC"
+	case "books_asc":
+		orderClause = "actual_book_count ASC, s.name ASC"
+	case "created_desc":
+		orderClause = "s.created_at DESC, s.name ASC"
+	case "updated_desc":
+		orderClause = "s.updated_at DESC, s.name ASC"
+	case "name_desc":
+		orderClause = "s.name DESC"
+	case "favorite_desc":
+		orderClause = "is_favorite DESC, s.name ASC"
+	}
+
 	// Finish Paginated Query
-	baseQuery += ` GROUP BY s.id ORDER BY s.name LIMIT ? OFFSET ?`
+	baseQuery += fmt.Sprintf(` GROUP BY s.id ORDER BY %s LIMIT ? OFFSET ?`, orderClause)
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, baseQuery, args...)

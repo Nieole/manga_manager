@@ -292,7 +292,7 @@ const Settings: React.FC = () => {
                             className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
                         >
                             <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" />
-                            <span>批量 Bangumi 元数据刮削</span>
+                            <span>批量元数据刮削</span>
                         </button>
                     </div>
                 </div>
@@ -331,8 +331,8 @@ const Settings: React.FC = () => {
                             <button
                                 onClick={confirmModal.onConfirm}
                                 className={`px-5 py-2.5 rounded-lg text-white font-medium transition-colors shadow-lg ${confirmModal.isDanger
-                                        ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20'
-                                        : 'bg-komgaPrimary hover:bg-komgaPrimary/90 shadow-komgaPrimary/20'
+                                    ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20'
+                                    : 'bg-komgaPrimary hover:bg-komgaPrimary/90 shadow-komgaPrimary/20'
                                     }`}
                             >
                                 确认执行

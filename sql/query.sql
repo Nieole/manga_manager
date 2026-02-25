@@ -1,6 +1,6 @@
 -- name: CreateLibrary :one
-INSERT INTO libraries (name, path)
-VALUES (?, ?)
+INSERT INTO libraries (name, path, auto_scan, scan_interval, scan_formats)
+VALUES (?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetLibrary :one
@@ -92,9 +92,9 @@ WHERE id = ?;
 
 -- name: UpsertSeriesByPath :one
 INSERT INTO series (
-    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields
+    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, is_favorite
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     library_id = excluded.library_id,
@@ -119,6 +119,7 @@ SET
     rating = ?,
     language = ?,
     locked_fields = ?,
+    is_favorite = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
@@ -194,3 +195,25 @@ DELETE FROM series_links WHERE series_id = ?;
 
 -- name: GetLinksForSeries :many
 SELECT * FROM series_links WHERE series_id = ? ORDER BY id ASC;
+
+-- name: GetRecentReadSeries :many
+WITH RankedBooks AS (
+    SELECT 
+        b.series_id,
+        b.id AS book_id,
+        b.last_read_at,
+        b.last_read_page,
+        ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY b.last_read_at DESC) as rn
+    FROM books b
+    WHERE b.last_read_at IS NOT NULL
+)
+SELECT 
+    s.*,
+    rb.book_id AS recent_book_id,
+    rb.last_read_at,
+    rb.last_read_page,
+    (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
+FROM series s
+JOIN RankedBooks rb ON s.id = rb.series_id AND rb.rn = 1
+ORDER BY rb.last_read_at DESC
+LIMIT ?;

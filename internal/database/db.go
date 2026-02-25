@@ -72,6 +72,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getNextBookInSeriesStmt, err = db.PrepareContext(ctx, getNextBookInSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextBookInSeries: %w", err)
 	}
+	if q.getRecentReadSeriesStmt, err = db.PrepareContext(ctx, getRecentReadSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query GetRecentReadSeries: %w", err)
+	}
 	if q.getSeriesStmt, err = db.PrepareContext(ctx, getSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeries: %w", err)
 	}
@@ -203,6 +206,11 @@ func (q *Queries) Close() error {
 	if q.getNextBookInSeriesStmt != nil {
 		if cerr := q.getNextBookInSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getNextBookInSeriesStmt: %w", cerr)
+		}
+	}
+	if q.getRecentReadSeriesStmt != nil {
+		if cerr := q.getRecentReadSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getRecentReadSeriesStmt: %w", cerr)
 		}
 	}
 	if q.getSeriesStmt != nil {
@@ -340,6 +348,7 @@ type Queries struct {
 	getLibraryStmt           *sql.Stmt
 	getLinksForSeriesStmt    *sql.Stmt
 	getNextBookInSeriesStmt  *sql.Stmt
+	getRecentReadSeriesStmt  *sql.Stmt
 	getSeriesStmt            *sql.Stmt
 	getSeriesByLibraryStmt   *sql.Stmt
 	getTagsForSeriesStmt     *sql.Stmt
@@ -378,6 +387,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getLibraryStmt:           q.getLibraryStmt,
 		getLinksForSeriesStmt:    q.getLinksForSeriesStmt,
 		getNextBookInSeriesStmt:  q.getNextBookInSeriesStmt,
+		getRecentReadSeriesStmt:  q.getRecentReadSeriesStmt,
 		getSeriesStmt:            q.getSeriesStmt,
 		getSeriesByLibraryStmt:   q.getSeriesByLibraryStmt,
 		getTagsForSeriesStmt:     q.getTagsForSeriesStmt,

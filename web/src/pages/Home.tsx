@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ImageIcon, ChevronLeft, ChevronRight, Heart } from 'lucide-react';
 
 interface NullString {
     String: string;
@@ -20,6 +20,7 @@ interface Series {
     actual_book_count: number;
     read_count: number;
     total_pages: { Float64: number, Valid: boolean };
+    is_favorite: boolean;
 }
 
 const PAGE_SIZE = 30;
@@ -34,6 +35,7 @@ export default function Home() {
     const [activeAuthor, setActiveAuthor] = useState<string | null>(null);
     const [activeStatus, setActiveStatus] = useState<string | null>(null);
     const [activeLetter, setActiveLetter] = useState<string | null>(null);
+    const [sortBy, setSortBy] = useState<string>('name_asc');
     const [page, setPage] = useState(1);
 
     const [allTags, setAllTags] = useState<{ name: string }[]>([]);
@@ -68,6 +70,7 @@ export default function Home() {
             if (activeAuthor) params.append('authors', activeAuthor);
             if (activeStatus) params.append('status', activeStatus);
             if (activeLetter) params.append('letter', activeLetter);
+            if (sortBy) params.append('sortBy', sortBy);
 
             axios.get(`/api/series/search?${params.toString()}`)
                 .then(res => {
@@ -105,6 +108,23 @@ export default function Home() {
                     <p className="text-gray-400 text-sm">
                         资源库返回 {totalSeries} 个结果
                     </p>
+                </div>
+                <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-400 font-medium">排序方式</span>
+                    <select
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value)}
+                        className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-none transition-colors cursor-pointer hover:border-gray-500"
+                    >
+                        <option value="name_asc">按名称排序 (A-Z)</option>
+                        <option value="name_desc">按名称排序 (Z-A)</option>
+                        <option value="created_desc">最新加入在先</option>
+                        <option value="updated_desc">最新更新连载在先</option>
+                        <option value="rating_desc">最高评分优先</option>
+                        <option value="books_desc">内容最多优先</option>
+                        <option value="books_asc">内容最少优先</option>
+                        <option value="favorite_desc">我的收藏置顶</option>
+                    </select>
                 </div>
             </div>
 
@@ -237,6 +257,11 @@ export default function Home() {
                                             <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md">
                                                 ★ {s.rating.Float64.toFixed(1)}
                                             </span>
+                                        )}
+                                        {s.is_favorite && (
+                                            <div className="ml-auto bg-black/70 p-1.5 rounded-full backdrop-blur border border-red-500/30 shadow-md">
+                                                <Heart className="w-3.5 h-3.5 fill-red-500 text-red-500" />
+                                            </div>
                                         )}
                                     </div>
                                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">

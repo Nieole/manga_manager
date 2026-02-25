@@ -25,6 +25,7 @@ type Querier interface {
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
+	GetRecentReadSeries(ctx context.Context, limit int64) ([]GetRecentReadSeriesRow, error)
 	GetSeries(ctx context.Context, id int64) (Series, error)
 	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
 	GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, error)

@@ -105,23 +105,35 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 }
 
 const createLibrary = `-- name: CreateLibrary :one
-INSERT INTO libraries (name, path)
-VALUES (?, ?)
-RETURNING id, name, path, created_at
+INSERT INTO libraries (name, path, auto_scan, scan_interval, scan_formats)
+VALUES (?, ?, ?, ?, ?)
+RETURNING id, name, path, auto_scan, scan_interval, scan_formats, created_at
 `
 
 type CreateLibraryParams struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	AutoScan     bool   `json:"auto_scan"`
+	ScanInterval int64  `json:"scan_interval"`
+	ScanFormats  string `json:"scan_formats"`
 }
 
 func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error) {
-	row := q.queryRow(ctx, q.createLibraryStmt, createLibrary, arg.Name, arg.Path)
+	row := q.queryRow(ctx, q.createLibraryStmt, createLibrary,
+		arg.Name,
+		arg.Path,
+		arg.AutoScan,
+		arg.ScanInterval,
+		arg.ScanFormats,
+	)
 	var i Library
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Path,
+		&i.AutoScan,
+		&i.ScanInterval,
+		&i.ScanFormats,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -133,7 +145,7 @@ INSERT INTO series (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at
+RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, is_favorite, path, created_at, updated_at
 `
 
 type CreateSeriesParams struct {
@@ -174,6 +186,7 @@ func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Ser
 		&i.Rating,
 		&i.Language,
 		&i.LockedFields,
+		&i.IsFavorite,
 		&i.Path,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -353,7 +366,7 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 }
 
 const getLibrary = `-- name: GetLibrary :one
-SELECT id, name, path, created_at FROM libraries WHERE id = ? LIMIT 1
+SELECT id, name, path, auto_scan, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
@@ -363,6 +376,9 @@ func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
 		&i.ID,
 		&i.Name,
 		&i.Path,
+		&i.AutoScan,
+		&i.ScanInterval,
+		&i.ScanFormats,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -436,8 +452,94 @@ func (q *Queries) GetNextBookInSeries(ctx context.Context, id int64) (Book, erro
 	return i, err
 }
 
+const getRecentReadSeries = `-- name: GetRecentReadSeries :many
+WITH RankedBooks AS (
+    SELECT 
+        b.series_id,
+        b.id AS book_id,
+        b.last_read_at,
+        b.last_read_page,
+        ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY b.last_read_at DESC) as rn
+    FROM books b
+    WHERE b.last_read_at IS NOT NULL
+)
+SELECT 
+    s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.is_favorite, s.path, s.created_at, s.updated_at,
+    rb.book_id AS recent_book_id,
+    rb.last_read_at,
+    rb.last_read_page,
+    (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
+FROM series s
+JOIN RankedBooks rb ON s.id = rb.series_id AND rb.rn = 1
+ORDER BY rb.last_read_at DESC
+LIMIT ?
+`
+
+type GetRecentReadSeriesRow struct {
+	ID           int64           `json:"id"`
+	LibraryID    int64           `json:"library_id"`
+	Name         string          `json:"name"`
+	Title        sql.NullString  `json:"title"`
+	Summary      sql.NullString  `json:"summary"`
+	Publisher    sql.NullString  `json:"publisher"`
+	Status       sql.NullString  `json:"status"`
+	Rating       sql.NullFloat64 `json:"rating"`
+	Language     sql.NullString  `json:"language"`
+	LockedFields sql.NullString  `json:"locked_fields"`
+	IsFavorite   bool            `json:"is_favorite"`
+	Path         string          `json:"path"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	RecentBookID int64           `json:"recent_book_id"`
+	LastReadAt   sql.NullTime    `json:"last_read_at"`
+	LastReadPage sql.NullInt64   `json:"last_read_page"`
+	CoverPath    sql.NullString  `json:"cover_path"`
+}
+
+func (q *Queries) GetRecentReadSeries(ctx context.Context, limit int64) ([]GetRecentReadSeriesRow, error) {
+	rows, err := q.query(ctx, q.getRecentReadSeriesStmt, getRecentReadSeries, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecentReadSeriesRow
+	for rows.Next() {
+		var i GetRecentReadSeriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Publisher,
+			&i.Status,
+			&i.Rating,
+			&i.Language,
+			&i.LockedFields,
+			&i.IsFavorite,
+			&i.Path,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RecentBookID,
+			&i.LastReadAt,
+			&i.LastReadPage,
+			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSeries = `-- name: GetSeries :one
-SELECT id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at FROM series WHERE id = ? LIMIT 1
+SELECT id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, is_favorite, path, created_at, updated_at FROM series WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
@@ -454,6 +556,7 @@ func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
 		&i.Rating,
 		&i.Language,
 		&i.LockedFields,
+		&i.IsFavorite,
 		&i.Path,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -463,7 +566,7 @@ func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
 
 const getSeriesByLibrary = `-- name: GetSeriesByLibrary :many
 SELECT 
-    s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, 
+    s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.is_favorite, s.path, s.created_at, s.updated_at, 
     GROUP_CONCAT(DISTINCT t.name) as tags_string,
     COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
     COUNT(DISTINCT b.id) as actual_book_count,
@@ -489,6 +592,7 @@ type GetSeriesByLibraryRow struct {
 	Rating          sql.NullFloat64 `json:"rating"`
 	Language        sql.NullString  `json:"language"`
 	LockedFields    sql.NullString  `json:"locked_fields"`
+	IsFavorite      bool            `json:"is_favorite"`
 	Path            string          `json:"path"`
 	CreatedAt       time.Time       `json:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`
@@ -519,6 +623,7 @@ func (q *Queries) GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]Ge
 			&i.Rating,
 			&i.Language,
 			&i.LockedFields,
+			&i.IsFavorite,
 			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -710,7 +815,7 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book
 }
 
 const listLibraries = `-- name: ListLibraries :many
-SELECT id, name, path, created_at FROM libraries ORDER BY name
+SELECT id, name, path, auto_scan, scan_interval, scan_formats, created_at FROM libraries ORDER BY name
 `
 
 func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
@@ -726,6 +831,9 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 			&i.ID,
 			&i.Name,
 			&i.Path,
+			&i.AutoScan,
+			&i.ScanInterval,
+			&i.ScanFormats,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -742,7 +850,7 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 }
 
 const listSeriesByLibrary = `-- name: ListSeriesByLibrary :many
-SELECT s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, 
+SELECT s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.is_favorite, s.path, s.created_at, s.updated_at, 
        (SELECT b.cover_path 
         FROM books b 
         WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
@@ -764,6 +872,7 @@ type ListSeriesByLibraryRow struct {
 	Rating       sql.NullFloat64 `json:"rating"`
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
+	IsFavorite   bool            `json:"is_favorite"`
 	Path         string          `json:"path"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
@@ -790,6 +899,7 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]L
 			&i.Rating,
 			&i.Language,
 			&i.LockedFields,
+			&i.IsFavorite,
 			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -834,9 +944,10 @@ SET
     rating = ?,
     language = ?,
     locked_fields = ?,
+    is_favorite = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at
+RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, is_favorite, path, created_at, updated_at
 `
 
 type UpdateSeriesMetadataParams struct {
@@ -847,6 +958,7 @@ type UpdateSeriesMetadataParams struct {
 	Rating       sql.NullFloat64 `json:"rating"`
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
+	IsFavorite   bool            `json:"is_favorite"`
 	ID           int64           `json:"id"`
 }
 
@@ -859,6 +971,7 @@ func (q *Queries) UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMeta
 		arg.Rating,
 		arg.Language,
 		arg.LockedFields,
+		arg.IsFavorite,
 		arg.ID,
 	)
 	var i Series
@@ -873,6 +986,7 @@ func (q *Queries) UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMeta
 		&i.Rating,
 		&i.Language,
 		&i.LockedFields,
+		&i.IsFavorite,
 		&i.Path,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -985,9 +1099,9 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 
 const upsertSeriesByPath = `-- name: UpsertSeriesByPath :one
 INSERT INTO series (
-    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields
+    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, is_favorite
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     library_id = excluded.library_id,
@@ -1000,7 +1114,7 @@ ON CONFLICT(path) DO UPDATE SET
     language = excluded.language,
     locked_fields = excluded.locked_fields,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at
+RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, is_favorite, path, created_at, updated_at
 `
 
 type UpsertSeriesByPathParams struct {
@@ -1014,6 +1128,7 @@ type UpsertSeriesByPathParams struct {
 	Rating       sql.NullFloat64 `json:"rating"`
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
+	IsFavorite   bool            `json:"is_favorite"`
 }
 
 func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error) {
@@ -1028,6 +1143,7 @@ func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPath
 		arg.Rating,
 		arg.Language,
 		arg.LockedFields,
+		arg.IsFavorite,
 	)
 	var i Series
 	err := row.Scan(
@@ -1041,6 +1157,7 @@ func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPath
 		&i.Rating,
 		&i.Language,
 		&i.LockedFields,
+		&i.IsFavorite,
 		&i.Path,
 		&i.CreatedAt,
 		&i.UpdatedAt,
