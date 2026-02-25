@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Settings as SettingsIcon, Save, Server, Database, FolderOpen, HardDrive, AlertTriangle, RefreshCw, Image as ImageIcon } from 'lucide-react';
+import { Settings as SettingsIcon, Save, Server, Database, FolderOpen, HardDrive, AlertTriangle, RefreshCw, Image as ImageIcon, Download } from 'lucide-react';
 
 interface Config {
     server: { port: number };
@@ -66,6 +66,17 @@ const Settings: React.FC = () => {
         } catch (error) {
             console.error(error);
             alert("执行重建失败");
+        }
+    };
+
+    const handleBatchScrape = async () => {
+        if (!confirm("将按顺序对所有漫画系列向 Bangumi 发起元数据刮削，这可能需要较长时间。确定执行？")) return;
+        try {
+            const res = await axios.post('/api/system/batch-scrape');
+            alert(res.data.message || "批量刮削已启动");
+        } catch (error) {
+            console.error(error);
+            alert("执行批量刮削失败");
         }
     };
 
@@ -221,6 +232,13 @@ const Settings: React.FC = () => {
                         >
                             <ImageIcon className="w-4 h-4 group-hover:scale-110 transition-transform duration-300" />
                             <span>清空并重装所有封面图</span>
+                        </button>
+                        <button
+                            onClick={handleBatchScrape}
+                            className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
+                        >
+                            <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" />
+                            <span>批量 Bangumi 元数据刮削</span>
                         </button>
                     </div>
                 </div>

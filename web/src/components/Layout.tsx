@@ -24,6 +24,7 @@ export default function Layout() {
     const [browseDirs, setBrowseDirs] = useState<any[]>([]);
     const [browseCurrent, setBrowseCurrent] = useState('');
     const [browseParent, setBrowseParent] = useState('');
+    const [browseDrives, setBrowseDrives] = useState<any[]>([]);
 
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -323,7 +324,7 @@ export default function Layout() {
                                             onClick={() => {
                                                 setBrowsing(true);
                                                 axios.get('/api/browse-dirs')
-                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); })
+                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); })
                                                     .catch(() => { });
                                             }}
                                             className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
@@ -344,10 +345,25 @@ export default function Layout() {
                                                 </div>
                                             </div>
                                             <div className="max-h-48 overflow-y-auto">
+                                                {browseDrives.length > 0 && (
+                                                    <div className="px-3 py-2 flex flex-wrap gap-1 border-b border-gray-700">
+                                                        {browseDrives.map((drv: any) => (
+                                                            <button key={drv.path} type="button" onClick={() => {
+                                                                axios.get(`/api/browse-dirs?path=${encodeURIComponent(drv.path)}`)
+                                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
+                                                            }}
+                                                                className={`px-2 py-1 text-xs rounded transition-colors ${browseCurrent.startsWith(drv.path) || browseCurrent.startsWith(drv.name)
+                                                                        ? 'bg-komgaPrimary text-white'
+                                                                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                                                                    }`}
+                                                            >{drv.name}</button>
+                                                        ))}
+                                                    </div>
+                                                )}
                                                 {browseCurrent !== browseParent && (
                                                     <button type="button" onClick={() => {
                                                         axios.get(`/api/browse-dirs?path=${encodeURIComponent(browseParent)}`)
-                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); });
+                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
                                                     }} className="w-full text-left px-3 py-2 text-sm text-yellow-400 hover:bg-gray-800 transition-colors flex items-center">
                                                         ↑ ..
                                                     </button>
@@ -357,7 +373,7 @@ export default function Layout() {
                                                 ) : browseDirs.map((d: any) => (
                                                     <button key={d.path} type="button" onClick={() => {
                                                         axios.get(`/api/browse-dirs?path=${encodeURIComponent(d.path)}`)
-                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); });
+                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
                                                     }} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-komgaPrimary transition-colors flex items-center">
                                                         <FolderOpen className="w-4 h-4 mr-2 text-komgaPrimary/60" />{d.name}
                                                     </button>

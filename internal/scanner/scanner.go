@@ -376,15 +376,16 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				if !ok {
 					// 初次创建
 					createdSeries, err := q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
-						LibraryID: libIDInt,
-						Name:      res.seriesName,
-						Path:      res.seriesPath,
-						Title:     sql.NullString{String: res.seriesName, Valid: true},
-						Summary:   sql.NullString{String: rSummary, Valid: rSummary != ""},
-						Publisher: sql.NullString{String: rPublisher, Valid: rPublisher != ""},
-						Status:    sql.NullString{String: rStatus, Valid: rStatus != ""},
-						Rating:    sql.NullFloat64{Float64: rating, Valid: rating > 0},
-						Language:  sql.NullString{String: rLang, Valid: rLang != ""},
+						LibraryID:    libIDInt,
+						Name:         res.seriesName,
+						Path:         res.seriesPath,
+						Title:        sql.NullString{String: res.seriesName, Valid: true},
+						Summary:      sql.NullString{String: rSummary, Valid: rSummary != ""},
+						Publisher:    sql.NullString{String: rPublisher, Valid: rPublisher != ""},
+						Status:       sql.NullString{String: rStatus, Valid: rStatus != ""},
+						Rating:       sql.NullFloat64{Float64: rating, Valid: rating > 0},
+						Language:     sql.NullString{String: rLang, Valid: rLang != ""},
+						LockedFields: sql.NullString{String: "title", Valid: true},
 					})
 					if err != nil {
 						log.Printf("Failed to create/upsert series %q: %v", res.seriesName, err)
@@ -401,6 +402,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						if locks == nil {
 							locks = make(map[string]bool)
 						}
+						// 系列名默认始终锁定，防止被外部刮削覆盖
+						locks["title"] = true
 
 						// 若被锁定则沿用旧有库中的数据，不被更新的 NULL 覆盖掉
 						getStr := func(field string, newVal string) sql.NullString {

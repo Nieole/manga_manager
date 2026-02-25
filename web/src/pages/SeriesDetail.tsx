@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download } from 'lucide-react';
 
 interface NullString {
     String: string;
@@ -77,6 +77,7 @@ export default function SeriesDetail() {
 
     // 当前如果是阅读某个卷下的内容，记录被选中的卷名
     const [selectedVolume, setSelectedVolume] = useState<string | null>(null);
+    const [isScraping, setIsScraping] = useState(false);
 
     // 解析 URL 上的 volume 返回参
     useEffect(() => {
@@ -426,13 +427,43 @@ export default function SeriesDetail() {
                                 seriesInfo?.title?.Valid ? seriesInfo.title.String : (seriesInfo?.name || "系列总览")
                             )}
                             {!selectedVolume && seriesInfo && (
-                                <button
-                                    onClick={() => setIsEditing(true)}
-                                    className="ml-4 p-1.5 text-gray-500 hover:text-komgaPrimary hover:bg-komgaPrimary/10 rounded transition-colors"
-                                    title="编辑元数据"
-                                >
-                                    <Edit className="w-5 h-5" />
-                                </button>
+                                <>
+                                    <button
+                                        onClick={() => setIsEditing(true)}
+                                        className="ml-4 p-1.5 text-gray-500 hover:text-komgaPrimary hover:bg-komgaPrimary/10 rounded transition-colors"
+                                        title="编辑元数据"
+                                    >
+                                        <Edit className="w-5 h-5" />
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            if (!seriesId) return;
+                                            setIsScraping(true);
+                                            try {
+                                                const res = await axios.post(`/api/series/${seriesId}/scrape`);
+                                                if (res.data.scraped) {
+                                                    alert(res.data.message);
+                                                    window.location.reload();
+                                                } else {
+                                                    alert(res.data.message || '未找到匹配的元数据');
+                                                }
+                                            } catch (err: any) {
+                                                alert('刮削失败: ' + (err.response?.data?.error || err.message));
+                                            } finally {
+                                                setIsScraping(false);
+                                            }
+                                        }}
+                                        disabled={isScraping}
+                                        className="ml-1 p-1.5 text-gray-500 hover:text-green-400 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="从 Bangumi 刮削元数据"
+                                    >
+                                        {isScraping ? (
+                                            <div className="w-5 h-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
+                                        ) : (
+                                            <Download className="w-5 h-5" />
+                                        )}
+                                    </button>
+                                </>
                             )}
                         </div>
 

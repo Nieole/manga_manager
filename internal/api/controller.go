@@ -88,6 +88,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/events", c.sseHandler)
 		r.Get("/search", c.searchBooks)
+		r.Get("/metadata/search", c.searchMetadata)
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
@@ -99,6 +100,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
 			r.Get("/info/{seriesId}", c.getSeriesInfo)
 			r.Put("/info/{seriesId}", c.updateSeriesInfo)
+			r.Post("/{seriesId}/scrape", c.scrapeSeriesMetadata)
 			r.Get("/{seriesId}/tags", c.getSeriesTags)
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 			r.Get("/{seriesId}/links", c.getSeriesLinks)
@@ -121,6 +123,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
+		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
 
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)
@@ -759,14 +762,30 @@ func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
 		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
 	})
 
+	// Windows 盘符探测
+	var drives []DirEntry
+	if runtime.GOOS == "windows" {
+		for letter := 'A'; letter <= 'Z'; letter++ {
+			drivePath := string(letter) + ":\\"
+			if fi, err := os.Stat(drivePath); err == nil && fi.IsDir() {
+				drives = append(drives, DirEntry{
+					Name: string(letter) + ":",
+					Path: drivePath,
+				})
+			}
+		}
+	}
+
 	result := struct {
 		Current string     `json:"current"`
 		Parent  string     `json:"parent"`
 		Dirs    []DirEntry `json:"dirs"`
+		Drives  []DirEntry `json:"drives,omitempty"`
 	}{
 		Current: reqPath,
 		Parent:  filepath.Dir(reqPath),
 		Dirs:    dirs,
+		Drives:  drives,
 	}
 
 	if result.Dirs == nil {
