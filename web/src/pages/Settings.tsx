@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Settings as SettingsIcon, Save, Server, Database, FolderOpen, HardDrive } from 'lucide-react';
+import { Settings as SettingsIcon, Save, Server, Database, FolderOpen, HardDrive, AlertTriangle, RefreshCw, Image as ImageIcon } from 'lucide-react';
 
 interface Config {
     server: { port: number };
@@ -44,6 +44,28 @@ const Settings: React.FC = () => {
             alert("保存失败");
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleRebuildIndex = async () => {
+        if (!confirm("这将会彻底擦除并重建所有搜索分词缓存，可能导致暂时的搜索瘫痪。确定执行？")) return;
+        try {
+            const res = await axios.post('/api/system/rebuild-index');
+            alert(res.data.message || "重建指令已发出");
+        } catch (error) {
+            console.error(error);
+            alert("执行重建失败");
+        }
+    };
+
+    const handleRebuildThumbnails = async () => {
+        if (!confirm("这将会清空全站缩略图并重新跑一遍全量提取，这会极大消耗 CPU 并引起磁盘 IO 风暴！确认执行？")) return;
+        try {
+            const res = await axios.post('/api/system/rebuild-thumbnails');
+            alert(res.data.message || "重抽指令已发出");
+        } catch (error) {
+            console.error(error);
+            alert("执行重建失败");
         }
     };
 
@@ -172,6 +194,34 @@ const Settings: React.FC = () => {
                                 {p}
                             </div>
                         ))}
+                    </div>
+                </div>
+
+                {/* 高级与维护区 */}
+                <div className="bg-red-900/10 border border-red-900/40 rounded-xl p-6 shadow-sm mt-4">
+                    <div className="flex items-center space-x-2 mb-4 text-red-500">
+                        <AlertTriangle className="w-5 h-5" />
+                        <h2 className="text-lg font-semibold text-white">进阶危险维护操作</h2>
+                    </div>
+                    <p className="text-sm text-red-400 mb-6 max-w-2xl">
+                        这些操作将直接越过保护对底层进行物理级数据结构撕洗。请确认您深知这些操作背后的代价。重建期间应用可能假死。
+                    </p>
+                    <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                        <button
+                            onClick={handleRebuildIndex}
+                            className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
+                        >
+                            <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
+                            <span>全量重建搜索索引</span>
+                        </button>
+
+                        <button
+                            onClick={handleRebuildThumbnails}
+                            className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
+                        >
+                            <ImageIcon className="w-4 h-4 group-hover:scale-110 transition-transform duration-300" />
+                            <span>清空并重装所有封面图</span>
+                        </button>
                     </div>
                 </div>
             </div>

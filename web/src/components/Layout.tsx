@@ -73,7 +73,13 @@ export default function Layout() {
         setIsSearchModalOpen(false);
         setSearchQuery("");
         setSearchResults([]);
-        navigate(`/reader/${hit.id}`);
+
+        const isSeries = hit.fields?.type === 'series' || hit.id.startsWith('s_');
+        if (isSeries) {
+            navigate(`/series/${hit.id.replace('s_', '')}`);
+        } else {
+            navigate(`/reader/${hit.id.replace('b_', '')}`);
+        }
     };
 
     const handleSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -430,8 +436,15 @@ export default function Layout() {
                                         onMouseEnter={() => setSelectedIndex(index)}
                                         className={`flex flex-col px-4 py-3 cursor-pointer rounded-lg transition-colors ${index === selectedIndex ? 'bg-gray-800 border-l-2 border-komgaPrimary' : 'hover:bg-gray-800/50 border-l-2 border-transparent'}`}
                                     >
-                                        <div className="text-base font-medium text-white truncate">{hit.fields?.title || hit.id}</div>
-                                        <div className="text-xs text-komgaPrimary mt-1 truncate">{hit.fields?.series_name || "未知系列"} | 匹配度: {hit.score?.toFixed(2)}</div>
+                                        <div className="flex items-center space-x-2">
+                                            {hit.fields?.type === 'series' || hit.id.startsWith('s_') ? (
+                                                <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-wider shrink-0 border border-blue-500/30">系列</span>
+                                            ) : (
+                                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-wider shrink-0 border border-emerald-500/30">单册</span>
+                                            )}
+                                            <div className="text-base font-medium text-white truncate">{hit.fields?.title || hit.id}</div>
+                                        </div>
+                                        <div className="text-xs text-komgaPrimary mt-1 truncate pl-11">{hit.fields?.series_name || "未知系列"} | 匹配度: {hit.score?.toFixed(2)}</div>
                                     </div>
                                 ))
                             ) : searchQuery.trim() !== "" ? (

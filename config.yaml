@@ -6,3 +6,6 @@ library:
     paths: []
 cache:
     dir: ./data/cache
+scanner:
+    workers: 0
+    thumbnail_format: avif

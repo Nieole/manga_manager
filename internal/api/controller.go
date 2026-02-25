@@ -119,6 +119,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Get("/system/config", c.getSystemConfig)
 		r.Post("/system/config", c.updateSystemConfig)
+		r.Post("/system/rebuild-index", c.rebuildIndex)
+		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)
@@ -800,4 +802,44 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 	*c.config = newCfg
 
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "Configuration saved. Please restart the server for all changes to take effect."})
+}
+
+// 触发扫描全库，作为通用的挂载工具
+func (c *Controller) triggerGlobalScan(ctx context.Context) {
+	libs, err := c.store.ListLibraries(ctx)
+	if err == nil {
+		for _, lib := range libs {
+			go c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, true)
+		}
+	}
+}
+
+func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
+	if c.engine != nil {
+		c.engine.Close()
+	}
+
+	indexPath := "data/search.bleve"
+	_ = os.RemoveAll(indexPath)
+
+	// Since we can't easily recreate the engine here due to the mapping logic being in search package,
+	// we will ask the user to restart the application to trigger a fresh engine creation and scan.
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "搜索引擎归档已被安全擦除。由于底层引擎句柄已被重置，请您重新启动应用以触发全新索引构建。"})
+}
+
+func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
+	thumbDir := filepath.Join(".", "data", "thumbnails")
+	if c.config != nil && c.config.Cache.Dir != "" {
+		thumbDir = c.config.Cache.Dir
+	}
+
+	// 尽力删除缓存目录
+	_ = os.RemoveAll(thumbDir)
+	_ = os.MkdirAll(thumbDir, 0755)
+
+	// 发起无视跳过的全局缓存重铸
+	go c.triggerGlobalScan(context.Background())
+
+	c.PublishEvent("refresh_thumbnails")
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。"})
 }
