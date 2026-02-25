@@ -6,6 +6,7 @@ import (
 	"manga-manager/internal/database"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
@@ -96,23 +97,34 @@ func (e *Engine) Search(queryStr string, target string, limit int) (*bleve.Searc
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	// 使用带分词的短语匹配，要求词语顺序与字面一致，防止"N和S"被过度容错拆解成包含单字的高分文档
-	query := bleve.NewMatchPhraseQuery(queryStr)
+	// 使用带分词的短语匹配，要求词语顺序与字面一致，防止"N和S"被过度容错拆解
+	qPhrase := bleve.NewMatchPhraseQuery(queryStr)
+
+	// 使用通配符匹配，解决未输入完整的半截残词（例如 "30" 匹配 "303"）
+	cleanQuery := strings.ToLower(strings.TrimSpace(queryStr))
+	qWild := bleve.NewWildcardQuery("*" + cleanQuery + "*")
 
 	var searchRequest *bleve.SearchRequest
 
 	if target == "series" {
-		query.SetField("series_name")
+		qPhrase.SetField("series_name")
+		qWild.SetField("series_name")
+		baseQuery := bleve.NewDisjunctionQuery(qPhrase, qWild)
+
 		typeQuery := bleve.NewMatchQuery("series")
 		typeQuery.SetField("type")
-		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(query, typeQuery))
+		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(baseQuery, typeQuery))
 	} else if target == "book" || target == "title" {
-		query.SetField("title")
+		qPhrase.SetField("title")
+		qWild.SetField("title")
+		baseQuery := bleve.NewDisjunctionQuery(qPhrase, qWild)
+
 		typeQuery := bleve.NewMatchQuery("book")
 		typeQuery.SetField("type")
-		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(query, typeQuery))
+		searchRequest = bleve.NewSearchRequest(bleve.NewConjunctionQuery(baseQuery, typeQuery))
 	} else {
-		searchRequest = bleve.NewSearchRequest(query)
+		baseQuery := bleve.NewDisjunctionQuery(qPhrase, qWild)
+		searchRequest = bleve.NewSearchRequest(baseQuery)
 	}
 
 	searchRequest.Size = limit
