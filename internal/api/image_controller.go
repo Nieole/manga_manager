@@ -134,6 +134,10 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 
 	if book.CoverPath.Valid && book.CoverPath.String != "" {
 		thumbDir := filepath.Join(".", "data", "thumbnails")
+		if c.config != nil && c.config.Cache.Dir != "" {
+			thumbDir = c.config.Cache.Dir
+		}
+
 		fullPath := filepath.Join(thumbDir, book.CoverPath.String)
 		if _, err := os.Stat(fullPath); err == nil {
 			w.Header().Set("Cache-Control", "public, max-age=31536000")

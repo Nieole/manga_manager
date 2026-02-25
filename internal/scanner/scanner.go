@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/images"
 	"manga-manager/internal/parser"
@@ -24,14 +25,16 @@ import (
 type Scanner struct {
 	store  database.Store
 	engine *search.Engine
+	config *config.Config
 	// 批量插入结束后的回调播送机制
 	onBatchIngested func(action string)
 }
 
-func NewScanner(store database.Store, engine *search.Engine) *Scanner {
+func NewScanner(store database.Store, engine *search.Engine, cfg *config.Config) *Scanner {
 	return &Scanner{
 		store:  store,
 		engine: engine,
+		config: cfg,
 	}
 }
 
@@ -76,7 +79,10 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 
 	// 第 2 阶段：解析工作池 (The Worker Pool)
 	// 在此处限制最大同时榨取的数量，保证文件描述符 FD 不枯竭且避免 CPU 长时间锁顿
-	numWorkers := runtime.NumCPU() * 2
+	numWorkers := s.config.Scanner.Workers
+	if numWorkers <= 0 {
+		numWorkers = runtime.NumCPU() * 2
+	}
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -140,7 +146,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	close(results)  // 通知 Ingester 没数据投递了
 	ingestWg.Wait() // 等待 Ingester 将批次强刷入磁盘
 
-	log.Printf("Scan completely flushed for library: %s", libraryID)
+	log.Printf("Scan completely flushed for library: %d", libraryID)
 	return walkErr
 }
 
@@ -201,58 +207,77 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	// 尝试生成冷热分离封面缓存图
 	var coverPath sql.NullString
 	if len(pages) > 0 {
-		thumbDir := filepath.Join(".", "data", "thumbnails")
-		err = os.MkdirAll(thumbDir, 0755)
-		if err != nil {
-			log.Printf("Failed to mkdir thumbDir %s: %v", thumbDir, err)
+		subDir := ""
+		if len(bookHash) >= 2 {
+			subDir = bookHash[:2]
 		}
+
+		baseThumbDir := filepath.Join(".", "data", "thumbnails")
+		if s.config != nil && s.config.Cache.Dir != "" {
+			baseThumbDir = s.config.Cache.Dir
+		}
+		thumbDir := filepath.Join(baseThumbDir, subDir)
+		err = os.MkdirAll(thumbDir, 0755)
 
 		webpPath := filepath.Join(thumbDir, bookHash+".webp")
 		jpgPath := filepath.Join(thumbDir, bookHash+".jpg")
 
 		if _, err := os.Stat(webpPath); err == nil {
-			coverPath = sql.NullString{String: bookHash + ".webp", Valid: true}
+			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".webp")), Valid: true}
 		} else if _, err := os.Stat(jpgPath); err == nil {
-			coverPath = sql.NullString{String: bookHash + ".jpg", Valid: true}
+			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".jpg")), Valid: true}
 		} else {
-			pageData, err := arc.ReadPage(pages[0].Name)
-			if err == nil {
-				// 优先尝试 WebP（体积小画质高），失败则降级到 JPEG（纯 Go 实现，跨平台无忧）
-				var processed []byte
-				var fileName string
-				webpData, _, webpErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-					Width: 400, Quality: 82, Format: "webp",
-				})
-				if webpErr == nil && len(webpData) > 0 {
-					processed = webpData
-					fileName = bookHash + ".webp"
-				} else {
-					if webpErr != nil {
-						log.Printf("WebP generation failed for %s: %v", job.path, webpErr)
-					}
-					jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-						Width: 400, Quality: 82, Format: "jpeg",
-					})
-					if jpegErr == nil {
-						processed = jpegData
-						fileName = bookHash + ".jpg"
-					} else {
-						log.Printf("JPEG generation failed for %s: %v", job.path, jpegErr)
-					}
-				}
-
-				if len(processed) > 0 && fileName != "" {
-					fullPath := filepath.Join(thumbDir, fileName)
-					if err := os.WriteFile(fullPath, processed, 0644); err == nil {
-						coverPath = sql.NullString{String: fileName, Valid: true}
-					} else {
-						log.Printf("Failed to write thumbnail file %s: %v", fullPath, err)
-					}
-				} else {
-					log.Printf("No processed thumbnail data for %s", job.path)
-				}
+			avifPath := filepath.Join(thumbDir, bookHash+".avif")
+			if _, err := os.Stat(avifPath); err == nil {
+				coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".avif")), Valid: true}
 			} else {
-				log.Printf("Failed to ReadPage %s from %s: %v", pages[0].Name, job.path, err)
+				pageData, err := arc.ReadPage(pages[0].Name)
+				if err == nil {
+					var processed []byte
+					var fileName string
+
+					targetFormat := s.config.Scanner.ThumbnailFormat
+					if targetFormat == "" {
+						targetFormat = "webp"
+					}
+
+					thumbData, _, thumbErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+						Width: 400, Quality: 82, Format: targetFormat,
+					})
+
+					if thumbErr == nil && len(thumbData) > 0 {
+						processed = thumbData
+						if targetFormat == "jpeg" || targetFormat == "jpg" {
+							fileName = bookHash + ".jpg"
+						} else {
+							fileName = bookHash + "." + targetFormat
+						}
+					} else {
+						log.Printf("Primary format (%s) generation failed for %s: %v, falling back to jpeg", targetFormat, job.path, thumbErr)
+						jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+							Width: 400, Quality: 82, Format: "jpeg",
+						})
+						if jpegErr == nil {
+							processed = jpegData
+							fileName = bookHash + ".jpg"
+						} else {
+							log.Printf("JPEG fallback generation failed for %s: %v", job.path, jpegErr)
+						}
+					}
+
+					if len(processed) > 0 && fileName != "" {
+						fullPath := filepath.Join(thumbDir, fileName)
+						if err := os.WriteFile(fullPath, processed, 0644); err == nil {
+							coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}
+						} else {
+							log.Printf("Failed to write thumbnail file %s: %v", fullPath, err)
+						}
+					} else {
+						log.Printf("No processed thumbnail data for %s", job.path)
+					}
+				} else {
+					log.Printf("Failed to ReadPage %s from %s: %v", pages[0].Name, job.path, err)
+				}
 			}
 		}
 	} else {

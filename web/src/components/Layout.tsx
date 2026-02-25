@@ -98,7 +98,7 @@ export default function Layout() {
         e.preventDefault();
         e.stopPropagation();
         try {
-            await axios.post(`/ api / libraries / ${id}/scan?force=${force}`);
+            await axios.post(`/api/libraries/${id}/scan?force=${force}`);
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
         } catch (error) {
             console.error("Trigger scan failed", error);

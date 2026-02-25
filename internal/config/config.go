@@ -20,6 +20,10 @@ type Config struct {
 	Cache struct {
 		Dir string `yaml:"dir"`
 	} `yaml:"cache"`
+	Scanner struct {
+		Workers         int    `yaml:"workers"`
+		ThumbnailFormat string `yaml:"thumbnail_format"`
+	} `yaml:"scanner"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -45,6 +49,8 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Database.Path = "./data/manga.db"
 	cfg.Library.Paths = []string{}
 	cfg.Cache.Dir = "./data/cache"
+	cfg.Scanner.Workers = 0              // 0 表示自动使用 runtime.NumCPU() * 2
+	cfg.Scanner.ThumbnailFormat = "webp" // 支持 webp, jpg, avif
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

@@ -133,10 +133,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{bookId}", c.serveCoverImage)
 		})
 
-		// 通用静态直接下发，适配首卷封面作为系列代表图
-		thumbDir := filepath.Join(".", "data", "thumbnails")
-		r.Get("/thumbnails/{filename}", func(w http.ResponseWriter, r *http.Request) {
-			filename := chi.URLParam(r, "filename")
+		// 通用静态直接下发，适配首卷封面作为系列代表图（支持二级哈希子目录）
+		r.Get("/thumbnails/*", func(w http.ResponseWriter, r *http.Request) {
+			thumbDir := filepath.Join(".", "data", "thumbnails")
+			if c.config != nil && c.config.Cache.Dir != "" {
+				thumbDir = c.config.Cache.Dir
+			}
+			filename := chi.URLParam(r, "*")
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
 			http.ServeFile(w, r, filepath.Join(thumbDir, filename))
 		})

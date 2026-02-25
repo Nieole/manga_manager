@@ -15,7 +15,7 @@ import (
 	// Init defaults for read fallback
 	_ "image/gif"
 
-	_ "github.com/gen2brain/avif"
+	"github.com/gen2brain/avif"
 )
 
 // ProcessOptions 用于接受前端动态要求的尺寸转换
@@ -60,6 +60,9 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		}
 		err = webp.Encode(&buf, newImg, opt)
 		newContentType = "image/webp"
+	case "avif":
+		err = avif.Encode(&buf, newImg, avif.Options{Quality: opts.Quality})
+		newContentType = "image/avif"
 	default:
 		// Fallback everything else to JPEG to save space
 		opt := &jpeg.Options{Quality: opts.Quality}

@@ -7,6 +7,10 @@ interface Config {
     database: { path: string };
     library: { paths: string[] };
     cache: { dir: string };
+    scanner: {
+        workers: number;
+        thumbnail_format: string;
+    };
 }
 
 const Settings: React.FC = () => {
@@ -109,12 +113,12 @@ const Settings: React.FC = () => {
                 <div className="bg-komgaSurface border border-gray-800 rounded-xl p-6 shadow-sm">
                     <div className="flex items-center space-x-2 mb-4 text-komgaPrimary">
                         <HardDrive className="w-5 h-5" />
-                        <h2 className="text-lg font-semibold text-white">缓存机制</h2>
+                        <h2 className="text-lg font-semibold text-white">缓存机制与生成策略</h2>
                     </div>
                     <div className="space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-400 mb-1">
-                                封面与切片缓存路径
+                                已存在缩略图的物理预制基底
                             </label>
                             <input
                                 type="text"
@@ -122,6 +126,35 @@ const Settings: React.FC = () => {
                                 onChange={(e) => setConfig({ ...config, cache: { ...config.cache, dir: e.target.value } })}
                                 className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
                             />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1" title="置0则由程序动态以主机线程数翻倍挂起">
+                                    解析器工作协程(Workers)
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={config.scanner.workers}
+                                    onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, workers: parseInt(e.target.value) || 0 } })}
+                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">留为 0 表示通过 CPU 数自动智能调度榨取。</p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1">
+                                    生成图片压缩封包格式
+                                </label>
+                                <select
+                                    value={config.scanner.thumbnail_format}
+                                    onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, thumbnail_format: e.target.value } })}
+                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all appearance-none"
+                                >
+                                    <option value="webp">WebP (默认平衡优先)</option>
+                                    <option value="avif">AVIF (次世代极致容量)</option>
+                                    <option value="jpg">JPEG (老旧纯血兼容)</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -133,8 +166,8 @@ const Settings: React.FC = () => {
                         <h2 className="text-lg font-semibold text-white">已绑定的物理检索根节点</h2>
                     </div>
                     <div className="space-y-2">
-                        {config.library.paths.length === 0 && <p className="text-sm text-gray-500">尚无注册目录，请前往主页左侧边栏添加资源库。</p>}
-                        {config.library.paths.map((p, i) => (
+                        {(!config.library.paths || config.library.paths.length === 0) && <p className="text-sm text-gray-500">尚无注册目录，请前往主页左侧边栏添加资源库。</p>}
+                        {(config.library.paths || []).map((p, i) => (
                             <div key={i} className="text-sm text-gray-300 bg-gray-900 px-3 py-2 border border-gray-800 rounded-lg truncate">
                                 {p}
                             </div>
