@@ -27,6 +27,9 @@ export default function Layout() {
 
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<any[]>([]);
+    const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+    const [selectedIndex, setSelectedIndex] = useState(0);
+    const [searchTarget, setSearchTarget] = useState("all");
 
     const { libId } = useParams();
     const navigate = useNavigate();
@@ -38,7 +41,7 @@ export default function Layout() {
             return;
         }
         const timer = setTimeout(() => {
-            axios.get(`/ api / search ? q = ${encodeURIComponent(searchQuery)} `)
+            axios.get(`/api/search?q=${encodeURIComponent(searchQuery)}&target=${searchTarget}`)
                 .then(res => {
                     if (res.data && res.data.hits) {
                         setSearchResults(res.data.hits);
@@ -49,7 +52,46 @@ export default function Layout() {
                 .catch(err => console.error("Search failed:", err));
         }, 300); // 防抖 300ms
         return () => clearTimeout(timer);
-    }, [searchQuery]);
+    }, [searchQuery, searchTarget]);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                setIsSearchModalOpen(true);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
+    useEffect(() => {
+        setSelectedIndex(0);
+    }, [searchResults]);
+
+    const handleSelectResult = (hit: any) => {
+        setIsSearchModalOpen(false);
+        setSearchQuery("");
+        setSearchResults([]);
+        navigate(`/reader/${hit.id}`);
+    };
+
+    const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setSelectedIndex(prev => Math.min(prev + 1, Math.max(0, searchResults.length - 1)));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSelectedIndex(prev => Math.max(prev - 1, 0));
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (searchResults[selectedIndex]) {
+                handleSelectResult(searchResults[selectedIndex]);
+            }
+        } else if (e.key === 'Escape') {
+            setIsSearchModalOpen(false);
+        }
+    };
 
     const fetchLibraries = () => {
         setLoading(true);
@@ -58,7 +100,7 @@ export default function Layout() {
                 setLibraries(res.data);
                 if (res.data.length > 0 && !libId && location.pathname === '/') {
                     // 仅在首页时默认跳转到第一个资源库，避免覆盖 /series/xxx 等子路由
-                    navigate(`/ library / ${res.data[0].id} `, { replace: true });
+                    navigate(`/library/${res.data[0].id}`, { replace: true });
                 }
                 setLoading(false);
             })
@@ -134,40 +176,17 @@ export default function Layout() {
                     <h1 className="text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition">Manga Manager</h1>
                 </Link>
 
-                <div className="flex-1 max-w-xl relative">
-                    <div className="relative group">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-komgaPrimary transition-colors" />
-                        <input
-                            type="text"
-                            placeholder="跨库模糊搜索漫画名称、连载系列..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-gray-900 border border-gray-800 rounded-full pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 focus:border-transparent transition-all placeholder-gray-500"
-                        />
-                        {searchQuery && (
-                            <button
-                                onClick={() => { setSearchQuery(""); setSearchResults([]); }}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
-                        )}
-                    </div>
-                    {searchResults.length > 0 && searchQuery.trim() !== "" && (
-                        <div className="absolute top-full mt-2 w-full bg-komgaSurface border border-gray-800 rounded-lg shadow-2xl overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                            {searchResults.map((hit: any) => (
-                                <Link
-                                    key={hit.id}
-                                    to={`/reader/${hit.id}`}
-                                    onClick={() => { setSearchQuery(""); setSearchResults([]); }}
-                                    className="block px-4 py-3 hover:bg-gray-800 transition-colors"
-                                >
-                                    <div className="text-sm font-medium text-white truncate">{hit.fields?.title || hit.id}</div>
-                                    <div className="text-xs text-komgaPrimary mt-1 truncate">{hit.fields?.series_name || "未知系列"} | 匹配度: {hit.score?.toFixed(2)}</div>
-                                </Link>
-                            ))}
+                <div className="flex-1 max-w-xl flex justify-center">
+                    <button
+                        onClick={() => setIsSearchModalOpen(true)}
+                        className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 flex items-center justify-between text-sm text-gray-500 hover:border-gray-700 hover:text-gray-300 transition-all opacity-80 hover:opacity-100 shadow-inner group"
+                    >
+                        <div className="flex items-center">
+                            <Search className="w-4 h-4 mr-3 group-hover:text-komgaPrimary transition-colors" />
+                            <span>搜索漫画名称、连载系列...</span>
                         </div>
-                    )}
+                        <kbd className="hidden sm:inline-block bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono text-gray-400">⌘K</kbd>
+                    </button>
                 </div>
 
                 <div className="w-64 flex justify-end">
@@ -366,6 +385,66 @@ export default function Layout() {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {isSearchModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] px-4">
+                    <div
+                        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                        onClick={() => setIsSearchModalOpen(false)}
+                    />
+                    <div className="relative w-full max-w-2xl bg-komgaSurface border border-gray-800 rounded-xl shadow-2xl flex flex-col max-h-[70vh] animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-center px-4 border-b border-gray-800 shrink-0">
+                            <Search className="w-5 h-5 text-gray-400" />
+                            <input
+                                autoFocus
+                                type="text"
+                                placeholder="输入关键字搜索..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onKeyDown={handleSearchKeyDown}
+                                className="flex-1 bg-transparent border-none py-4 px-4 text-white focus:outline-none focus:ring-0 text-lg placeholder-gray-500"
+                            />
+                            {searchQuery && (
+                                <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} className="p-1 text-gray-500 hover:text-white rounded-md transition-colors">
+                                    <X className="w-5 h-5" />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="flex items-center px-4 py-2 border-b border-gray-800 space-x-2 shrink-0 bg-gray-900/30">
+                            <span className="text-xs text-gray-500 mr-2">范围:</span>
+                            <button onClick={() => setSearchTarget("all")} className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${searchTarget === 'all' ? 'bg-komgaPrimary text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>全部</button>
+                            <button onClick={() => setSearchTarget("series")} className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${searchTarget === 'series' ? 'bg-komgaPrimary text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>仅系列</button>
+                            <button onClick={() => setSearchTarget("book")} className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${searchTarget === 'book' ? 'bg-komgaPrimary text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>仅册文件</button>
+                        </div>
+
+                        <div className="overflow-y-auto flex-1 p-2">
+                            {searchResults.length > 0 && searchQuery.trim() !== "" ? (
+                                searchResults.map((hit: any, index: number) => (
+                                    <div
+                                        key={hit.id}
+                                        onClick={() => handleSelectResult(hit)}
+                                        onMouseEnter={() => setSelectedIndex(index)}
+                                        className={`flex flex-col px-4 py-3 cursor-pointer rounded-lg transition-colors ${index === selectedIndex ? 'bg-gray-800 border-l-2 border-komgaPrimary' : 'hover:bg-gray-800/50 border-l-2 border-transparent'}`}
+                                    >
+                                        <div className="text-base font-medium text-white truncate">{hit.fields?.title || hit.id}</div>
+                                        <div className="text-xs text-komgaPrimary mt-1 truncate">{hit.fields?.series_name || "未知系列"} | 匹配度: {hit.score?.toFixed(2)}</div>
+                                    </div>
+                                ))
+                            ) : searchQuery.trim() !== "" ? (
+                                <div className="py-14 text-center text-gray-500 text-sm">
+                                    未找到符合条件的漫画
+                                </div>
+                            ) : (
+                                <div className="py-8 text-center text-gray-600 text-sm flex flex-col items-center">
+                                    <Search className="w-8 h-8 mb-3 opacity-20" />
+                                    支持全局模糊检索、键盘上下方向键导航
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

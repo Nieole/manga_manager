@@ -154,6 +154,11 @@ func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
 
 func (c *Controller) searchBooks(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
+	target := r.URL.Query().Get("target") // "all", "series", "book"
+	if target == "" {
+		target = "all"
+	}
+
 	if query == "" {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"hits": []interface{}{}})
 		return
@@ -164,7 +169,7 @@ func (c *Controller) searchBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := c.engine.Search(query, 20)
+	res, err := c.engine.Search(query, target, 20)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Search failed")
 		return

@@ -78,14 +78,20 @@ func (e *Engine) IndexBook(book database.Book, seriesName string) error {
 	return e.index.Index(doc.ID, doc)
 }
 
-func (e *Engine) Search(queryStr string, limit int) (*bleve.SearchResult, error) {
+func (e *Engine) Search(queryStr string, target string, limit int) (*bleve.SearchResult, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	// 使用支持模糊或包含切词的 Query String
-	// 补充两侧星号支持任意位置的子串模糊匹配（这对于中文切词和连载名截断非常重要）
-	qStr := "*" + queryStr + "*"
-	query := bleve.NewQueryStringQuery(qStr)
+	// 使用自带分词切片的 MatchQuery 进行宽泛匹配
+	query := bleve.NewMatchQuery(queryStr)
+	query.Fuzziness = 1 // 允许1个字符的模糊编辑距离，增加容错
+
+	if target == "series" {
+		query.SetField("series_name")
+	} else if target == "book" || target == "title" {
+		query.SetField("title")
+	}
+
 	searchRequest := bleve.NewSearchRequest(query)
 	searchRequest.Size = limit
 	// 要求返回哪些切片字段
