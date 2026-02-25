@@ -9,21 +9,21 @@ import (
 
 type Config struct {
 	Server struct {
-		Port int `yaml:"port"`
-	} `yaml:"server"`
+		Port int `yaml:"port" json:"port"`
+	} `yaml:"server" json:"server"`
 	Database struct {
-		Path string `yaml:"path"`
-	} `yaml:"database"`
+		Path string `yaml:"path" json:"path"`
+	} `yaml:"database" json:"database"`
 	Library struct {
-		Paths []string `yaml:"paths"`
-	} `yaml:"library"`
+		Paths []string `yaml:"paths" json:"paths"`
+	} `yaml:"library" json:"library"`
 	Cache struct {
-		Dir string `yaml:"dir"`
-	} `yaml:"cache"`
+		Dir string `yaml:"dir" json:"dir"`
+	} `yaml:"cache" json:"cache"`
 	Scanner struct {
-		Workers         int    `yaml:"workers"`
-		ThumbnailFormat string `yaml:"thumbnail_format"`
-	} `yaml:"scanner"`
+		Workers         int    `yaml:"workers" json:"workers"`
+		ThumbnailFormat string `yaml:"thumbnail_format" json:"thumbnail_format"`
+	} `yaml:"scanner" json:"scanner"`
 }
 
 func LoadConfig(path string) (*Config, error) {
