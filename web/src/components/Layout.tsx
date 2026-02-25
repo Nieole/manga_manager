@@ -15,6 +15,9 @@ export default function Layout() {
     const [showAddModal, setShowAddModal] = useState(false);
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
+    const [newLibAutoScan, setNewLibAutoScan] = useState(false);
+    const [newLibScanInterval, setNewLibScanInterval] = useState(60);
+    const [newLibScanFormats, setNewLibScanFormats] = useState("zip,cbz,rar,cbr,pdf");
     const [adding, setAdding] = useState(false);
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
     const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -159,11 +162,19 @@ export default function Layout() {
         e.preventDefault();
         setAdding(true);
         try {
-            // POST 只是将配置落库并派发给后台 Worker Pool，不必由于海量图库等待返回。
-            await axios.post('/api/libraries', { name: newLibName, path: newLibPath });
+            await axios.post('/api/libraries', {
+                name: newLibName,
+                path: newLibPath,
+                auto_scan: newLibAutoScan,
+                scan_interval: newLibScanInterval,
+                scan_formats: newLibScanFormats
+            });
             setShowAddModal(false);
             setNewLibName("");
             setNewLibPath("");
+            setNewLibAutoScan(false);
+            setNewLibScanInterval(60);
+            setNewLibScanFormats("zip,cbz,rar,cbr,pdf");
             // 由于有 SSE 监听，这里甚至可以不需要主动 fetch，但为了增强即时感先拉一下基本信息
             fetchLibraries();
             setRefreshTrigger(prev => prev + 1);
@@ -353,8 +364,8 @@ export default function Layout() {
                                                                     .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
                                                             }}
                                                                 className={`px-2 py-1 text-xs rounded transition-colors ${browseCurrent.startsWith(drv.path) || browseCurrent.startsWith(drv.name)
-                                                                        ? 'bg-komgaPrimary text-white'
-                                                                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                                                                    ? 'bg-komgaPrimary text-white'
+                                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
                                                                     }`}
                                                             >{drv.name}</button>
                                                         ))}
@@ -383,6 +394,42 @@ export default function Layout() {
                                     )}
                                 </div>
                             </div>
+
+                            <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
+                                <label className="flex items-center space-x-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={newLibAutoScan}
+                                        onChange={e => setNewLibAutoScan(e.target.checked)}
+                                        className="form-checkbox h-4 w-4 text-komgaPrimary bg-gray-800 border-gray-700 rounded focus:ring-komgaPrimary focus:ring-2"
+                                    />
+                                    <span className="text-sm font-medium text-gray-300">开启后台自动轮次扫描监控</span>
+                                </label>
+                                {newLibAutoScan && (
+                                    <>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-400 mb-1">循环触发扫描任务的间隔 (默认60分钟)</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={newLibScanInterval}
+                                                onChange={e => setNewLibScanInterval(parseInt(e.target.value) || 60)}
+                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-400 mb-1">目标提取匹配类型 (英文逗号分隔)</label>
+                                            <input
+                                                type="text"
+                                                value={newLibScanFormats}
+                                                onChange={e => setNewLibScanFormats(e.target.value)}
+                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
+                                            />
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
                             <div className="mt-8 flex justify-end space-x-3">
                                 <button
                                     type="button"

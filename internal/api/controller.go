@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -56,6 +58,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 	}
 
 	go c.startBroker()
+	go c.startDaemon()
 
 	return c
 }
@@ -79,6 +82,45 @@ func (c *Controller) startBroker() {
 	}
 }
 
+func (c *Controller) startDaemon() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	// 记录各个资料库的上次扫描时间
+	lastScan := make(map[int64]time.Time)
+
+	for {
+		<-ticker.C
+
+		libs, err := c.store.ListLibraries(context.Background())
+		if err != nil {
+			log.Printf("[Daemon ERROR] Failed to fetch libraries: %v", err)
+			continue
+		}
+
+		now := time.Now()
+		for _, lib := range libs {
+			if !lib.AutoScan {
+				continue
+			}
+
+			interval := time.Duration(lib.ScanInterval) * time.Minute
+			last, ok := lastScan[lib.ID]
+			// 如果从未记录（或刚启动），则在首次 Tick 时也会直接触发，或者也可选择不直接触发。目前假定超过间隔就触发。
+			if !ok || now.Sub(last) >= interval {
+				lastScan[lib.ID] = now
+				log.Printf("[Daemon] Triggering auto-scan for library %d (%s)", lib.ID, lib.Path)
+				go func(id int64, path string) {
+					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
+					if err != nil {
+						log.Printf("[Daemon ERROR] Auto-scan failed for library %d: %v", id, err)
+					}
+				}(lib.ID, lib.Path)
+			}
+		}
+	}
+}
+
 // PublishEvent 供 Scanner 外部等调用投递事件消息
 func (c *Controller) PublishEvent(event string) {
 	c.messages <- event
@@ -96,7 +138,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/metadata/search", c.searchMetadata)
 		r.Get("/metadata/providers", c.listProviders)
 		r.Route("/series", func(r chi.Router) {
+			r.Post("/bulk-update", c.bulkUpdateSeries)
 			r.Get("/search", c.searchSeriesPaged)
+			r.Get("/recent-read", c.getRecentReadSeries)
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
 			r.Get("/info/{seriesId}", c.getSeriesInfo)
 			r.Put("/info/{seriesId}", c.updateSeriesInfo)
@@ -107,6 +151,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		})
 
 		r.Route("/books", func(r chi.Router) {
+			r.Post("/bulk-progress", c.bulkUpdateBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
 			r.Get("/{seriesId}", c.getBooksBySeries)
 		})
@@ -223,8 +268,11 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateLibraryRequest struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	AutoScan     bool   `json:"auto_scan"`
+	ScanInterval int64  `json:"scan_interval"`
+	ScanFormats  string `json:"scan_formats"`
 }
 
 func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
@@ -238,10 +286,20 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ScanInterval <= 0 {
+		req.ScanInterval = 60
+	}
+	if req.ScanFormats == "" {
+		req.ScanFormats = "zip,cbz,rar,cbr,pdf"
+	}
+
 	ctx := r.Context()
 	libParams := database.CreateLibraryParams{
-		Name: req.Name,
-		Path: req.Path,
+		Name:         req.Name,
+		Path:         req.Path,
+		AutoScan:     req.AutoScan,
+		ScanInterval: req.ScanInterval,
+		ScanFormats:  req.ScanFormats,
 	}
 
 	createdLib, err := c.store.CreateLibrary(ctx, libParams)
@@ -348,6 +406,7 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 
 	series, total, err := c.store.SearchSeriesPaged(ctx, libID, letter, status, tags, authors, int32(limit), int32(offset), sortBy)
 	if err != nil {
+		log.Printf("[API ERROR] SearchSeriesPaged Failed: %v", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
 		return
 	}
@@ -361,6 +420,46 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		"total": total,
 		"page":  page,
 		"limit": limit,
+	})
+}
+
+// getRecentReadSeries 返回该资源库下含有书籍最新阅读记录的系列
+func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request) {
+	libIDStr := r.URL.Query().Get("libraryId")
+	if libIDStr == "" {
+		jsonError(w, http.StatusBadRequest, "libraryId is required")
+		return
+	}
+	libID, err := strconv.ParseInt(libIDStr, 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid libraryId")
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := int64(10) // 默认读取 10 条
+	if limitStr != "" {
+		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	ctx := r.Context()
+	arg := database.GetRecentReadSeriesParams{
+		LibraryID:   libID,
+		LibraryID_2: libID,
+		Limit:       limit,
+	}
+
+	items, err := c.store.GetRecentReadSeries(ctx, arg)
+	if err != nil {
+		log.Printf("[API ERROR] GetRecentReadSeries Failed: %v", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent read series")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"items": items,
 	})
 }
 
@@ -584,6 +683,78 @@ func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, book)
+}
+
+type BulkUpdateSeriesRequest struct {
+	SeriesIDs  []int64 `json:"series_ids"`
+	IsFavorite *bool   `json:"is_favorite"`
+}
+
+func (c *Controller) bulkUpdateSeries(w http.ResponseWriter, r *http.Request) {
+	var req BulkUpdateSeriesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if len(req.SeriesIDs) == 0 {
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "No series updated"})
+		return
+	}
+
+	ctx := r.Context()
+	for _, id := range req.SeriesIDs {
+		if req.IsFavorite != nil {
+			err := c.store.UpdateSeriesFavorite(ctx, database.UpdateSeriesFavoriteParams{
+				IsFavorite: *req.IsFavorite,
+				ID:         id,
+			})
+			if err != nil {
+				log.Printf("[API ERROR] Failed to bulk update series %d: %v", id, err)
+			}
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "Bulk update completed"})
+}
+
+type BulkUpdateBookProgressRequest struct {
+	BookIDs []int64 `json:"book_ids"`
+	IsRead  bool    `json:"is_read"` // true=标为已读(最大页码), false=标为未读(1)
+}
+
+func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Request) {
+	var req BulkUpdateBookProgressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if len(req.BookIDs) == 0 {
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "No books updated"})
+		return
+	}
+
+	ctx := r.Context()
+	for _, id := range req.BookIDs {
+		var page int64 = 1
+		if req.IsRead {
+			book, err := c.store.GetBook(ctx, id)
+			if err == nil && book.PageCount > 0 {
+				page = book.PageCount
+			} else {
+				page = 99999 // Fallback
+			}
+		}
+
+		err := c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+			LastReadPage: sql.NullInt64{Int64: page, Valid: true},
+			ID:           id,
+		})
+		if err != nil {
+			log.Printf("[API ERROR] Failed to bulk update book progress %d: %v", id, err)
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "Bulk progress update completed"})
 }
 
 func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {

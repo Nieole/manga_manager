@@ -205,7 +205,7 @@ WITH RankedBooks AS (
         b.last_read_page,
         ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY b.last_read_at DESC) as rn
     FROM books b
-    WHERE b.last_read_at IS NOT NULL
+    WHERE b.last_read_at IS NOT NULL AND b.library_id = ?
 )
 SELECT 
     s.*,
@@ -215,5 +215,9 @@ SELECT
     (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
 FROM series s
 JOIN RankedBooks rb ON s.id = rb.series_id AND rb.rn = 1
+WHERE s.library_id = ?
 ORDER BY rb.last_read_at DESC
 LIMIT ?;
+
+-- name: UpdateSeriesFavorite :exec
+UPDATE series SET is_favorite = ? WHERE id = ?;

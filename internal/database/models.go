@@ -58,10 +58,10 @@ type Series struct {
 	Rating       sql.NullFloat64 `json:"rating"`
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
-	IsFavorite   bool            `json:"is_favorite"`
 	Path         string          `json:"path"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
+	IsFavorite   bool            `json:"is_favorite"`
 }
 
 type SeriesAuthor struct {

@@ -71,6 +71,9 @@ export default function SeriesDetail() {
     const [allTags, setAllTags] = useState<MetaTag[]>([]);
     const [allAuthors, setAllAuthors] = useState<Author[]>([]);
 
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
+    const [selectedBooks, setSelectedBooks] = useState<number[]>([]);
+
     const [isEditing, setIsEditing] = useState(false);
     const [editForm, setEditForm] = useState<Partial<Series> & { tagsInput?: string[], authorsInput?: { name: string, role: string }[], linksInput?: { name: string, url: string }[] }>({});
     const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
@@ -102,6 +105,23 @@ export default function SeriesDetail() {
             showToast('刮削失败: ' + (err.response?.data?.error || err.message), 'error');
         } finally {
             setIsScraping(false);
+        }
+    };
+
+    const handleBulkProgressUpdate = async (isRead: boolean) => {
+        try {
+            await axios.post('/api/books/bulk-progress', {
+                book_ids: selectedBooks,
+                is_read: isRead
+            });
+            setIsSelectionMode(false);
+            setSelectedBooks([]);
+            const res = await axios.get(`/api/books/${seriesId}`);
+            setBooks(res.data || []);
+            showToast("批量更新进度成功", 'success');
+        } catch (e) {
+            console.error("Bulk progress update failed", e);
+            showToast("批量更新进度失败", 'error');
         }
     };
 
@@ -398,38 +418,56 @@ export default function SeriesDetail() {
         );
     };
 
-    const renderBookCard = (book: Book) => (
-        <Link
-            to={`/reader/${book.id}`}
-            key={book.id}
-            className="group flex flex-col rounded-xl overflow-hidden bg-komgaSurface border border-gray-800 hover:border-komgaPrimary/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10 cursor-pointer"
-        >
-            <div className="aspect-[3/4] w-full bg-gray-900 border-b border-gray-800 flex items-center justify-center relative overflow-hidden">
-                {book.cover_path?.Valid ? (
-                    <img src={`/api/covers/${book.id}`} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
-                ) : (
-                    <BookImage className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-3 z-10 pointer-events-none">
-                    <span className="text-xs font-semibold text-white px-2 py-1 bg-black/60 rounded backdrop-blur drop-shadow-md">
-                        {book.page_count} Pages
-                    </span>
-                </div>
-            </div>
-            <div className="p-4 flex-1 flex flex-col justify-between">
-                <div>
-                    <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
-                        {book.title?.Valid ? book.title.String : book.name}
-                    </h4>
-                    {book.last_read_page?.Valid && book.last_read_page.Int64 > 0 && (
-                        <div className="mt-2 inline-flex items-center text-xs font-medium text-orange-400 bg-orange-400/10 border border-orange-400/20 px-2 py-0.5 rounded-sm">
-                            阅读至 {book.last_read_page.Int64} 页
+    const renderBookCard = (book: Book) => {
+        const isSelected = selectedBooks.includes(book.id);
+        const handleCardClick = (e: React.MouseEvent) => {
+            if (isSelectionMode) {
+                e.preventDefault();
+                setSelectedBooks(prev => prev.includes(book.id) ? prev.filter(id => id !== book.id) : [...prev, book.id]);
+            }
+        };
+
+        return (
+            <Link
+                to={`/reader/${book.id}`}
+                onClick={handleCardClick}
+                key={book.id}
+                className={`group flex flex-col rounded-xl overflow-hidden bg-komgaSurface border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'} transition-all duration-300 cursor-pointer`}
+            >
+                <div className="aspect-[3/4] w-full bg-gray-900 border-b border-gray-800 flex items-center justify-center relative overflow-hidden">
+                    {isSelectionMode && (
+                        <div className="absolute top-2 left-2 z-30">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'}`}>
+                                {isSelected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
+                            </div>
                         </div>
                     )}
+                    {book.cover_path?.Valid ? (
+                        <img src={`/api/covers/${book.id}`} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
+                    ) : (
+                        <BookImage className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-3 z-10 pointer-events-none">
+                        <span className="text-xs font-semibold text-white px-2 py-1 bg-black/60 rounded backdrop-blur drop-shadow-md">
+                            {book.page_count} Pages
+                        </span>
+                    </div>
                 </div>
-            </div>
-        </Link>
-    );
+                <div className="p-4 flex-1 flex flex-col justify-between">
+                    <div>
+                        <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
+                            {book.title?.Valid ? book.title.String : book.name}
+                        </h4>
+                        {book.last_read_page?.Valid && book.last_read_page.Int64 > 0 && (
+                            <div className="mt-2 inline-flex items-center text-xs font-medium text-orange-400 bg-orange-400/10 border border-orange-400/20 px-2 py-0.5 rounded-sm">
+                                阅读至 {book.last_read_page.Int64} 页
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </Link>
+        );
+    };
 
     return (
         <div className="p-6 lg:p-10">
@@ -455,8 +493,17 @@ export default function SeriesDetail() {
                             {!selectedVolume && seriesInfo && (
                                 <>
                                     <button
+                                        onClick={() => {
+                                            setIsSelectionMode(!isSelectionMode);
+                                            setSelectedBooks([]);
+                                        }}
+                                        className={`ml-4 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border focus:outline-none ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
+                                    >
+                                        {isSelectionMode ? '取消选择' : '批量操作'}
+                                    </button>
+                                    <button
                                         onClick={() => setIsEditing(true)}
-                                        className="ml-4 p-1.5 text-gray-500 hover:text-komgaPrimary hover:bg-komgaPrimary/10 rounded transition-colors"
+                                        className="ml-2 p-1.5 text-gray-500 hover:text-komgaPrimary hover:bg-komgaPrimary/10 rounded transition-colors"
                                         title="编辑元数据"
                                     >
                                         <Edit className="w-5 h-5" />
@@ -803,6 +850,27 @@ export default function SeriesDetail() {
                     {books.length === 0 && (
                         <div className="text-center py-20 text-gray-500">此系列尚未包含任何资源</div>
                     )}
+                </div>
+            )}
+
+            {/* 悬浮多选操作栏 */}
+            {isSelectionMode && selectedBooks.length > 0 && (
+                <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl px-6 py-4 flex items-center gap-6 z-50 animate-in slide-in-from-bottom-5">
+                    <span className="text-white font-medium text-sm">已选择 {selectedBooks.length} 项</span>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => handleBulkProgressUpdate(true)}
+                            className="bg-green-500/10 hover:bg-green-500/20 text-green-500 border border-green-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                        >
+                            标为已读
+                        </button>
+                        <button
+                            onClick={() => handleBulkProgressUpdate(false)}
+                            className="bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                        >
+                            标为未读
+                        </button>
+                    </div>
                 </div>
             )}
 

@@ -25,7 +25,7 @@ type Querier interface {
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
-	GetRecentReadSeries(ctx context.Context, limit int64) ([]GetRecentReadSeriesRow, error)
+	GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error)
 	GetSeries(ctx context.Context, id int64) (Series, error)
 	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
 	GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, error)
@@ -37,6 +37,7 @@ type Querier interface {
 	ListLibraries(ctx context.Context) ([]Library, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
+	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
 	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error)

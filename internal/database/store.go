@@ -115,8 +115,7 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
             COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
             COUNT(DISTINCT b.id) as actual_book_count,
             COALESCE(SUM(CASE WHEN b.last_read_page > 1 THEN b.last_read_page ELSE 0 END), 0) as read_count,
-            SUM(b.page_count) as total_pages,
-            EXISTS(SELECT 1 FROM user_series_favorites usf WHERE usf.series_id = s.id AND usf.user_id = ?) AS is_favorite
+            SUM(b.page_count) as total_pages
 		FROM series s
 		LEFT JOIN series_tags st ON s.id = st.series_id
 		LEFT JOIN tags t ON st.tag_id = t.id
@@ -135,7 +134,7 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 		WHERE s.library_id = ?
 	`
 
-	args := []interface{}{0, libraryID} // Placeholder for user_id in EXISTS, then libraryID
+	args := []interface{}{libraryID}
 
 	if status != "" {
 		baseQuery += ` AND s.status = ?`
@@ -190,7 +189,7 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 
 	// Fetch Total Count First
 	var total int
-	err := s.db.QueryRowContext(ctx, countQuery, args[1:]...).Scan(&total) // Exclude the user_id placeholder for count query
+	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total) // Use all args for count query
 	if err != nil {
 		return nil, 0, err
 	}
@@ -241,6 +240,7 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsFavorite,
 			&i.CoverPath,
 			&i.TagsString,
 			&i.VolumeCount,

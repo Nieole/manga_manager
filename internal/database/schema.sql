@@ -19,10 +19,10 @@ CREATE TABLE IF NOT EXISTS series (
     rating REAL,
     language TEXT,
     locked_fields TEXT DEFAULT '',
-    is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
     path TEXT NOT NULL UNIQUE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
 );
 
