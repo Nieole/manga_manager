@@ -12,7 +12,7 @@ interface Page {
 type ReadMode = 'webtoon' | 'paged';
 type ReadDirection = 'ltr' | 'rtl';
 type ScaleMode = 'original' | 'fit-height' | 'fit-width' | 'fit-screen';
-type ImageFilter = 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'ncnn';
+type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'ncnn';
 
 // Helper for localStorage
 function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
@@ -73,9 +73,12 @@ export default function BookReader() {
 
     // 获取图像资源 URL（纯净无防抖，以保证跟前方预加载 Preloader 抓取下的缓存完全字面一致击穿 304）
     const getImageUrl = useCallback((pageNum: number) => {
-        let url = `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}`;
-        if (imageFilter === 'waifu2x') {
-            url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}&w2x_format=${w2xFormat}`;
+        let url = `/api/pages/${bookId}/${pageNum}`;
+        if (imageFilter && imageFilter !== 'none') {
+            url += `?filter=${imageFilter}`;
+            if (imageFilter === 'waifu2x') {
+                url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}&w2x_format=${w2xFormat}`;
+            }
         }
         return url;
     }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat]);
@@ -391,6 +394,7 @@ export default function BookReader() {
                                 onChange={(e) => setImageFilter(e.target.value as ImageFilter)}
                                 className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded p-2 outline-none cursor-pointer"
                             >
+                                <option value="none">原始图像 (Raw / 无处理)</option>
                                 <option value="nearest">相邻像素法 (Nearest / Pixelated)</option>
                                 <option value="average">平均像素法 (Average)</option>
                                 <option value="bilinear">双线性差值 (Bilinear / Auto)</option>
