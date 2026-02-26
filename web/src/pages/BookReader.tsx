@@ -12,7 +12,7 @@ interface Page {
 type ReadMode = 'webtoon' | 'paged';
 type ReadDirection = 'ltr' | 'rtl';
 type ScaleMode = 'original' | 'fit-height' | 'fit-width' | 'fit-screen';
-type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'ncnn';
+type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x';
 
 // Helper for localStorage
 function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
@@ -261,7 +261,6 @@ export default function BookReader() {
             case 'bicubic':
             case 'lanczos3':
             case 'waifu2x':
-            case 'ncnn':
                 return { imageRendering: 'high-quality' as any };
             default: return {};
         }
@@ -401,7 +400,6 @@ export default function BookReader() {
                                 <option value="bicubic">Bicubic (高画质重排)</option>
                                 <option value="lanczos3">Lanczos3 (需服务端支持)</option>
                                 <option value="waifu2x">Waifu2x AI (需服务端支持)</option>
-                                <option value="ncnn">ncnn 神经网络 (需服务端支持)</option>
                             </select>
                         </div>
 

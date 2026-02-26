@@ -60,7 +60,7 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 
 	// 针对 Waifu2x / ncnn 这种需要外部挂载文件系统的超分辨率算法单独开一条短路通道
 	if opts.Filter == "waifu2x" || opts.Filter == "ncnn" {
-		outData, err := execWaifu2x(data, opts)
+		outData, err := execWaifu2x(data, contentType, opts)
 		if err == nil {
 			// 直接返回加工好的 原始字节数组
 			// 为了防止前端不认识，强制重置 contentType
@@ -142,7 +142,7 @@ func decodeImage(data []byte, contentType string) (image.Image, string, error) {
 }
 
 // execWaifu2x 封闭处理 Waifu2x 外部二进制引擎挂载调用、零担内存置换及事后清理
-func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
+func execWaifu2x(imgData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
 	var execPath string
 
 	// 判断是否启用了自定义引擎路径机制
@@ -183,7 +183,21 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 	}
 	defer os.RemoveAll(sandboxDir)
 
-	inPath := filepath.Join(sandboxDir, "in.jpg")
+	// 根据原始图片的 MIME 类型推断正确的输入文件扩展名
+	inExt := "jpg"
+	switch {
+	case strings.Contains(contentType, "png"):
+		inExt = "png"
+	case strings.Contains(contentType, "webp"):
+		inExt = "webp"
+	case strings.Contains(contentType, "gif"):
+		inExt = "gif"
+	case strings.Contains(contentType, "bmp"):
+		inExt = "bmp"
+	case strings.Contains(contentType, "avif"):
+		inExt = "avif"
+	}
+	inPath := filepath.Join(sandboxDir, "in."+inExt)
 
 	outExt := "webp" // default fallback
 	if opts.Waifu2xFormat != "" {
