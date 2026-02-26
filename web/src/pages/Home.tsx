@@ -148,24 +148,24 @@ export default function Home() {
             {/* 头部信息栏 */}
             <div className="mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 border-b border-gray-800 pb-4">
                 <div>
-                    <h2 className="text-3xl font-bold text-white tracking-tight mb-1">浏览系列</h2>
-                    <p className="text-gray-400 text-sm">
+                    <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-1">浏览系列</h2>
+                    <p className="text-gray-400 text-xs sm:text-sm">
                         资源库返回 {totalSeries} 个结果
                     </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-4 sm:mt-0 w-full sm:w-auto justify-between sm:justify-end">
                     {allSeries.length > 0 && (
                         <button
                             onClick={() => {
                                 setIsSelectionMode(!isSelectionMode);
                                 setSelectedSeries([]);
                             }}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border focus:outline-none ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
+                            className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border focus:outline-none flex-shrink-0 ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
                         >
                             {isSelectionMode ? '取消选择' : '批量操作'}
                         </button>
                     )}
-                    <span className="text-sm text-gray-400 font-medium">排序方式</span>
+                    <span className="text-xs sm:text-sm text-gray-400 font-medium ml-auto sm:ml-0">排序方式</span>
                     <select
                         value={sortByField}
                         onChange={(e) => setSortByField(e.target.value)}
@@ -192,12 +192,12 @@ export default function Home() {
             {recentSeries.length > 0 && (
                 <div className="mb-10">
                     <h3 className="text-xl font-bold text-white mb-4 pl-1 border-l-4 border-komgaPrimary">继续阅读</h3>
-                    <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
+                    <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
                         {recentSeries.map(s => (
                             <Link
                                 key={s.id}
                                 to={s.recent_book_id ? `/reader/${s.recent_book_id}` : `/series/${s.id}`}
-                                className="group shrink-0 w-36 sm:w-44 md:w-52 flex flex-col rounded-xl overflow-hidden bg-komgaSurface border border-gray-800 hover:border-komgaPrimary transition-all duration-300 hover:shadow-lg snap-start"
+                                className="group shrink-0 w-32 sm:w-44 md:w-52 flex flex-col rounded-xl overflow-hidden bg-komgaSurface border border-gray-800 hover:border-komgaPrimary transition-all duration-300 hover:shadow-lg snap-start"
                             >
                                 <div className="aspect-[2/3] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
                                     {s.cover_path?.Valid && s.cover_path?.String ? (
@@ -233,7 +233,7 @@ export default function Home() {
             )}
 
             {/* 标签与作者与状态 聚合导航栏 */}
-            <div className="mb-6 grid xl:grid-cols-3 gap-8 divide-y xl:divide-y-0 xl:divide-x divide-gray-800">
+            <div className="mb-6 grid xl:grid-cols-3 gap-6 xl:gap-8 divide-y xl:divide-y-0 xl:divide-x divide-gray-800">
                 <div className="xl:pr-8">
                     <span className="text-komgaPrimary font-semibold text-sm mb-3 block">连载状态 (Status)</span>
                     <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
@@ -343,7 +343,7 @@ export default function Home() {
                 <div className="text-center py-20 text-gray-500">无匹配的系列</div>
             ) : (
                 <>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
                         {allSeries.map(s => {
                             const isSelected = selectedSeries.includes(s.id);
 

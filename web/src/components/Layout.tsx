@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -13,6 +13,7 @@ export default function Layout() {
     const [libraries, setLibraries] = useState<Library[]>([]);
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
     const [newLibAutoScan, setNewLibAutoScan] = useState(false);
@@ -188,13 +189,22 @@ export default function Layout() {
 
     return (
         <div className="min-h-screen bg-komgaDark text-gray-200 font-sans flex flex-col relative">
-            <header className="bg-komgaSurface shadow-md sticky top-0 z-20 px-6 py-4 flex items-center justify-between border-b border-gray-800">
-                <Link to="/" className="flex items-center space-x-3 w-64">
-                    <BookOpen className="text-komgaPrimary h-8 w-8" />
-                    <h1 className="text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition">Manga Manager</h1>
-                </Link>
+            <header className="bg-komgaSurface shadow-md sticky top-0 z-20 px-4 sm:px-6 py-4 flex items-center justify-between border-b border-gray-800">
+                <div className="flex items-center">
+                    <button
+                        onClick={() => setIsSidebarOpen(true)}
+                        className="md:hidden p-2 -ml-2 mr-2 text-gray-400 hover:text-white transition-colors"
+                        title="打开菜单"
+                    >
+                        <Menu className="w-6 h-6" />
+                    </button>
+                    <Link to="/" className="flex items-center space-x-2 sm:space-x-3 w-auto sm:w-56">
+                        <BookOpen className="text-komgaPrimary h-7 w-7 sm:h-8 sm:w-8" />
+                        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition hidden sm:block">Manga Manager</h1>
+                    </Link>
+                </div>
 
-                <div className="flex-1 max-w-xl flex justify-center">
+                <div className="flex-1 max-w-xl flex justify-center px-4">
                     <button
                         onClick={() => setIsSearchModalOpen(true)}
                         className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 flex items-center justify-between text-sm text-gray-500 hover:border-gray-700 hover:text-gray-300 transition-all opacity-80 hover:opacity-100 shadow-inner group"
@@ -207,7 +217,7 @@ export default function Layout() {
                     </button>
                 </div>
 
-                <div className="w-64 flex justify-end">
+                <div className="w-auto sm:w-64 flex justify-end">
                     <Link
                         to="/settings"
                         className="p-2 text-gray-400 hover:text-komgaPrimary hover:bg-gray-800 rounded-full transition-colors"
@@ -218,8 +228,16 @@ export default function Layout() {
                 </div>
             </header>
 
-            <main className="flex-1 flex overflow-hidden">
-                <aside className="w-64 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 hidden md:flex h-full overflow-hidden">
+            <main className="flex-1 flex overflow-hidden relative">
+                {/* 移动端侧边栏半透明深色遮罩 */}
+                {isSidebarOpen && (
+                    <div
+                        className="fixed inset-0 bg-black/70 z-40 md:hidden backdrop-blur-sm transition-opacity"
+                        onClick={() => setIsSidebarOpen(false)}
+                    />
+                )}
+
+                <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 w-64 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 transform transition-transform duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 overflow-hidden ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
                     <div className="px-6 mb-4 flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">
                         <span>Libraries</span>
                         <button
@@ -240,6 +258,7 @@ export default function Layout() {
                                 <Link
                                     key={lib.id}
                                     to={`/library/${lib.id}`}
+                                    onClick={() => setIsSidebarOpen(false)}
                                     className={`w-full flex justify-between items-center group px-3 py-2.5 rounded-lg transition-colors duration-200 ${libId === lib.id
                                         ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium'
                                         : 'text-gray-300 hover:bg-gray-800 hover:text-white'

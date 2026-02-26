@@ -480,8 +480,8 @@ export default function SeriesDetail() {
                         <ArrowLeft className="w-4 h-4 mr-1" />
                         {selectedVolume ? "返回系列总览" : "返回资源库"}
                     </button>
-                    <h2 className="text-3xl font-bold text-white tracking-tight flex flex-col sm:flex-row sm:items-center gap-4">
-                        <div className="flex items-center">
+                    <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight flex flex-col sm:flex-row sm:items-center gap-4">
+                        <div className="flex items-center break-all sm:break-normal">
                             {selectedVolume ? (
                                 <>
                                     <FolderOpen className="w-8 h-8 mr-3 text-komgaPrimary" />
@@ -491,28 +491,28 @@ export default function SeriesDetail() {
                                 seriesInfo?.title?.Valid ? seriesInfo.title.String : (seriesInfo?.name || "系列总览")
                             )}
                             {!selectedVolume && seriesInfo && (
-                                <>
+                                <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto sm:ml-4">
                                     <button
                                         onClick={() => {
                                             setIsSelectionMode(!isSelectionMode);
                                             setSelectedBooks([]);
                                         }}
-                                        className={`ml-4 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border focus:outline-none ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
+                                        className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border focus:outline-none ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
                                     >
                                         {isSelectionMode ? '取消选择' : '批量操作'}
                                     </button>
                                     <button
                                         onClick={() => setIsEditing(true)}
-                                        className="ml-2 p-1.5 text-gray-500 hover:text-komgaPrimary hover:bg-komgaPrimary/10 rounded transition-colors"
+                                        className="p-1.5 text-gray-500 hover:text-komgaPrimary bg-gray-900 border border-gray-800 hover:bg-komgaPrimary/10 rounded transition-colors"
                                         title="编辑元数据"
                                     >
                                         <Edit className="w-5 h-5" />
                                     </button>
-                                    <div className="relative ml-1">
+                                    <div className="relative">
                                         <button
                                             onClick={() => setScrapeMenuOpen(!scrapeMenuOpen)}
                                             disabled={isScraping}
-                                            className="p-1.5 text-gray-500 hover:text-green-400 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className="p-1.5 text-gray-500 hover:text-green-400 bg-gray-900 border border-gray-800 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                             title="刮削元数据"
                                         >
                                             {isScraping ? (
@@ -548,7 +548,7 @@ export default function SeriesDetail() {
                                             </>
                                         )}
                                     </div>
-                                </>
+                                </div>
                             )}
                         </div>
 
@@ -789,7 +789,7 @@ export default function SeriesDetail() {
                 <div className="text-center py-20 text-gray-500 animate-pulse">正在提取书籍关系元数据...</div>
             ) : selectedVolume ? (
                 // 渲染单个卷内的话列表
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
                     {activeVolumeBooks.map(renderBookCard)}
                 </div>
             ) : (
@@ -800,7 +800,7 @@ export default function SeriesDetail() {
                             <h3 className="text-lg font-semibold text-gray-300 mb-4 flex items-center">
                                 <FolderOpen className="w-5 h-5 mr-2 text-komgaPrimary" /> 卷列表
                             </h3>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
                                 {volumes.map(vol => (
                                     <div
                                         key={vol.name}
@@ -841,7 +841,7 @@ export default function SeriesDetail() {
                             <h3 className="text-lg font-semibold text-gray-300 mb-4 flex items-center">
                                 <BookImage className="w-5 h-5 mr-2 text-komgaPrimary" /> 单行本册子
                             </h3>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
                                 {standaloneBooks.map(renderBookCard)}
                             </div>
                         </div>
@@ -855,9 +855,9 @@ export default function SeriesDetail() {
 
             {/* 悬浮多选操作栏 */}
             {isSelectionMode && selectedBooks.length > 0 && (
-                <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl px-6 py-4 flex items-center gap-6 z-50 animate-in slide-in-from-bottom-5">
+                <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl p-4 w-[90vw] sm:w-auto flex flex-col sm:flex-row items-center gap-4 sm:gap-6 z-50 animate-in slide-in-from-bottom-5">
                     <span className="text-white font-medium text-sm">已选择 {selectedBooks.length} 项</span>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-between w-full sm:w-auto gap-3">
                         <button
                             onClick={() => handleBulkProgressUpdate(true)}
                             className="bg-green-500/10 hover:bg-green-500/20 text-green-500 border border-green-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"

@@ -334,7 +334,7 @@ export default function BookReader() {
 
                 {/* 设置体 */}
                 {showSettings && (
-                    <div className="self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-5 shadow-2xl w-80 text-sm text-gray-300 flex flex-col gap-4 animate-in fade-in slide-in-from-top-4">
+                    <div className="self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-4 sm:p-5 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 origin-top-right">
                         <div>
                             <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">阅读模式</span>
                             <div className="flex bg-gray-900 rounded p-1">
@@ -492,7 +492,7 @@ export default function BookReader() {
                     <div className="flex items-center justify-center w-full h-full bg-black relative">
                         {/* 左触控区/按钮 */}
                         <div
-                            className="absolute left-0 inset-y-0 w-2/5 sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
+                            className="absolute left-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
                             onClick={() => readDirection === 'ltr' ? handlePrev() : handleNext()}
                         >
                             <ChevronLeft className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors" />
@@ -521,7 +521,7 @@ export default function BookReader() {
 
                         {/* 右触控区/按钮 */}
                         <div
-                            className="absolute right-0 inset-y-0 w-2/5 sm:w-1/3 z-10 flex items-center justify-end sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
+                            className="absolute right-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-end sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
                             onClick={() => readDirection === 'ltr' ? handleNext() : handlePrev()}
                         >
                             <ChevronRight className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors" />
