@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,7 +62,7 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 			return outData, "image/png", nil
 		}
 		// 如果 waifu2x 执行失败，退回到下面原生的 Lanczos 软算逻辑
-		fmt.Printf("[Processor] Waifu2x err: %v. Falling back to Lanczos3.\n", err)
+		slog.Warn("Waifu2x execution failed. Falling back to Lanczos3.", "error", err)
 		opts.Filter = "lanczos3"
 	}
 
@@ -169,7 +170,7 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("execution failed: %v, output: %s", err, string(output))
 	}
-	fmt.Printf("[Processor] Waifu2x execution successful. Output: %s\n", string(output))
+	slog.Info("Waifu2x execution successful", "output_snippet", string(output[:min(len(output), 100)]))
 
 	// 读取处理完毕的磁盘输出图
 	processedData, err := os.ReadFile(outPath)
@@ -178,4 +179,11 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 	}
 
 	return processedData, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

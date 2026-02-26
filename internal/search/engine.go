@@ -2,7 +2,7 @@ package search
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"manga-manager/internal/database"
 	"os"
 	"path/filepath"
@@ -30,13 +30,13 @@ func NewEngine(dataPath string) (*Engine, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Println("Created new Bleve search index.")
+		slog.Info("Created new Bleve search index.")
 	} else {
 		idx, err = bleve.Open(indexPath)
 		if err != nil {
 			return nil, err
 		}
-		log.Println("Opened existing Bleve search index.")
+		slog.Info("Opened existing Bleve search index.")
 	}
 
 	return &Engine{

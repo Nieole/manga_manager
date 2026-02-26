@@ -5,7 +5,7 @@ import (
 	"crypto/sha1"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,7 +63,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	if !force {
 		existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
 		if err != nil {
-			log.Printf("Failed to load existing books cache: %v", err)
+			slog.Warn("Failed to load existing books cache", "library_id", libraryID, "error", err)
 			return err
 		}
 
@@ -107,7 +107,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	var walkErr error
 	walkErr = filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			log.Printf("Error accessing path %q: %v\n", path, err)
+			slog.Warn("Error accessing path", "path", path, "error", err)
 			return nil
 		}
 
@@ -146,21 +146,21 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	close(results)  // 通知 Ingester 没数据投递了
 	ingestWg.Wait() // 等待 Ingester 将批次强刷入磁盘
 
-	log.Printf("Scan completely flushed for library: %d", libraryID)
+	slog.Info("Scan completely flushed for library", "library_id", libraryID)
 	return walkErr
 }
 
 func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, results chan<- scanResult) {
 	arc, err := parser.OpenArchive(job.path)
 	if err != nil {
-		log.Printf("Failed to open archive %s (may be corrupted): %v", job.path, err)
+		slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
 		return
 	}
 	defer arc.Close()
 
 	pages, err := arc.GetPages()
 	if err != nil {
-		log.Printf("Failed to scan pages in %s: %v", job.path, err)
+		slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
 		return
 	}
 
@@ -253,7 +253,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 							fileName = bookHash + "." + targetFormat
 						}
 					} else {
-						log.Printf("Primary format (%s) generation failed for %s: %v, falling back to jpeg", targetFormat, job.path, thumbErr)
+						slog.Warn("Primary format generation failed, falling back to jpeg", "format", targetFormat, "path", job.path, "error", thumbErr)
 						jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
 							Width: 400, Quality: 82, Format: "jpeg",
 						})
@@ -261,7 +261,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 							processed = jpegData
 							fileName = bookHash + ".jpg"
 						} else {
-							log.Printf("JPEG fallback generation failed for %s: %v", job.path, jpegErr)
+							slog.Warn("JPEG fallback generation failed", "path", job.path, "error", jpegErr)
 						}
 					}
 
@@ -270,18 +270,18 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 						if err := os.WriteFile(fullPath, processed, 0644); err == nil {
 							coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}
 						} else {
-							log.Printf("Failed to write thumbnail file %s: %v", fullPath, err)
+							slog.Error("Failed to write thumbnail file", "path", fullPath, "error", err)
 						}
 					} else {
-						log.Printf("No processed thumbnail data for %s", job.path)
+						slog.Warn("No processed thumbnail data generated", "path", job.path)
 					}
 				} else {
-					log.Printf("Failed to ReadPage %s from %s: %v", pages[0].Name, job.path, err)
+					slog.Warn("Failed to ReadPage to parse cover", "page_name", pages[0].Name, "path", job.path, "error", err)
 				}
 			}
 		}
 	} else {
-		log.Printf("No pages found in %s to extract cover", job.path)
+		slog.Warn("No pages found in archive to extract cover", "path", job.path)
 	}
 
 	book := database.UpsertBookByPathParams{
@@ -388,7 +388,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						LockedFields: sql.NullString{String: "title", Valid: true},
 					})
 					if err != nil {
-						log.Printf("Failed to create/upsert series %q: %v", res.seriesName, err)
+						slog.Error("Failed to create/upsert series", "series_name", res.seriesName, "error", err)
 						continue
 					}
 					seriesID = createdSeries.ID
@@ -469,7 +469,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at，返回带主键的对象
 				actualBook, err := q.UpsertBookByPath(ctx, res.book)
 				if err != nil {
-					log.Printf("Failed to upsert book %q: %v", res.book.Path, err)
+					slog.Error("Failed to upsert book", "path", res.book.Path, "error", err)
 					continue
 				}
 
@@ -481,7 +481,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		})
 
 		if err != nil {
-			log.Printf("Batch ingest transaction failed: %v", err)
+			slog.Error("Batch ingest transaction failed", "error", err)
 		} else {
 			// 在事务外并发建立检索，释放数据库写锁，解救由于更新阅读进度卡死的连接
 			seriesIdxMap := make(map[int64]string)
@@ -492,7 +492,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			for sid, sname := range seriesIdxMap {
 				_ = s.engine.IndexSeries(sid, sname)
 			}
-			log.Printf("Successfully ingested batch of %d books.", len(batch))
+			slog.Info("Successfully ingested batch", "book_count", len(batch))
 			if s.onBatchIngested != nil {
 				s.onBatchIngested("batch_inserted")
 			}

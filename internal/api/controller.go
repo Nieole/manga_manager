@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -94,7 +94,7 @@ func (c *Controller) startDaemon() {
 
 		libs, err := c.store.ListLibraries(context.Background())
 		if err != nil {
-			log.Printf("[Daemon ERROR] Failed to fetch libraries: %v", err)
+			slog.Error("Daemon failed to fetch libraries", "error", err)
 			continue
 		}
 
@@ -109,11 +109,11 @@ func (c *Controller) startDaemon() {
 			// 如果从未记录（或刚启动），则在首次 Tick 时也会直接触发，或者也可选择不直接触发。目前假定超过间隔就触发。
 			if !ok || now.Sub(last) >= interval {
 				lastScan[lib.ID] = now
-				log.Printf("[Daemon] Triggering auto-scan for library %d (%s)", lib.ID, lib.Path)
+				slog.Info("Triggering auto-scan for library from Daemon", "library_id", lib.ID, "path", lib.Path)
 				go func(id int64, path string) {
 					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
 					if err != nil {
-						log.Printf("[Daemon ERROR] Auto-scan failed for library %d: %v", id, err)
+						slog.Error("Auto-scan failed", "library_id", id, "error", err)
 					}
 				}(lib.ID, lib.Path)
 			}
@@ -406,7 +406,7 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 
 	series, total, err := c.store.SearchSeriesPaged(ctx, libID, letter, status, tags, authors, int32(limit), int32(offset), sortBy)
 	if err != nil {
-		log.Printf("[API ERROR] SearchSeriesPaged Failed: %v", err)
+		slog.Error("SearchSeriesPaged Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
 		return
 	}
@@ -453,7 +453,7 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 
 	items, err := c.store.GetRecentReadSeries(ctx, arg)
 	if err != nil {
-		log.Printf("[API ERROR] GetRecentReadSeries Failed: %v", err)
+		slog.Error("GetRecentReadSeries Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent read series")
 		return
 	}
@@ -709,7 +709,7 @@ func (c *Controller) bulkUpdateSeries(w http.ResponseWriter, r *http.Request) {
 				ID:         id,
 			})
 			if err != nil {
-				log.Printf("[API ERROR] Failed to bulk update series %d: %v", id, err)
+				slog.Error("Failed to bulk update series favorite", "series_id", id, "error", err)
 			}
 		}
 	}
@@ -750,7 +750,7 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 			ID:           id,
 		})
 		if err != nil {
-			log.Printf("[API ERROR] Failed to bulk update book progress %d: %v", id, err)
+			slog.Error("Failed to bulk update book progress", "book_id", id, "error", err)
 		}
 	}
 

@@ -3,7 +3,7 @@ package metadata
 import (
 	"context"
 	"encoding/xml"
-	"log"
+	"log/slog"
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
@@ -36,11 +36,11 @@ func ExtractAndApply(ctx context.Context, store database.Store, arc parser.Archi
 
 	var info ComicInfo
 	if err := xml.Unmarshal(data, &info); err != nil {
-		log.Printf("Failed to unmarshal ComicInfo.xml for book %s: %v", bookID, err)
+		slog.Warn("Failed to unmarshal ComicInfo.xml", "book_id", bookID, "error", err)
 		return err
 	}
 
-	log.Printf("Found ComicInfo: %s - %s", info.Series, info.Title)
+	slog.Info("Found ComicInfo", "series", info.Series, "title", info.Title)
 
 	// TODO: 实现更细粒度的 update store 更新以覆盖从文件结构中推导出的 title/summary 默认值。
 	return nil

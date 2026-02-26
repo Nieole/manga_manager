@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -259,15 +259,15 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		successCount := 0
 
 		for i, entry := range allSeries {
-			log.Printf("[批量刮削·%s] (%d/%d) 正在刮削: %s", providerName, i+1, totalCount, entry.Name)
+			slog.Info("Scraping series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
 
 			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
 			if err != nil {
-				log.Printf("[批量刮削·%s] 刮削『%s』失败: %v", providerName, entry.Name, err)
+				slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 				continue
 			}
 			if result == nil {
-				log.Printf("[批量刮削·%s] 未找到『%s』的条目", providerName, entry.Name)
+				slog.Info("Entry not found by provider", "provider", providerName, "series_name", entry.Name)
 				continue
 			}
 
@@ -349,14 +349,14 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 
 			if err == nil {
 				successCount++
-				log.Printf("[批量刮削·%s] 成功刮削: %s", providerName, result.Title)
+				slog.Info("Successfully unified metadata", "provider", providerName, "series_title", result.Title)
 			}
 
 			// 速率限制
 			time.Sleep(500 * time.Millisecond)
 		}
 
-		log.Printf("[批量刮削·%s] 全部完成！成功 %d/%d", providerName, successCount, totalCount)
+		slog.Info("Batch scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
 		c.PublishEvent("scrape_complete")
 	}()
 

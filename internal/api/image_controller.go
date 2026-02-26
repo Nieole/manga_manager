@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -101,7 +102,7 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	finalData, finalContentType, err := images.ProcessImage(data, targetMediaType, opts)
 	if err != nil {
 		// Log and fallback to raw data
-		fmt.Printf("Image process error, fallback to raw source: %v", err)
+		slog.Warn("Image process error, fallback to raw source", "error", err)
 		finalData = data
 		finalContentType = targetMediaType
 	}
