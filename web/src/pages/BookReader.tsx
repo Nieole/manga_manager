@@ -47,6 +47,10 @@ export default function BookReader() {
     const [imageFilter, setImageFilter] = useStickyState<ImageFilter>('bilinear', 'manga_image_filter');
     const [preloadCount, setPreloadCount] = useStickyState<number>(3, 'manga_preload_count');
 
+    // Waifu2x 专属超分配置偏好
+    const [w2xScale, setW2xScale] = useStickyState<number>(2, 'manga_waifu2x_scale');
+    const [w2xNoise, setW2xNoise] = useStickyState<number>(0, 'manga_waifu2x_noise');
+
     // UI State
     const [showSettings, setShowSettings] = useState(false);
     // Paged mode state
@@ -65,6 +69,15 @@ export default function BookReader() {
         axios.post(`/api/books/${bookId}/progress`, { page: pageNumber })
             .catch(err => console.error("Failed to update read progress", err));
     }, [bookId]);
+
+    // 获取图像资源 URL（纯净无防抖，以保证跟前方预加载 Preloader 抓取下的缓存完全字面一致击穿 304）
+    const getImageUrl = useCallback((pageNum: number) => {
+        let url = `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}`;
+        if (imageFilter === 'waifu2x') {
+            url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}`;
+        }
+        return url;
+    }, [bookId, imageFilter, w2xScale, w2xNoise]);
 
     useEffect(() => {
         if (!bookId) return;
@@ -119,13 +132,11 @@ export default function BookReader() {
         if (!pages.length || preloadCount <= 0 || loading) return;
         const startIndex = currentPageIndex + (readMode === 'paged' && doublePage ? 2 : 1);
         const endIndex = Math.min(startIndex + preloadCount, pages.length);
-        const backendFilters = ['bicubic', 'lanczos3', 'waifu2x', 'ncnn'];
-        const filterQuery = backendFilters.includes(imageFilter) ? `?filter=${imageFilter}` : '';
         for (let i = startIndex; i < endIndex; i++) {
             const img = new window.Image();
-            img.src = `/api/pages/${bookId}/${pages[i].number}${filterQuery}`;
+            img.src = getImageUrl(pages[i].number);
         }
-    }, [currentPageIndex, pages, bookId, preloadCount, readMode, doublePage, loading, imageFilter]);
+    }, [currentPageIndex, pages, preloadCount, readMode, doublePage, loading, getImageUrl]);
 
     // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)
     useEffect(() => {
@@ -251,11 +262,6 @@ export default function BookReader() {
             default: return {};
         }
     };
-
-    // 获取图像资源 URL（纯净无防抖，以保证跟前方预加载 Preloader 抓取下的缓存完全字面一致击穿 304）
-    const getImageUrl = useCallback((pageNum: number) => {
-        return `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}`;
-    }, [bookId, imageFilter]);
 
     // --- 图层鼠标物理拖拽交互方法群 ---
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -393,6 +399,45 @@ export default function BookReader() {
                                 <option value="ncnn">ncnn 神经网络 (需服务端支持)</option>
                             </select>
                         </div>
+
+                        {imageFilter === 'waifu2x' && (
+                            <div className="bg-gray-900/50 p-3 rounded border border-komgaPrimary/30 animate-in fade-in slide-in-from-top-2">
+                                <div className="mb-3">
+                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
+                                        <span>引擎缩放倍数</span>
+                                        <span className="text-komgaPrimary">{w2xScale}x</span>
+                                    </span>
+                                    <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
+                                        {[1, 2, 4, 8].map(s => (
+                                            <button
+                                                key={s}
+                                                className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xScale === s ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
+                                                onClick={() => setW2xScale(s)}
+                                            >
+                                                {s}x
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
+                                        <span>降噪等级 (Noise)</span>
+                                        <span className="text-komgaPrimary">{w2xNoise === -1 ? '关闭' : w2xNoise}</span>
+                                    </span>
+                                    <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
+                                        {[-1, 0, 1, 2, 3].map(n => (
+                                            <button
+                                                key={n}
+                                                className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xNoise === n ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
+                                                onClick={() => setW2xNoise(n)}
+                                            >
+                                                {n === -1 ? '关' : n}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div>
                             <div className="flex items-center justify-between mb-2">

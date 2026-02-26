@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/chai2010/webp"
@@ -25,12 +26,14 @@ import (
 
 // ProcessOptions 用于接受前端动态要求的尺寸转换
 type ProcessOptions struct {
-	Width       int
-	Height      int
-	Format      string // webp, jpeg, png
-	Quality     int    // 0-100
-	Filter      string // bicubic, lanczos3, waifu2x, ncnn
-	Waifu2xPath string // 允许动态指定引擎启动文件路径
+	Width        int
+	Height       int
+	Format       string // webp, jpeg, png
+	Quality      int    // 0-100
+	Filter       string // bicubic, lanczos3, waifu2x, ncnn
+	Waifu2xPath  string // 允许动态指定引擎启动文件路径
+	Waifu2xScale int    // 引擎缩放倍数 1/2/4/8
+	Waifu2xNoise int    // 降噪等级 -1/0/1/2/3
 }
 
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
@@ -191,7 +194,17 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 	}
 	execDir := filepath.Dir(absExecPath)
 
-	cmd := exec.Command(execPath, "-i", inPath, "-o", outPath, "-s", "2", "-n", "1", "-f", "png")
+	// 提取从前端下发的客制化倍率，如未显性指示则分别跌落至默认倍数 2, 降噪 0
+	scaleStr := "2"
+	if opts.Waifu2xScale > 0 {
+		scaleStr = strconv.Itoa(opts.Waifu2xScale)
+	}
+	noiseStr := "0"
+	if opts.Waifu2xNoise >= -1 {
+		noiseStr = strconv.Itoa(opts.Waifu2xNoise)
+	}
+
+	cmd := exec.Command(execPath, "-i", inPath, "-o", outPath, "-s", scaleStr, "-n", noiseStr, "-f", "png")
 	cmd.Dir = execDir // 指定子进程在其引擎本体所在文件夹起飞！
 
 	output, err := cmd.CombinedOutput()
