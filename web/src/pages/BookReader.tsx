@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -36,6 +36,12 @@ export default function BookReader() {
     // Reading Settings
     const [readMode, setReadMode] = useStickyState<ReadMode>('webtoon', 'manga_read_mode');
     const [readDirection, setReadDirection] = useStickyState<ReadDirection>('ltr', 'manga_read_direction');
+
+    // --- 拖拉平移操控状态 ---
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const [scrollStart, setScrollStart] = useState({ left: 0, top: 0 });
     const [doublePage, setDoublePage] = useStickyState<boolean>(false, 'manga_double_page');
     const [scaleMode, setScaleMode] = useStickyState<ScaleMode>('fit-screen', 'manga_scale_mode');
     const [imageFilter, setImageFilter] = useStickyState<ImageFilter>('bilinear', 'manga_image_filter');
@@ -224,7 +230,7 @@ export default function BookReader() {
         let classes = baseClasses;
         switch (scaleMode) {
             case 'original': classes += ' w-auto h-auto max-w-none max-h-none block'; break;
-            case 'fit-width': classes += ' w-full max-w-none h-auto object-contain block'; break;
+            case 'fit-width': classes += ' w-screen min-w-full h-auto object-cover block m-0 p-0'; break;
             case 'fit-screen': classes += ' max-w-full max-h-screen object-contain block'; break;
             case 'fit-height':
             default: classes += ' h-screen w-auto object-contain max-h-screen max-w-none block'; break;
@@ -246,12 +252,42 @@ export default function BookReader() {
         }
     };
 
-    // 构造带服务端滤镜参数的图片链接
-    const getImageUrl = (pageNum: number) => {
-        const backendFilters = ['bicubic', 'lanczos3', 'waifu2x', 'ncnn'];
-        return backendFilters.includes(imageFilter)
-            ? `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}`
-            : `/api/pages/${bookId}/${pageNum}`;
+    // 获取图像资源 URL（带缓存防抖）
+    const getImageUrl = useCallback((pageNum: number) => {
+        return `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}&t=${Date.now()}`;
+    }, [bookId, imageFilter]);
+
+    // --- 图层鼠标物理拖拽交互方法群 ---
+    const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!containerRef.current) return;
+        setIsDragging(true);
+        // 记录按下时的原始光标位置及容器目前混动余量
+        setDragStart({ x: e.pageX, y: e.pageY });
+        setScrollStart({
+            left: containerRef.current.scrollLeft,
+            top: containerRef.current.scrollTop
+        });
+    };
+
+    const handleMouseLeave = () => {
+        setIsDragging(false);
+    };
+
+    const handleMouseUp = () => {
+        setIsDragging(false);
+    };
+
+    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!isDragging || !containerRef.current) return;
+        e.preventDefault();
+
+        // 计算鼠标位移差
+        const dx = e.pageX - dragStart.x;
+        const dy = e.pageY - dragStart.y;
+
+        // 按照物理相反方向拨动纸张滚动条（向左推光标，纸往右走；向上滑光标，纸往下掉）
+        containerRef.current.scrollLeft = scrollStart.left - dx;
+        containerRef.current.scrollTop = scrollStart.top - dy;
     };
 
     return (
@@ -383,7 +419,7 @@ export default function BookReader() {
                         <Loader2 className="w-10 h-10 animate-spin text-komgaPrimary" />
                     </div>
                 ) : readMode === 'webtoon' ? (
-                    <div className="flex flex-col items-center w-full bg-black relative h-full overflow-y-auto">
+                    <div className="flex flex-col items-center w-full bg-black relative h-full overflow-y-auto overflow-x-hidden">
                         {pages.map(page => (
                             <img
                                 key={page.number}
@@ -392,7 +428,7 @@ export default function BookReader() {
                                 loading="lazy"
                                 decoding="async"
                                 style={getFilterStyle()}
-                                className={getScaleClasses("bg-gray-900 min-h-[50vh] drop-shadow-lg")}
+                                className={getScaleClasses("bg-gray-900 min-h-[50vh] drop-shadow-lg max-w-[100vw]")}
                                 alt={`Page ${page.number}`}
                             />
                         ))}
@@ -417,8 +453,15 @@ export default function BookReader() {
                             <ChevronLeft className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors" />
                         </div>
 
-                        {/* 图像容器 - 根据数量排列 */}
-                        <div className="flex items-center justify-center h-full max-w-full max-h-full px-12 sm:px-20 select-none">
+                        {/* 图像容器 - 根据数量排列并赋予拖拽监听和原生弹性滚动 */}
+                        <div
+                            ref={containerRef}
+                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${scaleMode === 'fit-width' ? 'px-0 w-full' : 'px-12 sm:px-20'} select-none`}
+                            onMouseDown={handleMouseDown}
+                            onMouseLeave={handleMouseLeave}
+                            onMouseUp={handleMouseUp}
+                            onMouseMove={handleMouseMove}
+                        >
                             {getPagedImages().map((p) => (
                                 <img
                                     key={p.number}
