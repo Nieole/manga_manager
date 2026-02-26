@@ -11,6 +11,8 @@ interface Page {
 
 type ReadMode = 'webtoon' | 'paged';
 type ReadDirection = 'ltr' | 'rtl';
+type ScaleMode = 'original' | 'fit-height' | 'fit-width' | 'fit-screen';
+type ImageFilter = 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'ncnn';
 
 // Helper for localStorage
 function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
@@ -35,6 +37,9 @@ export default function BookReader() {
     const [readMode, setReadMode] = useStickyState<ReadMode>('webtoon', 'manga_read_mode');
     const [readDirection, setReadDirection] = useStickyState<ReadDirection>('ltr', 'manga_read_direction');
     const [doublePage, setDoublePage] = useStickyState<boolean>(false, 'manga_double_page');
+    const [scaleMode, setScaleMode] = useStickyState<ScaleMode>('fit-screen', 'manga_scale_mode');
+    const [imageFilter, setImageFilter] = useStickyState<ImageFilter>('bilinear', 'manga_image_filter');
+    const [preloadCount, setPreloadCount] = useStickyState<number>(3, 'manga_preload_count');
 
     // UI State
     const [showSettings, setShowSettings] = useState(false);
@@ -102,6 +107,19 @@ export default function BookReader() {
             setLoading(false);
         });
     }, [bookId]);
+
+    // 预加载队列系统 (向后驱取指定页数放入浏览器缓存池)
+    useEffect(() => {
+        if (!pages.length || preloadCount <= 0 || loading) return;
+        const startIndex = currentPageIndex + (readMode === 'paged' && doublePage ? 2 : 1);
+        const endIndex = Math.min(startIndex + preloadCount, pages.length);
+        const backendFilters = ['bicubic', 'lanczos3', 'waifu2x', 'ncnn'];
+        const filterQuery = backendFilters.includes(imageFilter) ? `?filter=${imageFilter}` : '';
+        for (let i = startIndex; i < endIndex; i++) {
+            const img = new window.Image();
+            img.src = `/api/pages/${bookId}/${pages[i].number}${filterQuery}`;
+        }
+    }, [currentPageIndex, pages, bookId, preloadCount, readMode, doublePage, loading, imageFilter]);
 
     // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)
     useEffect(() => {
@@ -201,6 +219,41 @@ export default function BookReader() {
         return [current];
     };
 
+    // 获取响应式缩放与图像预处理滤镜方案
+    const getScaleClasses = (baseClasses: string) => {
+        let classes = baseClasses;
+        switch (scaleMode) {
+            case 'original': classes += ' w-auto h-auto max-w-none max-h-none'; break;
+            case 'fit-width': classes += ' w-full h-auto object-contain'; break;
+            case 'fit-screen': classes += ' max-w-full max-h-screen object-contain'; break;
+            case 'fit-height':
+            default: classes += ' h-[95vh] w-auto object-contain max-w-full'; break;
+        }
+        return classes;
+    };
+
+    const getFilterStyle = (): React.CSSProperties => {
+        switch (imageFilter) {
+            case 'nearest': return { imageRendering: 'pixelated' };
+            case 'average':
+            case 'bilinear': return { imageRendering: 'auto' };
+            case 'bicubic':
+            case 'lanczos3':
+            case 'waifu2x':
+            case 'ncnn':
+                return { imageRendering: 'high-quality' as any };
+            default: return {};
+        }
+    };
+
+    // 构造带服务端滤镜参数的图片链接
+    const getImageUrl = (pageNum: number) => {
+        const backendFilters = ['bicubic', 'lanczos3', 'waifu2x', 'ncnn'];
+        return backendFilters.includes(imageFilter)
+            ? `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}`
+            : `/api/pages/${bookId}/${pageNum}`;
+    };
+
     return (
         <div className="absolute inset-0 bg-black flex flex-col z-50 overflow-hidden font-sans">
             {/* 顶栏控制面板区悬浮感应 */}
@@ -266,6 +319,60 @@ export default function BookReader() {
                                 </div>
                             </>
                         )}
+
+                        <div className="h-px bg-gray-800 my-2"></div>
+
+                        <div>
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">缩放方式</span>
+                            <div className="flex bg-gray-900 rounded p-1">
+                                {['original', 'fit-height', 'fit-width', 'fit-screen'].map(sm => (
+                                    <button
+                                        key={sm}
+                                        className={`flex-1 py-1 px-0.5 rounded transition text-xs ${scaleMode === sm ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
+                                        onClick={() => setScaleMode(sm as ScaleMode)}
+                                        title={sm === 'original' ? '原始尺寸' : sm === 'fit-height' ? '符合高度' : sm === 'fit-width' ? '符合宽度' : '符合屏幕'}
+                                    >
+                                        {sm === 'original' ? '原始' : sm === 'fit-height' ? '等高' : sm === 'fit-width' ? '等宽' : '适屏'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
+                                <span>插值过滤与缩放算法</span>
+                                <span className="text-komgaPrimary">{imageFilter}</span>
+                            </span>
+                            <select
+                                value={imageFilter}
+                                onChange={(e) => setImageFilter(e.target.value as ImageFilter)}
+                                className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded p-2 outline-none cursor-pointer"
+                            >
+                                <option value="nearest">相邻像素法 (Nearest / Pixelated)</option>
+                                <option value="average">平均像素法 (Average)</option>
+                                <option value="bilinear">双线性差值 (Bilinear / Auto)</option>
+                                <option value="bicubic">Bicubic (高画质重排)</option>
+                                <option value="lanczos3">Lanczos3 (需服务端支持)</option>
+                                <option value="waifu2x">Waifu2x AI (需服务端支持)</option>
+                                <option value="ncnn">ncnn 神经网络 (需服务端支持)</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider">提前预缓存页数</span>
+                                <span className="text-xs bg-gray-800 px-2 py-0.5 rounded text-gray-300">{preloadCount} 页</span>
+                            </div>
+                            <input
+                                type="range"
+                                min={0}
+                                max={10}
+                                step={1}
+                                value={preloadCount}
+                                onChange={(e) => setPreloadCount(parseInt(e.target.value, 10))}
+                                className="w-full accent-komgaPrimary"
+                            />
+                        </div>
                     </div>
                 )}
             </div>
@@ -282,10 +389,11 @@ export default function BookReader() {
                             <img
                                 key={page.number}
                                 data-page-number={page.number}
-                                src={`/api/pages/${bookId}/${page.number}`}
+                                src={getImageUrl(page.number)}
                                 loading="lazy"
                                 decoding="async"
-                                className="w-auto h-auto max-w-full lg:max-w-4xl max-h-screen object-contain mb-2 md:mb-4 bg-gray-900 min-h-[50vh]"
+                                style={getFilterStyle()}
+                                className={getScaleClasses("mb-2 md:mb-4 bg-gray-900 min-h-[50vh] drop-shadow-lg")}
                                 alt={`Page ${page.number}`}
                             />
                         ))}
@@ -315,8 +423,9 @@ export default function BookReader() {
                             {getPagedImages().map((p) => (
                                 <img
                                     key={p.number}
-                                    src={`/api/pages/${bookId}/${p.number}`}
-                                    className="object-contain max-h-screen max-w-full drop-shadow-2xl h-[95vh]"
+                                    src={getImageUrl(p.number)}
+                                    className={getScaleClasses("drop-shadow-2xl")}
+                                    style={getFilterStyle()}
                                     alt={`Page ${p.number}`}
                                     draggable={false}
                                 />

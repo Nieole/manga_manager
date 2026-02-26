@@ -60,12 +60,13 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format") // 支持前端主动请求 webp/jpeg 降低带宽高负载
 	widthStr := r.URL.Query().Get("w")
 	heightStr := r.URL.Query().Get("h")
+	filter := r.URL.Query().Get("filter")
 
-	// 构建缓存 Key：bookId-pageNumber-width-height-format-q
-	cacheKey := fmt.Sprintf("%d-%d-%s-%s-%s-%s", bookID, pageNumber, widthStr, heightStr, format, qualityStr)
+	// 构建缓存 Key：bookId-pageNumber-width-height-format-q-filter
+	cacheKey := fmt.Sprintf("%d-%d-%s-%s-%s-%s-%s", bookID, pageNumber, widthStr, heightStr, format, qualityStr, filter)
 
-	// 如果是请求特定画幅或经过缩放的，则进行缓存查找以极度加速。原始图片则不查内存以防 OOM。
-	isThumbnailReq := widthStr != "" || heightStr != ""
+	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
+	isThumbnailReq := widthStr != "" || heightStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear")
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
 			w.Header().Set("Content-Type", "image/jpeg") // fallback to jpeg standard cache behavior for simplicity
@@ -85,6 +86,7 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	// 准备处理并发送响应头
 	opts := images.ProcessOptions{
 		Format: format,
+		Filter: filter,
 	}
 	if q, err := strconv.Atoi(qualityStr); err == nil {
 		opts.Quality = q
