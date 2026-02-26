@@ -152,7 +152,7 @@ const Settings: React.FC = () => {
     }
 
     return (
-        <div className="p-4 sm:p-8 max-w-4xl mx-auto pb-24">
+        <div className="p-4 sm:p-8 max-w-4xl mx-auto">
             <div className="flex items-center space-x-3 mb-8">
                 <SettingsIcon className="w-8 h-8 text-komgaPrimary" />
                 <h1 className="text-2xl font-bold text-white tracking-tight">系统设定</h1>
@@ -355,8 +355,8 @@ const Settings: React.FC = () => {
                 </div>
             </div>
 
-            {/* 底部悬浮保存动作栏 */}
-            <div className="fixed bottom-0 left-0 right-0 p-4 bg-komgaDark/80 backdrop-blur-md border-t border-gray-800 flex justify-center z-10">
+            {/* 底部吸附保存动作栏 */}
+            <div className="sticky bottom-0 -mx-4 sm:-mx-8 mt-6 p-4 bg-komgaDark/90 backdrop-blur-md border-t border-gray-800 flex justify-center z-10">
                 <button
                     onClick={handleSave}
                     disabled={saving}
