@@ -252,9 +252,9 @@ export default function BookReader() {
         }
     };
 
-    // 获取图像资源 URL（带缓存防抖）
+    // 获取图像资源 URL（纯净无防抖，以保证跟前方预加载 Preloader 抓取下的缓存完全字面一致击穿 304）
     const getImageUrl = useCallback((pageNum: number) => {
-        return `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}&t=${Date.now()}`;
+        return `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}`;
     }, [bookId, imageFilter]);
 
     // --- 图层鼠标物理拖拽交互方法群 ---

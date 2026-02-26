@@ -10,6 +10,7 @@ interface Config {
     scanner: {
         workers: number;
         thumbnail_format: string;
+        waifu2x_path: string;
     };
     ollama: {
         endpoint: string;
@@ -246,6 +247,18 @@ const Settings: React.FC = () => {
                                     <option value="jpg">JPEG (老旧纯血兼容)</option>
                                 </select>
                             </div>
+                        </div>
+                        <div className="mt-4 border-t border-gray-800 pt-4">
+                            <label className="block text-sm font-medium text-gray-400 mb-1" title="若想使用系统级或自定义位置的 Waifu2x 引擎，请在此填入绝对路径。留空则自动从 PATH / bin 目录推断。">
+                                Waifu2x 引擎自定义执行路径 (缺省留空)
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="例如: /usr/local/bin/waifu2x-ncnn-vulkan 或 C:\waifu2x\waifu2x.exe"
+                                value={config.scanner.waifu2x_path}
+                                onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, waifu2x_path: e.target.value } })}
+                                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono text-sm"
+                            />
                         </div>
                     </div>
                 </div>

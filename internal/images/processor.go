@@ -25,11 +25,12 @@ import (
 
 // ProcessOptions 用于接受前端动态要求的尺寸转换
 type ProcessOptions struct {
-	Width   int
-	Height  int
-	Format  string // webp, jpeg, png
-	Quality int    // 0-100
-	Filter  string // bicubic, lanczos3, waifu2x, ncnn
+	Width       int
+	Height      int
+	Format      string // webp, jpeg, png
+	Quality     int    // 0-100
+	Filter      string // bicubic, lanczos3, waifu2x, ncnn
+	Waifu2xPath string // 允许动态指定引擎启动文件路径
 }
 
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
@@ -130,18 +131,36 @@ func decodeImage(data []byte, contentType string) (image.Image, string, error) {
 
 // execWaifu2x 封闭处理 Waifu2x 外部二进制引擎挂载调用、零担内存置换及事后清理
 func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
-	// 组装依据底层操作系统构架动态映射的 Waifu2x 执行终端文件名
-	binName := "waifu2x-ncnn-vulkan"
-	if runtime.GOOS == "windows" {
-		binName += ".exe"
+	var execPath string
+
+	// 判断是否启用了自定义引擎路径机制
+	if opts.Waifu2xPath != "" {
+		if _, err := os.Stat(opts.Waifu2xPath); os.IsNotExist(err) {
+			slog.Warn("Custom Waifu2x path specified but not found on disk", "custom_path", opts.Waifu2xPath)
+			// 退火等待全局嗅探
+		} else {
+			execPath = opts.Waifu2xPath
+		}
 	}
 
-	// 智能多级寻址：先检查是否安装于系统的环境变量（无需携带路径），再检查内附的 bin/ 底下
-	execPath := binName
-	if _, err := exec.LookPath(execPath); err != nil {
-		execPath = filepath.Join(".", "bin", "waifu2x", binName)
-		if _, err := os.Stat(execPath); os.IsNotExist(err) {
-			return nil, fmt.Errorf("waifu2x binary not found globally nor at local path %s", execPath)
+	// 如果自定义路径为空，或者文件不存在被退回，走原本的动态联排机制
+	if execPath == "" {
+		// 组装依据底层操作系统构架动态映射的 Waifu2x 执行终端文件名
+		binName := "waifu2x-ncnn-vulkan"
+		if runtime.GOOS == "windows" {
+			binName += ".exe"
+		}
+
+		// 智能多级寻址：先检查是否安装于系统的环境变量（无需携带路径），再检查内附的 bin/ 底下
+		if _, err := exec.LookPath(binName); err == nil {
+			execPath = binName // 可以直接执行，它在 PATH 环境变量里
+		} else {
+			// 在内置文件夹中搜刮
+			localPath := filepath.Join(".", "bin", "waifu2x", binName)
+			if _, localErr := os.Stat(localPath); os.IsNotExist(localErr) {
+				return nil, fmt.Errorf("waifu2x binary not found globally nor at local path %s", localPath)
+			}
+			execPath = localPath
 		}
 	}
 
@@ -164,7 +183,16 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 	// -s 2 : 倍数放大2倍
 	// -n 1 : 默认等级第一级降噪
 	// -f png : 输出全画幅 png 保留
+	// 规避找不到模型导致的空指针 Segment Fault 闪退
+	// 将工作目录（Cwd）锁死为引擎所在目录（不论是内部引用、环境寻找、还是用户指定）
+	absExecPath, err := filepath.Abs(execPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for waifu2x binary: %w", err)
+	}
+	execDir := filepath.Dir(absExecPath)
+
 	cmd := exec.Command(execPath, "-i", inPath, "-o", outPath, "-s", "2", "-n", "1", "-f", "png")
+	cmd.Dir = execDir // 指定子进程在其引擎本体所在文件夹起飞！
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

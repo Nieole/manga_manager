@@ -86,8 +86,9 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 
 	// 准备处理并发送响应头
 	opts := images.ProcessOptions{
-		Format: format,
-		Filter: filter,
+		Format:      format,
+		Filter:      filter,
+		Waifu2xPath: c.config.Scanner.Waifu2xPath,
 	}
 	if q, err := strconv.Atoi(qualityStr); err == nil {
 		opts.Quality = q
