@@ -24,6 +24,7 @@ type Config struct {
 		Workers         int    `yaml:"workers" json:"workers"`
 		ThumbnailFormat string `yaml:"thumbnail_format" json:"thumbnail_format"`
 		Waifu2xPath     string `yaml:"waifu2x_path" json:"waifu2x_path"`
+		RealCuganPath   string `yaml:"realcugan_path" json:"realcugan_path"`
 	} `yaml:"scanner" json:"scanner"`
 	Ollama struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"`

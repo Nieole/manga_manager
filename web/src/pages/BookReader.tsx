@@ -12,7 +12,7 @@ interface Page {
 type ReadMode = 'webtoon' | 'paged';
 type ReadDirection = 'ltr' | 'rtl';
 type ScaleMode = 'original' | 'fit-height' | 'fit-width' | 'fit-screen';
-type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x';
+type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'realcugan';
 
 // Helper for localStorage
 function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
@@ -76,7 +76,7 @@ export default function BookReader() {
         let url = `/api/pages/${bookId}/${pageNum}`;
         if (imageFilter && imageFilter !== 'none') {
             url += `?filter=${imageFilter}`;
-            if (imageFilter === 'waifu2x') {
+            if (imageFilter === 'waifu2x' || imageFilter === 'realcugan') {
                 url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}&w2x_format=${w2xFormat}`;
             }
         }
@@ -246,7 +246,7 @@ export default function BookReader() {
         switch (scaleMode) {
             case 'original': classes += ' w-auto h-auto max-w-none max-h-none block'; break;
             case 'fit-width': classes += ' w-screen min-w-full h-auto object-cover block m-0 p-0'; break;
-            case 'fit-screen': classes += ' max-w-full max-h-screen object-contain block'; break;
+            case 'fit-screen': classes += ' w-full h-screen sm:h-full object-contain block'; break;
             case 'fit-height':
             default: classes += ' h-screen w-auto object-contain max-h-screen max-w-none block'; break;
         }
@@ -261,6 +261,7 @@ export default function BookReader() {
             case 'bicubic':
             case 'lanczos3':
             case 'waifu2x':
+            case 'realcugan':
                 return { imageRendering: 'high-quality' as any };
             default: return {};
         }
@@ -399,11 +400,12 @@ export default function BookReader() {
                                 <option value="bilinear">双线性差值 (Bilinear / Auto)</option>
                                 <option value="bicubic">Bicubic (高画质重排)</option>
                                 <option value="lanczos3">Lanczos3 (需服务端支持)</option>
-                                <option value="waifu2x">Waifu2x AI (需服务端支持)</option>
+                                <option value="waifu2x">Waifu2x 初代二次元重绘 (需本地引擎)</option>
+                                <option value="realcugan">Real-CUGAN 次世代超分 (需本地引擎)</option>
                             </select>
                         </div>
 
-                        {imageFilter === 'waifu2x' && (
+                        {(imageFilter === 'waifu2x' || imageFilter === 'realcugan') && (
                             <div className="bg-gray-900/50 p-3 rounded border border-komgaPrimary/30 animate-in fade-in slide-in-from-top-2">
                                 <div className="mb-3">
                                     <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
@@ -521,7 +523,7 @@ export default function BookReader() {
                         {/* 图像容器 - 根据数量排列并赋予拖拽监听和原生弹性滚动 */}
                         <div
                             ref={containerRef}
-                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${scaleMode === 'fit-width' ? 'px-0 w-full' : 'px-12 sm:px-20'} select-none`}
+                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none`}
                             onMouseDown={handleMouseDown}
                             onMouseLeave={handleMouseLeave}
                             onMouseUp={handleMouseUp}

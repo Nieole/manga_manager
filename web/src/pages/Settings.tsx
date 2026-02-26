@@ -11,6 +11,7 @@ interface Config {
         workers: number;
         thumbnail_format: string;
         waifu2x_path: string;
+        realcugan_path: string;
     };
     ollama: {
         endpoint: string;
@@ -249,14 +250,26 @@ const Settings: React.FC = () => {
                             </div>
                         </div>
                         <div className="mt-4 border-t border-gray-800 pt-4">
-                            <label className="block text-sm font-medium text-gray-400 mb-1" title="若想使用系统级或自定义位置的 Waifu2x 引擎，请在此填入绝对路径。留空则自动从 PATH / bin 目录推断。">
+                            <label className="block text-sm font-medium text-gray-400 mb-1" title="留空则自动从 PATH / bin 目录推断。">
                                 Waifu2x 引擎自定义执行路径 (缺省留空)
                             </label>
                             <input
                                 type="text"
-                                placeholder="例如: /usr/local/bin/waifu2x-ncnn-vulkan 或 C:\waifu2x\waifu2x.exe"
+                                placeholder="例如: /usr/local/bin/waifu2x-ncnn-vulkan 或 C:\waifu2x\waifu2x-ncnn-vulkan.exe"
                                 value={config.scanner.waifu2x_path}
                                 onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, waifu2x_path: e.target.value } })}
+                                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono text-sm"
+                            />
+                        </div>
+                        <div className="mt-4 border-t border-gray-800 pt-4">
+                            <label className="block text-sm font-medium text-gray-400 mb-1" title="留空则自动从 PATH / bin 目录推断。">
+                                Real-CUGAN 引擎自定义执行路径 (缺省留空)
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="例如: /usr/local/bin/realcugan-ncnn-vulkan 或 C:\realcugan\realcugan-ncnn-vulkan.exe"
+                                value={config.scanner.realcugan_path}
+                                onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, realcugan_path: e.target.value } })}
                                 className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono text-sm"
                             />
                         </div>
@@ -372,44 +385,48 @@ const Settings: React.FC = () => {
             </div>
 
             {/* Confirm Modal */}
-            {confirmModal && confirmModal.isOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setConfirmModal(null)} />
-                    <div className="relative bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
-                        <h3 className="text-xl font-semibold text-white mb-4">{confirmModal.title}</h3>
-                        <div className="text-gray-300 mb-8">{confirmModal.message}</div>
-                        <div className="flex justify-end space-x-3">
-                            <button
-                                onClick={() => setConfirmModal(null)}
-                                className="px-5 py-2.5 rounded-lg text-gray-400 font-medium hover:text-white hover:bg-white/10 transition-colors"
-                            >
-                                取消
-                            </button>
-                            <button
-                                onClick={confirmModal.onConfirm}
-                                className={`px-5 py-2.5 rounded-lg text-white font-medium transition-colors shadow-lg ${confirmModal.isDanger
-                                    ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20'
-                                    : 'bg-komgaPrimary hover:bg-komgaPrimary/90 shadow-komgaPrimary/20'
-                                    }`}
-                            >
-                                确认执行
-                            </button>
+            {
+                confirmModal && confirmModal.isOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setConfirmModal(null)} />
+                        <div className="relative bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
+                            <h3 className="text-xl font-semibold text-white mb-4">{confirmModal.title}</h3>
+                            <div className="text-gray-300 mb-8">{confirmModal.message}</div>
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    onClick={() => setConfirmModal(null)}
+                                    className="px-5 py-2.5 rounded-lg text-gray-400 font-medium hover:text-white hover:bg-white/10 transition-colors"
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    onClick={confirmModal.onConfirm}
+                                    className={`px-5 py-2.5 rounded-lg text-white font-medium transition-colors shadow-lg ${confirmModal.isDanger
+                                        ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20'
+                                        : 'bg-komgaPrimary hover:bg-komgaPrimary/90 shadow-komgaPrimary/20'
+                                        }`}
+                                >
+                                    确认执行
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Toast 通知 */}
-            {toastMsg && (
-                <div className="fixed bottom-24 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
-                    <div className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 border ${toastMsg.type === 'success' ? 'bg-green-900 border-green-700 text-green-100' : 'bg-red-900 border-red-700 text-red-100'
-                        }`}>
-                        <span className="text-sm font-medium">{toastMsg.text}</span>
-                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
+            {
+                toastMsg && (
+                    <div className="fixed bottom-24 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
+                        <div className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 border ${toastMsg.type === 'success' ? 'bg-green-900 border-green-700 text-green-100' : 'bg-red-900 border-red-700 text-red-100'
+                            }`}>
+                            <span className="text-sm font-medium">{toastMsg.text}</span>
+                            <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
+                        </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 

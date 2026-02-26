@@ -93,6 +93,7 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 		Format:        format,
 		Filter:        filter,
 		Waifu2xPath:   c.config.Scanner.Waifu2xPath,
+		RealCuganPath: c.config.Scanner.RealCuganPath,
 		Waifu2xScale:  2,      // 缺省使用引擎默认2倍
 		Waifu2xNoise:  0,      // 缺省使用引擎默认0阶降噪
 		Waifu2xFormat: "webp", // 控制引擎默认采用 webp 挤压体积

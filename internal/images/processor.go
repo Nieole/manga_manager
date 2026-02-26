@@ -32,8 +32,9 @@ type ProcessOptions struct {
 	Quality       int    // 0-100
 	Filter        string // bicubic, lanczos3, waifu2x, ncnn
 	Waifu2xPath   string // 允许动态指定引擎启动文件路径
+	RealCuganPath string // 允许动态指定 realcugan 引擎启动文件路径
 	Waifu2xScale  int    // 引擎缩放倍数 1/2/4/8
-	Waifu2xNoise  int    // 降噪等级 -1/0/1/2/3
+	Waifu2xNoise  int    // Waifu2x 的降噪等级 / RealCUGAN 的噪点抑制强度
 	Waifu2xFormat string // 降噪外设输出格式 webp/png/jpg
 }
 
@@ -58,8 +59,8 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		targetHeight = uint(img.Bounds().Max.Y)
 	}
 
-	// 针对 Waifu2x / ncnn 这种需要外部挂载文件系统的超分辨率算法单独开一条短路通道
-	if opts.Filter == "waifu2x" || opts.Filter == "ncnn" {
+	// 针对 Waifu2x / realcugan / ncnn 这种需要外部挂载文件系统的超分辨率算法单独开一条短路通道
+	if opts.Filter == "waifu2x" || opts.Filter == "realcugan" || opts.Filter == "ncnn" {
 		outData, err := execWaifu2x(data, contentType, opts)
 		if err == nil {
 			// 直接返回加工好的 原始字节数组
@@ -144,21 +145,29 @@ func decodeImage(data []byte, contentType string) (image.Image, string, error) {
 // execWaifu2x 封闭处理 Waifu2x 外部二进制引擎挂载调用、零担内存置换及事后清理
 func execWaifu2x(imgData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
 	var execPath string
+	binName := "waifu2x-ncnn-vulkan"
+	if opts.Filter == "realcugan" {
+		binName = "realcugan-ncnn-vulkan"
+	}
 
 	// 判断是否启用了自定义引擎路径机制
-	if opts.Waifu2xPath != "" {
-		if _, err := os.Stat(opts.Waifu2xPath); os.IsNotExist(err) {
-			slog.Warn("Custom Waifu2x path specified but not found on disk", "custom_path", opts.Waifu2xPath)
+	customPath := opts.Waifu2xPath
+	if opts.Filter == "realcugan" {
+		customPath = opts.RealCuganPath
+	}
+
+	if customPath != "" {
+		if _, err := os.Stat(customPath); os.IsNotExist(err) {
+			slog.Warn("Custom engine path specified but not found on disk", "custom_path", customPath)
 			// 退火等待全局嗅探
 		} else {
-			execPath = opts.Waifu2xPath
+			execPath = customPath
 		}
 	}
 
 	// 如果自定义路径为空，或者文件不存在被退回，走原本的动态联排机制
 	if execPath == "" {
-		// 组装依据底层操作系统构架动态映射的 Waifu2x 执行终端文件名
-		binName := "waifu2x-ncnn-vulkan"
+		// 组装依据底层操作系统构架动态映射的 执行终端文件名
 		if runtime.GOOS == "windows" {
 			binName += ".exe"
 		}
@@ -213,9 +222,9 @@ func execWaifu2x(imgData []byte, contentType string, opts ProcessOptions) ([]byt
 		return nil, err
 	}
 
-	// 组装 Waifu2x-ncnn-vulkan 执行命令
-	// -s 2 : 倍数放大2倍
-	// -n 1 : 默认等级第一级降噪
+	// 组装 NCNN-Vulkan 家族系列执行命令
+	// -s : 倍数放大
+	// -n : 降噪
 	// -f <ext> : 输出全画幅指定的格式
 	// 规避找不到模型导致的空指针 Segment Fault 闪退
 	// 将工作目录（Cwd）锁死为引擎所在目录（不论是内部引用、环境寻找、还是用户指定）
@@ -240,9 +249,9 @@ func execWaifu2x(imgData []byte, contentType string, opts ProcessOptions) ([]byt
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("execution failed: %v, output: %s", err, string(output))
+		return nil, fmt.Errorf("%s execution failed: %v, output: %s", binName, err, string(output))
 	}
-	slog.Info("Waifu2x execution successful", "output_snippet", string(output[:min(len(output), 100)]))
+	slog.Info("AI upscaling execution successful", "engine", binName, "output_snippet", string(output[:min(len(output), 100)]))
 
 	// 读取处理完毕的磁盘输出图
 	processedData, err := os.ReadFile(outPath)
