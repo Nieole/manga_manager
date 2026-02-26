@@ -50,6 +50,7 @@ export default function BookReader() {
     // Waifu2x 专属超分配置偏好
     const [w2xScale, setW2xScale] = useStickyState<number>(2, 'manga_waifu2x_scale');
     const [w2xNoise, setW2xNoise] = useStickyState<number>(0, 'manga_waifu2x_noise');
+    const [w2xFormat, setW2xFormat] = useStickyState<string>('webp', 'manga_waifu2x_format');
 
     // UI State
     const [showSettings, setShowSettings] = useState(false);
@@ -74,10 +75,10 @@ export default function BookReader() {
     const getImageUrl = useCallback((pageNum: number) => {
         let url = `/api/pages/${bookId}/${pageNum}?filter=${imageFilter}`;
         if (imageFilter === 'waifu2x') {
-            url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}`;
+            url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}&w2x_format=${w2xFormat}`;
         }
         return url;
-    }, [bookId, imageFilter, w2xScale, w2xNoise]);
+    }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat]);
 
     useEffect(() => {
         if (!bookId) return;
@@ -432,6 +433,23 @@ export default function BookReader() {
                                                 onClick={() => setW2xNoise(n)}
                                             >
                                                 {n === -1 ? '关' : n}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="mt-3">
+                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
+                                        <span>输出编码格式</span>
+                                        <span className="text-komgaPrimary uppercase">{w2xFormat}</span>
+                                    </span>
+                                    <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
+                                        {['webp', 'png', 'jpg'].map(f => (
+                                            <button
+                                                key={f}
+                                                className={`flex-1 py-1 rounded transition text-xs font-semibold uppercase ${w2xFormat === f ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
+                                                onClick={() => setW2xFormat(f)}
+                                            >
+                                                {f}
                                             </button>
                                         ))}
                                     </div>

@@ -66,7 +66,8 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	// 构建缓存 Key（包含了全部可能改变画像最终形态的环境音阶，阻断 Waifu2x 翻页复读老图的缓存雪崩击穿）
 	w2xScaleStr := r.URL.Query().Get("w2x_scale")
 	w2xNoiseStr := r.URL.Query().Get("w2x_noise")
-	cacheKey := fmt.Sprintf("%d-%d-%s-%s-%s-%s-%s-%s-%s", bookID, pageNumber, widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr)
+	w2xFormatStr := r.URL.Query().Get("w2x_format")
+	cacheKey := fmt.Sprintf("%d-%d-%s-%s-%s-%s-%s-%s-%s-%s", bookID, pageNumber, widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr)
 
 	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
 	isThumbnailReq := widthStr != "" || heightStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear")
@@ -89,11 +90,12 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 
 	// 准备处理并发送响应头
 	opts := images.ProcessOptions{
-		Format:       format,
-		Filter:       filter,
-		Waifu2xPath:  c.config.Scanner.Waifu2xPath,
-		Waifu2xScale: 2, // 缺省使用引擎默认2倍
-		Waifu2xNoise: 0, // 缺省使用引擎默认0阶降噪
+		Format:        format,
+		Filter:        filter,
+		Waifu2xPath:   c.config.Scanner.Waifu2xPath,
+		Waifu2xScale:  2,      // 缺省使用引擎默认2倍
+		Waifu2xNoise:  0,      // 缺省使用引擎默认0阶降噪
+		Waifu2xFormat: "webp", // 控制引擎默认采用 webp 挤压体积
 	}
 
 	// 捕获前端客制化的 Waifu2x 特异性参数
@@ -106,6 +108,9 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 		if v, err := strconv.Atoi(w2xNoiseStr); err == nil {
 			opts.Waifu2xNoise = v
 		}
+	}
+	if w2xFormatStr != "" {
+		opts.Waifu2xFormat = w2xFormatStr
 	}
 	if q, err := strconv.Atoi(qualityStr); err == nil {
 		opts.Quality = q

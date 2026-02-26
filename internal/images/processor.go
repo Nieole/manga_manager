@@ -26,14 +26,15 @@ import (
 
 // ProcessOptions 用于接受前端动态要求的尺寸转换
 type ProcessOptions struct {
-	Width        int
-	Height       int
-	Format       string // webp, jpeg, png
-	Quality      int    // 0-100
-	Filter       string // bicubic, lanczos3, waifu2x, ncnn
-	Waifu2xPath  string // 允许动态指定引擎启动文件路径
-	Waifu2xScale int    // 引擎缩放倍数 1/2/4/8
-	Waifu2xNoise int    // 降噪等级 -1/0/1/2/3
+	Width         int
+	Height        int
+	Format        string // webp, jpeg, png
+	Quality       int    // 0-100
+	Filter        string // bicubic, lanczos3, waifu2x, ncnn
+	Waifu2xPath   string // 允许动态指定引擎启动文件路径
+	Waifu2xScale  int    // 引擎缩放倍数 1/2/4/8
+	Waifu2xNoise  int    // 降噪等级 -1/0/1/2/3
+	Waifu2xFormat string // 降噪外设输出格式 webp/png/jpg
 }
 
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
@@ -61,9 +62,17 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	if opts.Filter == "waifu2x" || opts.Filter == "ncnn" {
 		outData, err := execWaifu2x(data, opts)
 		if err == nil {
-			// 直接返回加工好的 PNG 原始字节数组
+			// 直接返回加工好的 原始字节数组
 			// 为了防止前端不认识，强制重置 contentType
-			return outData, "image/png", nil
+			contentType := "image/png"
+			if opts.Waifu2xFormat != "" {
+				if opts.Waifu2xFormat == "jpg" || opts.Waifu2xFormat == "jpeg" {
+					contentType = "image/jpeg"
+				} else {
+					contentType = "image/" + opts.Waifu2xFormat
+				}
+			}
+			return outData, contentType, nil
 		}
 		// 如果 waifu2x 执行失败，退回到下面原生的 Lanczos 软算逻辑
 		slog.Warn("Waifu2x execution failed. Falling back to Lanczos3.", "error", err)
@@ -175,7 +184,15 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 	defer os.RemoveAll(sandboxDir)
 
 	inPath := filepath.Join(sandboxDir, "in.jpg")
-	outPath := filepath.Join(sandboxDir, "out.png")
+
+	outExt := "webp" // default fallback
+	if opts.Waifu2xFormat != "" {
+		outExt = strings.ToLower(opts.Waifu2xFormat)
+		if outExt == "jpeg" {
+			outExt = "jpg"
+		}
+	}
+	outPath := filepath.Join(sandboxDir, "out."+outExt)
 
 	// 写原数据到 in.jpg
 	if err := os.WriteFile(inPath, imgData, 0644); err != nil {
@@ -185,7 +202,7 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 	// 组装 Waifu2x-ncnn-vulkan 执行命令
 	// -s 2 : 倍数放大2倍
 	// -n 1 : 默认等级第一级降噪
-	// -f png : 输出全画幅 png 保留
+	// -f <ext> : 输出全画幅指定的格式
 	// 规避找不到模型导致的空指针 Segment Fault 闪退
 	// 将工作目录（Cwd）锁死为引擎所在目录（不论是内部引用、环境寻找、还是用户指定）
 	absExecPath, err := filepath.Abs(execPath)
@@ -204,7 +221,7 @@ func execWaifu2x(imgData []byte, opts ProcessOptions) ([]byte, error) {
 		noiseStr = strconv.Itoa(opts.Waifu2xNoise)
 	}
 
-	cmd := exec.Command(execPath, "-i", inPath, "-o", outPath, "-s", scaleStr, "-n", noiseStr, "-f", "png")
+	cmd := exec.Command(execPath, "-i", inPath, "-o", outPath, "-s", scaleStr, "-n", noiseStr, "-f", outExt)
 	cmd.Dir = execDir // 指定子进程在其引擎本体所在文件夹起飞！
 
 	output, err := cmd.CombinedOutput()
