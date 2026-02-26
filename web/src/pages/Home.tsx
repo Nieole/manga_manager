@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, ChevronLeft, ChevronRight, Heart } from 'lucide-react';
+import { ImageIcon, ChevronLeft, ChevronRight, Heart, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface NullString {
     String: string;
@@ -39,7 +39,8 @@ export default function Home() {
     const [activeAuthor, setActiveAuthor] = useState<string | null>(null);
     const [activeStatus, setActiveStatus] = useState<string | null>(null);
     const [activeLetter, setActiveLetter] = useState<string | null>(null);
-    const [sortBy, setSortBy] = useState<string>('name_asc');
+    const [sortByField, setSortByField] = useState<string>('name');
+    const [sortDir, setSortDir] = useState<string>('asc');
     const [page, setPage] = useState(1);
 
     const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -87,7 +88,7 @@ export default function Home() {
             if (activeAuthor) params.append('authors', activeAuthor);
             if (activeStatus) params.append('status', activeStatus);
             if (activeLetter) params.append('letter', activeLetter);
-            if (sortBy) params.append('sortBy', sortBy);
+            if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
 
             axios.get(`/api/series/search?${params.toString()}`)
                 .then(res => {
@@ -100,13 +101,13 @@ export default function Home() {
                     setLoading(false);
                 });
         }
-    }, [libId, refreshTrigger, activeTag, activeAuthor, activeStatus, activeLetter, page]);
+    }, [libId, refreshTrigger, activeTag, activeAuthor, activeStatus, activeLetter, page, sortByField, sortDir]);
 
     // 分页逻辑
     const totalPages = Math.max(1, Math.ceil(totalSeries / PAGE_SIZE));
 
     // 当筛选条件变化时重置到第一页
-    useEffect(() => { setPage(1); setIsSelectionMode(false); setSelectedSeries([]); }, [activeTag, activeAuthor, activeStatus, activeLetter]);
+    useEffect(() => { setPage(1); setIsSelectionMode(false); setSelectedSeries([]); }, [activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     const handleBulkFavoriteUpdate = async (isFav: boolean) => {
         try {
@@ -125,7 +126,7 @@ export default function Home() {
             if (activeAuthor) params.append('authors', activeAuthor);
             if (activeStatus) params.append('status', activeStatus);
             if (activeLetter) params.append('letter', activeLetter);
-            if (sortBy) params.append('sortBy', sortBy);
+            if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
             const res = await axios.get(`/api/series/search?${params.toString()}`);
             setAllSeries(res.data.items || []);
         } catch (e) {
@@ -166,19 +167,24 @@ export default function Home() {
                     )}
                     <span className="text-sm text-gray-400 font-medium">排序方式</span>
                     <select
-                        value={sortBy}
-                        onChange={(e) => setSortBy(e.target.value)}
+                        value={sortByField}
+                        onChange={(e) => setSortByField(e.target.value)}
                         className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-none transition-colors cursor-pointer hover:border-gray-500"
                     >
-                        <option value="name_asc">按名称排序 (A-Z)</option>
-                        <option value="name_desc">按名称排序 (Z-A)</option>
-                        <option value="created_desc">最新加入在先</option>
-                        <option value="updated_desc">最新更新连载在先</option>
-                        <option value="rating_desc">最高评分优先</option>
-                        <option value="books_desc">内容最多优先</option>
-                        <option value="books_asc">内容最少优先</option>
-                        <option value="favorite_desc">我的收藏置顶</option>
+                        <option value="name">名称</option>
+                        <option value="created">入库时间</option>
+                        <option value="updated">最新更新</option>
+                        <option value="rating">评分</option>
+                        <option value="books">册数量</option>
+                        <option value="favorite">收藏状态</option>
                     </select>
+                    <button
+                        onClick={() => setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')}
+                        className="p-2 bg-gray-900 border border-gray-700 hover:border-gray-500 rounded-lg text-gray-400 hover:text-white transition-colors flex items-center justify-center shadow-sm hover:shadow"
+                        title={sortDir === 'asc' ? '当前正序 (点击切换倒序)' : '当前倒序 (点击切换正序)'}
+                    >
+                        {sortDir === 'asc' ? <ArrowUp className="w-5 h-5 text-komgaPrimary" /> : <ArrowDown className="w-5 h-5 text-komgaPrimary" />}
+                    </button>
                 </div>
             </div>
 

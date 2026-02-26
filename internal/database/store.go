@@ -196,21 +196,26 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 
 	// Dynamic Ordering
 	orderClause := "s.name ASC" // Default Sort fallback
-	switch sortBy {
-	case "rating_desc":
-		orderClause = "s.rating DESC, s.name ASC"
-	case "books_desc":
-		orderClause = "actual_book_count DESC, s.name ASC"
-	case "books_asc":
-		orderClause = "actual_book_count ASC, s.name ASC"
-	case "created_desc":
-		orderClause = "s.created_at DESC, s.name ASC"
-	case "updated_desc":
-		orderClause = "s.updated_at DESC, s.name ASC"
-	case "name_desc":
-		orderClause = "s.name DESC"
-	case "favorite_desc":
-		orderClause = "is_favorite DESC, s.name ASC"
+	parts := strings.Split(sortBy, "_")
+	if len(parts) == 2 {
+		field, dir := parts[0], strings.ToUpper(parts[1])
+		if dir != "ASC" && dir != "DESC" {
+			dir = "ASC"
+		}
+		switch field {
+		case "rating":
+			orderClause = fmt.Sprintf("s.rating %s, s.name ASC", dir)
+		case "books":
+			orderClause = fmt.Sprintf("actual_book_count %s, s.name ASC", dir)
+		case "created":
+			orderClause = fmt.Sprintf("s.created_at %s, s.name ASC", dir)
+		case "updated":
+			orderClause = fmt.Sprintf("s.updated_at %s, s.name ASC", dir)
+		case "name":
+			orderClause = fmt.Sprintf("s.name %s", dir)
+		case "favorite":
+			orderClause = fmt.Sprintf("is_favorite %s, s.name ASC", dir)
+		}
 	}
 
 	// Finish Paginated Query
