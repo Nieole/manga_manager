@@ -223,11 +223,11 @@ export default function BookReader() {
     const getScaleClasses = (baseClasses: string) => {
         let classes = baseClasses;
         switch (scaleMode) {
-            case 'original': classes += ' w-auto h-auto max-w-none max-h-none'; break;
-            case 'fit-width': classes += ' w-full h-auto object-contain'; break;
-            case 'fit-screen': classes += ' max-w-full max-h-screen object-contain'; break;
+            case 'original': classes += ' w-auto h-auto max-w-none max-h-none block'; break;
+            case 'fit-width': classes += ' w-full max-w-none h-auto object-contain block'; break;
+            case 'fit-screen': classes += ' max-w-full max-h-screen object-contain block'; break;
             case 'fit-height':
-            default: classes += ' h-[95vh] w-auto object-contain max-w-full'; break;
+            default: classes += ' h-screen w-auto object-contain max-h-screen max-w-none block'; break;
         }
         return classes;
     };
@@ -383,8 +383,7 @@ export default function BookReader() {
                         <Loader2 className="w-10 h-10 animate-spin text-komgaPrimary" />
                     </div>
                 ) : readMode === 'webtoon' ? (
-                    /* 瀑布流模式 */
-                    <div className="flex flex-col items-center w-full bg-black relative h-full overflow-y-auto pt-16">
+                    <div className="flex flex-col items-center w-full bg-black relative h-full overflow-y-auto">
                         {pages.map(page => (
                             <img
                                 key={page.number}
@@ -393,7 +392,7 @@ export default function BookReader() {
                                 loading="lazy"
                                 decoding="async"
                                 style={getFilterStyle()}
-                                className={getScaleClasses("mb-2 md:mb-4 bg-gray-900 min-h-[50vh] drop-shadow-lg")}
+                                className={getScaleClasses("bg-gray-900 min-h-[50vh] drop-shadow-lg")}
                                 alt={`Page ${page.number}`}
                             />
                         ))}
