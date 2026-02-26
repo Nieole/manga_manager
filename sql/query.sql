@@ -50,7 +50,7 @@ SELECT * FROM books WHERE id = ? LIMIT 1;
 SELECT * FROM books WHERE path = ? LIMIT 1;
 
 -- name: ListBooksBySeries :many
-SELECT * FROM books WHERE series_id = ? ORDER BY sort_number, name;
+SELECT * FROM books WHERE series_id = ? ORDER BY volume, sort_number, name;
 
 
 
@@ -175,9 +175,11 @@ DELETE FROM series_authors WHERE series_id = ?;
 -- name: GetNextBookInSeries :one
 SELECT nb.* FROM books nb
 INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
-WHERE (nb.sort_number > cb.sort_number)
-   OR (nb.sort_number = cb.sort_number AND nb.name > cb.name)
-ORDER BY nb.sort_number, nb.name
+WHERE 
+   (nb.volume > cb.volume)
+   OR (nb.volume = cb.volume AND nb.sort_number > cb.sort_number)
+   OR (nb.volume = cb.volume AND nb.sort_number = cb.sort_number AND nb.name > cb.name)
+ORDER BY nb.volume ASC, nb.sort_number ASC, nb.name ASC
 LIMIT 1;
 
 -- name: GetAllTags :many

@@ -420,9 +420,11 @@ func (q *Queries) GetLinksForSeries(ctx context.Context, seriesID int64) ([]Seri
 const getNextBookInSeries = `-- name: GetNextBookInSeries :one
 SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.created_at, nb.updated_at FROM books nb
 INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
-WHERE (nb.sort_number > cb.sort_number)
-   OR (nb.sort_number = cb.sort_number AND nb.name > cb.name)
-ORDER BY nb.sort_number, nb.name
+WHERE 
+   (nb.volume > cb.volume)
+   OR (nb.volume = cb.volume AND nb.sort_number > cb.sort_number)
+   OR (nb.volume = cb.volume AND nb.sort_number = cb.sort_number AND nb.name > cb.name)
+ORDER BY nb.volume ASC, nb.sort_number ASC, nb.name ASC
 LIMIT 1
 `
 
@@ -776,7 +778,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]Li
 }
 
 const listBooksBySeries = `-- name: ListBooksBySeries :many
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE series_id = ? ORDER BY sort_number, name
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE series_id = ? ORDER BY volume, sort_number, name
 `
 
 func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error) {
