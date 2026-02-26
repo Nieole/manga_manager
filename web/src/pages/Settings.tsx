@@ -11,6 +11,10 @@ interface Config {
         workers: number;
         thumbnail_format: string;
     };
+    ollama: {
+        endpoint: string;
+        model: string;
+    };
 }
 
 const Settings: React.FC = () => {
@@ -241,6 +245,46 @@ const Settings: React.FC = () => {
                                     <option value="avif">AVIF (次世代极致容量)</option>
                                     <option value="jpg">JPEG (老旧纯血兼容)</option>
                                 </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* AI 大语言模型对接 (LLM) */}
+                <div className="bg-komgaSurface border border-gray-800 rounded-xl p-6 shadow-sm">
+                    <div className="flex items-center space-x-2 mb-4 text-purple-400">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                        <h2 className="text-lg font-semibold text-white">AI 大模型刮削库对接 (LLM)</h2>
+                    </div>
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1">
+                                    API 端点 (Endpoint)
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder="http://localhost:11434"
+                                    value={config.ollama?.endpoint || ''}
+                                    onChange={(e) => setConfig({ ...config, ollama: { ...config.ollama, endpoint: e.target.value } })}
+                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">兼容 OpenAI / Ollama 协议的 API 中枢地址</p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1">
+                                    刮削专用基座模型 (Model)
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder="qwen2.5:14b / gemma"
+                                    value={config.ollama?.model || ''}
+                                    onChange={(e) => setConfig({ ...config, ollama: { ...config.ollama, model: e.target.value } })}
+                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">指定用于抽取和翻译元数据的发型版模型名称</p>
                             </div>
                         </div>
                     </div>
