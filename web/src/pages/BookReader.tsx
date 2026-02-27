@@ -12,7 +12,7 @@ interface Page {
 type ReadMode = 'webtoon' | 'paged';
 type ReadDirection = 'ltr' | 'rtl';
 type ScaleMode = 'original' | 'fit-height' | 'fit-width' | 'fit-screen';
-type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'realcugan';
+type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'realcugan' | 'mitchell' | 'lanczos2' | 'bspline' | 'catmullrom';
 
 // Helper for localStorage
 function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
@@ -268,6 +268,10 @@ export default function BookReader() {
             case 'bilinear': return { imageRendering: 'auto' };
             case 'bicubic':
             case 'lanczos3':
+            case 'mitchell':
+            case 'lanczos2':
+            case 'bspline':
+            case 'catmullrom':
             case 'waifu2x':
             case 'realcugan':
                 return { imageRendering: 'high-quality' as any };
@@ -400,8 +404,12 @@ export default function BookReader() {
                                 <option value="nearest">相邻像素法 (Nearest / Pixelated)</option>
                                 <option value="average">平均像素法 (Average)</option>
                                 <option value="bilinear">双线性差值 (Bilinear / Auto)</option>
-                                <option value="bicubic">Bicubic (高画质重排)</option>
-                                <option value="lanczos3">Lanczos3 (需服务端支持)</option>
+                                <option value="bicubic">Bicubic (高画质三次插值)</option>
+                                <option value="lanczos2">Lanczos2 (分两级 Lanczos)</option>
+                                <option value="lanczos3">Lanczos3 (锐利重采样)</option>
+                                <option value="mitchell">Mitchell-Netravali (平滑平衡)</option>
+                                <option value="bspline">B-Spline (极度平滑/防锯齿)</option>
+                                <option value="catmullrom">Catmull-Rom (保留边缘锐度)</option>
                                 <option value="waifu2x">Waifu2x 初代二次元重绘 (需本地引擎)</option>
                                 <option value="realcugan">Real-CUGAN 次世代超分 (需本地引擎)</option>
                             </select>

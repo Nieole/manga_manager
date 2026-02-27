@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/chai2010/webp v1.4.0
+	github.com/disintegration/imaging v1.6.2
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gen2brain/avif v0.4.4
 	github.com/go-chi/chi/v5 v5.2.5

@@ -24,6 +24,7 @@ import (
 
 	"image/color"
 
+	"github.com/disintegration/imaging"
 	"github.com/gen2brain/avif"
 )
 
@@ -118,16 +119,27 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	}
 
 	if targetWidth > 0 || targetHeight > 0 {
-		var interp resize.InterpolationFunction = resize.Bilinear
 		switch opts.Filter {
-		case "bicubic":
-			interp = resize.Bicubic
-		case "lanczos3":
-			interp = resize.Lanczos3
-		case "nearest":
-			interp = resize.NearestNeighbor
+		case "mitchell":
+			newImg = resize.Resize(targetWidth, targetHeight, newImg, resize.MitchellNetravali)
+		case "lanczos2":
+			newImg = resize.Resize(targetWidth, targetHeight, newImg, resize.Lanczos2)
+		case "bspline":
+			newImg = imaging.Fit(newImg, int(targetWidth), int(targetHeight), imaging.BSpline)
+		case "catmullrom":
+			newImg = imaging.Fit(newImg, int(targetWidth), int(targetHeight), imaging.CatmullRom)
+		default:
+			var interp resize.InterpolationFunction = resize.Bilinear
+			switch opts.Filter {
+			case "bicubic":
+				interp = resize.Bicubic
+			case "lanczos3":
+				interp = resize.Lanczos3
+			case "nearest":
+				interp = resize.NearestNeighbor
+			}
+			newImg = resize.Resize(targetWidth, targetHeight, newImg, interp)
 		}
-		newImg = resize.Resize(targetWidth, targetHeight, newImg, interp)
 	}
 
 	var buf bytes.Buffer
