@@ -194,11 +194,16 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 
 		// 来源链接
 		if result.SourceID > 0 && providerName != "" && strings.ToLower(providerName) != "ollama" && strings.ToLower(providerName) != "llm" {
+			linkName := providerName
+			if strings.ToLower(providerName) == "bangumi" {
+				linkName = "Bangumi"
+			}
 			linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
+
 			existingLinks, _ := q.GetLinksForSeries(ctx, series.ID)
 			hasLink := false
 			for _, l := range existingLinks {
-				if l.Name == providerName {
+				if l.Name == linkName {
 					hasLink = true
 					break
 				}
@@ -206,7 +211,7 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 			if !hasLink {
 				_, _ = q.LinkSeriesLink(ctx, database.LinkSeriesLinkParams{
 					SeriesID: series.ID,
-					Name:     providerName,
+					Name:     linkName,
 					Url:      linkURL,
 				})
 			}
