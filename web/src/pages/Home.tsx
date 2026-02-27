@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
 import { ImageIcon, Heart, ArrowUp, ArrowDown } from 'lucide-react';
-import { VirtuosoGrid } from 'react-virtuoso';
 
 interface NullString {
     String: string;
@@ -77,24 +76,14 @@ export default function Home() {
         }
     }, [libId, refreshTrigger]);
 
-    useEffect(() => {
-        if (libId) {
-            // 当筛选条件、排序或基础库变化时，重置所有状态
-            setAllSeries([]);
-            setPage(1);
-            setTotalSeries(0);
-            setLoading(true);
-        }
-    }, [libId, refreshTrigger, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
+    const fetchSeriesPage = (pageNumber: number, silent = false) => {
+        if (!libId || (loading && !silent)) return;
 
-    const loadMore = () => {
-        if (!libId || loading || (allSeries.length >= totalSeries && totalSeries > 0)) return;
-
-        setLoading(true);
+        if (!silent) setLoading(true);
         const params = new URLSearchParams();
         params.append('libraryId', libId);
         params.append('limit', PAGE_SIZE.toString());
-        params.append('page', page.toString());
+        params.append('page', pageNumber.toString());
         if (activeTag) params.append('tags', activeTag);
         if (activeAuthor) params.append('authors', activeAuthor);
         if (activeStatus) params.append('status', activeStatus);
@@ -104,10 +93,12 @@ export default function Home() {
         axios.get(`/api/series/search?${params.toString()}`)
             .then((res: any) => {
                 const newItems = res.data.items || [];
-                setAllSeries((prev: Series[]) => page === 1 ? newItems : [...prev, ...newItems]);
+                setAllSeries(newItems);
                 setTotalSeries(res.data.total || 0);
-                setPage((prev: number) => prev + 1);
-                setLoading(false);
+                if (!silent) {
+                    setLoading(false);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
             })
             .catch((err: any) => {
                 console.error("Failed to fetch series:", err);
@@ -115,18 +106,54 @@ export default function Home() {
             });
     };
 
-    // 初始加载及参数变化后的首次加载
+    // 1. 恢复配置 (仅在 libId 变化时执行一次)
     useEffect(() => {
-        if (libId && page === 1) {
-            loadMore();
+        if (!libId) return;
+        const saved = localStorage.getItem(`lib_settings_${libId}`);
+        if (saved) {
+            try {
+                const config = JSON.parse(saved);
+                setActiveTag(config.activeTag);
+                setActiveAuthor(config.activeAuthor);
+                setActiveStatus(config.activeStatus);
+                setActiveLetter(config.activeLetter);
+                setSortByField(config.sortByField || 'name');
+                setSortDir(config.sortDir || 'asc');
+                setPage(config.page || 1);
+            } catch (e) { }
+        } else {
+            setActiveTag(null);
+            setActiveAuthor(null);
+            setActiveStatus(null);
+            setActiveLetter(null);
+            setSortByField('name');
+            setSortDir('asc');
+            setPage(1);
         }
-    }, [libId, page]);
+    }, [libId]);
 
-    // 移除旧的分页逻辑
-    // const totalPages = Math.max(1, Math.ceil(totalSeries / PAGE_SIZE));
+    // 2. 状态变化处理：如果是过滤条件变了，重置页码；否则直接拉取
+    useEffect(() => {
+        if (!libId) return;
 
-    // 当筛选条件变化时重置到第一页
-    useEffect(() => { setPage(1); setIsSelectionMode(false); setSelectedSeries([]); }, [activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
+        // 保存配置
+        const config = { activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, page };
+        localStorage.setItem(`lib_settings_${libId}`, JSON.stringify(config));
+
+        // 如果是手动翻页或筛选，执行完整拉取
+        fetchSeriesPage(page);
+
+        // 筛选变化时自动退出选择模式
+        setIsSelectionMode(false);
+        setSelectedSeries([]);
+    }, [libId, page, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
+
+    // 3. SSE 专用静默刷新
+    useEffect(() => {
+        if (libId) {
+            fetchSeriesPage(page, true);
+        }
+    }, [refreshTrigger]);
 
     const handleBulkFavoriteUpdate = async (isFav: boolean) => {
         try {
@@ -187,7 +214,10 @@ export default function Home() {
                     <span className="text-xs sm:text-sm text-gray-400 font-medium ml-auto sm:ml-0">排序方式</span>
                     <select
                         value={sortByField}
-                        onChange={(e) => setSortByField(e.target.value)}
+                        onChange={(e) => {
+                            setSortByField(e.target.value);
+                            setPage(1);
+                        }}
                         className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-none transition-colors cursor-pointer hover:border-gray-500"
                     >
                         <option value="name">名称</option>
@@ -198,7 +228,10 @@ export default function Home() {
                         <option value="favorite">收藏状态</option>
                     </select>
                     <button
-                        onClick={() => setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')}
+                        onClick={() => {
+                            setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+                            setPage(1);
+                        }}
                         className="p-2 bg-gray-900 border border-gray-700 hover:border-gray-500 rounded-lg text-gray-400 hover:text-white transition-colors flex items-center justify-center shadow-sm hover:shadow"
                         title={sortDir === 'asc' ? '当前正序 (点击切换倒序)' : '当前倒序 (点击切换正序)'}
                     >
@@ -268,7 +301,13 @@ export default function Home() {
                         {allStatuses.map((st) => (
                             <button
                                 key={st}
-                                onClick={() => setActiveStatus(st === activeStatus ? null : st)}
+                                onClick={() => {
+                                    if (activeStatus === st) setActiveStatus(null);
+                                    else {
+                                        setActiveStatus(st);
+                                        setPage(1);
+                                    }
+                                }}
                                 className={`px-3 py-1 text-xs font-medium rounded-full transition-all border flex items-center gap-1.5 ${activeStatus === st
                                     ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
                                     : 'bg-transparent border-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-200 bg-gray-900/40'
@@ -323,7 +362,13 @@ export default function Home() {
                             {allAuthors.map((a) => (
                                 <button
                                     key={a.name}
-                                    onClick={() => setActiveAuthor(a.name === activeAuthor ? null : a.name)}
+                                    onClick={() => {
+                                        if (activeAuthor === a.name) setActiveAuthor(null);
+                                        else {
+                                            setActiveAuthor(a.name);
+                                            setPage(1);
+                                        }
+                                    }}
                                     className={`px-3 py-1 text-xs font-medium rounded-full transition-all border flex items-center gap-1.5 ${activeAuthor === a.name
                                         ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
                                         : 'bg-transparent border-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-200 bg-gray-900/40'
@@ -348,7 +393,13 @@ export default function Home() {
                 {'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').map(letter => (
                     <button
                         key={letter}
-                        onClick={() => setActiveLetter(letter)}
+                        onClick={() => {
+                            if (activeLetter === letter) setActiveLetter(null);
+                            else {
+                                setActiveLetter(letter);
+                                setPage(1);
+                            }
+                        }}
                         className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-md transition-colors ${activeLetter === letter ? 'bg-komgaPrimary text-white shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
                     >
                         {letter}
@@ -357,114 +408,158 @@ export default function Home() {
             </div>
 
             {loading && allSeries.length === 0 ? (
-                <div className="text-center py-20 text-gray-400 animate-pulse">正在加载目录与元数据...</div>
+                <div className="flex flex-col items-center justify-center py-40">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-komgaPrimary mb-4"></div>
+                    <div className="text-gray-400 font-medium">正在拉取资源...</div>
+                </div>
             ) : allSeries.length === 0 ? (
                 <div className="text-center py-20 text-gray-500">无匹配的系列</div>
             ) : (
-                <>
-                    <div className="min-h-[600px] w-full relative">
-                        <VirtuosoGrid
-                            useWindowScroll
-                            data={allSeries}
-                            totalCount={totalSeries}
-                            endReached={loadMore}
-                            overscan={400}
-                            listClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6"
-                            itemClassName="p-1"
-                            itemContent={(_, s: Series) => {
-                                const isSelected = selectedSeries.includes(s.id);
+                <div className={`relative transition-opacity duration-300 ${loading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6 min-h-[600px]">
+                        {allSeries.map((s) => {
+                            const isSelected = selectedSeries.includes(s.id);
 
-                                const handleCardClick = (e: React.MouseEvent) => {
-                                    if (isSelectionMode) {
-                                        e.preventDefault();
-                                        setSelectedSeries((prev: number[]) => prev.includes(s.id) ? prev.filter((id: number) => id !== s.id) : [...prev, s.id]);
+                            const handleCardClick = (e: React.MouseEvent) => {
+                                if (isSelectionMode) {
+                                    e.preventDefault();
+                                    setSelectedSeries((prev: number[]) => prev.includes(s.id) ? prev.filter((id: number) => id !== s.id) : [...prev, s.id]);
+                                }
+                            };
+
+                            return (
+                                <Link
+                                    key={s.id}
+                                    to={`/series/${s.id}`}
+                                    onClick={handleCardClick}
+                                    className={`group relative flex flex-col h-full rounded-xl overflow-hidden bg-komgaSurface border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'} transition-all duration-300 cursor-pointer`}
+                                >
+                                    <div className="aspect-[2/3] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
+                                        {isSelectionMode && (
+                                            <div className="absolute top-2 left-2 z-30">
+                                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'}`}>
+                                                    {isSelected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {s.cover_path?.Valid && s.cover_path?.String ? (
+                                            <img src={`/api/thumbnails/${s.cover_path.String}`} alt="cover" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                                        ) : (
+                                            <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
+                                        )}
+                                        <div className="absolute inset-x-0 top-0 p-3 z-20 pointer-events-none flex justify-between items-start">
+                                            {s.rating?.Valid && s.rating.Float64 > 0 && (
+                                                <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md">
+                                                    ★ {s.rating.Float64.toFixed(1)}
+                                                </span>
+                                            )}
+                                            {s.is_favorite && (
+                                                <div className="ml-auto bg-black/70 p-1.5 rounded-full backdrop-blur border border-red-500/30 shadow-md">
+                                                    <Heart className="w-3.5 h-3.5 fill-red-500 text-red-500" />
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
+                                            <div className="flex justify-between text-[11px] font-medium text-gray-300">
+                                                <span>
+                                                    {s.volume_count > 0 ? `${s.volume_count}卷 · ` : ''}{s.actual_book_count}话
+                                                </span>
+                                                <span>{s.total_pages?.Valid ? s.total_pages.Float64 : 0} P</span>
+                                            </div>
+                                            {s.total_pages?.Valid && s.total_pages.Float64 > 0 && (
+                                                <div className="w-full h-1 bg-gray-700/60 rounded-full mt-1.5 overflow-hidden">
+                                                    <div
+                                                        className={`h-full ${s.read_count >= s.total_pages.Float64 ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+                                                        style={{ width: `${Math.min(100, (s.read_count / s.total_pages.Float64) * 100)}%` }}
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="p-4 flex-1 flex flex-col justify-between">
+                                        <div>
+                                            <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
+                                                {s.title?.Valid ? s.title.String : s.name}
+                                            </h4>
+                                            {s.summary?.Valid && (
+                                                <p className="mt-2 text-xs text-gray-500 line-clamp-2">
+                                                    {s.summary.String}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                                            <span>系列</span>
+                                            <span className="opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+                                        </div>
+                                    </div>
+                                </Link>
+                            );
+                        })}
+                    </div>
+
+                    {/* 分页控制栏 */}
+                    <div className="mt-12 mb-8 flex flex-col sm:flex-row items-center justify-between gap-6 border-t border-gray-800 pt-8">
+                        <div className="text-gray-500 text-sm">
+                            共 <span className="text-gray-300 font-bold">{totalSeries}</span> 个系列，当前第 <span className="text-komgaPrimary font-bold">{page}</span> / {Math.ceil(totalSeries / PAGE_SIZE)} 页
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setPage(1)}
+                                disabled={page === 1}
+                                className="px-3 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                            >
+                                首页
+                            </button>
+                            <button
+                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                disabled={page === 1}
+                                className="px-4 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                            >
+                                上一页
+                            </button>
+
+                            <div className="flex items-center gap-1 mx-2">
+                                {[...Array(Math.min(5, Math.ceil(totalSeries / PAGE_SIZE)))].map((_, i) => {
+                                    const totalPages = Math.ceil(totalSeries / PAGE_SIZE);
+                                    let pNum = page;
+
+                                    if (page <= 3) {
+                                        pNum = i + 1;
+                                    } else if (page >= totalPages - 2) {
+                                        pNum = totalPages - 4 + i;
+                                    } else {
+                                        pNum = page - 2 + i;
                                     }
-                                };
 
-                                return (
-                                    <Link
-                                        key={s.id}
-                                        to={`/series/${s.id}`}
-                                        onClick={handleCardClick}
-                                        className={`group relative flex flex-col h-full rounded-xl overflow-hidden bg-komgaSurface border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'} transition-all duration-300 cursor-pointer`}
-                                    >
-                                        <div className="aspect-[2/3] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
-                                            {isSelectionMode && (
-                                                <div className="absolute top-2 left-2 z-30">
-                                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'}`}>
-                                                        {isSelected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {s.cover_path?.Valid && s.cover_path?.String ? (
-                                                <img src={`/api/thumbnails/${s.cover_path.String}`} alt="cover" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                                            ) : (
-                                                <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
-                                            )}
-                                            <div className="absolute inset-x-0 top-0 p-3 z-20 pointer-events-none flex justify-between items-start">
-                                                {s.rating?.Valid && s.rating.Float64 > 0 && (
-                                                    <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md">
-                                                        ★ {s.rating.Float64.toFixed(1)}
-                                                    </span>
-                                                )}
-                                                {s.is_favorite && (
-                                                    <div className="ml-auto bg-black/70 p-1.5 rounded-full backdrop-blur border border-red-500/30 shadow-md">
-                                                        <Heart className="w-3.5 h-3.5 fill-red-500 text-red-500" />
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
-                                                <div className="flex justify-between text-[11px] font-medium text-gray-300">
-                                                    <span>
-                                                        {s.volume_count > 0 ? `${s.volume_count}卷 · ` : ''}{s.actual_book_count}话
-                                                    </span>
-                                                    <span>{s.total_pages?.Valid ? s.total_pages.Float64 : 0} P</span>
-                                                </div>
-                                                {/* 阅读进度条 */}
-                                                {s.total_pages?.Valid && s.total_pages.Float64 > 0 && (
-                                                    <div className="w-full h-1 bg-gray-700/60 rounded-full mt-1.5 overflow-hidden">
-                                                        <div
-                                                            className={`h-full ${s.read_count >= s.total_pages.Float64 ? 'bg-green-500' : 'bg-komgaPrimary'}`}
-                                                            style={{ width: `${Math.min(100, (s.read_count / s.total_pages.Float64) * 100)}%` }}
-                                                        />
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div className="p-4 flex-1 flex flex-col justify-between">
-                                            <div>
-                                                <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
-                                                    {s.title?.Valid ? s.title.String : s.name}
-                                                </h4>
-                                                {s.summary?.Valid && (
-                                                    <p className="mt-2 text-xs text-gray-500 line-clamp-2">
-                                                        {s.summary.String}
-                                                    </p>
-                                                )}
-                                            </div>
-                                            <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                                                <span>系列</span>
-                                                <span className="opacity-0 group-hover:opacity-100 transition-opacity">→</span>
-                                            </div>
-                                        </div>
-                                    </Link>
-                                );
-                            }}
-                            components={{
-                                Footer: () => (
-                                    loading ? (
-                                        <div className="w-full py-10 flex flex-col items-center justify-center text-gray-500">
-                                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-komgaPrimary mb-2"></div>
-                                            <span className="text-xs">加载更多系列中...</span>
-                                        </div>
-                                    ) : allSeries.length >= totalSeries && totalSeries > 0 ? (
-                                        <div className="w-full py-10 text-center text-gray-600 text-xs italic">
-                                            — 到底啦，共 {totalSeries} 个系列 —
-                                        </div>
-                                    ) : null
-                                )
-                            }}
-                        />
+                                    if (pNum <= 0 || pNum > totalPages) return null;
+
+                                    return (
+                                        <button
+                                            key={pNum}
+                                            onClick={() => setPage(pNum)}
+                                            className={`w-10 h-10 flex items-center justify-center rounded-lg text-sm font-bold transition-all ${page === pNum ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20' : 'bg-gray-900 text-gray-400 border border-gray-800 hover:border-gray-600 hover:text-white'}`}
+                                        >
+                                            {pNum}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            <button
+                                onClick={() => setPage(p => Math.min(Math.ceil(totalSeries / PAGE_SIZE), p + 1))}
+                                disabled={page >= Math.ceil(totalSeries / PAGE_SIZE)}
+                                className="px-4 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                            >
+                                下一页
+                            </button>
+                            <button
+                                onClick={() => setPage(Math.ceil(totalSeries / PAGE_SIZE))}
+                                disabled={page >= Math.ceil(totalSeries / PAGE_SIZE)}
+                                className="px-3 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                            >
+                                末页
+                            </button>
+                        </div>
                     </div>
 
 
@@ -488,7 +583,7 @@ export default function Home() {
                             </div>
                         </div>
                     )}
-                </>
+                </div>
             )}
         </div>
     );
