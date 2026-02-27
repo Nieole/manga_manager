@@ -1,0 +1,16 @@
+server:
+    port: 8080
+database:
+    path: ./data/manga.db
+library:
+    paths: []
+cache:
+    dir: ./data/cache
+scanner:
+    workers: 0
+    thumbnail_format: webp
+    waifu2x_path: ""
+    realcugan_path: ""
+ollama:
+    endpoint: ""
+    model: ""
