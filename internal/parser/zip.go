@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Archive 支持的文件能力抽象接口
@@ -27,6 +28,7 @@ type PageMetadata struct {
 
 // ZipArchive 处理 zip/cbz 等标准归档
 type ZipArchive struct {
+	mu     sync.RWMutex
 	reader *zip.ReadCloser
 	path   string
 }
@@ -40,10 +42,15 @@ func OpenZip(path string) (Archive, error) {
 }
 
 func (z *ZipArchive) Close() error {
+	z.mu.Lock()
+	defer z.mu.Unlock()
 	return z.reader.Close()
 }
 
 func (z *ZipArchive) GetPages() ([]PageMetadata, error) {
+	z.mu.RLock()
+	defer z.mu.RUnlock()
+
 	var pages []PageMetadata
 
 	for _, f := range z.reader.File {
@@ -75,6 +82,9 @@ func (z *ZipArchive) GetPages() ([]PageMetadata, error) {
 }
 
 func (z *ZipArchive) ReadPage(name string) ([]byte, error) {
+	z.mu.RLock()
+	defer z.mu.RUnlock()
+
 	for _, f := range z.reader.File {
 		if f.Name == name {
 			rc, err := f.Open()
@@ -111,10 +121,4 @@ func getMediaType(ext string) string {
 	default:
 		return "application/octet-stream"
 	}
-}
-
-// 模拟文件管理器的自然排序算法，比如 1.jpg 排在 10.jpg 之前。
-func naturalCompare(a, b string) bool {
-	// 简单的字母表比较实现，TODO 替换为自然序列算法以兼容例如 "page2" < "page10"
-	return strings.Compare(a, b) < 0
 }
