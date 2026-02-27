@@ -246,13 +246,17 @@ export default function BookReader() {
 
     // 获取响应式缩放与图像预处理滤镜方案
     const getScaleClasses = (baseClasses: string) => {
-        let classes = baseClasses;
+        let classes = baseClasses + ' block m-0 p-0';
         switch (scaleMode) {
-            case 'original': classes += ' w-auto h-auto max-w-none max-h-none block'; break;
-            case 'fit-width': classes += ' w-screen min-w-full h-auto object-cover block m-0 p-0'; break;
-            case 'fit-screen': classes += ' w-full h-full max-h-full max-w-full object-contain block'; break;
+            case 'original': classes += ' w-auto h-auto max-w-none max-h-none'; break;
+            case 'fit-width': classes += ' w-screen min-w-full h-auto object-cover'; break;
+            case 'fit-screen':
+                // 修复：双页模式下不应强制 w-full (即占 50% 宽)，否则两页比例不一时会偏左。
+                // 通过禁用 w-full，两页将作为一个整体通过容器 justify-center 居中。
+                classes += (doublePage ? ' h-full w-auto' : ' w-full h-full') + ' max-h-full max-w-full object-contain';
+                break;
             case 'fit-height':
-            default: classes += ' h-full w-auto object-contain max-h-full max-w-none block'; break;
+            default: classes += ' h-full w-auto object-contain max-h-full max-w-none'; break;
         }
         return classes;
     };
@@ -508,22 +512,33 @@ export default function BookReader() {
                         {/* 图像容器 - 根据数量排列并赋予拖拽监听和原生弹性滚动 */}
                         <div
                             ref={containerRef}
-                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none gap-0`}
+                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none gap-0 ${doublePage ? 'drop-shadow-[0_20px_50px_rgba(0,0,0,0.9)]' : ''}`}
                             onMouseDown={handleMouseDown}
                             onMouseLeave={handleMouseLeave}
                             onMouseUp={handleMouseUp}
                             onMouseMove={handleMouseMove}
                         >
-                            {getPagedImages().map((p) => (
-                                <img
-                                    key={p.number}
-                                    src={getImageUrl(p.number)}
-                                    className={getScaleClasses(doublePage ? "drop-shadow-[0_10px_30px_rgba(0,0,0,0.8)]" : "drop-shadow-2xl")}
-                                    style={getFilterStyle()}
-                                    alt={`Page ${p.number}`}
-                                    draggable={false}
-                                />
-                            ))}
+                            {getPagedImages().map((p, idx, arr) => {
+                                // 深度修复方案：两张图片各自向中心偏移 -0.5px (逻辑像素) 实现物理重叠
+                                // 这能从底层封死亚像素计算导致的黑色缝隙泄露
+                                const isSpread = doublePage && arr.length > 1;
+                                const overlapStyle: React.CSSProperties = isSpread ? {
+                                    marginLeft: idx === 1 ? '-0.5px' : '0',
+                                    marginRight: idx === 0 ? '-0.5px' : '0',
+                                    zIndex: idx === 0 ? 1 : 0 // 确保层叠不会产生副作用
+                                } : {};
+
+                                return (
+                                    <img
+                                        key={p.number}
+                                        src={getImageUrl(p.number)}
+                                        className={getScaleClasses(!doublePage ? "drop-shadow-2xl" : "max-w-none")}
+                                        style={{ ...getFilterStyle(), ...overlapStyle }}
+                                        alt={`Page ${p.number}`}
+                                        draggable={false}
+                                    />
+                                );
+                            })}
                         </div>
 
                         {/* 右触控区/按钮 */}
