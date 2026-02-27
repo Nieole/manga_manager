@@ -138,37 +138,27 @@ export default function SeriesDetail() {
         if (seriesId) {
             // 防闪烁：如果是重新刷新且已经有数据，则不显示全屏 loading
             setLoading(!seriesInfo && books.length === 0);
-            Promise.all([
-                axios.get(`/api/books/${seriesId}`),
-                axios.get(`/api/series/info/${seriesId}`),
-                axios.get(`/api/series/${seriesId}/tags`),
-                axios.get(`/api/series/${seriesId}/authors`),
-                axios.get(`/api/series/${seriesId}/links`),
-            ])
-                .then(([booksRes, infoRes, tagsRes, authorsRes, linksRes]) => {
-                    setBooks(booksRes.data || []);
-                    const info = infoRes.data;
-                    setSeriesInfo(info);
+            axios.get(`/api/series/${seriesId}/context`)
+                .then(res => {
+                    const { series, books, tags, authors, links } = res.data;
+                    setBooks(books || []);
+                    setSeriesInfo(series);
+                    setTags(tags || []);
+                    setAuthors(authors || []);
+                    setLinks(links || []);
 
-                    const tagsData = tagsRes.data || [];
-                    const authorsData = authorsRes.data || [];
-                    const linksData = linksRes.data || [];
-                    setTags(tagsData);
-                    setAuthors(authorsData);
-                    setLinks(linksData);
-
-                    if (info) {
-                        setLockedFields(new Set(info.locked_fields?.Valid && info.locked_fields.String ? info.locked_fields.String.split(',') : []));
+                    if (series) {
+                        setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
                         setEditForm({
-                            title: info.title,
-                            summary: info.summary,
-                            publisher: info.publisher,
-                            status: info.status,
-                            rating: info.rating,
-                            language: info.language,
-                            tagsInput: tagsData.map((t: MetaTag) => t.name),
-                            authorsInput: authorsData.map((a: Author) => ({ name: a.name, role: a.role })),
-                            linksInput: linksData.map((l: SeriesLink) => ({ name: l.name, url: l.url }))
+                            title: series.title,
+                            summary: series.summary,
+                            publisher: series.publisher,
+                            status: series.status,
+                            rating: series.rating,
+                            language: series.language,
+                            tagsInput: (tags || []).map((t: MetaTag) => t.name),
+                            authorsInput: (authors || []).map((a: Author) => ({ name: a.name, role: a.role })),
+                            linksInput: (links || []).map((l: SeriesLink) => ({ name: l.name, url: l.url }))
                         });
                     }
                 })
@@ -213,7 +203,8 @@ export default function SeriesDetail() {
             books: volBooks,
             cover_path: volBooks.find(b => b.cover_path?.Valid && b.cover_path?.String)?.cover_path,
             cover_book_id: volBooks.find(b => b.cover_path?.Valid && b.cover_path?.String)?.id,
-            total_pages: volBooks.reduce((sum, b) => sum + b.page_count, 0)
+            total_pages: volBooks.reduce((sum, b) => sum + b.page_count, 0),
+            read_pages: volBooks.reduce((sum, b) => sum + (b.last_read_page?.Valid ? b.last_read_page.Int64 : 0), 0)
         }));
 
         volumeArr.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -452,6 +443,15 @@ export default function SeriesDetail() {
                             {book.page_count} Pages
                         </span>
                     </div>
+                    {/* 阅读进度条 */}
+                    {book.page_count > 0 && book.last_read_page?.Valid && book.last_read_page.Int64 > 0 && (
+                        <div className="absolute inset-x-0 bottom-0 h-1 bg-gray-800/40 z-20">
+                            <div
+                                className={`h-full transition-all duration-500 ${book.last_read_page.Int64 >= book.page_count ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+                                style={{ width: `${Math.min(100, (book.last_read_page.Int64 / book.page_count) * 100)}%` }}
+                            />
+                        </div>
+                    )}
                 </div>
                 <div className="p-4 flex-1 flex flex-col justify-between">
                     <div>
@@ -465,7 +465,7 @@ export default function SeriesDetail() {
                         )}
                     </div>
                 </div>
-            </Link>
+            </Link >
         );
     };
 
@@ -820,6 +820,15 @@ export default function SeriesDetail() {
                                                     <span>{vol.total_pages} 页</span>
                                                 </div>
                                             </div>
+                                            {/* 卷进度条 */}
+                                            {vol.total_pages > 0 && vol.read_pages > 0 && (
+                                                <div className="absolute inset-x-0 bottom-0 h-1 bg-gray-800/40 z-20">
+                                                    <div
+                                                        className={`h-full transition-all duration-500 ${vol.read_pages >= vol.total_pages ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+                                                        style={{ width: `${Math.min(100, (vol.read_pages / vol.total_pages) * 100)}%` }}
+                                                    />
+                                                </div>
+                                            )}
                                             {/* 右上角叠加卷叠层徽章 */}
                                             <div className="absolute top-2 right-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg">
                                                 Volume

@@ -24,6 +24,17 @@ import (
 	"github.com/gen2brain/avif"
 )
 
+// 全局 AI 并发控制信号量，防止瞬间拉起过多引擎进程撑爆 CPU/GPU/RAM
+var aiSemaphore chan struct{}
+
+// InitProcessor 初始化处理器全局参数
+func InitProcessor(maxAiConcurrency int) {
+	if maxAiConcurrency <= 0 {
+		maxAiConcurrency = 1
+	}
+	aiSemaphore = make(chan struct{}, maxAiConcurrency)
+}
+
 // ProcessOptions 用于接受前端动态要求的尺寸转换
 type ProcessOptions struct {
 	Width         int
@@ -41,6 +52,18 @@ type ProcessOptions struct {
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
 	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" {
 		return data, contentType, nil
+	}
+
+	// 性能优化：预检图片配置而不完全解码，用于评估内存风险
+	readerConfig := bytes.NewReader(data)
+	if config, _, err := image.DecodeConfig(readerConfig); err == nil {
+		// 内存保护阈值：如果图片面积超过 2500 万像素 (如 5000x5000)
+		// 在没有大并发处理能力的小型服务器上，完全解压这种位图会瞬间消耗 ~100MB+ 内存
+		area := config.Width * config.Height
+		if area > 25000000 {
+			slog.Warn("Large image detected, using memory-safe processing path", "width", config.Width, "height", config.Height, "area", area)
+			// 未来可在此处实施下采样读取或直接拒绝过大请求以防止 OOM
+		}
 	}
 
 	img, _, err := decodeImage(data, contentType)
@@ -144,6 +167,13 @@ func decodeImage(data []byte, contentType string) (image.Image, string, error) {
 
 // execWaifu2x 封闭处理 Waifu2x 外部二进制引擎挂载调用、零担内存置换及事后清理
 func execWaifu2x(imgData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
+	// 获取信号量锁 (Semaphore Acquire)
+	// 如果由于读页并发过高，此处会阻塞协程直到前序 AI 任务完成
+	if aiSemaphore != nil {
+		aiSemaphore <- struct{}{}
+		defer func() { <-aiSemaphore }() // 放锁 (Semaphore Release)
+	}
+
 	var execPath string
 	binName := "waifu2x-ncnn-vulkan"
 	if opts.Filter == "realcugan" {

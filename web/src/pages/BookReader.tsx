@@ -246,9 +246,9 @@ export default function BookReader() {
         switch (scaleMode) {
             case 'original': classes += ' w-auto h-auto max-w-none max-h-none block'; break;
             case 'fit-width': classes += ' w-screen min-w-full h-auto object-cover block m-0 p-0'; break;
-            case 'fit-screen': classes += ' w-full h-screen sm:h-full object-contain block'; break;
+            case 'fit-screen': classes += ' w-full h-full max-h-full max-w-full object-contain block'; break;
             case 'fit-height':
-            default: classes += ' h-screen w-auto object-contain max-h-screen max-w-none block'; break;
+            default: classes += ' h-full w-auto object-contain max-h-full max-w-none block'; break;
         }
         return classes;
     };

@@ -21,10 +21,12 @@ type Config struct {
 		Dir string `yaml:"dir" json:"dir"`
 	} `yaml:"cache" json:"cache"`
 	Scanner struct {
-		Workers         int    `yaml:"workers" json:"workers"`
-		ThumbnailFormat string `yaml:"thumbnail_format" json:"thumbnail_format"`
-		Waifu2xPath     string `yaml:"waifu2x_path" json:"waifu2x_path"`
-		RealCuganPath   string `yaml:"realcugan_path" json:"realcugan_path"`
+		Workers          int    `yaml:"workers" json:"workers"`
+		ThumbnailFormat  string `yaml:"thumbnail_format" json:"thumbnail_format"`
+		Waifu2xPath      string `yaml:"waifu2x_path" json:"waifu2x_path"`
+		RealCuganPath    string `yaml:"realcugan_path" json:"realcugan_path"`
+		ArchivePoolSize  int    `yaml:"archive_pool_size" json:"archive_pool_size"`
+		MaxAiConcurrency int    `yaml:"max_ai_concurrency" json:"max_ai_concurrency"`
 	} `yaml:"scanner" json:"scanner"`
 	Ollama struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"`
@@ -57,6 +59,10 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Cache.Dir = "./data/cache"
 	cfg.Scanner.Workers = 0              // 0 表示自动使用 runtime.NumCPU() * 2
 	cfg.Scanner.ThumbnailFormat = "webp" // 支持 webp, jpg, avif
+	cfg.Scanner.Waifu2xPath = ""
+	cfg.Scanner.RealCuganPath = ""
+	cfg.Scanner.ArchivePoolSize = 5  // 默认缓存 5 个打开的归档压缩包句柄
+	cfg.Scanner.MaxAiConcurrency = 3 // 默认限制最多抛出 3 个外置 AI 渲染子进程
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

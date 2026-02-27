@@ -58,6 +58,7 @@ type BookDocument struct {
 	Type       string `json:"type"`
 	Title      string `json:"title"`
 	SeriesName string `json:"series_name"`
+	CoverPath  string `json:"cover_path"`
 }
 
 // IndexBook 将书籍及其系列名推入分词引擎打标
@@ -76,11 +77,14 @@ func (e *Engine) IndexBook(book database.Book, seriesName string) error {
 		Title:      title,
 		SeriesName: seriesName,
 	}
+	if book.CoverPath.Valid {
+		doc.CoverPath = book.CoverPath.String
+	}
 
 	return e.index.Index(doc.ID, doc)
 }
 
-func (e *Engine) IndexSeries(id int64, name string) error {
+func (e *Engine) IndexSeries(id int64, name string, coverPath string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -89,6 +93,7 @@ func (e *Engine) IndexSeries(id int64, name string) error {
 		Type:       "series",
 		Title:      name,
 		SeriesName: name,
+		CoverPath:  coverPath,
 	}
 
 	return e.index.Index(doc.ID, doc)
@@ -167,7 +172,7 @@ func (e *Engine) Search(queryStr string, target string, limit int) (*bleve.Searc
 
 	searchRequest.Size = limit
 	// 要求返回哪些切片字段
-	searchRequest.Fields = []string{"id", "title", "series_name", "type"}
+	searchRequest.Fields = []string{"id", "title", "series_name", "type", "cover_path"}
 
 	return e.index.Search(searchRequest)
 }

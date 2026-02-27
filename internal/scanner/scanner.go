@@ -484,13 +484,26 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			slog.Error("Batch ingest transaction failed", "error", err)
 		} else {
 			// 在事务外并发建立检索，释放数据库写锁，解救由于更新阅读进度卡死的连接
-			seriesIdxMap := make(map[int64]string)
+			type sInfo struct {
+				name      string
+				coverPath string
+			}
+			seriesIdxMap := make(map[int64]sInfo)
 			for _, t := range tasks {
 				_ = s.engine.IndexBook(t.book, t.seriesName)
-				seriesIdxMap[t.book.SeriesID] = t.seriesName
+				cp := ""
+				if t.book.CoverPath.Valid {
+					cp = t.book.CoverPath.String
+				}
+				// 尝试从缓存中获取更准确的系列封面（如果有的话）
+				if cached, ok := seriesCache[t.book.Path]; ok && cached.CoverPath.Valid {
+					cp = cached.CoverPath.String
+				}
+
+				seriesIdxMap[t.book.SeriesID] = sInfo{name: t.seriesName, coverPath: cp}
 			}
-			for sid, sname := range seriesIdxMap {
-				_ = s.engine.IndexSeries(sid, sname)
+			for sid, info := range seriesIdxMap {
+				_ = s.engine.IndexSeries(sid, info.name, info.coverPath)
 			}
 			slog.Info("Successfully ingested batch", "book_count", len(batch))
 			if s.onBatchIngested != nil {

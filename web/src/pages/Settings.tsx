@@ -12,6 +12,8 @@ interface Config {
         thumbnail_format: string;
         waifu2x_path: string;
         realcugan_path: string;
+        archive_pool_size: number;
+        max_ai_concurrency: number;
     };
     ollama: {
         endpoint: string;
@@ -57,7 +59,8 @@ const Settings: React.FC = () => {
         setSaving(true);
         try {
             const res = await axios.post('/api/system/config', config);
-            showToast(res.data.message || "配置已保存，请重启应用以生效", 'success');
+            // 这里因为我们实现了 fsnotify 热重载，所以更新提示语，强调实时生效
+            showToast(res.data.message || "配置已保存，大部分设定（如线程、AI 路径）已实时反演生效", 'success');
         } catch (error) {
             console.error(error);
             showToast("保存失败", 'error');
@@ -223,16 +226,20 @@ const Settings: React.FC = () => {
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-400 mb-1" title="置0则由程序动态以主机线程数翻倍挂起">
-                                    解析器工作协程(Workers)
+                                    解析器工作协程 (Workers)
                                 </label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={config.scanner.workers}
-                                    onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, workers: parseInt(e.target.value) || 0 } })}
-                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">留为 0 表示通过 CPU 数自动智能调度榨取。</p>
+                                <div className="flex items-center space-x-3">
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="64"
+                                        value={config.scanner.workers}
+                                        onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, workers: parseInt(e.target.value) || 0 } })}
+                                        className="flex-1 accent-komgaPrimary"
+                                    />
+                                    <span className="text-sm font-mono text-komgaPrimary w-8">{config.scanner.workers}</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">{config.scanner.workers === 0 ? '目前为“智能自动调度”模式' : '手动指定并发处理协程数'}</p>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-400 mb-1">
@@ -249,6 +256,41 @@ const Settings: React.FC = () => {
                                 </select>
                             </div>
                         </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 py-4 border-y border-gray-800/50">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1" title="增加池大小可以加快频繁翻页速度，但会占用更多内存与文件句柄。建议设为 3-10 之间。">
+                                    归档句柄重用池大小 (Pool)
+                                </label>
+                                <div className="flex items-center space-x-3">
+                                    <input
+                                        type="range"
+                                        min="1"
+                                        max="50"
+                                        value={config.scanner.archive_pool_size}
+                                        onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, archive_pool_size: parseInt(e.target.value) || 1 } })}
+                                        className="flex-1 accent-komgaPrimary"
+                                    />
+                                    <span className="text-sm font-mono text-komgaPrimary w-8">{config.scanner.archive_pool_size}</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1" title="限制同时运行的 AI 超分进程数。较低的值可防止系统瞬间卡死。建议设为 1-4 之间。">
+                                    AI 引擎最大并行任务数
+                                </label>
+                                <div className="flex items-center space-x-3">
+                                    <input
+                                        type="range"
+                                        min="1"
+                                        max="10"
+                                        value={config.scanner.max_ai_concurrency}
+                                        onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, max_ai_concurrency: parseInt(e.target.value) || 1 } })}
+                                        className="flex-1 accent-purple-500"
+                                    />
+                                    <span className="text-sm font-mono text-purple-400 w-8">{config.scanner.max_ai_concurrency}</span>
+                                </div>
+                            </div>
+                        </div>
                         <div className="mt-4 border-t border-gray-800 pt-4">
                             <label className="block text-sm font-medium text-gray-400 mb-1" title="留空则自动从 PATH / bin 目录推断。">
                                 Waifu2x 引擎自定义执行路径 (缺省留空)
@@ -260,6 +302,18 @@ const Settings: React.FC = () => {
                                 onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, waifu2x_path: e.target.value } })}
                                 className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono text-sm"
                             />
+                            <p className="text-xs text-gray-500 mt-2 flex items-center gap-1.5">
+                                <ImageIcon className="w-3 h-3" />
+                                推荐下载：
+                                <a
+                                    href="https://github.com/nihui/waifu2x-ncnn-vulkan/releases"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-komgaPrimary hover:underline"
+                                >
+                                    Waifu2x GitHub 官方发布页
+                                </a>
+                            </p>
                         </div>
                         <div className="mt-4 border-t border-gray-800 pt-4">
                             <label className="block text-sm font-medium text-gray-400 mb-1" title="留空则自动从 PATH / bin 目录推断。">
@@ -272,6 +326,18 @@ const Settings: React.FC = () => {
                                 onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, realcugan_path: e.target.value } })}
                                 className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono text-sm"
                             />
+                            <p className="text-xs text-gray-500 mt-2 flex items-center gap-1.5">
+                                <ImageIcon className="w-3 h-3" />
+                                推荐下载：
+                                <a
+                                    href="https://github.com/nihui/realcugan-ncnn-vulkan/releases"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-komgaPrimary hover:underline"
+                                >
+                                    Real-CUGAN GitHub 官方发布页
+                                </a>
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -380,7 +446,7 @@ const Settings: React.FC = () => {
                     ) : (
                         <Save className="w-5 h-5" />
                     )}
-                    <span>{saving ? '正在复写...' : '保存更改并提示重启'}</span>
+                    <span>{saving ? '正在同步注入...' : '保存更改并立即应用'}</span>
                 </button>
             </div>
 

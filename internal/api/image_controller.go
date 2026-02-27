@@ -35,12 +35,11 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	archiver, err := parser.OpenArchive(book.Path)
+	archiver, err := parser.GetArchiveFromPool(book.Path)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
 		return
 	}
-	defer archiver.Close()
 
 	pagesInfo, err := archiver.GetPages()
 	if err != nil || len(pagesInfo) == 0 {

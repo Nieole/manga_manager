@@ -148,6 +148,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{seriesId}/tags", c.getSeriesTags)
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 			r.Get("/{seriesId}/links", c.getSeriesLinks)
+			r.Get("/{seriesId}/context", c.getSeriesContext)
 		})
 
 		r.Route("/books", func(r chi.Router) {
@@ -624,6 +625,75 @@ func (c *Controller) getSeriesLinks(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, links)
 }
 
+type SeriesContextResponse struct {
+	Series  database.Series       `json:"series"`
+	Books   []database.Book       `json:"books"`
+	Tags    []database.Tag        `json:"tags"`
+	Authors []database.Author     `json:"authors"`
+	Links   []database.SeriesLink `json:"links"`
+}
+
+func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	ctx := r.Context()
+
+	// 1. 获取系列基本信息
+	series, err := c.store.GetSeries(ctx, seriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+
+	// 2. 获取书籍列表
+	books, err := c.store.ListBooksBySeries(ctx, seriesID)
+	if err != nil {
+		slog.Error("Failed to fetch books for context", "series_id", seriesID, "error", err)
+	}
+	if books == nil {
+		books = []database.Book{}
+	}
+
+	// 3. 标签
+	tags, err := c.store.GetTagsForSeries(ctx, seriesID)
+	if err != nil {
+		slog.Error("Failed to fetch tags for context", "series_id", seriesID, "error", err)
+	}
+	if tags == nil {
+		tags = []database.Tag{}
+	}
+
+	// 4. 作者
+	authors, err := c.store.GetAuthorsForSeries(ctx, seriesID)
+	if err != nil {
+		slog.Error("Failed to fetch authors for context", "series_id", seriesID, "error", err)
+	}
+	if authors == nil {
+		authors = []database.Author{}
+	}
+
+	// 5. 链接
+	links, err := c.store.GetLinksForSeries(ctx, seriesID)
+	if err != nil {
+		slog.Error("Failed to fetch links for context", "series_id", seriesID, "error", err)
+	}
+	if links == nil {
+		links = []database.SeriesLink{}
+	}
+
+	jsonResponse(w, http.StatusOK, SeriesContextResponse{
+		Series:  series,
+		Books:   books,
+		Tags:    tags,
+		Authors: authors,
+		Links:   links,
+	})
+}
+
 func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := c.store.GetAllTags(r.Context())
 	if err != nil {
@@ -992,7 +1062,7 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 	// Update in-memory config
 	*c.config = newCfg
 
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "Configuration saved. Please restart the server for all changes to take effect."})
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "配置已成功保存。得益于热重载技术，大部分核心设定（如 AI 引擎路径、并发进程数）已立等生效，无需重启应用。"})
 }
 
 // 触发扫描全库，作为通用的挂载工具

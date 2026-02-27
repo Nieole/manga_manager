@@ -16,10 +16,14 @@ import (
 	"manga-manager/internal/api"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/images"
 	"manga-manager/internal/logger"
+	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 	"manga-manager/web"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func main() {
@@ -35,6 +39,13 @@ func main() {
 		slog.Error("Failed to load config", "error", err)
 		os.Exit(1)
 	}
+
+	// 初始化归档句柄重用池与 AI 并发控制参数
+	parser.InitPool(cfg.Scanner.ArchivePoolSize)
+	images.InitProcessor(cfg.Scanner.MaxAiConcurrency)
+
+	// 启动配置热重载监听
+	go watchConfig("config.yaml", cfg)
 
 	if err := database.Migrate(cfg.Database.Path); err != nil {
 		slog.Error("Failed to migrate database schema", "error", err)
@@ -125,5 +136,61 @@ func main() {
 	if err := http.ListenAndServe(addr, r); err != nil {
 		slog.Error("Server stopped", "error", err)
 		os.Exit(1)
+	}
+}
+
+func watchConfig(path string, currentCfg *config.Config) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		slog.Error("Failed to create config watcher", "error", err)
+		return
+	}
+	defer watcher.Close()
+
+	err = watcher.Add(path)
+	if err != nil {
+		slog.Error("Failed to add config path to watcher", "path", path, "error", err)
+		return
+	}
+
+	slog.Info("Config hot-reload watcher started", "path", path)
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			// 某些编辑器（如 vim）保存时会触发 Rename 或 Remove 后再 Create，
+			// 所以监听 Write 和 Create 两个事件更稳健。
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				slog.Info("Config file changed, re-applying settings...", "event", event.Name)
+				newCfg, err := config.LoadConfig(path)
+				if err != nil {
+					slog.Error("Failed to reload config during hot-swap", "error", err)
+					continue
+				}
+
+				// 1. 同步更新全局单例/传递的引用
+				// 注意：这里更新的是 *newCfg，如果 apiController 持有的是 *cfg 的引用，
+				// 我们需要手动将 *newCfg 的值刷入 *currentCfg 指向的内存，
+				// 或者确保后端组件统一订阅配置变更。
+				// 简单的做法是把新值 Copy 过去 (深拷贝结构体)
+				*currentCfg = *newCfg
+
+				// 2. 刷新具有受限状态的底层资源池
+				parser.InitPool(currentCfg.Scanner.ArchivePoolSize)
+				images.InitProcessor(currentCfg.Scanner.MaxAiConcurrency)
+
+				slog.Info("Config hot-reload applied successfully",
+					"pool_size", currentCfg.Scanner.ArchivePoolSize,
+					"ai_concurrency", currentCfg.Scanner.MaxAiConcurrency)
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			slog.Error("Config watcher error", "error", err)
+		}
 	}
 }

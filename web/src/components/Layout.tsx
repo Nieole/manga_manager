@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -511,24 +511,61 @@ export default function Layout() {
 
                         <div className="overflow-y-auto flex-1 p-2">
                             {searchResults.length > 0 && searchQuery.trim() !== "" ? (
-                                searchResults.map((hit: any, index: number) => (
-                                    <div
-                                        key={hit.id}
-                                        onClick={() => handleSelectResult(hit)}
-                                        onMouseEnter={() => setSelectedIndex(index)}
-                                        className={`flex flex-col px-4 py-3 cursor-pointer rounded-lg transition-colors ${index === selectedIndex ? 'bg-gray-800 border-l-2 border-komgaPrimary' : 'hover:bg-gray-800/50 border-l-2 border-transparent'}`}
-                                    >
-                                        <div className="flex items-center space-x-2">
-                                            {hit.fields?.type === 'series' || hit.id.startsWith('s_') ? (
-                                                <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-wider shrink-0 border border-blue-500/30">系列</span>
-                                            ) : (
-                                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-wider shrink-0 border border-emerald-500/30">单册</span>
-                                            )}
-                                            <div className="text-base font-medium text-white truncate">{hit.fields?.title || hit.id}</div>
+                                searchResults.map((hit: any, index: number) => {
+                                    const isSeries = hit.fields?.type === 'series' || hit.id.startsWith('s_');
+                                    const coverPath = hit.fields?.cover_path;
+
+                                    return (
+                                        <div
+                                            key={hit.id}
+                                            onClick={() => handleSelectResult(hit)}
+                                            onMouseEnter={() => setSelectedIndex(index)}
+                                            className={`flex items-center gap-4 px-4 py-3 cursor-pointer rounded-lg transition-all ${index === selectedIndex ? 'bg-komgaPrimary/10 border-l-4 border-komgaPrimary shadow-md' : 'hover:bg-gray-800/50 border-l-4 border-transparent'}`}
+                                        >
+                                            <div className="w-12 h-18 sm:w-14 sm:h-20 bg-gray-900 rounded-md overflow-hidden flex-shrink-0 border border-gray-800 shadow-sm relative group-hover:border-komgaPrimary/30 transition-colors">
+                                                {coverPath ? (
+                                                    <img
+                                                        src={`/api/thumbnails/${coverPath}`}
+                                                        alt="preview"
+                                                        className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                                                        onError={(e) => { (e.target as any).src = ''; (e.target as any).nextSibling.style.display = 'flex'; (e.target as any).style.display = 'none'; }}
+                                                    />
+                                                ) : null}
+                                                <div className={`absolute inset-0 items-center justify-center bg-gray-800 flex ${coverPath ? 'hidden' : ''}`}>
+                                                    <ImageIcon className="w-6 h-6 text-gray-700" />
+                                                </div>
+                                            </div>
+
+                                            <div className="flex-1 min-w-0 flex flex-col justify-center">
+                                                <div className="flex items-center space-x-2 mb-1">
+                                                    {isSeries ? (
+                                                        <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-wider shrink-0 border border-blue-500/30 uppercase">系列</span>
+                                                    ) : (
+                                                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-wider shrink-0 border border-emerald-500/30 uppercase">单册</span>
+                                                    )}
+                                                    <div className="text-base font-bold text-gray-100 truncate group-hover:text-komgaPrimary transition-colors">
+                                                        {hit.fields?.title || hit.id}
+                                                    </div>
+                                                </div>
+                                                <div className="text-xs text-gray-500 truncate flex items-center gap-2">
+                                                    {isSeries ? (
+                                                        <span>浏览整个系列内容</span>
+                                                    ) : (
+                                                        <>
+                                                            <span className="text-komgaPrimary font-medium truncate max-w-[150px]">{hit.fields?.series_name || "未知系列"}</span>
+                                                            <span className="text-gray-700">•</span>
+                                                            <span>进入详情页阅读</span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="hidden sm:flex flex-col items-end shrink-0 ml-2">
+                                                <span className="text-[10px] text-gray-600 font-mono">SCORE</span>
+                                                <span className={`text-xs font-bold ${hit.score > 0.5 ? 'text-komgaPrimary' : 'text-gray-500'}`}>{hit.score?.toFixed(2)}</span>
+                                            </div>
                                         </div>
-                                        <div className="text-xs text-komgaPrimary mt-1 truncate pl-11">{hit.fields?.series_name || "未知系列"} | 匹配度: {hit.score?.toFixed(2)}</div>
-                                    </div>
-                                ))
+                                    );
+                                })
                             ) : searchQuery.trim() !== "" ? (
                                 <div className="py-14 text-center text-gray-500 text-sm">
                                     未找到符合条件的漫画
