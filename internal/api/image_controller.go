@@ -61,15 +61,16 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	widthStr := r.URL.Query().Get("w")
 	heightStr := r.URL.Query().Get("h")
 	filter := r.URL.Query().Get("filter")
+	autoCrop := r.URL.Query().Get("auto_crop") == "true"
 
 	// 构建缓存 Key（包含了全部可能改变画像最终形态的环境音阶，阻断 Waifu2x 翻页复读老图的缓存雪崩击穿）
 	w2xScaleStr := r.URL.Query().Get("w2x_scale")
 	w2xNoiseStr := r.URL.Query().Get("w2x_noise")
 	w2xFormatStr := r.URL.Query().Get("w2x_format")
-	cacheKey := fmt.Sprintf("%d-%d-%s-%s-%s-%s-%s-%s-%s-%s", bookID, pageNumber, widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr)
+	cacheKey := fmt.Sprintf("%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t", bookID, pageNumber, widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr, autoCrop)
 
 	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
-	isThumbnailReq := widthStr != "" || heightStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear")
+	isThumbnailReq := widthStr != "" || heightStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear") || autoCrop
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
 			contentType := http.DetectContentType(cachedData)
@@ -91,6 +92,7 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	opts := images.ProcessOptions{
 		Format:        format,
 		Filter:        filter,
+		AutoCrop:      autoCrop,
 		Waifu2xPath:   c.config.Scanner.Waifu2xPath,
 		RealCuganPath: c.config.Scanner.RealCuganPath,
 		Waifu2xScale:  2,      // 缺省使用引擎默认2倍

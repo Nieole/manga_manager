@@ -45,6 +45,7 @@ export default function BookReader() {
     const [doublePage, setDoublePage] = useStickyState<boolean>(false, 'manga_double_page');
     const [scaleMode, setScaleMode] = useStickyState<ScaleMode>('fit-screen', 'manga_scale_mode');
     const [imageFilter, setImageFilter] = useStickyState<ImageFilter>('bilinear', 'manga_image_filter');
+    const [autoCrop, setAutoCrop] = useStickyState<boolean>(false, 'manga_auto_crop');
     const [preloadCount, setPreloadCount] = useStickyState<number>(3, 'manga_preload_count');
 
     // Waifu2x 专属超分配置偏好
@@ -79,6 +80,9 @@ export default function BookReader() {
             if (imageFilter === 'waifu2x' || imageFilter === 'realcugan') {
                 url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}&w2x_format=${w2xFormat}`;
             }
+        }
+        if (autoCrop) {
+            url += (url.includes('?') ? '&' : '?') + 'auto_crop=true';
         }
         return url;
     }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat]);
@@ -340,41 +344,41 @@ export default function BookReader() {
                 {showSettings && (
                     <div className="self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-4 sm:p-5 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 origin-top-right">
                         <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">阅读模式</span>
-                            <div className="flex bg-gray-900 rounded p-1">
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">阅读模式与排版</span>
+                            <div className="flex bg-gray-900 rounded p-1 mb-3">
                                 <button className={`flex-1 py-1.5 rounded transition ${readMode === 'webtoon' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('webtoon')}>瀑布流</button>
                                 <button className={`flex-1 py-1.5 rounded transition ${readMode === 'paged' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('paged')}>翻页</button>
                             </div>
+
+                            {readMode === 'paged' && (
+                                <div className="space-y-3">
+                                    <div>
+                                        <span className="text-[10px] text-gray-500 mb-1 block">单双页排版</span>
+                                        <div className="flex bg-gray-900 rounded p-0.5">
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${!doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(false)}>单页居中</button>
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(true)}>支持跨页</button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] text-gray-500 mb-1 block">阅读方向</span>
+                                        <div className="flex bg-gray-900 rounded p-0.5">
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'ltr' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('ltr')}>左到右 (漫威)</button>
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'rtl' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('rtl')}>右到左 (日漫)</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
-                        {readMode === 'paged' && (
-                            <>
-                                <div>
-                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">单双页排版</span>
-                                    <div className="flex bg-gray-900 rounded p-1">
-                                        <button className={`flex-1 py-1.5 rounded transition ${!doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(false)}>单页居中</button>
-                                        <button className={`flex-1 py-1.5 rounded transition ${doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(true)}>支持跨页</button>
-                                    </div>
-                                </div>
-                                <div>
-                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">翻页与组合方向</span>
-                                    <div className="flex bg-gray-900 rounded p-1">
-                                        <button className={`flex-1 py-1.5 rounded transition ${readDirection === 'ltr' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('ltr')}>左到右 (漫威)</button>
-                                        <button className={`flex-1 py-1.5 rounded transition ${readDirection === 'rtl' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('rtl')}>右到左 (日漫)</button>
-                                    </div>
-                                </div>
-                            </>
-                        )}
-
-                        <div className="h-px bg-gray-800 my-2"></div>
+                        <div className="h-px bg-gray-800 my-1"></div>
 
                         <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">缩放方式</span>
-                            <div className="flex bg-gray-900 rounded p-1">
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">缩放与图像处理</span>
+                            <div className="flex bg-gray-900 rounded p-1 mb-3">
                                 {['original', 'fit-height', 'fit-width', 'fit-screen'].map(sm => (
                                     <button
                                         key={sm}
-                                        className={`flex-1 py-1 px-0.5 rounded transition text-xs ${scaleMode === sm ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
+                                        className={`flex-1 py-1 rounded transition text-[10px] ${scaleMode === sm ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
                                         onClick={() => setScaleMode(sm as ScaleMode)}
                                         title={sm === 'original' ? '原始尺寸' : sm === 'fit-height' ? '符合高度' : sm === 'fit-width' ? '符合宽度' : '符合屏幕'}
                                     >
@@ -382,17 +386,11 @@ export default function BookReader() {
                                     </button>
                                 ))}
                             </div>
-                        </div>
 
-                        <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
-                                <span>插值过滤与缩放算法</span>
-                                <span className="text-komgaPrimary">{imageFilter}</span>
-                            </span>
                             <select
                                 value={imageFilter}
                                 onChange={(e) => setImageFilter(e.target.value as ImageFilter)}
-                                className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded p-2 outline-none cursor-pointer"
+                                className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded p-2 outline-none cursor-pointer mb-2"
                             >
                                 <option value="none">原始图像 (Raw / 无处理)</option>
                                 <option value="nearest">相邻像素法 (Nearest / Pixelated)</option>
@@ -403,58 +401,47 @@ export default function BookReader() {
                                 <option value="waifu2x">Waifu2x 初代二次元重绘 (需本地引擎)</option>
                                 <option value="realcugan">Real-CUGAN 次世代超分 (需本地引擎)</option>
                             </select>
+
+                            <button
+                                className={`w-full py-2 rounded text-xs transition font-medium border ${autoCrop ? 'bg-komgaPrimary/20 border-komgaPrimary text-komgaPrimary shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                                onClick={() => setAutoCrop(!autoCrop)}
+                            >
+                                {autoCrop ? '✨ 自动裁切已开启' : '开启自动裁切白边 (实验性)'}
+                            </button>
                         </div>
 
                         {(imageFilter === 'waifu2x' || imageFilter === 'realcugan') && (
                             <div className="bg-gray-900/50 p-3 rounded border border-komgaPrimary/30 animate-in fade-in slide-in-from-top-2">
                                 <div className="mb-3">
-                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
+                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
                                         <span>引擎缩放倍数</span>
                                         <span className="text-komgaPrimary">{w2xScale}x</span>
                                     </span>
                                     <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
                                         {[1, 2, 4, 8].map(s => (
-                                            <button
-                                                key={s}
-                                                className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xScale === s ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
-                                                onClick={() => setW2xScale(s)}
-                                            >
-                                                {s}x
-                                            </button>
+                                            <button key={s} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xScale === s ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xScale(s)}>{s}x</button>
                                         ))}
                                     </div>
                                 </div>
-                                <div>
-                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
+                                <div className="mb-3">
+                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
                                         <span>降噪等级 (Noise)</span>
                                         <span className="text-komgaPrimary">{w2xNoise === -1 ? '关闭' : w2xNoise}</span>
                                     </span>
                                     <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
                                         {[-1, 0, 1, 2, 3].map(n => (
-                                            <button
-                                                key={n}
-                                                className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xNoise === n ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
-                                                onClick={() => setW2xNoise(n)}
-                                            >
-                                                {n === -1 ? '关' : n}
-                                            </button>
+                                            <button key={n} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xNoise === n ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xNoise(n)}>{n === -1 ? '关' : n}</button>
                                         ))}
                                     </div>
                                 </div>
-                                <div className="mt-3">
-                                    <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 flex justify-between">
+                                <div>
+                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
                                         <span>输出编码格式</span>
-                                        <span className="text-komgaPrimary uppercase">{w2xFormat}</span>
+                                        <span className="text-komgaPrimary uppercase text-[10px]">{w2xFormat}</span>
                                     </span>
                                     <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
                                         {['webp', 'png', 'jpg'].map(f => (
-                                            <button
-                                                key={f}
-                                                className={`flex-1 py-1 rounded transition text-xs font-semibold uppercase ${w2xFormat === f ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
-                                                onClick={() => setW2xFormat(f)}
-                                            >
-                                                {f}
-                                            </button>
+                                            <button key={f} className={`flex-1 py-1 rounded transition text-xs font-semibold uppercase ${w2xFormat === f ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xFormat(f)}>{f}</button>
                                         ))}
                                     </div>
                                 </div>
@@ -462,9 +449,9 @@ export default function BookReader() {
                         )}
 
                         <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider">提前预缓存页数</span>
-                                <span className="text-xs bg-gray-800 px-2 py-0.5 rounded text-gray-300">{preloadCount} 页</span>
+                            <div className="flex items-center justify-between mb-1">
+                                <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">预缓存页数</span>
+                                <span className="text-[10px] text-gray-400">{preloadCount} 页</span>
                             </div>
                             <input
                                 type="range"
@@ -473,7 +460,7 @@ export default function BookReader() {
                                 step={1}
                                 value={preloadCount}
                                 onChange={(e) => setPreloadCount(parseInt(e.target.value, 10))}
-                                className="w-full accent-komgaPrimary"
+                                className="w-full accent-komgaPrimary h-1"
                             />
                         </div>
                     </div>
@@ -499,7 +486,6 @@ export default function BookReader() {
                                 alt={`Page ${page.number}`}
                             />
                         ))}
-                        {/* 瀑布流模式的续卷提示 */}
                         {nextBookId && (
                             <button
                                 onClick={() => navigate(`/reader/${nextBookId}`, { replace: true })}
@@ -510,7 +496,6 @@ export default function BookReader() {
                         )}
                     </div>
                 ) : (
-                    /* 翻页模式 */
                     <div className="flex items-center justify-center w-full h-full bg-black relative">
                         {/* 左触控区/按钮 */}
                         <div
@@ -523,7 +508,7 @@ export default function BookReader() {
                         {/* 图像容器 - 根据数量排列并赋予拖拽监听和原生弹性滚动 */}
                         <div
                             ref={containerRef}
-                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none`}
+                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none gap-0`}
                             onMouseDown={handleMouseDown}
                             onMouseLeave={handleMouseLeave}
                             onMouseUp={handleMouseUp}
@@ -533,7 +518,7 @@ export default function BookReader() {
                                 <img
                                     key={p.number}
                                     src={getImageUrl(p.number)}
-                                    className={getScaleClasses("drop-shadow-2xl")}
+                                    className={getScaleClasses(doublePage ? "drop-shadow-[0_10px_30px_rgba(0,0,0,0.8)]" : "drop-shadow-2xl")}
                                     style={getFilterStyle()}
                                     alt={`Page ${p.number}`}
                                     draggable={false}

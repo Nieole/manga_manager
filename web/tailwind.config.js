@@ -9,6 +9,7 @@ export default {
             colors: {
                 komgaDark: '#121212',
                 komgaSurface: '#1E1E1E',
+                komgaBackground: '#121212',
                 komgaPrimary: '#BB86FC',
                 komgaSecondary: '#03DAC6',
             }

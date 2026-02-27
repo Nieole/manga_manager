@@ -21,6 +21,8 @@ import (
 	// Init defaults for read fallback
 	_ "image/gif"
 
+	"image/color"
+
 	"github.com/gen2brain/avif"
 )
 
@@ -47,6 +49,7 @@ type ProcessOptions struct {
 	Waifu2xScale  int    // 引擎缩放倍数 1/2/4/8
 	Waifu2xNoise  int    // Waifu2x 的降噪等级 / RealCUGAN 的噪点抑制强度
 	Waifu2xFormat string // 降噪外设输出格式 webp/png/jpg
+	AutoCrop      bool   // 是否自动裁切白边
 }
 
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
@@ -72,6 +75,11 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	}
 
 	var newImg image.Image = img
+
+	// 自动裁切白边逻辑
+	if opts.AutoCrop {
+		newImg = autoCropImage(newImg)
+	}
 
 	targetWidth := uint(opts.Width)
 	targetHeight := uint(opts.Height)
@@ -297,4 +305,114 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// autoCropImage 扫描图像边缘，识别并裁切掉与背景色相近的边界白边/黑边
+func autoCropImage(img image.Image) image.Image {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	if width < 10 || height < 10 {
+		return img
+	}
+
+	// 采样背景色（通常取左上角，但也考虑边缘多点采样以提高鲁棒性）
+	bgR, bgG, bgB, _ := img.At(bounds.Min.X, bounds.Min.Y).RGBA()
+
+	// 寻找内容的上下左右边界
+	top, bottom, left, right := 0, height-1, 0, width-1
+
+	// 自顶向下扫描
+	found := false
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			if !isBackgroundColor(img.At(bounds.Min.X+x, bounds.Min.Y+y), bgR, bgG, bgB) {
+				top = y
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+
+	// 自底向上扫描
+	found = false
+	for y := height - 1; y >= top; y-- {
+		for x := 0; x < width; x++ {
+			if !isBackgroundColor(img.At(bounds.Min.X+x, bounds.Min.Y+y), bgR, bgG, bgB) {
+				bottom = y
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+
+	// 自左向右扫描
+	found = false
+	for x := 0; x < width; x++ {
+		for y := top; y <= bottom; y++ {
+			if !isBackgroundColor(img.At(bounds.Min.X+x, bounds.Min.Y+y), bgR, bgG, bgB) {
+				left = x
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+
+	// 自右向左扫描
+	found = false
+	for x := width - 1; x >= left; x-- {
+		for y := top; y <= bottom; y++ {
+			if !isBackgroundColor(img.At(bounds.Min.X+x, bounds.Min.Y+y), bgR, bgG, bgB) {
+				right = x
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+
+	// 如果裁切范围太小或者干脆没变，直接返回原图
+	if !found || (right-left < 10) || (bottom-top < 10) {
+		return img
+	}
+
+	// 执行子图裁切
+	type subImager interface {
+		SubImage(r image.Rectangle) image.Image
+	}
+
+	if si, ok := img.(subImager); ok {
+		return si.SubImage(image.Rect(bounds.Min.X+left, bounds.Min.Y+top, bounds.Min.X+right+1, bounds.Min.Y+bottom+1))
+	}
+
+	return img
+}
+
+// isBackgroundColor 判断给定颜色是否属于背景色范畴。引入阈值处理以应对 JPEG 边缘噪点。
+func isBackgroundColor(c color.Color, bgR, bgG, bgB uint32) bool {
+	r, g, b, _ := c.RGBA()
+
+	// 阈值设为 15% (由于 RGBA 是 16位 0-65535，15% 大约是 9800)
+	const threshold uint32 = 9800
+
+	diff := func(a, b uint32) uint32 {
+		if a > b {
+			return a - b
+		}
+		return b - a
+	}
+
+	return diff(r, bgR) < threshold && diff(g, bgG) < threshold && diff(b, bgB) < threshold
 }

@@ -416,7 +416,7 @@ export default function Home() {
                 <div className="text-center py-20 text-gray-500">无匹配的系列</div>
             ) : (
                 <div className={`relative transition-opacity duration-300 ${loading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6 min-h-[600px]">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 sm:gap-6 min-h-[600px] items-start">
                         {allSeries.map((s) => {
                             const isSelected = selectedSeries.includes(s.id);
 
@@ -432,9 +432,9 @@ export default function Home() {
                                     key={s.id}
                                     to={`/series/${s.id}`}
                                     onClick={handleCardClick}
-                                    className={`group relative flex flex-col h-full rounded-xl overflow-hidden bg-komgaSurface border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'} transition-all duration-300 cursor-pointer`}
+                                    className={`group relative rounded-xl overflow-hidden bg-komgaSurface border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'} transition-all duration-300 cursor-pointer block h-fit`}
                                 >
-                                    <div className="aspect-[2/3] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
+                                    <div className="aspect-[1/1.4] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
                                         {isSelectionMode && (
                                             <div className="absolute top-2 left-2 z-30">
                                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'}`}>
@@ -476,21 +476,18 @@ export default function Home() {
                                             )}
                                         </div>
                                     </div>
-                                    <div className="p-4 flex-1 flex flex-col justify-between">
+                                    <div className="p-3">
                                         <div>
-                                            <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
+                                            <h4 className="text-sm font-bold text-gray-200 line-clamp-1 leading-tight group-hover:text-komgaPrimary transition-colors mb-1.5">
                                                 {s.title?.Valid ? s.title.String : s.name}
                                             </h4>
                                             {s.summary?.Valid && (
-                                                <p className="mt-2 text-xs text-gray-500 line-clamp-2">
+                                                <p className="text-[11px] text-gray-500 line-clamp-2 leading-tight opacity-70">
                                                     {s.summary.String}
                                                 </p>
                                             )}
                                         </div>
-                                        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                                            <span>系列</span>
-                                            <span className="opacity-0 group-hover:opacity-100 transition-opacity">→</span>
-                                        </div>
+                                        {/* 移除底部的“系列”字样，保持清爽 */}
                                     </div>
                                 </Link>
                             );
