@@ -73,6 +73,7 @@ export default function SeriesDetail() {
 
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedBooks, setSelectedBooks] = useState<number[]>([]);
+    const [selectedVolumes, setSelectedVolumes] = useState<string[]>([]);
 
     const [isEditing, setIsEditing] = useState(false);
     const [editForm, setEditForm] = useState<Partial<Series> & { tagsInput?: string[], authorsInput?: { name: string, role: string }[], linksInput?: { name: string, url: string }[] }>({});
@@ -109,13 +110,23 @@ export default function SeriesDetail() {
     };
 
     const handleBulkProgressUpdate = async (isRead: boolean) => {
+        // 合并直接选中的书籍 ID 和 选中卷下的所有书籍 ID
+        const volumeBookIds = volumes
+            .filter(v => selectedVolumes.includes(v.name))
+            .flatMap(v => v.books.map(b => b.id));
+
+        const allSelectedIds = Array.from(new Set([...selectedBooks, ...volumeBookIds]));
+
+        if (allSelectedIds.length === 0) return;
+
         try {
             await axios.post('/api/books/bulk-progress', {
-                book_ids: selectedBooks,
+                book_ids: allSelectedIds,
                 is_read: isRead
             });
             setIsSelectionMode(false);
             setSelectedBooks([]);
+            setSelectedVolumes([]);
             const res = await axios.get(`/api/books/${seriesId}`);
             setBooks(res.data || []);
             showToast("批量更新进度成功", 'success');
@@ -496,6 +507,7 @@ export default function SeriesDetail() {
                                         onClick={() => {
                                             setIsSelectionMode(!isSelectionMode);
                                             setSelectedBooks([]);
+                                            setSelectedVolumes([]);
                                         }}
                                         className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border focus:outline-none ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
                                     >
@@ -801,46 +813,64 @@ export default function SeriesDetail() {
                                 <FolderOpen className="w-5 h-5 mr-2 text-komgaPrimary" /> 卷列表
                             </h3>
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
-                                {volumes.map(vol => (
-                                    <div
-                                        key={vol.name}
-                                        onClick={() => setSelectedVolume(vol.name)}
-                                        className="group flex flex-col rounded-xl overflow-hidden bg-gray-900 border border-gray-800 hover:border-komgaPrimary/50 hover:bg-gray-800 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10 cursor-pointer"
-                                    >
-                                        <div className="aspect-[3/4] w-full bg-komgaDark flex items-center justify-center relative overflow-hidden">
-                                            {vol.cover_path?.Valid && vol.cover_path?.String && vol.cover_book_id ? (
-                                                <img src={`/api/covers/${vol.cover_book_id}`} className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
-                                            ) : (
-                                                <FolderOpen className="w-16 h-16 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
-                                            )}
-                                            {/* 底部叠加卷信息 */}
-                                            <div className="absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/30 to-transparent flex items-end p-3 z-10 pointer-events-none">
-                                                <div className="w-full flex justify-between items-center text-xs font-semibold text-gray-300">
-                                                    <span>{vol.books.length} 话</span>
-                                                    <span>{vol.total_pages} 页</span>
+                                {volumes.map(vol => {
+                                    const isSelected = selectedVolumes.includes(vol.name);
+                                    const handleVolClick = () => {
+                                        if (isSelectionMode) {
+                                            setSelectedVolumes(prev => prev.includes(vol.name) ? prev.filter(n => n !== vol.name) : [...prev, vol.name]);
+                                        } else {
+                                            setSelectedVolume(vol.name);
+                                        }
+                                    };
+
+                                    return (
+                                        <div
+                                            key={vol.name}
+                                            onClick={handleVolClick}
+                                            className={`group flex flex-col rounded-xl overflow-hidden bg-gray-900 border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:bg-gray-800'} transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10 cursor-pointer`}
+                                        >
+                                            <div className="aspect-[3/4] w-full bg-komgaDark flex items-center justify-center relative overflow-hidden">
+                                                {isSelectionMode && (
+                                                    <div className="absolute top-2 left-2 z-30">
+                                                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'}`}>
+                                                            {isSelected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {vol.cover_path?.Valid && vol.cover_path?.String && vol.cover_book_id ? (
+                                                    <img src={`/api/covers/${vol.cover_book_id}`} className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
+                                                ) : (
+                                                    <FolderOpen className="w-16 h-16 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
+                                                )}
+                                                {/* 底部叠加卷信息 */}
+                                                <div className="absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/30 to-transparent flex items-end p-3 z-10 pointer-events-none">
+                                                    <div className="w-full flex justify-between items-center text-xs font-semibold text-gray-300">
+                                                        <span>{vol.books.length} 话</span>
+                                                        <span>{vol.total_pages} 页</span>
+                                                    </div>
+                                                </div>
+                                                {/* 卷进度条 */}
+                                                {vol.total_pages > 0 && vol.read_pages > 0 && (
+                                                    <div className="absolute inset-x-0 bottom-0 h-1 bg-gray-800/40 z-20">
+                                                        <div
+                                                            className={`h-full transition-all duration-500 ${vol.read_pages >= vol.total_pages ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+                                                            style={{ width: `${Math.min(100, (vol.read_pages / vol.total_pages) * 100)}%` }}
+                                                        />
+                                                    </div>
+                                                )}
+                                                {/* 右上角叠加卷叠层徽章 */}
+                                                <div className="absolute top-2 right-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg">
+                                                    Volume
                                                 </div>
                                             </div>
-                                            {/* 卷进度条 */}
-                                            {vol.total_pages > 0 && vol.read_pages > 0 && (
-                                                <div className="absolute inset-x-0 bottom-0 h-1 bg-gray-800/40 z-20">
-                                                    <div
-                                                        className={`h-full transition-all duration-500 ${vol.read_pages >= vol.total_pages ? 'bg-green-500' : 'bg-komgaPrimary'}`}
-                                                        style={{ width: `${Math.min(100, (vol.read_pages / vol.total_pages) * 100)}%` }}
-                                                    />
-                                                </div>
-                                            )}
-                                            {/* 右上角叠加卷叠层徽章 */}
-                                            <div className="absolute top-2 right-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg">
-                                                Volume
+                                            <div className="p-4 flex-1">
+                                                <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
+                                                    {vol.name}
+                                                </h4>
                                             </div>
                                         </div>
-                                        <div className="p-4 flex-1">
-                                            <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
-                                                {vol.name}
-                                            </h4>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
@@ -863,9 +893,9 @@ export default function SeriesDetail() {
             )}
 
             {/* 悬浮多选操作栏 */}
-            {isSelectionMode && selectedBooks.length > 0 && (
+            {isSelectionMode && (selectedBooks.length > 0 || selectedVolumes.length > 0) && (
                 <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl p-4 w-[90vw] sm:w-auto flex flex-col sm:flex-row items-center gap-4 sm:gap-6 z-50 animate-in slide-in-from-bottom-5">
-                    <span className="text-white font-medium text-sm">已选择 {selectedBooks.length} 项</span>
+                    <span className="text-white font-medium text-sm">已选择 {selectedBooks.length + selectedVolumes.length} 项</span>
                     <div className="flex items-center justify-between w-full sm:w-auto gap-3">
                         <button
                             onClick={() => handleBulkProgressUpdate(true)}

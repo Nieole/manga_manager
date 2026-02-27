@@ -53,7 +53,8 @@ type ProcessOptions struct {
 }
 
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
-	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" {
+	// 如果没有任何处理需求且不需要裁切，直接短路透传原始数据
+	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" && !opts.AutoCrop {
 		return data, contentType, nil
 	}
 
@@ -86,13 +87,13 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 
 	// 如果前端要求了滤镜但没有缩放，强制按照原始大小执行一次采样插值洗流
 	if (opts.Filter != "" && opts.Filter != "nearest" && opts.Filter != "average" && opts.Filter != "bilinear") && targetWidth == 0 && targetHeight == 0 {
-		targetWidth = uint(img.Bounds().Max.X)
-		targetHeight = uint(img.Bounds().Max.Y)
+		targetWidth = uint(newImg.Bounds().Dx())
+		targetHeight = uint(newImg.Bounds().Dy())
 	}
 
 	// 针对 Waifu2x / realcugan / ncnn 这种需要外部挂载文件系统的超分辨率算法单独开一条短路通道
 	if opts.Filter == "waifu2x" || opts.Filter == "realcugan" || opts.Filter == "ncnn" {
-		outData, err := execWaifu2x(data, contentType, opts)
+		outData, err := execWaifu2x(newImg, data, contentType, opts)
 		if err == nil {
 			// 直接返回加工好的 原始字节数组
 			// 为了防止前端不认识，强制重置 contentType
@@ -121,7 +122,7 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		case "nearest":
 			interp = resize.NearestNeighbor
 		}
-		newImg = resize.Resize(targetWidth, targetHeight, img, interp)
+		newImg = resize.Resize(targetWidth, targetHeight, newImg, interp)
 	}
 
 	var buf bytes.Buffer
@@ -129,7 +130,16 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 
 	format := strings.ToLower(opts.Format)
 	if format == "" {
-		format = "jpeg" // 默认退化到高压缩的 jpeg 给缩略图
+		// 如果未显式指定目标格式，则尝试从原始 contentType 中继承，避免非必要转换
+		if strings.Contains(contentType, "webp") {
+			format = "webp"
+		} else if strings.Contains(contentType, "png") {
+			format = "png"
+		} else if strings.Contains(contentType, "avif") {
+			format = "avif"
+		} else {
+			format = "jpeg" // 兜底格式
+		}
 	}
 
 	switch format {
@@ -174,7 +184,7 @@ func decodeImage(data []byte, contentType string) (image.Image, string, error) {
 }
 
 // execWaifu2x 封闭处理 Waifu2x 外部二进制引擎挂载调用、零担内存置换及事后清理
-func execWaifu2x(imgData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
+func execWaifu2x(img image.Image, rawData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
 	// 获取信号量锁 (Semaphore Acquire)
 	// 如果由于读页并发过高，此处会阻塞协程直到前序 AI 任务完成
 	if aiSemaphore != nil {
@@ -255,9 +265,35 @@ func execWaifu2x(imgData []byte, contentType string, opts ProcessOptions) ([]byt
 	}
 	outPath := filepath.Join(sandboxDir, "out."+outExt)
 
-	// 写原数据到 in.jpg
-	if err := os.WriteFile(inPath, imgData, 0644); err != nil {
-		return nil, err
+	// 将图片状态落盘。如果图片已经在内存中被 ProcessImage 裁切过，则使用原始图片格式重新编码；
+	// 如果没有任何内存变动，则直接使用原始字节流以追求极致效率。
+	if img != nil && opts.AutoCrop {
+		f, err := os.Create(inPath)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+
+		// 智能识别原始格式并选择最匹配的编码器作为中间件，绝不跨格式转换
+		if strings.Contains(contentType, "webp") {
+			// 使用无损 WebP 作为中间件
+			err = webp.Encode(f, img, &webp.Options{Lossless: true})
+		} else if strings.Contains(contentType, "png") {
+			err = png.Encode(f, img)
+		} else if strings.Contains(contentType, "avif") {
+			err = avif.Encode(f, img, avif.Options{Quality: 100})
+		} else {
+			// JPEG 情况，使用最高质量保存中间状态
+			err = jpeg.Encode(f, img, &jpeg.Options{Quality: 100})
+		}
+
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if err := os.WriteFile(inPath, rawData, 0644); err != nil {
+			return nil, err
+		}
 	}
 
 	// 组装 NCNN-Vulkan 家族系列执行命令
