@@ -120,10 +120,6 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 
 	if targetWidth > 0 || targetHeight > 0 {
 		switch opts.Filter {
-		case "mitchell":
-			newImg = resize.Resize(targetWidth, targetHeight, newImg, resize.MitchellNetravali)
-		case "lanczos2":
-			newImg = resize.Resize(targetWidth, targetHeight, newImg, resize.Lanczos2)
 		case "bspline":
 			newImg = imaging.Fit(newImg, int(targetWidth), int(targetHeight), imaging.BSpline)
 		case "catmullrom":
@@ -131,6 +127,10 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		default:
 			var interp resize.InterpolationFunction = resize.Bilinear
 			switch opts.Filter {
+			case "mitchell":
+				interp = resize.MitchellNetravali
+			case "lanczos2":
+				interp = resize.Lanczos2
 			case "bicubic":
 				interp = resize.Bicubic
 			case "lanczos3":
