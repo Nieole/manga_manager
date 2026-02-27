@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/jpeg"
 	"image/png"
 	"log/slog"
@@ -80,6 +81,10 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	// 自动裁切白边逻辑
 	if opts.AutoCrop {
 		newImg = autoCropImage(newImg)
+		// 重要：裁切后的 SubImage 可能带有非零的 Min.X/Y 和原始父图的步长(Stride)
+		// 这会导致某些编码器(如 cgo 封装的库)出现偏移、斜切或花屏
+		// 必须执行归一化，将其绘制到一个全新的从 (0,0) 开始的干净画布中
+		newImg = flattenImage(newImg)
 	}
 
 	targetWidth := uint(opts.Width)
@@ -265,7 +270,7 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 	}
 	outPath := filepath.Join(sandboxDir, "out."+outExt)
 
-	// 将图片状态落盘。如果图片已经在内存中被 ProcessImage 裁切过，则使用原始图片格式重新编码；
+	// 将图片状态落盘。如果图片已经在内存中被 ProcessImage 裁切过（且已执行归一化），则使用原始图片格式重新编码；
 	// 如果没有任何内存变动，则直接使用原始字节流以追求极致效率。
 	if img != nil && opts.AutoCrop {
 		f, err := os.Create(inPath)
@@ -451,4 +456,36 @@ func isBackgroundColor(c color.Color, bgR, bgG, bgB uint32) bool {
 	}
 
 	return diff(r, bgR) < threshold && diff(g, bgG) < threshold && diff(b, bgB) < threshold
+}
+
+// flattenImage 将可能带有偏移坐标（SubImage 产生）的图像归一化
+// 强制将图像绘制到一个起始坐标为 (0,0) 且内存排布完全紧凑的新 Canvas 中
+// 从而消除编码器在处理 Stride 或 Bounds.Min 时的兼容性问题（防花屏）
+func flattenImage(img image.Image) image.Image {
+	if img == nil {
+		return nil
+	}
+
+	bounds := img.Bounds()
+	// 如果已经是标准 (0,0) 起始，通常不需要重绘，但在处理裁切图时，为保险起见建议总是重绘以优化 Stride
+	if bounds.Min.X == 0 && bounds.Min.Y == 0 {
+		return img
+	}
+
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	// 根据原始图像是否有 Alpha 通道选择合适的画布类型
+	var canvas draw.Image
+	switch img.(type) {
+	case *image.NRGBA, *image.RGBA:
+		canvas = image.NewNRGBA(image.Rect(0, 0, width, height))
+	default:
+		// 默认使用 NRGBA 以获得更好的通用性和 Alpha 处理
+		canvas = image.NewNRGBA(image.Rect(0, 0, width, height))
+	}
+
+	// 执行重绘，将内容平移至 (0,0)
+	draw.Draw(canvas, canvas.Bounds(), img, bounds.Min, draw.Src)
+	return canvas
 }
