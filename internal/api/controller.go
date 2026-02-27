@@ -145,6 +145,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/info/{seriesId}", c.getSeriesInfo)
 			r.Put("/info/{seriesId}", c.updateSeriesInfo)
 			r.Post("/{seriesId}/scrape", c.scrapeSeriesMetadata)
+			r.Get("/{seriesId}/scrape-search", c.scrapeSearchMetadata)
+			r.Post("/{seriesId}/scrape-apply", c.applyScrapedMetadata)
 			r.Get("/{seriesId}/tags", c.getSeriesTags)
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 			r.Get("/{seriesId}/links", c.getSeriesLinks)

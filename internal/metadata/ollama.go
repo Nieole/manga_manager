@@ -133,3 +133,14 @@ func (o *OllamaProvider) FetchSeriesMetadata(ctx context.Context, title string) 
 		Rating:    result.Rating,
 	}, nil
 }
+
+func (o *OllamaProvider) SearchMetadata(ctx context.Context, title string) ([]*SeriesMetadata, error) {
+	result, err := o.FetchSeriesMetadata(ctx, title)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return []*SeriesMetadata{result}, nil
+}

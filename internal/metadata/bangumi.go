@@ -94,6 +94,18 @@ func (b *BangumiProvider) Name() string {
 }
 
 func (b *BangumiProvider) FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error) {
+	results, err := b.SearchMetadata(ctx, title)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	// 默认返回第一条（保持原有逻辑兼容性）
+	return results[0], nil
+}
+
+func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string) ([]*SeriesMetadata, error) {
 	reqBody := bangumiSearchRequest{
 		Keyword: title,
 		Filter: bangumiFilter{
@@ -135,9 +147,15 @@ func (b *BangumiProvider) FetchSeriesMetadata(ctx context.Context, title string)
 		return nil, nil // 未找到匹配结果
 	}
 
-	// 取评分最高或第一条结果
-	best := result.Data[0]
+	var metadatas []*SeriesMetadata
+	for _, item := range result.Data {
+		metadatas = append(metadatas, b.convertToSeriesMetadata(item))
+	}
 
+	return metadatas, nil
+}
+
+func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult) *SeriesMetadata {
 	// 优先使用中文名
 	displayTitle := best.NameCN
 	if displayTitle == "" {
@@ -177,14 +195,17 @@ func (b *BangumiProvider) FetchSeriesMetadata(ctx context.Context, title string)
 	publisher := extractPublisherFromInfobox(best.Infobox)
 
 	return &SeriesMetadata{
-		Title:     displayTitle,
-		Summary:   best.Summary,
-		Publisher: publisher,
-		CoverURL:  coverURL,
-		Rating:    rating,
-		Tags:      tags,
-		SourceID:  best.ID,
-	}, nil
+		Title:         displayTitle,
+		OriginalTitle: best.Name,
+		Summary:       best.Summary,
+		Publisher:     publisher,
+		CoverURL:      coverURL,
+		Rating:        rating,
+		Tags:          tags,
+		SourceID:      best.ID,
+		ReleaseDate:   best.Date,
+		VolumeCount:   best.Volumes,
+	}
 }
 
 // extractPublisherFromInfobox 尝试从 Bangumi 的 infobox 异构数组中提取出版社信息

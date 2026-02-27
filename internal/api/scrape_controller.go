@@ -65,6 +65,154 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 		"cover_url": result.CoverURL,
 		"rating":    result.Rating,
 		"tags":      result.Tags,
+		"source_id": result.SourceID,
+	})
+}
+
+func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	providerName := r.URL.Query().Get("provider")
+	provider := c.getProvider(providerName)
+
+	series, err := c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+
+	searchTitle := series.Name
+	if series.Title.Valid && series.Title.String != "" {
+		searchTitle = series.Title.String
+	}
+
+	results, err := provider.SearchMetadata(r.Context(), searchTitle)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 搜索失败: %v", provider.Name(), err))
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"results":  results,
+		"provider": provider.Name(),
+	})
+}
+
+func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	var result metadata.SeriesMetadata
+	if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid metadata payload")
+		return
+	}
+
+	// 从路径参数或请求体获取 provider 用于记录来源链接
+	providerName := r.URL.Query().Get("provider")
+
+	series, err := c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+
+	err = c.applyMetadataToSeries(r.Context(), series, &result, providerName)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to apply metadata")
+		return
+	}
+
+	updated, _ := c.store.GetSeries(r.Context(), seriesID)
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"series":  updated,
+	})
+}
+
+func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, providerName string) error {
+	// 解析已锁定字段
+	lockedSet := make(map[string]bool)
+	if series.LockedFields.Valid && series.LockedFields.String != "" {
+		for _, f := range strings.Split(series.LockedFields.String, ",") {
+			lockedSet[strings.TrimSpace(f)] = true
+		}
+	}
+
+	return c.store.ExecTx(ctx, func(q *database.Queries) error {
+		updateParams := database.UpdateSeriesMetadataParams{ID: series.ID}
+
+		if !lockedSet["title"] && result.Title != "" {
+			updateParams.Title = sql.NullString{String: result.Title, Valid: true}
+		} else {
+			updateParams.Title = series.Title
+		}
+
+		if !lockedSet["summary"] && result.Summary != "" {
+			updateParams.Summary = sql.NullString{String: result.Summary, Valid: true}
+		} else {
+			updateParams.Summary = series.Summary
+		}
+
+		if !lockedSet["publisher"] && result.Publisher != "" {
+			updateParams.Publisher = sql.NullString{String: result.Publisher, Valid: true}
+		} else {
+			updateParams.Publisher = series.Publisher
+		}
+
+		if !lockedSet["rating"] && result.Rating > 0 {
+			updateParams.Rating = sql.NullFloat64{Float64: result.Rating, Valid: true}
+		} else {
+			updateParams.Rating = series.Rating
+		}
+
+		updateParams.Status = series.Status
+		updateParams.Language = series.Language
+		updateParams.LockedFields = series.LockedFields
+
+		_, err := q.UpdateSeriesMetadata(ctx, updateParams)
+		if err != nil {
+			return err
+		}
+
+		// 标签
+		for _, tagName := range result.Tags {
+			if strings.TrimSpace(tagName) == "" {
+				continue
+			}
+			if inserted, err := q.UpsertTag(ctx, tagName); err == nil {
+				_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: series.ID, TagID: inserted.ID})
+			}
+		}
+
+		// 来源链接
+		if result.SourceID > 0 && providerName != "" && strings.ToLower(providerName) != "ollama" && strings.ToLower(providerName) != "llm" {
+			linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
+			existingLinks, _ := q.GetLinksForSeries(ctx, series.ID)
+			hasLink := false
+			for _, l := range existingLinks {
+				if l.Name == providerName {
+					hasLink = true
+					break
+				}
+			}
+			if !hasLink {
+				_, _ = q.LinkSeriesLink(ctx, database.LinkSeriesLinkParams{
+					SeriesID: series.ID,
+					Name:     providerName,
+					Url:      linkURL,
+				})
+			}
+		}
+
+		return nil
 	})
 }
 
@@ -109,91 +257,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 解析已锁定字段
-	lockedSet := make(map[string]bool)
-	if series.LockedFields.Valid && series.LockedFields.String != "" {
-		for _, f := range strings.Split(series.LockedFields.String, ",") {
-			lockedSet[strings.TrimSpace(f)] = true
-		}
-	}
-
-	// 在事务内更新系列元数据
-	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		updateParams := database.UpdateSeriesMetadataParams{ID: seriesID}
-
-		if !lockedSet["title"] && result.Title != "" {
-			updateParams.Title = sql.NullString{String: result.Title, Valid: true}
-		} else {
-			updateParams.Title = series.Title
-		}
-
-		if !lockedSet["summary"] && result.Summary != "" {
-			updateParams.Summary = sql.NullString{String: result.Summary, Valid: true}
-		} else {
-			updateParams.Summary = series.Summary
-		}
-
-		if !lockedSet["publisher"] && result.Publisher != "" {
-			updateParams.Publisher = sql.NullString{String: result.Publisher, Valid: true}
-		} else {
-			updateParams.Publisher = series.Publisher
-		}
-
-		if !lockedSet["rating"] && result.Rating > 0 {
-			updateParams.Rating = sql.NullFloat64{Float64: result.Rating, Valid: true}
-		} else {
-			updateParams.Rating = series.Rating
-		}
-
-		// 保持现有的 status, language 和 locked_fields 不变
-		updateParams.Status = series.Status
-		updateParams.Language = series.Language
-		updateParams.LockedFields = series.LockedFields
-
-		_, err := q.UpdateSeriesMetadata(r.Context(), updateParams)
-		if err != nil {
-			return err
-		}
-
-		// 刮削到的标签自动追加（增量合并）
-		for _, tagName := range result.Tags {
-			if strings.TrimSpace(tagName) == "" {
-				continue
-			}
-			if inserted, err := q.UpsertTag(r.Context(), tagName); err == nil {
-				_ = q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
-			}
-		}
-
-		// 添加来源链接（先检查是否已存在，避免重复）
-		if result.SourceID > 0 {
-			linkName := provider.Name()
-			linkURL := ""
-			if strings.ToLower(reqBody.Provider) != "ollama" && strings.ToLower(reqBody.Provider) != "llm" {
-				linkURL = fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
-			}
-			if linkURL != "" {
-				existingLinks, _ := q.GetLinksForSeries(r.Context(), seriesID)
-				hasLink := false
-				for _, l := range existingLinks {
-					if l.Name == linkName {
-						hasLink = true
-						break
-					}
-				}
-				if !hasLink {
-					_, _ = q.LinkSeriesLink(r.Context(), database.LinkSeriesLinkParams{
-						SeriesID: seriesID,
-						Name:     linkName,
-						Url:      linkURL,
-					})
-				}
-			}
-		}
-
-		return nil
-	})
-
+	err = c.applyMetadataToSeries(r.Context(), series, result, provider.Name())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to save scraped metadata")
 		return
@@ -276,77 +340,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 				continue
 			}
 
-			lockedSet := make(map[string]bool)
-			if series.LockedFields.Valid && series.LockedFields.String != "" {
-				for _, f := range strings.Split(series.LockedFields.String, ",") {
-					lockedSet[strings.TrimSpace(f)] = true
-				}
-			}
-
-			err = c.store.ExecTx(context.Background(), func(q *database.Queries) error {
-				updateParams := database.UpdateSeriesMetadataParams{ID: entry.ID}
-
-				if !lockedSet["title"] && result.Title != "" {
-					updateParams.Title = sql.NullString{String: result.Title, Valid: true}
-				} else {
-					updateParams.Title = series.Title
-				}
-				if !lockedSet["summary"] && result.Summary != "" {
-					updateParams.Summary = sql.NullString{String: result.Summary, Valid: true}
-				} else {
-					updateParams.Summary = series.Summary
-				}
-				if !lockedSet["publisher"] && result.Publisher != "" {
-					updateParams.Publisher = sql.NullString{String: result.Publisher, Valid: true}
-				} else {
-					updateParams.Publisher = series.Publisher
-				}
-				if !lockedSet["rating"] && result.Rating > 0 {
-					updateParams.Rating = sql.NullFloat64{Float64: result.Rating, Valid: true}
-				} else {
-					updateParams.Rating = series.Rating
-				}
-				updateParams.Status = series.Status
-				updateParams.Language = series.Language
-				updateParams.LockedFields = series.LockedFields
-
-				_, err := q.UpdateSeriesMetadata(context.Background(), updateParams)
-				if err != nil {
-					return err
-				}
-
-				for _, tagName := range result.Tags {
-					if strings.TrimSpace(tagName) == "" {
-						continue
-					}
-					if inserted, err := q.UpsertTag(context.Background(), tagName); err == nil {
-						_ = q.LinkSeriesTag(context.Background(), database.LinkSeriesTagParams{SeriesID: entry.ID, TagID: inserted.ID})
-					}
-				}
-
-				// 来源链接
-				if result.SourceID > 0 && strings.ToLower(reqBody.Provider) != "ollama" && strings.ToLower(reqBody.Provider) != "llm" {
-					linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
-					existingLinks, _ := q.GetLinksForSeries(context.Background(), entry.ID)
-					hasLink := false
-					for _, l := range existingLinks {
-						if l.Name == providerName {
-							hasLink = true
-							break
-						}
-					}
-					if !hasLink {
-						_, _ = q.LinkSeriesLink(context.Background(), database.LinkSeriesLinkParams{
-							SeriesID: entry.ID,
-							Name:     providerName,
-							Url:      linkURL,
-						})
-					}
-				}
-
-				return nil
-			})
-
+			err = c.applyMetadataToSeries(context.Background(), series, result, providerName)
 			if err == nil {
 				successCount++
 				slog.Info("Successfully unified metadata", "provider", providerName, "series_title", result.Title)
