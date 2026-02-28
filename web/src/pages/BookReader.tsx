@@ -57,6 +57,8 @@ export default function BookReader() {
     const [showSettings, setShowSettings] = useState(false);
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
+    // 底部进度条本地状态，用于解耦拖拽 UI 与核心渲染
+    const [sliderValue, setSliderValue] = useState(1);
     // Book context for navigation
     const seriesIdRef = useRef<number | null>(null);
     const [nextBookId, setNextBookId] = useState<number | null>(null);
@@ -121,6 +123,7 @@ export default function BookReader() {
             if (lastPage > 0) {
                 const safePage = Math.min(lastPage, sorted.length > 0 ? sorted.length : lastPage);
                 const targetIdx = safePage - 1;
+                setSliderValue(safePage);
 
                 if (readMode === 'paged') {
                     setCurrentPageIndex(Math.max(0, targetIdx));
@@ -141,15 +144,20 @@ export default function BookReader() {
         });
     }, [bookId]);
 
-    // 预加载队列系统 (向后驱取指定页数放入浏览器缓存池)
+    // 预加载队列系统 (向后驱取指定页数放入浏览器缓存池) - 增加防抖延迟以防连续翻页/拖拽触发洪峰
     useEffect(() => {
         if (!pages.length || preloadCount <= 0 || loading) return;
-        const startIndex = currentPageIndex + (readMode === 'paged' && doublePage ? 2 : 1);
-        const endIndex = Math.min(startIndex + preloadCount, pages.length);
-        for (let i = startIndex; i < endIndex; i++) {
-            const img = new window.Image();
-            img.src = getImageUrl(pages[i].number);
-        }
+
+        const timer = setTimeout(() => {
+            const startIndex = currentPageIndex + (readMode === 'paged' && doublePage ? 2 : 1);
+            const endIndex = Math.min(startIndex + preloadCount, pages.length);
+            for (let i = startIndex; i < endIndex; i++) {
+                const img = new window.Image();
+                img.src = getImageUrl(pages[i].number);
+            }
+        }, 300);
+
+        return () => clearTimeout(timer);
     }, [currentPageIndex, pages, preloadCount, readMode, doublePage, loading, getImageUrl]);
 
     // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)
@@ -191,12 +199,20 @@ export default function BookReader() {
         };
     }, [loading, pages, readMode, updateProgress]);
 
-    // Paged 模式翻页上报
+    // Paged 模式翻页延迟上报
     useEffect(() => {
         if (!loading && readMode === 'paged' && pages.length > 0 && bookId === pagesBookIdRef.current) {
-            updateProgress(pages[currentPageIndex].number);
+            const timer = setTimeout(() => {
+                updateProgress(pages[currentPageIndex].number);
+            }, 1000); // 停止翻页/拖拽 1s 后上报
+            return () => clearTimeout(timer);
         }
     }, [currentPageIndex, readMode, pages, updateProgress, loading, bookId]);
+
+    // 同步 sliderValue 与全局状态（当通过按钮翻页时）
+    useEffect(() => {
+        setSliderValue(currentPageIndex + 1);
+    }, [currentPageIndex]);
 
     // ==== 渲染相关计算 ====
 
@@ -574,9 +590,22 @@ export default function BookReader() {
                             type="range"
                             min={1}
                             max={pages.length}
-                            value={currentPageIndex + 1}
+                            value={sliderValue}
                             onChange={(e) => {
                                 const val = parseInt(e.target.value, 10);
+                                setSliderValue(val);
+                            }}
+                            onMouseUp={(e) => {
+                                const val = parseInt((e.target as HTMLInputElement).value, 10);
+                                if (readMode === 'paged') {
+                                    setCurrentPageIndex(val - 1);
+                                } else {
+                                    const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
+                                    if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
+                                }
+                            }}
+                            onTouchEnd={(e) => {
+                                const val = parseInt((e.target as HTMLInputElement).value, 10);
                                 if (readMode === 'paged') {
                                     setCurrentPageIndex(val - 1);
                                 } else {
