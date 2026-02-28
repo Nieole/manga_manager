@@ -6,7 +6,7 @@ import "context"
 type Provider interface {
 	Name() string
 	FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error)
-	SearchMetadata(ctx context.Context, title string) ([]*SeriesMetadata, error)
+	SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*SeriesMetadata, error)
 }
 
 // SeriesMetadata 供多数据源统一返回的内部使用的数据承载对象

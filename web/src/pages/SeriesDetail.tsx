@@ -101,6 +101,8 @@ export default function SeriesDetail() {
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [showSearchModal, setShowSearchModal] = useState(false);
     const [searchProvider, setSearchProvider] = useState('');
+    const [modalSearchQuery, setModalSearchQuery] = useState('');
+    const [currentOffset, setCurrentOffset] = useState(0);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -119,6 +121,7 @@ export default function SeriesDetail() {
                 if (res.data.results && res.data.results.length > 0) {
                     setSearchResults(res.data.results);
                     setSearchProvider(providerKey);
+                    setModalSearchQuery(seriesInfo?.title?.Valid && seriesInfo.title.String ? seriesInfo.title.String : (seriesInfo?.name || ''));
                     setShowSearchModal(true);
                 } else {
                     showToast('未找到匹配的条目', 'error');
@@ -163,6 +166,26 @@ export default function SeriesDetail() {
         } finally {
             setIsScraping(false);
             setSearchResults([]);
+        }
+    };
+
+    const handleModalReSearch = async (offset = 0) => {
+        if (!seriesId || !modalSearchQuery.trim()) return;
+        setIsScraping(true);
+        setCurrentOffset(offset);
+        try {
+            const res = await axios.get(`/api/series/${seriesId}/scrape-search?provider=${searchProvider}&q=${encodeURIComponent(modalSearchQuery)}&offset=${offset}`);
+            if (res.data.results && res.data.results.length > 0) {
+                setSearchResults(res.data.results);
+                showToast(`找到了 ${res.data.results.length} 条新结果`, 'success');
+            } else {
+                setSearchResults([]);
+                showToast('未找到匹配的条目', 'error');
+            }
+        } catch (err: any) {
+            showToast('搜索失败: ' + (err.response?.data?.error || err.message), 'error');
+        } finally {
+            setIsScraping(false);
         }
     };
 
@@ -1055,27 +1078,51 @@ export default function SeriesDetail() {
             {showSearchModal && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
                     <div className="bg-komgaSurface border border-gray-800 rounded-3xl w-full max-w-5xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] scale-in-center animate-in zoom-in-95 duration-300">
-                        <div className="flex items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50">
-                            <div>
-                                <h3 className="text-2xl font-bold text-white flex items-center gap-3">
-                                    <Globe className="w-6 h-6 text-komgaPrimary" />
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50 gap-4">
+                            <div className="flex-1 w-full">
+                                <h3 className="text-xl font-bold text-white flex items-center gap-3">
+                                    <Globe className="w-5 h-5 text-komgaPrimary" />
                                     选择最佳匹配条目
                                 </h3>
-                                <p className="text-gray-400 text-sm mt-1">从 {searchProvider === 'bangumi' ? 'Bangumi' : searchProvider} 找到了 {searchResults.length} 条匹配结果</p>
+                                <div className="mt-4 flex gap-2 w-full max-w-xl">
+                                    <div className="relative flex-1">
+                                        <input
+                                            type="text"
+                                            value={modalSearchQuery}
+                                            onChange={(e) => setModalSearchQuery(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleModalReSearch(0)}
+                                            placeholder="输入搜索关键词..."
+                                            className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all pl-10"
+                                        />
+                                        <Edit className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                                    </div>
+                                    <button
+                                        onClick={() => handleModalReSearch(0)}
+                                        disabled={isScraping}
+                                        className="bg-komgaPrimary hover:bg-komgaPrimary/80 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-lg shadow-komgaPrimary/20 flex items-center gap-2 shrink-0"
+                                    >
+                                        {isScraping ? (
+                                            <div className="w-4 h-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                        ) : (
+                                            <Download className="w-4 h-4" />
+                                        )}
+                                        重新搜索
+                                    </button>
+                                </div>
                             </div>
                             <button
                                 onClick={() => {
                                     setShowSearchModal(false);
                                     setSearchResults([]);
                                 }}
-                                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all"
+                                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all shrink-0 self-start sm:self-center"
                             >
                                 <X className="w-7 h-7" />
                             </button>
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
-                            {searchResults.map((res, idx) => (
+                            {searchResults.length > 0 ? searchResults.map((res, idx) => (
                                 <div
                                     key={idx}
                                     onClick={() => handleApplyMetadata(res)}
@@ -1146,11 +1193,35 @@ export default function SeriesDetail() {
                                     </div>
                                     <div className="absolute top-0 right-0 w-24 h-24 bg-komgaPrimary/5 -translate-y-12 translate-x-12 rotate-45 group-hover:translate-x-8 group-hover:-translate-y-8 transition-transform duration-700"></div>
                                 </div>
-                            ))}
+                            )) : (
+                                <div className="flex flex-col items-center justify-center py-20 text-gray-500 gap-4">
+                                    <Globe className="w-16 h-16 opacity-20" />
+                                    <p>未找到匹配条目，请尝试修改关键词重新搜索</p>
+                                </div>
+                            )}
                         </div>
 
-                        <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex justify-center">
-                            <p className="text-gray-500 text-sm flex items-center gap-2 italic">
+                        <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => handleModalReSearch(Math.max(0, currentOffset - 20))}
+                                    disabled={isScraping || currentOffset === 0}
+                                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-xl text-sm text-gray-300 transition-colors"
+                                >
+                                    上一页
+                                </button>
+                                <span className="text-gray-500 text-sm">
+                                    第 {Math.floor(currentOffset / 20) + 1} 页
+                                </span>
+                                <button
+                                    onClick={() => handleModalReSearch(currentOffset + 20)}
+                                    disabled={isScraping || searchResults.length < 20}
+                                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-xl text-sm text-gray-300 transition-colors"
+                                >
+                                    下一页
+                                </button>
+                            </div>
+                            <p className="text-gray-500 text-xs flex items-center gap-2 italic">
                                 <Info className="w-4 h-4" />
                                 请点击匹配最准确的条目以更新当前系列的元数据
                             </p>

@@ -79,18 +79,33 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 	providerName := r.URL.Query().Get("provider")
 	provider := c.getProvider(providerName)
 
-	series, err := c.store.GetSeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "Series not found")
-		return
+	// 优先从查询参数获取 q，若无则按系列标题搜索
+	searchTitle := r.URL.Query().Get("q")
+	if searchTitle == "" {
+		series, err := c.store.GetSeries(r.Context(), seriesID)
+		if err != nil {
+			jsonError(w, http.StatusNotFound, "Series not found")
+			return
+		}
+
+		searchTitle = series.Name
+		if series.Title.Valid && series.Title.String != "" {
+			searchTitle = series.Title.String
+		}
 	}
 
-	searchTitle := series.Name
-	if series.Title.Valid && series.Title.String != "" {
-		searchTitle = series.Title.String
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if limitStr != "" {
+		fmt.Sscanf(limitStr, "%d", &limit)
+	}
+	offsetStr := r.URL.Query().Get("offset")
+	offset := 0
+	if offsetStr != "" {
+		fmt.Sscanf(offsetStr, "%d", &offset)
 	}
 
-	results, err := provider.SearchMetadata(r.Context(), searchTitle)
+	results, err := provider.SearchMetadata(r.Context(), searchTitle, limit, offset)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 搜索失败: %v", provider.Name(), err))
 		return
@@ -99,6 +114,8 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"results":  results,
 		"provider": provider.Name(),
+		"limit":    limit,
+		"offset":   offset,
 	})
 }
 
