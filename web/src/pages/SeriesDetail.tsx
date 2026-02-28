@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download, Check } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download, CheckCircle2, Circle } from 'lucide-react';
 
 interface NullString {
     String: string;
@@ -586,7 +586,11 @@ export default function SeriesDetail() {
                             className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
                             title={book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? "标记为未读" : "快速标记为已读"}
                         >
-                            <Star className={`w-4 h-4 ${book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? 'fill-green-400 text-green-400' : ''}`} />
+                            {book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? (
+                                <CheckCircle2 className="w-4 h-4 text-green-400 fill-green-400/20" />
+                            ) : (
+                                <Circle className="w-4 h-4" />
+                            )}
                         </button>
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-3 z-10 pointer-events-none">
@@ -994,7 +998,11 @@ export default function SeriesDetail() {
                                                         className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
                                                         title={vol.read_pages >= vol.total_pages ? "将全卷标记为未读" : "将全卷标记为已读"}
                                                     >
-                                                        <Check className={`w-4 h-4 ${vol.read_pages >= vol.total_pages ? 'text-green-400' : ''}`} />
+                                                        {vol.read_pages >= vol.total_pages ? (
+                                                            <CheckCircle2 className="w-4 h-4 text-green-400 fill-green-400/20" />
+                                                        ) : (
+                                                            <Circle className="w-4 h-4" />
+                                                        )}
                                                     </button>
                                                 )}
                                                 {/* 底部叠加卷信息 */}

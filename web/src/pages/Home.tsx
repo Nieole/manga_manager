@@ -164,20 +164,25 @@ export default function Home() {
             setIsSelectionMode(false);
             setSelectedSeries([]);
             // 由于使用了 useOutletContext，无法直接修改其 state。因此我们可以借助触发重新 fetch 当前列表。
-            const params = new URLSearchParams();
-            params.append('libraryId', libId!);
-            params.append('limit', PAGE_SIZE.toString());
-            params.append('page', page.toString());
-            if (activeTag) params.append('tags', activeTag);
-            if (activeAuthor) params.append('authors', activeAuthor);
-            if (activeStatus) params.append('status', activeStatus);
-            if (activeLetter) params.append('letter', activeLetter);
-            if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
-            const res = await axios.get(`/api/series/search?${params.toString()}`);
-            setAllSeries(res.data.items || []);
+            fetchSeriesPage(page, true);
         } catch (e) {
             console.error("Bulk update failed", e);
             alert("批量更新失败");
+        }
+    };
+
+    const handleToggleFavorite = async (e: React.MouseEvent, seriesId: number, currentFav: boolean) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+            await axios.post('/api/series/bulk-update', {
+                series_ids: [seriesId],
+                is_favorite: !currentFav
+            });
+            // 静默刷新列表
+            fetchSeriesPage(page, true);
+        } catch (e) {
+            console.error("Toggle favorite failed", e);
         }
     };
 
@@ -453,10 +458,16 @@ export default function Home() {
                                                     ★ {s.rating.Float64.toFixed(1)}
                                                 </span>
                                             )}
-                                            {s.is_favorite && (
-                                                <div className="ml-auto bg-black/70 p-1.5 rounded-full backdrop-blur border border-red-500/30 shadow-md">
-                                                    <Heart className="w-3.5 h-3.5 fill-red-500 text-red-500" />
-                                                </div>
+                                            {!isSelectionMode && (
+                                                <button
+                                                    onClick={(e) => handleToggleFavorite(e, s.id, s.is_favorite)}
+                                                    className={`ml-auto p-1.5 rounded-full backdrop-blur border shadow-md transition-all ${s.is_favorite
+                                                        ? 'bg-red-500/20 border-red-500/40 text-red-500'
+                                                        : 'bg-black/60 border-white/10 text-white/40 hover:text-red-400 hover:bg-red-400/20 hover:border-red-400/40 opacity-0 group-hover:opacity-100'
+                                                        }`}
+                                                >
+                                                    <Heart className={`w-3.5 h-3.5 ${s.is_favorite ? 'fill-current' : ''}`} />
+                                                </button>
                                             )}
                                         </div>
                                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
