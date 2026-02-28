@@ -25,6 +25,7 @@ interface Series {
     language?: NullString;
     book_count: number;
     locked_fields: NullString;
+    updated_at?: string;
 }
 
 interface MetaTag {
@@ -54,6 +55,7 @@ interface Book {
     page_count: number;
     last_read_page?: { Valid: boolean; Int64: number };
     cover_path?: NullString;
+    updated_at?: string;
 }
 
 interface SearchResult {
@@ -574,7 +576,7 @@ export default function SeriesDetail() {
                         </div>
                     )}
                     {book.cover_path?.Valid ? (
-                        <img src={`/api/covers/${book.id}`} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
+                        <img src={`/api/covers/${book.id}${book.updated_at ? `?v=${new Date(book.updated_at).getTime()}` : ''}`} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
                     ) : (
                         <BookImage className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
                     )}
@@ -982,7 +984,7 @@ export default function SeriesDetail() {
                                                     </div>
                                                 )}
                                                 {vol.cover_path?.Valid && vol.cover_path?.String && vol.cover_book_id ? (
-                                                    <img src={`/api/covers/${vol.cover_book_id}`} className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
+                                                    <img src={`/api/covers/${vol.cover_book_id}${seriesInfo?.updated_at ? `?v=${new Date(seriesInfo.updated_at).getTime()}` : ''}`} className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
                                                 ) : (
                                                     <FolderOpen className="w-16 h-16 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
                                                 )}

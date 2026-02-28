@@ -164,7 +164,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		return
 	}
 
-	bookHash := fmt.Sprintf("%x", sha1.Sum([]byte(job.path)))
+	// 基于路径、修改时间和大小生成复合哈希，确保文件内容变动时缩略图强制刷新
+	hashSource := fmt.Sprintf("%s|%d|%d", job.path, job.info.ModTime().Unix(), job.info.Size())
+	bookHash := fmt.Sprintf("%x", sha1.Sum([]byte(hashSource)))
 	baseName := filepath.Base(job.path)
 	bookTitle := sql.NullString{
 		String: strings.TrimSuffix(baseName, filepath.Ext(baseName)),
@@ -219,65 +221,64 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		thumbDir := filepath.Join(baseThumbDir, subDir)
 		err = os.MkdirAll(thumbDir, 0755)
 
+		// 检查任何支持的格式是否存在，如果哈希变了，此处会自动判定为不存在从而重写
 		webpPath := filepath.Join(thumbDir, bookHash+".webp")
 		jpgPath := filepath.Join(thumbDir, bookHash+".jpg")
+		avifPath := filepath.Join(thumbDir, bookHash+".avif")
 
 		if _, err := os.Stat(webpPath); err == nil {
 			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".webp")), Valid: true}
 		} else if _, err := os.Stat(jpgPath); err == nil {
 			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".jpg")), Valid: true}
+		} else if _, err := os.Stat(avifPath); err == nil {
+			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".avif")), Valid: true}
 		} else {
-			avifPath := filepath.Join(thumbDir, bookHash+".avif")
-			if _, err := os.Stat(avifPath); err == nil {
-				coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".avif")), Valid: true}
-			} else {
-				pageData, err := arc.ReadPage(pages[0].Name)
-				if err == nil {
-					var processed []byte
-					var fileName string
+			pageData, err := arc.ReadPage(pages[0].Name)
+			if err == nil {
+				var processed []byte
+				var fileName string
 
-					targetFormat := s.config.Scanner.ThumbnailFormat
-					if targetFormat == "" {
-						targetFormat = "webp"
-					}
+				targetFormat := s.config.Scanner.ThumbnailFormat
+				if targetFormat == "" {
+					targetFormat = "webp"
+				}
 
-					thumbData, _, thumbErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-						Width: 400, Quality: 82, Format: targetFormat,
-					})
+				thumbData, _, thumbErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+					Width: 400, Quality: 82, Format: targetFormat,
+				})
 
-					if thumbErr == nil && len(thumbData) > 0 {
-						processed = thumbData
-						if targetFormat == "jpeg" || targetFormat == "jpg" {
-							fileName = bookHash + ".jpg"
-						} else {
-							fileName = bookHash + "." + targetFormat
-						}
+				if thumbErr == nil && len(thumbData) > 0 {
+					processed = thumbData
+					if targetFormat == "jpeg" || targetFormat == "jpg" {
+						fileName = bookHash + ".jpg"
 					} else {
-						slog.Warn("Primary format generation failed, falling back to jpeg", "format", targetFormat, "path", job.path, "error", thumbErr)
-						jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-							Width: 400, Quality: 82, Format: "jpeg",
-						})
-						if jpegErr == nil {
-							processed = jpegData
-							fileName = bookHash + ".jpg"
-						} else {
-							slog.Warn("JPEG fallback generation failed", "path", job.path, "error", jpegErr)
-						}
-					}
-
-					if len(processed) > 0 && fileName != "" {
-						fullPath := filepath.Join(thumbDir, fileName)
-						if err := os.WriteFile(fullPath, processed, 0644); err == nil {
-							coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}
-						} else {
-							slog.Error("Failed to write thumbnail file", "path", fullPath, "error", err)
-						}
-					} else {
-						slog.Warn("No processed thumbnail data generated", "path", job.path)
+						fileName = bookHash + "." + targetFormat
 					}
 				} else {
-					slog.Warn("Failed to ReadPage to parse cover", "page_name", pages[0].Name, "path", job.path, "error", err)
+					slog.Warn("Primary format generation failed, falling back to jpeg", "format", targetFormat, "path", job.path, "error", thumbErr)
+					jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+						Width: 400, Quality: 82, Format: "jpeg",
+					})
+					if jpegErr == nil {
+						processed = jpegData
+						fileName = bookHash + ".jpg"
+					} else {
+						slog.Warn("JPEG fallback generation failed", "path", job.path, "error", jpegErr)
+					}
 				}
+
+				if len(processed) > 0 && fileName != "" {
+					fullPath := filepath.Join(thumbDir, fileName)
+					if err := os.WriteFile(fullPath, processed, 0644); err == nil {
+						coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}
+					} else {
+						slog.Error("Failed to write thumbnail file", "path", fullPath, "error", err)
+					}
+				} else {
+					slog.Warn("No processed thumbnail data generated", "path", job.path)
+				}
+			} else {
+				slog.Warn("Failed to ReadPage to parse cover", "page_name", pages[0].Name, "path", job.path, "error", err)
 			}
 		}
 	} else {

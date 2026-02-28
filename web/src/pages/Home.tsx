@@ -24,6 +24,7 @@ interface Series {
     recent_book_id?: number;
     last_read_at?: { Time: string; Valid: boolean };
     last_read_page?: { Int64: number; Valid: boolean };
+    updated_at?: string;
 }
 
 const PAGE_SIZE = 30;
@@ -259,7 +260,7 @@ export default function Home() {
                                 <div className="aspect-[2/3] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
                                     {s.cover_path?.Valid && s.cover_path?.String ? (
                                         <img
-                                            src={`/api/thumbnails/${s.cover_path.String}`}
+                                            src={`/api/thumbnails/${s.cover_path.String}${s.updated_at ? `?v=${new Date(s.updated_at).getTime()}` : ''}`}
                                             alt={s.name}
                                             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                                             loading="lazy"
@@ -448,7 +449,7 @@ export default function Home() {
                                             </div>
                                         )}
                                         {s.cover_path?.Valid && s.cover_path?.String ? (
-                                            <img src={`/api/thumbnails/${s.cover_path.String}`} alt="cover" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                                            <img src={`/api/thumbnails/${s.cover_path.String}${s.updated_at ? `?v=${new Date(s.updated_at).getTime()}` : ''}`} alt="cover" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                                         ) : (
                                             <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
                                         )}
