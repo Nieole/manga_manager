@@ -134,13 +134,13 @@ func (o *OllamaProvider) FetchSeriesMetadata(ctx context.Context, title string) 
 	}, nil
 }
 
-func (o *OllamaProvider) SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*SeriesMetadata, error) {
+func (o *OllamaProvider) SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*SeriesMetadata, int, error) {
 	result, err := o.FetchSeriesMetadata(ctx, title)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if result == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
-	return []*SeriesMetadata{result}, nil
+	return []*SeriesMetadata{result}, 1, nil
 }

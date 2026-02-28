@@ -1,12 +1,13 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -94,7 +95,7 @@ func (b *BangumiProvider) Name() string {
 }
 
 func (b *BangumiProvider) FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error) {
-	results, err := b.SearchMetadata(ctx, title, 1, 0)
+	results, _, err := b.SearchMetadata(ctx, title, 1, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func (b *BangumiProvider) FetchSeriesMetadata(ctx context.Context, title string)
 	return results[0], nil
 }
 
-func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*SeriesMetadata, error) {
+func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*SeriesMetadata, int, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -113,33 +114,50 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 		offset = 0
 	}
 
-	url := fmt.Sprintf("%s/v0/search/subjects?keyword=%s&limit=%d&offset=%d&type=1",
-		b.ClientURL, strings.ReplaceAll(title, " ", "+"), limit, offset)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("bangumi: failed to create request: %w", err)
+	reqBody := bangumiSearchRequest{
+		Keyword: title,
+		Filter: bangumiFilter{
+			Type: []int{1}, // 1 = 书籍
+			// NSFW: true,
+		},
 	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, 0, fmt.Errorf("bangumi: failed to marshal request: %w", err)
+	}
+
+	apiUrl := fmt.Sprintf("%s/v0/search/subjects?limit=%d&offset=%d",
+		b.ClientURL, limit, offset)
+
+	slog.Info("Bangumi search request (POST)", "url", apiUrl, "keyword", title, "limit", limit, "offset", offset)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiUrl, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, 0, fmt.Errorf("bangumi: failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "MangaManager/1.0 (https://github.com/manga-manager)")
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("bangumi: request failed: %w", err)
+		return nil, 0, fmt.Errorf("bangumi: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("bangumi: API returned status %d: %s", resp.StatusCode, string(respBody))
+		slog.Error("Bangumi API error", "status", resp.Status, "body", string(respBody), "url", apiUrl)
+		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result bangumiSearchResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("bangumi: failed to decode response: %w", err)
+		return nil, 0, fmt.Errorf("bangumi: failed to decode response: %w", err)
 	}
 
 	if len(result.Data) == 0 {
-		return nil, nil // 未找到匹配结果
+		return nil, 0, nil // 未找到匹配结果
 	}
 
 	var metadatas []*SeriesMetadata
@@ -147,7 +165,7 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 		metadatas = append(metadatas, b.convertToSeriesMetadata(item))
 	}
 
-	return metadatas, nil
+	return metadatas, result.Total, nil
 }
 
 func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult) *SeriesMetadata {

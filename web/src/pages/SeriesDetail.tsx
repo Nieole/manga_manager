@@ -103,6 +103,7 @@ export default function SeriesDetail() {
     const [searchProvider, setSearchProvider] = useState('');
     const [modalSearchQuery, setModalSearchQuery] = useState('');
     const [currentOffset, setCurrentOffset] = useState(0);
+    const [searchTotal, setSearchTotal] = useState(0);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -177,10 +178,12 @@ export default function SeriesDetail() {
             const res = await axios.get(`/api/series/${seriesId}/scrape-search?provider=${searchProvider}&q=${encodeURIComponent(modalSearchQuery)}&offset=${offset}`);
             if (res.data.results && res.data.results.length > 0) {
                 setSearchResults(res.data.results);
+                setSearchTotal(res.data.total || 0);
                 showToast(`找到了 ${res.data.results.length} 条新结果`, 'success');
             } else {
                 setSearchResults([]);
-                showToast('未找到匹配的条目', 'error');
+                setSearchTotal(0);
+                showToast('未找到匹配的条目，请尝试修改关键词', 'error');
             }
         } catch (err: any) {
             showToast('搜索失败: ' + (err.response?.data?.error || err.message), 'error');
@@ -1211,11 +1214,11 @@ export default function SeriesDetail() {
                                     上一页
                                 </button>
                                 <span className="text-gray-500 text-sm">
-                                    第 {Math.floor(currentOffset / 20) + 1} 页
+                                    第 {Math.floor(currentOffset / 20) + 1} / {Math.max(1, Math.ceil(searchTotal / 20))} 页
                                 </span>
                                 <button
                                     onClick={() => handleModalReSearch(currentOffset + 20)}
-                                    disabled={isScraping || searchResults.length < 20}
+                                    disabled={isScraping || currentOffset + 20 >= searchTotal}
                                     className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-xl text-sm text-gray-300 transition-colors"
                                 >
                                     下一页

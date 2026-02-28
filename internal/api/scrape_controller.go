@@ -105,7 +105,7 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 		fmt.Sscanf(offsetStr, "%d", &offset)
 	}
 
-	results, err := provider.SearchMetadata(r.Context(), searchTitle, limit, offset)
+	results, total, err := provider.SearchMetadata(r.Context(), searchTitle, limit, offset)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 搜索失败: %v", provider.Name(), err))
 		return
@@ -116,6 +116,7 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 		"provider": provider.Name(),
 		"limit":    limit,
 		"offset":   offset,
+		"total":    total,
 	})
 }
 
