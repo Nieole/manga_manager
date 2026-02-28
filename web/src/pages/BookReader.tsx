@@ -59,6 +59,8 @@ export default function BookReader() {
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
     // 底部进度条本地状态，用于解耦拖拽 UI 与核心渲染
     const [sliderValue, setSliderValue] = useState(1);
+    const [hoverPage, setHoverPage] = useState<number | null>(null);
+    const [hoverX, setHoverX] = useState(0);
     // Book context for navigation
     const seriesIdRef = useRef<number | null>(null);
     const [nextBookId, setNextBookId] = useState<number | null>(null);
@@ -586,35 +588,56 @@ export default function BookReader() {
                 <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pb-8 pt-16 px-6 sm:px-12 flex flex-col items-center transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
                     <div className="w-full max-w-2xl flex items-center gap-4 bg-black/60 px-6 py-3 rounded-2xl backdrop-blur border border-white/10 shadow-2xl">
                         <span className="text-white font-medium text-sm whitespace-nowrap w-8 text-right drop-shadow-md">{currentPageIndex + 1}</span>
-                        <input
-                            type="range"
-                            min={1}
-                            max={pages.length}
-                            value={sliderValue}
-                            onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                setSliderValue(val);
-                            }}
-                            onMouseUp={(e) => {
-                                const val = parseInt((e.target as HTMLInputElement).value, 10);
-                                if (readMode === 'paged') {
-                                    setCurrentPageIndex(val - 1);
-                                } else {
-                                    const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
-                                    if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
-                                }
-                            }}
-                            onTouchEnd={(e) => {
-                                const val = parseInt((e.target as HTMLInputElement).value, 10);
-                                if (readMode === 'paged') {
-                                    setCurrentPageIndex(val - 1);
-                                } else {
-                                    const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
-                                    if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
-                                }
-                            }}
-                            className="flex-1 accent-komgaPrimary h-1.5 bg-gray-700/50 rounded-lg appearance-none cursor-pointer"
-                        />
+                        <div className="flex-1 relative h-6 flex items-center group/slider">
+                            {hoverPage !== null && (
+                                <div
+                                    className="absolute bottom-full mb-3 bg-komgaPrimary text-white text-[10px] font-bold py-1 px-2 rounded-md shadow-[0_0_15px_rgba(168,85,247,0.4)] pointer-events-none transform -translate-x-1/2 whitespace-nowrap z-30 animate-in fade-in zoom-in-95 duration-150"
+                                    style={{ left: `${hoverX}px` }}
+                                >
+                                    第 {hoverPage} 页
+                                    {/* 小三角 */}
+                                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-t-[4px] border-t-komgaPrimary"></div>
+                                </div>
+                            )}
+                            <input
+                                type="range"
+                                min={1}
+                                max={pages.length}
+                                value={sliderValue}
+                                onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    setSliderValue(val);
+                                }}
+                                onMouseMove={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const x = e.clientX - rect.left;
+                                    const percent = x / rect.width;
+                                    const page = Math.round(percent * (pages.length - 1)) + 1;
+                                    setHoverPage(Math.max(1, Math.min(pages.length, page)));
+                                    setHoverX(x);
+                                }}
+                                onMouseLeave={() => setHoverPage(null)}
+                                onMouseUp={(e) => {
+                                    const val = parseInt((e.target as HTMLInputElement).value, 10);
+                                    if (readMode === 'paged') {
+                                        setCurrentPageIndex(val - 1);
+                                    } else {
+                                        const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
+                                        if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
+                                    }
+                                }}
+                                onTouchEnd={(e) => {
+                                    const val = parseInt((e.target as HTMLInputElement).value, 10);
+                                    if (readMode === 'paged') {
+                                        setCurrentPageIndex(val - 1);
+                                    } else {
+                                        const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
+                                        if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
+                                    }
+                                }}
+                                className="w-full accent-komgaPrimary h-1.5 bg-gray-700/50 rounded-lg appearance-none cursor-pointer"
+                            />
+                        </div>
                         <span className="text-gray-400 font-medium text-sm whitespace-nowrap w-8 drop-shadow-md">{pages.length}</span>
                     </div>
                 </div>
