@@ -808,6 +808,9 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	for _, id := range req.BookIDs {
 		var page int64 = 1
+		validPage := false
+		var readAt sql.NullTime
+
 		if req.IsRead {
 			book, err := c.store.GetBook(ctx, id)
 			if err == nil && book.PageCount > 0 {
@@ -815,10 +818,17 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 			} else {
 				page = 99999 // Fallback
 			}
+			validPage = true
+			readAt = sql.NullTime{Time: time.Now(), Valid: true}
+		} else {
+			// 标记为未读：清空阅读记录
+			validPage = false
+			readAt = sql.NullTime{Valid: false}
 		}
 
 		err := c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
-			LastReadPage: sql.NullInt64{Int64: page, Valid: true},
+			LastReadPage: sql.NullInt64{Int64: page, Valid: validPage},
+			LastReadAt:   readAt,
 			ID:           id,
 		})
 		if err != nil {
@@ -864,8 +874,24 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// 校验页码合法性
+	book, err := c.store.GetBook(ctx, bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Book not found")
+		return
+	}
+
+	validPage := req.Page
+	if validPage > book.PageCount {
+		validPage = book.PageCount
+	}
+	if validPage < 1 {
+		validPage = 1
+	}
+
 	params := database.UpdateBookProgressParams{
-		LastReadPage: sql.NullInt64{Int64: req.Page, Valid: true},
+		LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
+		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           bookID,
 	}
 

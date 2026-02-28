@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download, Check } from 'lucide-react';
 
 interface NullString {
     String: string;
@@ -166,30 +166,76 @@ export default function SeriesDetail() {
         }
     };
 
-    const handleBulkProgressUpdate = async (isRead: boolean) => {
-        // 合并直接选中的书籍 ID 和 选中卷下的所有书籍 ID
-        const volumeBookIds = volumes
-            .filter(v => selectedVolumes.includes(v.name))
-            .flatMap(v => v.books.map(b => b.id));
+    const handleBulkProgressUpdate = async (isRead: boolean, ids?: number[]) => {
+        const targetIds = ids || (() => {
+            // 合并直接选中的书籍 ID 和 选中卷下的所有书籍 ID
+            const volumeBookIds = volumes
+                .filter(v => selectedVolumes.includes(v.name))
+                .flatMap(v => v.books.map(b => b.id));
+            return Array.from(new Set([...selectedBooks, ...volumeBookIds]));
+        })();
 
-        const allSelectedIds = Array.from(new Set([...selectedBooks, ...volumeBookIds]));
-
-        if (allSelectedIds.length === 0) return;
+        if (targetIds.length === 0) return;
 
         try {
             await axios.post('/api/books/bulk-progress', {
-                book_ids: allSelectedIds,
+                book_ids: targetIds,
                 is_read: isRead
             });
-            setIsSelectionMode(false);
-            setSelectedBooks([]);
-            setSelectedVolumes([]);
+            if (!ids) {
+                setIsSelectionMode(false);
+                setSelectedBooks([]);
+                setSelectedVolumes([]);
+            }
             const res = await axios.get(`/api/books/${seriesId}`);
             setBooks(res.data || []);
-            showToast("批量更新进度成功", 'success');
+            showToast(ids ? "状态已更新" : "批量更新进度成功", 'success');
         } catch (e) {
-            console.error("Bulk progress update failed", e);
-            showToast("批量更新进度失败", 'error');
+            console.error("Bulk progress update failed", e, ids);
+            showToast("操作失败", 'error');
+        }
+    };
+
+    const handleSelectAll = () => {
+        if (selectedVolume) {
+            // 在卷内，选中当前卷的所有书籍
+            const allIds = activeVolumeBooks.map(b => b.id);
+            const isAllSelected = allIds.every(id => selectedBooks.includes(id));
+            if (isAllSelected) {
+                setSelectedBooks(prev => prev.filter(id => !allIds.includes(id)));
+            } else {
+                setSelectedBooks(prev => Array.from(new Set([...prev, ...allIds])));
+            }
+        } else {
+            // 在顶层，选中所有卷和所有独立书籍
+            const allVolNames = volumes.map(v => v.name);
+            const allStandaloneIds = standaloneBooks.map(b => b.id);
+
+            const isAllVolsSelected = allVolNames.every(n => selectedVolumes.includes(n));
+            const isAllStandaloneSelected = allStandaloneIds.every(id => selectedBooks.includes(id));
+
+            if (isAllVolsSelected && isAllStandaloneSelected) {
+                setSelectedVolumes([]);
+                setSelectedBooks([]);
+            } else {
+                setSelectedVolumes(allVolNames);
+                setSelectedBooks(allStandaloneIds);
+            }
+        }
+    };
+
+    const handleQuickMarkRead = (e: React.MouseEvent, bookId: number, isRead: boolean) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleBulkProgressUpdate(isRead, [bookId]);
+    };
+
+    const handleQuickMarkVolumeRead = (e: React.MouseEvent, volName: string, isRead: boolean) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const vol = volumes.find(v => v.name === volName);
+        if (vol) {
+            handleBulkProgressUpdate(isRead, vol.books.map(b => b.id));
         }
     };
 
@@ -506,6 +552,17 @@ export default function SeriesDetail() {
                     ) : (
                         <BookImage className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
                     )}
+
+                    {/* 快捷标记已读按钮 (非多选模式下显示) */}
+                    {!isSelectionMode && (
+                        <button
+                            onClick={(e) => handleQuickMarkRead(e, book.id, !(book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count))}
+                            className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
+                            title={book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? "标记为未读" : "快速标记为已读"}
+                        >
+                            <Star className={`w-4 h-4 ${book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? 'fill-green-400 text-green-400' : ''}`} />
+                        </button>
+                    )}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-3 z-10 pointer-events-none">
                         <span className="text-xs font-semibold text-white px-2 py-1 bg-black/60 rounded backdrop-blur drop-shadow-md">
                             {book.page_count} Pages
@@ -558,7 +615,7 @@ export default function SeriesDetail() {
                             ) : (
                                 seriesInfo?.title?.Valid ? seriesInfo.title.String : (seriesInfo?.name || "系列总览")
                             )}
-                            {!selectedVolume && seriesInfo && (
+                            {seriesInfo && (
                                 <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto sm:ml-4">
                                     <button
                                         onClick={() => {
@@ -570,53 +627,57 @@ export default function SeriesDetail() {
                                     >
                                         {isSelectionMode ? '取消选择' : '批量操作'}
                                     </button>
-                                    <button
-                                        onClick={() => setIsEditing(true)}
-                                        className="p-1.5 text-gray-500 hover:text-komgaPrimary bg-gray-900 border border-gray-800 hover:bg-komgaPrimary/10 rounded transition-colors"
-                                        title="编辑元数据"
-                                    >
-                                        <Edit className="w-5 h-5" />
-                                    </button>
-                                    <div className="relative">
-                                        <button
-                                            onClick={() => setScrapeMenuOpen(!scrapeMenuOpen)}
-                                            disabled={isScraping}
-                                            className="p-1.5 text-gray-500 hover:text-green-400 bg-gray-900 border border-gray-800 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                            title="刮削元数据"
-                                        >
-                                            {isScraping ? (
-                                                <div className="w-5 h-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
-                                            ) : (
-                                                <Download className="w-5 h-5" />
-                                            )}
-                                        </button>
+                                    {!selectedVolume && (
+                                        <>
+                                            <button
+                                                onClick={() => setIsEditing(true)}
+                                                className="p-1.5 text-gray-500 hover:text-komgaPrimary bg-gray-900 border border-gray-800 hover:bg-komgaPrimary/10 rounded transition-colors"
+                                                title="编辑元数据"
+                                            >
+                                                <Edit className="w-5 h-5" />
+                                            </button>
+                                            <div className="relative">
+                                                <button
+                                                    onClick={() => setScrapeMenuOpen(!scrapeMenuOpen)}
+                                                    disabled={isScraping}
+                                                    className="p-1.5 text-gray-500 hover:text-green-400 bg-gray-900 border border-gray-800 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    title="刮削元数据"
+                                                >
+                                                    {isScraping ? (
+                                                        <div className="w-5 h-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
+                                                    ) : (
+                                                        <Download className="w-5 h-5" />
+                                                    )}
+                                                </button>
 
-                                        {scrapeMenuOpen && !isScraping && (
-                                            <>
-                                                <div
-                                                    className="fixed inset-0 z-40"
-                                                    onClick={() => setScrapeMenuOpen(false)}
-                                                />
-                                                <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
-                                                    <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
-                                                        选择刮削来源
-                                                    </div>
-                                                    <button
-                                                        onClick={() => handleScrape('bangumi')}
-                                                        className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
-                                                    >
-                                                        Bangumi (推荐)
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleScrape('ollama')}
-                                                        className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-700"
-                                                    >
-                                                        Ollama LLM
-                                                    </button>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
+                                                {scrapeMenuOpen && !isScraping && (
+                                                    <>
+                                                        <div
+                                                            className="fixed inset-0 z-40"
+                                                            onClick={() => setScrapeMenuOpen(false)}
+                                                        />
+                                                        <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                            <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
+                                                                选择刮削来源
+                                                            </div>
+                                                            <button
+                                                                onClick={() => handleScrape('bangumi')}
+                                                                className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                            >
+                                                                Bangumi (推荐)
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleScrape('ollama')}
+                                                                className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-700"
+                                                            >
+                                                                Ollama LLM
+                                                            </button>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -899,6 +960,17 @@ export default function SeriesDetail() {
                                                 ) : (
                                                     <FolderOpen className="w-16 h-16 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
                                                 )}
+
+                                                {/* 快捷按钮：卷标记 */}
+                                                {!isSelectionMode && (
+                                                    <button
+                                                        onClick={(e) => handleQuickMarkVolumeRead(e, vol.name, !(vol.read_pages >= vol.total_pages))}
+                                                        className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
+                                                        title={vol.read_pages >= vol.total_pages ? "将全卷标记为未读" : "将全卷标记为已读"}
+                                                    >
+                                                        <Check className={`w-4 h-4 ${vol.read_pages >= vol.total_pages ? 'text-green-400' : ''}`} />
+                                                    </button>
+                                                )}
                                                 {/* 底部叠加卷信息 */}
                                                 <div className="absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/30 to-transparent flex items-end p-3 z-10 pointer-events-none">
                                                     <div className="w-full flex justify-between items-center text-xs font-semibold text-gray-300">
@@ -915,11 +987,13 @@ export default function SeriesDetail() {
                                                         />
                                                     </div>
                                                 )}
-                                                {/* 右上角叠加卷叠层徽章 */}
-                                                <div className="absolute top-2 right-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg">
+                                            </div>
+                                            {/* 右上角叠加卷叠层徽章 */}
+                                            {!isSelectionMode && (
+                                                <div className="absolute top-2 left-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg opacity-80 group-hover:opacity-100 transition-opacity">
                                                     Volume
                                                 </div>
-                                            </div>
+                                            )}
                                             <div className="p-4 flex-1">
                                                 <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
                                                     {vol.name}
@@ -954,6 +1028,13 @@ export default function SeriesDetail() {
                 <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl p-4 w-[90vw] sm:w-auto flex flex-col sm:flex-row items-center gap-4 sm:gap-6 z-50 animate-in slide-in-from-bottom-5">
                     <span className="text-white font-medium text-sm">已选择 {selectedBooks.length + selectedVolumes.length} 项</span>
                     <div className="flex items-center justify-between w-full sm:w-auto gap-3">
+                        <button
+                            onClick={handleSelectAll}
+                            className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                        >
+                            {((selectedVolume ? activeVolumeBooks.length : (volumes.length + standaloneBooks.length)) === (selectedBooks.length + selectedVolumes.length)) ? '取消全选' : '全选'}
+                        </button>
+                        <div className="w-px h-6 bg-gray-700 hidden sm:block"></div>
                         <button
                             onClick={() => handleBulkProgressUpdate(true)}
                             className="bg-green-500/10 hover:bg-green-500/20 text-green-500 border border-green-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"

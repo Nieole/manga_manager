@@ -63,14 +63,17 @@ export default function BookReader() {
     const nextBookIdRef = useRef<number | null>(null);
     const [bookTitle, setBookTitle] = useState<string>('');
     const [bookVolume, setBookVolume] = useState<string>('');
+    const pagesBookIdRef = useRef<string | null>(null);
 
     // 回传阅读进度
     const updateProgress = useCallback((pageNumber: number) => {
-        if (!bookId) return;
+        if (!bookId || loading) return;
+        // 核心保护：如果当前路由的 bookId 与内存中 pages 所属的 ID 不一致，禁止上报
+        if (bookId !== pagesBookIdRef.current) return;
         if (pageNumber <= 0) return;
         axios.post(`/api/books/${bookId}/progress`, { page: pageNumber })
             .catch(err => console.error("Failed to update read progress", err));
-    }, [bookId]);
+    }, [bookId, loading]);
 
     // 获取图像资源 URL（纯净无防抖，以保证跟前方预加载 Preloader 抓取下的缓存完全字面一致击穿 304）
     const getImageUrl = useCallback((pageNum: number) => {
@@ -103,6 +106,7 @@ export default function BookReader() {
         ]).then(([pagesRes, infoRes]) => {
             const sorted = pagesRes.data.sort((a: Page, b: Page) => a.number - b.number);
             setPages(sorted);
+            pagesBookIdRef.current = bookId; // 记录这批 pages 属于哪个 bookId
 
             // 恢复上次阅读进度
             const lastPage = infoRes.data.last_read_page?.Valid ? infoRes.data.last_read_page.Int64 : 1;
@@ -113,14 +117,16 @@ export default function BookReader() {
             axios.get(`/api/book-next/${bookId}`)
                 .then(res => { setNextBookId(res.data.id); nextBookIdRef.current = res.data.id; })
                 .catch(() => { setNextBookId(null); nextBookIdRef.current = null; });
-            if (lastPage > 1) {
+
+            if (lastPage > 0) {
+                const safePage = Math.min(lastPage, sorted.length > 0 ? sorted.length : lastPage);
+                const targetIdx = safePage - 1;
+
                 if (readMode === 'paged') {
-                    // 页码为 1-based, 数组 index 为 0-based
-                    setCurrentPageIndex(lastPage - 1);
+                    setCurrentPageIndex(Math.max(0, targetIdx));
                 } else {
-                    // 对于瀑布流，图片加载完后需滚动（放在宏任务延迟稍等布局挂载）
                     setTimeout(() => {
-                        const targetImg = document.querySelector(`img[data-page-number="${lastPage}"]`);
+                        const targetImg = document.querySelector(`img[data-page-number="${safePage}"]`);
                         if (targetImg) {
                             targetImg.scrollIntoView({ behavior: 'auto', block: 'start' });
                         }
@@ -187,10 +193,10 @@ export default function BookReader() {
 
     // Paged 模式翻页上报
     useEffect(() => {
-        if (readMode === 'paged' && pages.length > 0) {
+        if (!loading && readMode === 'paged' && pages.length > 0 && bookId === pagesBookIdRef.current) {
             updateProgress(pages[currentPageIndex].number);
         }
-    }, [currentPageIndex, readMode, pages, updateProgress]);
+    }, [currentPageIndex, readMode, pages, updateProgress, loading, bookId]);
 
     // ==== 渲染相关计算 ====
 

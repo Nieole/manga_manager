@@ -929,17 +929,18 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]L
 
 const updateBookProgress = `-- name: UpdateBookProgress :exec
 UPDATE books 
-SET last_read_page = ?, last_read_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+SET last_read_page = ?, last_read_at = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
 type UpdateBookProgressParams struct {
 	LastReadPage sql.NullInt64 `json:"last_read_page"`
+	LastReadAt   sql.NullTime  `json:"last_read_at"`
 	ID           int64         `json:"id"`
 }
 
 func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
-	_, err := q.exec(ctx, q.updateBookProgressStmt, updateBookProgress, arg.LastReadPage, arg.ID)
+	_, err := q.exec(ctx, q.updateBookProgressStmt, updateBookProgress, arg.LastReadPage, arg.LastReadAt, arg.ID)
 	return err
 }
 

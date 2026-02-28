@@ -87,7 +87,7 @@ RETURNING *;
 
 -- name: UpdateBookProgress :exec
 UPDATE books 
-SET last_read_page = ?, last_read_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+SET last_read_page = ?, last_read_at = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
 -- name: UpsertSeriesByPath :one
