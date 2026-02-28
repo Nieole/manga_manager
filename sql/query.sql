@@ -92,9 +92,10 @@ WHERE id = ?;
 
 -- name: UpsertSeriesByPath :one
 INSERT INTO series (
-    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, is_favorite
+    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, is_favorite,
+    volume_count, book_count, total_pages
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     library_id = excluded.library_id,
@@ -106,6 +107,9 @@ ON CONFLICT(path) DO UPDATE SET
     rating = excluded.rating,
     language = excluded.language,
     locked_fields = excluded.locked_fields,
+    volume_count = excluded.volume_count,
+    book_count = excluded.book_count,
+    total_pages = excluded.total_pages,
     updated_at = CURRENT_TIMESTAMP
 RETURNING *;
 
@@ -120,6 +124,9 @@ SET
     language = ?,
     locked_fields = ?,
     is_favorite = ?,
+    volume_count = ?,
+    book_count = ?,
+    total_pages = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
@@ -136,17 +143,23 @@ INSERT OR IGNORE INTO series_tags (series_id, tag_id) VALUES (?, ?);
 SELECT 
     s.*, 
     GROUP_CONCAT(DISTINCT t.name) as tags_string,
-    COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
-    COUNT(DISTINCT b.id) as actual_book_count,
-    COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) as read_count,
-    SUM(b.page_count) as total_pages
+    (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
+    (SELECT COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
 FROM series s
 LEFT JOIN series_tags st ON s.id = st.series_id
 LEFT JOIN tags t ON st.tag_id = t.id
-LEFT JOIN books b ON s.id = b.series_id
 WHERE s.library_id = ? 
 GROUP BY s.id
 ORDER BY s.name;
+
+-- name: UpdateSeriesStatistics :exec
+UPDATE series
+SET 
+    volume_count = (SELECT COUNT(DISTINCT NULLIF(b.volume, '')) FROM books b WHERE b.series_id = ?),
+    book_count = (SELECT COUNT(*) FROM books b WHERE b.series_id = ?),
+    total_pages = (SELECT COALESCE(SUM(page_count), 0) FROM books b WHERE b.series_id = ?),
+    updated_at = CURRENT_TIMESTAMP
+WHERE series.id = ?;
 
 -- name: GetTagsForSeries :many
 SELECT t.* FROM tags t

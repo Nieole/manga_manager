@@ -351,6 +351,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			seriesName string
 		}
 		var tasks []indexTask
+		updatedSeriesIDs := make(map[int64]bool)
 
 		err := s.store.ExecTx(ctx, func(q *database.Queries) error {
 			for _, res := range batch {
@@ -386,6 +387,9 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						Rating:       sql.NullFloat64{Float64: rating, Valid: rating > 0},
 						Language:     sql.NullString{String: rLang, Valid: rLang != ""},
 						LockedFields: sql.NullString{String: "title", Valid: true},
+						VolumeCount:  0,
+						BookCount:    0,
+						TotalPages:   0,
 					})
 					if err != nil {
 						slog.Error("Failed to create/upsert series", "series_name", res.seriesName, "error", err)
@@ -443,10 +447,14 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 							// LockedFields 这里应该保持原样，所以 Valid 设为 false 让 Upsert 判定或传旧值
 							// 因为我们的 Upsert 里会用 excluded.locked_fields 覆盖，为了不丢掉我们传回现有的锁。
 							LockedFields: sql.NullString{String: getKeys(locks), Valid: true},
+							VolumeCount:  existingS.VolumeCount,
+							BookCount:    existingS.BookCount,
+							TotalPages:   existingS.TotalPages,
 						})
 					}
 				}
 				res.book.SeriesID = seriesID
+				updatedSeriesIDs[seriesID] = true
 
 				// 维护系列与标签、作者的多对多关系 (在单卷有新元数据时重刷)
 				if res.comicInfo != nil {
@@ -477,6 +485,19 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					tasks = append(tasks, indexTask{book: actualBook, seriesName: res.seriesName})
 				}
 			}
+			// 强力补丁：在批处理提交后，对该批次涉及的所有系列进行统计重算，确保数据最终一致性。
+			// 虽然这样多了一些 SQL，但在扫描性能层面由于 SQLite WAL + PageCache 与 SSD 极速 IO 相对微乎其微。
+			for sid := range updatedSeriesIDs {
+				if err := q.UpdateSeriesStatistics(ctx, database.UpdateSeriesStatisticsParams{
+					SeriesID:   sid,
+					SeriesID_2: sid,
+					SeriesID_3: sid,
+					ID:         sid,
+				}); err != nil {
+					slog.Warn("Failed to update series statistics", "series_id", sid, "err", err)
+				}
+			}
+
 			return nil
 		})
 

@@ -39,6 +39,7 @@ type Querier interface {
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
+	UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
 	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error)
 	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error)

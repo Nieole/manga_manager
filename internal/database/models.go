@@ -62,6 +62,9 @@ type Series struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 	IsFavorite   bool            `json:"is_favorite"`
+	VolumeCount  int64           `json:"volume_count"`
+	BookCount    int64           `json:"book_count"`
+	TotalPages   int64           `json:"total_pages"`
 }
 
 type SeriesAuthor struct {

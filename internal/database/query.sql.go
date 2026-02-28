@@ -145,7 +145,7 @@ INSERT INTO series (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite
+RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite, volume_count, book_count, total_pages
 `
 
 type CreateSeriesParams struct {
@@ -190,6 +190,9 @@ func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Ser
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsFavorite,
+		&i.VolumeCount,
+		&i.BookCount,
+		&i.TotalPages,
 	)
 	return i, err
 }
@@ -466,7 +469,7 @@ WITH RankedBooks AS (
     WHERE b.last_read_at IS NOT NULL AND b.library_id = ?
 )
 SELECT 
-    s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, s.is_favorite,
+    s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
     rb.book_id AS recent_book_id,
     rb.last_read_at,
     rb.last_read_page,
@@ -499,6 +502,9 @@ type GetRecentReadSeriesRow struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 	IsFavorite   bool            `json:"is_favorite"`
+	VolumeCount  int64           `json:"volume_count"`
+	BookCount    int64           `json:"book_count"`
+	TotalPages   int64           `json:"total_pages"`
 	RecentBookID int64           `json:"recent_book_id"`
 	LastReadAt   sql.NullTime    `json:"last_read_at"`
 	LastReadPage sql.NullInt64   `json:"last_read_page"`
@@ -529,6 +535,9 @@ func (q *Queries) GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeri
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsFavorite,
+			&i.VolumeCount,
+			&i.BookCount,
+			&i.TotalPages,
 			&i.RecentBookID,
 			&i.LastReadAt,
 			&i.LastReadPage,
@@ -548,7 +557,7 @@ func (q *Queries) GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeri
 }
 
 const getSeries = `-- name: GetSeries :one
-SELECT id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite FROM series WHERE id = ? LIMIT 1
+SELECT id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite, volume_count, book_count, total_pages FROM series WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
@@ -569,47 +578,48 @@ func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsFavorite,
+		&i.VolumeCount,
+		&i.BookCount,
+		&i.TotalPages,
 	)
 	return i, err
 }
 
 const getSeriesByLibrary = `-- name: GetSeriesByLibrary :many
 SELECT 
-    s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, s.is_favorite, 
+    s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages, 
     GROUP_CONCAT(DISTINCT t.name) as tags_string,
-    COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
-    COUNT(DISTINCT b.id) as actual_book_count,
-    COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) as read_count,
-    SUM(b.page_count) as total_pages
+    (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
+    (SELECT COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
 FROM series s
 LEFT JOIN series_tags st ON s.id = st.series_id
 LEFT JOIN tags t ON st.tag_id = t.id
-LEFT JOIN books b ON s.id = b.series_id
 WHERE s.library_id = ? 
 GROUP BY s.id
 ORDER BY s.name
 `
 
 type GetSeriesByLibraryRow struct {
-	ID              int64           `json:"id"`
-	LibraryID       int64           `json:"library_id"`
-	Name            string          `json:"name"`
-	Title           sql.NullString  `json:"title"`
-	Summary         sql.NullString  `json:"summary"`
-	Publisher       sql.NullString  `json:"publisher"`
-	Status          sql.NullString  `json:"status"`
-	Rating          sql.NullFloat64 `json:"rating"`
-	Language        sql.NullString  `json:"language"`
-	LockedFields    sql.NullString  `json:"locked_fields"`
-	Path            string          `json:"path"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	IsFavorite      bool            `json:"is_favorite"`
-	TagsString      string          `json:"tags_string"`
-	VolumeCount     int64           `json:"volume_count"`
-	ActualBookCount int64           `json:"actual_book_count"`
-	ReadCount       int64           `json:"read_count"`
-	TotalPages      sql.NullFloat64 `json:"total_pages"`
+	ID           int64           `json:"id"`
+	LibraryID    int64           `json:"library_id"`
+	Name         string          `json:"name"`
+	Title        sql.NullString  `json:"title"`
+	Summary      sql.NullString  `json:"summary"`
+	Publisher    sql.NullString  `json:"publisher"`
+	Status       sql.NullString  `json:"status"`
+	Rating       sql.NullFloat64 `json:"rating"`
+	Language     sql.NullString  `json:"language"`
+	LockedFields sql.NullString  `json:"locked_fields"`
+	Path         string          `json:"path"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	IsFavorite   bool            `json:"is_favorite"`
+	VolumeCount  int64           `json:"volume_count"`
+	BookCount    int64           `json:"book_count"`
+	TotalPages   int64           `json:"total_pages"`
+	TagsString   string          `json:"tags_string"`
+	CoverPath    sql.NullString  `json:"cover_path"`
+	ReadCount    int64           `json:"read_count"`
 }
 
 func (q *Queries) GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error) {
@@ -636,11 +646,12 @@ func (q *Queries) GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]Ge
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsFavorite,
-			&i.TagsString,
 			&i.VolumeCount,
-			&i.ActualBookCount,
-			&i.ReadCount,
+			&i.BookCount,
 			&i.TotalPages,
+			&i.TagsString,
+			&i.CoverPath,
+			&i.ReadCount,
 		); err != nil {
 			return nil, err
 		}
@@ -859,7 +870,7 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 }
 
 const listSeriesByLibrary = `-- name: ListSeriesByLibrary :many
-SELECT s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, s.is_favorite, 
+SELECT s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages, 
        (SELECT b.cover_path 
         FROM books b 
         WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
@@ -885,6 +896,9 @@ type ListSeriesByLibraryRow struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 	IsFavorite   bool            `json:"is_favorite"`
+	VolumeCount  int64           `json:"volume_count"`
+	BookCount    int64           `json:"book_count"`
+	TotalPages   int64           `json:"total_pages"`
 	CoverPath    sql.NullString  `json:"cover_path"`
 }
 
@@ -912,6 +926,9 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]L
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsFavorite,
+			&i.VolumeCount,
+			&i.BookCount,
+			&i.TotalPages,
 			&i.CoverPath,
 		); err != nil {
 			return nil, err
@@ -969,9 +986,12 @@ SET
     language = ?,
     locked_fields = ?,
     is_favorite = ?,
+    volume_count = ?,
+    book_count = ?,
+    total_pages = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite
+RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite, volume_count, book_count, total_pages
 `
 
 type UpdateSeriesMetadataParams struct {
@@ -983,6 +1003,9 @@ type UpdateSeriesMetadataParams struct {
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
 	IsFavorite   bool            `json:"is_favorite"`
+	VolumeCount  int64           `json:"volume_count"`
+	BookCount    int64           `json:"book_count"`
+	TotalPages   int64           `json:"total_pages"`
 	ID           int64           `json:"id"`
 }
 
@@ -996,6 +1019,9 @@ func (q *Queries) UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMeta
 		arg.Language,
 		arg.LockedFields,
 		arg.IsFavorite,
+		arg.VolumeCount,
+		arg.BookCount,
+		arg.TotalPages,
 		arg.ID,
 	)
 	var i Series
@@ -1014,8 +1040,38 @@ func (q *Queries) UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMeta
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsFavorite,
+		&i.VolumeCount,
+		&i.BookCount,
+		&i.TotalPages,
 	)
 	return i, err
+}
+
+const updateSeriesStatistics = `-- name: UpdateSeriesStatistics :exec
+UPDATE series
+SET 
+    volume_count = (SELECT COUNT(DISTINCT NULLIF(b.volume, '')) FROM books b WHERE b.series_id = ?),
+    book_count = (SELECT COUNT(*) FROM books b WHERE b.series_id = ?),
+    total_pages = (SELECT COALESCE(SUM(page_count), 0) FROM books b WHERE b.series_id = ?),
+    updated_at = CURRENT_TIMESTAMP
+WHERE series.id = ?
+`
+
+type UpdateSeriesStatisticsParams struct {
+	SeriesID   int64 `json:"series_id"`
+	SeriesID_2 int64 `json:"series_id_2"`
+	SeriesID_3 int64 `json:"series_id_3"`
+	ID         int64 `json:"id"`
+}
+
+func (q *Queries) UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error {
+	_, err := q.exec(ctx, q.updateSeriesStatisticsStmt, updateSeriesStatistics,
+		arg.SeriesID,
+		arg.SeriesID_2,
+		arg.SeriesID_3,
+		arg.ID,
+	)
+	return err
 }
 
 const upsertAuthor = `-- name: UpsertAuthor :one
@@ -1123,9 +1179,10 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 
 const upsertSeriesByPath = `-- name: UpsertSeriesByPath :one
 INSERT INTO series (
-    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, is_favorite
+    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, is_favorite,
+    volume_count, book_count, total_pages
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     library_id = excluded.library_id,
@@ -1137,8 +1194,11 @@ ON CONFLICT(path) DO UPDATE SET
     rating = excluded.rating,
     language = excluded.language,
     locked_fields = excluded.locked_fields,
+    volume_count = excluded.volume_count,
+    book_count = excluded.book_count,
+    total_pages = excluded.total_pages,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite
+RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite, volume_count, book_count, total_pages
 `
 
 type UpsertSeriesByPathParams struct {
@@ -1153,6 +1213,9 @@ type UpsertSeriesByPathParams struct {
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
 	IsFavorite   bool            `json:"is_favorite"`
+	VolumeCount  int64           `json:"volume_count"`
+	BookCount    int64           `json:"book_count"`
+	TotalPages   int64           `json:"total_pages"`
 }
 
 func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error) {
@@ -1168,6 +1231,9 @@ func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPath
 		arg.Language,
 		arg.LockedFields,
 		arg.IsFavorite,
+		arg.VolumeCount,
+		arg.BookCount,
+		arg.TotalPages,
 	)
 	var i Series
 	err := row.Scan(
@@ -1185,6 +1251,9 @@ func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPath
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsFavorite,
+		&i.VolumeCount,
+		&i.BookCount,
+		&i.TotalPages,
 	)
 	return i, err
 }

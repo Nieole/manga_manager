@@ -112,16 +112,12 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
             s.*,
             (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
             GROUP_CONCAT(DISTINCT t.name) as tags_string,
-            COUNT(DISTINCT NULLIF(b.volume, '')) as volume_count,
-            COUNT(DISTINCT b.id) as actual_book_count,
-            COALESCE(SUM(CASE WHEN b.last_read_page > 1 THEN b.last_read_page ELSE 0 END), 0) as read_count,
-            SUM(b.page_count) as total_pages
+            (SELECT COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
 		FROM series s
 		LEFT JOIN series_tags st ON s.id = st.series_id
 		LEFT JOIN tags t ON st.tag_id = t.id
 		LEFT JOIN series_authors sa ON s.id = sa.series_id
 		LEFT JOIN authors a ON sa.author_id = a.id
-        LEFT JOIN books b ON s.id = b.series_id
 		WHERE s.library_id = ?
 	`
 	// 因为使用了 GROUP BY，所以不能再外层 COUNT(DISTINCT s.id)，我们需要一个单独的包裹写法
@@ -246,12 +242,12 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsFavorite,
+			&i.VolumeCount,
+			&i.BookCount,
+			&i.TotalPages,
 			&i.CoverPath,
 			&i.TagsString,
-			&i.VolumeCount,
-			&i.ActualBookCount,
 			&i.ReadCount,
-			&i.TotalPages,
 		); err != nil {
 			return nil, 0, err
 		}
