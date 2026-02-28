@@ -452,9 +452,9 @@ export default function Home() {
                                         ) : (
                                             <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
                                         )}
-                                        <div className="absolute inset-x-0 top-0 p-3 z-20 pointer-events-none flex justify-between items-start">
+                                        <div className="absolute inset-x-0 top-0 p-3 z-20 flex justify-between items-start">
                                             {s.rating?.Valid && s.rating.Float64 > 0 && (
-                                                <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md">
+                                                <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md pointer-events-none">
                                                     ★ {s.rating.Float64.toFixed(1)}
                                                 </span>
                                             )}
