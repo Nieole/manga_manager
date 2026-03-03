@@ -43,6 +43,7 @@ export default function Home() {
     const [sortByField, setSortByField] = useState<string>('name');
     const [sortDir, setSortDir] = useState<string>('asc');
     const [page, setPage] = useState(1);
+    const [settingsReady, setSettingsReady] = useState(false);
 
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedSeries, setSelectedSeries] = useState<number[]>([]);
@@ -131,11 +132,13 @@ export default function Home() {
             setSortDir('asc');
             setPage(1);
         }
+        setSettingsReady(true);
+        return () => setSettingsReady(false);
     }, [libId]);
 
     // 2. 状态变化处理：如果是过滤条件变了，重置页码；否则直接拉取
     useEffect(() => {
-        if (!libId) return;
+        if (!libId || !settingsReady) return;
 
         // 保存配置
         const config = { activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, page };
@@ -147,7 +150,7 @@ export default function Home() {
         // 筛选变化时自动退出选择模式
         setIsSelectionMode(false);
         setSelectedSeries([]);
-    }, [libId, page, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
+    }, [libId, settingsReady, page, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     // 3. SSE 专用静默刷新
     useEffect(() => {
