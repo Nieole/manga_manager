@@ -878,6 +878,12 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			slog.Error("Failed to bulk update book progress", "book_id", id, "error", err)
 		}
+		// 记录阅读活动
+		if req.IsRead && validPage {
+			if err := c.store.LogReadingActivity(ctx, id, int(page)); err != nil {
+				slog.Error("Failed to log reading activity", "book_id", id, "error", err)
+			}
+		}
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "Bulk progress update completed"})
@@ -942,6 +948,11 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 	if err := c.store.UpdateBookProgress(ctx, params); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to update progress")
 		return
+	}
+
+	// 记录阅读活动到 reading_activity 表
+	if err := c.store.LogReadingActivity(ctx, bookID, int(validPage)); err != nil {
+		slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})

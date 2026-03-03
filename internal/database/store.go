@@ -22,6 +22,7 @@ type Store interface {
 	SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
+	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
 	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
 	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
 }
@@ -296,7 +297,7 @@ func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 			(SELECT COUNT(*) FROM books) as total_books,
 			(SELECT COUNT(*) FROM books WHERE last_read_page > 0) as read_books,
 			(SELECT COALESCE(SUM(page_count), 0) FROM books) as total_pages,
-			(SELECT COUNT(DISTINCT SUBSTR(last_read_at, 1, 10)) FROM books WHERE SUBSTR(last_read_at, 1, 10) >= DATE('now', '-7 days') AND last_read_page > 0) as active_days_7
+			(SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) as active_days_7
 	`
 	var stats DashboardStats
 	err := s.db.QueryRowContext(ctx, query).Scan(
@@ -318,18 +319,15 @@ type ActivityDay struct {
 	PageCount int    `json:"page_count"` // 当天阅读的总页数
 }
 
-// GetActivityHeatmap 返回最近 weeks 周每天的阅读页数（用于 GitHub 风格热力图）
+// GetActivityHeatmap 返回最近 weeks 周每天的阅读页数（基于 reading_activity 表精确统计）
 func (s *SqlStore) GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error) {
 	days := weeks * 7
 	query := `
-		SELECT SUBSTR(last_read_at, 1, 10) as read_date,
-		       SUM(last_read_page) as page_count
-		FROM books
-		WHERE last_read_at IS NOT NULL
-		  AND last_read_page > 0
-		  AND SUBSTR(last_read_at, 1, 10) >= DATE('now', ? || ' days')
-		GROUP BY read_date
-		ORDER BY read_date ASC
+		SELECT date, SUM(pages_read) as page_count
+		FROM reading_activity
+		WHERE date >= DATE('now', ? || ' days')
+		GROUP BY date
+		ORDER BY date ASC
 	`
 	offset := fmt.Sprintf("-%d", days)
 	rows, err := s.db.QueryContext(ctx, query, offset)
@@ -347,6 +345,18 @@ func (s *SqlStore) GetActivityHeatmap(ctx context.Context, weeks int) ([]Activit
 		items = append(items, d)
 	}
 	return items, rows.Err()
+}
+
+// LogReadingActivity 记录一次阅读活动到 reading_activity 表（同 book 同日 UPSERT 累加）
+func (s *SqlStore) LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error {
+	query := `
+		INSERT INTO reading_activity (book_id, date, pages_read)
+		VALUES (?, DATE('now'), ?)
+		ON CONFLICT(book_id, date) DO UPDATE SET
+			pages_read = MAX(reading_activity.pages_read, excluded.pages_read)
+	`
+	_, err := s.db.ExecContext(ctx, query, bookID, pagesRead)
+	return err
 }
 
 // RecentReadAllRow Dashboard 继续阅读列表的简化返回结构

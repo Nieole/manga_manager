@@ -130,3 +130,16 @@ CREATE TABLE IF NOT EXISTS series_relations (
     FOREIGN KEY(source_series_id) REFERENCES series(id) ON DELETE CASCADE,
     FOREIGN KEY(target_series_id) REFERENCES series(id) ON DELETE CASCADE
 );
+
+-- [#6] 逐日阅读活动记录（精确活跃度热力图）
+CREATE TABLE IF NOT EXISTS reading_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    date TEXT NOT NULL,          -- YYYY-MM-DD
+    pages_read INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, date),
+    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reading_activity_date ON reading_activity(date);
