@@ -7,6 +7,7 @@ import Collections from './pages/Collections';
 import SeriesDetail from './pages/SeriesDetail';
 import BookReader from './pages/BookReader';
 import Settings from './pages/Settings';
+import Logs from './pages/Logs';
 
 function App() {
   return (
@@ -21,6 +22,8 @@ function App() {
           <Route path="series/:seriesId" element={<SeriesDetail />} />
           {/* 合集管理 */}
           <Route path="collections" element={<Collections />} />
+          {/* 系统日志 */}
+          <Route path="logs" element={<Logs />} />
           {/* 系统配置中心 */}
           <Route path="settings" element={<Settings />} />
         </Route>

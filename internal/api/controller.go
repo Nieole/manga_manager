@@ -190,6 +190,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Get("/system/config", c.getSystemConfig)
 		r.Post("/system/config", c.updateSystemConfig)
+		r.Get("/system/logs", c.getSystemLogs)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
