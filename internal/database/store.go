@@ -20,6 +20,16 @@ type Store interface {
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
 	SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
+	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
+	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
+}
+
+type DashboardStats struct {
+	TotalSeries int `json:"total_series"`
+	TotalBooks  int `json:"total_books"`
+	ReadBooks   int `json:"read_books"`
+	TotalPages  int `json:"total_pages"`
+	ActiveDays7 int `json:"active_days_7"` // 最近7天有阅读行为的天数
 }
 
 type SearchSeriesPagedRow struct {
@@ -269,4 +279,86 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 	}
 
 	return items, total, nil
+}
+
+// GetDashboardStats 一次性拿到全局统计看板所需的聚合数据
+func (s *sqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
+	query := `
+		SELECT
+			(SELECT COUNT(*) FROM series) as total_series,
+			(SELECT COUNT(*) FROM books) as total_books,
+			(SELECT COUNT(*) FROM books WHERE last_read_page > 0) as read_books,
+			(SELECT COALESCE(SUM(page_count), 0) FROM books) as total_pages,
+			(SELECT COUNT(DISTINCT DATE(last_read_at)) FROM books WHERE last_read_at >= DATE('now', '-7 days') AND last_read_page > 0) as active_days_7
+	`
+	var stats DashboardStats
+	err := s.db.QueryRowContext(ctx, query).Scan(
+		&stats.TotalSeries,
+		&stats.TotalBooks,
+		&stats.ReadBooks,
+		&stats.TotalPages,
+		&stats.ActiveDays7,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+// RecentReadAllRow Dashboard 继续阅读列表的简化返回结构
+type RecentReadAllRow struct {
+	SeriesID     int64          `json:"series_id"`
+	SeriesName   string         `json:"series_name"`
+	BookID       int64          `json:"book_id"`
+	BookName     string         `json:"book_name"`
+	BookTitle    sql.NullString `json:"book_title"`
+	CoverPath    sql.NullString `json:"cover_path"`
+	LastReadPage sql.NullInt64  `json:"last_read_page"`
+	LastReadAt   sql.NullTime   `json:"last_read_at"`
+	PageCount    int64          `json:"page_count"`
+}
+
+// GetRecentReadAll 跨库查询最近阅读的书籍（每个系列取最新一本）
+func (s *sqlStore) GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error) {
+	query := `
+		WITH RankedBooks AS (
+			SELECT
+				b.series_id, b.id AS book_id, b.name AS book_name, b.title AS book_title,
+				b.last_read_at, b.last_read_page, b.page_count,
+				ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY b.last_read_at DESC) as rn
+			FROM books b
+			WHERE b.last_read_at IS NOT NULL AND b.last_read_page > 0
+		)
+		SELECT
+			s.name AS series_name,
+			rb.series_id, rb.book_id, rb.book_name, rb.book_title,
+			rb.last_read_at, rb.last_read_page, rb.page_count,
+			(SELECT b2.cover_path FROM books b2 WHERE b2.series_id = s.id AND b2.cover_path IS NOT NULL AND b2.cover_path != '' ORDER BY b2.sort_number, b2.name LIMIT 1) as cover_path
+		FROM RankedBooks rb
+		JOIN series s ON s.id = rb.series_id
+		WHERE rb.rn = 1
+		ORDER BY rb.last_read_at DESC
+		LIMIT ?
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []RecentReadAllRow
+	for rows.Next() {
+		var i RecentReadAllRow
+		if err := rows.Scan(
+			&i.SeriesName,
+			&i.SeriesID, &i.BookID, &i.BookName, &i.BookTitle,
+			&i.LastReadAt, &i.LastReadPage, &i.PageCount,
+			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
 }

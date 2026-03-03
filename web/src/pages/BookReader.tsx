@@ -47,6 +47,7 @@ export default function BookReader() {
     const [imageFilter, setImageFilter] = useStickyState<ImageFilter>('bilinear', 'manga_image_filter');
     const [autoCrop, setAutoCrop] = useStickyState<boolean>(false, 'manga_auto_crop');
     const [preloadCount, setPreloadCount] = useStickyState<number>(3, 'manga_preload_count');
+    const [eyeProtection, setEyeProtection] = useStickyState<boolean>(false, 'manga_eye_protection');
 
     // Waifu2x 专属超分配置偏好
     const [w2xScale, setW2xScale] = useStickyState<number>(2, 'manga_waifu2x_scale');
@@ -499,11 +500,36 @@ export default function BookReader() {
                                 className="w-full accent-komgaPrimary h-1"
                             />
                         </div>
+
+                        <div className="h-px bg-gray-800 my-1"></div>
+
+                        <div>
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">护眼模式</span>
+                            <button
+                                onClick={() => setEyeProtection(!eyeProtection)}
+                                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${eyeProtection ? 'bg-amber-900/40 border border-amber-600/40 text-amber-200' : 'bg-gray-900 border border-gray-800 text-gray-400 hover:bg-gray-800'
+                                    }`}
+                            >
+                                <span className="text-xs flex items-center gap-2">
+                                    <span className="text-base">{eyeProtection ? '🌙' : '☀️'}</span>
+                                    暖色护眼滤镜
+                                </span>
+                                <span className={`text-[10px] font-medium ${eyeProtection ? 'text-amber-400' : 'text-gray-600'
+                                    }`}>{eyeProtection ? '已开启' : '关闭'}</span>
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
 
             <div className="flex-1 w-full relative overflow-hidden ReaderScrollContainer">
+                {/* 护眼模式滤镜覆盖层 */}
+                {eyeProtection && (
+                    <div className="absolute inset-0 z-30 pointer-events-none" style={{
+                        background: 'rgba(255, 180, 50, 0.12)',
+                        mixBlendMode: 'multiply'
+                    }} />
+                )}
                 {loading ? (
                     <div className="flex items-center justify-center h-full">
                         <Loader2 className="w-10 h-10 animate-spin text-komgaPrimary" />

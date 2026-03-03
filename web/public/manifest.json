@@ -1,0 +1,25 @@
+{
+  "name": "Manga Manager",
+  "short_name": "MangaMgr",
+  "description": "私域漫画管理中心 - 扫描、阅读、组织你的漫画收藏",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f17",
+  "theme_color": "#7c5cbf",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["books", "entertainment"]
+}

@@ -173,6 +173,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
 
+		// 统计看板
+		r.Get("/stats/dashboard", c.getDashboardStats)
+		r.Get("/stats/recent-read", c.getRecentReadAll)
+
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)
 		r.Get("/book-next/{bookId}", c.getNextBook)
@@ -1131,4 +1135,37 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 
 	c.PublishEvent("refresh_thumbnails")
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。"})
+}
+
+// getDashboardStats 返回全局统计看板数据
+func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := c.store.GetDashboardStats(r.Context())
+	if err != nil {
+		slog.Error("GetDashboardStats failed", "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get dashboard stats")
+		return
+	}
+	jsonResponse(w, http.StatusOK, stats)
+}
+
+// getRecentReadAll 返回跨库的最近阅读记录（用于 Dashboard 首页）
+func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
+	limitStr := r.URL.Query().Get("limit")
+	limit := int64(20)
+	if limitStr != "" {
+		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	items, err := c.store.GetRecentReadAll(r.Context(), limit)
+	if err != nil {
+		slog.Error("GetRecentReadAll failed", "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get recent reads")
+		return
+	}
+	if items == nil {
+		items = []database.RecentReadAllRow{}
+	}
+	jsonResponse(w, http.StatusOK, items)
 }

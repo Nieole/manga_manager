@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import Home from './pages/Home';
+import Dashboard from './pages/Dashboard';
 import SeriesDetail from './pages/SeriesDetail';
 import BookReader from './pages/BookReader';
 import Settings from './pages/Settings';
@@ -11,8 +12,8 @@ function App() {
     <ErrorBoundary>
       <Routes>
         <Route path="/" element={<Layout />}>
-          {/* 默认首页 */}
-          <Route index element={<Home />} />
+          {/* 默认首页 - 仪表板 */}
+          <Route index element={<Dashboard />} />
           {/* 选择具体 Library 后的系列浏览 */}
           <Route path="library/:libId" element={<Home />} />
           {/* 点击特定系列后展示其中的电子书/卷册 */}
