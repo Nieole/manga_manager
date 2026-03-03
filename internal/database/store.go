@@ -138,7 +138,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 			FROM books WHERE cover_path IS NOT NULL AND cover_path != ''
 		) bc ON bc.series_id = s.id AND bc.rn = 1
 		LEFT JOIN (
-			SELECT series_id, COUNT(*) as read_count FROM books WHERE last_read_page > 0 GROUP BY series_id
+			SELECT series_id, COALESCE(SUM(last_read_page), 0) as read_count FROM books WHERE last_read_page > 0 GROUP BY series_id
 		) rc ON rc.series_id = s.id
 		LEFT JOIN series_tags st ON s.id = st.series_id
 		LEFT JOIN tags t ON st.tag_id = t.id
