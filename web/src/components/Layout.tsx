@@ -260,7 +260,7 @@ export default function Layout() {
                     />
                 )}
 
-                <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 w-64 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 transform transition-transform duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 overflow-hidden ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 w-64 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 transform transition-transform duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 overflow-y-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:h-[calc(100vh-73px)]`}>
                     <div className="px-6 mb-4 flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">
                         <span>Libraries</span>
                         <button
@@ -358,7 +358,7 @@ export default function Layout() {
                     </nav>
                 </aside>
 
-                <div className="flex-1 overflow-y-auto bg-komgaDark relative h-full">
+                <div className="flex-1 overflow-y-auto bg-komgaDark relative h-[calc(100vh-73px)]">
                     <Outlet context={{ refreshTrigger }} />
                 </div>
 
