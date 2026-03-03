@@ -197,6 +197,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		// 统计看板
 		r.Get("/stats/dashboard", c.getDashboardStats)
+		r.Get("/stats/activity-heatmap", c.getActivityHeatmap)
 		r.Get("/stats/recent-read", c.getRecentReadAll)
 		r.Get("/stats/recommendations", c.getRecommendations)
 
@@ -1185,6 +1186,26 @@ func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, stats)
+}
+
+// getActivityHeatmap 返回近 N 周每日阅读页数热力数据
+func (c *Controller) getActivityHeatmap(w http.ResponseWriter, r *http.Request) {
+	weeksStr := r.URL.Query().Get("weeks")
+	weeks := 16 // 默认 16 周
+	if w, err := strconv.Atoi(weeksStr); err == nil && w > 0 && w <= 52 {
+		weeks = w
+	}
+
+	data, err := c.store.GetActivityHeatmap(r.Context(), weeks)
+	if err != nil {
+		slog.Error("GetActivityHeatmap failed", "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get activity heatmap")
+		return
+	}
+	if data == nil {
+		data = []database.ActivityDay{}
+	}
+	jsonResponse(w, http.StatusOK, data)
 }
 
 // getRecentReadAll 返回跨库的最近阅读记录（用于 Dashboard 首页）

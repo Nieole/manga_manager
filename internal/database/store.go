@@ -21,6 +21,7 @@ type Store interface {
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
 	SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
+	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
 	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
 	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
 }
@@ -295,7 +296,7 @@ func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 			(SELECT COUNT(*) FROM books) as total_books,
 			(SELECT COUNT(*) FROM books WHERE last_read_page > 0) as read_books,
 			(SELECT COALESCE(SUM(page_count), 0) FROM books) as total_pages,
-			(SELECT COUNT(DISTINCT DATE(last_read_at)) FROM books WHERE last_read_at >= DATE('now', '-7 days') AND last_read_page > 0) as active_days_7
+			(SELECT COUNT(DISTINCT SUBSTR(last_read_at, 1, 10)) FROM books WHERE SUBSTR(last_read_at, 1, 10) >= DATE('now', '-7 days') AND last_read_page > 0) as active_days_7
 	`
 	var stats DashboardStats
 	err := s.db.QueryRowContext(ctx, query).Scan(
@@ -309,6 +310,43 @@ func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 		return nil, err
 	}
 	return &stats, nil
+}
+
+// ActivityDay 代表某一天的阅读活跃数据
+type ActivityDay struct {
+	Date      string `json:"date"`       // YYYY-MM-DD
+	PageCount int    `json:"page_count"` // 当天阅读的总页数
+}
+
+// GetActivityHeatmap 返回最近 weeks 周每天的阅读页数（用于 GitHub 风格热力图）
+func (s *SqlStore) GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error) {
+	days := weeks * 7
+	query := `
+		SELECT SUBSTR(last_read_at, 1, 10) as read_date,
+		       SUM(last_read_page) as page_count
+		FROM books
+		WHERE last_read_at IS NOT NULL
+		  AND last_read_page > 0
+		  AND SUBSTR(last_read_at, 1, 10) >= DATE('now', ? || ' days')
+		GROUP BY read_date
+		ORDER BY read_date ASC
+	`
+	offset := fmt.Sprintf("-%d", days)
+	rows, err := s.db.QueryContext(ctx, query, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []ActivityDay
+	for rows.Next() {
+		var d ActivityDay
+		if err := rows.Scan(&d.Date, &d.PageCount); err != nil {
+			return nil, err
+		}
+		items = append(items, d)
+	}
+	return items, rows.Err()
 }
 
 // RecentReadAllRow Dashboard 继续阅读列表的简化返回结构

@@ -11,6 +11,11 @@ interface DashboardStats {
     active_days_7: number;
 }
 
+interface ActivityDay {
+    date: string;
+    page_count: number;
+}
+
 interface RecentReadItem {
     series_id: number;
     series_name: string;
@@ -36,6 +41,7 @@ export default function Dashboard() {
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
     const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
+    const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
     const [loading, setLoading] = useState(true);
     const scrollRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
@@ -44,11 +50,13 @@ export default function Dashboard() {
         Promise.all([
             axios.get('/api/stats/dashboard'),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
-            axios.get('/api/stats/recommendations?limit=10').catch(() => ({ data: [] }))
-        ]).then(([statsRes, recentRes, recsRes]) => {
+            axios.get('/api/stats/recommendations?limit=10').catch(() => ({ data: [] })),
+            axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] }))
+        ]).then(([statsRes, recentRes, recsRes, heatmapRes]) => {
             setStats(statsRes.data);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setRecommendations(Array.isArray(recsRes.data) ? recsRes.data : []);
+            setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
         }).catch(console.error).finally(() => setLoading(false));
     }, []);
 
@@ -116,7 +124,7 @@ export default function Dashboard() {
                 </div>
             )}
 
-            {/* 阅读进度环形图 + 7日活跃 */}
+            {/* 阅读进度环形图 + GitHub 风格活跃热力图 */}
             {stats && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* 完读进度环 */}
@@ -145,29 +153,8 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    {/* 7日活跃概览 */}
-                    <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6">
-                        <h3 className="text-lg font-semibold text-white mb-3">近七日活跃</h3>
-                        <div className="flex items-end gap-2 h-20">
-                            {Array.from({ length: 7 }, (_, i) => {
-                                const dayActive = i < stats.active_days_7;
-                                const height = dayActive ? 60 + Math.random() * 40 : 15;
-                                const labels = ['一', '二', '三', '四', '五', '六', '日'];
-                                return (
-                                    <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                                        <div
-                                            className={`w-full rounded-t-md transition-all duration-700 ease-out ${dayActive ? 'bg-gradient-to-t from-komgaPrimary to-purple-400' : 'bg-gray-800'}`}
-                                            style={{ height: `${height}%` }}
-                                        />
-                                        <span className="text-[10px] text-gray-500">{labels[i]}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-3">
-                            过去 7 天中有 <span className="text-komgaPrimary font-medium">{stats.active_days_7}</span> 天保持了阅读习惯
-                        </p>
-                    </div>
+                    {/* GitHub 风格活跃热力图 */}
+                    <ActivityHeatmap data={heatmapData} activeDays7={stats.active_days_7} />
                 </div>
             )}
 
@@ -299,6 +286,167 @@ function StatCard({ icon, label, value, subtitle, color, borderColor, iconColor 
             {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
             {/* 装饰光斑 */}
             <div className={`absolute -top-8 -right-8 w-24 h-24 rounded-full bg-gradient-to-br ${color} opacity-30 blur-2xl group-hover:opacity-50 transition-opacity`} />
+        </div>
+    );
+}
+
+// GitHub 风格活跃热力图组件
+function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDays7: number }) {
+    const WEEKS = 16;
+    const TOTAL_DAYS = WEEKS * 7;
+
+    // 构建日期 → 页数的映射
+    const activityMap = new Map<string, number>();
+    data.forEach(d => activityMap.set(d.date, d.page_count));
+
+    // 计算颜色等级的阈值
+    const maxPages = Math.max(...data.map(d => d.page_count), 1);
+    const getLevel = (count: number): number => {
+        if (count === 0) return 0;
+        if (count <= maxPages * 0.25) return 1;
+        if (count <= maxPages * 0.5) return 2;
+        if (count <= maxPages * 0.75) return 3;
+        return 4;
+    };
+
+    const levelColors = [
+        'bg-gray-800/60',           // 0: 无活动
+        'bg-purple-900/80',         // 1: 少
+        'bg-purple-700/80',         // 2: 中
+        'bg-purple-500',            // 3: 多
+        'bg-komgaPrimary',          // 4: 极多
+    ];
+
+    // 生成从今天往前 TOTAL_DAYS 天的日期网格
+    const today = new Date();
+    const cells: { date: string; count: number; dayOfWeek: number }[] = [];
+
+    // 找到起始日期：从 TOTAL_DAYS 前开始，对齐到周一
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - TOTAL_DAYS + 1);
+    // 调整到最近的周一
+    const startDow = startDate.getDay();
+    const adjustToMonday = startDow === 0 ? -6 : 1 - startDow;
+    startDate.setDate(startDate.getDate() + adjustToMonday);
+
+    const endDate = new Date(today);
+    const current = new Date(startDate);
+    while (current <= endDate) {
+        const dateStr = current.toISOString().slice(0, 10);
+        const count = activityMap.get(dateStr) || 0;
+        cells.push({ date: dateStr, count, dayOfWeek: current.getDay() });
+        current.setDate(current.getDate() + 1);
+    }
+
+    // 按周分组（每列一周，每行一天）
+    const weeks: typeof cells[] = [];
+    let weekBuf: typeof cells = [];
+    for (const cell of cells) {
+        weekBuf.push(cell);
+        if (cell.dayOfWeek === 0) { // 周日结束一周
+            weeks.push(weekBuf);
+            weekBuf = [];
+        }
+    }
+    if (weekBuf.length > 0) weeks.push(weekBuf);
+
+    // 月份标签
+    const monthLabels: { label: string; colIndex: number }[] = [];
+    const months = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+    let lastMonth = -1;
+    weeks.forEach((week, colIdx) => {
+        const firstDay = week[0];
+        if (firstDay) {
+            const month = new Date(firstDay.date).getMonth();
+            if (month !== lastMonth) {
+                monthLabels.push({ label: months[month], colIndex: colIdx });
+                lastMonth = month;
+            }
+        }
+    });
+
+    const dayLabels = ['', '一', '', '三', '', '五', ''];
+
+    const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+
+    return (
+        <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 relative">
+            <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white">阅读活跃度</h3>
+                <p className="text-xs text-gray-500">
+                    近 7 天活跃 <span className="text-komgaPrimary font-medium">{activeDays7}</span> 天
+                </p>
+            </div>
+
+            <div className="overflow-x-auto">
+                <div className="inline-flex flex-col gap-0.5 min-w-fit">
+                    {/* 月份标签行 */}
+                    <div className="flex ml-8 mb-1">
+                        {weeks.map((_, colIdx) => {
+                            const ml = monthLabels.find(m => m.colIndex === colIdx);
+                            return (
+                                <div key={colIdx} className="w-[13px] mx-[1.5px] shrink-0">
+                                    {ml && <span className="text-[10px] text-gray-500 whitespace-nowrap">{ml.label}</span>}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* 热力图网格：7 行 × N 列 */}
+                    {Array.from({ length: 7 }, (_, rowIdx) => (
+                        <div key={rowIdx} className="flex items-center gap-0">
+                            <div className="w-7 text-right pr-1.5 shrink-0">
+                                <span className="text-[10px] text-gray-600 leading-none">{dayLabels[rowIdx]}</span>
+                            </div>
+                            <div className="flex gap-[3px]">
+                                {weeks.map((week, colIdx) => {
+                                    // 行索引对应周一=0, 周二=1, ..., 周日=6
+                                    const mappedDow = rowIdx === 6 ? 0 : rowIdx + 1;
+                                    const cell = week.find(c => c.dayOfWeek === mappedDow);
+                                    if (!cell) {
+                                        return <div key={colIdx} className="w-[13px] h-[13px] rounded-sm" />;
+                                    }
+                                    const level = getLevel(cell.count);
+                                    return (
+                                        <div
+                                            key={colIdx}
+                                            className={`w-[13px] h-[13px] rounded-sm ${levelColors[level]} transition-all duration-200 hover:ring-1 hover:ring-white/30 cursor-pointer`}
+                                            onMouseEnter={(e) => {
+                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                setTooltip({
+                                                    text: cell.count > 0 ? `${cell.date}: ${cell.count} 页` : `${cell.date}: 无活动`,
+                                                    x: rect.left + rect.width / 2,
+                                                    y: rect.top - 8
+                                                });
+                                            }}
+                                            onMouseLeave={() => setTooltip(null)}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* 图例 */}
+            <div className="flex items-center justify-end gap-1.5 mt-3">
+                <span className="text-[10px] text-gray-500 mr-1">少</span>
+                {levelColors.map((color, idx) => (
+                    <div key={idx} className={`w-[11px] h-[11px] rounded-sm ${color}`} />
+                ))}
+                <span className="text-[10px] text-gray-500 ml-1">多</span>
+            </div>
+
+            {/* Tooltip */}
+            {tooltip && (
+                <div
+                    className="fixed z-50 px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-xs text-white shadow-xl pointer-events-none whitespace-nowrap"
+                    style={{ left: tooltip.x, top: tooltip.y, transform: 'translate(-50%, -100%)' }}
+                >
+                    {tooltip.text}
+                </div>
+            )}
         </div>
     );
 }
