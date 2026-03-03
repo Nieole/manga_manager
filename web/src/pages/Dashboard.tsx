@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 
 interface DashboardStats {
     total_series: number;
@@ -23,9 +23,19 @@ interface RecentReadItem {
     page_count: number;
 }
 
+interface RecommendedItem {
+    id: number;
+    name: string;
+    title: { String: string; Valid: boolean };
+    cover_path: { String: string; Valid: boolean };
+    book_count: number;
+    score: number;
+}
+
 export default function Dashboard() {
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
+    const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
     const [loading, setLoading] = useState(true);
     const scrollRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
@@ -33,10 +43,12 @@ export default function Dashboard() {
     useEffect(() => {
         Promise.all([
             axios.get('/api/stats/dashboard'),
-            axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] }))
-        ]).then(([statsRes, recentRes]) => {
+            axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
+            axios.get('/api/stats/recommendations?limit=10').catch(() => ({ data: [] }))
+        ]).then(([statsRes, recentRes, recsRes]) => {
             setStats(statsRes.data);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
+            setRecommendations(Array.isArray(recsRes.data) ? recsRes.data : []);
         }).catch(console.error).finally(() => setLoading(false));
     }, []);
 
@@ -226,6 +238,39 @@ export default function Dashboard() {
                                         </p>
                                         <p className="text-[10px] text-gray-600 mt-1">{progress}% 已读</p>
                                     </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* 猜你喜欢 - AI 推荐 */}
+            {recommendations.length > 0 && (
+                <div>
+                    <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
+                        <Sparkles className="w-5 h-5 text-amber-400" />
+                        猜你喜欢
+                        <span className="text-xs text-gray-500 font-normal ml-1">基于你的收藏和阅读偏好</span>
+                    </h2>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                        {recommendations.map(item => {
+                            const coverUrl = item.cover_path?.Valid ? `/api/thumbnails/${item.cover_path.String}` : '';
+                            const title = item.title?.Valid ? item.title.String : item.name;
+                            return (
+                                <div key={item.id} onClick={() => navigate(`/series/${item.id}`)} className="group cursor-pointer">
+                                    <div className="aspect-[2/3] rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-amber-500/40 transition-all shadow-lg relative">
+                                        {coverUrl ? (
+                                            <img src={coverUrl} alt={title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center text-gray-700"><BookOpen className="w-8 h-8" /></div>
+                                        )}
+                                        <div className="absolute top-2 right-2 bg-black/70 text-amber-400 text-[10px] px-1.5 py-0.5 rounded-full font-medium">
+                                            ★ {item.score}
+                                        </div>
+                                    </div>
+                                    <p className="text-xs text-gray-300 mt-2 truncate group-hover:text-amber-400 transition-colors">{title}</p>
+                                    <p className="text-[10px] text-gray-600">{item.book_count} 册</p>
                                 </div>
                             );
                         })}

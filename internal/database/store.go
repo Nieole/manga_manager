@@ -368,3 +368,61 @@ func (s *SqlStore) GetRecentReadAll(ctx context.Context, limit int64) ([]RecentR
 	}
 	return items, rows.Err()
 }
+
+// RecommendedSeries 推荐系列的返回结构
+type RecommendedSeries struct {
+	ID        int64          `json:"id"`
+	Name      string         `json:"name"`
+	Title     sql.NullString `json:"title"`
+	CoverPath sql.NullString `json:"cover_path"`
+	BookCount int64          `json:"book_count"`
+	Score     int            `json:"score"` // 匹配权重
+}
+
+// GetRecommendations 基于用户阅读偏好（收藏 + 已读）的 Tag 权重推荐未读系列
+func (s *SqlStore) GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error) {
+	// 使用一条 SQL 完成全部逻辑：
+	// 1. 从用户偏好系列（收藏或已读 2+ 本的系列）提取 Tag
+	// 2. 找到拥有这些 Tag 但未被阅读过的系列
+	// 3. 按匹配 Tag 数量降序排列
+	query := `
+		WITH preferred_tags AS (
+			SELECT DISTINCT st.tag_id
+			FROM series_tags st
+			JOIN series s ON s.id = st.series_id
+			WHERE s.is_favorite = 1
+			   OR (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) >= 2
+		),
+		unread_series AS (
+			SELECT s.id
+			FROM series s
+			WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0)
+		)
+		SELECT s.id, s.name, s.title, s.book_count,
+			(SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
+			COUNT(st.tag_id) as score
+		FROM unread_series us
+		JOIN series s ON s.id = us.id
+		JOIN series_tags st ON st.series_id = s.id
+		JOIN preferred_tags pt ON pt.tag_id = st.tag_id
+		GROUP BY s.id
+		ORDER BY score DESC
+		LIMIT ?
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []RecommendedSeries
+	for rows.Next() {
+		var i RecommendedSeries
+		if err := rows.Scan(&i.ID, &i.Name, &i.Title, &i.BookCount, &i.CoverPath, &i.Score); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}

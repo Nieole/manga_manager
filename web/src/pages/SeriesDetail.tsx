@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download, Pencil } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download, Pencil, FolderHeart } from 'lucide-react';
+import AddToCollectionModal from '../components/AddToCollectionModal';
 
 interface NullString {
     String: string;
@@ -102,6 +103,7 @@ export default function SeriesDetail() {
 
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [showSearchModal, setShowSearchModal] = useState(false);
+    const [showCollectionModal, setShowCollectionModal] = useState(false);
     const [searchProvider, setSearchProvider] = useState('');
     const [modalSearchQuery, setModalSearchQuery] = useState('');
     const [currentOffset, setCurrentOffset] = useState(0);
@@ -663,6 +665,13 @@ export default function SeriesDetail() {
                                                 title="编辑元数据"
                                             >
                                                 <Edit className="w-5 h-5" />
+                                            </button>
+                                            <button
+                                                onClick={() => setShowCollectionModal(true)}
+                                                className="p-1.5 text-gray-500 hover:text-komgaPrimary bg-gray-900 border border-gray-800 hover:bg-komgaPrimary/10 rounded transition-colors"
+                                                title="添加到合集"
+                                            >
+                                                <FolderHeart className="w-5 h-5" />
                                             </button>
                                             <div className="relative">
                                                 <button
@@ -1244,6 +1253,15 @@ export default function SeriesDetail() {
                         <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
                     </div>
                 </div>
+            )}
+
+            {/* 添加到合集弹窗 */}
+            {showCollectionModal && seriesId && (
+                <AddToCollectionModal
+                    seriesIds={[Number(seriesId)]}
+                    onClose={() => setShowCollectionModal(false)}
+                    onSuccess={() => showToast('已成功添加到合集', 'success')}
+                />
             )}
         </div>
     );

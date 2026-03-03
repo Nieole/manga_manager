@@ -197,6 +197,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		// 统计看板
 		r.Get("/stats/dashboard", c.getDashboardStats)
 		r.Get("/stats/recent-read", c.getRecentReadAll)
+		r.Get("/stats/recommendations", c.getRecommendations)
 
 		// 合集管理
 		r.Route("/collections", func(r chi.Router) {
@@ -1203,6 +1204,28 @@ func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
 	}
 	if items == nil {
 		items = []database.RecentReadAllRow{}
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
+// getRecommendations 基于 Tag 权重返回个性化推荐
+func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) {
+	limitStr := r.URL.Query().Get("limit")
+	limit := 10
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	items, err := c.store.GetRecommendations(r.Context(), limit)
+	if err != nil {
+		slog.Error("GetRecommendations failed", "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get recommendations")
+		return
+	}
+	if items == nil {
+		items = []database.RecommendedSeries{}
 	}
 	jsonResponse(w, http.StatusOK, items)
 }

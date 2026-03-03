@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, Heart, ArrowUp, ArrowDown } from 'lucide-react';
+import { ImageIcon, Heart, ArrowUp, ArrowDown, FolderHeart } from 'lucide-react';
+import AddToCollectionModal from '../components/AddToCollectionModal';
 
 interface NullString {
     String: string;
@@ -47,6 +48,13 @@ export default function Home() {
 
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedSeries, setSelectedSeries] = useState<number[]>([]);
+    const [showCollectionModal, setShowCollectionModal] = useState(false);
+    const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+    const showToast = (text: string, type: 'success' | 'error') => {
+        setToastMsg({ text, type });
+        setTimeout(() => setToastMsg(null), 3000);
+    };
 
     const [allTags, setAllTags] = useState<{ name: string }[]>([]);
     const [allAuthors, setAllAuthors] = useState<{ name: string }[]>([]);
@@ -596,9 +604,39 @@ export default function Home() {
                                 >
                                     移除收藏
                                 </button>
+                                <button
+                                    onClick={() => setShowCollectionModal(true)}
+                                    className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                                >
+                                    <FolderHeart className="w-4 h-4" /> 加入合集
+                                </button>
                             </div>
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* 添加到合集弹窗 */}
+            {showCollectionModal && selectedSeries.length > 0 && (
+                <AddToCollectionModal
+                    seriesIds={selectedSeries}
+                    onClose={() => setShowCollectionModal(false)}
+                    onSuccess={() => {
+                        showToast(`成功将 ${selectedSeries.length} 个系列加入合集`, 'success');
+                        setSelectedSeries([]);
+                        setIsSelectionMode(false);
+                    }}
+                />
+            )}
+
+            {/* Toast 通知 */}
+            {toastMsg && (
+                <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
+                    <div className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 border ${toastMsg.type === 'success' ? 'bg-green-900 border-green-700 text-green-100' : 'bg-red-900 border-red-700 text-red-100'
+                        }`}>
+                        <span className="text-sm font-medium">{toastMsg.text}</span>
+                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
+                    </div>
                 </div>
             )}
         </div>
