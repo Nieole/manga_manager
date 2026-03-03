@@ -34,8 +34,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
         fetch(request)
             .then(response => {
-                // 如果响应有效，将其存入缓存
-                if (response.ok && request.method === 'GET') {
+                // 如果响应有效，而且是以 http/https 开头的请求才存入缓存 (排除 chrome-extension 等)
+                if (response.ok && request.method === 'GET' && request.url.startsWith('http')) {
                     const clone = response.clone();
                     caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
                 }
