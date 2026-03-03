@@ -136,7 +136,7 @@ export default function Home() {
         return () => setSettingsReady(false);
     }, [libId]);
 
-    // 2. 状态变化处理：如果是过滤条件变了，重置页码；否则直接拉取
+    // 2. 状态变化处理：筛选/排序/分页变化时，延迟 300ms 再拉取（防抖），避免快速切换筛选条件时的请求洪峰
     useEffect(() => {
         if (!libId || !settingsReady) return;
 
@@ -144,12 +144,16 @@ export default function Home() {
         const config = { activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, page };
         localStorage.setItem(`lib_settings_${libId}`, JSON.stringify(config));
 
-        // 如果是手动翻页或筛选，执行完整拉取
-        fetchSeriesPage(page);
+        // 防抖：300ms 后执行拉取
+        const timer = setTimeout(() => {
+            fetchSeriesPage(page);
+        }, 300);
 
         // 筛选变化时自动退出选择模式
         setIsSelectionMode(false);
         setSelectedSeries([]);
+
+        return () => clearTimeout(timer);
     }, [libId, settingsReady, page, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     // 3. SSE 专用静默刷新

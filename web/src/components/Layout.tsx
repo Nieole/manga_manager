@@ -1,5 +1,5 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon } from 'lucide-react';
 
@@ -22,6 +22,15 @@ export default function Layout() {
     const [adding, setAdding] = useState(false);
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+    // 全局任务进度状态
+    const [taskProgress, setTaskProgress] = useState<{
+        message: string;
+        current: number;
+        total: number;
+        type: string;
+    } | null>(null);
+    const taskDismissTimer = useRef<number | null>(null);
 
     // 文件夹浏览器状态
     const [browsing, setBrowsing] = useState(false);
@@ -128,11 +137,25 @@ export default function Layout() {
         const eventSource = new EventSource('/api/events');
 
         eventSource.onmessage = (event) => {
-            if (event.data === "refresh") {
+            const data = event.data as string;
+            if (data === "refresh") {
                 console.log("Receive SSE refresh signal, reloading libraries...");
                 fetchLibraries();
                 // 收到后端推送后自增刷新信号以便子组件重新拉取元数据
                 setRefreshTrigger(prev => prev + 1);
+            } else if (data.startsWith('task_progress:')) {
+                try {
+                    const progress = JSON.parse(data.slice('task_progress:'.length));
+                    setTaskProgress(progress);
+                    // 清除之前的自动关闭计时器
+                    if (taskDismissTimer.current) clearTimeout(taskDismissTimer.current);
+                    // 如果任务完成（current >= total），3 秒后自动隐藏
+                    if (progress.current >= progress.total && progress.total > 0) {
+                        taskDismissTimer.current = window.setTimeout(() => setTaskProgress(null), 3000);
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse task progress SSE:', e);
+                }
             }
         };
 
@@ -313,6 +336,43 @@ export default function Layout() {
                 <div className="flex-1 overflow-y-auto bg-komgaDark relative h-full">
                     <Outlet context={{ refreshTrigger }} />
                 </div>
+
+                {/* 全局任务进度浮动条 */}
+                {taskProgress && (
+                    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-lg animate-in slide-in-from-bottom-4 fade-in duration-300">
+                        <div className="bg-gray-900/95 border border-gray-700 rounded-2xl px-5 py-4 shadow-2xl backdrop-blur">
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    {taskProgress.current < taskProgress.total ? (
+                                        <Loader2 className="w-4 h-4 text-komgaPrimary animate-spin" />
+                                    ) : (
+                                        <span className="text-green-400 text-sm">✓</span>
+                                    )}
+                                    <span className="text-sm text-gray-200 font-medium truncate max-w-[280px]">
+                                        {taskProgress.message}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
+                                        {taskProgress.current}/{taskProgress.total}
+                                    </span>
+                                    <button onClick={() => setTaskProgress(null)} className="text-gray-500 hover:text-white transition-colors">
+                                        <X className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            </div>
+                            {taskProgress.total > 0 && (
+                                <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                                    <div
+                                        className={`h-full rounded-full transition-all duration-500 ease-out ${taskProgress.current >= taskProgress.total ? 'bg-green-500' : 'bg-komgaPrimary'
+                                            }`}
+                                        style={{ width: `${Math.min(100, (taskProgress.current / taskProgress.total) * 100)}%` }}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </main>
 
             {/* 新增库模态框 */}

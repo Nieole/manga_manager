@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -16,6 +17,7 @@ type ArchivePool struct {
 	mu      sync.Mutex
 	items   map[string]*poolItem
 	maxSize int
+	stopCh  chan struct{} // 停止 GC 协程的信号
 }
 
 var (
@@ -29,8 +31,47 @@ func InitPool(size int) {
 		globalPool = &ArchivePool{
 			items:   make(map[string]*poolItem),
 			maxSize: size,
+			stopCh:  make(chan struct{}),
 		}
+		go globalPool.gcLoop()
 	})
+}
+
+// StopGC 停止后台 GC 协程（应用退出时调用）
+func StopGC() {
+	if globalPool != nil {
+		close(globalPool.stopCh)
+	}
+}
+
+// gcLoop 定期清理超过 10 分钟未被访问的过期句柄，释放文件描述符
+func (p *ArchivePool) gcLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			p.mu.Lock()
+			now := time.Now()
+			expiredKeys := make([]string, 0)
+			for k, v := range p.items {
+				if now.Sub(v.lastUsed) > 10*time.Minute {
+					expiredKeys = append(expiredKeys, k)
+				}
+			}
+			for _, k := range expiredKeys {
+				p.items[k].archive.Close()
+				delete(p.items, k)
+			}
+			if len(expiredKeys) > 0 {
+				slog.Info("Archive pool GC completed", "evicted", len(expiredKeys), "remaining", len(p.items))
+			}
+			p.mu.Unlock()
+		case <-p.stopCh:
+			return
+		}
+	}
 }
 
 // GetArchiveFromPool 尝试从池中获取已打开的文件，如果不存在则延迟创建

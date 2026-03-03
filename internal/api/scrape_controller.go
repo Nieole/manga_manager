@@ -348,6 +348,9 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		for i, entry := range allSeries {
 			slog.Info("Scraping series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
 
+			// 向前端推送进度
+			c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削: %s"}`, i+1, totalCount, entry.Name))
+
 			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
 			if err != nil {
 				slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
@@ -374,7 +377,8 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		}
 
 		slog.Info("Batch scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
-		c.PublishEvent("scrape_complete")
+		c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削完成，成功 %d/%d"}`, totalCount, totalCount, successCount, totalCount))
+		c.PublishEvent("refresh")
 	}()
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{

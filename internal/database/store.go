@@ -39,13 +39,13 @@ type sqlStore struct {
 }
 
 func NewStore(dbPath string) (Store, error) {
-	// 加载现代 SQLite 对于千兆以上规模及大量随机读取极其友好的调教参数。
-	// mmap_size=30000000000 (允许超过系统内存约30GB的超大内存隐射加快搜索页的读取，极大地减轻冷启动延迟)
-	// cache_size=-500000  (单独为SQLite划定高达并超过 500MB 的专用查询热缓存页)
-	// busy_timeout=15000  (防止在长列表遍历且伴随有并发写入时的死锁退出报错)
-	// temp_store=2        (MEMORY：所有临时聚合、ORDER BY 操作与临时表将完全使用内存而非耗损SSD)
+	// 针对 100MB 级别的数据库进行精简优化：
+	// mmap_size=268435456 (256MB，足以将百兆级数据库整个隐射进内存，消除系统的换页压力)
+	// cache_size=-128000  (128MB，页缓存亦完全够用，不需要分配夸张的 500MB 防御性冗余)
+	// busy_timeout=15000  (保持长超时，预防因高并发读写引发 sqlite3 busy lock)
+	// temp_store=2        (MEMORY：百兆规模下，内存聚合 ORDER 操作极快，保持使用内存)
 	dsn := dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)" +
-		"&_pragma=mmap_size=30000000000&_pragma=cache_size=-500000&_pragma=busy_timeout=15000&_pragma=temp_store=2"
+		"&_pragma=mmap_size=268435456&_pragma=cache_size=-128000&_pragma=busy_timeout=15000&_pragma=temp_store=2"
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -106,14 +106,22 @@ func Migrate(dbPath string) error {
 
 // SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页
 func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
-	// 构建动态 SQL
+	// 构建动态 SQL - 使用预聚合子查询替代关联子查询提升查询性能
 	baseQuery := `
 		SELECT
             s.*,
-            (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
+            bc.cover_path,
             GROUP_CONCAT(DISTINCT t.name) as tags_string,
-            (SELECT COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
+            COALESCE(rc.read_count, 0) as read_count
 		FROM series s
+		LEFT JOIN (
+			SELECT series_id, cover_path,
+				ROW_NUMBER() OVER (PARTITION BY series_id ORDER BY sort_number, name) as rn
+			FROM books WHERE cover_path IS NOT NULL AND cover_path != ''
+		) bc ON bc.series_id = s.id AND bc.rn = 1
+		LEFT JOIN (
+			SELECT series_id, COUNT(*) as read_count FROM books WHERE last_read_page > 0 GROUP BY series_id
+		) rc ON rc.series_id = s.id
 		LEFT JOIN series_tags st ON s.id = st.series_id
 		LEFT JOIN tags t ON st.tag_id = t.id
 		LEFT JOIN series_authors sa ON s.id = sa.series_id
