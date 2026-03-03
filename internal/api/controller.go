@@ -34,6 +34,7 @@ type Controller struct {
 	engine     *search.Engine
 	config     *config.Config
 	configPath string
+	watcher    *scanner.FileWatcher
 
 	// SSE Broker
 	clients        map[chan string]bool
@@ -59,6 +60,26 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 
 	go c.startBroker()
 	go c.startDaemon()
+
+	// 初始化文件系统监控
+	fw, err := scanner.NewFileWatcher(scan)
+	if err != nil {
+		slog.Warn("Failed to create file watcher", "error", err)
+	} else {
+		c.watcher = fw
+		fw.Start(c.PublishEvent)
+		// 为现有库开启监听
+		go func() {
+			libs, err := store.ListLibraries(context.Background())
+			if err != nil {
+				slog.Warn("Failed to list libraries for watcher", "error", err)
+				return
+			}
+			for _, lib := range libs {
+				_ = fw.WatchLibrary(lib.ID, lib.Path)
+			}
+		}()
+	}
 
 	return c
 }
@@ -176,6 +197,22 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		// 统计看板
 		r.Get("/stats/dashboard", c.getDashboardStats)
 		r.Get("/stats/recent-read", c.getRecentReadAll)
+
+		// 合集管理
+		r.Route("/collections", func(r chi.Router) {
+			r.Get("/", c.listCollections)
+			r.Post("/", c.createCollection)
+			r.Put("/{collectionId}", c.updateCollection)
+			r.Delete("/{collectionId}", c.deleteCollection)
+			r.Get("/{collectionId}/series", c.getCollectionSeries)
+			r.Post("/{collectionId}/series", c.addSeriesToCollection)
+			r.Delete("/{collectionId}/series/{seriesId}", c.removeSeriesFromCollection)
+		})
+
+		// 系列关联
+		r.Get("/series/{seriesId}/relations", c.getSeriesRelations)
+		r.Post("/series/{seriesId}/relations", c.createSeriesRelation)
+		r.Delete("/relations/{relationId}", c.deleteSeriesRelation)
 
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)

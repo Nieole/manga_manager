@@ -22,6 +22,7 @@ type Store interface {
 	SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
+	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
 }
 
 type DashboardStats struct {
@@ -43,9 +44,14 @@ type SearchSeriesPagedRow struct {
 	IsFavorite      bool            `json:"is_favorite"`
 }
 
-type sqlStore struct {
+type SqlStore struct {
 	*Queries
 	db *sql.DB
+}
+
+// DB 返回底层数据库连接（供自定义查询使用）
+func (s *SqlStore) DB() *sql.DB {
+	return s.db
 }
 
 func NewStore(dbPath string) (Store, error) {
@@ -75,18 +81,18 @@ func NewStore(dbPath string) (Store, error) {
 	db.SetMaxOpenConns(maxConns)
 	db.SetMaxIdleConns(maxConns / 2)
 
-	return &sqlStore{
+	return &SqlStore{
 		Queries: New(db),
 		db:      db,
 	}, nil
 }
 
-func (s *sqlStore) Close() error {
+func (s *SqlStore) Close() error {
 	return s.db.Close()
 }
 
 // ExecTx 提供一个事务包裹器以进行批量执行，这对防止 SQLite 并发锁极为关键
-func (s *sqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
+func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -115,7 +121,7 @@ func Migrate(dbPath string) error {
 }
 
 // SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页
-func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
+func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
 	// 构建动态 SQL - 使用预聚合子查询替代关联子查询提升查询性能
 	baseQuery := `
 		SELECT
@@ -282,7 +288,7 @@ func (s *sqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 }
 
 // GetDashboardStats 一次性拿到全局统计看板所需的聚合数据
-func (s *sqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
+func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
 	query := `
 		SELECT
 			(SELECT COUNT(*) FROM series) as total_series,
@@ -319,7 +325,7 @@ type RecentReadAllRow struct {
 }
 
 // GetRecentReadAll 跨库查询最近阅读的书籍（每个系列取最新一本）
-func (s *sqlStore) GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error) {
+func (s *SqlStore) GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error) {
 	query := `
 		WITH RankedBooks AS (
 			SELECT

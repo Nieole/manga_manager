@@ -97,3 +97,36 @@ CREATE TABLE IF NOT EXISTS series_links (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
 );
+
+-- [#2] 自定义合集 / 智能书架
+CREATE TABLE IF NOT EXISTS collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    cover_url TEXT DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS collection_series (
+    collection_id INTEGER NOT NULL,
+    series_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (collection_id, series_id),
+    FOREIGN KEY(collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+    FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+
+-- [#5] 系列间关联（前传、续作、衍生等）
+CREATE TABLE IF NOT EXISTS series_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_series_id INTEGER NOT NULL,
+    target_series_id INTEGER NOT NULL,
+    relation_type TEXT NOT NULL DEFAULT 'sequel',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_series_id, target_series_id),
+    FOREIGN KEY(source_series_id) REFERENCES series(id) ON DELETE CASCADE,
+    FOREIGN KEY(target_series_id) REFERENCES series(id) ON DELETE CASCADE
+);

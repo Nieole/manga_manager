@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -271,6 +271,24 @@ export default function Layout() {
                             <Plus className="w-4 h-4" />
                         </button>
                     </div>
+                    {/* 快捷导航 */}
+                    <nav className="px-4 mb-4 space-y-1">
+                        <Link to="/" onClick={() => setIsSidebarOpen(false)}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                                }`}
+                        >
+                            <LayoutDashboard className="w-5 h-5 shrink-0" />
+                            <span>仪表板</span>
+                        </Link>
+                        <Link to="/collections" onClick={() => setIsSidebarOpen(false)}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/collections' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                                }`}
+                        >
+                            <FolderHeart className="w-5 h-5 shrink-0" />
+                            <span>合集</span>
+                        </Link>
+                    </nav>
+                    <div className="px-6 mb-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">Libraries</div>
                     <nav className="flex-1 space-y-1 px-4 overflow-y-auto">
                         {loading ? (
                             <div className="animate-pulse px-3 py-2 bg-gray-800 rounded-md h-10 w-full mb-2" />
