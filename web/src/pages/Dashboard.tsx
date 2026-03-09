@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw } from 'lucide-react';
 
 interface DashboardStats {
     total_series: number;
@@ -29,12 +29,10 @@ interface RecentReadItem {
 }
 
 interface RecommendedItem {
-    id: number;
-    name: string;
-    title: { String: string; Valid: boolean };
-    cover_path: { String: string; Valid: boolean };
-    book_count: number;
-    score: number;
+    series_id: number;
+    title: string;
+    cover_path: string;
+    reason: string;
 }
 
 export default function Dashboard() {
@@ -50,14 +48,28 @@ export default function Dashboard() {
         Promise.all([
             axios.get('/api/stats/dashboard'),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
-            axios.get('/api/stats/recommendations?limit=10').catch(() => ({ data: [] })),
             axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] }))
-        ]).then(([statsRes, recentRes, recsRes, heatmapRes]) => {
+        ]).then(([statsRes, recentRes, heatmapRes]) => {
             setStats(statsRes.data);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
-            setRecommendations(Array.isArray(recsRes.data) ? recsRes.data : []);
             setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
         }).catch(console.error).finally(() => setLoading(false));
+    }, []);
+
+    // AI 推荐独立加载，不阻塞页面主体渲染
+    const [recsLoading, setRecsLoading] = useState(true);
+
+    const loadRecommendations = (forceRefresh = false) => {
+        setRecsLoading(true);
+        const url = forceRefresh ? '/api/stats/recommendations?limit=10&refresh=true' : '/api/stats/recommendations?limit=10';
+        axios.get(url)
+            .then(res => setRecommendations(Array.isArray(res.data) ? res.data : []))
+            .catch(console.error)
+            .finally(() => setRecsLoading(false));
+    };
+
+    useEffect(() => {
+        loadRecommendations(false);
     }, []);
 
     const scrollCarousel = (dir: 'left' | 'right') => {
@@ -233,35 +245,63 @@ export default function Dashboard() {
             )}
 
             {/* 猜你喜欢 - AI 推荐 */}
-            {recommendations.length > 0 && (
+            {(recsLoading || recommendations.length > 0) && (
                 <div>
                     <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
                         <Sparkles className="w-5 h-5 text-amber-400" />
                         猜你喜欢
                         <span className="text-xs text-gray-500 font-normal ml-1">基于你的收藏和阅读偏好</span>
+
+                        <div className="flex-1" />
+
+                        <button
+                            onClick={() => loadRecommendations(true)}
+                            disabled={recsLoading}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-all ${recsLoading
+                                    ? 'bg-komgaSurface border border-gray-800 text-gray-500 cursor-not-allowed'
+                                    : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white border border-gray-700'
+                                }`}
+                            title="换一批推荐"
+                        >
+                            <RefreshCcw className={`w-3.5 h-3.5 ${recsLoading ? 'animate-spin' : ''}`} />
+                            换一批
+                        </button>
                     </h2>
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-                        {recommendations.map(item => {
-                            const coverUrl = item.cover_path?.Valid ? `/api/thumbnails/${item.cover_path.String}` : '';
-                            const title = item.title?.Valid ? item.title.String : item.name;
-                            return (
-                                <div key={item.id} onClick={() => navigate(`/series/${item.id}`)} className="group cursor-pointer">
-                                    <div className="aspect-[2/3] rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-amber-500/40 transition-all shadow-lg relative">
-                                        {coverUrl ? (
-                                            <img src={coverUrl} alt={title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-gray-700"><BookOpen className="w-8 h-8" /></div>
-                                        )}
-                                        <div className="absolute top-2 right-2 bg-black/70 text-amber-400 text-[10px] px-1.5 py-0.5 rounded-full font-medium">
-                                            ★ {item.score}
+                    {recsLoading ? (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                            {Array.from({ length: 5 }, (_, i) => (
+                                <div key={i} className="animate-pulse">
+                                    <div className="aspect-[2/3] rounded-xl bg-gray-800" />
+                                    <div className="mt-2 h-3 w-3/4 bg-gray-800 rounded" />
+                                    <div className="mt-1 h-2 w-1/2 bg-gray-800/50 rounded" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                            {recommendations.map(item => {
+                                const coverUrl = item.cover_path ? `/api/thumbnails/${item.cover_path}` : '';
+                                return (
+                                    <div key={item.series_id} onClick={() => navigate(`/series/${item.series_id}`)} className="group cursor-pointer flex bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-amber-500/40 transition-all shadow-lg">
+                                        <div className="w-24 shrink-0 aspect-[2/3] relative bg-black">
+                                            {coverUrl ? (
+                                                <img src={coverUrl} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-gray-700"><BookOpen className="w-8 h-8" /></div>
+                                            )}
+                                            <div className="absolute top-0 right-0 p-1">
+                                                <Sparkles className="w-4 h-4 text-amber-400 drop-shadow-md" />
+                                            </div>
+                                        </div>
+                                        <div className="p-3 flex flex-col min-w-0">
+                                            <p className="text-sm font-medium text-gray-200 truncate group-hover:text-amber-400 transition-colors">{item.title}</p>
+                                            <p className="text-xs text-gray-400 mt-2 line-clamp-3 leading-relaxed">{item.reason}</p>
                                         </div>
                                     </div>
-                                    <p className="text-xs text-gray-300 mt-2 truncate group-hover:text-amber-400 transition-colors">{title}</p>
-                                    <p className="text-[10px] text-gray-600">{item.book_count} 册</p>
-                                </div>
-                            );
-                        })}
-                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

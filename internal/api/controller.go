@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -42,6 +43,11 @@ type Controller struct {
 	newClients     chan chan string
 	defunctClients chan chan string
 	messages       chan string
+
+	// AI Recommendations Cache
+	recommendationsCache     []AIRecommendationResponse
+	recommendationsCacheTime time.Time
+	recommendationsMutex     sync.RWMutex
 }
 
 func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Config, cfgPath string) *Controller {
@@ -1378,6 +1384,19 @@ type AIRecommendationResponse struct {
 // getRecommendations 基于本地阅读历史的综合 LLM 推荐
 func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	forceRefresh := r.URL.Query().Get("refresh") == "true"
+
+	if !forceRefresh {
+		c.recommendationsMutex.RLock()
+		if time.Since(c.recommendationsCacheTime) < 24*time.Hour && len(c.recommendationsCache) > 0 {
+			cache := c.recommendationsCache
+			c.recommendationsMutex.RUnlock()
+			jsonResponse(w, http.StatusOK, cache)
+			return
+		}
+		c.recommendationsMutex.RUnlock()
+	}
+
 	dbCache := c.store.(*database.SqlStore)
 
 	// 1. 获取用户最常看的 10 个标签
@@ -1450,6 +1469,12 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 			CoverPath: coverPath,
 		})
 	}
+
+	// Update cache
+	c.recommendationsMutex.Lock()
+	c.recommendationsCache = finalRecs
+	c.recommendationsCacheTime = time.Now()
+	c.recommendationsMutex.Unlock()
 
 	jsonResponse(w, http.StatusOK, finalRecs)
 }
