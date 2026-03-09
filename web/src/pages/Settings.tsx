@@ -20,6 +20,7 @@ interface Config {
         endpoint: string;
         model: string;
         api_key: string;
+        timeout: number;
     };
 }
 
@@ -497,6 +498,24 @@ const Settings: React.FC = () => {
                             onChange={(e) => setConfig({ ...config, llm: { ...config.llm, api_key: e.target.value } })}
                             className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono"
                         />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">
+                            请求超时 (秒)
+                        </label>
+                        <div className="flex items-center space-x-3">
+                            <input
+                                type="range"
+                                min="30"
+                                max="600"
+                                step="10"
+                                value={config.llm?.timeout || 120}
+                                onChange={(e) => setConfig({ ...config, llm: { ...config.llm, timeout: parseInt(e.target.value) || 120 } })}
+                                className="flex-1 accent-komgaPrimary"
+                            />
+                            <span className="text-sm font-mono text-komgaPrimary w-12 text-right">{config.llm?.timeout || 120}s</span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">LLM 推理可能较慢，大模型或复杂任务建议设置较长超时</p>
                     </div>
                 </div>
 

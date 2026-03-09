@@ -22,7 +22,7 @@ func (c *Controller) getProvider(name string) metadata.Provider {
 		endpoint := c.config.LLM.Endpoint
 		model := c.config.LLM.Model
 		apiKey := c.config.LLM.APIKey
-		return metadata.NewAIProvider(provider, endpoint, model, apiKey)
+		return metadata.NewAIProvider(provider, endpoint, model, apiKey, c.config.LLM.Timeout)
 	default:
 		return metadata.NewBangumiProvider()
 	}

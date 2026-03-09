@@ -19,19 +19,22 @@ type OpenAIProvider struct {
 	client   *http.Client
 }
 
-func NewOpenAIProvider(endpoint, model, apiKey string) *OpenAIProvider {
+func NewOpenAIProvider(endpoint, model, apiKey string, timeout int) *OpenAIProvider {
 	if endpoint == "" {
 		endpoint = "https://api.openai.com/v1"
 	}
 	if model == "" {
 		model = "gpt-3.5-turbo"
 	}
+	if timeout <= 0 {
+		timeout = 120
+	}
 	return &OpenAIProvider{
 		Endpoint: endpoint,
 		Model:    model,
 		APIKey:   apiKey,
 		client: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: time.Duration(timeout) * time.Second,
 		},
 	}
 }

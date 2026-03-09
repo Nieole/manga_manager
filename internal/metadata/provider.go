@@ -18,12 +18,16 @@ type AIProvider interface {
 }
 
 // NewAIProvider 工厂方法，根据配置切换 LLM 实例
-func NewAIProvider(provider, endpoint, model, apiKey string) AIProvider {
+// timeout 为请求超时秒数，0 或负值使用默认 120 秒
+func NewAIProvider(provider, endpoint, model, apiKey string, timeout int) AIProvider {
+	if timeout <= 0 {
+		timeout = 120
+	}
 	if provider == "openai" {
-		return NewOpenAIProvider(endpoint, model, apiKey)
+		return NewOpenAIProvider(endpoint, model, apiKey, timeout)
 	}
 	// 默认回退到 ollama
-	return NewOllamaProvider(endpoint, model)
+	return NewOllamaProvider(endpoint, model, timeout)
 }
 
 // AIRecommendation 推荐条目结构

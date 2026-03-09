@@ -1263,7 +1263,7 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 		req.Prompt = "Hello, this is a test from Manga Manager."
 	}
 
-	provider := metadata.NewAIProvider(req.Provider, req.Endpoint, req.Model, req.APIKey)
+	provider := metadata.NewAIProvider(req.Provider, req.Endpoint, req.Model, req.APIKey, c.config.LLM.Timeout)
 	response, err := provider.TestLLM(r.Context(), req.Prompt)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("LLM Test failed: %v", err))
@@ -1418,7 +1418,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 3. 构建 Provider
-	provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey)
+	provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey, c.config.LLM.Timeout)
 
 	// 4. 交给 LLM 甄选并产出理
 	recList, err := provider.GenerateRecommendations(ctx, userTags, candidates, 3)
@@ -1501,7 +1501,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey)
+		provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey, c.config.LLM.Timeout)
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)

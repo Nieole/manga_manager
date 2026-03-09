@@ -18,18 +18,21 @@ type OllamaProvider struct {
 	client   *http.Client
 }
 
-func NewOllamaProvider(endpoint, model string) *OllamaProvider {
+func NewOllamaProvider(endpoint, model string, timeout int) *OllamaProvider {
 	if endpoint == "" {
 		endpoint = "http://localhost:11434"
 	}
 	if model == "" {
 		model = "qwen2.5"
 	}
+	if timeout <= 0 {
+		timeout = 120
+	}
 	return &OllamaProvider{
 		Endpoint: endpoint,
 		Model:    model,
 		client: &http.Client{
-			Timeout: 120 * time.Second, // LLM 推理需较长的超时
+			Timeout: time.Duration(timeout) * time.Second,
 		},
 	}
 }

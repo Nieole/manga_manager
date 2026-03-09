@@ -38,6 +38,7 @@ type Config struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"` // e.g. "http://localhost:11434" or "https://api.openai.com/v1"
 		Model    string `yaml:"model" json:"model"`       // e.g. "qwen2.5" or "gpt-4o"
 		APIKey   string `yaml:"api_key" json:"api_key"`   // Optional API Key for OpenAI/DeepSeek
+		Timeout  int    `yaml:"timeout" json:"timeout"`   // 请求超时时间（秒），默认 120
 	} `yaml:"llm" json:"llm"`
 }
 
@@ -87,6 +88,7 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.LLM.Provider = "ollama"
 	cfg.LLM.Endpoint = "http://localhost:11434"
 	cfg.LLM.Model = "qwen2.5"
+	cfg.LLM.Timeout = 120
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
