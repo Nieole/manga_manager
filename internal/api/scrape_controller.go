@@ -17,10 +17,12 @@ import (
 // getProvider 根据名称返回对应的 Provider 实例
 func (c *Controller) getProvider(name string) metadata.Provider {
 	switch strings.ToLower(name) {
-	case "ollama", "llm":
-		endpoint := c.config.Ollama.Endpoint
-		model := c.config.Ollama.Model
-		return metadata.NewOllamaProvider(endpoint, model)
+	case "ollama", "llm", "openai":
+		provider := c.config.LLM.Provider
+		endpoint := c.config.LLM.Endpoint
+		model := c.config.LLM.Model
+		apiKey := c.config.LLM.APIKey
+		return metadata.NewAIProvider(provider, endpoint, model, apiKey)
 	default:
 		return metadata.NewBangumiProvider()
 	}
@@ -30,7 +32,7 @@ func (c *Controller) getProvider(name string) metadata.Provider {
 func (c *Controller) listProviders(w http.ResponseWriter, r *http.Request) {
 	providers := []map[string]string{
 		{"id": "bangumi", "name": "Bangumi", "description": "从 Bangumi 番组计划获取漫画元数据"},
-		{"id": "ollama", "name": "Ollama LLM", "description": "通过本地 Ollama 大语言模型推理生成元数据"},
+		{"id": "llm", "name": "AI/LLM 解析", "description": "通过配置的大语言模型(如 Ollama, LM Studio, OpenAI)推理生成元数据"},
 	}
 	jsonResponse(w, http.StatusOK, providers)
 }

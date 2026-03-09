@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Settings as SettingsIcon, Save, Server, Database, FolderOpen, HardDrive, AlertTriangle, RefreshCw, Image as ImageIcon, Download } from 'lucide-react';
+import { Settings as SettingsIcon, Save, Server, Database, FolderOpen, HardDrive, AlertTriangle, RefreshCw, Image as ImageIcon, Download, Terminal } from 'lucide-react';
 
 interface Config {
     server: { port: number };
@@ -15,9 +15,11 @@ interface Config {
         archive_pool_size: number;
         max_ai_concurrency: number;
     };
-    ollama: {
+    llm: {
+        provider: string;
         endpoint: string;
         model: string;
+        api_key: string;
     };
 }
 
@@ -350,87 +352,179 @@ const Settings: React.FC = () => {
                         </svg>
                         <h2 className="text-lg font-semibold text-white">AI 大模型刮削库对接 (LLM)</h2>
                     </div>
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    API 端点 (Endpoint)
-                                </label>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1" title="置0则由程序动态以主机线程数翻倍挂起">
+                                解析器工作协程 (Workers)
+                            </label>
+                            <div className="flex items-center space-x-3">
                                 <input
-                                    type="text"
-                                    placeholder="http://localhost:11434"
-                                    value={config.ollama?.endpoint || ''}
-                                    onChange={(e) => setConfig({ ...config, ollama: { ...config.ollama, endpoint: e.target.value } })}
-                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                                    type="range"
+                                    min="0"
+                                    max="64"
+                                    value={config.scanner.workers}
+                                    onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, workers: parseInt(e.target.value) || 0 } })}
+                                    className="flex-1 accent-komgaPrimary"
                                 />
-                                <p className="text-xs text-gray-500 mt-1">兼容 OpenAI / Ollama 协议的 API 中枢地址</p>
+                                <span className="text-sm font-mono text-komgaPrimary w-8">{config.scanner.workers}</span>
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    刮削专用基座模型 (Model)
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="qwen2.5:14b / gemma"
-                                    value={config.ollama?.model || ''}
-                                    onChange={(e) => setConfig({ ...config, ollama: { ...config.ollama, model: e.target.value } })}
-                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">指定用于抽取和翻译元数据的发型版模型名称</p>
-                            </div>
+                            <p className="text-xs text-gray-500 mt-1">{config.scanner.workers === 0 ? '目前为“智能自动调度”模式' : '手动指定并发处理协程数'}</p>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                生成图片压缩封包格式
+                            </label>
+                            <select
+                                value={config.scanner.thumbnail_format}
+                                onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, thumbnail_format: e.target.value } })}
+                                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                            >
+                                <option value="webp">WebP (推荐，兼容与体积最佳)</option>
+                                <option value="jpeg">JPEG (最快，体积大)</option>
+                                <option value="avif">AVIF (体积最小，消耗 CPU 最高)</option>
+                                <option value="png">PNG (无损，极慢极大)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Waifu2x 物理运行路径 (降噪拉伸)
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="/usr/bin/waifu2x-ncnn-vulkan 或留空禁用"
+                                value={config.scanner.waifu2x_path}
+                                onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, waifu2x_path: e.target.value } })}
+                                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono text-sm"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                RealCugan 物理运行路径 (动漫特化拉伸)
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="/usr/bin/realcugan-ncnn-vulkan 或留空禁用"
+                                value={config.scanner.realcugan_path}
+                                onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, realcugan_path: e.target.value } })}
+                                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono text-sm"
+                            />
                         </div>
                     </div>
                 </div>
+            </div>
 
-                {/* 已挂载库目录（只读预览，由首页管理） */}
-                <div className="bg-komgaSurface border border-gray-800 rounded-xl p-6 shadow-sm opacity-70">
-                    <div className="flex items-center space-x-2 mb-4 text-komgaPrimary">
-                        <FolderOpen className="w-5 h-5" />
-                        <h2 className="text-lg font-semibold text-white">已绑定的物理检索根节点</h2>
+            {/* 大语言模型接入 */}
+            <div className="bg-komgaSurface border border-gray-800 rounded-xl p-6 shadow-sm">
+                <div className="flex items-center space-x-2 mb-4 text-komgaPrimary">
+                    <Terminal className="w-5 h-5" />
+                    <h2 className="text-lg font-semibold text-white">AI / 大语言模型引擎</h2>
+                </div>
+                <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                提供商 (Provider)
+                            </label>
+                            <select
+                                value={config.llm?.provider || 'ollama'}
+                                onChange={(e) => setConfig({ ...config, llm: { ...config.llm, provider: e.target.value } })}
+                                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                            >
+                                <option value="ollama">Ollama (Native JSON)</option>
+                                <option value="openai">OpenAI Compatible (OpenAI, DeepSeek, LM Studio, etc.)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                模型名 (Model)
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="e.g. qwen2.5 或 gpt-3.5-turbo"
+                                value={config.llm?.model || ''}
+                                onChange={(e) => setConfig({ ...config, llm: { ...config.llm, model: e.target.value } })}
+                                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                            />
+                        </div>
                     </div>
-                    <div className="space-y-2">
-                        {(!config.library.paths || config.library.paths.length === 0) && <p className="text-sm text-gray-500">尚无注册目录，请前往主页左侧边栏添加资源库。</p>}
-                        {(config.library.paths || []).map((p, i) => (
-                            <div key={i} className="text-sm text-gray-300 bg-gray-900 px-3 py-2 border border-gray-800 rounded-lg truncate">
-                                {p}
-                            </div>
-                        ))}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">
+                            推理终端 (API Endpoint)
+                        </label>
+                        <input
+                            type="text"
+                            placeholder="http://localhost:11434 或 https://api.openai.com/v1"
+                            value={config.llm?.endpoint || ''}
+                            onChange={(e) => setConfig({ ...config, llm: { ...config.llm, endpoint: e.target.value } })}
+                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">
+                            API 密钥 (选填)
+                        </label>
+                        <input
+                            type="password"
+                            placeholder="如果使用的是 OpenAI 或 DeepSeek，请填写 API Key"
+                            value={config.llm?.api_key || ''}
+                            onChange={(e) => setConfig({ ...config, llm: { ...config.llm, api_key: e.target.value } })}
+                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono"
+                        />
                     </div>
                 </div>
+            </div>
 
-                {/* 高级与维护区 */}
-                <div className="bg-red-900/10 border border-red-900/40 rounded-xl p-6 shadow-sm mt-4">
-                    <div className="flex items-center space-x-2 mb-4 text-red-500">
-                        <AlertTriangle className="w-5 h-5" />
-                        <h2 className="text-lg font-semibold text-white">进阶危险维护操作</h2>
-                    </div>
-                    <p className="text-sm text-red-400 mb-6 max-w-2xl">
-                        这些操作将直接越过保护对底层进行物理级数据结构撕洗。请确认您深知这些操作背后的代价。重建期间应用可能假死。
-                    </p>
-                    <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-                        <button
-                            onClick={handleRebuildIndex}
-                            className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
-                        >
-                            <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
-                            <span>全量重建搜索索引</span>
-                        </button>
+            {/* 已挂载库目录（只读预览，由首页管理） */}
+            <div className="bg-komgaSurface border border-gray-800 rounded-xl p-6 shadow-sm opacity-70">
+                <div className="flex items-center space-x-2 mb-4 text-komgaPrimary">
+                    <FolderOpen className="w-5 h-5" />
+                    <h2 className="text-lg font-semibold text-white">已绑定的物理检索根节点</h2>
+                </div>
+                <div className="space-y-2">
+                    {(!config.library.paths || config.library.paths.length === 0) && <p className="text-sm text-gray-500">尚无注册目录，请前往主页左侧边栏添加资源库。</p>}
+                    {(config.library.paths || []).map((p, i) => (
+                        <div key={i} className="text-sm text-gray-300 bg-gray-900 px-3 py-2 border border-gray-800 rounded-lg truncate">
+                            {p}
+                        </div>
+                    ))}
+                </div>
+            </div>
 
-                        <button
-                            onClick={handleRebuildThumbnails}
-                            className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
-                        >
-                            <ImageIcon className="w-4 h-4 group-hover:scale-110 transition-transform duration-300" />
-                            <span>清空并重装所有封面图</span>
-                        </button>
-                        <button
-                            onClick={handleBatchScrape}
-                            className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
-                        >
-                            <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" />
-                            <span>批量元数据刮削</span>
-                        </button>
-                    </div>
+            {/* 高级与维护区 */}
+            <div className="bg-red-900/10 border border-red-900/40 rounded-xl p-6 shadow-sm mt-4">
+                <div className="flex items-center space-x-2 mb-4 text-red-500">
+                    <AlertTriangle className="w-5 h-5" />
+                    <h2 className="text-lg font-semibold text-white">进阶危险维护操作</h2>
+                </div>
+                <p className="text-sm text-red-400 mb-6 max-w-2xl">
+                    这些操作将直接越过保护对底层进行物理级数据结构撕洗。请确认您深知这些操作背后的代价。重建期间应用可能假死。
+                </p>
+                <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                    <button
+                        onClick={handleRebuildIndex}
+                        className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
+                    >
+                        <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
+                        <span>全量重建搜索索引</span>
+                    </button>
+
+                    <button
+                        onClick={handleRebuildThumbnails}
+                        className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
+                    >
+                        <ImageIcon className="w-4 h-4 group-hover:scale-110 transition-transform duration-300" />
+                        <span>清空并重装所有封面图</span>
+                    </button>
+                    <button
+                        onClick={handleBatchScrape}
+                        className="flex-1 flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 py-3 px-4 rounded-lg transition-colors group"
+                    >
+                        <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" />
+                        <span>批量元数据刮削</span>
+                    </button>
                 </div>
             </div>
 
@@ -492,7 +586,7 @@ const Settings: React.FC = () => {
                     </div>
                 )
             }
-        </div >
+        </div>
     );
 };
 

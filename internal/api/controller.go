@@ -1387,7 +1387,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 3. 构建 Provider
-	provider := metadata.NewOllamaProvider(c.config.Ollama.Endpoint, c.config.Ollama.Model)
+	provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey)
 
 	// 4. 交给 LLM 甄选并产出理
 	recList, err := provider.GenerateRecommendations(ctx, userTags, candidates, 3)
@@ -1468,7 +1468,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		provider := metadata.NewOllamaProvider(c.config.Ollama.Endpoint, c.config.Ollama.Model)
+		provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey)
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)

@@ -31,7 +31,14 @@ type Config struct {
 	Ollama struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"`
 		Model    string `yaml:"model" json:"model"`
-	} `yaml:"ollama" json:"ollama"`
+	} `yaml:"ollama" json:"ollama"` // Deprecated: Use LLM instead
+
+	LLM struct {
+		Provider string `yaml:"provider" json:"provider"` // e.g. "ollama", "openai"
+		Endpoint string `yaml:"endpoint" json:"endpoint"` // e.g. "http://localhost:11434" or "https://api.openai.com/v1"
+		Model    string `yaml:"model" json:"model"`       // e.g. "qwen2.5" or "gpt-4o"
+		APIKey   string `yaml:"api_key" json:"api_key"`   // Optional API Key for OpenAI/DeepSeek
+	} `yaml:"llm" json:"llm"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -46,6 +53,19 @@ func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Backwards compatibility layer
+	if cfg.LLM.Provider == "" && cfg.Ollama.Endpoint != "" {
+		cfg.LLM.Provider = "ollama"
+		cfg.LLM.Endpoint = cfg.Ollama.Endpoint
+		cfg.LLM.Model = cfg.Ollama.Model
+	}
+	// Defaults if LLM is entirely absent
+	if cfg.LLM.Provider == "" {
+		cfg.LLM.Provider = "ollama"
+		cfg.LLM.Endpoint = "http://localhost:11434"
+		cfg.LLM.Model = "qwen2.5"
 	}
 
 	return &cfg, nil
@@ -63,6 +83,10 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Scanner.RealCuganPath = ""
 	cfg.Scanner.ArchivePoolSize = 5  // 默认缓存 5 个打开的归档压缩包句柄
 	cfg.Scanner.MaxAiConcurrency = 3 // 默认限制最多抛出 3 个外置 AI 渲染子进程
+
+	cfg.LLM.Provider = "ollama"
+	cfg.LLM.Endpoint = "http://localhost:11434"
+	cfg.LLM.Model = "qwen2.5"
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

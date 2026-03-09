@@ -145,22 +145,9 @@ func (o *OllamaProvider) SearchMetadata(ctx context.Context, title string, limit
 	return []*SeriesMetadata{result}, 1, nil
 }
 
-// AIRecommendation 推荐条目结构
-type AIRecommendation struct {
-	SeriesID int64  `json:"series_id"`
-	Reason   string `json:"reason"`
-}
-
 // aiRecommendationResult LLM返回的推荐列表格式
 type aiRecommendationResult struct {
 	Recommendations []AIRecommendation `json:"recommendations"`
-}
-
-// CandidateSeries 候选漫画信息
-type CandidateSeries struct {
-	ID      int64  `json:"id"`
-	Title   string `json:"title"`
-	Summary string `json:"summary"`
 }
 
 // GenerateRecommendations 请求LLM从候选列表中挑选合适的漫画并生成推荐理由
@@ -252,13 +239,6 @@ func (o *OllamaProvider) GenerateRecommendations(ctx context.Context, userTags [
 // AIGroupingResult LLM返回的分组列表格式
 type AIGroupingResult struct {
 	Collections []AIGroupCollection `json:"collections"`
-}
-
-// AIGroupCollection 单个分类
-type AIGroupCollection struct {
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	SeriesIDs   []int64 `json:"series_ids"`
 }
 
 // GenerateGrouping 请求LLM对系列分类归档
