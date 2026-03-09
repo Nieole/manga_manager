@@ -126,7 +126,7 @@ func (o *OpenAIProvider) sendRequest(ctx context.Context, prompt string, require
 	return result, nil
 }
 
-// 抽取 Markdown 中的 JSON 块（有些模型仍然会输出 ```json 前缀）
+// extractJSONString 抽取 Markdown 中的 JSON 块（有些模型仍然会输出 ```json 前缀）
 func extractJSONString(input string) string {
 	input = strings.TrimSpace(input)
 	if strings.HasPrefix(input, "```json") {
@@ -140,20 +140,7 @@ func extractJSONString(input string) string {
 }
 
 func (o *OpenAIProvider) FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error) {
-	prompt := fmt.Sprintf(`你是一个漫画和书籍数据专家。请根据以下漫画/书籍系列的名称，提供该系列的详细元数据信息。
-如果你不确定或不了解这个作品，请在所有字段中返回空值。
-
-系列名称: %s
-
-请严格以 JSON 格式回复，不要包含任何其他文字。JSON 结构如下:
-{
-  "title": "作品正式中文名（如有），否则原名",
-  "summary": "作品简介（100-300字）",
-  "publisher": "出版社名称",
-  "status": "连载状态（连载中/已完结/未知）",
-  "tags": ["标签1", "标签2", "标签3"],
-  "rating": 0.0
-}`, title)
+	prompt := BuildFetchMetadataPrompt(title)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {
@@ -195,40 +182,7 @@ func (o *OpenAIProvider) GenerateRecommendations(ctx context.Context, userTags [
 		return nil, nil
 	}
 
-	tagsStr := strings.Join(userTags, ", ")
-	if tagsStr == "" {
-		tagsStr = "无特定偏好(随机挑好书)"
-	}
-
-	var candidatesText strings.Builder
-	for _, c := range candidates {
-		title := c.Title
-		if title == "" {
-			title = fmt.Sprintf("未知标题 (ID: %d)", c.ID)
-		}
-		summary := c.Summary
-		if len(summary) > 100 {
-			summary = summary[:100] + "..."
-		}
-		candidatesText.WriteString(fmt.Sprintf("- ID: %d, 标题: %s, 简介: %s\n", c.ID, title, summary))
-	}
-
-	prompt := fmt.Sprintf(`你是一个专业的漫画和书籍推荐助手。
-请根据读者最近喜欢的阅读标签：[%s]，从下列候选作品中挑选出最符合他们口味的 %d 部作品。
-每一部选出的作品，请仔细阅读它的简介，给出一句充满吸引力、富有情感的推荐语（50字左右，像向朋友安利一样）。
-
-候选作品列表：
-%s
-
-请严格以 JSON 格式回复，不要包含任何其他文字。JSON 结构如下:
-{
-  "recommendations": [
-    {
-      "series_id": 123,
-      "reason": "这部漫画巧妙地将科幻设定融入日常，绝对会让你大呼过瘾！"
-    }
-  ]
-}`, tagsStr, limit, candidatesText.String())
+	prompt := BuildRecommendationsPrompt(userTags, candidates, limit)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {
@@ -250,35 +204,7 @@ func (o *OpenAIProvider) GenerateGrouping(ctx context.Context, seriesList []Cand
 		return nil, nil
 	}
 
-	var textBuilder strings.Builder
-	for _, s := range seriesList {
-		title := s.Title
-		if title == "" {
-			title = fmt.Sprintf("未知标题 (ID: %d)", s.ID)
-		}
-		summary := s.Summary
-		if len(summary) > 100 {
-			summary = summary[:100] + "..."
-		}
-		textBuilder.WriteString(fmt.Sprintf("- ID: %d, 标题: %s, 简介: %s\n", s.ID, title, summary))
-	}
-
-	prompt := fmt.Sprintf(`你是一个专业的图书管理员和漫画策展人。
-请仔细阅读以下给定的所有漫画作品清单，分析它们的类型、背景设定或关联性，将它们逻辑分组成 3 到 5 个不同的主题合集(Collections)。
-
-漫画作品清单：
-%s
-
-请严格以 JSON 格式回复，不要包含任何其他文字。必须输出以下格式:
-{
-  "collections": [
-    {
-      "name": "赛博朋克与科幻",
-      "description": "探讨未来科技与人性的硬核科幻作品集",
-      "series_ids": [12, 45, 89]
-    }
-  ]
-}`, textBuilder.String())
+	prompt := BuildGroupingPrompt(seriesList)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {
