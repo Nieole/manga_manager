@@ -39,6 +39,7 @@ type Querier interface {
 	ListLibraries(ctx context.Context) ([]Library, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
+	UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error)
 	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error

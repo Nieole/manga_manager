@@ -114,6 +114,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateBookProgressStmt, err = db.PrepareContext(ctx, updateBookProgress); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateBookProgress: %w", err)
 	}
+	if q.updateLibraryStmt, err = db.PrepareContext(ctx, updateLibrary); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateLibrary: %w", err)
+	}
 	if q.updateSeriesFavoriteStmt, err = db.PrepareContext(ctx, updateSeriesFavorite); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSeriesFavorite: %w", err)
 	}
@@ -290,6 +293,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateBookProgressStmt: %w", cerr)
 		}
 	}
+	if q.updateLibraryStmt != nil {
+		if cerr := q.updateLibraryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateLibraryStmt: %w", cerr)
+		}
+	}
 	if q.updateSeriesFavoriteStmt != nil {
 		if cerr := q.updateSeriesFavoriteStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateSeriesFavoriteStmt: %w", cerr)
@@ -394,6 +402,7 @@ type Queries struct {
 	listLibrariesStmt          *sql.Stmt
 	listSeriesByLibraryStmt    *sql.Stmt
 	updateBookProgressStmt     *sql.Stmt
+	updateLibraryStmt          *sql.Stmt
 	updateSeriesFavoriteStmt   *sql.Stmt
 	updateSeriesMetadataStmt   *sql.Stmt
 	updateSeriesStatisticsStmt *sql.Stmt
@@ -437,6 +446,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listLibrariesStmt:          q.listLibrariesStmt,
 		listSeriesByLibraryStmt:    q.listSeriesByLibraryStmt,
 		updateBookProgressStmt:     q.updateBookProgressStmt,
+		updateLibraryStmt:          q.updateLibraryStmt,
 		updateSeriesFavoriteStmt:   q.updateSeriesFavoriteStmt,
 		updateSeriesMetadataStmt:   q.updateSeriesMetadataStmt,
 		updateSeriesStatisticsStmt: q.updateSeriesStatisticsStmt,

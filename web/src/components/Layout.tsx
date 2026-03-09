@@ -1,12 +1,15 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal } from 'lucide-react';
 
 interface Library {
     id: string;
     name: string;
     path: string;
+    auto_scan?: boolean;
+    scan_interval?: number;
+    scan_formats?: string;
 }
 
 export default function Layout() {
@@ -14,12 +17,24 @@ export default function Layout() {
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
     const [newLibAutoScan, setNewLibAutoScan] = useState(false);
     const [newLibScanInterval, setNewLibScanInterval] = useState(60);
     const [newLibScanFormats, setNewLibScanFormats] = useState("zip,cbz,rar,cbr,pdf");
     const [adding, setAdding] = useState(false);
+
+    // 编辑资源库状态
+    const [showEditModal, setShowEditModal] = useState(false);
+    const [editLibId, setEditLibId] = useState("");
+    const [editLibName, setEditLibName] = useState("");
+    const [editLibPath, setEditLibPath] = useState("");
+    const [editLibAutoScan, setEditLibAutoScan] = useState(false);
+    const [editLibScanInterval, setEditLibScanInterval] = useState(60);
+    const [editLibScanFormats, setEditLibScanFormats] = useState("zip,cbz,rar,cbr,pdf");
+    const [editing, setEditing] = useState(false);
+
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
     const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -170,6 +185,54 @@ export default function Layout() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    const handleAddLibrary = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setAdding(true);
+        try {
+            await axios.post('/api/libraries', {
+                name: newLibName,
+                path: newLibPath,
+                auto_scan: newLibAutoScan,
+                scan_interval: newLibScanInterval,
+                scan_formats: newLibScanFormats
+            });
+            setShowAddModal(false);
+            setNewLibName("");
+            setNewLibPath("");
+            setNewLibAutoScan(false);
+            setNewLibScanInterval(60);
+            setNewLibScanFormats("zip,cbz,rar,cbr,pdf");
+            fetchLibraries();
+            setRefreshTrigger(prev => prev + 1);
+        } catch (error) {
+            console.error(error);
+            alert("添加库失败，请检查路径是否正确及服务端状态");
+        } finally {
+            setAdding(false);
+        }
+    };
+
+    const handleEditLibrarySubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setEditing(true);
+        try {
+            await axios.put(`/api/libraries/${editLibId}`, {
+                name: editLibName,
+                path: editLibPath,
+                auto_scan: editLibAutoScan,
+                scan_interval: editLibScanInterval,
+                scan_formats: editLibScanFormats
+            });
+            setShowEditModal(false);
+            fetchLibraries();
+        } catch (error) {
+            console.error(error);
+            alert("修改库失败，请检查填写内容");
+        } finally {
+            setEditing(false);
+        }
+    };
+
     const handleScanLibrary = async (e: React.MouseEvent, id: string, force: boolean = false) => {
         e.preventDefault();
         e.stopPropagation();
@@ -207,34 +270,6 @@ export default function Layout() {
                 console.error("Trigger cleanup failed", error);
                 alert("清理指令下发失败");
             }
-        }
-    };
-
-    const handleAddLibrary = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setAdding(true);
-        try {
-            await axios.post('/api/libraries', {
-                name: newLibName,
-                path: newLibPath,
-                auto_scan: newLibAutoScan,
-                scan_interval: newLibScanInterval,
-                scan_formats: newLibScanFormats
-            });
-            setShowAddModal(false);
-            setNewLibName("");
-            setNewLibPath("");
-            setNewLibAutoScan(false);
-            setNewLibScanInterval(60);
-            setNewLibScanFormats("zip,cbz,rar,cbr,pdf");
-            // 由于有 SSE 监听，这里甚至可以不需要主动 fetch，但为了增强即时感先拉一下基本信息
-            fetchLibraries();
-            setRefreshTrigger(prev => prev + 1);
-        } catch (error) {
-            console.error(error);
-            alert("添加库失败，请检查路径是否正确及服务端状态");
-        } finally {
-            setAdding(false);
         }
     };
 
@@ -300,7 +335,7 @@ export default function Layout() {
                         </button>
                     </div>
                     {/* 快捷导航 */}
-                    <nav className="px-4 mb-4 space-y-1">
+                    <nav className="px-4 mb-4 space-y-1" onClick={() => setOpenMenuId(null)}>
                         <Link to="/" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                 }`}
@@ -344,56 +379,108 @@ export default function Layout() {
                                         <FolderOpen className="w-5 h-5 flex-shrink-0" />
                                         <span className="truncate">{lib.name}</span>
                                     </div>
-                                    <button
-                                        onClick={(e) => handleScanLibrary(e, String(lib.id), false)}
-                                        className="text-gray-500 hover:text-komgaPrimary opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                        title="重新扫描库内的变动"
-                                    >
-                                        <RefreshCw className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={(e) => {
-                                            if (confirm("强制重新扫描将会耗费更长时间并全量读取覆盖所有元数据。是否继续？")) {
-                                                handleScanLibrary(e, String(lib.id), true);
-                                            } else {
+                                    <div className="relative">
+                                        <button
+                                            onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                            }
-                                        }}
-                                        className="text-gray-500 hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                        title="强制全量读取"
-                                    >
-                                        <RefreshCw className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={(e) => handleScrapeLibrary(e, String(lib.id))}
-                                        className="text-gray-500 hover:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                        title="刮削缺失元数据"
-                                    >
-                                        <Download className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={(e) => handleCleanupLibrary(e, String(lib.id))}
-                                        className="text-gray-500 hover:text-yellow-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                        title="清理失效资源"
-                                    >
-                                        <Eraser className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            if (confirm(`确定要删除资源库「${lib.name}」吗？\n所有关联的系列、书籍和阅读记录都将被清除。`)) {
-                                                axios.delete(`/api/libraries/${lib.id}`)
-                                                    .then(() => { fetchLibraries(); navigate('/'); })
-                                                    .catch(() => alert('删除失败'));
-                                            }
-                                        }}
-                                        className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                        title="删除此资源库"
-                                    >
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
+                                                setOpenMenuId(openMenuId === lib.id ? null : lib.id);
+                                            }}
+                                            className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700 focus:outline-none"
+                                            title="更多操作"
+                                        >
+                                            <MoreHorizontal className="w-5 h-5" />
+                                        </button>
+
+                                        {openMenuId === lib.id && (
+                                            <>
+                                                <div
+                                                    className="fixed inset-0 z-40"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setOpenMenuId(null);
+                                                    }}
+                                                />
+                                                <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                    <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
+                                                        资源库操作
+                                                    </div>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            setOpenMenuId(null);
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setEditLibId(lib.id);
+                                                            setEditLibName(lib.name || "");
+                                                            setEditLibPath(lib.path || "");
+                                                            setEditLibAutoScan(lib.auto_scan || false);
+                                                            setEditLibScanInterval(lib.scan_interval || 60);
+                                                            setEditLibScanFormats(lib.scan_formats || "zip,cbz,rar,cbr,pdf");
+                                                            setShowEditModal(true);
+                                                        }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-blue-500 hover:text-white transition-colors"
+                                                    >
+                                                        <SettingsIcon className="w-4 h-4 mr-2" />
+                                                        编辑资源库
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { setOpenMenuId(null); handleScanLibrary(e, String(lib.id), false); }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                    >
+                                                        <RefreshCw className="w-4 h-4 mr-2" />
+                                                        重新扫描增量
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            setOpenMenuId(null);
+                                                            if (confirm("强制重新扫描将会耗费更长时间并全量读取覆盖所有元数据。是否继续？")) {
+                                                                handleScanLibrary(e, String(lib.id), true);
+                                                            } else {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                            }
+                                                        }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-orange-500 hover:text-white transition-colors"
+                                                    >
+                                                        <RefreshCw className="w-4 h-4 mr-2" />
+                                                        强制全量读取
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { setOpenMenuId(null); handleScrapeLibrary(e, String(lib.id)); }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-green-500 hover:text-white transition-colors"
+                                                    >
+                                                        <Download className="w-4 h-4 mr-2" />
+                                                        刮削缺失元数据
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { setOpenMenuId(null); handleCleanupLibrary(e, String(lib.id)); }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-yellow-500 hover:text-white transition-colors"
+                                                    >
+                                                        <Eraser className="w-4 h-4 mr-2" />
+                                                        清理失效资源
+                                                    </button>
+                                                    <div className="border-t border-gray-700"></div>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            setOpenMenuId(null);
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            if (confirm(`确定要删除资源库「${lib.name}」吗？\n所有关联的系列、书籍和阅读记录都将被清除。`)) {
+                                                                axios.delete(`/api/libraries/${lib.id}`)
+                                                                    .then(() => { fetchLibraries(); navigate('/'); })
+                                                                    .catch(() => alert('删除失败'));
+                                                            }
+                                                        }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-red-500 hover:text-white transition-colors"
+                                                    >
+                                                        <Trash2 className="w-4 h-4 mr-2" />
+                                                        删除此资源库
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
                                 </Link>
                             ))
                         )}
@@ -596,6 +683,168 @@ export default function Layout() {
                                         </>
                                     ) : (
                                         "立即添加"
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* 编辑库模态框 */}
+            {showEditModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div className="bg-komgaSurface rounded-xl shadow-2xl border border-gray-800 w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="flex justify-between items-center p-6 border-b border-gray-800">
+                            <h3 className="text-xl font-semibold text-white">编辑资源库</h3>
+                            <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-white transition-colors">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <form onSubmit={handleEditLibrarySubmit} className="p-6">
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-400 mb-1">名称</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        value={editLibName}
+                                        onChange={e => setEditLibName(e.target.value)}
+                                        placeholder="例如: 日漫收藏"
+                                        className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-400 mb-1">路径</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            required
+                                            value={editLibPath}
+                                            onChange={e => setEditLibPath(e.target.value)}
+                                            placeholder="点击「浏览」选择文件夹"
+                                            className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setBrowsing(true);
+                                                axios.get('/api/browse-dirs')
+                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); })
+                                                    .catch(() => { });
+                                            }}
+                                            className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
+                                        >
+                                            <FolderOpen className="w-4 h-4 inline mr-1" />浏览
+                                        </button>
+                                    </div>
+                                    {browsing && (
+                                        <div className="mt-3 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                                            <div className="px-3 py-2 bg-gray-800 flex items-center justify-between text-xs">
+                                                <span className="text-gray-400 truncate flex-1 mr-2" title={browseCurrent}>{browseCurrent}</span>
+                                                <div className="flex gap-1">
+                                                    <button type="button" onClick={() => {
+                                                        setEditLibPath(browseCurrent);
+                                                        setBrowsing(false);
+                                                    }} className="px-2 py-1 bg-komgaPrimary hover:bg-purple-600 text-white rounded text-xs transition-colors">选择此目录</button>
+                                                    <button type="button" onClick={() => setBrowsing(false)} className="px-2 py-1 text-gray-400 hover:text-white transition-colors">关闭</button>
+                                                </div>
+                                            </div>
+                                            <div className="max-h-48 overflow-y-auto">
+                                                {browseDrives.length > 0 && (
+                                                    <div className="px-3 py-2 flex flex-wrap gap-1 border-b border-gray-700">
+                                                        {browseDrives.map((drv: any) => (
+                                                            <button key={drv.path} type="button" onClick={() => {
+                                                                axios.get(`/api/browse-dirs?path=${encodeURIComponent(drv.path)}`)
+                                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
+                                                            }}
+                                                                className={`px-2 py-1 text-xs rounded transition-colors ${browseCurrent.startsWith(drv.path) || browseCurrent.startsWith(drv.name)
+                                                                    ? 'bg-komgaPrimary text-white'
+                                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                                                                    }`}
+                                                            >{drv.name}</button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {browseCurrent !== browseParent && (
+                                                    <button type="button" onClick={() => {
+                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(browseParent)}`)
+                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
+                                                    }} className="w-full text-left px-3 py-2 text-sm text-yellow-400 hover:bg-gray-800 transition-colors flex items-center">
+                                                        ↑ ..
+                                                    </button>
+                                                )}
+                                                {browseDirs.length === 0 ? (
+                                                    <div className="px-3 py-3 text-xs text-gray-500 text-center">此目录下无子文件夹</div>
+                                                ) : browseDirs.map((d: any) => (
+                                                    <button key={d.path} type="button" onClick={() => {
+                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(d.path)}`)
+                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
+                                                    }} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-komgaPrimary transition-colors flex items-center">
+                                                        <FolderOpen className="w-4 h-4 mr-2 text-komgaPrimary/60" />{d.name}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
+                                <label className="flex items-center space-x-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={editLibAutoScan}
+                                        onChange={e => setEditLibAutoScan(e.target.checked)}
+                                        className="form-checkbox h-4 w-4 text-komgaPrimary bg-gray-800 border-gray-700 rounded focus:ring-komgaPrimary focus:ring-2"
+                                    />
+                                    <span className="text-sm font-medium text-gray-300">开启后台自动轮次扫描监控</span>
+                                </label>
+                                {editLibAutoScan && (
+                                    <>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-400 mb-1">循环触发扫描任务的间隔 (默认60分钟)</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={editLibScanInterval}
+                                                onChange={e => setEditLibScanInterval(parseInt(e.target.value) || 60)}
+                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-400 mb-1">目标提取匹配类型 (英文逗号分隔)</label>
+                                            <input
+                                                type="text"
+                                                value={editLibScanFormats}
+                                                onChange={e => setEditLibScanFormats(e.target.value)}
+                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
+                                            />
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="mt-8 flex justify-end space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowEditModal(false)}
+                                    className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors"
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={editing}
+                                    className="px-6 py-2 bg-komgaPrimary hover:bg-purple-600 text-white text-sm font-medium rounded-lg shadow-lg flex items-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {editing ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                            保存中...
+                                        </>
+                                    ) : (
+                                        "保存修改"
                                     )}
                                 </button>
                             </div>

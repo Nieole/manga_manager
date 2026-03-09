@@ -979,6 +979,44 @@ func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgress
 	return err
 }
 
+const updateLibrary = `-- name: UpdateLibrary :one
+UPDATE libraries
+SET name = ?, path = ?, auto_scan = ?, scan_interval = ?, scan_formats = ?
+WHERE id = ?
+RETURNING id, name, path, auto_scan, scan_interval, scan_formats, created_at
+`
+
+type UpdateLibraryParams struct {
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	AutoScan     bool   `json:"auto_scan"`
+	ScanInterval int64  `json:"scan_interval"`
+	ScanFormats  string `json:"scan_formats"`
+	ID           int64  `json:"id"`
+}
+
+func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error) {
+	row := q.queryRow(ctx, q.updateLibraryStmt, updateLibrary,
+		arg.Name,
+		arg.Path,
+		arg.AutoScan,
+		arg.ScanInterval,
+		arg.ScanFormats,
+		arg.ID,
+	)
+	var i Library
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Path,
+		&i.AutoScan,
+		&i.ScanInterval,
+		&i.ScanFormats,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateSeriesFavorite = `-- name: UpdateSeriesFavorite :exec
 UPDATE series SET is_favorite = ? WHERE id = ?
 `

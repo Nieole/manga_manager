@@ -153,6 +153,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/search", c.searchBooks)
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
+		r.Put("/libraries/{libraryId}", c.updateLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Post("/libraries/{libraryId}/scrape", c.scrapeLibrary)
 		r.Post("/libraries/{libraryId}/cleanup", c.cleanupLibrary)
@@ -369,6 +370,57 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	jsonResponse(w, http.StatusCreated, createdLib)
+}
+
+type UpdateLibraryRequest struct {
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	AutoScan     bool   `json:"auto_scan"`
+	ScanInterval int64  `json:"scan_interval"`
+	ScanFormats  string `json:"scan_formats"`
+}
+
+func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	libraryID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+
+	var req UpdateLibraryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if req.Name == "" || req.Path == "" {
+		jsonError(w, http.StatusBadRequest, "Name and Path are required")
+		return
+	}
+
+	if req.ScanInterval <= 0 {
+		req.ScanInterval = 60
+	}
+	if req.ScanFormats == "" {
+		req.ScanFormats = "zip,cbz,rar,cbr,pdf"
+	}
+
+	libParams := database.UpdateLibraryParams{
+		ID:           libraryID,
+		Name:         req.Name,
+		Path:         req.Path,
+		AutoScan:     req.AutoScan,
+		ScanInterval: req.ScanInterval,
+		ScanFormats:  req.ScanFormats,
+	}
+
+	updatedLib, err := c.store.UpdateLibrary(ctx, libParams)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to update library")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, updatedLib)
 }
 
 func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
