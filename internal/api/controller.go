@@ -201,6 +201,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
+		r.Post("/system/test-llm", c.testLLMConfig)
 
 		// 统计看板
 		r.Get("/stats/dashboard", c.getDashboardStats)
@@ -1242,6 +1243,36 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 	*c.config = newCfg
 
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "配置已成功保存。得益于热重载技术，大部分核心设定（如 AI 引擎路径、并发进程数）已立等生效，无需重启应用。"})
+}
+
+func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+		Endpoint string `json:"endpoint"`
+		Model    string `json:"model"`
+		APIKey   string `json:"api_key"`
+		Prompt   string `json:"prompt"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	if req.Prompt == "" {
+		req.Prompt = "Hello, this is a test from Manga Manager."
+	}
+
+	provider := metadata.NewAIProvider(req.Provider, req.Endpoint, req.Model, req.APIKey)
+	response, err := provider.TestLLM(r.Context(), req.Prompt)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("LLM Test failed: %v", err))
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{
+		"response": response,
+	})
 }
 
 // 触发扫描全库，作为通用的挂载工具

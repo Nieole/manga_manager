@@ -40,45 +40,36 @@ func (o *OpenAIProvider) Name() string {
 	return "OpenAI/Compatible LLM"
 }
 
-// openAIRequest OpenAI Chat Completions 请求体
+// openAIRequest OpenAI Responses API 请求体
 type openAIRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
-	// 为了确保返回 JSON（仅适用于支持此特性的提供商，比如 OpenAI, DeepSeek 等）。
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Model  string `json:"model"`
+	Input  string `json:"input"`
+	Stream bool   `json:"stream"`
 }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type responseFormat struct {
-	Type string `json:"type"`
-}
-
-// openAIResponse OpenAI Chat Completions 响应体
+// openAIResponse OpenAI Responses API 响应体
 type openAIResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
+	ID     string       `json:"id"`
+	Object string       `json:"object"`
+	Output []outputItem `json:"output"`
+}
+
+type outputItem struct {
+	Type    string        `json:"type"`
+	Content []contentItem `json:"content"`
+}
+
+type contentItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 // sendRequest 统一发送封装
 func (o *OpenAIProvider) sendRequest(ctx context.Context, prompt string, requireJSON bool) (string, error) {
 	reqBody := openAIRequest{
-		Model: o.Model,
-		Messages: []chatMessage{
-			{Role: "user", Content: prompt},
-		},
+		Model:  o.Model,
+		Input:  prompt,
 		Stream: false,
-	}
-
-	if requireJSON {
-		reqBody.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -87,8 +78,8 @@ func (o *OpenAIProvider) sendRequest(ctx context.Context, prompt string, require
 	}
 
 	url := strings.TrimRight(o.Endpoint, "/")
-	if !strings.HasSuffix(url, "/chat/completions") {
-		url += "/chat/completions"
+	if !strings.HasSuffix(url, "/v1/responses") {
+		url += "/v1/responses"
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
@@ -116,11 +107,23 @@ func (o *OpenAIProvider) sendRequest(ctx context.Context, prompt string, require
 		return "", fmt.Errorf("openai: failed to decode response: %w", err)
 	}
 
-	if len(aiResp.Choices) == 0 {
-		return "", fmt.Errorf("openai: no choices returned in response")
+	var finalOutput strings.Builder
+	for _, outItem := range aiResp.Output {
+		if outItem.Type == "message" {
+			for _, content := range outItem.Content {
+				if content.Type == "output_text" {
+					finalOutput.WriteString(content.Text)
+				}
+			}
+		}
 	}
 
-	return aiResp.Choices[0].Message.Content, nil
+	result := finalOutput.String()
+	if result == "" {
+		return "", fmt.Errorf("openai: no output_text found in response output")
+	}
+
+	return result, nil
 }
 
 // 抽取 Markdown 中的 JSON 块（有些模型仍然会输出 ```json 前缀）
@@ -289,4 +292,8 @@ func (o *OpenAIProvider) GenerateGrouping(ctx context.Context, seriesList []Cand
 	}
 
 	return result.Collections, nil
+}
+
+func (o *OpenAIProvider) TestLLM(ctx context.Context, prompt string) (string, error) {
+	return o.sendRequest(ctx, prompt, false)
 }

@@ -14,6 +14,7 @@ type AIProvider interface {
 	Provider
 	GenerateRecommendations(ctx context.Context, userTags []string, candidates []CandidateSeries, limit int) ([]AIRecommendation, error)
 	GenerateGrouping(ctx context.Context, seriesList []CandidateSeries) ([]AIGroupCollection, error)
+	TestLLM(ctx context.Context, prompt string) (string, error)
 }
 
 // NewAIProvider 工厂方法，根据配置切换 LLM 实例

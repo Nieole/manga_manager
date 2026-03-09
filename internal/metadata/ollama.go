@@ -320,3 +320,41 @@ func (o *OllamaProvider) GenerateGrouping(ctx context.Context, seriesList []Cand
 
 	return result.Collections, nil
 }
+
+func (o *OllamaProvider) TestLLM(ctx context.Context, prompt string) (string, error) {
+	reqBody := ollamaRequest{
+		Model:  o.Model,
+		Prompt: prompt,
+		Stream: false,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("ollama: failed to marshal test request: %w", err)
+	}
+
+	url := strings.TrimRight(o.Endpoint, "/") + "/api/generate"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("ollama: failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ollama: test request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ollama: API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var ollamaResp ollamaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		return "", fmt.Errorf("ollama: failed to decode test response: %w", err)
+	}
+
+	return ollamaResp.Response, nil
+}
