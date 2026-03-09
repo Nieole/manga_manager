@@ -236,3 +236,9 @@ LIMIT ?;
 
 -- name: UpdateSeriesFavorite :exec
 UPDATE series SET is_favorite = ? WHERE id = ?;
+
+-- name: DeleteSeries :exec
+DELETE FROM series WHERE id = ?;
+
+-- name: DeleteBook :exec
+DELETE FROM books WHERE id = ?;

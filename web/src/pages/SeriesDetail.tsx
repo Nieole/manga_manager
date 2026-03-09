@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download, Pencil, FolderHeart } from 'lucide-react';
+import { ArrowLeft, BookImage, FolderOpen, Star, Tag, User, Globe, Building2, Info, Edit, X, Lock, Unlock, ExternalLink, Download, Pencil, FolderHeart, RefreshCw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 
 interface NullString {
@@ -98,6 +98,7 @@ export default function SeriesDetail() {
     // 当前如果是阅读某个卷下的内容，记录被选中的卷名
     const [selectedVolume, setSelectedVolume] = useState<string | null>(null);
     const [isScraping, setIsScraping] = useState(false);
+    const [isRescanning, setIsRescanning] = useState(false);
     const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
     const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -112,6 +113,20 @@ export default function SeriesDetail() {
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
         setTimeout(() => setToastMsg(null), 3000);
+    };
+
+    const handleRescan = async () => {
+        if (!seriesId) return;
+        setIsRescanning(true);
+        try {
+            await axios.post(`/api/series/${seriesId}/rescan`);
+            showToast('已下发重新扫描指令', 'success');
+            setTimeout(() => window.location.reload(), 2000);
+        } catch (err: any) {
+            showToast('重新扫描抛出异常: ' + (err.response?.data?.error || err.message), 'error');
+        } finally {
+            setIsRescanning(false);
+        }
     };
 
     const handleScrape = async (providerKey: string) => {
@@ -672,6 +687,14 @@ export default function SeriesDetail() {
                                                 title="添加到合集"
                                             >
                                                 <FolderHeart className="w-5 h-5" />
+                                            </button>
+                                            <button
+                                                onClick={handleRescan}
+                                                disabled={isRescanning}
+                                                className="p-1.5 text-gray-500 hover:text-blue-400 bg-gray-900 border border-gray-800 hover:bg-blue-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                title="重新扫描该系列"
+                                            >
+                                                <RefreshCw className={`w-5 h-5 ${isRescanning ? 'animate-spin text-blue-400' : ''}`} />
                                             </button>
                                             <div className="relative">
                                                 <button

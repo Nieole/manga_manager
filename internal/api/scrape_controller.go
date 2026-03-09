@@ -387,3 +387,90 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		"provider": providerName,
 	})
 }
+
+// scrapeLibrary 批量刮削指定库的缺失元数据
+func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	libraryID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+
+	var reqBody struct {
+		Provider string `json:"provider"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&reqBody)
+	provider := c.getProvider(reqBody.Provider)
+
+	seriesList, err := c.store.ListSeriesByLibrary(ctx, libraryID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to list series in library")
+		return
+	}
+
+	type seriesEntry struct {
+		ID   int64
+		Name string
+	}
+	var allSeries []seriesEntry
+
+	for _, s := range seriesList {
+		// 跳过已经存在基础元数据的系列，只刮取缺失的
+		if (s.Summary.Valid && s.Summary.String != "") || (s.Publisher.Valid && s.Publisher.String != "") {
+			continue
+		}
+		name := s.Name
+		if s.Title.Valid && s.Title.String != "" {
+			name = s.Title.String
+		}
+		allSeries = append(allSeries, seriesEntry{ID: s.ID, Name: name})
+	}
+
+	if len(allSeries) == 0 {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "没有找到需要补充元数据的系列", "total": 0})
+		return
+	}
+
+	totalCount := len(allSeries)
+	providerName := provider.Name()
+
+	go func() {
+		successCount := 0
+		for i, entry := range allSeries {
+			slog.Info("Scraping library series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
+
+			c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削: %s"}`, i+1, totalCount, entry.Name))
+
+			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
+			if err != nil {
+				continue
+			}
+			if result == nil {
+				continue
+			}
+
+			series, err := c.store.GetSeries(context.Background(), entry.ID)
+			if err != nil {
+				continue
+			}
+
+			err = c.applyMetadataToSeries(context.Background(), series, result, providerName)
+			if err == nil {
+				successCount++
+			}
+			// 速率限制
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		slog.Info("Library scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
+		c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削资源库完成，成功 %d/%d"}`, totalCount, totalCount, successCount, totalCount))
+		c.PublishEvent("refresh")
+	}()
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"message":  fmt.Sprintf("资源库批量刮削(%s)已异步启动，共 %d 个缺失元数据的系列将逐一处理", providerName, totalCount),
+		"total":    totalCount,
+		"provider": providerName,
+	})
+}

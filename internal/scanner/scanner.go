@@ -150,6 +150,142 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	return walkErr
 }
 
+// ScanSeries 扫描单一系列目录，将新的卷添加到数据库中
+func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) error {
+	series, err := s.store.GetSeries(ctx, seriesID)
+	if err != nil {
+		return fmt.Errorf("failed to get series: %w", err)
+	}
+
+	library, err := s.store.GetLibrary(ctx, series.LibraryID)
+	if err != nil {
+		return fmt.Errorf("failed to get library: %w", err)
+	}
+
+	bookCache := make(map[string]time.Time)
+	if !force {
+		existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID)
+		if err == nil {
+			for _, b := range existingBooks {
+				bookCache[b.Path] = b.FileModifiedAt
+			}
+		}
+	}
+
+	jobs := make(chan scanJob, 100)
+	results := make(chan scanResult, 100)
+
+	var wg sync.WaitGroup
+	numWorkers := s.config.Scanner.Workers
+	if numWorkers <= 0 {
+		numWorkers = runtime.NumCPU() * 2
+	}
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				s.workerProcess(ctx, series.LibraryID, library.Path, job, results)
+			}
+		}()
+	}
+
+	ingestWg := sync.WaitGroup{}
+	ingestWg.Add(1)
+	go func() {
+		defer ingestWg.Done()
+		s.ingestResults(ctx, series.LibraryID, results)
+	}()
+
+	var walkErr error
+	walkErr = filepath.WalkDir(series.Path, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			slog.Warn("Error accessing path", "path", path, "error", err)
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".cbz" || ext == ".zip" || ext == ".cbr" || ext == ".rar" || ext == ".pdf" {
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+
+			if !force {
+				if lastMod, exists := bookCache[path]; exists {
+					if lastMod.Equal(info.ModTime()) {
+						return nil
+					}
+				}
+			}
+
+			select {
+			case jobs <- scanJob{path: path, info: info}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+
+	close(jobs)
+	wg.Wait()
+	close(results)
+	ingestWg.Wait()
+
+	slog.Info("Scan completely flushed for series", "series_id", seriesID)
+	return walkErr
+}
+
+// CleanupLibrary 验证并清理指定资料库中的失效资源记录
+func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
+	seriesList, err := s.store.ListSeriesByLibrary(ctx, libraryID)
+	if err != nil {
+		return fmt.Errorf("failed to list series: %w", err)
+	}
+
+	for _, series := range seriesList {
+		// 检查系列目录是否存在
+		if _, err := os.Stat(series.Path); os.IsNotExist(err) {
+			slog.Info("Removing missing series", "series_id", series.ID, "path", series.Path)
+			if err := s.store.DeleteSeries(ctx, series.ID); err != nil {
+				slog.Error("Failed to delete series", "series_id", series.ID, "error", err)
+			}
+			continue
+		}
+
+		// 检查卷文件是否存在
+		books, err := s.store.ListBooksBySeries(ctx, series.ID)
+		if err == nil {
+			booksChanged := false
+			for _, book := range books {
+				if _, err := os.Stat(book.Path); os.IsNotExist(err) {
+					slog.Info("Removing missing book", "book_id", book.ID, "path", book.Path)
+					if err := s.store.DeleteBook(ctx, book.ID); err != nil {
+						slog.Error("Failed to delete book", "book_id", book.ID, "error", err)
+					}
+					booksChanged = true
+				}
+			}
+			// 如果有卷被删除，更新系列的统计信息
+			if booksChanged {
+				_ = s.store.UpdateSeriesStatistics(ctx, database.UpdateSeriesStatisticsParams{
+					SeriesID:   series.ID,
+					SeriesID_2: series.ID,
+					SeriesID_3: series.ID,
+					ID:         series.ID,
+				})
+			}
+		}
+	}
+
+	slog.Info("Library cleanup completed", "library_id", libraryID)
+	return nil
+}
+
 func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, results chan<- scanResult) {
 	arc, err := parser.OpenArchive(job.path)
 	if err != nil {

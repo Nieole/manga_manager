@@ -197,6 +197,15 @@ func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Ser
 	return i, err
 }
 
+const deleteBook = `-- name: DeleteBook :exec
+DELETE FROM books WHERE id = ?
+`
+
+func (q *Queries) DeleteBook(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.deleteBookStmt, deleteBook, id)
+	return err
+}
+
 const deleteBookByPath = `-- name: DeleteBookByPath :exec
 DELETE FROM books WHERE path = ?
 `
@@ -212,6 +221,15 @@ DELETE FROM libraries WHERE id = ?
 
 func (q *Queries) DeleteLibrary(ctx context.Context, id int64) error {
 	_, err := q.exec(ctx, q.deleteLibraryStmt, deleteLibrary, id)
+	return err
+}
+
+const deleteSeries = `-- name: DeleteSeries :exec
+DELETE FROM series WHERE id = ?
+`
+
+func (q *Queries) DeleteSeries(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.deleteSeriesStmt, deleteSeries, id)
 	return err
 }
 

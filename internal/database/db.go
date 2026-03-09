@@ -42,11 +42,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createSeriesStmt, err = db.PrepareContext(ctx, createSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateSeries: %w", err)
 	}
+	if q.deleteBookStmt, err = db.PrepareContext(ctx, deleteBook); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteBook: %w", err)
+	}
 	if q.deleteBookByPathStmt, err = db.PrepareContext(ctx, deleteBookByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteBookByPath: %w", err)
 	}
 	if q.deleteLibraryStmt, err = db.PrepareContext(ctx, deleteLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteLibrary: %w", err)
+	}
+	if q.deleteSeriesStmt, err = db.PrepareContext(ctx, deleteSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteSeries: %w", err)
 	}
 	if q.getAllAuthorsStmt, err = db.PrepareContext(ctx, getAllAuthors); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllAuthors: %w", err)
@@ -164,6 +170,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing createSeriesStmt: %w", cerr)
 		}
 	}
+	if q.deleteBookStmt != nil {
+		if cerr := q.deleteBookStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteBookStmt: %w", cerr)
+		}
+	}
 	if q.deleteBookByPathStmt != nil {
 		if cerr := q.deleteBookByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteBookByPathStmt: %w", cerr)
@@ -172,6 +183,11 @@ func (q *Queries) Close() error {
 	if q.deleteLibraryStmt != nil {
 		if cerr := q.deleteLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteLibraryStmt: %w", cerr)
+		}
+	}
+	if q.deleteSeriesStmt != nil {
+		if cerr := q.deleteSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteSeriesStmt: %w", cerr)
 		}
 	}
 	if q.getAllAuthorsStmt != nil {
@@ -354,8 +370,10 @@ type Queries struct {
 	createBookStmt             *sql.Stmt
 	createLibraryStmt          *sql.Stmt
 	createSeriesStmt           *sql.Stmt
+	deleteBookStmt             *sql.Stmt
 	deleteBookByPathStmt       *sql.Stmt
 	deleteLibraryStmt          *sql.Stmt
+	deleteSeriesStmt           *sql.Stmt
 	getAllAuthorsStmt          *sql.Stmt
 	getAllTagsStmt             *sql.Stmt
 	getAuthorsForSeriesStmt    *sql.Stmt
@@ -395,8 +413,10 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createBookStmt:             q.createBookStmt,
 		createLibraryStmt:          q.createLibraryStmt,
 		createSeriesStmt:           q.createSeriesStmt,
+		deleteBookStmt:             q.deleteBookStmt,
 		deleteBookByPathStmt:       q.deleteBookByPathStmt,
 		deleteLibraryStmt:          q.deleteLibraryStmt,
+		deleteSeriesStmt:           q.deleteSeriesStmt,
 		getAllAuthorsStmt:          q.getAllAuthorsStmt,
 		getAllTagsStmt:             q.getAllTagsStmt,
 		getAuthorsForSeriesStmt:    q.getAuthorsForSeriesStmt,

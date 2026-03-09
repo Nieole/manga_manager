@@ -15,8 +15,10 @@ type Querier interface {
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
 	CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error)
+	DeleteBook(ctx context.Context, id int64) error
 	DeleteBookByPath(ctx context.Context, path string) error
 	DeleteLibrary(ctx context.Context, id int64) error
+	DeleteSeries(ctx context.Context, id int64) error
 	GetAllAuthors(ctx context.Context) ([]Author, error)
 	GetAllTags(ctx context.Context) ([]Tag, error)
 	GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Author, error)

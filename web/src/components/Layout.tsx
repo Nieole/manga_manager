@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -182,6 +182,34 @@ export default function Layout() {
         }
     };
 
+    const handleScrapeLibrary = async (e: React.MouseEvent, id: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (confirm("是否启动后台任务，批量刮削此资源库中所有缺失元数据的系列？")) {
+            try {
+                await axios.post(`/api/libraries/${id}/scrape`, { provider: 'bangumi' });
+                alert("刮削任务已提交，请留意界面底部的进度提示。");
+            } catch (error) {
+                console.error("Trigger scrape failed", error);
+                alert("刮削指令下发失败");
+            }
+        }
+    };
+
+    const handleCleanupLibrary = async (e: React.MouseEvent, id: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (confirm("确定要清理此资源库中已失效的记录吗？\n（物理文件已不在的记录将被删除）")) {
+            try {
+                await axios.post(`/api/libraries/${id}/cleanup`);
+                alert("清理任务已提交后台处理。");
+            } catch (error) {
+                console.error("Trigger cleanup failed", error);
+                alert("清理指令下发失败");
+            }
+        }
+    };
+
     const handleAddLibrary = async (e: React.FormEvent) => {
         e.preventDefault();
         setAdding(true);
@@ -336,6 +364,20 @@ export default function Layout() {
                                         title="强制全量读取"
                                     >
                                         <RefreshCw className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        onClick={(e) => handleScrapeLibrary(e, String(lib.id))}
+                                        className="text-gray-500 hover:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                                        title="刮削缺失元数据"
+                                    >
+                                        <Download className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        onClick={(e) => handleCleanupLibrary(e, String(lib.id))}
+                                        className="text-gray-500 hover:text-yellow-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                                        title="清理失效资源"
+                                    >
+                                        <Eraser className="w-4 h-4" />
                                     </button>
                                     <button
                                         onClick={(e) => {

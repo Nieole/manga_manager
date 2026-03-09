@@ -37,6 +37,23 @@ type Book struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
+type Collection struct {
+	ID          int64          `json:"id"`
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+	CoverUrl    sql.NullString `json:"cover_url"`
+	SortOrder   int64          `json:"sort_order"`
+	CreatedAt   sql.NullTime   `json:"created_at"`
+	UpdatedAt   sql.NullTime   `json:"updated_at"`
+}
+
+type CollectionSeries struct {
+	CollectionID int64        `json:"collection_id"`
+	SeriesID     int64        `json:"series_id"`
+	SortOrder    int64        `json:"sort_order"`
+	AddedAt      sql.NullTime `json:"added_at"`
+}
+
 type Library struct {
 	ID           int64        `json:"id"`
 	Name         string       `json:"name"`
@@ -45,6 +62,14 @@ type Library struct {
 	ScanInterval int64        `json:"scan_interval"`
 	ScanFormats  string       `json:"scan_formats"`
 	CreatedAt    sql.NullTime `json:"created_at"`
+}
+
+type ReadingActivity struct {
+	ID        int64        `json:"id"`
+	BookID    int64        `json:"book_id"`
+	Date      string       `json:"date"`
+	PagesRead int64        `json:"pages_read"`
+	CreatedAt sql.NullTime `json:"created_at"`
 }
 
 type Series struct {
@@ -78,6 +103,14 @@ type SeriesLink struct {
 	Name      string       `json:"name"`
 	Url       string       `json:"url"`
 	CreatedAt sql.NullTime `json:"created_at"`
+}
+
+type SeriesRelation struct {
+	ID             int64        `json:"id"`
+	SourceSeriesID int64        `json:"source_series_id"`
+	TargetSeriesID int64        `json:"target_series_id"`
+	RelationType   string       `json:"relation_type"`
+	CreatedAt      sql.NullTime `json:"created_at"`
 }
 
 type SeriesTag struct {

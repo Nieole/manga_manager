@@ -154,6 +154,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
+		r.Post("/libraries/{libraryId}/scrape", c.scrapeLibrary)
+		r.Post("/libraries/{libraryId}/cleanup", c.cleanupLibrary)
 		r.Delete("/libraries/{libraryId}", c.deleteLibrary)
 		r.Get("/browse-dirs", c.browseDirs)
 		r.Get("/metadata/search", c.searchMetadata)
@@ -165,6 +167,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
 			r.Get("/info/{seriesId}", c.getSeriesInfo)
 			r.Put("/info/{seriesId}", c.updateSeriesInfo)
+			r.Post("/{seriesId}/rescan", c.scanSeries)
 			r.Post("/{seriesId}/scrape", c.scrapeSeriesMetadata)
 			r.Get("/{seriesId}/scrape-search", c.scrapeSearchMetadata)
 			r.Post("/{seriesId}/scrape-apply", c.applyScrapedMetadata)
@@ -395,6 +398,26 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
 }
 
+func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	forceParam := r.URL.Query().Get("force")
+	isForce := forceParam == "true"
+
+	go func() {
+		err := c.scanner.ScanSeries(context.Background(), seriesID, isForce)
+		if err != nil {
+			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
+		}
+	}()
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
+}
+
 func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libID, err := parseID(r, "libraryId")
@@ -413,6 +436,24 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 		series = []database.ListSeriesByLibraryRow{}
 	}
 	jsonResponse(w, http.StatusOK, series)
+}
+
+// 清理失效资源记录
+func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+
+	go func() {
+		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
+		if err != nil {
+			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
+		}
+	}()
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "Cleanup initiated"})
 }
 
 func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
