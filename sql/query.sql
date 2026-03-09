@@ -123,10 +123,6 @@ SET
     rating = ?,
     language = ?,
     locked_fields = ?,
-    is_favorite = ?,
-    volume_count = ?,
-    book_count = ?,
-    total_pages = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;

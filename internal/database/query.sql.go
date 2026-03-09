@@ -1003,10 +1003,6 @@ SET
     rating = ?,
     language = ?,
     locked_fields = ?,
-    is_favorite = ?,
-    volume_count = ?,
-    book_count = ?,
-    total_pages = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, path, created_at, updated_at, is_favorite, volume_count, book_count, total_pages
@@ -1020,10 +1016,6 @@ type UpdateSeriesMetadataParams struct {
 	Rating       sql.NullFloat64 `json:"rating"`
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
-	IsFavorite   bool            `json:"is_favorite"`
-	VolumeCount  int64           `json:"volume_count"`
-	BookCount    int64           `json:"book_count"`
-	TotalPages   int64           `json:"total_pages"`
 	ID           int64           `json:"id"`
 }
 
@@ -1036,10 +1028,6 @@ func (q *Queries) UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMeta
 		arg.Rating,
 		arg.Language,
 		arg.LockedFields,
-		arg.IsFavorite,
-		arg.VolumeCount,
-		arg.BookCount,
-		arg.TotalPages,
 		arg.ID,
 	)
 	var i Series
