@@ -1466,18 +1466,20 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 
 	go func(libraryID int64) {
 		ctx := context.Background()
-		c.PublishEvent(fmt.Sprintf("library_message:%d:AI 智能分组开始", libraryID))
+		c.PublishEvent(`task_progress:{"type":"ai_grouping","current":0,"total":1,"message":"AI 智能分组开始..."}`)
 
 		dbCache := c.store.(*database.SqlStore)
 		seriesRows, err := dbCache.GetSeriesWithoutCollection(ctx, libraryID)
 		if err != nil {
 			slog.Error("Failed to fetch series for grouping", "error", err)
-			c.PublishEvent(fmt.Sprintf("library_error:%d:AI 分组失败 (数据库获取异常)", libraryID))
+			c.PublishEvent(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"AI 分组失败 (数据库获取异常)"}`)
 			return
 		}
 
+		slog.Info("AI grouping: fetched candidate series", "library_id", libraryID, "count", len(seriesRows))
+
 		if len(seriesRows) == 0 {
-			c.PublishEvent(fmt.Sprintf("library_message:%d:目前此库中所有带简介的作品已分组完成", libraryID))
+			c.PublishEvent(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"此库中所有作品已分组完成"}`)
 			return
 		}
 
@@ -1503,7 +1505,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)
-			c.PublishEvent(fmt.Sprintf("library_error:%d:AI 摘要生成失败: %v", libraryID, err))
+			c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"AI 分组失败: %s"}`, err.Error()))
 			return
 		}
 
@@ -1525,6 +1527,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		c.PublishEvent(fmt.Sprintf("library_message:%d:AI 智能分组成功完成 (生成了 %d 个合集)", libraryID, len(collections)))
+		c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"AI 智能分组成功完成 (生成了 %d 个合集)"}`, len(collections)))
+		c.PublishEvent("refresh")
 	}(libID)
 }

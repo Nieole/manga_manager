@@ -735,7 +735,7 @@ const getSeriesWithoutCollection = `-- name: GetSeriesWithoutCollection :many
 SELECT s.id, s.title, s.name, s.summary
 FROM series s
 LEFT JOIN collection_series cs ON s.id = cs.series_id
-WHERE s.library_id = ? AND cs.collection_id IS NULL AND (s.summary IS NOT NULL AND s.summary != '')
+WHERE s.library_id = ? AND cs.collection_id IS NULL
 `
 
 type GetSeriesWithoutCollectionRow struct {
