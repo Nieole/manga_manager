@@ -386,6 +386,53 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 	return i, err
 }
 
+const getCandidateSeriesForAI = `-- name: GetCandidateSeriesForAI :many
+SELECT s.id, s.title, s.name, s.summary, 
+       (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
+FROM series s
+WHERE s.summary IS NOT NULL AND s.summary != '' 
+  AND (s.total_pages = 0 OR (CAST(s.book_count AS REAL) > 0 AND (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) < s.book_count * 0.5))
+ORDER BY RANDOM()
+LIMIT ?
+`
+
+type GetCandidateSeriesForAIRow struct {
+	ID        int64          `json:"id"`
+	Title     sql.NullString `json:"title"`
+	Name      string         `json:"name"`
+	Summary   sql.NullString `json:"summary"`
+	CoverPath sql.NullString `json:"cover_path"`
+}
+
+func (q *Queries) GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error) {
+	rows, err := q.query(ctx, q.getCandidateSeriesForAIStmt, getCandidateSeriesForAI, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetCandidateSeriesForAIRow
+	for rows.Next() {
+		var i GetCandidateSeriesForAIRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Name,
+			&i.Summary,
+			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLibrary = `-- name: GetLibrary :one
 SELECT id, name, path, auto_scan, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
 `
@@ -684,6 +731,48 @@ func (q *Queries) GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]Ge
 	return items, nil
 }
 
+const getSeriesWithoutCollection = `-- name: GetSeriesWithoutCollection :many
+SELECT s.id, s.title, s.name, s.summary
+FROM series s
+LEFT JOIN collection_series cs ON s.id = cs.series_id
+WHERE s.library_id = ? AND cs.collection_id IS NULL AND (s.summary IS NOT NULL AND s.summary != '')
+`
+
+type GetSeriesWithoutCollectionRow struct {
+	ID      int64          `json:"id"`
+	Title   sql.NullString `json:"title"`
+	Name    string         `json:"name"`
+	Summary sql.NullString `json:"summary"`
+}
+
+func (q *Queries) GetSeriesWithoutCollection(ctx context.Context, libraryID int64) ([]GetSeriesWithoutCollectionRow, error) {
+	rows, err := q.query(ctx, q.getSeriesWithoutCollectionStmt, getSeriesWithoutCollection, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSeriesWithoutCollectionRow
+	for rows.Next() {
+		var i GetSeriesWithoutCollectionRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Name,
+			&i.Summary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTagsForSeries = `-- name: GetTagsForSeries :many
 SELECT t.id, t.name, t.created_at FROM tags t
 JOIN series_tags st ON t.id = st.tag_id
@@ -700,6 +789,45 @@ func (q *Queries) GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, 
 	for rows.Next() {
 		var i Tag
 		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTopReadingTags = `-- name: GetTopReadingTags :many
+SELECT t.name, COUNT(*) as tag_count
+FROM tags t
+JOIN series_tags st ON t.id = st.tag_id
+JOIN books b ON st.series_id = b.series_id
+JOIN reading_activity ra ON b.id = ra.book_id
+GROUP BY t.id
+ORDER BY tag_count DESC
+LIMIT ?
+`
+
+type GetTopReadingTagsRow struct {
+	Name     string `json:"name"`
+	TagCount int64  `json:"tag_count"`
+}
+
+func (q *Queries) GetTopReadingTags(ctx context.Context, limit int64) ([]GetTopReadingTagsRow, error) {
+	rows, err := q.query(ctx, q.getTopReadingTagsStmt, getTopReadingTags, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTopReadingTagsRow
+	for rows.Next() {
+		var i GetTopReadingTagsRow
+		if err := rows.Scan(&i.Name, &i.TagCount); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -244,3 +244,28 @@ DELETE FROM series WHERE id = ?;
 
 -- name: DeleteBook :exec
 DELETE FROM books WHERE id = ?;
+
+-- name: GetTopReadingTags :many
+SELECT t.name, COUNT(*) as tag_count
+FROM tags t
+JOIN series_tags st ON t.id = st.tag_id
+JOIN books b ON st.series_id = b.series_id
+JOIN reading_activity ra ON b.id = ra.book_id
+GROUP BY t.id
+ORDER BY tag_count DESC
+LIMIT ?;
+
+-- name: GetCandidateSeriesForAI :many
+SELECT s.id, s.title, s.name, s.summary, 
+       (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
+FROM series s
+WHERE s.summary IS NOT NULL AND s.summary != '' 
+  AND (s.total_pages = 0 OR (CAST(s.book_count AS REAL) > 0 AND (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) < s.book_count * 0.5))
+ORDER BY RANDOM()
+LIMIT ?;
+
+-- name: GetSeriesWithoutCollection :many
+SELECT s.id, s.title, s.name, s.summary
+FROM series s
+LEFT JOIN collection_series cs ON s.id = cs.series_id
+WHERE s.library_id = ? AND cs.collection_id IS NULL AND (s.summary IS NOT NULL AND s.summary != '');

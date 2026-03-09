@@ -19,6 +19,7 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
@@ -156,11 +157,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Put("/libraries/{libraryId}", c.updateLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Post("/libraries/{libraryId}/scrape", c.scrapeLibrary)
+		r.Post("/libraries/{libraryId}/ai-grouping", c.aiGroupingLibrary)
 		r.Post("/libraries/{libraryId}/cleanup", c.cleanupLibrary)
 		r.Delete("/libraries/{libraryId}", c.deleteLibrary)
 		r.Get("/browse-dirs", c.browseDirs)
 		r.Get("/metadata/search", c.searchMetadata)
 		r.Get("/metadata/providers", c.listProviders)
+		r.Get("/recommendations", c.getRecommendations)
 		r.Route("/series", func(r chi.Router) {
 			r.Post("/bulk-update", c.bulkUpdateSeries)
 			r.Get("/search", c.searchSeriesPaged)
@@ -1334,24 +1337,163 @@ func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-// getRecommendations 基于 Tag 权重返回个性化推荐
+type AIRecommendationResponse struct {
+	SeriesID  int64  `json:"series_id"`
+	Reason    string `json:"reason"`
+	Title     string `json:"title"`
+	CoverPath string `json:"cover_path"`
+}
+
+// getRecommendations 基于本地阅读历史的综合 LLM 推荐
 func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) {
-	limitStr := r.URL.Query().Get("limit")
-	limit := 10
-	if limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
+	ctx := r.Context()
+	dbCache := c.store.(*database.SqlStore)
+
+	// 1. 获取用户最常看的 10 个标签
+	tagRows, err := dbCache.GetTopReadingTags(ctx, 10)
+	var userTags []string
+	if err == nil {
+		for _, tr := range tagRows {
+			userTags = append(userTags, tr.Name)
 		}
 	}
 
-	items, err := c.store.GetRecommendations(r.Context(), limit)
+	// 2. 随机获取 20 本可能有兴趣的候选漫画
+	candidateRows, err := dbCache.GetCandidateSeriesForAI(ctx, 20)
 	if err != nil {
-		slog.Error("GetRecommendations failed", "error", err)
-		jsonError(w, http.StatusInternalServerError, "Failed to get recommendations")
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch candidates from database")
 		return
 	}
-	if items == nil {
-		items = []database.RecommendedSeries{}
+
+	var candidates []metadata.CandidateSeries
+	var candidatesMap = make(map[int64]database.GetCandidateSeriesForAIRow)
+	for _, cr := range candidateRows {
+		title := cr.Title.String
+		if title == "" {
+			title = cr.Name
+		}
+		summary := cr.Summary.String
+		candidatesMap[cr.ID] = cr
+		candidates = append(candidates, metadata.CandidateSeries{
+			ID:      cr.ID,
+			Title:   title,
+			Summary: summary,
+		})
 	}
-	jsonResponse(w, http.StatusOK, items)
+
+	if len(candidates) == 0 {
+		jsonResponse(w, http.StatusOK, []AIRecommendationResponse{}) // 没有候选则不推荐
+		return
+	}
+
+	// 3. 构建 Provider
+	provider := metadata.NewOllamaProvider(c.config.Ollama.Endpoint, c.config.Ollama.Model)
+
+	// 4. 交给 LLM 甄选并产出理
+	recList, err := provider.GenerateRecommendations(ctx, userTags, candidates, 3)
+	if err != nil {
+		slog.Error("LLM failed to generate recommendations", "error", err)
+		jsonError(w, http.StatusInternalServerError, "AI inference failed: "+err.Error())
+		return
+	}
+
+	// 5. 组合最终回包数据
+	var finalRecs []AIRecommendationResponse
+	for _, rec := range recList {
+		cRow, ok := candidatesMap[rec.SeriesID]
+		if !ok {
+			continue // AI幻觉
+		}
+		title := cRow.Title.String
+		if title == "" {
+			title = cRow.Name
+		}
+		coverPath := ""
+		if cRow.CoverPath.Valid {
+			coverPath = cRow.CoverPath.String
+		}
+		finalRecs = append(finalRecs, AIRecommendationResponse{
+			SeriesID:  rec.SeriesID,
+			Reason:    rec.Reason,
+			Title:     title,
+			CoverPath: coverPath,
+		})
+	}
+
+	jsonResponse(w, http.StatusOK, finalRecs)
+}
+
+// aiGroupingLibrary 扫描资料库中没有集合的系列，利用 LLM 进行智能分组
+func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
+	libID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组任务已提交至后台"})
+
+	go func(libraryID int64) {
+		ctx := context.Background()
+		c.PublishEvent(fmt.Sprintf("library_message:%d:AI 智能分组开始", libraryID))
+
+		dbCache := c.store.(*database.SqlStore)
+		seriesRows, err := dbCache.GetSeriesWithoutCollection(ctx, libraryID)
+		if err != nil {
+			slog.Error("Failed to fetch series for grouping", "error", err)
+			c.PublishEvent(fmt.Sprintf("library_error:%d:AI 分组失败 (数据库获取异常)", libraryID))
+			return
+		}
+
+		if len(seriesRows) == 0 {
+			c.PublishEvent(fmt.Sprintf("library_message:%d:目前此库中所有带简介的作品已分组完成", libraryID))
+			return
+		}
+
+		chunkSize := 50
+		if len(seriesRows) > chunkSize {
+			seriesRows = seriesRows[:chunkSize]
+		}
+
+		var candidates []metadata.CandidateSeries
+		for _, row := range seriesRows {
+			title := row.Title.String
+			if title == "" {
+				title = row.Name
+			}
+			candidates = append(candidates, metadata.CandidateSeries{
+				ID:      row.ID,
+				Title:   title,
+				Summary: row.Summary.String,
+			})
+		}
+
+		provider := metadata.NewOllamaProvider(c.config.Ollama.Endpoint, c.config.Ollama.Model)
+		collections, err := provider.GenerateGrouping(ctx, candidates)
+		if err != nil {
+			slog.Error("Failed to generate grouping", "error", err)
+			c.PublishEvent(fmt.Sprintf("library_error:%d:AI 摘要生成失败: %v", libraryID, err))
+			return
+		}
+
+		dbObj := dbCache.DB()
+
+		for _, col := range collections {
+			if len(col.SeriesIDs) == 0 {
+				continue
+			}
+			res, err := dbObj.ExecContext(ctx, "INSERT INTO collections (name, description) VALUES (?, ?)", col.Name, col.Description)
+			if err != nil {
+				slog.Error("Insert collection failed", "error", err)
+				continue
+			}
+			newColID, _ := res.LastInsertId()
+
+			for _, sid := range col.SeriesIDs {
+				dbObj.ExecContext(ctx, "INSERT OR IGNORE INTO collection_series (collection_id, series_id) VALUES (?, ?)", newColID, sid)
+			}
+		}
+
+		c.PublishEvent(fmt.Sprintf("library_message:%d:AI 智能分组成功完成 (生成了 %d 个合集)", libraryID, len(collections)))
+	}(libID)
 }

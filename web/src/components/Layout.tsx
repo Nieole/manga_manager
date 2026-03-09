@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles } from 'lucide-react';
 
 interface Library {
     id: string;
@@ -273,6 +273,20 @@ export default function Layout() {
         }
     };
 
+    const handleAIGrouping = async (e: React.MouseEvent, id: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (confirm("这可能会花费一些时间调用 AI 进行自动分类计算。是否确认执行？")) {
+            try {
+                await axios.post(`/api/libraries/${id}/ai-grouping`);
+                alert("AI 智能分组任务已提交后台计算。");
+            } catch (error) {
+                console.error("Trigger AI grouping failed", error);
+                alert("提交 AI 智能分组请求失败");
+            }
+        }
+    };
+
     return (
         <div className="min-h-screen bg-komgaDark text-gray-200 font-sans flex flex-col relative">
             <header className="bg-komgaSurface shadow-md sticky top-0 z-20 px-4 sm:px-6 py-4 flex items-center justify-between border-b border-gray-800">
@@ -459,6 +473,13 @@ export default function Layout() {
                                                     >
                                                         <Eraser className="w-4 h-4 mr-2" />
                                                         清理失效资源
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { setOpenMenuId(null); handleAIGrouping(e, String(lib.id)); }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-komgaPrimary hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                    >
+                                                        <Sparkles className="w-4 h-4 mr-2" />
+                                                        AI 智能分组
                                                     </button>
                                                     <div className="border-t border-gray-700"></div>
                                                     <button

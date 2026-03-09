@@ -69,6 +69,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBookByPathStmt, err = db.PrepareContext(ctx, getBookByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBookByPath: %w", err)
 	}
+	if q.getCandidateSeriesForAIStmt, err = db.PrepareContext(ctx, getCandidateSeriesForAI); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCandidateSeriesForAI: %w", err)
+	}
 	if q.getLibraryStmt, err = db.PrepareContext(ctx, getLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLibrary: %w", err)
 	}
@@ -87,8 +90,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getSeriesByLibraryStmt, err = db.PrepareContext(ctx, getSeriesByLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeriesByLibrary: %w", err)
 	}
+	if q.getSeriesWithoutCollectionStmt, err = db.PrepareContext(ctx, getSeriesWithoutCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSeriesWithoutCollection: %w", err)
+	}
 	if q.getTagsForSeriesStmt, err = db.PrepareContext(ctx, getTagsForSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTagsForSeries: %w", err)
+	}
+	if q.getTopReadingTagsStmt, err = db.PrepareContext(ctx, getTopReadingTags); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTopReadingTags: %w", err)
 	}
 	if q.linkSeriesAuthorStmt, err = db.PrepareContext(ctx, linkSeriesAuthor); err != nil {
 		return nil, fmt.Errorf("error preparing query LinkSeriesAuthor: %w", err)
@@ -218,6 +227,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getBookByPathStmt: %w", cerr)
 		}
 	}
+	if q.getCandidateSeriesForAIStmt != nil {
+		if cerr := q.getCandidateSeriesForAIStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCandidateSeriesForAIStmt: %w", cerr)
+		}
+	}
 	if q.getLibraryStmt != nil {
 		if cerr := q.getLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getLibraryStmt: %w", cerr)
@@ -248,9 +262,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getSeriesByLibraryStmt: %w", cerr)
 		}
 	}
+	if q.getSeriesWithoutCollectionStmt != nil {
+		if cerr := q.getSeriesWithoutCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSeriesWithoutCollectionStmt: %w", cerr)
+		}
+	}
 	if q.getTagsForSeriesStmt != nil {
 		if cerr := q.getTagsForSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getTagsForSeriesStmt: %w", cerr)
+		}
+	}
+	if q.getTopReadingTagsStmt != nil {
+		if cerr := q.getTopReadingTagsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTopReadingTagsStmt: %w", cerr)
 		}
 	}
 	if q.linkSeriesAuthorStmt != nil {
@@ -370,89 +394,95 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                         DBTX
-	tx                         *sql.Tx
-	clearSeriesAuthorsStmt     *sql.Stmt
-	clearSeriesLinksStmt       *sql.Stmt
-	clearSeriesTagsStmt        *sql.Stmt
-	createBookStmt             *sql.Stmt
-	createLibraryStmt          *sql.Stmt
-	createSeriesStmt           *sql.Stmt
-	deleteBookStmt             *sql.Stmt
-	deleteBookByPathStmt       *sql.Stmt
-	deleteLibraryStmt          *sql.Stmt
-	deleteSeriesStmt           *sql.Stmt
-	getAllAuthorsStmt          *sql.Stmt
-	getAllTagsStmt             *sql.Stmt
-	getAuthorsForSeriesStmt    *sql.Stmt
-	getBookStmt                *sql.Stmt
-	getBookByPathStmt          *sql.Stmt
-	getLibraryStmt             *sql.Stmt
-	getLinksForSeriesStmt      *sql.Stmt
-	getNextBookInSeriesStmt    *sql.Stmt
-	getRecentReadSeriesStmt    *sql.Stmt
-	getSeriesStmt              *sql.Stmt
-	getSeriesByLibraryStmt     *sql.Stmt
-	getTagsForSeriesStmt       *sql.Stmt
-	linkSeriesAuthorStmt       *sql.Stmt
-	linkSeriesLinkStmt         *sql.Stmt
-	linkSeriesTagStmt          *sql.Stmt
-	listBooksByLibraryStmt     *sql.Stmt
-	listBooksBySeriesStmt      *sql.Stmt
-	listLibrariesStmt          *sql.Stmt
-	listSeriesByLibraryStmt    *sql.Stmt
-	updateBookProgressStmt     *sql.Stmt
-	updateLibraryStmt          *sql.Stmt
-	updateSeriesFavoriteStmt   *sql.Stmt
-	updateSeriesMetadataStmt   *sql.Stmt
-	updateSeriesStatisticsStmt *sql.Stmt
-	upsertAuthorStmt           *sql.Stmt
-	upsertBookByPathStmt       *sql.Stmt
-	upsertSeriesByPathStmt     *sql.Stmt
-	upsertTagStmt              *sql.Stmt
+	db                             DBTX
+	tx                             *sql.Tx
+	clearSeriesAuthorsStmt         *sql.Stmt
+	clearSeriesLinksStmt           *sql.Stmt
+	clearSeriesTagsStmt            *sql.Stmt
+	createBookStmt                 *sql.Stmt
+	createLibraryStmt              *sql.Stmt
+	createSeriesStmt               *sql.Stmt
+	deleteBookStmt                 *sql.Stmt
+	deleteBookByPathStmt           *sql.Stmt
+	deleteLibraryStmt              *sql.Stmt
+	deleteSeriesStmt               *sql.Stmt
+	getAllAuthorsStmt              *sql.Stmt
+	getAllTagsStmt                 *sql.Stmt
+	getAuthorsForSeriesStmt        *sql.Stmt
+	getBookStmt                    *sql.Stmt
+	getBookByPathStmt              *sql.Stmt
+	getCandidateSeriesForAIStmt    *sql.Stmt
+	getLibraryStmt                 *sql.Stmt
+	getLinksForSeriesStmt          *sql.Stmt
+	getNextBookInSeriesStmt        *sql.Stmt
+	getRecentReadSeriesStmt        *sql.Stmt
+	getSeriesStmt                  *sql.Stmt
+	getSeriesByLibraryStmt         *sql.Stmt
+	getSeriesWithoutCollectionStmt *sql.Stmt
+	getTagsForSeriesStmt           *sql.Stmt
+	getTopReadingTagsStmt          *sql.Stmt
+	linkSeriesAuthorStmt           *sql.Stmt
+	linkSeriesLinkStmt             *sql.Stmt
+	linkSeriesTagStmt              *sql.Stmt
+	listBooksByLibraryStmt         *sql.Stmt
+	listBooksBySeriesStmt          *sql.Stmt
+	listLibrariesStmt              *sql.Stmt
+	listSeriesByLibraryStmt        *sql.Stmt
+	updateBookProgressStmt         *sql.Stmt
+	updateLibraryStmt              *sql.Stmt
+	updateSeriesFavoriteStmt       *sql.Stmt
+	updateSeriesMetadataStmt       *sql.Stmt
+	updateSeriesStatisticsStmt     *sql.Stmt
+	upsertAuthorStmt               *sql.Stmt
+	upsertBookByPathStmt           *sql.Stmt
+	upsertSeriesByPathStmt         *sql.Stmt
+	upsertTagStmt                  *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                         tx,
-		tx:                         tx,
-		clearSeriesAuthorsStmt:     q.clearSeriesAuthorsStmt,
-		clearSeriesLinksStmt:       q.clearSeriesLinksStmt,
-		clearSeriesTagsStmt:        q.clearSeriesTagsStmt,
-		createBookStmt:             q.createBookStmt,
-		createLibraryStmt:          q.createLibraryStmt,
-		createSeriesStmt:           q.createSeriesStmt,
-		deleteBookStmt:             q.deleteBookStmt,
-		deleteBookByPathStmt:       q.deleteBookByPathStmt,
-		deleteLibraryStmt:          q.deleteLibraryStmt,
-		deleteSeriesStmt:           q.deleteSeriesStmt,
-		getAllAuthorsStmt:          q.getAllAuthorsStmt,
-		getAllTagsStmt:             q.getAllTagsStmt,
-		getAuthorsForSeriesStmt:    q.getAuthorsForSeriesStmt,
-		getBookStmt:                q.getBookStmt,
-		getBookByPathStmt:          q.getBookByPathStmt,
-		getLibraryStmt:             q.getLibraryStmt,
-		getLinksForSeriesStmt:      q.getLinksForSeriesStmt,
-		getNextBookInSeriesStmt:    q.getNextBookInSeriesStmt,
-		getRecentReadSeriesStmt:    q.getRecentReadSeriesStmt,
-		getSeriesStmt:              q.getSeriesStmt,
-		getSeriesByLibraryStmt:     q.getSeriesByLibraryStmt,
-		getTagsForSeriesStmt:       q.getTagsForSeriesStmt,
-		linkSeriesAuthorStmt:       q.linkSeriesAuthorStmt,
-		linkSeriesLinkStmt:         q.linkSeriesLinkStmt,
-		linkSeriesTagStmt:          q.linkSeriesTagStmt,
-		listBooksByLibraryStmt:     q.listBooksByLibraryStmt,
-		listBooksBySeriesStmt:      q.listBooksBySeriesStmt,
-		listLibrariesStmt:          q.listLibrariesStmt,
-		listSeriesByLibraryStmt:    q.listSeriesByLibraryStmt,
-		updateBookProgressStmt:     q.updateBookProgressStmt,
-		updateLibraryStmt:          q.updateLibraryStmt,
-		updateSeriesFavoriteStmt:   q.updateSeriesFavoriteStmt,
-		updateSeriesMetadataStmt:   q.updateSeriesMetadataStmt,
-		updateSeriesStatisticsStmt: q.updateSeriesStatisticsStmt,
-		upsertAuthorStmt:           q.upsertAuthorStmt,
-		upsertBookByPathStmt:       q.upsertBookByPathStmt,
-		upsertSeriesByPathStmt:     q.upsertSeriesByPathStmt,
-		upsertTagStmt:              q.upsertTagStmt,
+		db:                             tx,
+		tx:                             tx,
+		clearSeriesAuthorsStmt:         q.clearSeriesAuthorsStmt,
+		clearSeriesLinksStmt:           q.clearSeriesLinksStmt,
+		clearSeriesTagsStmt:            q.clearSeriesTagsStmt,
+		createBookStmt:                 q.createBookStmt,
+		createLibraryStmt:              q.createLibraryStmt,
+		createSeriesStmt:               q.createSeriesStmt,
+		deleteBookStmt:                 q.deleteBookStmt,
+		deleteBookByPathStmt:           q.deleteBookByPathStmt,
+		deleteLibraryStmt:              q.deleteLibraryStmt,
+		deleteSeriesStmt:               q.deleteSeriesStmt,
+		getAllAuthorsStmt:              q.getAllAuthorsStmt,
+		getAllTagsStmt:                 q.getAllTagsStmt,
+		getAuthorsForSeriesStmt:        q.getAuthorsForSeriesStmt,
+		getBookStmt:                    q.getBookStmt,
+		getBookByPathStmt:              q.getBookByPathStmt,
+		getCandidateSeriesForAIStmt:    q.getCandidateSeriesForAIStmt,
+		getLibraryStmt:                 q.getLibraryStmt,
+		getLinksForSeriesStmt:          q.getLinksForSeriesStmt,
+		getNextBookInSeriesStmt:        q.getNextBookInSeriesStmt,
+		getRecentReadSeriesStmt:        q.getRecentReadSeriesStmt,
+		getSeriesStmt:                  q.getSeriesStmt,
+		getSeriesByLibraryStmt:         q.getSeriesByLibraryStmt,
+		getSeriesWithoutCollectionStmt: q.getSeriesWithoutCollectionStmt,
+		getTagsForSeriesStmt:           q.getTagsForSeriesStmt,
+		getTopReadingTagsStmt:          q.getTopReadingTagsStmt,
+		linkSeriesAuthorStmt:           q.linkSeriesAuthorStmt,
+		linkSeriesLinkStmt:             q.linkSeriesLinkStmt,
+		linkSeriesTagStmt:              q.linkSeriesTagStmt,
+		listBooksByLibraryStmt:         q.listBooksByLibraryStmt,
+		listBooksBySeriesStmt:          q.listBooksBySeriesStmt,
+		listLibrariesStmt:              q.listLibrariesStmt,
+		listSeriesByLibraryStmt:        q.listSeriesByLibraryStmt,
+		updateBookProgressStmt:         q.updateBookProgressStmt,
+		updateLibraryStmt:              q.updateLibraryStmt,
+		updateSeriesFavoriteStmt:       q.updateSeriesFavoriteStmt,
+		updateSeriesMetadataStmt:       q.updateSeriesMetadataStmt,
+		updateSeriesStatisticsStmt:     q.updateSeriesStatisticsStmt,
+		upsertAuthorStmt:               q.upsertAuthorStmt,
+		upsertBookByPathStmt:           q.upsertBookByPathStmt,
+		upsertSeriesByPathStmt:         q.upsertSeriesByPathStmt,
+		upsertTagStmt:                  q.upsertTagStmt,
 	}
 }

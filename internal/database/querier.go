@@ -24,13 +24,16 @@ type Querier interface {
 	GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Author, error)
 	GetBook(ctx context.Context, id int64) (Book, error)
 	GetBookByPath(ctx context.Context, path string) (Book, error)
+	GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error)
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
 	GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error)
 	GetSeries(ctx context.Context, id int64) (Series, error)
 	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
+	GetSeriesWithoutCollection(ctx context.Context, libraryID int64) ([]GetSeriesWithoutCollectionRow, error)
 	GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, error)
+	GetTopReadingTags(ctx context.Context, limit int64) ([]GetTopReadingTagsRow, error)
 	LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error
 	LinkSeriesLink(ctx context.Context, arg LinkSeriesLinkParams) (SeriesLink, error)
 	LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error
