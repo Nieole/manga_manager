@@ -23,11 +23,15 @@ func NewAIProvider(provider, endpoint, model, apiKey string, timeout int) AIProv
 	if timeout <= 0 {
 		timeout = 120
 	}
-	if provider == "openai" {
+	switch provider {
+	case "openai":
 		return NewOpenAIProvider(endpoint, model, apiKey, timeout)
+	case "openai-legacy":
+		return NewOpenAILegacyProvider(endpoint, model, apiKey, timeout)
+	default:
+		// 默认回退到 ollama
+		return NewOllamaProvider(endpoint, model, timeout)
 	}
-	// 默认回退到 ollama
-	return NewOllamaProvider(endpoint, model, timeout)
 }
 
 // AIRecommendation 推荐条目结构

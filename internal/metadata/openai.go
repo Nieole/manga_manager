@@ -80,10 +80,7 @@ func (o *OpenAIProvider) sendRequest(ctx context.Context, prompt string, require
 		return "", fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	url := strings.TrimRight(o.Endpoint, "/")
-	if !strings.HasSuffix(url, "/v1/responses") {
-		url += "/v1/responses"
-	}
+	url := strings.TrimSpace(o.Endpoint)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {

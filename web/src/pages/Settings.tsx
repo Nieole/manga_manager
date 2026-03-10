@@ -459,7 +459,8 @@ const Settings: React.FC = () => {
                                 className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
                             >
                                 <option value="ollama">Ollama (Native JSON)</option>
-                                <option value="openai">OpenAI Compatible (OpenAI, DeepSeek, LM Studio, etc.)</option>
+                                <option value="openai">OpenAI (v1/responses format)</option>
+                                <option value="openai-legacy">OpenAI Compatible (v1/chat/completions)</option>
                             </select>
                         </div>
                         <div>
@@ -481,10 +482,10 @@ const Settings: React.FC = () => {
                         </label>
                         <input
                             type="text"
-                            placeholder="http://localhost:11434 或 https://api.openai.com/v1"
+                            placeholder="请填写包含 /v1/chat/completions 在内的完整 URL..."
                             value={config.llm?.endpoint || ''}
                             onChange={(e) => setConfig({ ...config, llm: { ...config.llm, endpoint: e.target.value } })}
-                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all font-mono"
                         />
                     </div>
                     <div>
