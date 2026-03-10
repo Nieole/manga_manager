@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, Heart, ArrowUp, ArrowDown, FolderHeart } from 'lucide-react';
+import { ImageIcon, Heart, ArrowUp, ArrowDown, FolderHeart, RefreshCw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 
 interface NullString {
@@ -57,6 +57,7 @@ export default function Home() {
     const [selectedSeries, setSelectedSeries] = useState<number[]>([]);
     const [showCollectionModal, setShowCollectionModal] = useState(false);
     const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+    const [rescanningId, setRescanningId] = useState<number | null>(null);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -225,6 +226,21 @@ export default function Home() {
             fetchSeriesPage(page, true);
         } catch (e) {
             console.error("Toggle favorite failed", e);
+        }
+    };
+
+    const handleRescanSeries = async (e: React.MouseEvent, seriesId: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setRescanningId(seriesId);
+        try {
+            await axios.post(`/api/series/${seriesId}/rescan?force=true`);
+            showToast('已下发重新扫描指令', 'success');
+            setTimeout(() => fetchSeriesPage(page, true), 3000);
+        } catch (err: any) {
+            showToast('重新扫描失败: ' + (err.response?.data?.error || err.message), 'error');
+        } finally {
+            setRescanningId(null);
         }
     };
 
@@ -555,15 +571,25 @@ export default function Home() {
                                                 </span>
                                             )}
                                             {!isSelectionMode && (
-                                                <button
-                                                    onClick={(e) => handleToggleFavorite(e, s.id, s.is_favorite)}
-                                                    className={`ml-auto p-1.5 rounded-full backdrop-blur border shadow-md transition-all ${s.is_favorite
-                                                        ? 'bg-red-500/20 border-red-500/40 text-red-500'
-                                                        : 'bg-black/60 border-white/10 text-white/40 hover:text-red-400 hover:bg-red-400/20 hover:border-red-400/40 opacity-0 group-hover:opacity-100'
-                                                        }`}
-                                                >
-                                                    <Heart className={`w-3.5 h-3.5 ${s.is_favorite ? 'fill-current' : ''}`} />
-                                                </button>
+                                                <div className="flex gap-1.5">
+                                                    <button
+                                                        onClick={(e) => handleRescanSeries(e, s.id)}
+                                                        disabled={rescanningId === s.id}
+                                                        className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-blue-400 hover:bg-blue-400/20 hover:border-blue-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed`}
+                                                        title="重新扫描该系列"
+                                                    >
+                                                        <RefreshCw className={`w-3.5 h-3.5 ${rescanningId === s.id ? 'animate-spin text-blue-400' : ''}`} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => handleToggleFavorite(e, s.id, s.is_favorite)}
+                                                        className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all ${s.is_favorite
+                                                            ? 'bg-red-500/20 border-red-500/40 text-red-500'
+                                                            : 'bg-black/60 border-white/10 text-white/40 hover:text-red-400 hover:bg-red-400/20 hover:border-red-400/40 opacity-0 group-hover:opacity-100'
+                                                            }`}
+                                                    >
+                                                        <Heart className={`w-3.5 h-3.5 ${s.is_favorite ? 'fill-current' : ''}`} />
+                                                    </button>
+                                                </div>
                                             )}
                                         </div>
                                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
