@@ -154,9 +154,10 @@ export default function Layout() {
         eventSource.onmessage = (event) => {
             const data = event.data as string;
             if (data === "refresh") {
-                console.log("Receive SSE refresh signal, reloading libraries...");
-                fetchLibraries();
-                // 收到后端推送后自增刷新信号以便子组件重新拉取元数据
+                console.log("Receive SSE refresh signal, triggering child refresh...");
+                // 仅递增刷新信号通知当前活跃的子页面重新拉取数据
+                // 不再调用 fetchLibraries()：避免闭包捕获过期路由状态导致页面跳转，
+                // 同时侧边栏资源库列表无需因扫描而刷新
                 setRefreshTrigger(prev => prev + 1);
             } else if (data.startsWith('task_progress:')) {
                 try {
