@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -76,6 +78,57 @@ func requestWithRouteParam(method, path string, body []byte, key, value string) 
 	routeCtx := chi.NewRouteContext()
 	routeCtx.URLParams.Add(key, value)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+}
+
+func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, seriesName, bookName string, pageCount int64) (database.Library, database.Series, database.Book) {
+	t.Helper()
+
+	libPath := filepath.Join(rootDir, libName)
+	if err := os.MkdirAll(libPath, 0o755); err != nil {
+		t.Fatalf("mkdir lib path failed: %v", err)
+	}
+
+	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
+		Name:         libName,
+		Path:         libPath,
+		AutoScan:     false,
+		ScanInterval: 60,
+		ScanFormats:  "zip,cbz,rar,cbr,pdf",
+	})
+	if err != nil {
+		t.Fatalf("CreateLibrary failed: %v", err)
+	}
+
+	seriesPath := filepath.Join(libPath, seriesName)
+	if err := os.MkdirAll(seriesPath, 0o755); err != nil {
+		t.Fatalf("mkdir series path failed: %v", err)
+	}
+
+	series, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
+		LibraryID: lib.ID,
+		Name:      seriesName,
+		Path:      seriesPath,
+	})
+	if err != nil {
+		t.Fatalf("CreateSeries failed: %v", err)
+	}
+
+	book, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      lib.ID,
+		Name:           bookName,
+		Path:           filepath.Join(seriesPath, bookName),
+		Size:           1024,
+		FileModifiedAt: time.Now(),
+		Volume:         "",
+		Title:          sql.NullString{String: "Book Title", Valid: true},
+		PageCount:      pageCount,
+	})
+	if err != nil {
+		t.Fatalf("CreateBook failed: %v", err)
+	}
+
+	return lib, series, book
 }
 
 func TestGetAndUpdateSystemConfig(t *testing.T) {
@@ -308,5 +361,108 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for duplicate scan task, got %d", rec.Code)
+	}
+}
+
+func TestUpdateBookProgressClampsToPageCount(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 12)
+
+	reqBody := []byte(`{"page":999}`)
+	req := requestWithRouteParam(http.MethodPost, "/api/books/1/progress", reqBody, "bookId", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	controller.updateBookProgress(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	updated, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if !updated.LastReadPage.Valid || updated.LastReadPage.Int64 != 12 {
+		t.Fatalf("expected clamped page 12, got %+v", updated.LastReadPage)
+	}
+}
+
+func TestBulkUpdateBookProgressMarksReadAndUnread(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 8)
+
+	readReq := httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress", bytes.NewReader([]byte(`{"book_ids":[`+strconv.FormatInt(book.ID, 10)+`],"is_read":true}`)))
+	readRec := httptest.NewRecorder()
+	controller.bulkUpdateBookProgress(readRec, readReq)
+
+	if readRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when marking read, got %d", readRec.Code)
+	}
+
+	updated, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if !updated.LastReadPage.Valid || updated.LastReadPage.Int64 != 8 {
+		t.Fatalf("expected last_read_page=8, got %+v", updated.LastReadPage)
+	}
+
+	unreadReq := httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress", bytes.NewReader([]byte(`{"book_ids":[`+strconv.FormatInt(book.ID, 10)+`],"is_read":false}`)))
+	unreadRec := httptest.NewRecorder()
+	controller.bulkUpdateBookProgress(unreadRec, unreadReq)
+
+	if unreadRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when marking unread, got %d", unreadRec.Code)
+	}
+
+	updated, err = store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if updated.LastReadPage.Valid {
+		t.Fatalf("expected unread book to clear last_read_page, got %+v", updated.LastReadPage)
+	}
+}
+
+func TestRecentReadHandlersReturnUpdatedBooks(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 15)
+
+	progressReq := requestWithRouteParam(http.MethodPost, "/api/books/1/progress", []byte(`{"page":5}`), "bookId", strconv.FormatInt(book.ID, 10))
+	progressRec := httptest.NewRecorder()
+	controller.updateBookProgress(progressRec, progressReq)
+	if progressRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", progressRec.Code)
+	}
+
+	recentSeriesReq := httptest.NewRequest(http.MethodGet, "/api/series/recent-read?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=10", nil)
+	recentSeriesRec := httptest.NewRecorder()
+	controller.getRecentReadSeries(recentSeriesRec, recentSeriesReq)
+	if recentSeriesRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from recent series, got %d", recentSeriesRec.Code)
+	}
+
+	var recentSeries struct {
+		Items []any `json:"items"`
+	}
+	if err := json.NewDecoder(recentSeriesRec.Body).Decode(&recentSeries); err != nil {
+		t.Fatalf("decode recent series failed: %v", err)
+	}
+	if len(recentSeries.Items) != 1 {
+		t.Fatalf("expected 1 recent series item, got %d", len(recentSeries.Items))
+	}
+
+	recentAllReq := httptest.NewRequest(http.MethodGet, "/api/stats/recent-read?limit=10", nil)
+	recentAllRec := httptest.NewRecorder()
+	controller.getRecentReadAll(recentAllRec, recentAllReq)
+	if recentAllRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from recent read all, got %d", recentAllRec.Code)
+	}
+
+	var recentAll []any
+	if err := json.NewDecoder(recentAllRec.Body).Decode(&recentAll); err != nil {
+		t.Fatalf("decode recent read all failed: %v", err)
+	}
+	if len(recentAll) != 1 {
+		t.Fatalf("expected 1 recent read item, got %d", len(recentAll))
 	}
 }
