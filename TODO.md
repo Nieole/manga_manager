@@ -8,7 +8,7 @@
 
 ## P1 Maintainability
 
-- [ ] Break up oversized frontend pages/components (`Layout`, `Home`, `SeriesDetail`, `BookReader`) into smaller hooks and view components.
+- [x] Break up oversized frontend pages/components (`Layout`, `Home`, `SeriesDetail`, `BookReader`) into smaller hooks and view components.
 - [ ] Expand backend test coverage for scanner, API handlers, and reading progress flows.
 - [x] Replace ad hoc background task handling with a clearer task lifecycle and status model.
 

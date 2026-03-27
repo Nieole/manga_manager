@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { BookImage, FolderOpen, Pencil } from 'lucide-react';
+import { BookImage, Pencil } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
+import { SeriesContentSection } from './series-detail/SeriesContentSection';
 import { SeriesHeader } from './series-detail/SeriesHeader';
 import { SeriesMetadataEditorModal } from './series-detail/SeriesMetadataEditorModal';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
@@ -504,113 +505,23 @@ export default function SeriesDetail() {
                 onFormChange={handleFormChange}
             />
 
-            {loading ? (
-                <div className="text-center py-20 text-gray-500 animate-pulse">正在提取书籍关系元数据...</div>
-            ) : selectedVolume ? (
-                // 渲染单个卷内的话列表
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
-                    {activeVolumeBooks.map(renderBookCard)}
-                </div>
-            ) : (
-                // 渲染顶层（卷文件夹 和 单独书册）
-                <div className="space-y-10">
-                    {volumes.length > 0 && (
-                        <div>
-                            <h3 className="text-lg font-semibold text-gray-300 mb-4 flex items-center">
-                                <FolderOpen className="w-5 h-5 mr-2 text-komgaPrimary" /> 卷列表
-                            </h3>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
-                                {volumes.map(vol => {
-                                    const isSelected = selectedVolumes.includes(vol.name);
-                                    const handleVolClick = () => {
-                                        if (isSelectionMode) {
-                                            setSelectedVolumes(prev => prev.includes(vol.name) ? prev.filter(n => n !== vol.name) : [...prev, vol.name]);
-                                        } else {
-                                            setSelectedVolume(vol.name);
-                                        }
-                                    };
-
-                                    return (
-                                        <div
-                                            key={vol.name}
-                                            onClick={handleVolClick}
-                                            className={`group flex flex-col rounded-xl overflow-hidden bg-gray-900 border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:bg-gray-800'} transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10 cursor-pointer`}
-                                        >
-                                            <div className="aspect-[3/4] w-full bg-komgaDark flex items-center justify-center relative overflow-hidden">
-                                                {isSelectionMode && (
-                                                    <div className="absolute top-2 left-2 z-30">
-                                                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'}`}>
-                                                            {isSelected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                                {vol.cover_path?.Valid && vol.cover_path?.String && vol.cover_book_id ? (
-                                                    <img src={`/api/covers/${vol.cover_book_id}${seriesInfo?.updated_at ? `?v=${new Date(seriesInfo.updated_at).getTime()}` : ''}`} className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
-                                                ) : (
-                                                    <FolderOpen className="w-16 h-16 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
-                                                )}
-
-                                                {/* 快捷按钮：卷标记 */}
-                                                {!isSelectionMode && (
-                                                    <button
-                                                        onClick={(e) => handleQuickMarkVolumeRead(e, vol.name, !(vol.read_pages >= vol.total_pages))}
-                                                        className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
-                                                        title={vol.read_pages >= vol.total_pages ? "将全卷标记为未读" : "将全卷标记为已读"}
-                                                    >
-                                                        <Pencil className={`w-4 h-4 ${vol.read_pages >= vol.total_pages ? 'text-green-400 fill-green-400/20' : ''}`} />
-                                                    </button>
-                                                )}
-                                                {/* 底部叠加卷信息 */}
-                                                <div className="absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/30 to-transparent flex items-end p-3 z-10 pointer-events-none">
-                                                    <div className="w-full flex justify-between items-center text-xs font-semibold text-gray-300">
-                                                        <span>{vol.books.length} 话</span>
-                                                        <span>{vol.total_pages} 页</span>
-                                                    </div>
-                                                </div>
-                                                {/* 卷进度条 */}
-                                                {vol.total_pages > 0 && vol.read_pages > 0 && (
-                                                    <div className="absolute inset-x-0 bottom-0 h-1 bg-gray-800/40 z-20">
-                                                        <div
-                                                            className={`h-full transition-all duration-500 ${vol.read_pages >= vol.total_pages ? 'bg-green-500' : 'bg-komgaPrimary'}`}
-                                                            style={{ width: `${Math.min(100, (vol.read_pages / vol.total_pages) * 100)}%` }}
-                                                        />
-                                                    </div>
-                                                )}
-                                            </div>
-                                            {/* 右上角叠加卷叠层徽章 */}
-                                            {!isSelectionMode && (
-                                                <div className="absolute top-2 left-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg opacity-80 group-hover:opacity-100 transition-opacity">
-                                                    Volume
-                                                </div>
-                                            )}
-                                            <div className="p-4 flex-1">
-                                                <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
-                                                    {vol.name}
-                                                </h4>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-
-                    {standaloneBooks.length > 0 && (
-                        <div>
-                            <h3 className="text-lg font-semibold text-gray-300 mb-4 flex items-center">
-                                <BookImage className="w-5 h-5 mr-2 text-komgaPrimary" /> 单行本册子
-                            </h3>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
-                                {standaloneBooks.map(renderBookCard)}
-                            </div>
-                        </div>
-                    )}
-
-                    {books.length === 0 && (
-                        <div className="text-center py-20 text-gray-500">此系列尚未包含任何资源</div>
-                    )}
-                </div>
-            )}
+            <SeriesContentSection
+                loading={loading}
+                selectedVolume={selectedVolume}
+                activeVolumeBooks={activeVolumeBooks}
+                volumes={volumes}
+                standaloneBooks={standaloneBooks}
+                books={books}
+                isSelectionMode={isSelectionMode}
+                selectedVolumes={selectedVolumes}
+                seriesUpdatedAt={seriesInfo?.updated_at}
+                onSelectVolume={setSelectedVolume}
+                onToggleSelectedVolume={(name) =>
+                    setSelectedVolumes((prev) => (prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]))
+                }
+                onQuickMarkVolumeRead={handleQuickMarkVolumeRead}
+                renderBookCard={renderBookCard}
+            />
 
             {/* 悬浮多选操作栏 */}
             {isSelectionMode && (selectedBooks.length > 0 || selectedVolumes.length > 0) && (
