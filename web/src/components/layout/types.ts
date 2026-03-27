@@ -18,3 +18,13 @@ export interface SearchHit {
     cover_path?: string;
   };
 }
+
+export interface BrowseDirEntry {
+  name: string;
+  path: string;
+}
+
+export interface BrowseDrive {
+  name: string;
+  path: string;
+}

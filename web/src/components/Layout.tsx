@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
-import type { Library, SearchHit } from './layout/types';
+import { DirectoryPicker } from './layout/DirectoryPicker';
+import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 
 export default function Layout() {
@@ -43,10 +44,10 @@ export default function Layout() {
 
     // 文件夹浏览器状态
     const [browsing, setBrowsing] = useState(false);
-    const [browseDirs, setBrowseDirs] = useState<any[]>([]);
+    const [browseDirs, setBrowseDirs] = useState<BrowseDirEntry[]>([]);
     const [browseCurrent, setBrowseCurrent] = useState('');
     const [browseParent, setBrowseParent] = useState('');
-    const [browseDrives, setBrowseDrives] = useState<any[]>([]);
+    const [browseDrives, setBrowseDrives] = useState<BrowseDrive[]>([]);
 
     const {
         searchQuery,
@@ -64,6 +65,28 @@ export default function Layout() {
     const { libId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
+
+    const openDirectoryBrowser = () => {
+        setBrowsing(true);
+        axios.get('/api/browse-dirs')
+            .then(res => {
+                setBrowseDirs(res.data.dirs || []);
+                setBrowseCurrent(res.data.current);
+                setBrowseParent(res.data.parent);
+                setBrowseDrives(res.data.drives || []);
+            })
+            .catch(() => { });
+    };
+
+    const navigateDirectoryBrowser = (path: string) => {
+        axios.get(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
+            .then(res => {
+                setBrowseDirs(res.data.dirs || []);
+                setBrowseCurrent(res.data.current);
+                setBrowseParent(res.data.parent);
+                setBrowseDrives(res.data.drives || []);
+            });
+    };
 
     const handleSelectResult = (hit: SearchHit) => {
         setIsSearchModalOpen(false);
@@ -540,80 +563,22 @@ export default function Layout() {
                                         className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-400 mb-1">路径</label>
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            required
-                                            value={newLibPath}
-                                            onChange={e => setNewLibPath(e.target.value)}
-                                            placeholder="点击「浏览」选择文件夹"
-                                            className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setBrowsing(true);
-                                                axios.get('/api/browse-dirs')
-                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); })
-                                                    .catch(() => { });
-                                            }}
-                                            className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
-                                        >
-                                            <FolderOpen className="w-4 h-4 inline mr-1" />浏览
-                                        </button>
-                                    </div>
-                                    {browsing && (
-                                        <div className="mt-3 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-                                            <div className="px-3 py-2 bg-gray-800 flex items-center justify-between text-xs">
-                                                <span className="text-gray-400 truncate flex-1 mr-2" title={browseCurrent}>{browseCurrent}</span>
-                                                <div className="flex gap-1">
-                                                    <button type="button" onClick={() => {
-                                                        setNewLibPath(browseCurrent);
-                                                        setBrowsing(false);
-                                                    }} className="px-2 py-1 bg-komgaPrimary hover:bg-purple-600 text-white rounded text-xs transition-colors">选择此目录</button>
-                                                    <button type="button" onClick={() => setBrowsing(false)} className="px-2 py-1 text-gray-400 hover:text-white transition-colors">关闭</button>
-                                                </div>
-                                            </div>
-                                            <div className="max-h-48 overflow-y-auto">
-                                                {browseDrives.length > 0 && (
-                                                    <div className="px-3 py-2 flex flex-wrap gap-1 border-b border-gray-700">
-                                                        {browseDrives.map((drv: any) => (
-                                                            <button key={drv.path} type="button" onClick={() => {
-                                                                axios.get(`/api/browse-dirs?path=${encodeURIComponent(drv.path)}`)
-                                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
-                                                            }}
-                                                                className={`px-2 py-1 text-xs rounded transition-colors ${browseCurrent.startsWith(drv.path) || browseCurrent.startsWith(drv.name)
-                                                                    ? 'bg-komgaPrimary text-white'
-                                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
-                                                                    }`}
-                                                            >{drv.name}</button>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                                {browseCurrent !== browseParent && (
-                                                    <button type="button" onClick={() => {
-                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(browseParent)}`)
-                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
-                                                    }} className="w-full text-left px-3 py-2 text-sm text-yellow-400 hover:bg-gray-800 transition-colors flex items-center">
-                                                        ↑ ..
-                                                    </button>
-                                                )}
-                                                {browseDirs.length === 0 ? (
-                                                    <div className="px-3 py-3 text-xs text-gray-500 text-center">此目录下无子文件夹</div>
-                                                ) : browseDirs.map((d: any) => (
-                                                    <button key={d.path} type="button" onClick={() => {
-                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(d.path)}`)
-                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
-                                                    }} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-komgaPrimary transition-colors flex items-center">
-                                                        <FolderOpen className="w-4 h-4 mr-2 text-komgaPrimary/60" />{d.name}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
+                                <DirectoryPicker
+                                    value={newLibPath}
+                                    onChange={setNewLibPath}
+                                    browsing={browsing}
+                                    browseCurrent={browseCurrent}
+                                    browseParent={browseParent}
+                                    browseDirs={browseDirs}
+                                    browseDrives={browseDrives}
+                                    onOpen={openDirectoryBrowser}
+                                    onClose={() => setBrowsing(false)}
+                                    onChooseCurrent={() => {
+                                        setNewLibPath(browseCurrent);
+                                        setBrowsing(false);
+                                    }}
+                                    onNavigate={navigateDirectoryBrowser}
+                                />
                             </div>
 
                             <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
@@ -702,80 +667,22 @@ export default function Layout() {
                                         className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-400 mb-1">路径</label>
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            required
-                                            value={editLibPath}
-                                            onChange={e => setEditLibPath(e.target.value)}
-                                            placeholder="点击「浏览」选择文件夹"
-                                            className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setBrowsing(true);
-                                                axios.get('/api/browse-dirs')
-                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); })
-                                                    .catch(() => { });
-                                            }}
-                                            className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
-                                        >
-                                            <FolderOpen className="w-4 h-4 inline mr-1" />浏览
-                                        </button>
-                                    </div>
-                                    {browsing && (
-                                        <div className="mt-3 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-                                            <div className="px-3 py-2 bg-gray-800 flex items-center justify-between text-xs">
-                                                <span className="text-gray-400 truncate flex-1 mr-2" title={browseCurrent}>{browseCurrent}</span>
-                                                <div className="flex gap-1">
-                                                    <button type="button" onClick={() => {
-                                                        setEditLibPath(browseCurrent);
-                                                        setBrowsing(false);
-                                                    }} className="px-2 py-1 bg-komgaPrimary hover:bg-purple-600 text-white rounded text-xs transition-colors">选择此目录</button>
-                                                    <button type="button" onClick={() => setBrowsing(false)} className="px-2 py-1 text-gray-400 hover:text-white transition-colors">关闭</button>
-                                                </div>
-                                            </div>
-                                            <div className="max-h-48 overflow-y-auto">
-                                                {browseDrives.length > 0 && (
-                                                    <div className="px-3 py-2 flex flex-wrap gap-1 border-b border-gray-700">
-                                                        {browseDrives.map((drv: any) => (
-                                                            <button key={drv.path} type="button" onClick={() => {
-                                                                axios.get(`/api/browse-dirs?path=${encodeURIComponent(drv.path)}`)
-                                                                    .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
-                                                            }}
-                                                                className={`px-2 py-1 text-xs rounded transition-colors ${browseCurrent.startsWith(drv.path) || browseCurrent.startsWith(drv.name)
-                                                                    ? 'bg-komgaPrimary text-white'
-                                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
-                                                                    }`}
-                                                            >{drv.name}</button>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                                {browseCurrent !== browseParent && (
-                                                    <button type="button" onClick={() => {
-                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(browseParent)}`)
-                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
-                                                    }} className="w-full text-left px-3 py-2 text-sm text-yellow-400 hover:bg-gray-800 transition-colors flex items-center">
-                                                        ↑ ..
-                                                    </button>
-                                                )}
-                                                {browseDirs.length === 0 ? (
-                                                    <div className="px-3 py-3 text-xs text-gray-500 text-center">此目录下无子文件夹</div>
-                                                ) : browseDirs.map((d: any) => (
-                                                    <button key={d.path} type="button" onClick={() => {
-                                                        axios.get(`/api/browse-dirs?path=${encodeURIComponent(d.path)}`)
-                                                            .then(res => { setBrowseDirs(res.data.dirs || []); setBrowseCurrent(res.data.current); setBrowseParent(res.data.parent); setBrowseDrives(res.data.drives || []); });
-                                                    }} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-komgaPrimary transition-colors flex items-center">
-                                                        <FolderOpen className="w-4 h-4 mr-2 text-komgaPrimary/60" />{d.name}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
+                                <DirectoryPicker
+                                    value={editLibPath}
+                                    onChange={setEditLibPath}
+                                    browsing={browsing}
+                                    browseCurrent={browseCurrent}
+                                    browseParent={browseParent}
+                                    browseDirs={browseDirs}
+                                    browseDrives={browseDrives}
+                                    onOpen={openDirectoryBrowser}
+                                    onClose={() => setBrowsing(false)}
+                                    onChooseCurrent={() => {
+                                        setEditLibPath(browseCurrent);
+                                        setBrowsing(false);
+                                    }}
+                                    onNavigate={navigateDirectoryBrowser}
+                                />
                             </div>
 
                             <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
