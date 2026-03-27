@@ -2,29 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
-
-interface Page {
-    number: number;
-    width: number;
-    height: number;
-}
-
-type ReadMode = 'webtoon' | 'paged';
-type ReadDirection = 'ltr' | 'rtl';
-type ScaleMode = 'original' | 'fit-height' | 'fit-width' | 'fit-screen';
-type ImageFilter = 'none' | 'nearest' | 'average' | 'bilinear' | 'bicubic' | 'lanczos3' | 'waifu2x' | 'realcugan' | 'mitchell' | 'lanczos2' | 'bspline' | 'catmullrom';
-
-// Helper for localStorage
-function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
-    const [value, setValue] = useState<T>(() => {
-        const stickyValue = window.localStorage.getItem(key);
-        return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
-    });
-    useEffect(() => {
-        window.localStorage.setItem(key, JSON.stringify(value));
-    }, [key, value]);
-    return [value, setValue];
-}
+import { getFilterStyle, getPagedImages, getScaleClasses } from './book-reader/helpers';
+import { useReaderPreferences } from './book-reader/useReaderPreferences';
+import type { ImageFilter, Page, ScaleMode } from './book-reader/types';
 
 export default function BookReader() {
     const { bookId } = useParams();
@@ -34,25 +14,35 @@ export default function BookReader() {
     const observer = useRef<IntersectionObserver | null>(null);
 
     // Reading Settings
-    const [readMode, setReadMode] = useStickyState<ReadMode>('webtoon', 'manga_read_mode');
-    const [readDirection, setReadDirection] = useStickyState<ReadDirection>('ltr', 'manga_read_direction');
-
     // --- 拖拉平移操控状态 ---
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const [scrollStart, setScrollStart] = useState({ left: 0, top: 0 });
-    const [doublePage, setDoublePage] = useStickyState<boolean>(false, 'manga_double_page');
-    const [scaleMode, setScaleMode] = useStickyState<ScaleMode>('fit-screen', 'manga_scale_mode');
-    const [imageFilter, setImageFilter] = useStickyState<ImageFilter>('bilinear', 'manga_image_filter');
-    const [autoCrop, setAutoCrop] = useStickyState<boolean>(false, 'manga_auto_crop');
-    const [preloadCount, setPreloadCount] = useStickyState<number>(3, 'manga_preload_count');
-    const [eyeProtection, setEyeProtection] = useStickyState<boolean>(false, 'manga_eye_protection');
-
-    // Waifu2x 专属超分配置偏好
-    const [w2xScale, setW2xScale] = useStickyState<number>(2, 'manga_waifu2x_scale');
-    const [w2xNoise, setW2xNoise] = useStickyState<number>(0, 'manga_waifu2x_noise');
-    const [w2xFormat, setW2xFormat] = useStickyState<string>('webp', 'manga_waifu2x_format');
+    const {
+        readMode,
+        setReadMode,
+        readDirection,
+        setReadDirection,
+        doublePage,
+        setDoublePage,
+        scaleMode,
+        setScaleMode,
+        imageFilter,
+        setImageFilter,
+        autoCrop,
+        setAutoCrop,
+        preloadCount,
+        setPreloadCount,
+        eyeProtection,
+        setEyeProtection,
+        w2xScale,
+        setW2xScale,
+        w2xNoise,
+        setW2xNoise,
+        w2xFormat,
+        setW2xFormat,
+    } = useReaderPreferences();
 
     // UI State
     const [showSettings, setShowSettings] = useState(false);
@@ -252,57 +242,6 @@ export default function BookReader() {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [readMode, readDirection, doublePage, pages.length]);
-
-    // 提取单页/双页渲染所需的图片数组
-    const getPagedImages = () => {
-        if (pages.length === 0) return [];
-        const current = pages[currentPageIndex];
-
-        if (!doublePage) return [current];
-
-        // 双页模式下尝试捞下一张
-        if (currentPageIndex + 1 < pages.length) {
-            const next = pages[currentPageIndex + 1];
-            // 返回形式遵循 direction，flex-row-reverse 也可以搞定，但手动排组更直白
-            return readDirection === 'ltr' ? [current, next] : [next, current];
-        }
-        return [current];
-    };
-
-    // 获取响应式缩放与图像预处理滤镜方案
-    const getScaleClasses = (baseClasses: string) => {
-        let classes = baseClasses + ' block m-0 p-0';
-        switch (scaleMode) {
-            case 'original': classes += ' w-auto h-auto max-w-none max-h-none'; break;
-            case 'fit-width': classes += ' w-screen min-w-full h-auto object-cover'; break;
-            case 'fit-screen':
-                // 修复：双页模式下不应强制 w-full (即占 50% 宽)，否则两页比例不一时会偏左。
-                // 通过禁用 w-full，两页将作为一个整体通过容器 justify-center 居中。
-                classes += (doublePage ? ' h-full w-auto' : ' w-full h-full') + ' max-h-full max-w-full object-contain';
-                break;
-            case 'fit-height':
-            default: classes += ' h-full w-auto object-contain max-h-full max-w-none'; break;
-        }
-        return classes;
-    };
-
-    const getFilterStyle = (): React.CSSProperties => {
-        switch (imageFilter) {
-            case 'nearest': return { imageRendering: 'pixelated' };
-            case 'average':
-            case 'bilinear': return { imageRendering: 'auto' };
-            case 'bicubic':
-            case 'lanczos3':
-            case 'mitchell':
-            case 'lanczos2':
-            case 'bspline':
-            case 'catmullrom':
-            case 'waifu2x':
-            case 'realcugan':
-                return { imageRendering: 'high-quality' as any };
-            default: return {};
-        }
-    };
 
     // --- 图层鼠标物理拖拽交互方法群 ---
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -543,8 +482,8 @@ export default function BookReader() {
                                 src={getImageUrl(page.number)}
                                 loading="lazy"
                                 decoding="async"
-                                style={getFilterStyle()}
-                                className={getScaleClasses("bg-gray-900 min-h-[50vh] drop-shadow-lg max-w-[100vw]")}
+                                style={getFilterStyle(imageFilter)}
+                                className={getScaleClasses(scaleMode, doublePage, "bg-gray-900 min-h-[50vh] drop-shadow-lg max-w-[100vw]")}
                                 alt={`Page ${page.number}`}
                             />
                         ))}
@@ -576,7 +515,7 @@ export default function BookReader() {
                             onMouseUp={handleMouseUp}
                             onMouseMove={handleMouseMove}
                         >
-                            {getPagedImages().map((p, idx, arr) => {
+                            {getPagedImages(pages, currentPageIndex, doublePage, readDirection).map((p, idx, arr) => {
                                 // 深度修复方案：两张图片各自向中心偏移 -0.5px (逻辑像素) 实现物理重叠
                                 // 这能从底层封死亚像素计算导致的黑色缝隙泄露
                                 const isSpread = doublePage && arr.length > 1;
@@ -590,8 +529,8 @@ export default function BookReader() {
                                     <img
                                         key={p.number}
                                         src={getImageUrl(p.number)}
-                                        className={getScaleClasses(!doublePage ? "drop-shadow-2xl" : "max-w-none")}
-                                        style={{ ...getFilterStyle(), ...overlapStyle }}
+                                        className={getScaleClasses(scaleMode, doublePage, !doublePage ? "drop-shadow-2xl" : "max-w-none")}
+                                        style={{ ...getFilterStyle(imageFilter), ...overlapStyle }}
                                         alt={`Page ${p.number}`}
                                         draggable={false}
                                     />
