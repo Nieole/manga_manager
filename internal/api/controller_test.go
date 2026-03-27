@@ -692,3 +692,44 @@ func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
 		t.Fatalf("unexpected recommendation payload: %+v", recommendations[0])
 	}
 }
+
+func TestTestLLMConfigReturnsErrorForInvalidEndpoint(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/system/test-llm",
+		bytes.NewReader([]byte(`{"provider":"ollama","endpoint":"http://127.0.0.1:1","model":"fake","prompt":"ping"}`)),
+	)
+	rec := httptest.NewRecorder()
+	controller.testLLMConfig(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestScrapeSeriesMetadataReturnsErrorForInvalidLLMEndpoint(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
+
+	cfg := controller.currentConfig()
+	cfg.LLM.Provider = "ollama"
+	cfg.LLM.Endpoint = "http://127.0.0.1:1"
+	cfg.LLM.Model = "fake"
+	controller.config.Replace(&cfg)
+
+	req := requestWithRouteParam(
+		http.MethodPost,
+		"/api/series/1/scrape",
+		[]byte(`{"provider":"llm"}`),
+		"seriesId",
+		strconv.FormatInt(series.ID, 10),
+	)
+	rec := httptest.NewRecorder()
+	controller.scrapeSeriesMetadata(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
