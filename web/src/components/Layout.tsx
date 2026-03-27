@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
-import { DirectoryPicker } from './layout/DirectoryPicker';
+import { LibraryFormModal } from './layout/LibraryFormModal';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 
@@ -540,213 +540,69 @@ export default function Layout() {
                 )}
             </main>
 
-            {/* 新增库模态框 */}
-            {showAddModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                    <div className="bg-komgaSurface rounded-xl shadow-2xl border border-gray-800 w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-                        <div className="flex justify-between items-center p-6 border-b border-gray-800">
-                            <h3 className="text-xl font-semibold text-white">添加资源库</h3>
-                            <button onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-white transition-colors">
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <form onSubmit={handleAddLibrary} className="p-6">
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-400 mb-1">名称</label>
-                                    <input
-                                        type="text"
-                                        required
-                                        value={newLibName}
-                                        onChange={e => setNewLibName(e.target.value)}
-                                        placeholder="例如: 日漫收藏"
-                                        className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
-                                    />
-                                </div>
-                                <DirectoryPicker
-                                    value={newLibPath}
-                                    onChange={setNewLibPath}
-                                    browsing={browsing}
-                                    browseCurrent={browseCurrent}
-                                    browseParent={browseParent}
-                                    browseDirs={browseDirs}
-                                    browseDrives={browseDrives}
-                                    onOpen={openDirectoryBrowser}
-                                    onClose={() => setBrowsing(false)}
-                                    onChooseCurrent={() => {
-                                        setNewLibPath(browseCurrent);
-                                        setBrowsing(false);
-                                    }}
-                                    onNavigate={navigateDirectoryBrowser}
-                                />
-                            </div>
+            <LibraryFormModal
+                title="添加资源库"
+                submitLabel="立即添加"
+                submittingLabel="扫描入库中..."
+                open={showAddModal}
+                name={newLibName}
+                path={newLibPath}
+                autoScan={newLibAutoScan}
+                scanInterval={newLibScanInterval}
+                scanFormats={newLibScanFormats}
+                submitting={adding}
+                browsing={browsing}
+                browseCurrent={browseCurrent}
+                browseParent={browseParent}
+                browseDirs={browseDirs}
+                browseDrives={browseDrives}
+                onClose={() => setShowAddModal(false)}
+                onSubmit={handleAddLibrary}
+                onNameChange={setNewLibName}
+                onPathChange={setNewLibPath}
+                onAutoScanChange={setNewLibAutoScan}
+                onScanIntervalChange={setNewLibScanInterval}
+                onScanFormatsChange={setNewLibScanFormats}
+                onOpenDirectoryBrowser={openDirectoryBrowser}
+                onCloseDirectoryBrowser={() => setBrowsing(false)}
+                onChooseCurrentDirectory={() => {
+                    setNewLibPath(browseCurrent);
+                    setBrowsing(false);
+                }}
+                onNavigateDirectory={navigateDirectoryBrowser}
+            />
 
-                            <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
-                                <label className="flex items-center space-x-3 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={newLibAutoScan}
-                                        onChange={e => setNewLibAutoScan(e.target.checked)}
-                                        className="form-checkbox h-4 w-4 text-komgaPrimary bg-gray-800 border-gray-700 rounded focus:ring-komgaPrimary focus:ring-2"
-                                    />
-                                    <span className="text-sm font-medium text-gray-300">开启后台自动轮次扫描监控</span>
-                                </label>
-                                {newLibAutoScan && (
-                                    <>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-400 mb-1">循环触发扫描任务的间隔 (默认60分钟)</label>
-                                            <input
-                                                type="number"
-                                                min="1"
-                                                value={newLibScanInterval}
-                                                onChange={e => setNewLibScanInterval(parseInt(e.target.value) || DEFAULT_SCAN_INTERVAL)}
-                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-400 mb-1">目标提取匹配类型 (英文逗号分隔)</label>
-                                            <input
-                                                type="text"
-                                                value={newLibScanFormats}
-                                                onChange={e => setNewLibScanFormats(e.target.value)}
-                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
-                                            />
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-
-                            <div className="mt-8 flex justify-end space-x-3">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowAddModal(false)}
-                                    className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors"
-                                >
-                                    取消
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={adding}
-                                    className="px-6 py-2 bg-komgaPrimary hover:bg-purple-600 text-white text-sm font-medium rounded-lg shadow-lg flex items-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {adding ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                            扫描入库中...
-                                        </>
-                                    ) : (
-                                        "立即添加"
-                                    )}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* 编辑库模态框 */}
-            {showEditModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                    <div className="bg-komgaSurface rounded-xl shadow-2xl border border-gray-800 w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-                        <div className="flex justify-between items-center p-6 border-b border-gray-800">
-                            <h3 className="text-xl font-semibold text-white">编辑资源库</h3>
-                            <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-white transition-colors">
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <form onSubmit={handleEditLibrarySubmit} className="p-6">
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-400 mb-1">名称</label>
-                                    <input
-                                        type="text"
-                                        required
-                                        value={editLibName}
-                                        onChange={e => setEditLibName(e.target.value)}
-                                        placeholder="例如: 日漫收藏"
-                                        className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
-                                    />
-                                </div>
-                                <DirectoryPicker
-                                    value={editLibPath}
-                                    onChange={setEditLibPath}
-                                    browsing={browsing}
-                                    browseCurrent={browseCurrent}
-                                    browseParent={browseParent}
-                                    browseDirs={browseDirs}
-                                    browseDrives={browseDrives}
-                                    onOpen={openDirectoryBrowser}
-                                    onClose={() => setBrowsing(false)}
-                                    onChooseCurrent={() => {
-                                        setEditLibPath(browseCurrent);
-                                        setBrowsing(false);
-                                    }}
-                                    onNavigate={navigateDirectoryBrowser}
-                                />
-                            </div>
-
-                            <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
-                                <label className="flex items-center space-x-3 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={editLibAutoScan}
-                                        onChange={e => setEditLibAutoScan(e.target.checked)}
-                                        className="form-checkbox h-4 w-4 text-komgaPrimary bg-gray-800 border-gray-700 rounded focus:ring-komgaPrimary focus:ring-2"
-                                    />
-                                    <span className="text-sm font-medium text-gray-300">开启后台自动轮次扫描监控</span>
-                                </label>
-                                {editLibAutoScan && (
-                                    <>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-400 mb-1">循环触发扫描任务的间隔 (默认60分钟)</label>
-                                            <input
-                                                type="number"
-                                                min="1"
-                                                value={editLibScanInterval}
-                                                onChange={e => setEditLibScanInterval(parseInt(e.target.value) || DEFAULT_SCAN_INTERVAL)}
-                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-400 mb-1">目标提取匹配类型 (英文逗号分隔)</label>
-                                            <input
-                                                type="text"
-                                                value={editLibScanFormats}
-                                                onChange={e => setEditLibScanFormats(e.target.value)}
-                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
-                                            />
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-
-                            <div className="mt-8 flex justify-end space-x-3">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowEditModal(false)}
-                                    className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors"
-                                >
-                                    取消
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={editing}
-                                    className="px-6 py-2 bg-komgaPrimary hover:bg-purple-600 text-white text-sm font-medium rounded-lg shadow-lg flex items-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {editing ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                            保存中...
-                                        </>
-                                    ) : (
-                                        "保存修改"
-                                    )}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <LibraryFormModal
+                title="编辑资源库"
+                submitLabel="保存修改"
+                submittingLabel="保存中..."
+                open={showEditModal}
+                name={editLibName}
+                path={editLibPath}
+                autoScan={editLibAutoScan}
+                scanInterval={editLibScanInterval}
+                scanFormats={editLibScanFormats}
+                submitting={editing}
+                browsing={browsing}
+                browseCurrent={browseCurrent}
+                browseParent={browseParent}
+                browseDirs={browseDirs}
+                browseDrives={browseDrives}
+                onClose={() => setShowEditModal(false)}
+                onSubmit={handleEditLibrarySubmit}
+                onNameChange={setEditLibName}
+                onPathChange={setEditLibPath}
+                onAutoScanChange={setEditLibAutoScan}
+                onScanIntervalChange={setEditLibScanInterval}
+                onScanFormatsChange={setEditLibScanFormats}
+                onOpenDirectoryBrowser={openDirectoryBrowser}
+                onCloseDirectoryBrowser={() => setBrowsing(false)}
+                onChooseCurrentDirectory={() => {
+                    setEditLibPath(browseCurrent);
+                    setBrowsing(false);
+                }}
+                onNavigateDirectory={navigateDirectoryBrowser}
+            />
 
             {isSearchModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] px-4">
