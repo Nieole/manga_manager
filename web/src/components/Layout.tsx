@@ -2,15 +2,9 @@ import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, ImageIcon, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles } from 'lucide-react';
-
-interface Library {
-    id: string;
-    name: string;
-    path: string;
-    auto_scan?: boolean;
-    scan_interval?: number;
-    scan_formats?: string;
-}
+import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
+import type { Library, SearchHit } from './layout/types';
+import { useGlobalSearch } from './layout/useGlobalSearch';
 
 export default function Layout() {
     const [libraries, setLibraries] = useState<Library[]>([]);
@@ -21,8 +15,8 @@ export default function Layout() {
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
     const [newLibAutoScan, setNewLibAutoScan] = useState(false);
-    const [newLibScanInterval, setNewLibScanInterval] = useState(60);
-    const [newLibScanFormats, setNewLibScanFormats] = useState("zip,cbz,rar,cbr,pdf");
+    const [newLibScanInterval, setNewLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
+    const [newLibScanFormats, setNewLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [adding, setAdding] = useState(false);
 
     // 编辑资源库状态
@@ -31,8 +25,8 @@ export default function Layout() {
     const [editLibName, setEditLibName] = useState("");
     const [editLibPath, setEditLibPath] = useState("");
     const [editLibAutoScan, setEditLibAutoScan] = useState(false);
-    const [editLibScanInterval, setEditLibScanInterval] = useState(60);
-    const [editLibScanFormats, setEditLibScanFormats] = useState("zip,cbz,rar,cbr,pdf");
+    const [editLibScanInterval, setEditLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
+    const [editLibScanFormats, setEditLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [editing, setEditing] = useState(false);
 
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
@@ -54,54 +48,26 @@ export default function Layout() {
     const [browseParent, setBrowseParent] = useState('');
     const [browseDrives, setBrowseDrives] = useState<any[]>([]);
 
-    const [searchQuery, setSearchQuery] = useState("");
-    const [searchResults, setSearchResults] = useState<any[]>([]);
-    const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
-    const [selectedIndex, setSelectedIndex] = useState(0);
-    const [searchTarget, setSearchTarget] = useState("all");
+    const {
+        searchQuery,
+        setSearchQuery,
+        searchResults,
+        isSearchModalOpen,
+        setIsSearchModalOpen,
+        selectedIndex,
+        setSelectedIndex,
+        searchTarget,
+        setSearchTarget,
+        resetSearch,
+    } = useGlobalSearch();
 
     const { libId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
 
-    useEffect(() => {
-        if (!searchQuery.trim()) {
-            setSearchResults([]);
-            return;
-        }
-        const timer = setTimeout(() => {
-            axios.get(`/api/search?q=${encodeURIComponent(searchQuery)}&target=${searchTarget}`)
-                .then(res => {
-                    if (res.data && res.data.hits) {
-                        setSearchResults(res.data.hits);
-                    } else {
-                        setSearchResults([]);
-                    }
-                })
-                .catch(err => console.error("Search failed:", err));
-        }, 300); // 防抖 300ms
-        return () => clearTimeout(timer);
-    }, [searchQuery, searchTarget]);
-
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-                e.preventDefault();
-                setIsSearchModalOpen(true);
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, []);
-
-    useEffect(() => {
-        setSelectedIndex(0);
-    }, [searchResults]);
-
-    const handleSelectResult = (hit: any) => {
+    const handleSelectResult = (hit: SearchHit) => {
         setIsSearchModalOpen(false);
-        setSearchQuery("");
-        setSearchResults([]);
+        resetSearch();
 
         const isSeries = hit.fields?.type === 'series' || hit.id.startsWith('s_');
         if (isSeries) {
@@ -201,8 +167,8 @@ export default function Layout() {
             setNewLibName("");
             setNewLibPath("");
             setNewLibAutoScan(false);
-            setNewLibScanInterval(60);
-            setNewLibScanFormats("zip,cbz,rar,cbr,pdf");
+            setNewLibScanInterval(DEFAULT_SCAN_INTERVAL);
+            setNewLibScanFormats(DEFAULT_SCAN_FORMATS);
             fetchLibraries();
             setRefreshTrigger(prev => prev + 1);
         } catch (error) {
@@ -430,8 +396,8 @@ export default function Layout() {
                                                             setEditLibName(lib.name || "");
                                                             setEditLibPath(lib.path || "");
                                                             setEditLibAutoScan(lib.auto_scan || false);
-                                                            setEditLibScanInterval(lib.scan_interval || 60);
-                                                            setEditLibScanFormats(lib.scan_formats || "zip,cbz,rar,cbr,pdf");
+                                                            setEditLibScanInterval(lib.scan_interval || DEFAULT_SCAN_INTERVAL);
+                                                            setEditLibScanFormats(lib.scan_formats || DEFAULT_SCAN_FORMATS);
                                                             setShowEditModal(true);
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-blue-500 hover:text-white transition-colors"
@@ -668,7 +634,7 @@ export default function Layout() {
                                                 type="number"
                                                 min="1"
                                                 value={newLibScanInterval}
-                                                onChange={e => setNewLibScanInterval(parseInt(e.target.value) || 60)}
+                                                onChange={e => setNewLibScanInterval(parseInt(e.target.value) || DEFAULT_SCAN_INTERVAL)}
                                                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
                                             />
                                         </div>
@@ -830,7 +796,7 @@ export default function Layout() {
                                                 type="number"
                                                 min="1"
                                                 value={editLibScanInterval}
-                                                onChange={e => setEditLibScanInterval(parseInt(e.target.value) || 60)}
+                                                onChange={e => setEditLibScanInterval(parseInt(e.target.value) || DEFAULT_SCAN_INTERVAL)}
                                                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
                                             />
                                         </div>
@@ -894,7 +860,7 @@ export default function Layout() {
                                 className="flex-1 bg-transparent border-none py-4 px-4 text-white focus:outline-none focus:ring-0 text-lg placeholder-gray-500"
                             />
                             {searchQuery && (
-                                <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} className="p-1 text-gray-500 hover:text-white rounded-md transition-colors">
+                                <button onClick={resetSearch} className="p-1 text-gray-500 hover:text-white rounded-md transition-colors">
                                     <X className="w-5 h-5" />
                                 </button>
                             )}
@@ -909,7 +875,7 @@ export default function Layout() {
 
                         <div className="overflow-y-auto flex-1 p-2">
                             {searchResults.length > 0 && searchQuery.trim() !== "" ? (
-                                searchResults.map((hit: any, index: number) => {
+                                searchResults.map((hit, index: number) => {
                                     const isSeries = hit.fields?.type === 'series' || hit.id.startsWith('s_');
                                     const coverPath = hit.fields?.cover_path;
 
@@ -959,7 +925,7 @@ export default function Layout() {
                                             </div>
                                             <div className="hidden sm:flex flex-col items-end shrink-0 ml-2">
                                                 <span className="text-[10px] text-gray-600 font-mono">SCORE</span>
-                                                <span className={`text-xs font-bold ${hit.score > 0.5 ? 'text-komgaPrimary' : 'text-gray-500'}`}>{hit.score?.toFixed(2)}</span>
+                                                <span className={`text-xs font-bold ${(hit.score ?? 0) > 0.5 ? 'text-komgaPrimary' : 'text-gray-500'}`}>{hit.score?.toFixed(2) ?? '0.00'}</span>
                                             </div>
                                         </div>
                                     );
