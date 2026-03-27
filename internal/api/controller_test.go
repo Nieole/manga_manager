@@ -466,3 +466,138 @@ func TestRecentReadHandlersReturnUpdatedBooks(t *testing.T) {
 		t.Fatalf("expected 1 recent read item, got %d", len(recentAll))
 	}
 }
+
+func TestGetDashboardStatsReflectsReadingProgress(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, _, book1 := seedBookFixture(t, store, t.TempDir(), "LibA", "SeriesA", "book-a.cbz", 12)
+	_, _, book2 := seedBookFixture(t, store, t.TempDir(), "LibB", "SeriesB", "book-b.cbz", 8)
+
+	for _, item := range []struct {
+		bookID int64
+		page   int64
+	}{
+		{book1.ID, 5},
+		{book2.ID, 8},
+	} {
+		req := requestWithRouteParam(
+			http.MethodPost,
+			"/api/books/progress",
+			[]byte(`{"page":`+strconv.FormatInt(item.page, 10)+`}`),
+			"bookId",
+			strconv.FormatInt(item.bookID, 10),
+		)
+		rec := httptest.NewRecorder()
+		controller.updateBookProgress(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 updating progress, got %d", rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats/dashboard", nil)
+	rec := httptest.NewRecorder()
+	controller.getDashboardStats(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var stats struct {
+		TotalSeries int `json:"total_series"`
+		TotalBooks  int `json:"total_books"`
+		ReadBooks   int `json:"read_books"`
+		TotalPages  int `json:"total_pages"`
+		ActiveDays7 int `json:"active_days_7"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode dashboard stats failed: %v", err)
+	}
+
+	if stats.TotalSeries != 2 || stats.TotalBooks != 2 {
+		t.Fatalf("unexpected totals: %+v", stats)
+	}
+	if stats.ReadBooks != 2 {
+		t.Fatalf("expected 2 read books, got %d", stats.ReadBooks)
+	}
+	if stats.TotalPages != 20 {
+		t.Fatalf("expected 20 total pages, got %d", stats.TotalPages)
+	}
+	if stats.ActiveDays7 < 1 {
+		t.Fatalf("expected active_days_7 >= 1, got %d", stats.ActiveDays7)
+	}
+}
+
+func TestGetActivityHeatmapReturnsReadingData(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
+
+	if err := store.LogReadingActivity(context.Background(), book.ID, 7); err != nil {
+		t.Fatalf("LogReadingActivity failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats/activity-heatmap?weeks=1", nil)
+	rec := httptest.NewRecorder()
+	controller.getActivityHeatmap(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var days []struct {
+		Date      string `json:"date"`
+		PageCount int    `json:"page_count"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&days); err != nil {
+		t.Fatalf("decode heatmap failed: %v", err)
+	}
+
+	if len(days) == 0 {
+		t.Fatal("expected at least one activity day")
+	}
+	if days[len(days)-1].PageCount != 7 {
+		t.Fatalf("expected latest activity page count 7, got %d", days[len(days)-1].PageCount)
+	}
+}
+
+func TestGetRecentReadAllHonorsLimit(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	for i, pages := range []int64{3, 4} {
+		_, _, book := seedBookFixture(
+			t,
+			store,
+			t.TempDir(),
+			"Lib"+strconv.Itoa(i),
+			"Series"+strconv.Itoa(i),
+			"book-"+strconv.Itoa(i)+".cbz",
+			10,
+		)
+		req := requestWithRouteParam(
+			http.MethodPost,
+			"/api/books/progress",
+			[]byte(`{"page":`+strconv.FormatInt(pages, 10)+`}`),
+			"bookId",
+			strconv.FormatInt(book.ID, 10),
+		)
+		rec := httptest.NewRecorder()
+		controller.updateBookProgress(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 updating progress, got %d", rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats/recent-read?limit=1", nil)
+	rec := httptest.NewRecorder()
+	controller.getRecentReadAll(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var recent []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&recent); err != nil {
+		t.Fatalf("decode recent read all failed: %v", err)
+	}
+	if len(recent) != 1 {
+		t.Fatalf("expected exactly 1 recent read row, got %d", len(recent))
+	}
+}
