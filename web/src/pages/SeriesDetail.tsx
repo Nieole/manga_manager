@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { BookImage, FolderOpen, X, Lock, Unlock, Pencil } from 'lucide-react';
+import { BookImage, FolderOpen, Pencil } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { SeriesHeader } from './series-detail/SeriesHeader';
+import { SeriesMetadataEditorModal } from './series-detail/SeriesMetadataEditorModal';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
 import type { Author, Book, MetaTag, SearchResult, Series, SeriesLink } from './series-detail/types';
 
@@ -390,119 +391,6 @@ export default function SeriesDetail() {
         });
     };
 
-    const AutoCompleteTags = () => {
-        const [inputValue, setInputValue] = useState('');
-        const currentVals = editForm.tagsInput || [];
-        const suggestions = allTags.filter(t => !currentVals.includes(t.name) && t.name.toLowerCase().includes(inputValue.toLowerCase()));
-
-        const addTag = (n: string) => {
-            if (n.trim() && !currentVals.includes(n.trim())) {
-                handleFormChange('tagsInput', [...currentVals, n.trim()]);
-            }
-            setInputValue('');
-        };
-
-        const removeTag = (n: string) => {
-            handleFormChange('tagsInput', currentVals.filter(t => t !== n));
-        };
-
-        return (
-            <div className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-white focus-within:ring-2 focus-within:ring-komgaPrimary/50 transition-all">
-                <div className="flex flex-wrap gap-2 mb-2">
-                    {currentVals.map(t => (
-                        <span key={t} className="flex items-center gap-1 bg-komgaPrimary/20 text-komgaPrimary px-2 py-1 rounded text-xs border border-komgaPrimary/30">
-                            {t}
-                            <button onClick={() => removeTag(t)} className="hover:text-red-400"><X className="w-3 h-3" /></button>
-                        </span>
-                    ))}
-                </div>
-                <div className="relative">
-                    <input
-                        type="text"
-                        value={inputValue}
-                        onChange={e => setInputValue(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(inputValue); } }}
-                        placeholder="输入标签按回车添加..."
-                        className="w-full bg-transparent border-none outline-none p-1 text-sm placeholder-gray-500"
-                    />
-                    {inputValue && suggestions.length > 0 && (
-                        <div className="absolute top-10 left-0 w-full bg-komgaSurface border border-gray-700 rounded-lg shadow-xl z-20 max-h-40 overflow-y-auto">
-                            {suggestions.map(s => (
-                                <div key={s.id} onClick={() => addTag(s.name)} className="px-3 py-2 hover:bg-gray-800 cursor-pointer text-gray-300">
-                                    {s.name}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    };
-
-    const AutoCompleteAuthors = () => {
-        const [inputName, setInputName] = useState('');
-        const [inputRole, setInputRole] = useState('Writer');
-        const currentVals = editForm.authorsInput || [];
-        const suggestions = allAuthors.filter(a => !currentVals.find(c => c.name === a.name && c.role === a.role) && a.name.toLowerCase().includes(inputName.toLowerCase()));
-
-        const addAuthor = (n: string, r: string) => {
-            if (n.trim() && !currentVals.find(c => c.name === n.trim() && c.role === r)) {
-                handleFormChange('authorsInput', [...currentVals, { name: n.trim(), role: r }]);
-            }
-            setInputName('');
-        };
-
-        const removeAuthor = (idx: number) => {
-            handleFormChange('authorsInput', currentVals.filter((_, i) => i !== idx));
-        };
-
-        return (
-            <div className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-white focus-within:ring-2 focus-within:ring-komgaPrimary/50 transition-all">
-                <div className="flex flex-wrap gap-2 mb-2">
-                    {currentVals.map((a, idx) => (
-                        <span key={idx} className="flex items-center gap-1 bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs border border-gray-700">
-                            {a.name} <span className="text-gray-500">[{a.role}]</span>
-                            <button onClick={() => removeAuthor(idx)} className="hover:text-red-400 ml-1"><X className="w-3 h-3" /></button>
-                        </span>
-                    ))}
-                </div>
-                <div className="flex gap-2 relative">
-                    <input
-                        type="text"
-                        value={inputName}
-                        onChange={e => setInputName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addAuthor(inputName, inputRole); } }}
-                        placeholder="输入作者并按回车..."
-                        className="flex-1 bg-transparent border border-gray-800 rounded px-2 py-1 outline-none text-sm placeholder-gray-500"
-                    />
-                    <select
-                        value={inputRole}
-                        onChange={e => setInputRole(e.target.value)}
-                        className="bg-gray-800 border-none outline-none rounded px-2 py-1 text-sm text-gray-300 cursor-pointer"
-                    >
-                        <option value="Writer">Writer</option>
-                        <option value="Penciller">Penciller</option>
-                        <option value="Inker">Inker</option>
-                        <option value="Colorist">Colorist</option>
-                        <option value="Letterer">Letterer</option>
-                        <option value="Cover">Cover</option>
-                        <option value="Editor">Editor</option>
-                    </select>
-                    {inputName && suggestions.length > 0 && (
-                        <div className="absolute top-10 left-0 w-full bg-komgaSurface border border-gray-700 rounded-lg shadow-xl z-20 max-h-40 overflow-y-auto">
-                            {suggestions.map(s => (
-                                <div key={s.id + s.role} onClick={() => addAuthor(s.name, s.role)} className="px-3 py-2 hover:bg-gray-800 cursor-pointer flex justify-between text-gray-300">
-                                    <span>{s.name}</span>
-                                    <span className="text-gray-500 text-xs mt-0.5">{s.role}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    };
-
     const renderBookCard = (book: Book) => {
         const isSelected = selectedBooks.includes(book.id);
         const handleCardClick = (e: React.MouseEvent) => {
@@ -604,149 +492,17 @@ export default function SeriesDetail() {
                 onScrape={handleScrape}
             />
 
-            {/* 编辑元数据弹窗 */}
-            {isEditing && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                    <div className="bg-komgaSurface border border-gray-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-                        <div className="flex items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50">
-                            <h3 className="text-xl font-bold text-white">编辑系列元数据</h3>
-                            <button onClick={() => setIsEditing(false)} className="text-gray-400 hover:text-white transition-colors">
-                                <X className="w-6 h-6" />
-                            </button>
-                        </div>
-                        <div className="p-6 overflow-y-auto space-y-6 flex-1">
-                            {/* Form Fields */}
-                            {[
-                                { id: 'title', label: '系列标题 (Title)', type: 'text', val: editForm.title?.String || '' },
-                                { id: 'summary', label: '简介 (Summary)', type: 'textarea', val: editForm.summary?.String || '' },
-                                { id: 'publisher', label: '出版商 (Publisher)', type: 'text', val: editForm.publisher?.String || '' },
-                                { id: 'status', label: '连载状态 (Status)', type: 'select', val: editForm.status?.String || '', options: ['已完结', '连载中', '已放弃', '有生之年'] },
-                                { id: 'language', label: '语言 (Language ISO)', type: 'text', val: editForm.language?.String || '' },
-                                { id: 'rating', label: '评分 (Rating 0-10)', type: 'number', val: editForm.rating?.Float64 || 0, step: "0.1", max: 10 },
-                            ].map(f => (
-                                <div key={f.id} className="space-y-2">
-                                    <div className="flex items-center justify-between">
-                                        <label className="text-sm font-medium text-gray-300">{f.label}</label>
-                                        <button
-                                            onClick={() => toggleLock(f.id)}
-                                            className={`flex items-center text-xs px-2 py-1 rounded transition-colors ${lockedFields.has(f.id)
-                                                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                                                : 'text-gray-500 hover:text-gray-300'
-                                                }`}
-                                            title={lockedFields.has(f.id) ? "该字段已被锁定，扫描时不会被自动覆盖" : "点击锁定该字段，防止被扫描器覆盖"}
-                                        >
-                                            {lockedFields.has(f.id) ? <><Lock className="w-3 h-3 mr-1" /> 已锁定防覆盖</> : <><Unlock className="w-3 h-3 mr-1" /> 未锁定</>}
-                                        </button>
-                                    </div>
-                                    {f.type === 'textarea' ? (
-                                        <textarea
-                                            value={f.val}
-                                            onChange={e => handleFormChange(f.id, e.target.value)}
-                                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all min-h-[100px]"
-                                        />
-                                    ) : f.type === 'select' ? (
-                                        <select
-                                            value={f.val}
-                                            onChange={e => handleFormChange(f.id, e.target.value)}
-                                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all cursor-pointer"
-                                        >
-                                            <option value="">- 无状态 -</option>
-                                            {f.options?.map(opt => (
-                                                <option key={opt} value={opt}>{opt}</option>
-                                            ))}
-                                        </select>
-                                    ) : (
-                                        <input
-                                            type={f.type}
-                                            step={f.step}
-                                            max={f.max}
-                                            value={f.val}
-                                            onChange={e => handleFormChange(f.id, e.target.value)}
-                                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
-                                        />
-                                    )}
-                                </div>
-                            ))}
-                            {/* Tags Input */}
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <label className="text-sm font-medium text-gray-300">标签 (Tags)</label>
-                                    <button
-                                        onClick={() => toggleLock('tags')}
-                                        className={`flex items-center text-xs px-2 py-1 rounded transition-colors ${lockedFields.has('tags')
-                                            ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                                            : 'text-gray-500 hover:text-gray-300'
-                                            }`}
-                                        title={lockedFields.has('tags') ? "已锁定该字段防覆盖" : "点击锁定防覆盖"}
-                                    >
-                                        {lockedFields.has('tags') ? <><Lock className="w-3 h-3 mr-1" /> 已锁定防覆盖</> : <><Unlock className="w-3 h-3 mr-1" /> 未锁定</>}
-                                    </button>
-                                </div>
-                                <AutoCompleteTags />
-                            </div>
-                            {/* Authors Input */}
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <label className="text-sm font-medium text-gray-300">编绘者 (Authors)</label>
-                                    <button
-                                        onClick={() => toggleLock('authors')}
-                                        className={`flex items-center text-xs px-2 py-1 rounded transition-colors ${lockedFields.has('authors')
-                                            ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                                            : 'text-gray-500 hover:text-gray-300'
-                                            }`}
-                                        title={lockedFields.has('authors') ? "已锁定该字段防覆盖" : "点击锁定防覆盖"}
-                                    >
-                                        {lockedFields.has('authors') ? <><Lock className="w-3 h-3 mr-1" /> 已锁定防覆盖</> : <><Unlock className="w-3 h-3 mr-1" /> 未锁定</>}
-                                    </button>
-                                </div>
-                                <AutoCompleteAuthors />
-                            </div>
-                            {/* Links Input */}
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium text-gray-300">外部链接 (External Links)</label>
-                                <div className="space-y-3">
-                                    {(editForm.linksInput || []).map((lnk, idx) => (
-                                        <div key={idx} className="flex gap-2 items-center">
-                                            <input type="text" value={lnk.name} onChange={e => {
-                                                const newLinks = [...(editForm.linksInput || [])];
-                                                newLinks[idx].name = e.target.value;
-                                                handleFormChange('linksInput', newLinks);
-                                            }} placeholder="Link Name (e.g. Anilist)" className="flex-1 bg-gray-900 border border-gray-700 rounded p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary" />
-                                            <input type="text" value={lnk.url} onChange={e => {
-                                                const newLinks = [...(editForm.linksInput || [])];
-                                                newLinks[idx].url = e.target.value;
-                                                handleFormChange('linksInput', newLinks);
-                                            }} placeholder="URL" className="flex-[2] bg-gray-900 border border-gray-700 rounded p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary" />
-                                            <button onClick={() => {
-                                                const newLinks = (editForm.linksInput || []).filter((_, i) => i !== idx);
-                                                handleFormChange('linksInput', newLinks);
-                                            }} className="p-2 text-red-400 hover:bg-gray-800 rounded"><X className="w-4 h-4" /></button>
-                                        </div>
-                                    ))}
-                                    <button onClick={() => {
-                                        const newLinks = [...(editForm.linksInput || []), { name: '', url: '' }];
-                                        handleFormChange('linksInput', newLinks);
-                                    }} className="text-xs text-komgaPrimary font-medium border border-komgaPrimary/30 bg-komgaPrimary/10 hover:bg-komgaPrimary/20 px-3 py-1.5 rounded transition-colors block w-full text-center">+ 添加外部链接</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex justify-end gap-3">
-                            <button
-                                onClick={() => setIsEditing(false)}
-                                className="px-5 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors"
-                            >
-                                取消
-                            </button>
-                            <button
-                                onClick={handleSaveMetadata}
-                                className="px-5 py-2 rounded-lg text-sm font-medium bg-komgaPrimary text-white hover:bg-komgaPrimary/80 transition-colors shadow-lg shadow-komgaPrimary/20"
-                            >
-                                保存更改
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <SeriesMetadataEditorModal
+                open={isEditing}
+                allTags={allTags}
+                allAuthors={allAuthors}
+                editForm={editForm}
+                lockedFields={lockedFields}
+                onClose={() => setIsEditing(false)}
+                onSave={handleSaveMetadata}
+                onToggleLock={toggleLock}
+                onFormChange={handleFormChange}
+            />
 
             {loading ? (
                 <div className="text-center py-20 text-gray-500 animate-pulse">正在提取书籍关系元数据...</div>
