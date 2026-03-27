@@ -26,16 +26,24 @@ type Scanner struct {
 	store  database.Store
 	engine *search.Engine
 	config *config.Manager
+	mu     sync.Mutex
+	active struct {
+		libraries map[int64]struct{}
+		series    map[int64]struct{}
+	}
 	// 批量插入结束后的回调播送机制
 	onBatchIngested func(action string)
 }
 
 func NewScanner(store database.Store, engine *search.Engine, cfg *config.Manager) *Scanner {
-	return &Scanner{
+	s := &Scanner{
 		store:  store,
 		engine: engine,
 		config: cfg,
 	}
+	s.active.libraries = make(map[int64]struct{})
+	s.active.series = make(map[int64]struct{})
+	return s
 }
 
 // SetBatchCallback 允许外部注册事件通知钩子
@@ -48,6 +56,38 @@ func (s *Scanner) currentConfig() config.Config {
 		return config.Config{}
 	}
 	return s.config.Snapshot()
+}
+
+func (s *Scanner) beginLibraryScan(libraryID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.active.libraries[libraryID]; exists {
+		return false
+	}
+	s.active.libraries[libraryID] = struct{}{}
+	return true
+}
+
+func (s *Scanner) endLibraryScan(libraryID int64) {
+	s.mu.Lock()
+	delete(s.active.libraries, libraryID)
+	s.mu.Unlock()
+}
+
+func (s *Scanner) beginSeriesScan(seriesID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.active.series[seriesID]; exists {
+		return false
+	}
+	s.active.series[seriesID] = struct{}{}
+	return true
+}
+
+func (s *Scanner) endSeriesScan(seriesID int64) {
+	s.mu.Lock()
+	delete(s.active.series, seriesID)
+	s.mu.Unlock()
 }
 
 type scanJob struct {
@@ -64,6 +104,12 @@ type scanResult struct {
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
+	if !s.beginLibraryScan(libraryID) {
+		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)
+		return nil
+	}
+	defer s.endLibraryScan(libraryID)
+
 	// Step 0: Pre-load cache for increment scanning
 	bookCache := make(map[string]time.Time)
 
@@ -160,6 +206,12 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 
 // ScanSeries 扫描单一系列目录，将新的卷添加到数据库中
 func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) error {
+	if !s.beginSeriesScan(seriesID) {
+		slog.Info("Series scan skipped because another scan is already running", "series_id", seriesID)
+		return nil
+	}
+	defer s.endSeriesScan(seriesID)
+
 	series, err := s.store.GetSeries(ctx, seriesID)
 	if err != nil {
 		return fmt.Errorf("failed to get series: %w", err)

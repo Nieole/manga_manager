@@ -15,5 +15,5 @@
 ## P2 Performance
 
 - [x] Avoid full-file log scans for common log queries by keeping only the latest matching entries in memory during scans.
-- [ ] Revisit thumbnail rebuild and global scan task scheduling to reduce duplicate work.
-- [ ] Audit file watcher behavior for nested directories and large library churn.
+- [x] Revisit thumbnail rebuild and global scan task scheduling to reduce duplicate work.
+- [x] Audit file watcher behavior for nested directories and large library churn.
