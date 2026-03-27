@@ -601,3 +601,94 @@ func TestGetRecentReadAllHonorsLimit(t *testing.T) {
 		t.Fatalf("expected exactly 1 recent read row, got %d", len(recent))
 	}
 }
+
+func TestApplyScrapedMetadataPersistsSeriesTagsAndLink(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
+
+	payload := []byte(`{
+		"Title":"Updated Title",
+		"Summary":"Updated summary",
+		"Publisher":"Kodansha",
+		"Rating":8.6,
+		"Tags":["Action","Drama"],
+		"SourceID":12345
+	}`)
+
+	req := requestWithRouteParam(
+		http.MethodPost,
+		"/api/series/1/scrape-apply?provider=bangumi",
+		payload,
+		"seriesId",
+		strconv.FormatInt(series.ID, 10),
+	)
+	req.URL.RawQuery = "provider=bangumi"
+	rec := httptest.NewRecorder()
+	controller.applyScrapedMetadata(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	updated, err := store.GetSeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetSeries failed: %v", err)
+	}
+	if !updated.Title.Valid || updated.Title.String != "Updated Title" {
+		t.Fatalf("expected updated title, got %+v", updated.Title)
+	}
+	if !updated.Publisher.Valid || updated.Publisher.String != "Kodansha" {
+		t.Fatalf("expected updated publisher, got %+v", updated.Publisher)
+	}
+
+	tags, err := store.GetTagsForSeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetTagsForSeries failed: %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d", len(tags))
+	}
+
+	links, err := store.GetLinksForSeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetLinksForSeries failed: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("expected 1 source link, got %d", len(links))
+	}
+	if links[0].Url != "https://bgm.tv/subject/12345" {
+		t.Fatalf("unexpected source link: %s", links[0].Url)
+	}
+}
+
+func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	controller.recommendationsMutex.Lock()
+	controller.recommendationsCache = []AIRecommendationResponse{{
+		SeriesID:  99,
+		Reason:    "Cached reason",
+		Title:     "Cached title",
+		CoverPath: "cached.webp",
+	}}
+	controller.recommendationsCacheTime = time.Now()
+	controller.recommendationsMutex.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats/recommendations", nil)
+	rec := httptest.NewRecorder()
+	controller.getRecommendations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var recommendations []AIRecommendationResponse
+	if err := json.NewDecoder(rec.Body).Decode(&recommendations); err != nil {
+		t.Fatalf("decode recommendations failed: %v", err)
+	}
+	if len(recommendations) != 1 {
+		t.Fatalf("expected cached recommendation, got %d items", len(recommendations))
+	}
+	if recommendations[0].SeriesID != 99 {
+		t.Fatalf("unexpected recommendation payload: %+v", recommendations[0])
+	}
+}
