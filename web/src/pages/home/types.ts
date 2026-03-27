@@ -28,3 +28,7 @@ export interface Series {
   last_read_page?: { Int64: number; Valid: boolean };
   updated_at?: string;
 }
+
+export interface NamedOption {
+  name: string;
+}

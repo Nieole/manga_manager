@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, Heart, ArrowUp, ArrowDown, FolderHeart, RefreshCw } from 'lucide-react';
+import { ImageIcon, Heart, FolderHeart, RefreshCw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
+import { HomeFilters } from './home/HomeFilters';
+import { HomeToolbar } from './home/HomeToolbar';
 import { RecentSeriesStrip } from './home/RecentSeriesStrip';
-import type { AIRecommendation, Series } from './home/types';
+import type { AIRecommendation, NamedOption, Series } from './home/types';
 
 const PAGE_SIZE = 30;
 
@@ -36,8 +38,8 @@ export default function Home() {
         setTimeout(() => setToastMsg(null), 3000);
     };
 
-    const [allTags, setAllTags] = useState<{ name: string }[]>([]);
-    const [allAuthors, setAllAuthors] = useState<{ name: string }[]>([]);
+    const [allTags, setAllTags] = useState<NamedOption[]>([]);
+    const [allAuthors, setAllAuthors] = useState<NamedOption[]>([]);
     const allStatuses = ['已完结', '连载中', '已放弃', '有生之年'];
 
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
@@ -226,54 +228,25 @@ export default function Home() {
 
     return (
         <div className="p-6 lg:p-10">
-            {/* 头部信息栏 */}
-            <div className="mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 border-b border-gray-800 pb-4">
-                <div>
-                    <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-1">浏览系列</h2>
-                    <p className="text-gray-400 text-xs sm:text-sm">
-                        资源库返回 {totalSeries} 个结果
-                    </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-4 sm:mt-0 w-full sm:w-auto justify-between sm:justify-end">
-                    {allSeries.length > 0 && (
-                        <button
-                            onClick={() => {
-                                setIsSelectionMode(!isSelectionMode);
-                                setSelectedSeries([]);
-                            }}
-                            className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border focus:outline-none flex-shrink-0 ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
-                        >
-                            {isSelectionMode ? '取消选择' : '批量操作'}
-                        </button>
-                    )}
-                    <span className="text-xs sm:text-sm text-gray-400 font-medium ml-auto sm:ml-0">排序方式</span>
-                    <select
-                        value={sortByField}
-                        onChange={(e) => {
-                            setSortByField(e.target.value);
-                            setPage(1);
-                        }}
-                        className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-none transition-colors cursor-pointer hover:border-gray-500"
-                    >
-                        <option value="name">名称</option>
-                        <option value="created">入库时间</option>
-                        <option value="updated">最新更新</option>
-                        <option value="rating">评分</option>
-                        <option value="books">册数量</option>
-                        <option value="favorite">收藏状态</option>
-                    </select>
-                    <button
-                        onClick={() => {
-                            setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
-                            setPage(1);
-                        }}
-                        className="p-2 bg-gray-900 border border-gray-700 hover:border-gray-500 rounded-lg text-gray-400 hover:text-white transition-colors flex items-center justify-center shadow-sm hover:shadow"
-                        title={sortDir === 'asc' ? '当前正序 (点击切换倒序)' : '当前倒序 (点击切换正序)'}
-                    >
-                        {sortDir === 'asc' ? <ArrowUp className="w-5 h-5 text-komgaPrimary" /> : <ArrowDown className="w-5 h-5 text-komgaPrimary" />}
-                    </button>
-                </div>
-            </div>
+            <HomeToolbar
+                totalSeries={totalSeries}
+                hasSeries={allSeries.length > 0}
+                isSelectionMode={isSelectionMode}
+                sortByField={sortByField}
+                sortDir={sortDir}
+                onToggleSelectionMode={() => {
+                    setIsSelectionMode(!isSelectionMode);
+                    setSelectedSeries([]);
+                }}
+                onSortFieldChange={(value) => {
+                    setSortByField(value);
+                    setPage(1);
+                }}
+                onToggleSortDir={() => {
+                    setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+                    setPage(1);
+                }}
+            />
 
             <RecentSeriesStrip recentSeries={recentSeries} />
 
@@ -284,128 +257,31 @@ export default function Home() {
                 onRefresh={fetchAIRecommendations}
             />
 
-            {/* 标签与作者与状态 聚合导航栏 */}
-            <div className="mb-6 grid xl:grid-cols-3 gap-6 xl:gap-8 divide-y xl:divide-y-0 xl:divide-x divide-gray-800">
-                <div className="xl:pr-8">
-                    <span className="text-komgaPrimary font-semibold text-sm mb-3 block">连载状态 (Status)</span>
-                    <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
-                        <button
-                            onClick={() => setActiveStatus(null)}
-                            className={`px-3 py-1 text-xs font-medium rounded-full transition-colors border ${activeStatus === null
-                                ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'
-                                }`}
-                        >
-                            全部状态
-                        </button>
-                        {allStatuses.map((st) => (
-                            <button
-                                key={st}
-                                onClick={() => {
-                                    if (activeStatus === st) setActiveStatus(null);
-                                    else {
-                                        setActiveStatus(st);
-                                        setPage(1);
-                                    }
-                                }}
-                                className={`px-3 py-1 text-xs font-medium rounded-full transition-all border flex items-center gap-1.5 ${activeStatus === st
-                                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                    : 'bg-transparent border-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-200 bg-gray-900/40'
-                                    }`}
-                            >
-                                {st}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-                {allTags.length > 0 && (
-                    <div className="pt-6 xl:pt-0 xl:px-8">
-                        <span className="text-komgaPrimary font-semibold text-sm mb-3 block">标签分类 (Tags)</span>
-                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
-                            <button
-                                onClick={() => setActiveTag(null)}
-                                className={`px-3 py-1 text-xs font-medium rounded-full transition-colors border ${activeTag === null
-                                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                    : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'
-                                    }`}
-                            >
-                                不限
-                            </button>
-                            {allTags.map((t) => (
-                                <button
-                                    key={t.name}
-                                    onClick={() => setActiveTag(t.name === activeTag ? null : t.name)}
-                                    className={`px-3 py-1 text-xs font-medium rounded-full transition-all border flex items-center gap-1.5 ${activeTag === t.name
-                                        ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                        : 'bg-transparent border-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-200 bg-gray-900/40'
-                                        }`}
-                                >
-                                    {t.name}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
-                {allAuthors.length > 0 && (
-                    <div className="pt-6 xl:pt-0 xl:pl-8">
-                        <span className="text-komgaPrimary font-semibold text-sm mb-3 block">参与人员 (Authors)</span>
-                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
-                            <button
-                                onClick={() => setActiveAuthor(null)}
-                                className={`px-3 py-1 text-xs font-medium rounded-full transition-colors border ${activeAuthor === null
-                                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                    : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'
-                                    }`}
-                            >
-                                不限
-                            </button>
-                            {allAuthors.map((a) => (
-                                <button
-                                    key={a.name}
-                                    onClick={() => {
-                                        if (activeAuthor === a.name) setActiveAuthor(null);
-                                        else {
-                                            setActiveAuthor(a.name);
-                                            setPage(1);
-                                        }
-                                    }}
-                                    className={`px-3 py-1 text-xs font-medium rounded-full transition-all border flex items-center gap-1.5 ${activeAuthor === a.name
-                                        ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20'
-                                        : 'bg-transparent border-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-200 bg-gray-900/40'
-                                        }`}
-                                >
-                                    {a.name}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* 首字母筛选条 */}
-            <div className="mb-8 flex flex-wrap gap-1 items-center justify-center">
-                <button
-                    onClick={() => setActiveLetter(null)}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${activeLetter === null ? 'bg-komgaPrimary text-white shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                >
-                    全部
-                </button>
-                {'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').map(letter => (
-                    <button
-                        key={letter}
-                        onClick={() => {
-                            if (activeLetter === letter) setActiveLetter(null);
-                            else {
-                                setActiveLetter(letter);
-                                setPage(1);
-                            }
-                        }}
-                        className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-md transition-colors ${activeLetter === letter ? 'bg-komgaPrimary text-white shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                    >
-                        {letter}
-                    </button>
-                ))}
-            </div>
+            <HomeFilters
+                allStatuses={allStatuses}
+                allTags={allTags}
+                allAuthors={allAuthors}
+                activeStatus={activeStatus}
+                activeTag={activeTag}
+                activeAuthor={activeAuthor}
+                activeLetter={activeLetter}
+                onStatusChange={(value) => {
+                    setActiveStatus(value);
+                    setPage(1);
+                }}
+                onTagChange={(value) => {
+                    setActiveTag(value);
+                    setPage(1);
+                }}
+                onAuthorChange={(value) => {
+                    setActiveAuthor(value);
+                    setPage(1);
+                }}
+                onLetterChange={(value) => {
+                    setActiveLetter(value);
+                    setPage(1);
+                }}
+            />
 
             {loading && allSeries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-40">
