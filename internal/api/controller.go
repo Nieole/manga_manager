@@ -34,7 +34,7 @@ type Controller struct {
 	imageCache *lru.Cache[string, []byte]
 	scanner    *scanner.Scanner
 	engine     *search.Engine
-	config     *config.Config
+	config     *config.Manager
 	configPath string
 	watcher    *scanner.FileWatcher
 
@@ -50,7 +50,7 @@ type Controller struct {
 	recommendationsMutex     sync.RWMutex
 }
 
-func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Config, cfgPath string) *Controller {
+func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
 	c := &Controller{
 		store:          store,
@@ -89,6 +89,13 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 	}
 
 	return c
+}
+
+func (c *Controller) currentConfig() config.Config {
+	if c.config == nil {
+		return config.Config{}
+	}
+	return c.config.Snapshot()
 }
 
 func (c *Controller) startBroker() {
@@ -246,9 +253,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		// 通用静态直接下发，适配首卷封面作为系列代表图（支持二级哈希子目录）
 		r.Get("/thumbnails/*", func(w http.ResponseWriter, r *http.Request) {
+			cfg := c.currentConfig()
 			thumbDir := filepath.Join(".", "data", "thumbnails")
-			if c.config != nil && c.config.Cache.Dir != "" {
-				thumbDir = c.config.Cache.Dir
+			if cfg.Cache.Dir != "" {
+				thumbDir = cfg.Cache.Dir
 			}
 			filename := chi.URLParam(r, "*")
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
@@ -1224,7 +1232,7 @@ func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, http.StatusOK, c.config)
+	jsonResponse(w, http.StatusOK, c.currentConfig())
 }
 
 func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
@@ -1246,7 +1254,7 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Update in-memory config
-	*c.config = newCfg
+	c.config.Replace(&newCfg)
 
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "配置已成功保存。得益于热重载技术，大部分核心设定（如 AI 引擎路径、并发进程数）已立等生效，无需重启应用。"})
 }
@@ -1269,7 +1277,8 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 		req.Prompt = "Hello, this is a test from Manga Manager."
 	}
 
-	provider := metadata.NewAIProvider(req.Provider, req.Endpoint, req.Model, req.APIKey, c.config.LLM.Timeout)
+	cfg := c.currentConfig()
+	provider := metadata.NewAIProvider(req.Provider, req.Endpoint, req.Model, req.APIKey, cfg.LLM.Timeout)
 	response, err := provider.TestLLM(r.Context(), req.Prompt)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("LLM Test failed: %v", err))
@@ -1292,22 +1301,27 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 }
 
 func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
-	if c.engine != nil {
-		c.engine.Close()
+	if c.engine == nil {
+		jsonError(w, http.StatusServiceUnavailable, "Search engine not initialized")
+		return
 	}
 
-	indexPath := "data/search.bleve"
-	_ = os.RemoveAll(indexPath)
+	cfg := c.currentConfig()
+	dataPath := filepath.Dir(cfg.Database.Path)
+	if err := c.engine.Rebuild(dataPath); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to rebuild search index")
+		return
+	}
 
-	// Since we can't easily recreate the engine here due to the mapping logic being in search package,
-	// we will ask the user to restart the application to trigger a fresh engine creation and scan.
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "搜索引擎归档已被安全擦除。由于底层引擎句柄已被重置，请您重新启动应用以触发全新索引构建。"})
+	go c.triggerGlobalScan(context.Background())
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "搜索索引已在线重建，并已触发全库重新建立索引。"})
 }
 
 func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 	thumbDir := filepath.Join(".", "data", "thumbnails")
-	if c.config != nil && c.config.Cache.Dir != "" {
-		thumbDir = c.config.Cache.Dir
+	cfg := c.currentConfig()
+	if cfg.Cache.Dir != "" {
+		thumbDir = cfg.Cache.Dir
 	}
 
 	// 尽力删除缓存目录
@@ -1437,7 +1451,8 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 3. 构建 Provider
-	provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey, c.config.LLM.Timeout)
+	cfg := c.currentConfig()
+	provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.Endpoint, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
 
 	// 4. 交给 LLM 甄选并产出理
 	recList, err := provider.GenerateRecommendations(ctx, userTags, candidates, 3)
@@ -1526,7 +1541,8 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		provider := metadata.NewAIProvider(c.config.LLM.Provider, c.config.LLM.Endpoint, c.config.LLM.Model, c.config.LLM.APIKey, c.config.LLM.Timeout)
+		cfg := c.currentConfig()
+		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.Endpoint, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)

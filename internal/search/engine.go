@@ -14,34 +14,41 @@ import (
 )
 
 type Engine struct {
-	index bleve.Index
-	mu    sync.RWMutex
+	index     bleve.Index
+	indexPath string
+	mu        sync.RWMutex
 }
 
 func NewEngine(dataPath string) (*Engine, error) {
 	indexPath := filepath.Join(dataPath, "search.bleve")
-	var idx bleve.Index
-	var err error
+	idx, err := openIndex(indexPath)
+	if err != nil {
+		return nil, err
+	}
 
+	return &Engine{
+		index:     idx,
+		indexPath: indexPath,
+	}, nil
+}
+
+func openIndex(indexPath string) (bleve.Index, error) {
 	if _, errStat := os.Stat(indexPath); os.IsNotExist(errStat) {
-		// 使用默认的中文字段分词器支持映射
 		mapping := bleve.NewIndexMapping()
-		idx, err = bleve.New(indexPath, mapping)
+		idx, err := bleve.New(indexPath, mapping)
 		if err != nil {
 			return nil, err
 		}
 		slog.Info("Created new Bleve search index.")
-	} else {
-		idx, err = bleve.Open(indexPath)
-		if err != nil {
-			return nil, err
-		}
-		slog.Info("Opened existing Bleve search index.")
+		return idx, nil
 	}
 
-	return &Engine{
-		index: idx,
-	}, nil
+	idx, err := bleve.Open(indexPath)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("Opened existing Bleve search index.")
+	return idx, nil
 }
 
 func (e *Engine) Close() error {
@@ -50,6 +57,30 @@ func (e *Engine) Close() error {
 	if e.index != nil {
 		return e.index.Close()
 	}
+	return nil
+}
+
+func (e *Engine) Rebuild(dataPath string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	indexPath := filepath.Join(dataPath, "search.bleve")
+	if e.index != nil {
+		if err := e.index.Close(); err != nil {
+			return err
+		}
+	}
+	if err := os.RemoveAll(indexPath); err != nil {
+		return err
+	}
+
+	idx, err := openIndex(indexPath)
+	if err != nil {
+		return err
+	}
+
+	e.index = idx
+	e.indexPath = indexPath
 	return nil
 }
 

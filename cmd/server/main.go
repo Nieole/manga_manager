@@ -43,9 +43,10 @@ func main() {
 	// 初始化归档句柄重用池与 AI 并发控制参数
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
 	images.InitProcessor(cfg.Scanner.MaxAiConcurrency)
+	cfgManager := config.NewManager(cfg)
 
 	// 启动配置热重载监听
-	go watchConfig("config.yaml", cfg)
+	go watchConfig("config.yaml", cfgManager)
 
 	if err := database.Migrate(cfg.Database.Path); err != nil {
 		slog.Error("Failed to migrate database schema", "error", err)
@@ -83,8 +84,8 @@ func main() {
 	}
 
 	// API 端点挂载
-	scan := scanner.NewScanner(store, engine, cfg)
-	apiController := api.NewController(store, scan, engine, cfg, "config.yaml")
+	scan := scanner.NewScanner(store, engine, cfgManager)
+	apiController := api.NewController(store, scan, engine, cfgManager, "config.yaml")
 
 	// 连接扫描器的完成回调以向 SSE Broker 抛出刷新消息
 	scan.SetBatchCallback(func(action string) {
@@ -140,7 +141,7 @@ func main() {
 	}
 }
 
-func watchConfig(path string, currentCfg *config.Config) {
+func watchConfig(path string, cfgManager *config.Manager) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Error("Failed to create config watcher", "error", err)
@@ -177,7 +178,8 @@ func watchConfig(path string, currentCfg *config.Config) {
 				// 我们需要手动将 *newCfg 的值刷入 *currentCfg 指向的内存，
 				// 或者确保后端组件统一订阅配置变更。
 				// 简单的做法是把新值 Copy 过去 (深拷贝结构体)
-				*currentCfg = *newCfg
+				cfgManager.Replace(newCfg)
+				currentCfg := cfgManager.Snapshot()
 
 				// 2. 刷新具有受限状态的底层资源池
 				parser.InitPool(currentCfg.Scanner.ArchivePoolSize)

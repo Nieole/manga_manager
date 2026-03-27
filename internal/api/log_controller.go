@@ -35,7 +35,8 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	// manga_manager.log 的路径
 	// Controller 里可以直接通过配置或者数据路径推导
 	// 例如：Controller 中的 watcher 扫描器之类的依赖。为了简便，我们从存库路径推导
-	logFilePath := filepath.Join(filepath.Dir(c.config.Database.Path), "manga_manager.log")
+	cfg := c.currentConfig()
+	logFilePath := filepath.Join(filepath.Dir(cfg.Database.Path), "manga_manager.log")
 
 	file, err := os.Open(logFilePath)
 	if err != nil {
@@ -50,7 +51,7 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 
 	// 由于日志文件可能很大，我们简单暴力点：扫描一遍，存下符合条件的行。
 	// 对于非常巨大的日志可能需要特殊倒序读取库，此处假定只读当前 .log 并收集
-	var matchedLogs []LogEntry
+	matchedLogs := make([]LogEntry, 0, limit)
 	scanner := bufio.NewScanner(file)
 
 	// 简单正则提取 level=ERROR
@@ -61,6 +62,11 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		line := scanner.Text()
 		if strings.Contains(line, levelPattern) || (filterLevel == "ALL") {
 			entry := parseLogLine(line)
+			if len(matchedLogs) == limit {
+				copy(matchedLogs, matchedLogs[1:])
+				matchedLogs[len(matchedLogs)-1] = entry
+				continue
+			}
 			matchedLogs = append(matchedLogs, entry)
 		}
 	}
@@ -73,11 +79,6 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	// 倒序排列：最新的在前面
 	for i, j := 0, len(matchedLogs)-1; i < j; i, j = i+1, j-1 {
 		matchedLogs[i], matchedLogs[j] = matchedLogs[j], matchedLogs[i]
-	}
-
-	// 截断到 limit
-	if len(matchedLogs) > limit {
-		matchedLogs = matchedLogs[:limit]
 	}
 
 	jsonResponse(w, http.StatusOK, matchedLogs)

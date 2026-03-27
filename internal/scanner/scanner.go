@@ -25,12 +25,12 @@ import (
 type Scanner struct {
 	store  database.Store
 	engine *search.Engine
-	config *config.Config
+	config *config.Manager
 	// 批量插入结束后的回调播送机制
 	onBatchIngested func(action string)
 }
 
-func NewScanner(store database.Store, engine *search.Engine, cfg *config.Config) *Scanner {
+func NewScanner(store database.Store, engine *search.Engine, cfg *config.Manager) *Scanner {
 	return &Scanner{
 		store:  store,
 		engine: engine,
@@ -41,6 +41,13 @@ func NewScanner(store database.Store, engine *search.Engine, cfg *config.Config)
 // SetBatchCallback 允许外部注册事件通知钩子
 func (s *Scanner) SetBatchCallback(cb func(string)) {
 	s.onBatchIngested = cb
+}
+
+func (s *Scanner) currentConfig() config.Config {
+	if s.config == nil {
+		return config.Config{}
+	}
+	return s.config.Snapshot()
 }
 
 type scanJob struct {
@@ -79,7 +86,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 
 	// 第 2 阶段：解析工作池 (The Worker Pool)
 	// 在此处限制最大同时榨取的数量，保证文件描述符 FD 不枯竭且避免 CPU 长时间锁顿
-	numWorkers := s.config.Scanner.Workers
+	cfg := s.currentConfig()
+	numWorkers := cfg.Scanner.Workers
 	if numWorkers <= 0 {
 		numWorkers = runtime.NumCPU() * 2
 	}
@@ -176,7 +184,8 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	results := make(chan scanResult, 100)
 
 	var wg sync.WaitGroup
-	numWorkers := s.config.Scanner.Workers
+	cfg := s.currentConfig()
+	numWorkers := cfg.Scanner.Workers
 	if numWorkers <= 0 {
 		numWorkers = runtime.NumCPU() * 2
 	}
@@ -351,8 +360,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		}
 
 		baseThumbDir := filepath.Join(".", "data", "thumbnails")
-		if s.config != nil && s.config.Cache.Dir != "" {
-			baseThumbDir = s.config.Cache.Dir
+		cfg := s.currentConfig()
+		if cfg.Cache.Dir != "" {
+			baseThumbDir = cfg.Cache.Dir
 		}
 		thumbDir := filepath.Join(baseThumbDir, subDir)
 		err = os.MkdirAll(thumbDir, 0755)
@@ -374,7 +384,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 				var processed []byte
 				var fileName string
 
-				targetFormat := s.config.Scanner.ThumbnailFormat
+				targetFormat := cfg.Scanner.ThumbnailFormat
 				if targetFormat == "" {
 					targetFormat = "webp"
 				}

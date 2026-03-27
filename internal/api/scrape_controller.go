@@ -18,11 +18,12 @@ import (
 func (c *Controller) getProvider(name string) metadata.Provider {
 	switch strings.ToLower(name) {
 	case "ollama", "llm", "openai":
-		provider := c.config.LLM.Provider
-		endpoint := c.config.LLM.Endpoint
-		model := c.config.LLM.Model
-		apiKey := c.config.LLM.APIKey
-		return metadata.NewAIProvider(provider, endpoint, model, apiKey, c.config.LLM.Timeout)
+		cfg := c.currentConfig()
+		provider := cfg.LLM.Provider
+		endpoint := cfg.LLM.Endpoint
+		model := cfg.LLM.Model
+		apiKey := cfg.LLM.APIKey
+		return metadata.NewAIProvider(provider, endpoint, model, apiKey, cfg.LLM.Timeout)
 	default:
 		return metadata.NewBangumiProvider()
 	}
