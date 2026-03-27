@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ type FileWatcher struct {
 	// debounce: 同一库目录在 5 秒内只触发一次扫描
 	pending map[int64]time.Time
 	libs    map[string]int64 // path -> libraryID
+	watched map[string]struct{}
 	stopCh  chan struct{}
 	formats []string
 }
@@ -33,6 +35,7 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 		watcher: w,
 		pending: make(map[int64]time.Time),
 		libs:    make(map[string]int64),
+		watched: make(map[string]struct{}),
 		stopCh:  make(chan struct{}),
 		formats: []string{".zip", ".cbz", ".rar", ".cbr", ".pdf"},
 	}, nil
@@ -44,7 +47,7 @@ func (fw *FileWatcher) WatchLibrary(libraryID int64, path string) error {
 	fw.libs[path] = libraryID
 	fw.mu.Unlock()
 
-	err := fw.watcher.Add(path)
+	err := fw.watchRecursive(path)
 	if err != nil {
 		slog.Warn("Failed to watch library directory", "path", path, "error", err)
 	} else {
@@ -57,8 +60,18 @@ func (fw *FileWatcher) WatchLibrary(libraryID int64, path string) error {
 func (fw *FileWatcher) UnwatchLibrary(path string) {
 	fw.mu.Lock()
 	delete(fw.libs, path)
+	var toRemove []string
+	for watchedPath := range fw.watched {
+		if watchedPath == path || strings.HasPrefix(watchedPath, path+string(filepath.Separator)) {
+			toRemove = append(toRemove, watchedPath)
+			delete(fw.watched, watchedPath)
+		}
+	}
 	fw.mu.Unlock()
-	_ = fw.watcher.Remove(path)
+
+	for _, watchedPath := range toRemove {
+		_ = fw.watcher.Remove(watchedPath)
+	}
 }
 
 // Start 启动文件监控事件循环
@@ -75,6 +88,13 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 			case event, ok := <-fw.watcher.Events:
 				if !ok {
 					return
+				}
+				if event.Op&fsnotify.Create != 0 {
+					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+						if err := fw.watchRecursive(event.Name); err != nil {
+							slog.Warn("Failed to watch new subdirectory", "path", event.Name, "error", err)
+						}
+					}
 				}
 				// 只关注 Create 和 Write
 				if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
@@ -148,4 +168,33 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 func (fw *FileWatcher) Stop() {
 	close(fw.stopCh)
 	_ = fw.watcher.Close()
+}
+
+func (fw *FileWatcher) watchRecursive(root string) error {
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+
+		fw.mu.Lock()
+		_, exists := fw.watched[path]
+		if !exists {
+			fw.watched[path] = struct{}{}
+		}
+		fw.mu.Unlock()
+		if exists {
+			return nil
+		}
+
+		if err := fw.watcher.Add(path); err != nil {
+			fw.mu.Lock()
+			delete(fw.watched, path)
+			fw.mu.Unlock()
+			return err
+		}
+		return nil
+	})
 }
