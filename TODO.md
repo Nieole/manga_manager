@@ -10,7 +10,7 @@
 
 - [ ] Break up oversized frontend pages/components (`Layout`, `Home`, `SeriesDetail`, `BookReader`) into smaller hooks and view components.
 - [ ] Expand backend test coverage for scanner, API handlers, and reading progress flows.
-- [ ] Replace ad hoc background task handling with a clearer task lifecycle and status model.
+- [x] Replace ad hoc background task handling with a clearer task lifecycle and status model.
 
 ## P2 Performance
 

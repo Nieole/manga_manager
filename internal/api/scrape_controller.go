@@ -344,6 +344,11 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 
 	totalCount := len(allSeries)
 	providerName := provider.Name()
+	taskKey := "scrape_all_series"
+	if !c.startTask(taskKey, "scrape", fmt.Sprintf("批量刮削开始 (%s)", providerName), totalCount) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A batch scrape task is already running"})
+		return
+	}
 
 	go func() {
 		successCount := 0
@@ -351,8 +356,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		for i, entry := range allSeries {
 			slog.Info("Scraping series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
 
-			// 向前端推送进度
-			c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削: %s"}`, i+1, totalCount, entry.Name))
+			c.updateTask(taskKey, i+1, totalCount, fmt.Sprintf("刮削: %s", entry.Name))
 
 			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
 			if err != nil {
@@ -380,7 +384,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		}
 
 		slog.Info("Batch scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
-		c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削完成，成功 %d/%d"}`, totalCount, totalCount, successCount, totalCount))
+		c.finishTask(taskKey, fmt.Sprintf("刮削完成，成功 %d/%d", successCount, totalCount))
 		c.PublishEvent("refresh")
 	}()
 
@@ -437,13 +441,18 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 
 	totalCount := len(allSeries)
 	providerName := provider.Name()
+	taskKey := fmt.Sprintf("scrape_library_%d", libraryID)
+	if !c.startTask(taskKey, "scrape", fmt.Sprintf("资源库批量刮削开始 (%s)", providerName), totalCount) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scrape task is already running"})
+		return
+	}
 
 	go func() {
 		successCount := 0
 		for i, entry := range allSeries {
 			slog.Info("Scraping library series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
 
-			c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削: %s"}`, i+1, totalCount, entry.Name))
+			c.updateTask(taskKey, i+1, totalCount, fmt.Sprintf("刮削: %s", entry.Name))
 
 			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
 			if err != nil {
@@ -467,7 +476,7 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 		}
 
 		slog.Info("Library scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
-		c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"scrape","current":%d,"total":%d,"message":"刮削资源库完成，成功 %d/%d"}`, totalCount, totalCount, successCount, totalCount))
+		c.finishTask(taskKey, fmt.Sprintf("刮削资源库完成，成功 %d/%d", successCount, totalCount))
 		c.PublishEvent("refresh")
 	}()
 

@@ -48,6 +48,21 @@ type Controller struct {
 	recommendationsCache     []AIRecommendationResponse
 	recommendationsCacheTime time.Time
 	recommendationsMutex     sync.RWMutex
+
+	taskMutex sync.Mutex
+	tasks     map[string]TaskStatus
+}
+
+type TaskStatus struct {
+	Key        string     `json:"key"`
+	Type       string     `json:"type"`
+	Status     string     `json:"status"`
+	Message    string     `json:"message"`
+	Current    int        `json:"current"`
+	Total      int        `json:"total"`
+	StartedAt  time.Time  `json:"started_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
@@ -63,6 +78,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		newClients:     make(chan chan string),
 		defunctClients: make(chan chan string),
 		messages:       make(chan string, 10),
+		tasks:          make(map[string]TaskStatus),
 	}
 
 	go c.startBroker()
@@ -158,7 +174,116 @@ func (c *Controller) startDaemon() {
 
 // PublishEvent 供 Scanner 外部等调用投递事件消息
 func (c *Controller) PublishEvent(event string) {
+	if c.messages == nil {
+		return
+	}
 	c.messages <- event
+}
+
+func (c *Controller) startTask(key, taskType, message string, total int) bool {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	if c.tasks == nil {
+		c.tasks = make(map[string]TaskStatus)
+	}
+
+	if existing, ok := c.tasks[key]; ok && existing.Status == "running" {
+		return false
+	}
+
+	now := time.Now()
+	task := TaskStatus{
+		Key:       key,
+		Type:      taskType,
+		Status:    "running",
+		Message:   message,
+		Current:   0,
+		Total:     total,
+		StartedAt: now,
+		UpdatedAt: now,
+	}
+	c.tasks[key] = task
+	c.publishTaskStatusLocked(task)
+	return true
+}
+
+func (c *Controller) updateTask(key string, current, total int, message string) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	task, ok := c.tasks[key]
+	if !ok {
+		return
+	}
+	task.Current = current
+	if total >= 0 {
+		task.Total = total
+	}
+	if message != "" {
+		task.Message = message
+	}
+	task.UpdatedAt = time.Now()
+	c.tasks[key] = task
+	c.publishTaskStatusLocked(task)
+}
+
+func (c *Controller) finishTask(key, message string) {
+	c.completeTask(key, "completed", message)
+}
+
+func (c *Controller) failTask(key, message string) {
+	c.completeTask(key, "failed", message)
+}
+
+func (c *Controller) completeTask(key, status, message string) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	task, ok := c.tasks[key]
+	if !ok {
+		return
+	}
+	now := time.Now()
+	task.Status = status
+	task.Message = message
+	if task.Total > 0 {
+		task.Current = task.Total
+	}
+	task.UpdatedAt = now
+	task.FinishedAt = &now
+	c.tasks[key] = task
+	c.publishTaskStatusLocked(task)
+}
+
+func (c *Controller) publishTaskStatusLocked(task TaskStatus) {
+	if c.messages == nil {
+		return
+	}
+	payload, err := json.Marshal(task)
+	if err != nil {
+		slog.Warn("Failed to marshal task status", "task_key", task.Key, "error", err)
+		return
+	}
+	c.messages <- "task_progress:" + string(payload)
+}
+
+func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	if c.tasks == nil {
+		c.tasks = make(map[string]TaskStatus)
+	}
+
+	items := make([]TaskStatus, 0, len(c.tasks))
+	for _, task := range c.tasks {
+		items = append(items, task)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
+	jsonResponse(w, http.StatusOK, items)
 }
 
 func (c *Controller) SetupRoutes(r chi.Router) {
@@ -211,6 +336,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/config", c.getSystemConfig)
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Get("/system/logs", c.getSystemLogs)
+		r.Get("/system/tasks", c.listTasks)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
@@ -457,12 +583,19 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
+	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
+	if !c.startTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 1) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scan is already running"})
+		return
+	}
 
 	go func() {
 		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, isForce)
 		if err != nil {
-			_ = err
+			c.failTask(taskKey, fmt.Sprintf("资源库扫描失败: %v", err))
+			return
 		}
+		c.finishTask(taskKey, fmt.Sprintf("资源库扫描完成: %s", lib.Name))
 	}()
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
@@ -477,12 +610,20 @@ func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
+	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
+	if !c.startTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 1) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A series scan is already running"})
+		return
+	}
 
 	go func() {
 		err := c.scanner.ScanSeries(context.Background(), seriesID, isForce)
 		if err != nil {
 			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
+			c.failTask(taskKey, fmt.Sprintf("系列扫描失败: %v", err))
+			return
 		}
+		c.finishTask(taskKey, fmt.Sprintf("系列扫描完成 #%d", seriesID))
 	}()
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
@@ -515,12 +656,20 @@ func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
+	taskKey := fmt.Sprintf("cleanup_library_%d", libraryID)
+	if !c.startTask(taskKey, "cleanup_library", fmt.Sprintf("开始清理资源库 #%d", libraryID), 1) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library cleanup is already running"})
+		return
+	}
 
 	go func() {
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
 		if err != nil {
 			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
+			c.failTask(taskKey, fmt.Sprintf("资源库清理失败: %v", err))
+			return
 		}
+		c.finishTask(taskKey, fmt.Sprintf("资源库清理完成 #%d", libraryID))
 	}()
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Cleanup initiated"})
@@ -1305,19 +1454,30 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusServiceUnavailable, "Search engine not initialized")
 		return
 	}
+	if !c.startTask("rebuild_index", "rebuild_index", "开始重建搜索索引", 1) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A search index rebuild is already running"})
+		return
+	}
 
 	cfg := c.currentConfig()
 	dataPath := filepath.Dir(cfg.Database.Path)
 	if err := c.engine.Rebuild(dataPath); err != nil {
+		c.failTask("rebuild_index", fmt.Sprintf("搜索索引重建失败: %v", err))
 		jsonError(w, http.StatusInternalServerError, "Failed to rebuild search index")
 		return
 	}
 
 	go c.triggerGlobalScan(context.Background())
+	c.finishTask("rebuild_index", "搜索索引已重建，正在后台重建索引数据")
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "搜索索引已在线重建，并已触发全库重新建立索引。"})
 }
 
 func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
+	if !c.startTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 1) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail rebuild is already running"})
+		return
+	}
+
 	thumbDir := filepath.Join(".", "data", "thumbnails")
 	cfg := c.currentConfig()
 	if cfg.Cache.Dir != "" {
@@ -1330,6 +1490,7 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 
 	// 发起无视跳过的全局缓存重铸
 	go c.triggerGlobalScan(context.Background())
+	c.finishTask("rebuild_thumbnails", "缩略图缓存已清空，后台重建已启动")
 
 	c.PublishEvent("refresh_thumbnails")
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。"})
@@ -1501,25 +1662,29 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
+	taskKey := fmt.Sprintf("ai_grouping_library_%d", libID)
+	if !c.startTask(taskKey, "ai_grouping", "AI 智能分组开始...", 1) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An AI grouping task is already running for this library"})
+		return
+	}
 
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组任务已提交至后台"})
 
 	go func(libraryID int64) {
 		ctx := context.Background()
-		c.PublishEvent(`task_progress:{"type":"ai_grouping","current":0,"total":1,"message":"AI 智能分组开始..."}`)
 
 		dbCache := c.store.(*database.SqlStore)
 		seriesRows, err := dbCache.GetSeriesWithoutCollection(ctx, libraryID)
 		if err != nil {
 			slog.Error("Failed to fetch series for grouping", "error", err)
-			c.PublishEvent(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"AI 分组失败 (数据库获取异常)"}`)
+			c.failTask(taskKey, "AI 分组失败 (数据库获取异常)")
 			return
 		}
 
 		slog.Info("AI grouping: fetched candidate series", "library_id", libraryID, "count", len(seriesRows))
 
 		if len(seriesRows) == 0 {
-			c.PublishEvent(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"此库中所有作品已分组完成"}`)
+			c.finishTask(taskKey, "此库中所有作品已分组完成")
 			return
 		}
 
@@ -1546,7 +1711,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)
-			c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"AI 分组失败: %s"}`, err.Error()))
+			c.failTask(taskKey, fmt.Sprintf("AI 分组失败: %s", err.Error()))
 			return
 		}
 
@@ -1568,7 +1733,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		c.PublishEvent(fmt.Sprintf(`task_progress:{"type":"ai_grouping","current":1,"total":1,"message":"AI 智能分组成功完成 (生成了 %d 个合集)"}`, len(collections)))
+		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组成功完成 (生成了 %d 个合集)", len(collections)))
 		c.PublishEvent("refresh")
 	}(libID)
 }

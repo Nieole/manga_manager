@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"manga-manager/internal/config"
@@ -59,6 +60,8 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 		engine:     engine,
 		config:     cfgManager,
 		configPath: configPath,
+		tasks:      make(map[string]TaskStatus),
+		messages:   make(chan string, 32),
 	}
 
 	return controller, store, engine, configPath
@@ -241,5 +244,69 @@ func TestRebuildIndexKeepsSearchUsable(t *testing.T) {
 
 	if searchRec.Code != http.StatusOK {
 		t.Fatalf("expected search to keep working, got %d", searchRec.Code)
+	}
+}
+
+func TestListTasksReturnsMostRecentFirst(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	if !controller.startTask("older", "scan_library", "older task", 1) {
+		t.Fatal("expected first task to start")
+	}
+	controller.finishTask("older", "done")
+
+	if !controller.startTask("newer", "rebuild_index", "newer task", 1) {
+		t.Fatal("expected second task to start")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
+	rec := httptest.NewRecorder()
+	controller.listTasks(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var tasks []TaskStatus
+	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
+		t.Fatalf("decode tasks failed: %v", err)
+	}
+	if len(tasks) < 2 {
+		t.Fatalf("expected at least 2 tasks, got %d", len(tasks))
+	}
+	if tasks[0].Key != "newer" {
+		t.Fatalf("expected most recent task first, got %q", tasks[0].Key)
+	}
+}
+
+func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	libPath := filepath.Join(t.TempDir(), "library")
+	if err := os.MkdirAll(libPath, 0o755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+
+	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
+		Name:         "Main",
+		Path:         libPath,
+		AutoScan:     false,
+		ScanInterval: 60,
+		ScanFormats:  "zip,cbz,rar,cbr,pdf",
+	})
+	if err != nil {
+		t.Fatalf("CreateLibrary failed: %v", err)
+	}
+
+	if !controller.startTask("scan_library_"+strconv.FormatInt(lib.ID, 10), "scan_library", "running", 1) {
+		t.Fatal("expected task to start")
+	}
+
+	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/scan", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
+	rec := httptest.NewRecorder()
+	controller.scanLibrary(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate scan task, got %d", rec.Code)
 	}
 }
