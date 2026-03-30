@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -109,4 +112,80 @@ func TestOPDSFeeds(t *testing.T) {
 			t.Fatalf("expected acquisition + thumbnail links, got %+v", entry.Links)
 		}
 	})
+}
+
+func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	t.Run("library and series feeds validate route ids", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/bad", nil, "libraryId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid library id 400, got %d", rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/bad", nil, "seriesId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid series id 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("library feed can be empty", func(t *testing.T) {
+		secondLibPath := filepath.Join(rootDir, "Library Empty")
+		if err := os.MkdirAll(secondLibPath, 0o755); err != nil {
+			t.Fatalf("mkdir empty library failed: %v", err)
+		}
+		emptyLib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
+			Name:         "Library Empty",
+			Path:         secondLibPath,
+			AutoScan:     false,
+			ScanInterval: 60,
+			ScanFormats:  "zip,cbz,rar,cbr,pdf",
+		})
+		if err != nil {
+			t.Fatalf("CreateLibrary empty failed: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		controller.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/2", nil, "libraryId", strconv.FormatInt(emptyLib.ID, 10)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected empty library feed 200, got %d", rec.Code)
+		}
+
+		var feed OPDSFeed
+		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+			t.Fatalf("decode empty library feed failed: %v", err)
+		}
+		if len(feed.Entries) != 0 {
+			t.Fatalf("expected no entries, got %+v", feed.Entries)
+		}
+	})
+
+	t.Run("series books feed can be empty", func(t *testing.T) {
+		db := controller.store.(*database.SqlStore).DB()
+		if _, err := db.Exec(`DELETE FROM books WHERE series_id = ?`, series.ID); err != nil {
+			t.Fatalf("delete series books failed: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		controller.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected empty series books feed 200, got %d", rec.Code)
+		}
+
+		var feed OPDSFeed
+		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+			t.Fatalf("decode empty series books feed failed: %v", err)
+		}
+		if len(feed.Entries) != 0 {
+			t.Fatalf("expected no book entries, got %+v", feed.Entries)
+		}
+		if feed.Title != series.Name {
+			t.Fatalf("expected fallback series title %q, got %q", series.Name, feed.Title)
+		}
+	})
+
+	_ = lib
 }

@@ -196,6 +196,114 @@ func TestSeriesRelationHandlers(t *testing.T) {
 	}
 }
 
+func TestCollectionValidationHandlers(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	t.Run("create collection validates request", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.createCollection(rec, httptest.NewRequest(http.MethodPost, "/api/collections", bytes.NewBufferString(`{}`)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected create collection 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("update collection validates route and body", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.updateCollection(rec, requestWithRouteParam(http.MethodPut, "/api/collections/bad", []byte(`{"name":"x"}`), "collectionId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid collection id 400, got %d", rec.Code)
+		}
+
+		db := controller.store.(*database.SqlStore).DB()
+		res, err := db.ExecContext(context.Background(), `INSERT INTO collections (name, description) VALUES (?, ?)`, "Favorites", "picked")
+		if err != nil {
+			t.Fatalf("insert collection failed: %v", err)
+		}
+		collectionID, _ := res.LastInsertId()
+
+		rec = httptest.NewRecorder()
+		controller.updateCollection(rec, requestWithRouteParam(http.MethodPut, "/api/collections/1", []byte(`{`), "collectionId", strconv.FormatInt(collectionID, 10)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid update body 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("collection series handlers validate route and payload", func(t *testing.T) {
+		db := controller.store.(*database.SqlStore).DB()
+		res, err := db.ExecContext(context.Background(), `INSERT INTO collections (name, description) VALUES (?, ?)`, "Queue", "picked")
+		if err != nil {
+			t.Fatalf("insert collection failed: %v", err)
+		}
+		collectionID, _ := res.LastInsertId()
+
+		rec := httptest.NewRecorder()
+		controller.getCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/collections/bad/series", nil, "collectionId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid get collection series 400, got %d", rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.addSeriesToCollection(rec, requestWithRouteParam(http.MethodPost, "/api/collections/1/series", []byte(`{}`), "collectionId", strconv.FormatInt(collectionID, 10)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected missing series_ids 400, got %d", rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.addSeriesToCollection(rec, requestWithRouteParam(http.MethodPost, "/api/collections/1/series", []byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`,`+strconv.FormatInt(series.ID, 10)+`]}`), "collectionId", strconv.FormatInt(collectionID, 10)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected add series 200, got %d", rec.Code)
+		}
+		var added map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&added); err != nil {
+			t.Fatalf("decode add series response failed: %v", err)
+		}
+		if int(added["added"].(float64)) != 2 {
+			t.Fatalf("expected added count to reflect attempted inserts, got %+v", added)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.removeSeriesFromCollection(rec, requestWithRouteParam(http.MethodDelete, "/api/collections/bad/series/1", nil, "collectionId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid collection id 400, got %d", rec.Code)
+		}
+
+		req := requestWithRouteParam(http.MethodDelete, "/api/collections/1/series/bad", nil, "collectionId", strconv.FormatInt(collectionID, 10))
+		req = withRouteParam(req, "seriesId", "bad")
+		rec = httptest.NewRecorder()
+		controller.removeSeriesFromCollection(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid series id 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("relation handlers validate route and payload", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.getSeriesRelations(rec, requestWithRouteParam(http.MethodGet, "/api/series/bad/relations", nil, "seriesId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid series id 400, got %d", rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/bad/relations", []byte(`{"target_series_id":1}`), "seriesId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid source series id 400, got %d", rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/1/relations", []byte(`{}`), "seriesId", strconv.FormatInt(series.ID, 10)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected missing target_series_id 400, got %d", rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.deleteSeriesRelation(rec, requestWithRouteParam(http.MethodDelete, "/api/series/relations/bad", nil, "relationId", "bad"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid relation id 400, got %d", rec.Code)
+		}
+	})
+}
+
 func withRouteParam(req *http.Request, key, value string) *http.Request {
 	routeCtx, _ := req.Context().Value(chi.RouteCtxKey).(*chi.Context)
 	if routeCtx == nil {
