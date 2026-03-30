@@ -300,6 +300,174 @@ func TestRebuildIndexKeepsSearchUsable(t *testing.T) {
 	}
 }
 
+func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+	if err := writeTestCBZ(archivePath, map[string][]byte{
+		"001.png": png1x1,
+	}); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+
+	payload := []byte(`{
+		"title":"Alpha Display",
+		"summary":"Updated summary",
+		"publisher":"Test Publisher",
+		"status":"ongoing",
+		"rating":8.6,
+		"language":"ja",
+		"locked_fields":"title,summary",
+		"tags":["Action","Drama",""],
+		"authors":[
+			{"name":"Writer A","role":"story"},
+			{"name":"Artist B","role":"art"},
+			{"name":"","role":"ignore"}
+		],
+		"links":[
+			{"name":"Bangumi","url":"https://bgm.tv/subject/1"},
+			{"name":"","url":"https://invalid.example"}
+		]
+	}`)
+
+	updateReq := requestWithRouteParam(http.MethodPut, "/api/series/1", payload, "seriesId", strconv.FormatInt(series.ID, 10))
+	updateRec := httptest.NewRecorder()
+	controller.updateSeriesInfo(updateRec, updateReq)
+
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected update series 200, got %d", updateRec.Code)
+	}
+
+	infoRec := httptest.NewRecorder()
+	controller.getSeriesInfo(infoRec, requestWithRouteParam(http.MethodGet, "/api/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+
+	if infoRec.Code != http.StatusOK {
+		t.Fatalf("expected get series info 200, got %d", infoRec.Code)
+	}
+
+	var info database.Series
+	if err := json.NewDecoder(infoRec.Body).Decode(&info); err != nil {
+		t.Fatalf("decode series info failed: %v", err)
+	}
+	if !info.Title.Valid || info.Title.String != "Alpha Display" {
+		t.Fatalf("expected updated title, got %+v", info.Title)
+	}
+	if !info.Summary.Valid || info.Summary.String != "Updated summary" {
+		t.Fatalf("expected updated summary, got %+v", info.Summary)
+	}
+	if !info.Publisher.Valid || info.Publisher.String != "Test Publisher" {
+		t.Fatalf("expected updated publisher, got %+v", info.Publisher)
+	}
+
+	tagsRec := httptest.NewRecorder()
+	controller.getSeriesTags(tagsRec, requestWithRouteParam(http.MethodGet, "/api/series/1/tags", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if tagsRec.Code != http.StatusOK {
+		t.Fatalf("expected get series tags 200, got %d", tagsRec.Code)
+	}
+	var tags []database.Tag
+	if err := json.NewDecoder(tagsRec.Body).Decode(&tags); err != nil {
+		t.Fatalf("decode series tags failed: %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d", len(tags))
+	}
+
+	authorsRec := httptest.NewRecorder()
+	controller.getSeriesAuthors(authorsRec, requestWithRouteParam(http.MethodGet, "/api/series/1/authors", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if authorsRec.Code != http.StatusOK {
+		t.Fatalf("expected get series authors 200, got %d", authorsRec.Code)
+	}
+	var authors []database.Author
+	if err := json.NewDecoder(authorsRec.Body).Decode(&authors); err != nil {
+		t.Fatalf("decode series authors failed: %v", err)
+	}
+	if len(authors) != 2 {
+		t.Fatalf("expected 2 authors, got %d", len(authors))
+	}
+
+	linksRec := httptest.NewRecorder()
+	controller.getSeriesLinks(linksRec, requestWithRouteParam(http.MethodGet, "/api/series/1/links", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if linksRec.Code != http.StatusOK {
+		t.Fatalf("expected get series links 200, got %d", linksRec.Code)
+	}
+	var links []database.SeriesLink
+	if err := json.NewDecoder(linksRec.Body).Decode(&links); err != nil {
+		t.Fatalf("decode series links failed: %v", err)
+	}
+	if len(links) != 1 || links[0].Name != "Bangumi" {
+		t.Fatalf("unexpected series links: %+v", links)
+	}
+
+	booksRec := httptest.NewRecorder()
+	controller.getBooksBySeries(booksRec, requestWithRouteParam(http.MethodGet, "/api/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if booksRec.Code != http.StatusOK {
+		t.Fatalf("expected get books by series 200, got %d", booksRec.Code)
+	}
+	var books []database.Book
+	if err := json.NewDecoder(booksRec.Body).Decode(&books); err != nil {
+		t.Fatalf("decode books by series failed: %v", err)
+	}
+	if len(books) != 1 || books[0].ID != book.ID {
+		t.Fatalf("unexpected books response: %+v", books)
+	}
+
+	contextRec := httptest.NewRecorder()
+	controller.getSeriesContext(contextRec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if contextRec.Code != http.StatusOK {
+		t.Fatalf("expected get series context 200, got %d", contextRec.Code)
+	}
+
+	var seriesContext SeriesContextResponse
+	if err := json.NewDecoder(contextRec.Body).Decode(&seriesContext); err != nil {
+		t.Fatalf("decode series context failed: %v", err)
+	}
+	if seriesContext.Series.ID != series.ID || len(seriesContext.Books) != 1 || len(seriesContext.Tags) != 2 || len(seriesContext.Authors) != 2 || len(seriesContext.Links) != 1 {
+		t.Fatalf("unexpected series context payload: %+v", seriesContext)
+	}
+}
+
+func TestMetadataLookupValidationHandlers(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	providersRec := httptest.NewRecorder()
+	controller.listProviders(providersRec, httptest.NewRequest(http.MethodGet, "/api/providers", nil))
+	if providersRec.Code != http.StatusOK {
+		t.Fatalf("expected list providers 200, got %d", providersRec.Code)
+	}
+	var providers []map[string]string
+	if err := json.NewDecoder(providersRec.Body).Decode(&providers); err != nil {
+		t.Fatalf("decode providers failed: %v", err)
+	}
+	if len(providers) != 2 || providers[0]["id"] != "bangumi" {
+		t.Fatalf("unexpected providers payload: %+v", providers)
+	}
+
+	searchRec := httptest.NewRecorder()
+	controller.searchMetadata(searchRec, httptest.NewRequest(http.MethodGet, "/api/metadata/search", nil))
+	if searchRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing q to return 400, got %d", searchRec.Code)
+	}
+
+	scrapeSearchRec := httptest.NewRecorder()
+	controller.scrapeSearchMetadata(scrapeSearchRec, requestWithRouteParam(http.MethodGet, "/api/series/invalid/scrape/search", nil, "seriesId", "invalid"))
+	if scrapeSearchRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid series id to return 400, got %d", scrapeSearchRec.Code)
+	}
+
+	notFoundRec := httptest.NewRecorder()
+	controller.scrapeSearchMetadata(notFoundRec, requestWithRouteParam(http.MethodGet, "/api/series/999/scrape/search", nil, "seriesId", "999"))
+	if notFoundRec.Code != http.StatusNotFound {
+		t.Fatalf("expected missing series to return 404, got %d", notFoundRec.Code)
+	}
+
+	applyRec := httptest.NewRecorder()
+	controller.applyScrapedMetadata(applyRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scrape/apply", []byte("{"), "seriesId", "1"))
+	if applyRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid payload to return 400, got %d", applyRec.Code)
+	}
+}
+
 func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
