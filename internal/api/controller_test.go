@@ -468,6 +468,229 @@ func TestMetadataLookupValidationHandlers(t *testing.T) {
 	}
 }
 
+func TestLibraryAndSeriesReadEndpoints(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	libsRec := httptest.NewRecorder()
+	controller.getLibraries(libsRec, httptest.NewRequest(http.MethodGet, "/api/libraries", nil))
+	if libsRec.Code != http.StatusOK {
+		t.Fatalf("expected get libraries 200, got %d", libsRec.Code)
+	}
+	var libs []database.Library
+	if err := json.NewDecoder(libsRec.Body).Decode(&libs); err != nil {
+		t.Fatalf("decode libraries failed: %v", err)
+	}
+	if len(libs) != 1 || libs[0].ID != lib.ID {
+		t.Fatalf("unexpected libraries payload: %+v", libs)
+	}
+
+	seriesRec := httptest.NewRecorder()
+	controller.getSeriesByLibrary(seriesRec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/series", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	if seriesRec.Code != http.StatusOK {
+		t.Fatalf("expected get series by library 200, got %d", seriesRec.Code)
+	}
+	var seriesRows []database.ListSeriesByLibraryRow
+	if err := json.NewDecoder(seriesRec.Body).Decode(&seriesRows); err != nil {
+		t.Fatalf("decode series by library failed: %v", err)
+	}
+	if len(seriesRows) != 1 || seriesRows[0].ID != series.ID {
+		t.Fatalf("unexpected series rows: %+v", seriesRows)
+	}
+
+	searchReq := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=5&page=1", nil)
+	searchRec := httptest.NewRecorder()
+	controller.searchSeriesPaged(searchRec, searchReq)
+	if searchRec.Code != http.StatusOK {
+		t.Fatalf("expected search series paged 200, got %d", searchRec.Code)
+	}
+	var searchResp struct {
+		Items []database.SearchSeriesPagedRow `json:"items"`
+		Total int                             `json:"total"`
+		Page  int                             `json:"page"`
+		Limit int                             `json:"limit"`
+	}
+	if err := json.NewDecoder(searchRec.Body).Decode(&searchResp); err != nil {
+		t.Fatalf("decode search series response failed: %v", err)
+	}
+	if searchResp.Total != 1 || len(searchResp.Items) != 1 || searchResp.Items[0].ID != series.ID {
+		t.Fatalf("unexpected search response: %+v", searchResp)
+	}
+
+	invalidReq := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId=bad", nil)
+	invalidRec := httptest.NewRecorder()
+	controller.searchSeriesPaged(invalidRec, invalidReq)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid library id 400, got %d", invalidRec.Code)
+	}
+}
+
+func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	secondBook, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      lib.ID,
+		Name:           "Alpha 02.cbz",
+		Path:           filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 02.cbz"),
+		Size:           2048,
+		FileModifiedAt: time.Now(),
+		Volume:         "",
+		Title:          sql.NullString{String: "Second Book", Valid: true},
+		SortNumber:     sql.NullFloat64{Float64: 2, Valid: true},
+		PageCount:      20,
+	})
+	if err != nil {
+		t.Fatalf("CreateBook second failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET sort_number = ? WHERE id = ?`, 1, firstBook.ID); err != nil {
+		t.Fatalf("update first book sort number failed: %v", err)
+	}
+
+	updatePayload := []byte(`{
+		"title":"Alpha Display",
+		"tags":["Action","Mystery"],
+		"authors":[{"name":"Writer A","role":"story"}],
+		"links":[{"name":"Bangumi","url":"https://bgm.tv/subject/1"}]
+	}`)
+	updateReq := requestWithRouteParam(http.MethodPut, "/api/series/1", updatePayload, "seriesId", strconv.FormatInt(series.ID, 10))
+	updateRec := httptest.NewRecorder()
+	controller.updateSeriesInfo(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected update series 200, got %d", updateRec.Code)
+	}
+
+	allTagsRec := httptest.NewRecorder()
+	controller.getAllTags(allTagsRec, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+	if allTagsRec.Code != http.StatusOK {
+		t.Fatalf("expected get all tags 200, got %d", allTagsRec.Code)
+	}
+	var tags []database.Tag
+	if err := json.NewDecoder(allTagsRec.Body).Decode(&tags); err != nil {
+		t.Fatalf("decode all tags failed: %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d", len(tags))
+	}
+
+	allAuthorsRec := httptest.NewRecorder()
+	controller.getAllAuthors(allAuthorsRec, httptest.NewRequest(http.MethodGet, "/api/authors", nil))
+	if allAuthorsRec.Code != http.StatusOK {
+		t.Fatalf("expected get all authors 200, got %d", allAuthorsRec.Code)
+	}
+	var authors []database.Author
+	if err := json.NewDecoder(allAuthorsRec.Body).Decode(&authors); err != nil {
+		t.Fatalf("decode all authors failed: %v", err)
+	}
+	if len(authors) != 1 || authors[0].Name != "Writer A" {
+		t.Fatalf("unexpected authors payload: %+v", authors)
+	}
+
+	bookInfoRec := httptest.NewRecorder()
+	controller.getBookInfo(bookInfoRec, requestWithRouteParam(http.MethodGet, "/api/books/1", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
+	if bookInfoRec.Code != http.StatusOK {
+		t.Fatalf("expected get book info 200, got %d", bookInfoRec.Code)
+	}
+	var gotBook database.Book
+	if err := json.NewDecoder(bookInfoRec.Body).Decode(&gotBook); err != nil {
+		t.Fatalf("decode book info failed: %v", err)
+	}
+	if gotBook.ID != firstBook.ID {
+		t.Fatalf("unexpected book info payload: %+v", gotBook)
+	}
+
+	nextRec := httptest.NewRecorder()
+	controller.getNextBook(nextRec, requestWithRouteParam(http.MethodGet, "/api/books/1/next", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
+	if nextRec.Code != http.StatusOK {
+		t.Fatalf("expected get next book 200, got %d", nextRec.Code)
+	}
+	var nextBook database.Book
+	if err := json.NewDecoder(nextRec.Body).Decode(&nextBook); err != nil {
+		t.Fatalf("decode next book failed: %v", err)
+	}
+	if nextBook.ID != secondBook.ID {
+		t.Fatalf("expected second book as next, got %+v", nextBook)
+	}
+
+	notFoundNextRec := httptest.NewRecorder()
+	controller.getNextBook(notFoundNextRec, requestWithRouteParam(http.MethodGet, "/api/books/2/next", nil, "bookId", strconv.FormatInt(secondBook.ID, 10)))
+	if notFoundNextRec.Code != http.StatusNotFound {
+		t.Fatalf("expected no next book 404, got %d", notFoundNextRec.Code)
+	}
+}
+
+func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	favorite := true
+	bulkReq := httptest.NewRequest(http.MethodPost, "/api/series/bulk", bytes.NewBufferString(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`],"is_favorite":true}`))
+	bulkRec := httptest.NewRecorder()
+	controller.bulkUpdateSeries(bulkRec, bulkReq)
+	if bulkRec.Code != http.StatusOK {
+		t.Fatalf("expected bulk update series 200, got %d", bulkRec.Code)
+	}
+	updatedSeries, err := store.GetSeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetSeries after bulk update failed: %v", err)
+	}
+	if updatedSeries.IsFavorite != favorite {
+		t.Fatalf("expected favorite=true after bulk update, got %v", updatedSeries.IsFavorite)
+	}
+
+	noopRec := httptest.NewRecorder()
+	controller.bulkUpdateSeries(noopRec, httptest.NewRequest(http.MethodPost, "/api/series/bulk", bytes.NewBufferString(`{"series_ids":[]}`)))
+	if noopRec.Code != http.StatusOK {
+		t.Fatalf("expected empty bulk update 200, got %d", noopRec.Code)
+	}
+
+	pagesInvalidRec := httptest.NewRecorder()
+	controller.getPagesByBook(pagesInvalidRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/bad", nil, "bookId", "bad"))
+	if pagesInvalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid book id 400, got %d", pagesInvalidRec.Code)
+	}
+
+	pagesMissingRec := httptest.NewRecorder()
+	controller.getPagesByBook(pagesMissingRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/999", nil, "bookId", "999"))
+	if pagesMissingRec.Code != http.StatusNotFound {
+		t.Fatalf("expected missing book 404, got %d", pagesMissingRec.Code)
+	}
+
+	pagesErrorRec := httptest.NewRecorder()
+	controller.getPagesByBook(pagesErrorRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	if pagesErrorRec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected invalid archive 500, got %d", pagesErrorRec.Code)
+	}
+
+	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+	if err := writeTestCBZ(archivePath, map[string][]byte{
+		"001.png": png1x1,
+		"002.png": png1x1,
+	}); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET path = ? WHERE id = ?`, archivePath, book.ID); err != nil {
+		t.Fatalf("update book archive path failed: %v", err)
+	}
+
+	pagesRec := httptest.NewRecorder()
+	controller.getPagesByBook(pagesRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	if pagesRec.Code != http.StatusOK {
+		t.Fatalf("expected get pages 200, got %d", pagesRec.Code)
+	}
+	var pages []struct {
+		Number int64  `json:"number"`
+		URL    string `json:"url"`
+	}
+	if err := json.NewDecoder(pagesRec.Body).Decode(&pages); err != nil {
+		t.Fatalf("decode pages response failed: %v", err)
+	}
+	if len(pages) != 2 || pages[0].Number != 1 || pages[0].URL == "" {
+		t.Fatalf("unexpected pages payload: %+v", pages)
+	}
+}
+
 func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
