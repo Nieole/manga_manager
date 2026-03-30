@@ -691,6 +691,141 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	}
 }
 
+func TestDeleteLibraryAndValidationHandlers(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	libPath := filepath.Join(t.TempDir(), "library")
+	if err := os.MkdirAll(libPath, 0o755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+
+	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
+		Name:         "Main",
+		Path:         libPath,
+		AutoScan:     false,
+		ScanInterval: 60,
+		ScanFormats:  "zip,cbz,rar,cbr,pdf",
+	})
+	if err != nil {
+		t.Fatalf("CreateLibrary failed: %v", err)
+	}
+
+	invalidDeleteRec := httptest.NewRecorder()
+	controller.deleteLibrary(invalidDeleteRec, requestWithRouteParam(http.MethodDelete, "/api/libraries/bad", nil, "libraryId", "bad"))
+	if invalidDeleteRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid delete library 400, got %d", invalidDeleteRec.Code)
+	}
+
+	deleteRec := httptest.NewRecorder()
+	controller.deleteLibrary(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("expected delete library 200, got %d", deleteRec.Code)
+	}
+
+	if _, err := store.GetLibrary(context.Background(), lib.ID); err == nil {
+		t.Fatal("expected deleted library lookup to fail")
+	}
+}
+
+func TestTaskConflictHandlers(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	if !controller.startTask("scan_series_"+strconv.FormatInt(series.ID, 10), "scan_series", "running", 1) {
+		t.Fatal("expected scan series task to start")
+	}
+	scanSeriesRec := httptest.NewRecorder()
+	controller.scanSeries(scanSeriesRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scan", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if scanSeriesRec.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate scan series 409, got %d", scanSeriesRec.Code)
+	}
+
+	if !controller.startTask("cleanup_library_"+strconv.FormatInt(lib.ID, 10), "cleanup_library", "running", 1) {
+		t.Fatal("expected cleanup task to start")
+	}
+	cleanupRec := httptest.NewRecorder()
+	controller.cleanupLibrary(cleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/cleanup", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	if cleanupRec.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate cleanup 409, got %d", cleanupRec.Code)
+	}
+
+	invalidScanRec := httptest.NewRecorder()
+	controller.scanSeries(invalidScanRec, requestWithRouteParam(http.MethodPost, "/api/series/bad/scan", nil, "seriesId", "bad"))
+	if invalidScanRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid scan series 400, got %d", invalidScanRec.Code)
+	}
+
+	invalidCleanupRec := httptest.NewRecorder()
+	controller.cleanupLibrary(invalidCleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/bad/cleanup", nil, "libraryId", "bad"))
+	if invalidCleanupRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid cleanup 400, got %d", invalidCleanupRec.Code)
+	}
+}
+
+func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	missingLibraryRec := httptest.NewRecorder()
+	controller.getRecentReadSeries(missingLibraryRec, httptest.NewRequest(http.MethodGet, "/api/series/recent", nil))
+	if missingLibraryRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing libraryId 400, got %d", missingLibraryRec.Code)
+	}
+
+	invalidLibraryRec := httptest.NewRecorder()
+	controller.getRecentReadSeries(invalidLibraryRec, httptest.NewRequest(http.MethodGet, "/api/series/recent?libraryId=bad", nil))
+	if invalidLibraryRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid libraryId 400, got %d", invalidLibraryRec.Code)
+	}
+
+	rootDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rootDir, "Beta"), 0o755); err != nil {
+		t.Fatalf("mkdir Beta failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootDir, "alpha"), 0o755); err != nil {
+		t.Fatalf("mkdir alpha failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootDir, ".hidden"), 0o755); err != nil {
+		t.Fatalf("mkdir hidden failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rootDir, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	browseInvalidRec := httptest.NewRecorder()
+	controller.browseDirs(browseInvalidRec, httptest.NewRequest(http.MethodGet, "/api/browse?path=/definitely/missing", nil))
+	if browseInvalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid browse path 400, got %d", browseInvalidRec.Code)
+	}
+
+	browseReq := httptest.NewRequest(http.MethodGet, "/api/browse?path="+rootDir, nil)
+	browseRec := httptest.NewRecorder()
+	controller.browseDirs(browseRec, browseReq)
+	if browseRec.Code != http.StatusOK {
+		t.Fatalf("expected browse dirs 200, got %d", browseRec.Code)
+	}
+
+	var result struct {
+		Current string `json:"current"`
+		Parent  string `json:"parent"`
+		Dirs    []struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"dirs"`
+	}
+	if err := json.NewDecoder(browseRec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode browse result failed: %v", err)
+	}
+	if result.Current != rootDir {
+		t.Fatalf("expected current dir %q, got %q", rootDir, result.Current)
+	}
+	if len(result.Dirs) != 2 {
+		t.Fatalf("expected 2 visible dirs, got %+v", result.Dirs)
+	}
+	if result.Dirs[0].Name != "alpha" || result.Dirs[1].Name != "Beta" {
+		t.Fatalf("expected case-insensitive sorting and hidden dir filtering, got %+v", result.Dirs)
+	}
+}
+
 func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
