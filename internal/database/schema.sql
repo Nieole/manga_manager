@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS libraries (
     path TEXT NOT NULL UNIQUE,
     auto_scan BOOLEAN NOT NULL DEFAULT FALSE,
     scan_interval INTEGER NOT NULL DEFAULT 60,
-    scan_formats TEXT NOT NULL DEFAULT 'zip,cbz,rar,cbr,pdf',
+    scan_formats TEXT NOT NULL DEFAULT 'zip,cbz,rar,cbr',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -19,6 +19,8 @@ interface LibraryFormModalProps {
   browseParent: string;
   browseDirs: BrowseDirEntry[];
   browseDrives: BrowseDrive[];
+  recentPaths: string[];
+  supportedScanFormats: string;
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
   onNameChange: (value: string) => void;
@@ -48,6 +50,8 @@ export function LibraryFormModal({
   browseParent,
   browseDirs,
   browseDrives,
+  recentPaths,
+  supportedScanFormats,
   onClose,
   onSubmit,
   onNameChange,
@@ -86,6 +90,7 @@ export function LibraryFormModal({
             </div>
             <DirectoryPicker
               value={path}
+              recentPaths={recentPaths}
               onChange={onPathChange}
               browsing={browsing}
               browseCurrent={browseCurrent}
@@ -129,6 +134,7 @@ export function LibraryFormModal({
                     onChange={(e) => onScanFormatsChange(e.target.value)}
                     className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
                   />
+                  <p className="mt-1 text-xs text-gray-500">当前受支持的格式：{supportedScanFormats}</p>
                 </div>
               </>
             )}

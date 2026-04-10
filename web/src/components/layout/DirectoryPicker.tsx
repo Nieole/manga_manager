@@ -3,6 +3,7 @@ import type { BrowseDirEntry, BrowseDrive } from './types';
 
 interface DirectoryPickerProps {
   value: string;
+  recentPaths: string[];
   onChange: (value: string) => void;
   browsing: boolean;
   browseCurrent: string;
@@ -23,6 +24,7 @@ export function DirectoryPicker({
   browseParent,
   browseDirs,
   browseDrives,
+  recentPaths,
   onOpen,
   onClose,
   onChooseCurrent,
@@ -49,6 +51,21 @@ export function DirectoryPicker({
           浏览
         </button>
       </div>
+      {recentPaths.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {recentPaths.map((path) => (
+            <button
+              key={path}
+              type="button"
+              onClick={() => onChange(path)}
+              className="rounded-full border border-gray-700 bg-gray-900 px-3 py-1 text-xs text-gray-400 hover:border-komgaPrimary/40 hover:text-white"
+              title={path}
+            >
+              最近使用: {path}
+            </button>
+          ))}
+        </div>
+      )}
       {browsing && (
         <div className="mt-3 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
           <div className="px-3 py-2 bg-gray-800 flex items-center justify-between text-xs">

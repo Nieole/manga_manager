@@ -49,7 +49,16 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 	cfg.Database.Path = dbPath
 	cfg.Cache.Dir = filepath.Join(tempDir, "cache")
 	cfg.Scanner.ThumbnailFormat = "webp"
+	cfg.Scanner.ArchivePoolSize = 5
+	cfg.Scanner.MaxAiConcurrency = 3
+	cfg.LLM.Provider = "ollama"
+	cfg.LLM.BaseURL = "http://localhost:11434"
+	cfg.LLM.Model = "qwen2.5"
 	cfg.LLM.Timeout = 30
+	config.NormalizeConfig(cfg)
+	if err := os.MkdirAll(cfg.Cache.Dir, 0o755); err != nil {
+		t.Fatalf("mkdir cache dir failed: %v", err)
+	}
 
 	cfgManager := config.NewManager(cfg)
 	imageCache, _ := lru.New[string, []byte](8)
@@ -93,7 +102,7 @@ func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, serie
 		Path:         libPath,
 		AutoScan:     false,
 		ScanInterval: 60,
-		ScanFormats:  "zip,cbz,rar,cbr,pdf",
+		ScanFormats:  config.DefaultScanFormatsCSV,
 	})
 	if err != nil {
 		t.Fatalf("CreateLibrary failed: %v", err)
@@ -142,15 +151,18 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 		t.Fatalf("expected 200, got %d", getRec.Code)
 	}
 
-	var got config.Config
+	var got SystemConfigResponse
 	if err := json.NewDecoder(getRec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode getSystemConfig failed: %v", err)
 	}
-	if got.Database.Path == "" {
+	if got.Config.Database.Path == "" {
 		t.Fatal("expected database path in config response")
 	}
+	if got.Capabilities.DefaultScanFormats != config.DefaultScanFormatsCSV {
+		t.Fatalf("expected default scan formats %q, got %q", config.DefaultScanFormatsCSV, got.Capabilities.DefaultScanFormats)
+	}
 
-	updated := got
+	updated := got.Config
 	updated.Server.Port = 9090
 	updated.Cache.Dir = "./custom-cache"
 
@@ -177,6 +189,39 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("expected config file to be written: %v", err)
+	}
+}
+
+func TestUpdateSystemConfigRejectsInvalidConfiguration(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	payload := []byte(`{
+		"server":{"port":0},
+		"database":{"path":""},
+		"cache":{"dir":"/definitely/missing/cache"},
+		"scanner":{"workers":-1,"thumbnail_format":"gif","archive_pool_size":0,"max_ai_concurrency":0},
+		"llm":{"provider":"openai","api_mode":"","base_url":"","request_path":"","model":"","timeout":5}
+	}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/system/config", bytes.NewReader(payload))
+	controller.updateSystemConfig(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Validation config.ValidationResult `json:"validation"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode validation failed: %v", err)
+	}
+	if body.Validation.Valid {
+		t.Fatal("expected invalid validation result")
+	}
+	if len(body.Validation.Issues) == 0 {
+		t.Fatal("expected validation issues")
 	}
 }
 
@@ -245,7 +290,7 @@ func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 	if created.ScanInterval != 60 {
 		t.Fatalf("expected default scan interval 60, got %d", created.ScanInterval)
 	}
-	if created.ScanFormats != "zip,cbz,rar,cbr,pdf" {
+	if created.ScanFormats != config.DefaultScanFormatsCSV {
 		t.Fatalf("unexpected default scan formats: %q", created.ScanFormats)
 	}
 
@@ -704,7 +749,7 @@ func TestDeleteLibraryAndValidationHandlers(t *testing.T) {
 		Path:         libPath,
 		AutoScan:     false,
 		ScanInterval: 60,
-		ScanFormats:  "zip,cbz,rar,cbr,pdf",
+		ScanFormats:  config.DefaultScanFormatsCSV,
 	})
 	if err != nil {
 		t.Fatalf("CreateLibrary failed: %v", err)
@@ -858,6 +903,64 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	}
 }
 
+func TestListTasksSupportsStatusFilter(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	if !controller.startTask("failed_one", "scan_library", "failed task", 1) {
+		t.Fatal("expected failed task to start")
+	}
+	controller.failTask("failed_one", "boom")
+
+	if !controller.startTask("completed_one", "rebuild_index", "completed task", 1) {
+		t.Fatal("expected completed task to start")
+	}
+	controller.finishTask("completed_one", "done")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?status=failed", nil)
+	rec := httptest.NewRecorder()
+	controller.listTasks(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var tasks []TaskStatus
+	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
+		t.Fatalf("decode filtered tasks failed: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Key != "failed_one" {
+		t.Fatalf("expected only failed task, got %+v", tasks)
+	}
+}
+
+func TestRetryTaskRestartsRetryableTask(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	if !controller.startTask("scan_series_999", "scan_series", "failed series scan", 1) {
+		t.Fatal("expected task to start")
+	}
+	controller.failTask("scan_series_999", "failed")
+
+	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_series_999/retry", nil, "taskKey", "scan_series_999")
+	rec := httptest.NewRecorder()
+	controller.retryTask(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	controller.taskMutex.Lock()
+	task := controller.tasks["scan_series_999"]
+	controller.taskMutex.Unlock()
+	if task.Status == "running" {
+		t.Fatalf("expected retried task to finish quickly, got %+v", task)
+	}
+	if task.Message == "failed" {
+		t.Fatalf("expected retried task to update message, got %+v", task)
+	}
+}
+
 func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
@@ -871,7 +974,7 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 		Path:         libPath,
 		AutoScan:     false,
 		ScanInterval: 60,
-		ScanFormats:  "zip,cbz,rar,cbr,pdf",
+		ScanFormats:  config.DefaultScanFormatsCSV,
 	})
 	if err != nil {
 		t.Fatalf("CreateLibrary failed: %v", err)
@@ -1225,7 +1328,7 @@ func TestTestLLMConfigReturnsErrorForInvalidEndpoint(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/system/test-llm",
-		bytes.NewReader([]byte(`{"provider":"ollama","endpoint":"http://127.0.0.1:1","model":"fake","prompt":"ping"}`)),
+		bytes.NewReader([]byte(`{"provider":"ollama","base_url":"http://127.0.0.1:1","model":"fake","prompt":"ping"}`)),
 	)
 	rec := httptest.NewRecorder()
 	controller.testLLMConfig(rec, req)
@@ -1241,7 +1344,7 @@ func TestScrapeSeriesMetadataReturnsErrorForInvalidLLMEndpoint(t *testing.T) {
 
 	cfg := controller.currentConfig()
 	cfg.LLM.Provider = "ollama"
-	cfg.LLM.Endpoint = "http://127.0.0.1:1"
+	cfg.LLM.BaseURL = "http://127.0.0.1:1"
 	cfg.LLM.Model = "fake"
 	controller.config.Replace(&cfg)
 

@@ -1,6 +1,11 @@
 package metadata
 
-import "context"
+import (
+	"context"
+	"strings"
+
+	"manga-manager/internal/config"
+)
 
 // Provider 定义了一个外部元数据服务需要实现的标准获取接口
 type Provider interface {
@@ -19,18 +24,33 @@ type AIProvider interface {
 
 // NewAIProvider 工厂方法，根据配置切换 LLM 实例
 // timeout 为请求超时秒数，0 或负值使用默认 120 秒
-func NewAIProvider(provider, endpoint, model, apiKey string, timeout int) AIProvider {
+func NewAIProvider(provider, apiMode, baseURL, requestPath, model, apiKey string, timeout int) AIProvider {
 	if timeout <= 0 {
 		timeout = 120
 	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "openai-legacy" {
+		provider = "openai"
+		if apiMode == "" {
+			apiMode = "chat_completions"
+		}
+	}
+
 	switch provider {
 	case "openai":
+		cfg := &config.Config{}
+		cfg.LLM.Provider = "openai"
+		cfg.LLM.APIMode = apiMode
+		cfg.LLM.BaseURL = baseURL
+		cfg.LLM.RequestPath = requestPath
+		endpoint := config.BuildLLMEndpoint(cfg)
+		if strings.EqualFold(apiMode, "chat_completions") {
+			return NewOpenAILegacyProvider(endpoint, model, apiKey, timeout)
+		}
 		return NewOpenAIProvider(endpoint, model, apiKey, timeout)
-	case "openai-legacy":
-		return NewOpenAILegacyProvider(endpoint, model, apiKey, timeout)
 	default:
 		// 默认回退到 ollama
-		return NewOllamaProvider(endpoint, model, timeout)
+		return NewOllamaProvider(baseURL, model, timeout)
 	}
 }
 

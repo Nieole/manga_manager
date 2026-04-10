@@ -46,6 +46,7 @@ export default function SeriesDetail() {
     const [modalSearchQuery, setModalSearchQuery] = useState('');
     const [currentOffset, setCurrentOffset] = useState(0);
     const [searchTotal, setSearchTotal] = useState(0);
+    const [selectedSearchResult, setSelectedSearchResult] = useState<SearchResult | null>(null);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -77,6 +78,7 @@ export default function SeriesDetail() {
                 const res = await axios.get(`/api/series/${seriesId}/scrape-search?provider=${providerKey}`);
                 if (res.data.results && res.data.results.length > 0) {
                     setSearchResults(res.data.results);
+                    setSelectedSearchResult(res.data.results[0]);
                     setSearchProvider(providerKey);
                     setModalSearchQuery(seriesInfo?.title?.Valid && seriesInfo.title.String ? seriesInfo.title.String : (seriesInfo?.name || ''));
                     setShowSearchModal(true);
@@ -123,6 +125,7 @@ export default function SeriesDetail() {
         } finally {
             setIsScraping(false);
             setSearchResults([]);
+            setSelectedSearchResult(null);
         }
     };
 
@@ -134,10 +137,12 @@ export default function SeriesDetail() {
             const res = await axios.get(`/api/series/${seriesId}/scrape-search?provider=${searchProvider}&q=${encodeURIComponent(modalSearchQuery)}&offset=${offset}`);
             if (res.data.results && res.data.results.length > 0) {
                 setSearchResults(res.data.results);
+                setSelectedSearchResult(res.data.results[0]);
                 setSearchTotal(res.data.total || 0);
                 showToast(`找到了 ${res.data.results.length} 条新结果`, 'success');
             } else {
                 setSearchResults([]);
+                setSelectedSearchResult(null);
                 setSearchTotal(0);
                 showToast('未找到匹配的条目，请尝试修改关键词', 'error');
             }
@@ -561,7 +566,14 @@ export default function SeriesDetail() {
                 onClose={() => {
                     setShowSearchModal(false);
                     setSearchResults([]);
+                    setSelectedSearchResult(null);
                 }}
+                providerLabel={searchProvider === 'bangumi' ? 'Bangumi' : searchProvider}
+                currentSeries={seriesInfo}
+                currentTags={tags}
+                lockedFields={lockedFields}
+                selectedResult={selectedSearchResult}
+                onSelectMetadata={setSelectedSearchResult}
                 onSearchQueryChange={setModalSearchQuery}
                 onReSearch={handleModalReSearch}
                 onApplyMetadata={handleApplyMetadata}

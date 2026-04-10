@@ -170,7 +170,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".cbz" || ext == ".zip" || ext == ".cbr" || ext == ".rar" {
+		if config.IsSupportedArchiveExtension(ext) {
 			info, err := d.Info()
 			if err != nil {
 				return nil
@@ -269,7 +269,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".cbz" || ext == ".zip" || ext == ".cbr" || ext == ".rar" || ext == ".pdf" {
+		if config.IsSupportedArchiveExtension(ext) {
 			info, err := d.Info()
 			if err != nil {
 				return nil

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,26 +32,17 @@ func TestGetSystemLogsHonorsFilterAndLimit(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	body := rec.Body.String()
-	if !(contains(body, `"msg":"third"`) && contains(body, `"msg":"second"`)) {
-		t.Fatalf("expected latest two error logs in response, got %s", body)
+	var response LogsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode logs response failed: %v", err)
 	}
-	if contains(body, `"msg":"first"`) {
-		t.Fatalf("did not expect older error log in limited response, got %s", body)
+	if len(response.Items) != 2 {
+		t.Fatalf("expected 2 log items, got %d", len(response.Items))
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		return stringIndex(s, sub) >= 0
-	})()
-}
-
-func stringIndex(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
+	if response.Items[0].Msg != "third" || response.Items[1].Msg != "second" {
+		t.Fatalf("expected latest error logs first, got %+v", response.Items)
 	}
-	return -1
+	if response.Summary.ByLevel["ERROR"] != 3 {
+		t.Fatalf("expected error summary count 3, got %+v", response.Summary.ByLevel)
+	}
 }

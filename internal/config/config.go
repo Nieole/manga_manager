@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,11 +36,14 @@ type Config struct {
 	} `yaml:"ollama" json:"ollama"` // Deprecated: Use LLM instead
 
 	LLM struct {
-		Provider string `yaml:"provider" json:"provider"` // e.g. "ollama", "openai"
-		Endpoint string `yaml:"endpoint" json:"endpoint"` // e.g. "http://localhost:11434" or "https://api.openai.com/v1"
-		Model    string `yaml:"model" json:"model"`       // e.g. "qwen2.5" or "gpt-4o"
-		APIKey   string `yaml:"api_key" json:"api_key"`   // Optional API Key for OpenAI/DeepSeek
-		Timeout  int    `yaml:"timeout" json:"timeout"`   // 请求超时时间（秒），默认 120
+		Provider    string `yaml:"provider" json:"provider"`         // e.g. "ollama", "openai"
+		APIMode     string `yaml:"api_mode" json:"api_mode"`         // "responses" or "chat_completions"
+		BaseURL     string `yaml:"base_url" json:"base_url"`         // e.g. "http://localhost:11434" or "https://api.openai.com"
+		RequestPath string `yaml:"request_path" json:"request_path"` // e.g. "/v1/responses"
+		Endpoint    string `yaml:"endpoint" json:"endpoint"`         // Deprecated: kept for backwards compatibility
+		Model       string `yaml:"model" json:"model"`               // e.g. "qwen2.5" or "gpt-4o"
+		APIKey      string `yaml:"api_key" json:"api_key"`           // Optional API Key for OpenAI/DeepSeek
+		Timeout     int    `yaml:"timeout" json:"timeout"`           // 请求超时时间（秒），默认 120
 	} `yaml:"llm" json:"llm"`
 }
 
@@ -59,15 +64,16 @@ func LoadConfig(path string) (*Config, error) {
 	// Backwards compatibility layer
 	if cfg.LLM.Provider == "" && cfg.Ollama.Endpoint != "" {
 		cfg.LLM.Provider = "ollama"
-		cfg.LLM.Endpoint = cfg.Ollama.Endpoint
+		cfg.LLM.BaseURL = cfg.Ollama.Endpoint
 		cfg.LLM.Model = cfg.Ollama.Model
 	}
 	// Defaults if LLM is entirely absent
 	if cfg.LLM.Provider == "" {
 		cfg.LLM.Provider = "ollama"
-		cfg.LLM.Endpoint = "http://localhost:11434"
+		cfg.LLM.BaseURL = "http://localhost:11434"
 		cfg.LLM.Model = "qwen2.5"
 	}
+	NormalizeConfig(&cfg)
 
 	return &cfg, nil
 }
@@ -86,9 +92,12 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Scanner.MaxAiConcurrency = 3 // 默认限制最多抛出 3 个外置 AI 渲染子进程
 
 	cfg.LLM.Provider = "ollama"
-	cfg.LLM.Endpoint = "http://localhost:11434"
+	cfg.LLM.BaseURL = "http://localhost:11434"
+	cfg.LLM.RequestPath = ""
+	cfg.LLM.APIMode = ""
 	cfg.LLM.Model = "qwen2.5"
 	cfg.LLM.Timeout = 120
+	NormalizeConfig(cfg)
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -104,4 +113,137 @@ func createDefaultConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func normalizeLLMConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(cfg.LLM.Provider))
+	if provider == "" {
+		provider = "ollama"
+		cfg.LLM.Provider = provider
+	}
+
+	if cfg.LLM.BaseURL == "" && cfg.LLM.Endpoint != "" {
+		cfg.LLM.BaseURL, cfg.LLM.RequestPath = splitEndpoint(cfg.LLM.Endpoint)
+	}
+
+	switch provider {
+	case "openai-legacy":
+		cfg.LLM.Provider = "openai"
+		if cfg.LLM.APIMode == "" {
+			cfg.LLM.APIMode = "chat_completions"
+		}
+	case "openai":
+		if cfg.LLM.APIMode == "" {
+			cfg.LLM.APIMode = inferAPIModeFromRequestPath(cfg.LLM.RequestPath)
+		}
+	default:
+		cfg.LLM.APIMode = ""
+		cfg.LLM.RequestPath = ""
+	}
+
+	if cfg.LLM.BaseURL == "" {
+		if cfg.LLM.Provider == "openai" {
+			cfg.LLM.BaseURL = "https://api.openai.com"
+		} else {
+			cfg.LLM.BaseURL = "http://localhost:11434"
+		}
+	}
+
+	if cfg.LLM.Provider == "openai" && cfg.LLM.RequestPath == "" {
+		cfg.LLM.RequestPath = defaultRequestPath(cfg.LLM.APIMode)
+	}
+
+	cfg.LLM.Endpoint = BuildLLMEndpoint(cfg)
+
+	if cfg.LLM.Timeout <= 0 {
+		cfg.LLM.Timeout = 120
+	}
+}
+
+func NormalizeConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if cfg.Server.Port == 0 {
+		cfg.Server.Port = 8080
+	}
+	if cfg.Database.Path == "" {
+		cfg.Database.Path = "./data/manga.db"
+	}
+	if cfg.Cache.Dir == "" {
+		cfg.Cache.Dir = "./data/cache"
+	}
+	if cfg.Scanner.ThumbnailFormat == "" {
+		cfg.Scanner.ThumbnailFormat = "webp"
+	}
+	if cfg.Scanner.ArchivePoolSize == 0 {
+		cfg.Scanner.ArchivePoolSize = 5
+	}
+	if cfg.Scanner.MaxAiConcurrency == 0 {
+		cfg.Scanner.MaxAiConcurrency = 3
+	}
+	normalizeLLMConfig(cfg)
+}
+
+func splitEndpoint(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ""
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return raw, ""
+	}
+
+	base := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+	requestPath := parsed.EscapedPath()
+	if parsed.RawQuery != "" {
+		requestPath += "?" + parsed.RawQuery
+	}
+	return base, requestPath
+}
+
+func inferAPIModeFromRequestPath(path string) string {
+	path = strings.ToLower(strings.TrimSpace(path))
+	switch {
+	case strings.Contains(path, "chat/completions"):
+		return "chat_completions"
+	case strings.Contains(path, "responses"):
+		return "responses"
+	default:
+		return "responses"
+	}
+}
+
+func defaultRequestPath(apiMode string) string {
+	if strings.EqualFold(apiMode, "chat_completions") {
+		return "/v1/chat/completions"
+	}
+	return "/v1/responses"
+}
+
+func BuildLLMEndpoint(cfg *Config) string {
+	if cfg == nil {
+		return ""
+	}
+
+	baseURL := strings.TrimSpace(cfg.LLM.BaseURL)
+	if baseURL == "" {
+		return ""
+	}
+	if cfg.LLM.Provider != "openai" {
+		return strings.TrimRight(baseURL, "/")
+	}
+
+	requestPath := strings.TrimSpace(cfg.LLM.RequestPath)
+	if requestPath == "" {
+		requestPath = defaultRequestPath(cfg.LLM.APIMode)
+	}
+
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(requestPath, "/")
 }

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"manga-manager/internal/config"
+
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -37,7 +39,13 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 		libs:    make(map[string]int64),
 		watched: make(map[string]struct{}),
 		stopCh:  make(chan struct{}),
-		formats: []string{".zip", ".cbz", ".rar", ".cbr", ".pdf"},
+		formats: func() []string {
+			formats := make([]string, 0, len(config.SupportedScanFormats))
+			for _, item := range config.SupportedScanFormats {
+				formats = append(formats, "."+item)
+			}
+			return formats
+		}(),
 	}, nil
 }
 

@@ -11,6 +11,17 @@ scanner:
     thumbnail_format: webp
     waifu2x_path: ""
     realcugan_path: ""
+    archive_pool_size: 5
+    max_ai_concurrency: 3
 ollama:
     endpoint: ""
     model: ""
+llm:
+    provider: ollama
+    api_mode: ""
+    base_url: http://localhost:11434
+    request_path: ""
+    endpoint: http://localhost:11434
+    model: qwen2.5
+    api_key: ""
+    timeout: 120

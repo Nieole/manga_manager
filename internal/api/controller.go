@@ -54,15 +54,35 @@ type Controller struct {
 }
 
 type TaskStatus struct {
-	Key        string     `json:"key"`
-	Type       string     `json:"type"`
-	Status     string     `json:"status"`
-	Message    string     `json:"message"`
-	Current    int        `json:"current"`
-	Total      int        `json:"total"`
-	StartedAt  time.Time  `json:"started_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Key        string            `json:"key"`
+	Type       string            `json:"type"`
+	Scope      string            `json:"scope"`
+	ScopeID    *int64            `json:"scope_id,omitempty"`
+	Status     string            `json:"status"`
+	Message    string            `json:"message"`
+	Error      string            `json:"error,omitempty"`
+	Current    int               `json:"current"`
+	Total      int               `json:"total"`
+	CanCancel  bool              `json:"can_cancel"`
+	Retryable  bool              `json:"retryable"`
+	Params     map[string]string `json:"params,omitempty"`
+	StartedAt  time.Time         `json:"started_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+	FinishedAt *time.Time        `json:"finished_at,omitempty"`
+}
+
+type SystemCapabilitiesResponse struct {
+	SupportedScanFormats  []string `json:"supported_scan_formats"`
+	DefaultScanFormats    string   `json:"default_scan_formats"`
+	DefaultScanInterval   int      `json:"default_scan_interval"`
+	SupportedLLMProviders []string `json:"supported_llm_providers"`
+	SupportedLLMAPIModes  []string `json:"supported_llm_api_modes"`
+}
+
+type SystemConfigResponse struct {
+	Config       config.Config              `json:"config"`
+	Validation   config.ValidationResult    `json:"validation"`
+	Capabilities SystemCapabilitiesResponse `json:"capabilities"`
 }
 
 func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
@@ -112,6 +132,55 @@ func (c *Controller) currentConfig() config.Config {
 		return config.Config{}
 	}
 	return c.config.Snapshot()
+}
+
+func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
+	return SystemCapabilitiesResponse{
+		SupportedScanFormats:  append([]string{}, config.SupportedScanFormats...),
+		DefaultScanFormats:    config.DefaultScanFormatsCSV,
+		DefaultScanInterval:   config.DefaultScanInterval,
+		SupportedLLMProviders: []string{"ollama", "openai"},
+		SupportedLLMAPIModes:  []string{"responses", "chat_completions"},
+	}
+}
+
+func (c *Controller) buildSystemConfigResponse(cfg config.Config) SystemConfigResponse {
+	return SystemConfigResponse{
+		Config:       cfg,
+		Validation:   config.ValidateConfig(&cfg),
+		Capabilities: c.systemCapabilities(),
+	}
+}
+
+func inferTaskScope(taskType, key string) (string, *int64) {
+	scope := "system"
+	switch {
+	case strings.Contains(taskType, "library"):
+		scope = "library"
+	case strings.Contains(taskType, "series"):
+		scope = "series"
+	}
+
+	parts := strings.Split(key, "_")
+	if len(parts) == 0 {
+		return scope, nil
+	}
+
+	last := parts[len(parts)-1]
+	id, err := strconv.ParseInt(last, 10, 64)
+	if err != nil {
+		return scope, nil
+	}
+	return scope, &id
+}
+
+func isRetryableTaskType(taskType string) bool {
+	switch taskType {
+	case "scan_library", "scan_series", "cleanup_library", "rebuild_index", "rebuild_thumbnails", "scrape", "ai_grouping":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Controller) startBroker() {
@@ -193,13 +262,18 @@ func (c *Controller) startTask(key, taskType, message string, total int) bool {
 	}
 
 	now := time.Now()
+	scope, scopeID := inferTaskScope(taskType, key)
 	task := TaskStatus{
 		Key:       key,
 		Type:      taskType,
+		Scope:     scope,
+		ScopeID:   scopeID,
 		Status:    "running",
 		Message:   message,
 		Current:   0,
 		Total:     total,
+		CanCancel: false,
+		Retryable: isRetryableTaskType(taskType),
 		StartedAt: now,
 		UpdatedAt: now,
 	}
@@ -228,12 +302,25 @@ func (c *Controller) updateTask(key string, current, total int, message string) 
 	c.publishTaskStatusLocked(task)
 }
 
+func (c *Controller) setTaskParams(key string, params map[string]string) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	task, ok := c.tasks[key]
+	if !ok {
+		return
+	}
+	task.Params = params
+	c.tasks[key] = task
+	c.publishTaskStatusLocked(task)
+}
+
 func (c *Controller) finishTask(key, message string) {
 	c.completeTask(key, "completed", message)
 }
 
 func (c *Controller) failTask(key, message string) {
-	c.completeTask(key, "failed", message)
+	c.failTaskWithError(key, message, message)
 }
 
 func (c *Controller) completeTask(key, status, message string) {
@@ -247,9 +334,30 @@ func (c *Controller) completeTask(key, status, message string) {
 	now := time.Now()
 	task.Status = status
 	task.Message = message
+	if status != "failed" {
+		task.Error = ""
+	}
 	if task.Total > 0 {
 		task.Current = task.Total
 	}
+	task.UpdatedAt = now
+	task.FinishedAt = &now
+	c.tasks[key] = task
+	c.publishTaskStatusLocked(task)
+}
+
+func (c *Controller) failTaskWithError(key, message, taskError string) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	task, ok := c.tasks[key]
+	if !ok {
+		return
+	}
+	now := time.Now()
+	task.Status = "failed"
+	task.Message = message
+	task.Error = taskError
 	task.UpdatedAt = now
 	task.FinishedAt = &now
 	c.tasks[key] = task
@@ -277,13 +385,124 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]TaskStatus, 0, len(c.tasks))
+	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+	scopeFilter := strings.TrimSpace(r.URL.Query().Get("scope"))
+	typeFilter := strings.TrimSpace(r.URL.Query().Get("type"))
+	queryFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	limit := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
 	for _, task := range c.tasks {
+		if statusFilter != "" && task.Status != statusFilter {
+			continue
+		}
+		if scopeFilter != "" && task.Scope != scopeFilter {
+			continue
+		}
+		if typeFilter != "" && task.Type != typeFilter {
+			continue
+		}
+		if queryFilter != "" {
+			haystack := strings.ToLower(task.Key + " " + task.Message + " " + task.Error)
+			if !strings.Contains(haystack, queryFilter) {
+				continue
+			}
+		}
 		items = append(items, task)
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
 	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
+	taskKey := chi.URLParam(r, "taskKey")
+	if taskKey == "" {
+		jsonError(w, http.StatusBadRequest, "Missing task key")
+		return
+	}
+
+	c.taskMutex.Lock()
+	task, ok := c.tasks[taskKey]
+	c.taskMutex.Unlock()
+	if !ok {
+		jsonError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+	if task.Status == "running" {
+		jsonError(w, http.StatusConflict, "Task is already running")
+		return
+	}
+	if !task.Retryable {
+		jsonError(w, http.StatusConflict, "Task is not retryable")
+		return
+	}
+
+	var err error
+	switch task.Type {
+	case "scan_library":
+		if task.ScopeID == nil {
+			err = fmt.Errorf("missing library id")
+			break
+		}
+		lib, getErr := c.store.GetLibrary(r.Context(), *task.ScopeID)
+		if getErr != nil {
+			err = getErr
+			break
+		}
+		force := task.Params != nil && task.Params["force"] == "true"
+		if !c.launchLibraryScanTask(lib, force) {
+			err = fmt.Errorf("task already running")
+		}
+	case "scan_series":
+		if task.ScopeID == nil {
+			err = fmt.Errorf("missing series id")
+			break
+		}
+		force := task.Params != nil && task.Params["force"] == "true"
+		if !c.launchSeriesScanTask(*task.ScopeID, force) {
+			err = fmt.Errorf("task already running")
+		}
+	case "cleanup_library":
+		if task.ScopeID == nil {
+			err = fmt.Errorf("missing library id")
+			break
+		}
+		if !c.launchCleanupLibraryTask(*task.ScopeID) {
+			err = fmt.Errorf("task already running")
+		}
+	case "rebuild_index":
+		err = c.launchRebuildIndexTask()
+	case "rebuild_thumbnails":
+		err = c.launchRebuildThumbnailsTask()
+	case "scrape":
+		err = c.retryScrapeTask(task)
+	case "ai_grouping":
+		if task.ScopeID == nil {
+			err = fmt.Errorf("missing library id")
+			break
+		}
+		if !c.launchAIGroupingTask(*task.ScopeID) {
+			err = fmt.Errorf("task already running")
+		}
+	default:
+		err = fmt.Errorf("unsupported retry type")
+	}
+
+	if err != nil {
+		jsonError(w, http.StatusConflict, fmt.Sprintf("Retry failed: %v", err))
+		return
+	}
+
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task retry queued"})
 }
 
 func (c *Controller) SetupRoutes(r chi.Router) {
@@ -334,9 +553,11 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		})
 
 		r.Get("/system/config", c.getSystemConfig)
+		r.Get("/system/capabilities", c.getSystemCapabilities)
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Get("/system/logs", c.getSystemLogs)
 		r.Get("/system/tasks", c.listTasks)
+		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
@@ -470,6 +691,48 @@ type CreateLibraryRequest struct {
 	ScanFormats  string `json:"scan_formats"`
 }
 
+func (c *Controller) validateLibraryRequest(ctx context.Context, libraryID *int64, req CreateLibraryRequest) []config.ValidationIssue {
+	issues := make([]config.ValidationIssue, 0)
+	if strings.TrimSpace(req.Name) == "" {
+		issues = append(issues, config.ValidationIssue{Field: "name", Message: "名称不能为空。", Severity: "error"})
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		issues = append(issues, config.ValidationIssue{Field: "path", Message: "路径不能为空。", Severity: "error"})
+	} else {
+		info, err := os.Stat(req.Path)
+		if err != nil {
+			issues = append(issues, config.ValidationIssue{Field: "path", Message: "路径不存在或不可访问。", Severity: "error"})
+		} else if !info.IsDir() {
+			issues = append(issues, config.ValidationIssue{Field: "path", Message: "这里只能选择目录。", Severity: "error"})
+		}
+	}
+
+	if req.ScanInterval <= 0 {
+		issues = append(issues, config.ValidationIssue{Field: "scan_interval", Message: "扫描间隔至少为 1 分钟。", Severity: "error"})
+	}
+
+	normalizedFormats := config.ParseScanFormats(req.ScanFormats)
+	if len(normalizedFormats) == 0 {
+		issues = append(issues, config.ValidationIssue{Field: "scan_formats", Message: "至少保留一个受支持的扫描格式。", Severity: "error"})
+	}
+
+	libs, err := c.store.ListLibraries(ctx)
+	if err == nil {
+		cleanTarget := filepath.Clean(req.Path)
+		for _, lib := range libs {
+			if libraryID != nil && lib.ID == *libraryID {
+				continue
+			}
+			if filepath.Clean(lib.Path) == cleanTarget {
+				issues = append(issues, config.ValidationIssue{Field: "path", Message: "这个目录已经被其他资源库使用。", Severity: "error"})
+				break
+			}
+		}
+	}
+
+	return issues
+}
+
 func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	var req CreateLibraryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -482,13 +745,18 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ScanInterval <= 0 {
-		req.ScanInterval = 60
+		req.ScanInterval = config.DefaultScanInterval
 	}
-	if req.ScanFormats == "" {
-		req.ScanFormats = "zip,cbz,rar,cbr,pdf"
-	}
+	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
 
 	ctx := r.Context()
+	if issues := c.validateLibraryRequest(ctx, nil, req); len(issues) > 0 {
+		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
+			"error":      "Library validation failed",
+			"validation": config.ValidationResult{Valid: false, Issues: issues},
+		})
+		return
+	}
 	libParams := database.CreateLibraryParams{
 		Name:         req.Name,
 		Path:         req.Path,
@@ -543,10 +811,23 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ScanInterval <= 0 {
-		req.ScanInterval = 60
+		req.ScanInterval = config.DefaultScanInterval
 	}
-	if req.ScanFormats == "" {
-		req.ScanFormats = "zip,cbz,rar,cbr,pdf"
+	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
+
+	validateReq := CreateLibraryRequest{
+		Name:         req.Name,
+		Path:         req.Path,
+		AutoScan:     req.AutoScan,
+		ScanInterval: req.ScanInterval,
+		ScanFormats:  req.ScanFormats,
+	}
+	if issues := c.validateLibraryRequest(ctx, &libraryID, validateReq); len(issues) > 0 {
+		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
+			"error":      "Library validation failed",
+			"validation": config.ValidationResult{Valid: false, Issues: issues},
+		})
+		return
 	}
 
 	libParams := database.UpdateLibraryParams{
@@ -567,6 +848,25 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, updatedLib)
 }
 
+func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) bool {
+	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
+	if !c.startTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 1) {
+		return false
+	}
+	c.setTaskParams(taskKey, map[string]string{"force": strconv.FormatBool(force)})
+
+	go func() {
+		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, force)
+		if err != nil {
+			c.failTaskWithError(taskKey, fmt.Sprintf("资源库扫描失败: %v", err), err.Error())
+			return
+		}
+		c.finishTask(taskKey, fmt.Sprintf("资源库扫描完成: %s", lib.Name))
+	}()
+
+	return true
+}
+
 func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libID, err := parseID(r, "libraryId")
@@ -583,22 +883,32 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
-	if !c.startTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 1) {
+	if !c.launchLibraryScanTask(lib, isForce) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scan is already running"})
 		return
 	}
 
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
+}
+
+func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
+	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
+	if !c.startTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 1) {
+		return false
+	}
+	c.setTaskParams(taskKey, map[string]string{"force": strconv.FormatBool(force)})
+
 	go func() {
-		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, isForce)
+		err := c.scanner.ScanSeries(context.Background(), seriesID, force)
 		if err != nil {
-			c.failTask(taskKey, fmt.Sprintf("资源库扫描失败: %v", err))
+			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
+			c.failTaskWithError(taskKey, fmt.Sprintf("系列扫描失败: %v", err), err.Error())
 			return
 		}
-		c.finishTask(taskKey, fmt.Sprintf("资源库扫描完成: %s", lib.Name))
+		c.finishTask(taskKey, fmt.Sprintf("系列扫描完成 #%d", seriesID))
 	}()
 
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
+	return true
 }
 
 func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
@@ -610,21 +920,10 @@ func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
-	if !c.startTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 1) {
+	if !c.launchSeriesScanTask(seriesID, isForce) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A series scan is already running"})
 		return
 	}
-
-	go func() {
-		err := c.scanner.ScanSeries(context.Background(), seriesID, isForce)
-		if err != nil {
-			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
-			c.failTask(taskKey, fmt.Sprintf("系列扫描失败: %v", err))
-			return
-		}
-		c.finishTask(taskKey, fmt.Sprintf("系列扫描完成 #%d", seriesID))
-	}()
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
 }
@@ -650,27 +949,35 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 }
 
 // 清理失效资源记录
-func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
-	libraryID, err := parseID(r, "libraryId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid library ID")
-		return
-	}
+func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	taskKey := fmt.Sprintf("cleanup_library_%d", libraryID)
 	if !c.startTask(taskKey, "cleanup_library", fmt.Sprintf("开始清理资源库 #%d", libraryID), 1) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library cleanup is already running"})
-		return
+		return false
 	}
 
 	go func() {
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
 		if err != nil {
 			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
-			c.failTask(taskKey, fmt.Sprintf("资源库清理失败: %v", err))
+			c.failTaskWithError(taskKey, fmt.Sprintf("资源库清理失败: %v", err), err.Error())
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("资源库清理完成 #%d", libraryID))
 	}()
+
+	return true
+}
+
+func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+	if !c.launchCleanupLibraryTask(libraryID) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library cleanup is already running"})
+		return
+	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Cleanup initiated"})
 }
@@ -1381,13 +1688,35 @@ func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, http.StatusOK, c.currentConfig())
+	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(c.currentConfig()))
+}
+
+func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, http.StatusOK, c.systemCapabilities())
 }
 
 func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
 	var newCfg config.Config
 	if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid configuration format")
+		return
+	}
+	config.NormalizeConfig(&newCfg)
+
+	validation := config.ValidateConfig(&newCfg)
+	if !validation.Valid {
+		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
+			"error":      "Configuration validation failed",
+			"validation": validation,
+		})
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(newCfg.Database.Path), 0o755); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to prepare database directory")
+		return
+	}
+	if err := os.MkdirAll(newCfg.Cache.Dir, 0o755); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to prepare cache directory")
 		return
 	}
 
@@ -1405,16 +1734,23 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 	// Update in-memory config
 	c.config.Replace(&newCfg)
 
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "配置已成功保存。得益于热重载技术，大部分核心设定（如 AI 引擎路径、并发进程数）已立等生效，无需重启应用。"})
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"message":    "配置已成功保存。大部分设定会立刻生效。",
+		"config":     newCfg,
+		"validation": validation,
+	})
 }
 
 func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider string `json:"provider"`
-		Endpoint string `json:"endpoint"`
-		Model    string `json:"model"`
-		APIKey   string `json:"api_key"`
-		Prompt   string `json:"prompt"`
+		Provider    string `json:"provider"`
+		APIMode     string `json:"api_mode"`
+		BaseURL     string `json:"base_url"`
+		RequestPath string `json:"request_path"`
+		Endpoint    string `json:"endpoint"`
+		Model       string `json:"model"`
+		APIKey      string `json:"api_key"`
+		Prompt      string `json:"prompt"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1425,9 +1761,18 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 	if req.Prompt == "" {
 		req.Prompt = "Hello, this is a test from Manga Manager."
 	}
+	if req.BaseURL == "" && req.Endpoint != "" {
+		tmpCfg := &config.Config{}
+		tmpCfg.LLM.Provider = req.Provider
+		tmpCfg.LLM.Endpoint = req.Endpoint
+		config.NormalizeConfig(tmpCfg)
+		req.BaseURL = tmpCfg.LLM.BaseURL
+		req.RequestPath = tmpCfg.LLM.RequestPath
+		req.APIMode = tmpCfg.LLM.APIMode
+	}
 
 	cfg := c.currentConfig()
-	provider := metadata.NewAIProvider(req.Provider, req.Endpoint, req.Model, req.APIKey, cfg.LLM.Timeout)
+	provider := metadata.NewAIProvider(req.Provider, req.APIMode, req.BaseURL, req.RequestPath, req.Model, req.APIKey, cfg.LLM.Timeout)
 	response, err := provider.TestLLM(r.Context(), req.Prompt)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("LLM Test failed: %v", err))
@@ -1449,33 +1794,45 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 	}
 }
 
-func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
+func (c *Controller) launchRebuildIndexTask() error {
 	if c.engine == nil {
-		jsonError(w, http.StatusServiceUnavailable, "Search engine not initialized")
-		return
+		return fmt.Errorf("search engine not initialized")
 	}
 	if !c.startTask("rebuild_index", "rebuild_index", "开始重建搜索索引", 1) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A search index rebuild is already running"})
-		return
+		return fmt.Errorf("task already running")
 	}
 
 	cfg := c.currentConfig()
 	dataPath := filepath.Dir(cfg.Database.Path)
 	if err := c.engine.Rebuild(dataPath); err != nil {
-		c.failTask("rebuild_index", fmt.Sprintf("搜索索引重建失败: %v", err))
-		jsonError(w, http.StatusInternalServerError, "Failed to rebuild search index")
-		return
+		c.failTaskWithError("rebuild_index", fmt.Sprintf("搜索索引重建失败: %v", err), err.Error())
+		return err
 	}
 
 	go c.triggerGlobalScan(context.Background())
 	c.finishTask("rebuild_index", "搜索索引已重建，正在后台重建索引数据")
+	return nil
+}
+
+func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
+	if err := c.launchRebuildIndexTask(); err != nil {
+		if strings.Contains(err.Error(), "already running") {
+			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A search index rebuild is already running"})
+			return
+		}
+		if strings.Contains(err.Error(), "not initialized") {
+			jsonError(w, http.StatusServiceUnavailable, "Search engine not initialized")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to rebuild search index")
+		return
+	}
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "搜索索引已在线重建，并已触发全库重新建立索引。"})
 }
 
-func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
+func (c *Controller) launchRebuildThumbnailsTask() error {
 	if !c.startTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 1) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail rebuild is already running"})
-		return
+		return fmt.Errorf("task already running")
 	}
 
 	thumbDir := filepath.Join(".", "data", "thumbnails")
@@ -1484,15 +1841,20 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 		thumbDir = cfg.Cache.Dir
 	}
 
-	// 尽力删除缓存目录
 	_ = os.RemoveAll(thumbDir)
-	_ = os.MkdirAll(thumbDir, 0755)
+	_ = os.MkdirAll(thumbDir, 0o755)
 
-	// 发起无视跳过的全局缓存重铸
 	go c.triggerGlobalScan(context.Background())
 	c.finishTask("rebuild_thumbnails", "缩略图缓存已清空，后台重建已启动")
-
 	c.PublishEvent("refresh_thumbnails")
+	return nil
+}
+
+func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
+	if err := c.launchRebuildThumbnailsTask(); err != nil {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail rebuild is already running"})
+		return
+	}
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。"})
 }
 
@@ -1613,7 +1975,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 
 	// 3. 构建 Provider
 	cfg := c.currentConfig()
-	provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.Endpoint, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
+	provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
 
 	// 4. 交给 LLM 甄选并产出理
 	recList, err := provider.GenerateRecommendations(ctx, userTags, candidates, 3)
@@ -1656,19 +2018,11 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 }
 
 // aiGroupingLibrary 扫描资料库中没有集合的系列，利用 LLM 进行智能分组
-func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
-	libID, err := parseID(r, "libraryId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid library ID")
-		return
-	}
+func (c *Controller) launchAIGroupingTask(libID int64) bool {
 	taskKey := fmt.Sprintf("ai_grouping_library_%d", libID)
 	if !c.startTask(taskKey, "ai_grouping", "AI 智能分组开始...", 1) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An AI grouping task is already running for this library"})
-		return
+		return false
 	}
-
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组任务已提交至后台"})
 
 	go func(libraryID int64) {
 		ctx := context.Background()
@@ -1677,7 +2031,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		seriesRows, err := dbCache.GetSeriesWithoutCollection(ctx, libraryID)
 		if err != nil {
 			slog.Error("Failed to fetch series for grouping", "error", err)
-			c.failTask(taskKey, "AI 分组失败 (数据库获取异常)")
+			c.failTaskWithError(taskKey, "AI 分组失败 (数据库获取异常)", err.Error())
 			return
 		}
 
@@ -1707,11 +2061,11 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		}
 
 		cfg := c.currentConfig()
-		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.Endpoint, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
+		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)
-			c.failTask(taskKey, fmt.Sprintf("AI 分组失败: %s", err.Error()))
+			c.failTaskWithError(taskKey, fmt.Sprintf("AI 分组失败: %s", err.Error()), err.Error())
 			return
 		}
 
@@ -1736,4 +2090,20 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组成功完成 (生成了 %d 个合集)", len(collections)))
 		c.PublishEvent("refresh")
 	}(libID)
+
+	return true
+}
+
+func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
+	libID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+	if !c.launchAIGroupingTask(libID) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An AI grouping task is already running for this library"})
+		return
+	}
+
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组任务已提交至后台"})
 }

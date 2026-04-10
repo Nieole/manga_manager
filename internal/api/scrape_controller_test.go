@@ -128,8 +128,8 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode batch scrape response failed: %v", err)
 		}
-		if int(body["total"].(float64)) != 0 {
-			t.Fatalf("expected total 0, got %+v", body)
+		if body["provider"] != "Bangumi" {
+			t.Fatalf("expected Bangumi provider, got %+v", body)
 		}
 	})
 
@@ -181,8 +181,8 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode scrape library response failed: %v", err)
 		}
-		if int(body["total"].(float64)) != 0 {
-			t.Fatalf("expected total 0, got %+v", body)
+		if body["provider"] != "Bangumi" {
+			t.Fatalf("expected Bangumi provider, got %+v", body)
 		}
 	})
 

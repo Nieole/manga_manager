@@ -18,6 +18,16 @@ type LogEntry struct {
 	Raw   string `json:"raw"`
 }
 
+type LogSummary struct {
+	Total   int            `json:"total"`
+	ByLevel map[string]int `json:"by_level"`
+}
+
+type LogsResponse struct {
+	Items   []LogEntry `json:"items"`
+	Summary LogSummary `json:"summary"`
+}
+
 // getSystemLogs 提供分页或者只取最新的错误日志
 // 此处我们实现一个基本逻辑：从 data/manga_manager.log 倒序读取包含 level=ERROR 的行
 func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
@@ -32,9 +42,8 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		filterLevel = "ERROR"
 	}
 
-	// manga_manager.log 的路径
-	// Controller 里可以直接通过配置或者数据路径推导
-	// 例如：Controller 中的 watcher 扫描器之类的依赖。为了简便，我们从存库路径推导
+	searchQuery := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+
 	cfg := c.currentConfig()
 	logFilePath := filepath.Join(filepath.Dir(cfg.Database.Path), "manga_manager.log")
 
@@ -52,23 +61,41 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	// 由于日志文件可能很大，我们简单暴力点：扫描一遍，存下符合条件的行。
 	// 对于非常巨大的日志可能需要特殊倒序读取库，此处假定只读当前 .log 并收集
 	matchedLogs := make([]LogEntry, 0, limit)
+	summary := LogSummary{
+		ByLevel: map[string]int{
+			"ERROR": 0,
+			"WARN":  0,
+			"INFO":  0,
+		},
+	}
 	scanner := bufio.NewScanner(file)
-
-	// 简单正则提取 level=ERROR
-	// 现有的 slog.TextHandler 格式大概是: time=2023-10-10T... level=ERROR msg="something"
-	levelPattern := fmt.Sprintf(`level=%s`, filterLevel)
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, levelPattern) || (filterLevel == "ALL") {
-			entry := parseLogLine(line)
-			if len(matchedLogs) == limit {
-				copy(matchedLogs, matchedLogs[1:])
-				matchedLogs[len(matchedLogs)-1] = entry
+		entry := parseLogLine(line)
+		level := strings.ToUpper(entry.Level)
+		if _, ok := summary.ByLevel[level]; ok {
+			summary.ByLevel[level]++
+		}
+
+		if filterLevel != "ALL" && level != strings.ToUpper(filterLevel) {
+			continue
+		}
+		if searchQuery != "" {
+			raw := strings.ToLower(entry.Raw)
+			msg := strings.ToLower(entry.Msg)
+			if !strings.Contains(raw, searchQuery) && !strings.Contains(msg, searchQuery) {
 				continue
 			}
-			matchedLogs = append(matchedLogs, entry)
 		}
+
+		summary.Total++
+		if len(matchedLogs) == limit {
+			copy(matchedLogs, matchedLogs[1:])
+			matchedLogs[len(matchedLogs)-1] = entry
+			continue
+		}
+		matchedLogs = append(matchedLogs, entry)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -81,7 +108,10 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		matchedLogs[i], matchedLogs[j] = matchedLogs[j], matchedLogs[i]
 	}
 
-	jsonResponse(w, http.StatusOK, matchedLogs)
+	jsonResponse(w, http.StatusOK, LogsResponse{
+		Items:   matchedLogs,
+		Summary: summary,
+	})
 }
 
 // 简单的 text handler parser

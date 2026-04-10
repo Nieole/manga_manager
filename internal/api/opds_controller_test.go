@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"testing"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 )
 
@@ -142,7 +143,7 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 			Path:         secondLibPath,
 			AutoScan:     false,
 			ScanInterval: 60,
-			ScanFormats:  "zip,cbz,rar,cbr,pdf",
+			ScanFormats:  config.DefaultScanFormatsCSV,
 		})
 		if err != nil {
 			t.Fatalf("CreateLibrary empty failed: %v", err)

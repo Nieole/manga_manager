@@ -58,6 +58,7 @@ export interface SearchResult {
   OriginalTitle: string;
   Summary: string;
   Publisher: string;
+  Status?: string;
   CoverURL: string;
   Rating: number;
   Tags: string[];

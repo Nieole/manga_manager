@@ -20,10 +20,9 @@ func (c *Controller) getProvider(name string) metadata.Provider {
 	case "ollama", "llm", "openai":
 		cfg := c.currentConfig()
 		provider := cfg.LLM.Provider
-		endpoint := cfg.LLM.Endpoint
 		model := cfg.LLM.Model
 		apiKey := cfg.LLM.APIKey
-		return metadata.NewAIProvider(provider, endpoint, model, apiKey, cfg.LLM.Timeout)
+		return metadata.NewAIProvider(provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, model, apiKey, cfg.LLM.Timeout)
 	default:
 		return metadata.NewBangumiProvider()
 	}
@@ -300,21 +299,11 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 }
 
 // 批量刮削所有系列的元数据
-func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// 从请求体读取 provider 参数
-	var reqBody struct {
-		Provider string `json:"provider"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&reqBody)
-
-	provider := c.getProvider(reqBody.Provider)
-
+func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, providerKey string) error {
+	provider := c.getProvider(providerKey)
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to list libraries")
-		return
+		return err
 	}
 
 	type seriesEntry struct {
@@ -338,17 +327,16 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 	}
 
 	if len(allSeries) == 0 {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "没有找到任何系列", "total": 0})
-		return
+		return nil
 	}
 
 	totalCount := len(allSeries)
 	providerName := provider.Name()
 	taskKey := "scrape_all_series"
 	if !c.startTask(taskKey, "scrape", fmt.Sprintf("批量刮削开始 (%s)", providerName), totalCount) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A batch scrape task is already running"})
-		return
+		return fmt.Errorf("task already running")
 	}
+	c.setTaskParams(taskKey, map[string]string{"provider": providerKey})
 
 	go func() {
 		successCount := 0
@@ -388,32 +376,41 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		c.PublishEvent("refresh")
 	}()
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"message":  fmt.Sprintf("批量刮削(%s)已异步启动，共 %d 个系列将逐一处理", providerName, totalCount),
-		"total":    totalCount,
-		"provider": providerName,
-	})
+	return nil
 }
 
-// scrapeLibrary 批量刮削指定库的缺失元数据
-func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	libraryID, err := parseID(r, "libraryId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid library ID")
-		return
-	}
 
 	var reqBody struct {
 		Provider string `json:"provider"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&reqBody)
+
+	if err := c.launchBatchScrapeAllSeriesTask(ctx, reqBody.Provider); err != nil {
+		if strings.Contains(err.Error(), "task already running") {
+			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A batch scrape task is already running"})
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to list libraries")
+		return
+	}
+
 	provider := c.getProvider(reqBody.Provider)
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"message":  fmt.Sprintf("批量刮削(%s)已异步启动，任务已加入后台队列", provider.Name()),
+		"provider": provider.Name(),
+	})
+}
+
+// scrapeLibrary 批量刮削指定库的缺失元数据
+func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int64, providerKey string) error {
+	provider := c.getProvider(providerKey)
 
 	seriesList, err := c.store.ListSeriesByLibrary(ctx, libraryID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to list series in library")
-		return
+		return err
 	}
 
 	type seriesEntry struct {
@@ -435,17 +432,16 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(allSeries) == 0 {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "没有找到需要补充元数据的系列", "total": 0})
-		return
+		return nil
 	}
 
 	totalCount := len(allSeries)
 	providerName := provider.Name()
 	taskKey := fmt.Sprintf("scrape_library_%d", libraryID)
 	if !c.startTask(taskKey, "scrape", fmt.Sprintf("资源库批量刮削开始 (%s)", providerName), totalCount) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scrape task is already running"})
-		return
+		return fmt.Errorf("task already running")
 	}
+	c.setTaskParams(taskKey, map[string]string{"provider": providerKey})
 
 	go func() {
 		successCount := 0
@@ -480,9 +476,51 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 		c.PublishEvent("refresh")
 	}()
 
+	return nil
+}
+
+func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	libraryID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+
+	var reqBody struct {
+		Provider string `json:"provider"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&reqBody)
+
+	if err := c.launchLibraryScrapeTask(ctx, libraryID, reqBody.Provider); err != nil {
+		if strings.Contains(err.Error(), "task already running") {
+			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scrape task is already running"})
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to list series in library")
+		return
+	}
+
+	provider := c.getProvider(reqBody.Provider)
+
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"message":  fmt.Sprintf("资源库批量刮削(%s)已异步启动，共 %d 个缺失元数据的系列将逐一处理", providerName, totalCount),
-		"total":    totalCount,
-		"provider": providerName,
+		"message":  fmt.Sprintf("资源库批量刮削(%s)已异步启动，任务已加入后台队列", provider.Name()),
+		"provider": provider.Name(),
 	})
+}
+
+func (c *Controller) retryScrapeTask(task TaskStatus) error {
+	provider := ""
+	if task.Params != nil {
+		provider = task.Params["provider"]
+	}
+
+	switch {
+	case task.Key == "scrape_all_series":
+		return c.launchBatchScrapeAllSeriesTask(context.Background(), provider)
+	case strings.HasPrefix(task.Key, "scrape_library_") && task.ScopeID != nil:
+		return c.launchLibraryScrapeTask(context.Background(), *task.ScopeID, provider)
+	default:
+		return fmt.Errorf("unsupported scrape retry target")
+	}
 }

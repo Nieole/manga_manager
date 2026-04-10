@@ -9,6 +9,8 @@ import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/t
 import { useGlobalSearch } from './layout/useGlobalSearch';
 
 export default function Layout() {
+    const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
+    const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
@@ -36,7 +38,9 @@ export default function Layout() {
 
     // 全局任务进度状态
     const [taskProgress, setTaskProgress] = useState<{
+        status: string;
         message: string;
+        error?: string;
         current: number;
         total: number;
         type: string;
@@ -66,6 +70,25 @@ export default function Layout() {
     const { libId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
+
+    const saveRecentLibraryPath = (path: string) => {
+        const normalized = path.trim();
+        if (!normalized) return;
+        const next = [normalized, ...recentLibraryPaths.filter((item) => item !== normalized)].slice(0, 5);
+        setRecentLibraryPaths(next);
+        localStorage.setItem('manga_manager_recent_library_paths', JSON.stringify(next));
+    };
+
+    const extractErrorMessage = (error: unknown, fallback: string) => {
+        if (axios.isAxiosError(error)) {
+            const validationIssues = error.response?.data?.validation?.issues;
+            if (Array.isArray(validationIssues) && validationIssues.length > 0) {
+                return validationIssues.map((issue: { field: string; message: string }) => `${issue.field}: ${issue.message}`).join('\n');
+            }
+            return error.response?.data?.error || fallback;
+        }
+        return fallback;
+    };
 
     const openDirectoryBrowser = () => {
         setBrowsing(true);
@@ -137,6 +160,29 @@ export default function Layout() {
 
     useEffect(() => {
         fetchLibraries();
+        try {
+            const stored = localStorage.getItem('manga_manager_recent_library_paths');
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed)) {
+                    setRecentLibraryPaths(parsed.filter((item) => typeof item === 'string'));
+                }
+            }
+        } catch {
+            // ignore invalid local storage
+        }
+        axios.get('/api/system/capabilities')
+            .then((res) => {
+                if (res.data?.default_scan_formats) {
+                    setSupportedScanFormats(res.data.default_scan_formats);
+                    setNewLibScanFormats(res.data.default_scan_formats);
+                    setEditLibScanFormats(res.data.default_scan_formats);
+                }
+            })
+            .catch(() => { });
+
+        const openAddLibrary = () => setShowAddModal(true);
+        window.addEventListener('manga-manager:open-add-library', openAddLibrary);
 
         // 挂载 Server-Sent Events 流监听器
         const eventSource = new EventSource('/api/events');
@@ -156,7 +202,7 @@ export default function Layout() {
                     // 清除之前的自动关闭计时器
                     if (taskDismissTimer.current) clearTimeout(taskDismissTimer.current);
                     // 如果任务完成（current >= total），3 秒后自动隐藏
-                    if (progress.current >= progress.total && progress.total > 0) {
+                    if ((progress.status === 'completed' || progress.status === 'failed') && progress.total > 0) {
                         taskDismissTimer.current = window.setTimeout(() => setTaskProgress(null), 3000);
                     }
                 } catch (e) {
@@ -171,6 +217,7 @@ export default function Layout() {
         };
 
         return () => {
+            window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
             eventSource.close();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,11 +240,12 @@ export default function Layout() {
             setNewLibAutoScan(false);
             setNewLibScanInterval(DEFAULT_SCAN_INTERVAL);
             setNewLibScanFormats(DEFAULT_SCAN_FORMATS);
+            saveRecentLibraryPath(newLibPath);
             fetchLibraries();
             setRefreshTrigger(prev => prev + 1);
         } catch (error) {
             console.error(error);
-            alert("添加库失败，请检查路径是否正确及服务端状态");
+            alert(extractErrorMessage(error, "添加资源库失败，请检查目录权限和扫描格式。"));
         } finally {
             setAdding(false);
         }
@@ -215,10 +263,11 @@ export default function Layout() {
                 scan_formats: editLibScanFormats
             });
             setShowEditModal(false);
+            saveRecentLibraryPath(editLibPath);
             fetchLibraries();
         } catch (error) {
             console.error(error);
-            alert("修改库失败，请检查填写内容");
+            alert(extractErrorMessage(error, "修改资源库失败，请检查目录权限和扫描格式。"));
         } finally {
             setEditing(false);
         }
@@ -421,7 +470,7 @@ export default function Layout() {
                                                             setEditLibPath(lib.path || "");
                                                             setEditLibAutoScan(lib.auto_scan || false);
                                                             setEditLibScanInterval(lib.scan_interval || DEFAULT_SCAN_INTERVAL);
-                                                            setEditLibScanFormats(lib.scan_formats || DEFAULT_SCAN_FORMATS);
+                                                            setEditLibScanFormats(lib.scan_formats || supportedScanFormats);
                                                             setShowEditModal(true);
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-blue-500 hover:text-white transition-colors"
@@ -509,7 +558,9 @@ export default function Layout() {
                         <div className="bg-gray-900/95 border border-gray-700 rounded-2xl px-5 py-4 shadow-2xl backdrop-blur">
                             <div className="flex items-center justify-between mb-2">
                                 <div className="flex items-center gap-2">
-                                    {taskProgress.current < taskProgress.total ? (
+                                    {taskProgress.status === 'failed' ? (
+                                        <span className="text-red-400 text-sm">!</span>
+                                    ) : taskProgress.current < taskProgress.total ? (
                                         <Loader2 className="w-4 h-4 text-komgaPrimary animate-spin" />
                                     ) : (
                                         <span className="text-green-400 text-sm">✓</span>
@@ -527,10 +578,15 @@ export default function Layout() {
                                     </button>
                                 </div>
                             </div>
+                            {taskProgress.error && (
+                                <div className="mb-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                                    {taskProgress.error}
+                                </div>
+                            )}
                             {taskProgress.total > 0 && (
                                 <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
                                     <div
-                                        className={`h-full rounded-full transition-all duration-500 ease-out ${taskProgress.current >= taskProgress.total ? 'bg-green-500' : 'bg-komgaPrimary'
+                                        className={`h-full rounded-full transition-all duration-500 ease-out ${taskProgress.status === 'failed' ? 'bg-red-500' : taskProgress.current >= taskProgress.total ? 'bg-green-500' : 'bg-komgaPrimary'
                                             }`}
                                         style={{ width: `${Math.min(100, (taskProgress.current / taskProgress.total) * 100)}%` }}
                                     />
@@ -557,6 +613,8 @@ export default function Layout() {
                 browseParent={browseParent}
                 browseDirs={browseDirs}
                 browseDrives={browseDrives}
+                recentPaths={recentLibraryPaths}
+                supportedScanFormats={supportedScanFormats}
                 onClose={() => setShowAddModal(false)}
                 onSubmit={handleAddLibrary}
                 onNameChange={setNewLibName}
@@ -589,6 +647,8 @@ export default function Layout() {
                 browseParent={browseParent}
                 browseDirs={browseDirs}
                 browseDrives={browseDrives}
+                recentPaths={recentLibraryPaths}
+                supportedScanFormats={supportedScanFormats}
                 onClose={() => setShowEditModal(false)}
                 onSubmit={handleEditLibrarySubmit}
                 onNameChange={setEditLibName}

@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw } from 'lucide-react';
+import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, AlertTriangle, FolderPlus, Settings as SettingsIcon } from 'lucide-react';
 
 interface DashboardStats {
     total_series: number;
@@ -35,8 +35,18 @@ interface RecommendedItem {
     reason: string;
 }
 
+interface TaskStatus {
+    key: string;
+    status: string;
+    message: string;
+    error?: string;
+    updated_at: string;
+}
+
 export default function Dashboard() {
     const [stats, setStats] = useState<DashboardStats | null>(null);
+    const [libraries, setLibraries] = useState<any[]>([]);
+    const [tasks, setTasks] = useState<TaskStatus[]>([]);
     const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
     const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
     const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
@@ -47,10 +57,14 @@ export default function Dashboard() {
     useEffect(() => {
         Promise.all([
             axios.get('/api/stats/dashboard'),
+            axios.get('/api/libraries').catch(() => ({ data: [] })),
+            axios.get('/api/system/tasks').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
             axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] }))
-        ]).then(([statsRes, recentRes, heatmapRes]) => {
+        ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes]) => {
             setStats(statsRes.data);
+            setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
+            setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
         }).catch(console.error).finally(() => setLoading(false));
@@ -79,11 +93,57 @@ export default function Dashboard() {
     };
 
     const readPercent = stats ? (stats.total_books > 0 ? Math.round((stats.read_books / stats.total_books) * 100) : 0) : 0;
+    const failedTasks = tasks.filter((task) => task.status === 'failed').slice(0, 3);
 
     if (loading) {
         return (
             <div className="flex items-center justify-center h-full min-h-[60vh]">
                 <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-komgaPrimary"></div>
+            </div>
+        );
+    }
+
+    if (libraries.length === 0) {
+        return (
+            <div className="p-4 sm:p-8 max-w-5xl mx-auto">
+                <div className="rounded-[28px] border border-gray-800 bg-gradient-to-br from-komgaSurface to-gray-950 p-8 sm:p-10 shadow-2xl">
+                    <div className="max-w-3xl space-y-6">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
+                            <Sparkles className="w-4 h-4" />
+                            首次使用引导
+                        </div>
+                        <div>
+                            <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">先把第一座书库接进来</h1>
+                            <p className="mt-3 text-gray-400 leading-7">
+                                Manga Manager 已经启动成功。下一步建议先添加一个漫画目录，然后再测试 LLM 连接、触发首次扫描，并根据你的设备调整缓存与超分设置。
+                            </p>
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-3">
+                            <OnboardingCard
+                                title="1. 添加资源库"
+                                description="从侧边栏或这里直接添加一个本地目录，系统会据此建立索引。"
+                                actionLabel="立即添加"
+                                onClick={() => window.dispatchEvent(new Event('manga-manager:open-add-library'))}
+                                icon={<FolderPlus className="w-5 h-5 text-komgaPrimary" />}
+                            />
+                            <OnboardingCard
+                                title="2. 检查系统设定"
+                                description="确认数据库、缓存目录以及 LLM 协议模式配置正确。"
+                                actionLabel="打开设定"
+                                onClick={() => navigate('/settings')}
+                                icon={<SettingsIcon className="w-5 h-5 text-amber-400" />}
+                            />
+                            <OnboardingCard
+                                title="3. 开始首次扫描"
+                                description="添加目录后，触发一次扫描并等待首页开始出现系列与封面。"
+                                actionLabel="查看说明"
+                                onClick={() => navigate('/settings')}
+                                icon={<Library className="w-5 h-5 text-blue-400" />}
+                            />
+                        </div>
+                    </div>
+                </div>
             </div>
         );
     }
@@ -133,6 +193,23 @@ export default function Dashboard() {
                         borderColor="border-amber-500/30"
                         iconColor="text-amber-400"
                     />
+                </div>
+            )}
+
+            {failedTasks.length > 0 && (
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
+                    <div className="flex items-center gap-2 mb-3 text-red-200">
+                        <AlertTriangle className="w-5 h-5" />
+                        <h2 className="text-lg font-semibold">最近失败的后台任务</h2>
+                    </div>
+                    <div className="space-y-3">
+                        {failedTasks.map((task) => (
+                            <div key={task.key} className="rounded-xl border border-red-500/10 bg-black/20 p-3">
+                                <p className="text-sm font-medium text-white">{task.message}</p>
+                                {task.error && <p className="mt-1 text-xs text-red-100/80">{task.error}</p>}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
@@ -487,6 +564,36 @@ function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDay
                     {tooltip.text}
                 </div>
             )}
+        </div>
+    );
+}
+
+function OnboardingCard({
+    title,
+    description,
+    actionLabel,
+    onClick,
+    icon,
+}: {
+    title: string;
+    description: string;
+    actionLabel: string;
+    onClick: () => void;
+    icon: ReactNode;
+}) {
+    return (
+        <div className="rounded-2xl border border-gray-800 bg-black/20 p-5">
+            <div className="flex items-center gap-2 mb-3">
+                {icon}
+                <h2 className="text-base font-semibold text-white">{title}</h2>
+            </div>
+            <p className="text-sm text-gray-400 leading-6 min-h-[72px]">{description}</p>
+            <button
+                onClick={onClick}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800"
+            >
+                {actionLabel}
+            </button>
         </div>
     );
 }

@@ -1,42 +1,103 @@
-import { ArrowLeft, BookImage, Building2, Download, Edit, FolderOpen, Globe, Info, Star, X } from 'lucide-react';
-import type { SearchResult } from './types';
+import { ArrowLeft, BookImage, Building2, CheckCircle2, Download, Edit, FolderOpen, Globe, Info, Lock, Sparkles, Star, X } from 'lucide-react';
+import type { MetaTag, SearchResult, Series } from './types';
 
 interface SeriesSearchModalProps {
   open: boolean;
+  providerLabel: string;
   modalSearchQuery: string;
   isScraping: boolean;
   searchResults: SearchResult[];
   currentOffset: number;
   searchTotal: number;
+  currentSeries: Series | null;
+  currentTags: MetaTag[];
+  lockedFields: Set<string>;
+  selectedResult: SearchResult | null;
   onClose: () => void;
   onSearchQueryChange: (value: string) => void;
   onReSearch: (offset?: number) => void;
+  onSelectMetadata: (metadata: SearchResult) => void;
   onApplyMetadata: (metadata: SearchResult) => void;
+}
+
+interface PreviewField {
+  key: string;
+  label: string;
+  currentValue: string;
+  nextValue: string;
 }
 
 export function SeriesSearchModal({
   open,
+  providerLabel,
   modalSearchQuery,
   isScraping,
   searchResults,
   currentOffset,
   searchTotal,
+  currentSeries,
+  currentTags,
+  lockedFields,
+  selectedResult,
   onClose,
   onSearchQueryChange,
   onReSearch,
+  onSelectMetadata,
   onApplyMetadata,
 }: SeriesSearchModalProps) {
   if (!open) return null;
 
+  const previewFields: PreviewField[] = selectedResult && currentSeries ? [
+    {
+      key: 'title',
+      label: '标题',
+      currentValue: currentSeries.title?.Valid ? currentSeries.title.String : currentSeries.name,
+      nextValue: selectedResult.Title || '未提供',
+    },
+    {
+      key: 'summary',
+      label: '简介',
+      currentValue: currentSeries.summary?.Valid ? currentSeries.summary.String : '未填写',
+      nextValue: selectedResult.Summary || '未提供',
+    },
+    {
+      key: 'publisher',
+      label: '出版社',
+      currentValue: currentSeries.publisher?.Valid ? currentSeries.publisher.String : '未填写',
+      nextValue: selectedResult.Publisher || '未提供',
+    },
+    {
+      key: 'status',
+      label: '状态',
+      currentValue: currentSeries.status?.Valid ? currentSeries.status.String : '未填写',
+      nextValue: selectedResult.Status || '未提供',
+    },
+    {
+      key: 'rating',
+      label: '评分',
+      currentValue: currentSeries.rating?.Valid ? currentSeries.rating.Float64.toFixed(1) : '未填写',
+      nextValue: selectedResult.Rating > 0 ? selectedResult.Rating.toFixed(1) : '未提供',
+    },
+    {
+      key: 'tags',
+      label: '标签',
+      currentValue: currentTags.length > 0 ? currentTags.map((tag) => tag.name).join(' / ') : '未填写',
+      nextValue: selectedResult.Tags?.length ? selectedResult.Tags.join(' / ') : '未提供',
+    },
+  ] : [];
+
+  const changedFieldCount = previewFields.filter((field) => field.currentValue !== field.nextValue && field.nextValue !== '未提供').length;
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-komgaSurface border border-gray-800 rounded-3xl w-full max-w-5xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] scale-in-center animate-in zoom-in-95 duration-300">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50 gap-4">
+      <div className="bg-komgaSurface border border-gray-800 rounded-3xl w-full max-w-7xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-300">
+        <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50 gap-4">
           <div className="flex-1 w-full">
             <h3 className="text-xl font-bold text-white flex items-center gap-3">
               <Globe className="w-5 h-5 text-komgaPrimary" />
-              选择最佳匹配条目
+              预览并选择元数据来源
             </h3>
+            <p className="mt-1 text-sm text-gray-500">先比较当前信息与 {providerLabel || '外部来源'} 的差异，再决定是否应用。</p>
             <div className="mt-4 flex gap-2 w-full max-w-xl">
               <div className="relative flex-1">
                 <input
@@ -63,91 +124,183 @@ export function SeriesSearchModal({
               </button>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all shrink-0 self-start sm:self-center">
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all shrink-0">
             <X className="w-7 h-7" />
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
-          {searchResults.length > 0 ? (
-            searchResults.map((result, idx) => (
-              <div
-                key={idx}
-                onClick={() => onApplyMetadata(result)}
-                className="group flex gap-6 p-6 rounded-2xl bg-gray-900/40 border border-gray-800 hover:border-komgaPrimary/50 hover:bg-komgaPrimary/5 transition-all cursor-pointer relative overflow-hidden active:scale-[0.99] min-h-[180px]"
-              >
-                <div className="w-28 sm:w-36 shrink-0 aspect-[3/4] bg-gray-800 rounded-xl overflow-hidden border border-gray-700 shadow-xl self-start">
-                  {result.CoverURL ? (
-                    <img src={result.CoverURL} alt={result.Title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <BookImage className="w-12 h-12 text-gray-700" />
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0 flex flex-col justify-start">
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="min-w-0 flex-1">
-                      <h4 className="text-xl font-bold text-white group-hover:text-komgaPrimary transition-colors leading-tight">
-                        {result.Title}
-                      </h4>
-                      {result.OriginalTitle && result.OriginalTitle !== result.Title && (
-                        <p className="text-sm text-gray-500 truncate mt-1 italic">{result.OriginalTitle}</p>
-                      )}
-                    </div>
-                    {result.Rating > 0 && (
-                      <div className="flex items-center text-yellow-500 text-sm font-bold shrink-0 bg-yellow-400/10 px-2 py-1 rounded-lg border border-yellow-500/20 shadow-sm">
-                        <Star className="w-4 h-4 mr-1 fill-current" />
-                        {result.Rating.toFixed(1)}
+        <div className="grid xl:grid-cols-[1.1fr_0.9fr] min-h-0 flex-1">
+          <div className="border-r border-gray-800 min-h-0">
+            <div className="p-6 overflow-y-auto space-y-4 max-h-[65vh] xl:max-h-full">
+              {searchResults.length > 0 ? (
+                searchResults.map((result, idx) => {
+                  const isSelected = selectedResult?.SourceID === result.SourceID && selectedResult?.Title === result.Title;
+                  return (
+                    <button
+                      key={`${result.SourceID}-${idx}`}
+                      type="button"
+                      onClick={() => onSelectMetadata(result)}
+                      className={`group w-full text-left flex gap-5 p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden ${isSelected ? 'border-komgaPrimary bg-komgaPrimary/10 shadow-lg shadow-komgaPrimary/10' : 'bg-gray-900/40 border-gray-800 hover:border-komgaPrimary/40 hover:bg-komgaPrimary/5'}`}
+                    >
+                      <div className="w-24 sm:w-28 shrink-0 aspect-[3/4] bg-gray-800 rounded-xl overflow-hidden border border-gray-700 shadow-xl self-start">
+                        {result.CoverURL ? (
+                          <img src={result.CoverURL} alt={result.Title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <BookImage className="w-10 h-10 text-gray-700" />
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
-                    {result.Publisher && (
-                      <p className="text-purple-400 text-xs font-semibold flex items-center gap-1.5 bg-purple-400/5 px-2 py-1 rounded border border-purple-400/10">
-                        <Building2 className="w-3.5 h-3.5" />
-                        {result.Publisher}
-                      </p>
-                    )}
-                    {result.ReleaseDate && (
-                      <p className="text-blue-400 text-xs font-semibold flex items-center gap-1.5 bg-blue-400/5 px-2 py-1 rounded border border-blue-400/10">
-                        <Info className="w-3.5 h-3.5" />
-                        {result.ReleaseDate}
-                      </p>
-                    )}
-                    {result.VolumeCount > 0 && (
-                      <p className="text-green-400 text-xs font-semibold flex items-center gap-1.5 bg-green-400/5 px-2 py-1 rounded border border-green-400/10">
-                        <FolderOpen className="w-3.5 h-3.5" />
-                        {result.VolumeCount} 卷/册
-                      </p>
-                    )}
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {result.Tags?.slice(0, 8).map((tag) => (
-                      <span key={tag} className="text-[11px] bg-gray-800/60 text-gray-400 px-2.5 py-1 rounded-full border border-gray-700/50 hover:border-gray-600 transition-colors">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="text-gray-400 text-sm mt-4 line-clamp-3 leading-relaxed italic border-l-2 border-komgaPrimary/30 pl-4 py-1">
-                    {result.Summary || '暂无简介...'}
-                  </p>
-                  <div className="mt-6 flex items-center justify-between">
-                    <span className="text-xs text-gray-600 font-mono tracking-wider">SOURCE ID: {result.SourceID}</span>
-                    <span className="text-sm font-bold text-komgaPrimary opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0 transition-all duration-300 flex items-center gap-2 bg-komgaPrimary/10 px-4 py-1 rounded-full border border-komgaPrimary/20">
-                      应用当前条目 <ArrowLeft className="w-4 h-4 rotate-180" />
-                    </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h4 className="text-lg font-bold text-white leading-tight">{result.Title}</h4>
+                            {result.OriginalTitle && result.OriginalTitle !== result.Title && (
+                              <p className="text-sm text-gray-500 truncate mt-1 italic">{result.OriginalTitle}</p>
+                            )}
+                          </div>
+                          {isSelected && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-2 py-1 text-xs text-komgaPrimary">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              已选中
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
+                          {result.Publisher && (
+                            <p className="text-purple-400 text-xs font-semibold flex items-center gap-1.5 bg-purple-400/5 px-2 py-1 rounded border border-purple-400/10">
+                              <Building2 className="w-3.5 h-3.5" />
+                              {result.Publisher}
+                            </p>
+                          )}
+                          {result.ReleaseDate && (
+                            <p className="text-blue-400 text-xs font-semibold flex items-center gap-1.5 bg-blue-400/5 px-2 py-1 rounded border border-blue-400/10">
+                              <Info className="w-3.5 h-3.5" />
+                              {result.ReleaseDate}
+                            </p>
+                          )}
+                          {result.VolumeCount > 0 && (
+                            <p className="text-green-400 text-xs font-semibold flex items-center gap-1.5 bg-green-400/5 px-2 py-1 rounded border border-green-400/10">
+                              <FolderOpen className="w-3.5 h-3.5" />
+                              {result.VolumeCount} 卷/册
+                            </p>
+                          )}
+                          {result.Rating > 0 && (
+                            <p className="text-yellow-400 text-xs font-semibold flex items-center gap-1.5 bg-yellow-400/5 px-2 py-1 rounded border border-yellow-400/10">
+                              <Star className="w-3.5 h-3.5 fill-current" />
+                              {result.Rating.toFixed(1)}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {result.Tags?.slice(0, 6).map((tag) => (
+                            <span key={tag} className="text-[11px] bg-gray-800/60 text-gray-400 px-2.5 py-1 rounded-full border border-gray-700/50">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+
+                        <p className="text-gray-400 text-sm mt-4 line-clamp-3 leading-relaxed">
+                          {result.Summary || '暂无简介'}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-gray-500 gap-4">
+                  <Globe className="w-16 h-16 opacity-20" />
+                  <p>未找到匹配条目，请尝试修改关键词重新搜索</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="p-6 overflow-y-auto bg-gray-950/30">
+            {selectedResult ? (
+              <div className="space-y-5">
+                <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-gray-500">应用预览</p>
+                      <h4 className="mt-2 text-xl font-bold text-white">{selectedResult.Title}</h4>
+                      <p className="text-sm text-gray-500 mt-1">来源：{providerLabel || '外部来源'} · Source ID {selectedResult.SourceID}</p>
+                    </div>
+                    <div className="rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
+                      预计更新 {changedFieldCount} 个字段
+                    </div>
                   </div>
                 </div>
-                <div className="absolute top-0 right-0 w-24 h-24 bg-komgaPrimary/5 -translate-y-12 translate-x-12 rotate-45 group-hover:translate-x-8 group-hover:-translate-y-8 transition-transform duration-700"></div>
+
+                <div className="rounded-2xl border border-gray-800 bg-gray-900/40 p-5">
+                  <div className="flex items-center gap-2 mb-4 text-white">
+                    <Sparkles className="w-4 h-4 text-komgaPrimary" />
+                    <h5 className="font-semibold">字段级差异</h5>
+                  </div>
+                  <div className="space-y-3">
+                    {previewFields.map((field) => {
+                      const locked = lockedFields.has(field.key);
+                      const changed = field.currentValue !== field.nextValue && field.nextValue !== '未提供';
+                      return (
+                        <div key={field.key} className={`rounded-xl border p-4 ${changed ? 'border-komgaPrimary/20 bg-komgaPrimary/5' : 'border-gray-800 bg-black/10'}`}>
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <span className="text-sm font-medium text-white">{field.label}</span>
+                            {locked ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
+                                <Lock className="w-3 h-3" />
+                                已锁定，不会覆盖
+                              </span>
+                            ) : changed ? (
+                              <span className="rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-xs text-komgaPrimary">将更新</span>
+                            ) : (
+                              <span className="rounded-full border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-400">无变化</span>
+                            )}
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">当前</p>
+                              <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-300 whitespace-pre-wrap break-words">
+                                {field.currentValue}
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">将应用</p>
+                              <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap break-words">
+                                {field.nextValue}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-gray-800 bg-gray-900/40 p-5">
+                  <p className="text-sm text-gray-400 leading-6">
+                    提示：当前系列中被手动锁定的字段不会被这次应用覆盖。建议先预览差异，再把真正想保留的字段单独锁定。
+                  </p>
+                  <div className="mt-4 flex items-center justify-between gap-4">
+                    <span className="text-xs text-gray-500">点击左侧其他条目可即时比较不同来源。</span>
+                    <button
+                      onClick={() => onApplyMetadata(selectedResult)}
+                      disabled={isScraping}
+                      className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-medium text-white hover:bg-komgaPrimary/80 disabled:opacity-50"
+                    >
+                      {isScraping ? <div className="w-4 h-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <ArrowLeft className="w-4 h-4 rotate-180" />}
+                      应用这个条目
+                    </button>
+                  </div>
+                </div>
               </div>
-            ))
-          ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-gray-500 gap-4">
-              <Globe className="w-16 h-16 opacity-20" />
-              <p>未找到匹配条目，请尝试修改关键词重新搜索</p>
-            </div>
-          )}
+            ) : (
+              <div className="flex h-full min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-gray-800 bg-gray-900/20 p-6 text-center text-gray-500">
+                请先从左侧选择一个候选条目，右侧会显示字段级差异预览。
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -172,7 +325,7 @@ export function SeriesSearchModal({
           </div>
           <p className="text-gray-500 text-xs flex items-center gap-2 italic">
             <Info className="w-4 h-4" />
-            请点击匹配最准确的条目以更新当前系列的元数据
+            当前流程会先预览差异，再把选中的来源应用到系列元数据
           </p>
         </div>
       </div>
