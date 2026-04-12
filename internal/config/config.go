@@ -45,6 +45,11 @@ type Config struct {
 		APIKey      string `yaml:"api_key" json:"api_key"`           // Optional API Key for OpenAI/DeepSeek
 		Timeout     int    `yaml:"timeout" json:"timeout"`           // 请求超时时间（秒），默认 120
 	} `yaml:"llm" json:"llm"`
+	KOReader struct {
+		Enabled           bool   `yaml:"enabled" json:"enabled"`
+		BasePath          string `yaml:"base_path" json:"base_path"`
+		AllowRegistration bool   `yaml:"allow_registration" json:"allow_registration"`
+	} `yaml:"koreader" json:"koreader"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -97,6 +102,9 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.LLM.APIMode = ""
 	cfg.LLM.Model = "qwen2.5"
 	cfg.LLM.Timeout = 120
+	cfg.KOReader.Enabled = false
+	cfg.KOReader.BasePath = "/koreader"
+	cfg.KOReader.AllowRegistration = false
 	NormalizeConfig(cfg)
 
 	data, err := yaml.Marshal(cfg)
@@ -187,6 +195,18 @@ func NormalizeConfig(cfg *Config) {
 		cfg.Scanner.MaxAiConcurrency = 3
 	}
 	normalizeLLMConfig(cfg)
+	basePath := strings.TrimSpace(cfg.KOReader.BasePath)
+	if basePath == "" {
+		basePath = "/koreader"
+	}
+	if !strings.HasPrefix(basePath, "/") {
+		basePath = "/" + basePath
+	}
+	basePath = "/" + strings.Trim(strings.TrimSpace(basePath), "/")
+	if basePath == "//" || basePath == "" {
+		basePath = "/koreader"
+	}
+	cfg.KOReader.BasePath = basePath
 }
 
 func splitEndpoint(raw string) (string, string) {

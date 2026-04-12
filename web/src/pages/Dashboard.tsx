@@ -48,6 +48,15 @@ interface TaskStatus {
     updated_at: string;
 }
 
+interface KOReaderOverview {
+    enabled: boolean;
+    base_path: string;
+    stats?: {
+        matched_progress_count: number;
+        unmatched_progress_count: number;
+    };
+}
+
 export default function Dashboard() {
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [libraries, setLibraries] = useState<any[]>([]);
@@ -55,6 +64,7 @@ export default function Dashboard() {
     const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
     const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
     const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
+    const [koreaderOverview, setKOReaderOverview] = useState<KOReaderOverview | null>(null);
     const [loading, setLoading] = useState(true);
     const scrollRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
@@ -65,13 +75,15 @@ export default function Dashboard() {
             axios.get('/api/libraries').catch(() => ({ data: [] })),
             axios.get('/api/system/tasks').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
-            axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] }))
-        ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes]) => {
+            axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] })),
+            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } }))
+        ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes, koreaderRes]) => {
             setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
             setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
+            setKOReaderOverview(koreaderRes.data || null);
         }).catch(console.error).finally(() => setLoading(false));
     }, []);
 
@@ -100,6 +112,8 @@ export default function Dashboard() {
     const readPercent = stats ? (stats.total_books > 0 ? Math.round((stats.read_books / stats.total_books) * 100) : 0) : 0;
     const failedTasks = tasks.filter((task) => task.status === 'failed').slice(0, 3);
     const runningTasks = tasks.filter((task) => task.status === 'running').slice(0, 3);
+    const koreaderEnabledLibraries = libraries.filter((library) => library.koreader_sync_enabled ?? true).length;
+    const koreaderDisabledLibraries = Math.max(0, libraries.length - koreaderEnabledLibraries);
 
     const openTaskTarget = (task: TaskStatus) => {
         if (task.scope === 'series' && task.scope_id) {
@@ -234,6 +248,29 @@ export default function Dashboard() {
                     />
                 </div>
             )}
+
+            <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <h2 className="text-lg font-semibold text-white">KOReader Sync 覆盖范围</h2>
+                        <p className="mt-1 text-sm text-gray-300">
+                            服务端状态：{koreaderOverview?.enabled ? '已启用' : '未启用'}。已开启同步的资源库才会接收 KOReader 进度映射。
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => navigate('/settings')}
+                        className="rounded-lg border border-sky-500/20 bg-black/20 px-3 py-1.5 text-xs text-sky-100 hover:bg-black/30"
+                    >
+                        打开同步设定
+                    </button>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-4">
+                    <MiniStat label="启用同步的资源库" value={koreaderEnabledLibraries} accent="text-sky-300" />
+                    <MiniStat label="关闭同步的资源库" value={koreaderDisabledLibraries} accent="text-gray-300" />
+                    <MiniStat label="已匹配同步记录" value={koreaderOverview?.stats?.matched_progress_count ?? 0} accent="text-emerald-300" />
+                    <MiniStat label="待重关联记录" value={koreaderOverview?.stats?.unmatched_progress_count ?? 0} accent="text-amber-300" />
+                </div>
+            </div>
 
             {failedTasks.length > 0 && (
                 <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
@@ -482,6 +519,15 @@ function StatCard({ icon, label, value, subtitle, color, borderColor, iconColor 
             {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
             {/* 装饰光斑 */}
             <div className={`absolute -top-8 -right-8 w-24 h-24 rounded-full bg-gradient-to-br ${color} opacity-30 blur-2xl group-hover:opacity-50 transition-opacity`} />
+        </div>
+    );
+}
+
+function MiniStat({ label, value, accent }: { label: string; value: string | number; accent: string }) {
+    return (
+        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+            <p className={`text-xl font-semibold ${accent}`}>{value}</p>
+            <p className="mt-1 text-xs text-gray-400">{label}</p>
         </div>
     );
 }

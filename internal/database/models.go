@@ -55,13 +55,14 @@ type CollectionSeries struct {
 }
 
 type Library struct {
-	ID           int64        `json:"id"`
-	Name         string       `json:"name"`
-	Path         string       `json:"path"`
-	AutoScan     bool         `json:"auto_scan"`
-	ScanInterval int64        `json:"scan_interval"`
-	ScanFormats  string       `json:"scan_formats"`
-	CreatedAt    sql.NullTime `json:"created_at"`
+	ID                  int64        `json:"id"`
+	Name                string       `json:"name"`
+	Path                string       `json:"path"`
+	AutoScan            bool         `json:"auto_scan"`
+	KOReaderSyncEnabled bool         `json:"koreader_sync_enabled"`
+	ScanInterval        int64        `json:"scan_interval"`
+	ScanFormats         string       `json:"scan_formats"`
+	CreatedAt           sql.NullTime `json:"created_at"`
 }
 
 type ReadingActivity struct {

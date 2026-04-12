@@ -1,0 +1,299 @@
+package koreader
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"manga-manager/internal/database"
+)
+
+var (
+	ErrUnauthorized       = errors.New("unauthorized")
+	ErrForbidden          = errors.New("forbidden")
+	ErrRegistrationClosed = errors.New("registration closed")
+	ErrAlreadyConfigured  = errors.New("account already configured")
+	ErrProgressNotFound   = errors.New("progress not found")
+)
+
+type Service struct {
+	store database.Store
+}
+
+type Credentials struct {
+	Username string
+	Key      string
+}
+
+type ProgressPayload struct {
+	Document   string  `json:"document"`
+	Progress   string  `json:"progress"`
+	Percentage float64 `json:"percentage"`
+	Device     string  `json:"device"`
+	DeviceID   string  `json:"device_id"`
+}
+
+type SyncResult struct {
+	Record  database.KOReaderProgress
+	Matched bool
+	BookID  *int64
+}
+
+func NewService(store database.Store) *Service {
+	return &Service{store: store}
+}
+
+func (s *Service) Register(ctx context.Context, username, key string, allowRegistration bool) (database.KOReaderSettings, error) {
+	if !allowRegistration {
+		return database.KOReaderSettings{}, ErrRegistrationClosed
+	}
+	username = strings.TrimSpace(username)
+	key = strings.TrimSpace(key)
+	if username == "" || key == "" {
+		return database.KOReaderSettings{}, ErrUnauthorized
+	}
+
+	settings, err := s.store.GetKOReaderSettings(ctx)
+	if err != nil {
+		return database.KOReaderSettings{}, err
+	}
+	if settings.Username != "" {
+		return database.KOReaderSettings{}, ErrAlreadyConfigured
+	}
+
+	return s.store.UpsertKOReaderSettings(ctx, database.UpsertKOReaderSettingsParams{
+		Username:     username,
+		PasswordHash: HashKey(key),
+	})
+}
+
+func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database.KOReaderSettings, error) {
+	creds.Username = strings.TrimSpace(creds.Username)
+	creds.Key = strings.TrimSpace(creds.Key)
+	if creds.Username == "" || creds.Key == "" {
+		return database.KOReaderSettings{}, ErrUnauthorized
+	}
+
+	settings, err := s.store.GetKOReaderSettings(ctx)
+	if err != nil {
+		return database.KOReaderSettings{}, err
+	}
+	if settings.Username == "" || settings.PasswordHash == "" {
+		return database.KOReaderSettings{}, ErrForbidden
+	}
+	if settings.Username != creds.Username {
+		return database.KOReaderSettings{}, ErrForbidden
+	}
+	if settings.PasswordHash != HashKey(creds.Key) {
+		return database.KOReaderSettings{}, ErrUnauthorized
+	}
+	return settings, nil
+}
+
+func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload ProgressPayload) (SyncResult, error) {
+	settings, err := s.Authenticate(ctx, creds)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	_ = settings
+
+	payload.Document = strings.TrimSpace(payload.Document)
+	payload.Progress = strings.TrimSpace(payload.Progress)
+	payload.Device = strings.TrimSpace(payload.Device)
+	payload.DeviceID = strings.TrimSpace(payload.DeviceID)
+	if payload.Document == "" || payload.Progress == "" || payload.Device == "" || payload.DeviceID == "" {
+		return SyncResult{}, fmt.Errorf("invalid progress payload")
+	}
+	if payload.Percentage < 0 {
+		payload.Percentage = 0
+	}
+	if payload.Percentage > 1 {
+		payload.Percentage = 1
+	}
+
+	existing, err := s.store.GetKOReaderProgress(ctx, creds.Username, payload.Document)
+	if err != nil && err != sql.ErrNoRows {
+		return SyncResult{}, err
+	}
+	nowTS := time.Now().Unix()
+
+	// Do not regress canonical progress.
+	if err == nil && existing.Percentage > payload.Percentage {
+		return SyncResult{
+			Record:  existing,
+			Matched: existing.BookID.Valid,
+			BookID:  nullableInt64Ptr(existing.BookID),
+		}, nil
+	}
+
+	var (
+		bookID    sql.NullInt64
+		matchedBy string
+	)
+	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, payload.Document); matchErr == nil {
+		bookID = sql.NullInt64{Int64: match.BookID, Valid: true}
+		matchedBy = match.MatchedBy
+		if applyErr := s.applyBookProgress(ctx, match, payload.Percentage); applyErr != nil {
+			slog.Warn("Failed to project KOReader progress onto book", "book_id", match.BookID, "error", applyErr)
+		}
+	}
+
+	rawPayload, _ := json.Marshal(payload)
+	record, err := s.store.UpsertKOReaderProgress(ctx, database.UpsertKOReaderProgressParams{
+		Username:   creds.Username,
+		Document:   payload.Document,
+		Progress:   payload.Progress,
+		Percentage: payload.Percentage,
+		Device:     payload.Device,
+		DeviceID:   payload.DeviceID,
+		BookID:     bookID,
+		MatchedBy:  matchedBy,
+		Timestamp:  nowTS,
+		RawPayload: string(rawPayload),
+	})
+	if err != nil {
+		return SyncResult{}, err
+	}
+
+	_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
+		Direction: "push",
+		Username:  creds.Username,
+		Document:  payload.Document,
+		BookID:    record.BookID,
+		Status:    "ok",
+		Message:   matchedBy,
+	})
+
+	return SyncResult{
+		Record:  record,
+		Matched: record.BookID.Valid,
+		BookID:  nullableInt64Ptr(record.BookID),
+	}, nil
+}
+
+func (s *Service) GetProgress(ctx context.Context, creds Credentials, document string) (database.KOReaderProgress, error) {
+	if _, err := s.Authenticate(ctx, creds); err != nil {
+		return database.KOReaderProgress{}, err
+	}
+
+	record, err := s.store.GetKOReaderProgress(ctx, creds.Username, strings.TrimSpace(document))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return database.KOReaderProgress{}, ErrProgressNotFound
+		}
+		return database.KOReaderProgress{}, err
+	}
+
+	if !record.BookID.Valid {
+		if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, record.Document); matchErr == nil {
+			_ = s.store.LinkKOReaderProgressToBook(ctx, record.ID, match.BookID, match.MatchedBy)
+			record.BookID = sql.NullInt64{Int64: match.BookID, Valid: true}
+			record.MatchedBy = match.MatchedBy
+			if applyErr := s.applyBookProgress(ctx, match, record.Percentage); applyErr != nil {
+				slog.Warn("Failed to project KOReader pull progress onto book", "book_id", match.BookID, "error", applyErr)
+			}
+		}
+	}
+
+	_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
+		Direction: "pull",
+		Username:  creds.Username,
+		Document:  record.Document,
+		BookID:    record.BookID,
+		Status:    "ok",
+		Message:   record.MatchedBy,
+	})
+
+	return record, nil
+}
+
+func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
+	books, err := s.store.ListBooksMissingIdentity(ctx, limit)
+	if err != nil {
+		return 0, 0, err
+	}
+	total := len(books)
+	updated := 0
+	for idx, book := range books {
+		fileHash, err := FingerprintFile(book.Path)
+		if err != nil {
+			slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
+			continue
+		}
+		if err := s.store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
+			ID:                  book.ID,
+			FileHash:            fileHash,
+			PathFingerprint:     FingerprintRelativePath(book.LibraryPath, book.Path),
+			FilenameFingerprint: FingerprintFilename(book.Path),
+		}); err != nil {
+			return updated, total, err
+		}
+		updated++
+		if progress != nil {
+			progress(idx+1, total, fmt.Sprintf("已重建 %d / %d 本书籍指纹", idx+1, total))
+		}
+	}
+	return updated, total, nil
+}
+
+func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
+	items, err := s.store.ListUnmatchedKOReaderProgress(ctx, limit)
+	if err != nil {
+		return 0, 0, err
+	}
+	total := len(items)
+	updated := 0
+	for idx, item := range items {
+		match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, item.Document)
+		if matchErr == nil {
+			if err := s.store.LinkKOReaderProgressToBook(ctx, item.ID, match.BookID, match.MatchedBy); err != nil {
+				return updated, total, err
+			}
+			if applyErr := s.applyBookProgress(ctx, match, item.Percentage); applyErr != nil {
+				slog.Warn("Failed to project reconciled progress onto book", "book_id", match.BookID, "error", applyErr)
+			}
+			updated++
+		}
+		if progress != nil {
+			progress(idx+1, total, fmt.Sprintf("已重关联 %d / %d 条同步记录", idx+1, total))
+		}
+	}
+	return updated, total, nil
+}
+
+func (s *Service) applyBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64) error {
+	if match.PageCount <= 0 {
+		return nil
+	}
+	page := int64(float64(match.PageCount) * percentage)
+	if page < 1 {
+		page = 1
+	}
+	if page > match.PageCount {
+		page = match.PageCount
+	}
+	if match.LastReadPage != nil && page < *match.LastReadPage {
+		return nil
+	}
+	if err := s.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+		ID:           match.BookID,
+		LastReadPage: sql.NullInt64{Int64: page, Valid: true},
+		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
+	}); err != nil {
+		return err
+	}
+	return s.store.LogReadingActivity(ctx, match.BookID, int(page))
+}
+
+func nullableInt64Ptr(v sql.NullInt64) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	value := v.Int64
+	return &value
+}

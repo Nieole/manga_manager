@@ -3,6 +3,7 @@ export interface Library {
   name: string;
   path: string;
   auto_scan?: boolean;
+  koreader_sync_enabled?: boolean;
   scan_interval?: number;
   scan_formats?: string;
 }

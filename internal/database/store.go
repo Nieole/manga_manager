@@ -25,6 +25,17 @@ type Store interface {
 	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
 	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
 	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
+	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
+	UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReaderSettingsParams) (KOReaderSettings, error)
+	GetKOReaderStats(ctx context.Context) (KOReaderStats, error)
+	FindBookByDocumentFingerprint(ctx context.Context, document string) (KOReaderBookMatch, error)
+	UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReaderProgressParams) (KOReaderProgress, error)
+	GetKOReaderProgress(ctx context.Context, username, document string) (KOReaderProgress, error)
+	ListBooksMissingIdentity(ctx context.Context, limit int) ([]BookIdentityCandidate, error)
+	UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error
+	ListUnmatchedKOReaderProgress(ctx context.Context, limit int) ([]KOReaderProgress, error)
+	LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error
+	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
 }
 
 type DashboardStats struct {
@@ -118,7 +129,63 @@ func Migrate(dbPath string) error {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(schemaSQL)
+	if _, err = db.Exec(schemaSQL); err != nil {
+		return err
+	}
+
+	for _, column := range []struct {
+		table      string
+		name       string
+		definition string
+	}{
+		{table: "libraries", name: "koreader_sync_enabled", definition: "BOOLEAN NOT NULL DEFAULT TRUE"},
+		{table: "books", name: "file_hash", definition: "TEXT"},
+		{table: "books", name: "path_fingerprint", definition: "TEXT"},
+		{table: "books", name: "filename_fingerprint", definition: "TEXT"},
+	} {
+		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
+			return err
+		}
+	}
+
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_filename_fingerprint ON books(filename_fingerprint)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
 	return err
 }
 

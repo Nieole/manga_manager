@@ -94,6 +94,7 @@ func main() {
 
 	apiController.SetupRoutes(r)
 	apiController.SetupOPDSRoutes(r)
+	apiController.SetupKOReaderRoutes(r)
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

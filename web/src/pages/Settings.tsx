@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, CheckCircle2, Database, FolderOpen, HardDrive, Image as ImageIcon, RefreshCw, Save, Server, Settings as SettingsIcon, Sparkles, Terminal } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Database, FolderOpen, HardDrive, Image as ImageIcon, KeyRound, RefreshCw, Save, Server, Settings as SettingsIcon, Sparkles, TabletSmartphone, Terminal } from 'lucide-react';
 
 interface Config {
   server: { port: number };
@@ -24,6 +24,11 @@ interface Config {
     model: string;
     api_key: string;
     timeout: number;
+  };
+  koreader: {
+    enabled: boolean;
+    base_path: string;
+    allow_registration: boolean;
   };
 }
 
@@ -52,6 +57,32 @@ interface ConfigEnvelope {
   capabilities: Capabilities;
 }
 
+interface KOReaderStatus {
+  enabled: boolean;
+  base_path: string;
+  allow_registration: boolean;
+  username: string;
+  has_password: boolean;
+  stats: {
+    configured: boolean;
+    has_password: boolean;
+    username: string;
+    total_books: number;
+    hashed_books: number;
+    unmatched_progress_count: number;
+    matched_progress_count: number;
+    latest_sync_at?: { Time: string; Valid: boolean } | null;
+  };
+}
+
+interface KOReaderForm {
+  enabled: boolean;
+  base_path: string;
+  allow_registration: boolean;
+  username: string;
+  password: string;
+}
+
 const sectionClassName = 'bg-komgaSurface border border-gray-800 rounded-2xl p-6 shadow-sm space-y-4';
 const inputClassName = 'w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40 transition-all';
 
@@ -62,9 +93,13 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingLLM, setTestingLLM] = useState(false);
+  const [savingKOReader, setSavingKOReader] = useState(false);
   const [llmTestPrompt, setLlmTestPrompt] = useState('你好，请做个简短的自我介绍，并确认你收到了测试请求。');
   const [llmTestResult, setLlmTestResult] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [koreaderStatus, setKOReaderStatus] = useState<KOReaderStatus | null>(null);
+  const [koreaderForm, setKOReaderForm] = useState<KOReaderForm | null>(null);
+  const [koreaderValidation, setKOReaderValidation] = useState<ValidationResult>({ valid: true, issues: [] });
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMsg({ text, type });
@@ -72,21 +107,32 @@ export default function Settings() {
   };
 
   const fetchConfig = async () => {
-    try {
-      const res = await axios.get<ConfigEnvelope>('/api/system/config');
-      setConfig(res.data.config);
-      setValidation(res.data.validation);
-      setCapabilities(res.data.capabilities);
-    } catch (error) {
-      console.error('Failed to fetch config', error);
-      showToast('无法加载系统配置', 'error');
-    } finally {
-      setLoading(false);
-    }
+    const res = await axios.get<ConfigEnvelope>('/api/system/config');
+    setConfig(res.data.config);
+    setValidation(res.data.validation);
+    setCapabilities(res.data.capabilities);
+  };
+
+  const fetchKOReader = async () => {
+    const res = await axios.get<KOReaderStatus>('/api/system/koreader');
+    setKOReaderStatus(res.data);
+    setKOReaderForm({
+      enabled: res.data.enabled,
+      base_path: res.data.base_path,
+      allow_registration: res.data.allow_registration,
+      username: res.data.username || '',
+      password: '',
+    });
+    setKOReaderValidation({ valid: true, issues: [] });
   };
 
   useEffect(() => {
-    fetchConfig();
+    Promise.all([fetchConfig(), fetchKOReader()])
+      .catch((error) => {
+        console.error('Failed to fetch settings data', error);
+        showToast('无法加载系统配置', 'error');
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const validationByField = useMemo(() => {
@@ -101,6 +147,18 @@ export default function Settings() {
 
   const fieldErrors = (field: string) => validationByField.get(field) || [];
 
+  const koreaderValidationByField = useMemo(() => {
+    const map = new Map<string, string[]>();
+    koreaderValidation.issues.forEach((issue) => {
+      const current = map.get(issue.field) || [];
+      current.push(issue.message);
+      map.set(issue.field, current);
+    });
+    return map;
+  }, [koreaderValidation]);
+
+  const koreaderFieldErrors = (field: string) => koreaderValidationByField.get(field) || [];
+
   const handleSave = async () => {
     if (!config) return;
     setSaving(true);
@@ -108,7 +166,7 @@ export default function Settings() {
       const res = await axios.post('/api/system/config', config);
       setValidation(res.data.validation);
       showToast(res.data.message || '配置已保存', 'success');
-      await fetchConfig();
+      await Promise.all([fetchConfig(), fetchKOReader()]);
     } catch (error) {
       console.error(error);
       if (axios.isAxiosError(error) && error.response?.status === 422) {
@@ -155,8 +213,46 @@ export default function Settings() {
     }
   };
 
+  const handleSaveKOReader = async () => {
+    if (!koreaderForm) return;
+    setSavingKOReader(true);
+    try {
+      const res = await axios.post<KOReaderStatus>('/api/system/koreader', koreaderForm);
+      setKOReaderStatus(res.data);
+      setKOReaderForm({
+        enabled: res.data.enabled,
+        base_path: res.data.base_path,
+        allow_registration: res.data.allow_registration,
+        username: res.data.username || '',
+        password: '',
+      });
+      setKOReaderValidation({ valid: true, issues: [] });
+      showToast('KOReader 同步配置已保存', 'success');
+      await fetchConfig();
+    } catch (error) {
+      console.error(error);
+      if (axios.isAxiosError(error) && error.response?.status === 422) {
+        const nextValidation = error.response.data?.validation;
+        if (nextValidation) {
+          setKOReaderValidation(nextValidation);
+        }
+        showToast('KOReader 配置未通过校验。', 'error');
+      } else {
+        showToast('保存 KOReader 配置失败。', 'error');
+      }
+    } finally {
+      setSavingKOReader(false);
+    }
+  };
+
   const renderFieldErrors = (field: string) => (
     fieldErrors(field).map((message) => (
+      <p key={`${field}-${message}`} className="mt-1 text-xs text-red-300">{message}</p>
+    ))
+  );
+
+  const renderKOReaderFieldErrors = (field: string) => (
+    koreaderFieldErrors(field).map((message) => (
       <p key={`${field}-${message}`} className="mt-1 text-xs text-red-300">{message}</p>
     ))
   );
@@ -479,6 +575,126 @@ export default function Settings() {
           )}
         </div>
       </section>
+
+      {koreaderForm && (
+        <section className={sectionClassName}>
+          <div className="flex items-center gap-2 text-sky-400">
+            <TabletSmartphone className="w-5 h-5" />
+            <h2 className="text-lg font-semibold text-white">KOReader Sync</h2>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+              <label className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-white">启用 KOReader 同步服务</p>
+                  <p className="text-xs text-gray-500 mt-1">启用后，KOReader 可以把本程序当作自定义 progress sync server。</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={koreaderForm.enabled}
+                  onChange={(e) => setKOReaderForm({ ...koreaderForm, enabled: e.target.checked })}
+                  className="h-5 w-5 rounded border-gray-700 bg-gray-900 text-komgaPrimary"
+                />
+              </label>
+            </div>
+
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+              <p className="text-sm font-medium text-white">服务状态</p>
+              <p className="text-xs text-gray-500 mt-1">
+                已匹配 {koreaderStatus?.stats.matched_progress_count ?? 0} 条，同步待重关联 {koreaderStatus?.stats.unmatched_progress_count ?? 0} 条。
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                指纹进度 {koreaderStatus?.stats.hashed_books ?? 0} / {koreaderStatus?.stats.total_books ?? 0}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">同步路径</label>
+              <input
+                type="text"
+                value={koreaderForm.base_path}
+                onChange={(e) => setKOReaderForm({ ...koreaderForm, base_path: e.target.value })}
+                className={inputClassName}
+              />
+              <p className="text-xs text-gray-500 mt-1">当前启动实例监听在 `{koreaderStatus?.base_path || '/koreader'}`。修改路径后建议重启服务。</p>
+              {renderKOReaderFieldErrors('koreader.base_path')}
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">允许首次注册</label>
+              <select
+                value={koreaderForm.allow_registration ? 'true' : 'false'}
+                onChange={(e) => setKOReaderForm({ ...koreaderForm, allow_registration: e.target.value === 'true' })}
+                className={inputClassName}
+              >
+                <option value="false">关闭</option>
+                <option value="true">开启</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">建议单用户场景默认关闭，通过本页直接配置同步账号。</p>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">同步用户名</label>
+              <input
+                type="text"
+                value={koreaderForm.username}
+                onChange={(e) => setKOReaderForm({ ...koreaderForm, username: e.target.value })}
+                className={inputClassName}
+              />
+              {renderKOReaderFieldErrors('koreader.username')}
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">同步密钥</label>
+              <div className="relative">
+                <KeyRound className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-gray-500" />
+                <input
+                  type="password"
+                  value={koreaderForm.password}
+                  onChange={(e) => setKOReaderForm({ ...koreaderForm, password: e.target.value })}
+                  className={`${inputClassName} pl-10`}
+                  placeholder={koreaderStatus?.has_password ? '留空表示保留现有密钥' : '首次启用时必填'}
+                />
+              </div>
+              {renderKOReaderFieldErrors('koreader.password')}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-100">
+            <p className="font-medium">KOReader 配置方式</p>
+            <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`，用户名和同步密钥与这里保持一致。</p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <button
+              onClick={handleSaveKOReader}
+              disabled={savingKOReader}
+              className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15 disabled:opacity-60"
+            >
+              <p className="font-medium inline-flex items-center gap-2">
+                {savingKOReader ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                保存同步配置
+              </p>
+              <p className="text-xs text-sky-100/80 mt-1">保存启用状态、路径和同步账号。首次启用需要设置同步密钥。</p>
+            </button>
+            <button
+              onClick={() => handleAction('/api/system/koreader/rebuild-hashes', '书籍同步指纹重建已启动')}
+              className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15"
+            >
+              <p className="font-medium">重建书籍指纹</p>
+              <p className="text-xs text-sky-100/80 mt-1">为现有书籍补全 Binary / 路径 / 文件名三类匹配指纹。</p>
+            </button>
+            <button
+              onClick={() => handleAction('/api/system/koreader/reconcile', '未匹配同步记录重关联已启动')}
+              className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15"
+            >
+              <p className="font-medium">重关联未匹配记录</p>
+              <p className="text-xs text-sky-100/80 mt-1">重新尝试把历史同步记录映射回已入库书籍。</p>
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className={sectionClassName}>
         <div className="flex items-center gap-2 text-red-400">

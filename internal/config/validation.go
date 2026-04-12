@@ -107,6 +107,12 @@ func ValidateConfig(cfg *Config) ValidationResult {
 		issues = append(issues, ValidationIssue{Field: "llm.base_url", Message: "Ollama 地址不能为空。", Severity: "error"})
 	}
 
+	if basePath := strings.TrimSpace(cfg.KOReader.BasePath); basePath == "" {
+		issues = append(issues, ValidationIssue{Field: "koreader.base_path", Message: "KOReader 同步路径不能为空。", Severity: "error"})
+	} else if !strings.HasPrefix(basePath, "/") {
+		issues = append(issues, ValidationIssue{Field: "koreader.base_path", Message: "KOReader 同步路径必须以 / 开头。", Severity: "error"})
+	}
+
 	return ValidationResult{
 		Valid:  len(issues) == 0,
 		Issues: issues,

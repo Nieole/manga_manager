@@ -15,6 +15,7 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/koreader"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 
@@ -70,6 +71,7 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 		scanner:    scan,
 		engine:     engine,
 		config:     cfgManager,
+		koreader:   koreader.NewService(store),
 		configPath: configPath,
 		tasks:      make(map[string]TaskStatus),
 		messages:   make(chan string, 32),
@@ -98,11 +100,12 @@ func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, serie
 	}
 
 	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
-		Name:         libName,
-		Path:         libPath,
-		AutoScan:     false,
-		ScanInterval: 60,
-		ScanFormats:  config.DefaultScanFormatsCSV,
+		Name:                libName,
+		Path:                libPath,
+		AutoScan:            false,
+		KOReaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         config.DefaultScanFormatsCSV,
 	})
 	if err != nil {
 		t.Fatalf("CreateLibrary failed: %v", err)
@@ -189,6 +192,130 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("expected config file to be written: %v", err)
+	}
+}
+
+func TestUpdateKOReaderSettings(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	reqBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"username": "reader",
+		"password": "secret-key"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp KOReaderSystemResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if !resp.Enabled || resp.Username != "reader" || !resp.HasPassword {
+		t.Fatalf("unexpected KOReader response: %+v", resp)
+	}
+
+	settings, err := store.GetKOReaderSettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetKOReaderSettings failed: %v", err)
+	}
+	if settings.Username != "reader" || settings.PasswordHash == "" {
+		t.Fatalf("unexpected persisted settings: %+v", settings)
+	}
+}
+
+func TestKOReaderAuthAndProgressSync(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	reqBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"username": "reader",
+		"password": "secret-key"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d", rec.Code)
+	}
+
+	root := t.TempDir()
+	lib, series, book := seedBookFixture(t, store, root, "Library", "Series", "Book.cbz", 120)
+	_ = series
+	if err := os.WriteFile(book.Path, []byte("book-content-for-koreader-sync"), 0o644); err != nil {
+		t.Fatalf("write book file failed: %v", err)
+	}
+
+	fileHash, err := koreader.FingerprintFile(book.Path)
+	if err != nil {
+		t.Fatalf("FingerprintFile failed: %v", err)
+	}
+	if err := store.UpdateBookIdentity(context.Background(), database.UpdateBookIdentityParams{
+		ID:                  book.ID,
+		FileHash:            fileHash,
+		PathFingerprint:     koreader.FingerprintRelativePath(lib.Path, book.Path),
+		FilenameFingerprint: koreader.FingerprintFilename(book.Path),
+	}); err != nil {
+		t.Fatalf("UpdateBookIdentity failed: %v", err)
+	}
+
+	authReq := httptest.NewRequest(http.MethodGet, "/koreader/users/auth", nil)
+	authReq.Header.Set("x-auth-user", "reader")
+	authReq.Header.Set("x-auth-key", "secret-key")
+	authRec := httptest.NewRecorder()
+	controller.koreaderAuth(authRec, authReq)
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
+	}
+
+	progressPayload := []byte(`{
+		"document":"` + fileHash + `",
+		"progress":"epubcfi(/6/4!/4/10)",
+		"percentage":0.5,
+		"device":"Boox",
+		"device_id":"DEVICE-1"
+	}`)
+	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
+	progressReq.Header.Set("x-auth-user", "reader")
+	progressReq.Header.Set("x-auth-key", "secret-key")
+	progressRec := httptest.NewRecorder()
+	controller.koreaderUpdateProgress(progressRec, progressReq)
+	if progressRec.Code != http.StatusOK {
+		t.Fatalf("expected progress update 200, got %d body=%s", progressRec.Code, progressRec.Body.String())
+	}
+
+	updatedBook, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if !updatedBook.LastReadPage.Valid || updatedBook.LastReadPage.Int64 != 60 {
+		t.Fatalf("expected projected page 60, got %+v", updatedBook.LastReadPage)
+	}
+
+	getReq := requestWithRouteParam(http.MethodGet, "/koreader/syncs/progress/doc", nil, "document", fileHash)
+	getReq.Header.Set("x-auth-user", "reader")
+	getReq.Header.Set("x-auth-key", "secret-key")
+	getRec := httptest.NewRecorder()
+	controller.koreaderGetProgress(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected progress fetch 200, got %d body=%s", getRec.Code, getRec.Body.String())
+	}
+
+	var got map[string]interface{}
+	if err := json.NewDecoder(getRec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode progress response failed: %v", err)
+	}
+	if got["document"] != fileHash {
+		t.Fatalf("unexpected document payload: %+v", got)
 	}
 }
 
@@ -745,11 +872,12 @@ func TestDeleteLibraryAndValidationHandlers(t *testing.T) {
 	}
 
 	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
-		Name:         "Main",
-		Path:         libPath,
-		AutoScan:     false,
-		ScanInterval: 60,
-		ScanFormats:  config.DefaultScanFormatsCSV,
+		Name:                "Main",
+		Path:                libPath,
+		AutoScan:            false,
+		KOReaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         config.DefaultScanFormatsCSV,
 	})
 	if err != nil {
 		t.Fatalf("CreateLibrary failed: %v", err)
@@ -1033,11 +1161,12 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 	}
 
 	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
-		Name:         "Main",
-		Path:         libPath,
-		AutoScan:     false,
-		ScanInterval: 60,
-		ScanFormats:  config.DefaultScanFormatsCSV,
+		Name:                "Main",
+		Path:                libPath,
+		AutoScan:            false,
+		KOReaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         config.DefaultScanFormatsCSV,
 	})
 	if err != nil {
 		t.Fatalf("CreateLibrary failed: %v", err)

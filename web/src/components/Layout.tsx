@@ -19,6 +19,7 @@ export default function Layout() {
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
     const [newLibAutoScan, setNewLibAutoScan] = useState(false);
+    const [newLibKOReaderSyncEnabled, setNewLibKOReaderSyncEnabled] = useState(true);
     const [newLibScanInterval, setNewLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
     const [newLibScanFormats, setNewLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [adding, setAdding] = useState(false);
@@ -29,6 +30,7 @@ export default function Layout() {
     const [editLibName, setEditLibName] = useState("");
     const [editLibPath, setEditLibPath] = useState("");
     const [editLibAutoScan, setEditLibAutoScan] = useState(false);
+    const [editLibKOReaderSyncEnabled, setEditLibKOReaderSyncEnabled] = useState(true);
     const [editLibScanInterval, setEditLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
     const [editLibScanFormats, setEditLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [editing, setEditing] = useState(false);
@@ -70,6 +72,19 @@ export default function Layout() {
     const { libId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
+
+    const openEditLibraryModal = (libraryId: string | number) => {
+        const target = libraries.find((lib) => String(lib.id) === String(libraryId));
+        if (!target) return;
+        setEditLibId(String(target.id));
+        setEditLibName(target.name || "");
+        setEditLibPath(target.path || "");
+        setEditLibAutoScan(target.auto_scan || false);
+        setEditLibKOReaderSyncEnabled(target.koreader_sync_enabled ?? true);
+        setEditLibScanInterval(target.scan_interval || DEFAULT_SCAN_INTERVAL);
+        setEditLibScanFormats(target.scan_formats || supportedScanFormats);
+        setShowEditModal(true);
+    };
 
     const saveRecentLibraryPath = (path: string) => {
         const normalized = path.trim();
@@ -182,7 +197,14 @@ export default function Layout() {
             .catch(() => { });
 
         const openAddLibrary = () => setShowAddModal(true);
+        const openEditLibrary = (event: Event) => {
+            const customEvent = event as CustomEvent<{ libraryId?: string | number }>;
+            if (customEvent.detail?.libraryId != null) {
+                openEditLibraryModal(customEvent.detail.libraryId);
+            }
+        };
         window.addEventListener('manga-manager:open-add-library', openAddLibrary);
+        window.addEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
 
         // 挂载 Server-Sent Events 流监听器
         const eventSource = new EventSource('/api/events');
@@ -218,6 +240,7 @@ export default function Layout() {
 
         return () => {
             window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
+            window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
             eventSource.close();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -231,6 +254,7 @@ export default function Layout() {
                 name: newLibName,
                 path: newLibPath,
                 auto_scan: newLibAutoScan,
+                koreader_sync_enabled: newLibKOReaderSyncEnabled,
                 scan_interval: newLibScanInterval,
                 scan_formats: newLibScanFormats
             });
@@ -238,6 +262,7 @@ export default function Layout() {
             setNewLibName("");
             setNewLibPath("");
             setNewLibAutoScan(false);
+            setNewLibKOReaderSyncEnabled(true);
             setNewLibScanInterval(DEFAULT_SCAN_INTERVAL);
             setNewLibScanFormats(DEFAULT_SCAN_FORMATS);
             saveRecentLibraryPath(newLibPath);
@@ -259,6 +284,7 @@ export default function Layout() {
                 name: editLibName,
                 path: editLibPath,
                 auto_scan: editLibAutoScan,
+                koreader_sync_enabled: editLibKOReaderSyncEnabled,
                 scan_interval: editLibScanInterval,
                 scan_formats: editLibScanFormats
             });
@@ -429,9 +455,14 @@ export default function Layout() {
                                         : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                         }`}
                                 >
-                                    <div className="flex items-center space-x-3 overflow-hidden">
+                                    <div className="flex items-center space-x-3 overflow-hidden min-w-0">
                                         <FolderOpen className="w-5 h-5 flex-shrink-0" />
-                                        <span className="truncate">{lib.name}</span>
+                                        <div className="min-w-0">
+                                            <span className="truncate block">{lib.name}</span>
+                                            <span className={`text-[10px] ${lib.koreader_sync_enabled ?? true ? 'text-sky-400/80' : 'text-gray-500'}`}>
+                                                {lib.koreader_sync_enabled ?? true ? 'KOReader Sync 开启' : 'KOReader Sync 关闭'}
+                                            </span>
+                                        </div>
                                     </div>
                                     <div className="relative">
                                         <button
@@ -465,13 +496,7 @@ export default function Layout() {
                                                             setOpenMenuId(null);
                                                             e.preventDefault();
                                                             e.stopPropagation();
-                                                            setEditLibId(lib.id);
-                                                            setEditLibName(lib.name || "");
-                                                            setEditLibPath(lib.path || "");
-                                                            setEditLibAutoScan(lib.auto_scan || false);
-                                                            setEditLibScanInterval(lib.scan_interval || DEFAULT_SCAN_INTERVAL);
-                                                            setEditLibScanFormats(lib.scan_formats || supportedScanFormats);
-                                                            setShowEditModal(true);
+                                                            openEditLibraryModal(lib.id);
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-blue-500 hover:text-white transition-colors"
                                                     >
@@ -549,7 +574,7 @@ export default function Layout() {
                 </aside>
 
                 <div className="flex-1 overflow-y-auto bg-komgaDark relative h-[calc(100vh-73px)]">
-                    <Outlet context={{ refreshTrigger }} />
+                    <Outlet context={{ refreshTrigger, libraries }} />
                 </div>
 
                 {/* 全局任务进度浮动条 */}
@@ -605,6 +630,7 @@ export default function Layout() {
                 name={newLibName}
                 path={newLibPath}
                 autoScan={newLibAutoScan}
+                koreaderSyncEnabled={newLibKOReaderSyncEnabled}
                 scanInterval={newLibScanInterval}
                 scanFormats={newLibScanFormats}
                 submitting={adding}
@@ -620,6 +646,7 @@ export default function Layout() {
                 onNameChange={setNewLibName}
                 onPathChange={setNewLibPath}
                 onAutoScanChange={setNewLibAutoScan}
+                onKOReaderSyncEnabledChange={setNewLibKOReaderSyncEnabled}
                 onScanIntervalChange={setNewLibScanInterval}
                 onScanFormatsChange={setNewLibScanFormats}
                 onOpenDirectoryBrowser={openDirectoryBrowser}
@@ -639,6 +666,7 @@ export default function Layout() {
                 name={editLibName}
                 path={editLibPath}
                 autoScan={editLibAutoScan}
+                koreaderSyncEnabled={editLibKOReaderSyncEnabled}
                 scanInterval={editLibScanInterval}
                 scanFormats={editLibScanFormats}
                 submitting={editing}
@@ -654,6 +682,7 @@ export default function Layout() {
                 onNameChange={setEditLibName}
                 onPathChange={setEditLibPath}
                 onAutoScanChange={setEditLibAutoScan}
+                onKOReaderSyncEnabledChange={setEditLibKOReaderSyncEnabled}
                 onScanIntervalChange={setEditLibScanInterval}
                 onScanFormatsChange={setEditLibScanFormats}
                 onOpenDirectoryBrowser={openDirectoryBrowser}

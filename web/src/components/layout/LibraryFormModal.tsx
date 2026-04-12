@@ -11,6 +11,7 @@ interface LibraryFormModalProps {
   name: string;
   path: string;
   autoScan: boolean;
+  koreaderSyncEnabled: boolean;
   scanInterval: number;
   scanFormats: string;
   submitting: boolean;
@@ -26,6 +27,7 @@ interface LibraryFormModalProps {
   onNameChange: (value: string) => void;
   onPathChange: (value: string) => void;
   onAutoScanChange: (value: boolean) => void;
+  onKOReaderSyncEnabledChange: (value: boolean) => void;
   onScanIntervalChange: (value: number) => void;
   onScanFormatsChange: (value: string) => void;
   onOpenDirectoryBrowser: () => void;
@@ -42,6 +44,7 @@ export function LibraryFormModal({
   name,
   path,
   autoScan,
+  koreaderSyncEnabled,
   scanInterval,
   scanFormats,
   submitting,
@@ -57,6 +60,7 @@ export function LibraryFormModal({
   onNameChange,
   onPathChange,
   onAutoScanChange,
+  onKOReaderSyncEnabledChange,
   onScanIntervalChange,
   onScanFormatsChange,
   onOpenDirectoryBrowser,
@@ -105,6 +109,15 @@ export function LibraryFormModal({
           </div>
 
           <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
+            <label className="flex items-center space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={koreaderSyncEnabled}
+                onChange={(e) => onKOReaderSyncEnabledChange(e.target.checked)}
+                className="form-checkbox h-4 w-4 text-komgaPrimary bg-gray-800 border-gray-700 rounded focus:ring-komgaPrimary focus:ring-2"
+              />
+              <span className="text-sm font-medium text-gray-300">允许此资源库参与 KOReader 阅读进度同步</span>
+            </label>
             <label className="flex items-center space-x-3 cursor-pointer">
               <input
                 type="checkbox"

@@ -105,17 +105,18 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 }
 
 const createLibrary = `-- name: CreateLibrary :one
-INSERT INTO libraries (name, path, auto_scan, scan_interval, scan_formats)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, name, path, auto_scan, scan_interval, scan_formats, created_at
+INSERT INTO libraries (name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at
 `
 
 type CreateLibraryParams struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`
-	AutoScan     bool   `json:"auto_scan"`
-	ScanInterval int64  `json:"scan_interval"`
-	ScanFormats  string `json:"scan_formats"`
+	Name                string `json:"name"`
+	Path                string `json:"path"`
+	AutoScan            bool   `json:"auto_scan"`
+	KOReaderSyncEnabled bool   `json:"koreader_sync_enabled"`
+	ScanInterval        int64  `json:"scan_interval"`
+	ScanFormats         string `json:"scan_formats"`
 }
 
 func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error) {
@@ -123,6 +124,7 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		arg.Name,
 		arg.Path,
 		arg.AutoScan,
+		arg.KOReaderSyncEnabled,
 		arg.ScanInterval,
 		arg.ScanFormats,
 	)
@@ -132,6 +134,7 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		&i.Name,
 		&i.Path,
 		&i.AutoScan,
+		&i.KOReaderSyncEnabled,
 		&i.ScanInterval,
 		&i.ScanFormats,
 		&i.CreatedAt,
@@ -434,7 +437,7 @@ func (q *Queries) GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]G
 }
 
 const getLibrary = `-- name: GetLibrary :one
-SELECT id, name, path, auto_scan, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
+SELECT id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
@@ -445,6 +448,7 @@ func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
 		&i.Name,
 		&i.Path,
 		&i.AutoScan,
+		&i.KOReaderSyncEnabled,
 		&i.ScanInterval,
 		&i.ScanFormats,
 		&i.CreatedAt,
@@ -981,7 +985,7 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book
 }
 
 const listLibraries = `-- name: ListLibraries :many
-SELECT id, name, path, auto_scan, scan_interval, scan_formats, created_at FROM libraries ORDER BY name
+SELECT id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries ORDER BY name
 `
 
 func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
@@ -998,6 +1002,7 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 			&i.Name,
 			&i.Path,
 			&i.AutoScan,
+			&i.KOReaderSyncEnabled,
 			&i.ScanInterval,
 			&i.ScanFormats,
 			&i.CreatedAt,
@@ -1109,18 +1114,19 @@ func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgress
 
 const updateLibrary = `-- name: UpdateLibrary :one
 UPDATE libraries
-SET name = ?, path = ?, auto_scan = ?, scan_interval = ?, scan_formats = ?
+SET name = ?, path = ?, auto_scan = ?, koreader_sync_enabled = ?, scan_interval = ?, scan_formats = ?
 WHERE id = ?
-RETURNING id, name, path, auto_scan, scan_interval, scan_formats, created_at
+RETURNING id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at
 `
 
 type UpdateLibraryParams struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`
-	AutoScan     bool   `json:"auto_scan"`
-	ScanInterval int64  `json:"scan_interval"`
-	ScanFormats  string `json:"scan_formats"`
-	ID           int64  `json:"id"`
+	Name                string `json:"name"`
+	Path                string `json:"path"`
+	AutoScan            bool   `json:"auto_scan"`
+	KOReaderSyncEnabled bool   `json:"koreader_sync_enabled"`
+	ScanInterval        int64  `json:"scan_interval"`
+	ScanFormats         string `json:"scan_formats"`
+	ID                  int64  `json:"id"`
 }
 
 func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error) {
@@ -1128,6 +1134,7 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		arg.Name,
 		arg.Path,
 		arg.AutoScan,
+		arg.KOReaderSyncEnabled,
 		arg.ScanInterval,
 		arg.ScanFormats,
 		arg.ID,
@@ -1138,6 +1145,7 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		&i.Name,
 		&i.Path,
 		&i.AutoScan,
+		&i.KOReaderSyncEnabled,
 		&i.ScanInterval,
 		&i.ScanFormats,
 		&i.CreatedAt,

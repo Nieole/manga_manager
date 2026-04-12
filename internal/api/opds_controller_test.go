@@ -139,11 +139,12 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 			t.Fatalf("mkdir empty library failed: %v", err)
 		}
 		emptyLib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
-			Name:         "Library Empty",
-			Path:         secondLibPath,
-			AutoScan:     false,
-			ScanInterval: 60,
-			ScanFormats:  config.DefaultScanFormatsCSV,
+			Name:                "Library Empty",
+			Path:                secondLibPath,
+			AutoScan:            false,
+			KOReaderSyncEnabled: true,
+			ScanInterval:        60,
+			ScanFormats:         config.DefaultScanFormatsCSV,
 		})
 		if err != nil {
 			t.Fatalf("CreateLibrary empty failed: %v", err)

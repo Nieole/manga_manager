@@ -18,6 +18,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/images"
+	"manga-manager/internal/koreader"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/search"
 )
@@ -96,10 +97,13 @@ type scanJob struct {
 }
 
 type scanResult struct {
-	seriesName string
-	seriesPath string
-	book       database.UpsertBookByPathParams
-	comicInfo  *parser.ComicInfo
+	seriesName          string
+	seriesPath          string
+	book                database.UpsertBookByPathParams
+	comicInfo           *parser.ComicInfo
+	fileHash            string
+	pathFingerprint     string
+	filenameFingerprint string
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
@@ -496,6 +500,11 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		CoverPath:      coverPath,
 	}
 
+	fileHash, err := koreader.FingerprintFile(job.path)
+	if err != nil {
+		slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err)
+	}
+
 	// 尝试提取 ComicInfo.xml
 	var cInfo *parser.ComicInfo
 	if xmlData, err := arc.ReadMetadataFile("ComicInfo.xml"); err == nil {
@@ -505,10 +514,13 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 
 	res := scanResult{
-		seriesName: seriesName,
-		seriesPath: seriesPath,
-		book:       book,
-		comicInfo:  cInfo,
+		seriesName:          seriesName,
+		seriesPath:          seriesPath,
+		book:                book,
+		comicInfo:           cInfo,
+		fileHash:            fileHash,
+		pathFingerprint:     koreader.FingerprintRelativePath(rootPath, job.path),
+		filenameFingerprint: koreader.FingerprintFilename(job.path),
 	}
 
 	select {
@@ -678,6 +690,14 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				if err != nil {
 					slog.Error("Failed to upsert book", "path", res.book.Path, "error", err)
 					continue
+				}
+				if err := q.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
+					ID:                  actualBook.ID,
+					FileHash:            res.fileHash,
+					PathFingerprint:     res.pathFingerprint,
+					FilenameFingerprint: res.filenameFingerprint,
+				}); err != nil {
+					slog.Warn("Failed to update book identity", "book_id", actualBook.ID, "path", actualBook.Path, "error", err)
 				}
 
 				if s.engine != nil {

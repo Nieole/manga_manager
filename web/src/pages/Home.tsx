@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, Heart, FolderHeart, RefreshCw } from 'lucide-react';
+import { ImageIcon, Heart, FolderHeart, RefreshCw, Settings, TabletSmartphone } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
 import { HomeFilters } from './home/HomeFilters';
@@ -13,7 +13,7 @@ const PAGE_SIZE = 30;
 
 export default function Home() {
     const { libId } = useParams();
-    const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
+    const { refreshTrigger, libraries } = useOutletContext<{ refreshTrigger: number; libraries?: { id: string; name: string; koreader_sync_enabled?: boolean }[] }>() || { refreshTrigger: 0, libraries: [] };
     const [allSeries, setAllSeries] = useState<Series[]>([]);
     const [recentSeries, setRecentSeries] = useState<Series[]>([]);
     const [totalSeries, setTotalSeries] = useState(0);
@@ -45,6 +45,7 @@ export default function Home() {
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
     const [loadingAI, setLoadingAI] = useState(false);
     const [hasFetchedAI, setHasFetchedAI] = useState(false);
+    const [koreaderEnabled, setKOReaderEnabled] = useState(false);
 
     const fetchAIRecommendations = () => {
         if (!libId) return;
@@ -64,8 +65,9 @@ export default function Home() {
     useEffect(() => {
         Promise.all([
             axios.get('/api/tags/all').catch(() => ({ data: [] })),
-            axios.get('/api/authors/all').catch(() => ({ data: [] }))
-        ]).then(([tRes, aRes]) => {
+            axios.get('/api/authors/all').catch(() => ({ data: [] })),
+            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false } }))
+        ]).then(([tRes, aRes, koreaderRes]) => {
             // Deduplicate authors by name since we might have Writer, Penciller combinations
             const tNames = tRes.data || [];
             const aList = aRes.data || [];
@@ -74,8 +76,14 @@ export default function Home() {
 
             setAllTags(tNames);
             setAllAuthors(Array.from(map.values()));
+            setKOReaderEnabled(Boolean(koreaderRes.data?.enabled));
         });
     }, []);
+
+    const currentLibrary = useMemo(
+        () => (libraries || []).find((library) => String(library.id) === String(libId)),
+        [libraries, libId]
+    );
 
     useEffect(() => {
         if (libId) {
@@ -228,6 +236,33 @@ export default function Home() {
 
     return (
         <div className="p-6 lg:p-10">
+            {currentLibrary && (
+                <div className={`mb-6 rounded-2xl border p-4 ${currentLibrary.koreader_sync_enabled ?? true ? 'border-sky-500/20 bg-sky-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="flex items-start gap-3">
+                            <TabletSmartphone className={`mt-0.5 h-5 w-5 shrink-0 ${(currentLibrary.koreader_sync_enabled ?? true) ? 'text-sky-300' : 'text-amber-300'}`} />
+                            <div>
+                                <p className="text-sm font-medium text-white">
+                                    {currentLibrary.name} 的 KOReader 同步
+                                </p>
+                                <p className="mt-1 text-sm text-gray-300">
+                                    {currentLibrary.koreader_sync_enabled ?? true
+                                        ? (koreaderEnabled ? '当前资源库已参与 KOReader 阅读进度同步。来自 KOReader 的进度会尝试映射到本库书籍。' : '当前资源库允许 KOReader 同步，但系统级 KOReader 服务还未启用。')
+                                        : '当前资源库已排除在 KOReader 阅读进度同步范围外，来自 KOReader 的进度不会映射到这个库。'}
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => window.dispatchEvent(new CustomEvent('manga-manager:open-edit-library', { detail: { libraryId: currentLibrary.id } }))}
+                            className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-4 py-2 text-sm text-gray-100 hover:bg-black/30"
+                        >
+                            <Settings className="h-4 w-4" />
+                            编辑当前资源库
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <HomeToolbar
                 totalSeries={totalSeries}
                 hasSeries={allSeries.length > 0}

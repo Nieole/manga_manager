@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS libraries (
     name TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
     auto_scan BOOLEAN NOT NULL DEFAULT FALSE,
+    koreader_sync_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     scan_interval INTEGER NOT NULL DEFAULT 60,
     scan_formats TEXT NOT NULL DEFAULT 'zip,cbz,rar,cbr',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -79,6 +80,9 @@ CREATE TABLE IF NOT EXISTS books (
     cover_path TEXT,
     last_read_page INTEGER,
     last_read_at DATETIME,
+    file_hash TEXT,
+    path_fingerprint TEXT,
+    filename_fingerprint TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
@@ -143,3 +147,45 @@ CREATE TABLE IF NOT EXISTS reading_activity (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reading_activity_date ON reading_activity(date);
+
+CREATE TABLE IF NOT EXISTS koreader_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    username TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS koreader_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    document TEXT NOT NULL,
+    progress TEXT NOT NULL,
+    percentage REAL NOT NULL DEFAULT 0,
+    device TEXT NOT NULL DEFAULT '',
+    device_id TEXT NOT NULL DEFAULT '',
+    book_id INTEGER,
+    matched_by TEXT NOT NULL DEFAULT '',
+    timestamp INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    raw_payload TEXT NOT NULL DEFAULT '',
+    UNIQUE(username, document),
+    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_koreader_progress_book_id ON koreader_progress(book_id);
+CREATE INDEX IF NOT EXISTS idx_koreader_progress_username ON koreader_progress(username);
+
+CREATE TABLE IF NOT EXISTS koreader_sync_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    direction TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    document TEXT NOT NULL DEFAULT '',
+    book_id INTEGER,
+    status TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_created_at ON koreader_sync_events(created_at);

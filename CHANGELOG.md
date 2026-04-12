@@ -219,6 +219,73 @@
 #### 系列页恢复提示增强 `[P1: 完善元数据工作流]`
 - 系列页除了显示锁定字段之外，还会直接暴露关联失败任务，形成“看到问题 -> 就地重试”的闭环。
 
+### 📌 增量记录 — 2026-04-13（KOReader Sync 服务端）
+
+#### KOReader 阅读进度同步 `[P0/P1: 服务端同步能力]`
+- **新增 KOReader 服务端接口**：
+  - `POST /koreader/users/create`
+  - `GET /koreader/users/auth`
+  - `PUT /koreader/syncs/progress`
+  - `GET /koreader/syncs/progress/{document}`
+  - `GET /koreader/healthcheck`
+  - `GET /koreader/healthstatus`
+  - `GET /koreader/robots.txt`
+- **单用户同步模型落地**：当前版本以单用户服务为目标，不引入完整账号系统；同步认证使用 KOReader 头部 `x-auth-user` / `x-auth-key`。
+- **同步记录持久化**：新增 `koreader_settings`、`koreader_progress`、`koreader_sync_events` 三张表，分别保存同步账号、文档进度和同步审计事件。
+- **书籍身份指纹**：`books` 表新增：
+  - `file_hash`
+  - `path_fingerprint`
+  - `filename_fingerprint`
+  用于 Binary / 路径 / 文件名三类 KOReader 文档匹配。
+- **双轨以上匹配策略**：服务端优先使用二进制哈希匹配书籍，同时保留路径和文件名指纹兜底，支持历史未匹配进度后续重关联。
+- **进度投影回本地阅读状态**：当 KOReader 文档成功命中本地书籍时，会把 `percentage` 按 `page_count` 投影回 `books.last_read_page/last_read_at`，并写入 `reading_activity`。
+- **防止进度回退**：服务端采用“更远进度优先”，较小的 `percentage` 不会覆盖已有较大进度。
+
+#### 扫描器与维护任务 `[P1: 资源识别与恢复能力]`
+- **扫描时自动生成指纹**：扫描器在入库/更新书籍后会同步写入 KOReader 文档匹配指纹，不再依赖纯人工维护。
+- **新增系统维护任务**：
+  - `POST /api/system/koreader/rebuild-hashes`：重建书籍同步指纹
+  - `POST /api/system/koreader/reconcile`：重关联未匹配的 KOReader 同步记录
+- **任务中心集成**：新增任务类型
+  - `rebuild_book_hashes`
+  - `reconcile_koreader_progress`
+  并支持任务列表展示、错误提示与重试。
+
+#### 设置页与管理入口 `[P1: 配置与可运维性]`
+- 设置页新增 **KOReader Sync** 分组，支持：
+  - 启用/关闭同步服务
+  - 配置同步路径
+  - 配置用户名与同步密钥
+  - 控制是否允许首次注册
+  - 查看书籍指纹进度、已匹配/未匹配同步记录数
+  - 一键触发“重建书籍指纹”和“重关联未匹配记录”
+- `config.yaml` 示例文件新增 `koreader` 配置段：
+  - `enabled`
+  - `base_path`
+  - `allow_registration`
+
+#### 测试 `[回归保障]`
+- 为 KOReader 设置保存、鉴权、进度写入与进度拉取补充控制器测试。
+- 已验证：
+  - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./internal/api ./internal/config ./internal/scanner ./internal/database`
+  - `npm run build`（`web/`）
+
+### 📌 增量记录 — 2026-04-13（资源库级 KOReader 开关）
+
+#### 资源库配置 `[P1: 库管理交互 + 同步范围控制]`
+- **新增资源库级 KOReader 开关**：`libraries` 表新增 `koreader_sync_enabled` 字段，默认开启，保持现有“全库可同步”的行为不变。
+- **创建/编辑资源库弹窗支持配置**：添加资源库和编辑资源库时，可以直接决定该资源库是否参与 KOReader 阅读进度同步。
+- **旧请求兼容**：若旧客户端或脚本调用创建/更新资源库接口时未传 `koreader_sync_enabled`，后端会按“开启”处理，避免无意中把已有同步范围关掉。
+- **同步匹配范围收敛**：KOReader 文档匹配现在只会命中 `koreader_sync_enabled = true` 的资源库；被关闭的资源库不会再接收新的 KOReader 进度投影。
+- **侧边栏可见反馈**：资源库列表直接显示 “KOReader Sync 开启/关闭”，无需打开编辑弹窗才能确认状态。
+- **库页状态提示**：资源库主页顶部新增当前库的 KOReader 状态提示条，会明确说明该库是否参与同步，以及系统级 KOReader 服务是否已启用。
+- **直接编辑当前资源库**：库页提示条提供“编辑当前资源库”按钮，通过全局事件直接唤起对应资源库的编辑弹窗。
+- **仪表板全局概览**：仪表板新增 KOReader Sync 覆盖范围卡片，展示：
+  - 启用同步的资源库数量
+  - 关闭同步的资源库数量
+  - 已匹配同步记录数
+  - 待重关联记录数
+
 ### 📌 增量记录 — 2026-04-13（第三次续改）
 
 #### 任务上下文增强 `[P1: 改善日志与任务中心]`
@@ -248,3 +315,14 @@
 - **任务清理 API**：新增 `DELETE /api/system/tasks`，支持通过 `status` 和 `scope` 过滤条件批量清理任务记录。
 - **任务保留上限**：任务内存池加入基础保留策略，最多保留最近 `200` 条任务，避免任务中心无限膨胀。
 - **日志页任务清理入口**：任务中心新增“清理已完成任务”和“清理失败任务”两个快捷动作，操作后会立即刷新列表。
+
+### 📌 增量记录 — 2026-04-13（第六次续改）
+
+#### 任务详情下钻 `[P1: 改善日志与任务中心]`
+- **日志页任务卡片支持展开详情**：任务中心中的任务卡片可展开查看更多上下文，而不是只显示一行摘要。
+- **新增任务详情内容**：
+  - 开始时间与结束时间
+  - 参数快照（如 `force`、`provider` 等任务启动参数）
+  - 错误详情原文
+  - 更明确的进度展示（当前值 / 总数 / 百分比）
+- 这项改动不引入新接口，只消费现有任务对象中的 `params`、`started_at`、`finished_at` 和 `error` 字段。

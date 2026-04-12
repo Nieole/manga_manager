@@ -30,6 +30,7 @@ interface TaskStatus {
   current: number;
   total: number;
   retryable: boolean;
+  params?: Record<string, string>;
   started_at: string;
   updated_at: string;
   finished_at?: string;
@@ -48,6 +49,7 @@ export default function Logs() {
   const [taskScopeFilter, setTaskScopeFilter] = useState('ALL');
   const [taskQuery, setTaskQuery] = useState('');
   const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
+  const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const fetchData = async () => {
@@ -131,6 +133,12 @@ export default function Logs() {
     }
   };
 
+  const formatProgress = (task: TaskStatus) => {
+    const total = task.total || 1;
+    const percent = Math.max(0, Math.min(100, Math.round((task.current / total) * 100)));
+    return `${task.current}/${total} · ${percent}%`;
+  };
+
   const copyRawLog = async (raw: string, index: number) => {
     try {
       await navigator.clipboard.writeText(raw);
@@ -168,6 +176,10 @@ export default function Logs() {
         return '元数据刮削';
       case 'ai_grouping':
         return 'AI 分组';
+      case 'rebuild_book_hashes':
+        return '书籍指纹重建';
+      case 'reconcile_koreader_progress':
+        return 'KOReader 重关联';
       default:
         return type;
     }
@@ -186,10 +198,17 @@ export default function Logs() {
         return '建议检查元数据来源、网络连通性或 LLM 配置。';
       case 'ai_grouping':
         return '建议检查 LLM 配置和系列摘要是否足够完整。';
+      case 'rebuild_book_hashes':
+        return '建议检查书库文件可读性，以及数据库是否允许写入书籍身份字段。';
+      case 'reconcile_koreader_progress':
+        return '建议先重建书籍指纹，再重试未匹配的 KOReader 同步记录。';
       default:
         return '建议先查看任务错误详情，再决定是否重试。';
     }
   };
+
+  const hasTaskDetails = (task: TaskStatus) =>
+    Boolean(task.error || (task.params && Object.keys(task.params).length > 0) || task.started_at || task.finished_at);
 
   const retryTask = async (taskKey: string) => {
     setRetryingTaskKey(taskKey);
@@ -424,15 +443,60 @@ export default function Logs() {
                               重试
                             </button>
                           )}
+                          {hasTaskDetails(task) && (
+                            <button
+                              onClick={() => setExpandedTaskKey((current) => current === task.key ? null : task.key)}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-800"
+                            >
+                              {expandedTaskKey === task.key ? '收起详情' : '查看详情'}
+                            </button>
+                          )}
                         </div>
                         <p className="mt-2 text-sm text-slate-100">{task.message}</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          {task.current}/{task.total || 1} · {formatTaskRelativeTime(task.updated_at)} · {formatLogTime(task.updated_at)}
+                          {formatProgress(task)} · {formatTaskRelativeTime(task.updated_at)} · {formatLogTime(task.updated_at)}
                         </p>
                         {task.error && (
                           <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">{task.error}</p>
                         )}
                         <p className="mt-2 text-xs text-slate-500">{taskActionHint(task)}</p>
+                        {expandedTaskKey === task.key && (
+                          <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3 space-y-3">
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">开始时间</p>
+                                <p className="mt-1 text-xs text-slate-300">{formatLogTime(task.started_at)}</p>
+                              </div>
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">结束时间</p>
+                                <p className="mt-1 text-xs text-slate-300">{task.finished_at ? formatLogTime(task.finished_at) : '仍在运行中'}</p>
+                              </div>
+                            </div>
+                            {task.params && Object.keys(task.params).length > 0 && (
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mb-2">参数快照</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {Object.entries(task.params).map(([key, value]) => (
+                                    <span
+                                      key={`${task.key}-${key}`}
+                                      className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-300"
+                                    >
+                                      {key}: {value}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {task.error && (
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mb-2">错误详情</p>
+                                <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs text-red-100 whitespace-pre-wrap break-words">
+                                  {task.error}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <button
                           onClick={() => openTaskTarget(task)}
                           className="mt-3 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"

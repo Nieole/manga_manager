@@ -20,6 +20,7 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
@@ -35,6 +36,7 @@ type Controller struct {
 	scanner    *scanner.Scanner
 	engine     *search.Engine
 	config     *config.Manager
+	koreader   *koreader.Service
 	configPath string
 	watcher    *scanner.FileWatcher
 
@@ -96,6 +98,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		scanner:        scan,
 		engine:         engine,
 		config:         cfg,
+		koreader:       koreader.NewService(store),
 		configPath:     cfgPath,
 		clients:        make(map[chan string]bool),
 		newClients:     make(chan chan string),
@@ -135,6 +138,30 @@ func (c *Controller) currentConfig() config.Config {
 		return config.Config{}
 	}
 	return c.config.Snapshot()
+}
+
+func (c *Controller) persistConfig(cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	config.NormalizeConfig(cfg)
+
+	if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.Cache.Dir, 0o755); err != nil {
+		return err
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(c.configPath, data, 0644); err != nil {
+		return err
+	}
+	c.config.Replace(cfg)
+	return nil
 }
 
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
@@ -179,7 +206,7 @@ func inferTaskScope(taskType, key string) (string, *int64) {
 
 func isRetryableTaskType(taskType string) bool {
 	switch taskType {
-	case "scan_library", "scan_series", "cleanup_library", "rebuild_index", "rebuild_thumbnails", "scrape", "ai_grouping":
+	case "scan_library", "scan_series", "cleanup_library", "rebuild_index", "rebuild_thumbnails", "scrape", "ai_grouping", "rebuild_book_hashes", "reconcile_koreader_progress":
 		return true
 	default:
 		return false
@@ -563,6 +590,10 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		if !c.launchAIGroupingTask(*task.ScopeID) {
 			err = fmt.Errorf("task already running")
 		}
+	case "rebuild_book_hashes":
+		err = c.launchRebuildBookHashesTask()
+	case "reconcile_koreader_progress":
+		err = c.launchReconcileKOReaderProgressTask()
 	default:
 		err = fmt.Errorf("unsupported retry type")
 	}
@@ -629,6 +660,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/tasks", c.listTasks)
 		r.Delete("/system/tasks", c.clearTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
+		r.Get("/system/koreader", c.getKOReaderSettings)
+		r.Post("/system/koreader", c.updateKOReaderSettings)
+		r.Post("/system/koreader/rebuild-hashes", c.rebuildKOReaderHashes)
+		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
@@ -755,11 +790,12 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateLibraryRequest struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`
-	AutoScan     bool   `json:"auto_scan"`
-	ScanInterval int64  `json:"scan_interval"`
-	ScanFormats  string `json:"scan_formats"`
+	Name                string `json:"name"`
+	Path                string `json:"path"`
+	AutoScan            bool   `json:"auto_scan"`
+	KOReaderSyncEnabled *bool  `json:"koreader_sync_enabled"`
+	ScanInterval        int64  `json:"scan_interval"`
+	ScanFormats         string `json:"scan_formats"`
 }
 
 func (c *Controller) validateLibraryRequest(ctx context.Context, libraryID *int64, req CreateLibraryRequest) []config.ValidationIssue {
@@ -829,11 +865,12 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	libParams := database.CreateLibraryParams{
-		Name:         req.Name,
-		Path:         req.Path,
-		AutoScan:     req.AutoScan,
-		ScanInterval: req.ScanInterval,
-		ScanFormats:  req.ScanFormats,
+		Name:                req.Name,
+		Path:                req.Path,
+		AutoScan:            req.AutoScan,
+		KOReaderSyncEnabled: req.KOReaderSyncEnabled == nil || *req.KOReaderSyncEnabled,
+		ScanInterval:        req.ScanInterval,
+		ScanFormats:         req.ScanFormats,
 	}
 
 	createdLib, err := c.store.CreateLibrary(ctx, libParams)
@@ -856,11 +893,12 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateLibraryRequest struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`
-	AutoScan     bool   `json:"auto_scan"`
-	ScanInterval int64  `json:"scan_interval"`
-	ScanFormats  string `json:"scan_formats"`
+	Name                string `json:"name"`
+	Path                string `json:"path"`
+	AutoScan            bool   `json:"auto_scan"`
+	KOReaderSyncEnabled *bool  `json:"koreader_sync_enabled"`
+	ScanInterval        int64  `json:"scan_interval"`
+	ScanFormats         string `json:"scan_formats"`
 }
 
 func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
@@ -880,18 +918,28 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Name and Path are required")
 		return
 	}
+	existingLib, err := c.store.GetLibrary(ctx, libraryID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Library not found")
+		return
+	}
 
 	if req.ScanInterval <= 0 {
 		req.ScanInterval = config.DefaultScanInterval
 	}
 	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
+	koreaderSyncEnabled := existingLib.KOReaderSyncEnabled
+	if req.KOReaderSyncEnabled != nil {
+		koreaderSyncEnabled = *req.KOReaderSyncEnabled
+	}
 
 	validateReq := CreateLibraryRequest{
-		Name:         req.Name,
-		Path:         req.Path,
-		AutoScan:     req.AutoScan,
-		ScanInterval: req.ScanInterval,
-		ScanFormats:  req.ScanFormats,
+		Name:                req.Name,
+		Path:                req.Path,
+		AutoScan:            req.AutoScan,
+		KOReaderSyncEnabled: &koreaderSyncEnabled,
+		ScanInterval:        req.ScanInterval,
+		ScanFormats:         req.ScanFormats,
 	}
 	if issues := c.validateLibraryRequest(ctx, &libraryID, validateReq); len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
@@ -902,12 +950,13 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	libParams := database.UpdateLibraryParams{
-		ID:           libraryID,
-		Name:         req.Name,
-		Path:         req.Path,
-		AutoScan:     req.AutoScan,
-		ScanInterval: req.ScanInterval,
-		ScanFormats:  req.ScanFormats,
+		ID:                  libraryID,
+		Name:                req.Name,
+		Path:                req.Path,
+		AutoScan:            req.AutoScan,
+		KOReaderSyncEnabled: koreaderSyncEnabled,
+		ScanInterval:        req.ScanInterval,
+		ScanFormats:         req.ScanFormats,
 	}
 
 	updatedLib, err := c.store.UpdateLibrary(ctx, libParams)
@@ -1795,28 +1844,10 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(newCfg.Database.Path), 0o755); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to prepare database directory")
+	if err := c.persistConfig(&newCfg); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to persist configuration")
 		return
 	}
-	if err := os.MkdirAll(newCfg.Cache.Dir, 0o755); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to prepare cache directory")
-		return
-	}
-
-	data, err := yaml.Marshal(&newCfg)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to marshal configuration")
-		return
-	}
-
-	if err := os.WriteFile(c.configPath, data, 0644); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to write configuration file")
-		return
-	}
-
-	// Update in-memory config
-	c.config.Replace(&newCfg)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"message":    "配置已成功保存。大部分设定会立刻生效。",
