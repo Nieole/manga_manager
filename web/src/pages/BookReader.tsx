@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, CircleHelp, Loader2, RefreshCw, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getFilterStyle, getPagedImages, getScaleClasses } from './book-reader/helpers';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
 import type { ImageFilter, Page, ScaleMode } from './book-reader/types';
@@ -11,6 +11,7 @@ export default function BookReader() {
     const navigate = useNavigate();
     const [pages, setPages] = useState<Page[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const observer = useRef<IntersectionObserver | null>(null);
 
     // Reading Settings
@@ -46,6 +47,7 @@ export default function BookReader() {
 
     // UI State
     const [showSettings, setShowSettings] = useState(false);
+    const [showHelp, setShowHelp] = useState(false);
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
     // 底部进度条本地状态，用于解耦拖拽 UI 与核心渲染
@@ -59,6 +61,18 @@ export default function BookReader() {
     const [bookTitle, setBookTitle] = useState<string>('');
     const [bookVolume, setBookVolume] = useState<string>('');
     const pagesBookIdRef = useRef<string | null>(null);
+
+    const handleBackToSeries = useCallback(() => {
+        if (seriesIdRef.current) {
+            if (bookVolume) {
+                navigate(`/series/${seriesIdRef.current}?volume=${encodeURIComponent(bookVolume)}`);
+            } else {
+                navigate(`/series/${seriesIdRef.current}`);
+            }
+            return;
+        }
+        navigate('/');
+    }, [bookVolume, navigate]);
 
     // 回传阅读进度
     const updateProgress = useCallback((pageNumber: number) => {
@@ -91,6 +105,7 @@ export default function BookReader() {
         // 切换书籍时重置所有运行时状态
         setPages([]);
         setLoading(true);
+        setLoadError(null);
         setCurrentPageIndex(0);
         setNextBookId(null);
         setBookTitle('');
@@ -100,6 +115,11 @@ export default function BookReader() {
             axios.get(`/api/book-info/${bookId}`)
         ]).then(([pagesRes, infoRes]) => {
             const sorted = pagesRes.data.sort((a: Page, b: Page) => a.number - b.number);
+            if (sorted.length === 0) {
+                setLoadError('当前书籍没有可读取的页面，可能是归档损坏或格式不完整。');
+                setLoading(false);
+                return;
+            }
             setPages(sorted);
             pagesBookIdRef.current = bookId; // 记录这批 pages 属于哪个 bookId
 
@@ -133,6 +153,7 @@ export default function BookReader() {
             setLoading(false);
         }).catch(err => {
             console.error("Failed to load book data", err);
+            setLoadError(err.response?.data?.error || '阅读器无法加载当前书籍。请检查归档内容、页面解析和文件权限。');
             setLoading(false);
         });
     }, [bookId]);
@@ -243,6 +264,16 @@ export default function BookReader() {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [readMode, readDirection, doublePage, pages.length]);
 
+    useEffect(() => {
+        const handleGlobalHelp = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() === 'h' || e.key === '?') {
+                setShowHelp(prev => !prev);
+            }
+        };
+        window.addEventListener('keydown', handleGlobalHelp);
+        return () => window.removeEventListener('keydown', handleGlobalHelp);
+    }, []);
+
     // --- 图层鼠标物理拖拽交互方法群 ---
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!containerRef.current) return;
@@ -282,17 +313,7 @@ export default function BookReader() {
             <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
                 <div className="flex items-center justify-between w-full relative">
                     <button
-                        onClick={() => {
-                            if (seriesIdRef.current) {
-                                if (bookVolume) {
-                                    navigate(`/series/${seriesIdRef.current}?volume=${encodeURIComponent(bookVolume)}`);
-                                } else {
-                                    navigate(`/series/${seriesIdRef.current}`);
-                                }
-                            } else {
-                                navigate('/');
-                            }
-                        }}
+                        onClick={handleBackToSeries}
                         className="text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
                     >
                         <ArrowLeft className="w-5 h-5 mr-2" />
@@ -304,13 +325,42 @@ export default function BookReader() {
                         <span className="text-white font-medium truncate drop-shadow-md text-center">{bookTitle}</span>
                     </div>
 
-                    <button
-                        onClick={() => setShowSettings(!showSettings)}
-                        className={`text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10 ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
-                    >
-                        <Settings className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0 z-10">
+                        <button
+                            onClick={() => setShowHelp(!showHelp)}
+                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+                            title="阅读帮助"
+                        >
+                            <CircleHelp className="w-5 h-5" />
+                        </button>
+                        <button
+                            onClick={() => setShowSettings(!showSettings)}
+                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+                        >
+                            <Settings className="w-5 h-5" />
+                        </button>
+                    </div>
                 </div>
+
+                {showHelp && (
+                    <div className="self-end mt-3 bg-komgaSurface border border-gray-800 rounded-xl p-4 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 animate-in fade-in slide-in-from-top-4">
+                        <div className="space-y-3">
+                            <div>
+                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">快捷操作</p>
+                                <p>左右方向键：翻页</p>
+                                <p><span className="font-mono">H</span> / <span className="font-mono">?</span>：显示帮助</p>
+                            </div>
+                            <div>
+                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">移动端</p>
+                                <p>瀑布流直接滚动；翻页模式点击左右两侧区域翻页。</p>
+                            </div>
+                            <div>
+                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">排错</p>
+                                <p>读取失败时优先检查归档完整性、扫描结果和页面解析。</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* 设置体 */}
                 {showSettings && (
@@ -472,6 +522,29 @@ export default function BookReader() {
                 {loading ? (
                     <div className="flex items-center justify-center h-full">
                         <Loader2 className="w-10 h-10 animate-spin text-komgaPrimary" />
+                    </div>
+                ) : loadError ? (
+                    <div className="flex h-full items-center justify-center px-6">
+                        <div className="max-w-xl rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center">
+                            <p className="text-lg font-semibold text-white">当前书籍无法读取</p>
+                            <p className="mt-3 text-sm leading-7 text-red-100/90">{loadError}</p>
+                            <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+                                <button
+                                    onClick={() => window.location.reload()}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15"
+                                >
+                                    <RefreshCw className="w-4 h-4" />
+                                    重试加载
+                                </button>
+                                <button
+                                    onClick={handleBackToSeries}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm text-white hover:bg-purple-600"
+                                >
+                                    <ArrowLeft className="w-4 h-4" />
+                                    返回系列
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 ) : readMode === 'webtoon' ? (
                     <div className="flex flex-col items-center w-full bg-black relative h-full overflow-y-auto overflow-x-hidden">

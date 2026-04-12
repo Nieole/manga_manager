@@ -480,6 +480,7 @@ export default function SeriesDetail() {
                 tags={tags}
                 authors={authors}
                 links={links}
+                lockedFields={lockedFields}
                 isSelectionMode={isSelectionMode}
                 isRescanning={isRescanning}
                 isScraping={isScraping}

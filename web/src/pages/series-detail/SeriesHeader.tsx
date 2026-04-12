@@ -11,6 +11,7 @@ interface SeriesHeaderProps {
   tags: MetaTag[];
   authors: Author[];
   links: SeriesLink[];
+  lockedFields: Set<string>;
   isSelectionMode: boolean;
   isRescanning: boolean;
   isScraping: boolean;
@@ -35,6 +36,7 @@ export function SeriesHeader({
   tags,
   authors,
   links,
+  lockedFields,
   isSelectionMode,
   isRescanning,
   isScraping,
@@ -178,6 +180,22 @@ export function SeriesHeader({
             <span className="absolute -left-2 top-4 w-1 h-1/2 bg-gray-700 rounded-full group-hover:bg-komgaPrimary transition-colors opacity-0 group-hover:opacity-100"></span>
             {seriesInfo.summary.String}
           </p>
+        )}
+
+        {!selectedVolume && lockedFields.size > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 max-w-4xl">
+            <p className="text-sm font-medium text-amber-100">已锁定 {lockedFields.size} 个字段，后续刮削不会覆盖这些内容。</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {Array.from(lockedFields).map((field) => (
+                <span
+                  key={field}
+                  className="rounded-full border border-amber-500/20 bg-black/20 px-3 py-1 text-xs text-amber-200"
+                >
+                  {field}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
 
         {!selectedVolume && links.length > 0 && (
