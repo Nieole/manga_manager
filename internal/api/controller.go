@@ -58,6 +58,7 @@ type TaskStatus struct {
 	Type       string            `json:"type"`
 	Scope      string            `json:"scope"`
 	ScopeID    *int64            `json:"scope_id,omitempty"`
+	ScopeName  string            `json:"scope_name,omitempty"`
 	Status     string            `json:"status"`
 	Message    string            `json:"message"`
 	Error      string            `json:"error,omitempty"`
@@ -302,7 +303,7 @@ func (c *Controller) updateTask(key string, current, total int, message string) 
 	c.publishTaskStatusLocked(task)
 }
 
-func (c *Controller) setTaskParams(key string, params map[string]string) {
+func (c *Controller) setTaskMetadata(key string, params map[string]string, scopeName string) {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -311,6 +312,9 @@ func (c *Controller) setTaskParams(key string, params map[string]string) {
 		return
 	}
 	task.Params = params
+	if strings.TrimSpace(scopeName) != "" {
+		task.ScopeName = scopeName
+	}
 	c.tasks[key] = task
 	c.publishTaskStatusLocked(task)
 }
@@ -865,7 +869,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) boo
 	if !c.startTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 1) {
 		return false
 	}
-	c.setTaskParams(taskKey, map[string]string{"force": strconv.FormatBool(force)})
+	c.setTaskMetadata(taskKey, map[string]string{"force": strconv.FormatBool(force)}, lib.Name)
 
 	go func() {
 		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, force)
@@ -908,7 +912,15 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	if !c.startTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 1) {
 		return false
 	}
-	c.setTaskParams(taskKey, map[string]string{"force": strconv.FormatBool(force)})
+	scopeName := ""
+	if series, err := c.store.GetSeries(context.Background(), seriesID); err == nil {
+		if series.Title.Valid && strings.TrimSpace(series.Title.String) != "" {
+			scopeName = series.Title.String
+		} else {
+			scopeName = series.Name
+		}
+	}
+	c.setTaskMetadata(taskKey, map[string]string{"force": strconv.FormatBool(force)}, scopeName)
 
 	go func() {
 		err := c.scanner.ScanSeries(context.Background(), seriesID, force)
@@ -966,6 +978,11 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	if !c.startTask(taskKey, "cleanup_library", fmt.Sprintf("开始清理资源库 #%d", libraryID), 1) {
 		return false
 	}
+	scopeName := ""
+	if lib, err := c.store.GetLibrary(context.Background(), libraryID); err == nil {
+		scopeName = lib.Name
+	}
+	c.setTaskMetadata(taskKey, nil, scopeName)
 
 	go func() {
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
@@ -1813,6 +1830,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 	if !c.startTask("rebuild_index", "rebuild_index", "开始重建搜索索引", 1) {
 		return fmt.Errorf("task already running")
 	}
+	c.setTaskMetadata("rebuild_index", nil, "系统")
 
 	cfg := c.currentConfig()
 	dataPath := filepath.Dir(cfg.Database.Path)
@@ -1846,6 +1864,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 	if !c.startTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 1) {
 		return fmt.Errorf("task already running")
 	}
+	c.setTaskMetadata("rebuild_thumbnails", nil, "系统")
 
 	thumbDir := filepath.Join(".", "data", "thumbnails")
 	cfg := c.currentConfig()
@@ -2035,6 +2054,11 @@ func (c *Controller) launchAIGroupingTask(libID int64) bool {
 	if !c.startTask(taskKey, "ai_grouping", "AI 智能分组开始...", 1) {
 		return false
 	}
+	scopeName := ""
+	if lib, err := c.store.GetLibrary(context.Background(), libID); err == nil {
+		scopeName = lib.Name
+	}
+	c.setTaskMetadata(taskKey, nil, scopeName)
 
 	go func(libraryID int64) {
 		ctx := context.Background()

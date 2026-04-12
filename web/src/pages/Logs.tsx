@@ -23,6 +23,7 @@ interface TaskStatus {
   type: string;
   scope: string;
   scope_id?: number;
+  scope_name?: string;
   status: string;
   message: string;
   error?: string;
@@ -116,6 +117,45 @@ export default function Logs() {
         return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20';
       default:
         return 'bg-blue-500/10 text-blue-300 border-blue-500/20';
+    }
+  };
+
+  const taskTypeLabel = (type: string) => {
+    switch (type) {
+      case 'scan_library':
+        return '资源库扫描';
+      case 'scan_series':
+        return '系列扫描';
+      case 'cleanup_library':
+        return '资源清理';
+      case 'rebuild_index':
+        return '索引重建';
+      case 'rebuild_thumbnails':
+        return '缩略图重建';
+      case 'scrape':
+        return '元数据刮削';
+      case 'ai_grouping':
+        return 'AI 分组';
+      default:
+        return type;
+    }
+  };
+
+  const taskActionHint = (task: TaskStatus) => {
+    switch (task.type) {
+      case 'scan_library':
+      case 'scan_series':
+        return '建议检查目录可读性、归档结构和扫描格式。';
+      case 'rebuild_index':
+        return '建议确认数据库和搜索索引目录的写权限。';
+      case 'rebuild_thumbnails':
+        return '建议检查缓存目录权限和封面源文件是否仍然可用。';
+      case 'scrape':
+        return '建议检查元数据来源、网络连通性或 LLM 配置。';
+      case 'ai_grouping':
+        return '建议检查 LLM 配置和系列摘要是否足够完整。';
+      default:
+        return '建议先查看任务错误详情，再决定是否重试。';
     }
   };
 
@@ -299,7 +339,10 @@ export default function Logs() {
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${badgeClass(task.status)}`}>
                         {task.status}
                       </span>
-                      <span className="text-xs text-slate-500">{task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
+                      <span className="text-xs text-slate-500">{taskTypeLabel(task.type)}</span>
+                      <span className="text-xs text-slate-500">
+                        {task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}
+                      </span>
                       {task.retryable && task.status !== 'running' && (
                         <button
                           onClick={() => retryTask(task.key)}
@@ -316,6 +359,7 @@ export default function Logs() {
                     {task.error && (
                       <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">{task.error}</p>
                     )}
+                    <p className="mt-2 text-xs text-slate-500">{taskActionHint(task)}</p>
                     <button
                       onClick={() => openTaskTarget(task)}
                       className="mt-3 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"

@@ -37,9 +37,14 @@ interface RecommendedItem {
 
 interface TaskStatus {
     key: string;
+    type: string;
+    scope: string;
+    scope_id?: number;
+    scope_name?: string;
     status: string;
     message: string;
     error?: string;
+    retryable?: boolean;
     updated_at: string;
 }
 
@@ -94,6 +99,39 @@ export default function Dashboard() {
 
     const readPercent = stats ? (stats.total_books > 0 ? Math.round((stats.read_books / stats.total_books) * 100) : 0) : 0;
     const failedTasks = tasks.filter((task) => task.status === 'failed').slice(0, 3);
+
+    const openTaskTarget = (task: TaskStatus) => {
+        if (task.scope === 'series' && task.scope_id) {
+            navigate(`/series/${task.scope_id}`);
+            return;
+        }
+        if (task.scope === 'library' && task.scope_id) {
+            navigate(`/library/${task.scope_id}`);
+            return;
+        }
+        navigate('/logs');
+    };
+
+    const taskTypeLabel = (type: string) => {
+        switch (type) {
+            case 'scan_library':
+                return '资源库扫描';
+            case 'scan_series':
+                return '系列扫描';
+            case 'cleanup_library':
+                return '资源清理';
+            case 'rebuild_index':
+                return '索引重建';
+            case 'rebuild_thumbnails':
+                return '缩略图重建';
+            case 'scrape':
+                return '元数据刮削';
+            case 'ai_grouping':
+                return 'AI 分组';
+            default:
+                return type;
+        }
+    };
 
     if (loading) {
         return (
@@ -204,10 +242,18 @@ export default function Dashboard() {
                     </div>
                     <div className="space-y-3">
                         {failedTasks.map((task) => (
-                            <div key={task.key} className="rounded-xl border border-red-500/10 bg-black/20 p-3">
+                            <button
+                                key={task.key}
+                                onClick={() => openTaskTarget(task)}
+                                className="w-full text-left rounded-xl border border-red-500/10 bg-black/20 p-3 hover:bg-black/30"
+                            >
+                                <div className="flex items-center gap-2 text-xs text-red-100/60 mb-2">
+                                    <span>{taskTypeLabel(task.type)}</span>
+                                    <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
+                                </div>
                                 <p className="text-sm font-medium text-white">{task.message}</p>
                                 {task.error && <p className="mt-1 text-xs text-red-100/80">{task.error}</p>}
-                            </div>
+                            </button>
                         ))}
                     </div>
                 </div>

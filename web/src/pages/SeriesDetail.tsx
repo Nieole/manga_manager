@@ -49,6 +49,8 @@ export default function SeriesDetail() {
     const [selectedSearchResult, setSelectedSearchResult] = useState<SearchResult | null>(null);
     const [relatedFailedTasks, setRelatedFailedTasks] = useState<Array<{
         key: string;
+        type: string;
+        scope_name?: string;
         message: string;
         error?: string;
         retryable: boolean;
@@ -302,6 +304,17 @@ export default function SeriesDetail() {
             showToast(err.response?.data?.error || '任务重试失败', 'error');
         } finally {
             setRetryingTaskKey(null);
+        }
+    };
+
+    const taskTypeLabel = (type: string) => {
+        switch (type) {
+            case 'scan_series':
+                return '系列扫描';
+            case 'scrape':
+                return '元数据刮削';
+            default:
+                return type;
         }
     };
 
@@ -571,6 +584,10 @@ export default function SeriesDetail() {
                     <div className="space-y-3">
                         {relatedFailedTasks.map((task) => (
                             <div key={task.key} className="rounded-xl border border-red-500/10 bg-black/20 p-4">
+                                <div className="mb-2 flex items-center gap-2 text-xs text-red-100/60">
+                                    <span>{taskTypeLabel(task.type)}</span>
+                                    {task.scope_name && <span>{task.scope_name}</span>}
+                                </div>
                                 <p className="text-sm font-medium text-white">{task.message}</p>
                                 {task.error && <p className="mt-2 text-sm text-red-100/80">{task.error}</p>}
                                 <div className="mt-3 flex items-center justify-between gap-3">

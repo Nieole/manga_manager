@@ -336,7 +336,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	if !c.startTask(taskKey, "scrape", fmt.Sprintf("批量刮削开始 (%s)", providerName), totalCount) {
 		return fmt.Errorf("task already running")
 	}
-	c.setTaskParams(taskKey, map[string]string{"provider": providerKey})
+	c.setTaskMetadata(taskKey, map[string]string{"provider": providerKey}, "全库")
 
 	go func() {
 		successCount := 0
@@ -441,7 +441,11 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 	if !c.startTask(taskKey, "scrape", fmt.Sprintf("资源库批量刮削开始 (%s)", providerName), totalCount) {
 		return fmt.Errorf("task already running")
 	}
-	c.setTaskParams(taskKey, map[string]string{"provider": providerKey})
+	scopeName := ""
+	if lib, err := c.store.GetLibrary(context.Background(), libraryID); err == nil {
+		scopeName = lib.Name
+	}
+	c.setTaskMetadata(taskKey, map[string]string{"provider": providerKey}, scopeName)
 
 	go func() {
 		successCount := 0
