@@ -99,6 +99,7 @@ export default function Dashboard() {
 
     const readPercent = stats ? (stats.total_books > 0 ? Math.round((stats.read_books / stats.total_books) * 100) : 0) : 0;
     const failedTasks = tasks.filter((task) => task.status === 'failed').slice(0, 3);
+    const runningTasks = tasks.filter((task) => task.status === 'running').slice(0, 3);
 
     const openTaskTarget = (task: TaskStatus) => {
         if (task.scope === 'series' && task.scope_id) {
@@ -236,9 +237,17 @@ export default function Dashboard() {
 
             {failedTasks.length > 0 && (
                 <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
-                    <div className="flex items-center gap-2 mb-3 text-red-200">
-                        <AlertTriangle className="w-5 h-5" />
-                        <h2 className="text-lg font-semibold">最近失败的后台任务</h2>
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2 text-red-200">
+                            <AlertTriangle className="w-5 h-5" />
+                            <h2 className="text-lg font-semibold">最近失败的后台任务</h2>
+                        </div>
+                        <button
+                            onClick={() => navigate('/logs')}
+                            className="rounded-lg border border-red-500/20 bg-black/20 px-3 py-1.5 text-xs text-red-100 hover:bg-black/30"
+                        >
+                            打开任务中心
+                        </button>
                     </div>
                     <div className="space-y-3">
                         {failedTasks.map((task) => (
@@ -253,6 +262,30 @@ export default function Dashboard() {
                                 </div>
                                 <p className="text-sm font-medium text-white">{task.message}</p>
                                 {task.error && <p className="mt-1 text-xs text-red-100/80">{task.error}</p>}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {runningTasks.length > 0 && (
+                <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
+                    <div className="flex items-center gap-2 mb-3 text-blue-200">
+                        <Library className="w-5 h-5" />
+                        <h2 className="text-lg font-semibold">当前正在执行的任务</h2>
+                    </div>
+                    <div className="space-y-3">
+                        {runningTasks.map((task) => (
+                            <button
+                                key={task.key}
+                                onClick={() => openTaskTarget(task)}
+                                className="w-full text-left rounded-xl border border-blue-500/10 bg-black/20 p-3 hover:bg-black/30"
+                            >
+                                <div className="flex items-center gap-2 text-xs text-blue-100/60 mb-2">
+                                    <span>{taskTypeLabel(task.type)}</span>
+                                    <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
+                                </div>
+                                <p className="text-sm font-medium text-white">{task.message}</p>
                             </button>
                         ))}
                     </div>

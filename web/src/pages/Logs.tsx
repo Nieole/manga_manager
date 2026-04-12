@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, RotateCcw, Search, Terminal } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 
 interface LogEntry {
   time: string;
@@ -90,10 +90,42 @@ export default function Logs() {
   }, [filterLevel, taskStatusFilter, taskScopeFilter]);
 
   const failedTasks = useMemo(() => tasks.filter((task) => task.status === 'failed'), [tasks]);
+  const runningTasks = useMemo(() => tasks.filter((task) => task.status === 'running'), [tasks]);
+  const completedTasks = useMemo(() => tasks.filter((task) => task.status === 'completed'), [tasks]);
+  const groupedTasks = useMemo(() => {
+    const today: TaskStatus[] = [];
+    const yesterday: TaskStatus[] = [];
+    const earlier: TaskStatus[] = [];
+
+    tasks.forEach((task) => {
+      const date = new Date(task.updated_at);
+      if (isToday(date)) {
+        today.push(task);
+      } else if (isYesterday(date)) {
+        yesterday.push(task);
+      } else {
+        earlier.push(task);
+      }
+    });
+
+    return [
+      { title: '今天', items: today },
+      { title: '昨天', items: yesterday },
+      { title: '更早', items: earlier },
+    ].filter((group) => group.items.length > 0);
+  }, [tasks]);
 
   const formatLogTime = (timeStr: string) => {
     try {
       return format(new Date(timeStr), 'yyyy-MM-dd HH:mm:ss');
+    } catch {
+      return timeStr;
+    }
+  };
+
+  const formatTaskRelativeTime = (timeStr: string) => {
+    try {
+      return `${formatDistanceToNow(new Date(timeStr), { addSuffix: true })}`;
     } catch {
       return timeStr;
     }
@@ -176,6 +208,19 @@ export default function Logs() {
     }
   };
 
+  const clearTasks = async (status: 'completed' | 'failed') => {
+    try {
+      const resp = await fetch(`/api/system/tasks?status=${status}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        throw new Error('任务清理失败');
+      }
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : '任务清理失败');
+    }
+  };
+
   const openTaskTarget = (task: TaskStatus) => {
     if (task.scope === 'series' && task.scope_id) {
       navigate(`/series/${task.scope_id}`);
@@ -235,6 +280,12 @@ export default function Logs() {
         <MetricCard label="最近失败任务" value={failedTasks.length} tone="purple" />
       </div>
 
+      <div className="grid gap-4 md:grid-cols-3">
+        <TaskMetricCard label="运行中任务" value={runningTasks.length} hint="当前仍在后台执行" tone="blue" />
+        <TaskMetricCard label="失败任务" value={failedTasks.length} hint="建议优先处理" tone="red" />
+        <TaskMetricCard label="已完成任务" value={completedTasks.length} hint="当前筛选结果内" tone="emerald" />
+      </div>
+
       <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
         <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
           <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
@@ -290,6 +341,20 @@ export default function Logs() {
               <AlertCircle className="w-4 h-4 text-slate-400" />
               <h2 className="text-sm font-semibold text-white">任务中心</h2>
             </div>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => clearTasks('completed')}
+                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+              >
+                清理已完成任务
+              </button>
+              <button
+                onClick={() => clearTasks('failed')}
+                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+              >
+                清理失败任务
+              </button>
+            </div>
             <div className="mb-4 grid gap-2">
               <div className="grid grid-cols-2 gap-2">
                 <select
@@ -333,39 +398,49 @@ export default function Logs() {
               {tasks.length === 0 ? (
                 <p className="text-sm text-slate-500">暂时没有后台任务记录。</p>
               ) : (
-                tasks.map((task) => (
-                  <div key={task.key} className="rounded-xl border border-slate-800 bg-slate-950 p-3">
-                    <div className="flex items-center gap-2">
-                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${badgeClass(task.status)}`}>
-                        {task.status}
-                      </span>
-                      <span className="text-xs text-slate-500">{taskTypeLabel(task.type)}</span>
-                      <span className="text-xs text-slate-500">
-                        {task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}
-                      </span>
-                      {task.retryable && task.status !== 'running' && (
-                        <button
-                          onClick={() => retryTask(task.key)}
-                          disabled={retryingTaskKey === task.key}
-                          className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-800 disabled:opacity-60"
-                        >
-                          <RotateCcw className={`w-3 h-3 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
-                          重试
-                        </button>
-                      )}
+                groupedTasks.map((group) => (
+                  <div key={group.title} className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{group.title}</h3>
+                      <span className="text-xs text-slate-600">{group.items.length} 项</span>
                     </div>
-                    <p className="mt-2 text-sm text-slate-100">{task.message}</p>
-                    <p className="mt-1 text-xs text-slate-500">{task.current}/{task.total || 1} · {formatLogTime(task.updated_at)}</p>
-                    {task.error && (
-                      <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">{task.error}</p>
-                    )}
-                    <p className="mt-2 text-xs text-slate-500">{taskActionHint(task)}</p>
-                    <button
-                      onClick={() => openTaskTarget(task)}
-                      className="mt-3 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-                    >
-                      打开关联页面
-                    </button>
+                    {group.items.map((task) => (
+                      <div key={task.key} className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${badgeClass(task.status)}`}>
+                            {task.status}
+                          </span>
+                          <span className="text-xs text-slate-500">{taskTypeLabel(task.type)}</span>
+                          <span className="text-xs text-slate-500">
+                            {task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}
+                          </span>
+                          {task.retryable && task.status !== 'running' && (
+                            <button
+                              onClick={() => retryTask(task.key)}
+                              disabled={retryingTaskKey === task.key}
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-800 disabled:opacity-60"
+                            >
+                              <RotateCcw className={`w-3 h-3 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
+                              重试
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-2 text-sm text-slate-100">{task.message}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {task.current}/{task.total || 1} · {formatTaskRelativeTime(task.updated_at)} · {formatLogTime(task.updated_at)}
+                        </p>
+                        {task.error && (
+                          <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">{task.error}</p>
+                        )}
+                        <p className="mt-2 text-xs text-slate-500">{taskActionHint(task)}</p>
+                        <button
+                          onClick={() => openTaskTarget(task)}
+                          className="mt-3 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                        >
+                          打开关联页面
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 ))
               )}
@@ -401,6 +476,32 @@ function MetricCard({ label, value, tone }: { label: string; value: number; tone
     <div className={`rounded-2xl border p-4 ${toneClass}`}>
       <p className="text-sm opacity-80">{label}</p>
       <p className="mt-2 text-3xl font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function TaskMetricCard({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  tone: 'blue' | 'red' | 'emerald';
+}) {
+  const toneClass = {
+    blue: 'border-blue-500/20 bg-blue-500/10 text-blue-200',
+    red: 'border-red-500/20 bg-red-500/10 text-red-200',
+    emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200',
+  }[tone];
+
+  return (
+    <div className={`rounded-2xl border p-4 ${toneClass}`}>
+      <p className="text-sm opacity-80">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+      <p className="mt-1 text-xs opacity-80">{hint}</p>
     </div>
   );
 }

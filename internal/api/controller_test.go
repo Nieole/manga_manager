@@ -963,6 +963,39 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 	}
 }
 
+func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	if !controller.startTask("completed_one", "rebuild_index", "completed task", 1) {
+		t.Fatal("expected completed task to start")
+	}
+	controller.finishTask("completed_one", "done")
+
+	if !controller.startTask("failed_one", "scan_library", "failed task", 1) {
+		t.Fatal("expected failed task to start")
+	}
+	controller.failTask("failed_one", "boom")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=completed", nil)
+	rec := httptest.NewRecorder()
+	controller.clearTasks(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	controller.taskMutex.Lock()
+	_, completedExists := controller.tasks["completed_one"]
+	_, failedExists := controller.tasks["failed_one"]
+	controller.taskMutex.Unlock()
+	if completedExists {
+		t.Fatal("expected completed task to be removed")
+	}
+	if !failedExists {
+		t.Fatal("expected failed task to remain")
+	}
+}
+
 func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 

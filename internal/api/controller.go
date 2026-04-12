@@ -86,6 +86,8 @@ type SystemConfigResponse struct {
 	Capabilities SystemCapabilitiesResponse `json:"capabilities"`
 }
 
+const maxRetainedTasks = 200
+
 func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
 	c := &Controller{
@@ -279,6 +281,7 @@ func (c *Controller) startTask(key, taskType, message string, total int) bool {
 		UpdatedAt: now,
 	}
 	c.tasks[key] = task
+	c.pruneTasksLocked()
 	c.publishTaskStatusLocked(task)
 	return true
 }
@@ -380,6 +383,29 @@ func (c *Controller) publishTaskStatusLocked(task TaskStatus) {
 	c.messages <- "task_progress:" + string(payload)
 }
 
+func (c *Controller) pruneTasksLocked() {
+	if len(c.tasks) <= maxRetainedTasks {
+		return
+	}
+
+	items := make([]TaskStatus, 0, len(c.tasks))
+	for _, task := range c.tasks {
+		items = append(items, task)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
+
+	next := make(map[string]TaskStatus, len(items))
+	for _, task := range items {
+		if len(next) >= maxRetainedTasks {
+			break
+		}
+		next[task.Key] = task
+	}
+	c.tasks = next
+}
+
 func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
@@ -437,6 +463,34 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		items = items[:limit]
 	}
 	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	if c.tasks == nil {
+		c.tasks = make(map[string]TaskStatus)
+	}
+
+	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+	scopeFilter := strings.TrimSpace(r.URL.Query().Get("scope"))
+	removed := 0
+
+	for key, task := range c.tasks {
+		if statusFilter != "" && task.Status != statusFilter {
+			continue
+		}
+		if scopeFilter != "" && task.Scope != scopeFilter {
+			continue
+		}
+		delete(c.tasks, key)
+		removed++
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"removed": removed,
+	})
 }
 
 func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
@@ -573,6 +627,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Get("/system/logs", c.getSystemLogs)
 		r.Get("/system/tasks", c.listTasks)
+		r.Delete("/system/tasks", c.clearTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
