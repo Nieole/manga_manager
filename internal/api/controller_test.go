@@ -933,6 +933,36 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 	}
 }
 
+func TestListTasksSupportsScopeIDFilter(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	if !controller.startTask("scan_series_12", "scan_series", "series 12", 1) {
+		t.Fatal("expected task to start")
+	}
+	controller.finishTask("scan_series_12", "done")
+
+	if !controller.startTask("scan_series_18", "scan_series", "series 18", 1) {
+		t.Fatal("expected task to start")
+	}
+	controller.finishTask("scan_series_18", "done")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=18", nil)
+	rec := httptest.NewRecorder()
+	controller.listTasks(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var tasks []TaskStatus
+	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
+		t.Fatalf("decode filtered tasks failed: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Key != "scan_series_18" {
+		t.Fatalf("expected only series 18 task, got %+v", tasks)
+	}
+}
+
 func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 

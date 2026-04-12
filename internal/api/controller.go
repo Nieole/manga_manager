@@ -388,11 +388,18 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
 	scopeFilter := strings.TrimSpace(r.URL.Query().Get("scope"))
 	typeFilter := strings.TrimSpace(r.URL.Query().Get("type"))
+	scopeIDFilter := strings.TrimSpace(r.URL.Query().Get("scope_id"))
 	queryFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	limit := 0
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
 			limit = parsed
+		}
+	}
+	var scopeID *int64
+	if scopeIDFilter != "" {
+		if parsed, err := strconv.ParseInt(scopeIDFilter, 10, 64); err == nil {
+			scopeID = &parsed
 		}
 	}
 
@@ -405,6 +412,11 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		if typeFilter != "" && task.Type != typeFilter {
 			continue
+		}
+		if scopeID != nil {
+			if task.ScopeID == nil || *task.ScopeID != *scopeID {
+				continue
+			}
 		}
 		if queryFilter != "" {
 			haystack := strings.ToLower(task.Key + " " + task.Message + " " + task.Error)

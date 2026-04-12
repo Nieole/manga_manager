@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, RotateCcw, Search, Terminal } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -34,6 +35,7 @@ interface TaskStatus {
 }
 
 export default function Logs() {
+  const navigate = useNavigate();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [summary, setSummary] = useState<LogsResponse['summary']>({ total: 0, by_level: { ERROR: 0, WARN: 0, INFO: 0 } });
   const [tasks, setTasks] = useState<TaskStatus[]>([]);
@@ -132,6 +134,18 @@ export default function Logs() {
     } finally {
       setRetryingTaskKey(null);
     }
+  };
+
+  const openTaskTarget = (task: TaskStatus) => {
+    if (task.scope === 'series' && task.scope_id) {
+      navigate(`/series/${task.scope_id}`);
+      return;
+    }
+    if (task.scope === 'library' && task.scope_id) {
+      navigate(`/library/${task.scope_id}`);
+      return;
+    }
+    navigate('/settings');
   };
 
   return (
@@ -302,6 +316,12 @@ export default function Logs() {
                     {task.error && (
                       <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">{task.error}</p>
                     )}
+                    <button
+                      onClick={() => openTaskTarget(task)}
+                      className="mt-3 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                    >
+                      打开关联页面
+                    </button>
                   </div>
                 ))
               )}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { BookImage, Pencil } from 'lucide-react';
+import { AlertTriangle, BookImage, Pencil, RotateCcw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { SeriesContentSection } from './series-detail/SeriesContentSection';
 import { SeriesHeader } from './series-detail/SeriesHeader';
@@ -47,6 +47,14 @@ export default function SeriesDetail() {
     const [currentOffset, setCurrentOffset] = useState(0);
     const [searchTotal, setSearchTotal] = useState(0);
     const [selectedSearchResult, setSelectedSearchResult] = useState<SearchResult | null>(null);
+    const [relatedFailedTasks, setRelatedFailedTasks] = useState<Array<{
+        key: string;
+        message: string;
+        error?: string;
+        retryable: boolean;
+        updated_at: string;
+    }>>([]);
+    const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -271,6 +279,31 @@ export default function SeriesDetail() {
                 });
         }
     }, [seriesId, refreshTrigger]);
+
+    useEffect(() => {
+        if (!seriesId) return;
+        axios.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`)
+            .then((res) => {
+                setRelatedFailedTasks(Array.isArray(res.data) ? res.data : []);
+            })
+            .catch(() => {
+                setRelatedFailedTasks([]);
+            });
+    }, [seriesId, refreshTrigger]);
+
+    const retryTask = async (taskKey: string) => {
+        setRetryingTaskKey(taskKey);
+        try {
+            await axios.post(`/api/system/tasks/${encodeURIComponent(taskKey)}/retry`);
+            showToast('任务已重新加入后台队列', 'success');
+            const res = await axios.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`);
+            setRelatedFailedTasks(Array.isArray(res.data) ? res.data : []);
+        } catch (err: any) {
+            showToast(err.response?.data?.error || '任务重试失败', 'error');
+        } finally {
+            setRetryingTaskKey(null);
+        }
+    };
 
     useEffect(() => {
         if (isEditing) {
@@ -528,6 +561,36 @@ export default function SeriesDetail() {
                 onQuickMarkVolumeRead={handleQuickMarkVolumeRead}
                 renderBookCard={renderBookCard}
             />
+
+            {!selectedVolume && relatedFailedTasks.length > 0 && (
+                <div className="mt-6 rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
+                    <div className="flex items-center gap-2 mb-4 text-red-100">
+                        <AlertTriangle className="w-5 h-5" />
+                        <h3 className="text-base font-semibold">与当前系列相关的失败任务</h3>
+                    </div>
+                    <div className="space-y-3">
+                        {relatedFailedTasks.map((task) => (
+                            <div key={task.key} className="rounded-xl border border-red-500/10 bg-black/20 p-4">
+                                <p className="text-sm font-medium text-white">{task.message}</p>
+                                {task.error && <p className="mt-2 text-sm text-red-100/80">{task.error}</p>}
+                                <div className="mt-3 flex items-center justify-between gap-3">
+                                    <span className="text-xs text-red-100/60">{new Date(task.updated_at).toLocaleString()}</span>
+                                    {task.retryable && (
+                                        <button
+                                            onClick={() => retryTask(task.key)}
+                                            disabled={retryingTaskKey === task.key}
+                                            className="inline-flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100 hover:bg-red-500/15 disabled:opacity-60"
+                                        >
+                                            <RotateCcw className={`w-3.5 h-3.5 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
+                                            重试
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* 悬浮多选操作栏 */}
             {isSelectionMode && (selectedBooks.length > 0 || selectedVolumes.length > 0) && (
