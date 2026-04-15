@@ -159,3 +159,39 @@ func TestRebuildBookIdentitiesUsesPathIndexesInFilePathMode(t *testing.T) {
 		t.Fatalf("expected path fingerprints to be built, got exact=%q noext=%q", pathFingerprint, pathFingerprintNoExt)
 	}
 }
+
+func TestAuthenticateUsesKOReaderSyncKey(t *testing.T) {
+	service, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+
+	if _, err := store.UpsertKOReaderSettings(context.Background(), database.UpsertKOReaderSettingsParams{
+		Username: "reader",
+		SyncKey:  HashKey("secret-key"),
+	}); err != nil {
+		t.Fatalf("UpsertKOReaderSettings failed: %v", err)
+	}
+
+	if _, err := service.Authenticate(context.Background(), Credentials{
+		Username: "reader",
+		Key:      HashKey("secret-key"),
+	}); err != nil {
+		t.Fatalf("Authenticate failed: %v", err)
+	}
+}
+
+func TestAuthenticateRejectsLegacyInvalidStoredKey(t *testing.T) {
+	service, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+
+	if _, err := store.UpsertKOReaderSettings(context.Background(), database.UpsertKOReaderSettingsParams{
+		Username: "reader",
+		SyncKey:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}); err != nil {
+		t.Fatalf("UpsertKOReaderSettings failed: %v", err)
+	}
+
+	if _, err := service.Authenticate(context.Background(), Credentials{
+		Username: "reader",
+		Key:      HashKey("secret-key"),
+	}); err != ErrForbidden {
+		t.Fatalf("expected ErrForbidden for invalid stored sync key, got %v", err)
+	}
+}

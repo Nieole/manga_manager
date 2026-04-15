@@ -68,9 +68,12 @@ interface KOReaderStatus {
   path_match_depth: number;
   username: string;
   has_password: boolean;
+  has_valid_sync_key: boolean;
+  latest_error?: string;
   stats: {
     configured: boolean;
     has_password: boolean;
+    has_valid_sync_key: boolean;
     username: string;
     total_books: number;
     hashed_books: number;
@@ -87,7 +90,7 @@ interface KOReaderForm {
   match_mode: string;
   path_ignore_extension: boolean;
   username: string;
-  password: string;
+  sync_key: string;
 }
 
 interface KOReaderUnmatchedItem {
@@ -120,7 +123,7 @@ function buildKOReaderForm(
     path_ignore_extension:
       status?.path_ignore_extension ?? configState?.path_ignore_extension ?? current?.path_ignore_extension ?? false,
     username: resolvedUsername,
-    password: current?.password ?? '',
+    sync_key: current?.sync_key ?? '',
   };
 }
 
@@ -681,11 +684,14 @@ export default function Settings() {
                 {formatKOReaderIndexLabel(koreaderForm.match_mode, koreaderForm.path_ignore_extension)} 进度 {koreaderStatus?.stats.hashed_books ?? 0} / {koreaderStatus?.stats.total_books ?? 0}
               </p>
               <p className="text-xs text-gray-500 mt-2">
-                当前账号 {koreaderStatus?.username || koreaderStatus?.stats.username || '未配置'} · 同步密钥 {koreaderStatus?.has_password ? '已设置' : '未设置'}
+                当前账号 {koreaderStatus?.username || koreaderStatus?.stats.username || '未配置'} · Sync Key {koreaderStatus?.has_valid_sync_key ? '已配置' : koreaderStatus?.has_password ? '格式无效' : '未设置'}
               </p>
               <p className="text-xs text-gray-500 mt-2">
                 最近同步 {formatKOReaderLatestSync(koreaderStatus?.stats.latest_sync_at)}
               </p>
+              {koreaderStatus?.latest_error && (
+                <p className="text-xs text-amber-300 mt-2">最近错误 {koreaderStatus.latest_error}</p>
+              )}
             </div>
 
             <div>
@@ -755,24 +761,25 @@ export default function Settings() {
             </div>
 
             <div>
-              <label className="block text-sm text-gray-400 mb-1">同步密钥</label>
+              <label className="block text-sm text-gray-400 mb-1">KOReader Sync Key (MD5)</label>
               <div className="relative">
                 <KeyRound className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-gray-500" />
                 <input
                   type="password"
-                  value={koreaderForm.password}
-                  onChange={(e) => setKOReaderForm({ ...koreaderForm, password: e.target.value })}
+                  value={koreaderForm.sync_key}
+                  onChange={(e) => setKOReaderForm({ ...koreaderForm, sync_key: e.target.value })}
                   className={`${inputClassName} pl-10`}
-                  placeholder={koreaderStatus?.has_password ? '留空表示保留现有密钥' : '首次启用时必填'}
+                  placeholder={koreaderStatus?.has_valid_sync_key ? '留空表示保留现有 Sync Key' : '填写 32 位小写十六进制 MD5 值'}
                 />
               </div>
-              {renderKOReaderFieldErrors('koreader.password')}
+              <p className="text-xs text-gray-500 mt-1">这里填写 KOReader 设备实际发送的 Sync Key，不是原始密码。格式必须是 32 位小写十六进制 MD5。</p>
+              {renderKOReaderFieldErrors('koreader.sync_key')}
             </div>
           </div>
 
           <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-100">
             <p className="font-medium">KOReader 配置方式</p>
-            <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`，用户名和同步密钥与这里保持一致。</p>
+            <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`，用户名与这里保持一致，Sync Key 需要与这里保存的 32 位 MD5 值一致。</p>
             <p className="mt-2 text-sky-100/70">
               当前模式：{koreaderForm.match_mode === 'file_path'
                 ? `文件路径匹配（文件名 + 向上 ${koreaderStatus?.path_match_depth ?? 2} 层路径${koreaderForm.path_ignore_extension ? '，忽略扩展名' : '，保留扩展名'}）`

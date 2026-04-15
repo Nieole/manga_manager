@@ -13,7 +13,7 @@ func (q *Queries) GetKOReaderSettings(ctx context.Context) (KOReaderSettings, er
 	`)
 
 	var item KOReaderSettings
-	err := row.Scan(&item.ID, &item.Username, &item.PasswordHash, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.Username, &item.SyncKey, &item.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return KOReaderSettings{}, nil
 	}
@@ -32,10 +32,10 @@ func (q *Queries) UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReader
 			END,
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING id, username, password_hash, updated_at
-	`, arg.Username, arg.PasswordHash)
+	`, arg.Username, arg.SyncKey)
 
 	var item KOReaderSettings
-	err := row.Scan(&item.ID, &item.Username, &item.PasswordHash, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.Username, &item.SyncKey, &item.UpdatedAt)
 	return item, err
 }
 
@@ -44,6 +44,13 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 		SELECT
 			EXISTS(SELECT 1 FROM koreader_settings WHERE id = 1 AND username != '') as configured,
 			EXISTS(SELECT 1 FROM koreader_settings WHERE id = 1 AND password_hash != '') as has_password,
+			EXISTS(
+				SELECT 1
+				FROM koreader_settings
+				WHERE id = 1
+				  AND LOWER(password_hash) GLOB '[0-9a-f]*'
+				  AND LENGTH(password_hash) = 32
+			) as has_valid_sync_key,
 			COALESCE((SELECT username FROM koreader_settings WHERE id = 1), '') as username,
 			(SELECT COUNT(*) FROM books) as total_books,
 			(SELECT COUNT(*) FROM books WHERE COALESCE(file_hash, '') != '' AND COALESCE(path_fingerprint, '') != '' AND COALESCE(path_fingerprint_no_ext, '') != '') as hashed_books,
@@ -56,12 +63,36 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 	err := row.Scan(
 		&item.Configured,
 		&item.HasPassword,
+		&item.HasValidSyncKey,
 		&item.Username,
 		&item.TotalBooks,
 		&item.HashedBooks,
 		&item.UnmatchedProgressCount,
 		&item.MatchedProgressCount,
 		&item.LatestSyncAt,
+	)
+	return item, err
+}
+
+func (q *Queries) GetLatestKOReaderFailure(ctx context.Context) (KOReaderSyncEvent, error) {
+	row := q.db.QueryRowContext(ctx, `
+		SELECT id, direction, username, document, book_id, status, message, created_at
+		FROM koreader_sync_events
+		WHERE status != 'ok'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`)
+
+	var item KOReaderSyncEvent
+	err := row.Scan(
+		&item.ID,
+		&item.Direction,
+		&item.Username,
+		&item.Document,
+		&item.BookID,
+		&item.Status,
+		&item.Message,
+		&item.CreatedAt,
 	)
 	return item, err
 }

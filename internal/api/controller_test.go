@@ -91,6 +91,10 @@ func requestWithRouteParam(method, path string, body []byte, key, value string) 
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 }
 
+func testKOReaderSyncKey() string {
+	return koreader.HashKey("secret-key")
+}
+
 func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, seriesName, bookName string, pageCount int64) (database.Library, database.Series, database.Book) {
 	t.Helper()
 
@@ -206,7 +210,7 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 		"match_mode": "file_path",
 		"path_ignore_extension": true,
 		"username": "reader",
-		"password": "secret-key"
+		"sync_key": "` + testKOReaderSyncKey() + `"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
@@ -220,7 +224,7 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response failed: %v", err)
 	}
-	if !resp.Enabled || resp.Username != "reader" || !resp.HasPassword || resp.MatchMode != config.KOReaderMatchModeFilePath || !resp.PathIgnoreExtension {
+	if !resp.Enabled || resp.Username != "reader" || !resp.HasPassword || !resp.HasValidSyncKey || resp.MatchMode != config.KOReaderMatchModeFilePath || !resp.PathIgnoreExtension {
 		t.Fatalf("unexpected KOReader response: %+v", resp)
 	}
 
@@ -228,8 +232,29 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetKOReaderSettings failed: %v", err)
 	}
-	if settings.Username != "reader" || settings.PasswordHash == "" {
+	if settings.Username != "reader" || settings.SyncKey == "" {
 		t.Fatalf("unexpected persisted settings: %+v", settings)
+	}
+}
+
+func TestUpdateKOReaderSettingsRejectsInvalidSyncKey(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	reqBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"match_mode": "binary_hash",
+		"path_ignore_extension": false,
+		"username": "reader",
+		"sync_key": "not-a-valid-md5"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -243,7 +268,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 		"match_mode": "binary_hash",
 		"path_ignore_extension": false,
 		"username": "reader",
-		"password": "secret-key"
+		"sync_key": "` + testKOReaderSyncKey() + `"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
@@ -274,11 +299,14 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 
 	authReq := httptest.NewRequest(http.MethodGet, "/koreader/users/auth", nil)
 	authReq.Header.Set("x-auth-user", "reader")
-	authReq.Header.Set("x-auth-key", "secret-key")
+	authReq.Header.Set("x-auth-key", testKOReaderSyncKey())
 	authRec := httptest.NewRecorder()
 	controller.koreaderAuth(authRec, authReq)
 	if authRec.Code != http.StatusOK {
 		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
+	}
+	if got := authRec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected application/json content type, got %q", got)
 	}
 
 	progressPayload := []byte(`{
@@ -290,7 +318,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	}`)
 	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
 	progressReq.Header.Set("x-auth-user", "reader")
-	progressReq.Header.Set("x-auth-key", "secret-key")
+	progressReq.Header.Set("x-auth-key", testKOReaderSyncKey())
 	progressRec := httptest.NewRecorder()
 	controller.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
@@ -307,7 +335,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 
 	getReq := requestWithRouteParam(http.MethodGet, "/koreader/syncs/progress/doc", nil, "document", fileHash)
 	getReq.Header.Set("x-auth-user", "reader")
-	getReq.Header.Set("x-auth-key", "secret-key")
+	getReq.Header.Set("x-auth-key", testKOReaderSyncKey())
 	getRec := httptest.NewRecorder()
 	controller.koreaderGetProgress(getRec, getReq)
 	if getRec.Code != http.StatusOK {
@@ -323,6 +351,47 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	}
 }
 
+func TestKOReaderAuthSupportsVendorJSON(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	reqBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"match_mode": "binary_hash",
+		"path_ignore_extension": false,
+		"username": "reader",
+		"sync_key": "` + testKOReaderSyncKey() + `"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	authReq := httptest.NewRequest(http.MethodGet, "/koreader/users/auth", nil)
+	authReq.Header.Set("Accept", "application/vnd.koreader.v1+json")
+	authReq.Header.Set("x-auth-user", "reader")
+	authReq.Header.Set("x-auth-key", testKOReaderSyncKey())
+	authRec := httptest.NewRecorder()
+	controller.koreaderAuth(authRec, authReq)
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
+	}
+	if got := authRec.Header().Get("Content-Type"); got != "application/vnd.koreader.v1+json" {
+		t.Fatalf("unexpected content type %q", got)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(authRec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode auth response failed: %v", err)
+	}
+	if body["state"] != "OK" || body["authorized"] != "OK" {
+		t.Fatalf("unexpected auth response body: %+v", body)
+	}
+}
+
 func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
@@ -333,7 +402,7 @@ func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 		"match_mode": "file_path",
 		"path_ignore_extension": false,
 		"username": "reader",
-		"password": "secret-key"
+		"sync_key": "` + testKOReaderSyncKey() + `"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
@@ -370,7 +439,7 @@ func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 	}`)
 	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
 	progressReq.Header.Set("x-auth-user", "reader")
-	progressReq.Header.Set("x-auth-key", "secret-key")
+	progressReq.Header.Set("x-auth-key", testKOReaderSyncKey())
 	progressRec := httptest.NewRecorder()
 	controller.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
@@ -396,7 +465,7 @@ func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
 		"match_mode": "file_path",
 		"path_ignore_extension": true,
 		"username": "reader",
-		"password": "secret-key"
+		"sync_key": "` + testKOReaderSyncKey() + `"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
@@ -433,7 +502,7 @@ func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
 	}`)
 	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
 	progressReq.Header.Set("x-auth-user", "reader")
-	progressReq.Header.Set("x-auth-key", "secret-key")
+	progressReq.Header.Set("x-auth-key", testKOReaderSyncKey())
 	progressRec := httptest.NewRecorder()
 	controller.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
@@ -459,7 +528,7 @@ func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
 		"match_mode": "file_path",
 		"path_ignore_extension": false,
 		"username": "reader",
-		"password": "secret-key"
+		"sync_key": "` + testKOReaderSyncKey() + `"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()

@@ -6,15 +6,15 @@ import (
 )
 
 type KOReaderSettings struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	SyncKey   string    `json:"-"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type UpsertKOReaderSettingsParams struct {
-	Username     string `json:"username"`
-	PasswordHash string `json:"password_hash"`
+	Username string `json:"username"`
+	SyncKey  string `json:"sync_key"`
 }
 
 type KOReaderProgress struct {
@@ -74,6 +74,7 @@ type UpdateBookIdentityParams struct {
 type KOReaderStats struct {
 	Configured             bool         `json:"configured"`
 	HasPassword            bool         `json:"has_password"`
+	HasValidSyncKey        bool         `json:"has_valid_sync_key"`
 	Username               string       `json:"username"`
 	TotalBooks             int64        `json:"total_books"`
 	HashedBooks            int64        `json:"hashed_books"`
@@ -89,4 +90,15 @@ type CreateKOReaderSyncEventParams struct {
 	BookID    sql.NullInt64 `json:"book_id"`
 	Status    string        `json:"status"`
 	Message   string        `json:"message"`
+}
+
+type KOReaderSyncEvent struct {
+	ID        int64         `json:"id"`
+	Direction string        `json:"direction"`
+	Username  string        `json:"username"`
+	Document  string        `json:"document"`
+	BookID    sql.NullInt64 `json:"book_id"`
+	Status    string        `json:"status"`
+	Message   string        `json:"message"`
+	CreatedAt time.Time     `json:"created_at"`
 }

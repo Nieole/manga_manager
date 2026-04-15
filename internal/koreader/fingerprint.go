@@ -2,18 +2,28 @@ package koreader
 
 import (
 	"crypto/md5"
-	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
+var syncKeyPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
 func HashKey(raw string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(raw)))
+	sum := md5.Sum([]byte(strings.TrimSpace(raw)))
 	return hex.EncodeToString(sum[:])
+}
+
+func NormalizeSyncKey(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func IsValidSyncKey(raw string) bool {
+	return syncKeyPattern.MatchString(NormalizeSyncKey(raw))
 }
 
 func FingerprintFile(path string) (string, error) {

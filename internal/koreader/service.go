@@ -55,8 +55,8 @@ func (s *Service) Register(ctx context.Context, username, key string, allowRegis
 		return database.KOReaderSettings{}, ErrRegistrationClosed
 	}
 	username = strings.TrimSpace(username)
-	key = strings.TrimSpace(key)
-	if username == "" || key == "" {
+	key = NormalizeSyncKey(key)
+	if username == "" || !IsValidSyncKey(key) {
 		return database.KOReaderSettings{}, ErrUnauthorized
 	}
 
@@ -69,14 +69,14 @@ func (s *Service) Register(ctx context.Context, username, key string, allowRegis
 	}
 
 	return s.store.UpsertKOReaderSettings(ctx, database.UpsertKOReaderSettingsParams{
-		Username:     username,
-		PasswordHash: HashKey(key),
+		Username: username,
+		SyncKey:  key,
 	})
 }
 
 func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database.KOReaderSettings, error) {
 	creds.Username = strings.TrimSpace(creds.Username)
-	creds.Key = strings.TrimSpace(creds.Key)
+	creds.Key = NormalizeSyncKey(creds.Key)
 	if creds.Username == "" || creds.Key == "" {
 		return database.KOReaderSettings{}, ErrUnauthorized
 	}
@@ -85,13 +85,16 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 	if err != nil {
 		return database.KOReaderSettings{}, err
 	}
-	if settings.Username == "" || settings.PasswordHash == "" {
+	if settings.Username == "" || settings.SyncKey == "" {
 		return database.KOReaderSettings{}, ErrForbidden
 	}
 	if settings.Username != creds.Username {
 		return database.KOReaderSettings{}, ErrForbidden
 	}
-	if settings.PasswordHash != HashKey(creds.Key) {
+	if !IsValidSyncKey(settings.SyncKey) {
+		return database.KOReaderSettings{}, ErrForbidden
+	}
+	if settings.SyncKey != creds.Key {
 		return database.KOReaderSettings{}, ErrUnauthorized
 	}
 	return settings, nil

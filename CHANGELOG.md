@@ -258,6 +258,45 @@
 - 设置页新增 **KOReader Sync** 分组，支持：
   - 启用/关闭同步服务
   - 配置同步路径
+
+### 📌 增量记录 — 2026-04-15（KOReader 协议兼容修复）
+
+#### KOReader 鉴权与协议兼容 `[P0: 修正 KOReader 自定义同步协议实现]`
+- **修复设备登录 `Unauthorized`**：服务端不再把 `x-auth-key` 当作明文密码做二次哈希，改为按 KOReader 客户端实际发送的 **32 位 MD5 Sync Key** 直接存储和校验。
+- **切断旧错误密钥语义**：旧实现里保存的非 KOReader 兼容 key 不再被视为有效配置；管理员需要重新填写正确的 Sync Key。
+- **KOReader 专用响应对齐**：
+  - `GET /koreader/healthcheck` / `GET /koreader/healthstatus` 现在返回 `{"state":"OK"}`
+  - `GET /koreader/users/auth` 成功时返回包含 `state` / `authorized` 的兼容响应
+  - `PUT /koreader/syncs/progress` 与 `GET /koreader/syncs/progress/{document}` 的成功响应统一带 `state: OK`
+- **支持 KOReader vendor JSON**：当客户端发送 `Accept: application/vnd.koreader.v1+json` 时，接口会返回对应 `Content-Type`，否则仍返回普通 JSON。
+
+#### KOReader 设置与状态展示 `[P1: 配置可见性与排障能力]`
+- **设置字段语义切换**：系统管理接口与设置页从旧的 `password` 语义切换为 `sync_key`，明确表示这里填写的是 **KOReader Sync Key (MD5)**，不是原始密码。
+- **新增 Sync Key 格式校验**：保存 KOReader 配置时，`sync_key` 必须是 32 位小写十六进制字符串，否则返回字段级校验错误 `koreader.sync_key`。
+- **状态接口增强**：`GET /api/system/koreader` 新增：
+  - `has_valid_sync_key`
+  - `latest_error`
+  用于区分“已设置但格式无效”和“真正可用”的同步配置。
+- **设置页状态卡改进**：
+  - 显示 `Sync Key 已配置 / 格式无效 / 未设置`
+  - 显示最近一次 KOReader 协议错误
+  - 文案明确说明设备端应填写的是 32 位 MD5 Sync Key
+
+#### 日志与事件记录 `[P1: 排障闭环]`
+- KOReader 认证失败会写入 `koreader_sync_events`，状态区分为：
+  - `auth_failed_invalid_key`
+  - `auth_failed_forbidden`
+- `GET /api/system/koreader` 会读取最近一次非成功事件，作为设置页排障提示来源。
+
+#### 测试补充 `[工程质量]`
+- 新增 / 更新 KOReader 相关测试，覆盖：
+  - 合法 `sync_key` 登录成功
+  - 非法 `sync_key` 配置保存被拒绝
+  - KOReader vendor JSON `Accept` 头返回正确的 `Content-Type`
+  - 旧格式无效存储 key 被识别为不可用
+- 验证通过：
+  - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./...`
+  - `npm run build` in `web/`
   - 配置用户名与同步密钥
   - 控制是否允许首次注册
   - 查看当前模式下的索引进度、已匹配/未匹配同步记录数

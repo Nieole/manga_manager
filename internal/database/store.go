@@ -28,6 +28,7 @@ type Store interface {
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
 	UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReaderSettingsParams) (KOReaderSettings, error)
 	GetKOReaderStats(ctx context.Context) (KOReaderStats, error)
+	GetLatestKOReaderFailure(ctx context.Context) (KOReaderSyncEvent, error)
 	CountBooksMissingIdentity(ctx context.Context, matchMode string) (int64, error)
 	CountUnmatchedKOReaderProgress(ctx context.Context) (int64, error)
 	FindBookByDocumentFingerprint(ctx context.Context, documentKey, matchMode string, pathIgnoreExtension bool) (KOReaderBookMatch, error)

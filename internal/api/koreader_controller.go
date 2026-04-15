@@ -26,6 +26,8 @@ type KOReaderSystemResponse struct {
 	PathMatchDepth      int                    `json:"path_match_depth"`
 	Username            string                 `json:"username"`
 	HasPassword         bool                   `json:"has_password"`
+	HasValidSyncKey     bool                   `json:"has_valid_sync_key"`
+	LatestError         string                 `json:"latest_error,omitempty"`
 	Stats               database.KOReaderStats `json:"stats"`
 }
 
@@ -36,7 +38,7 @@ type UpdateKOReaderSettingsRequest struct {
 	MatchMode           string `json:"match_mode"`
 	PathIgnoreExtension bool   `json:"path_ignore_extension"`
 	Username            string `json:"username"`
-	Password            string `json:"password"`
+	SyncKey             string `json:"sync_key"`
 }
 
 type KOReaderUnmatchedItem struct {
@@ -82,6 +84,10 @@ func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch KOReader settings")
 		return
 	}
+	latestError := ""
+	if event, failureErr := c.store.GetLatestKOReaderFailure(r.Context()); failureErr == nil {
+		latestError = strings.TrimSpace(event.Message)
+	}
 	if indexed, err := c.koreader.IndexedBookCount(r.Context()); err == nil {
 		stats.HashedBooks = indexed
 	}
@@ -95,6 +101,8 @@ func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request)
 		PathMatchDepth:      config.KOReaderPathMatchDepth,
 		Username:            stats.Username,
 		HasPassword:         stats.HasPassword,
+		HasValidSyncKey:     stats.HasValidSyncKey,
+		LatestError:         latestError,
 		Stats:               stats,
 	})
 }
@@ -176,8 +184,12 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusInternalServerError, "Failed to load KOReader status")
 		return
 	}
-	if req.Enabled && !stats.HasPassword && strings.TrimSpace(req.Password) == "" {
-		issues = append(issues, config.ValidationIssue{Field: "koreader.password", Message: "首次启用同步时必须设置同步密钥。", Severity: "error"})
+	req.SyncKey = ksvc.NormalizeSyncKey(req.SyncKey)
+	if req.SyncKey != "" && !ksvc.IsValidSyncKey(req.SyncKey) {
+		issues = append(issues, config.ValidationIssue{Field: "koreader.sync_key", Message: "Sync Key 必须是 32 位小写十六进制 MD5 值。", Severity: "error"})
+	}
+	if req.Enabled && !stats.HasValidSyncKey && req.SyncKey == "" {
+		issues = append(issues, config.ValidationIssue{Field: "koreader.sync_key", Message: "首次启用同步时必须设置有效的 KOReader Sync Key。", Severity: "error"})
 	}
 	if len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
@@ -202,8 +214,8 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 	}
 
 	if _, err := c.store.UpsertKOReaderSettings(r.Context(), database.UpsertKOReaderSettingsParams{
-		Username:     req.Username,
-		PasswordHash: passwordHashOrEmpty(req.Password),
+		Username: req.Username,
+		SyncKey:  syncKeyOrEmpty(req.SyncKey),
 	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to persist KOReader credentials")
 		return
@@ -318,10 +330,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 }
 
 func (c *Controller) koreaderHealthcheck(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"message": "healthy",
-		"enabled": c.currentConfig().KOReader.Enabled,
-	})
+	writeKOReaderJSON(w, r, http.StatusOK, map[string]string{"state": "OK"})
 }
 
 func (c *Controller) koreaderRobots(w http.ResponseWriter, r *http.Request) {
@@ -339,27 +348,32 @@ func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Key      string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid request")
+		writeKOReaderJSON(w, r, http.StatusBadRequest, map[string]string{"message": "Invalid request"})
 		return
 	}
 
-	settings, err := c.koreader.Register(r.Context(), req.Username, req.Password, c.currentConfig().KOReader.AllowRegistration)
+	key := req.Key
+	if key == "" {
+		key = req.Password
+	}
+	settings, err := c.koreader.Register(r.Context(), req.Username, key, c.currentConfig().KOReader.AllowRegistration)
 	if err != nil {
 		switch {
 		case errors.Is(err, ksvc.ErrRegistrationClosed):
-			jsonResponse(w, http.StatusForbidden, map[string]string{"message": "This server is currently not accepting new registrations."})
+			writeKOReaderJSON(w, r, http.StatusForbidden, map[string]string{"message": "This server is currently not accepting new registrations."})
 		case errors.Is(err, ksvc.ErrAlreadyConfigured):
-			jsonResponse(w, http.StatusConflict, "Username is already registered.")
+			writeKOReaderJSON(w, r, http.StatusConflict, map[string]string{"message": "Username is already registered."})
 		case errors.Is(err, ksvc.ErrUnauthorized):
-			jsonError(w, http.StatusBadRequest, "Invalid request")
+			writeKOReaderJSON(w, r, http.StatusBadRequest, map[string]string{"message": "Invalid request"})
 		default:
-			jsonError(w, http.StatusInternalServerError, "Unknown server error")
+			writeKOReaderJSON(w, r, http.StatusInternalServerError, map[string]string{"message": "Unknown server error"})
 		}
 		return
 	}
-	jsonResponse(w, http.StatusCreated, map[string]string{"username": settings.Username})
+	writeKOReaderJSON(w, r, http.StatusCreated, map[string]string{"state": "OK", "username": settings.Username})
 }
 
 func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
@@ -369,10 +383,11 @@ func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err := c.koreader.Authenticate(r.Context(), readKOReaderCredentials(r))
 	if err != nil {
-		writeKOReaderAuthError(w, err)
+		c.logKOReaderAuthFailure(r.Context(), readKOReaderCredentials(r), "", err)
+		writeKOReaderAuthError(w, r, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"authorized": "OK"})
+	writeKOReaderJSON(w, r, http.StatusOK, map[string]string{"state": "OK", "authorized": "OK"})
 }
 
 func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Request) {
@@ -388,10 +403,12 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 
 	result, err := c.koreader.SaveProgress(r.Context(), readKOReaderCredentials(r), payload)
 	if err != nil {
-		writeKOReaderAuthError(w, err)
+		c.logKOReaderAuthFailure(r.Context(), readKOReaderCredentials(r), payload.Document, err)
+		writeKOReaderAuthError(w, r, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
+	writeKOReaderJSON(w, r, http.StatusOK, map[string]interface{}{
+		"state":     "OK",
 		"document":  result.Record.Document,
 		"timestamp": result.Record.Timestamp,
 	})
@@ -406,15 +423,17 @@ func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		switch {
 		case errors.Is(err, ksvc.ErrProgressNotFound):
-			jsonResponse(w, http.StatusNotFound, map[string]string{"message": "Not found"})
+			writeKOReaderJSON(w, r, http.StatusNotFound, map[string]string{"message": "Not found"})
 		case errors.Is(err, ksvc.ErrForbidden), errors.Is(err, ksvc.ErrUnauthorized):
-			writeKOReaderAuthError(w, err)
+			c.logKOReaderAuthFailure(r.Context(), readKOReaderCredentials(r), chi.URLParam(r, "document"), err)
+			writeKOReaderAuthError(w, r, err)
 		default:
-			jsonError(w, http.StatusInternalServerError, "Unknown server error")
+			writeKOReaderJSON(w, r, http.StatusInternalServerError, map[string]string{"message": "Unknown server error"})
 		}
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
+	writeKOReaderJSON(w, r, http.StatusOK, map[string]interface{}{
+		"state":      "OK",
 		"username":   record.Username,
 		"document":   record.Document,
 		"progress":   record.Progress,
@@ -432,21 +451,53 @@ func readKOReaderCredentials(r *http.Request) ksvc.Credentials {
 	}
 }
 
-func writeKOReaderAuthError(w http.ResponseWriter, err error) {
+func writeKOReaderJSON(w http.ResponseWriter, r *http.Request, status int, data interface{}) {
+	contentType := "application/json"
+	if r != nil && strings.Contains(strings.ToLower(r.Header.Get("Accept")), "application/vnd.koreader.v1+json") {
+		contentType = "application/vnd.koreader.v1+json"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func writeKOReaderAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ksvc.ErrUnauthorized):
-		jsonResponse(w, http.StatusUnauthorized, map[string]string{"message": "Unauthorized"})
+		writeKOReaderJSON(w, r, http.StatusUnauthorized, map[string]string{"message": "Unauthorized"})
 	case errors.Is(err, ksvc.ErrForbidden):
-		jsonResponse(w, http.StatusForbidden, map[string]string{"message": "Forbidden"})
+		writeKOReaderJSON(w, r, http.StatusForbidden, map[string]string{"message": "Forbidden"})
 	default:
-		jsonError(w, http.StatusInternalServerError, "Unknown server error")
+		writeKOReaderJSON(w, r, http.StatusInternalServerError, map[string]string{"message": "Unknown server error"})
 	}
 }
 
-func passwordHashOrEmpty(raw string) string {
-	raw = strings.TrimSpace(raw)
+func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Credentials, document string, err error) {
+	status := "auth_failed"
+	message := "Unauthorized"
+	switch {
+	case errors.Is(err, ksvc.ErrForbidden):
+		status = "auth_failed_forbidden"
+		message = "Forbidden"
+	case errors.Is(err, ksvc.ErrUnauthorized):
+		status = "auth_failed_invalid_key"
+		message = "Unauthorized"
+	default:
+		return
+	}
+	_ = c.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
+		Direction: "auth",
+		Username:  strings.TrimSpace(creds.Username),
+		Document:  strings.TrimSpace(document),
+		Status:    status,
+		Message:   message,
+	})
+}
+
+func syncKeyOrEmpty(raw string) string {
+	raw = ksvc.NormalizeSyncKey(raw)
 	if raw == "" {
 		return ""
 	}
-	return ksvc.HashKey(raw)
+	return raw
 }
