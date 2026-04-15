@@ -165,7 +165,7 @@ func TestAuthenticateUsesKOReaderSyncKey(t *testing.T) {
 
 	if _, err := store.CreateKOReaderAccount(context.Background(), database.CreateKOReaderAccountParams{
 		Username: "reader",
-		SyncKey:  HashKey("secret-key"),
+		SyncKey:  "secret-key",
 		Enabled:  true,
 	}); err != nil {
 		t.Fatalf("CreateKOReaderAccount failed: %v", err)
@@ -193,8 +193,8 @@ func TestAuthenticateRejectsLegacyInvalidStoredKey(t *testing.T) {
 	if _, err := service.Authenticate(context.Background(), Credentials{
 		Username: "reader",
 		Key:      HashKey("secret-key"),
-	}); err != ErrForbidden {
-		t.Fatalf("expected ErrForbidden for invalid stored sync key, got %v", err)
+	}); err != ErrUnauthorized {
+		t.Fatalf("expected ErrUnauthorized for mismatched client hash, got %v", err)
 	}
 }
 
@@ -207,5 +207,21 @@ func TestCreateAccountGeneratesKey(t *testing.T) {
 	}
 	if account.Username != "reader" || !IsValidSyncKey(account.SyncKey) {
 		t.Fatalf("unexpected account payload: %+v", account)
+	}
+}
+
+func TestCreateAccountAuthenticatesWithClientHashedHeader(t *testing.T) {
+	service, _, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+
+	account, err := service.CreateAccount(context.Background(), "reader")
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	if _, err := service.Authenticate(context.Background(), Credentials{
+		Username: account.Username,
+		Key:      HashKey(account.SyncKey),
+	}); err != nil {
+		t.Fatalf("Authenticate failed with client-hashed key: %v", err)
 	}
 }

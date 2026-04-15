@@ -91,10 +91,6 @@ func requestWithRouteParam(method, path string, body []byte, key, value string) 
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 }
 
-func testKOReaderSyncKey() string {
-	return koreader.HashKey("secret-key")
-}
-
 func createTestKOReaderAccount(t *testing.T, controller *Controller, username string) KOReaderAccountResponse {
 	t.Helper()
 
@@ -261,6 +257,33 @@ func TestCreateKOReaderAccount(t *testing.T) {
 	}
 }
 
+func TestGeneratedKOReaderAccountCanAuthenticateThroughClientHashedHeader(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	settingsReq := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader([]byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"match_mode": "binary_hash",
+		"path_ignore_extension": false
+	}`)))
+	settingsRec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(settingsRec, settingsReq)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d body=%s", settingsRec.Code, settingsRec.Body.String())
+	}
+
+	account := createTestKOReaderAccount(t, controller, "reader")
+	authReq := httptest.NewRequest(http.MethodGet, "/koreader/users/auth", nil)
+	authReq.Header.Set("x-auth-user", account.Username)
+	authReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
+	authRec := httptest.NewRecorder()
+	controller.koreaderAuth(authRec, authReq)
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
+	}
+}
+
 func TestRotateAndToggleKOReaderAccount(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
@@ -287,6 +310,24 @@ func TestRotateAndToggleKOReaderAccount(t *testing.T) {
 	}
 	if rotated.SyncKey == "" || rotated.SyncKey == account.SyncKey {
 		t.Fatalf("expected rotated sync key, got %+v", rotated)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/system/koreader/accounts", nil)
+	listRec := httptest.NewRecorder()
+	controller.listKOReaderAccounts(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected account list 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+
+	var accounts []KOReaderAccountResponse
+	if err := json.NewDecoder(listRec.Body).Decode(&accounts); err != nil {
+		t.Fatalf("decode account list failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	if accounts[0].LatestError != "" {
+		t.Fatalf("expected no latest error after rotate/toggle system events, got %+v", accounts[0])
 	}
 }
 
@@ -330,7 +371,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 
 	authReq := httptest.NewRequest(http.MethodGet, "/koreader/users/auth", nil)
 	authReq.Header.Set("x-auth-user", account.Username)
-	authReq.Header.Set("x-auth-key", account.SyncKey)
+	authReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	authRec := httptest.NewRecorder()
 	controller.koreaderAuth(authRec, authReq)
 	if authRec.Code != http.StatusOK {
@@ -349,7 +390,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	}`)
 	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
 	progressReq.Header.Set("x-auth-user", account.Username)
-	progressReq.Header.Set("x-auth-key", account.SyncKey)
+	progressReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	progressRec := httptest.NewRecorder()
 	controller.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
@@ -366,7 +407,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 
 	getReq := requestWithRouteParam(http.MethodGet, "/koreader/syncs/progress/doc", nil, "document", fileHash)
 	getReq.Header.Set("x-auth-user", account.Username)
-	getReq.Header.Set("x-auth-key", account.SyncKey)
+	getReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	getRec := httptest.NewRecorder()
 	controller.koreaderGetProgress(getRec, getReq)
 	if getRec.Code != http.StatusOK {
@@ -403,7 +444,7 @@ func TestKOReaderAuthSupportsVendorJSON(t *testing.T) {
 	authReq := httptest.NewRequest(http.MethodGet, "/koreader/users/auth", nil)
 	authReq.Header.Set("Accept", "application/vnd.koreader.v1+json")
 	authReq.Header.Set("x-auth-user", account.Username)
-	authReq.Header.Set("x-auth-key", account.SyncKey)
+	authReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	authRec := httptest.NewRecorder()
 	controller.koreaderAuth(authRec, authReq)
 	if authRec.Code != http.StatusOK {
@@ -468,7 +509,7 @@ func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 	}`)
 	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
 	progressReq.Header.Set("x-auth-user", account.Username)
-	progressReq.Header.Set("x-auth-key", account.SyncKey)
+	progressReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	progressRec := httptest.NewRecorder()
 	controller.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
@@ -530,7 +571,7 @@ func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
 	}`)
 	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
 	progressReq.Header.Set("x-auth-user", account.Username)
-	progressReq.Header.Set("x-auth-key", account.SyncKey)
+	progressReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	progressRec := httptest.NewRecorder()
 	controller.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {

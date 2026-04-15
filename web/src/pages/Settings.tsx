@@ -849,7 +849,7 @@ export default function Settings() {
 
           <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-100">
             <p className="font-medium">KOReader 配置方式</p>
-            <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`。用户名和 Sync Key 请从下方账号列表复制，Sync Key 由服务端生成。</p>
+            <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`。用户名和下方显示的原始 Sync Key 直接填到设备即可，KOReader 会在请求时自动计算鉴权值。</p>
             <p className="mt-2 text-sky-100/70">
               当前模式：{koreaderForm.match_mode === 'file_path'
                 ? `文件路径匹配（文件名 + 向上 ${koreaderStatus?.path_match_depth ?? 2} 层路径${koreaderForm.path_ignore_extension ? '，忽略扩展名' : '，保留扩展名'}）`
@@ -929,7 +929,7 @@ export default function Settings() {
 
             <div className="space-y-3">
               {koreaderAccounts.length === 0 ? (
-                <p className="text-sm text-gray-500">当前还没有 KOReader 账号。创建后系统会生成 Sync Key，可直接复制到设备中使用。</p>
+                <p className="text-sm text-gray-500">当前还没有 KOReader 账号。创建后系统会生成原始 Sync Key，直接填到 KOReader 设备即可，不需要手动做 MD5。</p>
               ) : (
                 koreaderAccounts.map((account) => (
                   <div key={account.id} className="rounded-lg border border-gray-800 bg-black/20 p-4 space-y-3">
@@ -949,7 +949,7 @@ export default function Settings() {
                     </div>
 
                     <div className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-gray-500">Sync Key</p>
+                      <p className="text-[11px] uppercase tracking-wide text-gray-500">原始 Sync Key</p>
                       <p className="mt-1 break-all font-mono text-sm text-sky-100">{account.sync_key}</p>
                     </div>
 

@@ -64,29 +64,63 @@ func (s *Service) Register(ctx context.Context, username, key string, allowRegis
 func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database.KOReaderAccount, error) {
 	creds.Username = strings.TrimSpace(creds.Username)
 	creds.Key = NormalizeSyncKey(creds.Key)
+	slog.Info("KOReader authenticate attempt",
+		"username", creds.Username,
+		"client_key_prefix", keyPreview(creds.Key),
+	)
 	if creds.Username == "" || creds.Key == "" {
+		slog.Warn("KOReader authenticate rejected: missing credentials",
+			"username", creds.Username,
+			"client_key_prefix", keyPreview(creds.Key),
+		)
 		return database.KOReaderAccount{}, ErrUnauthorized
 	}
 
 	account, err := s.store.GetKOReaderAccountByUsername(ctx, creds.Username)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			slog.Warn("KOReader authenticate rejected: account not found",
+				"username", creds.Username,
+				"client_key_prefix", keyPreview(creds.Key),
+			)
 			return database.KOReaderAccount{}, ErrForbidden
 		}
+		slog.Error("KOReader authenticate failed: account lookup error",
+			"username", creds.Username,
+			"error", err,
+		)
 		return database.KOReaderAccount{}, err
 	}
 	if !account.Enabled {
+		slog.Warn("KOReader authenticate rejected: account disabled",
+			"username", creds.Username,
+			"account_id", account.ID,
+		)
 		return database.KOReaderAccount{}, ErrForbidden
 	}
 	if account.Username == "" || account.SyncKey == "" {
+		slog.Warn("KOReader authenticate rejected: account missing stored sync key",
+			"username", creds.Username,
+			"account_id", account.ID,
+		)
 		return database.KOReaderAccount{}, ErrForbidden
 	}
-	if !IsValidSyncKey(account.SyncKey) {
-		return database.KOReaderAccount{}, ErrForbidden
-	}
-	if account.SyncKey != creds.Key {
+	expectedKey := HashKey(account.SyncKey)
+	if expectedKey != creds.Key {
+		slog.Warn("KOReader authenticate rejected: client key mismatch",
+			"username", creds.Username,
+			"account_id", account.ID,
+			"stored_raw_key_length", len(account.SyncKey),
+			"expected_key_prefix", keyPreview(expectedKey),
+			"client_key_prefix", keyPreview(creds.Key),
+		)
 		return database.KOReaderAccount{}, ErrUnauthorized
 	}
+	slog.Info("KOReader authenticate succeeded",
+		"username", creds.Username,
+		"account_id", account.ID,
+		"client_key_prefix", keyPreview(creds.Key),
+	)
 	return account, nil
 }
 
@@ -373,6 +407,17 @@ func GenerateSyncKey() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func keyPreview(value string) string {
+	value = NormalizeSyncKey(value)
+	if value == "" {
+		return "<empty>"
+	}
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
 }
 
 type MatchConfig struct {

@@ -54,6 +54,7 @@ func (q *Queries) ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, 
 				SELECT e.message
 				FROM koreader_sync_events e
 				WHERE e.username = a.username
+				  AND e.direction != 'system'
 				  AND e.status != 'ok'
 				ORDER BY e.created_at DESC, e.id DESC
 				LIMIT 1
@@ -230,7 +231,8 @@ func (q *Queries) GetLatestKOReaderFailure(ctx context.Context) (KOReaderSyncEve
 	row := q.db.QueryRowContext(ctx, `
 		SELECT id, direction, username, document, book_id, status, message, created_at
 		FROM koreader_sync_events
-		WHERE status != 'ok'
+		WHERE direction != 'system'
+		  AND status != 'ok'
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1
 	`)

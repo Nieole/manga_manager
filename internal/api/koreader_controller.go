@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -503,12 +504,25 @@ func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
+		slog.Warn("KOReader auth request rejected: service disabled",
+			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
+			"client_ip", requestClientIP(r),
+			"user_agent", r.UserAgent(),
+		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
 		return
 	}
-	_, err := c.koreader.Authenticate(r.Context(), readKOReaderCredentials(r))
+	creds := readKOReaderCredentials(r)
+	slog.Info("KOReader auth request received",
+		"username", creds.Username,
+		"client_key_prefix", authKeyPreview(creds.Key),
+		"client_ip", requestClientIP(r),
+		"user_agent", r.UserAgent(),
+		"accept", r.Header.Get("Accept"),
+	)
+	_, err := c.koreader.Authenticate(r.Context(), creds)
 	if err != nil {
-		c.logKOReaderAuthFailure(r.Context(), readKOReaderCredentials(r), "", err)
+		c.logKOReaderAuthFailure(r.Context(), creds, "", err)
 		writeKOReaderAuthError(w, r, err)
 		return
 	}
@@ -517,6 +531,11 @@ func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
+		slog.Warn("KOReader progress push rejected: service disabled",
+			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
+			"client_ip", requestClientIP(r),
+			"user_agent", r.UserAgent(),
+		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
 		return
 	}
@@ -526,9 +545,18 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	result, err := c.koreader.SaveProgress(r.Context(), readKOReaderCredentials(r), payload)
+	creds := readKOReaderCredentials(r)
+	slog.Info("KOReader progress push request received",
+		"username", creds.Username,
+		"client_key_prefix", authKeyPreview(creds.Key),
+		"document", strings.TrimSpace(payload.Document),
+		"device", strings.TrimSpace(payload.Device),
+		"device_id", strings.TrimSpace(payload.DeviceID),
+		"client_ip", requestClientIP(r),
+	)
+	result, err := c.koreader.SaveProgress(r.Context(), creds, payload)
 	if err != nil {
-		c.logKOReaderAuthFailure(r.Context(), readKOReaderCredentials(r), payload.Document, err)
+		c.logKOReaderAuthFailure(r.Context(), creds, payload.Document, err)
 		writeKOReaderAuthError(w, r, err)
 		return
 	}
@@ -541,16 +569,31 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 
 func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
+		slog.Warn("KOReader progress pull rejected: service disabled",
+			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
+			"document", chi.URLParam(r, "document"),
+			"client_ip", requestClientIP(r),
+			"user_agent", r.UserAgent(),
+		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
 		return
 	}
-	record, err := c.koreader.GetProgress(r.Context(), readKOReaderCredentials(r), chi.URLParam(r, "document"))
+	creds := readKOReaderCredentials(r)
+	document := chi.URLParam(r, "document")
+	slog.Info("KOReader progress pull request received",
+		"username", creds.Username,
+		"client_key_prefix", authKeyPreview(creds.Key),
+		"document", document,
+		"client_ip", requestClientIP(r),
+		"user_agent", r.UserAgent(),
+	)
+	record, err := c.koreader.GetProgress(r.Context(), creds, document)
 	if err != nil {
 		switch {
 		case errors.Is(err, ksvc.ErrProgressNotFound):
 			writeKOReaderJSON(w, r, http.StatusNotFound, map[string]string{"message": "Not found"})
 		case errors.Is(err, ksvc.ErrForbidden), errors.Is(err, ksvc.ErrUnauthorized):
-			c.logKOReaderAuthFailure(r.Context(), readKOReaderCredentials(r), chi.URLParam(r, "document"), err)
+			c.logKOReaderAuthFailure(r.Context(), creds, document, err)
 			writeKOReaderAuthError(w, r, err)
 		default:
 			writeKOReaderJSON(w, r, http.StatusInternalServerError, map[string]string{"message": "Unknown server error"})
@@ -617,4 +660,40 @@ func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Cred
 		Status:    status,
 		Message:   message,
 	})
+	slog.Warn("KOReader auth-related request failed",
+		"username", strings.TrimSpace(creds.Username),
+		"document", strings.TrimSpace(document),
+		"status", status,
+		"message", message,
+		"client_key_prefix", authKeyPreview(creds.Key),
+	)
+}
+
+func requestClientIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
+		value := strings.TrimSpace(r.Header.Get(header))
+		if value == "" {
+			continue
+		}
+		if header == "X-Forwarded-For" && strings.Contains(value, ",") {
+			parts := strings.Split(value, ",")
+			return strings.TrimSpace(parts[0])
+		}
+		return value
+	}
+	return r.RemoteAddr
+}
+
+func authKeyPreview(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "<empty>"
+	}
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
 }

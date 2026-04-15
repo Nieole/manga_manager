@@ -311,6 +311,60 @@
   - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./...`
   - `npm run build` in `web/`
 
+### 📌 增量记录 — 2026-04-15（KOReader 最近错误修复）
+
+#### 系统事件与错误提示分离 `[P1: 可观测性修正]`
+- **修复“轮换 Sync Key 后显示最近错误”的问题**：`latest_error` 的查询逻辑此前把所有 `status != ok` 的事件都当成错误，包括：
+  - `account_rotated`
+  - `account_enabled`
+  - `account_disabled`
+- 现在 `latest_error` 只会读取**非系统事件**中的失败记录，系统管理操作不再污染账号卡片或服务状态中的“最近错误”提示。
+- 新增回归测试，覆盖“轮换/启停账号后 `latest_error` 仍为空”的场景。
+
+### 📌 增量记录 — 2026-04-15（KOReader 原始密钥与登录排障）
+
+#### 原始 Sync Key 语义修正 `[P0: 鉴权兼容性修复]`
+- **修复“新生成账号仍然 Unauthorized”的问题**：多账号版本初版误把服务端保存的 `sync_key` 直接与请求头 `x-auth-key` 比较。
+- 现已改为符合 KOReader 客户端行为：
+  - 后台展示和复制的是**原始 Sync Key**
+  - KOReader 设备使用该原始值配置账号
+  - 客户端请求时会发送 `MD5(原始 Sync Key)` 到 `x-auth-key`
+  - 服务端鉴权时按 `MD5(保存的原始 Sync Key)` 与请求头比较
+- 设置页文案同步修正，明确说明：
+  - 设备侧直接填写原始 Sync Key
+  - 不需要手动对密钥做 MD5
+
+#### 登录排障日志增强 `[P1: 可观测性与故障定位]`
+- 为 KOReader 协议入口新增结构化日志，覆盖：
+  - `/koreader/users/auth`
+  - `/koreader/syncs/progress`
+  - `/koreader/syncs/progress/{document}`
+- 新增日志字段：
+  - `username`
+  - `client_ip`
+  - `user_agent`
+  - `accept`
+  - `document`
+  - `device`
+  - `device_id`
+  - `client_key_prefix`（仅前缀，不记录完整密钥）
+- 服务层鉴权分支现在会明确记录失败原因：
+  - 缺失凭据
+  - 账号不存在
+  - 账号停用
+  - 账号未保存原始密钥
+  - 客户端 header 与预期 MD5 不匹配
+  - 鉴权成功
+- 失败事件仍会写入 `koreader_sync_events`，同时补充一条结构化 `slog.Warn`，便于直接从服务日志定位问题。
+
+#### 测试与验证 `[工程质量]`
+- 新增 / 更新测试覆盖：
+  - 新生成账号 + 客户端发送 MD5 后的 `x-auth-key` 可以成功登录
+  - 服务层按“原始 Sync Key -> MD5 请求头”语义鉴权
+- 验证通过：
+  - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./internal/api ./internal/koreader ./internal/database`
+  - `npm run build` in `web/`
+
 ### 📌 增量记录 — 2026-04-15（KOReader 协议兼容修复）
 
 #### KOReader 鉴权与协议兼容 `[P0: 修正 KOReader 自定义同步协议实现]`
