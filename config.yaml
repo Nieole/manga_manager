@@ -29,3 +29,5 @@ koreader:
     enabled: false
     base_path: /koreader
     allow_registration: false
+    match_mode: binary_hash
+    path_ignore_extension: false

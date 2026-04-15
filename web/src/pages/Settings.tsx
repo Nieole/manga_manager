@@ -29,6 +29,8 @@ interface Config {
     enabled: boolean;
     base_path: string;
     allow_registration: boolean;
+    match_mode: string;
+    path_ignore_extension: boolean;
   };
 }
 
@@ -61,6 +63,9 @@ interface KOReaderStatus {
   enabled: boolean;
   base_path: string;
   allow_registration: boolean;
+  match_mode: string;
+  path_ignore_extension: boolean;
+  path_match_depth: number;
   username: string;
   has_password: boolean;
   stats: {
@@ -79,12 +84,56 @@ interface KOReaderForm {
   enabled: boolean;
   base_path: string;
   allow_registration: boolean;
+  match_mode: string;
+  path_ignore_extension: boolean;
   username: string;
   password: string;
 }
 
+interface KOReaderUnmatchedItem {
+  id: number;
+  document: string;
+  normalized_key: string;
+  device: string;
+  device_id: string;
+  percentage: number;
+  updated_at: string;
+  suggestion: string;
+}
+
+type KOReaderConfigState = Config['koreader'];
+
 const sectionClassName = 'bg-komgaSurface border border-gray-800 rounded-2xl p-6 shadow-sm space-y-4';
 const inputClassName = 'w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40 transition-all';
+
+function buildKOReaderForm(
+  configState?: KOReaderConfigState | null,
+  status?: KOReaderStatus | null,
+  current?: KOReaderForm | null
+): KOReaderForm {
+  const resolvedUsername = status ? (status.username || status.stats?.username || '') : (current?.username || '');
+  return {
+    enabled: status?.enabled ?? configState?.enabled ?? current?.enabled ?? false,
+    base_path: status?.base_path ?? configState?.base_path ?? current?.base_path ?? '/koreader',
+    allow_registration: status?.allow_registration ?? configState?.allow_registration ?? current?.allow_registration ?? false,
+    match_mode: status?.match_mode ?? configState?.match_mode ?? current?.match_mode ?? 'binary_hash',
+    path_ignore_extension:
+      status?.path_ignore_extension ?? configState?.path_ignore_extension ?? current?.path_ignore_extension ?? false,
+    username: resolvedUsername,
+    password: current?.password ?? '',
+  };
+}
+
+function formatKOReaderLatestSync(value?: { Time: string; Valid: boolean } | null): string {
+  if (!value?.Valid || !value.Time) {
+    return '暂无同步记录';
+  }
+  const date = new Date(value.Time);
+  if (Number.isNaN(date.getTime())) {
+    return '暂无同步记录';
+  }
+  return date.toLocaleString();
+}
 
 export default function Settings() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -100,6 +149,9 @@ export default function Settings() {
   const [koreaderStatus, setKOReaderStatus] = useState<KOReaderStatus | null>(null);
   const [koreaderForm, setKOReaderForm] = useState<KOReaderForm | null>(null);
   const [koreaderValidation, setKOReaderValidation] = useState<ValidationResult>({ valid: true, issues: [] });
+  const [unmatchedItems, setUnmatchedItems] = useState<KOReaderUnmatchedItem[]>([]);
+  const [applyingMatching, setApplyingMatching] = useState(false);
+  const [needsMatchingMaintenance, setNeedsMatchingMaintenance] = useState(false);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMsg({ text, type });
@@ -111,23 +163,23 @@ export default function Settings() {
     setConfig(res.data.config);
     setValidation(res.data.validation);
     setCapabilities(res.data.capabilities);
+    setKOReaderForm((current) => buildKOReaderForm(res.data.config.koreader, koreaderStatus, current));
   };
 
   const fetchKOReader = async () => {
     const res = await axios.get<KOReaderStatus>('/api/system/koreader');
     setKOReaderStatus(res.data);
-    setKOReaderForm({
-      enabled: res.data.enabled,
-      base_path: res.data.base_path,
-      allow_registration: res.data.allow_registration,
-      username: res.data.username || '',
-      password: '',
-    });
+    setKOReaderForm((current) => buildKOReaderForm(config?.koreader, res.data, current));
     setKOReaderValidation({ valid: true, issues: [] });
   };
 
+  const fetchKOReaderUnmatched = async () => {
+    const res = await axios.get<KOReaderUnmatchedItem[]>('/api/system/koreader/unmatched?limit=12');
+    setUnmatchedItems(Array.isArray(res.data) ? res.data : []);
+  };
+
   useEffect(() => {
-    Promise.all([fetchConfig(), fetchKOReader()])
+    Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderUnmatched()])
       .catch((error) => {
         console.error('Failed to fetch settings data', error);
         showToast('无法加载系统配置', 'error');
@@ -218,17 +270,17 @@ export default function Settings() {
     setSavingKOReader(true);
     try {
       const res = await axios.post<KOReaderStatus>('/api/system/koreader', koreaderForm);
+      const requiresMaintenance = Boolean(
+        koreaderStatus &&
+        (koreaderStatus.match_mode !== koreaderForm.match_mode ||
+          koreaderStatus.path_ignore_extension !== koreaderForm.path_ignore_extension)
+      );
       setKOReaderStatus(res.data);
-      setKOReaderForm({
-        enabled: res.data.enabled,
-        base_path: res.data.base_path,
-        allow_registration: res.data.allow_registration,
-        username: res.data.username || '',
-        password: '',
-      });
+      setKOReaderForm((current) => buildKOReaderForm(config?.koreader, res.data, current));
+      setNeedsMatchingMaintenance(requiresMaintenance);
       setKOReaderValidation({ valid: true, issues: [] });
       showToast('KOReader 同步配置已保存', 'success');
-      await fetchConfig();
+      await Promise.all([fetchConfig(), fetchKOReaderUnmatched()]);
     } catch (error) {
       console.error(error);
       if (axios.isAxiosError(error) && error.response?.status === 422) {
@@ -242,6 +294,21 @@ export default function Settings() {
       }
     } finally {
       setSavingKOReader(false);
+    }
+  };
+
+  const handleApplyMatchingChanges = async () => {
+    setApplyingMatching(true);
+    try {
+      const res = await axios.post('/api/system/koreader/apply-matching');
+      showToast(res.data?.message || 'KOReader 匹配规则应用任务已启动', 'success');
+      setNeedsMatchingMaintenance(false);
+      await fetchKOReader();
+    } catch (error) {
+      console.error(error);
+      showToast('启动 KOReader 匹配规则应用任务失败。', 'error');
+    } finally {
+      setApplyingMatching(false);
     }
   };
 
@@ -372,7 +439,6 @@ export default function Settings() {
         <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4 text-sm text-gray-300">
           <p className="font-medium text-white mb-1">当前支持的扫描格式</p>
           <p>{capabilities?.default_scan_formats || 'zip,cbz,rar,cbr'}</p>
-          <p className="text-xs text-gray-500 mt-2">已移除 PDF 的默认宣称，避免出现“可选但实际无法解析”的错误认知。</p>
         </div>
       </section>
 
@@ -605,7 +671,13 @@ export default function Settings() {
                 已匹配 {koreaderStatus?.stats.matched_progress_count ?? 0} 条，同步待重关联 {koreaderStatus?.stats.unmatched_progress_count ?? 0} 条。
               </p>
               <p className="text-xs text-gray-500 mt-2">
-                指纹进度 {koreaderStatus?.stats.hashed_books ?? 0} / {koreaderStatus?.stats.total_books ?? 0}
+                匹配索引进度 {koreaderStatus?.stats.hashed_books ?? 0} / {koreaderStatus?.stats.total_books ?? 0}
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                当前账号 {koreaderStatus?.username || koreaderStatus?.stats.username || '未配置'} · 同步密钥 {koreaderStatus?.has_password ? '已设置' : '未设置'}
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                最近同步 {formatKOReaderLatestSync(koreaderStatus?.stats.latest_sync_at)}
               </p>
             </div>
 
@@ -632,6 +704,36 @@ export default function Settings() {
                 <option value="true">开启</option>
               </select>
               <p className="text-xs text-gray-500 mt-1">建议单用户场景默认关闭，通过本页直接配置同步账号。</p>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">匹配模式</label>
+              <select
+                value={koreaderForm.match_mode}
+                onChange={(e) => setKOReaderForm({ ...koreaderForm, match_mode: e.target.value })}
+                className={inputClassName}
+              >
+                <option value="binary_hash">二进制哈希</option>
+                <option value="file_path">文件路径</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">`file_path` 模式只比较文件名及向上 {koreaderStatus?.path_match_depth ?? 2} 层路径。</p>
+              {renderKOReaderFieldErrors('koreader.match_mode')}
+            </div>
+
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+              <label className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-white">路径匹配时忽略扩展名</p>
+                  <p className="text-xs text-gray-500 mt-1">仅在 `file_path` 模式下生效。开启后，`.cbz` 与 `.zip` 只看路径主体是否一致。</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={koreaderForm.path_ignore_extension}
+                  disabled={koreaderForm.match_mode !== 'file_path'}
+                  onChange={(e) => setKOReaderForm({ ...koreaderForm, path_ignore_extension: e.target.checked })}
+                  className="h-5 w-5 rounded border-gray-700 bg-gray-900 text-komgaPrimary disabled:opacity-50"
+                />
+              </label>
             </div>
 
             <div>
@@ -664,7 +766,29 @@ export default function Settings() {
           <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-100">
             <p className="font-medium">KOReader 配置方式</p>
             <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`，用户名和同步密钥与这里保持一致。</p>
+            <p className="mt-2 text-sky-100/70">
+              当前模式：{koreaderForm.match_mode === 'file_path'
+                ? `文件路径匹配（文件名 + 向上 ${koreaderStatus?.path_match_depth ?? 2} 层路径${koreaderForm.path_ignore_extension ? '，忽略扩展名' : '，保留扩展名'}）`
+                : '二进制哈希匹配'}
+            </p>
           </div>
+
+          {needsMatchingMaintenance && (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+              <p className="font-medium">匹配规则已变更</p>
+              <p className="mt-1 text-amber-100/80">
+                你刚刚修改了 KOReader 匹配模式或扩展名规则。建议立即应用变更，系统会顺序执行“重建匹配索引”和“重关联未匹配记录”。
+              </p>
+              <button
+                onClick={handleApplyMatchingChanges}
+                disabled={applyingMatching}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg border border-amber-500/20 bg-black/20 px-4 py-2 text-sm text-amber-50 hover:bg-black/30 disabled:opacity-60"
+              >
+                {applyingMatching ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {applyingMatching ? '提交中...' : '应用匹配规则变更'}
+              </button>
+            </div>
+          )}
 
           <div className="grid gap-3 md:grid-cols-3">
             <button
@@ -679,11 +803,11 @@ export default function Settings() {
               <p className="text-xs text-sky-100/80 mt-1">保存启用状态、路径和同步账号。首次启用需要设置同步密钥。</p>
             </button>
             <button
-              onClick={() => handleAction('/api/system/koreader/rebuild-hashes', '书籍同步指纹重建已启动')}
+              onClick={() => handleAction('/api/system/koreader/rebuild-hashes', 'KOReader 匹配索引重建已启动')}
               className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15"
             >
-              <p className="font-medium">重建书籍指纹</p>
-              <p className="text-xs text-sky-100/80 mt-1">为现有书籍补全 Binary / 路径 / 文件名三类匹配指纹。</p>
+              <p className="font-medium">重建匹配索引</p>
+              <p className="text-xs text-sky-100/80 mt-1">为现有书籍补全二进制哈希和路径匹配索引。切换模式后建议先执行一次。</p>
             </button>
             <button
               onClick={() => handleAction('/api/system/koreader/reconcile', '未匹配同步记录重关联已启动')}
@@ -692,6 +816,43 @@ export default function Settings() {
               <p className="font-medium">重关联未匹配记录</p>
               <p className="text-xs text-sky-100/80 mt-1">重新尝试把历史同步记录映射回已入库书籍。</p>
             </button>
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-white">未匹配同步记录</p>
+                <p className="text-xs text-gray-500 mt-1">这里展示最近未能映射回本地书籍的 KOReader 记录，方便判断是路径规则问题还是索引未更新。</p>
+              </div>
+              <button
+                onClick={fetchKOReaderUnmatched}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-200 hover:bg-black/30"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                刷新
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              {unmatchedItems.length === 0 ? (
+                <p className="text-sm text-gray-500">当前没有未匹配的 KOReader 同步记录。</p>
+              ) : (
+                unmatchedItems.map((item) => (
+                  <div key={item.id} className="rounded-lg border border-gray-800 bg-black/20 p-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-white break-all">{item.document}</p>
+                        <p className="mt-1 text-xs text-gray-500 break-all">当前匹配键：{item.normalized_key || '无法归一化'}</p>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {Math.round(item.percentage * 100)}% · {new Date(item.updated_at).toLocaleString()}
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-400">设备：{item.device || '未知设备'}{item.device_id ? ` (${item.device_id})` : ''}</p>
+                    <p className="mt-2 text-xs text-amber-200/90">{item.suggestion}</p>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </section>
       )}

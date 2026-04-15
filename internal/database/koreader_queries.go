@@ -46,7 +46,7 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 			EXISTS(SELECT 1 FROM koreader_settings WHERE id = 1 AND password_hash != '') as has_password,
 			COALESCE((SELECT username FROM koreader_settings WHERE id = 1), '') as username,
 			(SELECT COUNT(*) FROM books) as total_books,
-			(SELECT COUNT(*) FROM books WHERE COALESCE(file_hash, '') != '') as hashed_books,
+			(SELECT COUNT(*) FROM books WHERE COALESCE(file_hash, '') != '' AND COALESCE(path_fingerprint, '') != '' AND COALESCE(path_fingerprint_no_ext, '') != '') as hashed_books,
 			(SELECT COUNT(*) FROM koreader_progress WHERE book_id IS NULL) as unmatched_progress_count,
 			(SELECT COUNT(*) FROM koreader_progress WHERE book_id IS NOT NULL) as matched_progress_count,
 			(SELECT MAX(updated_at) FROM koreader_progress) as latest_sync_at
@@ -66,43 +66,62 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 	return item, err
 }
 
-func (q *Queries) FindBookByDocumentFingerprint(ctx context.Context, document string) (KOReaderBookMatch, error) {
-	if document == "" {
+func (q *Queries) FindBookByDocumentFingerprint(ctx context.Context, documentKey, matchMode string, pathIgnoreExtension bool) (KOReaderBookMatch, error) {
+	if documentKey == "" {
 		return KOReaderBookMatch{}, sql.ErrNoRows
 	}
 
-	row := q.db.QueryRowContext(ctx, `
-		SELECT
-			b.id,
-			b.path,
-			b.page_count,
-			COALESCE(b.file_hash, ''),
-			COALESCE(b.path_fingerprint, ''),
-			COALESCE(b.filename_fingerprint, ''),
-			CASE
-				WHEN b.file_hash = ? THEN 'binary'
-				WHEN b.path_fingerprint = ? THEN 'path'
-				WHEN b.filename_fingerprint = ? THEN 'filename'
-				ELSE ''
-			END as matched_by,
-			b.last_read_page
-		FROM books b
-		JOIN libraries l ON l.id = b.library_id
-		WHERE l.koreader_sync_enabled = TRUE
-		  AND (
-			b.file_hash = ?
-			OR b.path_fingerprint = ?
-			OR b.filename_fingerprint = ?
-		  )
-		ORDER BY
-			CASE
-				WHEN b.file_hash = ? THEN 0
-				WHEN b.path_fingerprint = ? THEN 1
-				WHEN b.filename_fingerprint = ? THEN 2
-				ELSE 3
-			END
-		LIMIT 1
-	`, document, document, document, document, document, document, document, document, document)
+	var (
+		query     string
+		matchedBy string
+	)
+	switch matchMode {
+	case "binary_hash":
+		query = `
+			SELECT
+				b.id,
+				b.path,
+				b.page_count,
+				COALESCE(b.file_hash, ''),
+				COALESCE(b.path_fingerprint, ''),
+				COALESCE(b.path_fingerprint_no_ext, ''),
+				?,
+				b.last_read_page
+			FROM books b
+			JOIN libraries l ON l.id = b.library_id
+			WHERE l.koreader_sync_enabled = TRUE
+			  AND b.file_hash = ?
+			LIMIT 1
+		`
+		matchedBy = "binary_hash"
+	case "file_path":
+		column := "b.path_fingerprint"
+		matchedBy = "file_path_exact"
+		if pathIgnoreExtension {
+			column = "b.path_fingerprint_no_ext"
+			matchedBy = "file_path_ignore_extension"
+		}
+		query = `
+			SELECT
+				b.id,
+				b.path,
+				b.page_count,
+				COALESCE(b.file_hash, ''),
+				COALESCE(b.path_fingerprint, ''),
+				COALESCE(b.path_fingerprint_no_ext, ''),
+				?,
+				b.last_read_page
+			FROM books b
+			JOIN libraries l ON l.id = b.library_id
+			WHERE l.koreader_sync_enabled = TRUE
+			  AND ` + column + ` = ?
+			LIMIT 1
+		`
+	default:
+		return KOReaderBookMatch{}, sql.ErrNoRows
+	}
+
+	row := q.db.QueryRowContext(ctx, query, matchedBy, documentKey)
 
 	var (
 		item         KOReaderBookMatch
@@ -114,7 +133,7 @@ func (q *Queries) FindBookByDocumentFingerprint(ctx context.Context, document st
 		&item.PageCount,
 		&item.FileHash,
 		&item.PathFingerprint,
-		&item.FilenameFingerprint,
+		&item.PathFingerprintNoExt,
 		&item.MatchedBy,
 		&lastReadPage,
 	)
@@ -200,7 +219,7 @@ func (q *Queries) ListBooksMissingIdentity(ctx context.Context, limit int) ([]Bo
 		JOIN libraries l ON l.id = b.library_id
 		WHERE COALESCE(file_hash, '') = ''
 		   OR COALESCE(path_fingerprint, '') = ''
-		   OR COALESCE(filename_fingerprint, '') = ''
+		   OR COALESCE(path_fingerprint_no_ext, '') = ''
 		ORDER BY b.updated_at ASC, b.id ASC
 		LIMIT ?
 	`, limit)
@@ -223,9 +242,9 @@ func (q *Queries) ListBooksMissingIdentity(ctx context.Context, limit int) ([]Bo
 func (q *Queries) UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error {
 	_, err := q.db.ExecContext(ctx, `
 		UPDATE books
-		SET file_hash = ?, path_fingerprint = ?, filename_fingerprint = ?, updated_at = CURRENT_TIMESTAMP
+		SET file_hash = ?, path_fingerprint = ?, path_fingerprint_no_ext = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, arg.FileHash, arg.PathFingerprint, arg.FilenameFingerprint, arg.ID)
+	`, arg.FileHash, arg.PathFingerprint, arg.PathFingerprintNoExt, arg.ID)
 	return err
 }
 

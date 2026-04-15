@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -16,20 +18,36 @@ import (
 )
 
 type KOReaderSystemResponse struct {
-	Enabled           bool                   `json:"enabled"`
-	BasePath          string                 `json:"base_path"`
-	AllowRegistration bool                   `json:"allow_registration"`
-	Username          string                 `json:"username"`
-	HasPassword       bool                   `json:"has_password"`
-	Stats             database.KOReaderStats `json:"stats"`
+	Enabled             bool                   `json:"enabled"`
+	BasePath            string                 `json:"base_path"`
+	AllowRegistration   bool                   `json:"allow_registration"`
+	MatchMode           string                 `json:"match_mode"`
+	PathIgnoreExtension bool                   `json:"path_ignore_extension"`
+	PathMatchDepth      int                    `json:"path_match_depth"`
+	Username            string                 `json:"username"`
+	HasPassword         bool                   `json:"has_password"`
+	Stats               database.KOReaderStats `json:"stats"`
 }
 
 type UpdateKOReaderSettingsRequest struct {
-	Enabled           bool   `json:"enabled"`
-	BasePath          string `json:"base_path"`
-	AllowRegistration bool   `json:"allow_registration"`
-	Username          string `json:"username"`
-	Password          string `json:"password"`
+	Enabled             bool   `json:"enabled"`
+	BasePath            string `json:"base_path"`
+	AllowRegistration   bool   `json:"allow_registration"`
+	MatchMode           string `json:"match_mode"`
+	PathIgnoreExtension bool   `json:"path_ignore_extension"`
+	Username            string `json:"username"`
+	Password            string `json:"password"`
+}
+
+type KOReaderUnmatchedItem struct {
+	ID            int64   `json:"id"`
+	Document      string  `json:"document"`
+	NormalizedKey string  `json:"normalized_key"`
+	Device        string  `json:"device"`
+	DeviceID      string  `json:"device_id"`
+	Percentage    float64 `json:"percentage"`
+	UpdatedAt     string  `json:"updated_at"`
+	Suggestion    string  `json:"suggestion"`
 }
 
 func (c *Controller) SetupKOReaderRoutes(r chi.Router) {
@@ -56,13 +74,59 @@ func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request)
 	}
 	cfg := c.currentConfig()
 	jsonResponse(w, http.StatusOK, KOReaderSystemResponse{
-		Enabled:           cfg.KOReader.Enabled,
-		BasePath:          cfg.KOReader.BasePath,
-		AllowRegistration: cfg.KOReader.AllowRegistration,
-		Username:          stats.Username,
-		HasPassword:       stats.HasPassword,
-		Stats:             stats,
+		Enabled:             cfg.KOReader.Enabled,
+		BasePath:            cfg.KOReader.BasePath,
+		AllowRegistration:   cfg.KOReader.AllowRegistration,
+		MatchMode:           cfg.KOReader.MatchMode,
+		PathIgnoreExtension: cfg.KOReader.PathIgnoreExtension,
+		PathMatchDepth:      config.KOReaderPathMatchDepth,
+		Username:            stats.Username,
+		HasPassword:         stats.HasPassword,
+		Stats:               stats,
 	})
+}
+
+func (c *Controller) listKOReaderUnmatched(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	items, err := c.store.ListUnmatchedKOReaderProgress(r.Context(), limit)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load unmatched KOReader progress")
+		return
+	}
+
+	cfg := c.currentConfig()
+	result := make([]KOReaderUnmatchedItem, 0, len(items))
+	for _, item := range items {
+		suggestion := "建议先重建 KOReader 匹配索引，再重关联未匹配记录。"
+		if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
+			suggestion = fmt.Sprintf("请确认 KOReader 上报路径在文件名及向上 %d 层路径范围内可对应本地书籍。", config.KOReaderPathMatchDepth)
+			if cfg.KOReader.PathIgnoreExtension {
+				suggestion += " 当前已忽略扩展名。"
+			}
+		} else {
+			suggestion = "请确认 KOReader 当前使用的是二进制哈希匹配，并先重建匹配索引。"
+		}
+		result = append(result, KOReaderUnmatchedItem{
+			ID:            item.ID,
+			Document:      item.Document,
+			NormalizedKey: ksvc.NormalizeDocumentForMatch(item.Document, cfg.KOReader.MatchMode, cfg.KOReader.PathIgnoreExtension),
+			Device:        item.Device,
+			DeviceID:      item.DeviceID,
+			Percentage:    item.Percentage,
+			UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
+			Suggestion:    suggestion,
+		})
+	}
+	if result == nil {
+		result = []KOReaderUnmatchedItem{}
+	}
+	jsonResponse(w, http.StatusOK, result)
 }
 
 func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +143,15 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 	}
 	if !strings.HasPrefix(req.BasePath, "/") {
 		issues = append(issues, config.ValidationIssue{Field: "koreader.base_path", Message: "同步路径必须以 / 开头。", Severity: "error"})
+	}
+	req.MatchMode = strings.TrimSpace(strings.ToLower(req.MatchMode))
+	if req.MatchMode == "" {
+		req.MatchMode = config.KOReaderMatchModeBinaryHash
+	}
+	switch req.MatchMode {
+	case config.KOReaderMatchModeBinaryHash, config.KOReaderMatchModeFilePath:
+	default:
+		issues = append(issues, config.ValidationIssue{Field: "koreader.match_mode", Message: "匹配模式必须是 binary_hash 或 file_path。", Severity: "error"})
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Enabled && req.Username == "" {
@@ -108,6 +181,8 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 	cfg.KOReader.Enabled = req.Enabled
 	cfg.KOReader.BasePath = req.BasePath
 	cfg.KOReader.AllowRegistration = req.AllowRegistration
+	cfg.KOReader.MatchMode = req.MatchMode
+	cfg.KOReader.PathIgnoreExtension = req.PathIgnoreExtension
 	if err := c.persistConfig(&cfg); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to persist KOReader configuration")
 		return
@@ -129,7 +204,15 @@ func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusConflict, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "书籍指纹重建已启动"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "KOReader 匹配索引重建已启动"})
+}
+
+func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Request) {
+	if err := c.launchRefreshKOReaderMatchingTask(); err != nil {
+		jsonError(w, http.StatusConflict, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "KOReader 匹配规则应用任务已启动"})
 }
 
 func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +225,7 @@ func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Re
 
 func (c *Controller) launchRebuildBookHashesTask() error {
 	key := "rebuild_book_hashes"
-	if !c.startTask(key, "rebuild_book_hashes", "开始重建书籍同步指纹", 0) {
+	if !c.startTask(key, "rebuild_book_hashes", "开始重建 KOReader 匹配索引", 0) {
 		return fmt.Errorf("task already running")
 	}
 	c.setTaskMetadata(key, nil, "系统")
@@ -152,10 +235,10 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 			c.updateTask(key, current, total, message)
 		})
 		if err != nil {
-			c.failTaskWithError(key, fmt.Sprintf("书籍指纹重建失败: %v", err), err.Error())
+			c.failTaskWithError(key, fmt.Sprintf("KOReader 匹配索引重建失败: %v", err), err.Error())
 			return
 		}
-		c.finishTask(key, fmt.Sprintf("书籍指纹重建完成，已更新 %d / %d 本书籍", updated, total))
+		c.finishTask(key, fmt.Sprintf("KOReader 匹配索引重建完成，已更新 %d / %d 本书籍", updated, total))
 	}()
 	return nil
 }
@@ -176,6 +259,37 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 			return
 		}
 		c.finishTask(key, fmt.Sprintf("KOReader 进度重关联完成，已更新 %d / %d 条记录", updated, total))
+	}()
+	return nil
+}
+
+func (c *Controller) launchRefreshKOReaderMatchingTask() error {
+	key := "refresh_koreader_matching"
+	if !c.startTask(key, "refresh_koreader_matching", "开始应用 KOReader 匹配规则变更", 2) {
+		return fmt.Errorf("task already running")
+	}
+	cfg := c.currentConfig()
+	c.setTaskMetadata(key, map[string]string{
+		"match_mode":            cfg.KOReader.MatchMode,
+		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
+	}, "系统")
+
+	go func() {
+		c.updateTask(key, 0, 2, "开始重建 KOReader 匹配索引")
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(context.Background(), 10000, nil)
+		if err != nil {
+			c.failTaskWithError(key, fmt.Sprintf("KOReader 匹配索引重建失败: %v", err), err.Error())
+			return
+		}
+
+		c.updateTask(key, 1, 2, fmt.Sprintf("匹配索引已更新 %d / %d，本阶段开始重关联未匹配记录", updatedBooks, totalBooks))
+		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(context.Background(), 10000, nil)
+		if err != nil {
+			c.failTaskWithError(key, fmt.Sprintf("KOReader 进度重关联失败: %v", err), err.Error())
+			return
+		}
+
+		c.finishTask(key, fmt.Sprintf("KOReader 匹配规则已应用，索引更新 %d / %d，重关联 %d / %d", updatedBooks, totalBooks, updatedProgress, totalProgress))
 	}()
 	return nil
 }

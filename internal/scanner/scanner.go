@@ -97,13 +97,13 @@ type scanJob struct {
 }
 
 type scanResult struct {
-	seriesName          string
-	seriesPath          string
-	book                database.UpsertBookByPathParams
-	comicInfo           *parser.ComicInfo
-	fileHash            string
-	pathFingerprint     string
-	filenameFingerprint string
+	seriesName           string
+	seriesPath           string
+	book                 database.UpsertBookByPathParams
+	comicInfo            *parser.ComicInfo
+	fileHash             string
+	pathFingerprint      string
+	pathFingerprintNoExt string
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
@@ -514,13 +514,13 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 
 	res := scanResult{
-		seriesName:          seriesName,
-		seriesPath:          seriesPath,
-		book:                book,
-		comicInfo:           cInfo,
-		fileHash:            fileHash,
-		pathFingerprint:     koreader.FingerprintRelativePath(rootPath, job.path),
-		filenameFingerprint: koreader.FingerprintFilename(job.path),
+		seriesName:           seriesName,
+		seriesPath:           seriesPath,
+		book:                 book,
+		comicInfo:            cInfo,
+		fileHash:             fileHash,
+		pathFingerprint:      koreader.FingerprintRelativePath(rootPath, job.path, false),
+		pathFingerprintNoExt: koreader.FingerprintRelativePath(rootPath, job.path, true),
 	}
 
 	select {
@@ -692,10 +692,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					continue
 				}
 				if err := q.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
-					ID:                  actualBook.ID,
-					FileHash:            res.fileHash,
-					PathFingerprint:     res.pathFingerprint,
-					FilenameFingerprint: res.filenameFingerprint,
+					ID:                   actualBook.ID,
+					FileHash:             res.fileHash,
+					PathFingerprint:      res.pathFingerprint,
+					PathFingerprintNoExt: res.pathFingerprintNoExt,
 				}); err != nil {
 					slog.Warn("Failed to update book identity", "book_id", actualBook.ID, "path", actualBook.Path, "error", err)
 				}

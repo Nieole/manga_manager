@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -29,18 +30,56 @@ func FingerprintFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func FingerprintRelativePath(libraryRoot, bookPath string) string {
+func FingerprintRelativePath(libraryRoot, bookPath string, ignoreExtension bool) string {
 	rel, err := filepath.Rel(libraryRoot, bookPath)
 	if err != nil {
 		rel = bookPath
 	}
-	rel = filepath.ToSlash(strings.ToLower(strings.TrimSpace(rel)))
-	return hashMD5(rel)
+	return FingerprintDocumentPath(rel, ignoreExtension)
 }
 
-func FingerprintFilename(bookPath string) string {
-	name := strings.ToLower(strings.TrimSpace(filepath.Base(bookPath)))
-	return hashMD5(name)
+func FingerprintDocumentPath(documentPath string, ignoreExtension bool) string {
+	normalized := normalizePathFragment(documentPath, ignoreExtension)
+	if normalized == "" {
+		return ""
+	}
+	return hashMD5(normalized)
+}
+
+func normalizePathFragment(raw string, ignoreExtension bool) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	standard := strings.ReplaceAll(raw, "\\", "/")
+	standard = path.Clean(standard)
+	standard = strings.TrimPrefix(standard, "./")
+	parts := strings.Split(standard, "/")
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." {
+			continue
+		}
+		filtered = append(filtered, strings.ToLower(part))
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+
+	start := len(filtered) - 3
+	if start < 0 {
+		start = 0
+	}
+	filtered = filtered[start:]
+	if ignoreExtension && len(filtered) > 0 {
+		last := filtered[len(filtered)-1]
+		ext := path.Ext(last)
+		filtered[len(filtered)-1] = strings.TrimSuffix(last, ext)
+	}
+
+	return strings.Join(filtered, "/")
 }
 
 func hashMD5(value string) string {

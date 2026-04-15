@@ -180,6 +180,8 @@ export default function Logs() {
         return '书籍指纹重建';
       case 'reconcile_koreader_progress':
         return 'KOReader 重关联';
+      case 'refresh_koreader_matching':
+        return '应用 KOReader 匹配规则';
       default:
         return type;
     }
@@ -202,6 +204,8 @@ export default function Logs() {
         return '建议检查书库文件可读性，以及数据库是否允许写入书籍身份字段。';
       case 'reconcile_koreader_progress':
         return '建议先重建书籍指纹，再重试未匹配的 KOReader 同步记录。';
+      case 'refresh_koreader_matching':
+        return '会顺序执行匹配索引重建和未匹配记录重关联，适合在切换匹配模式后使用。';
       default:
         return '建议先查看任务错误详情，再决定是否重试。';
     }

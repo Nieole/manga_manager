@@ -98,7 +98,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		scanner:        scan,
 		engine:         engine,
 		config:         cfg,
-		koreader:       koreader.NewService(store),
+		koreader:       koreader.NewService(store, cfg),
 		configPath:     cfgPath,
 		clients:        make(map[chan string]bool),
 		newClients:     make(chan chan string),
@@ -207,6 +207,8 @@ func inferTaskScope(taskType, key string) (string, *int64) {
 func isRetryableTaskType(taskType string) bool {
 	switch taskType {
 	case "scan_library", "scan_series", "cleanup_library", "rebuild_index", "rebuild_thumbnails", "scrape", "ai_grouping", "rebuild_book_hashes", "reconcile_koreader_progress":
+		return true
+	case "refresh_koreader_matching":
 		return true
 	default:
 		return false
@@ -594,6 +596,8 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		err = c.launchRebuildBookHashesTask()
 	case "reconcile_koreader_progress":
 		err = c.launchReconcileKOReaderProgressTask()
+	case "refresh_koreader_matching":
+		err = c.launchRefreshKOReaderMatchingTask()
 	default:
 		err = fmt.Errorf("unsupported retry type")
 	}
@@ -661,7 +665,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Delete("/system/tasks", c.clearTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
 		r.Get("/system/koreader", c.getKOReaderSettings)
+		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)
 		r.Post("/system/koreader", c.updateKOReaderSettings)
+		r.Post("/system/koreader/apply-matching", c.applyKOReaderMatching)
 		r.Post("/system/koreader/rebuild-hashes", c.rebuildKOReaderHashes)
 		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)

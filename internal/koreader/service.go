@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 )
 
@@ -23,6 +24,7 @@ var (
 
 type Service struct {
 	store database.Store
+	cfg   *config.Manager
 }
 
 type Credentials struct {
@@ -44,8 +46,8 @@ type SyncResult struct {
 	BookID  *int64
 }
 
-func NewService(store database.Store) *Service {
-	return &Service{store: store}
+func NewService(store database.Store, cfg *config.Manager) *Service {
+	return &Service{store: store, cfg: cfg}
 }
 
 func (s *Service) Register(ctx context.Context, username, key string, allowRegistration bool) (database.KOReaderSettings, error) {
@@ -135,7 +137,9 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 		bookID    sql.NullInt64
 		matchedBy string
 	)
-	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, payload.Document); matchErr == nil {
+	matchConfig := s.currentMatchConfig()
+	documentKey := normalizeDocumentForMatch(payload.Document, matchConfig)
+	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
 		bookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 		matchedBy = match.MatchedBy
 		if applyErr := s.applyBookProgress(ctx, match, payload.Percentage); applyErr != nil {
@@ -190,7 +194,9 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 	}
 
 	if !record.BookID.Valid {
-		if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, record.Document); matchErr == nil {
+		matchConfig := s.currentMatchConfig()
+		documentKey := normalizeDocumentForMatch(record.Document, matchConfig)
+		if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
 			_ = s.store.LinkKOReaderProgressToBook(ctx, record.ID, match.BookID, match.MatchedBy)
 			record.BookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 			record.MatchedBy = match.MatchedBy
@@ -226,10 +232,10 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 			continue
 		}
 		if err := s.store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
-			ID:                  book.ID,
-			FileHash:            fileHash,
-			PathFingerprint:     FingerprintRelativePath(book.LibraryPath, book.Path),
-			FilenameFingerprint: FingerprintFilename(book.Path),
+			ID:                   book.ID,
+			FileHash:             fileHash,
+			PathFingerprint:      FingerprintRelativePath(book.LibraryPath, book.Path, false),
+			PathFingerprintNoExt: FingerprintRelativePath(book.LibraryPath, book.Path, true),
 		}); err != nil {
 			return updated, total, err
 		}
@@ -249,7 +255,9 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 	total := len(items)
 	updated := 0
 	for idx, item := range items {
-		match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, item.Document)
+		matchConfig := s.currentMatchConfig()
+		documentKey := normalizeDocumentForMatch(item.Document, matchConfig)
+		match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension)
 		if matchErr == nil {
 			if err := s.store.LinkKOReaderProgressToBook(ctx, item.ID, match.BookID, match.MatchedBy); err != nil {
 				return updated, total, err
@@ -264,6 +272,40 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 		}
 	}
 	return updated, total, nil
+}
+
+type MatchConfig struct {
+	MatchMode           string
+	PathIgnoreExtension bool
+}
+
+func (s *Service) currentMatchConfig() MatchConfig {
+	if s.cfg == nil {
+		return MatchConfig{MatchMode: config.KOReaderMatchModeBinaryHash}
+	}
+	current := s.cfg.Snapshot()
+	return MatchConfig{
+		MatchMode:           current.KOReader.MatchMode,
+		PathIgnoreExtension: current.KOReader.PathIgnoreExtension,
+	}
+}
+
+func normalizeDocumentForMatch(document string, cfg MatchConfig) string {
+	document = strings.TrimSpace(document)
+	if document == "" {
+		return ""
+	}
+	if cfg.MatchMode == config.KOReaderMatchModeFilePath {
+		return FingerprintDocumentPath(document, cfg.PathIgnoreExtension)
+	}
+	return strings.ToLower(document)
+}
+
+func NormalizeDocumentForMatch(document string, matchMode string, pathIgnoreExtension bool) string {
+	return normalizeDocumentForMatch(document, MatchConfig{
+		MatchMode:           matchMode,
+		PathIgnoreExtension: pathIgnoreExtension,
+	})
 }
 
 func (s *Service) applyBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64) error {

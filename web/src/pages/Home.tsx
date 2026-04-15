@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, Heart, FolderHeart, RefreshCw, Settings, TabletSmartphone } from 'lucide-react';
+import { ImageIcon, Heart, FolderHeart, RefreshCw, Settings } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
 import { HomeFilters } from './home/HomeFilters';
@@ -45,7 +45,6 @@ export default function Home() {
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
     const [loadingAI, setLoadingAI] = useState(false);
     const [hasFetchedAI, setHasFetchedAI] = useState(false);
-    const [koreaderEnabled, setKOReaderEnabled] = useState(false);
 
     const fetchAIRecommendations = () => {
         if (!libId) return;
@@ -66,8 +65,7 @@ export default function Home() {
         Promise.all([
             axios.get('/api/tags/all').catch(() => ({ data: [] })),
             axios.get('/api/authors/all').catch(() => ({ data: [] })),
-            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false } }))
-        ]).then(([tRes, aRes, koreaderRes]) => {
+        ]).then(([tRes, aRes]) => {
             // Deduplicate authors by name since we might have Writer, Penciller combinations
             const tNames = tRes.data || [];
             const aList = aRes.data || [];
@@ -76,7 +74,6 @@ export default function Home() {
 
             setAllTags(tNames);
             setAllAuthors(Array.from(map.values()));
-            setKOReaderEnabled(Boolean(koreaderRes.data?.enabled));
         });
     }, []);
 
@@ -239,19 +236,6 @@ export default function Home() {
             {currentLibrary && (
                 <div className={`mb-6 rounded-2xl border p-4 ${currentLibrary.koreader_sync_enabled ?? true ? 'border-sky-500/20 bg-sky-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div className="flex items-start gap-3">
-                            <TabletSmartphone className={`mt-0.5 h-5 w-5 shrink-0 ${(currentLibrary.koreader_sync_enabled ?? true) ? 'text-sky-300' : 'text-amber-300'}`} />
-                            <div>
-                                <p className="text-sm font-medium text-white">
-                                    {currentLibrary.name} 的 KOReader 同步
-                                </p>
-                                <p className="mt-1 text-sm text-gray-300">
-                                    {currentLibrary.koreader_sync_enabled ?? true
-                                        ? (koreaderEnabled ? '当前资源库已参与 KOReader 阅读进度同步。来自 KOReader 的进度会尝试映射到本库书籍。' : '当前资源库允许 KOReader 同步，但系统级 KOReader 服务还未启用。')
-                                        : '当前资源库已排除在 KOReader 阅读进度同步范围外，来自 KOReader 的进度不会映射到这个库。'}
-                                </p>
-                            </div>
-                        </div>
                         <button
                             onClick={() => window.dispatchEvent(new CustomEvent('manga-manager:open-edit-library', { detail: { libraryId: currentLibrary.id } }))}
                             className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-4 py-2 text-sm text-gray-100 hover:bg-black/30"

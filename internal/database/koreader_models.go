@@ -47,14 +47,14 @@ type UpsertKOReaderProgressParams struct {
 }
 
 type KOReaderBookMatch struct {
-	BookID              int64  `json:"book_id"`
-	Path                string `json:"path"`
-	PageCount           int64  `json:"page_count"`
-	FileHash            string `json:"file_hash"`
-	PathFingerprint     string `json:"path_fingerprint"`
-	FilenameFingerprint string `json:"filename_fingerprint"`
-	MatchedBy           string `json:"matched_by"`
-	LastReadPage        *int64 `json:"last_read_page,omitempty"`
+	BookID               int64  `json:"book_id"`
+	Path                 string `json:"path"`
+	PageCount            int64  `json:"page_count"`
+	FileHash             string `json:"file_hash"`
+	PathFingerprint      string `json:"path_fingerprint"`
+	PathFingerprintNoExt string `json:"path_fingerprint_no_ext"`
+	MatchedBy            string `json:"matched_by"`
+	LastReadPage         *int64 `json:"last_read_page,omitempty"`
 }
 
 type BookIdentityCandidate struct {
@@ -65,10 +65,10 @@ type BookIdentityCandidate struct {
 }
 
 type UpdateBookIdentityParams struct {
-	ID                  int64  `json:"id"`
-	FileHash            string `json:"file_hash"`
-	PathFingerprint     string `json:"path_fingerprint"`
-	FilenameFingerprint string `json:"filename_fingerprint"`
+	ID                   int64  `json:"id"`
+	FileHash             string `json:"file_hash"`
+	PathFingerprint      string `json:"path_fingerprint"`
+	PathFingerprintNoExt string `json:"path_fingerprint_no_ext"`
 }
 
 type KOReaderStats struct {

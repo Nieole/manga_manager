@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS books (
     last_read_at DATETIME,
     file_hash TEXT,
     path_fingerprint TEXT,
+    path_fingerprint_no_ext TEXT,
     filename_fingerprint TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -112,6 +112,11 @@ func ValidateConfig(cfg *Config) ValidationResult {
 	} else if !strings.HasPrefix(basePath, "/") {
 		issues = append(issues, ValidationIssue{Field: "koreader.base_path", Message: "KOReader 同步路径必须以 / 开头。", Severity: "error"})
 	}
+	switch strings.TrimSpace(cfg.KOReader.MatchMode) {
+	case KOReaderMatchModeBinaryHash, KOReaderMatchModeFilePath:
+	default:
+		issues = append(issues, ValidationIssue{Field: "koreader.match_mode", Message: "匹配模式必须是 binary_hash 或 file_path。", Severity: "error"})
+	}
 
 	return ValidationResult{
 		Valid:  len(issues) == 0,

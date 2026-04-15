@@ -28,7 +28,7 @@ type Store interface {
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
 	UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReaderSettingsParams) (KOReaderSettings, error)
 	GetKOReaderStats(ctx context.Context) (KOReaderStats, error)
-	FindBookByDocumentFingerprint(ctx context.Context, document string) (KOReaderBookMatch, error)
+	FindBookByDocumentFingerprint(ctx context.Context, documentKey, matchMode string, pathIgnoreExtension bool) (KOReaderBookMatch, error)
 	UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReaderProgressParams) (KOReaderProgress, error)
 	GetKOReaderProgress(ctx context.Context, username, document string) (KOReaderProgress, error)
 	ListBooksMissingIdentity(ctx context.Context, limit int) ([]BookIdentityCandidate, error)
@@ -141,7 +141,7 @@ func Migrate(dbPath string) error {
 		{table: "libraries", name: "koreader_sync_enabled", definition: "BOOLEAN NOT NULL DEFAULT TRUE"},
 		{table: "books", name: "file_hash", definition: "TEXT"},
 		{table: "books", name: "path_fingerprint", definition: "TEXT"},
-		{table: "books", name: "filename_fingerprint", definition: "TEXT"},
+		{table: "books", name: "path_fingerprint_no_ext", definition: "TEXT"},
 	} {
 		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
 			return err
@@ -151,7 +151,7 @@ func Migrate(dbPath string) error {
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
-		`CREATE INDEX IF NOT EXISTS idx_books_filename_fingerprint ON books(filename_fingerprint)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint_no_ext ON books(path_fingerprint_no_ext)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return err

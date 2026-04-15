@@ -46,11 +46,19 @@ type Config struct {
 		Timeout     int    `yaml:"timeout" json:"timeout"`           // 请求超时时间（秒），默认 120
 	} `yaml:"llm" json:"llm"`
 	KOReader struct {
-		Enabled           bool   `yaml:"enabled" json:"enabled"`
-		BasePath          string `yaml:"base_path" json:"base_path"`
-		AllowRegistration bool   `yaml:"allow_registration" json:"allow_registration"`
+		Enabled             bool   `yaml:"enabled" json:"enabled"`
+		BasePath            string `yaml:"base_path" json:"base_path"`
+		AllowRegistration   bool   `yaml:"allow_registration" json:"allow_registration"`
+		MatchMode           string `yaml:"match_mode" json:"match_mode"`
+		PathIgnoreExtension bool   `yaml:"path_ignore_extension" json:"path_ignore_extension"`
 	} `yaml:"koreader" json:"koreader"`
 }
+
+const (
+	KOReaderMatchModeBinaryHash = "binary_hash"
+	KOReaderMatchModeFilePath   = "file_path"
+	KOReaderPathMatchDepth      = 2
+)
 
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -105,6 +113,8 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.KOReader.Enabled = false
 	cfg.KOReader.BasePath = "/koreader"
 	cfg.KOReader.AllowRegistration = false
+	cfg.KOReader.MatchMode = KOReaderMatchModeBinaryHash
+	cfg.KOReader.PathIgnoreExtension = false
 	NormalizeConfig(cfg)
 
 	data, err := yaml.Marshal(cfg)
@@ -207,6 +217,13 @@ func NormalizeConfig(cfg *Config) {
 		basePath = "/koreader"
 	}
 	cfg.KOReader.BasePath = basePath
+	matchMode := strings.TrimSpace(strings.ToLower(cfg.KOReader.MatchMode))
+	switch matchMode {
+	case KOReaderMatchModeBinaryHash, KOReaderMatchModeFilePath:
+	default:
+		matchMode = KOReaderMatchModeBinaryHash
+	}
+	cfg.KOReader.MatchMode = matchMode
 }
 
 func splitEndpoint(raw string) (string, string) {

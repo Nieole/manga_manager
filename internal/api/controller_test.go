@@ -71,7 +71,7 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 		scanner:    scan,
 		engine:     engine,
 		config:     cfgManager,
-		koreader:   koreader.NewService(store),
+		koreader:   koreader.NewService(store, cfgManager),
 		configPath: configPath,
 		tasks:      make(map[string]TaskStatus),
 		messages:   make(chan string, 32),
@@ -203,6 +203,8 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 		"enabled": true,
 		"base_path": "/koreader",
 		"allow_registration": false,
+		"match_mode": "file_path",
+		"path_ignore_extension": true,
 		"username": "reader",
 		"password": "secret-key"
 	}`)
@@ -218,7 +220,7 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response failed: %v", err)
 	}
-	if !resp.Enabled || resp.Username != "reader" || !resp.HasPassword {
+	if !resp.Enabled || resp.Username != "reader" || !resp.HasPassword || resp.MatchMode != config.KOReaderMatchModeFilePath || !resp.PathIgnoreExtension {
 		t.Fatalf("unexpected KOReader response: %+v", resp)
 	}
 
@@ -231,13 +233,15 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 	}
 }
 
-func TestKOReaderAuthAndProgressSync(t *testing.T) {
+func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
 	reqBody := []byte(`{
 		"enabled": true,
 		"base_path": "/koreader",
 		"allow_registration": false,
+		"match_mode": "binary_hash",
+		"path_ignore_extension": false,
 		"username": "reader",
 		"password": "secret-key"
 	}`)
@@ -260,10 +264,10 @@ func TestKOReaderAuthAndProgressSync(t *testing.T) {
 		t.Fatalf("FingerprintFile failed: %v", err)
 	}
 	if err := store.UpdateBookIdentity(context.Background(), database.UpdateBookIdentityParams{
-		ID:                  book.ID,
-		FileHash:            fileHash,
-		PathFingerprint:     koreader.FingerprintRelativePath(lib.Path, book.Path),
-		FilenameFingerprint: koreader.FingerprintFilename(book.Path),
+		ID:                   book.ID,
+		FileHash:             fileHash,
+		PathFingerprint:      koreader.FingerprintRelativePath(lib.Path, book.Path, false),
+		PathFingerprintNoExt: koreader.FingerprintRelativePath(lib.Path, book.Path, true),
 	}); err != nil {
 		t.Fatalf("UpdateBookIdentity failed: %v", err)
 	}
@@ -316,6 +320,192 @@ func TestKOReaderAuthAndProgressSync(t *testing.T) {
 	}
 	if got["document"] != fileHash {
 		t.Fatalf("unexpected document payload: %+v", got)
+	}
+}
+
+func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	reqBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"match_mode": "file_path",
+		"path_ignore_extension": false,
+		"username": "reader",
+		"password": "secret-key"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	root := t.TempDir()
+	lib, _, book := seedBookFixture(t, store, root, "Library", filepath.Join("Series", "Volume"), "Book.cbz", 100)
+	if err := os.WriteFile(book.Path, []byte("book-content-for-koreader-sync-path"), 0o644); err != nil {
+		t.Fatalf("write book file failed: %v", err)
+	}
+
+	fileHash, err := koreader.FingerprintFile(book.Path)
+	if err != nil {
+		t.Fatalf("FingerprintFile failed: %v", err)
+	}
+	if err := store.UpdateBookIdentity(context.Background(), database.UpdateBookIdentityParams{
+		ID:                   book.ID,
+		FileHash:             fileHash,
+		PathFingerprint:      koreader.FingerprintRelativePath(lib.Path, book.Path, false),
+		PathFingerprintNoExt: koreader.FingerprintRelativePath(lib.Path, book.Path, true),
+	}); err != nil {
+		t.Fatalf("UpdateBookIdentity failed: %v", err)
+	}
+
+	progressPayload := []byte(`{
+		"document":"/mnt/other/Series/Volume/Book.cbz",
+		"progress":"p-1",
+		"percentage":0.4,
+		"device":"Boox",
+		"device_id":"DEVICE-2"
+	}`)
+	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
+	progressReq.Header.Set("x-auth-user", "reader")
+	progressReq.Header.Set("x-auth-key", "secret-key")
+	progressRec := httptest.NewRecorder()
+	controller.koreaderUpdateProgress(progressRec, progressReq)
+	if progressRec.Code != http.StatusOK {
+		t.Fatalf("expected progress update 200, got %d body=%s", progressRec.Code, progressRec.Body.String())
+	}
+
+	updatedBook, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if !updatedBook.LastReadPage.Valid || updatedBook.LastReadPage.Int64 != 40 {
+		t.Fatalf("expected projected page 40, got %+v", updatedBook.LastReadPage)
+	}
+}
+
+func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	reqBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"match_mode": "file_path",
+		"path_ignore_extension": true,
+		"username": "reader",
+		"password": "secret-key"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	root := t.TempDir()
+	lib, _, book := seedBookFixture(t, store, root, "Library", filepath.Join("Series", "Volume"), "Book.cbz", 80)
+	if err := os.WriteFile(book.Path, []byte("book-content-for-koreader-sync-path-ext"), 0o644); err != nil {
+		t.Fatalf("write book file failed: %v", err)
+	}
+
+	fileHash, err := koreader.FingerprintFile(book.Path)
+	if err != nil {
+		t.Fatalf("FingerprintFile failed: %v", err)
+	}
+	if err := store.UpdateBookIdentity(context.Background(), database.UpdateBookIdentityParams{
+		ID:                   book.ID,
+		FileHash:             fileHash,
+		PathFingerprint:      koreader.FingerprintRelativePath(lib.Path, book.Path, false),
+		PathFingerprintNoExt: koreader.FingerprintRelativePath(lib.Path, book.Path, true),
+	}); err != nil {
+		t.Fatalf("UpdateBookIdentity failed: %v", err)
+	}
+
+	progressPayload := []byte(`{
+		"document":"/different/root/Series/Volume/Book.zip",
+		"progress":"p-2",
+		"percentage":0.25,
+		"device":"Boox",
+		"device_id":"DEVICE-3"
+	}`)
+	progressReq := httptest.NewRequest(http.MethodPut, "/koreader/syncs/progress", bytes.NewReader(progressPayload))
+	progressReq.Header.Set("x-auth-user", "reader")
+	progressReq.Header.Set("x-auth-key", "secret-key")
+	progressRec := httptest.NewRecorder()
+	controller.koreaderUpdateProgress(progressRec, progressReq)
+	if progressRec.Code != http.StatusOK {
+		t.Fatalf("expected progress update 200, got %d body=%s", progressRec.Code, progressRec.Body.String())
+	}
+
+	updatedBook, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if !updatedBook.LastReadPage.Valid || updatedBook.LastReadPage.Int64 != 20 {
+		t.Fatalf("expected projected page 20, got %+v", updatedBook.LastReadPage)
+	}
+}
+
+func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	reqBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"match_mode": "file_path",
+		"path_ignore_extension": false,
+		"username": "reader",
+		"password": "secret-key"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	_, err := store.UpsertKOReaderProgress(context.Background(), database.UpsertKOReaderProgressParams{
+		Username:   "reader",
+		Document:   "/mnt/koreader/Unknown/Vol1/Book.cbz",
+		Progress:   "p-x",
+		Percentage: 0.15,
+		Device:     "Boox",
+		DeviceID:   "DEVICE-X",
+		Timestamp:  time.Now().Unix(),
+		MatchedBy:  "",
+		RawPayload: `{"document":"unknown"}`,
+	})
+	if err != nil {
+		t.Fatalf("UpsertKOReaderProgress failed: %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/system/koreader/unmatched?limit=10", nil)
+	listRec := httptest.NewRecorder()
+	controller.listKOReaderUnmatched(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected unmatched list 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+
+	var items []KOReaderUnmatchedItem
+	if err := json.NewDecoder(listRec.Body).Decode(&items); err != nil {
+		t.Fatalf("decode unmatched list failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 unmatched item, got %d", len(items))
+	}
+	if items[0].NormalizedKey == "" {
+		t.Fatalf("expected normalized key in unmatched item: %+v", items[0])
+	}
+
+	applyReq := httptest.NewRequest(http.MethodPost, "/api/system/koreader/apply-matching", nil)
+	applyRec := httptest.NewRecorder()
+	controller.applyKOReaderMatching(applyRec, applyReq)
+	if applyRec.Code != http.StatusAccepted {
+		t.Fatalf("expected apply matching 202, got %d body=%s", applyRec.Code, applyRec.Body.String())
 	}
 }
 

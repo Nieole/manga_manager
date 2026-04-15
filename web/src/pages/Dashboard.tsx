@@ -51,6 +51,9 @@ interface TaskStatus {
 interface KOReaderOverview {
     enabled: boolean;
     base_path: string;
+    match_mode: string;
+    path_ignore_extension: boolean;
+    path_match_depth: number;
     stats?: {
         matched_progress_count: number;
         unmatched_progress_count: number;
@@ -76,7 +79,7 @@ export default function Dashboard() {
             axios.get('/api/system/tasks').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
             axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] })),
-            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } }))
+            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, match_mode: 'binary_hash', path_ignore_extension: false, path_match_depth: 2, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } }))
         ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes, koreaderRes]) => {
             setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
@@ -143,6 +146,12 @@ export default function Dashboard() {
                 return '元数据刮削';
             case 'ai_grouping':
                 return 'AI 分组';
+            case 'rebuild_book_hashes':
+                return '重建匹配索引';
+            case 'reconcile_koreader_progress':
+                return 'KOReader 重关联';
+            case 'refresh_koreader_matching':
+                return '应用 KOReader 匹配规则';
             default:
                 return type;
         }
@@ -255,6 +264,11 @@ export default function Dashboard() {
                         <h2 className="text-lg font-semibold text-white">KOReader Sync 覆盖范围</h2>
                         <p className="mt-1 text-sm text-gray-300">
                             服务端状态：{koreaderOverview?.enabled ? '已启用' : '未启用'}。已开启同步的资源库才会接收 KOReader 进度映射。
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500">
+                            当前匹配模式：{koreaderOverview?.match_mode === 'file_path'
+                                ? `文件路径（文件名 + 向上 ${koreaderOverview?.path_match_depth ?? 2} 层路径${koreaderOverview?.path_ignore_extension ? '，忽略扩展名' : '，保留扩展名'}）`
+                                : '二进制哈希'}
                         </p>
                     </div>
                     <button
