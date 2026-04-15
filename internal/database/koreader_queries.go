@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 func (q *Queries) GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error) {
@@ -39,19 +40,168 @@ func (q *Queries) UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReader
 	return item, err
 }
 
+func (q *Queries) ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, error) {
+	rows, err := q.db.QueryContext(ctx, `
+		SELECT
+			a.id,
+			a.username,
+			a.sync_key,
+			a.enabled,
+			a.created_at,
+			a.updated_at,
+			(SELECT MAX(updated_at) FROM koreader_progress p WHERE p.username = a.username) as last_used_at,
+			COALESCE((
+				SELECT e.message
+				FROM koreader_sync_events e
+				WHERE e.username = a.username
+				  AND e.status != 'ok'
+				ORDER BY e.created_at DESC, e.id DESC
+				LIMIT 1
+			), '') as latest_error
+		FROM koreader_accounts a
+		ORDER BY LOWER(a.username) ASC, a.id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]KOReaderAccount, 0)
+	for rows.Next() {
+		var item KOReaderAccount
+		if err := rows.Scan(
+			&item.ID,
+			&item.Username,
+			&item.SyncKey,
+			&item.Enabled,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+			&item.LastUsedAt,
+			&item.LatestError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (q *Queries) CreateKOReaderAccount(ctx context.Context, arg CreateKOReaderAccountParams) (KOReaderAccount, error) {
+	row := q.db.QueryRowContext(ctx, `
+		INSERT INTO koreader_accounts (username, sync_key, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id, username, sync_key, enabled, created_at, updated_at
+	`, strings.TrimSpace(arg.Username), strings.TrimSpace(arg.SyncKey), arg.Enabled)
+
+	var item KOReaderAccount
+	err := row.Scan(
+		&item.ID,
+		&item.Username,
+		&item.SyncKey,
+		&item.Enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
+func (q *Queries) GetKOReaderAccountByUsername(ctx context.Context, username string) (KOReaderAccount, error) {
+	row := q.db.QueryRowContext(ctx, `
+		SELECT id, username, sync_key, enabled, created_at, updated_at
+		FROM koreader_accounts
+		WHERE username = ?
+		LIMIT 1
+	`, strings.TrimSpace(username))
+
+	var item KOReaderAccount
+	err := row.Scan(
+		&item.ID,
+		&item.Username,
+		&item.SyncKey,
+		&item.Enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
+func (q *Queries) GetKOReaderAccountByID(ctx context.Context, id int64) (KOReaderAccount, error) {
+	row := q.db.QueryRowContext(ctx, `
+		SELECT id, username, sync_key, enabled, created_at, updated_at
+		FROM koreader_accounts
+		WHERE id = ?
+		LIMIT 1
+	`, id)
+
+	var item KOReaderAccount
+	err := row.Scan(
+		&item.ID,
+		&item.Username,
+		&item.SyncKey,
+		&item.Enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
+func (q *Queries) RotateKOReaderAccountKey(ctx context.Context, id int64, syncKey string) (KOReaderAccount, error) {
+	row := q.db.QueryRowContext(ctx, `
+		UPDATE koreader_accounts
+		SET sync_key = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+		RETURNING id, username, sync_key, enabled, created_at, updated_at
+	`, strings.TrimSpace(syncKey), id)
+
+	var item KOReaderAccount
+	err := row.Scan(
+		&item.ID,
+		&item.Username,
+		&item.SyncKey,
+		&item.Enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
+func (q *Queries) SetKOReaderAccountEnabled(ctx context.Context, id int64, enabled bool) (KOReaderAccount, error) {
+	row := q.db.QueryRowContext(ctx, `
+		UPDATE koreader_accounts
+		SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+		RETURNING id, username, sync_key, enabled, created_at, updated_at
+	`, enabled, id)
+
+	var item KOReaderAccount
+	err := row.Scan(
+		&item.ID,
+		&item.Username,
+		&item.SyncKey,
+		&item.Enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
 func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 	row := q.db.QueryRowContext(ctx, `
 		SELECT
-			EXISTS(SELECT 1 FROM koreader_settings WHERE id = 1 AND username != '') as configured,
-			EXISTS(SELECT 1 FROM koreader_settings WHERE id = 1 AND password_hash != '') as has_password,
+			EXISTS(SELECT 1 FROM koreader_accounts) as configured,
+			EXISTS(SELECT 1 FROM koreader_accounts WHERE sync_key != '') as has_password,
 			EXISTS(
 				SELECT 1
-				FROM koreader_settings
-				WHERE id = 1
-				  AND LOWER(password_hash) GLOB '[0-9a-f]*'
-				  AND LENGTH(password_hash) = 32
+				FROM koreader_accounts
+				WHERE LOWER(sync_key) GLOB '[0-9a-f]*'
+				  AND LENGTH(sync_key) = 32
 			) as has_valid_sync_key,
-			COALESCE((SELECT username FROM koreader_settings WHERE id = 1), '') as username,
+			COALESCE((SELECT username FROM koreader_accounts ORDER BY id ASC LIMIT 1), '') as username,
+			(SELECT COUNT(*) FROM koreader_accounts) as account_count,
+			(SELECT COUNT(*) FROM koreader_accounts WHERE enabled = TRUE) as enabled_account_count,
 			(SELECT COUNT(*) FROM books) as total_books,
 			(SELECT COUNT(*) FROM books WHERE COALESCE(file_hash, '') != '' AND COALESCE(path_fingerprint, '') != '' AND COALESCE(path_fingerprint_no_ext, '') != '') as hashed_books,
 			(SELECT COUNT(*) FROM koreader_progress WHERE book_id IS NULL) as unmatched_progress_count,
@@ -65,6 +215,8 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 		&item.HasPassword,
 		&item.HasValidSyncKey,
 		&item.Username,
+		&item.AccountCount,
+		&item.EnabledAccountCount,
 		&item.TotalBooks,
 		&item.HashedBooks,
 		&item.UnmatchedProgressCount,

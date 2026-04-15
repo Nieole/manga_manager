@@ -163,11 +163,12 @@ func TestRebuildBookIdentitiesUsesPathIndexesInFilePathMode(t *testing.T) {
 func TestAuthenticateUsesKOReaderSyncKey(t *testing.T) {
 	service, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
 
-	if _, err := store.UpsertKOReaderSettings(context.Background(), database.UpsertKOReaderSettingsParams{
+	if _, err := store.CreateKOReaderAccount(context.Background(), database.CreateKOReaderAccountParams{
 		Username: "reader",
 		SyncKey:  HashKey("secret-key"),
+		Enabled:  true,
 	}); err != nil {
-		t.Fatalf("UpsertKOReaderSettings failed: %v", err)
+		t.Fatalf("CreateKOReaderAccount failed: %v", err)
 	}
 
 	if _, err := service.Authenticate(context.Background(), Credentials{
@@ -181,11 +182,12 @@ func TestAuthenticateUsesKOReaderSyncKey(t *testing.T) {
 func TestAuthenticateRejectsLegacyInvalidStoredKey(t *testing.T) {
 	service, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
 
-	if _, err := store.UpsertKOReaderSettings(context.Background(), database.UpsertKOReaderSettingsParams{
+	if _, err := store.CreateKOReaderAccount(context.Background(), database.CreateKOReaderAccountParams{
 		Username: "reader",
 		SyncKey:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Enabled:  true,
 	}); err != nil {
-		t.Fatalf("UpsertKOReaderSettings failed: %v", err)
+		t.Fatalf("CreateKOReaderAccount failed: %v", err)
 	}
 
 	if _, err := service.Authenticate(context.Background(), Credentials{
@@ -193,5 +195,17 @@ func TestAuthenticateRejectsLegacyInvalidStoredKey(t *testing.T) {
 		Key:      HashKey("secret-key"),
 	}); err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden for invalid stored sync key, got %v", err)
+	}
+}
+
+func TestCreateAccountGeneratesKey(t *testing.T) {
+	service, _, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+
+	account, err := service.CreateAccount(context.Background(), "reader")
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+	if account.Username != "reader" || !IsValidSyncKey(account.SyncKey) {
+		t.Fatalf("unexpected account payload: %+v", account)
 	}
 }

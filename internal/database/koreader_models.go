@@ -17,6 +17,23 @@ type UpsertKOReaderSettingsParams struct {
 	SyncKey  string `json:"sync_key"`
 }
 
+type KOReaderAccount struct {
+	ID         int64          `json:"id"`
+	Username   string         `json:"username"`
+	SyncKey    string         `json:"sync_key"`
+	Enabled    bool           `json:"enabled"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	LastUsedAt sql.NullTime   `json:"last_used_at"`
+	LatestError sql.NullString `json:"latest_error"`
+}
+
+type CreateKOReaderAccountParams struct {
+	Username string `json:"username"`
+	SyncKey  string `json:"sync_key"`
+	Enabled  bool   `json:"enabled"`
+}
+
 type KOReaderProgress struct {
 	ID         int64         `json:"id"`
 	Username   string        `json:"username"`
@@ -76,6 +93,8 @@ type KOReaderStats struct {
 	HasPassword            bool         `json:"has_password"`
 	HasValidSyncKey        bool         `json:"has_valid_sync_key"`
 	Username               string       `json:"username"`
+	AccountCount           int64        `json:"account_count"`
+	EnabledAccountCount    int64        `json:"enabled_account_count"`
 	TotalBooks             int64        `json:"total_books"`
 	HashedBooks            int64        `json:"hashed_books"`
 	UnmatchedProgressCount int64        `json:"unmatched_progress_count"`

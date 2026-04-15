@@ -259,6 +259,58 @@
   - 启用/关闭同步服务
   - 配置同步路径
 
+### 📌 增量记录 — 2026-04-15（KOReader 多账号与服务端生成密钥）
+
+#### 多账号模型 `[P1: KOReader 服务端能力增强]`
+- **KOReader 账号从单账号升级为多账号**：新增 `koreader_accounts` 表，账号字段包含：
+  - `username`
+  - `sync_key`
+  - `enabled`
+  - `created_at`
+  - `updated_at`
+- **旧单账号自动迁移**：数据库迁移时会尝试把历史 `koreader_settings` 中的单账号数据迁入 `koreader_accounts`，避免已有接入用户被直接清空。
+- **按账号鉴权**：KOReader 协议层不再读取单一账号配置，而是按 `x-auth-user` 查找对应账号，再校验其 `x-auth-key`。
+
+#### 服务端生成 Sync Key `[P1: 账号管理与接入流程]`
+- **Sync Key 改为由服务端生成**：新增随机 16 字节十六进制生成逻辑，每次创建账号或轮换密钥时由服务端生成新的 32 位小写十六进制 Sync Key。
+- **账号管理接口落地**：
+  - `GET /api/system/koreader/accounts`
+  - `POST /api/system/koreader/accounts`
+  - `POST /api/system/koreader/accounts/{id}/rotate-key`
+  - `POST /api/system/koreader/accounts/{id}/toggle`
+  - `DELETE /api/system/koreader/accounts/{id}`
+- **设备自助注册不再作为主路径**：`POST /koreader/users/create` 现在返回“请从管理后台创建账号”的兼容拒绝响应，以避免与“服务端生成 Sync Key”模型冲突。
+
+#### 系统状态与进度投影 `[P1: 多账号运行态可见性]`
+- `GET /api/system/koreader` 现在返回服务级统计，而不是单账号字段，新增：
+  - `account_count`
+  - `enabled_account_count`
+- KOReader 进度仍按账号分别保存在 `koreader_progress` 中，但对本地 `books.last_read_page/last_read_at` 的投影仍然保持**全局合并**，继续采用“更远进度优先”规则。
+- 删除 KOReader 账号时，会同步清理该账号关联的 `koreader_progress` 与 `koreader_sync_events`，避免遗留脏数据。
+
+#### 设置页重构 `[P1: 管理界面]`
+- KOReader 设置页从“单账号表单”改为“服务配置 + 账号列表”：
+  - 服务配置仍负责开关、路径和匹配模式
+  - 账号列表负责创建、查看 Sync Key、复制、轮换、启停和删除
+- 状态卡从展示单一账号改为展示：
+  - 已启用账号数 / 总账号数
+  - 最近同步时间
+  - 最近错误
+- 设备接入文案同步更新为：
+  - 自定义同步服务地址从服务配置读取
+  - 用户名和 Sync Key 从后台账号列表复制
+
+#### 测试与验证 `[工程质量]`
+- 新增 / 更新测试覆盖：
+  - 创建 KOReader 账号并生成 Sync Key
+  - 轮换 Sync Key
+  - 启停账号
+  - 多账号下按用户名鉴权
+  - 现有 binary_hash / file_path 进度同步回归
+- 验证通过：
+  - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./...`
+  - `npm run build` in `web/`
+
 ### 📌 增量记录 — 2026-04-15（KOReader 协议兼容修复）
 
 #### KOReader 鉴权与协议兼容 `[P0: 修正 KOReader 自定义同步协议实现]`

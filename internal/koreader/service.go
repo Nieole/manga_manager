@@ -2,7 +2,9 @@ package koreader
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ var (
 	ErrForbidden          = errors.New("forbidden")
 	ErrRegistrationClosed = errors.New("registration closed")
 	ErrAlreadyConfigured  = errors.New("account already configured")
+	ErrAccountNotFound    = errors.New("account not found")
 	ErrProgressNotFound   = errors.New("progress not found")
 )
 
@@ -51,61 +54,48 @@ func NewService(store database.Store, cfg *config.Manager) *Service {
 }
 
 func (s *Service) Register(ctx context.Context, username, key string, allowRegistration bool) (database.KOReaderSettings, error) {
-	if !allowRegistration {
-		return database.KOReaderSettings{}, ErrRegistrationClosed
-	}
-	username = strings.TrimSpace(username)
-	key = NormalizeSyncKey(key)
-	if username == "" || !IsValidSyncKey(key) {
-		return database.KOReaderSettings{}, ErrUnauthorized
-	}
-
-	settings, err := s.store.GetKOReaderSettings(ctx)
-	if err != nil {
-		return database.KOReaderSettings{}, err
-	}
-	if settings.Username != "" {
-		return database.KOReaderSettings{}, ErrAlreadyConfigured
-	}
-
-	return s.store.UpsertKOReaderSettings(ctx, database.UpsertKOReaderSettingsParams{
-		Username: username,
-		SyncKey:  key,
-	})
+	_ = ctx
+	_ = username
+	_ = key
+	_ = allowRegistration
+	return database.KOReaderSettings{}, ErrRegistrationClosed
 }
 
-func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database.KOReaderSettings, error) {
+func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database.KOReaderAccount, error) {
 	creds.Username = strings.TrimSpace(creds.Username)
 	creds.Key = NormalizeSyncKey(creds.Key)
 	if creds.Username == "" || creds.Key == "" {
-		return database.KOReaderSettings{}, ErrUnauthorized
+		return database.KOReaderAccount{}, ErrUnauthorized
 	}
 
-	settings, err := s.store.GetKOReaderSettings(ctx)
+	account, err := s.store.GetKOReaderAccountByUsername(ctx, creds.Username)
 	if err != nil {
-		return database.KOReaderSettings{}, err
+		if err == sql.ErrNoRows {
+			return database.KOReaderAccount{}, ErrForbidden
+		}
+		return database.KOReaderAccount{}, err
 	}
-	if settings.Username == "" || settings.SyncKey == "" {
-		return database.KOReaderSettings{}, ErrForbidden
+	if !account.Enabled {
+		return database.KOReaderAccount{}, ErrForbidden
 	}
-	if settings.Username != creds.Username {
-		return database.KOReaderSettings{}, ErrForbidden
+	if account.Username == "" || account.SyncKey == "" {
+		return database.KOReaderAccount{}, ErrForbidden
 	}
-	if !IsValidSyncKey(settings.SyncKey) {
-		return database.KOReaderSettings{}, ErrForbidden
+	if !IsValidSyncKey(account.SyncKey) {
+		return database.KOReaderAccount{}, ErrForbidden
 	}
-	if settings.SyncKey != creds.Key {
-		return database.KOReaderSettings{}, ErrUnauthorized
+	if account.SyncKey != creds.Key {
+		return database.KOReaderAccount{}, ErrUnauthorized
 	}
-	return settings, nil
+	return account, nil
 }
 
 func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload ProgressPayload) (SyncResult, error) {
-	settings, err := s.Authenticate(ctx, creds)
+	account, err := s.Authenticate(ctx, creds)
 	if err != nil {
 		return SyncResult{}, err
 	}
-	_ = settings
+	_ = account
 
 	payload.Document = strings.TrimSpace(payload.Document)
 	payload.Progress = strings.TrimSpace(payload.Progress)
@@ -315,6 +305,74 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 		}
 	}
 	return updated, total, nil
+}
+
+func (s *Service) ListAccounts(ctx context.Context) ([]database.KOReaderAccount, error) {
+	return s.store.ListKOReaderAccounts(ctx)
+}
+
+func (s *Service) CreateAccount(ctx context.Context, username string) (database.KOReaderAccount, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return database.KOReaderAccount{}, ErrUnauthorized
+	}
+	if _, err := s.store.GetKOReaderAccountByUsername(ctx, username); err == nil {
+		return database.KOReaderAccount{}, ErrAlreadyConfigured
+	} else if err != nil && err != sql.ErrNoRows {
+		return database.KOReaderAccount{}, err
+	}
+	syncKey, err := GenerateSyncKey()
+	if err != nil {
+		return database.KOReaderAccount{}, err
+	}
+	return s.store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
+		Username: username,
+		SyncKey:  syncKey,
+		Enabled:  true,
+	})
+}
+
+func (s *Service) RotateAccountKey(ctx context.Context, id int64) (database.KOReaderAccount, error) {
+	if _, err := s.store.GetKOReaderAccountByID(ctx, id); err != nil {
+		if err == sql.ErrNoRows {
+			return database.KOReaderAccount{}, ErrAccountNotFound
+		}
+		return database.KOReaderAccount{}, err
+	}
+	syncKey, err := GenerateSyncKey()
+	if err != nil {
+		return database.KOReaderAccount{}, err
+	}
+	return s.store.RotateKOReaderAccountKey(ctx, id, syncKey)
+}
+
+func (s *Service) SetAccountEnabled(ctx context.Context, id int64, enabled bool) (database.KOReaderAccount, error) {
+	account, err := s.store.SetKOReaderAccountEnabled(ctx, id, enabled)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return database.KOReaderAccount{}, ErrAccountNotFound
+		}
+		return database.KOReaderAccount{}, err
+	}
+	return account, nil
+}
+
+func (s *Service) DeleteAccount(ctx context.Context, id int64) error {
+	if _, err := s.store.GetKOReaderAccountByID(ctx, id); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrAccountNotFound
+		}
+		return err
+	}
+	return s.store.DeleteKOReaderAccount(ctx, id)
+}
+
+func GenerateSyncKey() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 type MatchConfig struct {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, CheckCircle2, Database, FolderOpen, HardDrive, Image as ImageIcon, KeyRound, RefreshCw, Save, Server, Settings as SettingsIcon, Sparkles, TabletSmartphone, Terminal } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Database, FolderOpen, HardDrive, Image as ImageIcon, KeyRound, RefreshCw, RotateCcw, Save, Server, Settings as SettingsIcon, Sparkles, TabletSmartphone, Terminal, Trash2, UserPlus } from 'lucide-react';
 
 interface Config {
   server: { port: number };
@@ -66,9 +66,8 @@ interface KOReaderStatus {
   match_mode: string;
   path_ignore_extension: boolean;
   path_match_depth: number;
-  username: string;
-  has_password: boolean;
-  has_valid_sync_key: boolean;
+  account_count: number;
+  enabled_account_count: number;
   latest_error?: string;
   stats: {
     configured: boolean;
@@ -89,8 +88,21 @@ interface KOReaderForm {
   allow_registration: boolean;
   match_mode: string;
   path_ignore_extension: boolean;
+}
+
+interface KOReaderAccount {
+  id: number;
   username: string;
   sync_key: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_used_at?: string | null;
+  latest_error?: string;
+}
+
+interface KOReaderAccountForm {
+  username: string;
 }
 
 interface KOReaderUnmatchedItem {
@@ -114,7 +126,6 @@ function buildKOReaderForm(
   status?: KOReaderStatus | null,
   current?: KOReaderForm | null
 ): KOReaderForm {
-  const resolvedUsername = status ? (status.username || status.stats?.username || '') : (current?.username || '');
   return {
     enabled: status?.enabled ?? configState?.enabled ?? current?.enabled ?? false,
     base_path: status?.base_path ?? configState?.base_path ?? current?.base_path ?? '/koreader',
@@ -122,8 +133,6 @@ function buildKOReaderForm(
     match_mode: status?.match_mode ?? configState?.match_mode ?? current?.match_mode ?? 'binary_hash',
     path_ignore_extension:
       status?.path_ignore_extension ?? configState?.path_ignore_extension ?? current?.path_ignore_extension ?? false,
-    username: resolvedUsername,
-    sync_key: current?.sync_key ?? '',
   };
 }
 
@@ -159,9 +168,13 @@ export default function Settings() {
   const [koreaderStatus, setKOReaderStatus] = useState<KOReaderStatus | null>(null);
   const [koreaderForm, setKOReaderForm] = useState<KOReaderForm | null>(null);
   const [koreaderValidation, setKOReaderValidation] = useState<ValidationResult>({ valid: true, issues: [] });
+  const [koreaderAccounts, setKOReaderAccounts] = useState<KOReaderAccount[]>([]);
+  const [koreaderAccountForm, setKOReaderAccountForm] = useState<KOReaderAccountForm>({ username: '' });
   const [unmatchedItems, setUnmatchedItems] = useState<KOReaderUnmatchedItem[]>([]);
   const [applyingMatching, setApplyingMatching] = useState(false);
   const [needsMatchingMaintenance, setNeedsMatchingMaintenance] = useState(false);
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [accountActionId, setAccountActionId] = useState<number | null>(null);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMsg({ text, type });
@@ -183,13 +196,18 @@ export default function Settings() {
     setKOReaderValidation({ valid: true, issues: [] });
   };
 
+  const fetchKOReaderAccounts = async () => {
+    const res = await axios.get<KOReaderAccount[]>('/api/system/koreader/accounts');
+    setKOReaderAccounts(Array.isArray(res.data) ? res.data : []);
+  };
+
   const fetchKOReaderUnmatched = async () => {
     const res = await axios.get<KOReaderUnmatchedItem[]>('/api/system/koreader/unmatched?limit=12');
     setUnmatchedItems(Array.isArray(res.data) ? res.data : []);
   };
 
   useEffect(() => {
-    Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderUnmatched()])
+    Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderUnmatched()])
       .catch((error) => {
         console.error('Failed to fetch settings data', error);
         showToast('无法加载系统配置', 'error');
@@ -290,7 +308,7 @@ export default function Settings() {
       setNeedsMatchingMaintenance(requiresMaintenance);
       setKOReaderValidation({ valid: true, issues: [] });
       showToast('KOReader 同步配置已保存', 'success');
-      await Promise.all([fetchConfig(), fetchKOReaderUnmatched()]);
+      await Promise.all([fetchConfig(), fetchKOReaderAccounts(), fetchKOReaderUnmatched()]);
     } catch (error) {
       console.error(error);
       if (axios.isAxiosError(error) && error.response?.status === 422) {
@@ -319,6 +337,84 @@ export default function Settings() {
       showToast('启动 KOReader 匹配规则应用任务失败。', 'error');
     } finally {
       setApplyingMatching(false);
+    }
+  };
+
+  const handleCreateKOReaderAccount = async () => {
+    if (!koreaderAccountForm.username.trim()) return;
+    setCreatingAccount(true);
+    try {
+      const res = await axios.post<KOReaderAccount>('/api/system/koreader/accounts', {
+        username: koreaderAccountForm.username.trim(),
+      });
+      showToast(`KOReader 账号 ${res.data.username} 已创建`, 'success');
+      setKOReaderAccountForm({ username: '' });
+      await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
+    } catch (error) {
+      console.error(error);
+      if (axios.isAxiosError(error) && error.response?.status === 422) {
+        const nextValidation = error.response.data?.validation;
+        if (nextValidation) {
+          setKOReaderValidation(nextValidation);
+        }
+      }
+      showToast('创建 KOReader 账号失败。', 'error');
+    } finally {
+      setCreatingAccount(false);
+    }
+  };
+
+  const handleCopySyncKey = async (account: KOReaderAccount) => {
+    try {
+      await navigator.clipboard.writeText(account.sync_key);
+      showToast(`已复制 ${account.username} 的 Sync Key`, 'success');
+    } catch (error) {
+      console.error(error);
+      showToast('复制 Sync Key 失败。', 'error');
+    }
+  };
+
+  const handleRotateKOReaderAccount = async (account: KOReaderAccount) => {
+    setAccountActionId(account.id);
+    try {
+      await axios.post(`/api/system/koreader/accounts/${account.id}/rotate-key`);
+      showToast(`已轮换 ${account.username} 的 Sync Key`, 'success');
+      await fetchKOReaderAccounts();
+    } catch (error) {
+      console.error(error);
+      showToast('轮换 Sync Key 失败。', 'error');
+    } finally {
+      setAccountActionId(null);
+    }
+  };
+
+  const handleToggleKOReaderAccount = async (account: KOReaderAccount) => {
+    setAccountActionId(account.id);
+    try {
+      await axios.post(`/api/system/koreader/accounts/${account.id}/toggle`, {
+        enabled: !account.enabled,
+      });
+      showToast(`${account.username} 已${account.enabled ? '停用' : '启用'}`, 'success');
+      await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
+    } catch (error) {
+      console.error(error);
+      showToast('更新账号状态失败。', 'error');
+    } finally {
+      setAccountActionId(null);
+    }
+  };
+
+  const handleDeleteKOReaderAccount = async (account: KOReaderAccount) => {
+    setAccountActionId(account.id);
+    try {
+      await axios.delete(`/api/system/koreader/accounts/${account.id}`);
+      showToast(`${account.username} 已删除`, 'success');
+      await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
+    } catch (error) {
+      console.error(error);
+      showToast('删除 KOReader 账号失败。', 'error');
+    } finally {
+      setAccountActionId(null);
     }
   };
 
@@ -684,7 +780,7 @@ export default function Settings() {
                 {formatKOReaderIndexLabel(koreaderForm.match_mode, koreaderForm.path_ignore_extension)} 进度 {koreaderStatus?.stats.hashed_books ?? 0} / {koreaderStatus?.stats.total_books ?? 0}
               </p>
               <p className="text-xs text-gray-500 mt-2">
-                当前账号 {koreaderStatus?.username || koreaderStatus?.stats.username || '未配置'} · Sync Key {koreaderStatus?.has_valid_sync_key ? '已配置' : koreaderStatus?.has_password ? '格式无效' : '未设置'}
+                KOReader 账号 {koreaderStatus?.enabled_account_count ?? 0} / {koreaderStatus?.account_count ?? 0} 已启用。
               </p>
               <p className="text-xs text-gray-500 mt-2">
                 最近同步 {formatKOReaderLatestSync(koreaderStatus?.stats.latest_sync_at)}
@@ -716,7 +812,7 @@ export default function Settings() {
                 <option value="false">关闭</option>
                 <option value="true">开启</option>
               </select>
-              <p className="text-xs text-gray-500 mt-1">建议单用户场景默认关闭，通过本页直接配置同步账号。</p>
+              <p className="text-xs text-gray-500 mt-1">当前模式下仍建议关闭。多账号 + 服务端生成 Sync Key 时，设备侧自助注册并不作为主要开通方式。</p>
             </div>
 
             <div>
@@ -749,37 +845,11 @@ export default function Settings() {
               </label>
             </div>
 
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">同步用户名</label>
-              <input
-                type="text"
-                value={koreaderForm.username}
-                onChange={(e) => setKOReaderForm({ ...koreaderForm, username: e.target.value })}
-                className={inputClassName}
-              />
-              {renderKOReaderFieldErrors('koreader.username')}
-            </div>
-
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">KOReader Sync Key (MD5)</label>
-              <div className="relative">
-                <KeyRound className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-gray-500" />
-                <input
-                  type="password"
-                  value={koreaderForm.sync_key}
-                  onChange={(e) => setKOReaderForm({ ...koreaderForm, sync_key: e.target.value })}
-                  className={`${inputClassName} pl-10`}
-                  placeholder={koreaderStatus?.has_valid_sync_key ? '留空表示保留现有 Sync Key' : '填写 32 位小写十六进制 MD5 值'}
-                />
-              </div>
-              <p className="text-xs text-gray-500 mt-1">这里填写 KOReader 设备实际发送的 Sync Key，不是原始密码。格式必须是 32 位小写十六进制 MD5。</p>
-              {renderKOReaderFieldErrors('koreader.sync_key')}
-            </div>
           </div>
 
           <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-100">
             <p className="font-medium">KOReader 配置方式</p>
-            <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`，用户名与这里保持一致，Sync Key 需要与这里保存的 32 位 MD5 值一致。</p>
+            <p className="mt-1 text-sky-100/80">在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`。用户名和 Sync Key 请从下方账号列表复制，Sync Key 由服务端生成。</p>
             <p className="mt-2 text-sky-100/70">
               当前模式：{koreaderForm.match_mode === 'file_path'
                 ? `文件路径匹配（文件名 + 向上 ${koreaderStatus?.path_match_depth ?? 2} 层路径${koreaderForm.path_ignore_extension ? '，忽略扩展名' : '，保留扩展名'}）`
@@ -816,7 +886,7 @@ export default function Settings() {
                 {savingKOReader ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 保存同步配置
               </p>
-              <p className="text-xs text-sky-100/80 mt-1">保存启用状态、路径和同步账号。首次启用需要设置同步密钥。</p>
+              <p className="text-xs text-sky-100/80 mt-1">只保存服务级配置。KOReader 账号和 Sync Key 通过下方账号列表管理。</p>
             </button>
             <button
               onClick={() => handleAction('/api/system/koreader/rebuild-hashes', 'KOReader 索引重建已启动')}
@@ -832,6 +902,94 @@ export default function Settings() {
               <p className="font-medium">重关联未匹配记录</p>
               <p className="text-xs text-sky-100/80 mt-1">重新尝试把历史同步记录映射回已入库书籍。</p>
             </button>
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4 space-y-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-end">
+              <div className="flex-1">
+                <label className="block text-sm text-gray-400 mb-1">新增 KOReader 账号</label>
+                <input
+                  type="text"
+                  value={koreaderAccountForm.username}
+                  onChange={(e) => setKOReaderAccountForm({ username: e.target.value })}
+                  className={inputClassName}
+                  placeholder="输入唯一用户名"
+                />
+                {renderKOReaderFieldErrors('koreader.accounts.username')}
+              </div>
+              <button
+                onClick={handleCreateKOReaderAccount}
+                disabled={creatingAccount || !koreaderAccountForm.username.trim()}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-4 py-2.5 text-sm text-sky-100 hover:bg-sky-500/15 disabled:opacity-60"
+              >
+                {creatingAccount ? <RefreshCw className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                {creatingAccount ? '创建中...' : '创建账号并生成 Sync Key'}
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {koreaderAccounts.length === 0 ? (
+                <p className="text-sm text-gray-500">当前还没有 KOReader 账号。创建后系统会生成 Sync Key，可直接复制到设备中使用。</p>
+              ) : (
+                koreaderAccounts.map((account) => (
+                  <div key={account.id} className="rounded-lg border border-gray-800 bg-black/20 p-4 space-y-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-white">{account.username}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          状态 {account.enabled ? '已启用' : '已停用'} · 最近使用 {account.last_used_at ? new Date(account.last_used_at).toLocaleString() : '暂无'}
+                        </p>
+                        {account.latest_error && (
+                          <p className="text-xs text-amber-300 mt-1">最近错误 {account.latest_error}</p>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        创建于 {new Date(account.created_at).toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-gray-500">Sync Key</p>
+                      <p className="mt-1 break-all font-mono text-sm text-sky-100">{account.sync_key}</p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleCopySyncKey(account)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-200 hover:bg-black/30"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        复制 Sync Key
+                      </button>
+                      <button
+                        onClick={() => handleRotateKOReaderAccount(account)}
+                        disabled={accountActionId === account.id}
+                        className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-200 hover:bg-black/30 disabled:opacity-60"
+                      >
+                        {accountActionId === account.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                        轮换 Sync Key
+                      </button>
+                      <button
+                        onClick={() => handleToggleKOReaderAccount(account)}
+                        disabled={accountActionId === account.id}
+                        className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-200 hover:bg-black/30 disabled:opacity-60"
+                      >
+                        <KeyRound className="h-3.5 w-3.5" />
+                        {account.enabled ? '停用账号' : '启用账号'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteKOReaderAccount(account)}
+                        disabled={accountActionId === account.id}
+                        className="inline-flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200 hover:bg-red-500/15 disabled:opacity-60"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        删除账号
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
           <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">

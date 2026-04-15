@@ -27,6 +27,13 @@ type Store interface {
 	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
 	UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReaderSettingsParams) (KOReaderSettings, error)
+	ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, error)
+	CreateKOReaderAccount(ctx context.Context, arg CreateKOReaderAccountParams) (KOReaderAccount, error)
+	GetKOReaderAccountByUsername(ctx context.Context, username string) (KOReaderAccount, error)
+	GetKOReaderAccountByID(ctx context.Context, id int64) (KOReaderAccount, error)
+	RotateKOReaderAccountKey(ctx context.Context, id int64, syncKey string) (KOReaderAccount, error)
+	SetKOReaderAccountEnabled(ctx context.Context, id int64, enabled bool) (KOReaderAccount, error)
+	DeleteKOReaderAccount(ctx context.Context, id int64) error
 	GetKOReaderStats(ctx context.Context) (KOReaderStats, error)
 	GetLatestKOReaderFailure(ctx context.Context) (KOReaderSyncEvent, error)
 	CountBooksMissingIdentity(ctx context.Context, matchMode string) (int64, error)
@@ -108,6 +115,23 @@ func (s *SqlStore) Close() error {
 	return s.db.Close()
 }
 
+func (s *SqlStore) DeleteKOReaderAccount(ctx context.Context, id int64) error {
+	return s.ExecTx(ctx, func(q *Queries) error {
+		account, err := q.GetKOReaderAccountByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if _, err := q.db.ExecContext(ctx, `DELETE FROM koreader_progress WHERE username = ?`, account.Username); err != nil {
+			return err
+		}
+		if _, err := q.db.ExecContext(ctx, `DELETE FROM koreader_sync_events WHERE username = ?`, account.Username); err != nil {
+			return err
+		}
+		_, err = q.db.ExecContext(ctx, `DELETE FROM koreader_accounts WHERE id = ?`, id)
+		return err
+	})
+}
+
 // ExecTx 提供一个事务包裹器以进行批量执行，这对防止 SQLite 并发锁极为关键
 func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -162,7 +186,45 @@ func Migrate(dbPath string) error {
 		}
 	}
 
+	if err := migrateLegacyKOReaderAccounts(db); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func migrateLegacyKOReaderAccounts(db *sql.DB) error {
+	var accountCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM koreader_accounts`).Scan(&accountCount); err != nil {
+		return err
+	}
+	if accountCount > 0 {
+		return nil
+	}
+
+	var (
+		username string
+		syncKey  string
+	)
+	err := db.QueryRow(`
+		SELECT username, password_hash
+		FROM koreader_settings
+		WHERE id = 1
+		  AND username != ''
+		  AND password_hash != ''
+	`).Scan(&username, &syncKey)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO koreader_accounts (username, sync_key, enabled, created_at, updated_at)
+		VALUES (?, ?, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, username, syncKey)
+	return err
 }
 
 func ensureColumn(db *sql.DB, table, column, definition string) error {

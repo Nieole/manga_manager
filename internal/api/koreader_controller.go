@@ -24,9 +24,8 @@ type KOReaderSystemResponse struct {
 	MatchMode           string                 `json:"match_mode"`
 	PathIgnoreExtension bool                   `json:"path_ignore_extension"`
 	PathMatchDepth      int                    `json:"path_match_depth"`
-	Username            string                 `json:"username"`
-	HasPassword         bool                   `json:"has_password"`
-	HasValidSyncKey     bool                   `json:"has_valid_sync_key"`
+	AccountCount        int64                  `json:"account_count"`
+	EnabledAccountCount int64                  `json:"enabled_account_count"`
 	LatestError         string                 `json:"latest_error,omitempty"`
 	Stats               database.KOReaderStats `json:"stats"`
 }
@@ -37,8 +36,25 @@ type UpdateKOReaderSettingsRequest struct {
 	AllowRegistration   bool   `json:"allow_registration"`
 	MatchMode           string `json:"match_mode"`
 	PathIgnoreExtension bool   `json:"path_ignore_extension"`
-	Username            string `json:"username"`
-	SyncKey             string `json:"sync_key"`
+}
+
+type CreateKOReaderAccountRequest struct {
+	Username string `json:"username"`
+}
+
+type ToggleKOReaderAccountRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+type KOReaderAccountResponse struct {
+	ID          int64   `json:"id"`
+	Username    string  `json:"username"`
+	SyncKey     string  `json:"sync_key"`
+	Enabled     bool    `json:"enabled"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	LastUsedAt  *string `json:"last_used_at,omitempty"`
+	LatestError string  `json:"latest_error,omitempty"`
 }
 
 type KOReaderUnmatchedItem struct {
@@ -99,9 +115,8 @@ func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request)
 		MatchMode:           cfg.KOReader.MatchMode,
 		PathIgnoreExtension: cfg.KOReader.PathIgnoreExtension,
 		PathMatchDepth:      config.KOReaderPathMatchDepth,
-		Username:            stats.Username,
-		HasPassword:         stats.HasPassword,
-		HasValidSyncKey:     stats.HasValidSyncKey,
+		AccountCount:        stats.AccountCount,
+		EnabledAccountCount: stats.EnabledAccountCount,
 		LatestError:         latestError,
 		Stats:               stats,
 	})
@@ -150,6 +165,168 @@ func (c *Controller) listKOReaderUnmatched(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, result)
 }
 
+func mapKOReaderAccountResponse(account database.KOReaderAccount) KOReaderAccountResponse {
+	resp := KOReaderAccountResponse{
+		ID:        account.ID,
+		Username:  account.Username,
+		SyncKey:   account.SyncKey,
+		Enabled:   account.Enabled,
+		CreatedAt: account.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: account.UpdatedAt.Format(time.RFC3339),
+	}
+	if account.LastUsedAt.Valid {
+		value := account.LastUsedAt.Time.Format(time.RFC3339)
+		resp.LastUsedAt = &value
+	}
+	if account.LatestError.Valid {
+		resp.LatestError = strings.TrimSpace(account.LatestError.String)
+	}
+	return resp
+}
+
+func (c *Controller) listKOReaderAccounts(w http.ResponseWriter, r *http.Request) {
+	accounts, err := c.koreader.ListAccounts(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load KOReader accounts")
+		return
+	}
+	result := make([]KOReaderAccountResponse, 0, len(accounts))
+	for _, account := range accounts {
+		result = append(result, mapKOReaderAccountResponse(account))
+	}
+	if result == nil {
+		result = []KOReaderAccountResponse{}
+	}
+	jsonResponse(w, http.StatusOK, result)
+}
+
+func (c *Controller) createKOReaderAccount(w http.ResponseWriter, r *http.Request) {
+	var req CreateKOReaderAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid KOReader account payload")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" {
+		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
+			"error": "KOReader account validation failed",
+			"validation": config.ValidationResult{
+				Valid: false,
+				Issues: []config.ValidationIssue{
+					{Field: "koreader.accounts.username", Message: "用户名不能为空。", Severity: "error"},
+				},
+			},
+		})
+		return
+	}
+	account, err := c.koreader.CreateAccount(r.Context(), req.Username)
+	if err != nil {
+		switch {
+		case errors.Is(err, ksvc.ErrAlreadyConfigured):
+			jsonResponse(w, http.StatusConflict, map[string]string{"error": "KOReader 用户名已存在"})
+		case errors.Is(err, ksvc.ErrUnauthorized):
+			jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
+				"error": "KOReader account validation failed",
+				"validation": config.ValidationResult{
+					Valid: false,
+					Issues: []config.ValidationIssue{
+						{Field: "koreader.accounts.username", Message: "用户名不能为空。", Severity: "error"},
+					},
+				},
+			})
+		default:
+			jsonError(w, http.StatusInternalServerError, "Failed to create KOReader account")
+		}
+		return
+	}
+	_ = c.store.CreateKOReaderSyncEvent(r.Context(), database.CreateKOReaderSyncEventParams{
+		Direction: "system",
+		Username:  account.Username,
+		Status:    "account_created",
+		Message:   "KOReader 账号已创建",
+	})
+	jsonResponse(w, http.StatusCreated, mapKOReaderAccountResponse(account))
+}
+
+func (c *Controller) rotateKOReaderAccountKey(w http.ResponseWriter, r *http.Request) {
+	accountID, err := strconv.ParseInt(chi.URLParam(r, "accountId"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid KOReader account ID")
+		return
+	}
+	account, err := c.koreader.RotateAccountKey(r.Context(), accountID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ksvc.ErrAccountNotFound):
+			jsonError(w, http.StatusNotFound, "KOReader account not found")
+		default:
+			jsonError(w, http.StatusInternalServerError, "Failed to rotate KOReader Sync Key")
+		}
+		return
+	}
+	_ = c.store.CreateKOReaderSyncEvent(r.Context(), database.CreateKOReaderSyncEventParams{
+		Direction: "system",
+		Username:  account.Username,
+		Status:    "account_rotated",
+		Message:   "KOReader Sync Key 已轮换",
+	})
+	jsonResponse(w, http.StatusOK, mapKOReaderAccountResponse(account))
+}
+
+func (c *Controller) toggleKOReaderAccount(w http.ResponseWriter, r *http.Request) {
+	accountID, err := strconv.ParseInt(chi.URLParam(r, "accountId"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid KOReader account ID")
+		return
+	}
+	var req ToggleKOReaderAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid KOReader account payload")
+		return
+	}
+	account, err := c.koreader.SetAccountEnabled(r.Context(), accountID, req.Enabled)
+	if err != nil {
+		switch {
+		case errors.Is(err, ksvc.ErrAccountNotFound):
+			jsonError(w, http.StatusNotFound, "KOReader account not found")
+		default:
+			jsonError(w, http.StatusInternalServerError, "Failed to update KOReader account")
+		}
+		return
+	}
+	status := "account_disabled"
+	message := "KOReader 账号已停用"
+	if account.Enabled {
+		status = "account_enabled"
+		message = "KOReader 账号已启用"
+	}
+	_ = c.store.CreateKOReaderSyncEvent(r.Context(), database.CreateKOReaderSyncEventParams{
+		Direction: "system",
+		Username:  account.Username,
+		Status:    status,
+		Message:   message,
+	})
+	jsonResponse(w, http.StatusOK, mapKOReaderAccountResponse(account))
+}
+
+func (c *Controller) deleteKOReaderAccount(w http.ResponseWriter, r *http.Request) {
+	accountID, err := strconv.ParseInt(chi.URLParam(r, "accountId"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid KOReader account ID")
+		return
+	}
+	if err := c.koreader.DeleteAccount(r.Context(), accountID); err != nil {
+		switch {
+		case errors.Is(err, ksvc.ErrAccountNotFound):
+			jsonError(w, http.StatusNotFound, "KOReader account not found")
+		default:
+			jsonError(w, http.StatusInternalServerError, "Failed to delete KOReader account")
+		}
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "KOReader 账号已删除"})
+}
+
 func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Request) {
 	var req UpdateKOReaderSettingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -174,23 +351,6 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 	default:
 		issues = append(issues, config.ValidationIssue{Field: "koreader.match_mode", Message: "匹配模式必须是 binary_hash 或 file_path。", Severity: "error"})
 	}
-	req.Username = strings.TrimSpace(req.Username)
-	if req.Enabled && req.Username == "" {
-		issues = append(issues, config.ValidationIssue{Field: "koreader.username", Message: "启用同步后必须配置用户名。", Severity: "error"})
-	}
-
-	stats, err := c.store.GetKOReaderStats(r.Context())
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load KOReader status")
-		return
-	}
-	req.SyncKey = ksvc.NormalizeSyncKey(req.SyncKey)
-	if req.SyncKey != "" && !ksvc.IsValidSyncKey(req.SyncKey) {
-		issues = append(issues, config.ValidationIssue{Field: "koreader.sync_key", Message: "Sync Key 必须是 32 位小写十六进制 MD5 值。", Severity: "error"})
-	}
-	if req.Enabled && !stats.HasValidSyncKey && req.SyncKey == "" {
-		issues = append(issues, config.ValidationIssue{Field: "koreader.sync_key", Message: "首次启用同步时必须设置有效的 KOReader Sync Key。", Severity: "error"})
-	}
 	if len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
 			"error": "KOReader settings validation failed",
@@ -210,14 +370,6 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 	cfg.KOReader.PathIgnoreExtension = req.PathIgnoreExtension
 	if err := c.persistConfig(&cfg); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to persist KOReader configuration")
-		return
-	}
-
-	if _, err := c.store.UpsertKOReaderSettings(r.Context(), database.UpsertKOReaderSettingsParams{
-		Username: req.Username,
-		SyncKey:  syncKeyOrEmpty(req.SyncKey),
-	}); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to persist KOReader credentials")
 		return
 	}
 
@@ -344,36 +496,9 @@ func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
 		return
 	}
-
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Key      string `json:"key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeKOReaderJSON(w, r, http.StatusBadRequest, map[string]string{"message": "Invalid request"})
-		return
-	}
-
-	key := req.Key
-	if key == "" {
-		key = req.Password
-	}
-	settings, err := c.koreader.Register(r.Context(), req.Username, key, c.currentConfig().KOReader.AllowRegistration)
-	if err != nil {
-		switch {
-		case errors.Is(err, ksvc.ErrRegistrationClosed):
-			writeKOReaderJSON(w, r, http.StatusForbidden, map[string]string{"message": "This server is currently not accepting new registrations."})
-		case errors.Is(err, ksvc.ErrAlreadyConfigured):
-			writeKOReaderJSON(w, r, http.StatusConflict, map[string]string{"message": "Username is already registered."})
-		case errors.Is(err, ksvc.ErrUnauthorized):
-			writeKOReaderJSON(w, r, http.StatusBadRequest, map[string]string{"message": "Invalid request"})
-		default:
-			writeKOReaderJSON(w, r, http.StatusInternalServerError, map[string]string{"message": "Unknown server error"})
-		}
-		return
-	}
-	writeKOReaderJSON(w, r, http.StatusCreated, map[string]string{"state": "OK", "username": settings.Username})
+	writeKOReaderJSON(w, r, http.StatusForbidden, map[string]string{
+		"message": "Device self-registration is disabled. Create KOReader accounts from the admin UI.",
+	})
 }
 
 func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
@@ -492,12 +617,4 @@ func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Cred
 		Status:    status,
 		Message:   message,
 	})
-}
-
-func syncKeyOrEmpty(raw string) string {
-	raw = ksvc.NormalizeSyncKey(raw)
-	if raw == "" {
-		return ""
-	}
-	return raw
 }
