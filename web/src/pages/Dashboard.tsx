@@ -46,6 +46,7 @@ interface TaskStatus {
     error?: string;
     retryable?: boolean;
     updated_at: string;
+    params?: Record<string, string>;
 }
 
 interface KOReaderOverview {
@@ -59,6 +60,13 @@ interface KOReaderOverview {
         unmatched_progress_count: number;
     };
 }
+
+const formatKOReaderIndexLabel = (matchMode?: string, pathIgnoreExtension?: boolean) => {
+    if (matchMode === 'file_path') {
+        return pathIgnoreExtension ? '路径索引（忽略扩展名）' : '路径索引';
+    }
+    return '二进制哈希索引';
+};
 
 export default function Dashboard() {
     const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -130,8 +138,8 @@ export default function Dashboard() {
         navigate('/logs');
     };
 
-    const taskTypeLabel = (type: string) => {
-        switch (type) {
+    const taskTypeLabel = (task: TaskStatus) => {
+        switch (task.type) {
             case 'scan_library':
                 return '资源库扫描';
             case 'scan_series':
@@ -147,13 +155,13 @@ export default function Dashboard() {
             case 'ai_grouping':
                 return 'AI 分组';
             case 'rebuild_book_hashes':
-                return '重建匹配索引';
+                return `重建 ${formatKOReaderIndexLabel(task.params?.match_mode, task.params?.path_ignore_extension === 'true')}`;
             case 'reconcile_koreader_progress':
                 return 'KOReader 重关联';
             case 'refresh_koreader_matching':
                 return '应用 KOReader 匹配规则';
             default:
-                return type;
+                return task.type;
         }
     };
 
@@ -308,7 +316,7 @@ export default function Dashboard() {
                                 className="w-full text-left rounded-xl border border-red-500/10 bg-black/20 p-3 hover:bg-black/30"
                             >
                                 <div className="flex items-center gap-2 text-xs text-red-100/60 mb-2">
-                                    <span>{taskTypeLabel(task.type)}</span>
+                                    <span>{taskTypeLabel(task)}</span>
                                     <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
                                 </div>
                                 <p className="text-sm font-medium text-white">{task.message}</p>
@@ -333,7 +341,7 @@ export default function Dashboard() {
                                 className="w-full text-left rounded-xl border border-blue-500/10 bg-black/20 p-3 hover:bg-black/30"
                             >
                                 <div className="flex items-center gap-2 text-xs text-blue-100/60 mb-2">
-                                    <span>{taskTypeLabel(task.type)}</span>
+                                    <span>{taskTypeLabel(task)}</span>
                                     <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
                                 </div>
                                 <p className="text-sm font-medium text-white">{task.message}</p>

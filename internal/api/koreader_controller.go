@@ -50,6 +50,16 @@ type KOReaderUnmatchedItem struct {
 	Suggestion    string  `json:"suggestion"`
 }
 
+func koreaderIndexLabel(cfg config.Config) string {
+	if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
+		if cfg.KOReader.PathIgnoreExtension {
+			return "路径索引（忽略扩展名）"
+		}
+		return "路径索引"
+	}
+	return "二进制哈希索引"
+}
+
 func (c *Controller) SetupKOReaderRoutes(r chi.Router) {
 	basePath := c.currentConfig().KOReader.BasePath
 	if strings.TrimSpace(basePath) == "" {
@@ -71,6 +81,9 @@ func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch KOReader settings")
 		return
+	}
+	if indexed, err := c.koreader.IndexedBookCount(r.Context()); err == nil {
+		stats.HashedBooks = indexed
 	}
 	cfg := c.currentConfig()
 	jsonResponse(w, http.StatusOK, KOReaderSystemResponse{
@@ -204,7 +217,7 @@ func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusConflict, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "KOReader 匹配索引重建已启动"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "KOReader 索引重建已启动"})
 }
 
 func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Request) {
@@ -225,20 +238,25 @@ func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Re
 
 func (c *Controller) launchRebuildBookHashesTask() error {
 	key := "rebuild_book_hashes"
-	if !c.startTask(key, "rebuild_book_hashes", "开始重建 KOReader 匹配索引", 0) {
+	cfg := c.currentConfig()
+	indexLabel := koreaderIndexLabel(cfg)
+	if !c.startTask(key, "rebuild_book_hashes", fmt.Sprintf("开始重建 KOReader %s", indexLabel), 0) {
 		return fmt.Errorf("task already running")
 	}
-	c.setTaskMetadata(key, nil, "系统")
+	c.setTaskMetadata(key, map[string]string{
+		"match_mode":            cfg.KOReader.MatchMode,
+		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
+	}, "系统")
 
 	go func() {
-		updated, total, err := c.koreader.RebuildBookIdentities(context.Background(), 10000, func(current, total int, message string) {
+		updated, total, err := c.koreader.RebuildBookIdentities(context.Background(), 500, func(current, total int, message string) {
 			c.updateTask(key, current, total, message)
 		})
 		if err != nil {
-			c.failTaskWithError(key, fmt.Sprintf("KOReader 匹配索引重建失败: %v", err), err.Error())
+			c.failTaskWithError(key, fmt.Sprintf("KOReader %s重建失败: %v", indexLabel, err), err.Error())
 			return
 		}
-		c.finishTask(key, fmt.Sprintf("KOReader 匹配索引重建完成，已更新 %d / %d 本书籍", updated, total))
+		c.finishTask(key, fmt.Sprintf("KOReader %s重建完成，已更新 %d / %d 本书籍", indexLabel, updated, total))
 	}()
 	return nil
 }
@@ -248,10 +266,14 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	if !c.startTask(key, "reconcile_koreader_progress", "开始重关联 KOReader 未匹配进度", 0) {
 		return fmt.Errorf("task already running")
 	}
-	c.setTaskMetadata(key, nil, "系统")
+	cfg := c.currentConfig()
+	c.setTaskMetadata(key, map[string]string{
+		"match_mode":            cfg.KOReader.MatchMode,
+		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
+	}, "系统")
 
 	go func() {
-		updated, total, err := c.koreader.ReconcileProgress(context.Background(), 10000, func(current, total int, message string) {
+		updated, total, err := c.koreader.ReconcileProgress(context.Background(), 500, func(current, total int, message string) {
 			c.updateTask(key, current, total, message)
 		})
 		if err != nil {
@@ -275,21 +297,22 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	}, "系统")
 
 	go func() {
-		c.updateTask(key, 0, 2, "开始重建 KOReader 匹配索引")
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(context.Background(), 10000, nil)
+		indexLabel := koreaderIndexLabel(cfg)
+		c.updateTask(key, 0, 2, fmt.Sprintf("开始重建 KOReader %s", indexLabel))
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(context.Background(), 500, nil)
 		if err != nil {
-			c.failTaskWithError(key, fmt.Sprintf("KOReader 匹配索引重建失败: %v", err), err.Error())
+			c.failTaskWithError(key, fmt.Sprintf("KOReader %s重建失败: %v", indexLabel, err), err.Error())
 			return
 		}
 
-		c.updateTask(key, 1, 2, fmt.Sprintf("匹配索引已更新 %d / %d，本阶段开始重关联未匹配记录", updatedBooks, totalBooks))
-		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(context.Background(), 10000, nil)
+		c.updateTask(key, 1, 2, fmt.Sprintf("%s已更新 %d / %d，本阶段开始重关联未匹配记录", indexLabel, updatedBooks, totalBooks))
+		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(context.Background(), 500, nil)
 		if err != nil {
 			c.failTaskWithError(key, fmt.Sprintf("KOReader 进度重关联失败: %v", err), err.Error())
 			return
 		}
 
-		c.finishTask(key, fmt.Sprintf("KOReader 匹配规则已应用，索引更新 %d / %d，重关联 %d / %d", updatedBooks, totalBooks, updatedProgress, totalProgress))
+		c.finishTask(key, fmt.Sprintf("KOReader 匹配规则已应用，%s更新 %d / %d，重关联 %d / %d", indexLabel, updatedBooks, totalBooks, updatedProgress, totalProgress))
 	}()
 	return nil
 }

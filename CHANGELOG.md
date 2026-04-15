@@ -235,16 +235,19 @@
 - **书籍身份指纹**：`books` 表新增：
   - `file_hash`
   - `path_fingerprint`
-  - `filename_fingerprint`
-  用于 Binary / 路径 / 文件名三类 KOReader 文档匹配。
-- **双轨以上匹配策略**：服务端优先使用二进制哈希匹配书籍，同时保留路径和文件名指纹兜底，支持历史未匹配进度后续重关联。
+  - `path_fingerprint_no_ext`
+  用于当前 KOReader 匹配方案中的二进制哈希和路径索引。
+- **当前匹配方案说明**：KOReader 现仅保留两种正式匹配模式：
+  - `binary_hash`
+  - `file_path`
+  其中 `file_path` 模式只比较“文件名 + 向上最多两层路径”，并支持可选的“忽略扩展名”规则。
 - **进度投影回本地阅读状态**：当 KOReader 文档成功命中本地书籍时，会把 `percentage` 按 `page_count` 投影回 `books.last_read_page/last_read_at`，并写入 `reading_activity`。
 - **防止进度回退**：服务端采用“更远进度优先”，较小的 `percentage` 不会覆盖已有较大进度。
 
 #### 扫描器与维护任务 `[P1: 资源识别与恢复能力]`
 - **扫描时自动生成指纹**：扫描器在入库/更新书籍后会同步写入 KOReader 文档匹配指纹，不再依赖纯人工维护。
 - **新增系统维护任务**：
-  - `POST /api/system/koreader/rebuild-hashes`：重建书籍同步指纹
+  - `POST /api/system/koreader/rebuild-hashes`：按当前匹配模式重建 KOReader 索引
   - `POST /api/system/koreader/reconcile`：重关联未匹配的 KOReader 同步记录
 - **任务中心集成**：新增任务类型
   - `rebuild_book_hashes`
@@ -257,7 +260,50 @@
   - 配置同步路径
   - 配置用户名与同步密钥
   - 控制是否允许首次注册
-  - 查看书籍指纹进度、已匹配/未匹配同步记录数
+  - 查看当前模式下的索引进度、已匹配/未匹配同步记录数
+
+### 📌 增量记录 — 2026-04-15（KOReader 索引重建与模式感知文案）
+
+#### KOReader 索引重建修正 `[P1: 资源识别与恢复能力]`
+- **索引重建不再截断在 10000 条**：`RebuildBookIdentities` 和 `ReconcileProgress` 从一次性 `LIMIT 10000` 改为分页批处理。
+  - `limit` 现在表示批次大小，当前任务入口默认按 `500` 条一批循环执行。
+  - 重建流程会持续迭代直到所有缺失索引的书籍都处理完成。
+  - 未匹配进度重关联同样改为全量分页扫描，不再只处理前一段记录。
+- **数据库层新增分页/计数接口**：
+  - `CountBooksMissingIdentity`
+  - `CountUnmatchedKOReaderProgress`
+  - `ListBooksMissingIdentityBatch`
+  - `ListUnmatchedKOReaderProgressBatch`
+  用于支持全量迭代和更准确的任务总量显示。
+- **索引更新改为按字段选择性写入**：`UpdateBookIdentity` 现在只更新本次模式需要写入的字段，不会把未参与本轮重建的字段清空。
+
+#### KOReader 匹配模式驱动索引构建 `[P1: 匹配模型一致性]`
+- **二进制哈希模式与路径模式的索引构建正式分离**：
+  - `binary_hash` 模式下只计算并写入 `file_hash`
+  - `file_path` 模式下只计算并写入 `path_fingerprint` / `path_fingerprint_no_ext`
+- **路径模式不再额外计算二进制哈希**，避免在仅使用路径匹配时仍进行不必要的大文件读取和哈希开销。
+- **索引覆盖统计改为模式感知**：
+  - `GET /api/system/koreader` 中的 `stats.hashed_books` 现在表示“当前匹配模式下已完成索引的书籍数”
+  - 不再要求 `file_hash`、`path_fingerprint`、`path_fingerprint_no_ext` 三类字段同时存在才算完成
+
+#### KOReader 任务文案与前端状态同步 `[P1: 配置与可运维性]`
+- **后端任务消息改为模式感知**：
+  - `rebuild_book_hashes` 在二进制模式下显示“二进制哈希索引”
+  - `rebuild_book_hashes` 在路径模式下显示“路径索引”或“路径索引（忽略扩展名）”
+  - `refresh_koreader_matching` 中的阶段消息与完成消息同步使用当前模式名称
+- **任务参数快照补全**：`rebuild_book_hashes` 和 `reconcile_koreader_progress` 现在都会记录：
+  - `match_mode`
+  - `path_ignore_extension`
+  便于日志页、仪表板和重试逻辑基于实际模式展示准确说明。
+- **前端任务中心/仪表板/设置页文案更新**：
+  - 日志页 `Logs` 中的 KOReader 任务标题和操作建议会根据当前模式动态显示“二进制哈希索引”或“路径索引”
+  - 仪表板中的运行中/失败任务卡片同步显示模式感知的 KOReader 任务名称
+  - 设置页中的“匹配索引进度”“重建匹配索引”按钮与变更提示，统一改为显示当前实际索引类型
+
+#### 测试补充 `[Tests]`
+- 新增 `internal/koreader/service_test.go`，覆盖：
+  - 小批次参数下索引重建仍会分页处理完整批量数据
+  - `file_path` 模式下只构建路径索引，不写入 `file_hash`
   - 一键触发“重建书籍指纹”和“重关联未匹配记录”
 - `config.yaml` 示例文件新增 `koreader` 配置段：
   - `enabled`

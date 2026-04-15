@@ -219,56 +219,96 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 }
 
 func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
-	books, err := s.store.ListBooksMissingIdentity(ctx, limit)
+	if limit <= 0 {
+		limit = 500
+	}
+	matchConfig := s.currentMatchConfig()
+	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchConfig.MatchMode)
 	if err != nil {
 		return 0, 0, err
 	}
-	total := len(books)
+
+	total := int(missingCount)
 	updated := 0
-	for idx, book := range books {
-		fileHash, err := FingerprintFile(book.Path)
+	var afterID int64
+	for {
+		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchConfig.MatchMode, afterID, limit)
 		if err != nil {
-			slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
-			continue
-		}
-		if err := s.store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
-			ID:                   book.ID,
-			FileHash:             fileHash,
-			PathFingerprint:      FingerprintRelativePath(book.LibraryPath, book.Path, false),
-			PathFingerprintNoExt: FingerprintRelativePath(book.LibraryPath, book.Path, true),
-		}); err != nil {
 			return updated, total, err
 		}
-		updated++
-		if progress != nil {
-			progress(idx+1, total, fmt.Sprintf("已重建 %d / %d 本书籍指纹", idx+1, total))
+		if len(books) == 0 {
+			break
+		}
+
+		for _, book := range books {
+			params := database.UpdateBookIdentityParams{ID: book.ID}
+			if matchConfig.MatchMode == config.KOReaderMatchModeBinaryHash {
+				fileHash, err := FingerprintFile(book.Path)
+				if err != nil {
+					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
+					afterID = book.ID
+					continue
+				}
+				params.FileHash = fileHash
+			} else {
+				params.PathFingerprint = FingerprintRelativePath(book.LibraryPath, book.Path, false)
+				params.PathFingerprintNoExt = FingerprintRelativePath(book.LibraryPath, book.Path, true)
+			}
+
+			if err := s.store.UpdateBookIdentity(ctx, params); err != nil {
+				return updated, total, err
+			}
+
+			updated++
+			afterID = book.ID
+			if progress != nil {
+				progress(updated, total, fmt.Sprintf("已重建 %d / %d 本书籍的 KOReader %s索引", updated, total, readableMatchMode(matchConfig)))
+			}
 		}
 	}
 	return updated, total, nil
 }
 
 func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
-	items, err := s.store.ListUnmatchedKOReaderProgress(ctx, limit)
+	if limit <= 0 {
+		limit = 500
+	}
+	unmatchedCount, err := s.store.CountUnmatchedKOReaderProgress(ctx)
 	if err != nil {
 		return 0, 0, err
 	}
-	total := len(items)
+
+	total := int(unmatchedCount)
 	updated := 0
-	for idx, item := range items {
-		matchConfig := s.currentMatchConfig()
-		documentKey := normalizeDocumentForMatch(item.Document, matchConfig)
-		match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension)
-		if matchErr == nil {
-			if err := s.store.LinkKOReaderProgressToBook(ctx, item.ID, match.BookID, match.MatchedBy); err != nil {
-				return updated, total, err
-			}
-			if applyErr := s.applyBookProgress(ctx, match, item.Percentage); applyErr != nil {
-				slog.Warn("Failed to project reconciled progress onto book", "book_id", match.BookID, "error", applyErr)
-			}
-			updated++
+	processed := 0
+	var afterID int64
+	for {
+		items, err := s.store.ListUnmatchedKOReaderProgressBatch(ctx, afterID, limit)
+		if err != nil {
+			return updated, total, err
 		}
-		if progress != nil {
-			progress(idx+1, total, fmt.Sprintf("已重关联 %d / %d 条同步记录", idx+1, total))
+		if len(items) == 0 {
+			break
+		}
+
+		for _, item := range items {
+			matchConfig := s.currentMatchConfig()
+			documentKey := normalizeDocumentForMatch(item.Document, matchConfig)
+			match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension)
+			if matchErr == nil {
+				if err := s.store.LinkKOReaderProgressToBook(ctx, item.ID, match.BookID, match.MatchedBy); err != nil {
+					return updated, total, err
+				}
+				if applyErr := s.applyBookProgress(ctx, match, item.Percentage); applyErr != nil {
+					slog.Warn("Failed to project reconciled progress onto book", "book_id", match.BookID, "error", applyErr)
+				}
+				updated++
+			}
+			processed++
+			afterID = item.ID
+			if progress != nil {
+				progress(processed, total, fmt.Sprintf("已处理 %d / %d 条 KOReader 同步记录", processed, total))
+			}
 		}
 	}
 	return updated, total, nil
@@ -306,6 +346,30 @@ func NormalizeDocumentForMatch(document string, matchMode string, pathIgnoreExte
 		MatchMode:           matchMode,
 		PathIgnoreExtension: pathIgnoreExtension,
 	})
+}
+
+func (s *Service) IndexedBookCount(ctx context.Context) (int64, error) {
+	stats, err := s.store.GetKOReaderStats(ctx)
+	if err != nil {
+		return 0, err
+	}
+	matchConfig := s.currentMatchConfig()
+	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchConfig.MatchMode)
+	if err != nil {
+		return 0, err
+	}
+	indexed := stats.TotalBooks - missingCount
+	if indexed < 0 {
+		indexed = 0
+	}
+	return indexed, nil
+}
+
+func readableMatchMode(cfg MatchConfig) string {
+	if cfg.MatchMode == config.KOReaderMatchModeFilePath {
+		return "路径"
+	}
+	return "二进制哈希"
 }
 
 func (s *Service) applyBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64) error {

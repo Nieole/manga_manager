@@ -28,12 +28,15 @@ type Store interface {
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
 	UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReaderSettingsParams) (KOReaderSettings, error)
 	GetKOReaderStats(ctx context.Context) (KOReaderStats, error)
+	CountBooksMissingIdentity(ctx context.Context, matchMode string) (int64, error)
+	CountUnmatchedKOReaderProgress(ctx context.Context) (int64, error)
 	FindBookByDocumentFingerprint(ctx context.Context, documentKey, matchMode string, pathIgnoreExtension bool) (KOReaderBookMatch, error)
 	UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReaderProgressParams) (KOReaderProgress, error)
 	GetKOReaderProgress(ctx context.Context, username, document string) (KOReaderProgress, error)
-	ListBooksMissingIdentity(ctx context.Context, limit int) ([]BookIdentityCandidate, error)
+	ListBooksMissingIdentityBatch(ctx context.Context, matchMode string, afterID int64, limit int) ([]BookIdentityCandidate, error)
 	UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error
 	ListUnmatchedKOReaderProgress(ctx context.Context, limit int) ([]KOReaderProgress, error)
+	ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterID int64, limit int) ([]KOReaderProgress, error)
 	LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error
 	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
 }

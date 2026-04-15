@@ -1,7 +1,7 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, Heart, FolderHeart, RefreshCw, Settings } from 'lucide-react';
+import { ImageIcon, Heart, FolderHeart, RefreshCw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
 import { HomeFilters } from './home/HomeFilters';
@@ -13,7 +13,7 @@ const PAGE_SIZE = 30;
 
 export default function Home() {
     const { libId } = useParams();
-    const { refreshTrigger, libraries } = useOutletContext<{ refreshTrigger: number; libraries?: { id: string; name: string; koreader_sync_enabled?: boolean }[] }>() || { refreshTrigger: 0, libraries: [] };
+    const { refreshTrigger } = useOutletContext<{ refreshTrigger: number; libraries?: { id: string; name: string; koreader_sync_enabled?: boolean }[] }>() || { refreshTrigger: 0, libraries: [] };
     const [allSeries, setAllSeries] = useState<Series[]>([]);
     const [recentSeries, setRecentSeries] = useState<Series[]>([]);
     const [totalSeries, setTotalSeries] = useState(0);
@@ -76,11 +76,6 @@ export default function Home() {
             setAllAuthors(Array.from(map.values()));
         });
     }, []);
-
-    const currentLibrary = useMemo(
-        () => (libraries || []).find((library) => String(library.id) === String(libId)),
-        [libraries, libId]
-    );
 
     useEffect(() => {
         if (libId) {
@@ -233,20 +228,6 @@ export default function Home() {
 
     return (
         <div className="p-6 lg:p-10">
-            {currentLibrary && (
-                <div className={`mb-6 rounded-2xl border p-4 ${currentLibrary.koreader_sync_enabled ?? true ? 'border-sky-500/20 bg-sky-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <button
-                            onClick={() => window.dispatchEvent(new CustomEvent('manga-manager:open-edit-library', { detail: { libraryId: currentLibrary.id } }))}
-                            className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-4 py-2 text-sm text-gray-100 hover:bg-black/30"
-                        >
-                            <Settings className="h-4 w-4" />
-                            编辑当前资源库
-                        </button>
-                    </div>
-                </div>
-            )}
-
             <HomeToolbar
                 totalSeries={totalSeries}
                 hasSeries={allSeries.length > 0}

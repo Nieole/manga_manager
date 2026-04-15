@@ -135,6 +135,13 @@ function formatKOReaderLatestSync(value?: { Time: string; Valid: boolean } | nul
   return date.toLocaleString();
 }
 
+function formatKOReaderIndexLabel(matchMode: string, pathIgnoreExtension: boolean): string {
+  if (matchMode === 'file_path') {
+    return pathIgnoreExtension ? '路径索引（忽略扩展名）' : '路径索引';
+  }
+  return '二进制哈希索引';
+}
+
 export default function Settings() {
   const [config, setConfig] = useState<Config | null>(null);
   const [validation, setValidation] = useState<ValidationResult>({ valid: true, issues: [] });
@@ -671,7 +678,7 @@ export default function Settings() {
                 已匹配 {koreaderStatus?.stats.matched_progress_count ?? 0} 条，同步待重关联 {koreaderStatus?.stats.unmatched_progress_count ?? 0} 条。
               </p>
               <p className="text-xs text-gray-500 mt-2">
-                匹配索引进度 {koreaderStatus?.stats.hashed_books ?? 0} / {koreaderStatus?.stats.total_books ?? 0}
+                {formatKOReaderIndexLabel(koreaderForm.match_mode, koreaderForm.path_ignore_extension)} 进度 {koreaderStatus?.stats.hashed_books ?? 0} / {koreaderStatus?.stats.total_books ?? 0}
               </p>
               <p className="text-xs text-gray-500 mt-2">
                 当前账号 {koreaderStatus?.username || koreaderStatus?.stats.username || '未配置'} · 同步密钥 {koreaderStatus?.has_password ? '已设置' : '未设置'}
@@ -777,7 +784,9 @@ export default function Settings() {
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
               <p className="font-medium">匹配规则已变更</p>
               <p className="mt-1 text-amber-100/80">
-                你刚刚修改了 KOReader 匹配模式或扩展名规则。建议立即应用变更，系统会顺序执行“重建匹配索引”和“重关联未匹配记录”。
+                你刚刚修改了 KOReader 匹配模式或扩展名规则。建议立即应用变更，系统会顺序执行“重建{' '}
+                {formatKOReaderIndexLabel(koreaderForm.match_mode, koreaderForm.path_ignore_extension)}
+                ”和“重关联未匹配记录”。
               </p>
               <button
                 onClick={handleApplyMatchingChanges}
@@ -803,11 +812,11 @@ export default function Settings() {
               <p className="text-xs text-sky-100/80 mt-1">保存启用状态、路径和同步账号。首次启用需要设置同步密钥。</p>
             </button>
             <button
-              onClick={() => handleAction('/api/system/koreader/rebuild-hashes', 'KOReader 匹配索引重建已启动')}
+              onClick={() => handleAction('/api/system/koreader/rebuild-hashes', 'KOReader 索引重建已启动')}
               className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15"
             >
-              <p className="font-medium">重建匹配索引</p>
-              <p className="text-xs text-sky-100/80 mt-1">为现有书籍补全二进制哈希和路径匹配索引。切换模式后建议先执行一次。</p>
+              <p className="font-medium">重建 {formatKOReaderIndexLabel(koreaderForm.match_mode, koreaderForm.path_ignore_extension)}</p>
+              <p className="text-xs text-sky-100/80 mt-1">按当前模式为现有书籍补全 KOReader 所需索引。切换模式后建议先执行一次。</p>
             </button>
             <button
               onClick={() => handleAction('/api/system/koreader/reconcile', '未匹配同步记录重关联已启动')}

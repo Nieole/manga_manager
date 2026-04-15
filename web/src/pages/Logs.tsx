@@ -36,6 +36,13 @@ interface TaskStatus {
   finished_at?: string;
 }
 
+const formatKOReaderIndexLabel = (params?: Record<string, string>) => {
+  if (params?.match_mode === 'file_path') {
+    return params.path_ignore_extension === 'true' ? '路径索引（忽略扩展名）' : '路径索引';
+  }
+  return '二进制哈希索引';
+};
+
 export default function Logs() {
   const navigate = useNavigate();
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -160,8 +167,8 @@ export default function Logs() {
     }
   };
 
-  const taskTypeLabel = (type: string) => {
-    switch (type) {
+  const taskTypeLabel = (task: TaskStatus) => {
+    switch (task.type) {
       case 'scan_library':
         return '资源库扫描';
       case 'scan_series':
@@ -177,13 +184,13 @@ export default function Logs() {
       case 'ai_grouping':
         return 'AI 分组';
       case 'rebuild_book_hashes':
-        return '书籍指纹重建';
+        return `重建 ${formatKOReaderIndexLabel(task.params)}`;
       case 'reconcile_koreader_progress':
         return 'KOReader 重关联';
       case 'refresh_koreader_matching':
         return '应用 KOReader 匹配规则';
       default:
-        return type;
+        return task.type;
     }
   };
 
@@ -201,11 +208,11 @@ export default function Logs() {
       case 'ai_grouping':
         return '建议检查 LLM 配置和系列摘要是否足够完整。';
       case 'rebuild_book_hashes':
-        return '建议检查书库文件可读性，以及数据库是否允许写入书籍身份字段。';
+        return `建议检查书库文件可读性，以及数据库是否允许写入 ${formatKOReaderIndexLabel(task.params)} 对应字段。`;
       case 'reconcile_koreader_progress':
-        return '建议先重建书籍指纹，再重试未匹配的 KOReader 同步记录。';
+        return `建议先重建 ${formatKOReaderIndexLabel(task.params)}，再重试未匹配的 KOReader 同步记录。`;
       case 'refresh_koreader_matching':
-        return '会顺序执行匹配索引重建和未匹配记录重关联，适合在切换匹配模式后使用。';
+        return `会顺序执行 ${formatKOReaderIndexLabel(task.params)} 重建和未匹配记录重关联，适合在切换匹配模式后使用。`;
       default:
         return '建议先查看任务错误详情，再决定是否重试。';
     }
@@ -433,7 +440,7 @@ export default function Logs() {
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${badgeClass(task.status)}`}>
                             {task.status}
                           </span>
-                          <span className="text-xs text-slate-500">{taskTypeLabel(task.type)}</span>
+                          <span className="text-xs text-slate-500">{taskTypeLabel(task)}</span>
                           <span className="text-xs text-slate-500">
                             {task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}
                           </span>

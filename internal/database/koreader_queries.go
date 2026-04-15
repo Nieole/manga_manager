@@ -66,6 +66,34 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 	return item, err
 }
 
+func (q *Queries) CountBooksMissingIdentity(ctx context.Context, matchMode string) (int64, error) {
+	condition := `COALESCE(file_hash, '') = ''`
+	if matchMode == "file_path" {
+		condition = `COALESCE(path_fingerprint, '') = '' OR COALESCE(path_fingerprint_no_ext, '') = ''`
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM books
+		WHERE `+condition)
+
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+func (q *Queries) CountUnmatchedKOReaderProgress(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM koreader_progress
+		WHERE book_id IS NULL
+	`)
+
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 func (q *Queries) FindBookByDocumentFingerprint(ctx context.Context, documentKey, matchMode string, pathIgnoreExtension bool) (KOReaderBookMatch, error) {
 	if documentKey == "" {
 		return KOReaderBookMatch{}, sql.ErrNoRows
@@ -209,20 +237,25 @@ func (q *Queries) GetKOReaderProgress(ctx context.Context, username, document st
 	return item, err
 }
 
-func (q *Queries) ListBooksMissingIdentity(ctx context.Context, limit int) ([]BookIdentityCandidate, error) {
+func (q *Queries) ListBooksMissingIdentityBatch(ctx context.Context, matchMode string, afterID int64, limit int) ([]BookIdentityCandidate, error) {
 	if limit <= 0 {
 		limit = 500
 	}
+
+	condition := `COALESCE(file_hash, '') = ''`
+	if matchMode == "file_path" {
+		condition = `COALESCE(path_fingerprint, '') = '' OR COALESCE(path_fingerprint_no_ext, '') = ''`
+	}
+
 	rows, err := q.db.QueryContext(ctx, `
 		SELECT b.id, b.library_id, l.path, b.path
 		FROM books b
 		JOIN libraries l ON l.id = b.library_id
-		WHERE COALESCE(file_hash, '') = ''
-		   OR COALESCE(path_fingerprint, '') = ''
-		   OR COALESCE(path_fingerprint_no_ext, '') = ''
-		ORDER BY b.updated_at ASC, b.id ASC
+		WHERE b.id > ?
+		  AND (`+condition+`)
+		ORDER BY b.id ASC
 		LIMIT ?
-	`, limit)
+	`, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -242,9 +275,12 @@ func (q *Queries) ListBooksMissingIdentity(ctx context.Context, limit int) ([]Bo
 func (q *Queries) UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error {
 	_, err := q.db.ExecContext(ctx, `
 		UPDATE books
-		SET file_hash = ?, path_fingerprint = ?, path_fingerprint_no_ext = ?, updated_at = CURRENT_TIMESTAMP
+		SET file_hash = CASE WHEN ? = '' THEN file_hash ELSE ? END,
+		    path_fingerprint = CASE WHEN ? = '' THEN path_fingerprint ELSE ? END,
+		    path_fingerprint_no_ext = CASE WHEN ? = '' THEN path_fingerprint_no_ext ELSE ? END,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, arg.FileHash, arg.PathFingerprint, arg.PathFingerprintNoExt, arg.ID)
+	`, arg.FileHash, arg.FileHash, arg.PathFingerprint, arg.PathFingerprint, arg.PathFingerprintNoExt, arg.PathFingerprintNoExt, arg.ID)
 	return err
 }
 
@@ -259,6 +295,48 @@ func (q *Queries) ListUnmatchedKOReaderProgress(ctx context.Context, limit int) 
 		ORDER BY updated_at DESC
 		LIMIT ?
 	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]KOReaderProgress, 0)
+	for rows.Next() {
+		var item KOReaderProgress
+		if err := rows.Scan(
+			&item.ID,
+			&item.Username,
+			&item.Document,
+			&item.Progress,
+			&item.Percentage,
+			&item.Device,
+			&item.DeviceID,
+			&item.BookID,
+			&item.MatchedBy,
+			&item.Timestamp,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+			&item.RawPayload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (q *Queries) ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterID int64, limit int) ([]KOReaderProgress, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := q.db.QueryContext(ctx, `
+		SELECT id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload
+		FROM koreader_progress
+		WHERE book_id IS NULL
+		  AND id > ?
+		ORDER BY id ASC
+		LIMIT ?
+	`, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
