@@ -1,5 +1,8 @@
 # Manga Manager 📚✨
 
+[![CI](https://github.com/Nieole/manga_manager/actions/workflows/ci.yml/badge.svg)](https://github.com/Nieole/manga_manager/actions/workflows/ci.yml)
+[![Release](https://github.com/Nieole/manga_manager/actions/workflows/release.yml/badge.svg)](https://github.com/Nieole/manga_manager/actions/workflows/release.yml)
+
 Manga Manager 是一款使用现代全栈技术打造的高性能、多端自适应**本地个人漫画/画集管理软路由服务器**与**沉浸式的阅读器**。
 
 本系统采用 `Go` + `React (Vite+TailwindCSS)` 构建，剥离了传统的云端数据库依赖，完全基于本地文件扫描。不论您有多少深藏于硬盘的卷册，它都能一举把您的收藏转变为具备私人专属 API 的数字阅读宇宙。不仅支持快速检阅与管理，我们还率先引进了 **Waifu2x / Real-CUGAN 次世代超分辨重建引擎**，即便在最残暴的网络带宽或最久远模糊的画质下，也能让每一页都呈现极致画卷。
@@ -77,6 +80,21 @@ Manga Manager 是一款使用现代全栈技术打造的高性能、多端自适
 ## 📦 如何部署与使用 (Installation & Usage)
 
 得益于 Golang 强悍的交叉编译机制，Manga Manager 不需要被困于环境依赖地狱。无论您是 Windows / Linux 还是 Mac ARM，我们都已备好了绿色整合包：
+
+### 0. GitHub Actions 自动构建与发布
+
+- 仓库已内置两条 GitHub Actions 工作流：
+- `CI`：在 `push main` 和 `pull_request` 时自动执行前端构建、后端测试和服务端编译检查。
+- `Release`：在推送 `v*` 标签时自动构建 `Linux AMD64`、`Windows AMD64`、`macOS ARM64` 三个平台二进制，并上传到 GitHub Release。
+- 如需手动验证发布流程，也可以在 GitHub 的 `Actions -> Release` 中直接使用 `Run workflow`。
+
+示例：
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+推送完成后，GitHub 会自动生成对应版本的 Release 附件。
 
 ### 1. 一键全平台联编
 在项目根目录运行预编译构建脚本（需具备 `Node.js` 与 `Go` 环境）：
