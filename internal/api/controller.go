@@ -20,6 +20,7 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
@@ -37,6 +38,7 @@ type Controller struct {
 	engine     *search.Engine
 	config     *config.Manager
 	koreader   *koreader.Service
+	external   *external.Manager
 	configPath string
 	watcher    *scanner.FileWatcher
 
@@ -99,6 +101,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		engine:         engine,
 		config:         cfg,
 		koreader:       koreader.NewService(store, cfg),
+		external:       external.NewManager(store, 30*time.Minute),
 		configPath:     cfgPath,
 		clients:        make(map[chan string]bool),
 		newClients:     make(chan chan string),
@@ -618,6 +621,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/libraries", c.createLibrary)
 		r.Put("/libraries/{libraryId}", c.updateLibrary)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
+		r.Post("/libraries/{libraryId}/external-libraries/session", c.createExternalLibrarySession)
+		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}", c.getExternalLibrarySession)
+		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}/series", c.getExternalLibrarySeries)
+		r.Post("/libraries/{libraryId}/external-libraries/session/{sessionId}/transfer", c.transferToExternalLibrary)
 		r.Post("/libraries/{libraryId}/scrape", c.scrapeLibrary)
 		r.Post("/libraries/{libraryId}/ai-grouping", c.aiGroupingLibrary)
 		r.Post("/libraries/{libraryId}/cleanup", c.cleanupLibrary)

@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { ImageIcon, Heart, FolderHeart, RefreshCw } from 'lucide-react';
+import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
+import { DirectoryPicker } from '../components/layout/DirectoryPicker';
+import type { BrowseDirEntry, BrowseDrive } from '../components/layout/types';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
 import { HomeFilters } from './home/HomeFilters';
 import { HomeToolbar } from './home/HomeToolbar';
@@ -10,6 +12,28 @@ import { RecentSeriesStrip } from './home/RecentSeriesStrip';
 import type { AIRecommendation, NamedOption, Series } from './home/types';
 
 const PAGE_SIZE = 30;
+
+interface ExternalSession {
+    session_id: string;
+    library_id: number;
+    external_path: string;
+    status: 'scanning' | 'ready' | 'failed';
+    error?: string;
+    scanned_files: number;
+    matched_books: number;
+    unmatched_files: number;
+    total_books: number;
+    created_at: string;
+    updated_at: string;
+}
+
+interface ExternalSeriesStatus {
+    series_id: number;
+    series_name?: string;
+    external_match_count: number;
+    external_total_count: number;
+    external_sync_status: 'missing' | 'partial' | 'complete';
+}
 
 export default function Home() {
     const { libId } = useParams();
@@ -32,6 +56,18 @@ export default function Home() {
     const [showCollectionModal, setShowCollectionModal] = useState(false);
     const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [rescanningId, setRescanningId] = useState<number | null>(null);
+    const [recentExternalPaths, setRecentExternalPaths] = useState<string[]>([]);
+    const [externalPath, setExternalPath] = useState('');
+    const [externalSession, setExternalSession] = useState<ExternalSession | null>(null);
+    const [externalSeriesMap, setExternalSeriesMap] = useState<Record<number, ExternalSeriesStatus>>({});
+    const [startingExternalScan, setStartingExternalScan] = useState(false);
+    const [startingTransfer, setStartingTransfer] = useState(false);
+
+    const [externalBrowsing, setExternalBrowsing] = useState(false);
+    const [externalBrowseDirs, setExternalBrowseDirs] = useState<BrowseDirEntry[]>([]);
+    const [externalBrowseCurrent, setExternalBrowseCurrent] = useState('');
+    const [externalBrowseParent, setExternalBrowseParent] = useState('');
+    const [externalBrowseDrives, setExternalBrowseDrives] = useState<BrowseDrive[]>([]);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -45,6 +81,97 @@ export default function Home() {
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
     const [loadingAI, setLoadingAI] = useState(false);
     const [hasFetchedAI, setHasFetchedAI] = useState(false);
+
+    const saveRecentExternalPath = (path: string) => {
+        const normalized = path.trim();
+        if (!normalized) return;
+        const next = [normalized, ...recentExternalPaths.filter((item) => item !== normalized)].slice(0, 5);
+        setRecentExternalPaths(next);
+        localStorage.setItem('manga_manager_recent_external_paths', JSON.stringify(next));
+    };
+
+    const openExternalDirectoryBrowser = () => {
+        setExternalBrowsing(true);
+        axios.get('/api/browse-dirs')
+            .then(res => {
+                setExternalBrowseDirs(res.data.dirs || []);
+                setExternalBrowseCurrent(res.data.current);
+                setExternalBrowseParent(res.data.parent);
+                setExternalBrowseDrives(res.data.drives || []);
+            })
+            .catch(err => console.error('Failed to open external directory browser', err));
+    };
+
+    const navigateExternalDirectoryBrowser = (path: string) => {
+        axios.get(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
+            .then(res => {
+                setExternalBrowseDirs(res.data.dirs || []);
+                setExternalBrowseCurrent(res.data.current);
+                setExternalBrowseParent(res.data.parent);
+                setExternalBrowseDrives(res.data.drives || []);
+            })
+            .catch(err => console.error('Failed to navigate external directory browser', err));
+    };
+
+    const fetchExternalSession = async (sessionId = externalSession?.session_id) => {
+        if (!libId || !sessionId) return null;
+        try {
+            const res = await axios.get<ExternalSession>(`/api/libraries/${libId}/external-libraries/session/${sessionId}`);
+            setExternalSession(res.data);
+            return res.data;
+        } catch (err) {
+            console.error('Failed to fetch external session', err);
+            setExternalSession(null);
+            setExternalSeriesMap({});
+            return null;
+        }
+    };
+
+    const fetchExternalSeriesStatus = async (sessionId = externalSession?.session_id, seriesIds = allSeries.map((item) => item.id)) => {
+        if (!libId || !sessionId || seriesIds.length === 0) {
+            setExternalSeriesMap({});
+            return;
+        }
+        try {
+            const res = await axios.get<ExternalSeriesStatus[]>(
+                `/api/libraries/${libId}/external-libraries/session/${sessionId}/series?ids=${seriesIds.join(',')}`
+            );
+            const next: Record<number, ExternalSeriesStatus> = {};
+            (res.data || []).forEach((item) => {
+                next[item.series_id] = item;
+            });
+            setExternalSeriesMap(next);
+        } catch (err) {
+            console.error('Failed to fetch external series coverage', err);
+            setExternalSeriesMap({});
+        }
+    };
+
+    const startExternalLibraryScan = async () => {
+        if (!libId || !externalPath.trim()) {
+            showToast('请先选择外部资源库目录', 'error');
+            return;
+        }
+        setStartingExternalScan(true);
+        try {
+            const res = await axios.post<ExternalSession>(`/api/libraries/${libId}/external-libraries/session`, {
+                external_path: externalPath.trim(),
+            });
+            setExternalSession(res.data);
+            setExternalSeriesMap({});
+            saveRecentExternalPath(externalPath.trim());
+            showToast('已开始扫描外部资源库', 'success');
+        } catch (err: any) {
+            showToast(err.response?.data?.error || '外部资源库扫描启动失败', 'error');
+        } finally {
+            setStartingExternalScan(false);
+        }
+    };
+
+    const clearExternalSession = () => {
+        setExternalSession(null);
+        setExternalSeriesMap({});
+    };
 
     const fetchAIRecommendations = () => {
         if (!libId) return;
@@ -75,6 +202,18 @@ export default function Home() {
             setAllTags(tNames);
             setAllAuthors(Array.from(map.values()));
         });
+
+        try {
+            const stored = localStorage.getItem('manga_manager_recent_external_paths');
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed)) {
+                    setRecentExternalPaths(parsed.filter((item) => typeof item === 'string'));
+                }
+            }
+        } catch {
+            // ignore invalid local storage
+        }
     }, []);
 
     useEffect(() => {
@@ -172,6 +311,35 @@ export default function Home() {
         }
     }, [refreshTrigger]);
 
+    useEffect(() => {
+        setExternalSession(null);
+        setExternalSeriesMap({});
+    }, [libId]);
+
+    useEffect(() => {
+        if (!externalSession?.session_id || externalSession.status !== 'scanning') return;
+        const timer = window.setInterval(() => {
+            fetchExternalSession(externalSession.session_id);
+        }, 1500);
+        return () => window.clearInterval(timer);
+    }, [externalSession?.session_id, externalSession?.status, libId]);
+
+    useEffect(() => {
+        if (!externalSession?.session_id) {
+            setExternalSeriesMap({});
+            return;
+        }
+
+        fetchExternalSession(externalSession.session_id).then((session) => {
+            if (session?.status === 'ready') {
+                fetchExternalSeriesStatus(session.session_id);
+            } else if (session?.status !== 'scanning') {
+                setExternalSeriesMap({});
+            }
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [externalSession?.session_id, allSeries, refreshTrigger]);
+
     const handleBulkFavoriteUpdate = async (isFav: boolean) => {
         try {
             await axios.post('/api/series/bulk-update', {
@@ -218,6 +386,51 @@ export default function Home() {
         }
     };
 
+    const handleTransferSelectedSeries = async () => {
+        if (!libId || !externalSession?.session_id) {
+            showToast('请先扫描外部资源库', 'error');
+            return;
+        }
+        if (externalSession.status !== 'ready') {
+            showToast('外部资源库仍在扫描中', 'error');
+            return;
+        }
+
+        const summary = selectedSeries.reduce((acc, seriesId) => {
+            const status = externalSeriesMap[seriesId];
+            const total = status?.external_total_count ?? allSeries.find((item) => item.id === seriesId)?.actual_book_count ?? 0;
+            const matched = status?.external_match_count ?? 0;
+            acc.total += total;
+            acc.matched += matched;
+            acc.missing += Math.max(0, total - matched);
+            return acc;
+        }, { total: 0, matched: 0, missing: 0 });
+
+        if (summary.missing === 0) {
+            showToast('所选系列已全部存在于外部资源库', 'success');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `将传输 ${selectedSeries.length} 个系列到外部资源库。\n` +
+            `待复制 ${summary.missing} 本，已存在 ${summary.matched} 本。\n\n` +
+            `目标目录：${externalSession.external_path}`
+        );
+        if (!confirmed) return;
+
+        setStartingTransfer(true);
+        try {
+            const res = await axios.post(`/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}/transfer`, {
+                series_ids: selectedSeries,
+            });
+            showToast(res.data?.message || '已提交外部资源库传输任务', 'success');
+        } catch (err: any) {
+            showToast(err.response?.data?.error || '外部资源库传输失败', 'error');
+        } finally {
+            setStartingTransfer(false);
+        }
+    };
+
     if (!libId) {
         return (
             <div className="flex-1 flex items-center justify-center p-10 h-full text-gray-500">
@@ -247,6 +460,90 @@ export default function Home() {
                     setPage(1);
                 }}
             />
+
+            <div className="mb-6 rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 to-gray-950 p-4 sm:p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <div className="flex items-center gap-2 text-white">
+                            <HardDrive className="w-5 h-5 text-komgaPrimary" />
+                            <h3 className="text-lg font-semibold">外部资源库</h3>
+                        </div>
+                        <p className="mt-1 text-sm text-gray-400">
+                            选择一个外部目录，扫描后按系列展示当前资源库在该目录中的命中比例，并支持批量传输缺失书籍。
+                        </p>
+                    </div>
+                    {externalSession && (
+                        <div className="rounded-xl border border-gray-800 bg-black/20 px-4 py-3 text-sm text-gray-300 min-w-[280px]">
+                            <div className="flex items-center gap-2">
+                                {externalSession.status === 'scanning' ? (
+                                    <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                                ) : externalSession.status === 'ready' ? (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                ) : (
+                                    <HardDrive className="w-4 h-4 text-red-400" />
+                                )}
+                                <span className="font-medium text-white">
+                                    {externalSession.status === 'scanning' ? '正在扫描外部资源库' : externalSession.status === 'ready' ? '外部资源库已就绪' : '外部资源库扫描失败'}
+                                </span>
+                            </div>
+                            <p className="mt-2 text-xs text-gray-400 break-all">{externalSession.external_path}</p>
+                            <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
+                                <div>
+                                    <p className="text-gray-500">已扫描</p>
+                                    <p className="mt-1 text-white font-semibold">{externalSession.scanned_files}</p>
+                                </div>
+                                <div>
+                                    <p className="text-gray-500">已命中</p>
+                                    <p className="mt-1 text-white font-semibold">{externalSession.matched_books}/{externalSession.total_books}</p>
+                                </div>
+                                <div>
+                                    <p className="text-gray-500">未识别</p>
+                                    <p className="mt-1 text-white font-semibold">{externalSession.unmatched_files}</p>
+                                </div>
+                            </div>
+                            {externalSession.error && <p className="mt-3 text-xs text-red-300">{externalSession.error}</p>}
+                        </div>
+                    )}
+                </div>
+
+                <div className="mt-4">
+                    <DirectoryPicker
+                        value={externalPath}
+                        onChange={setExternalPath}
+                        browsing={externalBrowsing}
+                        browseCurrent={externalBrowseCurrent}
+                        browseParent={externalBrowseParent}
+                        browseDirs={externalBrowseDirs}
+                        browseDrives={externalBrowseDrives}
+                        recentPaths={recentExternalPaths}
+                        onOpen={openExternalDirectoryBrowser}
+                        onClose={() => setExternalBrowsing(false)}
+                        onChooseCurrent={() => {
+                            setExternalPath(externalBrowseCurrent);
+                            setExternalBrowsing(false);
+                        }}
+                        onNavigate={navigateExternalDirectoryBrowser}
+                    />
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                        onClick={startExternalLibraryScan}
+                        disabled={startingExternalScan || !externalPath.trim()}
+                        className="rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2 text-sm font-medium text-komgaPrimary hover:bg-komgaPrimary/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {startingExternalScan ? '正在启动扫描...' : '扫描外部资源库'}
+                    </button>
+                    {externalSession && (
+                        <button
+                            onClick={clearExternalSession}
+                            className="rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm font-medium text-gray-300 hover:border-gray-600 hover:text-white"
+                        >
+                            清除当前会话
+                        </button>
+                    )}
+                </div>
+            </div>
 
             <RecentSeriesStrip recentSeries={recentSeries} />
 
@@ -295,6 +592,13 @@ export default function Home() {
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 sm:gap-6 min-h-[600px] items-start">
                         {allSeries.map((s) => {
                             const isSelected = selectedSeries.includes(s.id);
+                            const externalStatus = externalSeriesMap[s.id];
+                            const externalTotal = externalStatus?.external_total_count ?? s.actual_book_count ?? 0;
+                            const externalMatched = externalStatus?.external_match_count ?? 0;
+                            const externalSyncStatus = externalStatus?.external_sync_status
+                                ?? (externalMatched > 0
+                                    ? (externalMatched >= externalTotal && externalTotal > 0 ? 'complete' : 'partial')
+                                    : 'missing');
 
                             const handleCardClick = (e: React.MouseEvent) => {
                                 if (isSelectionMode) {
@@ -358,6 +662,28 @@ export default function Home() {
                                                 </span>
                                                 <span>{s.total_pages?.Valid ? s.total_pages.Float64 : 0} P</span>
                                             </div>
+                                            {externalSession && (
+                                                <div className="mt-1 flex justify-between text-[11px] font-medium">
+                                                    <span className={`${
+                                                        externalSyncStatus === 'complete'
+                                                            ? 'text-emerald-300'
+                                                            : externalSyncStatus === 'partial'
+                                                                ? 'text-amber-300'
+                                                                : 'text-gray-400'
+                                                    }`}>
+                                                        外部资源库
+                                                    </span>
+                                                    <span className={`${
+                                                        externalSyncStatus === 'complete'
+                                                            ? 'text-emerald-300'
+                                                            : externalSyncStatus === 'partial'
+                                                                ? 'text-amber-300'
+                                                                : 'text-gray-400'
+                                                    }`}>
+                                                        {externalMatched}/{externalTotal}
+                                                    </span>
+                                                </div>
+                                            )}
                                             {s.total_pages?.Valid && s.total_pages.Float64 > 0 && (
                                                 <div className="w-full h-1 bg-gray-700/60 rounded-full mt-1.5 overflow-hidden">
                                                     <div
@@ -474,6 +800,13 @@ export default function Home() {
                                     className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
                                 >
                                     <FolderHeart className="w-4 h-4" /> 加入合集
+                                </button>
+                                <button
+                                    onClick={handleTransferSelectedSeries}
+                                    disabled={startingTransfer || !externalSession || externalSession.status !== 'ready'}
+                                    className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    <Send className="w-4 h-4" /> {startingTransfer ? '正在提交...' : '传输到外部资源库'}
                                 </button>
                             </div>
                         </div>

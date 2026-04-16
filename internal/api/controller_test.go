@@ -15,6 +15,7 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
@@ -72,6 +73,7 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 		engine:     engine,
 		config:     cfgManager,
 		koreader:   koreader.NewService(store, cfgManager),
+		external:   external.NewManager(store, 30*time.Minute),
 		configPath: configPath,
 		tasks:      make(map[string]TaskStatus),
 		messages:   make(chan string, 32),
@@ -88,6 +90,15 @@ func requestWithRouteParam(method, path string, body []byte, key, value string) 
 
 	routeCtx := chi.NewRouteContext()
 	routeCtx.URLParams.Add(key, value)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+}
+
+func requestWithRouteParams(method, path string, body []byte, params map[string]string) *http.Request {
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	routeCtx := chi.NewRouteContext()
+	for key, value := range params {
+		routeCtx.URLParams.Add(key, value)
+	}
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 }
 
@@ -1259,6 +1270,117 @@ func TestTaskConflictHandlers(t *testing.T) {
 	controller.cleanupLibrary(invalidCleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/bad/cleanup", nil, "libraryId", "bad"))
 	if invalidCleanupRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid cleanup 400, got %d", invalidCleanupRec.Code)
+	}
+}
+
+func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+
+	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	if err := os.WriteFile(firstBook.Path, []byte("alpha-01"), 0o644); err != nil {
+		t.Fatalf("write first book failed: %v", err)
+	}
+
+	secondPath := filepath.Join(lib.Path, "Series Alpha", "Alpha 02.cbz")
+	secondBook, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      lib.ID,
+		Name:           "Alpha 02.cbz",
+		Path:           secondPath,
+		Size:           1024,
+		FileModifiedAt: time.Now(),
+		Volume:         "",
+		Title:          sql.NullString{String: "Book 2", Valid: true},
+		PageCount:      10,
+	})
+	if err != nil {
+		t.Fatalf("CreateBook second failed: %v", err)
+	}
+	if err := os.WriteFile(secondBook.Path, []byte("alpha-02"), 0o644); err != nil {
+		t.Fatalf("write second book failed: %v", err)
+	}
+
+	externalRoot := filepath.Join(rootDir, "device")
+	if err := os.MkdirAll(filepath.Join(externalRoot, "Series Alpha"), 0o755); err != nil {
+		t.Fatalf("mkdir external root failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(externalRoot, "Series Alpha", "Alpha 01.cbz"), []byte("existing-copy"), 0o644); err != nil {
+		t.Fatalf("write external file failed: %v", err)
+	}
+
+	createReq := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session", []byte(`{"external_path":"`+externalRoot+`"}`), map[string]string{
+		"libraryId": strconv.FormatInt(lib.ID, 10),
+	})
+	createRec := httptest.NewRecorder()
+	controller.createExternalLibrarySession(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("expected create external session 202, got %d body=%s", createRec.Code, createRec.Body.String())
+	}
+
+	var session external.SessionSnapshot
+	if err := json.NewDecoder(createRec.Body).Decode(&session); err != nil {
+		t.Fatalf("decode external session failed: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		current, getErr := controller.external.GetSession(lib.ID, session.SessionID)
+		if getErr == nil && current.Status == "ready" {
+			session = current
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if session.Status != "ready" {
+		t.Fatalf("expected session ready, got %+v", session)
+	}
+
+	seriesReq := requestWithRouteParams(http.MethodGet, "/api/libraries/1/external-libraries/session/s/series?ids="+strconv.FormatInt(series.ID, 10), nil, map[string]string{
+		"libraryId": strconv.FormatInt(lib.ID, 10),
+		"sessionId": session.SessionID,
+	})
+	seriesRec := httptest.NewRecorder()
+	controller.getExternalLibrarySeries(seriesRec, seriesReq)
+	if seriesRec.Code != http.StatusOK {
+		t.Fatalf("expected series coverage 200, got %d body=%s", seriesRec.Code, seriesRec.Body.String())
+	}
+
+	var coverage []external.SeriesCoverage
+	if err := json.NewDecoder(seriesRec.Body).Decode(&coverage); err != nil {
+		t.Fatalf("decode series coverage failed: %v", err)
+	}
+	if len(coverage) != 1 || coverage[0].ExternalMatchCount != 1 || coverage[0].ExternalTotalCount != 2 || coverage[0].ExternalSyncStatus != "partial" {
+		t.Fatalf("unexpected coverage: %+v", coverage)
+	}
+
+	transferReq := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session/s/transfer", []byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`]}`), map[string]string{
+		"libraryId": strconv.FormatInt(lib.ID, 10),
+		"sessionId": session.SessionID,
+	})
+	transferRec := httptest.NewRecorder()
+	controller.transferToExternalLibrary(transferRec, transferReq)
+	if transferRec.Code != http.StatusAccepted {
+		t.Fatalf("expected transfer queued 202, got %d body=%s", transferRec.Code, transferRec.Body.String())
+	}
+
+	targetPath := filepath.Join(externalRoot, "Series Alpha", "Alpha 02.cbz")
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, statErr := os.Stat(targetPath); statErr == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("expected transferred file to exist: %v", err)
+	}
+
+	updatedCoverage, err := controller.external.GetSeriesCoverage(lib.ID, session.SessionID, []int64{series.ID})
+	if err != nil {
+		t.Fatalf("GetSeriesCoverage after transfer failed: %v", err)
+	}
+	if len(updatedCoverage) != 1 || updatedCoverage[0].ExternalMatchCount != 2 || updatedCoverage[0].ExternalSyncStatus != "complete" {
+		t.Fatalf("unexpected updated coverage: %+v", updatedCoverage)
 	}
 }
 

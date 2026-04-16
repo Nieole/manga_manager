@@ -171,6 +171,8 @@ export default function Logs() {
     switch (task.type) {
       case 'scan_library':
         return '资源库扫描';
+      case 'scan_external_library':
+        return '外部资源库扫描';
       case 'scan_series':
         return '系列扫描';
       case 'cleanup_library':
@@ -189,6 +191,8 @@ export default function Logs() {
         return 'KOReader 重关联';
       case 'refresh_koreader_matching':
         return '应用 KOReader 匹配规则';
+      case 'transfer_external_library':
+        return '外部资源库传输';
       default:
         return task.type;
     }
@@ -199,6 +203,8 @@ export default function Logs() {
       case 'scan_library':
       case 'scan_series':
         return '建议检查目录可读性、归档结构和扫描格式。';
+      case 'scan_external_library':
+        return '建议检查外部目录是否可读，以及目录下的归档结构是否符合预期。';
       case 'rebuild_index':
         return '建议确认数据库和搜索索引目录的写权限。';
       case 'rebuild_thumbnails':
@@ -213,6 +219,8 @@ export default function Logs() {
         return `建议先重建 ${formatKOReaderIndexLabel(task.params)}，再重试未匹配的 KOReader 同步记录。`;
       case 'refresh_koreader_matching':
         return `会顺序执行 ${formatKOReaderIndexLabel(task.params)} 重建和未匹配记录重关联，适合在切换匹配模式后使用。`;
+      case 'transfer_external_library':
+        return '建议检查外部目录写权限、目标磁盘空间，以及源文件是否仍可访问。';
       default:
         return '建议先查看任务错误详情，再决定是否重试。';
     }

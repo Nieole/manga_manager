@@ -27,6 +27,9 @@ export interface Series {
   last_read_at?: { Time: string; Valid: boolean };
   last_read_page?: { Int64: number; Valid: boolean };
   updated_at?: string;
+  external_match_count?: number;
+  external_total_count?: number;
+  external_sync_status?: 'missing' | 'partial' | 'complete';
 }
 
 export interface NamedOption {

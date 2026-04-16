@@ -142,6 +142,8 @@ export default function Dashboard() {
         switch (task.type) {
             case 'scan_library':
                 return '资源库扫描';
+            case 'scan_external_library':
+                return '外部资源库扫描';
             case 'scan_series':
                 return '系列扫描';
             case 'cleanup_library':
@@ -160,6 +162,8 @@ export default function Dashboard() {
                 return 'KOReader 重关联';
             case 'refresh_koreader_matching':
                 return '应用 KOReader 匹配规则';
+            case 'transfer_external_library':
+                return '外部资源库传输';
             default:
                 return task.type;
         }
