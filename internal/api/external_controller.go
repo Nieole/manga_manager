@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"manga-manager/internal/external"
 
@@ -23,6 +24,14 @@ type externalLibrarySessionRequest struct {
 
 type externalLibraryTransferRequest struct {
 	SeriesIDs []int64 `json:"series_ids"`
+}
+
+func externalLibraryScanTaskKey(libraryID int64, sessionID string) string {
+	return fmt.Sprintf("scan_external_library_%s_%d", sessionID, libraryID)
+}
+
+func externalLibraryTransferTaskKey(libraryID int64, sessionID string) string {
+	return fmt.Sprintf("transfer_external_library_%s_%d", sessionID, libraryID)
 }
 
 func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http.Request) {
@@ -53,13 +62,17 @@ func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http
 		return
 	}
 
-	if !c.launchExternalLibraryScanTask(libraryID, session.SessionID) {
+	taskKey, started := c.launchExternalLibraryScanTask(libraryID, session.SessionID)
+	if !started {
 		c.external.ClearSession(libraryID, session.SessionID)
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An external library scan is already running"})
 		return
 	}
 
-	jsonResponse(w, http.StatusAccepted, session)
+	jsonResponse(w, http.StatusAccepted, map[string]any{
+		"session":  session,
+		"task_key": taskKey,
+	})
 }
 
 func (c *Controller) getExternalLibrarySession(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +97,8 @@ func (c *Controller) getExternalLibrarySession(w http.ResponseWriter, r *http.Re
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch external session")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	jsonResponse(w, http.StatusOK, session)
 }
 
@@ -124,6 +139,8 @@ func (c *Controller) getExternalLibrarySeries(w http.ResponseWriter, r *http.Req
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch external library coverage")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	jsonResponse(w, http.StatusOK, items)
 }
 
@@ -172,7 +189,8 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !c.launchExternalLibraryTransferTask(libraryID, sessionID, req.SeriesIDs) {
+	taskKey, started := c.launchExternalLibraryTransferTask(libraryID, sessionID, req.SeriesIDs)
+	if !started {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An external library transfer is already running"})
 		return
 	}
@@ -182,13 +200,14 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		"series_count":   plan.SeriesCount,
 		"missing_books":  plan.MissingBooks,
 		"existing_books": plan.ExistingBooks,
+		"task_key":       taskKey,
 	})
 }
 
-func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) bool {
-	taskKey := fmt.Sprintf("scan_external_library_%s_%d", sessionID, libraryID)
+func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) (string, bool) {
+	taskKey := externalLibraryScanTaskKey(libraryID, sessionID)
 	if !c.startTask(taskKey, "scan_external_library", "正在扫描外部资源库", 0) {
-		return false
+		return taskKey, false
 	}
 
 	lib, err := c.store.GetLibrary(context.Background(), libraryID)
@@ -197,23 +216,33 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 
 	go func() {
-		_, err := c.external.ScanSession(context.Background(), sessionID, func(current, total int, message string) {
-			c.updateTask(taskKey, current, total, message)
+		var lastUpdate time.Time
+		snapshot, err := c.external.ScanSession(context.Background(), sessionID, func(current, total int, message string) {
+			now := time.Now()
+			if now.Sub(lastUpdate) >= 500*time.Millisecond {
+				c.updateTask(taskKey, current, total, message)
+				lastUpdate = now
+			}
 		})
 		if err != nil {
 			c.failTaskWithError(taskKey, "外部资源库扫描失败", err.Error())
 			return
 		}
-		c.finishTask(taskKey, "外部资源库扫描完成")
+		if snapshot.ScannedFiles > 0 {
+			c.updateTask(taskKey, snapshot.ScannedFiles, snapshot.ScannedFiles, fmt.Sprintf("已扫描 %d 个外部资源文件", snapshot.ScannedFiles))
+			c.finishTask(taskKey, "外部资源库扫描完成")
+		} else {
+			c.completeTask(taskKey, "completed", "外部资源库扫描完成（未发现可处理资源）")
+		}
 		c.PublishEvent("refresh")
 	}()
-	return true
+	return taskKey, true
 }
 
-func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, seriesIDs []int64) bool {
-	taskKey := fmt.Sprintf("transfer_external_library_%s_%d", sessionID, libraryID)
+func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, seriesIDs []int64) (string, bool) {
+	taskKey := externalLibraryTransferTaskKey(libraryID, sessionID)
 	if !c.startTask(taskKey, "transfer_external_library", "正在传输到外部资源库", 0) {
-		return false
+		return taskKey, false
 	}
 
 	lib, err := c.store.GetLibrary(context.Background(), libraryID)
@@ -238,8 +267,13 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 
 		failures := make([]string, 0)
 		skipped := 0
+		var lastUpdate time.Time
 		for index, op := range plan.Operations {
-			c.updateTask(taskKey, index, len(plan.Operations), fmt.Sprintf("正在传输 %s", op.RelativePath))
+			now := time.Now()
+			if now.Sub(lastUpdate) >= 500*time.Millisecond {
+				c.updateTask(taskKey, index, len(plan.Operations), fmt.Sprintf("正在传输 %s", op.RelativePath))
+				lastUpdate = now
+			}
 			skippedCopy, err := copyFileToExternalLibrary(op.SourcePath, op.Destination)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", op.RelativePath, err))
@@ -252,7 +286,11 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			if skippedCopy {
 				skipped++
 			}
-			c.updateTask(taskKey, index+1, len(plan.Operations), fmt.Sprintf("已传输 %d / %d 本资源", index+1, len(plan.Operations)))
+			now = time.Now()
+			if now.Sub(lastUpdate) >= 500*time.Millisecond {
+				c.updateTask(taskKey, index+1, len(plan.Operations), fmt.Sprintf("已传输 %d / %d 本资源", index+1, len(plan.Operations)))
+				lastUpdate = now
+			}
 		}
 
 		if len(failures) > 0 {
@@ -266,7 +304,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		c.finishTask(taskKey, fmt.Sprintf("外部资源库传输完成，新增 %d，本已存在 %d", len(plan.Operations), plan.ExistingBooks+skipped))
 		c.PublishEvent("refresh")
 	}()
-	return true
+	return taskKey, true
 }
 
 func copyFileToExternalLibrary(src, dst string) (bool, error) {

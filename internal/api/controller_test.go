@@ -1317,9 +1317,16 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 		t.Fatalf("expected create external session 202, got %d body=%s", createRec.Code, createRec.Body.String())
 	}
 
-	var session external.SessionSnapshot
-	if err := json.NewDecoder(createRec.Body).Decode(&session); err != nil {
+	var createResp struct {
+		Session external.SessionSnapshot `json:"session"`
+		TaskKey string                   `json:"task_key"`
+	}
+	if err := json.NewDecoder(createRec.Body).Decode(&createResp); err != nil {
 		t.Fatalf("decode external session failed: %v", err)
+	}
+	session := createResp.Session
+	if createResp.TaskKey == "" {
+		t.Fatal("expected task_key in create external session response")
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -1361,6 +1368,15 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 	controller.transferToExternalLibrary(transferRec, transferReq)
 	if transferRec.Code != http.StatusAccepted {
 		t.Fatalf("expected transfer queued 202, got %d body=%s", transferRec.Code, transferRec.Body.String())
+	}
+	var transferResp struct {
+		TaskKey string `json:"task_key"`
+	}
+	if err := json.NewDecoder(transferRec.Body).Decode(&transferResp); err != nil {
+		t.Fatalf("decode transfer response failed: %v", err)
+	}
+	if transferResp.TaskKey == "" {
+		t.Fatal("expected task_key in transfer response")
 	}
 
 	targetPath := filepath.Join(externalRoot, "Series Alpha", "Alpha 02.cbz")

@@ -40,12 +40,14 @@ export default function Layout() {
 
     // 全局任务进度状态
     const [taskProgress, setTaskProgress] = useState<{
+        key?: string;
         status: string;
         message: string;
         error?: string;
         current: number;
         total: number;
         type: string;
+        params?: Record<string, string>;
     } | null>(null);
     const taskDismissTimer = useRef<number | null>(null);
 
@@ -205,6 +207,38 @@ export default function Layout() {
         };
         window.addEventListener('manga-manager:open-add-library', openAddLibrary);
         window.addEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
+        const handleTaskProgressOverride = (event: Event) => {
+            const customEvent = event as CustomEvent<{
+                key?: string;
+                status?: string;
+                message?: string;
+                error?: string;
+                current?: number;
+                total?: number;
+                type?: string;
+            }>;
+            const detail = customEvent.detail;
+            if (!detail?.key) return;
+
+            setTaskProgress((current) => {
+                if (!current || current.key !== detail.key) return current;
+                return {
+                    ...current,
+                    status: detail.status || current.status,
+                    message: detail.message || current.message,
+                    error: detail.error ?? current.error,
+                    current: detail.current ?? current.current,
+                    total: detail.total ?? current.total,
+                    type: detail.type || current.type,
+                };
+            });
+
+            if (detail.status === 'completed' || detail.status === 'failed') {
+                if (taskDismissTimer.current) clearTimeout(taskDismissTimer.current);
+                taskDismissTimer.current = window.setTimeout(() => setTaskProgress(null), 3000);
+            }
+        };
+        window.addEventListener('manga-manager:task-progress-override', handleTaskProgressOverride as EventListener);
 
         // 挂载 Server-Sent Events 流监听器
         const eventSource = new EventSource('/api/events');
@@ -220,11 +254,12 @@ export default function Layout() {
             } else if (data.startsWith('task_progress:')) {
                 try {
                     const progress = JSON.parse(data.slice('task_progress:'.length));
+                    window.dispatchEvent(new CustomEvent('manga-manager:task-progress', { detail: progress }));
                     setTaskProgress(progress);
                     // 清除之前的自动关闭计时器
                     if (taskDismissTimer.current) clearTimeout(taskDismissTimer.current);
-                    // 如果任务完成（current >= total），3 秒后自动隐藏
-                    if ((progress.status === 'completed' || progress.status === 'failed') && progress.total > 0) {
+                    // 如果任务完成或失败，3 秒后自动隐藏。某些任务的 total 可能为 0（例如极快完成或无可处理项）。
+                    if (progress.status === 'completed' || progress.status === 'failed') {
                         taskDismissTimer.current = window.setTimeout(() => setTaskProgress(null), 3000);
                     }
                 } catch (e) {
@@ -241,6 +276,7 @@ export default function Layout() {
         return () => {
             window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
             window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
+            window.removeEventListener('manga-manager:task-progress-override', handleTaskProgressOverride as EventListener);
             eventSource.close();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -596,7 +632,7 @@ export default function Layout() {
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
-                                        {taskProgress.current}/{taskProgress.total}
+                                        {taskProgress.total > 0 ? `${taskProgress.current}/${taskProgress.total}` : taskProgress.status === 'completed' ? '已完成' : taskProgress.status === 'failed' ? '失败' : '处理中'}
                                     </span>
                                     <button onClick={() => setTaskProgress(null)} className="text-gray-500 hover:text-white transition-colors">
                                         <X className="w-3.5 h-3.5" />
@@ -615,6 +651,11 @@ export default function Layout() {
                                             }`}
                                         style={{ width: `${Math.min(100, (taskProgress.current / taskProgress.total) * 100)}%` }}
                                     />
+                                </div>
+                            )}
+                            {taskProgress.total <= 0 && taskProgress.status === 'running' && (
+                                <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                                    <div className="h-full w-1/3 rounded-full bg-komgaPrimary animate-pulse" />
                                 </div>
                             )}
                         </div>

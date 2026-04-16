@@ -27,6 +27,11 @@ interface ExternalSession {
     updated_at: string;
 }
 
+interface ExternalSessionCreateResponse {
+    session: ExternalSession;
+    task_key: string;
+}
+
 interface ExternalSeriesStatus {
     series_id: number;
     series_name?: string;
@@ -62,6 +67,8 @@ export default function Home() {
     const [externalSeriesMap, setExternalSeriesMap] = useState<Record<number, ExternalSeriesStatus>>({});
     const [startingExternalScan, setStartingExternalScan] = useState(false);
     const [startingTransfer, setStartingTransfer] = useState(false);
+    const [externalScanTaskKey, setExternalScanTaskKey] = useState<string | null>(null);
+    const [externalTransferTaskKey, setExternalTransferTaskKey] = useState<string | null>(null);
 
     const [externalBrowsing, setExternalBrowsing] = useState(false);
     const [externalBrowseDirs, setExternalBrowseDirs] = useState<BrowseDirEntry[]>([]);
@@ -81,6 +88,21 @@ export default function Home() {
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
     const [loadingAI, setLoadingAI] = useState(false);
     const [hasFetchedAI, setHasFetchedAI] = useState(false);
+
+    const externalVisibilitySummary = allSeries.reduce((acc, series) => {
+        const externalStatus = externalSeriesMap[series.id];
+        const total = externalStatus?.external_total_count ?? series.actual_book_count ?? 0;
+        const matched = externalStatus?.external_match_count ?? 0;
+        const status = externalStatus?.external_sync_status
+            ?? (matched > 0
+                ? (matched >= total && total > 0 ? 'complete' : 'partial')
+                : 'missing');
+
+        if (status === 'complete') acc.complete += 1;
+        else if (status === 'partial') acc.partial += 1;
+        else acc.missing += 1;
+        return acc;
+    }, { complete: 0, partial: 0, missing: 0 });
 
     const saveRecentExternalPath = (path: string) => {
         const normalized = path.trim();
@@ -116,7 +138,9 @@ export default function Home() {
     const fetchExternalSession = async (sessionId = externalSession?.session_id) => {
         if (!libId || !sessionId) return null;
         try {
-            const res = await axios.get<ExternalSession>(`/api/libraries/${libId}/external-libraries/session/${sessionId}`);
+            const res = await axios.get<ExternalSession>(`/api/libraries/${libId}/external-libraries/session/${sessionId}`, {
+                params: { _ts: Date.now() },
+            });
             setExternalSession(res.data);
             return res.data;
         } catch (err) {
@@ -134,7 +158,13 @@ export default function Home() {
         }
         try {
             const res = await axios.get<ExternalSeriesStatus[]>(
-                `/api/libraries/${libId}/external-libraries/session/${sessionId}/series?ids=${seriesIds.join(',')}`
+                `/api/libraries/${libId}/external-libraries/session/${sessionId}/series`,
+                {
+                    params: {
+                        ids: seriesIds.join(','),
+                        _ts: Date.now(),
+                    },
+                }
             );
             const next: Record<number, ExternalSeriesStatus> = {};
             (res.data || []).forEach((item) => {
@@ -154,11 +184,13 @@ export default function Home() {
         }
         setStartingExternalScan(true);
         try {
-            const res = await axios.post<ExternalSession>(`/api/libraries/${libId}/external-libraries/session`, {
+            const res = await axios.post<ExternalSessionCreateResponse>(`/api/libraries/${libId}/external-libraries/session`, {
                 external_path: externalPath.trim(),
             });
-            setExternalSession(res.data);
+            setExternalSession(res.data.session);
             setExternalSeriesMap({});
+            setExternalScanTaskKey(res.data.task_key || null);
+            setExternalTransferTaskKey(null);
             saveRecentExternalPath(externalPath.trim());
             showToast('已开始扫描外部资源库', 'success');
         } catch (err: any) {
@@ -171,6 +203,8 @@ export default function Home() {
     const clearExternalSession = () => {
         setExternalSession(null);
         setExternalSeriesMap({});
+        setExternalScanTaskKey(null);
+        setExternalTransferTaskKey(null);
     };
 
     const fetchAIRecommendations = () => {
@@ -309,20 +343,87 @@ export default function Home() {
         if (libId) {
             fetchSeriesPage(page, true);
         }
+        if (externalSession?.session_id) {
+            fetchExternalSession(externalSession.session_id).then((session) => {
+                if (session?.status === 'ready') {
+                    fetchExternalSeriesStatus(session.session_id);
+                }
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [refreshTrigger]);
 
     useEffect(() => {
         setExternalSession(null);
         setExternalSeriesMap({});
+        setExternalScanTaskKey(null);
+        setExternalTransferTaskKey(null);
     }, [libId]);
 
     useEffect(() => {
         if (!externalSession?.session_id || externalSession.status !== 'scanning') return;
         const timer = window.setInterval(() => {
-            fetchExternalSession(externalSession.session_id);
+            fetchExternalSession(externalSession.session_id).then((session) => {
+                if (!session || !externalScanTaskKey) return;
+                if (session.status === 'ready' || session.status === 'failed') {
+                    window.dispatchEvent(new CustomEvent('manga-manager:task-progress-override', {
+                        detail: {
+                            key: externalScanTaskKey,
+                            type: 'scan_external_library',
+                            status: session.status === 'ready' ? 'completed' : 'failed',
+                            message: session.status === 'ready'
+                                ? (session.scanned_files > 0 ? `外部资源库扫描完成，已扫描 ${session.scanned_files} 个文件` : '外部资源库扫描完成')
+                                : (session.error || '外部资源库扫描失败'),
+                            error: session.status === 'failed' ? session.error : undefined,
+                            current: session.scanned_files,
+                            total: session.scanned_files,
+                        },
+                    }));
+                    if (session.status === 'ready') {
+                        fetchExternalSeriesStatus(session.session_id);
+                    }
+                    setExternalScanTaskKey(null);
+                }
+            });
         }, 1500);
         return () => window.clearInterval(timer);
-    }, [externalSession?.session_id, externalSession?.status, libId]);
+    }, [externalSession?.session_id, externalSession?.status, externalScanTaskKey, libId]);
+
+    useEffect(() => {
+        const handleTaskProgress = (event: Event) => {
+            const customEvent = event as CustomEvent<{
+                key?: string;
+                type?: string;
+                status?: string;
+            }>;
+            const progress = customEvent.detail;
+            if (!progress || !externalSession?.session_id || !libId) return;
+
+            const isTrackedScanTask = progress.key === externalScanTaskKey && progress.type === 'scan_external_library';
+            const isTrackedTransferTask = progress.key === externalTransferTaskKey && progress.type === 'transfer_external_library';
+            if (!isTrackedScanTask && !isTrackedTransferTask) return;
+            if (progress.status !== 'completed' && progress.status !== 'failed') return;
+
+            fetchExternalSession(externalSession.session_id).then((session) => {
+                if (session?.status === 'ready') {
+                    fetchExternalSeriesStatus(session.session_id);
+                }
+            });
+
+            if (isTrackedScanTask) {
+                setExternalScanTaskKey(null);
+            }
+            if (isTrackedTransferTask) {
+                setExternalTransferTaskKey(null);
+            }
+        };
+
+        window.addEventListener('manga-manager:task-progress', handleTaskProgress as EventListener);
+        return () => {
+            window.removeEventListener('manga-manager:task-progress', handleTaskProgress as EventListener);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [externalSession?.session_id, externalScanTaskKey, externalTransferTaskKey, allSeries, libId]);
 
     useEffect(() => {
         if (!externalSession?.session_id) {
@@ -423,6 +524,7 @@ export default function Home() {
             const res = await axios.post(`/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}/transfer`, {
                 series_ids: selectedSeries,
             });
+            setExternalTransferTaskKey(res.data?.task_key || null);
             showToast(res.data?.message || '已提交外部资源库传输任务', 'success');
         } catch (err: any) {
             showToast(err.response?.data?.error || '外部资源库传输失败', 'error');
@@ -580,6 +682,33 @@ export default function Home() {
                 }}
             />
 
+            {externalSession && (
+                <div className="mb-6 rounded-2xl border border-gray-800 bg-gray-950/80 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <h4 className="text-sm font-semibold text-white">当前页外部存在情况</h4>
+                            <p className="mt-1 text-xs text-gray-400">
+                                直接显示每个系列在当前外部资源库中的命中情况。绿色表示已完整存在，黄色表示部分存在，灰色表示尚未同步。
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-xs sm:text-sm">
+                            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
+                                <p className="text-emerald-300">已完整存在</p>
+                                <p className="mt-1 text-xl font-semibold text-white">{externalVisibilitySummary.complete}</p>
+                            </div>
+                            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+                                <p className="text-amber-300">部分存在</p>
+                                <p className="mt-1 text-xl font-semibold text-white">{externalVisibilitySummary.partial}</p>
+                            </div>
+                            <div className="rounded-xl border border-gray-700 bg-gray-900 px-4 py-3">
+                                <p className="text-gray-300">尚未同步</p>
+                                <p className="mt-1 text-xl font-semibold text-white">{externalVisibilitySummary.missing}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {loading && allSeries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-40">
                     <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-komgaPrimary mb-4"></div>
@@ -599,6 +728,17 @@ export default function Home() {
                                 ?? (externalMatched > 0
                                     ? (externalMatched >= externalTotal && externalTotal > 0 ? 'complete' : 'partial')
                                     : 'missing');
+                            const externalPercent = externalTotal > 0 ? Math.min(100, Math.round((externalMatched / externalTotal) * 100)) : 0;
+                            const externalStatusLabel = externalSyncStatus === 'complete'
+                                ? '外部已完整存在'
+                                : externalSyncStatus === 'partial'
+                                    ? '外部部分存在'
+                                    : '外部尚未同步';
+                            const externalStatusClass = externalSyncStatus === 'complete'
+                                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                                : externalSyncStatus === 'partial'
+                                    ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                                    : 'bg-gray-900 text-gray-300 border border-gray-700';
 
                             const handleCardClick = (e: React.MouseEvent) => {
                                 if (isSelectionMode) {
@@ -662,28 +802,6 @@ export default function Home() {
                                                 </span>
                                                 <span>{s.total_pages?.Valid ? s.total_pages.Float64 : 0} P</span>
                                             </div>
-                                            {externalSession && (
-                                                <div className="mt-1 flex justify-between text-[11px] font-medium">
-                                                    <span className={`${
-                                                        externalSyncStatus === 'complete'
-                                                            ? 'text-emerald-300'
-                                                            : externalSyncStatus === 'partial'
-                                                                ? 'text-amber-300'
-                                                                : 'text-gray-400'
-                                                    }`}>
-                                                        外部资源库
-                                                    </span>
-                                                    <span className={`${
-                                                        externalSyncStatus === 'complete'
-                                                            ? 'text-emerald-300'
-                                                            : externalSyncStatus === 'partial'
-                                                                ? 'text-amber-300'
-                                                                : 'text-gray-400'
-                                                    }`}>
-                                                        {externalMatched}/{externalTotal}
-                                                    </span>
-                                                </div>
-                                            )}
                                             {s.total_pages?.Valid && s.total_pages.Float64 > 0 && (
                                                 <div className="w-full h-1 bg-gray-700/60 rounded-full mt-1.5 overflow-hidden">
                                                     <div
@@ -705,6 +823,30 @@ export default function Home() {
                                                 </p>
                                             )}
                                         </div>
+                                        {externalSession && (
+                                            <div className="mt-3 rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-2">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${externalStatusClass}`}>
+                                                        {externalStatusLabel}
+                                                    </span>
+                                                    <span className="text-[11px] font-medium text-gray-400">
+                                                        {externalMatched}/{externalTotal}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-800">
+                                                    <div
+                                                        className={`h-full transition-all ${
+                                                            externalSyncStatus === 'complete'
+                                                                ? 'bg-emerald-400'
+                                                                : externalSyncStatus === 'partial'
+                                                                    ? 'bg-amber-400'
+                                                                    : 'bg-gray-500'
+                                                        }`}
+                                                        style={{ width: `${externalPercent}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
                                         {/* 移除底部的“系列”字样，保持清爽 */}
                                     </div>
                                 </Link>
