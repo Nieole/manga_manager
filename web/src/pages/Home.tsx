@@ -88,6 +88,9 @@ export default function Home() {
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
     const [loadingAI, setLoadingAI] = useState(false);
     const [hasFetchedAI, setHasFetchedAI] = useState(false);
+    const currentPageSeriesIds = allSeries.map((series) => series.id);
+    const currentPageSelectedCount = currentPageSeriesIds.filter((id) => selectedSeries.includes(id)).length;
+    const allCurrentPageSelected = currentPageSeriesIds.length > 0 && currentPageSelectedCount === currentPageSeriesIds.length;
 
     const externalVisibilitySummary = allSeries.reduce((acc, series) => {
         const externalStatus = externalSeriesMap[series.id];
@@ -331,12 +334,14 @@ export default function Home() {
             fetchSeriesPage(page);
         }, 300);
 
-        // 筛选变化时自动退出选择模式
-        setIsSelectionMode(false);
-        setSelectedSeries([]);
-
         return () => clearTimeout(timer);
     }, [libId, settingsReady, page, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
+
+    // 筛选条件、排序或资源库切换时清空选择；仅翻页时保留跨页多选状态
+    useEffect(() => {
+        setIsSelectionMode(false);
+        setSelectedSeries([]);
+    }, [libId, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     // 3. SSE 专用静默刷新
     useEffect(() => {
@@ -533,6 +538,14 @@ export default function Home() {
         }
     };
 
+    const handleToggleSelectCurrentPage = () => {
+        if (allCurrentPageSelected) {
+            setSelectedSeries((prev) => prev.filter((id) => !currentPageSeriesIds.includes(id)));
+            return;
+        }
+        setSelectedSeries((prev) => Array.from(new Set([...prev, ...currentPageSeriesIds])));
+    };
+
     if (!libId) {
         return (
             <div className="flex-1 flex items-center justify-center p-10 h-full text-gray-500">
@@ -547,12 +560,17 @@ export default function Home() {
                 totalSeries={totalSeries}
                 hasSeries={allSeries.length > 0}
                 isSelectionMode={isSelectionMode}
+                allCurrentPageSelected={allCurrentPageSelected}
+                selectedCount={selectedSeries.length}
                 sortByField={sortByField}
                 sortDir={sortDir}
                 onToggleSelectionMode={() => {
                     setIsSelectionMode(!isSelectionMode);
-                    setSelectedSeries([]);
+                    if (isSelectionMode) {
+                        setSelectedSeries([]);
+                    }
                 }}
+                onToggleSelectCurrentPage={handleToggleSelectCurrentPage}
                 onSortFieldChange={(value) => {
                     setSortByField(value);
                     setPage(1);
@@ -923,7 +941,10 @@ export default function Home() {
                     {/* 悬浮多选操作栏 */}
                     {isSelectionMode && selectedSeries.length > 0 && (
                         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl px-6 py-4 flex items-center gap-6 z-50 animate-in slide-in-from-bottom-5">
-                            <span className="text-white font-medium text-sm">已选择 {selectedSeries.length} 项</span>
+                            <span className="text-white font-medium text-sm">
+                                已选择 {selectedSeries.length} 项
+                                {currentPageSelectedCount > 0 ? ` · 当前页 ${currentPageSelectedCount} 项` : ''}
+                            </span>
                             <div className="flex items-center gap-3">
                                 <button
                                     onClick={() => handleBulkFavoriteUpdate(true)}

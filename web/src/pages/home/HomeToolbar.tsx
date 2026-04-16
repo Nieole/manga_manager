@@ -4,9 +4,12 @@ interface HomeToolbarProps {
   totalSeries: number;
   hasSeries: boolean;
   isSelectionMode: boolean;
+  allCurrentPageSelected?: boolean;
+  selectedCount?: number;
   sortByField: string;
   sortDir: string;
   onToggleSelectionMode: () => void;
+  onToggleSelectCurrentPage?: () => void;
   onSortFieldChange: (value: string) => void;
   onToggleSortDir: () => void;
 }
@@ -15,9 +18,12 @@ export function HomeToolbar({
   totalSeries,
   hasSeries,
   isSelectionMode,
+  allCurrentPageSelected = false,
+  selectedCount = 0,
   sortByField,
   sortDir,
   onToggleSelectionMode,
+  onToggleSelectCurrentPage,
   onSortFieldChange,
   onToggleSortDir,
 }: HomeToolbarProps) {
@@ -35,6 +41,19 @@ export function HomeToolbar({
           >
             {isSelectionMode ? '取消选择' : '批量操作'}
           </button>
+        )}
+        {isSelectionMode && hasSeries && onToggleSelectCurrentPage && (
+          <button
+            onClick={onToggleSelectCurrentPage}
+            className="px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white"
+          >
+            {allCurrentPageSelected ? '取消本页' : '全选本页'}
+          </button>
+        )}
+        {isSelectionMode && selectedCount > 0 && (
+          <span className="text-xs sm:text-sm text-komgaPrimary font-medium">
+            已选 {selectedCount} 项
+          </span>
         )}
         <span className="text-xs sm:text-sm text-gray-400 font-medium ml-auto sm:ml-0">排序方式</span>
         <select
