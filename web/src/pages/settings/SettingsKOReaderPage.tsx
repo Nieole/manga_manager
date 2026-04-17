@@ -37,7 +37,7 @@ export function SettingsKOReaderPage() {
       <SettingsPageIntro title="KOReader" description="单独管理 KOReader 服务配置、匹配规则、账号列表和未匹配记录。所有重建与重关联动作仍为即时执行任务。" />
 
       <section className={sectionClassName}>
-        <div className="flex items-center gap-2 text-sky-400">
+        <div className="flex items-center gap-2 text-komgaSecondary">
           <TabletSmartphone className="h-5 w-5" />
           <h3 className="text-lg font-semibold text-white">服务配置</h3>
         </div>
@@ -66,7 +66,7 @@ export function SettingsKOReaderPage() {
             </p>
             <p className="mt-2 text-xs text-gray-500">KOReader 账号 {koreaderStatus?.enabled_account_count ?? 0} / {koreaderStatus?.account_count ?? 0} 已启用。</p>
             <p className="mt-2 text-xs text-gray-500">最近同步 {formatKOReaderLatestSync(koreaderStatus?.stats.latest_sync_at)}</p>
-            {koreaderStatus?.latest_error && <p className="mt-2 text-xs text-amber-300">最近错误 {koreaderStatus.latest_error}</p>}
+            {koreaderStatus?.latest_error && <p className="mt-2 text-xs text-red-500">最近错误 {koreaderStatus.latest_error}</p>}
           </div>
 
           <div>
@@ -116,18 +116,18 @@ export function SettingsKOReaderPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-100">
+        <div className="rounded-xl border border-komgaSecondary/20 bg-komgaSecondary/10 p-4 text-sm text-komgaSecondary">
           <p className="font-medium">KOReader 配置方式</p>
-          <p className="mt-1 text-sky-100/80">
+          <p className="mt-1 opacity-80">
             在 KOReader 中将 Custom sync server 设置为 `{window.location.origin}{koreaderStatus?.base_path || '/koreader'}`。用户名和下方显示的原始 Sync Key 直接填到设备即可。
           </p>
         </div>
 
         {needsMatchingMaintenance && (
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+          <div className="rounded-xl border border-komgaPrimary/20 bg-komgaPrimary/10 p-4 text-sm text-komgaPrimary">
             <p className="font-medium">匹配规则已变更</p>
-            <p className="mt-1 text-amber-100/80">建议立即应用变更，系统会顺序执行重建当前索引和重关联未匹配记录。</p>
-            <button onClick={handleApplyMatchingChanges} disabled={applyingMatching} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-amber-500/20 bg-black/20 px-4 py-2 text-sm text-amber-50 hover:bg-black/30 disabled:opacity-60">
+            <p className="mt-1 opacity-80">建议立即应用变更，系统会顺序执行重建当前索引和重关联未匹配记录。</p>
+            <button onClick={handleApplyMatchingChanges} disabled={applyingMatching} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800 disabled:opacity-60 transition-colors">
               <RefreshCw className={`h-4 w-4 ${applyingMatching ? 'animate-spin' : ''}`} />
               {applyingMatching ? '提交中...' : '应用匹配规则变更'}
             </button>
@@ -135,20 +135,20 @@ export function SettingsKOReaderPage() {
         )}
 
         <div className="grid gap-3 md:grid-cols-3">
-          <button onClick={saveKOReader} disabled={savingKOReader} className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15 disabled:opacity-60">
+          <button onClick={saveKOReader} disabled={savingKOReader} className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-4 text-left text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-60 transition-colors">
             <p className="inline-flex items-center gap-2 font-medium">
               <Save className={`h-4 w-4 ${savingKOReader ? 'animate-spin' : ''}`} />
               {savingKOReader ? '保存中...' : '保存同步配置'}
             </p>
-            <p className="mt-1 text-xs text-sky-100/80">只保存服务级配置。账号和 Sync Key 通过下方账号列表管理。</p>
+            <p className="mt-1 text-xs opacity-70">只保存服务级配置。账号和 Sync Key 通过下方账号列表管理。</p>
           </button>
-          <button onClick={() => handleAction('/api/system/koreader/rebuild-hashes', 'KOReader 索引重建已启动')} className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15">
+          <button onClick={() => handleAction('/api/system/koreader/rebuild-hashes', 'KOReader 索引重建已启动')} className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-4 text-left text-gray-300 hover:text-white hover:bg-gray-800 transition-colors">
             <p className="font-medium">重建 {formatKOReaderIndexLabel(koreaderForm.match_mode, koreaderForm.path_ignore_extension)}</p>
-            <p className="mt-1 text-xs text-sky-100/80">按当前模式为现有书籍补全 KOReader 所需索引。</p>
+            <p className="mt-1 text-xs opacity-70">按当前模式为现有书籍补全 KOReader 所需索引。</p>
           </button>
-          <button onClick={() => handleAction('/api/system/koreader/reconcile', '未匹配同步记录重关联已启动')} className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4 text-left text-sky-100 hover:bg-sky-500/15">
+          <button onClick={() => handleAction('/api/system/koreader/reconcile', '未匹配同步记录重关联已启动')} className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-4 text-left text-gray-300 hover:text-white hover:bg-gray-800 transition-colors">
             <p className="font-medium">重关联未匹配记录</p>
-            <p className="mt-1 text-xs text-sky-100/80">重新尝试把历史同步记录映射回已入库书籍。</p>
+            <p className="mt-1 text-xs opacity-70">重新尝试把历史同步记录映射回已入库书籍。</p>
           </button>
         </div>
       </section>
@@ -161,7 +161,7 @@ export function SettingsKOReaderPage() {
             <input type="text" value={koreaderAccountForm.username} onChange={(e) => setKOReaderAccountForm({ username: e.target.value })} className={inputClassName} placeholder="输入唯一用户名" />
             <FieldErrors messages={koreaderFieldErrors('koreader.accounts.username')} />
           </div>
-          <button onClick={handleCreateKOReaderAccount} disabled={creatingAccount || !koreaderAccountForm.username.trim()} className="inline-flex items-center justify-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-4 py-2.5 text-sm text-sky-100 hover:bg-sky-500/15 disabled:opacity-60">
+          <button onClick={handleCreateKOReaderAccount} disabled={creatingAccount || !koreaderAccountForm.username.trim()} className="inline-flex items-center justify-center gap-2 rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2.5 text-sm text-komgaPrimary hover:bg-komgaPrimary/20 disabled:opacity-60 transition-colors">
             {creatingAccount ? <RefreshCw className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
             {creatingAccount ? '创建中...' : '创建账号并生成 Sync Key'}
           </button>
@@ -177,13 +177,13 @@ export function SettingsKOReaderPage() {
                   <div>
                     <p className="text-sm font-medium text-white">{account.username}</p>
                     <p className="mt-1 text-xs text-gray-500">状态 {account.enabled ? '已启用' : '已停用'} · 最近使用 {account.last_used_at ? new Date(account.last_used_at).toLocaleString() : '暂无'}</p>
-                    {account.latest_error && <p className="mt-1 text-xs text-amber-300">最近错误 {account.latest_error}</p>}
+                    {account.latest_error && <p className="mt-1 text-xs text-red-500">最近错误 {account.latest_error}</p>}
                   </div>
                   <div className="text-xs text-gray-500">创建于 {new Date(account.created_at).toLocaleString()}</div>
                 </div>
                 <div className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
                   <p className="text-[11px] uppercase tracking-wide text-gray-500">原始 Sync Key</p>
-                  <p className="mt-1 break-all font-mono text-sm text-sky-100">{account.sync_key}</p>
+                  <p className="mt-1 break-all font-mono text-sm text-komgaPrimary">{account.sync_key}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => handleCopySyncKey(account)} className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-200 hover:bg-black/30">
@@ -234,7 +234,7 @@ export function SettingsKOReaderPage() {
                   <div className="text-xs text-gray-500">{Math.round(item.percentage * 100)}% · {new Date(item.updated_at).toLocaleString()}</div>
                 </div>
                 <p className="mt-2 text-xs text-gray-400">设备：{item.device || '未知设备'}{item.device_id ? ` (${item.device_id})` : ''}</p>
-                <p className="mt-2 text-xs text-amber-200/90">{item.suggestion}</p>
+                <p className="mt-2 text-xs text-komgaPrimary opacity-90">{item.suggestion}</p>
               </div>
             ))
           )}

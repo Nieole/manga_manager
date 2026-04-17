@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { AlertTriangle, BookImage, Pencil, RotateCcw } from 'lucide-react';
+import { AlertTriangle, BookImage, CheckCircle2, RotateCcw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { SeriesContentSection } from './series-detail/SeriesContentSection';
 import { SeriesHeader } from './series-detail/SeriesHeader';
@@ -480,7 +480,7 @@ export default function SeriesDetail() {
                             className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
                             title={book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? "标记为未读" : "快速标记为已读"}
                         >
-                            <Pencil className={`w-4 h-4 ${book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? 'text-green-400 fill-green-400/20' : ''}`} />
+                            <CheckCircle2 className={`w-4 h-4 ${book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? 'text-green-400 fill-green-400/20' : ''}`} />
                         </button>
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-3 z-10 pointer-events-none">

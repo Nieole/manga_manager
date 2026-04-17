@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck } from 'lucide-react';
+import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { DirectoryPicker } from '../components/layout/DirectoryPicker';
 import type { BrowseDirEntry, BrowseDrive } from '../components/layout/types';
@@ -79,6 +79,9 @@ export default function Home() {
     const [externalBrowseCurrent, setExternalBrowseCurrent] = useState('');
     const [externalBrowseParent, setExternalBrowseParent] = useState('');
     const [externalBrowseDrives, setExternalBrowseDrives] = useState<BrowseDrive[]>([]);
+    
+    // External Library section collapse state
+    const [isExternalExpanded, setIsExternalExpanded] = useState(false);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -588,87 +591,99 @@ export default function Home() {
             />
 
             <div className="mb-6 rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 to-gray-950 p-4 sm:p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div 
+                    className="flex items-center justify-between cursor-pointer group"
+                    onClick={() => setIsExternalExpanded(!isExternalExpanded)}
+                >
                     <div>
                         <div className="flex items-center gap-2 text-white">
                             <HardDrive className="w-5 h-5 text-komgaPrimary" />
                             <h3 className="text-lg font-semibold">外部资源库</h3>
+                            {externalSession?.status === 'scanning' && <Loader2 className="w-4 h-4 ml-2 animate-spin text-blue-400" />}
+                            {externalSession?.status === 'ready' && !isExternalExpanded && <CheckCircle2 className="w-4 h-4 ml-2 text-emerald-400" />}
                         </div>
-                        <p className="mt-1 text-sm text-gray-400">
+                        <p className="mt-1 text-sm text-gray-400 transition-colors group-hover:text-gray-300">
                             选择一个外部目录，扫描后按系列展示当前资源库在该目录中的命中比例，并支持批量传输缺失书籍。
                         </p>
                     </div>
-                    {externalSession && (
-                        <div className="rounded-xl border border-gray-800 bg-black/20 px-4 py-3 text-sm text-gray-300 min-w-[280px]">
-                            <div className="flex items-center gap-2">
-                                {externalSession.status === 'scanning' ? (
-                                    <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-                                ) : externalSession.status === 'ready' ? (
-                                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                                ) : (
-                                    <HardDrive className="w-4 h-4 text-red-400" />
+                    <div className="text-gray-500 group-hover:text-white transition-colors">
+                        {isExternalExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </div>
+                </div>
+
+                {isExternalExpanded && (
+                    <div className="mt-4 pt-4 border-t border-gray-800/50 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="flex-1 w-full lg:max-w-3xl">
+                            <DirectoryPicker
+                                value={externalPath}
+                                onChange={setExternalPath}
+                                browsing={externalBrowsing}
+                                browseCurrent={externalBrowseCurrent}
+                                browseParent={externalBrowseParent}
+                                browseDirs={externalBrowseDirs}
+                                browseDrives={externalBrowseDrives}
+                                recentPaths={recentExternalPaths}
+                                onOpen={openExternalDirectoryBrowser}
+                                onClose={() => setExternalBrowsing(false)}
+                                onChooseCurrent={() => {
+                                    setExternalPath(externalBrowseCurrent);
+                                    setExternalBrowsing(false);
+                                }}
+                                onNavigate={navigateExternalDirectoryBrowser}
+                            />
+                            <div className="mt-4 flex flex-wrap items-center gap-3">
+                                <button
+                                    onClick={startExternalLibraryScan}
+                                    disabled={startingExternalScan || !externalPath.trim()}
+                                    className="rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2 text-sm font-medium text-komgaPrimary hover:bg-komgaPrimary/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {startingExternalScan ? '正在启动扫描...' : '扫描外部资源库'}
+                                </button>
+                                {externalSession && (
+                                    <button
+                                        onClick={clearExternalSession}
+                                        className="rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm font-medium text-gray-300 hover:border-gray-600 hover:text-white"
+                                    >
+                                        清除当前会话
+                                    </button>
                                 )}
-                                <span className="font-medium text-white">
-                                    {externalSession.status === 'scanning' ? '正在扫描外部资源库' : externalSession.status === 'ready' ? '外部资源库已就绪' : '外部资源库扫描失败'}
-                                </span>
                             </div>
-                            <p className="mt-2 text-xs text-gray-400 break-all">{externalSession.external_path}</p>
-                            <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
-                                <div>
-                                    <p className="text-gray-500">已扫描</p>
-                                    <p className="mt-1 text-white font-semibold">{externalSession.scanned_files}</p>
-                                </div>
-                                <div>
-                                    <p className="text-gray-500">已命中</p>
-                                    <p className="mt-1 text-white font-semibold">{externalSession.matched_books}/{externalSession.total_books}</p>
-                                </div>
-                                <div>
-                                    <p className="text-gray-500">未识别</p>
-                                    <p className="mt-1 text-white font-semibold">{externalSession.unmatched_files}</p>
-                                </div>
-                            </div>
-                            {externalSession.error && <p className="mt-3 text-xs text-red-300">{externalSession.error}</p>}
                         </div>
-                    )}
-                </div>
 
-                <div className="mt-4">
-                    <DirectoryPicker
-                        value={externalPath}
-                        onChange={setExternalPath}
-                        browsing={externalBrowsing}
-                        browseCurrent={externalBrowseCurrent}
-                        browseParent={externalBrowseParent}
-                        browseDirs={externalBrowseDirs}
-                        browseDrives={externalBrowseDrives}
-                        recentPaths={recentExternalPaths}
-                        onOpen={openExternalDirectoryBrowser}
-                        onClose={() => setExternalBrowsing(false)}
-                        onChooseCurrent={() => {
-                            setExternalPath(externalBrowseCurrent);
-                            setExternalBrowsing(false);
-                        }}
-                        onNavigate={navigateExternalDirectoryBrowser}
-                    />
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <button
-                        onClick={startExternalLibraryScan}
-                        disabled={startingExternalScan || !externalPath.trim()}
-                        className="rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2 text-sm font-medium text-komgaPrimary hover:bg-komgaPrimary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        {startingExternalScan ? '正在启动扫描...' : '扫描外部资源库'}
-                    </button>
-                    {externalSession && (
-                        <button
-                            onClick={clearExternalSession}
-                            className="rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm font-medium text-gray-300 hover:border-gray-600 hover:text-white"
-                        >
-                            清除当前会话
-                        </button>
-                    )}
-                </div>
+                        {externalSession && (
+                            <div className="rounded-xl border border-gray-800 bg-black/20 px-4 py-3 text-sm text-gray-300 w-full lg:min-w-[280px] lg:w-auto">
+                                <div className="flex items-center gap-2">
+                                    {externalSession.status === 'scanning' ? (
+                                        <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                                    ) : externalSession.status === 'ready' ? (
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                    ) : (
+                                        <HardDrive className="w-4 h-4 text-red-400" />
+                                    )}
+                                    <span className="font-medium text-white">
+                                        {externalSession.status === 'scanning' ? '正在扫描外部资源库' : externalSession.status === 'ready' ? '外部资源库已就绪' : '外部资源库扫描失败'}
+                                    </span>
+                                </div>
+                                <p className="mt-2 text-xs text-gray-400 break-all">{externalSession.external_path}</p>
+                                <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
+                                    <div>
+                                        <p className="text-gray-500">已扫描</p>
+                                        <p className="mt-1 text-white font-semibold">{externalSession.scanned_files}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500">已命中</p>
+                                        <p className="mt-1 text-white font-semibold">{externalSession.matched_books}/{externalSession.total_books}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500">未识别</p>
+                                        <p className="mt-1 text-white font-semibold">{externalSession.unmatched_files}</p>
+                                    </div>
+                                </div>
+                                {externalSession.error && <p className="mt-3 text-xs text-red-300">{externalSession.error}</p>}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <RecentSeriesStrip recentSeries={recentSeries} />
@@ -946,34 +961,34 @@ export default function Home() {
 
                     {/* 悬浮多选操作栏 */}
                     {isSelectionMode && selectedSeries.length > 0 && (
-                        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl px-6 py-4 flex items-center gap-6 z-50 animate-in slide-in-from-bottom-5">
-                            <span className="text-white font-medium text-sm">
+                        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-max max-w-[95vw] bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl px-4 sm:px-6 py-4 flex flex-wrap justify-center items-center gap-4 sm:gap-6 z-50 animate-in slide-in-from-bottom-5">
+                            <span className="text-white font-medium text-sm whitespace-nowrap shrink-0">
                                 已选择 {selectedSeries.length} 项
                                 {currentPageSelectedCount > 0 ? ` · 当前页 ${currentPageSelectedCount} 项` : ''}
                             </span>
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
                                 <button
                                     onClick={() => handleBulkFavoriteUpdate(true)}
-                                    className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                                    className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
                                 >
                                     <Heart className="w-4 h-4 fill-current" /> 标记收藏
                                 </button>
                                 <button
                                     onClick={() => handleBulkFavoriteUpdate(false)}
-                                    className="bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                    className="bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
                                 >
                                     移除收藏
                                 </button>
                                 <button
                                     onClick={() => setShowCollectionModal(true)}
-                                    className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                                    className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
                                 >
                                     <FolderHeart className="w-4 h-4" /> 加入合集
                                 </button>
                                 <button
                                     onClick={handleTransferSelectedSeries}
                                     disabled={startingTransfer || !externalSession || externalSession.status !== 'ready'}
-                                    className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                     <Send className="w-4 h-4" /> {startingTransfer ? '正在提交...' : '传输到外部资源库'}
                                 </button>

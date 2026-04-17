@@ -1,4 +1,4 @@
-import { BookImage, FolderOpen, Pencil } from 'lucide-react';
+import { BookImage, FolderOpen, CheckCircle2 } from 'lucide-react';
 import type { Book, NullString } from './types';
 
 interface VolumeItem {
@@ -98,7 +98,7 @@ export function SeriesContentSection({
                         className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
                         title={volume.read_pages >= volume.total_pages ? '将全卷标记为未读' : '将全卷标记为已读'}
                       >
-                        <Pencil className={`w-4 h-4 ${volume.read_pages >= volume.total_pages ? 'text-green-400 fill-green-400/20' : ''}`} />
+                        <CheckCircle2 className={`w-4 h-4 ${volume.read_pages >= volume.total_pages ? 'text-green-400 fill-green-400/20' : ''}`} />
                       </button>
                     )}
 
@@ -117,13 +117,14 @@ export function SeriesContentSection({
                         />
                       </div>
                     )}
+
+                    {!isSelectionMode && (
+                      <div className="absolute top-2 left-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg opacity-80 group-hover:opacity-100 transition-opacity z-20">
+                        Volume
+                      </div>
+                    )}
                   </div>
 
-                  {!isSelectionMode && (
-                    <div className="absolute top-2 left-2 bg-komgaPrimary/90 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-lg opacity-80 group-hover:opacity-100 transition-opacity">
-                      Volume
-                    </div>
-                  )}
                   <div className="p-4 flex-1">
                     <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">{volume.name}</h4>
                   </div>

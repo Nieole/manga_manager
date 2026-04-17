@@ -573,10 +573,10 @@ export default function BookReader() {
                     <div className="flex items-center justify-center w-full h-full bg-komgaDark relative">
                         {/* 左触控区/按钮 */}
                         <div
-                            className="absolute left-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
+                            className="absolute left-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer md:hover:bg-white/5 transition opacity-0 md:hover:opacity-100 group"
                             onClick={() => readDirection === 'ltr' ? handlePrev() : handleNext()}
                         >
-                            <ChevronLeft className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors" />
+                            <ChevronLeft className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors hidden md:block" />
                         </div>
 
                         {/* 图像容器 - 根据数量排列并赋予拖拽监听和原生弹性滚动 */}
@@ -613,10 +613,10 @@ export default function BookReader() {
 
                         {/* 右触控区/按钮 */}
                         <div
-                            className="absolute right-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-end sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
+                            className="absolute right-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-end sm:px-8 cursor-pointer md:hover:bg-white/5 transition opacity-0 md:hover:opacity-100 group"
                             onClick={() => readDirection === 'ltr' ? handleNext() : handlePrev()}
                         >
-                            <ChevronRight className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors" />
+                            <ChevronRight className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors hidden md:block" />
                         </div>
 
                     </div>

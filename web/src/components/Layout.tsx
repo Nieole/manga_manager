@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles } from 'lucide-react';
+import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import { LibraryFormModal } from './layout/LibraryFormModal';
 import { SearchModal } from './layout/SearchModal';
@@ -25,7 +25,20 @@ export default function Layout() {
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(() => {
+        try {
+            return localStorage.getItem('manga_manager_sidebar_collapsed') === 'true';
+        } catch { return false; }
+    });
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+    const toggleDesktopSidebar = () => {
+        setIsDesktopSidebarCollapsed(prev => {
+            const next = !prev;
+            localStorage.setItem('manga_manager_sidebar_collapsed', String(next));
+            return next;
+        });
+    };
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
     const [newLibAutoScan, setNewLibAutoScan] = useState(false);
@@ -467,42 +480,54 @@ export default function Layout() {
                     />
                 )}
 
-                <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 w-64 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 transform transition-transform duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 overflow-y-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:h-[calc(100vh-73px)]`}>
-                    <div className="px-6 mb-4 flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">
-                        <span>Libraries</span>
-                        <button
-                            onClick={() => setShowAddModal(true)}
-                            className="text-gray-400 hover:text-white transition-colors"
-                            title="添加新资源库"
-                        >
-                            <Plus className="w-4 h-4" />
-                        </button>
+                <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 transform transition-all duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 overflow-y-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:h-[calc(100vh-73px)] ${isDesktopSidebarCollapsed ? 'w-64 md:w-[72px]' : 'w-64'}`}>
+                    <div className={`mb-4 flex items-center text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0 ${isDesktopSidebarCollapsed ? 'md:px-0 md:justify-center' : 'px-6 justify-between'}`}>
+                        <span className={`transition-opacity duration-300 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>Libraries</span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={toggleDesktopSidebar}
+                                className="text-gray-400 hover:text-white transition-colors hidden md:block"
+                                title={isDesktopSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
+                            >
+                                {isDesktopSidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
+                            </button>
+                            <button
+                                onClick={() => setShowAddModal(true)}
+                                className={`text-gray-400 hover:text-white transition-colors ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}
+                                title="添加新资源库"
+                            >
+                                <Plus className="w-5 h-5" />
+                            </button>
+                        </div>
                     </div>
                     {/* 快捷导航 */}
                     <nav className="px-4 mb-4 space-y-1" onClick={() => setOpenMenuId(null)}>
                         <Link to="/" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                }`}
+                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
+                            title={isDesktopSidebarCollapsed ? "仪表板" : undefined}
                         >
                             <LayoutDashboard className="w-5 h-5 shrink-0" />
-                            <span>仪表板</span>
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>仪表板</span>
                         </Link>
                         <Link to="/collections" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/collections' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                }`}
+                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
+                            title={isDesktopSidebarCollapsed ? "合集" : undefined}
                         >
                             <FolderHeart className="w-5 h-5 shrink-0" />
-                            <span>合集</span>
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>合集</span>
                         </Link>
                         <Link to="/logs" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/logs' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                }`}
+                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
+                            title={isDesktopSidebarCollapsed ? "系统日志" : undefined}
                         >
                             <Terminal className="w-5 h-5 shrink-0" />
-                            <span>系统日志</span>
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>系统日志</span>
                         </Link>
                     </nav>
-                    <div className="px-6 mb-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">Libraries</div>
+                    <div className={`px-6 mb-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wider ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>Libraries</div>
                     <nav className="flex-1 space-y-1 px-4 overflow-y-auto">
                         {loading ? (
                             <div className="animate-pulse px-3 py-2 bg-gray-800 rounded-md h-10 w-full mb-2" />
@@ -514,26 +539,28 @@ export default function Layout() {
                                     key={lib.id}
                                     to={`/library/${lib.id}`}
                                     onClick={() => setIsSidebarOpen(false)}
-                                    className={`w-full flex justify-between items-center group px-3 py-2.5 rounded-lg transition-colors duration-200 ${libId === lib.id
+                                    title={isDesktopSidebarCollapsed ? lib.name : undefined}
+                                    className={`w-full flex justify-between items-center group px-3 py-2.5 rounded-lg transition-colors duration-200 ${libId === String(lib.id)
                                         ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium'
                                         : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                        }`}
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
                                 >
-                                    <div className="flex items-center space-x-3 overflow-hidden min-w-0">
+                                    <div className={`flex items-center space-x-3 overflow-hidden min-w-0 ${isDesktopSidebarCollapsed ? 'md:space-x-0 md:overflow-visible' : ''}`}>
                                         <FolderOpen className="w-5 h-5 flex-shrink-0" />
-                                        <div className="min-w-0">
+                                        <div className={`min-w-0 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>
                                             <span className="truncate block">{lib.name}</span>
                                             <span className={`text-[10px] ${lib.koreader_sync_enabled ?? true ? 'text-sky-400/80' : 'text-gray-500'}`}>
                                                 {lib.koreader_sync_enabled ?? true ? 'KOReader Sync 开启' : 'KOReader Sync 关闭'}
                                             </span>
                                         </div>
                                     </div>
+                                    {!isDesktopSidebarCollapsed && (
                                     <div className="relative">
                                         <button
                                             onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                setOpenMenuId(openMenuId === lib.id ? null : lib.id);
+                                                setOpenMenuId(openMenuId === String(lib.id) ? String(lib.id) : null);
                                             }}
                                             className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700 focus:outline-none"
                                             title="更多操作"
@@ -674,6 +701,7 @@ export default function Layout() {
                                             </>
                                         )}
                                     </div>
+                                    )}
                                 </Link>
                             ))
                         )}

@@ -463,8 +463,8 @@ body {
   color: rgb(var(--color-white));
   background-color: rgb(var(--color-komga-background));
   background-image:
-    radial-gradient(circle at top, rgba(var(--theme-glow), 0.14), transparent 28%),
-    linear-gradient(180deg, rgba(var(--color-komga-background), 0.98), rgba(var(--color-gray-950), 1));
+    radial-gradient(circle at top, rgb(var(--theme-glow) / 0.14), transparent 28%),
+    linear-gradient(180deg, rgb(var(--color-komga-background) / 0.98), rgb(var(--color-gray-950) / 1));
   background-attachment: fixed;
 }
 

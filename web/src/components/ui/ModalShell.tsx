@@ -85,7 +85,7 @@ export function ModalShell({
         className="absolute inset-0 backdrop-blur-sm"
         style={{
           background:
-            'radial-gradient(circle at top, rgba(var(--theme-glow), 0.16), transparent 35%), linear-gradient(to bottom, rgba(var(--theme-overlay-top), 0.78), rgba(var(--theme-overlay-bottom), 0.88))',
+            'radial-gradient(circle at top, rgb(var(--theme-glow) / 0.16), transparent 35%), linear-gradient(to bottom, rgb(var(--theme-overlay-top) / 0.78), rgb(var(--theme-overlay-bottom) / 0.88))',
         }}
         onClick={closeOnBackdrop ? onClose : undefined}
       />
@@ -98,14 +98,14 @@ export function ModalShell({
           aria-labelledby={title ? titleId : undefined}
           aria-describedby={description ? descriptionId : undefined}
           onClick={(event) => event.stopPropagation()}
-          className={`relative flex w-full ${sizeClassMap[size]} max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-gray-800/90 shadow-[0_32px_110px_-34px_rgba(var(--theme-shadow),0.92)] ${panelClassName}`}
+          className={`relative flex w-full ${sizeClassMap[size]} max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-gray-800/90 shadow-[0_32px_110px_-34px_rgb(var(--theme-shadow)/0.92)] ${panelClassName}`}
           style={{
-            background: 'linear-gradient(180deg, rgba(var(--theme-modal-top), 0.98), rgba(var(--theme-modal-bottom), 0.98))',
+            background: 'linear-gradient(180deg, rgb(var(--theme-modal-top) / 0.98), rgb(var(--theme-modal-bottom) / 0.98))',
           }}
         >
           <div
             className="pointer-events-none absolute inset-x-0 top-0 h-28 opacity-80"
-            style={{ background: 'radial-gradient(circle at top, rgba(var(--color-white), 0.08), transparent 65%)' }}
+            style={{ background: 'radial-gradient(circle at top, rgb(var(--color-white) / 0.08), transparent 65%)' }}
           />
 
           {(title || description || headerActions || headerContent || showCloseButton) && (
@@ -117,7 +117,7 @@ export function ModalShell({
                       {title && (
                         <div className="flex items-center gap-3">
                           {icon ? (
-                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-komgaPrimary shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-komgaPrimary shadow-[inset_0_1px_0_rgb(255_255_255/0.08)]">
                               {icon}
                             </div>
                           ) : null}
