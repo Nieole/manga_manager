@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { APP_THEMES, THEME_STORAGE_KEY, applyTheme, getStoredThemeId, getThemeById, type AppTheme, type AppThemeId } from './themes';
+import { APP_THEMES, DARK_THEMES, LIGHT_THEMES, THEME_STORAGE_KEY, applyTheme, getStoredThemeId, getThemeById, type AppTheme, type AppThemeId } from './themes';
 
 interface ThemeContextValue {
   themeId: AppThemeId;
   resolvedTheme: AppTheme;
   availableThemes: readonly AppTheme[];
+  lightThemes: readonly AppTheme[];
+  darkThemes: readonly AppTheme[];
   setTheme: (themeId: AppThemeId | string) => void;
 }
 
@@ -27,6 +29,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       themeId,
       resolvedTheme: getThemeById(themeId),
       availableThemes: APP_THEMES,
+      lightThemes: LIGHT_THEMES,
+      darkThemes: DARK_THEMES,
       setTheme,
     }),
     [themeId, setTheme],

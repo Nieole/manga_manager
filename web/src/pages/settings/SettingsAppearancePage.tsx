@@ -2,30 +2,39 @@ import { Palette } from 'lucide-react';
 import { useTheme } from '../../theme/ThemeProvider';
 import { SettingsPageIntro } from './shared';
 
-export function SettingsAppearancePage() {
-  const { themeId, resolvedTheme, availableThemes, setTheme } = useTheme();
-
+function ThemeSection({
+  title,
+  description,
+  themes,
+  themeId,
+  onSelect,
+}: {
+  title: string;
+  description: string;
+  themes: ReturnType<typeof useTheme>['availableThemes'];
+  themeId: string;
+  onSelect: (themeId: string) => void;
+}) {
   return (
-    <div className="space-y-6">
-      <SettingsPageIntro
-        title="外观 / 主题"
-        description="主题只保存在当前浏览器。阅读器默认跟随应用主题，阅读模式和图像处理偏好保持原有本地存储。"
-        badge={
-          <div className="inline-flex items-center gap-2 rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-3 py-1.5 text-sm text-komgaPrimary">
-            <Palette className="h-4 w-4" />
-            当前主题：{resolvedTheme.name}
-          </div>
-        }
-      />
+    <section className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold text-white">{title}</h3>
+          <p className="mt-1 text-sm leading-6 text-gray-400">{description}</p>
+        </div>
+        <span className="rounded-full border border-gray-700 bg-gray-900/60 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-gray-300">
+          {themes.length} 套
+        </span>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {availableThemes.map((theme) => {
+        {themes.map((theme) => {
           const selected = theme.id === themeId;
           return (
             <button
               key={theme.id}
               type="button"
-              onClick={() => setTheme(theme.id)}
+              onClick={() => onSelect(theme.id)}
               className={`rounded-2xl border p-5 text-left transition-all ${
                 selected ? 'border-komgaPrimary bg-komgaPrimary/10 shadow-lg shadow-komgaPrimary/10' : 'border-gray-800 bg-komgaSurface hover:border-gray-700 hover:bg-gray-900/70'
               }`}
@@ -46,6 +55,41 @@ export function SettingsAppearancePage() {
           );
         })}
       </div>
+    </section>
+  );
+}
+
+export function SettingsAppearancePage() {
+  const { themeId, resolvedTheme, lightThemes, darkThemes, setTheme } = useTheme();
+
+  return (
+    <div className="space-y-6">
+      <SettingsPageIntro
+        title="外观 / 主题"
+        description="主题只保存在当前浏览器。阅读器默认跟随应用主题，阅读模式和图像处理偏好保持原有本地存储。"
+        badge={
+          <div className="inline-flex items-center gap-2 rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-3 py-1.5 text-sm text-komgaPrimary">
+            <Palette className="h-4 w-4" />
+            当前主题：{resolvedTheme.name} · {resolvedTheme.colorScheme === 'light' ? '浅色' : '深色'}
+          </div>
+        }
+      />
+
+      <ThemeSection
+        title="浅色主题"
+        description="适合白天环境和管理型操作，整体更接近文档和桌面工具。"
+        themes={lightThemes}
+        themeId={themeId}
+        onSelect={setTheme}
+      />
+
+      <ThemeSection
+        title="深色主题"
+        description="适合夜间使用和沉浸式浏览，保留更强的层次和氛围感。"
+        themes={darkThemes}
+        themeId={themeId}
+        onSelect={setTheme}
+      />
     </div>
   );
 }
