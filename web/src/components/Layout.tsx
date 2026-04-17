@@ -560,7 +560,7 @@ export default function Layout() {
                                             onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                setOpenMenuId(openMenuId === String(lib.id) ? String(lib.id) : null);
+                                                setOpenMenuId(openMenuId === String(lib.id) ? null : String(lib.id));
                                             }}
                                             className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700 focus:outline-none"
                                             title="更多操作"
@@ -568,7 +568,7 @@ export default function Layout() {
                                             <MoreHorizontal className="w-5 h-5" />
                                         </button>
 
-                                        {openMenuId === lib.id && (
+                                        {openMenuId === String(lib.id) && (
                                             <>
                                                 <div
                                                     className="fixed inset-0 z-40"

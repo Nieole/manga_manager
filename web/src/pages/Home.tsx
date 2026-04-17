@@ -79,7 +79,7 @@ export default function Home() {
     const [externalBrowseCurrent, setExternalBrowseCurrent] = useState('');
     const [externalBrowseParent, setExternalBrowseParent] = useState('');
     const [externalBrowseDrives, setExternalBrowseDrives] = useState<BrowseDrive[]>([]);
-    
+
     // External Library section collapse state
     const [isExternalExpanded, setIsExternalExpanded] = useState(false);
 
@@ -591,14 +591,14 @@ export default function Home() {
             />
 
             <div className="mb-6 rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 to-gray-950 p-4 sm:p-5">
-                <div 
+                <div
                     className="flex items-center justify-between cursor-pointer group"
                     onClick={() => setIsExternalExpanded(!isExternalExpanded)}
                 >
                     <div>
                         <div className="flex items-center gap-2 text-white">
                             <HardDrive className="w-5 h-5 text-komgaPrimary" />
-                            <h3 className="text-lg font-semibold">外部资源库</h3>
+                            <h3 className="text-lg font-semibold">同步资源库</h3>
                             {externalSession?.status === 'scanning' && <Loader2 className="w-4 h-4 ml-2 animate-spin text-blue-400" />}
                             {externalSession?.status === 'ready' && !isExternalExpanded && <CheckCircle2 className="w-4 h-4 ml-2 text-emerald-400" />}
                         </div>
@@ -874,13 +874,12 @@ export default function Home() {
                                                 </div>
                                                 <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-800">
                                                     <div
-                                                        className={`h-full transition-all ${
-                                                            externalSyncStatus === 'complete'
+                                                        className={`h-full transition-all ${externalSyncStatus === 'complete'
                                                                 ? 'bg-emerald-400'
                                                                 : externalSyncStatus === 'partial'
                                                                     ? 'bg-amber-400'
                                                                     : 'bg-gray-500'
-                                                        }`}
+                                                            }`}
                                                         style={{ width: `${externalPercent}%` }}
                                                     />
                                                 </div>

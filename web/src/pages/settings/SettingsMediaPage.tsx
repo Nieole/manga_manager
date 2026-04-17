@@ -70,7 +70,7 @@ export function SettingsMediaPage() {
             <FieldErrors messages={fieldErrors('scanner.realcugan_path')} />
           </div>
           <div>
-            <label className="mb-1 block text-sm text-gray-400">AI 超分并发上限</label>
+            <label className="mb-1 block text-sm text-gray-400">AI 超分并发上限: {config.scanner.max_ai_concurrency}</label>
             <input
               type="range"
               min="1"

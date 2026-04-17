@@ -48,7 +48,7 @@ export function SettingsLibraryPage() {
 
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm text-gray-400">扫描工作协程</label>
+            <label className="mb-1 block text-sm text-gray-400">扫描工作协程: {config.scanner.workers}</label>
             <input
               type="range"
               min="0"
@@ -61,7 +61,7 @@ export function SettingsLibraryPage() {
             <FieldErrors messages={fieldErrors('scanner.workers')} />
           </div>
           <div>
-            <label className="mb-1 block text-sm text-gray-400">归档句柄池大小</label>
+            <label className="mb-1 block text-sm text-gray-400">归档句柄池大小: {config.scanner.archive_pool_size}</label>
             <input
               type="range"
               min="1"

@@ -49,13 +49,13 @@ export function SettingsSaveBar({
   onSave: () => void;
 }) {
   return (
-    <div className="sticky bottom-0 z-10 -mx-4 mt-6 border-t border-gray-800 bg-komgaDark/90 px-4 py-4 backdrop-blur-md sm:-mx-8">
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
-        <div className="text-sm text-gray-500">{hint || '修改只作用于当前设置分组。'}</div>
+    <div className="sticky bottom-0 z-10 mt-6 rounded-t-2xl border border-b-0 border-gray-800 bg-komgaDark/90 px-4 py-4 backdrop-blur-md">
+      <div className="flex items-center justify-between gap-4">
+        <div className="text-sm text-gray-400">{hint || '修改只作用于当前设置分组。'}</div>
         <button
           onClick={onSave}
           disabled={saving}
-          className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-5 py-3 text-sm font-medium text-white shadow-lg hover:bg-komgaPrimaryHover disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-5 py-3 text-sm font-medium text-white shadow-lg hover:bg-komgaPrimaryHover disabled:opacity-60 transition-colors"
         >
           <Save className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
           {saving ? '保存中...' : label}

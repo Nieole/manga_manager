@@ -61,7 +61,7 @@ export function SettingsAIPage() {
         </div>
 
         <div>
-          <label className="mb-1 block text-sm text-gray-400">超时时间（秒）</label>
+          <label className="mb-1 block text-sm text-gray-400">超时时间（秒）: {config.llm.timeout}</label>
           <input
             type="range"
             min="10"
