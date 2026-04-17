@@ -22,7 +22,7 @@ export function getPagedImages(
 
 export function getScaleClasses(
   scaleMode: ScaleMode,
-  doublePage: boolean,
+  _doublePage: boolean,
   baseClasses: string,
 ) {
   let classes = `${baseClasses} block m-0 p-0`;
@@ -34,7 +34,7 @@ export function getScaleClasses(
       classes += ' w-screen min-w-full h-auto object-cover';
       break;
     case 'fit-screen':
-      classes += (doublePage ? ' h-full w-auto' : ' w-full h-full') + ' max-h-full max-w-full object-contain';
+      classes += ' max-h-full max-w-full w-auto h-auto object-contain';
       break;
     case 'fit-height':
     default:

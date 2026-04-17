@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"manga-manager/internal/external"
@@ -25,6 +26,15 @@ type externalLibrarySessionRequest struct {
 
 type externalLibraryTransferRequest struct {
 	SeriesIDs []int64 `json:"series_ids"`
+}
+
+const transferCopyBufferSize = 1024 * 1024
+
+var transferCopyBufferPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, transferCopyBufferSize)
+		return &buf
+	},
 }
 
 func externalLibraryScanTaskKey(libraryID int64, sessionID string) string {
@@ -268,6 +278,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 
 		failures := make([]string, 0)
 		skipped := 0
+		createdDirs := make(map[string]struct{})
 		var lastUpdate time.Time
 		for index, op := range plan.Operations {
 			now := time.Now()
@@ -275,7 +286,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 				c.updateTask(taskKey, index, len(plan.Operations), fmt.Sprintf("正在传输 %s", op.RelativePath))
 				lastUpdate = now
 			}
-			skippedCopy, err := copyFileToExternalLibrary(op.SourcePath, op.Destination)
+			skippedCopy, err := copyFileToExternalLibrary(op.SourcePath, op.Destination, createdDirs)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", op.RelativePath, err))
 				continue
@@ -308,9 +319,16 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	return taskKey, true
 }
 
-func copyFileToExternalLibrary(src, dst string) (bool, error) {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return false, err
+func copyFileToExternalLibrary(src, dst string, createdDirs map[string]struct{}) (bool, error) {
+	if createdDirs == nil {
+		createdDirs = make(map[string]struct{})
+	}
+	parentDir := filepath.Dir(dst)
+	if _, ok := createdDirs[parentDir]; !ok {
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			return false, err
+		}
+		createdDirs[parentDir] = struct{}{}
 	}
 	if _, err := os.Stat(dst); err == nil {
 		return true, nil
@@ -336,9 +354,14 @@ func copyFileToExternalLibrary(src, dst string) (bool, error) {
 		}
 		return false, err
 	}
+	defer func() {
+		_ = targetFile.Close()
+	}()
 
-	if _, err := io.Copy(targetFile, sourceFile); err != nil {
-		targetFile.Close()
+	bufPtr := transferCopyBufferPool.Get().(*[]byte)
+	defer transferCopyBufferPool.Put(bufPtr)
+
+	if _, err := io.CopyBuffer(targetFile, sourceFile, *bufPtr); err != nil {
 		_ = os.Remove(dst)
 		return false, err
 	}

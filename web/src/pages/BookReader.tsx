@@ -682,7 +682,7 @@ export default function BookReader() {
                                 return (
                                     <div
                                         key={p.number}
-                                        className={`relative flex items-center justify-center ${doublePage ? "max-w-none" : ""}`}
+                                        className={`relative flex items-center justify-center ${doublePage ? "max-w-none" : ""} ${scaleMode === 'fit-screen' || scaleMode === 'fit-height' ? 'h-full' : ''}`}
                                         style={overlapStyle}
                                     >
                                         {isPagedImageReady(p.number) ? (
