@@ -10,6 +10,7 @@ export default function BookReader() {
     const { bookId } = useParams();
     const navigate = useNavigate();
     const [pages, setPages] = useState<Page[]>([]);
+    const [cachedPageImageUrls, setCachedPageImageUrls] = useState<Record<number, string>>({});
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const observer = useRef<IntersectionObserver | null>(null);
@@ -61,6 +62,9 @@ export default function BookReader() {
     const [bookTitle, setBookTitle] = useState<string>('');
     const [bookVolume, setBookVolume] = useState<string>('');
     const pagesBookIdRef = useRef<string | null>(null);
+    const preloadedImageUrlsRef = useRef<Set<string>>(new Set());
+    const pageImageObjectUrlsRef = useRef<Map<string, string>>(new Map());
+    const pageImageRequestCacheRef = useRef<Map<string, Promise<string>>>(new Map());
 
     const handleBackToSeries = useCallback(() => {
         if (seriesIdRef.current) {
@@ -99,10 +103,63 @@ export default function BookReader() {
         return url;
     }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat]);
 
+    const clearPageImageCache = useCallback(() => {
+        pageImageRequestCacheRef.current.clear();
+        preloadedImageUrlsRef.current.clear();
+        pageImageObjectUrlsRef.current.forEach((objectUrl) => {
+            URL.revokeObjectURL(objectUrl);
+        });
+        pageImageObjectUrlsRef.current.clear();
+        setCachedPageImageUrls({});
+    }, []);
+
+    const ensurePageImageLoaded = useCallback((pageNum: number) => {
+        const requestUrl = getImageUrl(pageNum);
+        const cachedObjectUrl = pageImageObjectUrlsRef.current.get(requestUrl);
+        if (cachedObjectUrl) {
+            return Promise.resolve(cachedObjectUrl);
+        }
+
+        const inFlight = pageImageRequestCacheRef.current.get(requestUrl);
+        if (inFlight) {
+            return inFlight;
+        }
+
+        const request = fetch(requestUrl)
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error(`Failed to load page ${pageNum}: ${response.status}`);
+                }
+                return response.blob();
+            })
+            .then((blob) => {
+                const objectUrl = URL.createObjectURL(blob);
+                pageImageObjectUrlsRef.current.set(requestUrl, objectUrl);
+                setCachedPageImageUrls((prev) => {
+                    if (prev[pageNum] === objectUrl) {
+                        return prev;
+                    }
+                    return { ...prev, [pageNum]: objectUrl };
+                });
+                return objectUrl;
+            })
+            .finally(() => {
+                pageImageRequestCacheRef.current.delete(requestUrl);
+            });
+
+        pageImageRequestCacheRef.current.set(requestUrl, request);
+        return request;
+    }, [getImageUrl]);
+
+    const isPagedImageReady = useCallback((pageNum: number) => {
+        return Boolean(cachedPageImageUrls[pageNum]);
+    }, [cachedPageImageUrls]);
+
     useEffect(() => {
         if (!bookId) return;
 
         // 切换书籍时重置所有运行时状态
+        clearPageImageCache();
         setPages([]);
         setLoading(true);
         setLoadError(null);
@@ -156,7 +213,12 @@ export default function BookReader() {
             setLoadError(err.response?.data?.error || '阅读器无法加载当前书籍。请检查归档内容、页面解析和文件权限。');
             setLoading(false);
         });
-    }, [bookId]);
+    }, [bookId, clearPageImageCache]);
+
+    // 当书籍或图像处理参数变化时，预加载去重缓存需要重新开始计算。
+    useEffect(() => {
+        clearPageImageCache();
+    }, [bookId, getImageUrl, clearPageImageCache]);
 
     // 预加载队列系统 (向后驱取指定页数放入浏览器缓存池) - 增加防抖延迟以防连续翻页/拖拽触发洪峰
     useEffect(() => {
@@ -166,13 +228,32 @@ export default function BookReader() {
             const startIndex = currentPageIndex + (readMode === 'paged' && doublePage ? 2 : 1);
             const endIndex = Math.min(startIndex + preloadCount, pages.length);
             for (let i = startIndex; i < endIndex; i++) {
-                const img = new window.Image();
-                img.src = getImageUrl(pages[i].number);
+                const imageUrl = getImageUrl(pages[i].number);
+                if (preloadedImageUrlsRef.current.has(imageUrl)) {
+                    continue;
+                }
+                preloadedImageUrlsRef.current.add(imageUrl);
+                ensurePageImageLoaded(pages[i].number).catch((err) => {
+                    console.error('Failed to preload reader page image', err);
+                    preloadedImageUrlsRef.current.delete(imageUrl);
+                });
             }
         }, 300);
 
         return () => clearTimeout(timer);
-    }, [currentPageIndex, pages, preloadCount, readMode, doublePage, loading, getImageUrl]);
+    }, [currentPageIndex, pages, preloadCount, readMode, doublePage, loading, getImageUrl, ensurePageImageLoaded]);
+
+    useEffect(() => {
+        if (loading || pages.length === 0 || !pages[currentPageIndex]) return;
+        ensurePageImageLoaded(pages[currentPageIndex].number).catch((err) => {
+            console.error('Failed to warm current reader page image', err);
+        });
+        if (readMode === 'paged' && doublePage && pages[currentPageIndex+1]) {
+            ensurePageImageLoaded(pages[currentPageIndex + 1].number).catch((err) => {
+                console.error('Failed to warm secondary reader page image', err);
+            });
+        }
+    }, [loading, pages, currentPageIndex, readMode, doublePage, ensurePageImageLoaded]);
 
     // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)
     useEffect(() => {
@@ -552,7 +633,7 @@ export default function BookReader() {
                             <img
                                 key={page.number}
                                 data-page-number={page.number}
-                                src={getImageUrl(page.number)}
+                                src={cachedPageImageUrls[page.number] || getImageUrl(page.number)}
                                 loading="lazy"
                                 decoding="async"
                                 style={getFilterStyle(imageFilter)}
@@ -599,14 +680,25 @@ export default function BookReader() {
                                 } : {};
 
                                 return (
-                                    <img
+                                    <div
                                         key={p.number}
-                                        src={getImageUrl(p.number)}
-                                        className={getScaleClasses(scaleMode, doublePage, !doublePage ? "drop-shadow-2xl" : "max-w-none")}
-                                        style={{ ...getFilterStyle(imageFilter), ...overlapStyle }}
-                                        alt={`Page ${p.number}`}
-                                        draggable={false}
-                                    />
+                                        className={`relative flex items-center justify-center ${doublePage ? "max-w-none" : ""}`}
+                                        style={overlapStyle}
+                                    >
+                                        {isPagedImageReady(p.number) ? (
+                                            <img
+                                                src={cachedPageImageUrls[p.number]}
+                                                className={getScaleClasses(scaleMode, doublePage, !doublePage ? "drop-shadow-2xl" : "max-w-none")}
+                                                style={getFilterStyle(imageFilter)}
+                                                alt={`Page ${p.number}`}
+                                                draggable={false}
+                                            />
+                                        ) : (
+                                            <div className="flex min-h-[40vh] min-w-[240px] items-center justify-center rounded-2xl border border-white/10 bg-black/30 px-10 py-16">
+                                                <Loader2 className="h-8 w-8 animate-spin text-komgaPrimary" />
+                                            </div>
+                                        )}
+                                    </div>
                                 );
                             })}
                         </div>
