@@ -817,3 +817,20 @@
   - 未保存修改保护
   - 请求稳定性修复
 - 尚未在本轮中继续做更细的按页懒加载请求优化；当前目标是先保证设置页稳定、清晰且不再失控刷新。
+
+### 📌 增量记录 — 2026-04-18（GitHub Actions Node 24 兼容）
+
+#### CI / Release 工作流兼容升级 `[P1: 构建与发布链路]`
+- **处理 GitHub Actions Node 20 弃用警告**：CI 和 Release 工作流已切换到 Node 24 兼容模式，避免后续 GitHub runner 默认运行时升级后产生不确定行为。
+- **顶层环境变量已启用**：
+  - `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`
+- **Actions 版本同步升级**：
+  - `actions/checkout@v5`
+  - `actions/setup-go@v6`
+  - `actions/setup-node@v5`
+  - `actions/upload-artifact@v5`
+  - `actions/download-artifact@v6`
+
+#### 用户可见结果 `[发布链路稳定性]`
+- 触发 GitHub `CI` 和 `Release` 工作流时，不再继续沿用即将弃用的 Node 20 JavaScript action 运行时。
+- 后续 GitHub 从 Node 20 默认切换到 Node 24 时，当前仓库的构建和发布链路具备更好的前向兼容性。
