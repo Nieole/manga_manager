@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { FolderHeart, Plus, Trash2, ChevronRight, BookOpen, X, Search } from 'lucide-react';
+import { FolderHeart, Plus, Trash2, ChevronRight, BookOpen, Search, X } from 'lucide-react';
+import { ModalShell } from '../components/ui/ModalShell';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalTextareaClass } from '../components/ui/modalStyles';
 
 interface Collection {
     id: number;
@@ -26,6 +29,7 @@ export default function Collections() {
     const [newName, setNewName] = useState('');
     const [newDesc, setNewDesc] = useState('');
     const [loading, setLoading] = useState(true);
+    const [pendingDeleteCollection, setPendingDeleteCollection] = useState<Collection | null>(null);
     const navigate = useNavigate();
 
     const fetchCollections = () => {
@@ -55,7 +59,6 @@ export default function Collections() {
     };
 
     const handleDelete = (id: number) => {
-        if (!confirm('确定要删除这个合集吗？')) return;
         axios.delete(`/api/collections/${id}`).then(() => {
             if (selected?.id === id) {
                 setSelected(null);
@@ -99,34 +102,51 @@ export default function Collections() {
             </div>
 
             {/* 新建合集弹窗 */}
-            {showCreate && (
-                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
-                    <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-semibold text-white">新建合集</h3>
-                            <button onClick={() => setShowCreate(false)} className="text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
-                        </div>
-                        <input
-                            value={newName}
-                            onChange={e => setNewName(e.target.value)}
-                            placeholder="合集名称"
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 mb-3 focus:border-komgaPrimary focus:outline-none"
-                            autoFocus
-                        />
-                        <textarea
-                            value={newDesc}
-                            onChange={e => setNewDesc(e.target.value)}
-                            placeholder="描述（可选）"
-                            rows={3}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 mb-4 focus:border-komgaPrimary focus:outline-none resize-none"
-                        />
-                        <div className="flex justify-end gap-3">
-                            <button onClick={() => setShowCreate(false)} className="px-4 py-2 text-gray-400 hover:text-white transition">取消</button>
-                            <button onClick={handleCreate} className="px-5 py-2 bg-komgaPrimary hover:bg-purple-600 text-white rounded-lg transition font-medium">创建</button>
-                        </div>
+            <ModalShell
+                open={showCreate}
+                onClose={() => setShowCreate(false)}
+                title="新建合集"
+                description="创建一个可复用的整理篮子，后续可以从资源库或系列页批量加入漫画。"
+                icon={<FolderHeart className="h-5 w-5" />}
+                size="compact"
+                footer={
+                    <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
+                        <button onClick={() => setShowCreate(false)} className={modalGhostButtonClass}>取消</button>
+                        <button onClick={handleCreate} className={modalPrimaryButtonClass}>创建</button>
                     </div>
+                }
+            >
+                <div className="space-y-4">
+                    <input
+                        value={newName}
+                        onChange={e => setNewName(e.target.value)}
+                        placeholder="合集名称"
+                        className={modalInputClass}
+                        autoFocus
+                    />
+                    <textarea
+                        value={newDesc}
+                        onChange={e => setNewDesc(e.target.value)}
+                        placeholder="描述（可选）"
+                        rows={4}
+                        className={modalTextareaClass}
+                    />
                 </div>
-            )}
+            </ModalShell>
+
+            <ConfirmDialog
+                open={pendingDeleteCollection !== null}
+                onClose={() => setPendingDeleteCollection(null)}
+                onConfirm={() => {
+                    if (!pendingDeleteCollection) return;
+                    handleDelete(pendingDeleteCollection.id);
+                    setPendingDeleteCollection(null);
+                }}
+                title="删除合集"
+                description={`确定要删除合集「${pendingDeleteCollection?.name || ''}」吗？这个操作会移除合集本身，但不会删除原始漫画文件。`}
+                confirmLabel="确认删除"
+                tone="danger"
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* 左侧：合集列表 */}
@@ -156,7 +176,7 @@ export default function Collections() {
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     <button
-                                        onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
+                                        onClick={e => { e.stopPropagation(); setPendingDeleteCollection(c); }}
                                         className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition opacity-0 group-hover:opacity-100"
                                     >
                                         <Trash2 className="w-3.5 h-3.5" />

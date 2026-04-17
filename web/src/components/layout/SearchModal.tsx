@@ -1,5 +1,6 @@
 import { Image as ImageIcon, Search, X } from 'lucide-react';
 import type { SearchHit } from './types';
+import { ModalShell } from '../ui/ModalShell';
 
 interface SearchModalProps {
   open: boolean;
@@ -33,10 +34,19 @@ export function SearchModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] px-4">
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-komgaSurface border border-gray-800 rounded-xl shadow-2xl flex flex-col max-h-[70vh] animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center px-4 border-b border-gray-800 shrink-0">
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="全局搜索"
+      description="检索系列和单册，支持键盘导航和即时跳转。"
+      icon={<Search className="h-5 w-5" />}
+      size="standard"
+      placement="top"
+      bodyClassName="overflow-hidden p-0"
+      panelClassName="max-h-[78vh]"
+    >
+      <div className="flex h-full flex-col">
+        <div className="flex items-center border-b border-gray-800 px-4 shrink-0">
           <Search className="w-5 h-5 text-gray-400" />
           <input
             autoFocus
@@ -54,7 +64,7 @@ export function SearchModal({
           )}
         </div>
 
-        <div className="flex items-center px-4 py-2 border-b border-gray-800 space-x-2 shrink-0 bg-gray-900/30">
+        <div className="flex items-center space-x-2 border-b border-gray-800 bg-gray-950/40 px-4 py-3 shrink-0">
           <span className="text-xs text-gray-500 mr-2">范围:</span>
           <button
             onClick={() => onSearchTargetChange('all')}
@@ -154,6 +164,6 @@ export function SearchModal({
           )}
         </div>
       </div>
-    </div>
+    </ModalShell>
   );
 }

@@ -406,7 +406,7 @@ export default function SeriesDetail() {
             setIsEditing(false);
         } catch (err) {
             console.error("Failed to update metadata", err);
-            alert("保存失败");
+            showToast("保存失败", 'error');
         }
     };
 

@@ -7,6 +7,16 @@ import { LibraryFormModal } from './layout/LibraryFormModal';
 import { SearchModal } from './layout/SearchModal';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
+import { ConfirmDialog } from './ui/ConfirmDialog';
+
+interface ConfirmDialogState {
+    open: boolean;
+    title: string;
+    description?: string;
+    confirmLabel?: string;
+    tone?: 'primary' | 'warning' | 'danger';
+    onConfirm: (() => Promise<void> | void) | null;
+}
 
 export default function Layout() {
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
@@ -57,6 +67,16 @@ export default function Layout() {
     const [browseCurrent, setBrowseCurrent] = useState('');
     const [browseParent, setBrowseParent] = useState('');
     const [browseDrives, setBrowseDrives] = useState<BrowseDrive[]>([]);
+    const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+    const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
+        open: false,
+        title: '',
+        description: '',
+        confirmLabel: '确认',
+        tone: 'primary',
+        onConfirm: null,
+    });
+    const [confirmLoading, setConfirmLoading] = useState(false);
 
     const {
         searchQuery,
@@ -74,6 +94,15 @@ export default function Layout() {
     const { libId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
+
+    const showToast = (text: string, type: 'success' | 'error') => {
+        setToastMsg({ text, type });
+        window.setTimeout(() => setToastMsg(null), 3200);
+    };
+
+    const openConfirmDialog = (next: Omit<ConfirmDialogState, 'open'>) => {
+        setConfirmDialog({ open: true, ...next });
+    };
 
     const openEditLibraryModal = (libraryId: string | number) => {
         const target = libraries.find((lib) => String(lib.id) === String(libraryId));
@@ -306,7 +335,7 @@ export default function Layout() {
             setRefreshTrigger(prev => prev + 1);
         } catch (error) {
             console.error(error);
-            alert(extractErrorMessage(error, "添加资源库失败，请检查目录权限和扫描格式。"));
+            showToast(extractErrorMessage(error, "添加资源库失败，请检查目录权限和扫描格式。"), 'error');
         } finally {
             setAdding(false);
         }
@@ -329,63 +358,62 @@ export default function Layout() {
             fetchLibraries();
         } catch (error) {
             console.error(error);
-            alert(extractErrorMessage(error, "修改资源库失败，请检查目录权限和扫描格式。"));
+            showToast(extractErrorMessage(error, "修改资源库失败，请检查目录权限和扫描格式。"), 'error');
         } finally {
             setEditing(false);
         }
     };
 
-    const handleScanLibrary = async (e: React.MouseEvent, id: string, force: boolean = false) => {
-        e.preventDefault();
-        e.stopPropagation();
+    const handleScanLibrary = async (id: string, force: boolean = false) => {
         try {
             await axios.post(`/api/libraries/${id}/scan?force=${force}`);
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
+            showToast(force ? '强制全量扫描任务已提交。' : '增量扫描任务已提交。', 'success');
         } catch (error) {
             console.error("Trigger scan failed", error);
-            alert("扫描指令下发失败");
+            showToast("扫描指令下发失败", 'error');
         }
     };
 
-    const handleScrapeLibrary = async (e: React.MouseEvent, id: string) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (confirm("是否启动后台任务，批量刮削此资源库中所有缺失元数据的系列？")) {
-            try {
-                await axios.post(`/api/libraries/${id}/scrape`, { provider: 'bangumi' });
-                alert("刮削任务已提交，请留意界面底部的进度提示。");
-            } catch (error) {
-                console.error("Trigger scrape failed", error);
-                alert("刮削指令下发失败");
-            }
+    const handleScrapeLibrary = async (id: string) => {
+        try {
+            await axios.post(`/api/libraries/${id}/scrape`, { provider: 'bangumi' });
+            showToast("刮削任务已提交，请留意界面底部的进度提示。", 'success');
+        } catch (error) {
+            console.error("Trigger scrape failed", error);
+            showToast("刮削指令下发失败", 'error');
         }
     };
 
-    const handleCleanupLibrary = async (e: React.MouseEvent, id: string) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (confirm("确定要清理此资源库中已失效的记录吗？\n（物理文件已不在的记录将被删除）")) {
-            try {
-                await axios.post(`/api/libraries/${id}/cleanup`);
-                alert("清理任务已提交后台处理。");
-            } catch (error) {
-                console.error("Trigger cleanup failed", error);
-                alert("清理指令下发失败");
-            }
+    const handleCleanupLibrary = async (id: string) => {
+        try {
+            await axios.post(`/api/libraries/${id}/cleanup`);
+            showToast("清理任务已提交后台处理。", 'success');
+        } catch (error) {
+            console.error("Trigger cleanup failed", error);
+            showToast("清理指令下发失败", 'error');
         }
     };
 
-    const handleAIGrouping = async (e: React.MouseEvent, id: string) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (confirm("这可能会花费一些时间调用 AI 进行自动分类计算。是否确认执行？")) {
-            try {
-                await axios.post(`/api/libraries/${id}/ai-grouping`);
-                alert("AI 智能分组任务已提交后台计算。");
-            } catch (error) {
-                console.error("Trigger AI grouping failed", error);
-                alert("提交 AI 智能分组请求失败");
-            }
+    const handleAIGrouping = async (id: string) => {
+        try {
+            await axios.post(`/api/libraries/${id}/ai-grouping`);
+            showToast("AI 智能分组任务已提交后台计算。", 'success');
+        } catch (error) {
+            console.error("Trigger AI grouping failed", error);
+            showToast("提交 AI 智能分组请求失败", 'error');
+        }
+    };
+
+    const handleDeleteLibrary = async (library: Library) => {
+        try {
+            await axios.delete(`/api/libraries/${library.id}`);
+            showToast(`资源库「${library.name}」已删除`, 'success');
+            fetchLibraries();
+            navigate('/');
+        } catch (error) {
+            console.error('Delete library failed', error);
+            showToast('删除失败', 'error');
         }
     };
 
@@ -540,7 +568,12 @@ export default function Layout() {
                                                         编辑资源库
                                                     </button>
                                                     <button
-                                                        onClick={(e) => { setOpenMenuId(null); handleScanLibrary(e, String(lib.id), false); }}
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
+                                                            handleScanLibrary(String(lib.id), false);
+                                                        }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
                                                     >
                                                         <RefreshCw className="w-4 h-4 mr-2" />
@@ -548,13 +581,16 @@ export default function Layout() {
                                                     </button>
                                                     <button
                                                         onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
                                                             setOpenMenuId(null);
-                                                            if (confirm("强制重新扫描将会耗费更长时间并全量读取覆盖所有元数据。是否继续？")) {
-                                                                handleScanLibrary(e, String(lib.id), true);
-                                                            } else {
-                                                                e.preventDefault();
-                                                                e.stopPropagation();
-                                                            }
+                                                            openConfirmDialog({
+                                                                title: '强制全量读取',
+                                                                description: '这会耗费更长时间，并重新读取该资源库中的所有文件与元数据。',
+                                                                confirmLabel: '确认执行',
+                                                                tone: 'warning',
+                                                                onConfirm: () => handleScanLibrary(String(lib.id), true),
+                                                            });
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-orange-500 hover:text-white transition-colors"
                                                     >
@@ -562,21 +598,54 @@ export default function Layout() {
                                                         强制全量读取
                                                     </button>
                                                     <button
-                                                        onClick={(e) => { setOpenMenuId(null); handleScrapeLibrary(e, String(lib.id)); }}
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
+                                                            openConfirmDialog({
+                                                                title: '批量刮削缺失元数据',
+                                                                description: '将对这个资源库中缺失元数据的系列启动后台刮削任务。',
+                                                                confirmLabel: '开始刮削',
+                                                                tone: 'primary',
+                                                                onConfirm: () => handleScrapeLibrary(String(lib.id)),
+                                                            });
+                                                        }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-green-500 hover:text-white transition-colors"
                                                     >
                                                         <Download className="w-4 h-4 mr-2" />
                                                         刮削缺失元数据
                                                     </button>
                                                     <button
-                                                        onClick={(e) => { setOpenMenuId(null); handleCleanupLibrary(e, String(lib.id)); }}
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
+                                                            openConfirmDialog({
+                                                                title: '清理失效资源',
+                                                                description: '物理文件已不存在的记录会被清理，但不会删除仍然存在的原始文件。',
+                                                                confirmLabel: '确认清理',
+                                                                tone: 'warning',
+                                                                onConfirm: () => handleCleanupLibrary(String(lib.id)),
+                                                            });
+                                                        }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-yellow-500 hover:text-white transition-colors"
                                                     >
                                                         <Eraser className="w-4 h-4 mr-2" />
                                                         清理失效资源
                                                     </button>
                                                     <button
-                                                        onClick={(e) => { setOpenMenuId(null); handleAIGrouping(e, String(lib.id)); }}
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
+                                                            openConfirmDialog({
+                                                                title: '启动 AI 智能分组',
+                                                                description: '这会调用 AI 对该资源库执行自动分类计算，可能持续较长时间。',
+                                                                confirmLabel: '开始计算',
+                                                                tone: 'warning',
+                                                                onConfirm: () => handleAIGrouping(String(lib.id)),
+                                                            });
+                                                        }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-komgaPrimary hover:bg-komgaPrimary hover:text-white transition-colors"
                                                     >
                                                         <Sparkles className="w-4 h-4 mr-2" />
@@ -585,14 +654,16 @@ export default function Layout() {
                                                     <div className="border-t border-gray-700"></div>
                                                     <button
                                                         onClick={(e) => {
-                                                            setOpenMenuId(null);
                                                             e.preventDefault();
                                                             e.stopPropagation();
-                                                            if (confirm(`确定要删除资源库「${lib.name}」吗？\n所有关联的系列、书籍和阅读记录都将被清除。`)) {
-                                                                axios.delete(`/api/libraries/${lib.id}`)
-                                                                    .then(() => { fetchLibraries(); navigate('/'); })
-                                                                    .catch(() => alert('删除失败'));
-                                                            }
+                                                            setOpenMenuId(null);
+                                                            openConfirmDialog({
+                                                                title: '删除资源库',
+                                                                description: `确定要删除资源库「${lib.name}」吗？所有关联的系列、书籍和阅读记录都会被清除。`,
+                                                                confirmLabel: '确认删除',
+                                                                tone: 'danger',
+                                                                onConfirm: () => handleDeleteLibrary(lib),
+                                                            });
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-red-500 hover:text-white transition-colors"
                                                     >
@@ -749,6 +820,38 @@ export default function Layout() {
                 onSelectResult={handleSelectResult}
                 onHighlightIndex={setSelectedIndex}
             />
+
+            <ConfirmDialog
+                open={confirmDialog.open}
+                onClose={() => {
+                    if (confirmLoading) return;
+                    setConfirmDialog((prev) => ({ ...prev, open: false, onConfirm: null }));
+                }}
+                onConfirm={async () => {
+                    if (!confirmDialog.onConfirm) return;
+                    setConfirmLoading(true);
+                    try {
+                        await confirmDialog.onConfirm();
+                        setConfirmDialog((prev) => ({ ...prev, open: false, onConfirm: null }));
+                    } finally {
+                        setConfirmLoading(false);
+                    }
+                }}
+                title={confirmDialog.title}
+                description={confirmDialog.description}
+                confirmLabel={confirmDialog.confirmLabel}
+                tone={confirmDialog.tone}
+                loading={confirmLoading}
+            />
+
+            {toastMsg && (
+                <div className="fixed bottom-6 right-6 z-[60] animate-in slide-in-from-bottom-5 fade-in duration-300">
+                    <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg ${toastMsg.type === 'success' ? 'border-green-700 bg-green-900 text-green-100' : 'border-red-700 bg-red-900 text-red-100'}`}>
+                        <span className="text-sm font-medium">{toastMsg.text}</span>
+                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

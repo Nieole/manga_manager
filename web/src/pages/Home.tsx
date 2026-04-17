@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart } from 'lucide-react';
+import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { DirectoryPicker } from '../components/layout/DirectoryPicker';
 import type { BrowseDirEntry, BrowseDrive } from '../components/layout/types';
+import { ModalShell } from '../components/ui/ModalShell';
+import { modalGhostButtonClass, modalPrimaryButtonClass } from '../components/ui/modalStyles';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
 import { HomeFilters } from './home/HomeFilters';
 import { HomeToolbar } from './home/HomeToolbar';
@@ -69,6 +71,8 @@ export default function Home() {
     const [startingTransfer, setStartingTransfer] = useState(false);
     const [externalScanTaskKey, setExternalScanTaskKey] = useState<string | null>(null);
     const [externalTransferTaskKey, setExternalTransferTaskKey] = useState<string | null>(null);
+    const [showTransferConfirmModal, setShowTransferConfirmModal] = useState(false);
+    const [pendingTransferSummary, setPendingTransferSummary] = useState<{ total: number; matched: number; missing: number } | null>(null);
 
     const [externalBrowsing, setExternalBrowsing] = useState(false);
     const [externalBrowseDirs, setExternalBrowseDirs] = useState<BrowseDirEntry[]>([]);
@@ -458,7 +462,7 @@ export default function Home() {
             fetchSeriesPage(page, true);
         } catch (e) {
             console.error("Bulk update failed", e);
-            alert("批量更新失败");
+            showToast("批量更新失败", 'error');
         }
     };
 
@@ -492,6 +496,25 @@ export default function Home() {
         }
     };
 
+    const submitTransferSelectedSeries = async () => {
+        if (!libId || !externalSession?.session_id) return;
+
+        setStartingTransfer(true);
+        try {
+            const res = await axios.post(`/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}/transfer`, {
+                series_ids: selectedSeries,
+            });
+            setExternalTransferTaskKey(res.data?.task_key || null);
+            showToast(res.data?.message || '已提交外部资源库传输任务', 'success');
+            setShowTransferConfirmModal(false);
+            setPendingTransferSummary(null);
+        } catch (err: any) {
+            showToast(err.response?.data?.error || '外部资源库传输失败', 'error');
+        } finally {
+            setStartingTransfer(false);
+        }
+    };
+
     const handleTransferSelectedSeries = async () => {
         if (!libId || !externalSession?.session_id) {
             showToast('请先扫描外部资源库', 'error');
@@ -517,25 +540,8 @@ export default function Home() {
             return;
         }
 
-        const confirmed = window.confirm(
-            `将传输 ${selectedSeries.length} 个系列到外部资源库。\n` +
-            `待复制 ${summary.missing} 本，已存在 ${summary.matched} 本。\n\n` +
-            `目标目录：${externalSession.external_path}`
-        );
-        if (!confirmed) return;
-
-        setStartingTransfer(true);
-        try {
-            const res = await axios.post(`/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}/transfer`, {
-                series_ids: selectedSeries,
-            });
-            setExternalTransferTaskKey(res.data?.task_key || null);
-            showToast(res.data?.message || '已提交外部资源库传输任务', 'success');
-        } catch (err: any) {
-            showToast(err.response?.data?.error || '外部资源库传输失败', 'error');
-        } finally {
-            setStartingTransfer(false);
-        }
+        setPendingTransferSummary(summary);
+        setShowTransferConfirmModal(true);
     };
 
     const handleToggleSelectCurrentPage = () => {
@@ -989,6 +995,80 @@ export default function Home() {
                     }}
                 />
             )}
+
+            <ModalShell
+                open={showTransferConfirmModal}
+                onClose={() => {
+                    if (startingTransfer) return;
+                    setShowTransferConfirmModal(false);
+                    setPendingTransferSummary(null);
+                }}
+                title="传输到外部资源库"
+                description="仅复制当前选中系列中外部资源库尚未存在的书籍，已存在文件会自动跳过。"
+                icon={<PackageCheck className="h-5 w-5" />}
+                size="compact"
+                closeOnBackdrop={!startingTransfer}
+                footer={
+                    <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
+                        <button
+                            onClick={() => {
+                                if (startingTransfer) return;
+                                setShowTransferConfirmModal(false);
+                                setPendingTransferSummary(null);
+                            }}
+                            className={modalGhostButtonClass}
+                            disabled={startingTransfer}
+                        >
+                            取消
+                        </button>
+                        <button
+                            onClick={submitTransferSelectedSeries}
+                            className={modalPrimaryButtonClass}
+                            disabled={startingTransfer}
+                        >
+                            {startingTransfer ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    正在提交...
+                                </>
+                            ) : (
+                                <>
+                                    <Send className="h-4 w-4" />
+                                    确认传输
+                                </>
+                            )}
+                        </button>
+                    </div>
+                }
+            >
+                <div className="space-y-4">
+                    <div className="rounded-2xl border border-gray-800 bg-gray-950/60 p-4">
+                        <p className="text-sm text-gray-300 leading-6">
+                            将从当前资源库中传输 <span className="font-semibold text-white">{selectedSeries.length}</span> 个系列到外部资源库。
+                        </p>
+                        <p className="mt-2 break-all text-xs text-gray-500">{externalSession?.external_path}</p>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3 text-sm">
+                        <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4">
+                            <p className="text-blue-300">目标书籍</p>
+                            <p className="mt-2 text-2xl font-semibold text-white">{pendingTransferSummary?.total ?? 0}</p>
+                        </div>
+                        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+                            <p className="text-emerald-300">已存在</p>
+                            <p className="mt-2 text-2xl font-semibold text-white">{pendingTransferSummary?.matched ?? 0}</p>
+                        </div>
+                        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
+                            <p className="text-amber-300">待复制</p>
+                            <p className="mt-2 text-2xl font-semibold text-white">{pendingTransferSummary?.missing ?? 0}</p>
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-800 bg-black/20 px-4 py-3 text-xs leading-6 text-gray-400">
+                        复制时会保持主资源库内的相对路径结构，不会覆盖外部目录中已经存在的同名文件。
+                    </div>
+                </div>
+            </ModalShell>
 
             {/* Toast 通知 */}
             {toastMsg && (

@@ -1,6 +1,17 @@
-import { Lock, Unlock, X } from 'lucide-react';
+import { Lock, Sparkles, Unlock, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Author, MetaTag, Series } from './types';
+import { ModalShell } from '../../components/ui/ModalShell';
+import {
+  modalGhostButtonClass,
+  modalInputClass,
+  modalPrimaryButtonClass,
+  modalSectionClass,
+  modalSelectClass,
+  modalSubtleTagClass,
+  modalTagClass,
+  modalTextareaClass,
+} from '../../components/ui/modalStyles';
 
 interface SeriesMetadataEditorModalProps {
   open: boolean;
@@ -76,15 +87,25 @@ export function SeriesMetadataEditorModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-komgaSurface border border-gray-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50">
-          <h3 className="text-xl font-bold text-white">编辑系列元数据</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
-            <X className="w-6 h-6" />
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="编辑系列元数据"
+      description="优先处理你确认过的字段，再通过锁定控制后续抓取是否允许覆盖。"
+      icon={<Sparkles className="h-5 w-5" />}
+      size="standard"
+      footer={
+        <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
+          <button onClick={onClose} className={modalGhostButtonClass}>
+            取消
+          </button>
+          <button onClick={onSave} className={modalPrimaryButtonClass}>
+            保存更改
           </button>
         </div>
-        <div className="p-6 overflow-y-auto space-y-6 flex-1">
+      }
+    >
+        <div className="space-y-6">
           {[
             { id: 'title', label: '系列标题 (Title)', type: 'text', val: editForm.title?.String || '' },
             { id: 'summary', label: '简介 (Summary)', type: 'textarea', val: editForm.summary?.String || '' },
@@ -93,12 +114,12 @@ export function SeriesMetadataEditorModal({
             { id: 'language', label: '语言 (Language ISO)', type: 'text', val: editForm.language?.String || '' },
             { id: 'rating', label: '评分 (Rating 0-10)', type: 'number', val: editForm.rating?.Float64 || 0, step: '0.1', max: 10 },
           ].map((field) => (
-            <div key={field.id} className="space-y-2">
+            <div key={field.id} className={`${modalSectionClass} space-y-3`}>
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-gray-300">{field.label}</label>
                 <button
                   onClick={() => onToggleLock(field.id)}
-                  className={`flex items-center text-xs px-2 py-1 rounded transition-colors ${lockedFields.has(field.id) ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'text-gray-500 hover:text-gray-300'}`}
+                  className={`flex items-center rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${lockedFields.has(field.id) ? 'border-orange-500/30 bg-orange-500/20 text-orange-300' : 'border-gray-700 bg-gray-900/60 text-gray-400 hover:text-gray-200'}`}
                   title={lockedFields.has(field.id) ? '该字段已被锁定，扫描时不会被自动覆盖' : '点击锁定该字段，防止被扫描器覆盖'}
                 >
                   {lockedFields.has(field.id) ? (
@@ -116,13 +137,13 @@ export function SeriesMetadataEditorModal({
                 <textarea
                   value={field.val}
                   onChange={(e) => onFormChange(field.id, e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all min-h-[100px]"
+                  className={modalTextareaClass}
                 />
               ) : field.type === 'select' ? (
                 <select
                   value={field.val}
                   onChange={(e) => onFormChange(field.id, e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all cursor-pointer"
+                  className={modalSelectClass}
                 >
                   <option value="">- 无状态 -</option>
                   {field.options?.map((option) => (
@@ -138,18 +159,18 @@ export function SeriesMetadataEditorModal({
                   max={field.max}
                   value={field.val}
                   onChange={(e) => onFormChange(field.id, e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all"
+                  className={modalInputClass}
                 />
               )}
             </div>
           ))}
 
-          <div className="space-y-2">
+          <div className={`${modalSectionClass} space-y-3`}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-gray-300">标签 (Tags)</label>
               <button
                 onClick={() => onToggleLock('tags')}
-                className={`flex items-center text-xs px-2 py-1 rounded transition-colors ${lockedFields.has('tags') ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`flex items-center rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${lockedFields.has('tags') ? 'border-orange-500/30 bg-orange-500/20 text-orange-300' : 'border-gray-700 bg-gray-900/60 text-gray-400 hover:text-gray-200'}`}
                 title={lockedFields.has('tags') ? '已锁定该字段防覆盖' : '点击锁定防覆盖'}
               >
                 {lockedFields.has('tags') ? (
@@ -163,10 +184,10 @@ export function SeriesMetadataEditorModal({
                 )}
               </button>
             </div>
-            <div className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-white focus-within:ring-2 focus-within:ring-komgaPrimary/50 transition-all">
+            <div className="w-full rounded-2xl border border-gray-700 bg-gray-950/80 p-3 text-sm text-white shadow-inner shadow-black/20 transition-all focus-within:border-komgaPrimary/50 focus-within:ring-2 focus-within:ring-komgaPrimary/20">
               <div className="flex flex-wrap gap-2 mb-2">
                 {currentTags.map((tag) => (
-                  <span key={tag} className="flex items-center gap-1 bg-komgaPrimary/20 text-komgaPrimary px-2 py-1 rounded text-xs border border-komgaPrimary/30">
+                  <span key={tag} className={modalTagClass}>
                     {tag}
                     <button onClick={() => removeTag(tag)} className="hover:text-red-400">
                       <X className="w-3 h-3" />
@@ -186,10 +207,10 @@ export function SeriesMetadataEditorModal({
                     }
                   }}
                   placeholder="输入标签按回车添加..."
-                  className="w-full bg-transparent border-none outline-none p-1 text-sm placeholder-gray-500"
+                  className="w-full bg-transparent border-none p-1 text-sm outline-none placeholder-gray-500"
                 />
                 {tagInputValue && tagSuggestions.length > 0 && (
-                  <div className="absolute top-10 left-0 w-full bg-komgaSurface border border-gray-700 rounded-lg shadow-xl z-20 max-h-40 overflow-y-auto">
+                  <div className="absolute left-0 top-10 z-20 max-h-40 w-full overflow-y-auto rounded-xl border border-gray-700 bg-komgaSurface shadow-xl">
                     {tagSuggestions.map((suggestion) => (
                       <div
                         key={suggestion.id}
@@ -205,12 +226,12 @@ export function SeriesMetadataEditorModal({
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className={`${modalSectionClass} space-y-3`}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-gray-300">编绘者 (Authors)</label>
               <button
                 onClick={() => onToggleLock('authors')}
-                className={`flex items-center text-xs px-2 py-1 rounded transition-colors ${lockedFields.has('authors') ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`flex items-center rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${lockedFields.has('authors') ? 'border-orange-500/30 bg-orange-500/20 text-orange-300' : 'border-gray-700 bg-gray-900/60 text-gray-400 hover:text-gray-200'}`}
                 title={lockedFields.has('authors') ? '已锁定该字段防覆盖' : '点击锁定防覆盖'}
               >
                 {lockedFields.has('authors') ? (
@@ -224,10 +245,10 @@ export function SeriesMetadataEditorModal({
                 )}
               </button>
             </div>
-            <div className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-white focus-within:ring-2 focus-within:ring-komgaPrimary/50 transition-all">
+            <div className="w-full rounded-2xl border border-gray-700 bg-gray-950/80 p-3 text-sm text-white shadow-inner shadow-black/20 transition-all focus-within:border-komgaPrimary/50 focus-within:ring-2 focus-within:ring-komgaPrimary/20">
               <div className="flex flex-wrap gap-2 mb-2">
                 {currentAuthors.map((author, idx) => (
-                  <span key={idx} className="flex items-center gap-1 bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs border border-gray-700">
+                  <span key={idx} className={modalSubtleTagClass}>
                     {author.name} <span className="text-gray-500">[{author.role}]</span>
                     <button onClick={() => removeAuthor(idx)} className="hover:text-red-400 ml-1">
                       <X className="w-3 h-3" />
@@ -247,12 +268,12 @@ export function SeriesMetadataEditorModal({
                     }
                   }}
                   placeholder="输入作者并按回车..."
-                  className="flex-1 bg-transparent border border-gray-800 rounded px-2 py-1 outline-none text-sm placeholder-gray-500"
+                  className="flex-1 rounded-lg border border-gray-800 bg-black/20 px-2.5 py-2 text-sm outline-none placeholder-gray-500"
                 />
                 <select
                   value={authorInputRole}
                   onChange={(e) => setAuthorInputRole(e.target.value)}
-                  className="bg-gray-800 border-none outline-none rounded px-2 py-1 text-sm text-gray-300 cursor-pointer"
+                  className="rounded-lg border border-gray-800 bg-gray-800 px-2.5 py-2 text-sm text-gray-300 outline-none cursor-pointer"
                 >
                   <option value="Writer">Writer</option>
                   <option value="Penciller">Penciller</option>
@@ -263,7 +284,7 @@ export function SeriesMetadataEditorModal({
                   <option value="Editor">Editor</option>
                 </select>
                 {authorInputName && authorSuggestions.length > 0 && (
-                  <div className="absolute top-10 left-0 w-full bg-komgaSurface border border-gray-700 rounded-lg shadow-xl z-20 max-h-40 overflow-y-auto">
+                  <div className="absolute left-0 top-10 z-20 max-h-40 w-full overflow-y-auto rounded-xl border border-gray-700 bg-komgaSurface shadow-xl">
                     {authorSuggestions.map((suggestion) => (
                       <div
                         key={suggestion.id + suggestion.role}
@@ -280,7 +301,7 @@ export function SeriesMetadataEditorModal({
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className={`${modalSectionClass} space-y-3`}>
             <label className="text-sm font-medium text-gray-300">外部链接 (External Links)</label>
             <div className="space-y-3">
               {(editForm.linksInput || []).map((link, idx) => (
@@ -294,7 +315,7 @@ export function SeriesMetadataEditorModal({
                       onFormChange('linksInput', newLinks);
                     }}
                     placeholder="Link Name (e.g. Anilist)"
-                    className="flex-1 bg-gray-900 border border-gray-700 rounded p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary"
+                    className="flex-1 rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-none transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
                   />
                   <input
                     type="text"
@@ -305,14 +326,14 @@ export function SeriesMetadataEditorModal({
                       onFormChange('linksInput', newLinks);
                     }}
                     placeholder="URL"
-                    className="flex-[2] bg-gray-900 border border-gray-700 rounded p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary"
+                    className="flex-[2] rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-none transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
                   />
                   <button
                     onClick={() => {
                       const newLinks = (editForm.linksInput || []).filter((_, index) => index !== idx);
                       onFormChange('linksInput', newLinks);
                     }}
-                    className="p-2 text-red-400 hover:bg-gray-800 rounded"
+                    className="rounded-xl border border-red-500/20 bg-red-500/10 p-2.5 text-red-300 transition-all hover:bg-red-500/20"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -323,28 +344,13 @@ export function SeriesMetadataEditorModal({
                   const newLinks = [...(editForm.linksInput || []), { name: '', url: '' }];
                   onFormChange('linksInput', newLinks);
                 }}
-                className="text-xs text-komgaPrimary font-medium border border-komgaPrimary/30 bg-komgaPrimary/10 hover:bg-komgaPrimary/20 px-3 py-1.5 rounded transition-colors block w-full text-center"
+                className="block w-full rounded-xl border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-2 text-center text-xs font-medium text-komgaPrimary transition-colors hover:bg-komgaPrimary/20"
               >
                 + 添加外部链接
               </button>
             </div>
           </div>
         </div>
-        <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-5 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors"
-          >
-            取消
-          </button>
-          <button
-            onClick={onSave}
-            className="px-5 py-2 rounded-lg text-sm font-medium bg-komgaPrimary text-white hover:bg-komgaPrimary/80 transition-colors shadow-lg shadow-komgaPrimary/20"
-          >
-            保存更改
-          </button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

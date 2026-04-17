@@ -1,7 +1,9 @@
-import { Loader2, X } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { DirectoryPicker } from './DirectoryPicker';
 import { DEFAULT_SCAN_INTERVAL } from './constants';
 import type { BrowseDirEntry, BrowseDrive } from './types';
+import { ModalShell } from '../ui/ModalShell';
+import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalSectionClass } from '../ui/modalStyles';
 
 interface LibraryFormModalProps {
   title: string;
@@ -71,25 +73,43 @@ export function LibraryFormModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-komgaSurface rounded-xl shadow-2xl border border-gray-800 w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-        <div className="flex justify-between items-center p-6 border-b border-gray-800">
-          <h3 className="text-xl font-semibold text-white">{title}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
-            <X className="w-5 h-5" />
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title={title}
+      description="资源库会直接影响扫描、KOReader 同步和外部资源库对比。这里的路径和策略需要保持准确。"
+      size="compact"
+      bodyClassName="pt-5"
+      footer={
+        <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
+          <button type="button" onClick={onClose} className={modalGhostButtonClass}>
+            取消
+          </button>
+          <button type="submit" form="library-form-modal" disabled={submitting} className={modalPrimaryButtonClass}>
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {submittingLabel}
+              </>
+            ) : (
+              submitLabel
+            )}
           </button>
         </div>
-        <form onSubmit={onSubmit} className="p-6">
-          <div className="space-y-4">
+      }
+    >
+      <form id="library-form-modal" onSubmit={onSubmit} className="space-y-5">
+          <div className={modalSectionClass}>
+            <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">名称</label>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">名称</label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => onNameChange(e.target.value)}
                 placeholder="例如: 日漫收藏"
-                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
+                className={modalInputClass}
               />
             </div>
             <DirectoryPicker
@@ -106,78 +126,66 @@ export function LibraryFormModal({
               onChooseCurrent={onChooseCurrentDirectory}
               onNavigate={onNavigateDirectory}
             />
+            </div>
           </div>
 
-          <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-gray-800 space-y-4">
-            <label className="flex items-center space-x-3 cursor-pointer">
+          <div className={`${modalSectionClass} space-y-4`}>
+            <div>
+              <p className="text-sm font-medium text-gray-200">扫描与同步策略</p>
+              <p className="mt-1 text-xs leading-5 text-gray-500">这些选项决定资源库是否参与后台扫描和 KOReader 进度投影。</p>
+            </div>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-800 bg-black/20 px-4 py-3">
               <input
                 type="checkbox"
                 checked={koreaderSyncEnabled}
                 onChange={(e) => onKOReaderSyncEnabledChange(e.target.checked)}
-                className="form-checkbox h-4 w-4 text-komgaPrimary bg-gray-800 border-gray-700 rounded focus:ring-komgaPrimary focus:ring-2"
+                className="mt-0.5 h-4 w-4 rounded border-gray-700 bg-gray-800 text-komgaPrimary focus:ring-2 focus:ring-komgaPrimary"
               />
-              <span className="text-sm font-medium text-gray-300">允许此资源库参与 KOReader 阅读进度同步</span>
+              <div>
+                <p className="text-sm font-medium text-gray-200">允许此资源库参与 KOReader 阅读进度同步</p>
+                <p className="mt-1 text-xs text-gray-500">关闭后，该资源库的书籍不会接收 KOReader 投影进度。</p>
+              </div>
             </label>
-            <label className="flex items-center space-x-3 cursor-pointer">
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-800 bg-black/20 px-4 py-3">
               <input
                 type="checkbox"
                 checked={autoScan}
                 onChange={(e) => onAutoScanChange(e.target.checked)}
-                className="form-checkbox h-4 w-4 text-komgaPrimary bg-gray-800 border-gray-700 rounded focus:ring-komgaPrimary focus:ring-2"
+                className="mt-0.5 h-4 w-4 rounded border-gray-700 bg-gray-800 text-komgaPrimary focus:ring-2 focus:ring-komgaPrimary"
               />
-              <span className="text-sm font-medium text-gray-300">开启后台自动轮次扫描监控</span>
+              <div>
+                <p className="text-sm font-medium text-gray-200">开启后台自动轮次扫描监控</p>
+                <p className="mt-1 text-xs text-gray-500">系统会按设定周期持续检查这个目录的变化。</p>
+              </div>
             </label>
             {autoScan && (
-              <>
+              <div className="space-y-4 rounded-2xl border border-gray-800 bg-black/20 p-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-400 mb-1">循环触发扫描任务的间隔 (默认60分钟)</label>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-300">循环触发扫描任务的间隔 (默认 60 分钟)</label>
                   <input
                     type="number"
                     min="1"
                     value={scanInterval}
                     onChange={(e) => onScanIntervalChange(parseInt(e.target.value) || DEFAULT_SCAN_INTERVAL)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
+                    className={modalInputClass}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-400 mb-1">目标提取匹配类型 (英文逗号分隔)</label>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-300">目标提取匹配类型 (英文逗号分隔)</label>
                   <input
                     type="text"
                     value={scanFormats}
                     onChange={(e) => onScanFormatsChange(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-komgaPrimary"
+                    className={modalInputClass}
                   />
-                  <p className="mt-1 text-xs text-gray-500">当前受支持的格式：{supportedScanFormats}</p>
+                  <p className="mt-2 text-xs text-gray-500">当前受支持的格式：{supportedScanFormats}</p>
                 </div>
-              </>
+              </div>
             )}
           </div>
-
-          <div className="mt-8 flex justify-end space-x-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="px-6 py-2 bg-komgaPrimary hover:bg-purple-600 text-white text-sm font-medium rounded-lg shadow-lg flex items-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  {submittingLabel}
-                </>
-              ) : (
-                submitLabel
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </ModalShell>
   );
 }

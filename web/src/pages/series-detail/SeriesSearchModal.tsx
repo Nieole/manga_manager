@@ -1,5 +1,7 @@
-import { ArrowLeft, BookImage, Building2, CheckCircle2, Download, Edit, FolderOpen, Globe, Info, Lock, Sparkles, Star, X } from 'lucide-react';
+import { ArrowLeft, BookImage, Building2, CheckCircle2, Download, Edit, FolderOpen, Globe, Info, Lock, Sparkles, Star } from 'lucide-react';
 import type { MetaTag, SearchResult, Series } from './types';
+import { ModalShell } from '../../components/ui/ModalShell';
+import { modalInputClass, modalPrimaryButtonClass, modalSecondaryButtonClass, modalSectionClass } from '../../components/ui/modalStyles';
 
 interface SeriesSearchModalProps {
   open: boolean;
@@ -89,47 +91,72 @@ export function SeriesSearchModal({
   const changedFieldCount = previewFields.filter((field) => field.currentValue !== field.nextValue && field.nextValue !== '未提供').length;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-komgaSurface border border-gray-800 rounded-3xl w-full max-w-7xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-300">
-        <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between p-6 border-b border-gray-800 bg-gray-900/50 gap-4">
-          <div className="flex-1 w-full">
-            <h3 className="text-xl font-bold text-white flex items-center gap-3">
-              <Globe className="w-5 h-5 text-komgaPrimary" />
-              预览并选择元数据来源
-            </h3>
-            <p className="mt-1 text-sm text-gray-500">先比较当前信息与 {providerLabel || '外部来源'} 的差异，再决定是否应用。</p>
-            <div className="mt-4 flex gap-2 w-full max-w-xl">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  value={modalSearchQuery}
-                  onChange={(e) => onSearchQueryChange(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && onReSearch(0)}
-                  placeholder="输入搜索关键词..."
-                  className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/50 transition-all pl-10"
-                />
-                <Edit className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              </div>
-              <button
-                onClick={() => onReSearch(0)}
-                disabled={isScraping}
-                className="bg-komgaPrimary hover:bg-komgaPrimary/80 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-medium transition-all shadow-lg shadow-komgaPrimary/20 flex items-center gap-2 shrink-0"
-              >
-                {isScraping ? (
-                  <div className="w-4 h-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                ) : (
-                  <Download className="w-4 h-4" />
-                )}
-                重新搜索
-              </button>
-            </div>
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="预览并选择元数据来源"
+      description={`先比较当前信息与 ${providerLabel || '外部来源'} 的差异，再决定是否应用。`}
+      icon={<Globe className="h-5 w-5" />}
+      size="wide"
+      zIndexClassName="z-[60]"
+      panelClassName="max-w-7xl"
+      bodyClassName="min-h-0 overflow-hidden p-0"
+      headerContent={
+        <div className="flex w-full max-w-xl gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={modalSearchQuery}
+              onChange={(e) => onSearchQueryChange(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onReSearch(0)}
+              placeholder="输入搜索关键词..."
+              className={`${modalInputClass} pl-10`}
+            />
+            <Edit className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all shrink-0">
-            <X className="w-7 h-7" />
+          <button
+            onClick={() => onReSearch(0)}
+            disabled={isScraping}
+            className={`${modalPrimaryButtonClass} shrink-0`}
+          >
+            {isScraping ? (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            重新搜索
           </button>
         </div>
-
-        <div className="grid xl:grid-cols-[1.1fr_0.9fr] min-h-0 flex-1">
+      }
+      footer={
+        <div className="flex flex-col items-center justify-between gap-4 lg:flex-row">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onReSearch(Math.max(0, currentOffset - 20))}
+              disabled={isScraping || currentOffset === 0}
+              className={modalSecondaryButtonClass}
+            >
+              上一页
+            </button>
+            <span className="text-sm text-gray-500">
+              第 {Math.floor(currentOffset / 20) + 1} / {Math.max(1, Math.ceil(searchTotal / 20))} 页
+            </span>
+            <button
+              onClick={() => onReSearch(currentOffset + 20)}
+              disabled={isScraping || currentOffset + 20 >= searchTotal}
+              className={modalSecondaryButtonClass}
+            >
+              下一页
+            </button>
+          </div>
+          <p className="flex items-center gap-2 text-xs italic text-gray-500">
+            <Info className="h-4 w-4" />
+            当前流程会先预览差异，再把选中的来源应用到系列元数据
+          </p>
+        </div>
+      }
+    >
+        <div className="grid min-h-0 flex-1 xl:grid-cols-[1.1fr_0.9fr]">
           <div className="border-r border-gray-800 min-h-0">
             <div className="p-6 overflow-y-auto space-y-4 max-h-[65vh] xl:max-h-full">
               {searchResults.length > 0 ? (
@@ -234,7 +261,7 @@ export function SeriesSearchModal({
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-gray-800 bg-gray-900/40 p-5">
+                <div className={`${modalSectionClass} bg-gray-900/40 p-5`}>
                   <div className="flex items-center gap-2 mb-4 text-white">
                     <Sparkles className="w-4 h-4 text-komgaPrimary" />
                     <h5 className="font-semibold">字段级差异</h5>
@@ -278,7 +305,7 @@ export function SeriesSearchModal({
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-gray-800 bg-gray-900/40 p-5">
+                <div className={`${modalSectionClass} bg-gray-900/40 p-5`}>
                   <p className="text-sm text-gray-400 leading-6">
                     提示：当前系列中被手动锁定的字段不会被这次应用覆盖。建议先预览差异，再把真正想保留的字段单独锁定。
                   </p>
@@ -287,7 +314,7 @@ export function SeriesSearchModal({
                     <button
                       onClick={() => onApplyMetadata(selectedResult)}
                       disabled={isScraping}
-                      className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-medium text-white hover:bg-komgaPrimary/80 disabled:opacity-50"
+                      className={modalPrimaryButtonClass}
                     >
                       {isScraping ? <div className="w-4 h-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <ArrowLeft className="w-4 h-4 rotate-180" />}
                       应用这个条目
@@ -302,33 +329,6 @@ export function SeriesSearchModal({
             )}
           </div>
         </div>
-
-        <div className="p-6 border-t border-gray-800 bg-gray-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => onReSearch(Math.max(0, currentOffset - 20))}
-              disabled={isScraping || currentOffset === 0}
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-xl text-sm text-gray-300 transition-colors"
-            >
-              上一页
-            </button>
-            <span className="text-gray-500 text-sm">
-              第 {Math.floor(currentOffset / 20) + 1} / {Math.max(1, Math.ceil(searchTotal / 20))} 页
-            </span>
-            <button
-              onClick={() => onReSearch(currentOffset + 20)}
-              disabled={isScraping || currentOffset + 20 >= searchTotal}
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-xl text-sm text-gray-300 transition-colors"
-            >
-              下一页
-            </button>
-          </div>
-          <p className="text-gray-500 text-xs flex items-center gap-2 italic">
-            <Info className="w-4 h-4" />
-            当前流程会先预览差异，再把选中的来源应用到系列元数据
-          </p>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }
