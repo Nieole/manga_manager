@@ -275,7 +275,7 @@ export default function Logs() {
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white">运维看板</h1>
+          <h1 className="text-3xl font-bold text-white">看板</h1>
           <p className="text-slate-400 mt-1">查看结构化日志、最近任务和失败上下文。</p>
         </div>
 

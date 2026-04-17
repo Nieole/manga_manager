@@ -44,7 +44,7 @@ function ThemeSection({
                   <p className="text-lg font-semibold text-white">{theme.name}</p>
                   <p className="mt-2 text-sm leading-6 text-gray-400">{theme.description}</p>
                 </div>
-                {selected && <span className="rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-2 py-1 text-[11px] font-medium text-komgaPrimary">当前</span>}
+                {selected && <span className="shrink-0 whitespace-nowrap rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-2 py-1 text-[11px] font-medium text-komgaPrimary">当前</span>}
               </div>
               <div className="mt-5 flex items-center gap-2">
                 {theme.swatches.map((swatch) => (

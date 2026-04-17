@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -26,13 +27,27 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
+
 func main() {
+	showVersion := flag.Bool("version", false, "print build version and exit")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("Manga Manager %s\ncommit: %s\nbuilt: %s\n", Version, Commit, BuildTime)
+		return
+	}
+
 	// 在最前面初始化记录系统：这里先输出到命令行与 data 文件夹
 	if err := logger.Init("data"); err != nil {
 		fmt.Printf("Fatal: Logger init failed: %v\n", err)
 		os.Exit(1)
 	}
-	slog.Info("Starting Manga Manager...")
+	slog.Info("Starting Manga Manager...", "version", Version, "commit", Commit, "build_time", BuildTime)
 
 	cfg, err := config.LoadConfig("config.yaml")
 	if err != nil {
