@@ -1400,6 +1400,97 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 	}
 }
 
+func TestExternalLibraryScanIgnoreExtensionOption(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+
+	lib, series, book := seedBookFixture(t, store, rootDir, "Library B", "Series Beta", "Beta 01.cbz", 10)
+	if err := os.WriteFile(book.Path, []byte("beta-01"), 0o644); err != nil {
+		t.Fatalf("write book failed: %v", err)
+	}
+
+	externalRoot := filepath.Join(rootDir, "device-ignore-extension")
+	if err := os.MkdirAll(filepath.Join(externalRoot, "Series Beta"), 0o755); err != nil {
+		t.Fatalf("mkdir external root failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(externalRoot, "Series Beta", "Beta 01.zip"), []byte("existing-copy"), 0o644); err != nil {
+		t.Fatalf("write external file failed: %v", err)
+	}
+
+	createSession := func(ignoreExtension bool) external.SessionSnapshot {
+		body := `{"external_path":"` + externalRoot + `","ignore_extension":` + strconv.FormatBool(ignoreExtension) + `}`
+		req := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session", []byte(body), map[string]string{
+			"libraryId": strconv.FormatInt(lib.ID, 10),
+		})
+		rec := httptest.NewRecorder()
+		controller.createExternalLibrarySession(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("expected create external session 202, got %d body=%s", rec.Code, rec.Body.String())
+		}
+
+		var resp struct {
+			Session external.SessionSnapshot `json:"session"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode external session failed: %v", err)
+		}
+
+		session := resp.Session
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			current, getErr := controller.external.GetSession(lib.ID, session.SessionID)
+			if getErr == nil && current.Status == "ready" {
+				return current
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		t.Fatalf("expected external session ready, got %+v", session)
+		return external.SessionSnapshot{}
+	}
+
+	strictSession := createSession(false)
+	if strictSession.IgnoreExtension {
+		t.Fatal("expected strict session to require matching extension")
+	}
+	strictCoverage, err := controller.external.GetSeriesCoverage(lib.ID, strictSession.SessionID, []int64{series.ID})
+	if err != nil {
+		t.Fatalf("GetSeriesCoverage strict failed: %v", err)
+	}
+	if len(strictCoverage) != 1 || strictCoverage[0].ExternalMatchCount != 0 || strictCoverage[0].ExternalSyncStatus != "missing" {
+		t.Fatalf("unexpected strict coverage: %+v", strictCoverage)
+	}
+
+	ignoreSession := createSession(true)
+	if !ignoreSession.IgnoreExtension {
+		t.Fatal("expected ignore-extension session flag to be true")
+	}
+	ignoreCoverage, err := controller.external.GetSeriesCoverage(lib.ID, ignoreSession.SessionID, []int64{series.ID})
+	if err != nil {
+		t.Fatalf("GetSeriesCoverage ignore-extension failed: %v", err)
+	}
+	if len(ignoreCoverage) != 1 || ignoreCoverage[0].ExternalMatchCount != 1 || ignoreCoverage[0].ExternalTotalCount != 1 || ignoreCoverage[0].ExternalSyncStatus != "complete" {
+		t.Fatalf("unexpected ignore-extension coverage: %+v", ignoreCoverage)
+	}
+
+	transferReq := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session/s/transfer", []byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`]}`), map[string]string{
+		"libraryId": strconv.FormatInt(lib.ID, 10),
+		"sessionId": ignoreSession.SessionID,
+	})
+	transferRec := httptest.NewRecorder()
+	controller.transferToExternalLibrary(transferRec, transferReq)
+	if transferRec.Code != http.StatusOK {
+		t.Fatalf("expected transfer to be skipped with 200, got %d body=%s", transferRec.Code, transferRec.Body.String())
+	}
+	var transferResp struct {
+		MissingBooks int `json:"missing_books"`
+	}
+	if err := json.NewDecoder(transferRec.Body).Decode(&transferResp); err != nil {
+		t.Fatalf("decode transfer response failed: %v", err)
+	}
+	if transferResp.MissingBooks != 0 {
+		t.Fatalf("expected no missing books when ignoring extension, got %+v", transferResp)
+	}
+}
+
 func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 

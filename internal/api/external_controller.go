@@ -19,7 +19,8 @@ import (
 )
 
 type externalLibrarySessionRequest struct {
-	ExternalPath string `json:"external_path"`
+	ExternalPath    string `json:"external_path"`
+	IgnoreExtension bool   `json:"ignore_extension"`
 }
 
 type externalLibraryTransferRequest struct {
@@ -52,7 +53,7 @@ func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http
 		return
 	}
 
-	session, err := c.external.CreateSession(r.Context(), libraryID, req.ExternalPath)
+	session, err := c.external.CreateSession(r.Context(), libraryID, req.ExternalPath, req.IgnoreExtension)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			jsonError(w, http.StatusBadRequest, "External path does not exist")

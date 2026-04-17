@@ -19,6 +19,7 @@ interface ExternalSession {
     session_id: string;
     library_id: number;
     external_path: string;
+    ignore_extension: boolean;
     status: 'scanning' | 'ready' | 'failed';
     error?: string;
     scanned_files: number;
@@ -65,6 +66,7 @@ export default function Home() {
     const [rescanningId, setRescanningId] = useState<number | null>(null);
     const [recentExternalPaths, setRecentExternalPaths] = useState<string[]>([]);
     const [externalPath, setExternalPath] = useState('');
+    const [externalIgnoreExtension, setExternalIgnoreExtension] = useState(false);
     const [externalSession, setExternalSession] = useState<ExternalSession | null>(null);
     const [externalSeriesMap, setExternalSeriesMap] = useState<Record<number, ExternalSeriesStatus>>({});
     const [startingExternalScan, setStartingExternalScan] = useState(false);
@@ -196,6 +198,7 @@ export default function Home() {
         try {
             const res = await axios.post<ExternalSessionCreateResponse>(`/api/libraries/${libId}/external-libraries/session`, {
                 external_path: externalPath.trim(),
+                ignore_extension: externalIgnoreExtension,
             });
             setExternalSession(res.data.session);
             setExternalSeriesMap({});
@@ -255,10 +258,18 @@ export default function Home() {
                     setRecentExternalPaths(parsed.filter((item) => typeof item === 'string'));
                 }
             }
+            const storedIgnoreExtension = localStorage.getItem('manga_manager_external_ignore_extension');
+            if (storedIgnoreExtension === 'true') {
+                setExternalIgnoreExtension(true);
+            }
         } catch {
             // ignore invalid local storage
         }
     }, []);
+
+    useEffect(() => {
+        localStorage.setItem('manga_manager_external_ignore_extension', externalIgnoreExtension ? 'true' : 'false');
+    }, [externalIgnoreExtension]);
 
     useEffect(() => {
         if (libId) {
@@ -631,6 +642,15 @@ export default function Home() {
                                 }}
                                 onNavigate={navigateExternalDirectoryBrowser}
                             />
+                            <label className="mt-4 inline-flex items-center gap-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-300">
+                                <input
+                                    type="checkbox"
+                                    checked={externalIgnoreExtension}
+                                    onChange={(event) => setExternalIgnoreExtension(event.target.checked)}
+                                    className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-komgaPrimary focus:ring-komgaPrimary"
+                                />
+                                <span>匹配时忽略外部资源库文件扩展名</span>
+                            </label>
                             <div className="mt-4 flex flex-wrap items-center gap-3">
                                 <button
                                     onClick={startExternalLibraryScan}
@@ -665,6 +685,9 @@ export default function Home() {
                                     </span>
                                 </div>
                                 <p className="mt-2 text-xs text-gray-400 break-all">{externalSession.external_path}</p>
+                                <p className="mt-2 text-xs text-gray-500">
+                                    匹配规则：{externalSession.ignore_extension ? '忽略扩展名' : '要求扩展名一致'}
+                                </p>
                                 <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
                                     <div>
                                         <p className="text-gray-500">已扫描</p>

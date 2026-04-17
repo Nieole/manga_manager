@@ -20,17 +20,18 @@ var (
 )
 
 type SessionSnapshot struct {
-	SessionID      string    `json:"session_id"`
-	LibraryID      int64     `json:"library_id"`
-	ExternalPath   string    `json:"external_path"`
-	Status         string    `json:"status"`
-	Error          string    `json:"error,omitempty"`
-	ScannedFiles   int       `json:"scanned_files"`
-	MatchedBooks   int       `json:"matched_books"`
-	UnmatchedFiles int       `json:"unmatched_files"`
-	TotalBooks     int       `json:"total_books"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	SessionID       string    `json:"session_id"`
+	LibraryID       int64     `json:"library_id"`
+	ExternalPath    string    `json:"external_path"`
+	IgnoreExtension bool      `json:"ignore_extension"`
+	Status          string    `json:"status"`
+	Error           string    `json:"error,omitempty"`
+	ScannedFiles    int       `json:"scanned_files"`
+	MatchedBooks    int       `json:"matched_books"`
+	UnmatchedFiles  int       `json:"unmatched_files"`
+	TotalBooks      int       `json:"total_books"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type SeriesCoverage struct {
@@ -66,20 +67,21 @@ type seriesEntry struct {
 }
 
 type session struct {
-	ID             string
-	LibraryID      int64
-	LibraryPath    string
-	ExternalPath   string
-	Status         string
-	Error          string
-	ScannedFiles   int
-	MatchedBooks   int
-	UnmatchedFiles int
-	TotalBooks     int
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Series         map[int64]*seriesEntry
-	MatchedKeys    map[string]struct{}
+	ID              string
+	LibraryID       int64
+	LibraryPath     string
+	ExternalPath    string
+	IgnoreExtension bool
+	Status          string
+	Error           string
+	ScannedFiles    int
+	MatchedBooks    int
+	UnmatchedFiles  int
+	TotalBooks      int
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Series          map[int64]*seriesEntry
+	MatchedKeys     map[string]struct{}
 }
 
 type Manager struct {
@@ -97,7 +99,7 @@ func NewManager(store database.Store, ttl time.Duration) *Manager {
 	}
 }
 
-func (m *Manager) CreateSession(ctx context.Context, libraryID int64, externalPath string) (SessionSnapshot, error) {
+func (m *Manager) CreateSession(ctx context.Context, libraryID int64, externalPath string, ignoreExtension bool) (SessionSnapshot, error) {
 	lib, err := m.store.GetLibrary(ctx, libraryID)
 	if err != nil {
 		return SessionSnapshot{}, err
@@ -113,15 +115,16 @@ func (m *Manager) CreateSession(ctx context.Context, libraryID int64, externalPa
 
 	now := time.Now()
 	s := &session{
-		ID:           fmt.Sprintf("%d-%d", libraryID, now.UnixNano()),
-		LibraryID:    libraryID,
-		LibraryPath:  lib.Path,
-		ExternalPath: externalPath,
-		Status:       "scanning",
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		Series:       make(map[int64]*seriesEntry),
-		MatchedKeys:  make(map[string]struct{}),
+		ID:              fmt.Sprintf("%d-%d", libraryID, now.UnixNano()),
+		LibraryID:       libraryID,
+		LibraryPath:     lib.Path,
+		ExternalPath:    externalPath,
+		IgnoreExtension: ignoreExtension,
+		Status:          "scanning",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		Series:          make(map[int64]*seriesEntry),
+		MatchedKeys:     make(map[string]struct{}),
 	}
 
 	m.mu.Lock()
@@ -221,6 +224,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 	libraryID := s.LibraryID
 	libraryPath := s.LibraryPath
 	externalPath := s.ExternalPath
+	ignoreExtension := s.IgnoreExtension
 	m.mu.Unlock()
 
 	books, err := m.store.ListExternalLibraryBooksByLibrary(ctx, libraryID)
@@ -238,7 +242,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 	bookByKey := make(map[string]bookRef, len(books))
 	seriesMap := make(map[int64]*seriesEntry)
 	for _, book := range books {
-		key, _, err := relativePathKeys(libraryPath, book.Path)
+		key, _, err := relativePathKeys(libraryPath, book.Path, ignoreExtension)
 		if err != nil {
 			continue
 		}
@@ -275,7 +279,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 	unmatchedFiles := 0
 	total := len(paths)
 	for index, path := range paths {
-		key, _, keyErr := relativePathKeys(externalPath, path)
+		key, _, keyErr := relativePathKeys(externalPath, path, ignoreExtension)
 		if keyErr != nil {
 			unmatchedFiles++
 		} else if ref, ok := bookByKey[key]; ok {
@@ -338,6 +342,7 @@ func (m *Manager) PrepareTransfer(ctx context.Context, libraryID int64, sessionI
 	for key := range s.MatchedKeys {
 		matchedKeys[key] = struct{}{}
 	}
+	ignoreExtension := s.IgnoreExtension
 	m.mu.Unlock()
 
 	plan := TransferPlan{SeriesCount: len(seriesIDs)}
@@ -350,7 +355,7 @@ func (m *Manager) PrepareTransfer(ctx context.Context, libraryID int64, sessionI
 			if book.LibraryID != libraryID {
 				continue
 			}
-			matchKey, displayRel, err := relativePathKeys(libraryPath, book.Path)
+			matchKey, displayRel, err := relativePathKeys(libraryPath, book.Path, ignoreExtension)
 			if err != nil {
 				continue
 			}
@@ -421,21 +426,22 @@ func (m *Manager) pruneLocked(now time.Time) {
 
 func snapshotFromSession(s *session) SessionSnapshot {
 	return SessionSnapshot{
-		SessionID:      s.ID,
-		LibraryID:      s.LibraryID,
-		ExternalPath:   s.ExternalPath,
-		Status:         s.Status,
-		Error:          s.Error,
-		ScannedFiles:   s.ScannedFiles,
-		MatchedBooks:   s.MatchedBooks,
-		UnmatchedFiles: s.UnmatchedFiles,
-		TotalBooks:     s.TotalBooks,
-		CreatedAt:      s.CreatedAt,
-		UpdatedAt:      s.UpdatedAt,
+		SessionID:       s.ID,
+		LibraryID:       s.LibraryID,
+		ExternalPath:    s.ExternalPath,
+		IgnoreExtension: s.IgnoreExtension,
+		Status:          s.Status,
+		Error:           s.Error,
+		ScannedFiles:    s.ScannedFiles,
+		MatchedBooks:    s.MatchedBooks,
+		UnmatchedFiles:  s.UnmatchedFiles,
+		TotalBooks:      s.TotalBooks,
+		CreatedAt:       s.CreatedAt,
+		UpdatedAt:       s.UpdatedAt,
 	}
 }
 
-func relativePathKeys(root, fullPath string) (matchKey string, displayRel string, err error) {
+func relativePathKeys(root, fullPath string, ignoreExtension bool) (matchKey string, displayRel string, err error) {
 	rel, err := filepath.Rel(root, fullPath)
 	if err != nil {
 		return "", "", err
@@ -445,7 +451,14 @@ func relativePathKeys(root, fullPath string) (matchKey string, displayRel string
 		return "", "", fmt.Errorf("path %q is outside root %q", fullPath, root)
 	}
 	display := filepath.ToSlash(rel)
-	return strings.ToLower(display), display, nil
+	match := display
+	if ignoreExtension {
+		ext := filepath.Ext(match)
+		if ext != "" {
+			match = strings.TrimSuffix(match, ext)
+		}
+	}
+	return strings.ToLower(match), display, nil
 }
 
 func isSupportedArchive(path string) bool {
