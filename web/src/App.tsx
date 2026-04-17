@@ -8,6 +8,13 @@ import SeriesDetail from './pages/SeriesDetail';
 import BookReader from './pages/BookReader';
 import Settings from './pages/Settings';
 import Logs from './pages/Logs';
+import { SettingsOverviewPage } from './pages/settings/SettingsOverviewPage';
+import { SettingsAppearancePage } from './pages/settings/SettingsAppearancePage';
+import { SettingsLibraryPage } from './pages/settings/SettingsLibraryPage';
+import { SettingsMediaPage } from './pages/settings/SettingsMediaPage';
+import { SettingsAIPage } from './pages/settings/SettingsAIPage';
+import { SettingsKOReaderPage } from './pages/settings/SettingsKOReaderPage';
+import { SettingsMaintenancePage } from './pages/settings/SettingsMaintenancePage';
 
 function App() {
   return (
@@ -25,7 +32,15 @@ function App() {
           {/* 系统日志 */}
           <Route path="logs" element={<Logs />} />
           {/* 系统配置中心 */}
-          <Route path="settings" element={<Settings />} />
+          <Route path="settings" element={<Settings />}>
+            <Route index element={<SettingsOverviewPage />} />
+            <Route path="appearance" element={<SettingsAppearancePage />} />
+            <Route path="library" element={<SettingsLibraryPage />} />
+            <Route path="media" element={<SettingsMediaPage />} />
+            <Route path="ai" element={<SettingsAIPage />} />
+            <Route path="koreader" element={<SettingsKOReaderPage />} />
+            <Route path="maintenance" element={<SettingsMaintenancePage />} />
+          </Route>
         </Route>
 
         {/* 阅读器作为需要接管全屏沉浸体验的独立路由，跳过常规 Layout */}
