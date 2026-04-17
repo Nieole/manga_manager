@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, CheckCircle2, Copy, Database, FolderOpen, HardDrive, Image as ImageIcon, KeyRound, RefreshCw, RotateCcw, Save, Server, Settings as SettingsIcon, Sparkles, TabletSmartphone, Terminal, Trash2, UserPlus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Database, FolderOpen, HardDrive, Image as ImageIcon, KeyRound, Palette, RefreshCw, RotateCcw, Save, Server, Settings as SettingsIcon, Sparkles, TabletSmartphone, Terminal, Trash2, UserPlus } from 'lucide-react';
+import { useTheme } from '../theme/ThemeProvider';
 
 interface Config {
   server: { port: number };
@@ -155,6 +156,7 @@ function formatKOReaderIndexLabel(matchMode: string, pathIgnoreExtension: boolea
 }
 
 export default function Settings() {
+  const { themeId, resolvedTheme, availableThemes, setTheme } = useTheme();
   const [config, setConfig] = useState<Config | null>(null);
   const [validation, setValidation] = useState<ValidationResult>({ valid: true, issues: [] });
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -477,6 +479,53 @@ export default function Settings() {
 
       <section className={sectionClassName}>
         <div className="flex items-center gap-2 text-komgaPrimary">
+          <Palette className="w-5 h-5" />
+          <h2 className="text-lg font-semibold text-white">外观 / 主题</h2>
+        </div>
+
+        <div className="rounded-2xl border border-gray-800 bg-gray-900/40 p-4 text-sm text-gray-300">
+          <p className="font-medium text-white">当前主题：{resolvedTheme.name}</p>
+          <p className="mt-1 text-gray-400">主题只保存在当前浏览器。阅读器会跟随当前应用主题，现有阅读偏好保持不变。</p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {availableThemes.map((theme) => {
+            const selected = theme.id === themeId;
+            return (
+              <button
+                key={theme.id}
+                type="button"
+                onClick={() => setTheme(theme.id)}
+                className={`rounded-2xl border p-4 text-left transition-all ${selected ? 'border-komgaPrimary bg-komgaPrimary/10 shadow-lg shadow-komgaPrimary/10' : 'border-gray-800 bg-gray-900/40 hover:border-gray-700 hover:bg-gray-900/70'}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-base font-semibold text-white">{theme.name}</p>
+                    <p className="mt-1 text-sm text-gray-400">{theme.description}</p>
+                  </div>
+                  {selected && (
+                    <span className="rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-2 py-1 text-[11px] font-medium text-komgaPrimary">
+                      当前
+                    </span>
+                  )}
+                </div>
+                <div className="mt-4 flex items-center gap-2">
+                  {theme.swatches.map((swatch) => (
+                    <span
+                      key={swatch}
+                      className="h-8 w-8 rounded-full border border-white/10 shadow-inner shadow-black/20"
+                      style={{ backgroundColor: swatch }}
+                    />
+                  ))}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className={sectionClassName}>
+        <div className="flex items-center gap-2 text-komgaPrimary">
           <Server className="w-5 h-5" />
           <h2 className="text-lg font-semibold text-white">基础设置</h2>
         </div>
@@ -610,7 +659,7 @@ export default function Settings() {
               max="10"
               value={config.scanner.max_ai_concurrency}
               onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, max_ai_concurrency: Number(e.target.value) || 1 } })}
-              className="w-full accent-purple-500"
+              className="w-full accent-komgaPrimary"
             />
             {renderFieldErrors('scanner.max_ai_concurrency')}
           </div>
@@ -626,7 +675,7 @@ export default function Settings() {
       </section>
 
       <section className={sectionClassName}>
-        <div className="flex items-center gap-2 text-purple-400">
+        <div className="flex items-center gap-2 text-komgaPrimary">
           <Sparkles className="w-5 h-5" />
           <h2 className="text-lg font-semibold text-white">AI / 元数据</h2>
         </div>
@@ -728,7 +777,7 @@ export default function Settings() {
             <button
               onClick={handleTestLLM}
               disabled={testingLLM}
-              className="inline-flex items-center gap-2 rounded-lg border border-purple-500/30 bg-purple-500/10 px-4 py-2 text-sm text-purple-200 hover:bg-purple-500/20 disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2 text-sm text-komgaPrimary hover:bg-komgaPrimary/20 disabled:opacity-60"
             >
               {testingLLM ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Terminal className="w-4 h-4" />}
               {testingLLM ? '测试中...' : '测试连接'}
@@ -1087,7 +1136,7 @@ export default function Settings() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-5 py-3 text-sm font-medium text-white shadow-lg hover:bg-purple-600 disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-5 py-3 text-sm font-medium text-white shadow-lg hover:bg-komgaPrimaryHover disabled:opacity-60"
           >
             {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? '保存中...' : '保存配置'}

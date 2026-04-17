@@ -308,13 +308,13 @@ export default function BookReader() {
     };
 
     return (
-        <div className="absolute inset-0 bg-black flex flex-col z-50 overflow-hidden font-sans">
+        <div className="absolute inset-0 bg-komgaDark flex flex-col z-50 overflow-hidden">
             {/* 顶栏控制面板区悬浮感应 */}
-            <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
+            <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-komgaDark/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
                 <div className="flex items-center justify-between w-full relative">
                     <button
                         onClick={handleBackToSeries}
-                        className="text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
+                        className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
                     >
                         <ArrowLeft className="w-5 h-5 mr-2" />
                         返回
@@ -328,14 +328,14 @@ export default function BookReader() {
                     <div className="flex items-center gap-2 shrink-0 z-10">
                         <button
                             onClick={() => setShowHelp(!showHelp)}
-                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
                             title="阅读帮助"
                         >
                             <CircleHelp className="w-5 h-5" />
                         </button>
                         <button
                             onClick={() => setShowSettings(!showSettings)}
-                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-black/60 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
                         >
                             <Settings className="w-5 h-5" />
                         </button>
@@ -538,7 +538,7 @@ export default function BookReader() {
                                 </button>
                                 <button
                                     onClick={handleBackToSeries}
-                                    className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm text-white hover:bg-purple-600"
+                                    className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm text-white hover:bg-komgaPrimaryHover"
                                 >
                                     <ArrowLeft className="w-4 h-4" />
                                     返回系列
@@ -547,7 +547,7 @@ export default function BookReader() {
                         </div>
                     </div>
                 ) : readMode === 'webtoon' ? (
-                    <div className="flex flex-col items-center w-full bg-black relative h-full overflow-y-auto overflow-x-hidden">
+                    <div className="flex flex-col items-center w-full bg-komgaDark relative h-full overflow-y-auto overflow-x-hidden">
                         {pages.map(page => (
                             <img
                                 key={page.number}
@@ -563,14 +563,14 @@ export default function BookReader() {
                         {nextBookId && (
                             <button
                                 onClick={() => navigate(`/reader/${nextBookId}`, { replace: true })}
-                                className="my-10 px-8 py-4 bg-komgaPrimary hover:bg-purple-600 text-white font-bold rounded-xl shadow-2xl text-lg transition-all duration-300 hover:scale-105"
+                                className="my-10 px-8 py-4 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white font-bold rounded-xl shadow-2xl text-lg transition-all duration-300 hover:scale-105"
                             >
                                 ▶ 继续阅读下一本
                             </button>
                         )}
                     </div>
                 ) : (
-                    <div className="flex items-center justify-center w-full h-full bg-black relative">
+                    <div className="flex items-center justify-center w-full h-full bg-komgaDark relative">
                         {/* 左触控区/按钮 */}
                         <div
                             className="absolute left-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer hover:bg-white/5 transition opacity-0 hover:opacity-100 group"
@@ -623,8 +623,8 @@ export default function BookReader() {
                 )}
 
                 {/* 底部进度与拖动条悬浮托盘 */}
-                <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pb-8 pt-16 px-6 sm:px-12 flex flex-col items-center transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
-                    <div className="w-full max-w-2xl flex items-center gap-4 bg-black/60 px-6 py-3 rounded-2xl backdrop-blur border border-white/10 shadow-2xl">
+                <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-komgaDark/90 via-komgaDark/45 to-transparent pb-8 pt-16 px-6 sm:px-12 flex flex-col items-center transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
+                    <div className="w-full max-w-2xl flex items-center gap-4 bg-komgaDark/70 px-6 py-3 rounded-2xl backdrop-blur border border-white/10 shadow-2xl">
                         <span className="text-white font-medium text-sm whitespace-nowrap w-8 text-right drop-shadow-md">{currentPageIndex + 1}</span>
                         <div className="flex-1 relative h-6 flex items-center group/slider">
                             {hoverPage !== null && (

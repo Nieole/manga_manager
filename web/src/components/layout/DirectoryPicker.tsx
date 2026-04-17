@@ -76,7 +76,7 @@ export function DirectoryPicker({
               <button
                 type="button"
                 onClick={onChooseCurrent}
-                className="px-2 py-1 bg-komgaPrimary hover:bg-purple-600 text-white rounded text-xs transition-colors"
+                className="px-2 py-1 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded text-xs transition-colors"
               >
                 选择此目录
               </button>

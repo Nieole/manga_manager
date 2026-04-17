@@ -3,13 +3,39 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --font-body: Inter, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+
+  --color-black: 7 10 15;
+  --color-white: 244 247 255;
+  --color-gray-50: 246 248 252;
+  --color-gray-100: 237 241 248;
+  --color-gray-200: 223 228 238;
+  --color-gray-300: 200 208 226;
+  --color-gray-400: 161 173 196;
+  --color-gray-500: 120 132 156;
+  --color-gray-600: 96 106 130;
+  --color-gray-700: 63 72 92;
+  --color-gray-800: 36 41 56;
+  --color-gray-900: 20 24 34;
+  --color-gray-950: 11 15 22;
+
+  --color-komga-background: 11 15 22;
+  --color-komga-surface: 24 28 39;
+  --color-komga-sidebar: 18 22 32;
+  --color-komga-dark: 9 12 18;
+  --color-komga-primary: 139 92 246;
+  --color-komga-primary-hover: 124 58 237;
+  --color-komga-secondary: 45 212 191;
+
+  --theme-glow: 139 92 246;
+  --theme-overlay-top: 10 14 20;
+  --theme-overlay-bottom: 0 0 0;
+  --theme-modal-top: 36 42 58;
+  --theme-modal-bottom: 21 24 34;
+  --theme-shadow: 3 6 12;
+
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #121212;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -17,11 +43,157 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+html[data-theme='paper'] {
+  --font-body: "Iowan Old Style", "Palatino Linotype", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+
+  --color-black: 28 24 20;
+  --color-white: 55 48 42;
+  --color-gray-50: 55 48 42;
+  --color-gray-100: 68 60 52;
+  --color-gray-200: 82 73 64;
+  --color-gray-300: 100 88 77;
+  --color-gray-400: 120 106 92;
+  --color-gray-500: 142 126 108;
+  --color-gray-600: 171 153 132;
+  --color-gray-700: 202 188 171;
+  --color-gray-800: 226 216 202;
+  --color-gray-900: 244 237 226;
+  --color-gray-950: 251 246 238;
+
+  --color-komga-background: 248 243 234;
+  --color-komga-surface: 255 250 242;
+  --color-komga-sidebar: 239 232 220;
+  --color-komga-dark: 234 225 212;
+  --color-komga-primary: 217 181 93;
+  --color-komga-primary-hover: 198 161 74;
+  --color-komga-secondary: 97 135 150;
+
+  --theme-glow: 217 181 93;
+  --theme-overlay-top: 241 233 220;
+  --theme-overlay-bottom: 226 214 199;
+  --theme-modal-top: 255 252 246;
+  --theme-modal-bottom: 243 236 226;
+  --theme-shadow: 63 47 27;
+}
+
+html[data-theme='forest'] {
+  --color-black: 6 10 8;
+  --color-white: 228 238 225;
+  --color-gray-50: 240 246 238;
+  --color-gray-100: 220 230 215;
+  --color-gray-200: 196 209 191;
+  --color-gray-300: 166 183 160;
+  --color-gray-400: 134 155 129;
+  --color-gray-500: 106 128 101;
+  --color-gray-600: 80 100 76;
+  --color-gray-700: 50 66 49;
+  --color-gray-800: 29 44 34;
+  --color-gray-900: 20 33 26;
+  --color-gray-950: 12 22 18;
+
+  --color-komga-background: 11 21 17;
+  --color-komga-surface: 20 33 26;
+  --color-komga-sidebar: 14 28 21;
+  --color-komga-dark: 9 18 14;
+  --color-komga-primary: 74 222 128;
+  --color-komga-primary-hover: 34 197 94;
+  --color-komga-secondary: 45 212 191;
+
+  --theme-glow: 74 222 128;
+  --theme-overlay-top: 9 18 14;
+  --theme-overlay-bottom: 0 0 0;
+  --theme-modal-top: 30 49 39;
+  --theme-modal-bottom: 17 28 22;
+  --theme-shadow: 4 12 8;
+}
+
+html[data-theme='amber'] {
+  --color-black: 12 9 7;
+  --color-white: 245 232 206;
+  --color-gray-50: 248 239 220;
+  --color-gray-100: 237 223 194;
+  --color-gray-200: 223 204 171;
+  --color-gray-300: 203 179 144;
+  --color-gray-400: 172 146 112;
+  --color-gray-500: 140 114 84;
+  --color-gray-600: 111 87 63;
+  --color-gray-700: 73 54 39;
+  --color-gray-800: 46 32 24;
+  --color-gray-900: 30 22 17;
+  --color-gray-950: 20 15 12;
+
+  --color-komga-background: 18 14 12;
+  --color-komga-surface: 30 22 17;
+  --color-komga-sidebar: 23 18 14;
+  --color-komga-dark: 15 11 9;
+  --color-komga-primary: 245 158 11;
+  --color-komga-primary-hover: 217 119 6;
+  --color-komga-secondary: 251 191 36;
+
+  --theme-glow: 245 158 11;
+  --theme-overlay-top: 18 14 12;
+  --theme-overlay-bottom: 5 3 2;
+  --theme-modal-top: 52 37 28;
+  --theme-modal-bottom: 28 20 16;
+  --theme-shadow: 18 8 2;
+}
+
+html[data-theme='graphite'] {
+  --color-black: 5 8 12;
+  --color-white: 229 236 244;
+  --color-gray-50: 240 245 249;
+  --color-gray-100: 219 228 237;
+  --color-gray-200: 195 207 220;
+  --color-gray-300: 163 177 191;
+  --color-gray-400: 129 145 160;
+  --color-gray-500: 100 116 132;
+  --color-gray-600: 76 90 105;
+  --color-gray-700: 45 57 72;
+  --color-gray-800: 28 38 49;
+  --color-gray-900: 18 27 36;
+  --color-gray-950: 12 19 26;
+
+  --color-komga-background: 12 19 26;
+  --color-komga-surface: 20 30 40;
+  --color-komga-sidebar: 15 23 32;
+  --color-komga-dark: 9 15 22;
+  --color-komga-primary: 56 189 248;
+  --color-komga-primary-hover: 14 165 233;
+  --color-komga-secondary: 34 211 238;
+
+  --theme-glow: 56 189 248;
+  --theme-overlay-top: 10 15 22;
+  --theme-overlay-bottom: 0 0 0;
+  --theme-modal-top: 31 43 57;
+  --theme-modal-bottom: 18 27 36;
+  --theme-shadow: 2 10 20;
+}
+
+html,
 body {
   margin: 0;
-  display: flex;
   min-width: 320px;
   min-height: 100vh;
+}
+
+body {
+  display: flex;
+  font-family: var(--font-body);
+  color: rgb(var(--color-white));
+  background-color: rgb(var(--color-komga-background));
+  background-image:
+    radial-gradient(circle at top, rgba(var(--theme-glow), 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(var(--color-komga-background), 0.98), rgba(var(--color-gray-950), 1));
+  background-attachment: fixed;
+}
+
+* {
+  scrollbar-color: rgba(var(--color-gray-500), 0.7) rgba(var(--color-gray-900), 0.85);
+}
+
+::selection {
+  background: rgba(var(--color-komga-primary), 0.28);
+  color: rgb(var(--color-white));
 }
 
 #root {

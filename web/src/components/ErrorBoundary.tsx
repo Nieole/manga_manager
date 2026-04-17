@@ -48,7 +48,7 @@ export default class ErrorBoundary extends React.Component<
                         )}
                         <button
                             onClick={this.handleReset}
-                            className="px-6 py-3 bg-komgaPrimary hover:bg-purple-600 text-white font-medium rounded-xl shadow-lg transition-all duration-300 hover:scale-105"
+                            className="px-6 py-3 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white font-medium rounded-xl shadow-lg transition-all duration-300 hover:scale-105"
                         >
                             返回主页
                         </button>

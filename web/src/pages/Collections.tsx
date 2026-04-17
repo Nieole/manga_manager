@@ -94,7 +94,7 @@ export default function Collections() {
                 </div>
                 <button
                     onClick={() => setShowCreate(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-komgaPrimary hover:bg-purple-600 text-white rounded-lg transition-colors text-sm font-medium"
+                    className="flex items-center gap-2 px-4 py-2 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded-lg transition-colors text-sm font-medium"
                 >
                     <Plus className="w-4 h-4" />
                     新建合集

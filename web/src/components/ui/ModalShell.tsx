@@ -82,7 +82,11 @@ export function ModalShell({
   return createPortal(
     <div className={`fixed inset-0 ${zIndexClassName}`}>
       <div
-        className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(187,134,252,0.12),transparent_35%),linear-gradient(to_bottom,rgba(5,8,15,0.78),rgba(0,0,0,0.88))] backdrop-blur-sm"
+        className="absolute inset-0 backdrop-blur-sm"
+        style={{
+          background:
+            'radial-gradient(circle at top, rgba(var(--theme-glow), 0.16), transparent 35%), linear-gradient(to bottom, rgba(var(--theme-overlay-top), 0.78), rgba(var(--theme-overlay-bottom), 0.88))',
+        }}
         onClick={closeOnBackdrop ? onClose : undefined}
       />
       <div
@@ -94,9 +98,15 @@ export function ModalShell({
           aria-labelledby={title ? titleId : undefined}
           aria-describedby={description ? descriptionId : undefined}
           onClick={(event) => event.stopPropagation()}
-          className={`relative flex w-full ${sizeClassMap[size]} max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-gray-800/90 bg-[linear-gradient(180deg,rgba(36,36,44,0.98),rgba(24,24,29,0.98))] shadow-[0_32px_110px_-34px_rgba(0,0,0,0.95)] ${panelClassName}`}
+          className={`relative flex w-full ${sizeClassMap[size]} max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-gray-800/90 shadow-[0_32px_110px_-34px_rgba(var(--theme-shadow),0.92)] ${panelClassName}`}
+          style={{
+            background: 'linear-gradient(180deg, rgba(var(--theme-modal-top), 0.98), rgba(var(--theme-modal-bottom), 0.98))',
+          }}
         >
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_65%)] opacity-80" />
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 h-28 opacity-80"
+            style={{ background: 'radial-gradient(circle at top, rgba(var(--color-white), 0.08), transparent 65%)' }}
+          />
 
           {(title || description || headerActions || headerContent || showCloseButton) && (
             <div className={`relative border-b border-gray-800/90 bg-gray-950/35 px-5 py-5 sm:px-6 ${headerClassName}`}>
