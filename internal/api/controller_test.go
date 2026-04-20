@@ -80,7 +80,7 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 		messages:   make(chan string, 32),
 	}
 
-	return controller, store, engine, configPath
+	return controller, store, engine, tempDir
 }
 
 func requestWithRouteParam(method, path string, body []byte, key, value string) *http.Request {
@@ -174,7 +174,7 @@ func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, serie
 }
 
 func TestGetAndUpdateSystemConfig(t *testing.T) {
-	controller, _, _, configPath := newTestController(t)
+	controller, _, _, _ := newTestController(t)
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/system/config", nil)
 	getRec := httptest.NewRecorder()
@@ -220,7 +220,7 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 		t.Fatalf("expected updated cache dir, got %q", snapshot.Cache.Dir)
 	}
 
-	if _, err := os.Stat(configPath); err != nil {
+	if _, err := os.Stat(controller.configPath); err != nil {
 		t.Fatalf("expected config file to be written: %v", err)
 	}
 }

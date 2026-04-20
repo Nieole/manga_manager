@@ -55,6 +55,7 @@ type Controller struct {
 
 	taskMutex sync.Mutex
 	tasks     map[string]TaskStatus
+	taskSeq   int64
 }
 
 type TaskStatus struct {
@@ -74,6 +75,7 @@ type TaskStatus struct {
 	StartedAt  time.Time         `json:"started_at"`
 	UpdatedAt  time.Time         `json:"updated_at"`
 	FinishedAt *time.Time        `json:"finished_at,omitempty"`
+	Sequence   int64             `json:"-"`
 }
 
 type SystemCapabilitiesResponse struct {
@@ -297,6 +299,7 @@ func (c *Controller) startTask(key, taskType, message string, total int) bool {
 	}
 
 	now := time.Now()
+	c.taskSeq++
 	scope, scopeID := inferTaskScope(taskType, key)
 	task := TaskStatus{
 		Key:       key,
@@ -311,6 +314,7 @@ func (c *Controller) startTask(key, taskType, message string, total int) bool {
 		Retryable: isRetryableTaskType(taskType),
 		StartedAt: now,
 		UpdatedAt: now,
+		Sequence:  c.taskSeq,
 	}
 	c.tasks[key] = task
 	c.pruneTasksLocked()
@@ -334,6 +338,8 @@ func (c *Controller) updateTask(key string, current, total int, message string) 
 		task.Message = message
 	}
 	task.UpdatedAt = time.Now()
+	c.taskSeq++
+	task.Sequence = c.taskSeq
 	c.tasks[key] = task
 	c.publishTaskStatusLocked(task)
 }
@@ -350,6 +356,8 @@ func (c *Controller) setTaskMetadata(key string, params map[string]string, scope
 	if strings.TrimSpace(scopeName) != "" {
 		task.ScopeName = scopeName
 	}
+	c.taskSeq++
+	task.Sequence = c.taskSeq
 	c.tasks[key] = task
 	c.publishTaskStatusLocked(task)
 }
@@ -381,6 +389,8 @@ func (c *Controller) completeTask(key, status, message string) {
 	}
 	task.UpdatedAt = now
 	task.FinishedAt = &now
+	c.taskSeq++
+	task.Sequence = c.taskSeq
 	c.tasks[key] = task
 	c.publishTaskStatusLocked(task)
 }
@@ -399,6 +409,8 @@ func (c *Controller) failTaskWithError(key, message, taskError string) {
 	task.Error = taskError
 	task.UpdatedAt = now
 	task.FinishedAt = &now
+	c.taskSeq++
+	task.Sequence = c.taskSeq
 	c.tasks[key] = task
 	c.publishTaskStatusLocked(task)
 }
@@ -425,13 +437,16 @@ func (c *Controller) pruneTasksLocked() {
 		items = append(items, task)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
-			if items[i].StartedAt.Equal(items[j].StartedAt) {
-				return items[i].Key > items[j].Key
+		if items[i].Sequence == items[j].Sequence {
+			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+				if items[i].StartedAt.Equal(items[j].StartedAt) {
+					return items[i].Key > items[j].Key
+				}
+				return items[i].StartedAt.After(items[j].StartedAt)
 			}
-			return items[i].StartedAt.After(items[j].StartedAt)
+			return items[i].UpdatedAt.After(items[j].UpdatedAt)
 		}
-		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+		return items[i].Sequence > items[j].Sequence
 	})
 
 	next := make(map[string]TaskStatus, len(items))
@@ -495,13 +510,16 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		items = append(items, task)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
-			if items[i].StartedAt.Equal(items[j].StartedAt) {
-				return items[i].Key > items[j].Key
+		if items[i].Sequence == items[j].Sequence {
+			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+				if items[i].StartedAt.Equal(items[j].StartedAt) {
+					return items[i].Key > items[j].Key
+				}
+				return items[i].StartedAt.After(items[j].StartedAt)
 			}
-			return items[i].StartedAt.After(items[j].StartedAt)
+			return items[i].UpdatedAt.After(items[j].UpdatedAt)
 		}
-		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+		return items[i].Sequence > items[j].Sequence
 	})
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
