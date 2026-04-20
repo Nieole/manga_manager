@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/parser"
 )
 
 var png1x1 = []byte{
@@ -120,6 +121,9 @@ func TestServePageImage(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("write test cbz failed: %v", err)
 		}
+		t.Cleanup(func() {
+			parser.EvictArchiveFromPool(archivePath)
+		})
 		if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET path = ?, size = ? WHERE id = ?`, archivePath, int64(len(png1x1)*2), book.ID); err != nil {
 			t.Fatalf("update book archive path failed: %v", err)
 		}

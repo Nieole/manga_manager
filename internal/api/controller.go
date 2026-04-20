@@ -425,6 +425,12 @@ func (c *Controller) pruneTasksLocked() {
 		items = append(items, task)
 	}
 	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			if items[i].StartedAt.Equal(items[j].StartedAt) {
+				return items[i].Key > items[j].Key
+			}
+			return items[i].StartedAt.After(items[j].StartedAt)
+		}
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
 
@@ -489,6 +495,12 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		items = append(items, task)
 	}
 	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			if items[i].StartedAt.Equal(items[j].StartedAt) {
+				return items[i].Key > items[j].Key
+			}
+			return items[i].StartedAt.After(items[j].StartedAt)
+		}
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
 	if limit > 0 && len(items) > limit {

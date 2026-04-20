@@ -741,7 +741,13 @@ func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 		t.Fatalf("mkdir library failed: %v", err)
 	}
 
-	createPayload := []byte(`{"name":"Main","path":"` + libPath + `"}`)
+	createPayload, err := json.Marshal(map[string]string{
+		"name": "Main",
+		"path": libPath,
+	})
+	if err != nil {
+		t.Fatalf("marshal create library payload failed: %v", err)
+	}
 	createReq := httptest.NewRequest(http.MethodPost, "/api/libraries", bytes.NewReader(createPayload))
 	createRec := httptest.NewRecorder()
 	controller.createLibrary(createRec, createReq)
@@ -766,7 +772,13 @@ func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 		t.Fatalf("mkdir updated library failed: %v", err)
 	}
 
-	updatePayload := []byte(`{"name":"Updated","path":"` + updatedPath + `"}`)
+	updatePayload, err := json.Marshal(map[string]string{
+		"name": "Updated",
+		"path": updatedPath,
+	})
+	if err != nil {
+		t.Fatalf("marshal update library payload failed: %v", err)
+	}
 	updateReq := requestWithRouteParam(http.MethodPut, "/api/libraries/1", updatePayload, "libraryId", "1")
 	updateRec := httptest.NewRecorder()
 	controller.updateLibrary(updateRec, updateReq)
@@ -1310,7 +1322,13 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 		t.Fatalf("write external file failed: %v", err)
 	}
 
-	createReq := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session", []byte(`{"external_path":"`+externalRoot+`"}`), map[string]string{
+	createPayload, err := json.Marshal(map[string]any{
+		"external_path": externalRoot,
+	})
+	if err != nil {
+		t.Fatalf("marshal create external session payload failed: %v", err)
+	}
+	createReq := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session", createPayload, map[string]string{
 		"libraryId": strconv.FormatInt(lib.ID, 10),
 	})
 	createRec := httptest.NewRecorder()
@@ -1419,8 +1437,14 @@ func TestExternalLibraryScanIgnoreExtensionOption(t *testing.T) {
 	}
 
 	createSession := func(ignoreExtension bool) external.SessionSnapshot {
-		body := `{"external_path":"` + externalRoot + `","ignore_extension":` + strconv.FormatBool(ignoreExtension) + `}`
-		req := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session", []byte(body), map[string]string{
+		body, err := json.Marshal(map[string]any{
+			"external_path":    externalRoot,
+			"ignore_extension": ignoreExtension,
+		})
+		if err != nil {
+			t.Fatalf("marshal create external session payload failed: %v", err)
+		}
+		req := requestWithRouteParams(http.MethodPost, "/api/libraries/1/external-libraries/session", body, map[string]string{
 			"libraryId": strconv.FormatInt(lib.ID, 10),
 		})
 		rec := httptest.NewRecorder()

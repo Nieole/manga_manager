@@ -129,3 +129,21 @@ func GetArchiveFromPool(path string) (Archive, error) {
 
 	return arc, nil
 }
+
+// EvictArchiveFromPool closes and removes a cached archive handle for the given path.
+func EvictArchiveFromPool(path string) {
+	if globalPool == nil {
+		return
+	}
+
+	globalPool.mu.Lock()
+	defer globalPool.mu.Unlock()
+
+	item, ok := globalPool.items[path]
+	if !ok {
+		return
+	}
+
+	_ = item.archive.Close()
+	delete(globalPool.items, path)
+}
