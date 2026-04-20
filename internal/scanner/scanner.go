@@ -445,25 +445,21 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 					targetFormat = "webp"
 				}
 
-				thumbData, _, thumbErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+				thumbData, thumbContentType, thumbErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
 					Width: 400, Quality: 82, Format: targetFormat,
 				})
 
 				if thumbErr == nil && len(thumbData) > 0 {
 					processed = thumbData
-					if targetFormat == "jpeg" || targetFormat == "jpg" {
-						fileName = bookHash + ".jpg"
-					} else {
-						fileName = bookHash + "." + targetFormat
-					}
+					fileName = bookHash + extensionFromContentType(thumbContentType, targetFormat)
 				} else {
 					slog.Warn("Primary format generation failed, falling back to jpeg", "format", targetFormat, "path", job.path, "error", thumbErr)
-					jpegData, _, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
+					jpegData, jpegContentType, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
 						Width: 400, Quality: 82, Format: "jpeg",
 					})
 					if jpegErr == nil {
 						processed = jpegData
-						fileName = bookHash + ".jpg"
+						fileName = bookHash + extensionFromContentType(jpegContentType, "jpeg")
 					} else {
 						slog.Warn("JPEG fallback generation failed", "path", job.path, "error", jpegErr)
 					}
@@ -784,4 +780,28 @@ func getKeys(m map[string]bool) string {
 		keys = append(keys, k)
 	}
 	return strings.Join(keys, ",")
+}
+
+func extensionFromContentType(contentType, fallbackFormat string) string {
+	switch {
+	case strings.Contains(contentType, "webp"):
+		return ".webp"
+	case strings.Contains(contentType, "png"):
+		return ".png"
+	case strings.Contains(contentType, "avif"):
+		return ".avif"
+	case strings.Contains(contentType, "jpeg"), strings.Contains(contentType, "jpg"):
+		return ".jpg"
+	}
+
+	switch strings.ToLower(strings.TrimSpace(fallbackFormat)) {
+	case "jpeg", "jpg":
+		return ".jpg"
+	case "png":
+		return ".png"
+	case "avif":
+		return ".avif"
+	default:
+		return ".webp"
+	}
 }

@@ -860,3 +860,42 @@
 - 缓存页数设为 5 时，从第 1 页翻到第 2 页，不会再重复请求之前已经预加载过的 `3-6` 页。
 - 切换图像处理方式后，当前页不会再立刻对同一资源发起两次并行请求。
 - 翻页模式下，下一页在预加载已命中的情况下会直接使用阅读器内存缓存，提高翻页稳定性。
+
+### 📌 增量记录 — 2026-04-20（Windows 测试兼容修复）
+
+#### Go 测试链路的 Windows 阻塞点修复 `[P1: 跨平台测试]`
+- **修复 Windows 上 `go test ./...` 先卡死在图像处理依赖编译阶段的问题**：此前 `internal/images` 直接依赖 `github.com/chai2010/webp`，在 Windows 测试链路下会先因为 `webp` 编译失败而无法进入业务测试。
+- **引入按平台分离的 WebP 编码实现**：
+  - 非 Windows 平台继续使用现有 `chai2010/webp`；
+  - Windows 平台改为兼容降级策略，避免测试和编译链路被 `webp` 依赖阻断。
+
+#### 缩略图输出路径兼容收口 `[Bug Fix]`
+- **缩略图文件扩展名不再只依赖请求的目标格式推断**：扫描器现在会根据 `ProcessImage` 的实际返回 `content-type` 决定封面缓存文件后缀。
+- **用户可见结果**：
+  - 当平台兼容分支改变实际输出格式时，缩略图路径和文件后缀仍然保持一致；
+  - 避免出现“内容实际已降级为 PNG，但文件名仍写成 `.webp`”这类错位。
+
+#### 测试中的 Unix 路径假设修复 `[Bug Fix]`
+- **修复控制器测试中写死 Unix 路径的问题**：
+  - 不再使用 `"/definitely/missing"`、`"/definitely/missing/cache"` 之类路径；
+  - 改为基于 `t.TempDir()` 生成跨平台缺失路径。
+- **修复路径参数直接拼接到 URL 的问题**：
+  - `browse` 相关测试现在会对文件系统路径执行 URL 编码；
+  - 避免 Windows 临时目录中的盘符和反斜杠破坏 query string 解析。
+
+#### CI 增加 Windows 覆盖 `[P1: 持续集成]`
+- **CI 工作流已改为多平台 matrix**：
+  - `ubuntu-latest`
+  - `windows-latest`
+- **结果**：
+  - 之前只在 Linux 上可见的问题，现在会在 CI 中直接暴露；
+  - Windows 不再是“理论支持但无人验证”的状态。
+
+#### 验证说明 `[回归保障]`
+- 已通过本地验证：
+  - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./internal/api ./internal/scanner ./internal/images`
+  - `npm run build`
+- 额外检查：
+  - `GOOS=windows GOARCH=amd64 go test ./...`
+  - 当前已不再报此前的 `chai2010/webp` 编译错误；
+  - 在 macOS 本地继续失败为 `exec format error`，这是因为交叉编出的 Windows 测试二进制无法在当前宿主机直接执行，属于预期现象。

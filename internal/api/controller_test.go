@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -659,11 +660,12 @@ func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
 
 func TestUpdateSystemConfigRejectsInvalidConfiguration(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
+	missingCacheDir := filepath.Join(t.TempDir(), "missing-parent", "cache")
 
 	payload := []byte(`{
 		"server":{"port":0},
 		"database":{"path":""},
-		"cache":{"dir":"/definitely/missing/cache"},
+		"cache":{"dir":"` + filepath.ToSlash(missingCacheDir) + `"},
 		"scanner":{"workers":-1,"thumbnail_format":"gif","archive_pool_size":0,"max_ai_concurrency":0},
 		"llm":{"provider":"openai","api_mode":"","base_url":"","request_path":"","model":"","timeout":5}
 	}`)
@@ -1521,12 +1523,13 @@ func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 	}
 
 	browseInvalidRec := httptest.NewRecorder()
-	controller.browseDirs(browseInvalidRec, httptest.NewRequest(http.MethodGet, "/api/browse?path=/definitely/missing", nil))
+	missingBrowsePath := filepath.Join(t.TempDir(), "definitely-missing")
+	controller.browseDirs(browseInvalidRec, httptest.NewRequest(http.MethodGet, "/api/browse?path="+url.QueryEscape(missingBrowsePath), nil))
 	if browseInvalidRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid browse path 400, got %d", browseInvalidRec.Code)
 	}
 
-	browseReq := httptest.NewRequest(http.MethodGet, "/api/browse?path="+rootDir, nil)
+	browseReq := httptest.NewRequest(http.MethodGet, "/api/browse?path="+url.QueryEscape(rootDir), nil)
 	browseRec := httptest.NewRecorder()
 	controller.browseDirs(browseRec, browseReq)
 	if browseRec.Code != http.StatusOK {

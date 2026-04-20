@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chai2010/webp"
 	"github.com/nfnt/resize"
 	golangWebp "golang.org/x/image/webp"
 
@@ -164,12 +163,11 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		err = png.Encode(&buf, newImg)
 		newContentType = "image/png"
 	case "webp":
-		opt := &webp.Options{Lossless: false, Quality: float32(opts.Quality)}
-		if opt.Quality <= 0 {
-			opt.Quality = 85 // 默认质量
+		quality := opts.Quality
+		if quality <= 0 {
+			quality = 85 // 默认质量
 		}
-		err = webp.Encode(&buf, newImg, opt)
-		newContentType = "image/webp"
+		newContentType, err = encodeWebP(&buf, newImg, quality, false)
 	case "avif":
 		err = avif.Encode(&buf, newImg, avif.Options{Quality: opts.Quality})
 		newContentType = "image/avif"
@@ -263,7 +261,7 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 	case strings.Contains(contentType, "png"):
 		inExt = "png"
 	case strings.Contains(contentType, "webp"):
-		inExt = "webp"
+		inExt = webpIntermediateExtension()
 	case strings.Contains(contentType, "gif"):
 		inExt = "gif"
 	case strings.Contains(contentType, "bmp"):
@@ -293,8 +291,7 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 
 		// 智能识别原始格式并选择最匹配的编码器作为中间件，绝不跨格式转换
 		if strings.Contains(contentType, "webp") {
-			// 使用无损 WebP 作为中间件
-			err = webp.Encode(f, img, &webp.Options{Lossless: true})
+			_, err = encodeWebP(f, img, 100, true)
 		} else if strings.Contains(contentType, "png") {
 			err = png.Encode(f, img)
 		} else if strings.Contains(contentType, "avif") {
