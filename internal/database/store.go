@@ -362,7 +362,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 		case "rating":
 			orderClause = fmt.Sprintf("s.rating %s, s.name ASC", dir)
 		case "books":
-			orderClause = fmt.Sprintf("actual_book_count %s, s.name ASC", dir)
+			orderClause = fmt.Sprintf("s.book_count %s, s.name ASC", dir)
 		case "created":
 			orderClause = fmt.Sprintf("s.created_at %s, s.name ASC", dir)
 		case "updated":
@@ -411,6 +411,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 		); err != nil {
 			return nil, 0, err
 		}
+		i.ActualBookCount = int(i.BookCount)
 		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {

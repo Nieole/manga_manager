@@ -899,3 +899,17 @@
   - `GOOS=windows GOARCH=amd64 go test ./...`
   - 当前已不再报此前的 `chai2010/webp` 编译错误；
   - 在 macOS 本地继续失败为 `exec format error`，这是因为交叉编出的 Windows 测试二进制无法在当前宿主机直接执行，属于预期现象。
+
+### 📌 增量记录 — 2026-04-20（资源库册数量排序修复）
+
+#### 资源库分页排序修复 `[Bug Fix]`
+- **修复资源库界面按“册数量”排序时报错的问题**：此前 `SearchSeriesPaged()` 的动态排序分支使用了 `actual_book_count` 作为 `ORDER BY` 字段，但 SQL 查询中并没有这个列或别名，导致 SQLite 报错：
+  - `SQL logic error: no such column: actual_book_count`
+- **修复方式**：
+  - 排序改为直接使用真实列 `s.book_count`；
+  - 查询结果中的 `ActualBookCount` 现在显式对齐到 `BookCount`，避免前端读取零值。
+
+#### 验证说明 `[回归保障]`
+- 已通过本地验证：
+  - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./internal/api ./internal/database`
+  - `npm run build`
