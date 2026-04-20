@@ -66,6 +66,7 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 
 	cfgManager := config.NewManager(cfg)
 	imageCache, _ := lru.New[string, []byte](8)
+	parser.InitPool(cfg.Scanner.ArchivePoolSize)
 	scan := scanner.NewScanner(store, engine, cfgManager)
 
 	controller := &Controller{
