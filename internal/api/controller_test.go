@@ -18,6 +18,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 
@@ -79,6 +80,8 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 		tasks:      make(map[string]TaskStatus),
 		messages:   make(chan string, 32),
 	}
+
+	t.Cleanup(parser.ResetArchivePool)
 
 	return controller, store, engine, tempDir
 }

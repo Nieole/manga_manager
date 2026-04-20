@@ -147,3 +147,18 @@ func EvictArchiveFromPool(path string) {
 	_ = item.archive.Close()
 	delete(globalPool.items, path)
 }
+
+// ResetArchivePool closes and removes every cached archive handle.
+func ResetArchivePool() {
+	if globalPool == nil {
+		return
+	}
+
+	globalPool.mu.Lock()
+	defer globalPool.mu.Unlock()
+
+	for key, item := range globalPool.items {
+		_ = item.archive.Close()
+		delete(globalPool.items, key)
+	}
+}
