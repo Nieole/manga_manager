@@ -22,6 +22,9 @@ type Config struct {
 	Cache struct {
 		Dir string `yaml:"dir" json:"dir"`
 	} `yaml:"cache" json:"cache"`
+	Logging struct {
+		Level string `yaml:"level" json:"level"`
+	} `yaml:"logging" json:"logging"`
 	Scanner struct {
 		Workers          int    `yaml:"workers" json:"workers"`
 		ThumbnailFormat  string `yaml:"thumbnail_format" json:"thumbnail_format"`
@@ -58,6 +61,10 @@ const (
 	KOReaderMatchModeBinaryHash = "binary_hash"
 	KOReaderMatchModeFilePath   = "file_path"
 	KOReaderPathMatchDepth      = 2
+	LogLevelDebug               = "debug"
+	LogLevelInfo                = "info"
+	LogLevelWarn                = "warn"
+	LogLevelError               = "error"
 )
 
 func LoadConfig(path string) (*Config, error) {
@@ -97,6 +104,7 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Database.Path = "./data/manga.db"
 	cfg.Library.Paths = []string{}
 	cfg.Cache.Dir = "./data/cache"
+	cfg.Logging.Level = LogLevelInfo
 	cfg.Scanner.Workers = 0              // 0 表示自动使用 runtime.NumCPU() * 2
 	cfg.Scanner.ThumbnailFormat = "webp" // 支持 webp, jpg, avif
 	cfg.Scanner.Waifu2xPath = ""
@@ -195,6 +203,13 @@ func NormalizeConfig(cfg *Config) {
 	if cfg.Cache.Dir == "" {
 		cfg.Cache.Dir = "./data/cache"
 	}
+	level := strings.ToLower(strings.TrimSpace(cfg.Logging.Level))
+	switch level {
+	case LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError:
+	default:
+		level = LogLevelInfo
+	}
+	cfg.Logging.Level = level
 	if cfg.Scanner.ThumbnailFormat == "" {
 		cfg.Scanner.ThumbnailFormat = "webp"
 	}

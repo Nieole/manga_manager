@@ -23,6 +23,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/logger"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
@@ -83,6 +84,7 @@ type TaskStatus struct {
 
 type SystemCapabilitiesResponse struct {
 	SupportedScanFormats  []string `json:"supported_scan_formats"`
+	SupportedLogLevels    []string `json:"supported_log_levels"`
 	DefaultScanFormats    string   `json:"default_scan_formats"`
 	DefaultScanInterval   int      `json:"default_scan_interval"`
 	SupportedLLMProviders []string `json:"supported_llm_providers"`
@@ -170,12 +172,16 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 		return err
 	}
 	c.config.Replace(cfg)
+	if err := logger.SetLevel(cfg.Logging.Level); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
 	return SystemCapabilitiesResponse{
 		SupportedScanFormats:  append([]string{}, config.SupportedScanFormats...),
+		SupportedLogLevels:    append([]string{}, config.SupportedLogLevels...),
 		DefaultScanFormats:    config.DefaultScanFormatsCSV,
 		DefaultScanInterval:   config.DefaultScanInterval,
 		SupportedLLMProviders: []string{"ollama", "openai"},

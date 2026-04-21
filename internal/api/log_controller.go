@@ -63,6 +63,7 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	matchedLogs := make([]LogEntry, 0, limit)
 	summary := LogSummary{
 		ByLevel: map[string]int{
+			"DEBUG": 0,
 			"ERROR": 0,
 			"WARN":  0,
 			"INFO":  0,

@@ -15,6 +15,7 @@ func TestGetSystemLogsHonorsFilterAndLimit(t *testing.T) {
 	logPath := filepath.Join(filepath.Dir(cfg.Database.Path), "manga_manager.log")
 
 	content := "" +
+		"time=2026-01-01T00:00:00Z level=DEBUG msg=\"trace\"\n" +
 		"time=2026-01-01T00:00:00Z level=INFO msg=\"boot\"\n" +
 		"time=2026-01-01T00:01:00Z level=ERROR msg=\"first\"\n" +
 		"time=2026-01-01T00:02:00Z level=WARN msg=\"warn\"\n" +
@@ -44,5 +45,8 @@ func TestGetSystemLogsHonorsFilterAndLimit(t *testing.T) {
 	}
 	if response.Summary.ByLevel["ERROR"] != 3 {
 		t.Fatalf("expected error summary count 3, got %+v", response.Summary.ByLevel)
+	}
+	if response.Summary.ByLevel["DEBUG"] != 1 {
+		t.Fatalf("expected debug summary count 1, got %+v", response.Summary.ByLevel)
 	}
 }

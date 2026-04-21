@@ -8,6 +8,8 @@ const DefaultScanInterval = 60
 
 const DefaultScanFormatsCSV = "zip,cbz,rar,cbr"
 
+var SupportedLogLevels = []string{LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError}
+
 func NormalizeScanFormatsCSV(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return DefaultScanFormatsCSV

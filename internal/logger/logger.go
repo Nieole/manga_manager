@@ -7,12 +7,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+var levelVar = &slog.LevelVar{}
+
 // Init 配置全局结构化日志与双路输出（Stdout + 物理日志文件）
-func Init(logDir string) error {
+func Init(logDir, level string) error {
 	// 如果配置了目录，则试图建立文件写入管道
 	var writers []io.Writer
 	writers = append(writers, os.Stdout)
@@ -39,10 +42,16 @@ func Init(logDir string) error {
 	// 利用 io.MultiWriter 合成一条同时轰击控制台和磁盘的双头水管
 	multiLog := io.MultiWriter(writers...)
 
+	slogLevel, err := parseLevel(level)
+	if err != nil {
+		return err
+	}
+	levelVar.Set(slogLevel)
+
 	// 配置 slog 输出为可读性较好的 Text 格式（也可使用 JSONHandler）
 	// 加入 Time 戳，设定输出级别，并将 Source 指针关掉以保持日志不要太冗长
 	opts := &slog.HandlerOptions{
-		Level:     slog.LevelInfo,
+		Level:     levelVar,
 		AddSource: false,
 	}
 	handler := slog.NewTextHandler(multiLog, opts)
@@ -56,6 +65,44 @@ func Init(logDir string) error {
 	log.SetPrefix("[LEGACY] ")
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmsgprefix)
 
-	slog.Info("Logger initialized successfully", "log_dir", logDir)
+	slog.Info("Logger initialized successfully", "log_dir", logDir, "level", CurrentLevel())
 	return nil
+}
+
+func SetLevel(level string) error {
+	slogLevel, err := parseLevel(level)
+	if err != nil {
+		return err
+	}
+	levelVar.Set(slogLevel)
+	slog.Info("Logger level updated", "level", CurrentLevel())
+	return nil
+}
+
+func CurrentLevel() string {
+	switch levelVar.Level() {
+	case slog.LevelDebug:
+		return "debug"
+	case slog.LevelWarn:
+		return "warn"
+	case slog.LevelError:
+		return "error"
+	default:
+		return "info"
+	}
+}
+
+func parseLevel(level string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return slog.LevelInfo, fmt.Errorf("unsupported log level %q", level)
+	}
 }

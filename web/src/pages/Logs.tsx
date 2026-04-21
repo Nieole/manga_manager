@@ -46,7 +46,7 @@ const formatKOReaderIndexLabel = (params?: Record<string, string>) => {
 export default function Logs() {
   const navigate = useNavigate();
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [summary, setSummary] = useState<LogsResponse['summary']>({ total: 0, by_level: { ERROR: 0, WARN: 0, INFO: 0 } });
+  const [summary, setSummary] = useState<LogsResponse['summary']>({ total: 0, by_level: { DEBUG: 0, ERROR: 0, WARN: 0, INFO: 0 } });
   const [tasks, setTasks] = useState<TaskStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +80,7 @@ export default function Logs() {
 
       const logsData: LogsResponse = await logsResp.json();
       setLogs(logsData.items || []);
-      setSummary(logsData.summary || { total: 0, by_level: { ERROR: 0, WARN: 0, INFO: 0 } });
+      setSummary(logsData.summary || { total: 0, by_level: { DEBUG: 0, ERROR: 0, WARN: 0, INFO: 0 } });
 
       if (tasksResp.ok) {
         const tasksData: TaskStatus[] = await tasksResp.json();
@@ -296,6 +296,7 @@ export default function Logs() {
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
           >
             <option value="ALL">全部级别</option>
+            <option value="DEBUG">仅调试</option>
             <option value="ERROR">仅错误</option>
             <option value="WARN">仅警告</option>
             <option value="INFO">仅信息</option>
@@ -311,8 +312,9 @@ export default function Logs() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="匹配日志" value={summary.total} tone="blue" />
+        <MetricCard label="调试" value={summary.by_level.DEBUG || 0} tone="purple" />
         <MetricCard label="错误" value={summary.by_level.ERROR || 0} tone="red" />
         <MetricCard label="警告" value={summary.by_level.WARN || 0} tone="amber" />
         <MetricCard label="最近失败任务" value={failedTasks.length} tone="purple" />
@@ -351,7 +353,7 @@ export default function Logs() {
                   <div key={`${log.time}-${index}`} className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-slate-500">{formatLogTime(log.time)}</span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${log.level === 'ERROR' ? 'border-red-500/30 bg-red-500/10 text-red-300' : log.level === 'WARN' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-blue-500/30 bg-blue-500/10 text-blue-300'}`}>
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${logLevelBadgeClass(log.level)}`}>
                         {log.level}
                       </span>
                       <button
@@ -588,3 +590,15 @@ function TaskMetricCard({
     </div>
   );
 }
+  const logLevelBadgeClass = (level: string) => {
+    switch (level) {
+      case 'ERROR':
+        return 'border-red-500/30 bg-red-500/10 text-red-300';
+      case 'WARN':
+        return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+      case 'DEBUG':
+        return 'border-violet-500/30 bg-violet-500/10 text-violet-300';
+      default:
+        return 'border-blue-500/30 bg-blue-500/10 text-blue-300';
+    }
+  };

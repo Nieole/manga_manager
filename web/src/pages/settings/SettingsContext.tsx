@@ -6,6 +6,7 @@ export interface Config {
   database: { path: string };
   library: { paths: string[] };
   cache: { dir: string };
+  logging: { level: string };
   scanner: {
     workers: number;
     thumbnail_format: string;
@@ -46,6 +47,7 @@ export interface ValidationResult {
 
 export interface Capabilities {
   supported_scan_formats: string[];
+  supported_log_levels: string[];
   default_scan_formats: string;
   default_scan_interval: number;
   supported_llm_providers: string[];
@@ -187,6 +189,7 @@ function pickSectionSnapshot(config: Config, section: Exclude<SettingsSectionKey
         server: config.server,
         database: config.database,
         library: config.library,
+        logging: config.logging,
         scanner: {
           workers: config.scanner.workers,
           archive_pool_size: config.scanner.archive_pool_size,

@@ -45,6 +45,12 @@ func ValidateConfig(cfg *Config) ValidationResult {
 		issues = append(issues, ValidationIssue{Field: "cache.dir", Message: err.Error(), Severity: "error"})
 	}
 
+	switch strings.ToLower(strings.TrimSpace(cfg.Logging.Level)) {
+	case LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError:
+	default:
+		issues = append(issues, ValidationIssue{Field: "logging.level", Message: "日志级别必须是 debug、info、warn 或 error。", Severity: "error"})
+	}
+
 	if cfg.Scanner.Workers < 0 {
 		issues = append(issues, ValidationIssue{Field: "scanner.workers", Message: "工作协程数不能小于 0。", Severity: "error"})
 	}

@@ -42,18 +42,18 @@ func main() {
 		return
 	}
 
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		fmt.Printf("Fatal: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
 	// 在最前面初始化记录系统：这里先输出到命令行与 data 文件夹
-	if err := logger.Init("data"); err != nil {
+	if err := logger.Init("data", cfg.Logging.Level); err != nil {
 		fmt.Printf("Fatal: Logger init failed: %v\n", err)
 		os.Exit(1)
 	}
 	slog.Info("Starting Manga Manager...", "version", Version, "commit", Commit, "build_time", BuildTime)
-
-	cfg, err := config.LoadConfig("config.yaml")
-	if err != nil {
-		slog.Error("Failed to load config", "error", err)
-		os.Exit(1)
-	}
 
 	// 初始化归档句柄重用池与 AI 并发控制参数
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
@@ -200,8 +200,12 @@ func watchConfig(path string, cfgManager *config.Manager) {
 				// 2. 刷新具有受限状态的底层资源池
 				parser.InitPool(currentCfg.Scanner.ArchivePoolSize)
 				images.InitProcessor(currentCfg.Scanner.MaxAiConcurrency)
+				if err := logger.SetLevel(currentCfg.Logging.Level); err != nil {
+					slog.Error("Failed to apply logger level during hot-swap", "level", currentCfg.Logging.Level, "error", err)
+				}
 
 				slog.Info("Config hot-reload applied successfully",
+					"log_level", currentCfg.Logging.Level,
 					"pool_size", currentCfg.Scanner.ArchivePoolSize,
 					"ai_concurrency", currentCfg.Scanner.MaxAiConcurrency)
 			}

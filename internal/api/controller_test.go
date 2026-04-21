@@ -198,10 +198,14 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	if got.Capabilities.DefaultScanFormats != config.DefaultScanFormatsCSV {
 		t.Fatalf("expected default scan formats %q, got %q", config.DefaultScanFormatsCSV, got.Capabilities.DefaultScanFormats)
 	}
+	if len(got.Capabilities.SupportedLogLevels) != len(config.SupportedLogLevels) {
+		t.Fatalf("expected supported log levels %+v, got %+v", config.SupportedLogLevels, got.Capabilities.SupportedLogLevels)
+	}
 
 	updated := got.Config
 	updated.Server.Port = 9090
 	updated.Cache.Dir = "./custom-cache"
+	updated.Logging.Level = config.LogLevelDebug
 
 	body, err := json.Marshal(updated)
 	if err != nil {
@@ -222,6 +226,9 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	}
 	if snapshot.Cache.Dir != "./custom-cache" {
 		t.Fatalf("expected updated cache dir, got %q", snapshot.Cache.Dir)
+	}
+	if snapshot.Logging.Level != config.LogLevelDebug {
+		t.Fatalf("expected updated log level %q, got %q", config.LogLevelDebug, snapshot.Logging.Level)
 	}
 
 	if _, err := os.Stat(controller.configPath); err != nil {

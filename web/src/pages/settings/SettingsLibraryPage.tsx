@@ -82,6 +82,32 @@ export function SettingsLibraryPage() {
       </section>
 
       <section className={sectionClassName}>
+        <div className="flex items-center gap-2 text-komgaPrimary">
+          <Server className="h-5 w-5" />
+          <h3 className="text-lg font-semibold text-white">日志级别</h3>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-sm text-gray-400">最小输出级别</label>
+            <select
+              value={config.logging.level}
+              onChange={(e) => setConfig({ ...config, logging: { level: e.target.value } })}
+              className={inputClassName}
+            >
+              {(capabilities?.supported_log_levels || ['debug', 'info', 'warn', 'error']).map((level) => (
+                <option key={level} value={level}>
+                  {level.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">同时控制控制台和日志文件的最小输出级别。保存后立即生效。</p>
+            <FieldErrors messages={fieldErrors('logging.level')} />
+          </div>
+        </div>
+      </section>
+
+      <section className={sectionClassName}>
         <h3 className="text-lg font-semibold text-white">当前已绑定目录</h3>
         {config.library.paths?.length ? (
           <div className="space-y-2">
