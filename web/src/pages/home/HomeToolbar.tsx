@@ -28,7 +28,7 @@ export function HomeToolbar({
   onToggleSortDir,
 }: HomeToolbarProps) {
   return (
-    <div className="mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 border-b border-gray-800 pb-4">
+    <div className="mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 border-b border-gray-800/30 pb-4">
       <div>
         <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-1">浏览系列</h2>
         <p className="text-gray-400 text-xs sm:text-sm">资源库返回 {totalSeries} 个结果</p>
@@ -37,7 +37,7 @@ export function HomeToolbar({
         {hasSeries && (
           <button
             onClick={onToggleSelectionMode}
-            className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border focus:outline-none flex-shrink-0 ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
+            className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border focus:outline-none flex-shrink-0 ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-white/10 text-gray-400 hover:border-white/20 hover:text-white'}`}
           >
             {isSelectionMode ? '取消选择' : '批量操作'}
           </button>
@@ -45,13 +45,13 @@ export function HomeToolbar({
         {isSelectionMode && hasSeries && onToggleSelectCurrentPage && (
           <button
             onClick={onToggleSelectCurrentPage}
-            className="px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white"
+            className="px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border border-white/10 text-gray-300 hover:border-white/20 hover:text-white bg-transparent"
           >
             {allCurrentPageSelected ? '取消本页' : '全选本页'}
           </button>
         )}
         {isSelectionMode && selectedCount > 0 && (
-          <span className="text-xs sm:text-sm text-komgaPrimary font-medium">
+          <span className="text-xs sm:text-sm text-komgaPrimary font-medium px-2">
             已选 {selectedCount} 项
           </span>
         )}
@@ -59,7 +59,7 @@ export function HomeToolbar({
         <select
           value={sortByField}
           onChange={(e) => onSortFieldChange(e.target.value)}
-          className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-none transition-colors cursor-pointer hover:border-gray-500"
+          className="bg-komgaSurface border border-white/10 text-gray-100 text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-none transition-colors cursor-pointer hover:border-white/20 shadow-sm"
         >
           <option value="name">名称</option>
           <option value="created">入库时间</option>
@@ -73,10 +73,10 @@ export function HomeToolbar({
         </select>
         <button
           onClick={onToggleSortDir}
-          className="p-2 bg-gray-900 border border-gray-700 hover:border-gray-500 rounded-lg text-gray-400 hover:text-white transition-colors flex items-center justify-center shadow-sm hover:shadow"
+          className="p-2 bg-komgaSurface border border-white/10 hover:border-white/20 rounded-lg text-gray-400 hover:text-komgaPrimary transition-colors flex items-center justify-center shadow-sm"
           title={sortDir === 'asc' ? '当前正序 (点击切换倒序)' : '当前倒序 (点击切换正序)'}
         >
-          {sortDir === 'asc' ? <ArrowUp className="w-5 h-5 text-komgaPrimary" /> : <ArrowDown className="w-5 h-5 text-komgaPrimary" />}
+          {sortDir === 'asc' ? <ArrowUp className="w-5 h-5" /> : <ArrowDown className="w-5 h-5" />}
         </button>
       </div>
     </div>

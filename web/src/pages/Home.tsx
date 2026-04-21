@@ -13,7 +13,7 @@ import { HomeToolbar } from './home/HomeToolbar';
 import { RecentSeriesStrip } from './home/RecentSeriesStrip';
 import type { AIRecommendation, NamedOption, Series } from './home/types';
 
-const PAGE_SIZE = 30;
+const DEFAULT_PAGE_SIZE = 30;
 
 interface ExternalSession {
     session_id: string;
@@ -57,6 +57,7 @@ export default function Home() {
     const [sortByField, setSortByField] = useState<string>('name');
     const [sortDir, setSortDir] = useState<string>('asc');
     const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
     const [settingsReady, setSettingsReady] = useState(false);
 
     const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -287,7 +288,7 @@ export default function Home() {
         if (!silent) setLoading(true);
         const params = new URLSearchParams();
         params.append('libraryId', libId);
-        params.append('limit', PAGE_SIZE.toString());
+        params.append('limit', pageSize.toString());
         params.append('page', pageNumber.toString());
         if (activeTag) params.append('tags', activeTag);
         if (activeAuthor) params.append('authors', activeAuthor);
@@ -324,6 +325,7 @@ export default function Home() {
                 setActiveLetter(config.activeLetter);
                 setSortByField(config.sortByField || 'name');
                 setSortDir(config.sortDir || 'asc');
+                setPageSize(config.pageSize || DEFAULT_PAGE_SIZE);
                 setPage(config.page || 1);
             } catch (e) { }
         } else {
@@ -333,6 +335,7 @@ export default function Home() {
             setActiveLetter(null);
             setSortByField('name');
             setSortDir('asc');
+            setPageSize(DEFAULT_PAGE_SIZE);
             setPage(1);
         }
         setSettingsReady(true);
@@ -344,7 +347,7 @@ export default function Home() {
         if (!libId || !settingsReady) return;
 
         // 保存配置
-        const config = { activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, page };
+        const config = { activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, pageSize, page };
         localStorage.setItem(`lib_settings_${libId}`, JSON.stringify(config));
 
         // 防抖：300ms 后执行拉取
@@ -353,7 +356,7 @@ export default function Home() {
         }, 300);
 
         return () => clearTimeout(timer);
-    }, [libId, settingsReady, page, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
+    }, [libId, settingsReady, page, pageSize, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     // 筛选条件、排序或资源库切换时清空选择；仅翻页时保留跨页多选状态
     useEffect(() => {
@@ -946,35 +949,57 @@ export default function Home() {
                     </div>
 
                     {/* 分页控制栏 */}
-                    <div className="mt-12 mb-8 flex flex-col sm:flex-row items-center justify-between gap-6 border-t border-gray-800 pt-8">
-                        <div className="text-gray-500 text-sm">
-                            共 <span className="text-gray-300 font-bold">{totalSeries}</span> 个系列，当前第 <span className="text-komgaPrimary font-bold">{page}</span> / {Math.ceil(totalSeries / PAGE_SIZE)} 页
+                    <div className="mt-12 mb-8 flex flex-col xl:flex-row items-center justify-between gap-6 border-t border-gray-800 pt-8">
+                        <div className="flex items-center gap-4 text-sm">
+                            <span className="text-gray-500">
+                                共 <span className="text-gray-300 font-bold">{totalSeries}</span> 个系列
+                            </span>
+                            <div className="h-4 w-px bg-gray-800"></div>
+                            <div className="flex items-center gap-2 text-gray-400">
+                                每页显示
+                                <select
+                                    value={pageSize}
+                                    onChange={(e) => {
+                                        setPageSize(Number(e.target.value));
+                                        setPage(1);
+                                    }}
+                                    className="bg-transparent border border-gray-700 text-white rounded focus:ring-komgaPrimary focus:border-komgaPrimary px-1 py-0.5 outline-none transition-colors"
+                                >
+                                    <option value={30}>30</option>
+                                    <option value={50}>50</option>
+                                    <option value={100}>100</option>
+                                </select>
+                            </div>
+                            <div className="h-4 w-px bg-gray-800"></div>
+                            <span className="text-gray-500">
+                                第 <span className="text-komgaPrimary font-bold">{page}</span> / {Math.ceil(totalSeries / pageSize) || 1} 页
+                            </span>
                         </div>
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={() => setPage(1)}
                                 disabled={page === 1}
-                                className="px-3 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                                className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
                                 首页
                             </button>
                             <button
                                 onClick={() => setPage(p => Math.max(1, p - 1))}
                                 disabled={page === 1}
-                                className="px-4 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                                className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
                                 上一页
                             </button>
 
-                            <div className="flex items-center gap-1 mx-2">
-                                {[...Array(Math.min(5, Math.ceil(totalSeries / PAGE_SIZE)))].map((_, i) => {
-                                    const totalPages = Math.ceil(totalSeries / PAGE_SIZE);
+                            <div className="flex items-center gap-1 mx-1 sm:mx-2 overflow-x-auto">
+                                {[...Array(Math.min(5, Math.ceil(totalSeries / pageSize) || 1))].map((_, i) => {
+                                    const totalPages = Math.ceil(totalSeries / pageSize) || 1;
                                     let pNum = page;
 
                                     if (page <= 3) {
                                         pNum = i + 1;
                                     } else if (page >= totalPages - 2) {
-                                        pNum = totalPages - 4 + i;
+                                        pNum = Math.max(1, totalPages - 4 + i);
                                     } else {
                                         pNum = page - 2 + i;
                                     }
@@ -983,9 +1008,9 @@ export default function Home() {
 
                                     return (
                                         <button
-                                            key={pNum}
+                                            key={`page-${i}-${pNum}`}
                                             onClick={() => setPage(pNum)}
-                                            className={`w-10 h-10 flex items-center justify-center rounded-lg text-sm font-bold transition-all ${page === pNum ? 'bg-komgaPrimary text-white shadow-lg shadow-komgaPrimary/20' : 'bg-gray-900 text-gray-400 border border-gray-800 hover:border-gray-600 hover:text-white'}`}
+                                            className={`w-8 h-8 sm:w-9 sm:h-9 shrink-0 flex items-center justify-center rounded-lg text-sm font-bold transition-all ${page === pNum ? 'bg-komgaPrimary text-white shadow-md' : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'}`}
                                         >
                                             {pNum}
                                         </button>
@@ -994,19 +1019,39 @@ export default function Home() {
                             </div>
 
                             <button
-                                onClick={() => setPage(p => Math.min(Math.ceil(totalSeries / PAGE_SIZE), p + 1))}
-                                disabled={page >= Math.ceil(totalSeries / PAGE_SIZE)}
-                                className="px-4 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                                onClick={() => setPage(p => Math.min(Math.ceil(totalSeries / pageSize) || 1, p + 1))}
+                                disabled={page >= (Math.ceil(totalSeries / pageSize) || 1)}
+                                className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
                                 下一页
                             </button>
                             <button
-                                onClick={() => setPage(Math.ceil(totalSeries / PAGE_SIZE))}
-                                disabled={page >= Math.ceil(totalSeries / PAGE_SIZE)}
-                                className="px-3 py-2 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                                onClick={() => setPage(Math.ceil(totalSeries / pageSize) || 1)}
+                                disabled={page >= (Math.ceil(totalSeries / pageSize) || 1)}
+                                className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
                                 末页
                             </button>
+                            
+                            <div className="hidden sm:flex items-center gap-2 ml-2 pl-4 border-l border-gray-800 text-sm text-gray-500">
+                                跳至
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={Math.ceil(totalSeries / pageSize) || 1}
+                                    className="w-14 bg-gray-900 border border-gray-800 rounded-lg text-white text-center py-1 focus:border-komgaPrimary outline-none placeholder:text-gray-700"
+                                    placeholder={page.toString()}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            const val = parseInt(e.currentTarget.value);
+                                            const max = Math.ceil(totalSeries / pageSize) || 1;
+                                            if (val > 0 && val <= max) setPage(val);
+                                            e.currentTarget.value = '';
+                                        }
+                                    }}
+                                />
+                                页
+                            </div>
                         </div>
                     </div>
 
