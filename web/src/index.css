@@ -469,11 +469,11 @@ body {
 }
 
 * {
-  scrollbar-color: rgba(var(--color-gray-500), 0.7) rgba(var(--color-gray-900), 0.85);
+  scrollbar-color: rgb(var(--color-gray-500) / 0.7) rgb(var(--color-gray-900) / 0.85);
 }
 
 ::selection {
-  background: rgba(var(--color-komga-primary), 0.28);
+  background: rgb(var(--color-komga-primary) / 0.4);
   color: rgb(var(--color-white));
 }
 

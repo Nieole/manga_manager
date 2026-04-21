@@ -89,10 +89,11 @@ export function HomeFilters({
                   </div>
                   <input
                     type="text"
-                    className="bg-white/5 border border-white/10 text-gray-100 text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block w-full pl-9 p-2 transition-colors placeholder:text-gray-500 outline-none backdrop-blur-sm"
+                    className="select-text bg-white/5 border border-white/10 text-gray-100 text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block w-full pl-9 p-2 transition-colors placeholder:text-gray-500 outline-none backdrop-blur-sm"
                     placeholder={`在列表中搜索 ${label}...`}
                     value={searchValue}
                     onChange={(e) => setSearchValue(e.target.value)}
+                    onMouseDown={(e) => e.stopPropagation()}
                   />
                 </div>
             )}

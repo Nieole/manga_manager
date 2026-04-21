@@ -1039,8 +1039,9 @@ export default function Home() {
                                     type="number"
                                     min={1}
                                     max={Math.ceil(totalSeries / pageSize) || 1}
-                                    className="w-14 bg-gray-900 border border-gray-800 rounded-lg text-white text-center py-1 focus:border-komgaPrimary outline-none placeholder:text-gray-700"
+                                    className="w-14 select-text bg-gray-900 border border-gray-800 rounded-lg text-white text-center py-1 focus:border-komgaPrimary outline-none placeholder:text-gray-700"
                                     placeholder={page.toString()}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
                                             const val = parseInt(e.currentTarget.value);
