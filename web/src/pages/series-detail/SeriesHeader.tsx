@@ -198,8 +198,8 @@ export function SeriesHeader({
              </button>
              
              {!selectedVolume && (
-               <div className="flex items-center border border-white/10 rounded-xl overflow-hidden shadow-sm bg-komgaSurface/80 backdrop-blur-md">
-                 <button onClick={onEdit} className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors" title="编辑元数据">
+               <div className="flex items-center border border-white/10 rounded-xl shadow-sm bg-komgaSurface/80 backdrop-blur-md">
+                 <button onClick={onEdit} className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors rounded-l-xl" title="编辑元数据">
                     <Edit className="w-4 h-4 m-0.5" />
                  </button>
                  <div className="w-px h-5 bg-white/10 mx-1" />
@@ -216,7 +216,7 @@ export function SeriesHeader({
                  </button>
                  <div className="w-px h-5 bg-white/10 mx-1" />
                  <div className="relative flex">
-                    <button onClick={onToggleScrapeMenu} disabled={isScraping} className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors disabled:opacity-50" title="刮削元数据">
+                    <button onClick={onToggleScrapeMenu} disabled={isScraping} className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors disabled:opacity-50 rounded-r-xl" title="刮削元数据">
                       {isScraping ? <div className="w-4 h-4 m-0.5 animate-spin rounded-full border-2 border-komgaPrimary border-t-transparent" /> : <Download className="w-4 h-4 m-0.5" />}
                     </button>
                     {scrapeMenuOpen && !isScraping && (

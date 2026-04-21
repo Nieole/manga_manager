@@ -17,6 +17,7 @@ interface HomeFiltersProps {
 }
 
 const COLLAPSED_VISIBLE_COUNT = 15;
+const EXPANDED_VISIBLE_COUNT = 150;
 
 export function HomeFilters({
   allStatuses,
@@ -37,23 +38,20 @@ export function HomeFilters({
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [authorsExpanded, setAuthorsExpanded] = useState(false);
 
+  const processedTags = useMemo(() => allTags.map(t => ({ name: t.name, lower: t.name.toLowerCase() })), [allTags]);
+  const processedAuthors = useMemo(() => allAuthors.map(a => ({ name: a.name, lower: a.name.toLowerCase() })), [allAuthors]);
+
   const filteredTags = useMemo(() => {
-    let list = allTags.map(t => t.name);
-    if (tagSearch) {
-      const lower = tagSearch.toLowerCase().trim();
-      list = list.filter(t => t.toLowerCase().includes(lower));
-    }
-    return list;
-  }, [allTags, tagSearch]);
+    if (!tagSearch) return processedTags.map(t => t.name);
+    const lower = tagSearch.toLowerCase().trim();
+    return processedTags.filter(t => t.lower.includes(lower)).map(t => t.name);
+  }, [processedTags, tagSearch]);
 
   const filteredAuthors = useMemo(() => {
-    let list = allAuthors.map(a => a.name);
-    if (authorSearch) {
-      const lower = authorSearch.toLowerCase().trim();
-      list = list.filter(a => a.toLowerCase().includes(lower));
-    }
-    return list;
-  }, [allAuthors, authorSearch]);
+    if (!authorSearch) return processedAuthors.map(a => a.name);
+    const lower = authorSearch.toLowerCase().trim();
+    return processedAuthors.filter(a => a.lower.includes(lower)).map(a => a.name);
+  }, [processedAuthors, authorSearch]);
 
   const renderFilterRow = (
     label: string, 
@@ -68,11 +66,25 @@ export function HomeFilters({
   ) => {
     
     let displayList = filteredList;
-    if (expandable && !expanded) {
-      // If collapsed, make sure to include activeValue if it's selected, otherwise show top N
-      const activeIncluded = activeValue ? [activeValue] : [];
-      const topN = filteredList.filter(v => v !== activeValue);
-      displayList = Array.from(new Set([...activeIncluded, ...topN])).slice(0, COLLAPSED_VISIBLE_COUNT);
+    let hasMore = false;
+    let omitCount = 0;
+
+    if (expandable) {
+      const activeIncluded = activeValue && filteredList.includes(activeValue) ? [activeValue] : [];
+      const others = filteredList.filter(v => v !== activeValue);
+      const combined = Array.from(new Set([...activeIncluded, ...others]));
+      
+      if (!expanded) {
+        displayList = combined.slice(0, COLLAPSED_VISIBLE_COUNT);
+      } else {
+        if (combined.length > EXPANDED_VISIBLE_COUNT) {
+          displayList = combined.slice(0, EXPANDED_VISIBLE_COUNT);
+          hasMore = true;
+          omitCount = combined.length - EXPANDED_VISIBLE_COUNT;
+        } else {
+          displayList = combined;
+        }
+      }
     }
 
     return (
@@ -119,6 +131,12 @@ export function HomeFilters({
 
               {filteredList.length === 0 && expanded && (
                  <span className="text-sm text-gray-500 ml-2">没有匹配结果</span>
+              )}
+
+              {hasMore && expanded && (
+                <span className="text-xs text-gray-500 ml-2 italic py-1.5 flex items-center">
+                  ...+{omitCount} 项 (请使用搜索)
+                </span>
               )}
 
               {expandable && (

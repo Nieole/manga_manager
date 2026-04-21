@@ -22,7 +22,7 @@ export function getPagedImages(
 
 export function getScaleClasses(
   scaleMode: ScaleMode,
-  _doublePage: boolean,
+  doublePage: boolean,
   baseClasses: string,
 ) {
   let classes = `${baseClasses} block m-0 p-0`;
@@ -31,14 +31,26 @@ export function getScaleClasses(
       classes += ' w-auto h-auto max-w-none max-h-none';
       break;
     case 'fit-width':
-      classes += ' w-screen min-w-full h-auto object-cover';
+      if (doublePage) {
+        classes += ' w-[50vw] h-auto object-contain';
+      } else {
+        classes += ' w-full h-auto object-contain';
+      }
       break;
     case 'fit-screen':
-      classes += ' max-h-full max-w-full w-auto h-auto object-contain';
+      if (doublePage) {
+        classes += ' h-full w-auto object-contain max-w-[50vw]';
+      } else {
+        classes += ' w-full h-full object-contain';
+      }
       break;
     case 'fit-height':
     default:
-      classes += ' h-full w-auto object-contain max-h-full max-w-none';
+      if (doublePage) {
+        classes += ' h-full w-auto object-contain max-w-[50vw]';
+      } else {
+        classes += ' h-full w-auto object-contain max-w-none';
+      }
       break;
   }
   return classes;

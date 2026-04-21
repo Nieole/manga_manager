@@ -100,14 +100,18 @@ export default function SeriesDetail() {
             setIsScraping(true);
             try {
                 const res = await axios.get(`/api/series/${seriesId}/scrape-search?provider=${providerKey}`);
+                
+                setSearchProvider(providerKey);
+                setModalSearchQuery(seriesInfo?.title?.Valid && seriesInfo.title.String ? seriesInfo.title.String : (seriesInfo?.name || ''));
+                setShowSearchModal(true);
+
                 if (res.data.results && res.data.results.length > 0) {
                     setSearchResults(res.data.results);
                     setSelectedSearchResult(res.data.results[0]);
-                    setSearchProvider(providerKey);
-                    setModalSearchQuery(seriesInfo?.title?.Valid && seriesInfo.title.String ? seriesInfo.title.String : (seriesInfo?.name || ''));
-                    setShowSearchModal(true);
                 } else {
-                    showToast('未找到匹配的条目', 'error');
+                    setSearchResults([]);
+                    setSelectedSearchResult(null);
+                    showToast('未自动匹配到结果，请尝试手工更改关键词搜索', 'error');
                 }
             } catch (err: any) {
                 showToast('搜索失败: ' + (err.response?.data?.error || err.message), 'error');
