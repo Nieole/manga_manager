@@ -65,7 +65,10 @@ export function HomeToolbar({
           <option value="created">入库时间</option>
           <option value="updated">最新更新</option>
           <option value="rating">评分</option>
+          <option value="volumes">卷数量</option>
           <option value="books">册数量</option>
+          <option value="pages">总页数</option>
+          <option value="read">已读进度</option>
           <option value="favorite">收藏状态</option>
         </select>
         <button

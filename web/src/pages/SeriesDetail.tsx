@@ -377,6 +377,16 @@ export default function SeriesDetail() {
         };
     }, [books, selectedVolume]);
 
+    const displayCover = useMemo(() => {
+        let b;
+        if (selectedVolume) {
+            b = activeVolumeBooks.find((book) => book.cover_path?.Valid && book.cover_path?.String) || activeVolumeBooks[0];
+        } else {
+            b = books.find((book) => book.cover_path?.Valid && book.cover_path?.String) || books[0];
+        }
+        return b ? `/api/covers/${b.id}${b.updated_at ? `?v=${new Date(b.updated_at).getTime()}` : ''}` : null;
+    }, [books, selectedVolume, activeVolumeBooks]);
+
     // 返回导航逻辑：如果在卷内则退回卷列表，在顶层则退回资源库
     const handleBack = () => {
         if (selectedVolume) {
@@ -529,9 +539,25 @@ export default function SeriesDetail() {
     };
 
     return (
-        <div className="p-6 lg:p-10">
-            <SeriesHeader
-                selectedVolume={selectedVolume}
+        <div className="relative min-h-screen">
+            {displayCover && (
+                <>
+                    {/* 背景底色 */}
+                    <div className="fixed inset-0 z-0 bg-gray-950 pointer-events-none"></div>
+                    {/* 模糊图层: 去掉透明度衰减，降低模糊值，让封面的内容更明显 */}
+                    <div 
+                        className="fixed inset-0 z-0 bg-cover bg-[center_top] bg-no-repeat blur-lg opacity-100 transform scale-105 pointer-events-none" 
+                        style={{ backgroundImage: `url("${displayCover}")` }} 
+                    />
+                    {/* 简单的压暗遮罩：用半透明黑底压暗图片，防止干扰白字 */}
+                    <div className="fixed inset-0 z-0 bg-gray-950/70 pointer-events-none"></div>
+                    <div className="fixed inset-0 z-0 bg-gradient-to-t from-gray-950 via-gray-950/40 to-transparent pointer-events-none"></div>
+                </>
+            )}
+            <div className="relative z-10 p-6 lg:p-10">
+                <SeriesHeader
+                    coverUrl={displayCover}
+                    selectedVolume={selectedVolume}
                 seriesInfo={seriesInfo}
                 books={books}
                 volumes={volumes}
@@ -695,6 +721,7 @@ export default function SeriesDetail() {
                     onSuccess={() => showToast('已成功添加到合集', 'success')}
                 />
             )}
+        </div>
         </div>
     );
 }

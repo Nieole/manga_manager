@@ -363,6 +363,12 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 			orderClause = fmt.Sprintf("s.rating %s, s.name ASC", dir)
 		case "books":
 			orderClause = fmt.Sprintf("s.book_count %s, s.name ASC", dir)
+		case "volumes":
+			orderClause = fmt.Sprintf("s.volume_count %s, s.name ASC", dir)
+		case "pages":
+			orderClause = fmt.Sprintf("s.total_pages %s, s.name ASC", dir)
+		case "read":
+			orderClause = fmt.Sprintf("read_count %s, s.name ASC", dir)
 		case "created":
 			orderClause = fmt.Sprintf("s.created_at %s, s.name ASC", dir)
 		case "updated":

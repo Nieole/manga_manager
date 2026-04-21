@@ -1,7 +1,8 @@
-import { ArrowLeft, Building2, Download, Edit, FolderHeart, FolderOpen, Globe, Info, RefreshCw, Star } from 'lucide-react';
+import { ArrowLeft, BookImage, Building2, Download, Edit, FolderHeart, FolderOpen, Globe, Info, RefreshCw, Star, Tag, User } from 'lucide-react';
 import type { Author, Book, MetaTag, Series, SeriesLink } from './types';
 
 interface SeriesHeaderProps {
+  coverUrl?: string | null;
   selectedVolume: string | null;
   seriesInfo: Series | null;
   books: Book[];
@@ -29,6 +30,7 @@ interface SeriesHeaderProps {
 }
 
 export function SeriesHeader({
+  coverUrl,
   selectedVolume,
   seriesInfo,
   books,
@@ -55,190 +57,82 @@ export function SeriesHeader({
   onScrape,
 }: SeriesHeaderProps) {
   return (
-    <div className="mb-6 flex justify-between items-end border-b border-gray-800 pb-4">
-      <div>
+    <div className="mb-10 flex flex-col md:flex-row gap-8 items-start relative z-10 border-b border-gray-800/50 pb-8">
+      {/* Cover Image */}
+      <div className="shrink-0 w-48 md:w-64 lg:w-72 rounded-2xl shadow-xl overflow-hidden self-center md:self-start border border-white/10 bg-komgaSurface group relative">
+          {coverUrl ? (
+            <img src={coverUrl} alt="Cover" className="w-full h-auto object-cover aspect-[2/3] transition-transform duration-700 group-hover:scale-105" />
+          ) : (
+            <div className="w-full aspect-[2/3] flex flex-col items-center justify-center bg-komgaSurface/50">
+              <BookImage className="w-16 h-16 text-gray-500 opacity-50 mb-4" />
+              <span className="text-gray-400 text-sm font-medium">暂无封面</span>
+            </div>
+          )}
+          <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-2xl pointer-events-none"></div>
+      </div>
+
+      {/* Info Content */}
+      <div className="flex-1 min-w-0 flex flex-col w-full">
         <button
           onClick={onBack}
-          className="flex items-center text-gray-400 hover:text-white transition-colors text-sm font-medium mb-4"
+          className="flex items-center text-gray-200 hover:text-white transition-colors text-sm font-medium mb-4 self-start bg-komgaSurface/80 hover:bg-komgaSurface px-3 py-1.5 rounded-lg border border-transparent hover:border-white/10 backdrop-blur-sm shadow-sm"
         >
-          <ArrowLeft className="w-4 h-4 mr-1" />
+          <ArrowLeft className="w-4 h-4 mr-1.5" />
           {selectedVolume ? '返回系列总览' : '返回资源库'}
         </button>
-        <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight flex flex-col sm:flex-row sm:items-center gap-4">
-          <div className="flex items-center break-all sm:break-normal">
+
+        <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-tight break-words leading-tight mb-5 flex items-center">
             {selectedVolume ? (
               <>
-                <FolderOpen className="w-8 h-8 mr-3 text-komgaPrimary" />
+                <FolderOpen className="w-10 h-10 mr-4 text-komgaPrimary" />
                 {selectedVolume}
               </>
             ) : (
               seriesInfo?.title?.Valid ? seriesInfo.title.String : seriesInfo?.name || '系列总览'
             )}
-            {seriesInfo && (
-              <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto sm:ml-4">
-                <button
-                  onClick={onToggleSelectionMode}
-                  className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border focus:outline-none ${isSelectionMode ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
-                >
-                  {isSelectionMode ? '取消选择' : '批量操作'}
-                </button>
-                {!selectedVolume && (
-                  <>
-                    <button
-                      onClick={onEdit}
-                      className="p-1.5 text-gray-500 hover:text-komgaPrimary bg-gray-900 border border-gray-800 hover:bg-komgaPrimary/10 rounded transition-colors"
-                      title="编辑元数据"
-                    >
-                      <Edit className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={onAddToCollection}
-                      className="p-1.5 text-gray-500 hover:text-komgaPrimary bg-gray-900 border border-gray-800 hover:bg-komgaPrimary/10 rounded transition-colors"
-                      title="添加到合集"
-                    >
-                      <FolderHeart className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={onOpenDirectory}
-                      disabled={isOpeningDirectory}
-                      className="p-1.5 text-gray-500 hover:text-amber-400 bg-gray-900 border border-gray-800 hover:bg-amber-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="在文件管理器中打开系列目录"
-                    >
-                      <FolderOpen className={`w-5 h-5 ${isOpeningDirectory ? 'animate-pulse text-amber-400' : ''}`} />
-                    </button>
-                    <button
-                      onClick={onRescan}
-                      disabled={isRescanning}
-                      className="p-1.5 text-gray-500 hover:text-blue-400 bg-gray-900 border border-gray-800 hover:bg-blue-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="重新扫描该系列"
-                    >
-                      <RefreshCw className={`w-5 h-5 ${isRescanning ? 'animate-spin text-blue-400' : ''}`} />
-                    </button>
-                    <div className="relative">
-                      <button
-                        onClick={onToggleScrapeMenu}
-                        disabled={isScraping}
-                        className="p-1.5 text-gray-500 hover:text-green-400 bg-gray-900 border border-gray-800 hover:bg-green-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="刮削元数据"
-                      >
-                        {isScraping ? (
-                          <div className="w-5 h-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
-                        ) : (
-                          <Download className="w-5 h-5" />
-                        )}
-                      </button>
-
-                      {scrapeMenuOpen && !isScraping && (
-                        <>
-                          <div className="fixed inset-0 z-40" onClick={onCloseScrapeMenu} />
-                          <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
-                            <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
-                              选择刮削来源
-                            </div>
-                            <button
-                              onClick={() => onScrape('bangumi')}
-                              className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
-                            >
-                              Bangumi (推荐)
-                            </button>
-                            <button
-                              onClick={() => onScrape('ollama')}
-                              className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-700"
-                            >
-                              Ollama LLM
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          {!selectedVolume && seriesInfo && (
-            <div className="flex flex-wrap items-center gap-2 text-sm font-normal mt-2 sm:mt-0">
-              {seriesInfo.rating?.Valid && (
-                <span className="flex items-center text-yellow-500 bg-yellow-500/10 px-2.5 py-1 rounded-md border border-yellow-500/20 shadow-sm">
-                  <Star className="w-4 h-4 mr-1 fill-current" />
-                  {seriesInfo.rating.Float64.toFixed(1)}
-                </span>
-              )}
-              {seriesInfo.status?.Valid && (
-                <span className="flex items-center text-green-400 bg-green-400/10 px-2.5 py-1 rounded-md border border-green-400/20 shadow-sm">
-                  <Info className="w-4 h-4 mr-1" />
-                  {seriesInfo.status.String}
-                </span>
-              )}
-              {seriesInfo.language?.Valid && (
-                <span className="flex items-center text-blue-400 bg-blue-400/10 px-2.5 py-1 rounded-md border border-blue-400/20 shadow-sm uppercase font-semibold tracking-wider">
-                  <Globe className="w-4 h-4 mr-1" />
-                  {seriesInfo.language.String}
-                </span>
-              )}
-              {seriesInfo.publisher?.Valid && (
-                <span className="flex items-center text-purple-400 bg-purple-400/10 px-2.5 py-1 rounded-md border border-purple-400/20 shadow-sm">
-                  <Building2 className="w-4 h-4 mr-1" />
-                  {seriesInfo.publisher.String}
-                </span>
-              )}
-            </div>
-          )}
         </h2>
 
-        {!selectedVolume && seriesInfo?.summary?.Valid && (
-          <p className="text-gray-400 mt-5 text-sm leading-relaxed max-w-4xl line-clamp-3 hover:line-clamp-none transition-all cursor-pointer bg-gray-900/50 p-4 rounded-xl border border-gray-800/50 relative group">
-            <span className="absolute -left-2 top-4 w-1 h-1/2 bg-gray-700 rounded-full group-hover:bg-komgaPrimary transition-colors opacity-0 group-hover:opacity-100"></span>
-            {seriesInfo.summary.String}
-          </p>
-        )}
-
-        {!selectedVolume && lockedFields.size > 0 && (
-          <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 max-w-4xl">
-            <p className="text-sm font-medium text-amber-100">已锁定 {lockedFields.size} 个字段，后续刮削不会覆盖这些内容。</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {Array.from(lockedFields).map((field) => (
-                <span
-                  key={field}
-                  className="rounded-full border border-amber-500/20 bg-black/20 px-3 py-1 text-xs text-amber-200"
-                >
-                  {field}
-                </span>
-              ))}
-            </div>
+        {/* Badges */}
+        {!selectedVolume && seriesInfo && (
+          <div className="flex flex-wrap items-center gap-2 text-sm font-medium mb-6">
+            {seriesInfo.rating?.Valid && (
+              <span className="flex items-center text-komgaPrimary bg-komgaPrimary/10 px-3 py-1.5 rounded-lg border border-komgaPrimary/20 shadow-sm backdrop-blur-md transition-colors hover:bg-komgaPrimary/20">
+                <Star className="w-4 h-4 mr-1.5 fill-current" />
+                {seriesInfo.rating.Float64.toFixed(1)}
+              </span>
+            )}
+            {seriesInfo.status?.Valid && (
+              <span className="flex items-center text-komgaSecondary bg-komgaSecondary/10 px-3 py-1.5 rounded-lg border border-komgaSecondary/20 shadow-sm backdrop-blur-md transition-colors hover:bg-komgaSecondary/20">
+                <Info className="w-4 h-4 mr-1.5" />
+                {seriesInfo.status.String}
+              </span>
+            )}
+            {seriesInfo.language?.Valid && (
+              <span className="flex items-center text-gray-100 bg-white/10 px-3 py-1.5 rounded-lg border border-white/10 shadow-sm uppercase tracking-wider backdrop-blur-md transition-colors hover:bg-white/20">
+                <Globe className="w-4 h-4 mr-1.5" />
+                {seriesInfo.language.String}
+              </span>
+            )}
+            {seriesInfo.publisher?.Valid && (
+              <span className="flex items-center text-gray-100 bg-komgaSurface/80 px-3 py-1.5 rounded-lg border border-white/10 shadow-sm backdrop-blur-md transition-colors hover:bg-komgaSurface">
+                <Building2 className="w-4 h-4 mr-1.5" />
+                {seriesInfo.publisher.String}
+              </span>
+            )}
           </div>
         )}
 
-        {!selectedVolume && links.length > 0 && (
-          <div className="mt-5 flex flex-wrap gap-3">
-            {links.map((link, index) => (
-              <a
-                key={index}
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center text-xs font-semibold px-4 py-2 bg-gray-800 hover:bg-komgaPrimary hover:text-white text-gray-300 border border-gray-700/50 hover:border-komgaPrimary/50 rounded-lg transition-all shadow-sm group"
-              >
-                {link.name}
-              </a>
-            ))}
-          </div>
-        )}
-
+        {/* Authors & Tags */}
         {!selectedVolume && (tags.length > 0 || authors.length > 0) && (
-          <div className="mt-5 flex flex-col gap-3">
+          <div className="flex flex-col gap-3 mb-6">
             {authors.length > 0 && (
               <div className="flex items-start gap-3">
-                <Info className="w-4 h-4 text-gray-500 mt-1 shrink-0" />
+                <User className="w-5 h-5 text-gray-400 shrink-0 mt-0.5" />
                 <div className="flex flex-wrap gap-2">
                   {authors.map((author) => (
-                    <span
-                      key={author.id}
-                      className="text-xs text-gray-300 bg-gray-800/80 px-2 py-1 rounded-md border border-gray-700 shadow-sm hover:bg-gray-700 transition-colors"
-                    >
+                    <span key={author.id} className="text-sm font-medium text-gray-100 bg-white/5 px-2.5 py-1 rounded-md border border-white/10 shadow-sm hover:bg-white/10 transition-colors backdrop-blur-md">
                       {author.name}
-                      <span className="text-gray-500 ml-1.5 inline-block scale-90">({author.role})</span>
+                      <span className="text-gray-400 ml-1.5 font-normal text-xs">({author.role})</span>
                     </span>
                   ))}
                 </div>
@@ -246,13 +140,10 @@ export function SeriesHeader({
             )}
             {tags.length > 0 && (
               <div className="flex items-start gap-3">
-                <Info className="w-4 h-4 text-komgaPrimary/60 mt-1 shrink-0" />
+                <Tag className="w-5 h-5 text-komgaPrimary/80 shrink-0 transform rotate-90 mt-0.5" />
                 <div className="flex flex-wrap gap-2">
                   {tags.map((tag) => (
-                    <span
-                      key={tag.id}
-                      className="text-xs text-komgaPrimary bg-komgaPrimary/10 px-2 py-1 rounded-md border border-komgaPrimary/20 shadow-sm hover:bg-komgaPrimary/20 transition-colors cursor-pointer"
-                    >
+                    <span key={tag.id} className="text-xs font-semibold text-komgaSecondary bg-komgaSecondary/10 px-2.5 py-1.5 rounded-md border border-komgaSecondary/20 shadow-sm hover:bg-komgaSecondary/20 transition-colors cursor-pointer backdrop-blur-md">
                       {tag.name}
                     </span>
                   ))}
@@ -262,12 +153,95 @@ export function SeriesHeader({
           </div>
         )}
 
-        <p className="text-gray-500 mt-6 text-sm font-medium flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-komgaPrimary/50"></div>
-          {selectedVolume
-            ? `含 ${activeVolumeBooks.length} 话 · 总共 ${activeVolumeBooks.reduce((acc, book) => acc + book.page_count, 0)} 页`
-            : `共 ${books.length} 项资源 (${volumes.length} 卷, ${standaloneBooks.length} 独立册)`}
-        </p>
+        {/* Abstract */}
+        {!selectedVolume && seriesInfo?.summary?.Valid && (
+          <p className="text-gray-100 text-sm leading-relaxed max-w-4xl line-clamp-3 hover:line-clamp-none transition-all cursor-pointer bg-komgaSurface/80 p-5 rounded-xl border border-white/5 relative group backdrop-blur-md shadow-sm mb-6">
+            <span className="absolute -left-px top-1/2 -translate-y-1/2 w-1 h-3/4 bg-komgaPrimary/50 rounded-r-full group-hover:bg-komgaPrimary transition-colors opacity-50 group-hover:opacity-100"></span>
+            {seriesInfo.summary.String}
+          </p>
+        )}
+
+        {/* Lock Info & Links */}
+        {!selectedVolume && (lockedFields.size > 0 || links.length > 0) && (
+          <div className="flex flex-wrap gap-6 mb-6">
+            {lockedFields.size > 0 && (
+              <div className="flex-1 min-w-[280px] rounded-xl border border-komgaSecondary/20 bg-komgaSecondary/5 p-4 backdrop-blur-md">
+                <p className="text-sm font-medium text-komgaSecondary mb-2">已锁定 {lockedFields.size} 个字段，不会被刮削覆盖</p>
+                <div className="flex flex-wrap gap-2">
+                  {Array.from(lockedFields).map((field) => (
+                    <span key={field} className="rounded-md border border-komgaSecondary/20 bg-komgaSecondary/10 px-2 py-0.5 text-xs text-komgaSecondary">{field}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {links.length > 0 && (
+               <div className="flex flex-wrap gap-2 items-center">
+                 {links.map((link, index) => (
+                    <a key={index} href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-sm font-medium px-4 py-2 bg-white/5 hover:bg-komgaPrimary text-gray-100 hover:text-white border border-white/10 hover:border-komgaPrimary/50 rounded-lg transition-all shadow-sm backdrop-blur-md">
+                      <Globe className="w-4 h-4 mr-2" />
+                      {link.name}
+                    </a>
+                 ))}
+               </div>
+            )}
+          </div>
+        )}
+        
+        {/* Actions & Stats */}
+        <div className="mt-auto pt-4 flex flex-wrap items-center justify-between gap-6">
+          <div className="flex flex-wrap items-center gap-3">
+             <button
+                onClick={onToggleSelectionMode}
+                className={`flex items-center px-4 py-2 text-sm font-semibold rounded-xl transition-all shadow-lg focus:outline-none backdrop-blur-md ${isSelectionMode ? 'bg-komgaPrimary text-white shadow-komgaPrimary/20 border border-komgaPrimary/50' : 'bg-komgaSurface text-gray-100 hover:bg-white/10 border border-white/10 hover:border-white/20'}`}
+             >
+                {isSelectionMode ? '取消批量操作' : '批量操作'}
+             </button>
+             
+             {!selectedVolume && (
+               <div className="flex items-center border border-white/10 rounded-xl overflow-hidden shadow-sm bg-komgaSurface/80 backdrop-blur-md">
+                 <button onClick={onEdit} className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors" title="编辑元数据">
+                    <Edit className="w-4 h-4 m-0.5" />
+                 </button>
+                 <div className="w-px h-5 bg-white/10 mx-1" />
+                 <button onClick={onAddToCollection} className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors" title="添加到合集">
+                    <FolderHeart className="w-4 h-4 m-0.5" />
+                 </button>
+                 <div className="w-px h-5 bg-white/10 mx-1" />
+                 <button onClick={onOpenDirectory} disabled={isOpeningDirectory} className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors disabled:opacity-50" title="打开系统目录">
+                    <FolderOpen className={`w-4 h-4 m-0.5 ${isOpeningDirectory ? 'animate-pulse text-komgaPrimary' : ''}`} />
+                 </button>
+                 <div className="w-px h-5 bg-white/10 mx-1" />
+                 <button onClick={onRescan} disabled={isRescanning} className="p-2 text-gray-200 hover:text-komgaSecondary hover:bg-komgaSecondary/10 transition-colors disabled:opacity-50" title="重新扫描该系列">
+                    <RefreshCw className={`w-4 h-4 m-0.5 ${isRescanning ? 'animate-spin text-komgaSecondary' : ''}`} />
+                 </button>
+                 <div className="w-px h-5 bg-white/10 mx-1" />
+                 <div className="relative flex">
+                    <button onClick={onToggleScrapeMenu} disabled={isScraping} className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors disabled:opacity-50" title="刮削元数据">
+                      {isScraping ? <div className="w-4 h-4 m-0.5 animate-spin rounded-full border-2 border-komgaPrimary border-t-transparent" /> : <Download className="w-4 h-4 m-0.5" />}
+                    </button>
+                    {scrapeMenuOpen && !isScraping && (
+                       <>
+                         <div className="fixed inset-0 z-40" onClick={onCloseScrapeMenu} />
+                         <div className="absolute right-0 bottom-full mb-2 w-48 bg-komgaSurface border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
+                           <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-white/5 bg-komgaSurface/50">选择刮削来源</div>
+                           <button onClick={() => onScrape('bangumi')} className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors">Bangumi (推荐)</button>
+                           <button onClick={() => onScrape('ollama')} className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-white/5">Ollama LLM</button>
+                         </div>
+                       </>
+                    )}
+                 </div>
+               </div>
+             )}
+          </div>
+          
+          <div className="text-gray-200 text-sm font-medium flex items-center gap-2 bg-komgaSurface/80 px-4 py-2 rounded-lg border border-white/5 backdrop-blur-sm self-stretch md:self-auto shadow-sm">
+            <div className="w-2 h-2 rounded-full bg-komgaPrimary/80 animate-pulse hidden sm:block"></div>
+            {selectedVolume
+              ? `含 ${activeVolumeBooks.length} 话 · 共 ${activeVolumeBooks.reduce((acc, book) => acc + book.page_count, 0)} 页`
+              : `共 ${books.length} 项资源 ${volumes.length > 0 ? `(${volumes.length} 卷, ${standaloneBooks.length} 独立册)` : ''}`}
+          </div>
+        </div>
+
       </div>
     </div>
   );
