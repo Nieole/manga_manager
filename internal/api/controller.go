@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -56,6 +57,8 @@ type Controller struct {
 	taskMutex sync.Mutex
 	tasks     map[string]TaskStatus
 	taskSeq   int64
+
+	openPath func(string) error
 }
 
 type TaskStatus struct {
@@ -110,6 +113,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		defunctClients: make(chan chan string),
 		messages:       make(chan string, 10),
 		tasks:          make(map[string]TaskStatus),
+		openPath:       openPathInDefaultFileManager,
 	}
 
 	go c.startBroker()
@@ -185,6 +189,22 @@ func (c *Controller) buildSystemConfigResponse(cfg config.Config) SystemConfigRe
 		Validation:   config.ValidateConfig(&cfg),
 		Capabilities: c.systemCapabilities(),
 	}
+}
+
+func openPathInDefaultFileManager(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "windows":
+		cmd = exec.Command("explorer.exe", path)
+	case "linux":
+		cmd = exec.Command("xdg-open", path)
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	return cmd.Start()
 }
 
 func inferTaskScope(taskType, key string) (string, *int64) {
@@ -670,6 +690,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
 			r.Get("/info/{seriesId}", c.getSeriesInfo)
 			r.Put("/info/{seriesId}", c.updateSeriesInfo)
+			r.Post("/{seriesId}/open-dir", c.openSeriesDirectory)
 			r.Post("/{seriesId}/rescan", c.scanSeries)
 			r.Post("/{seriesId}/scrape", c.scrapeSeriesMetadata)
 			r.Get("/{seriesId}/scrape-search", c.scrapeSearchMetadata)
@@ -1270,6 +1291,48 @@ func (c *Controller) getSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, series)
+}
+
+func (c *Controller) openSeriesDirectory(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	series, err := c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+
+	path := strings.TrimSpace(series.Path)
+	if path == "" {
+		jsonError(w, http.StatusBadRequest, "Series directory is not available")
+		return
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Series directory does not exist")
+		return
+	}
+	if !info.IsDir() {
+		jsonError(w, http.StatusBadRequest, "Series path is not a directory")
+		return
+	}
+
+	opener := c.openPath
+	if opener == nil {
+		opener = openPathInDefaultFileManager
+	}
+	if err := opener(path); err != nil {
+		slog.Error("OpenSeriesDirectory Failed", "series_id", seriesID, "path", path, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to open series directory")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true})
 }
 
 type UpdateAuthorRequest struct {

@@ -996,6 +996,45 @@ func TestMetadataLookupValidationHandlers(t *testing.T) {
 	}
 }
 
+func TestOpenSeriesDirectory(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	var openedPath string
+	controller.openPath = func(path string) error {
+		openedPath = path
+		return nil
+	}
+
+	successRec := httptest.NewRecorder()
+	successReq := requestWithRouteParam(http.MethodPost, "/api/series/1/open-dir", nil, "seriesId", strconv.FormatInt(series.ID, 10))
+	controller.openSeriesDirectory(successRec, successReq)
+	if successRec.Code != http.StatusOK {
+		t.Fatalf("expected open series directory 200, got %d body=%s", successRec.Code, successRec.Body.String())
+	}
+	if openedPath != series.Path {
+		t.Fatalf("expected opened path %q, got %q", series.Path, openedPath)
+	}
+
+	notFoundRec := httptest.NewRecorder()
+	notFoundReq := requestWithRouteParam(http.MethodPost, "/api/series/999/open-dir", nil, "seriesId", "999")
+	controller.openSeriesDirectory(notFoundRec, notFoundReq)
+	if notFoundRec.Code != http.StatusNotFound {
+		t.Fatalf("expected missing series 404, got %d", notFoundRec.Code)
+	}
+
+	controller.openPath = func(path string) error {
+		return os.ErrPermission
+	}
+
+	errorRec := httptest.NewRecorder()
+	errorReq := requestWithRouteParam(http.MethodPost, "/api/series/1/open-dir", nil, "seriesId", strconv.FormatInt(series.ID, 10))
+	controller.openSeriesDirectory(errorRec, errorReq)
+	if errorRec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected open failure 500, got %d body=%s", errorRec.Code, errorRec.Body.String())
+	}
+}
+
 func TestLibraryAndSeriesReadEndpoints(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
@@ -1146,6 +1185,76 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	if notFoundNextRec.Code != http.StatusNotFound {
 		t.Fatalf("expected no next book 404, got %d", notFoundNextRec.Code)
 	}
+}
+
+func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+
+	lib, seriesA, bookA := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 10)
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET volume_count = ?, total_pages = ? WHERE id = ?`, 1, 10, seriesA.ID); err != nil {
+		t.Fatalf("update series A stats failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET last_read_page = ? WHERE id = ?`, 3, bookA.ID); err != nil {
+		t.Fatalf("update book A read progress failed: %v", err)
+	}
+
+	seriesB, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
+		LibraryID: lib.ID,
+		Name:      "Series Beta",
+		Path:      filepath.Join(rootDir, "Library A", "Series Beta"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSeries B failed: %v", err)
+	}
+	if err := os.MkdirAll(seriesB.Path, 0o755); err != nil {
+		t.Fatalf("mkdir series B path failed: %v", err)
+	}
+	bookB, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       seriesB.ID,
+		LibraryID:      lib.ID,
+		Name:           "Beta 01.cbz",
+		Path:           filepath.Join(seriesB.Path, "Beta 01.cbz"),
+		Size:           1024,
+		FileModifiedAt: time.Now(),
+		PageCount:      30,
+		Title:          sql.NullString{String: "Beta 01", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateBook B failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET last_read_page = ? WHERE id = ?`, 20, bookB.ID); err != nil {
+		t.Fatalf("update book B read progress failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET volume_count = ?, book_count = ?, total_pages = ? WHERE id = ?`, 4, 1, 30, seriesB.ID); err != nil {
+		t.Fatalf("update series B stats failed: %v", err)
+	}
+
+	assertFirst := func(sortBy string, expectedID int64) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=10&page=1&sortBy="+sortBy, nil)
+		rec := httptest.NewRecorder()
+		controller.searchSeriesPaged(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for sort %s, got %d body=%s", sortBy, rec.Code, rec.Body.String())
+		}
+
+		var resp struct {
+			Items []database.SearchSeriesPagedRow `json:"items"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode search response for %s failed: %v", sortBy, err)
+		}
+		if len(resp.Items) < 2 {
+			t.Fatalf("expected at least 2 items for %s, got %+v", sortBy, resp.Items)
+		}
+		if resp.Items[0].ID != expectedID {
+			t.Fatalf("expected first series %d for sort %s, got %+v", expectedID, sortBy, resp.Items)
+		}
+	}
+
+	assertFirst("volumes_desc", seriesB.ID)
+	assertFirst("pages_desc", seriesB.ID)
+	assertFirst("read_desc", seriesB.ID)
 }
 
 func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {

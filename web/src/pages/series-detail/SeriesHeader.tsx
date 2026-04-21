@@ -13,6 +13,7 @@ interface SeriesHeaderProps {
   links: SeriesLink[];
   lockedFields: Set<string>;
   isSelectionMode: boolean;
+  isOpeningDirectory: boolean;
   isRescanning: boolean;
   isScraping: boolean;
   scrapeMenuOpen: boolean;
@@ -20,6 +21,7 @@ interface SeriesHeaderProps {
   onToggleSelectionMode: () => void;
   onEdit: () => void;
   onAddToCollection: () => void;
+  onOpenDirectory: () => void;
   onRescan: () => void;
   onToggleScrapeMenu: () => void;
   onCloseScrapeMenu: () => void;
@@ -38,6 +40,7 @@ export function SeriesHeader({
   links,
   lockedFields,
   isSelectionMode,
+  isOpeningDirectory,
   isRescanning,
   isScraping,
   scrapeMenuOpen,
@@ -45,6 +48,7 @@ export function SeriesHeader({
   onToggleSelectionMode,
   onEdit,
   onAddToCollection,
+  onOpenDirectory,
   onRescan,
   onToggleScrapeMenu,
   onCloseScrapeMenu,
@@ -93,6 +97,14 @@ export function SeriesHeader({
                       title="添加到合集"
                     >
                       <FolderHeart className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={onOpenDirectory}
+                      disabled={isOpeningDirectory}
+                      className="p-1.5 text-gray-500 hover:text-amber-400 bg-gray-900 border border-gray-800 hover:bg-amber-400/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="在文件管理器中打开系列目录"
+                    >
+                      <FolderOpen className={`w-5 h-5 ${isOpeningDirectory ? 'animate-pulse text-amber-400' : ''}`} />
                     </button>
                     <button
                       onClick={onRescan}

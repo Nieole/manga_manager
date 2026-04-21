@@ -12,6 +12,7 @@ export interface Series {
   id: number;
   name: string;
   library_id: number;
+  path: string;
   title?: NullString;
   summary?: NullString;
   publisher?: NullString;

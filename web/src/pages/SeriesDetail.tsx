@@ -36,6 +36,7 @@ export default function SeriesDetail() {
     const [selectedVolume, setSelectedVolume] = useState<string | null>(null);
     const [isScraping, setIsScraping] = useState(false);
     const [isRescanning, setIsRescanning] = useState(false);
+    const [isOpeningDirectory, setIsOpeningDirectory] = useState(false);
     const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
     const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -74,6 +75,19 @@ export default function SeriesDetail() {
             showToast('重新扫描抛出异常: ' + (err.response?.data?.error || err.message), 'error');
         } finally {
             setIsRescanning(false);
+        }
+    };
+
+    const handleOpenDirectory = async () => {
+        if (!seriesId) return;
+        setIsOpeningDirectory(true);
+        try {
+            await axios.post(`/api/series/${seriesId}/open-dir`);
+            showToast('已在系统文件管理器中打开该系列目录', 'success');
+        } catch (err: any) {
+            showToast(err.response?.data?.error || '打开系列目录失败', 'error');
+        } finally {
+            setIsOpeningDirectory(false);
         }
     };
 
@@ -528,6 +542,7 @@ export default function SeriesDetail() {
                 links={links}
                 lockedFields={lockedFields}
                 isSelectionMode={isSelectionMode}
+                isOpeningDirectory={isOpeningDirectory}
                 isRescanning={isRescanning}
                 isScraping={isScraping}
                 scrapeMenuOpen={scrapeMenuOpen}
@@ -539,6 +554,7 @@ export default function SeriesDetail() {
                 }}
                 onEdit={() => setIsEditing(true)}
                 onAddToCollection={() => setShowCollectionModal(true)}
+                onOpenDirectory={handleOpenDirectory}
                 onRescan={handleRescan}
                 onToggleScrapeMenu={() => setScrapeMenuOpen(!scrapeMenuOpen)}
                 onCloseScrapeMenu={() => setScrapeMenuOpen(false)}

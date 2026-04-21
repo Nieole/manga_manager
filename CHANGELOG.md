@@ -913,3 +913,24 @@
 - 已通过本地验证：
   - `GOCACHE=/Users/nicoer/dev/manga_manager/.gocache GOTMPDIR=/Users/nicoer/dev/manga_manager/.tmp go test ./internal/api ./internal/database`
   - `npm run build`
+
+### 📌 增量记录 — 2026-04-21（系列详情页打开目录）
+
+#### 系列目录快速打开 `[体验增强]`
+- **系列详情页新增“打开目录”按钮**：在系列总览头部操作区增加目录打开入口，位置与编辑、添加到合集、重新扫描等操作保持一致。
+- **通过系统默认文件管理器打开当前系列目录**：
+  - macOS 使用 `open`
+  - Windows 使用 `explorer.exe`
+  - Linux 使用 `xdg-open`
+- **交互约束**：
+  - 仅在系列总览显示，不在卷视图显示；
+  - 点击后提供成功/失败 toast；
+  - 按钮带 loading 态，避免重复点击。
+
+#### 后端接口与测试 `[实现细节]`
+- **新增系列级专用接口**：`POST /api/series/{seriesId}/open-dir`
+- **接口仅允许打开当前系列自身目录**，不暴露任意路径打开能力。
+- **新增控制器测试覆盖**：
+  - 正常打开目录
+  - 系列不存在
+  - 打开文件管理器失败
