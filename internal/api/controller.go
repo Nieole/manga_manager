@@ -113,7 +113,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		clients:        make(map[chan string]bool),
 		newClients:     make(chan chan string),
 		defunctClients: make(chan chan string),
-		messages:       make(chan string, 10),
+		messages:       make(chan string, 64),
 		tasks:          make(map[string]TaskStatus),
 		openPath:       openPathInDefaultFileManager,
 	}
@@ -450,7 +450,11 @@ func (c *Controller) publishTaskStatusLocked(task TaskStatus) {
 		slog.Warn("Failed to marshal task status", "task_key", task.Key, "error", err)
 		return
 	}
-	c.messages <- "task_progress:" + string(payload)
+	select {
+	case c.messages <- "task_progress:" + string(payload):
+	default:
+		slog.Warn("SSE message channel full, dropping task progress", "task_key", task.Key)
+	}
 }
 
 func (c *Controller) pruneTasksLocked() {
@@ -1784,7 +1788,7 @@ func (c *Controller) sseHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// 注册客户端通道
-	messageChan := make(chan string)
+	messageChan := make(chan string, 16)
 	c.newClients <- messageChan
 
 	// 监听从客户端意外断开链接

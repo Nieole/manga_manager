@@ -370,6 +370,36 @@ export default function Home() {
             fetchExternalSession(externalSession.session_id).then((session) => {
                 if (session?.status === 'ready') {
                     fetchExternalSeriesStatus(session.session_id);
+                    // 当 SSE refresh 先于轮询 useEffect 检测到扫描完成时，
+                    // 主动 dispatch override 事件以关闭全局进度条，避免竞争条件。
+                    if (externalScanTaskKey) {
+                        window.dispatchEvent(new CustomEvent('manga-manager:task-progress-override', {
+                            detail: {
+                                key: externalScanTaskKey,
+                                type: 'scan_external_library',
+                                status: 'completed',
+                                message: session.scanned_files > 0
+                                    ? `外部资源库扫描完成，已扫描 ${session.scanned_files} 个文件`
+                                    : '外部资源库扫描完成',
+                                current: session.scanned_files,
+                                total: session.scanned_files,
+                            },
+                        }));
+                        setExternalScanTaskKey(null);
+                    }
+                } else if (session?.status === 'failed' && externalScanTaskKey) {
+                    window.dispatchEvent(new CustomEvent('manga-manager:task-progress-override', {
+                        detail: {
+                            key: externalScanTaskKey,
+                            type: 'scan_external_library',
+                            status: 'failed',
+                            message: session.error || '外部资源库扫描失败',
+                            error: session.error,
+                            current: session.scanned_files,
+                            total: session.scanned_files,
+                        },
+                    }));
+                    setExternalScanTaskKey(null);
                 }
             });
         }
