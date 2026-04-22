@@ -5,6 +5,7 @@ import { FolderHeart, Plus, Trash2, ChevronRight, BookOpen, Search, X } from 'lu
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalTextareaClass } from '../components/ui/modalStyles';
+import { useI18n } from '../i18n/LocaleProvider';
 
 interface Collection {
     id: number;
@@ -22,6 +23,7 @@ interface CollectionSeriesItem {
 }
 
 export default function Collections() {
+    const { t } = useI18n();
     const [collections, setCollections] = useState<Collection[]>([]);
     const [selected, setSelected] = useState<Collection | null>(null);
     const [seriesItems, setSeriesItems] = useState<CollectionSeriesItem[]>([]);
@@ -90,14 +92,14 @@ export default function Collections() {
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                     <FolderHeart className="w-7 h-7 text-komgaPrimary" />
-                    <h1 className="text-2xl font-bold text-white tracking-tight">合集管理</h1>
+                    <h1 className="text-2xl font-bold text-white tracking-tight">{t('collections.title')}</h1>
                 </div>
                 <button
                     onClick={() => setShowCreate(true)}
                     className="flex items-center gap-2 px-4 py-2 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded-lg transition-colors text-sm font-medium"
                 >
                     <Plus className="w-4 h-4" />
-                    新建合集
+                    {t('collections.create')}
                 </button>
             </div>
 
@@ -105,14 +107,14 @@ export default function Collections() {
             <ModalShell
                 open={showCreate}
                 onClose={() => setShowCreate(false)}
-                title="新建合集"
-                description="创建一个可复用的整理篮子，后续可以从资源库或系列页批量加入漫画。"
+                title={t('collections.createTitle')}
+                description={t('collections.createDescription')}
                 icon={<FolderHeart className="h-5 w-5" />}
                 size="compact"
                 footer={
                     <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
-                        <button onClick={() => setShowCreate(false)} className={modalGhostButtonClass}>取消</button>
-                        <button onClick={handleCreate} className={modalPrimaryButtonClass}>创建</button>
+                        <button onClick={() => setShowCreate(false)} className={modalGhostButtonClass}>{t('modal.cancel')}</button>
+                        <button onClick={handleCreate} className={modalPrimaryButtonClass}>{t('common.create')}</button>
                     </div>
                 }
             >
@@ -120,14 +122,14 @@ export default function Collections() {
                     <input
                         value={newName}
                         onChange={e => setNewName(e.target.value)}
-                        placeholder="合集名称"
+                        placeholder={t('collections.namePlaceholder')}
                         className={modalInputClass}
                         autoFocus
                     />
                     <textarea
                         value={newDesc}
                         onChange={e => setNewDesc(e.target.value)}
-                        placeholder="描述（可选）"
+                        placeholder={t('collections.descriptionPlaceholder')}
                         rows={4}
                         className={modalTextareaClass}
                     />
@@ -142,9 +144,9 @@ export default function Collections() {
                     handleDelete(pendingDeleteCollection.id);
                     setPendingDeleteCollection(null);
                 }}
-                title="删除合集"
-                description={`确定要删除合集「${pendingDeleteCollection?.name || ''}」吗？这个操作会移除合集本身，但不会删除原始漫画文件。`}
-                confirmLabel="确认删除"
+                title={t('collections.deleteTitle')}
+                description={t('collections.deleteDescription', { name: pendingDeleteCollection?.name || '' })}
+                confirmLabel={t('collections.confirmDelete')}
                 tone="danger"
             />
 
@@ -154,8 +156,8 @@ export default function Collections() {
                     {collections.length === 0 ? (
                         <div className="text-center py-16 text-gray-600">
                             <FolderHeart className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                            <p className="text-sm">还没有合集</p>
-                            <p className="text-xs mt-1">点击右上角"新建合集"开始整理你的漫画</p>
+                            <p className="text-sm">{t('collections.empty')}</p>
+                            <p className="text-xs mt-1">{t('collections.emptyHint')}</p>
                         </div>
                     ) : (
                         collections.map(c => (
@@ -172,7 +174,7 @@ export default function Collections() {
                                         <FolderHeart className={`w-4 h-4 shrink-0 ${selected?.id === c.id ? 'text-komgaPrimary' : 'text-gray-600'}`} />
                                         <p className="font-medium text-white truncate">{c.name}</p>
                                     </div>
-                                    <p className="text-xs text-gray-500 mt-1 ml-6">{c.series_count} 个系列</p>
+                                    <p className="text-xs text-gray-500 mt-1 ml-6">{t('common.seriesCount', { count: c.series_count })}</p>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     <button
@@ -197,14 +199,14 @@ export default function Collections() {
                                     <h2 className="text-lg font-semibold text-white">{selected.name}</h2>
                                     {selected.description && <p className="text-xs text-gray-500 mt-1">{selected.description}</p>}
                                 </div>
-                                <span className="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">{seriesItems.length} 个系列</span>
+                                <span className="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">{t('common.seriesCount', { count: seriesItems.length })}</span>
                             </div>
 
                             {seriesItems.length === 0 ? (
                                 <div className="text-center py-20 text-gray-600">
                                     <BookOpen className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                                    <p className="text-sm">合集暂无系列</p>
-                                    <p className="text-xs mt-1">在资源库中将系列添加到此合集</p>
+                                    <p className="text-sm">{t('collections.noSeries')}</p>
+                                    <p className="text-xs mt-1">{t('collections.noSeriesHint')}</p>
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -227,7 +229,7 @@ export default function Collections() {
                                                     </button>
                                                 </div>
                                                 <p className="text-xs text-gray-300 mt-2 truncate group-hover:text-komgaPrimary transition-colors">{item.series_name}</p>
-                                                <p className="text-[10px] text-gray-600">{item.book_count} 册</p>
+                                                <p className="text-[10px] text-gray-600">{t('common.books', { count: item.book_count })}</p>
                                             </div>
                                         );
                                     })}
@@ -238,7 +240,7 @@ export default function Collections() {
                         <div className="flex items-center justify-center h-full min-h-[40vh] text-gray-600">
                             <div className="text-center">
                                 <Search className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                                <p className="text-sm">选择左侧合集查看内容</p>
+                                <p className="text-sm">{t('collections.pickLeft')}</p>
                             </div>
                         </div>
                     )}

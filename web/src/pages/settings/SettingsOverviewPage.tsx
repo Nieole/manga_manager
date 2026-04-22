@@ -1,48 +1,50 @@
 import { AlertTriangle, CheckCircle2, FolderOpen, HardDrive, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Wrench } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { SettingsPageIntro } from './shared';
 
 export function SettingsOverviewPage() {
+  const { t } = useI18n();
   const { validation, config, koreaderStatus, capabilities } = useSettings();
   const { resolvedTheme } = useTheme();
   const { navigateSettingsSection } = useOutletContext<{ navigateSettingsSection: (path: string) => void }>();
 
   const cards = [
     {
-      title: '外观',
-      description: `当前主题：${resolvedTheme.name}`,
+      title: t('settings.nav.appearance'),
+      description: t('settings.overview.themeCard', { theme: t(resolvedTheme.nameKey) }),
       icon: <Palette className="h-5 w-5 text-komgaPrimary" />,
       action: () => navigateSettingsSection('/settings/appearance'),
     },
     {
-      title: '库与扫描',
-      description: `${config?.library.paths?.length ?? 0} 个绑定目录，扫描格式 ${capabilities?.default_scan_formats ?? '载入中'}`,
+      title: t('settings.nav.library'),
+      description: t('settings.overview.libraryCard', { count: config?.library.paths?.length ?? 0, formats: capabilities?.default_scan_formats ?? t('common.loading') }),
       icon: <FolderOpen className="h-5 w-5 text-komgaPrimary" />,
       action: () => navigateSettingsSection('/settings/library'),
     },
     {
-      title: '图片与缓存',
-      description: `缓存目录 ${config?.cache.dir || '未配置'}`,
+      title: t('settings.nav.media'),
+      description: t('settings.overview.mediaCard', { path: config?.cache.dir || t('settings.overview.notConfigured') }),
       icon: <HardDrive className="h-5 w-5 text-komgaPrimary" />,
       action: () => navigateSettingsSection('/settings/media'),
     },
     {
-      title: 'AI / 元数据',
-      description: `${config?.llm.provider || '未配置'} · ${config?.llm.model || '未设置模型'}`,
+      title: t('settings.nav.ai'),
+      description: `${config?.llm.provider || t('settings.overview.notConfigured')} · ${config?.llm.model || t('settings.overview.modelUnset')}`,
       icon: <Sparkles className="h-5 w-5 text-komgaPrimary" />,
       action: () => navigateSettingsSection('/settings/ai'),
     },
     {
       title: 'KOReader',
-      description: koreaderStatus?.enabled ? `服务已启用，${koreaderStatus.enabled_account_count}/${koreaderStatus.account_count} 个账号可用` : '服务未启用',
+      description: koreaderStatus?.enabled ? t('settings.overview.koreaderEnabled', { enabled: koreaderStatus.enabled_account_count, total: koreaderStatus.account_count }) : t('settings.overview.koreaderDisabled'),
       icon: <TabletSmartphone className="h-5 w-5 text-sky-400" />,
       action: () => navigateSettingsSection('/settings/koreader'),
     },
     {
-      title: '维护工具',
-      description: '索引、缩略图和批量元数据任务入口',
+      title: t('settings.nav.maintenance'),
+      description: t('settings.overview.maintenanceCard'),
       icon: <Wrench className="h-5 w-5 text-red-400" />,
       action: () => navigateSettingsSection('/settings/maintenance'),
     },
@@ -51,8 +53,8 @@ export function SettingsOverviewPage() {
   return (
     <div className="space-y-6">
       <SettingsPageIntro
-        title="设置概览"
-        description="按场景拆分后的设置入口。先看健康状态和当前配置概况，再进入对应设置页处理。"
+        title={t('settings.overview.title')}
+        description={t('settings.overview.description')}
         badge={
           <div
             className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${
@@ -60,14 +62,14 @@ export function SettingsOverviewPage() {
             }`}
           >
             {validation.valid ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-            {validation.valid ? '配置健康' : `待修正 ${validation.issues.length} 项`}
+            {validation.valid ? t('settings.overview.healthy') : t('settings.overview.needFix', { count: validation.issues.length })}
           </div>
         }
       />
 
       {!validation.valid && (
         <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
-          <p className="text-sm font-medium text-amber-100">当前仍有阻塞保存的问题。</p>
+          <p className="text-sm font-medium text-amber-100">{t('settings.overview.blockingIssues')}</p>
           <div className="mt-2 space-y-1">
             {validation.issues.slice(0, 5).map((issue) => (
               <p key={`${issue.field}-${issue.message}`} className="text-sm text-amber-200/90">
@@ -102,20 +104,20 @@ export function SettingsOverviewPage() {
       <div className="rounded-2xl border border-gray-800 bg-komgaSurface p-6">
         <div className="flex items-center gap-2 text-komgaPrimary">
           <SettingsIcon className="h-5 w-5" />
-          <h3 className="text-lg font-semibold text-white">当前全局状态</h3>
+          <h3 className="text-lg font-semibold text-white">{t('settings.overview.globalStatus')}</h3>
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
           <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-            <p className="text-sm text-gray-400">已绑定目录</p>
+            <p className="text-sm text-gray-400">{t('settings.overview.boundDirs')}</p>
             <p className="mt-2 text-2xl font-bold text-white">{config?.library.paths?.length ?? 0}</p>
           </div>
           <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-            <p className="text-sm text-gray-400">KOReader 未匹配记录</p>
+            <p className="text-sm text-gray-400">{t('settings.overview.unmatchedRecords')}</p>
             <p className="mt-2 text-2xl font-bold text-white">{koreaderStatus?.stats.unmatched_progress_count ?? 0}</p>
           </div>
           <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-            <p className="text-sm text-gray-400">当前主题</p>
-            <p className="mt-2 text-2xl font-bold text-white">{resolvedTheme.name}</p>
+            <p className="text-sm text-gray-400">{t('settings.overview.currentTheme')}</p>
+            <p className="mt-2 text-2xl font-bold text-white">{t(resolvedTheme.nameKey)}</p>
           </div>
         </div>
       </div>

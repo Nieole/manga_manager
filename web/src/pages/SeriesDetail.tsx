@@ -8,8 +8,10 @@ import { SeriesHeader } from './series-detail/SeriesHeader';
 import { SeriesMetadataEditorModal } from './series-detail/SeriesMetadataEditorModal';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
 import type { Author, Book, MetaTag, SearchResult, Series, SeriesLink } from './series-detail/types';
+import { useI18n } from '../i18n/LocaleProvider';
 
 export default function SeriesDetail() {
+    const { t, formatDateTime } = useI18n();
     const { seriesId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
@@ -69,10 +71,10 @@ export default function SeriesDetail() {
         setIsRescanning(true);
         try {
             await axios.post(`/api/series/${seriesId}/rescan`);
-            showToast('已下发重新扫描指令', 'success');
+            showToast(t('series.toast.rescanQueued'), 'success');
             setTimeout(() => window.location.reload(), 2000);
         } catch (err: any) {
-            showToast('重新扫描抛出异常: ' + (err.response?.data?.error || err.message), 'error');
+            showToast(`${t('series.toast.rescanFailed')}: ${err.response?.data?.error || err.message}`, 'error');
         } finally {
             setIsRescanning(false);
         }
@@ -83,9 +85,9 @@ export default function SeriesDetail() {
         setIsOpeningDirectory(true);
         try {
             await axios.post(`/api/series/${seriesId}/open-dir`);
-            showToast('已在系统文件管理器中打开该系列目录', 'success');
+            showToast(t('series.toast.openDirSuccess'), 'success');
         } catch (err: any) {
-            showToast(err.response?.data?.error || '打开系列目录失败', 'error');
+            showToast(err.response?.data?.error || t('series.toast.openDirFailed'), 'error');
         } finally {
             setIsOpeningDirectory(false);
         }
@@ -111,10 +113,10 @@ export default function SeriesDetail() {
                 } else {
                     setSearchResults([]);
                     setSelectedSearchResult(null);
-                    showToast('未自动匹配到结果，请尝试手工更改关键词搜索', 'error');
+                    showToast(t('series.toast.autoMatchNotFound'), 'error');
                 }
             } catch (err: any) {
-                showToast('搜索失败: ' + (err.response?.data?.error || err.message), 'error');
+                showToast(`${t('series.toast.searchFailed')}: ${err.response?.data?.error || err.message}`, 'error');
             } finally {
                 setIsScraping(false);
             }
@@ -129,10 +131,10 @@ export default function SeriesDetail() {
                 showToast(`[${res.data.provider}] ${res.data.message}`, 'success');
                 setTimeout(() => window.location.reload(), 1500);
             } else {
-                showToast(res.data.message || '未找到匹配的元数据', 'error');
+                showToast(res.data.message || t('series.toast.metadataNotFound'), 'error');
             }
         } catch (err: any) {
-            showToast('刮削失败: ' + (err.response?.data?.error || err.message), 'error');
+            showToast(`${t('series.toast.scrapeFailed')}: ${err.response?.data?.error || err.message}`, 'error');
         } finally {
             setIsScraping(false);
         }
@@ -145,11 +147,11 @@ export default function SeriesDetail() {
         try {
             const res = await axios.post(`/api/series/${seriesId}/scrape-apply?provider=${searchProvider}`, metadata);
             if (res.data.success) {
-                showToast('已成功应用选定的元数据', 'success');
+                showToast(t('series.toast.applyMetadataSuccess'), 'success');
                 setTimeout(() => window.location.reload(), 1500);
             }
         } catch (err: any) {
-            showToast('应用元数据失败: ' + (err.response?.data?.error || err.message), 'error');
+            showToast(`${t('series.toast.applyMetadataFailed')}: ${err.response?.data?.error || err.message}`, 'error');
         } finally {
             setIsScraping(false);
             setSearchResults([]);
@@ -167,15 +169,15 @@ export default function SeriesDetail() {
                 setSearchResults(res.data.results);
                 setSelectedSearchResult(res.data.results[0]);
                 setSearchTotal(res.data.total || 0);
-                showToast(`找到了 ${res.data.results.length} 条新结果`, 'success');
+                showToast(t('series.toast.searchFound', { count: res.data.results.length }), 'success');
             } else {
                 setSearchResults([]);
                 setSelectedSearchResult(null);
                 setSearchTotal(0);
-                showToast('未找到匹配的条目，请尝试修改关键词', 'error');
+                showToast(t('series.toast.searchNoResult'), 'error');
             }
         } catch (err: any) {
-            showToast('搜索失败: ' + (err.response?.data?.error || err.message), 'error');
+            showToast(`${t('series.toast.searchFailed')}: ${err.response?.data?.error || err.message}`, 'error');
         } finally {
             setIsScraping(false);
         }
@@ -204,10 +206,10 @@ export default function SeriesDetail() {
             }
             const res = await axios.get(`/api/books/${seriesId}`);
             setBooks(res.data || []);
-            showToast(ids ? "状态已更新" : "批量更新进度成功", 'success');
+            showToast(ids ? t('series.toast.statusUpdated') : t('series.toast.bulkProgressSuccess'), 'success');
         } catch (e) {
             console.error("Bulk progress update failed", e, ids);
-            showToast("操作失败", 'error');
+            showToast(t('series.toast.actionFailed'), 'error');
         }
     };
 
@@ -315,11 +317,11 @@ export default function SeriesDetail() {
         setRetryingTaskKey(taskKey);
         try {
             await axios.post(`/api/system/tasks/${encodeURIComponent(taskKey)}/retry`);
-            showToast('任务已重新加入后台队列', 'success');
+            showToast(t('series.toast.retryTaskQueued'), 'success');
             const res = await axios.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`);
             setRelatedFailedTasks(Array.isArray(res.data) ? res.data : []);
         } catch (err: any) {
-            showToast(err.response?.data?.error || '任务重试失败', 'error');
+            showToast(err.response?.data?.error || t('series.toast.retryTaskFailed'), 'error');
         } finally {
             setRetryingTaskKey(null);
         }
@@ -328,9 +330,9 @@ export default function SeriesDetail() {
     const taskTypeLabel = (type: string) => {
         switch (type) {
             case 'scan_series':
-                return '系列扫描';
+                return t('task.type.scan_series');
             case 'scrape':
-                return '元数据刮削';
+                return t('task.type.scrape');
             default:
                 return type;
         }
@@ -434,7 +436,7 @@ export default function SeriesDetail() {
             setIsEditing(false);
         } catch (err) {
             console.error("Failed to update metadata", err);
-            showToast("保存失败", 'error');
+            showToast(t('series.toast.saveFailed'), 'error');
         }
     };
 
@@ -625,7 +627,7 @@ export default function SeriesDetail() {
                 <div className="mt-6 rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
                     <div className="flex items-center gap-2 mb-4 text-red-100">
                         <AlertTriangle className="w-5 h-5" />
-                        <h3 className="text-base font-semibold">与当前系列相关的失败任务</h3>
+                        <h3 className="text-base font-semibold">{t('series.failedTasks.title')}</h3>
                     </div>
                     <div className="space-y-3">
                         {relatedFailedTasks.map((task) => (
@@ -637,7 +639,7 @@ export default function SeriesDetail() {
                                 <p className="text-sm font-medium text-white">{task.message}</p>
                                 {task.error && <p className="mt-2 text-sm text-red-100/80">{task.error}</p>}
                                 <div className="mt-3 flex items-center justify-between gap-3">
-                                    <span className="text-xs text-red-100/60">{new Date(task.updated_at).toLocaleString()}</span>
+                                    <span className="text-xs text-red-100/60">{formatDateTime(task.updated_at)}</span>
                                     {task.retryable && (
                                         <button
                                             onClick={() => retryTask(task.key)}
@@ -645,7 +647,7 @@ export default function SeriesDetail() {
                                             className="inline-flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100 hover:bg-red-500/15 disabled:opacity-60"
                                         >
                                             <RotateCcw className={`w-3.5 h-3.5 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
-                                            重试
+                                            {t('common.retry')}
                                         </button>
                                     )}
                                 </div>
@@ -658,26 +660,26 @@ export default function SeriesDetail() {
             {/* 悬浮多选操作栏 */}
             {isSelectionMode && (selectedBooks.length > 0 || selectedVolumes.length > 0) && (
                 <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl p-4 w-[90vw] sm:w-auto flex flex-col sm:flex-row items-center gap-4 sm:gap-6 z-50 animate-in slide-in-from-bottom-5">
-                    <span className="text-white font-medium text-sm">已选择 {selectedBooks.length + selectedVolumes.length} 项</span>
+                    <span className="text-white font-medium text-sm">{t('series.selection.selectedCount', { count: selectedBooks.length + selectedVolumes.length })}</span>
                     <div className="flex items-center justify-between w-full sm:w-auto gap-3">
                         <button
                             onClick={handleSelectAll}
                             className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                         >
-                            {((selectedVolume ? activeVolumeBooks.length : (volumes.length + standaloneBooks.length)) === (selectedBooks.length + selectedVolumes.length)) ? '取消全选' : '全选'}
+                            {((selectedVolume ? activeVolumeBooks.length : (volumes.length + standaloneBooks.length)) === (selectedBooks.length + selectedVolumes.length)) ? t('series.selection.unselectAll') : t('series.selection.selectAll')}
                         </button>
                         <div className="w-px h-6 bg-gray-700 hidden sm:block"></div>
                         <button
                             onClick={() => handleBulkProgressUpdate(true)}
                             className="bg-green-500/10 hover:bg-green-500/20 text-green-500 border border-green-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                         >
-                            标为已读
+                            {t('series.selection.markRead')}
                         </button>
                         <button
                             onClick={() => handleBulkProgressUpdate(false)}
                             className="bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                         >
-                            标为未读
+                            {t('series.selection.markUnread')}
                         </button>
                     </div>
                 </div>
@@ -722,7 +724,7 @@ export default function SeriesDetail() {
                 <AddToCollectionModal
                     seriesIds={[Number(seriesId)]}
                     onClose={() => setShowCollectionModal(false)}
-                    onSuccess={() => showToast('已成功添加到合集', 'success')}
+                    onSuccess={() => showToast(t('series.toast.addedToCollection'), 'success')}
                 />
             )}
         </div>

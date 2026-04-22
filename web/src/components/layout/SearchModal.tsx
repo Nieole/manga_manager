@@ -1,6 +1,7 @@
 import { Image as ImageIcon, Search, X } from 'lucide-react';
 import type { SearchHit } from './types';
 import { ModalShell } from '../ui/ModalShell';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 interface SearchModalProps {
   open: boolean;
@@ -31,14 +32,15 @@ export function SearchModal({
   onSelectResult,
   onHighlightIndex,
 }: SearchModalProps) {
+  const { t } = useI18n();
   if (!open) return null;
 
   return (
     <ModalShell
       open={open}
       onClose={onClose}
-      title="全局搜索"
-      description="检索系列和单册，支持键盘导航和即时跳转。"
+      title={t('searchModal.title')}
+      description={t('searchModal.description')}
       icon={<Search className="h-5 w-5" />}
       size="standard"
       placement="top"
@@ -51,7 +53,7 @@ export function SearchModal({
           <input
             autoFocus
             type="text"
-            placeholder="输入关键字搜索..."
+            placeholder={t('searchModal.placeholder')}
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             onKeyDown={onSearchKeyDown}
@@ -65,24 +67,24 @@ export function SearchModal({
         </div>
 
         <div className="flex items-center space-x-2 border-b border-gray-800 bg-gray-950/40 px-4 py-3 shrink-0">
-          <span className="text-xs text-gray-500 mr-2">范围:</span>
+          <span className="text-xs text-gray-500 mr-2">{t('searchModal.scope')}</span>
           <button
             onClick={() => onSearchTargetChange('all')}
             className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${searchTarget === 'all' ? 'bg-komgaPrimary text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
           >
-            全部
+            {t('searchModal.scope.all')}
           </button>
           <button
             onClick={() => onSearchTargetChange('series')}
             className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${searchTarget === 'series' ? 'bg-komgaPrimary text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
           >
-            仅系列
+            {t('searchModal.scope.series')}
           </button>
           <button
             onClick={() => onSearchTargetChange('book')}
             className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${searchTarget === 'book' ? 'bg-komgaPrimary text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
           >
-            仅册文件
+            {t('searchModal.scope.book')}
           </button>
         </div>
 
@@ -122,11 +124,11 @@ export function SearchModal({
                     <div className="flex items-center space-x-2 mb-1">
                       {isSeries ? (
                         <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-wider shrink-0 border border-blue-500/30 uppercase">
-                          系列
+                          {t('searchModal.type.series')}
                         </span>
                       ) : (
                         <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-wider shrink-0 border border-emerald-500/30 uppercase">
-                          单册
+                          {t('searchModal.type.book')}
                         </span>
                       )}
                       <div className="text-base font-bold text-gray-100 truncate group-hover:text-komgaPrimary transition-colors">
@@ -135,12 +137,12 @@ export function SearchModal({
                     </div>
                     <div className="text-xs text-gray-500 truncate flex items-center gap-2">
                       {isSeries ? (
-                        <span>浏览整个系列内容</span>
+                        <span>{t('searchModal.seriesAction')}</span>
                       ) : (
                         <>
-                          <span className="text-komgaPrimary font-medium truncate max-w-[150px]">{hit.fields?.series_name || '未知系列'}</span>
+                          <span className="text-komgaPrimary font-medium truncate max-w-[150px]">{hit.fields?.series_name || t('searchModal.unknownSeries')}</span>
                           <span className="text-gray-700">•</span>
-                          <span>进入详情页阅读</span>
+                          <span>{t('searchModal.bookAction')}</span>
                         </>
                       )}
                     </div>
@@ -155,11 +157,11 @@ export function SearchModal({
               );
             })
           ) : searchQuery.trim() !== '' ? (
-            <div className="py-14 text-center text-gray-500 text-sm">未找到符合条件的漫画</div>
+            <div className="py-14 text-center text-gray-500 text-sm">{t('searchModal.empty')}</div>
           ) : (
             <div className="py-8 text-center text-gray-600 text-sm flex flex-col items-center">
               <Search className="w-8 h-8 mb-3 opacity-20" />
-              支持全局模糊检索、键盘上下方向键导航
+              {t('searchModal.hint')}
             </div>
           )}
         </div>

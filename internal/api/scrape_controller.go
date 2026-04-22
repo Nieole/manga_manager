@@ -47,7 +47,7 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 	providerName := r.URL.Query().Get("provider")
 	provider := c.getProvider(providerName)
 
-	result, err := provider.FetchSeriesMetadata(r.Context(), query)
+	result, err := provider.FetchSeriesMetadata(requestContextWithLocale(r), query)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s search failed: %v", provider.Name(), err))
 		return
@@ -107,7 +107,7 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 		fmt.Sscanf(offsetStr, "%d", &offset)
 	}
 
-	results, total, err := provider.SearchMetadata(r.Context(), searchTitle, limit, offset)
+	results, total, err := provider.SearchMetadata(requestContextWithLocale(r), searchTitle, limit, offset)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 搜索失败: %v", provider.Name(), err))
 		return
@@ -193,7 +193,11 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 			updateParams.Rating = series.Rating
 		}
 
-		updateParams.Status = series.Status
+		if !lockedSet["status"] && result.Status != "" {
+			updateParams.Status = sql.NullString{String: metadata.NormalizeStatusCode(result.Status), Valid: true}
+		} else {
+			updateParams.Status = series.Status
+		}
 		updateParams.Language = series.Language
 		updateParams.LockedFields = series.LockedFields
 
@@ -268,7 +272,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		searchTitle = series.Title.String
 	}
 
-	result, err := provider.FetchSeriesMetadata(r.Context(), searchTitle)
+	result, err := provider.FetchSeriesMetadata(requestContextWithLocale(r), searchTitle)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 刮削失败: %v", provider.Name(), err))
 		return
@@ -301,6 +305,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 // 批量刮削所有系列的元数据
 func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, providerKey string) error {
 	provider := c.getProvider(providerKey)
+	locale := metadata.LocaleFromContext(ctx)
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		return err
@@ -338,15 +343,16 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	}
 	c.setTaskMetadata(taskKey, map[string]string{"provider": providerKey}, "全库")
 
-	go func() {
+	go func(taskLocale string) {
 		successCount := 0
+		bgCtx := metadata.WithLocale(context.Background(), taskLocale)
 
 		for i, entry := range allSeries {
 			slog.Info("Scraping series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
 
 			c.updateTask(taskKey, i+1, totalCount, fmt.Sprintf("刮削: %s", entry.Name))
 
-			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
+			result, err := provider.FetchSeriesMetadata(bgCtx, entry.Name)
 			if err != nil {
 				slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 				continue
@@ -356,12 +362,12 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 				continue
 			}
 
-			series, err := c.store.GetSeries(context.Background(), entry.ID)
+			series, err := c.store.GetSeries(bgCtx, entry.ID)
 			if err != nil {
 				continue
 			}
 
-			err = c.applyMetadataToSeries(context.Background(), series, result, providerName)
+			err = c.applyMetadataToSeries(bgCtx, series, result, providerName)
 			if err == nil {
 				successCount++
 				slog.Info("Successfully unified metadata", "provider", providerName, "series_title", result.Title)
@@ -374,13 +380,13 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		slog.Info("Batch scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
 		c.finishTask(taskKey, fmt.Sprintf("刮削完成，成功 %d/%d", successCount, totalCount))
 		c.PublishEvent("refresh")
-	}()
+	}(locale)
 
 	return nil
 }
 
 func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx := requestContextWithLocale(r)
 
 	var reqBody struct {
 		Provider string `json:"provider"`
@@ -407,6 +413,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 // scrapeLibrary 批量刮削指定库的缺失元数据
 func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int64, providerKey string) error {
 	provider := c.getProvider(providerKey)
+	locale := metadata.LocaleFromContext(ctx)
 
 	seriesList, err := c.store.ListSeriesByLibrary(ctx, libraryID)
 	if err != nil {
@@ -442,19 +449,20 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		return fmt.Errorf("task already running")
 	}
 	scopeName := ""
-	if lib, err := c.store.GetLibrary(context.Background(), libraryID); err == nil {
+	if lib, err := c.store.GetLibrary(ctx, libraryID); err == nil {
 		scopeName = lib.Name
 	}
 	c.setTaskMetadata(taskKey, map[string]string{"provider": providerKey}, scopeName)
 
-	go func() {
+	go func(taskLocale string) {
 		successCount := 0
+		bgCtx := metadata.WithLocale(context.Background(), taskLocale)
 		for i, entry := range allSeries {
 			slog.Info("Scraping library series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
 
 			c.updateTask(taskKey, i+1, totalCount, fmt.Sprintf("刮削: %s", entry.Name))
 
-			result, err := provider.FetchSeriesMetadata(context.Background(), entry.Name)
+			result, err := provider.FetchSeriesMetadata(bgCtx, entry.Name)
 			if err != nil {
 				continue
 			}
@@ -462,12 +470,12 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 				continue
 			}
 
-			series, err := c.store.GetSeries(context.Background(), entry.ID)
+			series, err := c.store.GetSeries(bgCtx, entry.ID)
 			if err != nil {
 				continue
 			}
 
-			err = c.applyMetadataToSeries(context.Background(), series, result, providerName)
+			err = c.applyMetadataToSeries(bgCtx, series, result, providerName)
 			if err == nil {
 				successCount++
 			}
@@ -478,13 +486,13 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		slog.Info("Library scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
 		c.finishTask(taskKey, fmt.Sprintf("刮削资源库完成，成功 %d/%d", successCount, totalCount))
 		c.PublishEvent("refresh")
-	}()
+	}(locale)
 
 	return nil
 }
 
 func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx := requestContextWithLocale(r)
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")

@@ -5,8 +5,10 @@ import { ArrowLeft, CircleHelp, Loader2, RefreshCw, Settings, ChevronLeft, Chevr
 import { getFilterStyle, getPagedImages, getScaleClasses } from './book-reader/helpers';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
 import type { ImageFilter, Page, ScaleMode } from './book-reader/types';
+import { useI18n } from '../i18n/LocaleProvider';
 
 export default function BookReader() {
+    const { t } = useI18n();
     const { bookId } = useParams();
     const navigate = useNavigate();
     const [pages, setPages] = useState<Page[]>([]);
@@ -173,7 +175,7 @@ export default function BookReader() {
         ]).then(([pagesRes, infoRes]) => {
             const sorted = pagesRes.data.sort((a: Page, b: Page) => a.number - b.number);
             if (sorted.length === 0) {
-                setLoadError('当前书籍没有可读取的页面，可能是归档损坏或格式不完整。');
+                setLoadError(t('reader.error.noPages'));
                 setLoading(false);
                 return;
             }
@@ -210,7 +212,7 @@ export default function BookReader() {
             setLoading(false);
         }).catch(err => {
             console.error("Failed to load book data", err);
-            setLoadError(err.response?.data?.error || '阅读器无法加载当前书籍。请检查归档内容、页面解析和文件权限。');
+            setLoadError(err.response?.data?.error || t('reader.error.loadFailed'));
             setLoading(false);
         });
     }, [bookId, clearPageImageCache]);
@@ -398,7 +400,7 @@ export default function BookReader() {
                         className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
                     >
                         <ArrowLeft className="w-5 h-5 mr-2" />
-                        返回
+                        {t('reader.back')}
                     </button>
 
                     {/* 绝对居中书名 */}
@@ -410,7 +412,7 @@ export default function BookReader() {
                         <button
                             onClick={() => setShowHelp(!showHelp)}
                             className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
-                            title="阅读帮助"
+                            title={t('reader.help')}
                         >
                             <CircleHelp className="w-5 h-5" />
                         </button>
@@ -427,17 +429,17 @@ export default function BookReader() {
                     <div className="self-end mt-3 bg-komgaSurface border border-gray-800 rounded-xl p-4 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 animate-in fade-in slide-in-from-top-4">
                         <div className="space-y-3">
                             <div>
-                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">快捷操作</p>
-                                <p>左右方向键：翻页</p>
-                                <p><span className="font-mono">H</span> / <span className="font-mono">?</span>：显示帮助</p>
+                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpShortcuts')}</p>
+                                <p>{t('reader.helpArrowKeys')}</p>
+                                <p>{t('reader.helpToggleHelp')}</p>
                             </div>
                             <div>
-                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">移动端</p>
-                                <p>瀑布流直接滚动；翻页模式点击左右两侧区域翻页。</p>
+                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpMobile')}</p>
+                                <p>{t('reader.helpMobileDescription')}</p>
                             </div>
                             <div>
-                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">排错</p>
-                                <p>读取失败时优先检查归档完整性、扫描结果和页面解析。</p>
+                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpTroubleshooting')}</p>
+                                <p>{t('reader.helpTroubleshootingDescription')}</p>
                             </div>
                         </div>
                     </div>
@@ -447,26 +449,26 @@ export default function BookReader() {
                 {showSettings && (
                     <div className="self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-4 sm:p-5 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 origin-top-right">
                         <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">阅读模式与排版</span>
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">{t('reader.layoutSection')}</span>
                             <div className="flex bg-gray-900 rounded p-1 mb-3">
-                                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'webtoon' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('webtoon')}>瀑布流</button>
-                                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'paged' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('paged')}>翻页</button>
+                                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'webtoon' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('webtoon')}>{t('reader.modeWebtoon')}</button>
+                                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'paged' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('paged')}>{t('reader.modePaged')}</button>
                             </div>
 
                             {readMode === 'paged' && (
                                 <div className="space-y-3">
                                     <div>
-                                        <span className="text-[10px] text-gray-500 mb-1 block">单双页排版</span>
+                                        <span className="text-[10px] text-gray-500 mb-1 block">{t('reader.doublePageTitle')}</span>
                                         <div className="flex bg-gray-900 rounded p-0.5">
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${!doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(false)}>单页居中</button>
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(true)}>支持跨页</button>
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${!doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(false)}>{t('reader.singlePage')}</button>
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(true)}>{t('reader.doublePage')}</button>
                                         </div>
                                     </div>
                                     <div>
-                                        <span className="text-[10px] text-gray-500 mb-1 block">阅读方向</span>
+                                        <span className="text-[10px] text-gray-500 mb-1 block">{t('reader.readDirection')}</span>
                                         <div className="flex bg-gray-900 rounded p-0.5">
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'ltr' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('ltr')}>左到右 (漫威)</button>
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'rtl' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('rtl')}>右到左 (日漫)</button>
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'ltr' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('ltr')}>{t('reader.ltr')}</button>
+                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'rtl' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('rtl')}>{t('reader.rtl')}</button>
                                         </div>
                                     </div>
                                 </div>
@@ -476,16 +478,16 @@ export default function BookReader() {
                         <div className="h-px bg-gray-800 my-1"></div>
 
                         <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">缩放与图像处理</span>
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">{t('reader.imageSection')}</span>
                             <div className="flex bg-gray-900 rounded p-1 mb-3">
                                 {['original', 'fit-height', 'fit-width', 'fit-screen'].map(sm => (
                                     <button
                                         key={sm}
                                         className={`flex-1 py-1 rounded transition text-[10px] ${scaleMode === sm ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
                                         onClick={() => setScaleMode(sm as ScaleMode)}
-                                        title={sm === 'original' ? '原始尺寸' : sm === 'fit-height' ? '符合高度' : sm === 'fit-width' ? '符合宽度' : '符合屏幕'}
+                                        title={sm === 'original' ? t('reader.scaleOriginal') : sm === 'fit-height' ? t('reader.scaleFitHeight') : sm === 'fit-width' ? t('reader.scaleFitWidth') : t('reader.scaleFitScreen')}
                                     >
-                                        {sm === 'original' ? '原始' : sm === 'fit-height' ? '等高' : sm === 'fit-width' ? '等宽' : '适屏'}
+                                        {sm === 'original' ? t('reader.scaleOriginalShort') : sm === 'fit-height' ? t('reader.scaleFitHeightShort') : sm === 'fit-width' ? t('reader.scaleFitWidthShort') : t('reader.scaleFitScreenShort')}
                                     </button>
                                 ))}
                             </div>
@@ -495,25 +497,25 @@ export default function BookReader() {
                                 onChange={(e) => setImageFilter(e.target.value as ImageFilter)}
                                 className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded p-2 outline-none cursor-pointer mb-2"
                             >
-                                <option value="none">原始图像 (Raw / 无处理)</option>
-                                <option value="nearest">相邻像素法 (Nearest / Pixelated)</option>
-                                <option value="average">平均像素法 (Average)</option>
-                                <option value="bilinear">双线性差值 (Bilinear / Auto)</option>
-                                <option value="bicubic">Bicubic (高画质三次插值)</option>
-                                <option value="lanczos2">Lanczos2 (分两级 Lanczos)</option>
-                                <option value="lanczos3">Lanczos3 (锐利重采样)</option>
-                                <option value="mitchell">Mitchell-Netravali (平滑平衡)</option>
-                                <option value="bspline">B-Spline (极度平滑/防锯齿)</option>
-                                <option value="catmullrom">Catmull-Rom (保留边缘锐度)</option>
-                                <option value="waifu2x">Waifu2x 初代二次元重绘 (需本地引擎)</option>
-                                <option value="realcugan">Real-CUGAN 次世代超分 (需本地引擎)</option>
+                                <option value="none">{t('reader.filter.raw')}</option>
+                                <option value="nearest">{t('reader.filter.nearest')}</option>
+                                <option value="average">{t('reader.filter.average')}</option>
+                                <option value="bilinear">{t('reader.filter.bilinear')}</option>
+                                <option value="bicubic">{t('reader.filter.bicubic')}</option>
+                                <option value="lanczos2">{t('reader.filter.lanczos2')}</option>
+                                <option value="lanczos3">{t('reader.filter.lanczos3')}</option>
+                                <option value="mitchell">{t('reader.filter.mitchell')}</option>
+                                <option value="bspline">{t('reader.filter.bspline')}</option>
+                                <option value="catmullrom">{t('reader.filter.catmullrom')}</option>
+                                <option value="waifu2x">{t('reader.filter.waifu2x')}</option>
+                                <option value="realcugan">{t('reader.filter.realcugan')}</option>
                             </select>
 
                             <button
                                 className={`w-full py-2 rounded text-xs transition font-medium border ${autoCrop ? 'bg-komgaPrimary/20 border-komgaPrimary text-komgaPrimary shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'}`}
                                 onClick={() => setAutoCrop(!autoCrop)}
                             >
-                                {autoCrop ? '✨ 自动裁切已开启' : '开启自动裁切白边 (实验性)'}
+                                {autoCrop ? t('reader.autoCropOn') : t('reader.autoCropOff')}
                             </button>
                         </div>
 
@@ -521,7 +523,7 @@ export default function BookReader() {
                             <div className="bg-gray-900/50 p-3 rounded border border-komgaPrimary/30 animate-in fade-in slide-in-from-top-2">
                                 <div className="mb-3">
                                     <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
-                                        <span>引擎缩放倍数</span>
+                                        <span>{t('reader.engineScale')}</span>
                                         <span className="text-komgaPrimary">{w2xScale}x</span>
                                     </span>
                                     <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
@@ -532,18 +534,18 @@ export default function BookReader() {
                                 </div>
                                 <div className="mb-3">
                                     <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
-                                        <span>降噪等级 (Noise)</span>
-                                        <span className="text-komgaPrimary">{w2xNoise === -1 ? '关闭' : w2xNoise}</span>
+                                        <span>{t('reader.noiseLevel')}</span>
+                                        <span className="text-komgaPrimary">{w2xNoise === -1 ? t('settings.koreader.off') : w2xNoise}</span>
                                     </span>
                                     <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
                                         {[-1, 0, 1, 2, 3].map(n => (
-                                            <button key={n} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xNoise === n ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xNoise(n)}>{n === -1 ? '关' : n}</button>
+                                            <button key={n} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xNoise === n ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xNoise(n)}>{n === -1 ? t('settings.koreader.off') : n}</button>
                                         ))}
                                     </div>
                                 </div>
                                 <div>
                                     <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
-                                        <span>输出编码格式</span>
+                                        <span>{t('reader.outputFormat')}</span>
                                         <span className="text-komgaPrimary uppercase text-[10px]">{w2xFormat}</span>
                                     </span>
                                     <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
@@ -557,8 +559,8 @@ export default function BookReader() {
 
                         <div>
                             <div className="flex items-center justify-between mb-1">
-                                <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">预缓存页数</span>
-                                <span className="text-[10px] text-gray-400">{preloadCount} 页</span>
+                                <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">{t('reader.preloadPages')}</span>
+                                <span className="text-[10px] text-gray-400">{t('reader.pageCountShort', { count: preloadCount })}</span>
                             </div>
                             <input
                                 type="range"
@@ -574,7 +576,7 @@ export default function BookReader() {
                         <div className="h-px bg-gray-800 my-1"></div>
 
                         <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">护眼模式</span>
+                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">{t('reader.eyeProtection')}</span>
                             <button
                                 onClick={() => setEyeProtection(!eyeProtection)}
                                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${eyeProtection ? 'bg-amber-900/40 border border-amber-600/40 text-amber-200' : 'bg-gray-900 border border-gray-800 text-gray-400 hover:bg-gray-800'
@@ -582,10 +584,10 @@ export default function BookReader() {
                             >
                                 <span className="text-xs flex items-center gap-2">
                                     <span className="text-base">{eyeProtection ? '🌙' : '☀️'}</span>
-                                    暖色护眼滤镜
+                                    {t('reader.eyeProtectionWarm')}
                                 </span>
                                 <span className={`text-[10px] font-medium ${eyeProtection ? 'text-amber-400' : 'text-gray-600'
-                                    }`}>{eyeProtection ? '已开启' : '关闭'}</span>
+                                    }`}>{eyeProtection ? t('reader.on') : t('settings.koreader.off')}</span>
                             </button>
                         </div>
                     </div>
@@ -607,7 +609,7 @@ export default function BookReader() {
                 ) : loadError ? (
                     <div className="flex h-full items-center justify-center px-6">
                         <div className="max-w-xl rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center">
-                            <p className="text-lg font-semibold text-white">当前书籍无法读取</p>
+                            <p className="text-lg font-semibold text-white">{t('reader.error.title')}</p>
                             <p className="mt-3 text-sm leading-7 text-red-100/90">{loadError}</p>
                             <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
                                 <button
@@ -615,14 +617,14 @@ export default function BookReader() {
                                     className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15"
                                 >
                                     <RefreshCw className="w-4 h-4" />
-                                    重试加载
+                                    {t('reader.retry')}
                                 </button>
                                 <button
                                     onClick={handleBackToSeries}
                                     className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm text-white hover:bg-komgaPrimaryHover"
                                 >
                                     <ArrowLeft className="w-4 h-4" />
-                                    返回系列
+                                    {t('reader.backToSeries')}
                                 </button>
                             </div>
                         </div>
@@ -646,7 +648,7 @@ export default function BookReader() {
                                 onClick={() => navigate(`/reader/${nextBookId}`, { replace: true })}
                                 className="my-10 px-8 py-4 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white font-bold rounded-xl shadow-2xl text-lg transition-all duration-300 hover:scale-105"
                             >
-                                ▶ 继续阅读下一本
+                                {t('reader.nextBook')}
                             </button>
                         )}
                     </div>
@@ -724,7 +726,7 @@ export default function BookReader() {
                                     className="absolute bottom-full mb-3 bg-komgaPrimary text-white text-[10px] font-bold py-1 px-2 rounded-md shadow-[0_0_15px_rgba(168,85,247,0.4)] pointer-events-none transform -translate-x-1/2 whitespace-nowrap z-30 animate-in fade-in zoom-in-95 duration-150"
                                     style={{ left: `${hoverX}px` }}
                                 >
-                                    第 {hoverPage} 页
+                                    {t('reader.pagePreview', { page: hoverPage })}
                                     {/* 小三角 */}
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-t-[4px] border-t-komgaPrimary"></div>
                                 </div>

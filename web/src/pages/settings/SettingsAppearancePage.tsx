@@ -1,5 +1,6 @@
 import { Palette } from 'lucide-react';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useI18n } from '../../i18n/LocaleProvider';
 import { SettingsPageIntro } from './shared';
 
 function ThemeSection({
@@ -15,6 +16,8 @@ function ThemeSection({
   themeId: string;
   onSelect: (themeId: string) => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between gap-4">
@@ -23,7 +26,7 @@ function ThemeSection({
           <p className="mt-1 text-sm leading-6 text-gray-400">{description}</p>
         </div>
         <span className="rounded-full border border-gray-700 bg-gray-900/60 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-gray-300">
-          {themes.length} 套
+          {t('settings.appearance.themeCount', { count: themes.length })}
         </span>
       </div>
 
@@ -41,10 +44,10 @@ function ThemeSection({
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-lg font-semibold text-white">{theme.name}</p>
-                  <p className="mt-2 text-sm leading-6 text-gray-400">{theme.description}</p>
+                  <p className="text-lg font-semibold text-white">{t(theme.nameKey)}</p>
+                  <p className="mt-2 text-sm leading-6 text-gray-400">{t(theme.descriptionKey)}</p>
                 </div>
-                {selected && <span className="shrink-0 whitespace-nowrap rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-2 py-1 text-[11px] font-medium text-komgaPrimary">当前</span>}
+                {selected && <span className="shrink-0 whitespace-nowrap rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-2 py-1 text-[11px] font-medium text-komgaPrimary">{t('settings.appearance.current')}</span>}
               </div>
               <div className="mt-5 flex items-center gap-2">
                 {theme.swatches.map((swatch) => (
@@ -61,31 +64,61 @@ function ThemeSection({
 
 export function SettingsAppearancePage() {
   const { themeId, resolvedTheme, lightThemes, darkThemes, setTheme } = useTheme();
+  const { locale, locales, setLocale, t } = useI18n();
 
   return (
     <div className="space-y-6">
       <SettingsPageIntro
-        title="外观 / 主题"
-        description="主题只保存在当前浏览器。阅读器默认跟随应用主题，阅读模式和图像处理偏好保持原有本地存储。"
+        title={t('settings.appearance.title')}
+        description={t('settings.appearance.description')}
         badge={
           <div className="inline-flex items-center gap-2 rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-3 py-1.5 text-sm text-komgaPrimary">
             <Palette className="h-4 w-4" />
-            当前主题：{resolvedTheme.name} · {resolvedTheme.colorScheme === 'light' ? '浅色' : '深色'}
+            {t('settings.appearance.currentTheme', {
+              name: t(resolvedTheme.nameKey),
+              scheme: resolvedTheme.colorScheme === 'light' ? t('settings.appearance.light') : t('settings.appearance.dark'),
+            })}
           </div>
         }
       />
 
+      <section className="space-y-4 rounded-3xl border border-white/5 bg-komgaSurface/70 p-6 backdrop-blur-sm">
+        <div>
+          <h3 className="text-lg font-semibold text-white">{t('settings.appearance.languageTitle')}</h3>
+          <p className="mt-1 text-sm leading-6 text-gray-400">{t('settings.appearance.languageDescription')}</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {locales.map((option) => {
+            const selected = option === locale;
+            return (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setLocale(option)}
+                className={`rounded-2xl border px-4 py-3 text-sm transition-all ${
+                  selected
+                    ? 'border-komgaPrimary bg-komgaPrimary/10 text-komgaPrimary'
+                    : 'border-gray-800 bg-gray-900/40 text-gray-300 hover:border-gray-700 hover:text-white'
+                }`}
+              >
+                {t(`common.locale.${option}`)}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <ThemeSection
-        title="浅色主题"
-        description="适合白天环境和管理型操作，整体更接近文档和桌面工具。"
+        title={t('settings.appearance.lightThemes')}
+        description={t('settings.appearance.lightThemesDescription')}
         themes={lightThemes}
         themeId={themeId}
         onSelect={setTheme}
       />
 
       <ThemeSection
-        title="深色主题"
-        description="适合夜间使用和沉浸式浏览，保留更强的层次和氛围感。"
+        title={t('settings.appearance.darkThemes')}
+        description={t('settings.appearance.darkThemesDescription')}
         themes={darkThemes}
         themeId={themeId}
         onSelect={setTheme}

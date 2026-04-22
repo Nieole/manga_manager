@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Save } from 'lucide-react';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 export const sectionClassName = 'bg-komgaSurface border border-gray-800 rounded-2xl p-6 shadow-sm space-y-4';
 export const inputClassName = 'w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40 transition-all';
@@ -48,17 +49,18 @@ export function SettingsSaveBar({
   hint?: string;
   onSave: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="sticky bottom-0 z-10 mt-6 rounded-t-2xl border border-b-0 border-gray-800 bg-komgaDark/90 px-4 py-4 backdrop-blur-md">
       <div className="flex items-center justify-between gap-4">
-        <div className="text-sm text-gray-400">{hint || '修改只作用于当前设置分组。'}</div>
+        <div className="text-sm text-gray-400">{hint || t('settings.saveBarHint')}</div>
         <button
           onClick={onSave}
           disabled={saving}
           className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-5 py-3 text-sm font-medium text-white shadow-lg hover:bg-komgaPrimaryHover disabled:opacity-60 transition-colors"
         >
           <Save className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
-          {saving ? '保存中...' : label}
+          {saving ? t('settings.saving') : label}
         </button>
       </div>
     </div>

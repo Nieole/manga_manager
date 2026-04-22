@@ -1,19 +1,21 @@
 import { Link } from 'react-router-dom';
 import { ImageIcon } from 'lucide-react';
 import type { Series } from './types';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 interface RecentSeriesStripProps {
   recentSeries: Series[];
 }
 
 export function RecentSeriesStrip({ recentSeries }: RecentSeriesStripProps) {
+  const { t } = useI18n();
   if (recentSeries.length === 0) {
     return null;
   }
 
   return (
     <div className="mb-10">
-      <h3 className="text-xl font-bold text-white mb-4 pl-1 border-l-4 border-komgaPrimary">继续阅读</h3>
+      <h3 className="text-xl font-bold text-white mb-4 pl-1 border-l-4 border-komgaPrimary">{t('home.recent.title')}</h3>
       <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
         {recentSeries.map((series) => (
           <Link
@@ -35,7 +37,7 @@ export function RecentSeriesStrip({ recentSeries }: RecentSeriesStripProps) {
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-komgaBackground to-transparent h-2/3 opacity-80" />
               <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-t-xl" />
               <div className="absolute bottom-3 right-3 bg-komgaPrimary/90 text-white text-[10px] font-bold px-2 py-1 rounded backdrop-blur">
-                接着读
+                {t('home.recent.continue')}
               </div>
               {series.last_read_page?.Valid && series.last_read_page?.Int64 > 1 && (
                 <div className="absolute top-2 right-2 bg-black/70 px-2 py-0.5 rounded text-[10px] text-gray-300 backdrop-blur">

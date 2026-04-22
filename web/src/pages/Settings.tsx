@@ -2,19 +2,10 @@ import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Outlet, UNSAFE_NavigationContext, useLocation, useNavigate } from 'react-router-dom';
 import { AlertTriangle, FolderOpen, HardDrive, LayoutDashboard, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Wrench } from 'lucide-react';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { useI18n } from '../i18n/LocaleProvider';
 import { SettingsProvider, useSettings } from './settings/SettingsContext';
 
 type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'maintenance';
-
-const navItems: Array<{ key: SettingsSectionKey; label: string; path: string; icon: ReactNode }> = [
-  { key: 'overview', label: '概览', path: '/settings', icon: <LayoutDashboard className="h-4 w-4" /> },
-  { key: 'appearance', label: '外观', path: '/settings/appearance', icon: <Palette className="h-4 w-4" /> },
-  { key: 'library', label: '库与扫描', path: '/settings/library', icon: <FolderOpen className="h-4 w-4" /> },
-  { key: 'media', label: '图片与缓存', path: '/settings/media', icon: <HardDrive className="h-4 w-4" /> },
-  { key: 'ai', label: 'AI / 元数据', path: '/settings/ai', icon: <Sparkles className="h-4 w-4" /> },
-  { key: 'koreader', label: 'KOReader', path: '/settings/koreader', icon: <TabletSmartphone className="h-4 w-4" /> },
-  { key: 'maintenance', label: '维护工具', path: '/settings/maintenance', icon: <Wrench className="h-4 w-4" /> },
-];
 
 function getSectionKey(pathname: string): SettingsSectionKey {
   if (pathname.startsWith('/settings/appearance')) return 'appearance';
@@ -27,6 +18,7 @@ function getSectionKey(pathname: string): SettingsSectionKey {
 }
 
 function SettingsLayoutInner() {
+  const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const { loading, config, validation, toastMsg, setToastMsg, hasSectionChanges } = useSettings();
@@ -69,7 +61,17 @@ function SettingsLayoutInner() {
     navigate(path);
   };
 
-  const currentNavLabel = useMemo(() => navItems.find((item) => item.key === currentSection)?.label || '设置', [currentSection]);
+  const navItems: Array<{ key: SettingsSectionKey; label: string; path: string; icon: ReactNode }> = [
+    { key: 'overview', label: t('settings.nav.overview'), path: '/settings', icon: <LayoutDashboard className="h-4 w-4" /> },
+    { key: 'appearance', label: t('settings.nav.appearance'), path: '/settings/appearance', icon: <Palette className="h-4 w-4" /> },
+    { key: 'library', label: t('settings.nav.library'), path: '/settings/library', icon: <FolderOpen className="h-4 w-4" /> },
+    { key: 'media', label: t('settings.nav.media'), path: '/settings/media', icon: <HardDrive className="h-4 w-4" /> },
+    { key: 'ai', label: t('settings.nav.ai'), path: '/settings/ai', icon: <Sparkles className="h-4 w-4" /> },
+    { key: 'koreader', label: 'KOReader', path: '/settings/koreader', icon: <TabletSmartphone className="h-4 w-4" /> },
+    { key: 'maintenance', label: t('settings.nav.maintenance'), path: '/settings/maintenance', icon: <Wrench className="h-4 w-4" /> },
+  ];
+
+  const currentNavLabel = useMemo(() => navItems.find((item) => item.key === currentSection)?.label || t('settings.nav.title'), [currentSection, navItems, t]);
 
   if (loading) {
     return (
@@ -80,7 +82,7 @@ function SettingsLayoutInner() {
   }
 
   if (!config) {
-    return <div className="p-8 text-center text-gray-500">无法加载配置。</div>;
+    return <div className="p-8 text-center text-gray-500">{t('settings.loadFailed')}</div>;
   }
 
   return (
@@ -93,12 +95,12 @@ function SettingsLayoutInner() {
                 <SettingsIcon className="h-5 w-5 text-komgaPrimary" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight text-white">系统设定</h1>
-                <p className="mt-1 text-sm text-gray-400">按场景拆分后的设置导航。</p>
+                <h1 className="text-xl font-bold tracking-tight text-white">{t('settings.title')}</h1>
+                <p className="mt-1 text-sm text-gray-400">{t('settings.subtitle')}</p>
               </div>
             </div>
             <div className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs ${validation.valid ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border border-amber-500/20 bg-amber-500/10 text-amber-300'}`}>
-              {validation.valid ? '配置校验通过' : `存在 ${validation.issues.length} 个待修正项`}
+              {validation.valid ? t('settings.validationOk') : t('settings.validationIssues', { count: validation.issues.length })}
             </div>
           </div>
 
@@ -128,7 +130,7 @@ function SettingsLayoutInner() {
 
       <div className="min-w-0 flex-1">
         <div className="mb-4 rounded-2xl border border-gray-800 bg-komgaSurface p-4 lg:hidden">
-          <p className="text-sm text-gray-400">当前设置分组</p>
+          <p className="text-sm text-gray-400">{t('settings.currentGroup')}</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {navItems.map((item) => {
               const active = currentSection === item.key;
@@ -144,7 +146,7 @@ function SettingsLayoutInner() {
               );
             })}
           </div>
-          <p className="mt-3 text-xs text-gray-500">当前：{currentNavLabel}</p>
+          <p className="mt-3 text-xs text-gray-500">{t('settings.currentGroupValue', { value: currentNavLabel })}</p>
         </div>
 
         <Outlet context={{ navigateSettingsSection }} />
@@ -157,15 +159,15 @@ function SettingsLayoutInner() {
           pendingTransition?.retry();
           setPendingTransition(null);
         }}
-        title="离开当前设置页"
-        description="当前页面还有未保存的修改。继续切换会丢失这些更改。"
-        confirmLabel="仍然离开"
+        title={t('settings.leaveTitle')}
+        description={t('settings.leaveDescription')}
+        confirmLabel={t('settings.leaveConfirm')}
         tone="warning"
       >
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>只会丢弃当前设置分组的未保存更改，其他页面已保存的内容不受影响。</p>
+            <p>{t('settings.leaveHint')}</p>
           </div>
         </div>
       </ConfirmDialog>

@@ -12,6 +12,7 @@ import { HomeFilters } from './home/HomeFilters';
 import { HomeToolbar } from './home/HomeToolbar';
 import { RecentSeriesStrip } from './home/RecentSeriesStrip';
 import type { AIRecommendation, NamedOption, Series } from './home/types';
+import { useI18n } from '../i18n/LocaleProvider';
 
 const DEFAULT_PAGE_SIZE = 30;
 
@@ -44,6 +45,7 @@ interface ExternalSeriesStatus {
 }
 
 export default function Home() {
+    const { t, formatNumber } = useI18n();
     const { libId } = useParams();
     const { refreshTrigger } = useOutletContext<{ refreshTrigger: number; libraries?: { id: string; name: string; koreader_sync_enabled?: boolean }[] }>() || { refreshTrigger: 0, libraries: [] };
     const [allSeries, setAllSeries] = useState<Series[]>([]);
@@ -93,7 +95,7 @@ export default function Home() {
 
     const [allTags, setAllTags] = useState<NamedOption[]>([]);
     const [allAuthors, setAllAuthors] = useState<NamedOption[]>([]);
-    const allStatuses = ['已完结', '连载中', '已放弃', '有生之年'];
+    const allStatuses = ['completed', 'ongoing', 'cancelled', 'hiatus'];
 
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
     const [loadingAI, setLoadingAI] = useState(false);
@@ -192,7 +194,7 @@ export default function Home() {
 
     const startExternalLibraryScan = async () => {
         if (!libId || !externalPath.trim()) {
-            showToast('请先选择外部资源库目录', 'error');
+            showToast(t('home.external.pickPathFirst'), 'error');
             return;
         }
         setStartingExternalScan(true);
@@ -206,9 +208,9 @@ export default function Home() {
             setExternalScanTaskKey(res.data.task_key || null);
             setExternalTransferTaskKey(null);
             saveRecentExternalPath(externalPath.trim());
-            showToast('已开始扫描外部资源库', 'success');
+            showToast(t('home.external.scanStarted'), 'success');
         } catch (err: any) {
-            showToast(err.response?.data?.error || '外部资源库扫描启动失败', 'error');
+            showToast(err.response?.data?.error || t('home.external.scanStartFailed'), 'error');
         } finally {
             setStartingExternalScan(false);
         }
@@ -231,7 +233,7 @@ export default function Home() {
             })
             .catch(err => {
                 console.error("Failed to fetch AI recommendations", err);
-                showToast("获取 AI 推荐失败", "error");
+                showToast(t('home.ai.fetchFailed'), "error");
             })
             .finally(() => setLoadingAI(false));
     };
@@ -382,8 +384,8 @@ export default function Home() {
                                 type: 'scan_external_library',
                                 status: 'completed',
                                 message: session.scanned_files > 0
-                                    ? `外部资源库扫描完成，已扫描 ${session.scanned_files} 个文件`
-                                    : '外部资源库扫描完成',
+                                    ? t('home.external.scanCompletedWithCount', { count: session.scanned_files })
+                                    : t('home.external.scanCompleted'),
                                 current: session.scanned_files,
                                 total: session.scanned_files,
                             },
@@ -396,7 +398,7 @@ export default function Home() {
                             key: externalScanTaskKey,
                             type: 'scan_external_library',
                             status: 'failed',
-                            message: session.error || '外部资源库扫描失败',
+                            message: session.error || t('home.external.statusFailed'),
                             error: session.error,
                             current: session.scanned_files,
                             total: session.scanned_files,
@@ -428,8 +430,8 @@ export default function Home() {
                             type: 'scan_external_library',
                             status: session.status === 'ready' ? 'completed' : 'failed',
                             message: session.status === 'ready'
-                                ? (session.scanned_files > 0 ? `外部资源库扫描完成，已扫描 ${session.scanned_files} 个文件` : '外部资源库扫描完成')
-                                : (session.error || '外部资源库扫描失败'),
+                                ? (session.scanned_files > 0 ? t('home.external.scanCompletedWithCount', { count: session.scanned_files }) : t('home.external.scanCompleted'))
+                                : (session.error || t('home.external.statusFailed')),
                             error: session.status === 'failed' ? session.error : undefined,
                             current: session.scanned_files,
                             total: session.scanned_files,
@@ -509,7 +511,7 @@ export default function Home() {
             fetchSeriesPage(page, true);
         } catch (e) {
             console.error("Bulk update failed", e);
-            showToast("批量更新失败", 'error');
+            showToast(t('home.bulkFavoriteFailed'), 'error');
         }
     };
 
@@ -534,10 +536,10 @@ export default function Home() {
         setRescanningId(seriesId);
         try {
             await axios.post(`/api/series/${seriesId}/rescan?force=true`);
-            showToast('已下发重新扫描指令', 'success');
+            showToast(t('home.seriesRescanQueued'), 'success');
             setTimeout(() => fetchSeriesPage(page, true), 3000);
         } catch (err: any) {
-            showToast('重新扫描失败: ' + (err.response?.data?.error || err.message), 'error');
+            showToast(`${t('home.seriesRescanFailed')}: ${err.response?.data?.error || err.message}`, 'error');
         } finally {
             setRescanningId(null);
         }
@@ -552,11 +554,11 @@ export default function Home() {
                 series_ids: selectedSeries,
             });
             setExternalTransferTaskKey(res.data?.task_key || null);
-            showToast(res.data?.message || '已提交外部资源库传输任务', 'success');
+            showToast(res.data?.message || t('home.external.transferQueued'), 'success');
             setShowTransferConfirmModal(false);
             setPendingTransferSummary(null);
         } catch (err: any) {
-            showToast(err.response?.data?.error || '外部资源库传输失败', 'error');
+            showToast(err.response?.data?.error || t('home.external.transferFailed'), 'error');
         } finally {
             setStartingTransfer(false);
         }
@@ -564,11 +566,11 @@ export default function Home() {
 
     const handleTransferSelectedSeries = async () => {
         if (!libId || !externalSession?.session_id) {
-            showToast('请先扫描外部资源库', 'error');
+            showToast(t('home.external.scanFirst'), 'error');
             return;
         }
         if (externalSession.status !== 'ready') {
-            showToast('外部资源库仍在扫描中', 'error');
+            showToast(t('home.external.stillScanning'), 'error');
             return;
         }
 
@@ -583,7 +585,7 @@ export default function Home() {
         }, { total: 0, matched: 0, missing: 0 });
 
         if (summary.missing === 0) {
-            showToast('所选系列已全部存在于外部资源库', 'success');
+            showToast(t('home.external.alreadyComplete'), 'success');
             return;
         }
 
@@ -602,7 +604,7 @@ export default function Home() {
     if (!libId) {
         return (
             <div className="flex-1 flex items-center justify-center p-10 h-full text-gray-500">
-                请在左侧选择一个扫描库以开始
+                {t('home.pickLibrary')}
             </div>
         );
     }
@@ -642,12 +644,12 @@ export default function Home() {
                     <div>
                         <div className="flex items-center gap-2 text-white">
                             <HardDrive className="w-5 h-5 text-komgaPrimary" />
-                            <h3 className="text-lg font-semibold">同步资源库</h3>
+                            <h3 className="text-lg font-semibold">{t('home.external.title')}</h3>
                             {externalSession?.status === 'scanning' && <Loader2 className="w-4 h-4 ml-2 animate-spin text-blue-400" />}
                             {externalSession?.status === 'ready' && !isExternalExpanded && <CheckCircle2 className="w-4 h-4 ml-2 text-emerald-400" />}
                         </div>
                         <p className="mt-1 text-sm text-gray-400 transition-colors group-hover:text-gray-300">
-                            选择一个外部目录，扫描后按系列展示当前资源库在该目录中的命中比例，并支持批量传输缺失书籍。
+                            {t('home.external.description')}
                         </p>
                     </div>
                     <div className="text-gray-500 group-hover:text-white transition-colors">
@@ -682,7 +684,7 @@ export default function Home() {
                                     onChange={(event) => setExternalIgnoreExtension(event.target.checked)}
                                     className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-komgaPrimary focus:ring-komgaPrimary"
                                 />
-                                <span>匹配时忽略外部资源库文件扩展名</span>
+                                <span>{t('home.external.ignoreExtension')}</span>
                             </label>
                             <div className="mt-4 flex flex-wrap items-center gap-3">
                                 <button
@@ -690,14 +692,14 @@ export default function Home() {
                                     disabled={startingExternalScan || !externalPath.trim()}
                                     className="rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2 text-sm font-medium text-komgaPrimary hover:bg-komgaPrimary/20 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
-                                    {startingExternalScan ? '正在启动扫描...' : '扫描外部资源库'}
+                                    {startingExternalScan ? t('home.external.startingScan') : t('home.external.scanAction')}
                                 </button>
                                 {externalSession && (
                                     <button
                                         onClick={clearExternalSession}
                                         className="rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm font-medium text-gray-300 hover:border-gray-600 hover:text-white"
                                     >
-                                        清除当前会话
+                                        {t('home.external.clearSession')}
                                     </button>
                                 )}
                             </div>
@@ -714,24 +716,24 @@ export default function Home() {
                                         <HardDrive className="w-4 h-4 text-red-400" />
                                     )}
                                     <span className="font-medium text-white">
-                                        {externalSession.status === 'scanning' ? '正在扫描外部资源库' : externalSession.status === 'ready' ? '外部资源库已就绪' : '外部资源库扫描失败'}
+                                        {externalSession.status === 'scanning' ? t('home.external.statusScanning') : externalSession.status === 'ready' ? t('home.external.statusReady') : t('home.external.statusFailed')}
                                     </span>
                                 </div>
                                 <p className="mt-2 text-xs text-gray-400 break-all">{externalSession.external_path}</p>
                                 <p className="mt-2 text-xs text-gray-500">
-                                    匹配规则：{externalSession.ignore_extension ? '忽略扩展名' : '要求扩展名一致'}
+                                    {t('home.external.matchRule', { rule: externalSession.ignore_extension ? t('home.external.ignoreExtensionShort') : t('home.external.keepExtensionShort') })}
                                 </p>
                                 <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
                                     <div>
-                                        <p className="text-gray-500">已扫描</p>
+                                        <p className="text-gray-500">{t('home.external.scanned')}</p>
                                         <p className="mt-1 text-white font-semibold">{externalSession.scanned_files}</p>
                                     </div>
                                     <div>
-                                        <p className="text-gray-500">已命中</p>
+                                        <p className="text-gray-500">{t('home.external.matched')}</p>
                                         <p className="mt-1 text-white font-semibold">{externalSession.matched_books}/{externalSession.total_books}</p>
                                     </div>
                                     <div>
-                                        <p className="text-gray-500">未识别</p>
+                                        <p className="text-gray-500">{t('home.external.unmatched')}</p>
                                         <p className="mt-1 text-white font-semibold">{externalSession.unmatched_files}</p>
                                     </div>
                                 </div>
@@ -781,22 +783,22 @@ export default function Home() {
                 <div className="mb-6 rounded-2xl border border-gray-800 bg-gray-950/80 p-4">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                         <div>
-                            <h4 className="text-sm font-semibold text-white">当前页外部存在情况</h4>
+                            <h4 className="text-sm font-semibold text-white">{t('home.external.currentPageTitle')}</h4>
                             <p className="mt-1 text-xs text-gray-400">
-                                直接显示每个系列在当前外部资源库中的命中情况。绿色表示已完整存在，黄色表示部分存在，灰色表示尚未同步。
+                                {t('home.external.currentPageDescription')}
                             </p>
                         </div>
                         <div className="grid grid-cols-3 gap-3 text-xs sm:text-sm">
                             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
-                                <p className="text-emerald-300">已完整存在</p>
+                                <p className="text-emerald-300">{t('home.external.complete')}</p>
                                 <p className="mt-1 text-xl font-semibold text-white">{externalVisibilitySummary.complete}</p>
                             </div>
                             <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
-                                <p className="text-amber-300">部分存在</p>
+                                <p className="text-amber-300">{t('home.external.partial')}</p>
                                 <p className="mt-1 text-xl font-semibold text-white">{externalVisibilitySummary.partial}</p>
                             </div>
                             <div className="rounded-xl border border-gray-700 bg-gray-900 px-4 py-3">
-                                <p className="text-gray-300">尚未同步</p>
+                                <p className="text-gray-300">{t('home.external.missing')}</p>
                                 <p className="mt-1 text-xl font-semibold text-white">{externalVisibilitySummary.missing}</p>
                             </div>
                         </div>
@@ -807,10 +809,10 @@ export default function Home() {
             {loading && allSeries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-40">
                     <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-komgaPrimary mb-4"></div>
-                    <div className="text-gray-400 font-medium">正在拉取资源...</div>
+                    <div className="text-gray-400 font-medium">{t('common.loading')}</div>
                 </div>
             ) : allSeries.length === 0 ? (
-                <div className="text-center py-20 text-gray-500">无匹配的系列</div>
+                <div className="text-center py-20 text-gray-500">{t('home.noMatches')}</div>
             ) : (
                 <div className={`relative transition-opacity duration-300 ${loading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 sm:gap-6 min-h-[600px] items-start">
@@ -825,10 +827,10 @@ export default function Home() {
                                     : 'missing');
                             const externalPercent = externalTotal > 0 ? Math.min(100, Math.round((externalMatched / externalTotal) * 100)) : 0;
                             const externalStatusLabel = externalSyncStatus === 'complete'
-                                ? '外部已完整存在'
+                                ? t('home.external.cardComplete')
                                 : externalSyncStatus === 'partial'
-                                    ? '外部部分存在'
-                                    : '外部尚未同步';
+                                    ? t('home.external.cardPartial')
+                                    : t('home.external.cardMissing');
                             const externalStatusClass = externalSyncStatus === 'complete'
                                 ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
                                 : externalSyncStatus === 'partial'
@@ -874,7 +876,7 @@ export default function Home() {
                                                         onClick={(e) => handleRescanSeries(e, s.id)}
                                                         disabled={rescanningId === s.id}
                                                         className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-blue-400 hover:bg-blue-400/20 hover:border-blue-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed`}
-                                                        title="重新扫描该系列"
+                                                        title={t('home.seriesRescan')}
                                                     >
                                                         <RefreshCw className={`w-3.5 h-3.5 ${rescanningId === s.id ? 'animate-spin text-blue-400' : ''}`} />
                                                     </button>
@@ -893,9 +895,9 @@ export default function Home() {
                                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
                                             <div className="flex justify-between text-[11px] font-medium text-gray-300">
                                                 <span>
-                                                    {s.volume_count > 0 ? `${s.volume_count}卷 · ` : ''}{s.actual_book_count}话
+                                                    {s.volume_count > 0 ? t('home.seriesCountsWithVolumes', { volumes: s.volume_count, books: s.actual_book_count }) : t('home.seriesCountsBooksOnly', { books: s.actual_book_count })}
                                                 </span>
-                                                <span>{s.total_pages?.Valid ? s.total_pages.Float64 : 0} P</span>
+                                                <span>{formatNumber(s.total_pages?.Valid ? s.total_pages.Float64 : 0)} P</span>
                                             </div>
                                             {s.total_pages?.Valid && s.total_pages.Float64 > 0 && (
                                                 <div className="w-full h-1 bg-gray-700/60 rounded-full mt-1.5 overflow-hidden">
@@ -952,11 +954,11 @@ export default function Home() {
                     <div className="mt-12 mb-8 flex flex-col xl:flex-row items-center justify-between gap-6 border-t border-gray-800 pt-8">
                         <div className="flex items-center gap-4 text-sm">
                             <span className="text-gray-500">
-                                共 <span className="text-gray-300 font-bold">{totalSeries}</span> 个系列
+                                {t('home.pagination.totalSeries', { count: totalSeries })}
                             </span>
                             <div className="h-4 w-px bg-gray-800"></div>
                             <div className="flex items-center gap-2 text-gray-400">
-                                每页显示
+                                {t('home.pagination.pageSize')}
                                 <select
                                     value={pageSize}
                                     onChange={(e) => {
@@ -972,7 +974,7 @@ export default function Home() {
                             </div>
                             <div className="h-4 w-px bg-gray-800"></div>
                             <span className="text-gray-500">
-                                第 <span className="text-komgaPrimary font-bold">{page}</span> / {Math.ceil(totalSeries / pageSize) || 1} 页
+                                {t('home.pagination.currentPage', { page, total: Math.ceil(totalSeries / pageSize) || 1 })}
                             </span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -981,14 +983,14 @@ export default function Home() {
                                 disabled={page === 1}
                                 className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
-                                首页
+                                {t('home.pagination.first')}
                             </button>
                             <button
                                 onClick={() => setPage(p => Math.max(1, p - 1))}
                                 disabled={page === 1}
                                 className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
-                                上一页
+                                {t('home.pagination.prev')}
                             </button>
 
                             <div className="flex items-center gap-1 mx-1 sm:mx-2 overflow-x-auto">
@@ -1023,18 +1025,18 @@ export default function Home() {
                                 disabled={page >= (Math.ceil(totalSeries / pageSize) || 1)}
                                 className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
-                                下一页
+                                {t('home.pagination.next')}
                             </button>
                             <button
                                 onClick={() => setPage(Math.ceil(totalSeries / pageSize) || 1)}
                                 disabled={page >= (Math.ceil(totalSeries / pageSize) || 1)}
                                 className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
-                                末页
+                                {t('home.pagination.last')}
                             </button>
                             
                             <div className="hidden sm:flex items-center gap-2 ml-2 pl-4 border-l border-gray-800 text-sm text-gray-500">
-                                跳至
+                                {t('home.pagination.jumpTo')}
                                 <input
                                     type="number"
                                     min={1}
@@ -1051,7 +1053,7 @@ export default function Home() {
                                         }
                                     }}
                                 />
-                                页
+                                {t('home.pagination.page')}
                             </div>
                         </div>
                     </div>
@@ -1061,34 +1063,34 @@ export default function Home() {
                     {isSelectionMode && selectedSeries.length > 0 && (
                         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-max max-w-[95vw] bg-gray-900 border border-gray-700 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] rounded-2xl px-4 sm:px-6 py-4 flex flex-wrap justify-center items-center gap-4 sm:gap-6 z-50 animate-in slide-in-from-bottom-5">
                             <span className="text-white font-medium text-sm whitespace-nowrap shrink-0">
-                                已选择 {selectedSeries.length} 项
-                                {currentPageSelectedCount > 0 ? ` · 当前页 ${currentPageSelectedCount} 项` : ''}
+                                {t('home.selection.selectedCount', { count: selectedSeries.length })}
+                                {currentPageSelectedCount > 0 ? ` · ${t('home.selection.currentPageCount', { count: currentPageSelectedCount })}` : ''}
                             </span>
                             <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
                                 <button
                                     onClick={() => handleBulkFavoriteUpdate(true)}
                                     className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
                                 >
-                                    <Heart className="w-4 h-4 fill-current" /> 标记收藏
+                                    <Heart className="w-4 h-4 fill-current" /> {t('home.selection.markFavorite')}
                                 </button>
                                 <button
                                     onClick={() => handleBulkFavoriteUpdate(false)}
                                     className="bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
                                 >
-                                    移除收藏
+                                    {t('home.selection.removeFavorite')}
                                 </button>
                                 <button
                                     onClick={() => setShowCollectionModal(true)}
                                     className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
                                 >
-                                    <FolderHeart className="w-4 h-4" /> 加入合集
+                                    <FolderHeart className="w-4 h-4" /> {t('home.selection.addToCollection')}
                                 </button>
                                 <button
                                     onClick={handleTransferSelectedSeries}
                                     disabled={startingTransfer || !externalSession || externalSession.status !== 'ready'}
                                     className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
-                                    <Send className="w-4 h-4" /> {startingTransfer ? '正在提交...' : '传输到外部资源库'}
+                                    <Send className="w-4 h-4" /> {startingTransfer ? t('home.transfer.submitting') : t('home.transfer.action')}
                                 </button>
                             </div>
                         </div>
@@ -1102,7 +1104,7 @@ export default function Home() {
                     seriesIds={selectedSeries}
                     onClose={() => setShowCollectionModal(false)}
                     onSuccess={() => {
-                        showToast(`成功将 ${selectedSeries.length} 个系列加入合集`, 'success');
+                        showToast(t('home.selection.addToCollectionSuccess', { count: selectedSeries.length }), 'success');
                         setSelectedSeries([]);
                         setIsSelectionMode(false);
                     }}
@@ -1116,8 +1118,8 @@ export default function Home() {
                     setShowTransferConfirmModal(false);
                     setPendingTransferSummary(null);
                 }}
-                title="传输到外部资源库"
-                description="仅复制当前选中系列中外部资源库尚未存在的书籍，已存在文件会自动跳过。"
+                title={t('home.transfer.title')}
+                description={t('home.transfer.description')}
                 icon={<PackageCheck className="h-5 w-5" />}
                 size="compact"
                 closeOnBackdrop={!startingTransfer}
@@ -1132,7 +1134,7 @@ export default function Home() {
                             className={modalGhostButtonClass}
                             disabled={startingTransfer}
                         >
-                            取消
+                            {t('modal.cancel')}
                         </button>
                         <button
                             onClick={submitTransferSelectedSeries}
@@ -1142,12 +1144,12 @@ export default function Home() {
                             {startingTransfer ? (
                                 <>
                                     <Loader2 className="h-4 w-4 animate-spin" />
-                                    正在提交...
+                                    {t('home.transfer.submitting')}
                                 </>
                             ) : (
                                 <>
                                     <Send className="h-4 w-4" />
-                                    确认传输
+                                    {t('home.transfer.confirm')}
                                 </>
                             )}
                         </button>
@@ -1157,28 +1159,28 @@ export default function Home() {
                 <div className="space-y-4">
                     <div className="rounded-2xl border border-gray-800 bg-gray-950/60 p-4">
                         <p className="text-sm text-gray-300 leading-6">
-                            将从当前资源库中传输 <span className="font-semibold text-white">{selectedSeries.length}</span> 个系列到外部资源库。
+                            {t('home.transfer.summary', { count: selectedSeries.length })}
                         </p>
                         <p className="mt-2 break-all text-xs text-gray-500">{externalSession?.external_path}</p>
                     </div>
 
                     <div className="grid grid-cols-3 gap-3 text-sm">
                         <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4">
-                            <p className="text-blue-300">目标书籍</p>
+                            <p className="text-blue-300">{t('home.transfer.targetBooks')}</p>
                             <p className="mt-2 text-2xl font-semibold text-white">{pendingTransferSummary?.total ?? 0}</p>
                         </div>
                         <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
-                            <p className="text-emerald-300">已存在</p>
+                            <p className="text-emerald-300">{t('home.transfer.alreadyExists')}</p>
                             <p className="mt-2 text-2xl font-semibold text-white">{pendingTransferSummary?.matched ?? 0}</p>
                         </div>
                         <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
-                            <p className="text-amber-300">待复制</p>
+                            <p className="text-amber-300">{t('home.transfer.toCopy')}</p>
                             <p className="mt-2 text-2xl font-semibold text-white">{pendingTransferSummary?.missing ?? 0}</p>
                         </div>
                     </div>
 
                     <div className="rounded-2xl border border-gray-800 bg-black/20 px-4 py-3 text-xs leading-6 text-gray-400">
-                        复制时会保持主资源库内的相对路径结构，不会覆盖外部目录中已经存在的同名文件。
+                        {t('home.transfer.hint')}
                     </div>
                 </div>
             </ModalShell>

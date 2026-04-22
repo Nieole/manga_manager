@@ -125,7 +125,7 @@ func (o *OpenAILegacyProvider) sendRequest(ctx context.Context, prompt string, r
 }
 
 func (o *OpenAILegacyProvider) FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error) {
-	prompt := BuildFetchMetadataPrompt(title)
+	prompt := BuildFetchMetadataPrompt(ctx, title)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {
@@ -138,6 +138,7 @@ func (o *OpenAILegacyProvider) FetchSeriesMetadata(ctx context.Context, title st
 	if err := json.Unmarshal([]byte(content), &meta); err != nil {
 		return nil, fmt.Errorf("openai-legacy: failed to parse JSON output: %w\nOutput: %s", err, content)
 	}
+	meta.Status = NormalizeStatusCode(meta.Status)
 
 	return &meta, nil
 }
@@ -147,7 +148,7 @@ func (o *OpenAILegacyProvider) SearchMetadata(ctx context.Context, title string,
 }
 
 func (o *OpenAILegacyProvider) GenerateRecommendations(ctx context.Context, userTags []string, candidates []CandidateSeries, limit int) ([]AIRecommendation, error) {
-	prompt := BuildRecommendationsPrompt(userTags, candidates, limit)
+	prompt := BuildRecommendationsPrompt(ctx, userTags, candidates, limit)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {
@@ -167,7 +168,7 @@ func (o *OpenAILegacyProvider) GenerateRecommendations(ctx context.Context, user
 }
 
 func (o *OpenAILegacyProvider) GenerateGrouping(ctx context.Context, seriesList []CandidateSeries) ([]AIGroupCollection, error) {
-	prompt := BuildGroupingPrompt(seriesList)
+	prompt := BuildGroupingPrompt(ctx, seriesList)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {

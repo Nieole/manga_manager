@@ -98,7 +98,7 @@ func (o *OllamaProvider) sendRequest(ctx context.Context, prompt string, require
 }
 
 func (o *OllamaProvider) FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error) {
-	prompt := BuildFetchMetadataPrompt(title)
+	prompt := BuildFetchMetadataPrompt(ctx, title)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {
@@ -120,7 +120,7 @@ func (o *OllamaProvider) FetchSeriesMetadata(ctx context.Context, title string) 
 		Title:     result.Title,
 		Summary:   result.Summary,
 		Publisher: result.Publisher,
-		Status:    result.Status,
+		Status:    NormalizeStatusCode(result.Status),
 		Tags:      result.Tags,
 		Rating:    result.Rating,
 	}, nil
@@ -143,7 +143,7 @@ func (o *OllamaProvider) GenerateRecommendations(ctx context.Context, userTags [
 		return nil, nil
 	}
 
-	prompt := BuildRecommendationsPrompt(userTags, candidates, limit)
+	prompt := BuildRecommendationsPrompt(ctx, userTags, candidates, limit)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {
@@ -164,7 +164,7 @@ func (o *OllamaProvider) GenerateGrouping(ctx context.Context, seriesList []Cand
 		return nil, nil
 	}
 
-	prompt := BuildGroupingPrompt(seriesList)
+	prompt := BuildGroupingPrompt(ctx, seriesList)
 
 	content, err := o.sendRequest(ctx, prompt, true)
 	if err != nil {

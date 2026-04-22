@@ -1,5 +1,6 @@
 import { BookImage, FolderOpen, CheckCircle2 } from 'lucide-react';
 import type { Book, NullString } from './types';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 interface VolumeItem {
   name: string;
@@ -41,8 +42,9 @@ export function SeriesContentSection({
   onQuickMarkVolumeRead,
   renderBookCard,
 }: SeriesContentSectionProps) {
+  const { t } = useI18n();
   if (loading) {
-    return <div className="text-center py-20 text-gray-500 animate-pulse">正在提取书籍关系元数据...</div>;
+    return <div className="text-center py-20 text-gray-500 animate-pulse">{t('series.content.loading')}</div>;
   }
 
   if (selectedVolume) {
@@ -54,7 +56,7 @@ export function SeriesContentSection({
       {volumes.length > 0 && (
         <div>
           <h3 className="text-lg font-semibold text-gray-300 mb-4 flex items-center">
-            <FolderOpen className="w-5 h-5 mr-2 text-komgaPrimary" /> 卷列表
+            <FolderOpen className="w-5 h-5 mr-2 text-komgaPrimary" /> {t('series.content.volumes')}
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
             {volumes.map((volume) => {
@@ -96,7 +98,7 @@ export function SeriesContentSection({
                       <button
                         onClick={(e) => onQuickMarkVolumeRead(e, volume.name, !(volume.read_pages >= volume.total_pages))}
                         className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
-                        title={volume.read_pages >= volume.total_pages ? '将全卷标记为未读' : '将全卷标记为已读'}
+                        title={volume.read_pages >= volume.total_pages ? t('series.content.markVolumeUnread') : t('series.content.markVolumeRead')}
                       >
                         <CheckCircle2 className={`w-4 h-4 ${volume.read_pages >= volume.total_pages ? 'text-green-400 fill-green-400/20' : ''}`} />
                       </button>
@@ -104,8 +106,8 @@ export function SeriesContentSection({
 
                     <div className="absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/30 to-transparent flex items-end p-3 z-10 pointer-events-none">
                       <div className="w-full flex justify-between items-center text-xs font-semibold text-gray-300">
-                        <span>{volume.books.length} 话</span>
-                        <span>{volume.total_pages} 页</span>
+                        <span>{t('series.content.bookCount', { count: volume.books.length })}</span>
+                        <span>{t('series.content.pageCount', { count: volume.total_pages })}</span>
                       </div>
                     </div>
 
@@ -138,13 +140,13 @@ export function SeriesContentSection({
       {standaloneBooks.length > 0 && (
         <div>
           <h3 className="text-lg font-semibold text-gray-300 mb-4 flex items-center">
-            <BookImage className="w-5 h-5 mr-2 text-komgaPrimary" /> 单行本册子
+            <BookImage className="w-5 h-5 mr-2 text-komgaPrimary" /> {t('series.content.standalone')}
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">{standaloneBooks.map(renderBookCard)}</div>
         </div>
       )}
 
-      {books.length === 0 && <div className="text-center py-20 text-gray-500">此系列尚未包含任何资源</div>}
+      {books.length === 0 && <div className="text-center py-20 text-gray-500">{t('series.content.empty')}</div>}
     </div>
   );
 }

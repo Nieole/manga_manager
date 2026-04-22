@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { Search, ChevronDown, ChevronUp, Filter } from 'lucide-react';
 import type { NamedOption } from './types';
+import { useI18n } from '../../i18n/LocaleProvider';
+import { normalizeSeriesStatus } from '../../i18n/status';
 
 interface HomeFiltersProps {
   allStatuses: string[];
@@ -32,6 +34,7 @@ export function HomeFilters({
   onAuthorChange,
   onLetterChange,
 }: HomeFiltersProps) {
+  const { t } = useI18n();
   
   const [tagSearch, setTagSearch] = useState('');
   const [authorSearch, setAuthorSearch] = useState('');
@@ -54,7 +57,8 @@ export function HomeFilters({
   }, [processedAuthors, authorSearch]);
 
   const renderFilterRow = (
-    label: string, 
+    label: string,
+    translateItem: ((item: string) => string) | null,
     filteredList: string[],
     activeValue: string | null, 
     onChange: (val: string | null) => void,
@@ -102,7 +106,7 @@ export function HomeFilters({
                   <input
                     type="text"
                     className="select-text bg-white/5 border border-white/10 text-gray-100 text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block w-full pl-9 p-2 transition-colors placeholder:text-gray-500 outline-none backdrop-blur-sm"
-                    placeholder={`在列表中搜索 ${label}...`}
+                    placeholder={t('home.filters.searchInList', { label })}
                     value={searchValue}
                     onChange={(e) => setSearchValue(e.target.value)}
                     onMouseDown={(e) => e.stopPropagation()}
@@ -115,7 +119,7 @@ export function HomeFilters({
                 onClick={() => onChange(null)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all border ${activeValue === null ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-komgaSurface border-white/5 text-gray-400 hover:border-white/20 hover:text-white'}`}
               >
-                全部
+                {t('home.filters.all')}
               </button>
 
               {displayList.map((item) => (
@@ -125,17 +129,17 @@ export function HomeFilters({
                   className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all border max-w-[200px] truncate ${activeValue === item ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md' : 'bg-komgaSurface border-white/5 text-gray-200 hover:border-white/20 hover:text-white'}`}
                   title={item}
                 >
-                  {item}
+                  {translateItem ? translateItem(item) : item}
                 </button>
               ))}
 
               {filteredList.length === 0 && expanded && (
-                 <span className="text-sm text-gray-500 ml-2">没有匹配结果</span>
+                 <span className="text-sm text-gray-500 ml-2">{t('home.filters.noMatch')}</span>
               )}
 
               {hasMore && expanded && (
                 <span className="text-xs text-gray-500 ml-2 italic py-1.5 flex items-center">
-                  ...+{omitCount} 项 (请使用搜索)
+                  {t('home.filters.moreHidden', { count: omitCount })}
                 </span>
               )}
 
@@ -144,7 +148,9 @@ export function HomeFilters({
                   onClick={onToggleExpand}
                   className="flex items-center justify-center px-3 py-1 text-xs font-medium text-komgaPrimary hover:text-komgaPrimaryHover bg-transparent hover:bg-komgaPrimary/10 rounded-lg transition-colors ml-1 h-8"
                 >
-                  {expanded ? <><ChevronUp className="w-3.5 h-3.5 mr-1" /> 收起</> : <><ChevronDown className="w-3.5 h-3.5 mr-1" /> 展开发现剩余 {filteredList.length - displayList.length}</>}
+                  {expanded
+                    ? <><ChevronUp className="w-3.5 h-3.5 mr-1" /> {t('home.filters.collapse')}</>
+                    : <><ChevronDown className="w-3.5 h-3.5 mr-1" /> {t('home.filters.expandMore', { count: filteredList.length - displayList.length })}</>}
                 </button>
               )}
             </div>
@@ -163,11 +169,11 @@ export function HomeFilters({
       >
          <div className="flex items-center gap-2 text-gray-200 group-hover:text-white transition-colors">
             <Filter className="w-5 h-5 text-komgaPrimary" />
-            <h3 className="text-base font-semibold tracking-wide">高级分类筛选</h3>
+            <h3 className="text-base font-semibold tracking-wide">{t('home.filters.title')}</h3>
             {(activeStatus || activeTag || activeAuthor || activeLetter) && (
               <span className="ml-2 px-2 py-0.5 rounded-full bg-komgaPrimary/20 text-komgaPrimary text-[11px] font-bold border border-komgaPrimary/30 flex items-center shadow-lg shadow-komgaPrimary/10">
                 <div className="w-1.5 h-1.5 rounded-full bg-komgaPrimary mr-1 animate-pulse"></div>
-                过滤器生效中
+                {t('home.filters.active')}
               </span>
             )}
          </div>
@@ -178,9 +184,9 @@ export function HomeFilters({
 
       <div className={`transition-all duration-300 ease-in-out origin-top ${isFiltersExpanded ? 'opacity-100 max-h-[2000px] border-t border-white/5' : 'opacity-0 max-h-0'}`}>
         <div className="px-5 sm:px-8 py-2">
-          {/* 状态分类 */}
           {renderFilterRow(
-            '连载状态', 
+            t('home.filters.status'),
+            (item) => t(`status.${normalizeSeriesStatus(item)}`),
             allStatuses, 
             activeStatus, 
             onStatusChange, 
@@ -191,9 +197,9 @@ export function HomeFilters({
             false
           )}
 
-          {/* 标签分类 */}
           {allTags.length > 0 && renderFilterRow(
-            '内容标签', 
+            t('home.filters.tags'),
+            null,
             filteredTags, 
             activeTag, 
             onTagChange, 
@@ -207,9 +213,9 @@ export function HomeFilters({
             allTags.length > COLLAPSED_VISIBLE_COUNT
           )}
 
-          {/* 作者分类 */}
           {allAuthors.length > 0 && renderFilterRow(
-            '参与人员', 
+            t('home.filters.authors'),
+            null,
             filteredAuthors, 
             activeAuthor, 
             onAuthorChange, 
@@ -223,17 +229,16 @@ export function HomeFilters({
             allAuthors.length > COLLAPSED_VISIBLE_COUNT
           )}
           
-          {/* 字母分类 */}
           <div className="flex flex-col lg:flex-row gap-3 py-5 border-t border-gray-800/30">
             <div className="flex items-center lg:w-32 shrink-0 h-9">
-              <span className="text-gray-400 font-medium text-sm">按字母筛选</span>
+              <span className="text-gray-400 font-medium text-sm">{t('home.filters.letter')}</span>
             </div>
             <div className="flex-1 flex flex-wrap gap-1.5 items-center">
                 <button
                   onClick={() => onLetterChange(null)}
                   className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${activeLetter === null ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-sm' : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'}`}
                 >
-                  全部
+                  {t('home.filters.all')}
                 </button>
                 {'#ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((letter) => (
                   <button

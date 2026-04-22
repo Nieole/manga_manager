@@ -2,6 +2,7 @@ import { AlertTriangle, ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { ModalShell } from './ModalShell';
 import { modalGhostButtonClass, modalPrimaryButtonClass } from './modalStyles';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 type ConfirmTone = 'primary' | 'warning' | 'danger';
 
@@ -39,14 +40,15 @@ export function ConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = '确认',
-  cancelLabel = '取消',
+  confirmLabel,
+  cancelLabel,
   tone = 'primary',
   loading = false,
   onClose,
   onConfirm,
   children,
 }: ConfirmDialogProps) {
+  const { t } = useI18n();
   const toneConfig = toneMap[tone];
 
   return (
@@ -61,10 +63,10 @@ export function ConfirmDialog({
       footer={
         <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
           <button onClick={onClose} className={modalGhostButtonClass} disabled={loading}>
-            {cancelLabel}
+            {cancelLabel || t('modal.cancel')}
           </button>
           <button onClick={onConfirm} className={toneConfig.buttonClass} disabled={loading}>
-            {confirmLabel}
+            {confirmLabel || t('modal.confirm')}
           </button>
         </div>
       }

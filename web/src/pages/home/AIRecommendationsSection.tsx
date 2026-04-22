@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ImageIcon } from 'lucide-react';
 import type { AIRecommendation } from './types';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 interface AIRecommendationsSectionProps {
   aiRecommendations: AIRecommendation[];
@@ -15,16 +16,18 @@ export function AIRecommendationsSection({
   hasFetchedAI,
   onRefresh,
 }: AIRecommendationsSectionProps) {
+  const { t } = useI18n();
+
   return (
     <div className="mb-10">
       <div className="flex items-center gap-3 mb-4 pl-1 border-l-4 border-komgaPrimary">
-        <h3 className="text-xl font-bold text-white">AI 每日导读</h3>
+        <h3 className="text-xl font-bold text-white">{t('home.ai.title')}</h3>
         <button
           onClick={onRefresh}
           disabled={loadingAI}
           className="text-xs px-2 py-1 rounded bg-komgaPrimary/20 text-komgaPrimary hover:bg-komgaPrimary/30 transition-colors flex items-center gap-1 border border-komgaPrimary/30 disabled:opacity-50"
         >
-          {loadingAI ? 'AI 思考中...' : hasFetchedAI ? '换一批' : '生成专属推荐'}
+          {loadingAI ? t('home.ai.loadingButton') : hasFetchedAI ? t('home.ai.refresh') : t('home.ai.generate')}
         </button>
       </div>
 
@@ -32,7 +35,7 @@ export function AIRecommendationsSection({
         <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-8 flex flex-col items-center justify-center">
           <div className="animate-pulse flex flex-col items-center">
             <div className="w-10 h-10 border-4 border-komgaPrimary border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-gray-400 text-sm">正在深度推演你的阅读偏好...</p>
+            <p className="text-gray-400 text-sm">{t('home.ai.loading')}</p>
           </div>
         </div>
       ) : aiRecommendations.length > 0 ? (
@@ -70,7 +73,7 @@ export function AIRecommendationsSection({
         </div>
       ) : hasFetchedAI ? (
         <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-6 text-center text-gray-500 text-sm">
-          暂时没有找到合适的推荐
+          {t('home.ai.empty')}
         </div>
       ) : null}
     </div>

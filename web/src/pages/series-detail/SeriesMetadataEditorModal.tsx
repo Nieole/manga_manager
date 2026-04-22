@@ -2,6 +2,8 @@ import { Lock, Sparkles, Unlock, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Author, MetaTag, Series } from './types';
 import { ModalShell } from '../../components/ui/ModalShell';
+import { useI18n } from '../../i18n/LocaleProvider';
+import { normalizeSeriesStatus } from '../../i18n/status';
 import {
   modalGhostButtonClass,
   modalInputClass,
@@ -40,6 +42,7 @@ export function SeriesMetadataEditorModal({
   onToggleLock,
   onFormChange,
 }: SeriesMetadataEditorModalProps) {
+  const { t } = useI18n();
   const [tagInputValue, setTagInputValue] = useState('');
   const [authorInputName, setAuthorInputName] = useState('');
   const [authorInputRole, setAuthorInputRole] = useState('Writer');
@@ -86,33 +89,35 @@ export function SeriesMetadataEditorModal({
     );
   };
 
+  const statusOptions = ['completed', 'ongoing', 'cancelled', 'hiatus'] as const;
+
   return (
     <ModalShell
       open={open}
       onClose={onClose}
-      title="编辑系列元数据"
-      description="优先处理你确认过的字段，再通过锁定控制后续抓取是否允许覆盖。"
+      title={t('series.editor.title')}
+      description={t('series.editor.description')}
       icon={<Sparkles className="h-5 w-5" />}
       size="standard"
       footer={
         <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
           <button onClick={onClose} className={modalGhostButtonClass}>
-            取消
+            {t('modal.cancel')}
           </button>
           <button onClick={onSave} className={modalPrimaryButtonClass}>
-            保存更改
+            {t('series.editor.save')}
           </button>
         </div>
       }
     >
         <div className="space-y-6">
           {[
-            { id: 'title', label: '系列标题 (Title)', type: 'text', val: editForm.title?.String || '' },
-            { id: 'summary', label: '简介 (Summary)', type: 'textarea', val: editForm.summary?.String || '' },
-            { id: 'publisher', label: '出版商 (Publisher)', type: 'text', val: editForm.publisher?.String || '' },
-            { id: 'status', label: '连载状态 (Status)', type: 'select', val: editForm.status?.String || '', options: ['已完结', '连载中', '已放弃', '有生之年'] },
-            { id: 'language', label: '语言 (Language ISO)', type: 'text', val: editForm.language?.String || '' },
-            { id: 'rating', label: '评分 (Rating 0-10)', type: 'number', val: editForm.rating?.Float64 || 0, step: '0.1', max: 10 },
+            { id: 'title', label: t('series.editor.field.title'), type: 'text', val: editForm.title?.String || '' },
+            { id: 'summary', label: t('series.editor.field.summary'), type: 'textarea', val: editForm.summary?.String || '' },
+            { id: 'publisher', label: t('series.editor.field.publisher'), type: 'text', val: editForm.publisher?.String || '' },
+            { id: 'status', label: t('series.editor.field.status'), type: 'select', val: normalizeSeriesStatus(editForm.status?.String), options: statusOptions },
+            { id: 'language', label: t('series.editor.field.language'), type: 'text', val: editForm.language?.String || '' },
+            { id: 'rating', label: t('series.editor.field.rating'), type: 'number', val: editForm.rating?.Float64 || 0, step: '0.1', max: 10 },
           ].map((field) => (
             <div key={field.id} className={`${modalSectionClass} space-y-3`}>
               <div className="flex items-center justify-between">
@@ -120,15 +125,15 @@ export function SeriesMetadataEditorModal({
                 <button
                   onClick={() => onToggleLock(field.id)}
                   className={`flex items-center rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${lockedFields.has(field.id) ? 'border-orange-500/30 bg-orange-500/20 text-orange-300' : 'border-gray-700 bg-gray-900/60 text-gray-400 hover:text-gray-200'}`}
-                  title={lockedFields.has(field.id) ? '该字段已被锁定，扫描时不会被自动覆盖' : '点击锁定该字段，防止被扫描器覆盖'}
+                  title={lockedFields.has(field.id) ? t('series.editor.lockedTitle') : t('series.editor.unlockedTitle')}
                 >
                   {lockedFields.has(field.id) ? (
                     <>
-                      <Lock className="w-3 h-3 mr-1" /> 已锁定防覆盖
+                      <Lock className="w-3 h-3 mr-1" /> {t('series.editor.locked')}
                     </>
                   ) : (
                     <>
-                      <Unlock className="w-3 h-3 mr-1" /> 未锁定
+                      <Unlock className="w-3 h-3 mr-1" /> {t('series.editor.unlocked')}
                     </>
                   )}
                 </button>
@@ -145,10 +150,10 @@ export function SeriesMetadataEditorModal({
                   onChange={(e) => onFormChange(field.id, e.target.value)}
                   className={modalSelectClass}
                 >
-                  <option value="">- 无状态 -</option>
+                  <option value="unknown">{t('series.editor.noStatus')}</option>
                   {field.options?.map((option) => (
                     <option key={option} value={option}>
-                      {option}
+                      {t(`status.${option}`)}
                     </option>
                   ))}
                 </select>
@@ -167,19 +172,19 @@ export function SeriesMetadataEditorModal({
 
           <div className={`${modalSectionClass} space-y-3`}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-gray-300">标签 (Tags)</label>
+              <label className="text-sm font-medium text-gray-300">{t('series.editor.field.tags')}</label>
               <button
                 onClick={() => onToggleLock('tags')}
                 className={`flex items-center rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${lockedFields.has('tags') ? 'border-orange-500/30 bg-orange-500/20 text-orange-300' : 'border-gray-700 bg-gray-900/60 text-gray-400 hover:text-gray-200'}`}
-                title={lockedFields.has('tags') ? '已锁定该字段防覆盖' : '点击锁定防覆盖'}
+                title={lockedFields.has('tags') ? t('series.editor.lockedTitle') : t('series.editor.unlockedTitle')}
               >
                 {lockedFields.has('tags') ? (
                   <>
-                    <Lock className="w-3 h-3 mr-1" /> 已锁定防覆盖
+                    <Lock className="w-3 h-3 mr-1" /> {t('series.editor.locked')}
                   </>
                 ) : (
                   <>
-                    <Unlock className="w-3 h-3 mr-1" /> 未锁定
+                    <Unlock className="w-3 h-3 mr-1" /> {t('series.editor.unlocked')}
                   </>
                 )}
               </button>
@@ -206,7 +211,7 @@ export function SeriesMetadataEditorModal({
                       addTag(tagInputValue);
                     }
                   }}
-                  placeholder="输入标签按回车添加..."
+                  placeholder={t('series.editor.tagPlaceholder')}
                   className="w-full bg-transparent border-none p-1 text-sm outline-none placeholder-gray-500"
                 />
                 {tagInputValue && tagSuggestions.length > 0 && (
@@ -228,19 +233,19 @@ export function SeriesMetadataEditorModal({
 
           <div className={`${modalSectionClass} space-y-3`}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-gray-300">编绘者 (Authors)</label>
+              <label className="text-sm font-medium text-gray-300">{t('series.editor.field.authors')}</label>
               <button
                 onClick={() => onToggleLock('authors')}
                 className={`flex items-center rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${lockedFields.has('authors') ? 'border-orange-500/30 bg-orange-500/20 text-orange-300' : 'border-gray-700 bg-gray-900/60 text-gray-400 hover:text-gray-200'}`}
-                title={lockedFields.has('authors') ? '已锁定该字段防覆盖' : '点击锁定防覆盖'}
+                title={lockedFields.has('authors') ? t('series.editor.lockedTitle') : t('series.editor.unlockedTitle')}
               >
                 {lockedFields.has('authors') ? (
                   <>
-                    <Lock className="w-3 h-3 mr-1" /> 已锁定防覆盖
+                    <Lock className="w-3 h-3 mr-1" /> {t('series.editor.locked')}
                   </>
                 ) : (
                   <>
-                    <Unlock className="w-3 h-3 mr-1" /> 未锁定
+                    <Unlock className="w-3 h-3 mr-1" /> {t('series.editor.unlocked')}
                   </>
                 )}
               </button>
@@ -267,7 +272,7 @@ export function SeriesMetadataEditorModal({
                       addAuthor(authorInputName, authorInputRole);
                     }
                   }}
-                  placeholder="输入作者并按回车..."
+                  placeholder={t('series.editor.authorPlaceholder')}
                   className="flex-1 rounded-lg border border-gray-800 bg-black/20 px-2.5 py-2 text-sm outline-none placeholder-gray-500"
                 />
                 <select
@@ -302,7 +307,7 @@ export function SeriesMetadataEditorModal({
           </div>
 
           <div className={`${modalSectionClass} space-y-3`}>
-            <label className="text-sm font-medium text-gray-300">外部链接 (External Links)</label>
+            <label className="text-sm font-medium text-gray-300">{t('series.editor.field.links')}</label>
             <div className="space-y-3">
               {(editForm.linksInput || []).map((link, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
@@ -346,7 +351,7 @@ export function SeriesMetadataEditorModal({
                 }}
                 className="block w-full rounded-xl border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-2 text-center text-xs font-medium text-komgaPrimary transition-colors hover:bg-komgaPrimary/20"
               >
-                + 添加外部链接
+                {t('series.editor.addLink')}
               </button>
             </div>
           </div>

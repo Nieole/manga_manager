@@ -1,5 +1,6 @@
 import { FolderOpen } from 'lucide-react';
 import type { BrowseDirEntry, BrowseDrive } from './types';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 interface DirectoryPickerProps {
   value: string;
@@ -30,16 +31,18 @@ export function DirectoryPicker({
   onChooseCurrent,
   onNavigate,
 }: DirectoryPickerProps) {
+  const { t } = useI18n();
+
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-400 mb-1">路径</label>
+      <label className="block text-sm font-medium text-gray-400 mb-1">{t('directoryPicker.path')}</label>
       <div className="flex gap-2">
         <input
           type="text"
           required
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="点击「浏览」选择文件夹"
+          placeholder={t('directoryPicker.placeholder')}
           className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
         />
         <button
@@ -48,7 +51,7 @@ export function DirectoryPicker({
           className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
         >
           <FolderOpen className="w-4 h-4 inline mr-1" />
-          浏览
+          {t('directoryPicker.browse')}
         </button>
       </div>
       {recentPaths.length > 0 && (
@@ -61,7 +64,7 @@ export function DirectoryPicker({
               className="rounded-full border border-gray-700 bg-gray-900 px-3 py-1 text-xs text-gray-400 hover:border-komgaPrimary/40 hover:text-white"
               title={path}
             >
-              最近使用: {path}
+              {t('directoryPicker.recent', { path })}
             </button>
           ))}
         </div>
@@ -78,14 +81,14 @@ export function DirectoryPicker({
                 onClick={onChooseCurrent}
                 className="px-2 py-1 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded text-xs transition-colors"
               >
-                选择此目录
+                {t('directoryPicker.chooseCurrent')}
               </button>
               <button
                 type="button"
                 onClick={onClose}
                 className="px-2 py-1 text-gray-400 hover:text-white transition-colors"
               >
-                关闭
+                {t('directoryPicker.close')}
               </button>
             </div>
           </div>
@@ -118,7 +121,7 @@ export function DirectoryPicker({
               </button>
             )}
             {browseDirs.length === 0 ? (
-              <div className="px-3 py-3 text-xs text-gray-500 text-center">此目录下无子文件夹</div>
+              <div className="px-3 py-3 text-xs text-gray-500 text-center">{t('directoryPicker.empty')}</div>
             ) : (
               browseDirs.map((dir) => (
                 <button

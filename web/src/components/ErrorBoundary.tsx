@@ -1,4 +1,5 @@
 import React from 'react';
+import { getClientLocale, translateInLocale } from '../i18n/LocaleProvider';
 
 interface ErrorBoundaryState {
     hasError: boolean;
@@ -33,13 +34,14 @@ export default class ErrorBoundary extends React.Component<
 
     render() {
         if (this.state.hasError) {
+            const locale = getClientLocale();
             return (
                 <div className="flex-1 flex items-center justify-center p-10 h-full">
                     <div className="text-center max-w-md">
                         <div className="text-6xl mb-6">💥</div>
-                        <h2 className="text-2xl font-bold text-white mb-3">页面出现了意外错误</h2>
+                        <h2 className="text-2xl font-bold text-white mb-3">{translateInLocale(locale, 'errorBoundary.title')}</h2>
                         <p className="text-gray-400 text-sm mb-2">
-                            这可能是由于数据损坏或系统异常导致的。
+                            {translateInLocale(locale, 'errorBoundary.description')}
                         </p>
                         {this.state.error && (
                             <pre className="text-xs text-red-400/70 bg-red-500/10 border border-red-500/20 rounded-lg p-3 mt-4 mb-6 text-left overflow-auto max-h-32">
@@ -50,7 +52,7 @@ export default class ErrorBoundary extends React.Component<
                             onClick={this.handleReset}
                             className="px-6 py-3 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white font-medium rounded-xl shadow-lg transition-all duration-300 hover:scale-105"
                         >
-                            返回主页
+                            {translateInLocale(locale, 'errorBoundary.backHome')}
                         </button>
                     </div>
                 </div>

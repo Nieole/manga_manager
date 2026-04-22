@@ -8,6 +8,7 @@ import { SearchModal } from './layout/SearchModal';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 import { ConfirmDialog } from './ui/ConfirmDialog';
+import { useI18n } from '../i18n/LocaleProvider';
 
 interface ConfirmDialogState {
     open: boolean;
@@ -19,6 +20,7 @@ interface ConfirmDialogState {
 }
 
 export default function Layout() {
+    const { t } = useI18n();
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
@@ -348,7 +350,7 @@ export default function Layout() {
             setRefreshTrigger(prev => prev + 1);
         } catch (error) {
             console.error(error);
-            showToast(extractErrorMessage(error, "添加资源库失败，请检查目录权限和扫描格式。"), 'error');
+            showToast(extractErrorMessage(error, t('layout.toast.addLibraryFailed')), 'error');
         } finally {
             setAdding(false);
         }
@@ -371,7 +373,7 @@ export default function Layout() {
             fetchLibraries();
         } catch (error) {
             console.error(error);
-            showToast(extractErrorMessage(error, "修改资源库失败，请检查目录权限和扫描格式。"), 'error');
+            showToast(extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
         } finally {
             setEditing(false);
         }
@@ -381,52 +383,52 @@ export default function Layout() {
         try {
             await axios.post(`/api/libraries/${id}/scan?force=${force}`);
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
-            showToast(force ? '强制全量扫描任务已提交。' : '增量扫描任务已提交。', 'success');
+            showToast(force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued'), 'success');
         } catch (error) {
             console.error("Trigger scan failed", error);
-            showToast("扫描指令下发失败", 'error');
+            showToast(t('layout.toast.scanFailed'), 'error');
         }
     };
 
     const handleScrapeLibrary = async (id: string) => {
         try {
             await axios.post(`/api/libraries/${id}/scrape`, { provider: 'bangumi' });
-            showToast("刮削任务已提交，请留意界面底部的进度提示。", 'success');
+            showToast(t('layout.toast.scrapeQueued'), 'success');
         } catch (error) {
             console.error("Trigger scrape failed", error);
-            showToast("刮削指令下发失败", 'error');
+            showToast(t('layout.toast.scrapeFailed'), 'error');
         }
     };
 
     const handleCleanupLibrary = async (id: string) => {
         try {
             await axios.post(`/api/libraries/${id}/cleanup`);
-            showToast("清理任务已提交后台处理。", 'success');
+            showToast(t('layout.toast.cleanupQueued'), 'success');
         } catch (error) {
             console.error("Trigger cleanup failed", error);
-            showToast("清理指令下发失败", 'error');
+            showToast(t('layout.toast.cleanupFailed'), 'error');
         }
     };
 
     const handleAIGrouping = async (id: string) => {
         try {
             await axios.post(`/api/libraries/${id}/ai-grouping`);
-            showToast("AI 智能分组任务已提交后台计算。", 'success');
+            showToast(t('layout.toast.aiGroupingQueued'), 'success');
         } catch (error) {
             console.error("Trigger AI grouping failed", error);
-            showToast("提交 AI 智能分组请求失败", 'error');
+            showToast(t('layout.toast.aiGroupingFailed'), 'error');
         }
     };
 
     const handleDeleteLibrary = async (library: Library) => {
         try {
             await axios.delete(`/api/libraries/${library.id}`);
-            showToast(`资源库「${library.name}」已删除`, 'success');
+            showToast(t('layout.toast.libraryDeleted', { name: library.name }), 'success');
             fetchLibraries();
             navigate('/');
         } catch (error) {
             console.error('Delete library failed', error);
-            showToast('删除失败', 'error');
+            showToast(t('layout.toast.deleteFailed'), 'error');
         }
     };
 
@@ -437,7 +439,7 @@ export default function Layout() {
                     <button
                         onClick={() => setIsSidebarOpen(true)}
                         className="md:hidden p-2 -ml-2 mr-2 text-gray-400 hover:text-white transition-colors"
-                        title="打开菜单"
+                        title={t('layout.openMenu')}
                     >
                         <Menu className="w-6 h-6" />
                     </button>
@@ -454,7 +456,7 @@ export default function Layout() {
                     >
                         <div className="flex items-center">
                             <Search className="w-4 h-4 mr-3 group-hover:text-komgaPrimary transition-colors" />
-                            <span>搜索漫画名称、连载系列...</span>
+                            <span>{t('layout.searchPlaceholder')}</span>
                         </div>
                         <kbd className="hidden sm:inline-block bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono text-gray-400">⌘K</kbd>
                     </button>
@@ -464,7 +466,7 @@ export default function Layout() {
                     <Link
                         to="/settings"
                         className="p-2 text-gray-400 hover:text-komgaPrimary hover:bg-gray-800 rounded-full transition-colors"
-                        title="系统设定"
+                        title={t('layout.settings')}
                     >
                         <SettingsIcon className="w-6 h-6" />
                     </Link>
@@ -482,19 +484,19 @@ export default function Layout() {
 
                 <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 transform transition-all duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 overflow-y-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:h-[calc(100vh-73px)] ${isDesktopSidebarCollapsed ? 'w-64 md:w-[72px]' : 'w-64'}`}>
                     <div className={`mb-4 flex items-center text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0 ${isDesktopSidebarCollapsed ? 'md:px-0 md:justify-center' : 'px-6 justify-between'}`}>
-                        <span className={`transition-opacity duration-300 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>Libraries</span>
+                        <span className={`transition-opacity duration-300 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.libraries')}</span>
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={toggleDesktopSidebar}
                                 className="text-gray-400 hover:text-white transition-colors hidden md:block"
-                                title={isDesktopSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
+                                title={isDesktopSidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')}
                             >
                                 {isDesktopSidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
                             </button>
                             <button
                                 onClick={() => setShowAddModal(true)}
                                 className={`text-gray-400 hover:text-white transition-colors ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}
-                                title="添加新资源库"
+                                title={t('layout.sidebar.addLibrary')}
                             >
                                 <Plus className="w-5 h-5" />
                             </button>
@@ -505,34 +507,34 @@ export default function Layout() {
                         <Link to="/" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                 } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? "仪表板" : undefined}
+                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.dashboard') : undefined}
                         >
                             <LayoutDashboard className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>仪表板</span>
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.dashboard')}</span>
                         </Link>
                         <Link to="/collections" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/collections' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                 } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? "合集" : undefined}
+                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.collections') : undefined}
                         >
                             <FolderHeart className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>合集</span>
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.collections')}</span>
                         </Link>
                         <Link to="/logs" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/logs' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                 } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? "系统日志" : undefined}
+                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.logs') : undefined}
                         >
                             <Terminal className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>系统日志</span>
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.logs')}</span>
                         </Link>
                     </nav>
-                    <div className={`px-6 mb-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wider ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>Libraries</div>
+                    <div className={`px-6 mb-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wider ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.libraries')}</div>
                     <nav className="flex-1 space-y-1 px-4 overflow-y-auto">
                         {loading ? (
                             <div className="animate-pulse px-3 py-2 bg-gray-800 rounded-md h-10 w-full mb-2" />
                         ) : libraries.length === 0 ? (
-                            <div className="text-gray-500 px-3 text-sm">No libraries found.</div>
+                            <div className="text-gray-500 px-3 text-sm">{t('layout.sidebar.noLibraries')}</div>
                         ) : (
                             libraries.map(lib => (
                                 <Link
@@ -550,7 +552,7 @@ export default function Layout() {
                                         <div className={`min-w-0 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>
                                             <span className="truncate block">{lib.name}</span>
                                             <span className={`text-[10px] ${lib.koreader_sync_enabled ?? true ? 'text-sky-400/80' : 'text-gray-500'}`}>
-                                                {lib.koreader_sync_enabled ?? true ? 'KOReader Sync 开启' : 'KOReader Sync 关闭'}
+                                                {lib.koreader_sync_enabled ?? true ? t('layout.sidebar.koreaderOn') : t('layout.sidebar.koreaderOff')}
                                             </span>
                                         </div>
                                     </div>
@@ -563,7 +565,7 @@ export default function Layout() {
                                                 setOpenMenuId(openMenuId === String(lib.id) ? null : String(lib.id));
                                             }}
                                             className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700 focus:outline-none"
-                                            title="更多操作"
+                                            title={t('common.details')}
                                         >
                                             <MoreHorizontal className="w-5 h-5" />
                                         </button>
@@ -580,7 +582,7 @@ export default function Layout() {
                                                 />
                                                 <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
                                                     <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
-                                                        资源库操作
+                                                        {t('layout.libraryActions.title')}
                                                     </div>
                                                     <button
                                                         onClick={(e) => {
@@ -592,7 +594,7 @@ export default function Layout() {
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-blue-500 hover:text-white transition-colors"
                                                     >
                                                         <SettingsIcon className="w-4 h-4 mr-2" />
-                                                        编辑资源库
+                                                        {t('layout.libraryActions.edit')}
                                                     </button>
                                                     <button
                                                         onClick={(e) => {
@@ -604,7 +606,7 @@ export default function Layout() {
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
                                                     >
                                                         <RefreshCw className="w-4 h-4 mr-2" />
-                                                        重新扫描增量
+                                                        {t('layout.libraryActions.scanIncremental')}
                                                     </button>
                                                     <button
                                                         onClick={(e) => {
@@ -612,9 +614,9 @@ export default function Layout() {
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
                                                             openConfirmDialog({
-                                                                title: '强制全量读取',
-                                                                description: '这会耗费更长时间，并重新读取该资源库中的所有文件与元数据。',
-                                                                confirmLabel: '确认执行',
+                                                                title: t('layout.libraryActions.confirmFullScanTitle'),
+                                                                description: t('layout.libraryActions.confirmFullScanDescription'),
+                                                                confirmLabel: t('layout.libraryActions.confirmRun'),
                                                                 tone: 'warning',
                                                                 onConfirm: () => handleScanLibrary(String(lib.id), true),
                                                             });
@@ -622,7 +624,7 @@ export default function Layout() {
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-orange-500 hover:text-white transition-colors"
                                                     >
                                                         <RefreshCw className="w-4 h-4 mr-2" />
-                                                        强制全量读取
+                                                        {t('layout.libraryActions.scanFull')}
                                                     </button>
                                                     <button
                                                         onClick={(e) => {
@@ -630,9 +632,9 @@ export default function Layout() {
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
                                                             openConfirmDialog({
-                                                                title: '批量刮削缺失元数据',
-                                                                description: '将对这个资源库中缺失元数据的系列启动后台刮削任务。',
-                                                                confirmLabel: '开始刮削',
+                                                                title: t('layout.libraryActions.confirmScrapeTitle'),
+                                                                description: t('layout.libraryActions.confirmScrapeDescription'),
+                                                                confirmLabel: t('layout.libraryActions.startScrape'),
                                                                 tone: 'primary',
                                                                 onConfirm: () => handleScrapeLibrary(String(lib.id)),
                                                             });
@@ -640,7 +642,7 @@ export default function Layout() {
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-green-500 hover:text-white transition-colors"
                                                     >
                                                         <Download className="w-4 h-4 mr-2" />
-                                                        刮削缺失元数据
+                                                        {t('layout.libraryActions.scrape')}
                                                     </button>
                                                     <button
                                                         onClick={(e) => {
@@ -648,9 +650,9 @@ export default function Layout() {
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
                                                             openConfirmDialog({
-                                                                title: '清理失效资源',
-                                                                description: '物理文件已不存在的记录会被清理，但不会删除仍然存在的原始文件。',
-                                                                confirmLabel: '确认清理',
+                                                                title: t('layout.libraryActions.confirmCleanupTitle'),
+                                                                description: t('layout.libraryActions.confirmCleanupDescription'),
+                                                                confirmLabel: t('layout.libraryActions.confirmCleanup'),
                                                                 tone: 'warning',
                                                                 onConfirm: () => handleCleanupLibrary(String(lib.id)),
                                                             });
@@ -658,7 +660,7 @@ export default function Layout() {
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-yellow-500 hover:text-white transition-colors"
                                                     >
                                                         <Eraser className="w-4 h-4 mr-2" />
-                                                        清理失效资源
+                                                        {t('layout.libraryActions.cleanup')}
                                                     </button>
                                                     <button
                                                         onClick={(e) => {
@@ -666,9 +668,9 @@ export default function Layout() {
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
                                                             openConfirmDialog({
-                                                                title: '启动 AI 智能分组',
-                                                                description: '这会调用 AI 对该资源库执行自动分类计算，可能持续较长时间。',
-                                                                confirmLabel: '开始计算',
+                                                                title: t('layout.libraryActions.confirmAiGroupingTitle'),
+                                                                description: t('layout.libraryActions.confirmAiGroupingDescription'),
+                                                                confirmLabel: t('layout.libraryActions.startCompute'),
                                                                 tone: 'warning',
                                                                 onConfirm: () => handleAIGrouping(String(lib.id)),
                                                             });
@@ -676,7 +678,7 @@ export default function Layout() {
                                                         className="w-full flex items-center px-4 py-2 text-sm text-komgaPrimary hover:bg-komgaPrimary hover:text-white transition-colors"
                                                     >
                                                         <Sparkles className="w-4 h-4 mr-2" />
-                                                        AI 智能分组
+                                                        {t('layout.libraryActions.aiGrouping')}
                                                     </button>
                                                     <div className="border-t border-gray-700"></div>
                                                     <button
@@ -685,9 +687,9 @@ export default function Layout() {
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
                                                             openConfirmDialog({
-                                                                title: '删除资源库',
-                                                                description: `确定要删除资源库「${lib.name}」吗？所有关联的系列、书籍和阅读记录都会被清除。`,
-                                                                confirmLabel: '确认删除',
+                                                                title: t('layout.libraryActions.confirmDeleteTitle'),
+                                                                description: t('layout.libraryActions.confirmDeleteDescription', { name: lib.name }),
+                                                                confirmLabel: t('layout.libraryActions.confirmDelete'),
                                                                 tone: 'danger',
                                                                 onConfirm: () => handleDeleteLibrary(lib),
                                                             });
@@ -695,7 +697,7 @@ export default function Layout() {
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-red-500 hover:text-white transition-colors"
                                                     >
                                                         <Trash2 className="w-4 h-4 mr-2" />
-                                                        删除此资源库
+                                                        {t('layout.libraryActions.delete')}
                                                     </button>
                                                 </div>
                                             </>
@@ -731,7 +733,7 @@ export default function Layout() {
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
-                                        {taskProgress.total > 0 ? `${taskProgress.current}/${taskProgress.total}` : taskProgress.status === 'completed' ? '已完成' : taskProgress.status === 'failed' ? '失败' : '处理中'}
+                                        {taskProgress.total > 0 ? `${taskProgress.current}/${taskProgress.total}` : taskProgress.status === 'completed' ? t('layout.task.completed') : taskProgress.status === 'failed' ? t('layout.task.failed') : t('layout.task.running')}
                                     </span>
                                     <button onClick={() => setTaskProgress(null)} className="text-gray-500 hover:text-white transition-colors">
                                         <X className="w-3.5 h-3.5" />
@@ -763,9 +765,9 @@ export default function Layout() {
             </main>
 
             <LibraryFormModal
-                title="添加资源库"
-                submitLabel="立即添加"
-                submittingLabel="扫描入库中..."
+                title={t('layout.libraryModal.addTitle')}
+                submitLabel={t('layout.libraryModal.addSubmit')}
+                submittingLabel={t('layout.libraryModal.addSubmitting')}
                 open={showAddModal}
                 name={newLibName}
                 path={newLibPath}
@@ -799,9 +801,9 @@ export default function Layout() {
             />
 
             <LibraryFormModal
-                title="编辑资源库"
-                submitLabel="保存修改"
-                submittingLabel="保存中..."
+                title={t('layout.libraryModal.editTitle')}
+                submitLabel={t('layout.libraryModal.editSubmit')}
+                submittingLabel={t('layout.libraryModal.editSubmitting')}
                 open={showEditModal}
                 name={editLibName}
                 path={editLibPath}

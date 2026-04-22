@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import axios from 'axios';
+import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
 
 export interface Config {
   server: { port: number };
@@ -213,20 +214,32 @@ function pickSectionSnapshot(config: Config, section: Exclude<SettingsSectionKey
 }
 
 export function formatKOReaderLatestSync(value?: { Time: string; Valid: boolean } | null): string {
-  if (!value?.Valid || !value.Time) return '暂无同步记录';
+  const locale = getClientLocale();
+  if (!value?.Valid || !value.Time) return translateInLocale(locale, 'settings.koreader.noSyncRecord');
   const date = new Date(value.Time);
-  if (Number.isNaN(date.getTime())) return '暂无同步记录';
-  return date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return translateInLocale(locale, 'settings.koreader.noSyncRecord');
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(date);
 }
 
 export function formatKOReaderIndexLabel(matchMode: string, pathIgnoreExtension: boolean): string {
+  const locale = getClientLocale();
   if (matchMode === 'file_path') {
-    return pathIgnoreExtension ? '路径索引（忽略扩展名）' : '路径索引';
+    return pathIgnoreExtension
+      ? translateInLocale(locale, 'task.koreader.pathIndexIgnoreExtension')
+      : translateInLocale(locale, 'task.koreader.pathIndex');
   }
-  return '二进制哈希索引';
+  return translateInLocale(locale, 'task.koreader.binaryHashIndex');
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const [config, setConfig] = useState<Config | null>(null);
   const [initialConfig, setInitialConfig] = useState<Config | null>(null);
   const [validation, setValidation] = useState<ValidationResult>({ valid: true, issues: [] });
@@ -299,10 +312,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderUnmatched()])
       .catch((error) => {
         console.error('Failed to fetch settings data', error);
-        showToast('无法加载系统配置', 'error');
+        showToast(t('settings.toast.fetchFailed'), 'error');
       })
       .finally(() => setLoading(false));
-  }, [fetchConfig, fetchKOReader, fetchKOReaderAccounts, fetchKOReaderUnmatched, showToast]);
+  }, [fetchConfig, fetchKOReader, fetchKOReaderAccounts, fetchKOReaderUnmatched, showToast, t]);
 
   const validationByField = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -329,7 +342,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const koreaderFieldErrors = useCallback((field: string) => koreaderValidationByField.get(field) || [], [koreaderValidationByField]);
 
   const saveConfig = useCallback(
-    async (successMessage = '配置已保存') => {
+    async (successMessage = t('settings.toast.configSaved')) => {
       if (!config) return;
       setSaving(true);
       try {
@@ -342,15 +355,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         if (axios.isAxiosError(error) && error.response?.status === 422) {
           const nextValidation = error.response.data?.validation;
           if (nextValidation) setValidation(nextValidation);
-          showToast('配置未通过校验，请先修正高亮字段。', 'error');
+          showToast(t('settings.toast.configInvalid'), 'error');
         } else {
-          showToast('保存失败，请检查配置和文件权限。', 'error');
+          showToast(t('settings.toast.configSaveFailed'), 'error');
         }
       } finally {
         setSaving(false);
       }
     },
-    [config, fetchConfig, showToast],
+    [config, fetchConfig, showToast, t],
   );
 
   const handleTestLLM = useCallback(async () => {
@@ -363,15 +376,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         prompt: llmTestPrompt,
       });
       setLlmTestResult(res.data.response);
-      showToast('LLM 联通性测试成功', 'success');
+      showToast(t('settings.toast.llmTestSucceeded'), 'success');
     } catch (error: any) {
-      const message = error.response?.data?.error || '测试失败，请检查地址、协议模式和模型名。';
+      const message = error.response?.data?.error || t('settings.toast.llmTestFallback');
       setLlmTestResult(`Error: ${message}`);
-      showToast('LLM 测试失败', 'error');
+      showToast(t('settings.toast.llmTestFailed'), 'error');
     } finally {
       setTestingLLM(false);
     }
-  }, [config, llmTestPrompt, showToast]);
+  }, [config, llmTestPrompt, showToast, t]);
 
   const handleAction = useCallback(async (path: string, successMessage: string) => {
     try {
@@ -399,36 +412,36 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setInitialKOReaderForm(nextForm);
       setNeedsMatchingMaintenance(requiresMaintenance);
       setKOReaderValidation({ valid: true, issues: [] });
-      showToast('KOReader 同步配置已保存', 'success');
+      showToast(t('settings.toast.koreaderSaved'), 'success');
       await Promise.all([fetchConfig(), fetchKOReaderAccounts(), fetchKOReaderUnmatched()]);
     } catch (error) {
       console.error(error);
       if (axios.isAxiosError(error) && error.response?.status === 422) {
         const nextValidation = error.response.data?.validation;
         if (nextValidation) setKOReaderValidation(nextValidation);
-        showToast('KOReader 配置未通过校验。', 'error');
+        showToast(t('settings.toast.koreaderInvalid'), 'error');
       } else {
-        showToast('保存 KOReader 配置失败。', 'error');
+        showToast(t('settings.toast.koreaderSaveFailed'), 'error');
       }
     } finally {
       setSavingKOReader(false);
     }
-  }, [config?.koreader, fetchConfig, fetchKOReaderAccounts, fetchKOReaderUnmatched, koreaderForm, koreaderStatus, showToast]);
+  }, [config?.koreader, fetchConfig, fetchKOReaderAccounts, fetchKOReaderUnmatched, koreaderForm, koreaderStatus, showToast, t]);
 
   const handleApplyMatchingChanges = useCallback(async () => {
     setApplyingMatching(true);
     try {
       const res = await axios.post('/api/system/koreader/apply-matching');
-      showToast(res.data?.message || 'KOReader 匹配规则应用任务已启动', 'success');
+      showToast(res.data?.message || t('settings.toast.koreaderApplyMatchingStarted'), 'success');
       setNeedsMatchingMaintenance(false);
       await fetchKOReader();
     } catch (error) {
       console.error(error);
-      showToast('启动 KOReader 匹配规则应用任务失败。', 'error');
+      showToast(t('settings.toast.koreaderApplyMatchingFailed'), 'error');
     } finally {
       setApplyingMatching(false);
     }
-  }, [fetchKOReader, showToast]);
+  }, [fetchKOReader, showToast, t]);
 
   const handleCreateKOReaderAccount = useCallback(async () => {
     if (!koreaderAccountForm.username.trim()) return;
@@ -437,7 +450,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       const res = await axios.post<KOReaderAccount>('/api/system/koreader/accounts', {
         username: koreaderAccountForm.username.trim(),
       });
-      showToast(`KOReader 账号 ${res.data.username} 已创建`, 'success');
+      showToast(t('settings.toast.koreaderAccountCreated', { username: res.data.username }), 'success');
       setKOReaderAccountForm({ username: '' });
       await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
     } catch (error) {
@@ -446,35 +459,35 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         const nextValidation = error.response.data?.validation;
         if (nextValidation) setKOReaderValidation(nextValidation);
       }
-      showToast('创建 KOReader 账号失败。', 'error');
+      showToast(t('settings.toast.koreaderAccountCreateFailed'), 'error');
     } finally {
       setCreatingAccount(false);
     }
-  }, [fetchKOReader, fetchKOReaderAccounts, koreaderAccountForm.username, showToast]);
+  }, [fetchKOReader, fetchKOReaderAccounts, koreaderAccountForm.username, showToast, t]);
 
   const handleCopySyncKey = useCallback(async (account: KOReaderAccount) => {
     try {
       await navigator.clipboard.writeText(account.sync_key);
-      showToast(`已复制 ${account.username} 的 Sync Key`, 'success');
+      showToast(t('settings.toast.koreaderSyncKeyCopied', { username: account.username }), 'success');
     } catch (error) {
       console.error(error);
-      showToast('复制 Sync Key 失败。', 'error');
+      showToast(t('settings.toast.koreaderSyncKeyCopyFailed'), 'error');
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   const handleRotateKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
     try {
       await axios.post(`/api/system/koreader/accounts/${account.id}/rotate-key`);
-      showToast(`已轮换 ${account.username} 的 Sync Key`, 'success');
+      showToast(t('settings.toast.koreaderSyncKeyRotated', { username: account.username }), 'success');
       await fetchKOReaderAccounts();
     } catch (error) {
       console.error(error);
-      showToast('轮换 Sync Key 失败。', 'error');
+      showToast(t('settings.toast.koreaderSyncKeyRotateFailed'), 'error');
     } finally {
       setAccountActionId(null);
     }
-  }, [fetchKOReaderAccounts, showToast]);
+  }, [fetchKOReaderAccounts, showToast, t]);
 
   const handleToggleKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
@@ -482,29 +495,35 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       await axios.post(`/api/system/koreader/accounts/${account.id}/toggle`, {
         enabled: !account.enabled,
       });
-      showToast(`${account.username} 已${account.enabled ? '停用' : '启用'}`, 'success');
+      showToast(
+        t('settings.toast.koreaderAccountToggled', {
+          username: account.username,
+          action: account.enabled ? t('settings.toast.koreaderAccountDisabled') : t('settings.toast.koreaderAccountEnabled'),
+        }),
+        'success',
+      );
       await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
     } catch (error) {
       console.error(error);
-      showToast('更新账号状态失败。', 'error');
+      showToast(t('settings.toast.koreaderAccountToggleFailed'), 'error');
     } finally {
       setAccountActionId(null);
     }
-  }, [fetchKOReader, fetchKOReaderAccounts, showToast]);
+  }, [fetchKOReader, fetchKOReaderAccounts, showToast, t]);
 
   const handleDeleteKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
     try {
       await axios.delete(`/api/system/koreader/accounts/${account.id}`);
-      showToast(`${account.username} 已删除`, 'success');
+      showToast(t('settings.toast.koreaderAccountDeleted', { username: account.username }), 'success');
       await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
     } catch (error) {
       console.error(error);
-      showToast('删除 KOReader 账号失败。', 'error');
+      showToast(t('settings.toast.koreaderAccountDeleteFailed'), 'error');
     } finally {
       setAccountActionId(null);
     }
-  }, [fetchKOReader, fetchKOReaderAccounts, showToast]);
+  }, [fetchKOReader, fetchKOReaderAccounts, showToast, t]);
 
   const hasSectionChanges = useCallback(
     (section: SettingsSectionKey) => {

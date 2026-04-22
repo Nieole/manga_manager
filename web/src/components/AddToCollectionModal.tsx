@@ -3,6 +3,7 @@ import axios from 'axios';
 import { FolderHeart, Loader2 } from 'lucide-react';
 import { ModalShell } from './ui/ModalShell';
 import { modalPrimaryButtonClass, modalSectionClass } from './ui/modalStyles';
+import { useI18n } from '../i18n/LocaleProvider';
 
 interface Collection {
     id: number;
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export default function AddToCollectionModal({ seriesIds, onClose, onSuccess }: Props) {
+    const { t } = useI18n();
     const [collections, setCollections] = useState<Collection[]>([]);
     const [loading, setLoading] = useState(true);
     const [addingTo, setAddingTo] = useState<number | null>(null);
@@ -44,8 +46,8 @@ export default function AddToCollectionModal({ seriesIds, onClose, onSuccess }: 
         <ModalShell
             open
             onClose={onClose}
-            title="添加到合集"
-            description={`将已选择的 ${seriesIds.length} 个系列归档到一个已有合集。`}
+            title={t('addToCollection.title')}
+            description={t('addToCollection.description', { count: seriesIds.length })}
             icon={<FolderHeart className="h-5 w-5" />}
             size="compact"
             zIndexClassName="z-[100]"
@@ -57,8 +59,8 @@ export default function AddToCollectionModal({ seriesIds, onClose, onSuccess }: 
                     </div>
                 ) : collections.length === 0 ? (
                     <div className={`${modalSectionClass} text-center py-10 text-gray-400`}>
-                        <p className="text-sm font-medium text-gray-200">还没有创建任何合集</p>
-                        <p className="mt-2 text-xs text-gray-500">请先在侧边栏的“合集”页面创建一个合集</p>
+                        <p className="text-sm font-medium text-gray-200">{t('addToCollection.empty')}</p>
+                        <p className="mt-2 text-xs text-gray-500">{t('addToCollection.emptyHint')}</p>
                     </div>
                 ) : (
                     <div className={`${modalSectionClass} max-h-[58vh] space-y-2 overflow-y-auto pr-1 custom-scrollbar`}>
@@ -71,13 +73,13 @@ export default function AddToCollectionModal({ seriesIds, onClose, onSuccess }: 
                             >
                                 <div>
                                     <h4 className="font-medium text-gray-100 transition-colors group-hover:text-white">{c.name}</h4>
-                                    <p className="mt-1 text-xs text-gray-500">{c.series_count} 个系列</p>
+                                    <p className="mt-1 text-xs text-gray-500">{t('common.seriesCount', { count: c.series_count })}</p>
                                 </div>
                                 {addingTo === c.id ? (
                                     <Loader2 className="w-4 h-4 animate-spin text-komgaPrimary" />
                                 ) : (
                                     <div className={`${modalPrimaryButtonClass} px-3 py-2 text-xs opacity-0 transition-opacity group-hover:opacity-100`}>
-                                        添加
+                                        {t('addToCollection.add')}
                                     </div>
                                 )}
                             </button>

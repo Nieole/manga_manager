@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, AlertTriangle, FolderPlus, Settings as SettingsIcon } from 'lucide-react';
+import { useI18n } from '../i18n/LocaleProvider';
+import { getTaskTypeLabel } from '../i18n/task';
 
 interface DashboardStats {
     total_series: number;
@@ -61,14 +63,8 @@ interface KOReaderOverview {
     };
 }
 
-const formatKOReaderIndexLabel = (matchMode?: string, pathIgnoreExtension?: boolean) => {
-    if (matchMode === 'file_path') {
-        return pathIgnoreExtension ? '路径索引（忽略扩展名）' : '路径索引';
-    }
-    return '二进制哈希索引';
-};
-
 export default function Dashboard() {
+    const { t, formatNumber } = useI18n();
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [libraries, setLibraries] = useState<any[]>([]);
     const [tasks, setTasks] = useState<TaskStatus[]>([]);
@@ -139,34 +135,7 @@ export default function Dashboard() {
     };
 
     const taskTypeLabel = (task: TaskStatus) => {
-        switch (task.type) {
-            case 'scan_library':
-                return '资源库扫描';
-            case 'scan_external_library':
-                return '外部资源库扫描';
-            case 'scan_series':
-                return '系列扫描';
-            case 'cleanup_library':
-                return '资源清理';
-            case 'rebuild_index':
-                return '索引重建';
-            case 'rebuild_thumbnails':
-                return '缩略图重建';
-            case 'scrape':
-                return '元数据刮削';
-            case 'ai_grouping':
-                return 'AI 分组';
-            case 'rebuild_book_hashes':
-                return `重建 ${formatKOReaderIndexLabel(task.params?.match_mode, task.params?.path_ignore_extension === 'true')}`;
-            case 'reconcile_koreader_progress':
-                return 'KOReader 重关联';
-            case 'refresh_koreader_matching':
-                return '应用 KOReader 匹配规则';
-            case 'transfer_external_library':
-                return '外部资源库传输';
-            default:
-                return task.type;
-        }
+        return getTaskTypeLabel(task, t);
     };
 
     if (loading) {
@@ -184,34 +153,34 @@ export default function Dashboard() {
                     <div className="max-w-3xl space-y-6">
                         <div className="inline-flex items-center gap-2 rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
                             <Sparkles className="w-4 h-4" />
-                            首次使用引导
+                            {t('dashboard.onboarding.badge')}
                         </div>
                         <div>
-                            <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">先把第一座书库接进来</h1>
+                            <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">{t('dashboard.onboarding.title')}</h1>
                             <p className="mt-3 text-gray-400 leading-7">
-                                Manga Manager 已经启动成功。下一步建议先添加一个漫画目录，然后再测试 LLM 连接、触发首次扫描，并根据你的设备调整缓存与超分设置。
+                                {t('dashboard.onboarding.description')}
                             </p>
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-3">
                             <OnboardingCard
-                                title="1. 添加资源库"
-                                description="从侧边栏或这里直接添加一个本地目录，系统会据此建立索引。"
-                                actionLabel="立即添加"
+                                title={t('dashboard.onboarding.step1.title')}
+                                description={t('dashboard.onboarding.step1.description')}
+                                actionLabel={t('dashboard.onboarding.step1.action')}
                                 onClick={() => window.dispatchEvent(new Event('manga-manager:open-add-library'))}
                                 icon={<FolderPlus className="w-5 h-5 text-komgaPrimary" />}
                             />
                             <OnboardingCard
-                                title="2. 检查系统设定"
-                                description="确认数据库、缓存目录以及 LLM 协议模式配置正确。"
-                                actionLabel="打开设定"
+                                title={t('dashboard.onboarding.step2.title')}
+                                description={t('dashboard.onboarding.step2.description')}
+                                actionLabel={t('dashboard.onboarding.step2.action')}
                                 onClick={() => navigate('/settings')}
                                 icon={<SettingsIcon className="w-5 h-5 text-amber-400" />}
                             />
                             <OnboardingCard
-                                title="3. 开始首次扫描"
-                                description="添加目录后，触发一次扫描并等待首页开始出现系列与封面。"
-                                actionLabel="查看说明"
+                                title={t('dashboard.onboarding.step3.title')}
+                                description={t('dashboard.onboarding.step3.description')}
+                                actionLabel={t('dashboard.onboarding.step3.action')}
                                 onClick={() => navigate('/settings')}
                                 icon={<Library className="w-5 h-5 text-blue-400" />}
                             />
@@ -227,7 +196,7 @@ export default function Dashboard() {
             {/* 标题 */}
             <div className="flex items-center gap-3">
                 <TrendingUp className="w-7 h-7 text-komgaPrimary" />
-                <h1 className="text-2xl font-bold text-white tracking-tight">仪表板</h1>
+                <h1 className="text-2xl font-bold text-white tracking-tight">{t('dashboard.title')}</h1>
             </div>
 
             {/* 统计卡片网格 */}
@@ -235,7 +204,7 @@ export default function Dashboard() {
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard
                         icon={<Library className="w-5 h-5" />}
-                        label="漫画系列"
+                        label={t('dashboard.stats.series')}
                         value={stats.total_series}
                         color="from-purple-500/20 to-purple-600/5"
                         borderColor="border-purple-500/30"
@@ -243,7 +212,7 @@ export default function Dashboard() {
                     />
                     <StatCard
                         icon={<BookOpen className="w-5 h-5" />}
-                        label="书籍总册数"
+                        label={t('dashboard.stats.books')}
                         value={stats.total_books}
                         color="from-blue-500/20 to-blue-600/5"
                         borderColor="border-blue-500/30"
@@ -251,18 +220,18 @@ export default function Dashboard() {
                     />
                     <StatCard
                         icon={<Eye className="w-5 h-5" />}
-                        label="已阅读"
-                        value={`${stats.read_books} 册`}
-                        subtitle={`${readPercent}% 完读率`}
+                        label={t('dashboard.stats.read')}
+                        value={t('dashboard.stats.booksReadValue', { count: stats.read_books })}
+                        subtitle={t('dashboard.stats.readRate', { percent: readPercent })}
                         color="from-emerald-500/20 to-emerald-600/5"
                         borderColor="border-emerald-500/30"
                         iconColor="text-emerald-400"
                     />
                     <StatCard
                         icon={<FileText className="w-5 h-5" />}
-                        label="馆藏总页数"
-                        value={stats.total_pages.toLocaleString()}
-                        subtitle={`近7日活跃 ${stats.active_days_7} 天`}
+                        label={t('dashboard.stats.pages')}
+                        value={formatNumber(stats.total_pages)}
+                        subtitle={t('dashboard.stats.activeDays7', { count: stats.active_days_7 })}
                         color="from-amber-500/20 to-amber-600/5"
                         borderColor="border-amber-500/30"
                         iconColor="text-amber-400"
@@ -273,9 +242,9 @@ export default function Dashboard() {
             <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
                 <div className="flex items-center justify-between gap-3">
                     <div>
-                        <h2 className="text-lg font-semibold text-white">KOReader Sync 覆盖范围</h2>
+                        <h2 className="text-lg font-semibold text-white">{t('dashboard.koreader.title')}</h2>
                         <p className="mt-1 text-sm text-gray-300">
-                            服务端状态：{koreaderOverview?.enabled ? '已启用' : '未启用'}。已开启同步的资源库才会接收 KOReader 进度映射。
+                            {t('dashboard.koreader.status', { state: koreaderOverview?.enabled ? t('dashboard.koreader.enabled') : t('dashboard.koreader.disabled') })}
                         </p>
                         <p className="mt-1 text-xs text-gray-500">
                             当前匹配模式：{koreaderOverview?.match_mode === 'file_path'
@@ -287,14 +256,14 @@ export default function Dashboard() {
                         onClick={() => navigate('/settings')}
                         className="rounded-lg border border-sky-500/20 bg-black/20 px-3 py-1.5 text-xs text-sky-100 hover:bg-black/30"
                     >
-                        打开同步设定
+                        {t('dashboard.koreader.openSettings')}
                     </button>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-4">
-                    <MiniStat label="启用同步的资源库" value={koreaderEnabledLibraries} accent="text-sky-300" />
-                    <MiniStat label="关闭同步的资源库" value={koreaderDisabledLibraries} accent="text-gray-300" />
-                    <MiniStat label="已匹配同步记录" value={koreaderOverview?.stats?.matched_progress_count ?? 0} accent="text-emerald-300" />
-                    <MiniStat label="待重关联记录" value={koreaderOverview?.stats?.unmatched_progress_count ?? 0} accent="text-amber-300" />
+                    <MiniStat label={t('dashboard.koreader.enabledLibraries')} value={koreaderEnabledLibraries} accent="text-sky-300" />
+                    <MiniStat label={t('dashboard.koreader.disabledLibraries')} value={koreaderDisabledLibraries} accent="text-gray-300" />
+                    <MiniStat label={t('dashboard.koreader.matchedRecords')} value={koreaderOverview?.stats?.matched_progress_count ?? 0} accent="text-emerald-300" />
+                    <MiniStat label={t('dashboard.koreader.unmatchedRecords')} value={koreaderOverview?.stats?.unmatched_progress_count ?? 0} accent="text-amber-300" />
                 </div>
             </div>
 
@@ -303,13 +272,13 @@ export default function Dashboard() {
                     <div className="flex items-center justify-between gap-3 mb-3">
                         <div className="flex items-center gap-2 text-red-200">
                             <AlertTriangle className="w-5 h-5" />
-                            <h2 className="text-lg font-semibold">最近失败的后台任务</h2>
+                            <h2 className="text-lg font-semibold">{t('dashboard.failedTasks.title')}</h2>
                         </div>
                         <button
                             onClick={() => navigate('/logs')}
                             className="rounded-lg border border-red-500/20 bg-black/20 px-3 py-1.5 text-xs text-red-100 hover:bg-black/30"
                         >
-                            打开任务中心
+                            {t('dashboard.failedTasks.open')}
                         </button>
                     </div>
                     <div className="space-y-3">
@@ -335,7 +304,7 @@ export default function Dashboard() {
                 <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
                     <div className="flex items-center gap-2 mb-3 text-blue-200">
                         <Library className="w-5 h-5" />
-                        <h2 className="text-lg font-semibold">当前正在执行的任务</h2>
+                        <h2 className="text-lg font-semibold">{t('dashboard.runningTasks.title')}</h2>
                     </div>
                     <div className="space-y-3">
                         {runningTasks.map((task) => (
@@ -374,12 +343,12 @@ export default function Dashboard() {
                             </div>
                         </div>
                         <div>
-                            <h3 className="text-lg font-semibold text-white mb-1">阅读完成度</h3>
+                            <h3 className="text-lg font-semibold text-white mb-1">{t('dashboard.readingProgress.title')}</h3>
                             <p className="text-sm text-gray-400">
-                                已阅读 <span className="text-komgaPrimary font-medium">{stats.read_books}</span> / {stats.total_books} 册
+                                {t('dashboard.readingProgress.summary', { read: stats.read_books, total: stats.total_books })}
                             </p>
                             <p className="text-xs text-gray-500 mt-2">
-                                共计 {stats.total_pages.toLocaleString()} 页漫画内容
+                                {t('dashboard.readingProgress.pages', { pages: formatNumber(stats.total_pages) })}
                             </p>
                         </div>
                     </div>
@@ -395,7 +364,7 @@ export default function Dashboard() {
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                             <BookOpen className="w-5 h-5 text-komgaPrimary" />
-                            继续阅读
+                            {t('dashboard.continueReading.title')}
                         </h2>
                         <div className="flex gap-2">
                             <button onClick={() => scrollCarousel('left')} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
@@ -444,7 +413,7 @@ export default function Dashboard() {
                                         {/* 悬停覆盖层 */}
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
                                             <span className="text-xs text-white font-medium">
-                                                继续 → 第 {item.last_read_page?.Valid ? item.last_read_page.Int64 : 1} 页
+                                                {t('dashboard.continueReading.resumeToPage', { page: item.last_read_page?.Valid ? item.last_read_page.Int64 : 1 })}
                                             </span>
                                         </div>
                                     </div>
@@ -454,7 +423,7 @@ export default function Dashboard() {
                                         <p className="text-xs text-gray-500 truncate mt-0.5">
                                             {item.book_title?.Valid ? item.book_title.String : item.book_name}
                                         </p>
-                                        <p className="text-[10px] text-gray-600 mt-1">{progress}% 已读</p>
+                                        <p className="text-[10px] text-gray-600 mt-1">{t('dashboard.continueReading.readPercent', { percent: progress })}</p>
                                     </div>
                                 </div>
                             );
@@ -468,8 +437,8 @@ export default function Dashboard() {
                 <div>
                     <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
                         <Sparkles className="w-5 h-5 text-amber-400" />
-                        猜你喜欢
-                        <span className="text-xs text-gray-500 font-normal ml-1">基于你的收藏和阅读偏好</span>
+                        {t('dashboard.recommendations.title')}
+                        <span className="text-xs text-gray-500 font-normal ml-1">{t('dashboard.recommendations.subtitle')}</span>
 
                         <div className="flex-1" />
 
@@ -480,10 +449,10 @@ export default function Dashboard() {
                                     ? 'bg-komgaSurface border border-gray-800 text-gray-500 cursor-not-allowed'
                                     : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white border border-gray-700'
                                 }`}
-                            title="换一批推荐"
+                            title={t('dashboard.recommendations.refresh')}
                         >
                             <RefreshCcw className={`w-3.5 h-3.5 ${recsLoading ? 'animate-spin' : ''}`} />
-                            换一批
+                            {t('dashboard.recommendations.refresh')}
                         </button>
                     </h2>
                     {recsLoading ? (

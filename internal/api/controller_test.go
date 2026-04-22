@@ -2188,13 +2188,19 @@ func TestApplyScrapedMetadataPersistsSeriesTagsAndLink(t *testing.T) {
 func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	controller.recommendationsMutex.Lock()
-	controller.recommendationsCache = []AIRecommendationResponse{{
+	if controller.recommendationsCache == nil {
+		controller.recommendationsCache = make(map[string][]AIRecommendationResponse)
+	}
+	if controller.recommendationsCacheTime == nil {
+		controller.recommendationsCacheTime = make(map[string]time.Time)
+	}
+	controller.recommendationsCache["zh-CN"] = []AIRecommendationResponse{{
 		SeriesID:  99,
 		Reason:    "Cached reason",
 		Title:     "Cached title",
 		CoverPath: "cached.webp",
 	}}
-	controller.recommendationsCacheTime = time.Now()
+	controller.recommendationsCacheTime["zh-CN"] = time.Now()
 	controller.recommendationsMutex.Unlock()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/recommendations", nil)

@@ -51,8 +51,8 @@ type Controller struct {
 	messages       chan string
 
 	// AI Recommendations Cache
-	recommendationsCache     []AIRecommendationResponse
-	recommendationsCacheTime time.Time
+	recommendationsCache     map[string][]AIRecommendationResponse
+	recommendationsCacheTime map[string]time.Time
 	recommendationsMutex     sync.RWMutex
 
 	taskMutex sync.Mutex
@@ -115,6 +115,8 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		defunctClients: make(chan chan string),
 		messages:       make(chan string, 64),
 		tasks:          make(map[string]TaskStatus),
+		recommendationsCache:     make(map[string][]AIRecommendationResponse),
+		recommendationsCacheTime: make(map[string]time.Time),
 		openPath:       openPathInDefaultFileManager,
 	}
 
@@ -652,7 +654,7 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 			err = fmt.Errorf("missing library id")
 			break
 		}
-		if !c.launchAIGroupingTask(*task.ScopeID) {
+		if !c.launchAIGroupingTask(*task.ScopeID, "zh-CN") {
 			err = fmt.Errorf("task already running")
 		}
 	case "rebuild_book_hashes":
@@ -2158,13 +2160,15 @@ type AIRecommendationResponse struct {
 
 // getRecommendations 基于本地阅读历史的综合 LLM 推荐
 func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	locale := requestLocale(r)
+	ctx := metadata.WithLocale(r.Context(), locale)
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
 
 	if !forceRefresh {
 		c.recommendationsMutex.RLock()
-		if time.Since(c.recommendationsCacheTime) < 24*time.Hour && len(c.recommendationsCache) > 0 {
-			cache := c.recommendationsCache
+		cache := c.recommendationsCache[locale]
+		cacheTime := c.recommendationsCacheTime[locale]
+		if time.Since(cacheTime) < 24*time.Hour && len(cache) > 0 {
 			c.recommendationsMutex.RUnlock()
 			jsonResponse(w, http.StatusOK, cache)
 			return
@@ -2248,15 +2252,15 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 
 	// Update cache
 	c.recommendationsMutex.Lock()
-	c.recommendationsCache = finalRecs
-	c.recommendationsCacheTime = time.Now()
+	c.recommendationsCache[locale] = finalRecs
+	c.recommendationsCacheTime[locale] = time.Now()
 	c.recommendationsMutex.Unlock()
 
 	jsonResponse(w, http.StatusOK, finalRecs)
 }
 
 // aiGroupingLibrary 扫描资料库中没有集合的系列，利用 LLM 进行智能分组
-func (c *Controller) launchAIGroupingTask(libID int64) bool {
+func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	taskKey := fmt.Sprintf("ai_grouping_library_%d", libID)
 	if !c.startTask(taskKey, "ai_grouping", "AI 智能分组开始...", 1) {
 		return false
@@ -2267,8 +2271,8 @@ func (c *Controller) launchAIGroupingTask(libID int64) bool {
 	}
 	c.setTaskMetadata(taskKey, nil, scopeName)
 
-	go func(libraryID int64) {
-		ctx := context.Background()
+	go func(libraryID int64, taskLocale string) {
+		ctx := metadata.WithLocale(context.Background(), taskLocale)
 
 		dbCache := c.store.(*database.SqlStore)
 		seriesRows, err := dbCache.GetSeriesWithoutCollection(ctx, libraryID)
@@ -2332,7 +2336,7 @@ func (c *Controller) launchAIGroupingTask(libID int64) bool {
 
 		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组成功完成 (生成了 %d 个合集)", len(collections)))
 		c.PublishEvent("refresh")
-	}(libID)
+	}(libID, locale)
 
 	return true
 }
@@ -2343,7 +2347,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
-	if !c.launchAIGroupingTask(libID) {
+	if !c.launchAIGroupingTask(libID, requestLocale(r)) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An AI grouping task is already running for this library"})
 		return
 	}
