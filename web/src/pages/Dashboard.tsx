@@ -277,13 +277,13 @@ export default function Dashboard() {
             {failedTasks.length > 0 && (
                 <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
                     <div className="flex items-center justify-between gap-3 mb-3">
-                        <div className="flex items-center gap-2 text-red-200">
+                        <div className="flex items-center gap-2 text-red-500">
                             <AlertTriangle className="w-5 h-5" />
                             <h2 className="text-lg font-semibold">{t('dashboard.failedTasks.title')}</h2>
                         </div>
                         <button
                             onClick={() => navigate('/logs')}
-                            className="rounded-lg border border-red-500/20 bg-black/20 px-3 py-1.5 text-xs text-red-100 hover:bg-black/30"
+                            className="rounded-lg border border-red-500/20 bg-black/20 px-3 py-1.5 text-xs text-red-500 hover:bg-black/30"
                         >
                             {t('dashboard.failedTasks.open')}
                         </button>
@@ -295,12 +295,12 @@ export default function Dashboard() {
                                 onClick={() => openTaskTarget(task)}
                                 className="w-full text-left rounded-xl border border-red-500/10 bg-black/20 p-3 hover:bg-black/30"
                             >
-                                <div className="flex items-center gap-2 text-xs text-red-100/60 mb-2">
+                                <div className="flex items-center gap-2 text-xs text-red-500/80 mb-2">
                                     <span>{taskTypeLabel(task)}</span>
                                     <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
                                 </div>
                                 <p className="text-sm font-medium text-white">{task.message}</p>
-                                {task.error && <p className="mt-1 text-xs text-red-100/80">{task.error}</p>}
+                                {task.error && <p className="mt-1 text-xs text-red-500/90">{task.error}</p>}
                             </button>
                         ))}
                     </div>
@@ -309,7 +309,7 @@ export default function Dashboard() {
 
             {runningTasks.length > 0 && (
                 <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
-                    <div className="flex items-center gap-2 mb-3 text-blue-200">
+                    <div className="flex items-center gap-2 mb-3 text-blue-500">
                         <Library className="w-5 h-5" />
                         <h2 className="text-lg font-semibold">{t('dashboard.runningTasks.title')}</h2>
                     </div>
@@ -320,7 +320,7 @@ export default function Dashboard() {
                                 onClick={() => openTaskTarget(task)}
                                 className="w-full text-left rounded-xl border border-blue-500/10 bg-black/20 p-3 hover:bg-black/30"
                             >
-                                <div className="flex items-center gap-2 text-xs text-blue-100/60 mb-2">
+                                <div className="flex items-center gap-2 text-xs text-blue-500/80 mb-2">
                                     <span>{taskTypeLabel(task)}</span>
                                     <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
                                 </div>

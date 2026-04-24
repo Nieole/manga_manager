@@ -41,13 +41,13 @@ interface TaskStatus {
 function logLevelBadgeClass(level: string) {
   switch (level) {
     case 'ERROR':
-      return 'border-red-500/30 bg-red-500/10 text-red-300';
+      return 'border-red-500/30 bg-red-500/10 text-red-500';
     case 'WARN':
-      return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
     case 'DEBUG':
-      return 'border-violet-500/30 bg-violet-500/10 text-violet-300';
+      return 'border-violet-500/30 bg-violet-500/10 text-violet-500';
     default:
-      return 'border-blue-500/30 bg-blue-500/10 text-blue-300';
+      return 'border-blue-500/30 bg-blue-500/10 text-blue-500';
   }
 }
 
@@ -152,11 +152,11 @@ export default function Logs() {
   const badgeClass = (status: string) => {
     switch (status) {
       case 'failed':
-        return 'bg-red-500/10 text-red-300 border-red-500/20';
+        return 'bg-red-500/10 text-red-500 border-red-500/20';
       case 'completed':
-        return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20';
+        return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
       default:
-        return 'bg-blue-500/10 text-blue-300 border-blue-500/20';
+        return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
     }
   };
 
@@ -210,24 +210,24 @@ export default function Logs() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">{t('logs.title')}</h1>
-          <p className="text-slate-400 mt-1">{t('logs.subtitle')}</p>
+          <p className="text-gray-400 mt-1">{t('logs.subtitle')}</p>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <Search className="absolute left-3 top-1/2 -trangray-y-1/2 w-4 h-4 text-gray-500" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && fetchData()}
               placeholder={t('logs.searchPlaceholder')}
-              className="w-full sm:w-64 rounded-lg border border-slate-700 bg-slate-900 pl-10 pr-4 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+              className="w-full sm:w-64 rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
             />
           </div>
           <select
             value={filterLevel}
             onChange={(e) => setFilterLevel(e.target.value)}
-            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
           >
             <option value="ALL">{t('logs.level.all')}</option>
             <option value="DEBUG">{t('logs.level.debug')}</option>
@@ -261,46 +261,46 @@ export default function Logs() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-        <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
-            <Terminal className="w-4 h-4 text-slate-400" />
-            <span className="text-sm text-slate-300">{t('logs.systemLogs')}</span>
+        <div className="rounded-2xl border border-gray-800 bg-gray-950 overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-gray-800 px-4 py-3">
+            <Terminal className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-300">{t('logs.systemLogs')}</span>
           </div>
           <div className="max-h-[70vh] overflow-auto p-4 font-mono text-sm">
             {loading && logs.length === 0 ? (
-              <div className="flex h-56 items-center justify-center text-slate-500">
+              <div className="flex h-56 items-center justify-center text-gray-500">
                 <RefreshCw className="w-6 h-6 animate-spin" />
               </div>
             ) : error ? (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 text-red-300">
+              <div className="flex h-56 flex-col items-center justify-center gap-2 text-red-500">
                 <AlertTriangle className="w-8 h-8" />
                 <span>{error}</span>
               </div>
             ) : logs.length === 0 ? (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 text-slate-500">
+              <div className="flex h-56 flex-col items-center justify-center gap-2 text-gray-500">
                 <Info className="w-8 h-8" />
                 <span>{t('logs.empty')}</span>
               </div>
             ) : (
               <div className="space-y-2">
                 {logs.map((log, index) => (
-                  <div key={`${log.time}-${index}`} className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                  <div key={`${log.time}-${index}`} className="rounded-xl border border-gray-800 bg-gray-900/70 p-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-slate-500">{formatDateTime(log.time)}</span>
+                      <span className="text-gray-500">{formatDateTime(log.time)}</span>
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${logLevelBadgeClass(log.level)}`}>
                         {log.level}
                       </span>
                       <button
                         onClick={() => copyRawLog(log.raw, index)}
-                        className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+                        className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-white"
                       >
                         <Copy className="w-3 h-3" />
                         {copiedIndex === index ? t('logs.copied') : t('logs.copyRaw')}
                       </button>
                     </div>
-                    <p className="mt-2 whitespace-pre-wrap break-words text-slate-200">{log.msg || log.raw}</p>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-gray-200">{log.msg || log.raw}</p>
                     {log.msg !== log.raw && (
-                      <p className="mt-2 whitespace-pre-wrap break-words text-xs text-slate-500">{log.raw}</p>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-xs text-gray-500">{log.raw}</p>
                     )}
                   </div>
                 ))}
@@ -310,21 +310,21 @@ export default function Logs() {
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+          <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
             <div className="mb-3 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-slate-400" />
+              <AlertCircle className="w-4 h-4 text-gray-400" />
               <h2 className="text-sm font-semibold text-white">{t('logs.taskCenter')}</h2>
             </div>
             <div className="mb-4 flex flex-wrap gap-2">
               <button
                 onClick={() => clearTasks('completed')}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800"
               >
                 {t('logs.clearCompleted')}
               </button>
               <button
                 onClick={() => clearTasks('failed')}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800"
               >
                 {t('logs.clearFailed')}
               </button>
@@ -334,7 +334,7 @@ export default function Logs() {
                 <select
                   value={taskStatusFilter}
                   onChange={(e) => setTaskStatusFilter(e.target.value)}
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
                 >
                   <option value="ALL">{t('logs.taskStatus.all')}</option>
                   <option value="running">{t('logs.taskStatus.running')}</option>
@@ -344,7 +344,7 @@ export default function Logs() {
                 <select
                   value={taskScopeFilter}
                   onChange={(e) => setTaskScopeFilter(e.target.value)}
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
                 >
                   <option value="ALL">{t('logs.taskScope.all')}</option>
                   <option value="system">{t('logs.taskScope.system')}</option>
@@ -358,11 +358,11 @@ export default function Logs() {
                   onChange={(e) => setTaskQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && fetchData()}
                   placeholder={t('logs.taskSearchPlaceholder')}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
                 />
                 <button
                   onClick={fetchData}
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800"
                 >
                   {t('logs.query')}
                 </button>
@@ -370,22 +370,22 @@ export default function Logs() {
             </div>
             <div className="space-y-3">
               {tasks.length === 0 ? (
-                <p className="text-sm text-slate-500">{t('logs.noTasks')}</p>
+                <p className="text-sm text-gray-500">{t('logs.noTasks')}</p>
               ) : (
                 groupedTasks.map((group) => (
                   <div key={group.title} className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{group.title}</h3>
-                      <span className="text-xs text-slate-600">{t('common.itemCount', { count: group.items.length })}</span>
+                      <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">{group.title}</h3>
+                      <span className="text-xs text-gray-600">{t('common.itemCount', { count: group.items.length })}</span>
                     </div>
                     {group.items.map((task) => (
-                      <div key={task.key} className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+                      <div key={task.key} className="rounded-xl border border-gray-800 bg-gray-950 p-3">
                         <div className="flex items-center gap-2">
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${badgeClass(task.status)}`}>
                             {task.status}
                           </span>
-                          <span className="text-xs text-slate-500">{getTaskTypeLabel(task, t)}</span>
-                          <span className="text-xs text-slate-500">
+                          <span className="text-xs text-gray-500">{getTaskTypeLabel(task, t)}</span>
+                          <span className="text-xs text-gray-500">
                             {task.scope_name || task.scope}
                             {task.scope_id ? ` #${task.scope_id}` : ''}
                           </span>
@@ -393,7 +393,7 @@ export default function Logs() {
                             <button
                               onClick={() => retryTask(task.key)}
                               disabled={retryingTaskKey === task.key}
-                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-800 disabled:opacity-60"
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-800 disabled:opacity-60"
                             >
                               <RotateCcw className={`w-3 h-3 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
                               {t('common.retry')}
@@ -402,40 +402,40 @@ export default function Logs() {
                           {hasTaskDetails(task) && (
                             <button
                               onClick={() => setExpandedTaskKey((current) => (current === task.key ? null : task.key))}
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-800"
+                              className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-800"
                             >
                               {expandedTaskKey === task.key ? t('common.collapseDetails') : t('common.viewDetails')}
                             </button>
                           )}
                         </div>
-                        <p className="mt-2 text-sm text-slate-100">{task.message}</p>
-                        <p className="mt-1 text-xs text-slate-500">
+                        <p className="mt-2 text-sm text-gray-100">{task.message}</p>
+                        <p className="mt-1 text-xs text-gray-500">
                           {formatProgress(task)} · {formatRelativeTime(task.updated_at)} · {formatDateTime(task.updated_at)}
                         </p>
                         {task.error && (
-                          <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">{task.error}</p>
+                          <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-500">{task.error}</p>
                         )}
-                        <p className="mt-2 text-xs text-slate-500">{getTaskActionHint(task, t)}</p>
+                        <p className="mt-2 text-xs text-gray-500">{getTaskActionHint(task, t)}</p>
                         {expandedTaskKey === task.key && (
-                          <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3 space-y-3">
+                          <div className="mt-3 rounded-xl border border-gray-800 bg-gray-900/60 p-3 space-y-3">
                             <div className="grid gap-2 sm:grid-cols-2">
                               <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t('logs.task.startedAt')}</p>
-                                <p className="mt-1 text-xs text-slate-300">{formatDateTime(task.started_at)}</p>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('logs.task.startedAt')}</p>
+                                <p className="mt-1 text-xs text-gray-300">{formatDateTime(task.started_at)}</p>
                               </div>
                               <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t('logs.task.finishedAt')}</p>
-                                <p className="mt-1 text-xs text-slate-300">{task.finished_at ? formatDateTime(task.finished_at) : t('logs.task.runningNow')}</p>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('logs.task.finishedAt')}</p>
+                                <p className="mt-1 text-xs text-gray-300">{task.finished_at ? formatDateTime(task.finished_at) : t('logs.task.runningNow')}</p>
                               </div>
                             </div>
                             {task.params && Object.keys(task.params).length > 0 && (
                               <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mb-2">{t('logs.task.params')}</p>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-2">{t('logs.task.params')}</p>
                                 <div className="flex flex-wrap gap-2">
                                   {Object.entries(task.params).map(([key, value]) => (
                                     <span
                                       key={`${task.key}-${key}`}
-                                      className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-300"
+                                      className="rounded-full border border-gray-700 bg-gray-950 px-2.5 py-1 text-xs text-gray-300"
                                     >
                                       {key}: {value}
                                     </span>
@@ -445,8 +445,8 @@ export default function Logs() {
                             )}
                             {task.error && (
                               <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mb-2">{t('logs.task.errorDetails')}</p>
-                                <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs text-red-100 whitespace-pre-wrap break-words">
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-2">{t('logs.task.errorDetails')}</p>
+                                <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs text-red-500 whitespace-pre-wrap break-words">
                                   {task.error}
                                 </pre>
                               </div>
@@ -455,7 +455,7 @@ export default function Logs() {
                         )}
                         <button
                           onClick={() => openTaskTarget(task)}
-                          className="mt-3 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                          className="mt-3 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
                         >
                           {t('logs.task.openPage')}
                         </button>
@@ -467,12 +467,12 @@ export default function Logs() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+          <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
             <div className="mb-3 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-slate-400" />
+              <CheckCircle2 className="w-4 h-4 text-gray-400" />
               <h2 className="text-sm font-semibold text-white">{t('logs.tips.title')}</h2>
             </div>
-            <ul className="space-y-2 text-sm text-slate-400">
+            <ul className="space-y-2 text-sm text-gray-400">
               <li>{t('logs.tips.one')}</li>
               <li>{t('logs.tips.two')}</li>
               <li>{t('logs.tips.three')}</li>
@@ -486,10 +486,10 @@ export default function Logs() {
 
 function MetricCard({ label, value, tone }: { label: string; value: number; tone: 'blue' | 'red' | 'amber' | 'purple' }) {
   const toneClass = {
-    blue: 'border-blue-500/20 bg-blue-500/10 text-blue-200',
-    red: 'border-red-500/20 bg-red-500/10 text-red-200',
-    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-200',
-    purple: 'border-purple-500/20 bg-purple-500/10 text-purple-200',
+    blue: 'border-blue-500/20 bg-blue-500/10 text-blue-500',
+    red: 'border-red-500/20 bg-red-500/10 text-red-500',
+    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-600',
+    purple: 'border-purple-500/20 bg-purple-500/10 text-purple-500',
   }[tone];
 
   return (
@@ -512,9 +512,9 @@ function TaskMetricCard({
   tone: 'blue' | 'red' | 'emerald';
 }) {
   const toneClass = {
-    blue: 'border-blue-500/20 bg-blue-500/10 text-blue-200',
-    red: 'border-red-500/20 bg-red-500/10 text-red-200',
-    emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200',
+    blue: 'border-blue-500/20 bg-blue-500/10 text-blue-500',
+    red: 'border-red-500/20 bg-red-500/10 text-red-500',
+    emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
   }[tone];
 
   return (

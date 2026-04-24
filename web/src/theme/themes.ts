@@ -140,6 +140,11 @@ export function applyTheme(themeId: string) {
   const theme = getThemeById(themeId);
   document.documentElement.dataset.theme = theme.id;
   document.documentElement.style.colorScheme = theme.colorScheme;
+  if (theme.colorScheme === 'dark') {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
 }
 
 export function initializeTheme() {
