@@ -498,7 +498,7 @@ export default function SeriesDetail() {
                         </div>
                     )}
                     {book.cover_path?.Valid ? (
-                        <img src={`/api/covers/${book.id}${book.updated_at ? `?v=${new Date(book.updated_at).getTime()}` : ''}`} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="cover" loading="lazy" />
+                        <img src={`/api/covers/${book.id}${book.updated_at ? `?v=${new Date(book.updated_at).getTime()}` : ''}`} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt={t('common.cover')} loading="lazy" />
                     ) : (
                         <BookImage className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
                     )}
@@ -508,7 +508,7 @@ export default function SeriesDetail() {
                         <button
                             onClick={(e) => handleQuickMarkRead(e, book.id, !(book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count))}
                             className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
-                            title={book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? "标记为未读" : "快速标记为已读"}
+                            title={book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? t('series.book.markUnread') : t('series.book.quickMarkRead')}
                         >
                             <CheckCircle2 className={`w-4 h-4 ${book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? 'text-green-400 fill-green-400/20' : ''}`} />
                         </button>
@@ -535,7 +535,7 @@ export default function SeriesDetail() {
                         </h4>
                         {book.last_read_page?.Valid && book.last_read_page.Int64 > 0 && (
                             <div className="mt-2 inline-flex items-center text-xs font-medium text-orange-400 bg-orange-400/10 border border-orange-400/20 px-2 py-0.5 rounded-sm">
-                                阅读至 {book.last_read_page.Int64} 页
+                                {t('series.book.resumeToPage', { page: book.last_read_page.Int64 })}
                             </div>
                         )}
                     </div>

@@ -23,8 +23,8 @@ export function SettingsAIPage() {
           <div>
             <label className="mb-1 block text-sm text-gray-400">{t('settings.ai.provider')}</label>
             <select value={config.llm.provider} onChange={(e) => setConfig({ ...config, llm: { ...config.llm, provider: e.target.value } })} className={inputClassName}>
-              <option value="ollama">Ollama</option>
-              <option value="openai">OpenAI Compatible</option>
+              <option value="ollama">{t('settings.ai.provider.ollama')}</option>
+              <option value="openai">{t('settings.ai.provider.openaiCompatible')}</option>
             </select>
             <FieldErrors messages={fieldErrors('llm.provider')} />
           </div>
@@ -36,8 +36,8 @@ export function SettingsAIPage() {
               className={inputClassName}
               disabled={config.llm.provider !== 'openai'}
             >
-              <option value="responses">Responses API</option>
-              <option value="chat_completions">Chat Completions</option>
+              <option value="responses">{t('settings.ai.apiMode.responses')}</option>
+              <option value="chat_completions">{t('settings.ai.apiMode.chatCompletions')}</option>
             </select>
             <FieldErrors messages={fieldErrors('llm.api_mode')} />
           </div>

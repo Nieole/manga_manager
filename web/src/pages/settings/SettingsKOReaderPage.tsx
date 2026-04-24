@@ -36,7 +36,7 @@ export function SettingsKOReaderPage() {
 
   return (
     <div className="space-y-6">
-      <SettingsPageIntro title="KOReader" description={t('settings.koreader.description')} />
+      <SettingsPageIntro title={t('app.koreader')} description={t('settings.koreader.description')} />
 
       <section className={sectionClassName}>
         <div className="flex items-center gap-2 text-komgaSecondary">
@@ -148,11 +148,11 @@ export function SettingsKOReaderPage() {
             </p>
             <p className="mt-1 text-xs opacity-70">{t('settings.koreader.saveHint')}</p>
           </button>
-          <button onClick={() => handleAction('/api/system/koreader/rebuild-hashes', t('settings.koreader.rebuildHashesSuccess'))} className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-4 text-left text-gray-300 hover:text-white hover:bg-gray-800 transition-colors">
+          <button onClick={() => handleAction('/api/system/koreader/rebuild-hashes', t('settings.koreader.rebuildHashesSuccess'), t('settings.koreader.rebuildHashesFailed'))} className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-4 text-left text-gray-300 hover:text-white hover:bg-gray-800 transition-colors">
             <p className="font-medium">{t('settings.koreader.rebuildHashes', { label: formatKOReaderIndexLabel(koreaderForm.match_mode, koreaderForm.path_ignore_extension) })}</p>
             <p className="mt-1 text-xs opacity-70">{t('settings.koreader.rebuildHashesHint')}</p>
           </button>
-          <button onClick={() => handleAction('/api/system/koreader/reconcile', t('settings.koreader.reconcileSuccess'))} className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-4 text-left text-gray-300 hover:text-white hover:bg-gray-800 transition-colors">
+          <button onClick={() => handleAction('/api/system/koreader/reconcile', t('settings.koreader.reconcileSuccess'), t('settings.koreader.reconcileFailed'))} className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-4 text-left text-gray-300 hover:text-white hover:bg-gray-800 transition-colors">
             <p className="font-medium">{t('settings.koreader.reconcile')}</p>
             <p className="mt-1 text-xs opacity-70">{t('settings.koreader.reconcileHint')}</p>
           </button>

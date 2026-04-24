@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,6 +82,15 @@ func main() {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Compress(5,
+		"text/html",
+		"text/css",
+		"application/javascript",
+		"application/json",
+		"image/svg+xml",
+		"text/plain",
+		"application/xml",
+	))
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
@@ -131,21 +141,12 @@ func main() {
 				w.Write([]byte("Manga Manager API is running. Web builds are not yet embedded. Please run UI building task."))
 				return
 			}
-			w.Header().Set("Content-Type", "text/html")
+			setStaticResponseHeaders(w, "/index.html")
 			w.Write(index)
 			return
 		}
 
-		if strings.HasSuffix(path, ".css") {
-			w.Header().Set("Content-Type", "text/css")
-		} else if strings.HasSuffix(path, ".js") {
-			w.Header().Set("Content-Type", "application/javascript")
-		} else if strings.HasSuffix(path, ".html") {
-			w.Header().Set("Content-Type", "text/html")
-		} else if strings.HasSuffix(path, ".svg") {
-			w.Header().Set("Content-Type", "image/svg+xml")
-		}
-
+		setStaticResponseHeaders(w, path)
 		w.Write(content)
 	})
 
@@ -155,6 +156,44 @@ func main() {
 		slog.Error("Server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func setStaticResponseHeaders(w http.ResponseWriter, path string) {
+	if contentType := staticContentType(path); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", staticCacheControl(path))
+}
+
+func staticContentType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return ""
+	}
+
+	contentType := mime.TypeByExtension(ext)
+	if contentType == "" {
+		return ""
+	}
+
+	if ext == ".js" {
+		return "application/javascript"
+	}
+
+	return contentType
+}
+
+func staticCacheControl(path string) string {
+	normalized := strings.TrimPrefix(path, "/")
+	if normalized == "" || normalized == "index.html" {
+		return "no-cache"
+	}
+
+	if strings.HasPrefix(normalized, "assets/") {
+		return "public, max-age=31536000, immutable"
+	}
+
+	return "no-cache"
 }
 
 func watchConfig(path string, cfgManager *config.Manager) {

@@ -247,9 +247,16 @@ export default function Dashboard() {
                             {t('dashboard.koreader.status', { state: koreaderOverview?.enabled ? t('dashboard.koreader.enabled') : t('dashboard.koreader.disabled') })}
                         </p>
                         <p className="mt-1 text-xs text-gray-500">
-                            当前匹配模式：{koreaderOverview?.match_mode === 'file_path'
-                                ? `文件路径（文件名 + 向上 ${koreaderOverview?.path_match_depth ?? 2} 层路径${koreaderOverview?.path_ignore_extension ? '，忽略扩展名' : '，保留扩展名'}）`
-                                : '二进制哈希'}
+                            {t('dashboard.koreader.matchMode', {
+                                mode: koreaderOverview?.match_mode === 'file_path'
+                                    ? t('dashboard.koreader.matchModeFilePath', {
+                                        depth: koreaderOverview?.path_match_depth ?? 2,
+                                        extensionMode: koreaderOverview?.path_ignore_extension
+                                            ? t('dashboard.koreader.ignoreExtension')
+                                            : t('dashboard.koreader.keepExtension'),
+                                    })
+                                    : t('dashboard.koreader.matchModeBinaryHash'),
+                            })}
                         </p>
                     </div>
                     <button
@@ -529,6 +536,7 @@ function MiniStat({ label, value, accent }: { label: string; value: string | num
 
 // GitHub 风格活跃热力图组件
 function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDays7: number }) {
+    const { locale, t, formatNumber } = useI18n();
     const WEEKS = 16;
     const TOTAL_DAYS = WEEKS * 7;
 
@@ -589,29 +597,32 @@ function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDay
 
     // 月份标签
     const monthLabels: { label: string; colIndex: number }[] = [];
-    const months = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
     let lastMonth = -1;
     weeks.forEach((week, colIdx) => {
         const firstDay = week[0];
         if (firstDay) {
-            const month = new Date(firstDay.date).getMonth();
+            const monthDate = new Date(firstDay.date);
+            const month = monthDate.getMonth();
             if (month !== lastMonth) {
-                monthLabels.push({ label: months[month], colIndex: colIdx });
+                monthLabels.push({
+                    label: new Intl.DateTimeFormat(locale, { month: 'short' }).format(monthDate),
+                    colIndex: colIdx,
+                });
                 lastMonth = month;
             }
         }
     });
 
-    const dayLabels = ['', '一', '', '三', '', '五', ''];
+    const dayLabels = ['', t('dashboard.activity.day.mon'), '', t('dashboard.activity.day.wed'), '', t('dashboard.activity.day.fri'), ''];
 
     const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
 
     return (
         <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 relative">
             <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-white">阅读活跃度</h3>
+                <h3 className="text-lg font-semibold text-white">{t('dashboard.activity.title')}</h3>
                 <p className="text-xs text-gray-500">
-                    近 7 天活跃 <span className="text-komgaPrimary font-medium">{activeDays7}</span> 天
+                    {t('dashboard.activity.summary', { count: formatNumber(activeDays7) })}
                 </p>
             </div>
 
@@ -651,7 +662,9 @@ function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDay
                                             onMouseEnter={(e) => {
                                                 const rect = e.currentTarget.getBoundingClientRect();
                                                 setTooltip({
-                                                    text: cell.count > 0 ? `${cell.date}: ${cell.count} 页` : `${cell.date}: 无活动`,
+                                                    text: cell.count > 0
+                                                        ? `${cell.date}: ${t('dashboard.activity.pagesRead', { count: formatNumber(cell.count) })}`
+                                                        : `${cell.date}: ${t('dashboard.activity.noActivity')}`,
                                                     x: rect.left + rect.width / 2,
                                                     y: rect.top - 8
                                                 });
@@ -668,11 +681,11 @@ function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDay
 
             {/* 图例 */}
             <div className="flex items-center justify-end gap-1.5 mt-3">
-                <span className="text-[10px] text-gray-500 mr-1">少</span>
+                <span className="text-[10px] text-gray-500 mr-1">{t('dashboard.activity.legendLess')}</span>
                 {levelColors.map((color, idx) => (
                     <div key={idx} className={`w-[11px] h-[11px] rounded-sm ${color}`} />
                 ))}
-                <span className="text-[10px] text-gray-500 ml-1">多</span>
+                <span className="text-[10px] text-gray-500 ml-1">{t('dashboard.activity.legendMore')}</span>
             </div>
 
             {/* Tooltip */}

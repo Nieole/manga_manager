@@ -1,6 +1,7 @@
 import { useEffect, useId, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useI18n } from '../../i18n/LocaleProvider';
 
 type ModalSize = 'compact' | 'standard' | 'wide';
 type ModalPlacement = 'center' | 'top';
@@ -54,6 +55,7 @@ export function ModalShell({
   headerClassName = '',
   footerClassName = '',
 }: ModalShellProps) {
+  const { t } = useI18n();
   const titleId = useId();
   const descriptionId = useId();
 
@@ -145,7 +147,7 @@ export function ModalShell({
                       type="button"
                       onClick={onClose}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-700/80 bg-gray-900/70 text-gray-400 transition-all hover:border-gray-600 hover:bg-gray-800 hover:text-white"
-                      aria-label="关闭"
+                      aria-label={t('common.close')}
                     >
                       <X className="h-5 w-5" />
                     </button>

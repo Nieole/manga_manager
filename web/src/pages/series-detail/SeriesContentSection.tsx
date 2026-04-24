@@ -87,7 +87,7 @@ export function SeriesContentSection({
                       <img
                         src={`/api/covers/${volume.cover_book_id}${seriesUpdatedAt ? `?v=${new Date(seriesUpdatedAt).getTime()}` : ''}`}
                         className="absolute inset-0 w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105"
-                        alt="cover"
+                        alt={t('common.cover')}
                         loading="lazy"
                       />
                     ) : (

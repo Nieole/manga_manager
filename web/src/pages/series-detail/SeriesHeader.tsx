@@ -65,7 +65,7 @@ export function SeriesHeader({
       {/* Cover Image */}
       <div className="shrink-0 w-48 md:w-64 lg:w-72 rounded-2xl shadow-xl overflow-hidden self-center md:self-start border border-white/10 bg-komgaSurface group relative">
           {coverUrl ? (
-            <img src={coverUrl} alt="Cover" className="w-full h-auto object-cover aspect-[2/3] transition-transform duration-700 group-hover:scale-105" />
+            <img src={coverUrl} alt={t('common.cover')} className="w-full h-auto object-cover aspect-[2/3] transition-transform duration-700 group-hover:scale-105" />
           ) : (
             <div className="w-full aspect-[2/3] flex flex-col items-center justify-center bg-komgaSurface/50">
               <BookImage className="w-16 h-16 text-gray-500 opacity-50 mb-4" />
@@ -229,7 +229,7 @@ export function SeriesHeader({
                          <div className="absolute right-0 bottom-full mb-2 w-48 bg-komgaSurface border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
                            <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-white/5 bg-komgaSurface/50">{t('series.header.pickSource')}</div>
                            <button onClick={() => onScrape('bangumi')} className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors">{t('series.header.bangumiRecommended')}</button>
-                           <button onClick={() => onScrape('ollama')} className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-white/5">Ollama LLM</button>
+                           <button onClick={() => onScrape('ollama')} className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-white/5">{t('series.header.ollama')}</button>
                          </div>
                        </>
                     )}

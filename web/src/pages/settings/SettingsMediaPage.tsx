@@ -36,9 +36,9 @@ export function SettingsMediaPage() {
               onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, thumbnail_format: e.target.value } })}
               className={inputClassName}
             >
-              <option value="webp">WebP</option>
-              <option value="avif">AVIF</option>
-              <option value="jpg">JPEG</option>
+              <option value="webp">{t('settings.media.format.webp')}</option>
+              <option value="avif">{t('settings.media.format.avif')}</option>
+              <option value="jpg">{t('settings.media.format.jpg')}</option>
             </select>
             <FieldErrors messages={fieldErrors('scanner.thumbnail_format')} />
           </div>

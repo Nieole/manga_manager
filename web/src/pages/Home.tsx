@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck, ChevronDown, ChevronUp } from 'lucide-react';
@@ -15,6 +15,7 @@ import type { AIRecommendation, NamedOption, Series } from './home/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
 const DEFAULT_PAGE_SIZE = 30;
+const inflightSeriesSearchRequests = new Map<string, Promise<any>>();
 
 interface ExternalSession {
     session_id: string;
@@ -42,6 +43,22 @@ interface ExternalSeriesStatus {
     external_match_count: number;
     external_total_count: number;
     external_sync_status: 'missing' | 'partial' | 'complete';
+}
+
+function requestSeriesSearch(query: string) {
+    const existing = inflightSeriesSearchRequests.get(query);
+    if (existing) {
+        return existing;
+    }
+
+    const request = axios.get(`/api/series/search?${query}`)
+        .finally(() => {
+            if (inflightSeriesSearchRequests.get(query) === request) {
+                inflightSeriesSearchRequests.delete(query);
+            }
+        });
+    inflightSeriesSearchRequests.set(query, request);
+    return request;
 }
 
 export default function Home() {
@@ -87,6 +104,7 @@ export default function Home() {
 
     // External Library section collapse state
     const [isExternalExpanded, setIsExternalExpanded] = useState(false);
+    const hasMountedRefreshEffect = useRef(false);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -298,7 +316,7 @@ export default function Home() {
         if (activeLetter) params.append('letter', activeLetter);
         if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
 
-        axios.get(`/api/series/search?${params.toString()}`)
+        requestSeriesSearch(params.toString())
             .then((res: any) => {
                 const newItems = res.data.items || [];
                 setAllSeries(newItems);
@@ -367,8 +385,16 @@ export default function Home() {
     }, [libId, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     // 3. SSE 专用静默刷新
+    // 注意：settingsReady 仅用作守卫条件，不作为触发依赖。
+    // 如果将 settingsReady 加入依赖，当它从 false→true 变化时（配置恢复后），
+    // 本 effect 会和 effect #2 同时触发，导致发出两个相同的请求。
     useEffect(() => {
-        if (libId) {
+        if (!hasMountedRefreshEffect.current) {
+            hasMountedRefreshEffect.current = true;
+            return;
+        }
+
+        if (libId && settingsReady) {
             fetchSeriesPage(page, true);
         }
         if (externalSession?.session_id) {
@@ -860,7 +886,7 @@ export default function Home() {
                                             </div>
                                         )}
                                         {s.cover_path?.Valid && s.cover_path?.String ? (
-                                            <img src={`/api/thumbnails/${s.cover_path.String}${s.updated_at ? `?v=${new Date(s.updated_at).getTime()}` : ''}`} alt="cover" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                                            <img src={`/api/thumbnails/${s.cover_path.String}${s.updated_at ? `?v=${new Date(s.updated_at).getTime()}` : ''}`} alt={t('common.cover')} loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                                         ) : (
                                             <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
                                         )}

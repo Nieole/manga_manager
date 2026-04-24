@@ -160,7 +160,7 @@ interface SettingsContextValue {
   handleRotateKOReaderAccount: (account: KOReaderAccount) => Promise<void>;
   handleToggleKOReaderAccount: (account: KOReaderAccount) => Promise<void>;
   handleDeleteKOReaderAccount: (account: KOReaderAccount) => Promise<void>;
-  handleAction: (path: string, successMessage: string) => Promise<void>;
+  handleAction: (path: string, successMessage: string, errorMessage?: string) => Promise<void>;
   hasSectionChanges: (section: SettingsSectionKey) => boolean;
   formatKOReaderLatestSync: (value?: { Time: string; Valid: boolean } | null) => string;
   formatKOReaderIndexLabel: (matchMode: string, pathIgnoreExtension: boolean) => string;
@@ -248,7 +248,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [saving, setSaving] = useState(false);
   const [testingLLM, setTestingLLM] = useState(false);
   const [savingKOReader, setSavingKOReader] = useState(false);
-  const [llmTestPrompt, setLlmTestPrompt] = useState('你好，请做个简短的自我介绍，并确认你收到了测试请求。');
+  const [llmTestPrompt, setLlmTestPrompt] = useState(() =>
+    translateInLocale(getClientLocale(), 'settings.ai.defaultTestPrompt'),
+  );
   const [llmTestResult, setLlmTestResult] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [koreaderStatus, setKOReaderStatus] = useState<KOReaderStatus | null>(null);
@@ -379,22 +381,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showToast(t('settings.toast.llmTestSucceeded'), 'success');
     } catch (error: any) {
       const message = error.response?.data?.error || t('settings.toast.llmTestFallback');
-      setLlmTestResult(`Error: ${message}`);
+      setLlmTestResult(`${t('common.errorPrefix')}: ${message}`);
       showToast(t('settings.toast.llmTestFailed'), 'error');
     } finally {
       setTestingLLM(false);
     }
   }, [config, llmTestPrompt, showToast, t]);
 
-  const handleAction = useCallback(async (path: string, successMessage: string) => {
+  const handleAction = useCallback(async (path: string, successMessage: string, errorMessage?: string) => {
     try {
       const res = await axios.post(path);
       showToast(res.data.message || successMessage, 'success');
     } catch (error) {
       console.error(error);
-      showToast(successMessage.replace('已', '未能'), 'error');
+      showToast(errorMessage || t('settings.toast.actionFailed'), 'error');
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   const saveKOReader = useCallback(async () => {
     if (!koreaderForm) return;

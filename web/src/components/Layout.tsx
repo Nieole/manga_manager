@@ -1,14 +1,15 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import axios from 'axios';
 import { BookOpen, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
-import { LibraryFormModal } from './layout/LibraryFormModal';
-import { SearchModal } from './layout/SearchModal';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
+
+const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
+const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
 
 interface ConfirmDialogState {
     open: boolean;
@@ -87,7 +88,7 @@ export default function Layout() {
         open: false,
         title: '',
         description: '',
-        confirmLabel: '确认',
+        confirmLabel: undefined,
         tone: 'primary',
         onConfirm: null,
     });
@@ -201,6 +202,15 @@ export default function Layout() {
             setIsSearchModalOpen(false);
         }
     };
+
+    const modalFallback = (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="flex items-center gap-3 rounded-2xl border border-gray-800 bg-gray-900/90 px-5 py-4 text-sm text-gray-300 shadow-xl shadow-black/40">
+                <Loader2 className="h-4 w-4 animate-spin text-komgaPrimary" />
+                <span>{t('common.loading')}</span>
+            </div>
+        </div>
+    );
 
     const fetchLibraries = () => {
         setLoading(true);
@@ -445,7 +455,7 @@ export default function Layout() {
                     </button>
                     <Link to="/" className="flex items-center space-x-2 sm:space-x-3 w-auto sm:w-56">
                         <BookOpen className="text-komgaPrimary h-7 w-7 sm:h-8 sm:w-8" />
-                        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition hidden sm:block">Manga Manager</h1>
+                        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition hidden sm:block">{t('app.name')}</h1>
                     </Link>
                 </div>
 
@@ -764,92 +774,96 @@ export default function Layout() {
                 )}
             </main>
 
-            <LibraryFormModal
-                title={t('layout.libraryModal.addTitle')}
-                submitLabel={t('layout.libraryModal.addSubmit')}
-                submittingLabel={t('layout.libraryModal.addSubmitting')}
-                open={showAddModal}
-                name={newLibName}
-                path={newLibPath}
-                autoScan={newLibAutoScan}
-                koreaderSyncEnabled={newLibKOReaderSyncEnabled}
-                scanInterval={newLibScanInterval}
-                scanFormats={newLibScanFormats}
-                submitting={adding}
-                browsing={browsing}
-                browseCurrent={browseCurrent}
-                browseParent={browseParent}
-                browseDirs={browseDirs}
-                browseDrives={browseDrives}
-                recentPaths={recentLibraryPaths}
-                supportedScanFormats={supportedScanFormats}
-                onClose={() => setShowAddModal(false)}
-                onSubmit={handleAddLibrary}
-                onNameChange={setNewLibName}
-                onPathChange={setNewLibPath}
-                onAutoScanChange={setNewLibAutoScan}
-                onKOReaderSyncEnabledChange={setNewLibKOReaderSyncEnabled}
-                onScanIntervalChange={setNewLibScanInterval}
-                onScanFormatsChange={setNewLibScanFormats}
-                onOpenDirectoryBrowser={openDirectoryBrowser}
-                onCloseDirectoryBrowser={() => setBrowsing(false)}
-                onChooseCurrentDirectory={() => {
-                    setNewLibPath(browseCurrent);
-                    setBrowsing(false);
-                }}
-                onNavigateDirectory={navigateDirectoryBrowser}
-            />
+            {(showAddModal || showEditModal || isSearchModalOpen) ? (
+                <Suspense fallback={modalFallback}>
+                    <LibraryFormModal
+                        title={t('layout.libraryModal.addTitle')}
+                        submitLabel={t('layout.libraryModal.addSubmit')}
+                        submittingLabel={t('layout.libraryModal.addSubmitting')}
+                        open={showAddModal}
+                        name={newLibName}
+                        path={newLibPath}
+                        autoScan={newLibAutoScan}
+                        koreaderSyncEnabled={newLibKOReaderSyncEnabled}
+                        scanInterval={newLibScanInterval}
+                        scanFormats={newLibScanFormats}
+                        submitting={adding}
+                        browsing={browsing}
+                        browseCurrent={browseCurrent}
+                        browseParent={browseParent}
+                        browseDirs={browseDirs}
+                        browseDrives={browseDrives}
+                        recentPaths={recentLibraryPaths}
+                        supportedScanFormats={supportedScanFormats}
+                        onClose={() => setShowAddModal(false)}
+                        onSubmit={handleAddLibrary}
+                        onNameChange={setNewLibName}
+                        onPathChange={setNewLibPath}
+                        onAutoScanChange={setNewLibAutoScan}
+                        onKOReaderSyncEnabledChange={setNewLibKOReaderSyncEnabled}
+                        onScanIntervalChange={setNewLibScanInterval}
+                        onScanFormatsChange={setNewLibScanFormats}
+                        onOpenDirectoryBrowser={openDirectoryBrowser}
+                        onCloseDirectoryBrowser={() => setBrowsing(false)}
+                        onChooseCurrentDirectory={() => {
+                            setNewLibPath(browseCurrent);
+                            setBrowsing(false);
+                        }}
+                        onNavigateDirectory={navigateDirectoryBrowser}
+                    />
 
-            <LibraryFormModal
-                title={t('layout.libraryModal.editTitle')}
-                submitLabel={t('layout.libraryModal.editSubmit')}
-                submittingLabel={t('layout.libraryModal.editSubmitting')}
-                open={showEditModal}
-                name={editLibName}
-                path={editLibPath}
-                autoScan={editLibAutoScan}
-                koreaderSyncEnabled={editLibKOReaderSyncEnabled}
-                scanInterval={editLibScanInterval}
-                scanFormats={editLibScanFormats}
-                submitting={editing}
-                browsing={browsing}
-                browseCurrent={browseCurrent}
-                browseParent={browseParent}
-                browseDirs={browseDirs}
-                browseDrives={browseDrives}
-                recentPaths={recentLibraryPaths}
-                supportedScanFormats={supportedScanFormats}
-                onClose={() => setShowEditModal(false)}
-                onSubmit={handleEditLibrarySubmit}
-                onNameChange={setEditLibName}
-                onPathChange={setEditLibPath}
-                onAutoScanChange={setEditLibAutoScan}
-                onKOReaderSyncEnabledChange={setEditLibKOReaderSyncEnabled}
-                onScanIntervalChange={setEditLibScanInterval}
-                onScanFormatsChange={setEditLibScanFormats}
-                onOpenDirectoryBrowser={openDirectoryBrowser}
-                onCloseDirectoryBrowser={() => setBrowsing(false)}
-                onChooseCurrentDirectory={() => {
-                    setEditLibPath(browseCurrent);
-                    setBrowsing(false);
-                }}
-                onNavigateDirectory={navigateDirectoryBrowser}
-            />
+                    <LibraryFormModal
+                        title={t('layout.libraryModal.editTitle')}
+                        submitLabel={t('layout.libraryModal.editSubmit')}
+                        submittingLabel={t('layout.libraryModal.editSubmitting')}
+                        open={showEditModal}
+                        name={editLibName}
+                        path={editLibPath}
+                        autoScan={editLibAutoScan}
+                        koreaderSyncEnabled={editLibKOReaderSyncEnabled}
+                        scanInterval={editLibScanInterval}
+                        scanFormats={editLibScanFormats}
+                        submitting={editing}
+                        browsing={browsing}
+                        browseCurrent={browseCurrent}
+                        browseParent={browseParent}
+                        browseDirs={browseDirs}
+                        browseDrives={browseDrives}
+                        recentPaths={recentLibraryPaths}
+                        supportedScanFormats={supportedScanFormats}
+                        onClose={() => setShowEditModal(false)}
+                        onSubmit={handleEditLibrarySubmit}
+                        onNameChange={setEditLibName}
+                        onPathChange={setEditLibPath}
+                        onAutoScanChange={setEditLibAutoScan}
+                        onKOReaderSyncEnabledChange={setEditLibKOReaderSyncEnabled}
+                        onScanIntervalChange={setEditLibScanInterval}
+                        onScanFormatsChange={setEditLibScanFormats}
+                        onOpenDirectoryBrowser={openDirectoryBrowser}
+                        onCloseDirectoryBrowser={() => setBrowsing(false)}
+                        onChooseCurrentDirectory={() => {
+                            setEditLibPath(browseCurrent);
+                            setBrowsing(false);
+                        }}
+                        onNavigateDirectory={navigateDirectoryBrowser}
+                    />
 
-            <SearchModal
-                open={isSearchModalOpen}
-                searchQuery={searchQuery}
-                searchResults={searchResults}
-                selectedIndex={selectedIndex}
-                searchTarget={searchTarget}
-                onClose={() => setIsSearchModalOpen(false)}
-                onSearchQueryChange={setSearchQuery}
-                onSearchKeyDown={handleSearchKeyDown}
-                onResetSearch={resetSearch}
-                onSearchTargetChange={setSearchTarget}
-                onSelectResult={handleSelectResult}
-                onHighlightIndex={setSelectedIndex}
-            />
+                    <SearchModal
+                        open={isSearchModalOpen}
+                        searchQuery={searchQuery}
+                        searchResults={searchResults}
+                        selectedIndex={selectedIndex}
+                        searchTarget={searchTarget}
+                        onClose={() => setIsSearchModalOpen(false)}
+                        onSearchQueryChange={setSearchQuery}
+                        onSearchKeyDown={handleSearchKeyDown}
+                        onResetSearch={resetSearch}
+                        onSearchTargetChange={setSearchTarget}
+                        onSelectResult={handleSelectResult}
+                        onHighlightIndex={setSelectedIndex}
+                    />
+                </Suspense>
+            ) : null}
 
             <ConfirmDialog
                 open={confirmDialog.open}

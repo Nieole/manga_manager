@@ -2,4 +2,5 @@
 build
 data
 .gocache
+.gocache_local
 .tmp

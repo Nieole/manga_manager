@@ -43,6 +43,15 @@ export function SeriesMetadataEditorModal({
   onFormChange,
 }: SeriesMetadataEditorModalProps) {
   const { t } = useI18n();
+  const authorRoleOptions = [
+    { value: 'Writer', label: t('series.editor.authorRole.writer') },
+    { value: 'Penciller', label: t('series.editor.authorRole.penciller') },
+    { value: 'Inker', label: t('series.editor.authorRole.inker') },
+    { value: 'Colorist', label: t('series.editor.authorRole.colorist') },
+    { value: 'Letterer', label: t('series.editor.authorRole.letterer') },
+    { value: 'Cover', label: t('series.editor.authorRole.cover') },
+    { value: 'Editor', label: t('series.editor.authorRole.editor') },
+  ];
   const [tagInputValue, setTagInputValue] = useState('');
   const [authorInputName, setAuthorInputName] = useState('');
   const [authorInputRole, setAuthorInputRole] = useState('Writer');
@@ -280,13 +289,11 @@ export function SeriesMetadataEditorModal({
                   onChange={(e) => setAuthorInputRole(e.target.value)}
                   className="rounded-lg border border-gray-800 bg-gray-800 px-2.5 py-2 text-sm text-gray-300 outline-none cursor-pointer"
                 >
-                  <option value="Writer">Writer</option>
-                  <option value="Penciller">Penciller</option>
-                  <option value="Inker">Inker</option>
-                  <option value="Colorist">Colorist</option>
-                  <option value="Letterer">Letterer</option>
-                  <option value="Cover">Cover</option>
-                  <option value="Editor">Editor</option>
+                  {authorRoleOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
                 {authorInputName && authorSuggestions.length > 0 && (
                   <div className="absolute left-0 top-10 z-20 max-h-40 w-full overflow-y-auto rounded-xl border border-gray-700 bg-komgaSurface shadow-xl">
@@ -319,7 +326,7 @@ export function SeriesMetadataEditorModal({
                       newLinks[idx].name = e.target.value;
                       onFormChange('linksInput', newLinks);
                     }}
-                    placeholder="Link Name (e.g. Anilist)"
+                    placeholder={t('series.editor.linkNamePlaceholder')}
                     className="flex-1 rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-none transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
                   />
                   <input
@@ -330,7 +337,7 @@ export function SeriesMetadataEditorModal({
                       newLinks[idx].url = e.target.value;
                       onFormChange('linksInput', newLinks);
                     }}
-                    placeholder="URL"
+                    placeholder={t('series.editor.linkUrlPlaceholder')}
                     className="flex-[2] rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-none transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
                   />
                   <button
