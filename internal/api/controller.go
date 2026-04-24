@@ -138,7 +138,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 				return
 			}
 			for _, lib := range libs {
-				if lib.AutoScan {
+				if lib.ScanMode == "watch" {
 					_ = fw.WatchLibrary(lib.ID, lib.Path)
 				}
 			}
@@ -287,7 +287,7 @@ func (c *Controller) startDaemon() {
 
 		now := time.Now()
 		for _, lib := range libs {
-			if !lib.AutoScan {
+			if lib.ScanMode != "interval" {
 				continue
 			}
 
@@ -879,7 +879,7 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 type CreateLibraryRequest struct {
 	Name                string `json:"name"`
 	Path                string `json:"path"`
-	AutoScan            bool   `json:"auto_scan"`
+	ScanMode            string `json:"scan_mode"`
 	KOReaderSyncEnabled *bool  `json:"koreader_sync_enabled"`
 	ScanInterval        int64  `json:"scan_interval"`
 	ScanFormats         string `json:"scan_formats"`
@@ -954,8 +954,8 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	libParams := database.CreateLibraryParams{
 		Name:                req.Name,
 		Path:                req.Path,
-		AutoScan:            req.AutoScan,
-		KOReaderSyncEnabled: req.KOReaderSyncEnabled == nil || *req.KOReaderSyncEnabled,
+		ScanMode:            req.ScanMode,
+		KoreaderSyncEnabled: req.KOReaderSyncEnabled == nil || *req.KOReaderSyncEnabled,
 		ScanInterval:        req.ScanInterval,
 		ScanFormats:         req.ScanFormats,
 	}
@@ -966,7 +966,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if createdLib.AutoScan && c.watcher != nil {
+	if createdLib.ScanMode == "watch" && c.watcher != nil {
 		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path)
 	}
 
@@ -986,7 +986,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 type UpdateLibraryRequest struct {
 	Name                string `json:"name"`
 	Path                string `json:"path"`
-	AutoScan            bool   `json:"auto_scan"`
+	ScanMode            string `json:"scan_mode"`
 	KOReaderSyncEnabled *bool  `json:"koreader_sync_enabled"`
 	ScanInterval        int64  `json:"scan_interval"`
 	ScanFormats         string `json:"scan_formats"`
@@ -1019,7 +1019,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		req.ScanInterval = config.DefaultScanInterval
 	}
 	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
-	koreaderSyncEnabled := existingLib.KOReaderSyncEnabled
+	koreaderSyncEnabled := existingLib.KoreaderSyncEnabled
 	if req.KOReaderSyncEnabled != nil {
 		koreaderSyncEnabled = *req.KOReaderSyncEnabled
 	}
@@ -1027,7 +1027,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	validateReq := CreateLibraryRequest{
 		Name:                req.Name,
 		Path:                req.Path,
-		AutoScan:            req.AutoScan,
+		ScanMode:            req.ScanMode,
 		KOReaderSyncEnabled: &koreaderSyncEnabled,
 		ScanInterval:        req.ScanInterval,
 		ScanFormats:         req.ScanFormats,
@@ -1044,8 +1044,8 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		ID:                  libraryID,
 		Name:                req.Name,
 		Path:                req.Path,
-		AutoScan:            req.AutoScan,
-		KOReaderSyncEnabled: koreaderSyncEnabled,
+		ScanMode:            req.ScanMode,
+		KoreaderSyncEnabled: koreaderSyncEnabled,
 		ScanInterval:        req.ScanInterval,
 		ScanFormats:         req.ScanFormats,
 	}
@@ -1058,7 +1058,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 
 	if c.watcher != nil {
 		c.watcher.UnwatchLibrary(existingLib.Path)
-		if updatedLib.AutoScan {
+		if updatedLib.ScanMode == "watch" {
 			_ = c.watcher.WatchLibrary(updatedLib.ID, updatedLib.Path)
 		}
 	}

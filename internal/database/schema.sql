@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS libraries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
-    auto_scan BOOLEAN NOT NULL DEFAULT FALSE,
+    scan_mode TEXT NOT NULL DEFAULT 'none',
     koreader_sync_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     scan_interval INTEGER NOT NULL DEFAULT 60,
     scan_formats TEXT NOT NULL DEFAULT 'zip,cbz,rar,cbr',

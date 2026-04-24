@@ -1,6 +1,6 @@
 -- name: CreateLibrary :one
-INSERT INTO libraries (name, path, auto_scan, scan_interval, scan_formats)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO libraries (name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats)
+VALUES (?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetLibrary :one
@@ -8,7 +8,7 @@ SELECT * FROM libraries WHERE id = ? LIMIT 1;
 
 -- name: UpdateLibrary :one
 UPDATE libraries
-SET name = ?, path = ?, auto_scan = ?, scan_interval = ?, scan_formats = ?
+SET name = ?, path = ?, scan_mode = ?, koreader_sync_enabled = ?, scan_interval = ?, scan_formats = ?
 WHERE id = ?
 RETURNING *;
 

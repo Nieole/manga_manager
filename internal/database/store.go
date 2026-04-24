@@ -168,9 +168,11 @@ func Migrate(dbPath string) error {
 		definition string
 	}{
 		{table: "libraries", name: "koreader_sync_enabled", definition: "BOOLEAN NOT NULL DEFAULT TRUE"},
+		{table: "libraries", name: "scan_mode", definition: "TEXT NOT NULL DEFAULT 'none'"},
 		{table: "books", name: "file_hash", definition: "TEXT"},
 		{table: "books", name: "path_fingerprint", definition: "TEXT"},
 		{table: "books", name: "path_fingerprint_no_ext", definition: "TEXT"},
+		{table: "books", name: "filename_fingerprint", definition: "TEXT"},
 	} {
 		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
 			return err
@@ -190,6 +192,10 @@ func Migrate(dbPath string) error {
 	if err := migrateLegacyKOReaderAccounts(db); err != nil {
 		return err
 	}
+
+	// 迁移旧的 auto_scan 字段到新的 scan_mode
+	// 尝试执行，忽略错误因为有些数据库可能原本就没有 auto_scan
+	_, _ = db.Exec(`UPDATE libraries SET scan_mode = 'interval' WHERE auto_scan = 1 AND scan_mode = 'none'`)
 
 	return nil
 }

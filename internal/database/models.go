@@ -17,24 +17,28 @@ type Author struct {
 }
 
 type Book struct {
-	ID             int64           `json:"id"`
-	SeriesID       int64           `json:"series_id"`
-	LibraryID      int64           `json:"library_id"`
-	Name           string          `json:"name"`
-	Path           string          `json:"path"`
-	Size           int64           `json:"size"`
-	FileModifiedAt time.Time       `json:"file_modified_at"`
-	Volume         string          `json:"volume"`
-	Title          sql.NullString  `json:"title"`
-	Summary        sql.NullString  `json:"summary"`
-	Number         sql.NullString  `json:"number"`
-	SortNumber     sql.NullFloat64 `json:"sort_number"`
-	PageCount      int64           `json:"page_count"`
-	CoverPath      sql.NullString  `json:"cover_path"`
-	LastReadPage   sql.NullInt64   `json:"last_read_page"`
-	LastReadAt     sql.NullTime    `json:"last_read_at"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	ID                   int64           `json:"id"`
+	SeriesID             int64           `json:"series_id"`
+	LibraryID            int64           `json:"library_id"`
+	Name                 string          `json:"name"`
+	Path                 string          `json:"path"`
+	Size                 int64           `json:"size"`
+	FileModifiedAt       time.Time       `json:"file_modified_at"`
+	Volume               string          `json:"volume"`
+	Title                sql.NullString  `json:"title"`
+	Summary              sql.NullString  `json:"summary"`
+	Number               sql.NullString  `json:"number"`
+	SortNumber           sql.NullFloat64 `json:"sort_number"`
+	PageCount            int64           `json:"page_count"`
+	CoverPath            sql.NullString  `json:"cover_path"`
+	LastReadPage         sql.NullInt64   `json:"last_read_page"`
+	LastReadAt           sql.NullTime    `json:"last_read_at"`
+	FileHash             sql.NullString  `json:"file_hash"`
+	PathFingerprint      sql.NullString  `json:"path_fingerprint"`
+	PathFingerprintNoExt sql.NullString  `json:"path_fingerprint_no_ext"`
+	FilenameFingerprint  sql.NullString  `json:"filename_fingerprint"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 type Collection struct {
@@ -54,12 +58,55 @@ type CollectionSeries struct {
 	AddedAt      sql.NullTime `json:"added_at"`
 }
 
+type KoreaderAccount struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	SyncKey   string    `json:"sync_key"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type KoreaderProgress struct {
+	ID         int64         `json:"id"`
+	Username   string        `json:"username"`
+	Document   string        `json:"document"`
+	Progress   string        `json:"progress"`
+	Percentage float64       `json:"percentage"`
+	Device     string        `json:"device"`
+	DeviceID   string        `json:"device_id"`
+	BookID     sql.NullInt64 `json:"book_id"`
+	MatchedBy  string        `json:"matched_by"`
+	Timestamp  int64         `json:"timestamp"`
+	CreatedAt  time.Time     `json:"created_at"`
+	UpdatedAt  time.Time     `json:"updated_at"`
+	RawPayload string        `json:"raw_payload"`
+}
+
+type KoreaderSetting struct {
+	ID           int64     `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"password_hash"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type KoreaderSyncEvent struct {
+	ID        int64         `json:"id"`
+	Direction string        `json:"direction"`
+	Username  string        `json:"username"`
+	Document  string        `json:"document"`
+	BookID    sql.NullInt64 `json:"book_id"`
+	Status    string        `json:"status"`
+	Message   string        `json:"message"`
+	CreatedAt time.Time     `json:"created_at"`
+}
+
 type Library struct {
 	ID                  int64        `json:"id"`
 	Name                string       `json:"name"`
 	Path                string       `json:"path"`
-	AutoScan            bool         `json:"auto_scan"`
-	KOReaderSyncEnabled bool         `json:"koreader_sync_enabled"`
+	ScanMode            string       `json:"scan_mode"`
+	KoreaderSyncEnabled bool         `json:"koreader_sync_enabled"`
 	ScanInterval        int64        `json:"scan_interval"`
 	ScanFormats         string       `json:"scan_formats"`
 	CreatedAt           sql.NullTime `json:"created_at"`

@@ -44,7 +44,7 @@ export default function Layout() {
     };
     const [newLibName, setNewLibName] = useState("");
     const [newLibPath, setNewLibPath] = useState("");
-    const [newLibAutoScan, setNewLibAutoScan] = useState(false);
+    const [newLibScanMode, setNewLibScanMode] = useState("none");
     const [newLibKOReaderSyncEnabled, setNewLibKOReaderSyncEnabled] = useState(true);
     const [newLibScanInterval, setNewLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
     const [newLibScanFormats, setNewLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
@@ -55,7 +55,7 @@ export default function Layout() {
     const [editLibId, setEditLibId] = useState("");
     const [editLibName, setEditLibName] = useState("");
     const [editLibPath, setEditLibPath] = useState("");
-    const [editLibAutoScan, setEditLibAutoScan] = useState(false);
+    const [editLibScanMode, setEditLibScanMode] = useState("none");
     const [editLibKOReaderSyncEnabled, setEditLibKOReaderSyncEnabled] = useState(true);
     const [editLibScanInterval, setEditLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
     const [editLibScanFormats, setEditLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
@@ -126,7 +126,7 @@ export default function Layout() {
         setEditLibId(String(target.id));
         setEditLibName(target.name || "");
         setEditLibPath(target.path || "");
-        setEditLibAutoScan(target.auto_scan || false);
+        setEditLibScanMode(target.scan_mode || "none");
         setEditLibKOReaderSyncEnabled(target.koreader_sync_enabled ?? true);
         setEditLibScanInterval(target.scan_interval || DEFAULT_SCAN_INTERVAL);
         setEditLibScanFormats(target.scan_formats || supportedScanFormats);
@@ -343,7 +343,7 @@ export default function Layout() {
             await axios.post('/api/libraries', {
                 name: newLibName,
                 path: newLibPath,
-                auto_scan: newLibAutoScan,
+                scan_mode: newLibScanMode,
                 koreader_sync_enabled: newLibKOReaderSyncEnabled,
                 scan_interval: newLibScanInterval,
                 scan_formats: newLibScanFormats
@@ -351,7 +351,7 @@ export default function Layout() {
             setShowAddModal(false);
             setNewLibName("");
             setNewLibPath("");
-            setNewLibAutoScan(false);
+            setNewLibScanMode("none");
             setNewLibKOReaderSyncEnabled(true);
             setNewLibScanInterval(DEFAULT_SCAN_INTERVAL);
             setNewLibScanFormats(DEFAULT_SCAN_FORMATS);
@@ -373,7 +373,7 @@ export default function Layout() {
             await axios.put(`/api/libraries/${editLibId}`, {
                 name: editLibName,
                 path: editLibPath,
-                auto_scan: editLibAutoScan,
+                scan_mode: editLibScanMode,
                 koreader_sync_enabled: editLibKOReaderSyncEnabled,
                 scan_interval: editLibScanInterval,
                 scan_formats: editLibScanFormats
@@ -783,7 +783,7 @@ export default function Layout() {
                         open={showAddModal}
                         name={newLibName}
                         path={newLibPath}
-                        autoScan={newLibAutoScan}
+                        scanMode={newLibScanMode}
                         koreaderSyncEnabled={newLibKOReaderSyncEnabled}
                         scanInterval={newLibScanInterval}
                         scanFormats={newLibScanFormats}
@@ -799,7 +799,7 @@ export default function Layout() {
                         onSubmit={handleAddLibrary}
                         onNameChange={setNewLibName}
                         onPathChange={setNewLibPath}
-                        onAutoScanChange={setNewLibAutoScan}
+                        onScanModeChange={setNewLibScanMode}
                         onKOReaderSyncEnabledChange={setNewLibKOReaderSyncEnabled}
                         onScanIntervalChange={setNewLibScanInterval}
                         onScanFormatsChange={setNewLibScanFormats}
@@ -819,7 +819,7 @@ export default function Layout() {
                         open={showEditModal}
                         name={editLibName}
                         path={editLibPath}
-                        autoScan={editLibAutoScan}
+                        scanMode={editLibScanMode}
                         koreaderSyncEnabled={editLibKOReaderSyncEnabled}
                         scanInterval={editLibScanInterval}
                         scanFormats={editLibScanFormats}
@@ -835,7 +835,7 @@ export default function Layout() {
                         onSubmit={handleEditLibrarySubmit}
                         onNameChange={setEditLibName}
                         onPathChange={setEditLibPath}
-                        onAutoScanChange={setEditLibAutoScan}
+                        onScanModeChange={setEditLibScanMode}
                         onKOReaderSyncEnabledChange={setEditLibKOReaderSyncEnabled}
                         onScanIntervalChange={setEditLibScanInterval}
                         onScanFormatsChange={setEditLibScanFormats}

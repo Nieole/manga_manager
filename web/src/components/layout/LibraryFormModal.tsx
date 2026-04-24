@@ -13,7 +13,7 @@ interface LibraryFormModalProps {
   open: boolean;
   name: string;
   path: string;
-  autoScan: boolean;
+  scanMode: string;
   koreaderSyncEnabled: boolean;
   scanInterval: number;
   scanFormats: string;
@@ -29,7 +29,7 @@ interface LibraryFormModalProps {
   onSubmit: (e: React.FormEvent) => void;
   onNameChange: (value: string) => void;
   onPathChange: (value: string) => void;
-  onAutoScanChange: (value: boolean) => void;
+  onScanModeChange: (value: string) => void;
   onKOReaderSyncEnabledChange: (value: boolean) => void;
   onScanIntervalChange: (value: number) => void;
   onScanFormatsChange: (value: string) => void;
@@ -46,7 +46,7 @@ export function LibraryFormModal({
   open,
   name,
   path,
-  autoScan,
+  scanMode,
   koreaderSyncEnabled,
   scanInterval,
   scanFormats,
@@ -62,7 +62,7 @@ export function LibraryFormModal({
   onSubmit,
   onNameChange,
   onPathChange,
-  onAutoScanChange,
+  onScanModeChange,
   onKOReaderSyncEnabledChange,
   onScanIntervalChange,
   onScanFormatsChange,
@@ -150,42 +150,43 @@ export function LibraryFormModal({
               </div>
             </label>
 
-            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-800 bg-black/20 px-4 py-3">
-              <input
-                type="checkbox"
-                checked={autoScan}
-                onChange={(e) => onAutoScanChange(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-gray-700 bg-gray-800 text-komgaPrimary focus:ring-2 focus:ring-komgaPrimary"
-              />
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">{t('libraryForm.scanModeTitle')}</label>
+              <select
+                value={scanMode}
+                onChange={(e) => onScanModeChange(e.target.value)}
+                className={`${modalInputClass} appearance-none cursor-pointer`}
+              >
+                <option value="none">{t('libraryForm.scanModeNone')}</option>
+                <option value="interval">{t('libraryForm.scanModeInterval')}</option>
+                <option value="watch">{t('libraryForm.scanModeWatch')}</option>
+              </select>
+              <p className="mt-2 text-xs text-gray-500">{t('libraryForm.scanModeDescription')}</p>
+            </div>
+
+            {scanMode === 'interval' && (
               <div>
-                <p className="text-sm font-medium text-gray-200">{t('libraryForm.autoScanTitle')}</p>
-                <p className="mt-1 text-xs text-gray-500">{t('libraryForm.autoScanDescription')}</p>
-              </div>
-            </label>
-            {autoScan && (
-              <div className="space-y-4 rounded-2xl border border-gray-800 bg-black/20 p-4">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-300">{t('libraryForm.scanInterval')}</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={scanInterval}
-                    onChange={(e) => onScanIntervalChange(parseInt(e.target.value) || DEFAULT_SCAN_INTERVAL)}
-                    className={modalInputClass}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-300">{t('libraryForm.scanFormats')}</label>
-                  <input
-                    type="text"
-                    value={scanFormats}
-                    onChange={(e) => onScanFormatsChange(e.target.value)}
-                    className={modalInputClass}
-                  />
-                  <p className="mt-2 text-xs text-gray-500">{t('libraryForm.supportedFormats', { formats: supportedScanFormats })}</p>
-                </div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-300">{t('libraryForm.scanInterval')}</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={scanInterval}
+                  onChange={(e) => onScanIntervalChange(parseInt(e.target.value) || DEFAULT_SCAN_INTERVAL)}
+                  className={modalInputClass}
+                />
               </div>
             )}
+
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">{t('libraryForm.scanFormats')}</label>
+              <input
+                type="text"
+                value={scanFormats}
+                onChange={(e) => onScanFormatsChange(e.target.value)}
+                className={modalInputClass}
+              />
+              <p className="mt-2 text-xs text-gray-500">{t('libraryForm.supportedFormats', { formats: supportedScanFormats })}</p>
+            </div>
           </div>
       </form>
     </ModalShell>

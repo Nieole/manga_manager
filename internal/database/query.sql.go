@@ -45,7 +45,7 @@ INSERT INTO books (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
 `
 
 type CreateBookParams struct {
@@ -98,6 +98,10 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		&i.CoverPath,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.FileHash,
+		&i.PathFingerprint,
+		&i.PathFingerprintNoExt,
+		&i.FilenameFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -105,16 +109,16 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 }
 
 const createLibrary = `-- name: CreateLibrary :one
-INSERT INTO libraries (name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats)
+INSERT INTO libraries (name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats)
 VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at
+RETURNING id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at
 `
 
 type CreateLibraryParams struct {
 	Name                string `json:"name"`
 	Path                string `json:"path"`
-	AutoScan            bool   `json:"auto_scan"`
-	KOReaderSyncEnabled bool   `json:"koreader_sync_enabled"`
+	ScanMode            string `json:"scan_mode"`
+	KoreaderSyncEnabled bool   `json:"koreader_sync_enabled"`
 	ScanInterval        int64  `json:"scan_interval"`
 	ScanFormats         string `json:"scan_formats"`
 }
@@ -123,8 +127,8 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 	row := q.queryRow(ctx, q.createLibraryStmt, createLibrary,
 		arg.Name,
 		arg.Path,
-		arg.AutoScan,
-		arg.KOReaderSyncEnabled,
+		arg.ScanMode,
+		arg.KoreaderSyncEnabled,
 		arg.ScanInterval,
 		arg.ScanFormats,
 	)
@@ -133,8 +137,8 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		&i.ID,
 		&i.Name,
 		&i.Path,
-		&i.AutoScan,
-		&i.KOReaderSyncEnabled,
+		&i.ScanMode,
+		&i.KoreaderSyncEnabled,
 		&i.ScanInterval,
 		&i.ScanFormats,
 		&i.CreatedAt,
@@ -330,7 +334,7 @@ func (q *Queries) GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Au
 }
 
 const getBook = `-- name: GetBook :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE id = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
@@ -353,6 +357,10 @@ func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
 		&i.CoverPath,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.FileHash,
+		&i.PathFingerprint,
+		&i.PathFingerprintNoExt,
+		&i.FilenameFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -360,7 +368,7 @@ func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
 }
 
 const getBookByPath = `-- name: GetBookByPath :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE path = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE path = ? LIMIT 1
 `
 
 func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) {
@@ -383,6 +391,10 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 		&i.CoverPath,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.FileHash,
+		&i.PathFingerprint,
+		&i.PathFingerprintNoExt,
+		&i.FilenameFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -437,7 +449,7 @@ func (q *Queries) GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]G
 }
 
 const getLibrary = `-- name: GetLibrary :one
-SELECT id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
+SELECT id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
@@ -447,8 +459,8 @@ func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
 		&i.ID,
 		&i.Name,
 		&i.Path,
-		&i.AutoScan,
-		&i.KOReaderSyncEnabled,
+		&i.ScanMode,
+		&i.KoreaderSyncEnabled,
 		&i.ScanInterval,
 		&i.ScanFormats,
 		&i.CreatedAt,
@@ -490,7 +502,7 @@ func (q *Queries) GetLinksForSeries(ctx context.Context, seriesID int64) ([]Seri
 }
 
 const getNextBookInSeries = `-- name: GetNextBookInSeries :one
-SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.created_at, nb.updated_at FROM books nb
+SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.file_hash, nb.path_fingerprint, nb.path_fingerprint_no_ext, nb.filename_fingerprint, nb.created_at, nb.updated_at FROM books nb
 INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
 WHERE 
    (nb.volume > cb.volume)
@@ -520,6 +532,10 @@ func (q *Queries) GetNextBookInSeries(ctx context.Context, id int64) (Book, erro
 		&i.CoverPath,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.FileHash,
+		&i.PathFingerprint,
+		&i.PathFingerprintNoExt,
+		&i.FilenameFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -939,7 +955,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]Li
 }
 
 const listBooksBySeries = `-- name: ListBooksBySeries :many
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at FROM books WHERE series_id = ? ORDER BY volume, sort_number, name
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE series_id = ? ORDER BY volume, sort_number, name
 `
 
 func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error) {
@@ -968,6 +984,10 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book
 			&i.CoverPath,
 			&i.LastReadPage,
 			&i.LastReadAt,
+			&i.FileHash,
+			&i.PathFingerprint,
+			&i.PathFingerprintNoExt,
+			&i.FilenameFingerprint,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -985,7 +1005,7 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book
 }
 
 const listLibraries = `-- name: ListLibraries :many
-SELECT id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries ORDER BY name
+SELECT id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries ORDER BY name
 `
 
 func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
@@ -1001,8 +1021,8 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 			&i.ID,
 			&i.Name,
 			&i.Path,
-			&i.AutoScan,
-			&i.KOReaderSyncEnabled,
+			&i.ScanMode,
+			&i.KoreaderSyncEnabled,
 			&i.ScanInterval,
 			&i.ScanFormats,
 			&i.CreatedAt,
@@ -1114,16 +1134,16 @@ func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgress
 
 const updateLibrary = `-- name: UpdateLibrary :one
 UPDATE libraries
-SET name = ?, path = ?, auto_scan = ?, koreader_sync_enabled = ?, scan_interval = ?, scan_formats = ?
+SET name = ?, path = ?, scan_mode = ?, koreader_sync_enabled = ?, scan_interval = ?, scan_formats = ?
 WHERE id = ?
-RETURNING id, name, path, auto_scan, koreader_sync_enabled, scan_interval, scan_formats, created_at
+RETURNING id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at
 `
 
 type UpdateLibraryParams struct {
 	Name                string `json:"name"`
 	Path                string `json:"path"`
-	AutoScan            bool   `json:"auto_scan"`
-	KOReaderSyncEnabled bool   `json:"koreader_sync_enabled"`
+	ScanMode            string `json:"scan_mode"`
+	KoreaderSyncEnabled bool   `json:"koreader_sync_enabled"`
 	ScanInterval        int64  `json:"scan_interval"`
 	ScanFormats         string `json:"scan_formats"`
 	ID                  int64  `json:"id"`
@@ -1133,8 +1153,8 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 	row := q.queryRow(ctx, q.updateLibraryStmt, updateLibrary,
 		arg.Name,
 		arg.Path,
-		arg.AutoScan,
-		arg.KOReaderSyncEnabled,
+		arg.ScanMode,
+		arg.KoreaderSyncEnabled,
 		arg.ScanInterval,
 		arg.ScanFormats,
 		arg.ID,
@@ -1144,8 +1164,8 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		&i.ID,
 		&i.Name,
 		&i.Path,
-		&i.AutoScan,
-		&i.KOReaderSyncEnabled,
+		&i.ScanMode,
+		&i.KoreaderSyncEnabled,
 		&i.ScanInterval,
 		&i.ScanFormats,
 		&i.CreatedAt,
@@ -1298,7 +1318,7 @@ ON CONFLICT(path) DO UPDATE SET
     page_count = excluded.page_count,
     cover_path = excluded.cover_path,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
 `
 
 type UpsertBookByPathParams struct {
@@ -1351,6 +1371,10 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 		&i.CoverPath,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.FileHash,
+		&i.PathFingerprint,
+		&i.PathFingerprintNoExt,
+		&i.FilenameFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
