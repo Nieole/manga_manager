@@ -138,7 +138,9 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 				return
 			}
 			for _, lib := range libs {
-				_ = fw.WatchLibrary(lib.ID, lib.Path)
+				if lib.AutoScan {
+					_ = fw.WatchLibrary(lib.ID, lib.Path)
+				}
 			}
 		}()
 	}
@@ -861,6 +863,10 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if lib, err := c.store.GetLibrary(ctx, libraryID); err == nil && c.watcher != nil {
+		c.watcher.UnwatchLibrary(lib.Path)
+	}
+
 	err = c.store.DeleteLibrary(ctx, libraryID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete library")
@@ -960,6 +966,10 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if createdLib.AutoScan && c.watcher != nil {
+		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path)
+	}
+
 	// 触发异步扫描任务，不阻塞前端 API 响应
 	go func() {
 		// 使用独立 context 避免跟随请求自动取消，创建库默认全量
@@ -1044,6 +1054,13 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to update library")
 		return
+	}
+
+	if c.watcher != nil {
+		c.watcher.UnwatchLibrary(existingLib.Path)
+		if updatedLib.AutoScan {
+			_ = c.watcher.WatchLibrary(updatedLib.ID, updatedLib.Path)
+		}
 	}
 
 	jsonResponse(w, http.StatusOK, updatedLib)
