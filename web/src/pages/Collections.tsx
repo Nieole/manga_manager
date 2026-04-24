@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { FolderHeart, Plus, Trash2, ChevronRight, BookOpen, Search, X } from 'lucide-react';
+import { FolderHeart, Plus, Trash2, ChevronRight, BookOpen, Search, X, Pencil } from 'lucide-react';
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalTextareaClass } from '../components/ui/modalStyles';
@@ -30,6 +30,9 @@ export default function Collections() {
     const [showCreate, setShowCreate] = useState(false);
     const [newName, setNewName] = useState('');
     const [newDesc, setNewDesc] = useState('');
+    const [showEdit, setShowEdit] = useState(false);
+    const [editName, setEditName] = useState('');
+    const [editDesc, setEditDesc] = useState('');
     const [loading, setLoading] = useState(true);
     const [pendingDeleteCollection, setPendingDeleteCollection] = useState<Collection | null>(null);
     const navigate = useNavigate();
@@ -56,6 +59,16 @@ export default function Collections() {
             setNewName('');
             setNewDesc('');
             setShowCreate(false);
+            fetchCollections();
+        });
+    };
+
+    const handleEditSubmit = () => {
+        if (!selected || !editName.trim()) return;
+        axios.put(`/api/collections/${selected.id}`, { name: editName, description: editDesc }).then(() => {
+            setShowEdit(false);
+            // Update selected locally
+            setSelected({ ...selected, name: editName, description: editDesc });
             fetchCollections();
         });
     };
@@ -136,6 +149,39 @@ export default function Collections() {
                 </div>
             </ModalShell>
 
+            {/* 编辑合集弹窗 */}
+            <ModalShell
+                open={showEdit}
+                onClose={() => setShowEdit(false)}
+                title={t('collections.editTitle')}
+                description={t('collections.editDescription')}
+                icon={<Pencil className="h-5 w-5" />}
+                size="compact"
+                footer={
+                    <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
+                        <button onClick={() => setShowEdit(false)} className={modalGhostButtonClass}>{t('modal.cancel')}</button>
+                        <button onClick={handleEditSubmit} className={modalPrimaryButtonClass}>{t('collections.editSubmit')}</button>
+                    </div>
+                }
+            >
+                <div className="space-y-4">
+                    <input
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        placeholder={t('collections.namePlaceholder')}
+                        className={modalInputClass}
+                        autoFocus
+                    />
+                    <textarea
+                        value={editDesc}
+                        onChange={e => setEditDesc(e.target.value)}
+                        placeholder={t('collections.descriptionPlaceholder')}
+                        rows={4}
+                        className={modalTextareaClass}
+                    />
+                </div>
+            </ModalShell>
+
             <ConfirmDialog
                 open={pendingDeleteCollection !== null}
                 onClose={() => setPendingDeleteCollection(null)}
@@ -195,11 +241,26 @@ export default function Collections() {
                     {selected ? (
                         <div>
                             <div className="flex items-center justify-between mb-4">
-                                <div>
-                                    <h2 className="text-lg font-semibold text-white">{selected.name}</h2>
-                                    {selected.description && <p className="text-xs text-gray-500 mt-1">{selected.description}</p>}
+                                <div className="flex items-start justify-between w-full">
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="text-lg font-semibold text-white">{selected.name}</h2>
+                                            <button
+                                                onClick={() => {
+                                                    setEditName(selected.name);
+                                                    setEditDesc(selected.description);
+                                                    setShowEdit(true);
+                                                }}
+                                                className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors"
+                                                title={t('common.edit')}
+                                            >
+                                                <Pencil className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                        {selected.description && <p className="text-xs text-gray-500 mt-1">{selected.description}</p>}
+                                    </div>
+                                    <span className="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">{t('common.seriesCount', { count: seriesItems.length })}</span>
                                 </div>
-                                <span className="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">{t('common.seriesCount', { count: seriesItems.length })}</span>
                             </div>
 
                             {seriesItems.length === 0 ? (
