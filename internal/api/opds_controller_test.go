@@ -52,6 +52,32 @@ func TestOPDSFeeds(t *testing.T) {
 		if feed.Entries[1].ID != "urn:manga-manager:opds:continue" {
 			t.Fatalf("expected continue reading entry, got %+v", feed.Entries)
 		}
+		if len(feed.Links) != 3 || feed.Links[2].Rel != "search" {
+			t.Fatalf("expected root feed search link, got %+v", feed.Links)
+		}
+	})
+
+	t.Run("open search descriptor", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.opdsOpenSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/opensearch.xml", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if rec.Header().Get("Content-Type") != "application/opensearchdescription+xml;charset=utf-8" {
+			t.Fatalf("unexpected content type: %q", rec.Header().Get("Content-Type"))
+		}
+
+		var descriptor OpenSearchDescription
+		if err := xml.Unmarshal(rec.Body.Bytes(), &descriptor); err != nil {
+			t.Fatalf("decode open search descriptor failed: %v", err)
+		}
+		if descriptor.ShortName != "Manga Manager" || len(descriptor.URLs) != 1 {
+			t.Fatalf("unexpected open search descriptor: %+v", descriptor)
+		}
+		if descriptor.URLs[0].Template != "/opds/v1.2/search?q={searchTerms}&page={startPage?}&limit={count?}" {
+			t.Fatalf("unexpected search template: %+v", descriptor.URLs[0])
+		}
 	})
 
 	t.Run("libraries feed", func(t *testing.T) {
@@ -68,6 +94,30 @@ func TestOPDSFeeds(t *testing.T) {
 		}
 		if len(feed.Entries) != 1 || feed.Entries[0].Title != lib.Name {
 			t.Fatalf("unexpected libraries feed: %+v", feed.Entries)
+		}
+	})
+
+	t.Run("search feed", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.opdsSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/search?q=Display&limit=10", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		var feed OPDSFeed
+		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+			t.Fatalf("decode search feed failed: %v", err)
+		}
+		if feed.ID != "urn:manga-manager:opds:search:Display" || len(feed.Entries) != 1 {
+			t.Fatalf("unexpected search feed: %+v", feed)
+		}
+		entry := feed.Entries[0]
+		if entry.Title != "Alpha Display" || entry.Content != "Alpha summary" {
+			t.Fatalf("unexpected search entry: %+v", entry)
+		}
+		if len(entry.Links) != 2 || entry.Links[0].Href != "/opds/v1.2/series/"+strconv.FormatInt(series.ID, 10) {
+			t.Fatalf("unexpected search links: %+v", entry.Links)
 		}
 	})
 
@@ -216,6 +266,22 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 		}
 		if feed.Title != series.Name {
 			t.Fatalf("expected fallback series title %q, got %q", series.Name, feed.Title)
+		}
+	})
+
+	t.Run("search feed accepts empty query", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.opdsSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/search?q=", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected empty search 200, got %d", rec.Code)
+		}
+
+		var feed OPDSFeed
+		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+			t.Fatalf("decode empty search feed failed: %v", err)
+		}
+		if len(feed.Entries) != 0 {
+			t.Fatalf("expected no empty-query entries, got %+v", feed.Entries)
 		}
 	})
 

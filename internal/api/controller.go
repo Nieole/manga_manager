@@ -772,6 +772,18 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Delete("/{collectionId}/series/{seriesId}", c.removeSeriesFromCollection)
 		})
 
+		// 有序阅读清单
+		r.Route("/reading-lists", func(r chi.Router) {
+			r.Get("/", c.listReadingLists)
+			r.Post("/", c.createReadingList)
+			r.Put("/{listId}", c.updateReadingList)
+			r.Delete("/{listId}", c.deleteReadingList)
+			r.Get("/{listId}/items", c.listReadingListItems)
+			r.Post("/{listId}/items", c.addReadingListItem)
+			r.Post("/{listId}/items/reorder", c.reorderReadingListItems)
+			r.Delete("/{listId}/items/{itemId}", c.removeReadingListItem)
+		})
+
 		// 系列关联
 		r.Get("/series/{seriesId}/relations", c.getSeriesRelations)
 		r.Post("/series/{seriesId}/relations", c.createSeriesRelation)

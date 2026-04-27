@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -60,15 +59,6 @@ type DashboardStats struct {
 	ReadBooks   int `json:"read_books"`
 	TotalPages  int `json:"total_pages"`
 	ActiveDays7 int `json:"active_days_7"` // 最近7天有阅读行为的天数
-}
-
-type ReadingBookmark struct {
-	ID        int64     `json:"id"`
-	BookID    int64     `json:"book_id"`
-	Page      int64     `json:"page"`
-	Note      string    `json:"note"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type SearchSeriesPagedRow struct {

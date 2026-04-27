@@ -124,6 +124,31 @@ CREATE TABLE IF NOT EXISTS collection_series (
     FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS reading_lists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS reading_list_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reading_list_id INTEGER NOT NULL,
+    series_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(reading_list_id, series_id),
+    FOREIGN KEY(reading_list_id) REFERENCES reading_lists(id) ON DELETE CASCADE,
+    FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reading_list_items_list_id ON reading_list_items(reading_list_id);
+CREATE INDEX IF NOT EXISTS idx_reading_list_items_series_id ON reading_list_items(series_id);
+
 -- [#5] 系列间关联（前传、续作、衍生等）
 CREATE TABLE IF NOT EXISTS series_relations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

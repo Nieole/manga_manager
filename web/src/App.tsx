@@ -8,6 +8,7 @@ import { useI18n } from './i18n/LocaleProvider';
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Collections = lazy(() => import('./pages/Collections'));
+const ReadingLists = lazy(() => import('./pages/ReadingLists'));
 const SeriesDetail = lazy(() => import('./pages/SeriesDetail'));
 const BookReader = lazy(() => import('./pages/BookReader'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -50,6 +51,8 @@ function App() {
           <Route path="series/:seriesId" element={withRouteFallback(<SeriesDetail />)} />
           {/* 合集管理 */}
           <Route path="collections" element={withRouteFallback(<Collections />)} />
+          {/* 有序阅读清单 */}
+          <Route path="reading-lists" element={withRouteFallback(<ReadingLists />)} />
           {/* 系统日志 */}
           <Route path="logs" element={withRouteFallback(<Logs />)} />
           {/* 系统配置中心 */}

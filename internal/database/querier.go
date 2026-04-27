@@ -9,15 +9,19 @@ import (
 )
 
 type Querier interface {
+	AddReadingListItem(ctx context.Context, arg AddReadingListItemParams) (ReadingListItem, error)
 	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 	ClearSeriesLinks(ctx context.Context, seriesID int64) error
 	ClearSeriesTags(ctx context.Context, seriesID int64) error
+	CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error)
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
+	CreateReadingList(ctx context.Context, arg CreateReadingListParams) (ReadingList, error)
 	CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error)
 	DeleteBook(ctx context.Context, id int64) error
 	DeleteBookByPath(ctx context.Context, path string) error
 	DeleteLibrary(ctx context.Context, id int64) error
+	DeleteReadingList(ctx context.Context, id int64) error
 	DeleteSeries(ctx context.Context, id int64) error
 	GetAllAuthors(ctx context.Context) ([]Author, error)
 	GetAllTags(ctx context.Context) ([]Tag, error)
@@ -28,6 +32,7 @@ type Querier interface {
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
+	GetReadingList(ctx context.Context, id int64) (ReadingList, error)
 	GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error)
 	GetSeries(ctx context.Context, id int64) (Series, error)
 	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
@@ -40,9 +45,15 @@ type Querier interface {
 	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)
 	ListLibraries(ctx context.Context) ([]Library, error)
+	ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error)
+	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
+	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
+	SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 	UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error)
+	UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error)
+	UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) error
 	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error

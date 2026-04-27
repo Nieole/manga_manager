@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.addReadingListItemStmt, err = db.PrepareContext(ctx, addReadingListItem); err != nil {
+		return nil, fmt.Errorf("error preparing query AddReadingListItem: %w", err)
+	}
 	if q.clearSeriesAuthorsStmt, err = db.PrepareContext(ctx, clearSeriesAuthors); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesAuthors: %w", err)
 	}
@@ -33,11 +36,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.clearSeriesTagsStmt, err = db.PrepareContext(ctx, clearSeriesTags); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesTags: %w", err)
 	}
+	if q.countOPDSSeriesSearchStmt, err = db.PrepareContext(ctx, countOPDSSeriesSearch); err != nil {
+		return nil, fmt.Errorf("error preparing query CountOPDSSeriesSearch: %w", err)
+	}
 	if q.createBookStmt, err = db.PrepareContext(ctx, createBook); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateBook: %w", err)
 	}
 	if q.createLibraryStmt, err = db.PrepareContext(ctx, createLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateLibrary: %w", err)
+	}
+	if q.createReadingListStmt, err = db.PrepareContext(ctx, createReadingList); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateReadingList: %w", err)
 	}
 	if q.createSeriesStmt, err = db.PrepareContext(ctx, createSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateSeries: %w", err)
@@ -50,6 +59,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.deleteLibraryStmt, err = db.PrepareContext(ctx, deleteLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteLibrary: %w", err)
+	}
+	if q.deleteReadingListStmt, err = db.PrepareContext(ctx, deleteReadingList); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteReadingList: %w", err)
 	}
 	if q.deleteSeriesStmt, err = db.PrepareContext(ctx, deleteSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSeries: %w", err)
@@ -80,6 +92,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getNextBookInSeriesStmt, err = db.PrepareContext(ctx, getNextBookInSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextBookInSeries: %w", err)
+	}
+	if q.getReadingListStmt, err = db.PrepareContext(ctx, getReadingList); err != nil {
+		return nil, fmt.Errorf("error preparing query GetReadingList: %w", err)
 	}
 	if q.getRecentReadSeriesStmt, err = db.PrepareContext(ctx, getRecentReadSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRecentReadSeries: %w", err)
@@ -117,14 +132,32 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listLibrariesStmt, err = db.PrepareContext(ctx, listLibraries); err != nil {
 		return nil, fmt.Errorf("error preparing query ListLibraries: %w", err)
 	}
+	if q.listReadingListItemsStmt, err = db.PrepareContext(ctx, listReadingListItems); err != nil {
+		return nil, fmt.Errorf("error preparing query ListReadingListItems: %w", err)
+	}
+	if q.listReadingListsStmt, err = db.PrepareContext(ctx, listReadingLists); err != nil {
+		return nil, fmt.Errorf("error preparing query ListReadingLists: %w", err)
+	}
 	if q.listSeriesByLibraryStmt, err = db.PrepareContext(ctx, listSeriesByLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSeriesByLibrary: %w", err)
+	}
+	if q.removeReadingListItemStmt, err = db.PrepareContext(ctx, removeReadingListItem); err != nil {
+		return nil, fmt.Errorf("error preparing query RemoveReadingListItem: %w", err)
+	}
+	if q.searchOPDSSeriesStmt, err = db.PrepareContext(ctx, searchOPDSSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query SearchOPDSSeries: %w", err)
 	}
 	if q.updateBookProgressStmt, err = db.PrepareContext(ctx, updateBookProgress); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateBookProgress: %w", err)
 	}
 	if q.updateLibraryStmt, err = db.PrepareContext(ctx, updateLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateLibrary: %w", err)
+	}
+	if q.updateReadingListStmt, err = db.PrepareContext(ctx, updateReadingList); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateReadingList: %w", err)
+	}
+	if q.updateReadingListItemSortOrderStmt, err = db.PrepareContext(ctx, updateReadingListItemSortOrder); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateReadingListItemSortOrder: %w", err)
 	}
 	if q.updateSeriesFavoriteStmt, err = db.PrepareContext(ctx, updateSeriesFavorite); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSeriesFavorite: %w", err)
@@ -152,6 +185,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.addReadingListItemStmt != nil {
+		if cerr := q.addReadingListItemStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addReadingListItemStmt: %w", cerr)
+		}
+	}
 	if q.clearSeriesAuthorsStmt != nil {
 		if cerr := q.clearSeriesAuthorsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearSeriesAuthorsStmt: %w", cerr)
@@ -167,6 +205,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing clearSeriesTagsStmt: %w", cerr)
 		}
 	}
+	if q.countOPDSSeriesSearchStmt != nil {
+		if cerr := q.countOPDSSeriesSearchStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countOPDSSeriesSearchStmt: %w", cerr)
+		}
+	}
 	if q.createBookStmt != nil {
 		if cerr := q.createBookStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createBookStmt: %w", cerr)
@@ -175,6 +218,11 @@ func (q *Queries) Close() error {
 	if q.createLibraryStmt != nil {
 		if cerr := q.createLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createLibraryStmt: %w", cerr)
+		}
+	}
+	if q.createReadingListStmt != nil {
+		if cerr := q.createReadingListStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createReadingListStmt: %w", cerr)
 		}
 	}
 	if q.createSeriesStmt != nil {
@@ -195,6 +243,11 @@ func (q *Queries) Close() error {
 	if q.deleteLibraryStmt != nil {
 		if cerr := q.deleteLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteLibraryStmt: %w", cerr)
+		}
+	}
+	if q.deleteReadingListStmt != nil {
+		if cerr := q.deleteReadingListStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteReadingListStmt: %w", cerr)
 		}
 	}
 	if q.deleteSeriesStmt != nil {
@@ -245,6 +298,11 @@ func (q *Queries) Close() error {
 	if q.getNextBookInSeriesStmt != nil {
 		if cerr := q.getNextBookInSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getNextBookInSeriesStmt: %w", cerr)
+		}
+	}
+	if q.getReadingListStmt != nil {
+		if cerr := q.getReadingListStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getReadingListStmt: %w", cerr)
 		}
 	}
 	if q.getRecentReadSeriesStmt != nil {
@@ -307,9 +365,29 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listLibrariesStmt: %w", cerr)
 		}
 	}
+	if q.listReadingListItemsStmt != nil {
+		if cerr := q.listReadingListItemsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listReadingListItemsStmt: %w", cerr)
+		}
+	}
+	if q.listReadingListsStmt != nil {
+		if cerr := q.listReadingListsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listReadingListsStmt: %w", cerr)
+		}
+	}
 	if q.listSeriesByLibraryStmt != nil {
 		if cerr := q.listSeriesByLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSeriesByLibraryStmt: %w", cerr)
+		}
+	}
+	if q.removeReadingListItemStmt != nil {
+		if cerr := q.removeReadingListItemStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing removeReadingListItemStmt: %w", cerr)
+		}
+	}
+	if q.searchOPDSSeriesStmt != nil {
+		if cerr := q.searchOPDSSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing searchOPDSSeriesStmt: %w", cerr)
 		}
 	}
 	if q.updateBookProgressStmt != nil {
@@ -320,6 +398,16 @@ func (q *Queries) Close() error {
 	if q.updateLibraryStmt != nil {
 		if cerr := q.updateLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateLibraryStmt: %w", cerr)
+		}
+	}
+	if q.updateReadingListStmt != nil {
+		if cerr := q.updateReadingListStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateReadingListStmt: %w", cerr)
+		}
+	}
+	if q.updateReadingListItemSortOrderStmt != nil {
+		if cerr := q.updateReadingListItemSortOrderStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateReadingListItemSortOrderStmt: %w", cerr)
 		}
 	}
 	if q.updateSeriesFavoriteStmt != nil {
@@ -394,95 +482,117 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                             DBTX
-	tx                             *sql.Tx
-	clearSeriesAuthorsStmt         *sql.Stmt
-	clearSeriesLinksStmt           *sql.Stmt
-	clearSeriesTagsStmt            *sql.Stmt
-	createBookStmt                 *sql.Stmt
-	createLibraryStmt              *sql.Stmt
-	createSeriesStmt               *sql.Stmt
-	deleteBookStmt                 *sql.Stmt
-	deleteBookByPathStmt           *sql.Stmt
-	deleteLibraryStmt              *sql.Stmt
-	deleteSeriesStmt               *sql.Stmt
-	getAllAuthorsStmt              *sql.Stmt
-	getAllTagsStmt                 *sql.Stmt
-	getAuthorsForSeriesStmt        *sql.Stmt
-	getBookStmt                    *sql.Stmt
-	getBookByPathStmt              *sql.Stmt
-	getCandidateSeriesForAIStmt    *sql.Stmt
-	getLibraryStmt                 *sql.Stmt
-	getLinksForSeriesStmt          *sql.Stmt
-	getNextBookInSeriesStmt        *sql.Stmt
-	getRecentReadSeriesStmt        *sql.Stmt
-	getSeriesStmt                  *sql.Stmt
-	getSeriesByLibraryStmt         *sql.Stmt
-	getSeriesWithoutCollectionStmt *sql.Stmt
-	getTagsForSeriesStmt           *sql.Stmt
-	getTopReadingTagsStmt          *sql.Stmt
-	linkSeriesAuthorStmt           *sql.Stmt
-	linkSeriesLinkStmt             *sql.Stmt
-	linkSeriesTagStmt              *sql.Stmt
-	listBooksByLibraryStmt         *sql.Stmt
-	listBooksBySeriesStmt          *sql.Stmt
-	listLibrariesStmt              *sql.Stmt
-	listSeriesByLibraryStmt        *sql.Stmt
-	updateBookProgressStmt         *sql.Stmt
-	updateLibraryStmt              *sql.Stmt
-	updateSeriesFavoriteStmt       *sql.Stmt
-	updateSeriesMetadataStmt       *sql.Stmt
-	updateSeriesStatisticsStmt     *sql.Stmt
-	upsertAuthorStmt               *sql.Stmt
-	upsertBookByPathStmt           *sql.Stmt
-	upsertSeriesByPathStmt         *sql.Stmt
-	upsertTagStmt                  *sql.Stmt
+	db                                 DBTX
+	tx                                 *sql.Tx
+	addReadingListItemStmt             *sql.Stmt
+	clearSeriesAuthorsStmt             *sql.Stmt
+	clearSeriesLinksStmt               *sql.Stmt
+	clearSeriesTagsStmt                *sql.Stmt
+	countOPDSSeriesSearchStmt          *sql.Stmt
+	createBookStmt                     *sql.Stmt
+	createLibraryStmt                  *sql.Stmt
+	createReadingListStmt              *sql.Stmt
+	createSeriesStmt                   *sql.Stmt
+	deleteBookStmt                     *sql.Stmt
+	deleteBookByPathStmt               *sql.Stmt
+	deleteLibraryStmt                  *sql.Stmt
+	deleteReadingListStmt              *sql.Stmt
+	deleteSeriesStmt                   *sql.Stmt
+	getAllAuthorsStmt                  *sql.Stmt
+	getAllTagsStmt                     *sql.Stmt
+	getAuthorsForSeriesStmt            *sql.Stmt
+	getBookStmt                        *sql.Stmt
+	getBookByPathStmt                  *sql.Stmt
+	getCandidateSeriesForAIStmt        *sql.Stmt
+	getLibraryStmt                     *sql.Stmt
+	getLinksForSeriesStmt              *sql.Stmt
+	getNextBookInSeriesStmt            *sql.Stmt
+	getReadingListStmt                 *sql.Stmt
+	getRecentReadSeriesStmt            *sql.Stmt
+	getSeriesStmt                      *sql.Stmt
+	getSeriesByLibraryStmt             *sql.Stmt
+	getSeriesWithoutCollectionStmt     *sql.Stmt
+	getTagsForSeriesStmt               *sql.Stmt
+	getTopReadingTagsStmt              *sql.Stmt
+	linkSeriesAuthorStmt               *sql.Stmt
+	linkSeriesLinkStmt                 *sql.Stmt
+	linkSeriesTagStmt                  *sql.Stmt
+	listBooksByLibraryStmt             *sql.Stmt
+	listBooksBySeriesStmt              *sql.Stmt
+	listLibrariesStmt                  *sql.Stmt
+	listReadingListItemsStmt           *sql.Stmt
+	listReadingListsStmt               *sql.Stmt
+	listSeriesByLibraryStmt            *sql.Stmt
+	removeReadingListItemStmt          *sql.Stmt
+	searchOPDSSeriesStmt               *sql.Stmt
+	updateBookProgressStmt             *sql.Stmt
+	updateLibraryStmt                  *sql.Stmt
+	updateReadingListStmt              *sql.Stmt
+	updateReadingListItemSortOrderStmt *sql.Stmt
+	updateSeriesFavoriteStmt           *sql.Stmt
+	updateSeriesMetadataStmt           *sql.Stmt
+	updateSeriesStatisticsStmt         *sql.Stmt
+	upsertAuthorStmt                   *sql.Stmt
+	upsertBookByPathStmt               *sql.Stmt
+	upsertSeriesByPathStmt             *sql.Stmt
+	upsertTagStmt                      *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                             tx,
-		tx:                             tx,
-		clearSeriesAuthorsStmt:         q.clearSeriesAuthorsStmt,
-		clearSeriesLinksStmt:           q.clearSeriesLinksStmt,
-		clearSeriesTagsStmt:            q.clearSeriesTagsStmt,
-		createBookStmt:                 q.createBookStmt,
-		createLibraryStmt:              q.createLibraryStmt,
-		createSeriesStmt:               q.createSeriesStmt,
-		deleteBookStmt:                 q.deleteBookStmt,
-		deleteBookByPathStmt:           q.deleteBookByPathStmt,
-		deleteLibraryStmt:              q.deleteLibraryStmt,
-		deleteSeriesStmt:               q.deleteSeriesStmt,
-		getAllAuthorsStmt:              q.getAllAuthorsStmt,
-		getAllTagsStmt:                 q.getAllTagsStmt,
-		getAuthorsForSeriesStmt:        q.getAuthorsForSeriesStmt,
-		getBookStmt:                    q.getBookStmt,
-		getBookByPathStmt:              q.getBookByPathStmt,
-		getCandidateSeriesForAIStmt:    q.getCandidateSeriesForAIStmt,
-		getLibraryStmt:                 q.getLibraryStmt,
-		getLinksForSeriesStmt:          q.getLinksForSeriesStmt,
-		getNextBookInSeriesStmt:        q.getNextBookInSeriesStmt,
-		getRecentReadSeriesStmt:        q.getRecentReadSeriesStmt,
-		getSeriesStmt:                  q.getSeriesStmt,
-		getSeriesByLibraryStmt:         q.getSeriesByLibraryStmt,
-		getSeriesWithoutCollectionStmt: q.getSeriesWithoutCollectionStmt,
-		getTagsForSeriesStmt:           q.getTagsForSeriesStmt,
-		getTopReadingTagsStmt:          q.getTopReadingTagsStmt,
-		linkSeriesAuthorStmt:           q.linkSeriesAuthorStmt,
-		linkSeriesLinkStmt:             q.linkSeriesLinkStmt,
-		linkSeriesTagStmt:              q.linkSeriesTagStmt,
-		listBooksByLibraryStmt:         q.listBooksByLibraryStmt,
-		listBooksBySeriesStmt:          q.listBooksBySeriesStmt,
-		listLibrariesStmt:              q.listLibrariesStmt,
-		listSeriesByLibraryStmt:        q.listSeriesByLibraryStmt,
-		updateBookProgressStmt:         q.updateBookProgressStmt,
-		updateLibraryStmt:              q.updateLibraryStmt,
-		updateSeriesFavoriteStmt:       q.updateSeriesFavoriteStmt,
-		updateSeriesMetadataStmt:       q.updateSeriesMetadataStmt,
-		updateSeriesStatisticsStmt:     q.updateSeriesStatisticsStmt,
-		upsertAuthorStmt:               q.upsertAuthorStmt,
-		upsertBookByPathStmt:           q.upsertBookByPathStmt,
-		upsertSeriesByPathStmt:         q.upsertSeriesByPathStmt,
-		upsertTagStmt:                  q.upsertTagStmt,
+		db:                                 tx,
+		tx:                                 tx,
+		addReadingListItemStmt:             q.addReadingListItemStmt,
+		clearSeriesAuthorsStmt:             q.clearSeriesAuthorsStmt,
+		clearSeriesLinksStmt:               q.clearSeriesLinksStmt,
+		clearSeriesTagsStmt:                q.clearSeriesTagsStmt,
+		countOPDSSeriesSearchStmt:          q.countOPDSSeriesSearchStmt,
+		createBookStmt:                     q.createBookStmt,
+		createLibraryStmt:                  q.createLibraryStmt,
+		createReadingListStmt:              q.createReadingListStmt,
+		createSeriesStmt:                   q.createSeriesStmt,
+		deleteBookStmt:                     q.deleteBookStmt,
+		deleteBookByPathStmt:               q.deleteBookByPathStmt,
+		deleteLibraryStmt:                  q.deleteLibraryStmt,
+		deleteReadingListStmt:              q.deleteReadingListStmt,
+		deleteSeriesStmt:                   q.deleteSeriesStmt,
+		getAllAuthorsStmt:                  q.getAllAuthorsStmt,
+		getAllTagsStmt:                     q.getAllTagsStmt,
+		getAuthorsForSeriesStmt:            q.getAuthorsForSeriesStmt,
+		getBookStmt:                        q.getBookStmt,
+		getBookByPathStmt:                  q.getBookByPathStmt,
+		getCandidateSeriesForAIStmt:        q.getCandidateSeriesForAIStmt,
+		getLibraryStmt:                     q.getLibraryStmt,
+		getLinksForSeriesStmt:              q.getLinksForSeriesStmt,
+		getNextBookInSeriesStmt:            q.getNextBookInSeriesStmt,
+		getReadingListStmt:                 q.getReadingListStmt,
+		getRecentReadSeriesStmt:            q.getRecentReadSeriesStmt,
+		getSeriesStmt:                      q.getSeriesStmt,
+		getSeriesByLibraryStmt:             q.getSeriesByLibraryStmt,
+		getSeriesWithoutCollectionStmt:     q.getSeriesWithoutCollectionStmt,
+		getTagsForSeriesStmt:               q.getTagsForSeriesStmt,
+		getTopReadingTagsStmt:              q.getTopReadingTagsStmt,
+		linkSeriesAuthorStmt:               q.linkSeriesAuthorStmt,
+		linkSeriesLinkStmt:                 q.linkSeriesLinkStmt,
+		linkSeriesTagStmt:                  q.linkSeriesTagStmt,
+		listBooksByLibraryStmt:             q.listBooksByLibraryStmt,
+		listBooksBySeriesStmt:              q.listBooksBySeriesStmt,
+		listLibrariesStmt:                  q.listLibrariesStmt,
+		listReadingListItemsStmt:           q.listReadingListItemsStmt,
+		listReadingListsStmt:               q.listReadingListsStmt,
+		listSeriesByLibraryStmt:            q.listSeriesByLibraryStmt,
+		removeReadingListItemStmt:          q.removeReadingListItemStmt,
+		searchOPDSSeriesStmt:               q.searchOPDSSeriesStmt,
+		updateBookProgressStmt:             q.updateBookProgressStmt,
+		updateLibraryStmt:                  q.updateLibraryStmt,
+		updateReadingListStmt:              q.updateReadingListStmt,
+		updateReadingListItemSortOrderStmt: q.updateReadingListItemSortOrderStmt,
+		updateSeriesFavoriteStmt:           q.updateSeriesFavoriteStmt,
+		updateSeriesMetadataStmt:           q.updateSeriesMetadataStmt,
+		updateSeriesStatisticsStmt:         q.updateSeriesStatisticsStmt,
+		upsertAuthorStmt:                   q.upsertAuthorStmt,
+		upsertBookByPathStmt:               q.upsertBookByPathStmt,
+		upsertSeriesByPathStmt:             q.upsertSeriesByPathStmt,
+		upsertTagStmt:                      q.upsertTagStmt,
 	}
 }

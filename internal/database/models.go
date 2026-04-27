@@ -120,6 +120,34 @@ type ReadingActivity struct {
 	CreatedAt sql.NullTime `json:"created_at"`
 }
 
+type ReadingBookmark struct {
+	ID        int64     `json:"id"`
+	BookID    int64     `json:"book_id"`
+	Page      int64     `json:"page"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ReadingList struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	SortOrder   int64     `json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type ReadingListItem struct {
+	ID            int64     `json:"id"`
+	ReadingListID int64     `json:"reading_list_id"`
+	SeriesID      int64     `json:"series_id"`
+	SortOrder     int64     `json:"sort_order"`
+	Note          string    `json:"note"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Series struct {
 	ID           int64           `json:"id"`
 	LibraryID    int64           `json:"library_id"`

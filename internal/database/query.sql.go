@@ -11,6 +11,41 @@ import (
 	"time"
 )
 
+const addReadingListItem = `-- name: AddReadingListItem :one
+INSERT INTO reading_list_items (reading_list_id, series_id, sort_order, note)
+VALUES (
+    ?1,
+    ?2,
+    COALESCE((SELECT MAX(sort_order) + 10 FROM reading_list_items WHERE reading_list_id = ?1), 10),
+    ?3
+)
+ON CONFLICT(reading_list_id, series_id) DO UPDATE SET
+    note = excluded.note,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING id, reading_list_id, series_id, sort_order, note, created_at, updated_at
+`
+
+type AddReadingListItemParams struct {
+	ReadingListID int64  `json:"reading_list_id"`
+	SeriesID      int64  `json:"series_id"`
+	Note          string `json:"note"`
+}
+
+func (q *Queries) AddReadingListItem(ctx context.Context, arg AddReadingListItemParams) (ReadingListItem, error) {
+	row := q.queryRow(ctx, q.addReadingListItemStmt, addReadingListItem, arg.ReadingListID, arg.SeriesID, arg.Note)
+	var i ReadingListItem
+	err := row.Scan(
+		&i.ID,
+		&i.ReadingListID,
+		&i.SeriesID,
+		&i.SortOrder,
+		&i.Note,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const clearSeriesAuthors = `-- name: ClearSeriesAuthors :exec
 DELETE FROM series_authors WHERE series_id = ?
 `
@@ -36,6 +71,20 @@ DELETE FROM series_tags WHERE series_id = ?
 func (q *Queries) ClearSeriesTags(ctx context.Context, seriesID int64) error {
 	_, err := q.exec(ctx, q.clearSeriesTagsStmt, clearSeriesTags, seriesID)
 	return err
+}
+
+const countOPDSSeriesSearch = `-- name: CountOPDSSeriesSearch :one
+SELECT COUNT(*)
+FROM series s
+WHERE instr(lower(s.name), lower(?1)) > 0
+   OR instr(lower(COALESCE(s.title, '')), lower(?1)) > 0
+`
+
+func (q *Queries) CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error) {
+	row := q.queryRow(ctx, q.countOPDSSeriesSearchStmt, countOPDSSeriesSearch, query)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createBook = `-- name: CreateBook :one
@@ -146,6 +195,31 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 	return i, err
 }
 
+const createReadingList = `-- name: CreateReadingList :one
+INSERT INTO reading_lists (name, description)
+VALUES (?, ?)
+RETURNING id, name, description, sort_order, created_at, updated_at
+`
+
+type CreateReadingListParams struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (q *Queries) CreateReadingList(ctx context.Context, arg CreateReadingListParams) (ReadingList, error) {
+	row := q.queryRow(ctx, q.createReadingListStmt, createReadingList, arg.Name, arg.Description)
+	var i ReadingList
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createSeries = `-- name: CreateSeries :one
 INSERT INTO series (
     library_id, name, path, title, summary, publisher, status, rating, language, locked_fields
@@ -228,6 +302,15 @@ DELETE FROM libraries WHERE id = ?
 
 func (q *Queries) DeleteLibrary(ctx context.Context, id int64) error {
 	_, err := q.exec(ctx, q.deleteLibraryStmt, deleteLibrary, id)
+	return err
+}
+
+const deleteReadingList = `-- name: DeleteReadingList :exec
+DELETE FROM reading_lists WHERE id = ?
+`
+
+func (q *Queries) DeleteReadingList(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.deleteReadingListStmt, deleteReadingList, id)
 	return err
 }
 
@@ -536,6 +619,24 @@ func (q *Queries) GetNextBookInSeries(ctx context.Context, id int64) (Book, erro
 		&i.PathFingerprint,
 		&i.PathFingerprintNoExt,
 		&i.FilenameFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getReadingList = `-- name: GetReadingList :one
+SELECT id, name, description, sort_order, created_at, updated_at FROM reading_lists WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) GetReadingList(ctx context.Context, id int64) (ReadingList, error) {
+	row := q.queryRow(ctx, q.getReadingListStmt, getReadingList, id)
+	var i ReadingList
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1040,6 +1141,153 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 	return items, nil
 }
 
+const listReadingListItems = `-- name: ListReadingListItems :many
+SELECT
+    rli.id,
+    rli.reading_list_id,
+    rli.series_id,
+    rli.sort_order,
+    rli.note,
+    rli.created_at,
+    rli.updated_at,
+    s.name as series_name,
+    COALESCE(s.title, '') as series_title,
+    s.book_count,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id
+        ORDER BY
+            CASE
+                WHEN b.page_count = 0 THEN 0
+                WHEN b.last_read_page IS NULL THEN 0
+                WHEN b.last_read_page < b.page_count THEN 0
+                ELSE 1
+            END,
+            b.sort_number,
+            b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as next_book_id
+FROM reading_list_items rli
+JOIN series s ON s.id = rli.series_id
+WHERE rli.reading_list_id = ?
+ORDER BY rli.sort_order, s.name
+`
+
+type ListReadingListItemsRow struct {
+	ID            int64     `json:"id"`
+	ReadingListID int64     `json:"reading_list_id"`
+	SeriesID      int64     `json:"series_id"`
+	SortOrder     int64     `json:"sort_order"`
+	Note          string    `json:"note"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	SeriesName    string    `json:"series_name"`
+	SeriesTitle   string    `json:"series_title"`
+	BookCount     int64     `json:"book_count"`
+	CoverPath     string    `json:"cover_path"`
+	NextBookID    int64     `json:"next_book_id"`
+}
+
+func (q *Queries) ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error) {
+	rows, err := q.query(ctx, q.listReadingListItemsStmt, listReadingListItems, readingListID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReadingListItemsRow
+	for rows.Next() {
+		var i ListReadingListItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReadingListID,
+			&i.SeriesID,
+			&i.SortOrder,
+			&i.Note,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SeriesName,
+			&i.SeriesTitle,
+			&i.BookCount,
+			&i.CoverPath,
+			&i.NextBookID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReadingLists = `-- name: ListReadingLists :many
+SELECT
+    rl.id,
+    rl.name,
+    rl.description,
+    rl.sort_order,
+    rl.created_at,
+    rl.updated_at,
+    COUNT(rli.id) as item_count
+FROM reading_lists rl
+LEFT JOIN reading_list_items rli ON rli.reading_list_id = rl.id
+GROUP BY rl.id
+ORDER BY rl.sort_order, rl.name
+`
+
+type ListReadingListsRow struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	SortOrder   int64     `json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	ItemCount   int64     `json:"item_count"`
+}
+
+func (q *Queries) ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error) {
+	rows, err := q.query(ctx, q.listReadingListsStmt, listReadingLists)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReadingListsRow
+	for rows.Next() {
+		var i ListReadingListsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.SortOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSeriesByLibrary = `-- name: ListSeriesByLibrary :many
 SELECT s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages, 
        (SELECT b.cover_path 
@@ -1115,6 +1363,86 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]L
 	return items, nil
 }
 
+const removeReadingListItem = `-- name: RemoveReadingListItem :exec
+DELETE FROM reading_list_items WHERE reading_list_id = ? AND id = ?
+`
+
+type RemoveReadingListItemParams struct {
+	ReadingListID int64 `json:"reading_list_id"`
+	ID            int64 `json:"id"`
+}
+
+func (q *Queries) RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error {
+	_, err := q.exec(ctx, q.removeReadingListItemStmt, removeReadingListItem, arg.ReadingListID, arg.ID)
+	return err
+}
+
+const searchOPDSSeries = `-- name: SearchOPDSSeries :many
+SELECT
+    s.id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    s.updated_at,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path
+FROM series s
+WHERE instr(lower(s.name), lower(?1)) > 0
+   OR instr(lower(COALESCE(s.title, '')), lower(?1)) > 0
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+LIMIT ?3 OFFSET ?2
+`
+
+type SearchOPDSSeriesParams struct {
+	Query  string `json:"query"`
+	Offset int64  `json:"offset"`
+	Limit  int64  `json:"limit"`
+}
+
+type SearchOPDSSeriesRow struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Title     string    `json:"title"`
+	Summary   string    `json:"summary"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CoverPath string    `json:"cover_path"`
+}
+
+func (q *Queries) SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error) {
+	rows, err := q.query(ctx, q.searchOPDSSeriesStmt, searchOPDSSeries, arg.Query, arg.Offset, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchOPDSSeriesRow
+	for rows.Next() {
+		var i SearchOPDSSeriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.UpdatedAt,
+			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateBookProgress = `-- name: UpdateBookProgress :exec
 UPDATE books 
 SET last_read_page = ?, last_read_at = ?, updated_at = CURRENT_TIMESTAMP
@@ -1171,6 +1499,50 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateReadingList = `-- name: UpdateReadingList :one
+UPDATE reading_lists
+SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, name, description, sort_order, created_at, updated_at
+`
+
+type UpdateReadingListParams struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ID          int64  `json:"id"`
+}
+
+func (q *Queries) UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error) {
+	row := q.queryRow(ctx, q.updateReadingListStmt, updateReadingList, arg.Name, arg.Description, arg.ID)
+	var i ReadingList
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateReadingListItemSortOrder = `-- name: UpdateReadingListItemSortOrder :exec
+UPDATE reading_list_items
+SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
+WHERE reading_list_id = ? AND id = ?
+`
+
+type UpdateReadingListItemSortOrderParams struct {
+	SortOrder     int64 `json:"sort_order"`
+	ReadingListID int64 `json:"reading_list_id"`
+	ID            int64 `json:"id"`
+}
+
+func (q *Queries) UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) error {
+	_, err := q.exec(ctx, q.updateReadingListItemSortOrderStmt, updateReadingListItemSortOrder, arg.SortOrder, arg.ReadingListID, arg.ID)
+	return err
 }
 
 const updateSeriesFavorite = `-- name: UpdateSeriesFavorite :exec

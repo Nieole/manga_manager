@@ -40,6 +40,32 @@ FROM series s
 WHERE s.library_id = ? 
 ORDER BY s.name;
 
+-- name: CountOPDSSeriesSearch :one
+SELECT COUNT(*)
+FROM series s
+WHERE instr(lower(s.name), lower(sqlc.arg(query))) > 0
+   OR instr(lower(COALESCE(s.title, '')), lower(sqlc.arg(query))) > 0;
+
+-- name: SearchOPDSSeries :many
+SELECT
+    s.id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    s.updated_at,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path
+FROM series s
+WHERE instr(lower(s.name), lower(sqlc.arg(query))) > 0
+   OR instr(lower(COALESCE(s.title, '')), lower(sqlc.arg(query))) > 0
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
 -- name: CreateBook :one
 INSERT INTO books (
     series_id, library_id, name, path, size, file_modified_at, 
@@ -269,3 +295,94 @@ SELECT s.id, s.title, s.name, s.summary
 FROM series s
 LEFT JOIN collection_series cs ON s.id = cs.series_id
 WHERE s.library_id = ? AND cs.collection_id IS NULL;
+
+-- name: ListReadingLists :many
+SELECT
+    rl.id,
+    rl.name,
+    rl.description,
+    rl.sort_order,
+    rl.created_at,
+    rl.updated_at,
+    COUNT(rli.id) as item_count
+FROM reading_lists rl
+LEFT JOIN reading_list_items rli ON rli.reading_list_id = rl.id
+GROUP BY rl.id
+ORDER BY rl.sort_order, rl.name;
+
+-- name: CreateReadingList :one
+INSERT INTO reading_lists (name, description)
+VALUES (?, ?)
+RETURNING *;
+
+-- name: GetReadingList :one
+SELECT * FROM reading_lists WHERE id = ? LIMIT 1;
+
+-- name: UpdateReadingList :one
+UPDATE reading_lists
+SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING *;
+
+-- name: DeleteReadingList :exec
+DELETE FROM reading_lists WHERE id = ?;
+
+-- name: ListReadingListItems :many
+SELECT
+    rli.id,
+    rli.reading_list_id,
+    rli.series_id,
+    rli.sort_order,
+    rli.note,
+    rli.created_at,
+    rli.updated_at,
+    s.name as series_name,
+    COALESCE(s.title, '') as series_title,
+    s.book_count,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id
+        ORDER BY
+            CASE
+                WHEN b.page_count = 0 THEN 0
+                WHEN b.last_read_page IS NULL THEN 0
+                WHEN b.last_read_page < b.page_count THEN 0
+                ELSE 1
+            END,
+            b.sort_number,
+            b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as next_book_id
+FROM reading_list_items rli
+JOIN series s ON s.id = rli.series_id
+WHERE rli.reading_list_id = ?
+ORDER BY rli.sort_order, s.name;
+
+-- name: AddReadingListItem :one
+INSERT INTO reading_list_items (reading_list_id, series_id, sort_order, note)
+VALUES (
+    sqlc.arg(reading_list_id),
+    sqlc.arg(series_id),
+    COALESCE((SELECT MAX(sort_order) + 10 FROM reading_list_items WHERE reading_list_id = sqlc.arg(reading_list_id)), 10),
+    sqlc.arg(note)
+)
+ON CONFLICT(reading_list_id, series_id) DO UPDATE SET
+    note = excluded.note,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING *;
+
+-- name: RemoveReadingListItem :exec
+DELETE FROM reading_list_items WHERE reading_list_id = ? AND id = ?;
+
+-- name: UpdateReadingListItemSortOrder :exec
+UPDATE reading_list_items
+SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
+WHERE reading_list_id = ? AND id = ?;

@@ -4,8 +4,12 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
+
+	"manga-manager/internal/database"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -44,11 +48,28 @@ type OPDSEntry struct {
 	Links   []OPDSLink `xml:"link"`
 }
 
+type OpenSearchDescription struct {
+	XMLName        xml.Name        `xml:"OpenSearchDescription"`
+	XMLNS          string          `xml:"xmlns,attr"`
+	ShortName      string          `xml:"ShortName"`
+	Description    string          `xml:"Description"`
+	InputEncoding  string          `xml:"InputEncoding"`
+	OutputEncoding string          `xml:"OutputEncoding"`
+	URLs           []OpenSearchURL `xml:"Url"`
+}
+
+type OpenSearchURL struct {
+	Type     string `xml:"type,attr"`
+	Template string `xml:"template,attr"`
+}
+
 // SetupOPDSRoutes 注册 OPDS 路由
 func (c *Controller) SetupOPDSRoutes(r chi.Router) {
 	r.Route("/opds/v1.2", func(r chi.Router) {
 		r.Get("/", c.opdsRoot)
 		r.Get("/continue", c.opdsContinueReading)
+		r.Get("/opensearch.xml", c.opdsOpenSearch)
+		r.Get("/search", c.opdsSearch)
 		r.Get("/libraries", c.opdsLibraries)
 		r.Get("/libraries/{libraryId}", c.opdsLibrarySeries)
 		r.Get("/series/{seriesId}", c.opdsSeriesBooks)
@@ -57,6 +78,15 @@ func (c *Controller) SetupOPDSRoutes(r chi.Router) {
 
 func xmlResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/atom+xml;charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(xml.Header))
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	enc.Encode(data)
+}
+
+func openSearchResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/opensearchdescription+xml;charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(xml.Header))
 	enc := xml.NewEncoder(w)
@@ -76,6 +106,7 @@ func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
 		Links: []OPDSLink{
 			{Rel: "self", Href: "/opds/v1.2/", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 			{Rel: "start", Href: "/opds/v1.2/", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
+			{Rel: "search", Href: "/opds/v1.2/opensearch.xml", Type: "application/opensearchdescription+xml"},
 		},
 		Entries: []OPDSEntry{
 			{
@@ -101,6 +132,23 @@ func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
 	xmlResponse(w, feed)
 }
 
+func (c *Controller) opdsOpenSearch(w http.ResponseWriter, r *http.Request) {
+	description := OpenSearchDescription{
+		XMLNS:          "http://a9.com/-/spec/opensearch/1.1/",
+		ShortName:      "Manga Manager",
+		Description:    "Search Manga Manager series",
+		InputEncoding:  "UTF-8",
+		OutputEncoding: "UTF-8",
+		URLs: []OpenSearchURL{
+			{
+				Type:     "application/atom+xml;profile=opds-catalog;kind=acquisition",
+				Template: "/opds/v1.2/search?q={searchTerms}&page={startPage?}&limit={count?}",
+			},
+		},
+	}
+	openSearchResponse(w, description)
+}
+
 func opdsPositiveQueryInt(r *http.Request, key string, fallback, max int) int {
 	value, err := strconv.Atoi(r.URL.Query().Get(key))
 	if err != nil || value <= 0 {
@@ -124,18 +172,90 @@ func opdsSliceBounds(total, page, limit int) (int, int) {
 	return start, end
 }
 
+func opdsPageHref(base string, page, limit int) string {
+	separator := "?"
+	if strings.Contains(base, "?") {
+		separator = "&"
+	}
+	return fmt.Sprintf("%s%spage=%d&limit=%d", base, separator, page, limit)
+}
+
 func opdsPaginationLinks(base string, page, limit, total int) []OPDSLink {
 	links := []OPDSLink{
-		{Rel: "self", Href: fmt.Sprintf("%s?page=%d&limit=%d", base, page, limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+		{Rel: "self", Href: opdsPageHref(base, page, limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
 		{Rel: "start", Href: "/opds/v1.2/", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 	}
 	if page > 1 {
-		links = append(links, OPDSLink{Rel: "previous", Href: fmt.Sprintf("%s?page=%d&limit=%d", base, page-1, limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"})
+		links = append(links, OPDSLink{Rel: "previous", Href: opdsPageHref(base, page-1, limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"})
 	}
 	if page*limit < total {
-		links = append(links, OPDSLink{Rel: "next", Href: fmt.Sprintf("%s?page=%d&limit=%d", base, page+1, limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"})
+		links = append(links, OPDSLink{Rel: "next", Href: opdsPageHref(base, page+1, limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"})
 	}
 	return links
+}
+
+// opdsSearch 搜索系列，供 OPDS 客户端通过 OpenSearch 调用。
+func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	page := opdsPositiveQueryInt(r, "page", 1, 0)
+	limit := opdsPositiveQueryInt(r, "limit", 30, 100)
+	now := time.Now().Format(time.RFC3339)
+
+	total := 0
+	entries := []OPDSEntry{}
+	if query != "" {
+		searchTotal, err := c.store.CountOPDSSeriesSearch(r.Context(), query)
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		total = int(searchTotal)
+
+		rows, err := c.store.SearchOPDSSeries(r.Context(), database.SearchOPDSSeriesParams{
+			Query:  query,
+			Limit:  int64(limit),
+			Offset: int64((page - 1) * limit),
+		})
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+
+		for _, row := range rows {
+			title := row.Title
+			if title == "" {
+				title = row.Name
+			}
+			links := []OPDSLink{
+				{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+			}
+			if row.CoverPath != "" {
+				links = append(links, OPDSLink{
+					Rel:  "http://opds-spec.org/image/thumbnail",
+					Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+					Type: "image/jpeg",
+				})
+			}
+			entries = append(entries, OPDSEntry{
+				Title:   title,
+				ID:      fmt.Sprintf("urn:manga-manager:opds:search:series:%d", row.ID),
+				Updated: row.UpdatedAt.Format(time.RFC3339),
+				Content: row.Summary,
+				Links:   links,
+			})
+		}
+	}
+
+	base := "/opds/v1.2/search?q=" + url.QueryEscape(query)
+	feed := OPDSFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   fmt.Sprintf("搜索：%s", query),
+		ID:      "urn:manga-manager:opds:search:" + query,
+		Updated: now,
+		Links:   opdsPaginationLinks(base, page, limit, total),
+		Entries: entries,
+	}
+	xmlResponse(w, feed)
 }
 
 // opdsLibraries 资源库列表
