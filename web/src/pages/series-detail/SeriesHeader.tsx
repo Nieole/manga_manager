@@ -1,4 +1,4 @@
-import { ArrowLeft, BookImage, Building2, Download, Edit, FolderHeart, FolderOpen, Globe, Info, RefreshCw, Star, Tag, User } from 'lucide-react';
+import { ArrowLeft, BookImage, Building2, Download, Edit, FileDown, FolderHeart, FolderOpen, Globe, Info, RefreshCw, Star, Tag, User } from 'lucide-react';
 import type { Author, Book, MetaTag, Series, SeriesLink } from './types';
 import { normalizeSeriesStatus } from '../../i18n/status';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -24,6 +24,7 @@ interface SeriesHeaderProps {
   onToggleSelectionMode: () => void;
   onEdit: () => void;
   onAddToCollection: () => void;
+  onExportComicInfo: () => void;
   onOpenDirectory: () => void;
   onRescan: () => void;
   onToggleScrapeMenu: () => void;
@@ -52,6 +53,7 @@ export function SeriesHeader({
   onToggleSelectionMode,
   onEdit,
   onAddToCollection,
+  onExportComicInfo,
   onOpenDirectory,
   onRescan,
   onToggleScrapeMenu,
@@ -209,6 +211,10 @@ export function SeriesHeader({
                  <div className="w-px h-5 bg-white/10 mx-1" />
                  <button onClick={onAddToCollection} className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors" title={t('series.header.addToCollection')}>
                     <FolderHeart className="w-4 h-4 m-0.5" />
+                 </button>
+                 <div className="w-px h-5 bg-white/10 mx-1" />
+                 <button onClick={onExportComicInfo} className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors" title={t('series.header.exportComicInfo')}>
+                    <FileDown className="w-4 h-4 m-0.5" />
                  </button>
                  <div className="w-px h-5 bg-white/10 mx-1" />
                  <button onClick={onOpenDirectory} disabled={isOpeningDirectory} className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors disabled:opacity-50" title={t('series.header.openDirectory')}>

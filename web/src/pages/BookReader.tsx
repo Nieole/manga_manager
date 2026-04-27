@@ -16,6 +16,12 @@ interface ReadingBookmark {
     updated_at: string;
 }
 
+function isReaderShortcutInput(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
+}
+
 export default function BookReader() {
     const { t } = useI18n();
     const { bookId } = useParams();
@@ -436,33 +442,47 @@ export default function BookReader() {
     useEffect(() => {
         if (readMode !== 'paged') return;
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'ArrowRight') {
+            if (isReaderShortcutInput(e.target)) return;
+            if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+                e.preventDefault();
                 if (readDirection === 'ltr') {
                     handleNext();
                 } else {
                     handlePrev();
                 }
-            } else if (e.key === 'ArrowLeft') {
+            } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                e.preventDefault();
                 if (readDirection === 'ltr') {
                     handlePrev();
                 } else {
                     handleNext();
                 }
+            } else if (e.key === 'Home') {
+                e.preventDefault();
+                setCurrentPageIndex(0);
+            } else if (e.key === 'End') {
+                e.preventDefault();
+                setCurrentPageIndex(Math.max(0, pages.length - 1));
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [readMode, readDirection, handleNext, handlePrev]);
+    }, [readMode, readDirection, handleNext, handlePrev, pages.length]);
 
     useEffect(() => {
         const handleGlobalHelp = (e: KeyboardEvent) => {
+            if (isReaderShortcutInput(e.target)) return;
             if (e.key.toLowerCase() === 'h' || e.key === '?') {
+                e.preventDefault();
                 setShowHelp(prev => !prev);
+            } else if (e.key.toLowerCase() === 'b') {
+                e.preventDefault();
+                handleSaveBookmark();
             }
         };
         window.addEventListener('keydown', handleGlobalHelp);
         return () => window.removeEventListener('keydown', handleGlobalHelp);
-    }, []);
+    }, [handleSaveBookmark]);
 
     // --- 图层鼠标物理拖拽交互方法群 ---
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -546,6 +566,9 @@ export default function BookReader() {
                             <div>
                                 <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpShortcuts')}</p>
                                 <p>{t('reader.helpArrowKeys')}</p>
+                                <p>{t('reader.helpPageKeys')}</p>
+                                <p>{t('reader.helpJumpKeys')}</p>
+                                <p>{t('reader.helpBookmarkKey')}</p>
                                 <p>{t('reader.helpToggleHelp')}</p>
                             </div>
                             <div>

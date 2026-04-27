@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"encoding/xml"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +41,32 @@ func TestNaturalCompare(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("naturalCompare(%q, %q) = %v; want %v", tt.a, tt.b, got, tt.expected)
 		}
+	}
+}
+
+func TestMarshalComicInfo(t *testing.T) {
+	data, err := MarshalComicInfo(ComicInfo{
+		Title:       "Book Title",
+		Series:      "Series Title",
+		Number:      "1",
+		Volume:      "1",
+		Count:       3,
+		PageCount:   188,
+		Genre:       "Action, Drama",
+		LanguageISO: "zh",
+	})
+	if err != nil {
+		t.Fatalf("MarshalComicInfo failed: %v", err)
+	}
+	if !strings.HasPrefix(string(data), xml.Header) {
+		t.Fatalf("expected XML header, got %q", string(data[:min(len(data), len(xml.Header))]))
+	}
+
+	var info ComicInfo
+	if err := xml.Unmarshal(data, &info); err != nil {
+		t.Fatalf("unmarshal marshaled ComicInfo failed: %v", err)
+	}
+	if info.Title != "Book Title" || info.Series != "Series Title" || info.Number != "1" || info.PageCount != 188 {
+		t.Fatalf("unexpected ComicInfo roundtrip: %+v", info)
 	}
 }

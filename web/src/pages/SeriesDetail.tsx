@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { AlertTriangle, BookImage, CheckCircle2, RotateCcw } from 'lucide-react';
+import { AlertTriangle, BookImage, CheckCircle2, FileDown, RotateCcw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { SeriesContentSection } from './series-detail/SeriesContentSection';
 import { SeriesHeader } from './series-detail/SeriesHeader';
@@ -118,6 +118,11 @@ export default function SeriesDetail() {
         } finally {
             setIsOpeningDirectory(false);
         }
+    };
+
+    const handleExportSeriesComicInfo = () => {
+        if (!seriesId) return;
+        window.location.href = `/api/series/${seriesId}/comicinfo.zip`;
     };
 
     const loadSeriesRelations = async () => {
@@ -630,6 +635,20 @@ export default function SeriesDetail() {
                     {/* 快捷标记已读按钮 (非多选模式下显示) */}
                     {!isSelectionMode && (
                         <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                window.location.href = `/api/books/${book.id}/comicinfo.xml`;
+                            }}
+                            className="absolute top-2 left-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-komgaPrimary hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
+                            title={t('series.book.exportComicInfo')}
+                        >
+                            <FileDown className="w-4 h-4" />
+                        </button>
+                    )}
+
+                    {!isSelectionMode && (
+                        <button
                             onClick={(e) => handleQuickMarkRead(e, book.id, !(book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count))}
                             className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-all opacity-0 group-hover:opacity-100 backdrop-blur"
                             title={book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count ? t('series.book.markUnread') : t('series.book.quickMarkRead')}
@@ -710,6 +729,7 @@ export default function SeriesDetail() {
                 }}
                 onEdit={() => setIsEditing(true)}
                 onAddToCollection={() => setShowCollectionModal(true)}
+                onExportComicInfo={handleExportSeriesComicInfo}
                 onOpenDirectory={handleOpenDirectory}
                 onRescan={handleRescan}
                 onToggleScrapeMenu={() => setScrapeMenuOpen(!scrapeMenuOpen)}

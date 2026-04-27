@@ -713,11 +713,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 			r.Get("/{seriesId}/links", c.getSeriesLinks)
 			r.Get("/{seriesId}/context", c.getSeriesContext)
+			r.Get("/{seriesId}/comicinfo.zip", c.exportSeriesComicInfoArchive)
 		})
 
 		r.Route("/books", func(r chi.Router) {
 			r.Post("/bulk-progress", c.bulkUpdateBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
+			r.Get("/{bookId}/comicinfo.xml", c.exportBookComicInfo)
 			r.Get("/{bookId}/bookmarks", c.listReadingBookmarks)
 			r.Post("/{bookId}/bookmarks", c.upsertReadingBookmark)
 			r.Delete("/{bookId}/bookmarks/{bookmarkId}", c.deleteReadingBookmark)

@@ -10,6 +10,9 @@ type ComicInfo struct {
 	XMLName         xml.Name `xml:"ComicInfo"`
 	Title           string   `xml:"Title,omitempty"`
 	Series          string   `xml:"Series,omitempty"`
+	Number          string   `xml:"Number,omitempty"`
+	Count           int      `xml:"Count,omitempty"`
+	Volume          string   `xml:"Volume,omitempty"`
 	Summary         string   `xml:"Summary,omitempty"`
 	Writer          string   `xml:"Writer,omitempty"`
 	Penciller       string   `xml:"Penciller,omitempty"`
@@ -22,6 +25,7 @@ type ComicInfo struct {
 	Manga           string   `xml:"Manga,omitempty"`           // Yes, No, RightToLeft
 	Rating          string   `xml:"Rating,omitempty"`          // Unknown, Rating Pending, Early Childhood, Everyone, Everyone 10+, Teen, Mature 17+, Adults Only 18+  (可选项，数字如 4.0 也常见)
 	CommunityRating float32  `xml:"CommunityRating,omitempty"` // 真实分值 0.0 - 5.0
+	PageCount       int      `xml:"PageCount,omitempty"`
 }
 
 // ParseComicInfo 从 XML 字节流中反序列化 ComicInfo
@@ -31,6 +35,14 @@ func ParseComicInfo(data []byte) (*ComicInfo, error) {
 		return nil, err
 	}
 	return &info, nil
+}
+
+func MarshalComicInfo(info ComicInfo) ([]byte, error) {
+	data, err := xml.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(xml.Header), data...), nil
 }
 
 // GetTags 从 Genre 中提取标签（通常是逗号分隔）
