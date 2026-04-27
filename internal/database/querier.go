@@ -13,6 +13,7 @@ type Querier interface {
 	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 	ClearSeriesLinks(ctx context.Context, seriesID int64) error
 	ClearSeriesTags(ctx context.Context, seriesID int64) error
+	CountMihonSeries(ctx context.Context, arg CountMihonSeriesParams) (int64, error)
 	CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error)
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
@@ -31,6 +32,7 @@ type Querier interface {
 	GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error)
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
+	GetMihonSeries(ctx context.Context, id int64) (GetMihonSeriesRow, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
 	GetReadingList(ctx context.Context, id int64) (ReadingList, error)
 	GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error)
@@ -45,6 +47,9 @@ type Querier interface {
 	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)
 	ListLibraries(ctx context.Context) ([]Library, error)
+	ListMihonSeries(ctx context.Context, arg ListMihonSeriesParams) ([]ListMihonSeriesRow, error)
+	ListMihonSeriesByBooks(ctx context.Context, arg ListMihonSeriesByBooksParams) ([]ListMihonSeriesByBooksRow, error)
+	ListMihonSeriesByUpdated(ctx context.Context, arg ListMihonSeriesByUpdatedParams) ([]ListMihonSeriesByUpdatedRow, error)
 	ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error)
 	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)

@@ -36,6 +36,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.clearSeriesTagsStmt, err = db.PrepareContext(ctx, clearSeriesTags); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesTags: %w", err)
 	}
+	if q.countMihonSeriesStmt, err = db.PrepareContext(ctx, countMihonSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query CountMihonSeries: %w", err)
+	}
 	if q.countOPDSSeriesSearchStmt, err = db.PrepareContext(ctx, countOPDSSeriesSearch); err != nil {
 		return nil, fmt.Errorf("error preparing query CountOPDSSeriesSearch: %w", err)
 	}
@@ -90,6 +93,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getLinksForSeriesStmt, err = db.PrepareContext(ctx, getLinksForSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLinksForSeries: %w", err)
 	}
+	if q.getMihonSeriesStmt, err = db.PrepareContext(ctx, getMihonSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMihonSeries: %w", err)
+	}
 	if q.getNextBookInSeriesStmt, err = db.PrepareContext(ctx, getNextBookInSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextBookInSeries: %w", err)
 	}
@@ -131,6 +137,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.listLibrariesStmt, err = db.PrepareContext(ctx, listLibraries); err != nil {
 		return nil, fmt.Errorf("error preparing query ListLibraries: %w", err)
+	}
+	if q.listMihonSeriesStmt, err = db.PrepareContext(ctx, listMihonSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query ListMihonSeries: %w", err)
+	}
+	if q.listMihonSeriesByBooksStmt, err = db.PrepareContext(ctx, listMihonSeriesByBooks); err != nil {
+		return nil, fmt.Errorf("error preparing query ListMihonSeriesByBooks: %w", err)
+	}
+	if q.listMihonSeriesByUpdatedStmt, err = db.PrepareContext(ctx, listMihonSeriesByUpdated); err != nil {
+		return nil, fmt.Errorf("error preparing query ListMihonSeriesByUpdated: %w", err)
 	}
 	if q.listReadingListItemsStmt, err = db.PrepareContext(ctx, listReadingListItems); err != nil {
 		return nil, fmt.Errorf("error preparing query ListReadingListItems: %w", err)
@@ -203,6 +218,11 @@ func (q *Queries) Close() error {
 	if q.clearSeriesTagsStmt != nil {
 		if cerr := q.clearSeriesTagsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearSeriesTagsStmt: %w", cerr)
+		}
+	}
+	if q.countMihonSeriesStmt != nil {
+		if cerr := q.countMihonSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countMihonSeriesStmt: %w", cerr)
 		}
 	}
 	if q.countOPDSSeriesSearchStmt != nil {
@@ -295,6 +315,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getLinksForSeriesStmt: %w", cerr)
 		}
 	}
+	if q.getMihonSeriesStmt != nil {
+		if cerr := q.getMihonSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMihonSeriesStmt: %w", cerr)
+		}
+	}
 	if q.getNextBookInSeriesStmt != nil {
 		if cerr := q.getNextBookInSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getNextBookInSeriesStmt: %w", cerr)
@@ -363,6 +388,21 @@ func (q *Queries) Close() error {
 	if q.listLibrariesStmt != nil {
 		if cerr := q.listLibrariesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listLibrariesStmt: %w", cerr)
+		}
+	}
+	if q.listMihonSeriesStmt != nil {
+		if cerr := q.listMihonSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listMihonSeriesStmt: %w", cerr)
+		}
+	}
+	if q.listMihonSeriesByBooksStmt != nil {
+		if cerr := q.listMihonSeriesByBooksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listMihonSeriesByBooksStmt: %w", cerr)
+		}
+	}
+	if q.listMihonSeriesByUpdatedStmt != nil {
+		if cerr := q.listMihonSeriesByUpdatedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listMihonSeriesByUpdatedStmt: %w", cerr)
 		}
 	}
 	if q.listReadingListItemsStmt != nil {
@@ -488,6 +528,7 @@ type Queries struct {
 	clearSeriesAuthorsStmt             *sql.Stmt
 	clearSeriesLinksStmt               *sql.Stmt
 	clearSeriesTagsStmt                *sql.Stmt
+	countMihonSeriesStmt               *sql.Stmt
 	countOPDSSeriesSearchStmt          *sql.Stmt
 	createBookStmt                     *sql.Stmt
 	createLibraryStmt                  *sql.Stmt
@@ -506,6 +547,7 @@ type Queries struct {
 	getCandidateSeriesForAIStmt        *sql.Stmt
 	getLibraryStmt                     *sql.Stmt
 	getLinksForSeriesStmt              *sql.Stmt
+	getMihonSeriesStmt                 *sql.Stmt
 	getNextBookInSeriesStmt            *sql.Stmt
 	getReadingListStmt                 *sql.Stmt
 	getRecentReadSeriesStmt            *sql.Stmt
@@ -520,6 +562,9 @@ type Queries struct {
 	listBooksByLibraryStmt             *sql.Stmt
 	listBooksBySeriesStmt              *sql.Stmt
 	listLibrariesStmt                  *sql.Stmt
+	listMihonSeriesStmt                *sql.Stmt
+	listMihonSeriesByBooksStmt         *sql.Stmt
+	listMihonSeriesByUpdatedStmt       *sql.Stmt
 	listReadingListItemsStmt           *sql.Stmt
 	listReadingListsStmt               *sql.Stmt
 	listSeriesByLibraryStmt            *sql.Stmt
@@ -546,6 +591,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		clearSeriesAuthorsStmt:             q.clearSeriesAuthorsStmt,
 		clearSeriesLinksStmt:               q.clearSeriesLinksStmt,
 		clearSeriesTagsStmt:                q.clearSeriesTagsStmt,
+		countMihonSeriesStmt:               q.countMihonSeriesStmt,
 		countOPDSSeriesSearchStmt:          q.countOPDSSeriesSearchStmt,
 		createBookStmt:                     q.createBookStmt,
 		createLibraryStmt:                  q.createLibraryStmt,
@@ -564,6 +610,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getCandidateSeriesForAIStmt:        q.getCandidateSeriesForAIStmt,
 		getLibraryStmt:                     q.getLibraryStmt,
 		getLinksForSeriesStmt:              q.getLinksForSeriesStmt,
+		getMihonSeriesStmt:                 q.getMihonSeriesStmt,
 		getNextBookInSeriesStmt:            q.getNextBookInSeriesStmt,
 		getReadingListStmt:                 q.getReadingListStmt,
 		getRecentReadSeriesStmt:            q.getRecentReadSeriesStmt,
@@ -578,6 +625,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listBooksByLibraryStmt:             q.listBooksByLibraryStmt,
 		listBooksBySeriesStmt:              q.listBooksBySeriesStmt,
 		listLibrariesStmt:                  q.listLibrariesStmt,
+		listMihonSeriesStmt:                q.listMihonSeriesStmt,
+		listMihonSeriesByBooksStmt:         q.listMihonSeriesByBooksStmt,
+		listMihonSeriesByUpdatedStmt:       q.listMihonSeriesByUpdatedStmt,
 		listReadingListItemsStmt:           q.listReadingListItemsStmt,
 		listReadingListsStmt:               q.listReadingListsStmt,
 		listSeriesByLibraryStmt:            q.listSeriesByLibraryStmt,

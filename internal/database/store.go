@@ -20,7 +20,7 @@ type Store interface {
 	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]ExternalLibraryBookRow, error)
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
-	SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
+	SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
 	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
@@ -267,7 +267,7 @@ func ensureColumn(db *sql.DB, table, column, definition string) error {
 }
 
 // SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页
-func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
+func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
 	// 构建动态 SQL - 使用预聚合子查询替代关联子查询提升查询性能
 	baseQuery := `
 		SELECT
@@ -288,7 +288,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 		LEFT JOIN tags t ON st.tag_id = t.id
 		LEFT JOIN series_authors sa ON s.id = sa.series_id
 		LEFT JOIN authors a ON sa.author_id = a.id
-		WHERE s.library_id = ?
+		WHERE (CAST(? AS INTEGER) = 0 OR s.library_id = CAST(? AS INTEGER))
 	`
 	// 因为使用了 GROUP BY，所以不能再外层 COUNT(DISTINCT s.id)，我们需要一个单独的包裹写法
 	countFilters := `
@@ -297,10 +297,16 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, lette
 		LEFT JOIN tags t ON st.tag_id = t.id
 		LEFT JOIN series_authors sa ON s.id = sa.series_id
 		LEFT JOIN authors a ON sa.author_id = a.id
-		WHERE s.library_id = ?
+		WHERE (CAST(? AS INTEGER) = 0 OR s.library_id = CAST(? AS INTEGER))
 	`
 
-	args := []interface{}{libraryID}
+	args := []interface{}{libraryID, libraryID}
+
+	if keyword != "" {
+		baseQuery += ` AND (instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`
+		countFilters += ` AND (instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`
+		args = append(args, keyword, keyword)
+	}
 
 	if status != "" {
 		baseQuery += ` AND s.status = ?`

@@ -679,6 +679,8 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) SetupRoutes(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
+		c.setupMihonRoutes(r)
+
 		r.Get("/events", c.sseHandler)
 		r.Get("/search", c.searchBooks)
 		r.Get("/libraries", c.getLibraries)
@@ -1266,7 +1268,7 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	letter := r.URL.Query().Get("letter")
 	sortBy := r.URL.Query().Get("sortBy")
 
-	series, total, err := c.store.SearchSeriesPaged(ctx, libID, letter, status, tags, authors, int32(limit), int32(offset), sortBy)
+	series, total, err := c.store.SearchSeriesPaged(ctx, libID, "", letter, status, tags, authors, int32(limit), int32(offset), sortBy)
 	if err != nil {
 		slog.Error("SearchSeriesPaged Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")

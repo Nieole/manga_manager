@@ -66,6 +66,122 @@ WHERE instr(lower(s.name), lower(sqlc.arg(query))) > 0
 ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
+-- name: CountMihonSeries :one
+SELECT COUNT(*)
+FROM series s
+WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (
+    CAST(sqlc.arg(query) AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+  );
+
+-- name: ListMihonSeries :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (
+    CAST(sqlc.arg(query) AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+  )
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: ListMihonSeriesByUpdated :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (
+    CAST(sqlc.arg(query) AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+  )
+ORDER BY s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: ListMihonSeriesByBooks :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (
+    CAST(sqlc.arg(query) AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+  )
+ORDER BY s.book_count DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: GetMihonSeries :one
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE s.id = ?
+LIMIT 1;
+
 -- name: CreateBook :one
 INSERT INTO books (
     series_id, library_id, name, path, size, file_modified_at, 

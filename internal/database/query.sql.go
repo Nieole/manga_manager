@@ -73,6 +73,29 @@ func (q *Queries) ClearSeriesTags(ctx context.Context, seriesID int64) error {
 	return err
 }
 
+const countMihonSeries = `-- name: CountMihonSeries :one
+SELECT COUNT(*)
+FROM series s
+WHERE (CAST(?1 AS INTEGER) = 0 OR s.library_id = CAST(?1 AS INTEGER))
+  AND (
+    CAST(?2 AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(?2 AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(?2 AS TEXT))) > 0
+  )
+`
+
+type CountMihonSeriesParams struct {
+	LibraryID int64  `json:"library_id"`
+	Query     string `json:"query"`
+}
+
+func (q *Queries) CountMihonSeries(ctx context.Context, arg CountMihonSeriesParams) (int64, error) {
+	row := q.queryRow(ctx, q.countMihonSeriesStmt, countMihonSeries, arg.LibraryID, arg.Query)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOPDSSeriesSearch = `-- name: CountOPDSSeriesSearch :one
 SELECT COUNT(*)
 FROM series s
@@ -582,6 +605,60 @@ func (q *Queries) GetLinksForSeries(ctx context.Context, seriesID int64) ([]Seri
 		return nil, err
 	}
 	return items, nil
+}
+
+const getMihonSeries = `-- name: GetMihonSeries :one
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE s.id = ?
+LIMIT 1
+`
+
+type GetMihonSeriesRow struct {
+	ID          int64     `json:"id"`
+	LibraryID   int64     `json:"library_id"`
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	BookCount   int64     `json:"book_count"`
+	TotalPages  int64     `json:"total_pages"`
+	CoverBookID int64     `json:"cover_book_id"`
+}
+
+func (q *Queries) GetMihonSeries(ctx context.Context, id int64) (GetMihonSeriesRow, error) {
+	row := q.queryRow(ctx, q.getMihonSeriesStmt, getMihonSeries, id)
+	var i GetMihonSeriesRow
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Name,
+		&i.Title,
+		&i.Summary,
+		&i.Status,
+		&i.UpdatedAt,
+		&i.BookCount,
+		&i.TotalPages,
+		&i.CoverBookID,
+	)
+	return i, err
 }
 
 const getNextBookInSeries = `-- name: GetNextBookInSeries :one
@@ -1127,6 +1204,270 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 			&i.ScanInterval,
 			&i.ScanFormats,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMihonSeries = `-- name: ListMihonSeries :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE (CAST(?1 AS INTEGER) = 0 OR s.library_id = CAST(?1 AS INTEGER))
+  AND (
+    CAST(?2 AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(?2 AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(?2 AS TEXT))) > 0
+  )
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListMihonSeriesParams struct {
+	LibraryID int64  `json:"library_id"`
+	Query     string `json:"query"`
+	Offset    int64  `json:"offset"`
+	Limit     int64  `json:"limit"`
+}
+
+type ListMihonSeriesRow struct {
+	ID          int64     `json:"id"`
+	LibraryID   int64     `json:"library_id"`
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	BookCount   int64     `json:"book_count"`
+	TotalPages  int64     `json:"total_pages"`
+	CoverBookID int64     `json:"cover_book_id"`
+}
+
+func (q *Queries) ListMihonSeries(ctx context.Context, arg ListMihonSeriesParams) ([]ListMihonSeriesRow, error) {
+	rows, err := q.query(ctx, q.listMihonSeriesStmt, listMihonSeries,
+		arg.LibraryID,
+		arg.Query,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMihonSeriesRow
+	for rows.Next() {
+		var i ListMihonSeriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.BookCount,
+			&i.TotalPages,
+			&i.CoverBookID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMihonSeriesByBooks = `-- name: ListMihonSeriesByBooks :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE (CAST(?1 AS INTEGER) = 0 OR s.library_id = CAST(?1 AS INTEGER))
+  AND (
+    CAST(?2 AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(?2 AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(?2 AS TEXT))) > 0
+  )
+ORDER BY s.book_count DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListMihonSeriesByBooksParams struct {
+	LibraryID int64  `json:"library_id"`
+	Query     string `json:"query"`
+	Offset    int64  `json:"offset"`
+	Limit     int64  `json:"limit"`
+}
+
+type ListMihonSeriesByBooksRow struct {
+	ID          int64     `json:"id"`
+	LibraryID   int64     `json:"library_id"`
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	BookCount   int64     `json:"book_count"`
+	TotalPages  int64     `json:"total_pages"`
+	CoverBookID int64     `json:"cover_book_id"`
+}
+
+func (q *Queries) ListMihonSeriesByBooks(ctx context.Context, arg ListMihonSeriesByBooksParams) ([]ListMihonSeriesByBooksRow, error) {
+	rows, err := q.query(ctx, q.listMihonSeriesByBooksStmt, listMihonSeriesByBooks,
+		arg.LibraryID,
+		arg.Query,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMihonSeriesByBooksRow
+	for rows.Next() {
+		var i ListMihonSeriesByBooksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.BookCount,
+			&i.TotalPages,
+			&i.CoverBookID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMihonSeriesByUpdated = `-- name: ListMihonSeriesByUpdated :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE (CAST(?1 AS INTEGER) = 0 OR s.library_id = CAST(?1 AS INTEGER))
+  AND (
+    CAST(?2 AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(?2 AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(?2 AS TEXT))) > 0
+  )
+ORDER BY s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListMihonSeriesByUpdatedParams struct {
+	LibraryID int64  `json:"library_id"`
+	Query     string `json:"query"`
+	Offset    int64  `json:"offset"`
+	Limit     int64  `json:"limit"`
+}
+
+type ListMihonSeriesByUpdatedRow struct {
+	ID          int64     `json:"id"`
+	LibraryID   int64     `json:"library_id"`
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	BookCount   int64     `json:"book_count"`
+	TotalPages  int64     `json:"total_pages"`
+	CoverBookID int64     `json:"cover_book_id"`
+}
+
+func (q *Queries) ListMihonSeriesByUpdated(ctx context.Context, arg ListMihonSeriesByUpdatedParams) ([]ListMihonSeriesByUpdatedRow, error) {
+	rows, err := q.query(ctx, q.listMihonSeriesByUpdatedStmt, listMihonSeriesByUpdated,
+		arg.LibraryID,
+		arg.Query,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMihonSeriesByUpdatedRow
+	for rows.Next() {
+		var i ListMihonSeriesByUpdatedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.BookCount,
+			&i.TotalPages,
+			&i.CoverBookID,
 		); err != nil {
 			return nil, err
 		}
