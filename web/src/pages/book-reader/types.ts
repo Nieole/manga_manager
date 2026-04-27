@@ -7,6 +7,7 @@ export interface Page {
 export type ReadMode = 'webtoon' | 'paged';
 export type ReadDirection = 'ltr' | 'rtl';
 export type ScaleMode = 'original' | 'fit-height' | 'fit-width' | 'fit-screen';
+export type ReaderImageFormat = 'original' | 'webp' | 'jpeg';
 export type ImageFilter =
   | 'none'
   | 'nearest'

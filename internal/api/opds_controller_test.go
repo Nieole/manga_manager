@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -44,8 +46,11 @@ func TestOPDSFeeds(t *testing.T) {
 		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
 			t.Fatalf("decode root feed failed: %v", err)
 		}
-		if feed.Title != "Manga Manager OPDS Catalog" || len(feed.Entries) != 1 {
+		if feed.Title != "Manga Manager OPDS Catalog" || len(feed.Entries) != 2 {
 			t.Fatalf("unexpected root feed payload: %+v", feed)
+		}
+		if feed.Entries[1].ID != "urn:manga-manager:opds:continue" {
+			t.Fatalf("expected continue reading entry, got %+v", feed.Entries)
 		}
 	})
 
@@ -111,6 +116,31 @@ func TestOPDSFeeds(t *testing.T) {
 		}
 		if len(entry.Links) != 2 {
 			t.Fatalf("expected acquisition + thumbnail links, got %+v", entry.Links)
+		}
+	})
+
+	t.Run("continue reading feed", func(t *testing.T) {
+		if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+			ID:           book.ID,
+			LastReadPage: sql.NullInt64{Int64: 6, Valid: true},
+			LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
+		}); err != nil {
+			t.Fatalf("UpdateBookProgress failed: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		controller.opdsContinueReading(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/continue?limit=5", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		var feed OPDSFeed
+		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+			t.Fatalf("decode continue feed failed: %v", err)
+		}
+		if feed.ID != "urn:manga-manager:opds:continue" || len(feed.Entries) != 1 {
+			t.Fatalf("unexpected continue feed: %+v", feed)
 		}
 	})
 }

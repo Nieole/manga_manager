@@ -54,8 +54,8 @@ type ProcessOptions struct {
 }
 
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
-	// 如果没有任何处理需求且不需要裁切，直接短路透传原始数据
-	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" && !opts.AutoCrop {
+	// 如果没有任何处理需求且不需要转码/裁切，直接短路透传原始数据。
+	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" && opts.Format == "" && opts.Quality == 0 && !opts.AutoCrop {
 		return data, contentType, nil
 	}
 

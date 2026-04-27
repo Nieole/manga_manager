@@ -9,9 +9,10 @@ import { ModalShell } from '../components/ui/ModalShell';
 import { modalGhostButtonClass, modalPrimaryButtonClass } from '../components/ui/modalStyles';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
 import { HomeFilters } from './home/HomeFilters';
+import { HomeSmartFilters } from './home/HomeSmartFilters';
 import { HomeToolbar } from './home/HomeToolbar';
 import { RecentSeriesStrip } from './home/RecentSeriesStrip';
-import type { AIRecommendation, NamedOption, Series } from './home/types';
+import type { AIRecommendation, NamedOption, SavedSmartFilter, Series } from './home/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
 const DEFAULT_PAGE_SIZE = 30;
@@ -88,6 +89,31 @@ function requestSeriesSearch(query: string) {
     return request;
 }
 
+function smartFilterStorageKey(libraryId: string) {
+    return `lib_smart_filters_${libraryId}`;
+}
+
+function readSavedSmartFilters(libraryId: string) {
+    try {
+        const saved = localStorage.getItem(smartFilterStorageKey(libraryId));
+        if (!saved) return [];
+        const parsed = JSON.parse(saved) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((item): item is SavedSmartFilter => {
+            return Boolean(
+                item
+                && typeof item === 'object'
+                && 'id' in item
+                && 'name' in item
+                && typeof item.id === 'string'
+                && typeof item.name === 'string'
+            );
+        });
+    } catch {
+        return [];
+    }
+}
+
 export default function Home() {
     const { t, formatNumber } = useI18n();
     const { libId } = useParams();
@@ -104,6 +130,7 @@ export default function Home() {
     const [sortDir, setSortDir] = useState<string>('asc');
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+    const [savedSmartFilters, setSavedSmartFilters] = useState<SavedSmartFilter[]>([]);
     const [settingsReady, setSettingsReady] = useState(false);
 
     const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -136,6 +163,64 @@ export default function Home() {
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
         setTimeout(() => setToastMsg(null), 3000);
+    };
+
+    const persistSmartFilters = (items: SavedSmartFilter[]) => {
+        if (!libId) return;
+        setSavedSmartFilters(items);
+        localStorage.setItem(smartFilterStorageKey(libId), JSON.stringify(items));
+    };
+
+    const buildCurrentSmartFilter = (name: string): SavedSmartFilter => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        activeTag,
+        activeAuthor,
+        activeStatus,
+        activeLetter,
+        sortByField,
+        sortDir,
+        pageSize,
+        createdAt: new Date().toISOString(),
+    });
+
+    const handleSaveSmartFilter = (rawName: string) => {
+        if (!libId) return;
+        const name = rawName.trim() || t('home.smartFilters.defaultName', { count: savedSmartFilters.length + 1 });
+        const next = [
+            buildCurrentSmartFilter(name),
+            ...savedSmartFilters.filter((item) => item.name !== name),
+        ].slice(0, 20);
+        persistSmartFilters(next);
+        showToast(t('home.smartFilters.saved'), 'success');
+    };
+
+    const handleApplySmartFilter = (filter: SavedSmartFilter) => {
+        setActiveTag(filter.activeTag ?? null);
+        setActiveAuthor(filter.activeAuthor ?? null);
+        setActiveStatus(filter.activeStatus ?? null);
+        setActiveLetter(filter.activeLetter ?? null);
+        setSortByField(filter.sortByField || 'name');
+        setSortDir(filter.sortDir || 'asc');
+        setPageSize(filter.pageSize || DEFAULT_PAGE_SIZE);
+        setPage(1);
+        showToast(t('home.smartFilters.applied', { name: filter.name }), 'success');
+    };
+
+    const handleDeleteSmartFilter = (id: string) => {
+        persistSmartFilters(savedSmartFilters.filter((item) => item.id !== id));
+        showToast(t('home.smartFilters.deleted'), 'success');
+    };
+
+    const handleResetSmartFilters = () => {
+        setActiveTag(null);
+        setActiveAuthor(null);
+        setActiveStatus(null);
+        setActiveLetter(null);
+        setSortByField('name');
+        setSortDir('asc');
+        setPageSize(DEFAULT_PAGE_SIZE);
+        setPage(1);
     };
 
     const [allTags, setAllTags] = useState<NamedOption[]>([]);
@@ -362,6 +447,7 @@ export default function Home() {
     // 1. 恢复配置 (仅在 libId 变化时执行一次)
     useEffect(() => {
         if (!libId) return;
+        setSavedSmartFilters(readSavedSmartFilters(libId));
         const saved = localStorage.getItem(`lib_settings_${libId}`);
         if (saved) {
             try {
@@ -693,6 +779,21 @@ export default function Home() {
                     setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
                     setPage(1);
                 }}
+            />
+
+            <HomeSmartFilters
+                savedFilters={savedSmartFilters}
+                activeTag={activeTag}
+                activeAuthor={activeAuthor}
+                activeStatus={activeStatus}
+                activeLetter={activeLetter}
+                sortByField={sortByField}
+                sortDir={sortDir}
+                pageSize={pageSize}
+                onSave={handleSaveSmartFilter}
+                onApply={handleApplySmartFilter}
+                onDelete={handleDeleteSmartFilter}
+                onReset={handleResetSmartFilters}
             />
 
             <div className="mb-6 rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 to-gray-950 p-4 sm:p-5">

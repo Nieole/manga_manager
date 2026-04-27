@@ -179,6 +179,23 @@ func TestSeriesRelationHandlers(t *testing.T) {
 		t.Fatalf("unexpected relation payload: %+v", relations[0])
 	}
 
+	reverseBody := []byte(`{"target_series_id":` + strconv.FormatInt(seriesA.ID, 10) + `,"relation_type":"sequel"}`)
+	reverseReq := requestWithRouteParam(http.MethodPost, "/api/series/2/relations", reverseBody, "seriesId", strconv.FormatInt(seriesB.ID, 10))
+	reverseRec := httptest.NewRecorder()
+	controller.createSeriesRelation(reverseRec, reverseReq)
+	if reverseRec.Code != http.StatusOK {
+		t.Fatalf("expected reverse duplicate relation 200, got %d body=%s", reverseRec.Code, reverseRec.Body.String())
+	}
+
+	var duplicateCount int
+	duplicateRow := controller.store.(*database.SqlStore).DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM series_relations WHERE (source_series_id = ? AND target_series_id = ?) OR (source_series_id = ? AND target_series_id = ?)`, seriesA.ID, seriesB.ID, seriesB.ID, seriesA.ID)
+	if err := duplicateRow.Scan(&duplicateCount); err != nil {
+		t.Fatalf("count duplicate relations failed: %v", err)
+	}
+	if duplicateCount != 1 {
+		t.Fatalf("expected reverse relation to reuse existing row, got %d rows", duplicateCount)
+	}
+
 	deleteRec := httptest.NewRecorder()
 	controller.deleteSeriesRelation(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/series/relations/1", nil, "relationId", strconv.FormatInt(relations[0].ID, 10)))
 
@@ -294,6 +311,12 @@ func TestCollectionValidationHandlers(t *testing.T) {
 		controller.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/1/relations", []byte(`{}`), "seriesId", strconv.FormatInt(series.ID, 10)))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected missing target_series_id 400, got %d", rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		controller.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/1/relations", []byte(`{"target_series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "seriesId", strconv.FormatInt(series.ID, 10)))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected self relation 422, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()

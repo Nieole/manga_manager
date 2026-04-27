@@ -6,8 +6,9 @@ import AddToCollectionModal from '../components/AddToCollectionModal';
 import { SeriesContentSection } from './series-detail/SeriesContentSection';
 import { SeriesHeader } from './series-detail/SeriesHeader';
 import { SeriesMetadataEditorModal } from './series-detail/SeriesMetadataEditorModal';
+import { SeriesRelationsPanel } from './series-detail/SeriesRelationsPanel';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
-import type { Author, Book, MetaTag, SearchResult, Series, SeriesLink } from './series-detail/types';
+import type { Author, Book, MetaTag, SearchResult, Series, SeriesLink, SeriesRelation, SeriesRelationCandidate } from './series-detail/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
 type SeriesEditForm = Partial<Series> & {
@@ -40,6 +41,13 @@ export default function SeriesDetail() {
     const [authors, setAuthors] = useState<Author[]>([]);
     const [books, setBooks] = useState<Book[]>([]);
     const [links, setLinks] = useState<SeriesLink[]>([]);
+    const [relations, setRelations] = useState<SeriesRelation[]>([]);
+    const [relationCandidates, setRelationCandidates] = useState<SeriesRelationCandidate[]>([]);
+    const [relationType, setRelationType] = useState('sequel');
+    const [relationSearch, setRelationSearch] = useState('');
+    const [selectedRelationTargetId, setSelectedRelationTargetId] = useState<number | null>(null);
+    const [isLoadingRelationCandidates, setIsLoadingRelationCandidates] = useState(false);
+    const [isAddingRelation, setIsAddingRelation] = useState(false);
     const [loading, setLoading] = useState(true);
 
     const [allTags, setAllTags] = useState<MetaTag[]>([]);
@@ -109,6 +117,46 @@ export default function SeriesDetail() {
             showToast(getApiErrorMessage(err, t('series.toast.openDirFailed')), 'error');
         } finally {
             setIsOpeningDirectory(false);
+        }
+    };
+
+    const loadSeriesRelations = async () => {
+        if (!seriesId) return;
+        try {
+            const res = await axios.get<SeriesRelation[]>(`/api/series/${seriesId}/relations`);
+            setRelations(Array.isArray(res.data) ? res.data : []);
+        } catch (err) {
+            console.error("Failed to load series relations", err);
+            setRelations([]);
+        }
+    };
+
+    const handleAddRelation = async () => {
+        if (!seriesId || !selectedRelationTargetId) return;
+        setIsAddingRelation(true);
+        try {
+            await axios.post(`/api/series/${seriesId}/relations`, {
+                target_series_id: selectedRelationTargetId,
+                relation_type: relationType,
+            });
+            await loadSeriesRelations();
+            setSelectedRelationTargetId(null);
+            setRelationSearch('');
+            showToast(t('series.toast.relationAdded'), 'success');
+        } catch (err: unknown) {
+            showToast(getApiErrorMessage(err, t('series.toast.relationAddFailed')), 'error');
+        } finally {
+            setIsAddingRelation(false);
+        }
+    };
+
+    const handleDeleteRelation = async (relation: SeriesRelation) => {
+        try {
+            await axios.delete(`/api/relations/${relation.id}`);
+            setRelations((prev) => prev.filter((item) => item.id !== relation.id));
+            showToast(t('series.toast.relationDeleted'), 'success');
+        } catch (err: unknown) {
+            showToast(getApiErrorMessage(err, t('series.toast.relationDeleteFailed')), 'error');
         }
     };
 
@@ -322,6 +370,54 @@ export default function SeriesDetail() {
         // seriesInfo/books are used only to choose loading presentation for this request.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [seriesId, refreshTrigger]);
+
+    useEffect(() => {
+        void loadSeriesRelations();
+        // loadSeriesRelations intentionally follows seriesId/refreshTrigger only.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [seriesId, refreshTrigger]);
+
+    useEffect(() => {
+        if (!seriesInfo?.library_id || !relationSearch.trim()) {
+            setRelationCandidates([]);
+            return;
+        }
+
+        let active = true;
+        const timer = window.setTimeout(() => {
+            setIsLoadingRelationCandidates(true);
+            axios.get<{ items?: SeriesRelationCandidate[] }>(`/api/series/search`, {
+                params: {
+                    libraryId: seriesInfo.library_id,
+                    limit: 100,
+                    page: 1,
+                    sortBy: 'name_asc',
+                },
+            }).then((res) => {
+                if (!active) return;
+                const query = relationSearch.trim().toLowerCase();
+                const existingIds = new Set(relations.map((item) => item.target_series_id));
+                const items = (res.data.items || [])
+                    .filter((item) => item.id !== Number(seriesId))
+                    .filter((item) => !existingIds.has(item.id))
+                    .filter((item) => {
+                        const title = item.title?.Valid ? item.title.String : '';
+                        return item.name.toLowerCase().includes(query) || title.toLowerCase().includes(query);
+                    })
+                    .slice(0, 12);
+                setRelationCandidates(items);
+            }).catch(() => {
+                if (active) setRelationCandidates([]);
+            }).finally(() => {
+                if (active) setIsLoadingRelationCandidates(false);
+            });
+        }, 200);
+
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [relationSearch, relations, seriesId, seriesInfo?.library_id]);
 
     useEffect(() => {
         if (!seriesId) return;
@@ -589,9 +685,9 @@ export default function SeriesDetail() {
                 </>
             )}
             <div className="relative z-10 p-6 lg:p-10">
-                <SeriesHeader
-                    coverUrl={displayCover}
-                    selectedVolume={selectedVolume}
+            <SeriesHeader
+                coverUrl={displayCover}
+                selectedVolume={selectedVolume}
                 seriesInfo={seriesInfo}
                 books={books}
                 volumes={volumes}
@@ -620,6 +716,35 @@ export default function SeriesDetail() {
                 onCloseScrapeMenu={() => setScrapeMenuOpen(false)}
                 onScrape={handleScrape}
             />
+
+            {!selectedVolume && seriesInfo && (
+                <SeriesRelationsPanel
+                    relations={relations}
+                    candidates={relationCandidates}
+                    relationType={relationType}
+                    relationSearch={relationSearch}
+                    selectedTargetId={selectedRelationTargetId}
+                    isAdding={isAddingRelation}
+                    isLoadingCandidates={isLoadingRelationCandidates}
+                    onRelationTypeChange={setRelationType}
+                    onSearchChange={(value) => {
+                        setRelationSearch(value);
+                        setSelectedRelationTargetId(null);
+                    }}
+                    onSelectTarget={(id) => {
+                        if (id === 0) {
+                            setSelectedRelationTargetId(null);
+                            setRelationSearch('');
+                            return;
+                        }
+                        const target = relationCandidates.find((item) => item.id === id);
+                        setSelectedRelationTargetId(id);
+                        setRelationSearch(target?.title?.Valid ? target.title.String : target?.name || '');
+                    }}
+                    onAddRelation={handleAddRelation}
+                    onDeleteRelation={handleDeleteRelation}
+                />
+            )}
 
             <SeriesMetadataEditorModal
                 open={isEditing}

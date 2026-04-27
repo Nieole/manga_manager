@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"manga-manager/internal/database"
@@ -294,8 +295,36 @@ func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request
 	if req.RelationType == "" {
 		req.RelationType = "sequel"
 	}
+	req.RelationType = strings.TrimSpace(req.RelationType)
+	if req.RelationType == "" {
+		req.RelationType = "sequel"
+	}
+	if req.TargetSeriesID == seriesID {
+		jsonError(w, http.StatusUnprocessableEntity, "A series cannot relate to itself")
+		return
+	}
 
 	db := c.store.(*database.SqlStore).DB()
+	if err := db.QueryRowContext(r.Context(), `SELECT id FROM series WHERE id = ?`, req.TargetSeriesID).Scan(new(int64)); err != nil {
+		jsonError(w, http.StatusNotFound, "Target series not found")
+		return
+	}
+	var existingID int64
+	err = db.QueryRowContext(r.Context(), `
+		SELECT id FROM series_relations
+		WHERE (source_series_id = ? AND target_series_id = ?)
+		   OR (source_series_id = ? AND target_series_id = ?)
+		LIMIT 1
+	`, seriesID, req.TargetSeriesID, req.TargetSeriesID, seriesID).Scan(&existingID)
+	if err == nil {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "exists", "id": existingID})
+		return
+	}
+	if err != sql.ErrNoRows {
+		jsonError(w, http.StatusInternalServerError, "Failed to check relation")
+		return
+	}
+
 	_, err = db.ExecContext(r.Context(),
 		`INSERT OR IGNORE INTO series_relations (source_series_id, target_series_id, relation_type) VALUES (?, ?, ?)`,
 		seriesID, req.TargetSeriesID, req.RelationType)

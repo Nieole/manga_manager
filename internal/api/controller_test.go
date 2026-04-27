@@ -2126,6 +2126,58 @@ func TestGetRecentReadAllHonorsLimit(t *testing.T) {
 	}
 }
 
+func TestReadingBookmarksLifecycle(t *testing.T) {
+	controller, store, _, tempDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, tempDir, "Lib", "Series", "Book.cbz", 12)
+
+	createBody := []byte(`{"page":5,"note":"重要跨页"}`)
+	createReq := requestWithRouteParam(http.MethodPost, "/api/books/1/bookmarks", createBody, "bookId", strconv.FormatInt(book.ID, 10))
+	createRec := httptest.NewRecorder()
+	controller.upsertReadingBookmark(createRec, createReq)
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("expected bookmark create 200, got %d body=%s", createRec.Code, createRec.Body.String())
+	}
+	var created database.ReadingBookmark
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode bookmark failed: %v", err)
+	}
+	if created.Page != 5 || created.Note != "重要跨页" {
+		t.Fatalf("unexpected bookmark payload: %+v", created)
+	}
+
+	listReq := requestWithRouteParam(http.MethodGet, "/api/books/1/bookmarks", nil, "bookId", strconv.FormatInt(book.ID, 10))
+	listRec := httptest.NewRecorder()
+	controller.listReadingBookmarks(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected bookmark list 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var listed []database.ReadingBookmark
+	if err := json.NewDecoder(listRec.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode bookmark list failed: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("expected one created bookmark, got %+v", listed)
+	}
+
+	deleteReq := requestWithRouteParams(http.MethodDelete, "/api/books/1/bookmarks/1", nil, map[string]string{
+		"bookId":     strconv.FormatInt(book.ID, 10),
+		"bookmarkId": strconv.FormatInt(created.ID, 10),
+	})
+	deleteRec := httptest.NewRecorder()
+	controller.deleteReadingBookmark(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("expected bookmark delete 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	remaining, err := store.ListReadingBookmarks(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("ListReadingBookmarks failed: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected no bookmarks after delete, got %+v", remaining)
+	}
+}
+
 func TestApplyScrapedMetadataPersistsSeriesTagsAndLink(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)

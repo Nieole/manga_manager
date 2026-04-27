@@ -102,22 +102,22 @@ const maxRetainedTasks = 200
 func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
 	c := &Controller{
-		store:          store,
-		imageCache:     cache,
-		scanner:        scan,
-		engine:         engine,
-		config:         cfg,
-		koreader:       koreader.NewService(store, cfg),
-		external:       external.NewManager(store, 30*time.Minute),
-		configPath:     cfgPath,
-		clients:        make(map[chan string]bool),
-		newClients:     make(chan chan string),
-		defunctClients: make(chan chan string),
-		messages:       make(chan string, 64),
-		tasks:          make(map[string]TaskStatus),
+		store:                    store,
+		imageCache:               cache,
+		scanner:                  scan,
+		engine:                   engine,
+		config:                   cfg,
+		koreader:                 koreader.NewService(store, cfg),
+		external:                 external.NewManager(store, 30*time.Minute),
+		configPath:               cfgPath,
+		clients:                  make(map[chan string]bool),
+		newClients:               make(chan chan string),
+		defunctClients:           make(chan chan string),
+		messages:                 make(chan string, 64),
+		tasks:                    make(map[string]TaskStatus),
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
-		openPath:       openPathInDefaultFileManager,
+		openPath:                 openPathInDefaultFileManager,
 	}
 
 	go c.startBroker()
@@ -718,6 +718,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Route("/books", func(r chi.Router) {
 			r.Post("/bulk-progress", c.bulkUpdateBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
+			r.Get("/{bookId}/bookmarks", c.listReadingBookmarks)
+			r.Post("/{bookId}/bookmarks", c.upsertReadingBookmark)
+			r.Delete("/{bookId}/bookmarks/{bookmarkId}", c.deleteReadingBookmark)
 			r.Get("/{seriesId}", c.getBooksBySeries)
 		})
 
@@ -1796,6 +1799,89 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})
+}
+
+type UpsertReadingBookmarkRequest struct {
+	Page int64  `json:"page"`
+	Note string `json:"note"`
+}
+
+func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request) {
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+	if _, err := c.store.GetBook(r.Context(), bookID); err != nil {
+		jsonError(w, http.StatusNotFound, "Book not found")
+		return
+	}
+
+	items, err := c.store.ListReadingBookmarks(r.Context(), bookID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load reading bookmarks")
+		return
+	}
+	if items == nil {
+		items = []database.ReadingBookmark{}
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Request) {
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+
+	var req UpsertReadingBookmarkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	book, err := c.store.GetBook(r.Context(), bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Book not found")
+		return
+	}
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	if book.PageCount > 0 && page > book.PageCount {
+		page = book.PageCount
+	}
+
+	item, err := c.store.UpsertReadingBookmark(r.Context(), bookID, page, strings.TrimSpace(req.Note))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to save reading bookmark")
+		return
+	}
+	jsonResponse(w, http.StatusOK, item)
+}
+
+func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Request) {
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+	bookmarkID, err := parseID(r, "bookmarkId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid bookmark ID")
+		return
+	}
+	if err := c.store.DeleteReadingBookmark(r.Context(), bookID, bookmarkID); err != nil {
+		if err == sql.ErrNoRows {
+			jsonError(w, http.StatusNotFound, "Bookmark not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to delete reading bookmark")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "Bookmark deleted"})
 }
 
 func (c *Controller) sseHandler(w http.ResponseWriter, r *http.Request) {

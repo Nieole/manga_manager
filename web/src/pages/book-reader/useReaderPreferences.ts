@@ -1,5 +1,5 @@
 import { useStickyState } from './useStickyState';
-import type { ImageFilter, ReadDirection, ReadMode, ScaleMode } from './types';
+import type { ImageFilter, ReaderImageFormat, ReadDirection, ReadMode, ScaleMode } from './types';
 
 export function useReaderPreferences() {
   const [readMode, setReadMode] = useStickyState<ReadMode>('webtoon', 'manga_read_mode');
@@ -9,6 +9,8 @@ export function useReaderPreferences() {
   const [imageFilter, setImageFilter] = useStickyState<ImageFilter>('bilinear', 'manga_image_filter');
   const [autoCrop, setAutoCrop] = useStickyState<boolean>(false, 'manga_auto_crop');
   const [preloadCount, setPreloadCount] = useStickyState<number>(3, 'manga_preload_count');
+  const [readerImageFormat, setReaderImageFormat] = useStickyState<ReaderImageFormat>('original', 'manga_reader_image_format');
+  const [readerImageQuality, setReaderImageQuality] = useStickyState<number>(82, 'manga_reader_image_quality');
   const [eyeProtection, setEyeProtection] = useStickyState<boolean>(false, 'manga_eye_protection');
   const [w2xScale, setW2xScale] = useStickyState<number>(2, 'manga_waifu2x_scale');
   const [w2xNoise, setW2xNoise] = useStickyState<number>(0, 'manga_waifu2x_noise');
@@ -29,6 +31,10 @@ export function useReaderPreferences() {
     setAutoCrop,
     preloadCount,
     setPreloadCount,
+    readerImageFormat,
+    setReaderImageFormat,
+    readerImageQuality,
+    setReaderImageQuality,
     eyeProtection,
     setEyeProtection,
     w2xScale,

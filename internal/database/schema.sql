@@ -149,6 +149,19 @@ CREATE TABLE IF NOT EXISTS reading_activity (
 
 CREATE INDEX IF NOT EXISTS idx_reading_activity_date ON reading_activity(date);
 
+CREATE TABLE IF NOT EXISTS reading_bookmarks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    page INTEGER NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, page),
+    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id);
+
 CREATE TABLE IF NOT EXISTS koreader_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     username TEXT NOT NULL DEFAULT '',

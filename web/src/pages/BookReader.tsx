@@ -1,11 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CircleHelp, Loader2, RefreshCw, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Bookmark, CircleHelp, Loader2, RefreshCw, Settings, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { getFilterStyle, getPagedImages, getScaleClasses } from './book-reader/helpers';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
-import type { ImageFilter, Page, ScaleMode } from './book-reader/types';
+import type { ImageFilter, Page, ReaderImageFormat, ScaleMode } from './book-reader/types';
 import { useI18n } from '../i18n/LocaleProvider';
+
+interface ReadingBookmark {
+    id: number;
+    book_id: number;
+    page: number;
+    note: string;
+    created_at: string;
+    updated_at: string;
+}
 
 export default function BookReader() {
     const { t } = useI18n();
@@ -38,6 +47,10 @@ export default function BookReader() {
         setAutoCrop,
         preloadCount,
         setPreloadCount,
+        readerImageFormat,
+        setReaderImageFormat,
+        readerImageQuality,
+        setReaderImageQuality,
         eyeProtection,
         setEyeProtection,
         w2xScale,
@@ -63,6 +76,10 @@ export default function BookReader() {
     const [showHelp, setShowHelp] = useState(false);
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
+    const currentPageNumber = pages[currentPageIndex]?.number ?? currentPageIndex + 1;
+    const [bookmarks, setBookmarks] = useState<ReadingBookmark[]>([]);
+    const [bookmarkNote, setBookmarkNote] = useState('');
+    const [savingBookmark, setSavingBookmark] = useState(false);
     // 底部进度条本地状态，用于解耦拖拽 UI 与核心渲染
     const [sliderValue, setSliderValue] = useState(1);
     const [hoverPage, setHoverPage] = useState<number | null>(null);
@@ -102,18 +119,25 @@ export default function BookReader() {
 
     // 获取图像资源 URL（纯净无防抖，以保证跟前方预加载 Preloader 抓取下的缓存完全字面一致击穿 304）
     const getImageUrl = useCallback((pageNum: number) => {
-        let url = `/api/pages/${bookId}/${pageNum}`;
+        const params = new URLSearchParams();
         if (imageFilter && imageFilter !== 'none') {
-            url += `?filter=${imageFilter}`;
+            params.set('filter', imageFilter);
             if (imageFilter === 'waifu2x' || imageFilter === 'realcugan') {
-                url += `&w2x_scale=${w2xScale}&w2x_noise=${w2xNoise}&w2x_format=${w2xFormat}`;
+                params.set('w2x_scale', String(w2xScale));
+                params.set('w2x_noise', String(w2xNoise));
+                params.set('w2x_format', w2xFormat);
             }
         }
         if (autoCrop) {
-            url += (url.includes('?') ? '&' : '?') + 'auto_crop=true';
+            params.set('auto_crop', 'true');
         }
-        return url;
-    }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat, autoCrop]);
+        if (readerImageFormat !== 'original') {
+            params.set('format', readerImageFormat);
+            params.set('q', String(readerImageQuality));
+        }
+        const query = params.toString();
+        return `/api/pages/${bookId}/${pageNum}${query ? `?${query}` : ''}`;
+    }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat, autoCrop, readerImageFormat, readerImageQuality]);
 
     const clearPageImageCache = useCallback(() => {
         pageImageRequestCacheRef.current.clear();
@@ -167,12 +191,74 @@ export default function BookReader() {
         return Boolean(cachedPageImageUrls[pageNum]);
     }, [cachedPageImageUrls]);
 
+    const loadBookmarks = useCallback(() => {
+        if (!bookId) return Promise.resolve();
+        return axios.get<ReadingBookmark[]>(`/api/books/${bookId}/bookmarks`)
+            .then((res) => setBookmarks(res.data || []))
+            .catch((err) => {
+                console.error('Failed to load reading bookmarks', err);
+                setBookmarks([]);
+            });
+    }, [bookId]);
+
+    const jumpToPage = useCallback((pageNumber: number) => {
+        const targetIndex = Math.max(0, Math.min(pages.length - 1, pageNumber - 1));
+        setSliderValue(targetIndex + 1);
+        if (readModeRef.current === 'paged') {
+            setCurrentPageIndex(targetIndex);
+            return;
+        }
+        const targetImg = document.querySelector(`img[data-page-number="${targetIndex + 1}"]`);
+        if (targetImg) {
+            targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
+        }
+    }, [pages.length]);
+
+    const handleSaveBookmark = useCallback(() => {
+        if (!bookId || pages.length === 0) return;
+        setSavingBookmark(true);
+        axios.post<ReadingBookmark>(`/api/books/${bookId}/bookmarks`, {
+            page: currentPageNumber,
+            note: bookmarkNote,
+        }).then((res) => {
+            setBookmarks((prev) => {
+                const next = prev.filter((item) => item.id !== res.data.id && item.page !== res.data.page);
+                next.push(res.data);
+                return next.sort((a, b) => a.page - b.page);
+            });
+            setBookmarkNote('');
+        }).catch((err) => {
+            console.error('Failed to save reading bookmark', err);
+        }).finally(() => {
+            setSavingBookmark(false);
+        });
+    }, [bookId, bookmarkNote, currentPageNumber, pages.length]);
+
+    const handleDeleteBookmark = useCallback((bookmark: ReadingBookmark) => {
+        if (!bookId) return;
+        axios.delete(`/api/books/${bookId}/bookmarks/${bookmark.id}`)
+            .then(() => setBookmarks((prev) => prev.filter((item) => item.id !== bookmark.id)))
+            .catch((err) => console.error('Failed to delete reading bookmark', err));
+    }, [bookId]);
+
+    const currentBookmark = bookmarks.find((item) => item.page === currentPageNumber) || null;
+
+    useEffect(() => {
+        void loadBookmarks();
+    }, [loadBookmarks]);
+
+    useEffect(() => {
+        setBookmarkNote(currentBookmark?.note || '');
+    }, [currentBookmark]);
+
     useEffect(() => {
         if (!bookId) return;
 
         // 切换书籍时重置所有运行时状态
         clearPageImageCache();
         setPages([]);
+        setBookmarks([]);
+        setBookmarkNote('');
         setLoading(true);
         setLoadError(null);
         setCurrentPageIndex(0);
@@ -431,6 +517,14 @@ export default function BookReader() {
 
                     <div className="flex items-center gap-2 shrink-0 z-10">
                         <button
+                            onClick={handleSaveBookmark}
+                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${currentBookmark ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+                            title={currentBookmark ? t('reader.bookmark.update') : t('reader.bookmark.add')}
+                            disabled={savingBookmark || loading}
+                        >
+                            {savingBookmark ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bookmark className="w-5 h-5" />}
+                        </button>
+                        <button
                             onClick={() => setShowHelp(!showHelp)}
                             className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
                             title={t('reader.help')}
@@ -538,6 +632,35 @@ export default function BookReader() {
                             >
                                 {autoCrop ? t('reader.autoCropOn') : t('reader.autoCropOff')}
                             </button>
+
+                            <div className="mt-3 rounded-lg border border-gray-800 bg-gray-900/60 p-3">
+                                <div className="mb-2 flex items-center justify-between">
+                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">{t('reader.networkSection')}</span>
+                                    <span className="text-[10px] text-gray-400">{readerImageFormat === 'original' ? t('reader.networkOriginal') : `${readerImageFormat.toUpperCase()} ${readerImageQuality}`}</span>
+                                </div>
+                                <select
+                                    value={readerImageFormat}
+                                    onChange={(e) => setReaderImageFormat(e.target.value as ReaderImageFormat)}
+                                    className="mb-2 w-full rounded border border-gray-700 bg-gray-950 p-2 text-xs text-gray-300 outline-none"
+                                >
+                                    <option value="original">{t('reader.networkOriginal')}</option>
+                                    <option value="webp">{t('reader.networkWebp')}</option>
+                                    <option value="jpeg">{t('reader.networkJpeg')}</option>
+                                </select>
+                                {readerImageFormat !== 'original' && (
+                                    <input
+                                        type="range"
+                                        min={45}
+                                        max={95}
+                                        step={5}
+                                        value={readerImageQuality}
+                                        onChange={(e) => setReaderImageQuality(parseInt(e.target.value, 10))}
+                                        className="w-full accent-komgaPrimary h-1"
+                                        aria-label={t('reader.networkQuality')}
+                                    />
+                                )}
+                                <p className="mt-2 text-[11px] leading-5 text-gray-500">{t('reader.networkHint')}</p>
+                            </div>
                         </div>
 
                         {(imageFilter === 'waifu2x' || imageFilter === 'realcugan') && (
@@ -592,6 +715,54 @@ export default function BookReader() {
                                 onChange={(e) => setPreloadCount(parseInt(e.target.value, 10))}
                                 className="w-full accent-komgaPrimary h-1"
                             />
+                        </div>
+
+                        <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+                            <div className="mb-2 flex items-center justify-between">
+                                <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">{t('reader.bookmarks')}</span>
+                                <span className="text-[10px] text-gray-400">{t('reader.bookmark.count', { count: bookmarks.length })}</span>
+                            </div>
+                            <textarea
+                                value={bookmarkNote}
+                                onChange={(e) => setBookmarkNote(e.target.value)}
+                                placeholder={t('reader.bookmark.notePlaceholder')}
+                                className="mb-2 h-16 w-full resize-none rounded border border-gray-700 bg-gray-950 p-2 text-xs text-gray-300 outline-none focus:border-komgaPrimary"
+                            />
+                            <button
+                                onClick={handleSaveBookmark}
+                                disabled={savingBookmark || loading}
+                                className="mb-3 flex w-full items-center justify-center gap-2 rounded bg-komgaPrimary px-3 py-2 text-xs font-semibold text-white hover:bg-komgaPrimaryHover disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {savingBookmark ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bookmark className="h-3.5 w-3.5" />}
+                                {currentBookmark ? t('reader.bookmark.update') : t('reader.bookmark.addCurrent', { page: currentPageNumber })}
+                            </button>
+                            <div className="max-h-36 space-y-2 overflow-y-auto pr-1">
+                                {bookmarks.length === 0 ? (
+                                    <p className="text-xs text-gray-500">{t('reader.bookmark.empty')}</p>
+                                ) : bookmarks.map((bookmark) => (
+                                    <div key={bookmark.id} className="flex items-start gap-2 rounded border border-gray-800 bg-gray-950/70 p-2">
+                                        <button
+                                            onClick={() => jumpToPage(bookmark.page)}
+                                            className="shrink-0 rounded bg-gray-800 px-2 py-1 text-[11px] font-semibold text-komgaPrimary hover:bg-gray-700"
+                                        >
+                                            {t('reader.bookmark.page', { page: bookmark.page })}
+                                        </button>
+                                        <button
+                                            onClick={() => jumpToPage(bookmark.page)}
+                                            className="min-w-0 flex-1 text-left text-[11px] leading-5 text-gray-300 hover:text-white"
+                                        >
+                                            {bookmark.note || t('reader.bookmark.noNote')}
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteBookmark(bookmark)}
+                                            className="shrink-0 rounded p-1 text-gray-500 hover:bg-red-500/10 hover:text-red-300"
+                                            title={t('reader.bookmark.delete')}
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
 
                         <div className="h-px bg-gray-800 my-1"></div>

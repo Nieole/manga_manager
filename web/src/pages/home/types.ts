@@ -35,3 +35,16 @@ export interface Series {
 export interface NamedOption {
   name: string;
 }
+
+export interface SavedSmartFilter {
+  id: string;
+  name: string;
+  activeTag: string | null;
+  activeAuthor: string | null;
+  activeStatus: string | null;
+  activeLetter: string | null;
+  sortByField: string;
+  sortDir: string;
+  pageSize: number;
+  createdAt: string;
+}

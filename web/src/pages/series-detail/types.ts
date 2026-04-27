@@ -41,6 +41,20 @@ export interface SeriesLink {
   url: string;
 }
 
+export interface SeriesRelation {
+  id: number;
+  target_series_id: number;
+  target_series_name: string;
+  relation_type: string;
+}
+
+export interface SeriesRelationCandidate {
+  id: number;
+  name: string;
+  title?: NullString;
+  cover_path?: NullString;
+}
+
 export interface Book {
   id: number;
   name: string;

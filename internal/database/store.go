@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,6 +25,9 @@ type Store interface {
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
 	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
+	ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error)
+	UpsertReadingBookmark(ctx context.Context, bookID, page int64, note string) (ReadingBookmark, error)
+	DeleteReadingBookmark(ctx context.Context, bookID, bookmarkID int64) error
 	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
 	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
@@ -56,6 +60,15 @@ type DashboardStats struct {
 	ReadBooks   int `json:"read_books"`
 	TotalPages  int `json:"total_pages"`
 	ActiveDays7 int `json:"active_days_7"` // 最近7天有阅读行为的天数
+}
+
+type ReadingBookmark struct {
+	ID        int64     `json:"id"`
+	BookID    int64     `json:"book_id"`
+	Page      int64     `json:"page"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type SearchSeriesPagedRow struct {
@@ -183,6 +196,7 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint_no_ext ON books(path_fingerprint_no_ext)`,
+		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
@@ -504,6 +518,60 @@ func (s *SqlStore) LogReadingActivity(ctx context.Context, bookID int64, pagesRe
 	`
 	_, err := s.db.ExecContext(ctx, query, bookID, pagesRead)
 	return err
+}
+
+func (s *SqlStore) ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, book_id, page, note, created_at, updated_at
+		FROM reading_bookmarks
+		WHERE book_id = ?
+		ORDER BY page ASC, id ASC
+	`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]ReadingBookmark, 0)
+	for rows.Next() {
+		var item ReadingBookmark
+		if err := rows.Scan(&item.ID, &item.BookID, &item.Page, &item.Note, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SqlStore) UpsertReadingBookmark(ctx context.Context, bookID, page int64, note string) (ReadingBookmark, error) {
+	var item ReadingBookmark
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO reading_bookmarks (book_id, page, note)
+		VALUES (?, ?, ?)
+		ON CONFLICT(book_id, page) DO UPDATE SET
+			note = excluded.note,
+			updated_at = CURRENT_TIMESTAMP
+		RETURNING id, book_id, page, note, created_at, updated_at
+	`, bookID, page, note).Scan(&item.ID, &item.BookID, &item.Page, &item.Note, &item.CreatedAt, &item.UpdatedAt)
+	return item, err
+}
+
+func (s *SqlStore) DeleteReadingBookmark(ctx context.Context, bookID, bookmarkID int64) error {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM reading_bookmarks
+		WHERE id = ? AND book_id = ?
+	`, bookmarkID, bookID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // RecentReadAllRow Dashboard 继续阅读列表的简化返回结构
