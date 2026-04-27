@@ -10,6 +10,25 @@ import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
 import type { Author, Book, MetaTag, SearchResult, Series, SeriesLink } from './series-detail/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
+type SeriesEditForm = Partial<Series> & {
+    tagsInput?: string[];
+    authorsInput?: { name: string, role: string }[];
+    linksInput?: { name: string, url: string }[];
+};
+
+type SeriesFormField = 'title' | 'summary' | 'publisher' | 'status' | 'rating' | 'language' | 'tagsInput' | 'authorsInput' | 'linksInput';
+type SeriesFormValue = string | number | string[] | { name: string, role: string }[] | { name: string, url: string }[];
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+    if (axios.isAxiosError(error)) {
+        return error.response?.data?.error || error.message || fallback;
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return fallback;
+}
+
 export default function SeriesDetail() {
     const { t, formatDateTime } = useI18n();
     const { seriesId } = useParams();
@@ -31,7 +50,7 @@ export default function SeriesDetail() {
     const [selectedVolumes, setSelectedVolumes] = useState<string[]>([]);
 
     const [isEditing, setIsEditing] = useState(false);
-    const [editForm, setEditForm] = useState<Partial<Series> & { tagsInput?: string[], authorsInput?: { name: string, role: string }[], linksInput?: { name: string, url: string }[] }>({});
+    const [editForm, setEditForm] = useState<SeriesEditForm>({});
     const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
 
     // 当前如果是阅读某个卷下的内容，记录被选中的卷名
@@ -73,8 +92,8 @@ export default function SeriesDetail() {
             await axios.post(`/api/series/${seriesId}/rescan`);
             showToast(t('series.toast.rescanQueued'), 'success');
             setTimeout(() => window.location.reload(), 2000);
-        } catch (err: any) {
-            showToast(`${t('series.toast.rescanFailed')}: ${err.response?.data?.error || err.message}`, 'error');
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.rescanFailed')}: ${getApiErrorMessage(err, t('series.toast.rescanFailed'))}`, 'error');
         } finally {
             setIsRescanning(false);
         }
@@ -86,8 +105,8 @@ export default function SeriesDetail() {
         try {
             await axios.post(`/api/series/${seriesId}/open-dir`);
             showToast(t('series.toast.openDirSuccess'), 'success');
-        } catch (err: any) {
-            showToast(err.response?.data?.error || t('series.toast.openDirFailed'), 'error');
+        } catch (err: unknown) {
+            showToast(getApiErrorMessage(err, t('series.toast.openDirFailed')), 'error');
         } finally {
             setIsOpeningDirectory(false);
         }
@@ -115,8 +134,8 @@ export default function SeriesDetail() {
                     setSelectedSearchResult(null);
                     showToast(t('series.toast.autoMatchNotFound'), 'error');
                 }
-            } catch (err: any) {
-                showToast(`${t('series.toast.searchFailed')}: ${err.response?.data?.error || err.message}`, 'error');
+            } catch (err: unknown) {
+                showToast(`${t('series.toast.searchFailed')}: ${getApiErrorMessage(err, t('series.toast.searchFailed'))}`, 'error');
             } finally {
                 setIsScraping(false);
             }
@@ -133,8 +152,8 @@ export default function SeriesDetail() {
             } else {
                 showToast(res.data.message || t('series.toast.metadataNotFound'), 'error');
             }
-        } catch (err: any) {
-            showToast(`${t('series.toast.scrapeFailed')}: ${err.response?.data?.error || err.message}`, 'error');
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.scrapeFailed')}: ${getApiErrorMessage(err, t('series.toast.scrapeFailed'))}`, 'error');
         } finally {
             setIsScraping(false);
         }
@@ -150,8 +169,8 @@ export default function SeriesDetail() {
                 showToast(t('series.toast.applyMetadataSuccess'), 'success');
                 setTimeout(() => window.location.reload(), 1500);
             }
-        } catch (err: any) {
-            showToast(`${t('series.toast.applyMetadataFailed')}: ${err.response?.data?.error || err.message}`, 'error');
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.applyMetadataFailed')}: ${getApiErrorMessage(err, t('series.toast.applyMetadataFailed'))}`, 'error');
         } finally {
             setIsScraping(false);
             setSearchResults([]);
@@ -176,8 +195,8 @@ export default function SeriesDetail() {
                 setSearchTotal(0);
                 showToast(t('series.toast.searchNoResult'), 'error');
             }
-        } catch (err: any) {
-            showToast(`${t('series.toast.searchFailed')}: ${err.response?.data?.error || err.message}`, 'error');
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.searchFailed')}: ${getApiErrorMessage(err, t('series.toast.searchFailed'))}`, 'error');
         } finally {
             setIsScraping(false);
         }
@@ -300,6 +319,8 @@ export default function SeriesDetail() {
                     setLoading(false);
                 });
         }
+        // seriesInfo/books are used only to choose loading presentation for this request.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [seriesId, refreshTrigger]);
 
     useEffect(() => {
@@ -320,8 +341,8 @@ export default function SeriesDetail() {
             showToast(t('series.toast.retryTaskQueued'), 'success');
             const res = await axios.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`);
             setRelatedFailedTasks(Array.isArray(res.data) ? res.data : []);
-        } catch (err: any) {
-            showToast(err.response?.data?.error || t('series.toast.retryTaskFailed'), 'error');
+        } catch (err: unknown) {
+            showToast(getApiErrorMessage(err, t('series.toast.retryTaskFailed')), 'error');
         } finally {
             setRetryingTaskKey(null);
         }
@@ -452,15 +473,22 @@ export default function SeriesDetail() {
         });
     };
 
-    const handleFormChange = (field: string, value: any) => {
+    const handleFormChange = (field: SeriesFormField, value: SeriesFormValue) => {
         setEditForm(prev => {
-            const next: any = { ...prev };
+            const next: SeriesEditForm = { ...prev };
             if (field === 'rating') {
                 next.rating = { Float64: Number(value), Valid: Number(value) > 0 };
-            } else if (field === 'tagsInput' || field === 'authorsInput' || field === 'linksInput') {
-                next[field] = value;
+            } else if (field === 'tagsInput' && Array.isArray(value)) {
+                next.tagsInput = value as string[];
+            } else if (field === 'authorsInput' && Array.isArray(value)) {
+                next.authorsInput = value as { name: string, role: string }[];
+            } else if (field === 'linksInput' && Array.isArray(value)) {
+                next.linksInput = value as { name: string, url: string }[];
             } else {
-                next[field] = { String: String(value), Valid: String(value).trim() !== '' };
+                const stringValue = String(value);
+                if (field === 'title' || field === 'summary' || field === 'publisher' || field === 'status' || field === 'language') {
+                    next[field] = { String: stringValue, Valid: stringValue.trim() !== '' };
+                }
             }
             return next;
         });

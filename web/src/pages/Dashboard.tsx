@@ -63,10 +63,16 @@ interface KOReaderOverview {
     };
 }
 
+interface LibraryOverview {
+    id: number;
+    name: string;
+    koreader_sync_enabled?: boolean;
+}
+
 export default function Dashboard() {
     const { t, formatNumber } = useI18n();
     const [stats, setStats] = useState<DashboardStats | null>(null);
-    const [libraries, setLibraries] = useState<any[]>([]);
+    const [libraries, setLibraries] = useState<LibraryOverview[]>([]);
     const [tasks, setTasks] = useState<TaskStatus[]>([]);
     const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
     const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
@@ -77,6 +83,7 @@ export default function Dashboard() {
     const navigate = useNavigate();
 
     useEffect(() => {
+        let active = true;
         Promise.all([
             axios.get('/api/stats/dashboard'),
             axios.get('/api/libraries').catch(() => ({ data: [] })),
@@ -85,13 +92,19 @@ export default function Dashboard() {
             axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] })),
             axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, match_mode: 'binary_hash', path_ignore_extension: false, path_match_depth: 2, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } }))
         ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes, koreaderRes]) => {
+            if (!active) return;
             setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
             setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
             setKOReaderOverview(koreaderRes.data || null);
-        }).catch(console.error).finally(() => setLoading(false));
+        }).catch(console.error).finally(() => {
+            if (active) setLoading(false);
+        });
+        return () => {
+            active = false;
+        };
     }, []);
 
     // AI 推荐独立加载，不阻塞页面主体渲染
@@ -107,7 +120,18 @@ export default function Dashboard() {
     };
 
     useEffect(() => {
-        loadRecommendations(false);
+        let active = true;
+        axios.get('/api/stats/recommendations?limit=10')
+            .then(res => {
+                if (active) setRecommendations(Array.isArray(res.data) ? res.data : []);
+            })
+            .catch(console.error)
+            .finally(() => {
+                if (active) setRecsLoading(false);
+            });
+        return () => {
+            active = false;
+        };
     }, []);
 
     const scrollCarousel = (dir: 'left' | 'right') => {

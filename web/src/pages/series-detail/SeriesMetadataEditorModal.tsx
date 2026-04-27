@@ -15,6 +15,9 @@ import {
   modalTextareaClass,
 } from '../../components/ui/modalStyles';
 
+type SeriesMetadataField = 'title' | 'summary' | 'publisher' | 'status' | 'rating' | 'language' | 'tagsInput' | 'authorsInput' | 'linksInput';
+type SeriesMetadataValue = string | number | string[] | { name: string; role: string }[] | { name: string; url: string }[];
+
 interface SeriesMetadataEditorModalProps {
   open: boolean;
   allTags: MetaTag[];
@@ -28,7 +31,7 @@ interface SeriesMetadataEditorModalProps {
   onClose: () => void;
   onSave: () => void;
   onToggleLock: (field: string) => void;
-  onFormChange: (field: string, value: any) => void;
+  onFormChange: (field: SeriesMetadataField, value: SeriesMetadataValue) => void;
 }
 
 export function SeriesMetadataEditorModal({
@@ -99,6 +102,22 @@ export function SeriesMetadataEditorModal({
   };
 
   const statusOptions = ['completed', 'ongoing', 'cancelled', 'hiatus'] as const;
+  const metadataFields = [
+    { id: 'title', label: t('series.editor.field.title'), type: 'text', val: editForm.title?.String || '' },
+    { id: 'summary', label: t('series.editor.field.summary'), type: 'textarea', val: editForm.summary?.String || '' },
+    { id: 'publisher', label: t('series.editor.field.publisher'), type: 'text', val: editForm.publisher?.String || '' },
+    { id: 'status', label: t('series.editor.field.status'), type: 'select', val: normalizeSeriesStatus(editForm.status?.String), options: statusOptions },
+    { id: 'language', label: t('series.editor.field.language'), type: 'text', val: editForm.language?.String || '' },
+    { id: 'rating', label: t('series.editor.field.rating'), type: 'number', val: editForm.rating?.Float64 || 0, step: '0.1', max: 10 },
+  ] satisfies Array<{
+    id: Exclude<SeriesMetadataField, 'tagsInput' | 'authorsInput' | 'linksInput'>;
+    label: string;
+    type: 'text' | 'textarea' | 'select' | 'number';
+    val: string | number;
+    options?: typeof statusOptions;
+    step?: string;
+    max?: number;
+  }>;
 
   return (
     <ModalShell
@@ -120,14 +139,7 @@ export function SeriesMetadataEditorModal({
       }
     >
         <div className="space-y-6">
-          {[
-            { id: 'title', label: t('series.editor.field.title'), type: 'text', val: editForm.title?.String || '' },
-            { id: 'summary', label: t('series.editor.field.summary'), type: 'textarea', val: editForm.summary?.String || '' },
-            { id: 'publisher', label: t('series.editor.field.publisher'), type: 'text', val: editForm.publisher?.String || '' },
-            { id: 'status', label: t('series.editor.field.status'), type: 'select', val: normalizeSeriesStatus(editForm.status?.String), options: statusOptions },
-            { id: 'language', label: t('series.editor.field.language'), type: 'text', val: editForm.language?.String || '' },
-            { id: 'rating', label: t('series.editor.field.rating'), type: 'number', val: editForm.rating?.Float64 || 0, step: '0.1', max: 10 },
-          ].map((field) => (
+          {metadataFields.map((field) => (
             <div key={field.id} className={`${modalSectionClass} space-y-3`}>
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-gray-300">{field.label}</label>

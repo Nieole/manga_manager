@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import axios, { type AxiosResponse } from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
@@ -15,7 +15,24 @@ import type { AIRecommendation, NamedOption, Series } from './home/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
 const DEFAULT_PAGE_SIZE = 30;
-const inflightSeriesSearchRequests = new Map<string, Promise<any>>();
+
+interface SeriesSearchResponse {
+    items?: Series[];
+    total?: number;
+}
+
+interface SavedLibrarySettings {
+    activeTag?: string | null;
+    activeAuthor?: string | null;
+    activeStatus?: string | null;
+    activeLetter?: string | null;
+    sortByField?: string;
+    sortDir?: string;
+    pageSize?: number;
+    page?: number;
+}
+
+const inflightSeriesSearchRequests = new Map<string, Promise<AxiosResponse<SeriesSearchResponse>>>();
 
 interface ExternalSession {
     session_id: string;
@@ -43,6 +60,16 @@ interface ExternalSeriesStatus {
     external_match_count: number;
     external_total_count: number;
     external_sync_status: 'missing' | 'partial' | 'complete';
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+    if (axios.isAxiosError(error)) {
+        return error.response?.data?.error || error.message || fallback;
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return fallback;
 }
 
 function requestSeriesSearch(query: string) {
@@ -227,8 +254,8 @@ export default function Home() {
             setExternalTransferTaskKey(null);
             saveRecentExternalPath(externalPath.trim());
             showToast(t('home.external.scanStarted'), 'success');
-        } catch (err: any) {
-            showToast(err.response?.data?.error || t('home.external.scanStartFailed'), 'error');
+        } catch (err: unknown) {
+            showToast(getApiErrorMessage(err, t('home.external.scanStartFailed')), 'error');
         } finally {
             setStartingExternalScan(false);
         }
@@ -262,10 +289,10 @@ export default function Home() {
             axios.get('/api/authors/all').catch(() => ({ data: [] })),
         ]).then(([tRes, aRes]) => {
             // Deduplicate authors by name since we might have Writer, Penciller combinations
-            const tNames = tRes.data || [];
-            const aList = aRes.data || [];
-            const map = new Map();
-            aList.forEach((a: any) => map.set(a.name, a));
+            const tNames = Array.isArray(tRes.data) ? tRes.data as NamedOption[] : [];
+            const aList = Array.isArray(aRes.data) ? aRes.data as NamedOption[] : [];
+            const map = new Map<string, NamedOption>();
+            aList.forEach((a) => map.set(a.name, a));
 
             setAllTags(tNames);
             setAllAuthors(Array.from(map.values()));
@@ -274,7 +301,7 @@ export default function Home() {
         try {
             const stored = localStorage.getItem('manga_manager_recent_external_paths');
             if (stored) {
-                const parsed = JSON.parse(stored);
+                const parsed = JSON.parse(stored) as unknown;
                 if (Array.isArray(parsed)) {
                     setRecentExternalPaths(parsed.filter((item) => typeof item === 'string'));
                 }
@@ -317,7 +344,7 @@ export default function Home() {
         if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
 
         requestSeriesSearch(params.toString())
-            .then((res: any) => {
+            .then((res) => {
                 const newItems = res.data.items || [];
                 setAllSeries(newItems);
                 setTotalSeries(res.data.total || 0);
@@ -326,7 +353,7 @@ export default function Home() {
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
             })
-            .catch((err: any) => {
+            .catch((err: unknown) => {
                 console.error("Failed to fetch series:", err);
                 setLoading(false);
             });
@@ -338,16 +365,18 @@ export default function Home() {
         const saved = localStorage.getItem(`lib_settings_${libId}`);
         if (saved) {
             try {
-                const config = JSON.parse(saved);
-                setActiveTag(config.activeTag);
-                setActiveAuthor(config.activeAuthor);
-                setActiveStatus(config.activeStatus);
-                setActiveLetter(config.activeLetter);
+                const config = JSON.parse(saved) as SavedLibrarySettings;
+                setActiveTag(config.activeTag ?? null);
+                setActiveAuthor(config.activeAuthor ?? null);
+                setActiveStatus(config.activeStatus ?? null);
+                setActiveLetter(config.activeLetter ?? null);
                 setSortByField(config.sortByField || 'name');
                 setSortDir(config.sortDir || 'asc');
                 setPageSize(config.pageSize || DEFAULT_PAGE_SIZE);
                 setPage(config.page || 1);
-            } catch (e) { }
+            } catch (err) {
+                console.warn('Failed to restore library settings:', err);
+            }
         } else {
             setActiveTag(null);
             setActiveAuthor(null);
@@ -376,6 +405,8 @@ export default function Home() {
         }, 300);
 
         return () => clearTimeout(timer);
+        // fetchSeriesPage intentionally reads the current state captured by this trigger set.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [libId, settingsReady, page, pageSize, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     // 筛选条件、排序或资源库切换时清空选择；仅翻页时保留跨页多选状态
@@ -471,6 +502,8 @@ export default function Home() {
             });
         }, 1500);
         return () => window.clearInterval(timer);
+        // Polling is keyed by the external session state; helper dependencies would restart the interval on unrelated renders.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [externalSession?.session_id, externalSession?.status, externalScanTaskKey, libId]);
 
     useEffect(() => {
@@ -564,8 +597,8 @@ export default function Home() {
             await axios.post(`/api/series/${seriesId}/rescan?force=true`);
             showToast(t('home.seriesRescanQueued'), 'success');
             setTimeout(() => fetchSeriesPage(page, true), 3000);
-        } catch (err: any) {
-            showToast(`${t('home.seriesRescanFailed')}: ${err.response?.data?.error || err.message}`, 'error');
+        } catch (err: unknown) {
+            showToast(`${t('home.seriesRescanFailed')}: ${getApiErrorMessage(err, t('home.seriesRescanFailed'))}`, 'error');
         } finally {
             setRescanningId(null);
         }
@@ -583,8 +616,8 @@ export default function Home() {
             showToast(res.data?.message || t('home.external.transferQueued'), 'success');
             setShowTransferConfirmModal(false);
             setPendingTransferSummary(null);
-        } catch (err: any) {
-            showToast(err.response?.data?.error || t('home.external.transferFailed'), 'error');
+        } catch (err: unknown) {
+            showToast(getApiErrorMessage(err, t('home.external.transferFailed')), 'error');
         } finally {
             setStartingTransfer(false);
         }

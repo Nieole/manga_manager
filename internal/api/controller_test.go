@@ -136,8 +136,8 @@ func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, serie
 	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
 		Name:                libName,
 		Path:                libPath,
-		AutoScan:            false,
-		KOReaderSyncEnabled: true,
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
 		ScanInterval:        60,
 		ScanFormats:         config.DefaultScanFormatsCSV,
 	})
@@ -1346,8 +1346,8 @@ func TestDeleteLibraryAndValidationHandlers(t *testing.T) {
 	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
 		Name:                "Main",
 		Path:                libPath,
-		AutoScan:            false,
-		KOReaderSyncEnabled: true,
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
 		ScanInterval:        60,
 		ScanFormats:         config.DefaultScanFormatsCSV,
 	})
@@ -1866,8 +1866,8 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
 		Name:                "Main",
 		Path:                libPath,
-		AutoScan:            false,
-		KOReaderSyncEnabled: true,
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
 		ScanInterval:        60,
 		ScanFormats:         config.DefaultScanFormatsCSV,
 	})

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import axios from 'axios';
 import { formatDistanceToNow } from 'date-fns';
 import { enUS, zhCN } from 'date-fns/locale';
@@ -149,7 +149,7 @@ export function LocaleProvider({
     };
   }, [defaultMessages]);
 
-  const setLocale = (nextLocale: AppLocale | string) => {
+  const setLocale = useCallback((nextLocale: AppLocale | string) => {
     const normalized = normalizeAppLocale(nextLocale);
     if (normalized === locale) {
       return;
@@ -158,7 +158,7 @@ export function LocaleProvider({
       setCurrentMessages(catalog);
       setLocaleState(normalized);
     });
-  };
+  }, [locale]);
 
   const value = useMemo<I18nContextValue>(() => {
     const t = (key: string, params?: TranslationParams) => {
@@ -217,7 +217,7 @@ export function LocaleProvider({
       formatNumber,
       formatRelativeTime,
     };
-  }, [currentMessages, defaultMessages, locale]);
+  }, [currentMessages, defaultMessages, locale, setLocale]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

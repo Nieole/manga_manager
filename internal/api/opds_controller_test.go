@@ -141,8 +141,8 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 		emptyLib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
 			Name:                "Library Empty",
 			Path:                secondLibPath,
-			AutoScan:            false,
-			KOReaderSyncEnabled: true,
+			ScanMode:            "none",
+			KoreaderSyncEnabled: true,
 			ScanInterval:        60,
 			ScanFormats:         config.DefaultScanFormatsCSV,
 		})

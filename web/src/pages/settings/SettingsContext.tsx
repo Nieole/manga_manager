@@ -379,8 +379,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       });
       setLlmTestResult(res.data.response);
       showToast(t('settings.toast.llmTestSucceeded'), 'success');
-    } catch (error: any) {
-      const message = error.response?.data?.error || t('settings.toast.llmTestFallback');
+    } catch (error: unknown) {
+      const message = axios.isAxiosError(error)
+        ? error.response?.data?.error || error.message || t('settings.toast.llmTestFallback')
+        : t('settings.toast.llmTestFallback');
       setLlmTestResult(`${t('common.errorPrefix')}: ${message}`);
       showToast(t('settings.toast.llmTestFailed'), 'error');
     } finally {

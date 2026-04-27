@@ -47,6 +47,16 @@ export default function BookReader() {
         w2xFormat,
         setW2xFormat,
     } = useReaderPreferences();
+    const readModeRef = useRef(readMode);
+    const tRef = useRef(t);
+
+    useEffect(() => {
+        readModeRef.current = readMode;
+    }, [readMode]);
+
+    useEffect(() => {
+        tRef.current = t;
+    }, [t]);
 
     // UI State
     const [showSettings, setShowSettings] = useState(false);
@@ -103,7 +113,7 @@ export default function BookReader() {
             url += (url.includes('?') ? '&' : '?') + 'auto_crop=true';
         }
         return url;
-    }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat]);
+    }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat, autoCrop]);
 
     const clearPageImageCache = useCallback(() => {
         pageImageRequestCacheRef.current.clear();
@@ -175,7 +185,7 @@ export default function BookReader() {
         ]).then(([pagesRes, infoRes]) => {
             const sorted = pagesRes.data.sort((a: Page, b: Page) => a.number - b.number);
             if (sorted.length === 0) {
-                setLoadError(t('reader.error.noPages'));
+                setLoadError(tRef.current('reader.error.noPages'));
                 setLoading(false);
                 return;
             }
@@ -197,7 +207,7 @@ export default function BookReader() {
                 const targetIdx = safePage - 1;
                 setSliderValue(safePage);
 
-                if (readMode === 'paged') {
+                if (readModeRef.current === 'paged') {
                     setCurrentPageIndex(Math.max(0, targetIdx));
                 } else {
                     setTimeout(() => {
@@ -212,7 +222,10 @@ export default function BookReader() {
             setLoading(false);
         }).catch(err => {
             console.error("Failed to load book data", err);
-            setLoadError(err.response?.data?.error || t('reader.error.loadFailed'));
+            const message = axios.isAxiosError(err)
+                ? err.response?.data?.error || err.message || tRef.current('reader.error.loadFailed')
+                : tRef.current('reader.error.loadFailed');
+            setLoadError(message);
             setLoading(false);
         });
     }, [bookId, clearPageImageCache]);
@@ -314,8 +327,8 @@ export default function BookReader() {
     // ==== 渲染相关计算 ====
 
     // 页码控制
-    const handleNext = () => {
-        let step = doublePage ? 2 : 1;
+    const handleNext = useCallback(() => {
+        const step = doublePage ? 2 : 1;
         setCurrentPageIndex(prev => {
             if (prev + step >= pages.length) {
                 // 已到最后一页，尝试跳转下一本
@@ -326,26 +339,34 @@ export default function BookReader() {
             }
             return Math.min(prev + step, pages.length - 1);
         });
-    };
+    }, [doublePage, navigate, pages.length]);
 
-    const handlePrev = () => {
-        let step = doublePage ? 2 : 1;
+    const handlePrev = useCallback(() => {
+        const step = doublePage ? 2 : 1;
         setCurrentPageIndex(prev => Math.max(prev - step, 0));
-    };
+    }, [doublePage]);
 
     // 键盘支持
     useEffect(() => {
         if (readMode !== 'paged') return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'ArrowRight') {
-                readDirection === 'ltr' ? handleNext() : handlePrev();
+                if (readDirection === 'ltr') {
+                    handleNext();
+                } else {
+                    handlePrev();
+                }
             } else if (e.key === 'ArrowLeft') {
-                readDirection === 'ltr' ? handlePrev() : handleNext();
+                if (readDirection === 'ltr') {
+                    handlePrev();
+                } else {
+                    handleNext();
+                }
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [readMode, readDirection, doublePage, pages.length]);
+    }, [readMode, readDirection, handleNext, handlePrev]);
 
     useEffect(() => {
         const handleGlobalHelp = (e: KeyboardEvent) => {

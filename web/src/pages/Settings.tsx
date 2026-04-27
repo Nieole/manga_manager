@@ -61,7 +61,7 @@ function SettingsLayoutInner() {
     navigate(path);
   };
 
-  const navItems: Array<{ key: SettingsSectionKey; label: string; path: string; icon: ReactNode }> = [
+  const navItems: Array<{ key: SettingsSectionKey; label: string; path: string; icon: ReactNode }> = useMemo(() => [
     { key: 'overview', label: t('settings.nav.overview'), path: '/settings', icon: <LayoutDashboard className="h-4 w-4" /> },
     { key: 'appearance', label: t('settings.nav.appearance'), path: '/settings/appearance', icon: <Palette className="h-4 w-4" /> },
     { key: 'library', label: t('settings.nav.library'), path: '/settings/library', icon: <FolderOpen className="h-4 w-4" /> },
@@ -69,7 +69,7 @@ function SettingsLayoutInner() {
     { key: 'ai', label: t('settings.nav.ai'), path: '/settings/ai', icon: <Sparkles className="h-4 w-4" /> },
     { key: 'koreader', label: 'KOReader', path: '/settings/koreader', icon: <TabletSmartphone className="h-4 w-4" /> },
     { key: 'maintenance', label: t('settings.nav.maintenance'), path: '/settings/maintenance', icon: <Wrench className="h-4 w-4" /> },
-  ];
+  ], [t]);
 
   const currentNavLabel = useMemo(() => navItems.find((item) => item.key === currentSection)?.label || t('settings.nav.title'), [currentSection, navItems, t]);
 

@@ -46,8 +46,8 @@ func seedServiceBook(t *testing.T, store database.Store, rootDir, libraryName, s
 	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
 		Name:                libraryName,
 		Path:                libPath,
-		AutoScan:            false,
-		KOReaderSyncEnabled: true,
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
 		ScanInterval:        60,
 		ScanFormats:         config.DefaultScanFormatsCSV,
 	})

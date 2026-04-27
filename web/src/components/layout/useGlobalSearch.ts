@@ -8,32 +8,45 @@ export function useGlobalSearch() {
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [searchTarget, setSearchTarget] = useState('all');
+  const visibleSearchResults = searchQuery.trim() ? searchResults : [];
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
+    const query = searchQuery.trim();
+    if (!query) {
       return;
     }
 
+    const controller = new AbortController();
     const timer = setTimeout(() => {
       axios
-        .get(`/api/search?q=${encodeURIComponent(searchQuery)}&target=${searchTarget}`)
+        .get(`/api/search?q=${encodeURIComponent(query)}&target=${searchTarget}`, {
+          signal: controller.signal,
+        })
         .then((res) => {
           if (res.data && res.data.hits) {
             setSearchResults(res.data.hits);
           } else {
             setSearchResults([]);
           }
+          setSelectedIndex(0);
         })
-        .catch((err) => console.error('Search failed:', err));
+        .catch((err) => {
+          if (!axios.isCancel(err)) {
+            console.error('Search failed:', err);
+          }
+        });
     }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
   }, [searchQuery, searchTarget]);
 
-  useEffect(() => {
+  const updateSearchQuery = (value: string) => {
+    setSearchQuery(value);
     setSelectedIndex(0);
-  }, [searchResults]);
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -55,8 +68,8 @@ export function useGlobalSearch() {
 
   return {
     searchQuery,
-    setSearchQuery,
-    searchResults,
+    setSearchQuery: updateSearchQuery,
+    searchResults: visibleSearchResults,
     isSearchModalOpen,
     setIsSearchModalOpen,
     selectedIndex,
