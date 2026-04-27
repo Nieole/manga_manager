@@ -166,6 +166,10 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]MihonSeriesResponse, 0, len(rows))
 	for _, row := range rows {
+		coverURL := ""
+		if row.CoverPath.Valid && row.CoverPath.String != "" {
+			coverURL = "/api/thumbnails/" + row.CoverPath.String
+		}
 		items = append(items, MihonSeriesResponse{
 			ID:          row.ID,
 			LibraryID:   row.LibraryID,
@@ -175,8 +179,8 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 			Status:      row.Status.String,
 			BookCount:   int64(row.ActualBookCount),
 			TotalPages:  int64(row.TotalPages.Float64),
-			CoverBookID: 0, // Not needed, CoverURL handles it
-			CoverURL:    row.CoverPath.String,
+			CoverBookID: 0,
+			CoverURL:    coverURL,
 			UpdatedAt:   row.UpdatedAt,
 		})
 	}
