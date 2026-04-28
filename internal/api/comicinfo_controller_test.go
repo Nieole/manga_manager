@@ -127,20 +127,22 @@ func seedComicInfoFixture(t *testing.T) (*Controller, database.Series, database.
 		t.Fatalf("CreateLibrary failed: %v", err)
 	}
 	series, err := store.CreateSeries(ctx, database.CreateSeriesParams{
-		LibraryID: lib.ID,
-		Name:      "Raw Series",
-		Path:      filepath.Join(tempDir, "Library", "Raw Series"),
+		LibraryID:   lib.ID,
+		Name:        "Raw Series",
+		Path:        filepath.Join(tempDir, "Library", "Raw Series"),
+		NameInitial: database.SeriesInitial("", "Raw Series"),
 	})
 	if err != nil {
 		t.Fatalf("CreateSeries failed: %v", err)
 	}
 	series, err = store.UpdateSeriesMetadata(ctx, database.UpdateSeriesMetadataParams{
-		Title:     sql.NullString{String: "Display Series", Valid: true},
-		Summary:   sql.NullString{String: "Series summary", Valid: true},
-		Publisher: sql.NullString{String: "Publisher", Valid: true},
-		Rating:    sql.NullFloat64{Float64: 4.5, Valid: true},
-		Language:  sql.NullString{String: "zh", Valid: true},
-		ID:        series.ID,
+		Title:       sql.NullString{String: "Display Series", Valid: true},
+		Summary:     sql.NullString{String: "Series summary", Valid: true},
+		Publisher:   sql.NullString{String: "Publisher", Valid: true},
+		Rating:      sql.NullFloat64{Float64: 4.5, Valid: true},
+		Language:    sql.NullString{String: "zh", Valid: true},
+		NameInitial: database.SeriesInitial("Display Series", "Raw Series"),
+		ID:          series.ID,
 	})
 	if err != nil {
 		t.Fatalf("UpdateSeriesMetadata failed: %v", err)

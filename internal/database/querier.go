@@ -53,6 +53,7 @@ type Querier interface {
 	ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error)
 	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
+	ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error)
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
 	SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
@@ -60,6 +61,7 @@ type Querier interface {
 	UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error)
 	UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) error
 	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error
+	UpdateSeriesInitial(ctx context.Context, arg UpdateSeriesInitialParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)

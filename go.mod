@@ -11,6 +11,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
+	github.com/mozillazg/go-pinyin v0.21.0
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/nwaples/rardecode/v2 v2.2.2
 	golang.org/x/image v0.36.0

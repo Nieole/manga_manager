@@ -597,6 +597,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						VolumeCount:  0,
 						BookCount:    0,
 						TotalPages:   0,
+						NameInitial:  database.SeriesInitial(res.seriesName, res.seriesName),
 					})
 					if err != nil {
 						slog.Error("Failed to create/upsert series", "series_name", res.seriesName, "error", err)
@@ -657,6 +658,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 							VolumeCount:  existingS.VolumeCount,
 							BookCount:    existingS.BookCount,
 							TotalPages:   existingS.TotalPages,
+							NameInitial:  database.SeriesInitial(res.seriesName, res.seriesName),
 						})
 					}
 				}

@@ -20,9 +20,9 @@ DELETE FROM libraries WHERE id = ?;
 
 -- name: CreateSeries :one
 INSERT INTO series (
-    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields
+    library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, name_initial
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -30,7 +30,25 @@ RETURNING *;
 SELECT * FROM series WHERE id = ? LIMIT 1;
 
 -- name: ListSeriesByLibrary :many
-SELECT s.*, 
+SELECT
+       s.id,
+       s.library_id,
+       s.name,
+       s.title,
+       s.summary,
+       s.publisher,
+       s.status,
+       s.rating,
+       s.language,
+       s.locked_fields,
+       s.name_initial,
+       s.path,
+       s.created_at,
+       s.updated_at,
+       s.is_favorite,
+       s.volume_count,
+       s.book_count,
+       s.total_pages,
        (SELECT b.cover_path 
         FROM books b 
         WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
@@ -241,13 +259,14 @@ WHERE id = ?;
 -- name: UpsertSeriesByPath :one
 INSERT INTO series (
     library_id, name, path, title, summary, publisher, status, rating, language, locked_fields, is_favorite,
-    volume_count, book_count, total_pages
+    volume_count, book_count, total_pages, name_initial
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(path) DO UPDATE SET
     library_id = excluded.library_id,
     name = excluded.name,
+    name_initial = excluded.name_initial,
     title = excluded.title,
     summary = excluded.summary,
     publisher = excluded.publisher,
@@ -271,9 +290,16 @@ SET
     rating = ?,
     language = ?,
     locked_fields = ?,
+    name_initial = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
+
+-- name: ListSeriesInitialBackfillCandidates :many
+SELECT id, name, title, name_initial FROM series;
+
+-- name: UpdateSeriesInitial :exec
+UPDATE series SET name_initial = ? WHERE id = ?;
 
 -- name: UpsertTag :one
 INSERT INTO tags (name) VALUES (?)
@@ -284,8 +310,25 @@ RETURNING *;
 INSERT OR IGNORE INTO series_tags (series_id, tag_id) VALUES (?, ?);
 
 -- name: GetSeriesByLibrary :many
-SELECT 
-    s.*, 
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    s.title,
+    s.summary,
+    s.publisher,
+    s.status,
+    s.rating,
+    s.language,
+    s.locked_fields,
+    s.name_initial,
+    s.path,
+    s.created_at,
+    s.updated_at,
+    s.is_favorite,
+    s.volume_count,
+    s.book_count,
+    s.total_pages,
     GROUP_CONCAT(DISTINCT t.name) as tags_string,
     (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
     (SELECT COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count

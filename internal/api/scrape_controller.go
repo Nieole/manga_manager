@@ -200,6 +200,7 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 		}
 		updateParams.Language = series.Language
 		updateParams.LockedFields = series.LockedFields
+		updateParams.NameInitial = database.SeriesInitialFromNullTitle(updateParams.Title, series.Name)
 
 		_, err := q.UpdateSeriesMetadata(ctx, updateParams)
 		if err != nil {

@@ -151,9 +151,10 @@ func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, serie
 	}
 
 	series, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
-		LibraryID: lib.ID,
-		Name:      seriesName,
-		Path:      seriesPath,
+		LibraryID:   lib.ID,
+		Name:        seriesName,
+		Path:        seriesPath,
+		NameInitial: database.SeriesInitial("", seriesName),
 	})
 	if err != nil {
 		t.Fatalf("CreateSeries failed: %v", err)
@@ -1099,6 +1100,63 @@ func TestLibraryAndSeriesReadEndpoints(t *testing.T) {
 	}
 }
 
+func TestSearchSeriesPagedFiltersChineseInitials(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+	createSeries := func(name, title string) database.Series {
+		t.Helper()
+		series, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
+			LibraryID:   lib.ID,
+			Name:        name,
+			Path:        filepath.Join(rootDir, "Library A", name),
+			Title:       sql.NullString{String: title, Valid: title != ""},
+			NameInitial: database.SeriesInitial(title, name),
+		})
+		if err != nil {
+			t.Fatalf("CreateSeries %s failed: %v", name, err)
+		}
+		return series
+	}
+
+	jSeries := createSeries("folder-j", "《进击的巨人》")
+	oSeries := createSeries("folder-o", "— One Piece")
+	hashSeries := createSeries("folder-hash", "12345...")
+
+	requestSearch := func(letter string) []database.SearchSeriesPagedRow {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=10&page=1&letter="+letter, nil)
+		rec := httptest.NewRecorder()
+		controller.searchSeriesPaged(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected search %s 200, got %d body=%s", letter, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Items []database.SearchSeriesPagedRow `json:"items"`
+			Total int                             `json:"total"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode search %s failed: %v", letter, err)
+		}
+		if resp.Total != len(resp.Items) {
+			t.Fatalf("expected total to match item count, got total=%d items=%d", resp.Total, len(resp.Items))
+		}
+		return resp.Items
+	}
+
+	assertOnly := func(letter string, expectedID int64) {
+		t.Helper()
+		items := requestSearch(letter)
+		if len(items) != 1 || items[0].ID != expectedID {
+			t.Fatalf("expected only series %d for letter %s, got %+v", expectedID, letter, items)
+		}
+	}
+
+	assertOnly("J", jSeries.ID)
+	assertOnly("O", oSeries.ID)
+	assertOnly("#", hashSeries.ID)
+}
+
 func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
@@ -1206,9 +1264,10 @@ func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 	}
 
 	seriesB, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
-		LibraryID: lib.ID,
-		Name:      "Series Beta",
-		Path:      filepath.Join(rootDir, "Library A", "Series Beta"),
+		LibraryID:   lib.ID,
+		Name:        "Series Beta",
+		Path:        filepath.Join(rootDir, "Library A", "Series Beta"),
+		NameInitial: database.SeriesInitial("", "Series Beta"),
 	})
 	if err != nil {
 		t.Fatalf("CreateSeries B failed: %v", err)

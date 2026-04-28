@@ -159,6 +159,7 @@ type Series struct {
 	Rating       sql.NullFloat64 `json:"rating"`
 	Language     sql.NullString  `json:"language"`
 	LockedFields sql.NullString  `json:"locked_fields"`
+	NameInitial  string          `json:"name_initial"`
 	Path         string          `json:"path"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`

@@ -61,9 +61,10 @@ func seedServiceBook(t *testing.T, store database.Store, rootDir, libraryName, s
 	}
 
 	series, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
-		LibraryID: lib.ID,
-		Name:      seriesName,
-		Path:      seriesPath,
+		LibraryID:   lib.ID,
+		Name:        seriesName,
+		Path:        seriesPath,
+		NameInitial: database.SeriesInitial("", seriesName),
 	})
 	if err != nil {
 		t.Fatalf("create series failed: %v", err)

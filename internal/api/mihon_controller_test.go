@@ -17,10 +17,11 @@ func TestMihonAPILifecycle(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 	series, err := store.UpdateSeriesMetadata(context.Background(), database.UpdateSeriesMetadataParams{
-		Title:   sql.NullString{String: "Display Alpha", Valid: true},
-		Summary: sql.NullString{String: "Summary Alpha", Valid: true},
-		Status:  sql.NullString{String: "ONGOING", Valid: true},
-		ID:      series.ID,
+		Title:       sql.NullString{String: "Display Alpha", Valid: true},
+		Summary:     sql.NullString{String: "Summary Alpha", Valid: true},
+		Status:      sql.NullString{String: "ONGOING", Valid: true},
+		NameInitial: database.SeriesInitial("Display Alpha", series.Name),
+		ID:          series.ID,
 	})
 	if err != nil {
 		t.Fatalf("UpdateSeriesMetadata failed: %v", err)

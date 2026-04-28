@@ -1419,6 +1419,12 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	currentSeries, err := c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
 		_, err := q.UpdateSeriesMetadata(r.Context(), database.UpdateSeriesMetadataParams{
 			Title:        sql.NullString{String: req.Title, Valid: req.Title != ""},
@@ -1428,6 +1434,7 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 			Rating:       sql.NullFloat64{Float64: req.Rating, Valid: req.Rating > 0},
 			Language:     sql.NullString{String: req.Language, Valid: req.Language != ""},
 			LockedFields: sql.NullString{String: req.LockedFields, Valid: true},
+			NameInitial:  database.SeriesInitial(req.Title, currentSeries.Name),
 			ID:           seriesID,
 		})
 		if err != nil {

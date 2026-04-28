@@ -176,6 +176,7 @@ func Migrate(dbPath string) error {
 		{table: "books", name: "path_fingerprint", definition: "TEXT"},
 		{table: "books", name: "path_fingerprint_no_ext", definition: "TEXT"},
 		{table: "books", name: "filename_fingerprint", definition: "TEXT"},
+		{table: "series", name: "name_initial", definition: "TEXT NOT NULL DEFAULT '#'"},
 	} {
 		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
 			return err
@@ -187,10 +188,15 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint_no_ext ON books(path_fingerprint_no_ext)`,
 		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_name_initial ON series(name_initial)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
 		}
+	}
+
+	if err := backfillSeriesInitials(db); err != nil {
+		return err
 	}
 
 	if err := migrateLegacyKOReaderAccounts(db); err != nil {
@@ -236,6 +242,50 @@ func migrateLegacyKOReaderAccounts(db *sql.DB) error {
 		VALUES (?, ?, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, username, syncKey)
 	return err
+}
+
+func backfillSeriesInitials(db *sql.DB) error {
+	ctx := context.Background()
+	q := New(db)
+
+	type update struct {
+		id      int64
+		initial string
+	}
+	updates := make([]update, 0)
+	candidates, err := q.ListSeriesInitialBackfillCandidates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		nextInitial := SeriesInitialFromNullTitle(candidate.Title, candidate.Name)
+		if candidate.NameInitial != nextInitial {
+			updates = append(updates, update{
+				id:      candidate.ID,
+				initial: nextInitial,
+			})
+		}
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	tq := q.WithTx(tx)
+
+	for _, item := range updates {
+		if err := tq.UpdateSeriesInitial(ctx, UpdateSeriesInitialParams{
+			NameInitial: item.initial,
+			ID:          item.id,
+		}); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func ensureColumn(db *sql.DB, table, column, definition string) error {
@@ -315,13 +365,16 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 	}
 
 	if letter != "" {
-		if letter == "#" {
-			baseQuery += ` AND UPPER(SUBSTR(s.name, 1, 1)) NOT BETWEEN 'A' AND 'Z'`
-			countFilters += ` AND UPPER(SUBSTR(s.name, 1, 1)) NOT BETWEEN 'A' AND 'Z'`
-		} else {
-			baseQuery += ` AND UPPER(SUBSTR(s.name, 1, 1)) = ?`
-			countFilters += ` AND UPPER(SUBSTR(s.name, 1, 1)) = ?`
-			args = append(args, strings.ToUpper(letter))
+		normalizedLetter := strings.ToUpper(strings.TrimSpace(letter))
+		if normalizedLetter != "" {
+			if normalizedLetter == "#" {
+				baseQuery += ` AND s.name_initial = '#'`
+				countFilters += ` AND s.name_initial = '#'`
+			} else {
+				baseQuery += ` AND s.name_initial = ?`
+				countFilters += ` AND s.name_initial = ?`
+				args = append(args, normalizedLetter)
+			}
 		}
 	}
 
@@ -420,6 +473,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 			&i.Rating,
 			&i.Language,
 			&i.LockedFields,
+			&i.NameInitial,
 			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
