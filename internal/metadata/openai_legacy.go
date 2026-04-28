@@ -177,14 +177,12 @@ func (o *OpenAILegacyProvider) GenerateGrouping(ctx context.Context, seriesList 
 
 	content = extractJSONString(content)
 
-	var response struct {
-		Groups []AIGroupCollection `json:"groups"`
-	}
+	var response AIGroupingResult
 	if err := json.Unmarshal([]byte(content), &response); err != nil {
 		return nil, fmt.Errorf("openai-legacy: failed to parse grouping response: %w\nOutput: %s", err, content)
 	}
 
-	return response.Groups, nil
+	return response.NormalizedCollections(), nil
 }
 
 func (o *OpenAILegacyProvider) TestLLM(ctx context.Context, prompt string) (string, error) {

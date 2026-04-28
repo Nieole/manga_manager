@@ -27,6 +27,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.addReadingListItemStmt, err = db.PrepareContext(ctx, addReadingListItem); err != nil {
 		return nil, fmt.Errorf("error preparing query AddReadingListItem: %w", err)
 	}
+	if q.addSeriesToCollectionStmt, err = db.PrepareContext(ctx, addSeriesToCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query AddSeriesToCollection: %w", err)
+	}
 	if q.clearSeriesAuthorsStmt, err = db.PrepareContext(ctx, clearSeriesAuthors); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesAuthors: %w", err)
 	}
@@ -44,6 +47,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.createBookStmt, err = db.PrepareContext(ctx, createBook); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateBook: %w", err)
+	}
+	if q.createCollectionStmt, err = db.PrepareContext(ctx, createCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateCollection: %w", err)
 	}
 	if q.createLibraryStmt, err = db.PrepareContext(ctx, createLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateLibrary: %w", err)
@@ -165,6 +171,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.searchOPDSSeriesStmt, err = db.PrepareContext(ctx, searchOPDSSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query SearchOPDSSeries: %w", err)
 	}
+	if q.touchCollectionStmt, err = db.PrepareContext(ctx, touchCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query TouchCollection: %w", err)
+	}
 	if q.updateBookProgressStmt, err = db.PrepareContext(ctx, updateBookProgress); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateBookProgress: %w", err)
 	}
@@ -211,6 +220,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing addReadingListItemStmt: %w", cerr)
 		}
 	}
+	if q.addSeriesToCollectionStmt != nil {
+		if cerr := q.addSeriesToCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addSeriesToCollectionStmt: %w", cerr)
+		}
+	}
 	if q.clearSeriesAuthorsStmt != nil {
 		if cerr := q.clearSeriesAuthorsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearSeriesAuthorsStmt: %w", cerr)
@@ -239,6 +253,11 @@ func (q *Queries) Close() error {
 	if q.createBookStmt != nil {
 		if cerr := q.createBookStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createBookStmt: %w", cerr)
+		}
+	}
+	if q.createCollectionStmt != nil {
+		if cerr := q.createCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createCollectionStmt: %w", cerr)
 		}
 	}
 	if q.createLibraryStmt != nil {
@@ -441,6 +460,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing searchOPDSSeriesStmt: %w", cerr)
 		}
 	}
+	if q.touchCollectionStmt != nil {
+		if cerr := q.touchCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing touchCollectionStmt: %w", cerr)
+		}
+	}
 	if q.updateBookProgressStmt != nil {
 		if cerr := q.updateBookProgressStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateBookProgressStmt: %w", cerr)
@@ -541,12 +565,14 @@ type Queries struct {
 	db                                      DBTX
 	tx                                      *sql.Tx
 	addReadingListItemStmt                  *sql.Stmt
+	addSeriesToCollectionStmt               *sql.Stmt
 	clearSeriesAuthorsStmt                  *sql.Stmt
 	clearSeriesLinksStmt                    *sql.Stmt
 	clearSeriesTagsStmt                     *sql.Stmt
 	countMihonSeriesStmt                    *sql.Stmt
 	countOPDSSeriesSearchStmt               *sql.Stmt
 	createBookStmt                          *sql.Stmt
+	createCollectionStmt                    *sql.Stmt
 	createLibraryStmt                       *sql.Stmt
 	createReadingListStmt                   *sql.Stmt
 	createSeriesStmt                        *sql.Stmt
@@ -587,6 +613,7 @@ type Queries struct {
 	listSeriesInitialBackfillCandidatesStmt *sql.Stmt
 	removeReadingListItemStmt               *sql.Stmt
 	searchOPDSSeriesStmt                    *sql.Stmt
+	touchCollectionStmt                     *sql.Stmt
 	updateBookProgressStmt                  *sql.Stmt
 	updateLibraryStmt                       *sql.Stmt
 	updateReadingListStmt                   *sql.Stmt
@@ -606,12 +633,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		db:                                      tx,
 		tx:                                      tx,
 		addReadingListItemStmt:                  q.addReadingListItemStmt,
+		addSeriesToCollectionStmt:               q.addSeriesToCollectionStmt,
 		clearSeriesAuthorsStmt:                  q.clearSeriesAuthorsStmt,
 		clearSeriesLinksStmt:                    q.clearSeriesLinksStmt,
 		clearSeriesTagsStmt:                     q.clearSeriesTagsStmt,
 		countMihonSeriesStmt:                    q.countMihonSeriesStmt,
 		countOPDSSeriesSearchStmt:               q.countOPDSSeriesSearchStmt,
 		createBookStmt:                          q.createBookStmt,
+		createCollectionStmt:                    q.createCollectionStmt,
 		createLibraryStmt:                       q.createLibraryStmt,
 		createReadingListStmt:                   q.createReadingListStmt,
 		createSeriesStmt:                        q.createSeriesStmt,
@@ -652,6 +681,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listSeriesInitialBackfillCandidatesStmt: q.listSeriesInitialBackfillCandidatesStmt,
 		removeReadingListItemStmt:               q.removeReadingListItemStmt,
 		searchOPDSSeriesStmt:                    q.searchOPDSSeriesStmt,
+		touchCollectionStmt:                     q.touchCollectionStmt,
 		updateBookProgressStmt:                  q.updateBookProgressStmt,
 		updateLibraryStmt:                       q.updateLibraryStmt,
 		updateReadingListStmt:                   q.updateReadingListStmt,

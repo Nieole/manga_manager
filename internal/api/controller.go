@@ -2400,8 +2400,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	go func(libraryID int64, taskLocale string) {
 		ctx := metadata.WithLocale(context.Background(), taskLocale)
 
-		dbCache := c.store.(*database.SqlStore)
-		seriesRows, err := dbCache.GetSeriesWithoutCollection(ctx, libraryID)
+		seriesRows, err := c.store.GetSeriesWithoutCollection(ctx, libraryID)
 		if err != nil {
 			slog.Error("Failed to fetch series for grouping", "error", err)
 			c.failTaskWithError(taskKey, "AI 分组失败 (数据库获取异常)", err.Error())
@@ -2421,11 +2420,13 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 		}
 
 		var candidates []metadata.CandidateSeries
+		candidateIDs := make(map[int64]struct{}, len(seriesRows))
 		for _, row := range seriesRows {
 			title := row.Title.String
 			if title == "" {
 				title = row.Name
 			}
+			candidateIDs[row.ID] = struct{}{}
 			candidates = append(candidates, metadata.CandidateSeries{
 				ID:      row.ID,
 				Title:   title,
@@ -2442,25 +2443,51 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 			return
 		}
 
-		dbObj := dbCache.DB()
-
+		createdCollections := 0
 		for _, col := range collections {
-			if len(col.SeriesIDs) == 0 {
-				continue
-			}
-			res, err := dbObj.ExecContext(ctx, "INSERT INTO collections (name, description) VALUES (?, ?)", col.Name, col.Description)
-			if err != nil {
-				slog.Error("Insert collection failed", "error", err)
-				continue
-			}
-			newColID, _ := res.LastInsertId()
-
+			col.Name = strings.TrimSpace(col.Name)
+			validSeriesIDs := make([]int64, 0, len(col.SeriesIDs))
+			seenSeriesIDs := make(map[int64]struct{}, len(col.SeriesIDs))
 			for _, sid := range col.SeriesIDs {
-				dbObj.ExecContext(ctx, "INSERT OR IGNORE INTO collection_series (collection_id, series_id) VALUES (?, ?)", newColID, sid)
+				if _, ok := candidateIDs[sid]; !ok {
+					continue
+				}
+				if _, seen := seenSeriesIDs[sid]; seen {
+					continue
+				}
+				seenSeriesIDs[sid] = struct{}{}
+				validSeriesIDs = append(validSeriesIDs, sid)
 			}
+
+			if col.Name == "" || len(validSeriesIDs) == 0 {
+				continue
+			}
+
+			if err := c.store.ExecTx(ctx, func(q *database.Queries) error {
+				created, err := q.CreateCollection(ctx, database.CreateCollectionParams{
+					Name:        col.Name,
+					Description: sql.NullString{String: strings.TrimSpace(col.Description), Valid: true},
+				})
+				if err != nil {
+					return err
+				}
+				for _, sid := range validSeriesIDs {
+					if err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
+						CollectionID: created.ID,
+						SeriesID:     sid,
+					}); err != nil {
+						return err
+					}
+				}
+				return q.TouchCollection(ctx, created.ID)
+			}); err != nil {
+				slog.Error("Insert AI collection failed", "collection", col.Name, "error", err)
+				continue
+			}
+			createdCollections++
 		}
 
-		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组成功完成 (生成了 %d 个合集)", len(collections)))
+		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组成功完成 (生成了 %d 个合集)", createdCollections))
 		c.PublishEvent("refresh")
 	}(libID, locale)
 

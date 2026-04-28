@@ -46,6 +46,21 @@ func (q *Queries) AddReadingListItem(ctx context.Context, arg AddReadingListItem
 	return i, err
 }
 
+const addSeriesToCollection = `-- name: AddSeriesToCollection :exec
+INSERT OR IGNORE INTO collection_series (collection_id, series_id)
+VALUES (?, ?)
+`
+
+type AddSeriesToCollectionParams struct {
+	CollectionID int64 `json:"collection_id"`
+	SeriesID     int64 `json:"series_id"`
+}
+
+func (q *Queries) AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) error {
+	_, err := q.exec(ctx, q.addSeriesToCollectionStmt, addSeriesToCollection, arg.CollectionID, arg.SeriesID)
+	return err
+}
+
 const clearSeriesAuthors = `-- name: ClearSeriesAuthors :exec
 DELETE FROM series_authors WHERE series_id = ?
 `
@@ -174,6 +189,32 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		&i.PathFingerprint,
 		&i.PathFingerprintNoExt,
 		&i.FilenameFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createCollection = `-- name: CreateCollection :one
+INSERT INTO collections (name, description)
+VALUES (?, ?)
+RETURNING id, name, description, cover_url, sort_order, created_at, updated_at
+`
+
+type CreateCollectionParams struct {
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+}
+
+func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error) {
+	row := q.queryRow(ctx, q.createCollectionStmt, createCollection, arg.Name, arg.Description)
+	var i Collection
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CoverUrl,
+		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1866,6 +1907,17 @@ func (q *Queries) SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const touchCollection = `-- name: TouchCollection :exec
+UPDATE collections
+SET updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+func (q *Queries) TouchCollection(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.touchCollectionStmt, touchCollection, id)
+	return err
 }
 
 const updateBookProgress = `-- name: UpdateBookProgress :exec

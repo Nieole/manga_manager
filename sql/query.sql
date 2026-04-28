@@ -455,6 +455,20 @@ FROM series s
 LEFT JOIN collection_series cs ON s.id = cs.series_id
 WHERE s.library_id = ? AND cs.collection_id IS NULL;
 
+-- name: CreateCollection :one
+INSERT INTO collections (name, description)
+VALUES (?, ?)
+RETURNING *;
+
+-- name: AddSeriesToCollection :exec
+INSERT OR IGNORE INTO collection_series (collection_id, series_id)
+VALUES (?, ?);
+
+-- name: TouchCollection :exec
+UPDATE collections
+SET updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
+
 -- name: ListReadingLists :many
 SELECT
     rl.id,

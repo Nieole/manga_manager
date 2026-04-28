@@ -170,13 +170,14 @@ func (o *OllamaProvider) GenerateGrouping(ctx context.Context, seriesList []Cand
 	if err != nil {
 		return nil, fmt.Errorf("ollama: grouping request failed: %w", err)
 	}
+	content = extractJSONString(content)
 
 	var result AIGroupingResult
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
 		return nil, fmt.Errorf("ollama: grouping response is not valid JSON: %w\nRaw: %s", err, content)
 	}
 
-	return result.Collections, nil
+	return result.NormalizedCollections(), nil
 }
 
 func (o *OllamaProvider) TestLLM(ctx context.Context, prompt string) (string, error) {

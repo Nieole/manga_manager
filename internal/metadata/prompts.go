@@ -28,6 +28,14 @@ type aiRecommendationResult struct {
 // AIGroupingResult LLM返回的分组列表格式
 type AIGroupingResult struct {
 	Collections []AIGroupCollection `json:"collections"`
+	Groups      []AIGroupCollection `json:"groups"`
+}
+
+func (r AIGroupingResult) NormalizedCollections() []AIGroupCollection {
+	if len(r.Collections) > 0 {
+		return r.Collections
+	}
+	return r.Groups
 }
 
 // ============================================================================

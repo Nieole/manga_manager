@@ -217,7 +217,7 @@ func (o *OpenAIProvider) GenerateGrouping(ctx context.Context, seriesList []Cand
 		return nil, fmt.Errorf("openai: grouping response is not valid JSON: %w\nRaw: %s", err, content)
 	}
 
-	return result.Collections, nil
+	return result.NormalizedCollections(), nil
 }
 
 func (o *OpenAIProvider) TestLLM(ctx context.Context, prompt string) (string, error) {

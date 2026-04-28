@@ -10,12 +10,14 @@ import (
 
 type Querier interface {
 	AddReadingListItem(ctx context.Context, arg AddReadingListItemParams) (ReadingListItem, error)
+	AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) error
 	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 	ClearSeriesLinks(ctx context.Context, seriesID int64) error
 	ClearSeriesTags(ctx context.Context, seriesID int64) error
 	CountMihonSeries(ctx context.Context, arg CountMihonSeriesParams) (int64, error)
 	CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error)
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
+	CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error)
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
 	CreateReadingList(ctx context.Context, arg CreateReadingListParams) (ReadingList, error)
 	CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error)
@@ -56,6 +58,7 @@ type Querier interface {
 	ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error)
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
 	SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error)
+	TouchCollection(ctx context.Context, id int64) error
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 	UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error)
 	UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error)
