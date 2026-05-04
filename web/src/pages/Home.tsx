@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import axios, { type AxiosResponse } from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck, ChevronDown, ChevronUp } from 'lucide-react';
+import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
 import { DirectoryPicker } from '../components/layout/DirectoryPicker';
 import type { BrowseDirEntry, BrowseDrive } from '../components/layout/types';
@@ -14,6 +14,8 @@ import { HomeToolbar } from './home/HomeToolbar';
 import { RecentSeriesStrip } from './home/RecentSeriesStrip';
 import type { AIRecommendation, NamedOption, SavedSmartFilter, Series } from './home/types';
 import { useI18n } from '../i18n/LocaleProvider';
+import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
+import type { SearchResult } from './series-detail/types';
 
 const DEFAULT_PAGE_SIZE = 30;
 
@@ -159,6 +161,18 @@ export default function Home() {
     // External Library section collapse state
     const [isExternalExpanded, setIsExternalExpanded] = useState(false);
     const hasMountedRefreshEffect = useRef(false);
+
+    // Scrape Modal states
+    const [scrapeProvider, setScrapeProvider] = useState('');
+    const [scrapeModalSearchQuery, setScrapeModalSearchQuery] = useState('');
+    const [showScrapeModal, setShowScrapeModal] = useState(false);
+    const [scrapeSearchResults, setScrapeSearchResults] = useState<SearchResult[]>([]);
+    const [selectedScrapeResult, setSelectedScrapeResult] = useState<SearchResult | null>(null);
+    const [scrapeTotal, setScrapeTotal] = useState(0);
+    const [scrapeOffset, setScrapeOffset] = useState(0);
+    const [isScraping, setIsScraping] = useState(false);
+    const [scrapingSeries, setScrapingSeries] = useState<Series | null>(null);
+    const [scrapeMenuOpenId, setScrapeMenuOpenId] = useState<number | null>(null);
 
     const showToast = (text: string, type: 'success' | 'error') => {
         setToastMsg({ text, type });
@@ -690,6 +704,101 @@ export default function Home() {
         }
     };
 
+    const handleScrapeSeries = async (e: React.MouseEvent, s: Series, providerKey: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setScrapeMenuOpenId(null);
+        
+        setScrapingSeries(s);
+        setIsScraping(true);
+        setScrapeProvider(providerKey);
+
+        if (providerKey === 'bangumi') {
+            const q = s.title?.Valid && s.title.String ? s.title.String : s.name;
+            setScrapeModalSearchQuery(q);
+
+            try {
+                const res = await axios.get(`/api/series/${s.id}/scrape-search?provider=${providerKey}`);
+                setShowScrapeModal(true);
+
+                if (res.data.results && res.data.results.length > 0) {
+                    setScrapeSearchResults(res.data.results);
+                    setSelectedScrapeResult(res.data.results[0]);
+                    setScrapeTotal(res.data.total || 0);
+                } else {
+                    setScrapeSearchResults([]);
+                    setSelectedScrapeResult(null);
+                    showToast(t('series.toast.autoMatchNotFound'), 'error');
+                }
+            } catch (err: unknown) {
+                showToast(`${t('series.toast.searchFailed')}: ${getApiErrorMessage(err, t('series.toast.searchFailed'))}`, 'error');
+            } finally {
+                setIsScraping(false);
+            }
+            return;
+        }
+
+        // For Ollama and other fully automatic providers
+        try {
+            const res = await axios.post(`/api/series/${s.id}/scrape`, { provider: providerKey });
+            if (res.data.scraped) {
+                showToast(`[${res.data.provider}] ${res.data.message}`, 'success');
+                fetchSeriesPage(page, true);
+            } else {
+                showToast(res.data.message || t('series.toast.metadataNotFound'), 'error');
+            }
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.scrapeFailed')}: ${getApiErrorMessage(err, t('series.toast.scrapeFailed'))}`, 'error');
+        } finally {
+            setIsScraping(false);
+            setScrapingSeries(null);
+        }
+    };
+
+    const handleScrapeModalReSearch = async (offset = 0) => {
+        if (!scrapingSeries || !scrapeModalSearchQuery.trim()) return;
+        setIsScraping(true);
+        setScrapeOffset(offset);
+        try {
+            const res = await axios.get(`/api/series/${scrapingSeries.id}/scrape-search?provider=${scrapeProvider}&q=${encodeURIComponent(scrapeModalSearchQuery)}&offset=${offset}`);
+            if (res.data.results && res.data.results.length > 0) {
+                setScrapeSearchResults(res.data.results);
+                setSelectedScrapeResult(res.data.results[0]);
+                setScrapeTotal(res.data.total || 0);
+                showToast(t('series.toast.searchFound', { count: res.data.results.length }), 'success');
+            } else {
+                setScrapeSearchResults([]);
+                setSelectedScrapeResult(null);
+                setScrapeTotal(0);
+                showToast(t('series.toast.searchNoResult'), 'error');
+            }
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.searchFailed')}: ${getApiErrorMessage(err, t('series.toast.searchFailed'))}`, 'error');
+        } finally {
+            setIsScraping(false);
+        }
+    };
+
+    const handleApplyScrapeMetadata = async (metadata: SearchResult) => {
+        if (!scrapingSeries) return;
+        setShowScrapeModal(false);
+        setIsScraping(true);
+        try {
+            const res = await axios.post(`/api/series/${scrapingSeries.id}/scrape-apply?provider=${scrapeProvider}`, metadata);
+            if (res.data.success) {
+                showToast(t('series.toast.applyMetadataSuccess'), 'success');
+                fetchSeriesPage(page, true);
+            }
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.applyMetadataFailed')}: ${getApiErrorMessage(err, t('series.toast.applyMetadataFailed'))}`, 'error');
+        } finally {
+            setIsScraping(false);
+            setScrapeSearchResults([]);
+            setSelectedScrapeResult(null);
+            setScrapingSeries(null);
+        }
+    };
+
     const submitTransferSelectedSeries = async () => {
         if (!libId || !externalSession?.session_id) return;
 
@@ -1009,9 +1118,54 @@ export default function Home() {
                                     key={s.id}
                                     to={`/series/${s.id}`}
                                     onClick={handleCardClick}
-                                    className={`group relative rounded-xl overflow-hidden bg-komgaSurface border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'} transition-all duration-300 cursor-pointer block h-fit`}
+                                    className={`group relative rounded-xl bg-komgaSurface border ${isSelected ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20' : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'} transition-all duration-300 cursor-pointer block h-fit ${scrapeMenuOpenId === s.id ? 'z-[100]' : 'hover:z-40'}`}
                                 >
-                                    <div className="aspect-[1/1.4] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden">
+                                    <div className="absolute inset-x-0 top-0 p-3 z-20 flex justify-between items-start pointer-events-none">
+                                        {s.rating?.Valid && s.rating.Float64 > 0 && (
+                                            <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md pointer-events-none">
+                                                ★ {s.rating.Float64.toFixed(1)}
+                                            </span>
+                                        )}
+                                        {!isSelectionMode && (
+                                            <div className="flex gap-1.5 ml-auto pointer-events-auto">
+                                                <div className="relative">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setScrapeMenuOpenId(scrapeMenuOpenId === s.id ? null : s.id);
+                                                        }}
+                                                        disabled={isScraping && scrapingSeries?.id === s.id}
+                                                        className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-purple-400 hover:bg-purple-400/20 hover:border-purple-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed`}
+                                                        title={t('series.scrape.action')}
+                                                    >
+                                                        <Sparkles className={`w-3.5 h-3.5 ${isScraping && scrapingSeries?.id === s.id ? 'animate-pulse text-purple-400' : ''}`} />
+                                                    </button>
+                                                    {scrapeMenuOpenId === s.id && !isScraping && (
+                                                        <div className="fixed inset-0 z-40 cursor-default" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); setScrapeMenuOpenId(null); }} />
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={(e) => handleRescanSeries(e, s.id)}
+                                                    disabled={rescanningId === s.id}
+                                                    className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-blue-400 hover:bg-blue-400/20 hover:border-blue-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed`}
+                                                    title={t('home.seriesRescan')}
+                                                >
+                                                    <RefreshCw className={`w-3.5 h-3.5 ${rescanningId === s.id ? 'animate-spin text-blue-400' : ''}`} />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => handleToggleFavorite(e, s.id, s.is_favorite)}
+                                                    className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all ${s.is_favorite
+                                                        ? 'bg-red-500/20 border-red-500/40 text-red-500'
+                                                        : 'bg-black/60 border-white/10 text-white/40 hover:text-red-400 hover:bg-red-400/20 hover:border-red-400/40 opacity-0 group-hover:opacity-100'
+                                                        }`}
+                                                >
+                                                    <Heart className={`w-3.5 h-3.5 ${s.is_favorite ? 'fill-current' : ''}`} />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="aspect-[1/1.4] w-full bg-gray-900 flex items-center justify-center relative overflow-hidden rounded-t-xl">
                                         {isSelectionMode && (
                                             <div className="absolute top-2 left-2 z-30">
                                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'}`}>
@@ -1024,34 +1178,6 @@ export default function Home() {
                                         ) : (
                                             <ImageIcon className="h-12 w-12 text-gray-700 opacity-50 transition-opacity group-hover:opacity-100 relative z-10" />
                                         )}
-                                        <div className="absolute inset-x-0 top-0 p-3 z-20 flex justify-between items-start">
-                                            {s.rating?.Valid && s.rating.Float64 > 0 && (
-                                                <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md pointer-events-none">
-                                                    ★ {s.rating.Float64.toFixed(1)}
-                                                </span>
-                                            )}
-                                            {!isSelectionMode && (
-                                                <div className="flex gap-1.5">
-                                                    <button
-                                                        onClick={(e) => handleRescanSeries(e, s.id)}
-                                                        disabled={rescanningId === s.id}
-                                                        className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-blue-400 hover:bg-blue-400/20 hover:border-blue-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed`}
-                                                        title={t('home.seriesRescan')}
-                                                    >
-                                                        <RefreshCw className={`w-3.5 h-3.5 ${rescanningId === s.id ? 'animate-spin text-blue-400' : ''}`} />
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => handleToggleFavorite(e, s.id, s.is_favorite)}
-                                                        className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all ${s.is_favorite
-                                                            ? 'bg-red-500/20 border-red-500/40 text-red-500'
-                                                            : 'bg-black/60 border-white/10 text-white/40 hover:text-red-400 hover:bg-red-400/20 hover:border-red-400/40 opacity-0 group-hover:opacity-100'
-                                                            }`}
-                                                    >
-                                                        <Heart className={`w-3.5 h-3.5 ${s.is_favorite ? 'fill-current' : ''}`} />
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
                                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
                                             <div className="flex justify-between text-[11px] font-medium text-gray-300">
                                                 <span>
@@ -1069,7 +1195,7 @@ export default function Home() {
                                             )}
                                         </div>
                                     </div>
-                                    <div className="p-3">
+                                    <div className="p-3 rounded-b-xl">
                                         <div>
                                             <h4 className="text-sm font-bold text-gray-200 line-clamp-1 leading-tight group-hover:text-komgaPrimary transition-colors mb-1.5">
                                                 {s.title?.Valid ? s.title.String : s.name}
@@ -1105,6 +1231,17 @@ export default function Home() {
                                         )}
                                         {/* 移除底部的“系列”字样，保持清爽 */}
                                     </div>
+                                    
+                                    {scrapeMenuOpenId === s.id && !isScraping && (
+                                        <div className="absolute inset-0 z-50 flex items-center justify-center p-3" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                                            <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-[2px] rounded-xl" />
+                                            <div className="relative z-50 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-2xl shadow-black overflow-hidden animate-in fade-in zoom-in duration-200 cursor-default">
+                                                <div className="px-3 py-2 text-[11px] font-bold text-komgaPrimary border-b border-gray-800 bg-black/80 text-center uppercase tracking-wider">{t('series.header.pickSource')}</div>
+                                                <div onPointerDown={(e) => handleScrapeSeries(e, s, 'bangumi')} className="w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors cursor-pointer truncate">{t('series.header.bangumiRecommended')}</div>
+                                                <div onPointerDown={(e) => handleScrapeSeries(e, s, 'ollama')} className="w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-800 cursor-pointer truncate">{t('series.header.ollama')}</div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </Link>
                             );
                         })}
@@ -1344,6 +1481,31 @@ export default function Home() {
                     </div>
                 </div>
             </ModalShell>
+
+            {/* 资源刮削弹窗 */}
+            {scrapingSeries && (
+                <SeriesSearchModal
+                    open={showScrapeModal}
+                    onClose={() => {
+                        setShowScrapeModal(false);
+                        setScrapingSeries(null);
+                    }}
+                    providerLabel="Bangumi"
+                    modalSearchQuery={scrapeModalSearchQuery}
+                    isScraping={isScraping}
+                    searchResults={scrapeSearchResults}
+                    currentOffset={scrapeOffset}
+                    searchTotal={scrapeTotal}
+                    currentSeries={scrapingSeries as any}
+                    currentTags={[]}
+                    lockedFields={new Set()}
+                    selectedResult={selectedScrapeResult}
+                    onSearchQueryChange={setScrapeModalSearchQuery}
+                    onReSearch={handleScrapeModalReSearch}
+                    onSelectMetadata={setSelectedScrapeResult}
+                    onApplyMetadata={handleApplyScrapeMetadata}
+                />
+            )}
 
             {/* Toast 通知 */}
             {toastMsg && (

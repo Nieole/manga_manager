@@ -19,7 +19,7 @@ interface SeriesSearchModalProps {
   onClose: () => void;
   onSearchQueryChange: (value: string) => void;
   onReSearch: (offset?: number) => void;
-  onSelectMetadata: (metadata: SearchResult) => void;
+  onSelectMetadata: (metadata: SearchResult | null) => void;
   onApplyMetadata: (metadata: SearchResult) => void;
 }
 
@@ -131,7 +131,7 @@ export function SeriesSearchModal({
         </div>
       }
       footer={
-        <div className="flex flex-col items-center justify-between gap-4 lg:flex-row">
+        <div className="flex w-full flex-col items-center justify-between gap-4 lg:flex-row">
           <div className="flex items-center gap-3">
             <button
               onClick={() => onReSearch(Math.max(0, currentOffset - 20))}
@@ -151,16 +151,33 @@ export function SeriesSearchModal({
               {t('home.pagination.next')}
             </button>
           </div>
-          <p className="flex items-center gap-2 text-xs italic text-gray-500">
-            <Info className="h-4 w-4" />
-            {t('series.searchModal.footerHint')}
-          </p>
+          {selectedResult ? (
+            <div className="flex w-full flex-col sm:w-auto sm:flex-row items-center gap-3 sm:gap-4 lg:w-auto lg:ml-auto">
+              <div className="text-sm text-gray-400 hidden sm:block text-right">
+                <p className="mb-0.5 leading-relaxed">{t('series.searchModal.lockHint')}</p>
+                <p className="text-xs text-gray-500">{t('series.searchModal.compareHint')}</p>
+              </div>
+              <button
+                onClick={() => onApplyMetadata(selectedResult)}
+                disabled={isScraping}
+                className={`${modalPrimaryButtonClass} w-full sm:w-auto shrink-0 shadow-lg shadow-komgaPrimary/20 hover:shadow-xl hover:shadow-komgaPrimary/30 px-6 py-2.5 justify-center`}
+              >
+                {isScraping ? <div className="w-4 h-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <CheckCircle2 className="w-5 h-5" />}
+                <span className="font-bold">{t('series.searchModal.apply')}</span>
+              </button>
+            </div>
+          ) : (
+            <p className="flex items-center gap-2 text-xs italic text-gray-500">
+              <Info className="h-4 w-4" />
+              {t('series.searchModal.footerHint')}
+            </p>
+          )}
         </div>
       }
     >
-        <div className="grid min-h-0 flex-1 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="border-r border-gray-800 min-h-0">
-            <div className="p-6 overflow-y-auto space-y-4 max-h-[65vh] xl:max-h-full">
+        <div className="flex h-full min-h-0 flex-col flex-1 xl:grid xl:grid-cols-[1.1fr_0.9fr]">
+          <div className={`border-gray-800 min-h-0 min-w-0 xl:border-r ${selectedResult ? 'hidden xl:block' : 'block flex-1'}`}>
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 h-full xl:max-h-full">
               {searchResults.length > 0 ? (
                 searchResults.map((result, idx) => {
                   const isSelected = selectedResult?.SourceID === result.SourceID && selectedResult?.Title === result.Title;
@@ -183,7 +200,7 @@ export function SeriesSearchModal({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <h4 className="text-lg font-bold text-white leading-tight">{result.Title}</h4>
+                            <h4 className="text-lg font-bold text-white leading-tight break-words">{result.Title}</h4>
                             {result.OriginalTitle && result.OriginalTitle !== result.Title && (
                               <p className="text-sm text-gray-500 truncate mt-1 italic">{result.OriginalTitle}</p>
                             )}
@@ -225,7 +242,7 @@ export function SeriesSearchModal({
 
                         <div className="mt-3 flex flex-wrap gap-2">
                           {result.Tags?.slice(0, 6).map((tag) => (
-                            <span key={tag} className="text-[11px] bg-gray-800/60 text-gray-400 px-2.5 py-1 rounded-full border border-gray-700/50">
+                            <span key={tag} className="text-[11px] bg-gray-800/60 text-gray-400 px-2.5 py-1 rounded-full border border-gray-700/50 truncate max-w-full">
                               {tag}
                             </span>
                           ))}
@@ -247,86 +264,81 @@ export function SeriesSearchModal({
             </div>
           </div>
 
-          <div className="p-6 overflow-y-auto bg-gray-950/30">
+          <div className={`flex-col bg-gray-950/30 min-w-0 h-full ${selectedResult ? 'flex flex-1' : 'hidden xl:flex'}`}>
             {selectedResult ? (
-              <div className="space-y-5">
-                <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.18em] text-gray-500">{t('series.searchModal.preview')}</p>
-                      <h4 className="mt-2 text-xl font-bold text-white">{selectedResult.Title}</h4>
-                      <p className="text-sm text-gray-500 mt-1">{t('series.searchModal.source', { provider: providerLabel || t('series.searchModal.externalSource'), id: selectedResult.SourceID })}</p>
-                    </div>
-                    <div className="rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
-                      {t('series.searchModal.changedFields', { count: changedFieldCount })}
+              <>
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+                  <button
+                    type="button"
+                    onClick={() => onSelectMetadata(null)}
+                    className="xl:hidden flex items-center gap-2 text-sm text-gray-400 hover:text-white mb-2 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    {t('common.back') || 'Back'}
+                  </button>
+                  <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-4 sm:p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] text-gray-500">{t('series.searchModal.preview')}</p>
+                        <h4 className="mt-2 text-xl font-bold text-white">{selectedResult.Title}</h4>
+                        <p className="text-sm text-gray-500 mt-1">{t('series.searchModal.source', { provider: providerLabel || t('series.searchModal.externalSource'), id: selectedResult.SourceID })}</p>
+                      </div>
+                      <div className="rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
+                        {t('series.searchModal.changedFields', { count: changedFieldCount })}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className={`${modalSectionClass} bg-gray-900/40 p-5`}>
-                  <div className="flex items-center gap-2 mb-4 text-white">
-                    <Sparkles className="w-4 h-4 text-komgaPrimary" />
-                    <h5 className="font-semibold">{t('series.searchModal.diffTitle')}</h5>
-                  </div>
-                  <div className="space-y-3">
-                    {previewFields.map((field) => {
-                      const locked = lockedFields.has(field.key);
-                      const changed = field.currentValue !== field.nextValue && field.nextValue !== t('series.searchModal.notProvided');
-                      return (
-                        <div key={field.key} className={`rounded-xl border p-4 ${changed ? 'border-komgaPrimary/20 bg-komgaPrimary/5' : 'border-gray-800 bg-black/10'}`}>
-                          <div className="flex items-center justify-between gap-3 mb-3">
-                            <span className="text-sm font-medium text-white">{field.label}</span>
-                            {locked ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
-                                <Lock className="w-3 h-3" />
-                                {t('series.searchModal.locked')}
-                              </span>
-                            ) : changed ? (
-                              <span className="rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-xs text-komgaPrimary">{t('series.searchModal.willUpdate')}</span>
-                            ) : (
-                              <span className="rounded-full border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-400">{t('series.searchModal.noChange')}</span>
-                            )}
-                          </div>
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div>
-                              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">{t('series.searchModal.current')}</p>
-                              <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-300 whitespace-pre-wrap break-words">
-                                {field.currentValue}
+                  <div className={`${modalSectionClass} bg-gray-900/40 p-5`}>
+                    <div className="flex items-center gap-2 mb-4 text-white">
+                      <Sparkles className="w-4 h-4 text-komgaPrimary" />
+                      <h5 className="font-semibold">{t('series.searchModal.diffTitle')}</h5>
+                    </div>
+                    <div className="space-y-3">
+                      {previewFields.map((field) => {
+                        const locked = lockedFields.has(field.key);
+                        const changed = field.currentValue !== field.nextValue && field.nextValue !== t('series.searchModal.notProvided');
+                        return (
+                          <div key={field.key} className={`rounded-xl border p-4 ${changed ? 'border-komgaPrimary/20 bg-komgaPrimary/5' : 'border-gray-800 bg-black/10'}`}>
+                            <div className="flex items-center justify-between gap-3 mb-3">
+                              <span className="text-sm font-medium text-white">{field.label}</span>
+                              {locked ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
+                                  <Lock className="w-3 h-3" />
+                                  {t('series.searchModal.locked')}
+                                </span>
+                              ) : changed ? (
+                                <span className="rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-xs text-komgaPrimary">{t('series.searchModal.willUpdate')}</span>
+                              ) : (
+                                <span className="rounded-full border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-400">{t('series.searchModal.noChange')}</span>
+                              )}
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">{t('series.searchModal.current')}</p>
+                                <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-300 whitespace-pre-wrap break-words">
+                                  {field.currentValue}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">{t('series.searchModal.next')}</p>
+                                <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap break-words">
+                                  {field.nextValue}
+                                </div>
                               </div>
                             </div>
-                            <div>
-                              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">{t('series.searchModal.next')}</p>
-                              <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap break-words">
-                                {field.nextValue}
-                              </div>
-                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className={`${modalSectionClass} bg-gray-900/40 p-5`}>
-                  <p className="text-sm text-gray-400 leading-6">
-                    {t('series.searchModal.lockHint')}
-                  </p>
-                  <div className="mt-4 flex items-center justify-between gap-4">
-                    <span className="text-xs text-gray-500">{t('series.searchModal.compareHint')}</span>
-                    <button
-                      onClick={() => onApplyMetadata(selectedResult)}
-                      disabled={isScraping}
-                      className={modalPrimaryButtonClass}
-                    >
-                      {isScraping ? <div className="w-4 h-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <ArrowLeft className="w-4 h-4 rotate-180" />}
-                      {t('series.searchModal.apply')}
-                    </button>
+                        );
+                      })}
                   </div>
                 </div>
               </div>
+            </>
             ) : (
-              <div className="flex h-full min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-gray-800 bg-gray-900/20 p-6 text-center text-gray-500">
-                {t('series.searchModal.pickCandidate')}
+              <div className="flex-1 flex items-center justify-center p-6">
+                <div className="flex h-full w-full min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-gray-800 bg-gray-900/20 p-6 text-center text-gray-500">
+                  {t('series.searchModal.pickCandidate')}
+                </div>
               </div>
             )}
           </div>

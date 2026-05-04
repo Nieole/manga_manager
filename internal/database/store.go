@@ -321,7 +321,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 	// 构建动态 SQL - 使用预聚合子查询替代关联子查询提升查询性能
 	baseQuery := `
 		SELECT
-            s.*,
+            s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
             bc.cover_path,
             GROUP_CONCAT(DISTINCT t.name) as tags_string,
             COALESCE(rc.read_count, 0) as read_count

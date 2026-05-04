@@ -32,7 +32,6 @@ CREATE TABLE IF NOT EXISTS series (
 );
 
 CREATE INDEX IF NOT EXISTS idx_series_library_id ON series(library_id);
-CREATE INDEX IF NOT EXISTS idx_series_name_initial ON series(name_initial);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_series_path ON series(path);
 
 CREATE TABLE IF NOT EXISTS tags (
