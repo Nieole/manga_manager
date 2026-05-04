@@ -235,6 +235,30 @@ type SeriesRelation struct {
 	RelationType     string `json:"relation_type"`
 }
 
+// inverseRelationType returns the inverse relation type for display
+// when viewing a relation from the target's perspective.
+// e.g. A → B (spinoff) means B sees A as "parent"
+func inverseRelationType(rt string) string {
+	switch rt {
+	case "sequel":
+		return "prequel"
+	case "prequel":
+		return "sequel"
+	case "spinoff":
+		return "parent"
+	case "side_story":
+		return "parent"
+	case "adaptation":
+		return "source"
+	case "remake":
+		return "original"
+	case "same_universe":
+		return "same_universe"
+	default:
+		return rt
+	}
+}
+
 // getSeriesRelations 获取系列的所有关联
 func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
@@ -244,31 +268,51 @@ func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) 
 	}
 
 	db := c.store.(*database.SqlStore).DB()
-	rows, err := db.QueryContext(r.Context(), `
+
+	// Forward relations: this series is the source
+	forwardRows, err := db.QueryContext(r.Context(), `
 		SELECT sr.id, sr.target_series_id, s.name, sr.relation_type
 		FROM series_relations sr
 		JOIN series s ON s.id = sr.target_series_id
 		WHERE sr.source_series_id = ?
-		UNION ALL
-		SELECT sr.id, sr.source_series_id, s.name, sr.relation_type
-		FROM series_relations sr
-		JOIN series s ON s.id = sr.source_series_id
-		WHERE sr.target_series_id = ?
-	`, seriesID, seriesID)
+	`, seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get relations")
 		return
 	}
-	defer rows.Close()
 
 	var items []SeriesRelation
-	for rows.Next() {
+	for forwardRows.Next() {
 		var item SeriesRelation
-		if err := rows.Scan(&item.ID, &item.TargetSeriesID, &item.TargetSeriesName, &item.RelationType); err != nil {
+		if err := forwardRows.Scan(&item.ID, &item.TargetSeriesID, &item.TargetSeriesName, &item.RelationType); err != nil {
 			continue
 		}
 		items = append(items, item)
 	}
+	forwardRows.Close()
+
+	// Reverse relations: this series is the target, apply inverse type
+	reverseRows, err := db.QueryContext(r.Context(), `
+		SELECT sr.id, sr.source_series_id, s.name, sr.relation_type
+		FROM series_relations sr
+		JOIN series s ON s.id = sr.source_series_id
+		WHERE sr.target_series_id = ?
+	`, seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get reverse relations")
+		return
+	}
+
+	for reverseRows.Next() {
+		var item SeriesRelation
+		if err := reverseRows.Scan(&item.ID, &item.TargetSeriesID, &item.TargetSeriesName, &item.RelationType); err != nil {
+			continue
+		}
+		item.RelationType = inverseRelationType(item.RelationType)
+		items = append(items, item)
+	}
+	reverseRows.Close()
+
 	if items == nil {
 		items = []SeriesRelation{}
 	}

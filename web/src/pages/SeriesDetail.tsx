@@ -394,21 +394,17 @@ export default function SeriesDetail() {
             axios.get<{ items?: SeriesRelationCandidate[] }>(`/api/series/search`, {
                 params: {
                     libraryId: seriesInfo.library_id,
-                    limit: 100,
+                    q: relationSearch.trim(),
+                    limit: 20,
                     page: 1,
                     sortBy: 'name_asc',
                 },
             }).then((res) => {
                 if (!active) return;
-                const query = relationSearch.trim().toLowerCase();
                 const existingIds = new Set(relations.map((item) => item.target_series_id));
                 const items = (res.data.items || [])
                     .filter((item) => item.id !== Number(seriesId))
                     .filter((item) => !existingIds.has(item.id))
-                    .filter((item) => {
-                        const title = item.title?.Valid ? item.title.String : '';
-                        return item.name.toLowerCase().includes(query) || title.toLowerCase().includes(query);
-                    })
                     .slice(0, 12);
                 setRelationCandidates(items);
             }).catch(() => {

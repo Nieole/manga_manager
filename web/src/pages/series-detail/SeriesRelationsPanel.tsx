@@ -42,7 +42,7 @@ export function SeriesRelationsPanel({
   const selectedTarget = candidates.find((item) => item.id === selectedTargetId) || null;
 
   return (
-    <section className="mb-8 rounded-2xl border border-white/10 bg-komgaSurface/80 p-5 shadow-xl backdrop-blur-md">
+    <section className="relative z-20 mb-8 rounded-2xl border border-white/10 bg-komgaSurface/80 p-5 shadow-xl backdrop-blur-md">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="flex items-center gap-2 text-lg font-semibold text-white">
@@ -116,22 +116,39 @@ export function SeriesRelationsPanel({
             </button>
           )}
           {!selectedTarget && relationSearch.trim() && (
-            <div className="absolute left-0 right-0 top-full z-30 mt-2 max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-gray-950 shadow-2xl">
+            <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-80 overflow-y-auto rounded-xl border border-white/10 bg-gray-950 shadow-2xl">
               {isLoadingCandidates ? (
-                <div className="px-3 py-3 text-sm text-gray-500">{t('common.loading')}</div>
+                <div className="px-4 py-4 text-sm text-gray-500">{t('common.loading')}</div>
               ) : candidates.length > 0 ? (
-                candidates.map((candidate) => (
-                  <button
-                    key={candidate.id}
-                    onClick={() => onSelectTarget(candidate.id)}
-                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-gray-100 hover:bg-komgaPrimary/10"
-                  >
-                    <span className="truncate">{candidate.title?.Valid ? candidate.title.String : candidate.name}</span>
-                    <span className="shrink-0 text-xs text-gray-500">#{candidate.id}</span>
-                  </button>
-                ))
+                candidates.map((candidate) => {
+                  const displayTitle = candidate.title?.Valid ? candidate.title.String : candidate.name;
+                  const hasAlias = candidate.title?.Valid && candidate.title.String !== candidate.name;
+                  const coverUrl = candidate.cover_path?.Valid ? `/api/thumbnails/${candidate.cover_path.String}` : null;
+                  return (
+                    <button
+                      key={candidate.id}
+                      onClick={() => onSelectTarget(candidate.id)}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-komgaPrimary/10 border-b border-white/5 last:border-b-0"
+                    >
+                      <div className="h-12 w-9 shrink-0 overflow-hidden rounded-md border border-white/10 bg-gray-900">
+                        {coverUrl ? (
+                          <img src={coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-gray-700 text-xs">?</div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-gray-100">{displayTitle}</p>
+                        {hasAlias && (
+                          <p className="truncate text-xs text-gray-500">{candidate.name}</p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-xs text-gray-600">#{candidate.id}</span>
+                    </button>
+                  );
+                })
               ) : (
-                <div className="px-3 py-3 text-sm text-gray-500">{t('series.relations.noCandidates')}</div>
+                <div className="px-4 py-4 text-sm text-gray-500">{t('series.relations.noCandidates')}</div>
               )}
             </div>
           )}
