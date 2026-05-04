@@ -15,7 +15,7 @@ import { RecentSeriesStrip } from './home/RecentSeriesStrip';
 import type { AIRecommendation, NamedOption, SavedSmartFilter, Series } from './home/types';
 import { useI18n } from '../i18n/LocaleProvider';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
-import type { SearchResult } from './series-detail/types';
+import type { MetaTag, SearchResult, Series as DetailSeries } from './series-detail/types';
 
 const DEFAULT_PAGE_SIZE = 30;
 
@@ -172,6 +172,9 @@ export default function Home() {
     const [scrapeOffset, setScrapeOffset] = useState(0);
     const [isScraping, setIsScraping] = useState(false);
     const [scrapingSeries, setScrapingSeries] = useState<Series | null>(null);
+    const [scrapeSeriesDetail, setScrapeSeriesDetail] = useState<DetailSeries | null>(null);
+    const [scrapeCurrentTags, setScrapeCurrentTags] = useState<MetaTag[]>([]);
+    const [scrapeLockedFields, setScrapeLockedFields] = useState<Set<string>>(new Set());
     const [scrapeMenuOpenId, setScrapeMenuOpenId] = useState<number | null>(null);
 
     const showToast = (text: string, type: 'success' | 'error') => {
@@ -718,7 +721,24 @@ export default function Home() {
             setScrapeModalSearchQuery(q);
 
             try {
-                const res = await axios.get(`/api/series/${s.id}/scrape-search?provider=${providerKey}`);
+                // Fetch tags, series info and scrape results in parallel
+                const [res, tagsRes, infoRes] = await Promise.all([
+                    axios.get(`/api/series/${s.id}/scrape-search?provider=${providerKey}`),
+                    axios.get(`/api/series/${s.id}/tags`).catch(() => ({ data: [] })),
+                    axios.get(`/api/series/info/${s.id}`).catch(() => ({ data: null })),
+                ]);
+                setScrapeCurrentTags(tagsRes.data || []);
+                // Use full series info for accurate field comparison (publisher, status, etc.)
+                const seriesInfo = infoRes.data;
+                if (seriesInfo) {
+                    setScrapeSeriesDetail(seriesInfo as DetailSeries);
+                }
+                // Parse locked_fields from series info
+                if (seriesInfo?.locked_fields?.Valid && seriesInfo.locked_fields.String) {
+                    setScrapeLockedFields(new Set(seriesInfo.locked_fields.String.split(',')));
+                } else {
+                    setScrapeLockedFields(new Set());
+                }
                 setShowScrapeModal(true);
 
                 if (res.data.results && res.data.results.length > 0) {
@@ -1488,17 +1508,20 @@ export default function Home() {
                     open={showScrapeModal}
                     onClose={() => {
                         setShowScrapeModal(false);
+                        setScrapeSearchResults([]);
+                        setSelectedScrapeResult(null);
                         setScrapingSeries(null);
+                        setScrapeSeriesDetail(null);
                     }}
-                    providerLabel="Bangumi"
+                    providerLabel={scrapeProvider === 'bangumi' ? 'Bangumi' : scrapeProvider}
                     modalSearchQuery={scrapeModalSearchQuery}
                     isScraping={isScraping}
                     searchResults={scrapeSearchResults}
                     currentOffset={scrapeOffset}
                     searchTotal={scrapeTotal}
-                    currentSeries={scrapingSeries as any}
-                    currentTags={[]}
-                    lockedFields={new Set()}
+                    currentSeries={scrapeSeriesDetail || scrapingSeries as any}
+                    currentTags={scrapeCurrentTags}
+                    lockedFields={scrapeLockedFields}
                     selectedResult={selectedScrapeResult}
                     onSearchQueryChange={setScrapeModalSearchQuery}
                     onReSearch={handleScrapeModalReSearch}

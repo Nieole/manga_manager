@@ -85,12 +85,29 @@ export function SeriesSearchModal({
     {
       key: 'tags',
       label: t('series.searchModal.field.tags'),
-      currentValue: currentTags.length > 0 ? currentTags.map((tag) => tag.name).join(' / ') : t('series.searchModal.notFilled'),
-      nextValue: selectedResult.Tags?.length ? selectedResult.Tags.join(' / ') : t('series.searchModal.notProvided'),
+      currentValue: currentTags.length > 0 ? [...currentTags].map((tag) => tag.name).sort((a, b) => a.localeCompare(b)).join(' / ') : t('series.searchModal.notFilled'),
+      nextValue: selectedResult.Tags?.length ? [...selectedResult.Tags].sort((a, b) => a.localeCompare(b)).join(' / ') : t('series.searchModal.notProvided'),
     },
   ] : [];
 
-  const changedFieldCount = previewFields.filter((field) => field.currentValue !== field.nextValue && field.nextValue !== t('series.searchModal.notProvided')).length;
+  // Tag comparison uses sorted sets for order-independent matching
+  const areTagsEqual = (current: MetaTag[], next: string[] | undefined): boolean => {
+    if (!next?.length && !current.length) return true;
+    if (!next?.length || !current.length) return false;
+    const currentSet = new Set(current.map((t) => t.name.toLowerCase()));
+    const nextSet = new Set(next.map((t) => t.toLowerCase()));
+    if (currentSet.size !== nextSet.size) return false;
+    for (const tag of currentSet) {
+      if (!nextSet.has(tag)) return false;
+    }
+    return true;
+  };
+
+  const changedFieldCount = previewFields.filter((field) => {
+    if (field.nextValue === t('series.searchModal.notProvided')) return false;
+    if (field.key === 'tags') return !areTagsEqual(currentTags, selectedResult?.Tags);
+    return field.currentValue !== field.nextValue;
+  }).length;
 
   return (
     <ModalShell
@@ -297,7 +314,9 @@ export function SeriesSearchModal({
                     <div className="space-y-3">
                       {previewFields.map((field) => {
                         const locked = lockedFields.has(field.key);
-                        const changed = field.currentValue !== field.nextValue && field.nextValue !== t('series.searchModal.notProvided');
+                        const changed = field.key === 'tags'
+                          ? (field.nextValue !== t('series.searchModal.notProvided') && !areTagsEqual(currentTags, selectedResult?.Tags))
+                          : (field.currentValue !== field.nextValue && field.nextValue !== t('series.searchModal.notProvided'));
                         return (
                           <div key={field.key} className={`rounded-xl border p-4 ${changed ? 'border-komgaPrimary/20 bg-komgaPrimary/5' : 'border-gray-800 bg-black/10'}`}>
                             <div className="flex items-center justify-between gap-3 mb-3">
