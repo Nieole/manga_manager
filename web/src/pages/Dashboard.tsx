@@ -5,12 +5,19 @@ import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskTypeLabel } from '../i18n/task';
 
+interface LibrarySize {
+    library_id: number;
+    library_name: string;
+    total_size: number;
+}
+
 interface DashboardStats {
     total_series: number;
     total_books: number;
     read_books: number;
     total_pages: number;
     active_days_7: number;
+    library_sizes: LibrarySize[];
 }
 
 interface ActivityDay {
@@ -89,7 +96,7 @@ export default function Dashboard() {
             axios.get('/api/libraries').catch(() => ({ data: [] })),
             axios.get('/api/system/tasks').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
-            axios.get('/api/stats/activity-heatmap?weeks=16').catch(() => ({ data: [] })),
+            axios.get('/api/stats/activity-heatmap?weeks=52').catch(() => ({ data: [] })),
             axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, match_mode: 'binary_hash', path_ignore_extension: false, path_match_depth: 2, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } }))
         ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes, koreaderRes]) => {
             if (!active) return;
@@ -355,13 +362,13 @@ export default function Dashboard() {
                 </div>
             )}
 
-            {/* 阅读进度环形图 + GitHub 风格活跃热力图 */}
+            {/* 阅读进度、存储空间与热力图 */}
             {stats && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* 完读进度环 */}
-                    <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 flex items-center gap-6">
+                    <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 flex items-center gap-6 h-full">
                         <div className="relative w-28 h-28 shrink-0">
-                            <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                            <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90 drop-shadow-xl">
                                 <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-800" />
                                 <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" strokeWidth="2.5"
                                     strokeDasharray={`${readPercent} ${100 - readPercent}`}
@@ -384,8 +391,13 @@ export default function Dashboard() {
                         </div>
                     </div>
 
+                    {/* 物理存储占用图 */}
+                    <StoragePieChart librarySizes={stats.library_sizes} />
+
                     {/* GitHub 风格活跃热力图 */}
-                    <ActivityHeatmap data={heatmapData} activeDays7={stats.active_days_7} />
+                    <div className="lg:col-span-2">
+                        <ActivityHeatmap data={heatmapData} activeDays7={stats.active_days_7} />
+                    </div>
                 </div>
             )}
 
@@ -561,7 +573,7 @@ function MiniStat({ label, value, accent }: { label: string; value: string | num
 // GitHub 风格活跃热力图组件
 function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDays7: number }) {
     const { locale, t, formatNumber } = useI18n();
-    const WEEKS = 16;
+    const WEEKS = 52;
     const TOTAL_DAYS = WEEKS * 7;
 
     // 构建日期 → 页数的映射
@@ -751,6 +763,130 @@ function OnboardingCard({
             >
                 {actionLabel}
             </button>
+        </div>
+    );
+}
+
+// 格式化字节数
+function formatBytes(bytes: number, decimals = 2) {
+    if (!+bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+// 存储空间环形图组件
+function StoragePieChart({ librarySizes }: { librarySizes: LibrarySize[] }) {
+    const { t } = useI18n();
+    const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+
+    if (!librarySizes || librarySizes.length === 0) {
+        return (
+            <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 flex flex-col items-center justify-center h-full min-h-[160px]">
+                <p className="text-gray-500 text-sm">{t('dashboard.storage.empty')}</p>
+            </div>
+        );
+    }
+
+    const totalSize = librarySizes.reduce((sum, ls) => sum + ls.total_size, 0);
+
+    // 科技感配色方案
+    const colors = [
+        '#8b5cf6', // purple-500
+        '#3b82f6', // blue-500
+        '#10b981', // emerald-500
+        '#f59e0b', // amber-500
+        '#ef4444', // red-500
+        '#06b6d4', // cyan-500
+        '#ec4899', // pink-500
+    ];
+
+    // 计算 SVG 环形的分段
+    let currentAngle = 0;
+    const segments = librarySizes.map((ls, index) => {
+        const percentage = totalSize > 0 ? (ls.total_size / totalSize) : 0;
+        const length = percentage * 100;
+        const gap = 100 - length;
+        const strokeDasharray = `${length} ${gap}`;
+        const strokeDashoffset = -currentAngle;
+        currentAngle += length;
+
+        return {
+            ...ls,
+            color: colors[index % colors.length],
+            percentage,
+            strokeDasharray,
+            strokeDashoffset,
+        };
+    });
+
+    return (
+        <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 relative h-full">
+            <h3 className="text-lg font-semibold text-white mb-4">{t('dashboard.storage.title')}</h3>
+
+            <div className="flex flex-col sm:flex-row items-center gap-6">
+                {/* 环形图 */}
+                <div className="relative w-28 h-28 shrink-0">
+                    <svg viewBox="0 0 42 42" className="w-full h-full -rotate-90 drop-shadow-xl overflow-visible">
+                        {segments.map((segment) => (
+                            <circle
+                                key={segment.library_id}
+                                cx="21" cy="21" r="15.91549430918954"
+                                fill="none"
+                                stroke={segment.color}
+                                strokeWidth="4.5"
+                                strokeDasharray={segment.strokeDasharray}
+                                strokeDashoffset={segment.strokeDashoffset}
+                                className="transition-all duration-1000 ease-out cursor-pointer hover:stroke-[5.5px]"
+                                onMouseEnter={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setTooltip({
+                                        text: `${segment.library_name}: ${formatBytes(segment.total_size)} (${(segment.percentage * 100).toFixed(1)}%)`,
+                                        x: rect.left + rect.width / 2,
+                                        y: rect.top - 10
+                                    });
+                                }}
+                                onMouseLeave={() => setTooltip(null)}
+                            />
+                        ))}
+                    </svg>
+                    {/* 中心总容量 */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-[9px] text-gray-400 tracking-wide uppercase">{t('dashboard.storage.total')}</span>
+                        <span className="text-xs font-bold text-white tracking-tight mt-0.5">{formatBytes(totalSize, 1)}</span>
+                    </div>
+                </div>
+
+                {/* 图例列表 */}
+                <div className="flex-1 w-full space-y-2.5">
+                    {segments.slice(0, 5).map((segment) => (
+                        <div key={segment.library_id} className="flex items-center justify-between group">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: segment.color }} />
+                                <span className="text-xs text-gray-300 truncate group-hover:text-white transition-colors">{segment.library_name}</span>
+                            </div>
+                            <span className="text-xs font-medium text-gray-400 shrink-0 ml-3 group-hover:text-white transition-colors">{formatBytes(segment.total_size)}</span>
+                        </div>
+                    ))}
+                    {segments.length > 5 && (
+                        <div className="text-xs text-gray-500 mt-2 italic">
+                            + {t('dashboard.storage.others', { count: segments.length - 5 })} {t('dashboard.storage.more')}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Tooltip */}
+            {tooltip && (
+                <div
+                    className="fixed z-50 px-3 py-2 bg-gray-900/95 border border-gray-700 rounded-lg text-xs text-white shadow-2xl pointer-events-none whitespace-nowrap backdrop-blur-sm"
+                    style={{ left: tooltip.x, top: tooltip.y, transform: 'translate(-50%, -100%)' }}
+                >
+                    {tooltip.text}
+                </div>
+            )}
         </div>
     );
 }

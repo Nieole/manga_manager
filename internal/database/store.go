@@ -53,12 +53,19 @@ type Store interface {
 	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
 }
 
+type LibrarySize struct {
+	LibraryID   int64  `json:"library_id"`
+	LibraryName string `json:"library_name"`
+	TotalSize   int64  `json:"total_size"`
+}
+
 type DashboardStats struct {
-	TotalSeries int `json:"total_series"`
-	TotalBooks  int `json:"total_books"`
-	ReadBooks   int `json:"read_books"`
-	TotalPages  int `json:"total_pages"`
-	ActiveDays7 int `json:"active_days_7"` // 最近7天有阅读行为的天数
+	TotalSeries  int           `json:"total_series"`
+	TotalBooks   int           `json:"total_books"`
+	ReadBooks    int           `json:"read_books"`
+	TotalPages   int           `json:"total_pages"`
+	ActiveDays7  int           `json:"active_days_7"` // 最近7天有阅读行为的天数
+	LibrarySizes []LibrarySize `json:"library_sizes"`
 }
 
 type SearchSeriesPagedRow struct {
@@ -521,6 +528,27 @@ func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 	if err != nil {
 		return nil, err
 	}
+
+	sizeQuery := `
+		SELECT l.id, l.name, COALESCE(SUM(b.size), 0) as total_size
+		FROM libraries l
+		LEFT JOIN books b ON l.id = b.library_id
+		GROUP BY l.id, l.name
+		ORDER BY total_size DESC
+	`
+	rows, err := s.db.QueryContext(ctx, sizeQuery)
+	if err == nil {
+		defer rows.Close()
+		var sizes []LibrarySize
+		for rows.Next() {
+			var ls LibrarySize
+			if err := rows.Scan(&ls.LibraryID, &ls.LibraryName, &ls.TotalSize); err == nil {
+				sizes = append(sizes, ls)
+			}
+		}
+		stats.LibrarySizes = sizes
+	}
+
 	return &stats, nil
 }
 
