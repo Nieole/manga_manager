@@ -16,10 +16,55 @@ interface ReadingBookmark {
     updated_at: string;
 }
 
+interface NullableText {
+    Valid?: boolean;
+    String?: string;
+}
+
+interface NullableInt {
+    Valid?: boolean;
+    Int64?: number;
+}
+
+interface ReaderBookInfo {
+    id?: number;
+    name: string;
+    title?: NullableText;
+    volume?: string;
+    series_id?: number;
+    last_read_page?: NullableInt;
+}
+
+interface PageImageRequest {
+    promise: Promise<string>;
+    controller: AbortController;
+}
+
+interface ReaderBookCache {
+    pages?: Page[];
+    bookInfo?: ReaderBookInfo;
+    nextBookId?: number | null;
+    imageUrls: Map<string, string>;
+    imageRequests: Map<string, PageImageRequest>;
+    preloadedImageUrls: Set<string>;
+}
+
 function isReaderShortcutInput(target: EventTarget | null) {
     if (!(target instanceof HTMLElement)) return false;
     const tagName = target.tagName.toLowerCase();
     return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
+}
+
+function createReaderBookCache(): ReaderBookCache {
+    return {
+        imageUrls: new Map(),
+        imageRequests: new Map(),
+        preloadedImageUrls: new Set(),
+    };
+}
+
+function isIgnoredImageLoadError(err: unknown) {
+    return err instanceof DOMException && err.name === 'AbortError';
 }
 
 export default function BookReader() {
@@ -77,6 +122,10 @@ export default function BookReader() {
         tRef.current = t;
     }, [t]);
 
+    useEffect(() => {
+        currentBookIdRef.current = bookId ?? null;
+    }, [bookId]);
+
     // UI State
     const [showSettings, setShowSettings] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
@@ -97,9 +146,9 @@ export default function BookReader() {
     const [bookTitle, setBookTitle] = useState<string>('');
     const [bookVolume, setBookVolume] = useState<string>('');
     const pagesBookIdRef = useRef<string | null>(null);
-    const preloadedImageUrlsRef = useRef<Set<string>>(new Set());
-    const pageImageObjectUrlsRef = useRef<Map<string, string>>(new Map());
-    const pageImageRequestCacheRef = useRef<Map<string, Promise<string>>>(new Map());
+    const currentBookIdRef = useRef<string | null>(bookId ?? null);
+    const readerBookCacheRef = useRef<Map<string, ReaderBookCache>>(new Map());
+    const imageCacheGenerationRef = useRef(0);
 
     const handleBackToSeries = useCallback(() => {
         if (seriesIdRef.current) {
@@ -123,8 +172,26 @@ export default function BookReader() {
             .catch(err => console.error("Failed to update read progress", err));
     }, [bookId, loading]);
 
-    // 获取图像资源 URL（纯净无防抖，以保证跟前方预加载 Preloader 抓取下的缓存完全字面一致击穿 304）
-    const getImageUrl = useCallback((pageNum: number) => {
+    const imageOptionsKey = [
+        imageFilter,
+        w2xScale,
+        w2xNoise,
+        w2xFormat,
+        autoCrop ? 'crop' : 'no-crop',
+        readerImageFormat,
+        readerImageQuality,
+    ].join('|');
+
+    const getBookCache = useCallback((targetBookId: string) => {
+        let cache = readerBookCacheRef.current.get(targetBookId);
+        if (!cache) {
+            cache = createReaderBookCache();
+            readerBookCacheRef.current.set(targetBookId, cache);
+        }
+        return cache;
+    }, []);
+
+    const getImageUrlForBook = useCallback((targetBookId: string, pageNum: number) => {
         const params = new URLSearchParams();
         if (imageFilter && imageFilter !== 'none') {
             params.set('filter', imageFilter);
@@ -142,32 +209,71 @@ export default function BookReader() {
             params.set('q', String(readerImageQuality));
         }
         const query = params.toString();
-        return `/api/pages/${bookId}/${pageNum}${query ? `?${query}` : ''}`;
-    }, [bookId, imageFilter, w2xScale, w2xNoise, w2xFormat, autoCrop, readerImageFormat, readerImageQuality]);
+        return `/api/pages/${targetBookId}/${pageNum}${query ? `?${query}` : ''}`;
+    }, [imageFilter, w2xScale, w2xNoise, w2xFormat, autoCrop, readerImageFormat, readerImageQuality]);
 
-    const clearPageImageCache = useCallback(() => {
-        pageImageRequestCacheRef.current.clear();
-        preloadedImageUrlsRef.current.clear();
-        pageImageObjectUrlsRef.current.forEach((objectUrl) => {
+    const getImageUrl = useCallback((pageNum: number) => {
+        return getImageUrlForBook(bookId ?? '', pageNum);
+    }, [bookId, getImageUrlForBook]);
+
+    const clearImagesInCache = useCallback((cache: ReaderBookCache) => {
+        cache.imageRequests.forEach(({ controller }) => controller.abort());
+        cache.imageRequests.clear();
+        cache.preloadedImageUrls.clear();
+        cache.imageUrls.forEach((objectUrl) => {
             URL.revokeObjectURL(objectUrl);
         });
-        pageImageObjectUrlsRef.current.clear();
-        setCachedPageImageUrls({});
+        cache.imageUrls.clear();
     }, []);
 
-    const ensurePageImageLoaded = useCallback((pageNum: number) => {
-        const requestUrl = getImageUrl(pageNum);
-        const cachedObjectUrl = pageImageObjectUrlsRef.current.get(requestUrl);
+    const clearAllPageImageCaches = useCallback(() => {
+        imageCacheGenerationRef.current += 1;
+        readerBookCacheRef.current.forEach((cache) => clearImagesInCache(cache));
+        setCachedPageImageUrls({});
+    }, [clearImagesInCache]);
+
+    const cachedImageUrlsForBook = useCallback((targetBookId: string, bookPages: Page[]) => {
+        const cache = readerBookCacheRef.current.get(targetBookId);
+        if (!cache) return {};
+        const cachedUrls: Record<number, string> = {};
+        bookPages.forEach((page) => {
+            const objectUrl = cache.imageUrls.get(getImageUrlForBook(targetBookId, page.number));
+            if (objectUrl) {
+                cachedUrls[page.number] = objectUrl;
+            }
+        });
+        return cachedUrls;
+    }, [getImageUrlForBook]);
+
+    const retainBookCaches = useCallback((bookIds: Array<string | null | undefined>) => {
+        const keep = new Set(bookIds.filter((id): id is string => Boolean(id)));
+        readerBookCacheRef.current.forEach((cache, cacheBookId) => {
+            if (!keep.has(cacheBookId)) {
+                clearImagesInCache(cache);
+                readerBookCacheRef.current.delete(cacheBookId);
+            }
+        });
+    }, [clearImagesInCache]);
+
+    const ensurePageImageLoaded = useCallback((targetBookId: string, pageNum: number) => {
+        const cache = getBookCache(targetBookId);
+        const requestUrl = getImageUrlForBook(targetBookId, pageNum);
+        const cachedObjectUrl = cache.imageUrls.get(requestUrl);
         if (cachedObjectUrl) {
+            if (targetBookId === currentBookIdRef.current) {
+                setCachedPageImageUrls((prev) => prev[pageNum] ? prev : { ...prev, [pageNum]: cachedObjectUrl });
+            }
             return Promise.resolve(cachedObjectUrl);
         }
 
-        const inFlight = pageImageRequestCacheRef.current.get(requestUrl);
+        const inFlight = cache.imageRequests.get(requestUrl);
         if (inFlight) {
-            return inFlight;
+            return inFlight.promise;
         }
 
-        const request = fetch(requestUrl)
+        const generation = imageCacheGenerationRef.current;
+        const controller = new AbortController();
+        const request = fetch(requestUrl, { signal: controller.signal })
             .then((response) => {
                 if (!response.ok) {
                     throw new Error(`Failed to load page ${pageNum}: ${response.status}`);
@@ -176,22 +282,28 @@ export default function BookReader() {
             })
             .then((blob) => {
                 const objectUrl = URL.createObjectURL(blob);
-                pageImageObjectUrlsRef.current.set(requestUrl, objectUrl);
-                setCachedPageImageUrls((prev) => {
-                    if (prev[pageNum] === objectUrl) {
-                        return prev;
-                    }
-                    return { ...prev, [pageNum]: objectUrl };
-                });
+                if (generation !== imageCacheGenerationRef.current || !readerBookCacheRef.current.has(targetBookId)) {
+                    URL.revokeObjectURL(objectUrl);
+                    throw new DOMException('Stale reader image request', 'AbortError');
+                }
+                cache.imageUrls.set(requestUrl, objectUrl);
+                if (targetBookId === currentBookIdRef.current) {
+                    setCachedPageImageUrls((prev) => {
+                        if (prev[pageNum] === objectUrl) {
+                            return prev;
+                        }
+                        return { ...prev, [pageNum]: objectUrl };
+                    });
+                }
                 return objectUrl;
             })
             .finally(() => {
-                pageImageRequestCacheRef.current.delete(requestUrl);
+                cache.imageRequests.delete(requestUrl);
             });
 
-        pageImageRequestCacheRef.current.set(requestUrl, request);
+        cache.imageRequests.set(requestUrl, { promise: request, controller });
         return request;
-    }, [getImageUrl]);
+    }, [getBookCache, getImageUrlForBook]);
 
     const isPagedImageReady = useCallback((pageNum: number) => {
         return Boolean(cachedPageImageUrls[pageNum]);
@@ -200,10 +312,16 @@ export default function BookReader() {
     const loadBookmarks = useCallback(() => {
         if (!bookId) return Promise.resolve();
         return axios.get<ReadingBookmark[]>(`/api/books/${bookId}/bookmarks`)
-            .then((res) => setBookmarks(res.data || []))
+            .then((res) => {
+                if (bookId === currentBookIdRef.current) {
+                    setBookmarks(res.data || []);
+                }
+            })
             .catch((err) => {
                 console.error('Failed to load reading bookmarks', err);
-                setBookmarks([]);
+                if (bookId === currentBookIdRef.current) {
+                    setBookmarks([]);
+                }
             });
     }, [bookId]);
 
@@ -249,6 +367,48 @@ export default function BookReader() {
 
     const currentBookmark = bookmarks.find((item) => item.page === currentPageNumber) || null;
 
+    const fetchPagesForBook = useCallback((targetBookId: string) => {
+        const cache = getBookCache(targetBookId);
+        if (cache.pages) {
+            return Promise.resolve(cache.pages);
+        }
+        return axios.get<Page[]>(`/api/pages/${targetBookId}`).then((res) => {
+            const sorted = [...res.data].sort((a, b) => a.number - b.number);
+            cache.pages = sorted;
+            return sorted;
+        });
+    }, [getBookCache]);
+
+    const fetchBookInfoForBook = useCallback((targetBookId: string) => {
+        const cache = getBookCache(targetBookId);
+        if (cache.bookInfo) {
+            return Promise.resolve(cache.bookInfo);
+        }
+        return axios.get<ReaderBookInfo>(`/api/book-info/${targetBookId}`).then((res) => {
+            cache.bookInfo = res.data;
+            return res.data;
+        });
+    }, [getBookCache]);
+
+    const fetchNextBookIdForBook = useCallback((targetBookId: string) => {
+        const cache = getBookCache(targetBookId);
+        if (cache.nextBookId !== undefined) {
+            return Promise.resolve(cache.nextBookId);
+        }
+        return axios.get<ReaderBookInfo>(`/api/book-next/${targetBookId}`)
+            .then((res) => {
+                cache.nextBookId = res.data.id ?? null;
+                return cache.nextBookId;
+            })
+            .catch((err) => {
+                if (!axios.isAxiosError(err) || err.response?.status !== 404) {
+                    console.error('Failed to load next book', err);
+                }
+                cache.nextBookId = null;
+                return null;
+            });
+    }, [getBookCache]);
+
     useEffect(() => {
         void loadBookmarks();
     }, [loadBookmarks]);
@@ -259,40 +419,49 @@ export default function BookReader() {
 
     useEffect(() => {
         if (!bookId) return;
+        const targetBookId = bookId;
+        let cancelled = false;
 
         // 切换书籍时重置所有运行时状态
-        clearPageImageCache();
         setPages([]);
+        setCachedPageImageUrls({});
         setBookmarks([]);
         setBookmarkNote('');
         setLoading(true);
         setLoadError(null);
         setCurrentPageIndex(0);
         setNextBookId(null);
+        nextBookIdRef.current = null;
         setBookTitle('');
+        setBookVolume('');
+        retainBookCaches([targetBookId]);
 
         Promise.all([
-            axios.get(`/api/pages/${bookId}`),
-            axios.get(`/api/book-info/${bookId}`)
-        ]).then(([pagesRes, infoRes]) => {
-            const sorted = pagesRes.data.sort((a: Page, b: Page) => a.number - b.number);
+            fetchPagesForBook(targetBookId),
+            fetchBookInfoForBook(targetBookId)
+        ]).then(([sorted, bookInfo]) => {
+            if (cancelled || currentBookIdRef.current !== targetBookId) return;
             if (sorted.length === 0) {
                 setLoadError(tRef.current('reader.error.noPages'));
                 setLoading(false);
                 return;
             }
             setPages(sorted);
-            pagesBookIdRef.current = bookId; // 记录这批 pages 属于哪个 bookId
+            setCachedPageImageUrls(cachedImageUrlsForBook(targetBookId, sorted));
+            pagesBookIdRef.current = targetBookId; // 记录这批 pages 属于哪个 bookId
 
             // 恢复上次阅读进度
-            const lastPage = infoRes.data.last_read_page?.Valid ? infoRes.data.last_read_page.Int64 : 1;
-            seriesIdRef.current = infoRes.data.series_id || null;
-            setBookTitle(infoRes.data.title?.Valid ? infoRes.data.title.String : infoRes.data.name);
-            setBookVolume(infoRes.data.volume || '');
+            const lastPage = bookInfo.last_read_page?.Valid ? bookInfo.last_read_page.Int64 ?? 1 : 1;
+            seriesIdRef.current = bookInfo.series_id || null;
+            setBookTitle(bookInfo.title?.Valid ? bookInfo.title.String ?? bookInfo.name : bookInfo.name);
+            setBookVolume(bookInfo.volume || '');
             // 获取下一本
-            axios.get(`/api/book-next/${bookId}`)
-                .then(res => { setNextBookId(res.data.id); nextBookIdRef.current = res.data.id; })
-                .catch(() => { setNextBookId(null); nextBookIdRef.current = null; });
+            fetchNextBookIdForBook(targetBookId).then((nextId) => {
+                if (cancelled || currentBookIdRef.current !== targetBookId) return;
+                setNextBookId(nextId);
+                nextBookIdRef.current = nextId;
+                retainBookCaches([targetBookId, nextId ? String(nextId) : null]);
+            });
 
             if (lastPage > 0) {
                 const safePage = Math.min(lastPage, sorted.length > 0 ? sorted.length : lastPage);
@@ -313,6 +482,7 @@ export default function BookReader() {
 
             setLoading(false);
         }).catch(err => {
+            if (cancelled || currentBookIdRef.current !== targetBookId) return;
             console.error("Failed to load book data", err);
             const message = axios.isAxiosError(err)
                 ? err.response?.data?.error || err.message || tRef.current('reader.error.loadFailed')
@@ -320,47 +490,103 @@ export default function BookReader() {
             setLoadError(message);
             setLoading(false);
         });
-    }, [bookId, clearPageImageCache]);
+        return () => {
+            cancelled = true;
+        };
+    }, [bookId, cachedImageUrlsForBook, fetchBookInfoForBook, fetchNextBookIdForBook, fetchPagesForBook, retainBookCaches]);
 
     // 当书籍或图像处理参数变化时，预加载去重缓存需要重新开始计算。
     useEffect(() => {
-        clearPageImageCache();
-    }, [bookId, getImageUrl, clearPageImageCache]);
+        clearAllPageImageCaches();
+    }, [imageOptionsKey, clearAllPageImageCaches]);
+
+    useEffect(() => {
+        return () => clearAllPageImageCaches();
+    }, [clearAllPageImageCaches]);
 
     // 预加载队列系统 (向后驱取指定页数放入浏览器缓存池) - 增加防抖延迟以防连续翻页/拖拽触发洪峰
     useEffect(() => {
-        if (!pages.length || preloadCount <= 0 || loading) return;
+        if (!bookId || !pages.length || preloadCount <= 0 || loading) return;
 
         const timer = setTimeout(() => {
+            const cache = getBookCache(bookId);
             const startIndex = currentPageIndex + (readMode === 'paged' && doublePage ? 2 : 1);
             const endIndex = Math.min(startIndex + preloadCount, pages.length);
             for (let i = startIndex; i < endIndex; i++) {
-                const imageUrl = getImageUrl(pages[i].number);
-                if (preloadedImageUrlsRef.current.has(imageUrl)) {
+                const imageUrl = getImageUrlForBook(bookId, pages[i].number);
+                if (cache.preloadedImageUrls.has(imageUrl)) {
                     continue;
                 }
-                preloadedImageUrlsRef.current.add(imageUrl);
-                ensurePageImageLoaded(pages[i].number).catch((err) => {
-                    console.error('Failed to preload reader page image', err);
-                    preloadedImageUrlsRef.current.delete(imageUrl);
+                cache.preloadedImageUrls.add(imageUrl);
+                ensurePageImageLoaded(bookId, pages[i].number).catch((err) => {
+                    if (!isIgnoredImageLoadError(err)) {
+                        console.error('Failed to preload reader page image', err);
+                    }
+                    cache.preloadedImageUrls.delete(imageUrl);
                 });
             }
         }, 300);
 
         return () => clearTimeout(timer);
-    }, [currentPageIndex, pages, preloadCount, readMode, doublePage, loading, getImageUrl, ensurePageImageLoaded]);
+    }, [bookId, currentPageIndex, pages, preloadCount, readMode, doublePage, loading, getBookCache, getImageUrlForBook, ensurePageImageLoaded]);
 
     useEffect(() => {
-        if (loading || pages.length === 0 || !pages[currentPageIndex]) return;
-        ensurePageImageLoaded(pages[currentPageIndex].number).catch((err) => {
-            console.error('Failed to warm current reader page image', err);
+        if (!bookId || loading || pages.length === 0 || !pages[currentPageIndex]) return;
+        ensurePageImageLoaded(bookId, pages[currentPageIndex].number).catch((err) => {
+            if (!isIgnoredImageLoadError(err)) {
+                console.error('Failed to warm current reader page image', err);
+            }
         });
         if (readMode === 'paged' && doublePage && pages[currentPageIndex+1]) {
-            ensurePageImageLoaded(pages[currentPageIndex + 1].number).catch((err) => {
-                console.error('Failed to warm secondary reader page image', err);
+            ensurePageImageLoaded(bookId, pages[currentPageIndex + 1].number).catch((err) => {
+                if (!isIgnoredImageLoadError(err)) {
+                    console.error('Failed to warm secondary reader page image', err);
+                }
             });
         }
-    }, [loading, pages, currentPageIndex, readMode, doublePage, ensurePageImageLoaded]);
+    }, [bookId, loading, pages, currentPageIndex, readMode, doublePage, ensurePageImageLoaded]);
+
+    useEffect(() => {
+        if (!bookId || loading || pages.length === 0 || !nextBookId) return;
+        if (preloadCount <= 0) return;
+        const visiblePageCount = readMode === 'paged' && doublePage ? 2 : 1;
+        const remainingPages = Math.max(0, pages.length - (currentPageIndex + visiblePageCount));
+        if (remainingPages > preloadCount) return;
+
+        const nextBookIdString = String(nextBookId);
+        let cancelled = false;
+
+        Promise.all([
+            fetchPagesForBook(nextBookIdString),
+            fetchBookInfoForBook(nextBookIdString),
+        ]).then(([nextPages]) => {
+            if (cancelled) return;
+            retainBookCaches([bookId, nextBookIdString]);
+
+            const nextCache = getBookCache(nextBookIdString);
+            nextPages.slice(0, preloadCount).forEach((page) => {
+                const imageUrl = getImageUrlForBook(nextBookIdString, page.number);
+                if (nextCache.preloadedImageUrls.has(imageUrl)) {
+                    return;
+                }
+                nextCache.preloadedImageUrls.add(imageUrl);
+                ensurePageImageLoaded(nextBookIdString, page.number).catch((err) => {
+                    if (!isIgnoredImageLoadError(err)) {
+                        console.error('Failed to preload next book reader page image', err);
+                    }
+                    nextCache.preloadedImageUrls.delete(imageUrl);
+                });
+            });
+        }).catch((err) => {
+            if (!cancelled) {
+                console.error('Failed to warm next reader book', err);
+            }
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [bookId, currentPageIndex, doublePage, fetchBookInfoForBook, fetchPagesForBook, getBookCache, getImageUrlForBook, ensurePageImageLoaded, loading, nextBookId, pages.length, preloadCount, readMode, retainBookCaches]);
 
     // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)
     useEffect(() => {
