@@ -131,7 +131,6 @@ export default function BookReader() {
     const [showHelp, setShowHelp] = useState(false);
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
-    const currentPageNumber = pages[currentPageIndex]?.number ?? currentPageIndex + 1;
     const [bookmarks, setBookmarks] = useState<ReadingBookmark[]>([]);
     const [bookmarkNote, setBookmarkNote] = useState('');
     const [savingBookmark, setSavingBookmark] = useState(false);
@@ -145,10 +144,15 @@ export default function BookReader() {
     const nextBookIdRef = useRef<number | null>(null);
     const [bookTitle, setBookTitle] = useState<string>('');
     const [bookVolume, setBookVolume] = useState<string>('');
+    const [pagesBookId, setPagesBookId] = useState<string | null>(null);
     const pagesBookIdRef = useRef<string | null>(null);
     const currentBookIdRef = useRef<string | null>(bookId ?? null);
     const readerBookCacheRef = useRef<Map<string, ReaderBookCache>>(new Map());
     const imageCacheGenerationRef = useRef(0);
+    const pagesBelongToCurrentBook = Boolean(bookId && bookId === pagesBookId);
+    const activePages = pagesBelongToCurrentBook ? pages : [];
+    const readerLoading = loading || Boolean(bookId && !pagesBelongToCurrentBook);
+    const currentPageNumber = activePages[currentPageIndex]?.number ?? currentPageIndex + 1;
 
     const handleBackToSeries = useCallback(() => {
         if (seriesIdRef.current) {
@@ -326,7 +330,7 @@ export default function BookReader() {
     }, [bookId]);
 
     const jumpToPage = useCallback((pageNumber: number) => {
-        const targetIndex = Math.max(0, Math.min(pages.length - 1, pageNumber - 1));
+        const targetIndex = Math.max(0, Math.min(activePages.length - 1, pageNumber - 1));
         setSliderValue(targetIndex + 1);
         if (readModeRef.current === 'paged') {
             setCurrentPageIndex(targetIndex);
@@ -336,10 +340,10 @@ export default function BookReader() {
         if (targetImg) {
             targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
         }
-    }, [pages.length]);
+    }, [activePages.length]);
 
     const handleSaveBookmark = useCallback(() => {
-        if (!bookId || pages.length === 0) return;
+        if (!bookId || activePages.length === 0) return;
         setSavingBookmark(true);
         axios.post<ReadingBookmark>(`/api/books/${bookId}/bookmarks`, {
             page: currentPageNumber,
@@ -356,7 +360,7 @@ export default function BookReader() {
         }).finally(() => {
             setSavingBookmark(false);
         });
-    }, [bookId, bookmarkNote, currentPageNumber, pages.length]);
+    }, [activePages.length, bookId, bookmarkNote, currentPageNumber]);
 
     const handleDeleteBookmark = useCallback((bookmark: ReadingBookmark) => {
         if (!bookId) return;
@@ -423,6 +427,8 @@ export default function BookReader() {
         let cancelled = false;
 
         // 切换书籍时重置所有运行时状态
+        setPagesBookId(null);
+        pagesBookIdRef.current = null;
         setPages([]);
         setCachedPageImageUrls({});
         setBookmarks([]);
@@ -448,6 +454,7 @@ export default function BookReader() {
             }
             setPages(sorted);
             setCachedPageImageUrls(cachedImageUrlsForBook(targetBookId, sorted));
+            setPagesBookId(targetBookId);
             pagesBookIdRef.current = targetBookId; // 记录这批 pages 属于哪个 bookId
 
             // 恢复上次阅读进度
@@ -506,7 +513,7 @@ export default function BookReader() {
 
     // 预加载队列系统 (向后驱取指定页数放入浏览器缓存池) - 增加防抖延迟以防连续翻页/拖拽触发洪峰
     useEffect(() => {
-        if (!bookId || !pages.length || preloadCount <= 0 || loading) return;
+        if (!bookId || !pagesBelongToCurrentBook || !pages.length || preloadCount <= 0 || loading) return;
 
         const timer = setTimeout(() => {
             const cache = getBookCache(bookId);
@@ -528,10 +535,10 @@ export default function BookReader() {
         }, 300);
 
         return () => clearTimeout(timer);
-    }, [bookId, currentPageIndex, pages, preloadCount, readMode, doublePage, loading, getBookCache, getImageUrlForBook, ensurePageImageLoaded]);
+    }, [bookId, currentPageIndex, pages, pagesBelongToCurrentBook, preloadCount, readMode, doublePage, loading, getBookCache, getImageUrlForBook, ensurePageImageLoaded]);
 
     useEffect(() => {
-        if (!bookId || loading || pages.length === 0 || !pages[currentPageIndex]) return;
+        if (!bookId || !pagesBelongToCurrentBook || loading || pages.length === 0 || !pages[currentPageIndex]) return;
         ensurePageImageLoaded(bookId, pages[currentPageIndex].number).catch((err) => {
             if (!isIgnoredImageLoadError(err)) {
                 console.error('Failed to warm current reader page image', err);
@@ -544,14 +551,15 @@ export default function BookReader() {
                 }
             });
         }
-    }, [bookId, loading, pages, currentPageIndex, readMode, doublePage, ensurePageImageLoaded]);
+    }, [bookId, loading, pages, pagesBelongToCurrentBook, currentPageIndex, readMode, doublePage, ensurePageImageLoaded]);
 
     useEffect(() => {
-        if (!bookId || loading || pages.length === 0 || !nextBookId) return;
+        if (!bookId || !pagesBelongToCurrentBook || loading || pages.length === 0 || !nextBookId) return;
         if (preloadCount <= 0) return;
         const visiblePageCount = readMode === 'paged' && doublePage ? 2 : 1;
         const remainingPages = Math.max(0, pages.length - (currentPageIndex + visiblePageCount));
-        if (remainingPages > preloadCount) return;
+        const nextBookPreloadCount = preloadCount - remainingPages;
+        if (nextBookPreloadCount <= 0) return;
 
         const nextBookIdString = String(nextBookId);
         let cancelled = false;
@@ -564,7 +572,7 @@ export default function BookReader() {
             retainBookCaches([bookId, nextBookIdString]);
 
             const nextCache = getBookCache(nextBookIdString);
-            nextPages.slice(0, preloadCount).forEach((page) => {
+            nextPages.slice(0, nextBookPreloadCount).forEach((page) => {
                 const imageUrl = getImageUrlForBook(nextBookIdString, page.number);
                 if (nextCache.preloadedImageUrls.has(imageUrl)) {
                     return;
@@ -586,11 +594,11 @@ export default function BookReader() {
         return () => {
             cancelled = true;
         };
-    }, [bookId, currentPageIndex, doublePage, fetchBookInfoForBook, fetchPagesForBook, getBookCache, getImageUrlForBook, ensurePageImageLoaded, loading, nextBookId, pages.length, preloadCount, readMode, retainBookCaches]);
+    }, [bookId, currentPageIndex, doublePage, fetchBookInfoForBook, fetchPagesForBook, getBookCache, getImageUrlForBook, ensurePageImageLoaded, loading, nextBookId, pages.length, pagesBelongToCurrentBook, preloadCount, readMode, retainBookCaches]);
 
     // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)
     useEffect(() => {
-        if (loading || pages.length === 0 || readMode !== 'webtoon') return;
+        if (loading || !pagesBelongToCurrentBook || pages.length === 0 || readMode !== 'webtoon') return;
 
         let debounceTimeout: number;
         const options = {
@@ -625,17 +633,17 @@ export default function BookReader() {
             }
             clearTimeout(debounceTimeout);
         };
-    }, [loading, pages, readMode, updateProgress]);
+    }, [loading, pages, pagesBelongToCurrentBook, readMode, updateProgress]);
 
     // Paged 模式翻页延迟上报
     useEffect(() => {
-        if (!loading && readMode === 'paged' && pages.length > 0 && bookId === pagesBookIdRef.current) {
+        if (!loading && readMode === 'paged' && pagesBelongToCurrentBook && pages.length > 0 && pages[currentPageIndex]) {
             const timer = setTimeout(() => {
                 updateProgress(pages[currentPageIndex].number);
             }, 1000); // 停止翻页/拖拽 1s 后上报
             return () => clearTimeout(timer);
         }
-    }, [currentPageIndex, readMode, pages, updateProgress, loading, bookId]);
+    }, [currentPageIndex, readMode, pages, pagesBelongToCurrentBook, updateProgress, loading]);
 
     // 同步 sliderValue 与全局状态（当通过按钮翻页时）
     useEffect(() => {
@@ -648,16 +656,16 @@ export default function BookReader() {
     const handleNext = useCallback(() => {
         const step = doublePage ? 2 : 1;
         setCurrentPageIndex(prev => {
-            if (prev + step >= pages.length) {
+            if (prev + step >= activePages.length) {
                 // 已到最后一页，尝试跳转下一本
                 if (nextBookIdRef.current) {
                     setTimeout(() => navigate(`/reader/${nextBookIdRef.current}`, { replace: true }), 0);
                 }
                 return prev; // 保持当前页不变
             }
-            return Math.min(prev + step, pages.length - 1);
+            return Math.min(prev + step, activePages.length - 1);
         });
-    }, [doublePage, navigate, pages.length]);
+    }, [activePages.length, doublePage, navigate]);
 
     const handlePrev = useCallback(() => {
         const step = doublePage ? 2 : 1;
@@ -688,12 +696,12 @@ export default function BookReader() {
                 setCurrentPageIndex(0);
             } else if (e.key === 'End') {
                 e.preventDefault();
-                setCurrentPageIndex(Math.max(0, pages.length - 1));
+                setCurrentPageIndex(Math.max(0, activePages.length - 1));
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [readMode, readDirection, handleNext, handlePrev, pages.length]);
+    }, [readMode, readDirection, handleNext, handlePrev, activePages.length]);
 
     useEffect(() => {
         const handleGlobalHelp = (e: KeyboardEvent) => {
@@ -1043,7 +1051,7 @@ export default function BookReader() {
                         mixBlendMode: 'multiply'
                     }} />
                 )}
-                {loading ? (
+                {readerLoading ? (
                     <div className="flex items-center justify-center h-full">
                         <Loader2 className="w-10 h-10 animate-spin text-komgaPrimary" />
                     </div>
@@ -1072,7 +1080,7 @@ export default function BookReader() {
                     </div>
                 ) : readMode === 'webtoon' ? (
                     <div className="flex flex-col items-center w-full bg-komgaDark relative h-full overflow-y-auto overflow-x-hidden">
-                        {pages.map(page => (
+                        {activePages.map(page => (
                             <img
                                 key={page.number}
                                 data-page-number={page.number}
@@ -1112,7 +1120,7 @@ export default function BookReader() {
                             onMouseUp={handleMouseUp}
                             onMouseMove={handleMouseMove}
                         >
-                            {getPagedImages(pages, currentPageIndex, doublePage, readDirection).map((p, idx, arr) => {
+                            {getPagedImages(activePages, currentPageIndex, doublePage, readDirection).map((p, idx, arr) => {
                                 // 深度修复方案：两张图片各自向中心偏移 -0.5px (逻辑像素) 实现物理重叠
                                 // 这能从底层封死亚像素计算导致的黑色缝隙泄露
                                 const isSpread = doublePage && arr.length > 1;
@@ -1175,7 +1183,7 @@ export default function BookReader() {
                             <input
                                 type="range"
                                 min={1}
-                                max={pages.length}
+                                max={activePages.length}
                                 value={sliderValue}
                                 onChange={(e) => {
                                     const val = parseInt(e.target.value, 10);
@@ -1185,8 +1193,8 @@ export default function BookReader() {
                                     const rect = e.currentTarget.getBoundingClientRect();
                                     const x = e.clientX - rect.left;
                                     const percent = x / rect.width;
-                                    const page = Math.round(percent * (pages.length - 1)) + 1;
-                                    setHoverPage(Math.max(1, Math.min(pages.length, page)));
+                                    const page = Math.round(percent * (activePages.length - 1)) + 1;
+                                    setHoverPage(Math.max(1, Math.min(activePages.length, page)));
                                     setHoverX(x);
                                 }}
                                 onMouseLeave={() => setHoverPage(null)}
@@ -1211,7 +1219,7 @@ export default function BookReader() {
                                 className="w-full accent-komgaPrimary h-1.5 bg-gray-700/50 rounded-lg appearance-none cursor-pointer"
                             />
                         </div>
-                        <span className="text-gray-400 font-medium text-sm whitespace-nowrap w-8 drop-shadow-md">{pages.length}</span>
+                        <span className="text-gray-400 font-medium text-sm whitespace-nowrap w-8 drop-shadow-md">{activePages.length}</span>
                     </div>
                 </div>
             </div>
