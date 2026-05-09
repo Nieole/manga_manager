@@ -5,6 +5,21 @@ import { isToday, isYesterday } from 'date-fns';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskTypeLabel } from '../i18n/task';
 
+const TASK_TYPE_OPTIONS = [
+  'scan_library',
+  'scan_external_library',
+  'scan_series',
+  'cleanup_library',
+  'rebuild_index',
+  'rebuild_thumbnails',
+  'scrape',
+  'ai_grouping',
+  'rebuild_book_hashes',
+  'reconcile_koreader_progress',
+  'refresh_koreader_matching',
+  'transfer_external_library',
+];
+
 interface LogEntry {
   time: string;
   level: string;
@@ -51,6 +66,11 @@ function logLevelBadgeClass(level: string) {
   }
 }
 
+function isInterruptedTask(task: TaskStatus) {
+  const error = task.error || '';
+  return task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart'));
+}
+
 export default function Logs() {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const navigate = useNavigate();
@@ -63,6 +83,8 @@ export default function Logs() {
   const [query, setQuery] = useState('');
   const [taskStatusFilter, setTaskStatusFilter] = useState('ALL');
   const [taskScopeFilter, setTaskScopeFilter] = useState('ALL');
+  const [taskTypeFilter, setTaskTypeFilter] = useState('ALL');
+  const [taskScopeIdFilter, setTaskScopeIdFilter] = useState('');
   const [taskQuery, setTaskQuery] = useState('');
   const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
@@ -76,6 +98,8 @@ export default function Logs() {
       taskParams.set('limit', '50');
       if (taskStatusFilter !== 'ALL') taskParams.set('status', taskStatusFilter);
       if (taskScopeFilter !== 'ALL') taskParams.set('scope', taskScopeFilter);
+      if (taskTypeFilter !== 'ALL') taskParams.set('type', taskTypeFilter);
+      if (taskScopeIdFilter.trim()) taskParams.set('scope_id', taskScopeIdFilter.trim());
       if (taskQuery.trim()) taskParams.set('q', taskQuery.trim());
 
       const [logsResp, tasksResp] = await Promise.all([
@@ -105,11 +129,12 @@ export default function Logs() {
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterLevel, taskStatusFilter, taskScopeFilter]);
+  }, [filterLevel, taskStatusFilter, taskScopeFilter, taskTypeFilter]);
 
   const failedTasks = useMemo(() => tasks.filter((task) => task.status === 'failed'), [tasks]);
   const runningTasks = useMemo(() => tasks.filter((task) => task.status === 'running'), [tasks]);
   const completedTasks = useMemo(() => tasks.filter((task) => task.status === 'completed'), [tasks]);
+  const interruptedTasks = useMemo(() => tasks.filter(isInterruptedTask), [tasks]);
   const groupedTasks = useMemo(() => {
     const today: TaskStatus[] = [];
     const yesterday: TaskStatus[] = [];
@@ -180,9 +205,24 @@ export default function Logs() {
     }
   };
 
-  const clearTasks = async (status: 'completed' | 'failed') => {
+  const taskTypeLabelFromType = (type: string) => getTaskTypeLabel({ type, params: {} }, t);
+
+  const currentTaskFilterCanClear = taskStatusFilter !== 'ALL' && taskStatusFilter !== 'running';
+
+  const clearTasks = async (status?: 'completed' | 'failed', useCurrentFilters = false) => {
     try {
-      const resp = await fetch(`/api/system/tasks?status=${status}`, { method: 'DELETE' });
+      const params = new URLSearchParams();
+      if (status) {
+        params.set('status', status);
+      } else if (useCurrentFilters && taskStatusFilter !== 'ALL') {
+        params.set('status', taskStatusFilter);
+      }
+      if (useCurrentFilters) {
+        if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
+        if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
+        if (taskScopeIdFilter.trim()) params.set('scope_id', taskScopeIdFilter.trim());
+      }
+      const resp = await fetch(`/api/system/tasks?${params.toString()}`, { method: 'DELETE' });
       if (!resp.ok) {
         throw new Error(t('logs.error.cleanup'));
       }
@@ -254,9 +294,10 @@ export default function Logs() {
         <MetricCard label={t('logs.metric.failedTasks')} value={failedTasks.length} tone="purple" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <TaskMetricCard label={t('logs.metric.runningTasks')} value={runningTasks.length} hint={t('logs.metric.runningTasksHint')} tone="blue" />
         <TaskMetricCard label={t('logs.metric.failedTasks')} value={failedTasks.length} hint={t('logs.metric.failedTasksHint')} tone="red" />
+        <TaskMetricCard label={t('logs.metric.interruptedTasks')} value={interruptedTasks.length} hint={t('logs.metric.interruptedTasksHint')} tone="amber" />
         <TaskMetricCard label={t('logs.metric.completedTasks')} value={completedTasks.length} hint={t('logs.metric.completedTasksHint')} tone="emerald" />
       </div>
 
@@ -328,6 +369,14 @@ export default function Logs() {
               >
                 {t('logs.clearFailed')}
               </button>
+              <button
+                onClick={() => clearTasks(undefined, true)}
+                disabled={!currentTaskFilterCanClear}
+                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                title={currentTaskFilterCanClear ? t('logs.clearCurrentFilterHint') : t('logs.clearCurrentFilterDisabled')}
+              >
+                {t('logs.clearCurrentFilter')}
+              </button>
             </div>
             <div className="mb-4 grid gap-2">
               <div className="grid grid-cols-2 gap-2">
@@ -351,6 +400,26 @@ export default function Logs() {
                   <option value="library">{t('logs.taskScope.library')}</option>
                   <option value="series">{t('logs.taskScope.series')}</option>
                 </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={taskTypeFilter}
+                  onChange={(e) => setTaskTypeFilter(e.target.value)}
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
+                >
+                  <option value="ALL">{t('logs.taskType.all')}</option>
+                  {TASK_TYPE_OPTIONS.map((type) => (
+                    <option key={type} value={type}>{taskTypeLabelFromType(type)}</option>
+                  ))}
+                </select>
+                <input
+                  value={taskScopeIdFilter}
+                  onChange={(e) => setTaskScopeIdFilter(e.target.value.replace(/[^\d]/g, ''))}
+                  onKeyDown={(e) => e.key === 'Enter' && fetchData()}
+                  inputMode="numeric"
+                  placeholder={t('logs.taskScopeIdPlaceholder')}
+                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
+                />
               </div>
               <div className="flex gap-2">
                 <input
@@ -409,6 +478,11 @@ export default function Logs() {
                           )}
                         </div>
                         <p className="mt-2 text-sm text-gray-100">{task.message}</p>
+                        {isInterruptedTask(task) && (
+                          <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-2 text-xs text-amber-300">
+                            {t('logs.task.interruptedHint')}
+                          </p>
+                        )}
                         <p className="mt-1 text-xs text-gray-500">
                           {formatProgress(task)} · {formatRelativeTime(task.updated_at)} · {formatDateTime(task.updated_at)}
                         </p>
@@ -509,11 +583,12 @@ function TaskMetricCard({
   label: string;
   value: number;
   hint: string;
-  tone: 'blue' | 'red' | 'emerald';
+  tone: 'blue' | 'red' | 'amber' | 'emerald';
 }) {
   const toneClass = {
     blue: 'border-blue-500/20 bg-blue-500/10 text-blue-500',
     red: 'border-red-500/20 bg-red-500/10 text-red-500',
+    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-500',
     emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
   }[tone];
 

@@ -8,6 +8,9 @@ import { useI18n } from './i18n/LocaleProvider';
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Collections = lazy(() => import('./pages/Collections'));
+const Organize = lazy(() => import('./pages/Organize'));
+const MetadataReviews = lazy(() => import('./pages/MetadataReviews'));
+const AIGroupingReviews = lazy(() => import('./pages/AIGroupingReviews'));
 const ReadingLists = lazy(() => import('./pages/ReadingLists'));
 const SeriesDetail = lazy(() => import('./pages/SeriesDetail'));
 const BookReader = lazy(() => import('./pages/BookReader'));
@@ -19,6 +22,7 @@ const SettingsLibraryPage = lazy(() => import('./pages/settings/SettingsLibraryP
 const SettingsMediaPage = lazy(() => import('./pages/settings/SettingsMediaPage').then((module) => ({ default: module.SettingsMediaPage })));
 const SettingsAIPage = lazy(() => import('./pages/settings/SettingsAIPage').then((module) => ({ default: module.SettingsAIPage })));
 const SettingsKOReaderPage = lazy(() => import('./pages/settings/SettingsKOReaderPage').then((module) => ({ default: module.SettingsKOReaderPage })));
+const SettingsConnectionsPage = lazy(() => import('./pages/settings/SettingsConnectionsPage').then((module) => ({ default: module.SettingsConnectionsPage })));
 const SettingsMaintenancePage = lazy(() => import('./pages/settings/SettingsMaintenancePage').then((module) => ({ default: module.SettingsMaintenancePage })));
 
 function RouteFallback() {
@@ -51,6 +55,12 @@ function App() {
           <Route path="series/:seriesId" element={withRouteFallback(<SeriesDetail />)} />
           {/* 合集管理 */}
           <Route path="collections" element={withRouteFallback(<Collections />)} />
+          {/* 整理工作台 */}
+          <Route path="organize" element={withRouteFallback(<Organize />)} />
+          {/* 元数据审核收件箱 */}
+          <Route path="metadata-reviews" element={withRouteFallback(<MetadataReviews />)} />
+          {/* AI 分组审核队列 */}
+          <Route path="ai-grouping-reviews" element={withRouteFallback(<AIGroupingReviews />)} />
           {/* 有序阅读清单 */}
           <Route path="reading-lists" element={withRouteFallback(<ReadingLists />)} />
           {/* 系统日志 */}
@@ -63,6 +73,7 @@ function App() {
             <Route path="media" element={withRouteFallback(<SettingsMediaPage />)} />
             <Route path="ai" element={withRouteFallback(<SettingsAIPage />)} />
             <Route path="koreader" element={withRouteFallback(<SettingsKOReaderPage />)} />
+            <Route path="connections" element={withRouteFallback(<SettingsConnectionsPage />)} />
             <Route path="maintenance" element={withRouteFallback(<SettingsMaintenancePage />)} />
           </Route>
         </Route>

@@ -1,7 +1,10 @@
 package parser
 
 import (
+	"archive/zip"
 	"encoding/xml"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -69,4 +72,62 @@ func TestMarshalComicInfo(t *testing.T) {
 	if info.Title != "Book Title" || info.Series != "Series Title" || info.Number != "1" || info.PageCount != 188 {
 		t.Fatalf("unexpected ComicInfo roundtrip: %+v", info)
 	}
+}
+
+func TestArchivePoolInitResizesExistingPool(t *testing.T) {
+	ResetArchivePool()
+
+	root := t.TempDir()
+	t.Cleanup(ResetArchivePool)
+	paths := []string{
+		filepath.Join(root, "one.cbz"),
+		filepath.Join(root, "two.cbz"),
+		filepath.Join(root, "three.cbz"),
+	}
+	for _, path := range paths {
+		if err := writeParserTestCBZ(path); err != nil {
+			t.Fatalf("write cbz failed: %v", err)
+		}
+	}
+
+	InitPool(3)
+	for _, path := range paths {
+		arc, err := GetArchiveFromPool(path)
+		if err != nil {
+			t.Fatalf("get archive failed: %v", err)
+		}
+		if _, err := arc.GetPages(); err != nil {
+			t.Fatalf("get pages failed: %v", err)
+		}
+	}
+	if len(globalPool.items) != 3 {
+		t.Fatalf("expected 3 cached archives, got %d", len(globalPool.items))
+	}
+
+	InitPool(1)
+	if globalPool.maxSize != 1 {
+		t.Fatalf("expected resized max size 1, got %d", globalPool.maxSize)
+	}
+	if len(globalPool.items) > 1 {
+		t.Fatalf("expected cache to be trimmed to 1 item, got %d", len(globalPool.items))
+	}
+}
+
+func writeParserTestCBZ(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("001.png")
+	if err != nil {
+		_ = zw.Close()
+		return err
+	}
+	if _, err := w.Write([]byte("not a real image")); err != nil {
+		_ = zw.Close()
+		return err
+	}
+	return zw.Close()
 }

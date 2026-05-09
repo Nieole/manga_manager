@@ -154,12 +154,14 @@ func (o *OpenAIProvider) FetchSeriesMetadata(ctx context.Context, title string) 
 	}
 
 	metadata := &SeriesMetadata{
-		Title:     result.Title,
-		Summary:   result.Summary,
-		Publisher: result.Publisher,
-		Status:    NormalizeStatusCode(result.Status),
-		Tags:      result.Tags,
-		Rating:    result.Rating,
+		Title:      result.Title,
+		Summary:    result.Summary,
+		Publisher:  result.Publisher,
+		Status:     NormalizeStatusCode(result.Status),
+		Tags:       result.Tags,
+		Rating:     result.Rating,
+		Confidence: result.Confidence,
+		Provider:   o.Name(),
 	}
 
 	return metadata, nil

@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,11 +26,19 @@ type Store interface {
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
 	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
+	ListPageManifest(ctx context.Context, bookID int64) ([]PageManifestEntry, error)
+	GetPageManifestEntry(ctx context.Context, bookID, pageNumber int64) (PageManifestEntry, error)
+	ReplacePageManifest(ctx context.Context, bookID int64, pages []PageManifestEntry) error
 	ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error)
 	UpsertReadingBookmark(ctx context.Context, bookID, page int64, note string) (ReadingBookmark, error)
 	DeleteReadingBookmark(ctx context.Context, bookID, bookmarkID int64) error
 	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
 	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
+	UpsertTask(ctx context.Context, task TaskRecord) error
+	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
+	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
+	MarkInterruptedTasks(ctx context.Context, message string) (int64, error)
+	GetHealthReport(ctx context.Context, filters HealthIssueFilters) (HealthReport, error)
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
 	UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReaderSettingsParams) (KOReaderSettings, error)
 	ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, error)
@@ -46,6 +56,8 @@ type Store interface {
 	UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReaderProgressParams) (KOReaderProgress, error)
 	GetKOReaderProgress(ctx context.Context, username, document string) (KOReaderProgress, error)
 	ListBooksMissingIdentityBatch(ctx context.Context, matchMode string, afterID int64, limit int) ([]BookIdentityCandidate, error)
+	CountBooksMissingQuickHash(ctx context.Context) (int64, error)
+	ListBooksMissingQuickHashBatch(ctx context.Context, afterID int64, limit int) ([]BookIdentityCandidate, error)
 	UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error
 	ListUnmatchedKOReaderProgress(ctx context.Context, limit int) ([]KOReaderProgress, error)
 	ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterID int64, limit int) ([]KOReaderProgress, error)
@@ -66,6 +78,43 @@ type DashboardStats struct {
 	TotalPages   int           `json:"total_pages"`
 	ActiveDays7  int           `json:"active_days_7"` // 最近7天有阅读行为的天数
 	LibrarySizes []LibrarySize `json:"library_sizes"`
+}
+
+type PageManifestEntry struct {
+	BookID     int64  `json:"book_id"`
+	PageNumber int64  `json:"page_number"`
+	EntryName  string `json:"entry_name"`
+	Size       int64  `json:"size"`
+	MediaType  string `json:"media_type"`
+}
+
+type TaskRecord struct {
+	Key        string            `json:"key"`
+	Type       string            `json:"type"`
+	Scope      string            `json:"scope"`
+	ScopeID    *int64            `json:"scope_id,omitempty"`
+	ScopeName  string            `json:"scope_name,omitempty"`
+	Status     string            `json:"status"`
+	Message    string            `json:"message"`
+	Error      string            `json:"error,omitempty"`
+	Current    int               `json:"current"`
+	Total      int               `json:"total"`
+	CanCancel  bool              `json:"can_cancel"`
+	Retryable  bool              `json:"retryable"`
+	Params     map[string]string `json:"params,omitempty"`
+	StartedAt  time.Time         `json:"started_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+	FinishedAt *time.Time        `json:"finished_at,omitempty"`
+	Sequence   int64             `json:"-"`
+}
+
+type TaskFilters struct {
+	Status  string
+	Scope   string
+	Type    string
+	ScopeID *int64
+	Query   string
+	Limit   int
 }
 
 type SearchSeriesPagedRow struct {
@@ -180,6 +229,7 @@ func Migrate(dbPath string) error {
 		{table: "libraries", name: "koreader_sync_enabled", definition: "BOOLEAN NOT NULL DEFAULT TRUE"},
 		{table: "libraries", name: "scan_mode", definition: "TEXT NOT NULL DEFAULT 'none'"},
 		{table: "books", name: "file_hash", definition: "TEXT"},
+		{table: "books", name: "quick_hash", definition: "TEXT"},
 		{table: "books", name: "path_fingerprint", definition: "TEXT"},
 		{table: "books", name: "path_fingerprint_no_ext", definition: "TEXT"},
 		{table: "books", name: "filename_fingerprint", definition: "TEXT"},
@@ -192,10 +242,22 @@ func Migrate(dbPath string) error {
 
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint_no_ext ON books(path_fingerprint_no_ext)`,
 		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_name_initial ON series(name_initial)`,
+		`CREATE INDEX IF NOT EXISTS idx_page_manifest_book_id ON page_manifest(book_id, page_number)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_initial ON series(library_id, name_initial)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_status ON series(library_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_updated ON series(library_id, updated_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_created ON series(library_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_series_sort ON books(series_id, volume, sort_number, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
@@ -321,6 +383,273 @@ func ensureColumn(db *sql.DB, table, column, definition string) error {
 
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
 	return err
+}
+
+func (s *SqlStore) ListPageManifest(ctx context.Context, bookID int64) ([]PageManifestEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT book_id, page_number, entry_name, size, media_type
+		FROM page_manifest
+		WHERE book_id = ?
+		ORDER BY page_number ASC
+	`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pages []PageManifestEntry
+	for rows.Next() {
+		var page PageManifestEntry
+		if err := rows.Scan(&page.BookID, &page.PageNumber, &page.EntryName, &page.Size, &page.MediaType); err != nil {
+			return nil, err
+		}
+		pages = append(pages, page)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return pages, nil
+}
+
+func (s *SqlStore) GetPageManifestEntry(ctx context.Context, bookID, pageNumber int64) (PageManifestEntry, error) {
+	var page PageManifestEntry
+	err := s.db.QueryRowContext(ctx, `
+		SELECT book_id, page_number, entry_name, size, media_type
+		FROM page_manifest
+		WHERE book_id = ? AND page_number = ?
+		LIMIT 1
+	`, bookID, pageNumber).Scan(&page.BookID, &page.PageNumber, &page.EntryName, &page.Size, &page.MediaType)
+	return page, err
+}
+
+func (s *SqlStore) ReplacePageManifest(ctx context.Context, bookID int64, pages []PageManifestEntry) error {
+	return s.ExecTx(ctx, func(q *Queries) error {
+		if _, err := q.db.ExecContext(ctx, `DELETE FROM page_manifest WHERE book_id = ?`, bookID); err != nil {
+			return err
+		}
+		if len(pages) == 0 {
+			return nil
+		}
+
+		stmt, err := q.db.PrepareContext(ctx, `
+			INSERT INTO page_manifest (book_id, page_number, entry_name, size, media_type, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, page := range pages {
+			if page.BookID == 0 {
+				page.BookID = bookID
+			}
+			if page.MediaType == "" {
+				page.MediaType = "application/octet-stream"
+			}
+			if _, err := stmt.ExecContext(ctx, page.BookID, page.PageNumber, page.EntryName, page.Size, page.MediaType); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *SqlStore) UpsertTask(ctx context.Context, task TaskRecord) error {
+	paramsJSON := ""
+	if len(task.Params) > 0 {
+		data, err := json.Marshal(task.Params)
+		if err != nil {
+			return err
+		}
+		paramsJSON = string(data)
+	}
+
+	var scopeID any
+	if task.ScopeID != nil {
+		scopeID = *task.ScopeID
+	}
+	var finishedAt any
+	if task.FinishedAt != nil {
+		finishedAt = *task.FinishedAt
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO tasks (
+			key, type, scope, scope_id, scope_name, status, message, error,
+			current, total, can_cancel, retryable, params,
+			started_at, updated_at, finished_at, sequence
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET
+			type = excluded.type,
+			scope = excluded.scope,
+			scope_id = excluded.scope_id,
+			scope_name = excluded.scope_name,
+			status = excluded.status,
+			message = excluded.message,
+			error = excluded.error,
+			current = excluded.current,
+			total = excluded.total,
+			can_cancel = excluded.can_cancel,
+			retryable = excluded.retryable,
+			params = excluded.params,
+			started_at = excluded.started_at,
+			updated_at = excluded.updated_at,
+			finished_at = excluded.finished_at,
+			sequence = excluded.sequence
+	`, task.Key, task.Type, task.Scope, scopeID, task.ScopeName, task.Status, task.Message, task.Error,
+		task.Current, task.Total, task.CanCancel, task.Retryable, paramsJSON,
+		task.StartedAt, task.UpdatedAt, finishedAt, task.Sequence)
+	return err
+}
+
+func (s *SqlStore) ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error) {
+	query := `
+		SELECT key, type, scope, scope_id, scope_name, status, message, error,
+		       current, total, can_cancel, retryable, params,
+		       started_at, updated_at, finished_at, sequence
+		FROM tasks
+		WHERE 1 = 1
+	`
+	args := make([]any, 0)
+	if filters.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filters.Status)
+	}
+	if filters.Scope != "" {
+		query += ` AND scope = ?`
+		args = append(args, filters.Scope)
+	}
+	if filters.Type != "" {
+		query += ` AND type = ?`
+		args = append(args, filters.Type)
+	}
+	if filters.ScopeID != nil {
+		query += ` AND scope_id = ?`
+		args = append(args, *filters.ScopeID)
+	}
+	if filters.Query != "" {
+		query += ` AND lower(key || ' ' || message || ' ' || error) LIKE ?`
+		args = append(args, "%"+strings.ToLower(filters.Query)+"%")
+	}
+	query += ` ORDER BY sequence DESC, updated_at DESC, started_at DESC, key DESC`
+	if filters.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filters.Limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tasks := make([]TaskRecord, 0)
+	for rows.Next() {
+		task, err := scanTaskRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+func (s *SqlStore) DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error) {
+	query := `DELETE FROM tasks WHERE status != 'running'`
+	args := make([]any, 0)
+	if filters.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filters.Status)
+	}
+	if filters.Scope != "" {
+		query += ` AND scope = ?`
+		args = append(args, filters.Scope)
+	}
+	if filters.Type != "" {
+		query += ` AND type = ?`
+		args = append(args, filters.Type)
+	}
+	if filters.ScopeID != nil {
+		query += ` AND scope_id = ?`
+		args = append(args, *filters.ScopeID)
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *SqlStore) MarkInterruptedTasks(ctx context.Context, message string) (int64, error) {
+	if strings.TrimSpace(message) == "" {
+		message = "任务因服务重启而中断，可重试"
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'failed',
+		    message = ?,
+		    error = ?,
+		    updated_at = CURRENT_TIMESTAMP,
+		    finished_at = CURRENT_TIMESTAMP
+		WHERE status = 'running'
+	`, message, message)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+type taskScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanTaskRecord(row taskScanner) (TaskRecord, error) {
+	var (
+		task       TaskRecord
+		scopeID    sql.NullInt64
+		finishedAt sql.NullTime
+		paramsJSON string
+	)
+	err := row.Scan(
+		&task.Key,
+		&task.Type,
+		&task.Scope,
+		&scopeID,
+		&task.ScopeName,
+		&task.Status,
+		&task.Message,
+		&task.Error,
+		&task.Current,
+		&task.Total,
+		&task.CanCancel,
+		&task.Retryable,
+		&paramsJSON,
+		&task.StartedAt,
+		&task.UpdatedAt,
+		&finishedAt,
+		&task.Sequence,
+	)
+	if err != nil {
+		return TaskRecord{}, err
+	}
+	if scopeID.Valid {
+		task.ScopeID = &scopeID.Int64
+	}
+	if finishedAt.Valid {
+		task.FinishedAt = &finishedAt.Time
+	}
+	if strings.TrimSpace(paramsJSON) != "" {
+		var params map[string]string
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return TaskRecord{}, err
+		}
+		task.Params = params
+	}
+	return task, nil
 }
 
 // SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页

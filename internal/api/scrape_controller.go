@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,15 +61,17 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"found":     true,
-		"provider":  provider.Name(),
-		"title":     result.Title,
-		"summary":   result.Summary,
-		"publisher": result.Publisher,
-		"cover_url": result.CoverURL,
-		"rating":    result.Rating,
-		"tags":      result.Tags,
-		"source_id": result.SourceID,
+		"found":      true,
+		"provider":   provider.Name(),
+		"title":      result.Title,
+		"summary":    result.Summary,
+		"publisher":  result.Publisher,
+		"cover_url":  result.CoverURL,
+		"rating":     result.Rating,
+		"tags":       result.Tags,
+		"source_id":  result.SourceID,
+		"source_url": metadataSourceURL(provider.Name(), result),
+		"confidence": result.Confidence,
 	})
 }
 
@@ -144,57 +148,78 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = c.applyMetadataToSeries(r.Context(), series, &result, providerName)
+	review, fields, err := c.queueMetadataReview(r.Context(), series, &result, providerName, series.Name)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to apply metadata")
+		if errors.Is(err, errNoMetadataChanges) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"success": true,
+				"queued":  false,
+				"message": "No metadata changes to review",
+			})
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to queue metadata review")
 		return
 	}
 
-	updated, _ := c.store.GetSeries(r.Context(), seriesID)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"series":  updated,
+		"success":     true,
+		"queued":      true,
+		"review_id":   review.ID,
+		"field_count": len(fields),
+		"series":      series,
 	})
 }
 
-func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, providerName string) error {
+func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions) error {
 	// 解析已锁定字段
-	lockedSet := make(map[string]bool)
-	if series.LockedFields.Valid && series.LockedFields.String != "" {
-		for _, f := range strings.Split(series.LockedFields.String, ",") {
-			lockedSet[strings.TrimSpace(f)] = true
-		}
-	}
+	lockedSet := metadataLockedFieldSet(series)
+	providerName := strings.TrimSpace(opts.ProviderName)
 
 	return c.store.ExecTx(ctx, func(q *database.Queries) error {
 		updateParams := database.UpdateSeriesMetadataParams{ID: series.ID}
+		appliedFields := make(map[string]string)
+		confidence := opts.Confidence
+		if confidence <= 0 {
+			confidence = metadataDefaultConfidence(opts.ProviderName)
+		}
+		reviewID := sql.NullInt64{}
+		if opts.ReviewID != nil {
+			reviewID = sql.NullInt64{Int64: *opts.ReviewID, Valid: true}
+		}
 
 		if !lockedSet["title"] && result.Title != "" {
 			updateParams.Title = sql.NullString{String: result.Title, Valid: true}
+			appliedFields["title"] = result.Title
 		} else {
 			updateParams.Title = series.Title
 		}
 
 		if !lockedSet["summary"] && result.Summary != "" {
 			updateParams.Summary = sql.NullString{String: result.Summary, Valid: true}
+			appliedFields["summary"] = result.Summary
 		} else {
 			updateParams.Summary = series.Summary
 		}
 
 		if !lockedSet["publisher"] && result.Publisher != "" {
 			updateParams.Publisher = sql.NullString{String: result.Publisher, Valid: true}
+			appliedFields["publisher"] = result.Publisher
 		} else {
 			updateParams.Publisher = series.Publisher
 		}
 
 		if !lockedSet["rating"] && result.Rating > 0 {
 			updateParams.Rating = sql.NullFloat64{Float64: result.Rating, Valid: true}
+			appliedFields["rating"] = fmt.Sprintf("%.1f", result.Rating)
 		} else {
 			updateParams.Rating = series.Rating
 		}
 
 		if !lockedSet["status"] && result.Status != "" {
-			updateParams.Status = sql.NullString{String: metadata.NormalizeStatusCode(result.Status), Valid: true}
+			status := metadata.NormalizeStatusCode(result.Status)
+			updateParams.Status = sql.NullString{String: status, Valid: true}
+			appliedFields["status"] = status
 		} else {
 			updateParams.Status = series.Status
 		}
@@ -207,13 +232,46 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 			return err
 		}
 
-		// 标签
-		for _, tagName := range result.Tags {
-			if strings.TrimSpace(tagName) == "" {
-				continue
+		recordField := func(fieldName, value string) error {
+			if strings.TrimSpace(value) == "" {
+				return nil
 			}
-			if inserted, err := q.UpsertTag(ctx, tagName); err == nil {
-				_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: series.ID, TagID: inserted.ID})
+			_, err := q.UpsertSeriesMetadataProvenance(ctx, database.UpsertSeriesMetadataProvenanceParams{
+				SeriesID:   series.ID,
+				FieldName:  fieldName,
+				Value:      value,
+				Source:     providerName,
+				SourceUrl:  strings.TrimSpace(opts.SourceURL),
+				Confidence: confidence,
+				ReviewID:   reviewID,
+			})
+			return err
+		}
+
+		for _, fieldName := range []string{"title", "summary", "publisher", "status", "rating"} {
+			if err := recordField(fieldName, appliedFields[fieldName]); err != nil {
+				return err
+			}
+		}
+
+		// 标签
+		var tagValues []string
+		if !lockedSet["tags"] {
+			for _, tagName := range result.Tags {
+				tagName = strings.TrimSpace(tagName)
+				if tagName == "" {
+					continue
+				}
+				if inserted, err := q.UpsertTag(ctx, tagName); err == nil {
+					_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: series.ID, TagID: inserted.ID})
+				}
+				tagValues = append(tagValues, tagName)
+			}
+		}
+		if len(tagValues) > 0 {
+			sort.Strings(tagValues)
+			if err := recordField("tags", strings.Join(tagValues, " / ")); err != nil {
+				return err
 			}
 		}
 
@@ -239,6 +297,9 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 					Name:     linkName,
 					Url:      linkURL,
 				})
+				if err := recordField("source_link", linkURL); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -287,19 +348,27 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = c.applyMetadataToSeries(r.Context(), series, result, provider.Name())
+	review, fields, err := c.queueMetadataReview(r.Context(), series, result, provider.Name(), searchTitle)
 	if err != nil {
+		if errors.Is(err, errNoMetadataChanges) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"scraped": false,
+				"message": fmt.Sprintf("从 %s 找到条目，但没有可加入审阅队列的字段", provider.Name()),
+			})
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, "Failed to save scraped metadata")
 		return
 	}
 
-	updated, _ := c.store.GetSeries(r.Context(), seriesID)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"scraped":  true,
-		"provider": provider.Name(),
-		"message":  fmt.Sprintf("成功从 %s 刮削了『%s』的元数据", provider.Name(), result.Title),
-		"series":   updated,
-		"metadata": result,
+		"scraped":     true,
+		"provider":    provider.Name(),
+		"message":     fmt.Sprintf("已将 %s 的『%s』加入审阅队列", provider.Name(), result.Title),
+		"series":      series,
+		"metadata":    result,
+		"review_id":   review.ID,
+		"field_count": len(fields),
 	})
 }
 
@@ -368,10 +437,11 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 				continue
 			}
 
-			err = c.applyMetadataToSeries(bgCtx, series, result, providerName)
-			if err == nil {
+			if _, _, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
 				successCount++
-				slog.Info("Successfully unified metadata", "provider", providerName, "series_title", result.Title)
+				slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
+			} else if !errors.Is(err, errNoMetadataChanges) {
+				slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 			}
 
 			// 速率限制
@@ -476,8 +546,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 				continue
 			}
 
-			err = c.applyMetadataToSeries(bgCtx, series, result, providerName)
-			if err == nil {
+			if _, _, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
 				successCount++
 			}
 			// 速率限制

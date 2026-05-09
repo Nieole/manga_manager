@@ -78,6 +78,71 @@ export interface SearchResult {
   Rating: number;
   Tags: string[];
   SourceID: number;
+  SourceURL?: string;
+  Provider?: string;
+  Confidence?: number;
   ReleaseDate: string;
   VolumeCount: number;
+}
+
+export interface MetadataReviewField {
+  name: string;
+  label: string;
+  current: string;
+  proposed: string;
+  confidence: number;
+  locked: boolean;
+  source: string;
+  source_url: string;
+  status: string;
+}
+
+export interface MetadataReview {
+  id: number;
+  series_id: number;
+  provider: string;
+  source_url: string;
+  source_id: number;
+  source_query: string;
+  summary: string;
+  confidence: number;
+  status: string;
+  raw_payload: string;
+  created_at: string;
+  updated_at: string;
+  applied_at?: string;
+  rejected_at?: string;
+  fields: MetadataReviewField[];
+}
+
+export interface MetadataReviewInboxItem extends MetadataReview {
+  library_id: number;
+  library_name: string;
+  series_name: string;
+  series_title: string;
+  cover_book_id: number;
+  field_count: number;
+  locked_field_count: number;
+}
+
+export interface MetadataReviewInboxResponse {
+  items: MetadataReviewInboxItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface MetadataProvenance {
+  field_name: string;
+  label: string;
+  value: string;
+  source: string;
+  source_url: string;
+  confidence: number;
+  updated_at: string;
+}
+
+export interface MetadataReviewResponse {
+  reviews: MetadataReview[];
+  provenance: MetadataProvenance[];
 }

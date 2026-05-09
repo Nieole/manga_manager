@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS series (
 
 CREATE INDEX IF NOT EXISTS idx_series_library_id ON series(library_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_series_path ON series(path);
+CREATE INDEX IF NOT EXISTS idx_series_library_initial ON series(library_id, name_initial);
+CREATE INDEX IF NOT EXISTS idx_series_library_status ON series(library_id, status);
+CREATE INDEX IF NOT EXISTS idx_series_library_updated ON series(library_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_series_library_created ON series(library_id, created_at);
 
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +86,7 @@ CREATE TABLE IF NOT EXISTS books (
     last_read_page INTEGER,
     last_read_at DATETIME,
     file_hash TEXT,
+    quick_hash TEXT,
     path_fingerprint TEXT,
     path_fingerprint_no_ext TEXT,
     filename_fingerprint TEXT,
@@ -94,6 +99,23 @@ CREATE TABLE IF NOT EXISTS books (
 CREATE INDEX IF NOT EXISTS idx_books_series_id ON books(series_id);
 CREATE INDEX IF NOT EXISTS idx_books_library_id ON books(library_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path);
+CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash);
+CREATE INDEX IF NOT EXISTS idx_books_series_sort ON books(series_id, volume, sort_number, name);
+CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at);
+
+CREATE TABLE IF NOT EXISTS page_manifest (
+    book_id INTEGER NOT NULL,
+    page_number INTEGER NOT NULL,
+    entry_name TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    media_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (book_id, page_number),
+    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_page_manifest_book_id ON page_manifest(book_id, page_number);
 
 CREATE TABLE IF NOT EXISTS series_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,6 +125,128 @@ CREATE TABLE IF NOT EXISTS series_links (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS metadata_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    source_url TEXT NOT NULL DEFAULT '',
+    source_id INTEGER NOT NULL DEFAULT 0,
+    source_query TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    raw_payload TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    applied_at DATETIME,
+    rejected_at DATETIME,
+    FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_metadata_reviews_series_status ON metadata_reviews(series_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_metadata_reviews_status ON metadata_reviews(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS metadata_review_fields (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    field_name TEXT NOT NULL,
+    current_value TEXT NOT NULL DEFAULT '',
+    proposed_value TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    locked BOOLEAN NOT NULL DEFAULT FALSE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(review_id, field_name),
+    FOREIGN KEY(review_id) REFERENCES metadata_reviews(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_metadata_review_fields_review_id ON metadata_review_fields(review_id);
+
+CREATE TABLE IF NOT EXISTS ai_grouping_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id INTEGER NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    summary TEXT NOT NULL DEFAULT '',
+    raw_payload TEXT NOT NULL DEFAULT '',
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    collection_count INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    applied_at DATETIME,
+    rejected_at DATETIME,
+    FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_grouping_reviews_library_status ON ai_grouping_reviews(library_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_grouping_reviews_status ON ai_grouping_reviews(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS ai_grouping_review_collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    series_ids TEXT NOT NULL DEFAULT '[]',
+    series_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_collection_id INTEGER,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(review_id) REFERENCES ai_grouping_reviews(id) ON DELETE CASCADE,
+    FOREIGN KEY(created_collection_id) REFERENCES collections(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_grouping_review_collections_review_id ON ai_grouping_review_collections(review_id);
+
+CREATE TABLE IF NOT EXISTS series_metadata_provenance (
+    series_id INTEGER NOT NULL,
+    field_name TEXT NOT NULL,
+    value TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0,
+    review_id INTEGER,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(series_id, field_name),
+    FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE,
+    FOREIGN KEY(review_id) REFERENCES metadata_reviews(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_series_metadata_provenance_series_id ON series_metadata_provenance(series_id, field_name);
+
+INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+SELECT id, 'title', title, 'manual', '', 1.0, NULL
+FROM series
+WHERE title IS NOT NULL AND title != '';
+
+INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+SELECT id, 'summary', summary, 'manual', '', 1.0, NULL
+FROM series
+WHERE summary IS NOT NULL AND summary != '';
+
+INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+SELECT id, 'publisher', publisher, 'manual', '', 1.0, NULL
+FROM series
+WHERE publisher IS NOT NULL AND publisher != '';
+
+INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+SELECT id, 'status', status, 'manual', '', 1.0, NULL
+FROM series
+WHERE status IS NOT NULL AND status != '';
+
+INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+SELECT id, 'rating', CAST(rating AS TEXT), 'manual', '', 1.0, NULL
+FROM series
+WHERE rating IS NOT NULL;
+
+INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+SELECT id, 'language', language, 'manual', '', 1.0, NULL
+FROM series
+WHERE language IS NOT NULL AND language != '';
 
 -- [#2] 自定义合集 / 智能书架
 CREATE TABLE IF NOT EXISTS collections (
@@ -124,6 +268,25 @@ CREATE TABLE IF NOT EXISTS collection_series (
     FOREIGN KEY(collection_id) REFERENCES collections(id) ON DELETE CASCADE,
     FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS smart_filters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    active_tag TEXT,
+    active_author TEXT,
+    active_status TEXT,
+    active_letter TEXT,
+    sort_by_field TEXT NOT NULL DEFAULT 'name',
+    sort_dir TEXT NOT NULL DEFAULT 'asc',
+    page_size INTEGER NOT NULL DEFAULT 30,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(library_id, name),
+    FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at);
 
 CREATE TABLE IF NOT EXISTS reading_lists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,6 +350,30 @@ CREATE TABLE IF NOT EXISTS reading_bookmarks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    key TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'system',
+    scope_id INTEGER,
+    scope_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    current INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    can_cancel BOOLEAN NOT NULL DEFAULT FALSE,
+    retryable BOOLEAN NOT NULL DEFAULT FALSE,
+    params TEXT NOT NULL DEFAULT '',
+    started_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    finished_at DATETIME,
+    sequence INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id);
 
 CREATE TABLE IF NOT EXISTS koreader_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),

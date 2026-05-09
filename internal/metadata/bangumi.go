@@ -161,14 +161,14 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 	}
 
 	var metadatas []*SeriesMetadata
-	for _, item := range result.Data {
-		metadatas = append(metadatas, b.convertToSeriesMetadata(item))
+	for idx, item := range result.Data {
+		metadatas = append(metadatas, b.convertToSeriesMetadata(item, idx))
 	}
 
 	return metadatas, result.Total, nil
 }
 
-func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult) *SeriesMetadata {
+func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult, rank int) *SeriesMetadata {
 	// 优先使用中文名
 	displayTitle := best.NameCN
 	if displayTitle == "" {
@@ -206,6 +206,22 @@ func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult) *Se
 
 	// 推断出版商：尝试从 infobox 中解析
 	publisher := extractPublisherFromInfobox(best.Infobox)
+	confidence := 0.92 - float64(rank)*0.04
+	if confidence < 0.55 {
+		confidence = 0.55
+	}
+	if best.Summary == "" {
+		confidence -= 0.08
+	}
+	if publisher == "" {
+		confidence -= 0.03
+	}
+	if len(tags) == 0 {
+		confidence -= 0.03
+	}
+	if confidence < 0.35 {
+		confidence = 0.35
+	}
 
 	return &SeriesMetadata{
 		Title:         displayTitle,
@@ -216,6 +232,9 @@ func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult) *Se
 		Rating:        rating,
 		Tags:          tags,
 		SourceID:      best.ID,
+		SourceURL:     fmt.Sprintf("https://bgm.tv/subject/%d", best.ID),
+		Provider:      b.Name(),
+		Confidence:    confidence,
 		ReleaseDate:   best.Date,
 		VolumeCount:   best.Volumes,
 	}

@@ -22,19 +22,29 @@ type ArchivePool struct {
 
 var (
 	globalPool *ArchivePool
-	once       sync.Once
+	poolMu     sync.Mutex
 )
 
 // InitPool 初始化全局归档池
 func InitPool(size int) {
-	once.Do(func() {
+	if size <= 0 {
+		size = 1
+	}
+
+	poolMu.Lock()
+	defer poolMu.Unlock()
+
+	if globalPool == nil {
 		globalPool = &ArchivePool{
 			items:   make(map[string]*poolItem),
 			maxSize: size,
 			stopCh:  make(chan struct{}),
 		}
 		go globalPool.gcLoop()
-	})
+		return
+	}
+
+	globalPool.resize(size)
 }
 
 // StopGC 停止后台 GC 协程（应用退出时调用）
@@ -74,9 +84,40 @@ func (p *ArchivePool) gcLoop() {
 	}
 }
 
+func (p *ArchivePool) resize(size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.maxSize = size
+	for len(p.items) > p.maxSize {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, v := range p.items {
+			if oldestKey == "" || v.lastUsed.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.lastUsed
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		_ = p.items[oldestKey].archive.Close()
+		delete(p.items, oldestKey)
+	}
+}
+
+func (p *ArchivePool) max() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxSize
+}
+
 // GetArchiveFromPool 尝试从池中获取已打开的文件，如果不存在则延迟创建
 func GetArchiveFromPool(path string) (Archive, error) {
 	if globalPool == nil {
+		return OpenArchive(path)
+	}
+	if globalPool.max() <= 0 {
 		return OpenArchive(path)
 	}
 

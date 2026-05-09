@@ -1,12 +1,17 @@
 package api
 
 import (
+	"crypto/sha1"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"manga-manager/internal/images"
 	"manga-manager/internal/parser"
@@ -14,7 +19,14 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type pageCacheStatsResponse struct {
+	Path      string `json:"path"`
+	FileSize  int64  `json:"file_size"`
+	FileCount int64  `json:"file_count"`
+}
+
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	ctx := r.Context()
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
@@ -35,25 +47,22 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	archiver, err := parser.GetArchiveFromPool(book.Path)
+	pageInfo, err := c.getPageManifestEntry(ctx, book, pageNumber)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Page not found")
+			return
+		}
+		if pageNumber > book.PageCount && book.PageCount > 0 {
+			jsonError(w, http.StatusNotFound, "Page not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
 		return
 	}
 
-	pagesInfo, err := archiver.GetPages()
-	if err != nil || len(pagesInfo) == 0 {
-		jsonError(w, http.StatusNotFound, "Book not found or empty")
-		return
-	}
-
-	if pageNumber < 1 || int(pageNumber) > len(pagesInfo) {
-		jsonError(w, http.StatusNotFound, "Page not found")
-		return
-	}
-
-	targetPage := pagesInfo[pageNumber-1].Name
-	targetMediaType := pagesInfo[pageNumber-1].MediaType
+	targetPage := pageInfo.EntryName
+	targetMediaType := pageInfo.MediaType
 
 	// 图片参数判断
 	qualityStr := r.URL.Query().Get("q")
@@ -71,18 +80,43 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	cacheKey := fmt.Sprintf("%d-%d-%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t",
 		bookID, pageNumber, book.FileModifiedAt.UnixNano(), book.Size,
 		widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr, autoCrop)
+	etag := weakETag(cacheKey)
+	if r.Header.Get("If-None-Match") == etag {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 
 	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
 	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear") || autoCrop
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
 			contentType := http.DetectContentType(cachedData)
+			c.logPageImageServed(bookID, pageNumber, "memory", contentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 			w.Header().Set("Content-Type", contentType) // 告别祖传写死的 jpeg 格式假传导致的前端崩溃
 			w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("ETag", etag)
 			w.Write(cachedData)
 			return
 		}
+		if cachedData, cachedContentType, ok := c.readDiskImageCache(cacheKey); ok {
+			c.imageCache.Add(cacheKey, cachedData)
+			c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
+			w.Header().Set("Content-Type", cachedContentType)
+			w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("ETag", etag)
+			w.Write(cachedData)
+			return
+		}
+	}
+
+	archiver, err := parser.GetArchiveFromPool(book.Path)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
+		return
 	}
 
 	data, err := archiver.ReadPage(targetPage)
@@ -137,6 +171,9 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 
 	if isThumbnailReq {
 		c.imageCache.Add(cacheKey, finalData)
+		if err := c.writeDiskImageCache(cacheKey, finalData, finalContentType); err != nil {
+			slog.Warn("Failed to write processed page disk cache", "error", err)
+		}
 	}
 
 	w.Header().Set("Content-Type", finalContentType)
@@ -145,8 +182,173 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	// Cache control for performant client-side static assets
 	// In production read this from config or context
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("ETag", etag)
 
+	cacheSource := "raw"
+	if isThumbnailReq {
+		cacheSource = "processed"
+	}
+	c.logPageImageServed(bookID, pageNumber, cacheSource, finalContentType, len(finalData), time.Since(started), format, filter, autoCrop)
 	w.Write(finalData)
+}
+
+func (c *Controller) logPageImageServed(bookID, pageNumber int64, source, contentType string, size int, duration time.Duration, format, filter string, autoCrop bool) {
+	if duration < 250*time.Millisecond && source != "processed" {
+		return
+	}
+	slog.Info("Served page image",
+		"book_id", bookID,
+		"page", pageNumber,
+		"source", source,
+		"content_type", contentType,
+		"bytes", size,
+		"duration_ms", duration.Milliseconds(),
+		"format", format,
+		"filter", filter,
+		"auto_crop", autoCrop,
+	)
+}
+
+func weakETag(value string) string {
+	return `W/"` + fmt.Sprintf("%x", sha1.Sum([]byte(value))) + `"`
+}
+
+func (c *Controller) processedImageCacheDir() string {
+	baseDir := filepath.Join(".", "data", "page-cache")
+	cfg := c.currentConfig()
+	if cfg.Cache.Dir != "" {
+		baseDir = filepath.Join(cfg.Cache.Dir, "pages")
+	}
+	return baseDir
+}
+
+func processedImageCacheFileName(cacheKey, contentType string) string {
+	sum := fmt.Sprintf("%x", sha1.Sum([]byte(cacheKey)))
+	return sum + extensionFromContentType(contentType)
+}
+
+func extensionFromContentType(contentType string) string {
+	switch {
+	case strings.Contains(contentType, "webp"):
+		return ".webp"
+	case strings.Contains(contentType, "png"):
+		return ".png"
+	case strings.Contains(contentType, "avif"):
+		return ".avif"
+	case strings.Contains(contentType, "jpeg"), strings.Contains(contentType, "jpg"):
+		return ".jpg"
+	default:
+		return ".bin"
+	}
+}
+
+func (c *Controller) readDiskImageCache(cacheKey string) ([]byte, string, bool) {
+	sum := fmt.Sprintf("%x", sha1.Sum([]byte(cacheKey)))
+	dir := c.processedImageCacheDir()
+	for _, ext := range []string{".webp", ".png", ".avif", ".jpg", ".bin"} {
+		path := filepath.Join(dir, sum[:2], sum+ext)
+		data, err := os.ReadFile(path)
+		if err == nil && len(data) > 0 {
+			return data, http.DetectContentType(data), true
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, os.ErrPermission) {
+			slog.Warn("Failed to read processed page disk cache", "path", path, "error", err)
+		}
+	}
+	return nil, "", false
+}
+
+func (c *Controller) writeDiskImageCache(cacheKey string, data []byte, contentType string) error {
+	if len(data) == 0 {
+		return nil
+	}
+	fileName := processedImageCacheFileName(cacheKey, contentType)
+	subDir := fileName[:2]
+	dir := filepath.Join(c.processedImageCacheDir(), subDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, fileName), data, 0o644)
+}
+
+func (c *Controller) getPageCacheStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := c.collectPageCacheStats()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to inspect page cache")
+		return
+	}
+	jsonResponse(w, http.StatusOK, stats)
+}
+
+func (c *Controller) clearPageCache(w http.ResponseWriter, r *http.Request) {
+	dir := filepath.Clean(c.processedImageCacheDir())
+	if dir == "." || dir == string(filepath.Separator) || strings.TrimSpace(dir) == "" {
+		jsonError(w, http.StatusInternalServerError, "Invalid page cache directory")
+		return
+	}
+
+	before, err := c.collectPageCacheStats()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to inspect page cache")
+		return
+	}
+	if err := removeDirectoryContents(dir); err != nil {
+		slog.Warn("Failed to clear processed page cache", "path", dir, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to clear page cache")
+		return
+	}
+	c.imageCache.Purge()
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"message":       "Page cache cleared",
+		"path":          before.Path,
+		"cleared_files": before.FileCount,
+		"cleared_bytes": before.FileSize,
+	})
+}
+
+func (c *Controller) collectPageCacheStats() (pageCacheStatsResponse, error) {
+	dir := filepath.Clean(c.processedImageCacheDir())
+	stats := pageCacheStatsResponse{Path: dir}
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, os.ErrNotExist) {
+				return nil
+			}
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		stats.FileCount++
+		stats.FileSize += info.Size()
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return stats, nil
+	}
+	return stats, err
+}
+
+func removeDirectoryContents(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {

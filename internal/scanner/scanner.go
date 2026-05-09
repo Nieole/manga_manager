@@ -100,8 +100,10 @@ type scanResult struct {
 	seriesName           string
 	seriesPath           string
 	book                 database.UpsertBookByPathParams
+	pages                []database.PageManifestEntry
 	comicInfo            *parser.ComicInfo
 	fileHash             string
+	quickHash            string
 	pathFingerprint      string
 	pathFingerprintNoExt string
 }
@@ -495,10 +497,23 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
 		CoverPath:      coverPath,
 	}
+	pageManifest := make([]database.PageManifestEntry, 0, len(pages))
+	for idx, page := range pages {
+		pageManifest = append(pageManifest, database.PageManifestEntry{
+			PageNumber: int64(idx + 1),
+			EntryName:  page.Name,
+			Size:       page.Size,
+			MediaType:  page.MediaType,
+		})
+	}
 
 	fileHash, err := koreader.FingerprintFile(job.path)
 	if err != nil {
 		slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err)
+	}
+	quickHash, err := koreader.FingerprintQuickFile(job.path)
+	if err != nil {
+		slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err)
 	}
 
 	// 尝试提取 ComicInfo.xml
@@ -513,8 +528,10 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		seriesName:           seriesName,
 		seriesPath:           seriesPath,
 		book:                 book,
+		pages:                pageManifest,
 		comicInfo:            cInfo,
 		fileHash:             fileHash,
+		quickHash:            quickHash,
 		pathFingerprint:      koreader.FingerprintRelativePath(rootPath, job.path, false),
 		pathFingerprintNoExt: koreader.FingerprintRelativePath(rootPath, job.path, true),
 	}
@@ -689,9 +706,18 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					slog.Error("Failed to upsert book", "path", res.book.Path, "error", err)
 					continue
 				}
+				if len(res.pages) > 0 {
+					for idx := range res.pages {
+						res.pages[idx].BookID = actualBook.ID
+					}
+					if err := replacePageManifestWithQueries(ctx, q, actualBook.ID, res.pages); err != nil {
+						slog.Warn("Failed to replace page manifest", "book_id", actualBook.ID, "path", actualBook.Path, "error", err)
+					}
+				}
 				if err := q.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
 					ID:                   actualBook.ID,
 					FileHash:             res.fileHash,
+					QuickHash:            res.quickHash,
 					PathFingerprint:      res.pathFingerprint,
 					PathFingerprintNoExt: res.pathFingerprintNoExt,
 				}); err != nil {
@@ -782,6 +808,35 @@ func getKeys(m map[string]bool) string {
 		keys = append(keys, k)
 	}
 	return strings.Join(keys, ",")
+}
+
+func replacePageManifestWithQueries(ctx context.Context, q *database.Queries, bookID int64, pages []database.PageManifestEntry) error {
+	if _, err := q.DBTX().ExecContext(ctx, `DELETE FROM page_manifest WHERE book_id = ?`, bookID); err != nil {
+		return err
+	}
+	if len(pages) == 0 {
+		return nil
+	}
+
+	stmt, err := q.DBTX().PrepareContext(ctx, `
+		INSERT INTO page_manifest (book_id, page_number, entry_name, size, media_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, page := range pages {
+		mediaType := page.MediaType
+		if mediaType == "" {
+			mediaType = "application/octet-stream"
+		}
+		if _, err := stmt.ExecContext(ctx, bookID, page.PageNumber, page.EntryName, page.Size, mediaType); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func extensionFromContentType(contentType, fallbackFormat string) string {

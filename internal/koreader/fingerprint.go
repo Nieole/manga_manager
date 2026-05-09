@@ -2,7 +2,9 @@ package koreader
 
 import (
 	"crypto/md5"
+	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -37,6 +39,51 @@ func FingerprintFile(path string) (string, error) {
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err
 	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func FingerprintQuickFile(path string) (string, error) {
+	const chunkSize = 64 * 1024
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha1.New()
+	if _, err := fmt.Fprintf(h, "%d|", info.Size()); err != nil {
+		return "", err
+	}
+
+	buf := make([]byte, chunkSize)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		if err != io.ErrUnexpectedEOF && err != io.EOF {
+			return "", err
+		}
+		buf = buf[:maxInt(0, int(info.Size()))]
+	}
+	if len(buf) > 0 {
+		if _, err := h.Write(buf); err != nil {
+			return "", err
+		}
+	}
+
+	if info.Size() > chunkSize {
+		tail := make([]byte, chunkSize)
+		if _, err := f.ReadAt(tail, info.Size()-chunkSize); err != nil {
+			return "", err
+		}
+		if _, err := h.Write(tail); err != nil {
+			return "", err
+		}
+	}
+
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
@@ -95,4 +142,11 @@ func normalizePathFragment(raw string, ignoreExtension bool) string {
 func hashMD5(value string) string {
 	sum := md5.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

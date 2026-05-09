@@ -21,3 +21,22 @@ export type ImageFilter =
   | 'lanczos2'
   | 'bspline'
   | 'catmullrom';
+
+export interface NullableText {
+  Valid?: boolean;
+  String?: string;
+}
+
+export interface NullableInt {
+  Valid?: boolean;
+  Int64?: number;
+}
+
+export interface ReaderBookInfo {
+  id?: number;
+  name: string;
+  title?: NullableText;
+  volume?: string;
+  series_id?: number;
+  last_read_page?: NullableInt;
+}

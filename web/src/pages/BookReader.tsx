@@ -3,8 +3,9 @@ import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Bookmark, CircleHelp, Loader2, RefreshCw, Settings, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { getFilterStyle, getPagedImages, getScaleClasses } from './book-reader/helpers';
+import { usePageImageCache } from './book-reader/usePageImageCache';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
-import type { ImageFilter, Page, ReaderImageFormat, ScaleMode } from './book-reader/types';
+import type { ImageFilter, Page, ReaderBookInfo, ReaderImageFormat, ScaleMode } from './book-reader/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
 interface ReadingBookmark {
@@ -16,51 +17,10 @@ interface ReadingBookmark {
     updated_at: string;
 }
 
-interface NullableText {
-    Valid?: boolean;
-    String?: string;
-}
-
-interface NullableInt {
-    Valid?: boolean;
-    Int64?: number;
-}
-
-interface ReaderBookInfo {
-    id?: number;
-    name: string;
-    title?: NullableText;
-    volume?: string;
-    series_id?: number;
-    last_read_page?: NullableInt;
-}
-
-interface PageImageRequest {
-    promise: Promise<string>;
-    controller: AbortController;
-}
-
-interface ReaderBookCache {
-    pages?: Page[];
-    bookInfo?: ReaderBookInfo;
-    nextBookId?: number | null;
-    imageUrls: Map<string, string>;
-    imageRequests: Map<string, PageImageRequest>;
-    preloadedImageUrls: Set<string>;
-}
-
 function isReaderShortcutInput(target: EventTarget | null) {
     if (!(target instanceof HTMLElement)) return false;
     const tagName = target.tagName.toLowerCase();
     return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
-}
-
-function createReaderBookCache(): ReaderBookCache {
-    return {
-        imageUrls: new Map(),
-        imageRequests: new Map(),
-        preloadedImageUrls: new Set(),
-    };
 }
 
 function isIgnoredImageLoadError(err: unknown) {
@@ -72,7 +32,6 @@ export default function BookReader() {
     const { bookId } = useParams();
     const navigate = useNavigate();
     const [pages, setPages] = useState<Page[]>([]);
-    const [cachedPageImageUrls, setCachedPageImageUrls] = useState<Record<number, string>>({});
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const observer = useRef<IntersectionObserver | null>(null);
@@ -147,8 +106,28 @@ export default function BookReader() {
     const [pagesBookId, setPagesBookId] = useState<string | null>(null);
     const pagesBookIdRef = useRef<string | null>(null);
     const currentBookIdRef = useRef<string | null>(bookId ?? null);
-    const readerBookCacheRef = useRef<Map<string, ReaderBookCache>>(new Map());
-    const imageCacheGenerationRef = useRef(0);
+    const {
+        cachedPageImageUrls,
+        setCachedPageImageUrls,
+        imageOptionsKey,
+        getBookCache,
+        getImageUrlForBook,
+        getImageUrl,
+        clearAllPageImageCaches,
+        cachedImageUrlsForBook,
+        retainBookCaches,
+        ensurePageImageLoaded,
+        isPagedImageReady,
+    } = usePageImageCache({
+        imageFilter,
+        w2xScale,
+        w2xNoise,
+        w2xFormat,
+        autoCrop,
+        readerImageFormat,
+        readerImageQuality,
+        currentBookIdRef,
+    });
     const pagesBelongToCurrentBook = Boolean(bookId && bookId === pagesBookId);
     const activePages = pagesBelongToCurrentBook ? pages : [];
     const readerLoading = loading || Boolean(bookId && !pagesBelongToCurrentBook);
@@ -175,143 +154,6 @@ export default function BookReader() {
         axios.post(`/api/books/${bookId}/progress`, { page: pageNumber })
             .catch(err => console.error("Failed to update read progress", err));
     }, [bookId, loading]);
-
-    const imageOptionsKey = [
-        imageFilter,
-        w2xScale,
-        w2xNoise,
-        w2xFormat,
-        autoCrop ? 'crop' : 'no-crop',
-        readerImageFormat,
-        readerImageQuality,
-    ].join('|');
-
-    const getBookCache = useCallback((targetBookId: string) => {
-        let cache = readerBookCacheRef.current.get(targetBookId);
-        if (!cache) {
-            cache = createReaderBookCache();
-            readerBookCacheRef.current.set(targetBookId, cache);
-        }
-        return cache;
-    }, []);
-
-    const getImageUrlForBook = useCallback((targetBookId: string, pageNum: number) => {
-        const params = new URLSearchParams();
-        if (imageFilter && imageFilter !== 'none') {
-            params.set('filter', imageFilter);
-            if (imageFilter === 'waifu2x' || imageFilter === 'realcugan') {
-                params.set('w2x_scale', String(w2xScale));
-                params.set('w2x_noise', String(w2xNoise));
-                params.set('w2x_format', w2xFormat);
-            }
-        }
-        if (autoCrop) {
-            params.set('auto_crop', 'true');
-        }
-        if (readerImageFormat !== 'original') {
-            params.set('format', readerImageFormat);
-            params.set('q', String(readerImageQuality));
-        }
-        const query = params.toString();
-        return `/api/pages/${targetBookId}/${pageNum}${query ? `?${query}` : ''}`;
-    }, [imageFilter, w2xScale, w2xNoise, w2xFormat, autoCrop, readerImageFormat, readerImageQuality]);
-
-    const getImageUrl = useCallback((pageNum: number) => {
-        return getImageUrlForBook(bookId ?? '', pageNum);
-    }, [bookId, getImageUrlForBook]);
-
-    const clearImagesInCache = useCallback((cache: ReaderBookCache) => {
-        cache.imageRequests.forEach(({ controller }) => controller.abort());
-        cache.imageRequests.clear();
-        cache.preloadedImageUrls.clear();
-        cache.imageUrls.forEach((objectUrl) => {
-            URL.revokeObjectURL(objectUrl);
-        });
-        cache.imageUrls.clear();
-    }, []);
-
-    const clearAllPageImageCaches = useCallback(() => {
-        imageCacheGenerationRef.current += 1;
-        readerBookCacheRef.current.forEach((cache) => clearImagesInCache(cache));
-        setCachedPageImageUrls({});
-    }, [clearImagesInCache]);
-
-    const cachedImageUrlsForBook = useCallback((targetBookId: string, bookPages: Page[]) => {
-        const cache = readerBookCacheRef.current.get(targetBookId);
-        if (!cache) return {};
-        const cachedUrls: Record<number, string> = {};
-        bookPages.forEach((page) => {
-            const objectUrl = cache.imageUrls.get(getImageUrlForBook(targetBookId, page.number));
-            if (objectUrl) {
-                cachedUrls[page.number] = objectUrl;
-            }
-        });
-        return cachedUrls;
-    }, [getImageUrlForBook]);
-
-    const retainBookCaches = useCallback((bookIds: Array<string | null | undefined>) => {
-        const keep = new Set(bookIds.filter((id): id is string => Boolean(id)));
-        readerBookCacheRef.current.forEach((cache, cacheBookId) => {
-            if (!keep.has(cacheBookId)) {
-                clearImagesInCache(cache);
-                readerBookCacheRef.current.delete(cacheBookId);
-            }
-        });
-    }, [clearImagesInCache]);
-
-    const ensurePageImageLoaded = useCallback((targetBookId: string, pageNum: number) => {
-        const cache = getBookCache(targetBookId);
-        const requestUrl = getImageUrlForBook(targetBookId, pageNum);
-        const cachedObjectUrl = cache.imageUrls.get(requestUrl);
-        if (cachedObjectUrl) {
-            if (targetBookId === currentBookIdRef.current) {
-                setCachedPageImageUrls((prev) => prev[pageNum] ? prev : { ...prev, [pageNum]: cachedObjectUrl });
-            }
-            return Promise.resolve(cachedObjectUrl);
-        }
-
-        const inFlight = cache.imageRequests.get(requestUrl);
-        if (inFlight) {
-            return inFlight.promise;
-        }
-
-        const generation = imageCacheGenerationRef.current;
-        const controller = new AbortController();
-        const request = fetch(requestUrl, { signal: controller.signal })
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error(`Failed to load page ${pageNum}: ${response.status}`);
-                }
-                return response.blob();
-            })
-            .then((blob) => {
-                const objectUrl = URL.createObjectURL(blob);
-                if (generation !== imageCacheGenerationRef.current || !readerBookCacheRef.current.has(targetBookId)) {
-                    URL.revokeObjectURL(objectUrl);
-                    throw new DOMException('Stale reader image request', 'AbortError');
-                }
-                cache.imageUrls.set(requestUrl, objectUrl);
-                if (targetBookId === currentBookIdRef.current) {
-                    setCachedPageImageUrls((prev) => {
-                        if (prev[pageNum] === objectUrl) {
-                            return prev;
-                        }
-                        return { ...prev, [pageNum]: objectUrl };
-                    });
-                }
-                return objectUrl;
-            })
-            .finally(() => {
-                cache.imageRequests.delete(requestUrl);
-            });
-
-        cache.imageRequests.set(requestUrl, { promise: request, controller });
-        return request;
-    }, [getBookCache, getImageUrlForBook]);
-
-    const isPagedImageReady = useCallback((pageNum: number) => {
-        return Boolean(cachedPageImageUrls[pageNum]);
-    }, [cachedPageImageUrls]);
 
     const loadBookmarks = useCallback(() => {
         if (!bookId) return Promise.resolve();
@@ -1084,7 +926,7 @@ export default function BookReader() {
                             <img
                                 key={page.number}
                                 data-page-number={page.number}
-                                src={cachedPageImageUrls[page.number] || getImageUrl(page.number)}
+                                src={cachedPageImageUrls[page.number] || getImageUrl(bookId, page.number)}
                                 loading="lazy"
                                 decoding="async"
                                 style={getFilterStyle(imageFilter)}

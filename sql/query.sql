@@ -295,6 +295,120 @@ SET
 WHERE id = ?
 RETURNING *;
 
+-- name: CreateMetadataReview :one
+INSERT INTO metadata_reviews (
+    series_id, provider, source_url, source_id, source_query, summary, confidence, status, raw_payload
+) VALUES (
+    sqlc.arg(series_id), sqlc.arg(provider), sqlc.arg(source_url), sqlc.arg(source_id), sqlc.arg(source_query), sqlc.arg(summary), sqlc.arg(confidence), sqlc.arg(status), sqlc.arg(raw_payload)
+)
+RETURNING *;
+
+-- name: GetMetadataReview :one
+SELECT * FROM metadata_reviews WHERE id = ? LIMIT 1;
+
+-- name: ListMetadataReviewsBySeries :many
+SELECT * FROM metadata_reviews WHERE series_id = ? ORDER BY created_at DESC;
+
+-- name: ListPendingMetadataReviewsBySeries :many
+SELECT * FROM metadata_reviews WHERE series_id = ? AND status = 'pending' ORDER BY confidence DESC, created_at DESC;
+
+-- name: CountPendingMetadataReviewInbox :one
+SELECT COUNT(*)
+FROM metadata_reviews mr
+JOIN series s ON s.id = mr.series_id
+JOIN libraries l ON l.id = s.library_id
+WHERE mr.status = 'pending'
+  AND (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (CAST(sqlc.arg(provider) AS TEXT) = '' OR lower(mr.provider) = lower(CAST(sqlc.arg(provider) AS TEXT)))
+  AND (
+    CAST(sqlc.arg(query) AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(mr.source_query), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+  );
+
+-- name: ListPendingMetadataReviewInbox :many
+SELECT
+    mr.id,
+    mr.series_id,
+    mr.provider,
+    mr.source_url,
+    mr.source_id,
+    mr.source_query,
+    mr.summary,
+    mr.confidence,
+    mr.status,
+    mr.raw_payload,
+    mr.created_at,
+    mr.updated_at,
+    mr.applied_at,
+    mr.rejected_at,
+    s.library_id,
+    l.name as library_name,
+    s.name as series_name,
+    COALESCE(s.title, '') as series_title,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id,
+    CAST((SELECT COUNT(*) FROM metadata_review_fields f WHERE f.review_id = mr.id) AS INTEGER) as field_count,
+    CAST((SELECT COUNT(*) FROM metadata_review_fields f WHERE f.review_id = mr.id AND f.locked = TRUE) AS INTEGER) as locked_field_count
+FROM metadata_reviews mr
+JOIN series s ON s.id = mr.series_id
+JOIN libraries l ON l.id = s.library_id
+WHERE mr.status = 'pending'
+  AND (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (CAST(sqlc.arg(provider) AS TEXT) = '' OR lower(mr.provider) = lower(CAST(sqlc.arg(provider) AS TEXT)))
+  AND (
+    CAST(sqlc.arg(query) AS TEXT) = ''
+    OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+    OR instr(lower(mr.source_query), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
+  )
+ORDER BY mr.confidence ASC, mr.created_at ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: UpdateMetadataReviewStatus :one
+UPDATE metadata_reviews
+SET status = sqlc.arg(status),
+    updated_at = CURRENT_TIMESTAMP,
+    applied_at = CASE WHEN sqlc.arg(status) = 'applied' THEN CURRENT_TIMESTAMP ELSE applied_at END,
+    rejected_at = CASE WHEN sqlc.arg(status) = 'rejected' THEN CURRENT_TIMESTAMP ELSE rejected_at END
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: CreateMetadataReviewField :one
+INSERT INTO metadata_review_fields (
+    review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status
+) VALUES (
+    sqlc.arg(review_id), sqlc.arg(field_name), sqlc.arg(current_value), sqlc.arg(proposed_value), sqlc.arg(confidence), sqlc.arg(source), sqlc.arg(source_url), sqlc.arg(locked), sqlc.arg(status)
+)
+RETURNING *;
+
+-- name: ListMetadataReviewFields :many
+SELECT * FROM metadata_review_fields WHERE review_id = ? ORDER BY id ASC;
+
+-- name: UpsertSeriesMetadataProvenance :one
+INSERT INTO series_metadata_provenance (
+    series_id, field_name, value, source, source_url, confidence, review_id
+) VALUES (
+    sqlc.arg(series_id), sqlc.arg(field_name), sqlc.arg(value), sqlc.arg(source), sqlc.arg(source_url), sqlc.arg(confidence), sqlc.arg(review_id)
+)
+ON CONFLICT(series_id, field_name) DO UPDATE SET
+    value = excluded.value,
+    source = excluded.source,
+    source_url = excluded.source_url,
+    confidence = excluded.confidence,
+    review_id = excluded.review_id,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING *;
+
+-- name: GetSeriesMetadataProvenance :many
+SELECT * FROM series_metadata_provenance WHERE series_id = ? ORDER BY field_name;
+
 -- name: ListSeriesInitialBackfillCandidates :many
 SELECT id, name, title, name_initial FROM series;
 
@@ -454,6 +568,85 @@ SELECT s.id, s.title, s.name, s.summary
 FROM series s
 LEFT JOIN collection_series cs ON s.id = cs.series_id
 WHERE s.library_id = ? AND cs.collection_id IS NULL;
+
+-- name: CreateAIGroupingReview :one
+INSERT INTO ai_grouping_reviews (
+    library_id, provider, status, summary, raw_payload, candidate_count, collection_count
+) VALUES (
+    sqlc.arg(library_id), sqlc.arg(provider), sqlc.arg(status), sqlc.arg(summary), sqlc.arg(raw_payload), sqlc.arg(candidate_count), sqlc.arg(collection_count)
+)
+RETURNING *;
+
+-- name: CreateAIGroupingReviewCollection :one
+INSERT INTO ai_grouping_review_collections (
+    review_id, name, description, series_ids, series_count, status
+) VALUES (
+    sqlc.arg(review_id), sqlc.arg(name), sqlc.arg(description), sqlc.arg(series_ids), sqlc.arg(series_count), sqlc.arg(status)
+)
+RETURNING *;
+
+-- name: ListAIGroupingReviews :many
+SELECT
+    agr.id,
+    agr.library_id,
+    l.name as library_name,
+    agr.provider,
+    agr.status,
+    agr.summary,
+    agr.raw_payload,
+    agr.candidate_count,
+    agr.collection_count,
+    agr.created_at,
+    agr.updated_at,
+    agr.applied_at,
+    agr.rejected_at
+FROM ai_grouping_reviews agr
+JOIN libraries l ON l.id = agr.library_id
+WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR agr.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (CAST(sqlc.arg(status) AS TEXT) = '' OR agr.status = CAST(sqlc.arg(status) AS TEXT))
+ORDER BY agr.created_at DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: CountAIGroupingReviews :one
+SELECT COUNT(*)
+FROM ai_grouping_reviews agr
+WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR agr.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
+  AND (CAST(sqlc.arg(status) AS TEXT) = '' OR agr.status = CAST(sqlc.arg(status) AS TEXT));
+
+-- name: GetAIGroupingReview :one
+SELECT * FROM ai_grouping_reviews WHERE id = ? LIMIT 1;
+
+-- name: ListAIGroupingReviewCollections :many
+SELECT * FROM ai_grouping_review_collections WHERE review_id = ? ORDER BY id ASC;
+
+-- name: UpdateAIGroupingReviewStatus :one
+UPDATE ai_grouping_reviews
+SET status = sqlc.arg(status),
+    updated_at = CURRENT_TIMESTAMP,
+    applied_at = CASE WHEN sqlc.arg(status) = 'applied' THEN CURRENT_TIMESTAMP ELSE applied_at END,
+    rejected_at = CASE WHEN sqlc.arg(status) = 'rejected' THEN CURRENT_TIMESTAMP ELSE rejected_at END
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: MarkAIGroupingReviewCollectionApplied :exec
+UPDATE ai_grouping_review_collections
+SET status = 'applied',
+    created_collection_id = sqlc.arg(created_collection_id),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id);
+
+-- name: MarkAIGroupingReviewCollectionsRejected :exec
+UPDATE ai_grouping_review_collections
+SET status = 'rejected',
+    updated_at = CURRENT_TIMESTAMP
+WHERE review_id = sqlc.arg(review_id)
+  AND status = 'pending';
+
+-- name: GetSeriesNamesByIDs :many
+SELECT id, name, COALESCE(title, '') as title
+FROM series
+WHERE id IN (sqlc.slice(ids))
+ORDER BY COALESCE(NULLIF(title, ''), name) COLLATE NOCASE;
 
 -- name: CreateCollection :one
 INSERT INTO collections (name, description)

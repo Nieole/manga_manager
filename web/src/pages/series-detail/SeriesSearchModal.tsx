@@ -30,6 +30,11 @@ interface PreviewField {
   nextValue: string;
 }
 
+function confidenceLabel(value: number | undefined) {
+  if (!value || !Number.isFinite(value)) return '0%';
+  return `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%`;
+}
+
 export function SeriesSearchModal({
   open,
   providerLabel,
@@ -255,6 +260,12 @@ export function SeriesSearchModal({
                               {result.Rating.toFixed(1)}
                             </p>
                           )}
+                          {(result.Confidence || result.Provider || result.SourceURL) && (
+                            <p className="text-cyan-300 text-xs font-semibold flex items-center gap-1.5 bg-cyan-400/5 px-2 py-1 rounded border border-cyan-400/10">
+                              <Sparkles className="w-3.5 h-3.5" />
+                              {result.Provider || providerLabel || t('series.searchModal.externalSource')} · {confidenceLabel(result.Confidence)}
+                            </p>
+                          )}
                         </div>
 
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -298,7 +309,14 @@ export function SeriesSearchModal({
                       <div>
                         <p className="text-xs uppercase tracking-[0.18em] text-gray-500">{t('series.searchModal.preview')}</p>
                         <h4 className="mt-2 text-xl font-bold text-white">{selectedResult.Title}</h4>
-                        <p className="text-sm text-gray-500 mt-1">{t('series.searchModal.source', { provider: providerLabel || t('series.searchModal.externalSource'), id: selectedResult.SourceID })}</p>
+                        <p className="text-sm text-gray-500 mt-1">{t('series.searchModal.source', { provider: selectedResult.Provider || providerLabel || t('series.searchModal.externalSource'), id: selectedResult.SourceID })}</p>
+                        <p className="mt-1 text-xs text-cyan-300">{t('series.searchModal.confidence', { value: confidenceLabel(selectedResult.Confidence) })}</p>
+                        {selectedResult.SourceURL && (
+                          <a href={selectedResult.SourceURL} target="_blank" rel="noreferrer" className="mt-2 inline-flex max-w-full items-center gap-1 truncate text-xs text-cyan-300 hover:text-cyan-200">
+                            <Globe className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{selectedResult.SourceURL}</span>
+                          </a>
+                        )}
                       </div>
                       <div className="rounded-full border border-komgaPrimary/20 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
                         {t('series.searchModal.changedFields', { count: changedFieldCount })}

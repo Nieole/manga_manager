@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
-	"manga-manager/internal/parser"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -194,7 +193,6 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func (c *Controller) mihonSeriesDetail(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
@@ -242,14 +240,7 @@ func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "Book not found")
 		return
 	}
-	arc, err := parser.OpenArchive(book.Path)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to open archive")
-		return
-	}
-	defer arc.Close()
-
-	pages, err := arc.GetPages()
+	pages, err := c.ensurePageManifest(r.Context(), book)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
 		return
@@ -300,7 +291,6 @@ func mihonImageQuery(r *http.Request) string {
 	}
 	return "?" + strings.Join(query, "&")
 }
-
 
 func mihonSeriesFromDetailRow(row database.GetMihonSeriesRow) MihonSeriesResponse {
 	return MihonSeriesResponse{

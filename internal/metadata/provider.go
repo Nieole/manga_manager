@@ -84,7 +84,10 @@ type SeriesMetadata struct {
 	CoverURL      string
 	Rating        float64
 	Tags          []string
-	SourceID      int    // 外部数据源条目 ID（如 Bangumi subject ID）
+	SourceID      int // 外部数据源条目 ID（如 Bangumi subject ID）
+	SourceURL     string
+	Provider      string
+	Confidence    float64
 	ReleaseDate   string // 发行日期
 	VolumeCount   int    // 册数/卷数
 }

@@ -12,12 +12,13 @@ import (
 
 // llmMetadataResult LLM 返回的 JSON 结构化元数据
 type llmMetadataResult struct {
-	Title     string   `json:"title"`
-	Summary   string   `json:"summary"`
-	Publisher string   `json:"publisher"`
-	Status    string   `json:"status"`
-	Tags      []string `json:"tags"`
-	Rating    float64  `json:"rating"`
+	Title      string   `json:"title"`
+	Summary    string   `json:"summary"`
+	Publisher  string   `json:"publisher"`
+	Status     string   `json:"status"`
+	Tags       []string `json:"tags"`
+	Rating     float64  `json:"rating"`
+	Confidence float64  `json:"confidence"`
 }
 
 // aiRecommendationResult LLM返回的推荐列表格式
@@ -54,6 +55,7 @@ Series title: %s
 
 Return strict JSON only, with no extra text. Use these status codes only: ongoing, completed, hiatus, cancelled, unknown.
 Write title, summary, publisher, and tags in English.
+Also include a confidence score from 0.0 to 1.0 that reflects how certain you are about the answer.
 
 {
   "title": "Official English title if available, otherwise the original title",
@@ -61,7 +63,8 @@ Write title, summary, publisher, and tags in English.
   "publisher": "Publisher name",
   "status": "ongoing",
   "tags": ["tag 1", "tag 2", "tag 3"],
-  "rating": 0.0
+  "rating": 0.0,
+  "confidence": 0.0
 }`, title)
 	}
 
@@ -72,6 +75,7 @@ Write title, summary, publisher, and tags in English.
 
 请严格以 JSON 格式回复，不要包含任何其他文字。status 字段只能使用以下英文状态码之一：ongoing、completed、hiatus、cancelled、unknown。
 title、summary、publisher、tags 请使用简体中文输出。
+另外请给出 0.0 到 1.0 之间的 confidence 分数，表示你对答案的把握程度。
 
 {
   "title": "作品正式中文名（如有），否则原名",
@@ -79,7 +83,8 @@ title、summary、publisher、tags 请使用简体中文输出。
   "publisher": "出版社名称",
   "status": "ongoing",
   "tags": ["标签1", "标签2", "标签3"],
-  "rating": 0.0
+  "rating": 0.0,
+  "confidence": 0.0
 }`, title)
 }
 

@@ -22,7 +22,7 @@ func TestApplyMetadataToSeriesHonorsLocksAndCreatesTagsAndLinks(t *testing.T) {
 		UPDATE series
 		SET title = ?, summary = ?, publisher = ?, rating = ?, locked_fields = ?
 		WHERE id = ?
-	`, "Locked Title", "Old summary", "Old publisher", 7.2, "title,publisher", series.ID); err != nil {
+	`, "Locked Title", "Old summary", "Old publisher", 7.2, "title,publisher,tags", series.ID); err != nil {
 		t.Fatalf("seed locked series metadata failed: %v", err)
 	}
 
@@ -40,7 +40,13 @@ func TestApplyMetadataToSeriesHonorsLocksAndCreatesTagsAndLinks(t *testing.T) {
 		SourceID:  12345,
 	}
 
-	if err := controller.applyMetadataToSeries(context.Background(), series, input, "bangumi"); err != nil {
+	if err := controller.applyMetadataToSeries(context.Background(), series, input, metadataApplyOptions{
+		ProviderName: "bangumi",
+		SourceURL:    "https://bgm.tv/subject/12345",
+		SourceID:     12345,
+		Confidence:   0.91,
+		SourceQuery:  series.Name,
+	}); err != nil {
 		t.Fatalf("applyMetadataToSeries failed: %v", err)
 	}
 
@@ -66,8 +72,8 @@ func TestApplyMetadataToSeriesHonorsLocksAndCreatesTagsAndLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTagsForSeries failed: %v", err)
 	}
-	if len(tags) != 2 {
-		t.Fatalf("expected 2 deduplicated tags, got %d", len(tags))
+	if len(tags) != 0 {
+		t.Fatalf("expected locked tags to stay unchanged, got %d", len(tags))
 	}
 
 	links, err := controller.store.GetLinksForSeries(context.Background(), series.ID)
@@ -81,7 +87,40 @@ func TestApplyMetadataToSeriesHonorsLocksAndCreatesTagsAndLinks(t *testing.T) {
 		t.Fatalf("unexpected source link: %+v", links[0])
 	}
 
-	if err := controller.applyMetadataToSeries(context.Background(), updated, input, "bangumi"); err != nil {
+	provenance, err := controller.store.GetSeriesMetadataProvenance(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetSeriesMetadataProvenance failed: %v", err)
+	}
+	provenanceByField := map[string]database.SeriesMetadataProvenance{}
+	for _, row := range provenance {
+		provenanceByField[row.FieldName] = row
+	}
+	if provenanceByField["summary"].Source != "bangumi" || provenanceByField["summary"].SourceUrl != "https://bgm.tv/subject/12345" {
+		t.Fatalf("expected summary provenance from Bangumi, got %+v", provenanceByField["summary"])
+	}
+	if provenanceByField["summary"].Confidence != 0.91 {
+		t.Fatalf("expected summary confidence recorded, got %+v", provenanceByField["summary"])
+	}
+	if _, ok := provenanceByField["title"]; ok {
+		t.Fatalf("expected locked title not to receive scraped provenance, got %+v", provenanceByField["title"])
+	}
+	if _, ok := provenanceByField["publisher"]; ok {
+		t.Fatalf("expected locked publisher not to receive scraped provenance, got %+v", provenanceByField["publisher"])
+	}
+	if _, ok := provenanceByField["tags"]; ok {
+		t.Fatalf("expected locked tags not to receive scraped provenance, got %+v", provenanceByField["tags"])
+	}
+	if _, ok := provenanceByField["source_link"]; !ok {
+		t.Fatalf("expected source_link provenance, got %+v", provenanceByField)
+	}
+
+	if err := controller.applyMetadataToSeries(context.Background(), updated, input, metadataApplyOptions{
+		ProviderName: "bangumi",
+		SourceURL:    "https://bgm.tv/subject/12345",
+		SourceID:     12345,
+		Confidence:   0.91,
+		SourceQuery:  series.Name,
+	}); err != nil {
 		t.Fatalf("second applyMetadataToSeries failed: %v", err)
 	}
 

@@ -18,6 +18,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
@@ -1392,6 +1393,13 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	if len(pages) != 2 || pages[0].Number != 1 || pages[0].URL == "" {
 		t.Fatalf("unexpected pages payload: %+v", pages)
 	}
+	manifest, err := store.ListPageManifest(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("list page manifest after get pages failed: %v", err)
+	}
+	if len(manifest) != 2 || manifest[0].EntryName != "001.png" || manifest[1].EntryName != "002.png" {
+		t.Fatalf("expected getPagesByBook to backfill page manifest, got %+v", manifest)
+	}
 }
 
 func TestDeleteLibraryAndValidationHandlers(t *testing.T) {
@@ -1853,6 +1861,110 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 	}
 }
 
+func TestTasksPersistAcrossControllerInstances(t *testing.T) {
+	controller, store, engine, tempDir := newTestController(t)
+
+	if !controller.startTask("scan_series_77", "scan_series", "series 77", 1) {
+		t.Fatal("expected task to start")
+	}
+	controller.setTaskMetadata("scan_series_77", map[string]string{"force": "true"}, "Series 77")
+	controller.failTaskWithError("scan_series_77", "failed series scan", "archive error")
+
+	cfg := controller.config
+	imageCache, _ := lru.New[string, []byte](8)
+	reloaded := &Controller{
+		store:      store,
+		imageCache: imageCache,
+		scanner:    scanner.NewScanner(store, engine, cfg),
+		engine:     engine,
+		config:     cfg,
+		koreader:   koreader.NewService(store, cfg),
+		external:   external.NewManager(store, 30*time.Minute),
+		configPath: filepath.Join(tempDir, "config.yaml"),
+		tasks:      make(map[string]TaskStatus),
+		messages:   make(chan string, 32),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)
+	rec := httptest.NewRecorder()
+	reloaded.listTasks(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var tasks []TaskStatus
+	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
+		t.Fatalf("decode persisted tasks failed: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected one persisted task, got %+v", tasks)
+	}
+	task := tasks[0]
+	if task.Key != "scan_series_77" || task.Status != "failed" || task.Error != "archive error" {
+		t.Fatalf("unexpected persisted task: %+v", task)
+	}
+	if task.Params == nil || task.Params["force"] != "true" {
+		t.Fatalf("expected persisted params, got %+v", task.Params)
+	}
+	if task.ScopeName != "Series 77" {
+		t.Fatalf("expected persisted scope name, got %q", task.ScopeName)
+	}
+}
+
+func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
+	_, store, engine, tempDir := newTestController(t)
+	now := time.Now().Add(-time.Minute)
+	scopeID := int64(55)
+	if err := store.UpsertTask(context.Background(), database.TaskRecord{
+		Key:       "scan_series_55",
+		Type:      "scan_series",
+		Scope:     "series",
+		ScopeID:   &scopeID,
+		Status:    "running",
+		Message:   "running before restart",
+		Total:     1,
+		Retryable: true,
+		StartedAt: now,
+		UpdatedAt: now,
+		Sequence:  42,
+	}); err != nil {
+		t.Fatalf("upsert running task failed: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Database.Path = filepath.Join(tempDir, "test.db")
+	cfg.Cache.Dir = filepath.Join(tempDir, "cache")
+	cfg.Scanner.ArchivePoolSize = 5
+	cfg.Scanner.MaxAiConcurrency = 3
+	cfg.LLM.Provider = "ollama"
+	cfg.LLM.BaseURL = "http://localhost:11434"
+	cfg.LLM.Model = "qwen2.5"
+	config.NormalizeConfig(cfg)
+	cfgManager := config.NewManager(cfg)
+	controller := NewController(store, scanner.NewScanner(store, engine, cfgManager), engine, cfgManager, filepath.Join(tempDir, "config.yaml"))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=55", nil)
+	rec := httptest.NewRecorder()
+	controller.listTasks(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var tasks []TaskStatus
+	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
+		t.Fatalf("decode tasks failed: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected one task, got %+v", tasks)
+	}
+	if tasks[0].Status != "failed" || tasks[0].Error == "" {
+		t.Fatalf("expected interrupted task to be failed with error, got %+v", tasks[0])
+	}
+	if !tasks[0].Retryable {
+		t.Fatalf("expected interrupted task to remain retryable")
+	}
+}
+
 func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
@@ -1883,6 +1995,63 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 	}
 	if !failedExists {
 		t.Fatal("expected failed task to remain")
+	}
+}
+
+func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	if !controller.startTask("scan_series_10", "scan_series", "series 10", 1) {
+		t.Fatal("expected first task to start")
+	}
+	controller.finishTask("scan_series_10", "done")
+
+	if !controller.startTask("scan_series_11", "scan_series", "series 11", 1) {
+		t.Fatal("expected second task to start")
+	}
+	controller.finishTask("scan_series_11", "done")
+
+	if !controller.startTask("scan_library_11", "scan_library", "library 11", 1) {
+		t.Fatal("expected third task to start")
+	}
+	controller.finishTask("scan_library_11", "done")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
+	rec := httptest.NewRecorder()
+	controller.clearTasks(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Removed int `json:"removed"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode clear response failed: %v", err)
+	}
+	if payload.Removed != 1 {
+		t.Fatalf("expected one removed task, got %d", payload.Removed)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
+	rec = httptest.NewRecorder()
+	controller.listTasks(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected list 200, got %d", rec.Code)
+	}
+	var tasks []TaskStatus
+	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
+		t.Fatalf("decode tasks failed: %v", err)
+	}
+	keys := make(map[string]bool)
+	for _, task := range tasks {
+		keys[task.Key] = true
+	}
+	if keys["scan_series_11"] {
+		t.Fatalf("expected scan_series_11 to be removed, got %+v", keys)
+	}
+	if !keys["scan_series_10"] || !keys["scan_library_11"] {
+		t.Fatalf("expected other tasks to remain, got %+v", keys)
 	}
 }
 
@@ -2185,6 +2354,30 @@ func TestGetRecentReadAllHonorsLimit(t *testing.T) {
 	}
 }
 
+func TestRunRebuildFileIdentitiesBackfillsQuickHash(t *testing.T) {
+	controller, store, _, tempDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, tempDir, "Lib", "Series", "Book.cbz", 12)
+	if err := os.WriteFile(book.Path, []byte("quick-hash-book-content"), 0o644); err != nil {
+		t.Fatalf("write book file failed: %v", err)
+	}
+
+	updated, total, err := controller.runRebuildFileIdentities(context.Background(), 500, nil)
+	if err != nil {
+		t.Fatalf("runRebuildFileIdentities failed: %v", err)
+	}
+	if updated != 1 || total != 1 {
+		t.Fatalf("expected one identity update, got updated=%d total=%d", updated, total)
+	}
+
+	got, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if !got.QuickHash.Valid || got.QuickHash.String == "" {
+		t.Fatalf("expected quick hash to be backfilled, got %+v", got.QuickHash)
+	}
+}
+
 func TestReadingBookmarksLifecycle(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 	_, _, book := seedBookFixture(t, store, tempDir, "Lib", "Series", "Book.cbz", 12)
@@ -2237,7 +2430,7 @@ func TestReadingBookmarksLifecycle(t *testing.T) {
 	}
 }
 
-func TestApplyScrapedMetadataPersistsSeriesTagsAndLink(t *testing.T) {
+func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
 
@@ -2247,7 +2440,9 @@ func TestApplyScrapedMetadataPersistsSeriesTagsAndLink(t *testing.T) {
 		"Publisher":"Kodansha",
 		"Rating":8.6,
 		"Tags":["Action","Drama"],
-		"SourceID":12345
+		"SourceID":12345,
+		"SourceURL":"https://bgm.tv/subject/12345",
+		"Confidence":0.92
 	}`)
 
 	req := requestWithRouteParam(
@@ -2265,15 +2460,66 @@ func TestApplyScrapedMetadataPersistsSeriesTagsAndLink(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
+	var queued struct {
+		Queued     bool  `json:"queued"`
+		ReviewID   int64 `json:"review_id"`
+		FieldCount int   `json:"field_count"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&queued); err != nil {
+		t.Fatalf("decode queued response failed: %v", err)
+	}
+	if !queued.Queued || queued.ReviewID == 0 || queued.FieldCount == 0 {
+		t.Fatalf("expected metadata review to be queued, got %+v", queued)
+	}
+
 	updated, err := store.GetSeries(context.Background(), series.ID)
 	if err != nil {
 		t.Fatalf("GetSeries failed: %v", err)
 	}
+	if updated.Title.Valid || updated.Publisher.Valid {
+		t.Fatalf("expected scraped metadata not to overwrite before review, got title=%+v publisher=%+v", updated.Title, updated.Publisher)
+	}
+
+	listRec := httptest.NewRecorder()
+	controller.listSeriesMetadataReview(listRec, requestWithRouteParam(
+		http.MethodGet,
+		"/api/series/1/metadata-review",
+		nil,
+		"seriesId",
+		strconv.FormatInt(series.ID, 10),
+	))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected metadata review list 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var listPayload metadataReviewResponse
+	if err := json.NewDecoder(listRec.Body).Decode(&listPayload); err != nil {
+		t.Fatalf("decode review list failed: %v", err)
+	}
+	if len(listPayload.Reviews) != 1 || len(listPayload.Reviews[0].Fields) == 0 {
+		t.Fatalf("expected pending review fields, got %+v", listPayload)
+	}
+
+	applyRec := httptest.NewRecorder()
+	controller.applyMetadataReview(applyRec, requestWithRouteParam(
+		http.MethodPost,
+		"/api/metadata/reviews/1/apply",
+		nil,
+		"reviewId",
+		strconv.FormatInt(queued.ReviewID, 10),
+	))
+	if applyRec.Code != http.StatusOK {
+		t.Fatalf("expected metadata review apply 200, got %d body=%s", applyRec.Code, applyRec.Body.String())
+	}
+
+	updated, err = store.GetSeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetSeries after apply failed: %v", err)
+	}
 	if !updated.Title.Valid || updated.Title.String != "Updated Title" {
-		t.Fatalf("expected updated title, got %+v", updated.Title)
+		t.Fatalf("expected updated title after review apply, got %+v", updated.Title)
 	}
 	if !updated.Publisher.Valid || updated.Publisher.String != "Kodansha" {
-		t.Fatalf("expected updated publisher, got %+v", updated.Publisher)
+		t.Fatalf("expected updated publisher after review apply, got %+v", updated.Publisher)
 	}
 
 	tags, err := store.GetTagsForSeries(context.Background(), series.ID)
@@ -2293,6 +2539,134 @@ func TestApplyScrapedMetadataPersistsSeriesTagsAndLink(t *testing.T) {
 	}
 	if links[0].Url != "https://bgm.tv/subject/12345" {
 		t.Fatalf("unexpected source link: %s", links[0].Url)
+	}
+
+	review, err := store.GetMetadataReview(context.Background(), queued.ReviewID)
+	if err != nil {
+		t.Fatalf("GetMetadataReview failed: %v", err)
+	}
+	if review.Status != "applied" {
+		t.Fatalf("expected applied review status, got %+v", review)
+	}
+	provenance, err := store.GetSeriesMetadataProvenance(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetSeriesMetadataProvenance failed: %v", err)
+	}
+	if len(provenance) == 0 {
+		t.Fatal("expected provenance rows after review apply")
+	}
+	foundTitleProvenance := false
+	for _, row := range provenance {
+		if row.FieldName == "title" {
+			foundTitleProvenance = row.Source == "bangumi" && row.ReviewID.Valid && row.ReviewID.Int64 == queued.ReviewID
+		}
+	}
+	if !foundTitleProvenance {
+		t.Fatalf("expected title provenance tied to review %d, got %+v", queued.ReviewID, provenance)
+	}
+}
+
+func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, seriesA, _ := seedBookFixture(t, store, t.TempDir(), "LibA", "Series Alpha", "book-a.cbz", 10)
+	_, seriesB, _ := seedBookFixture(t, store, t.TempDir(), "LibB", "Series Beta", "book-b.cbz", 10)
+
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`
+		UPDATE series SET title = ?, publisher = ? WHERE id = ?
+	`, "Existing Title", "", seriesA.ID); err != nil {
+		t.Fatalf("seed series A metadata failed: %v", err)
+	}
+	seriesA, err := store.GetSeries(context.Background(), seriesA.ID)
+	if err != nil {
+		t.Fatalf("GetSeries A failed: %v", err)
+	}
+
+	reviewA, _, err := controller.queueMetadataReview(context.Background(), seriesA, &metadata.SeriesMetadata{
+		Title:      "External Title",
+		Publisher:  "External Publisher",
+		Summary:    "External summary",
+		SourceID:   1,
+		SourceURL:  "https://example.test/a",
+		Provider:   "bangumi",
+		Confidence: 0.7,
+	}, "bangumi", "Series Alpha")
+	if err != nil {
+		t.Fatalf("queue review A failed: %v", err)
+	}
+	reviewB, _, err := controller.queueMetadataReview(context.Background(), seriesB, &metadata.SeriesMetadata{
+		Title:      "Beta Title",
+		Publisher:  "Beta Publisher",
+		SourceID:   2,
+		SourceURL:  "https://example.test/b",
+		Provider:   "bangumi",
+		Confidence: 0.8,
+	}, "bangumi", "Series Beta")
+	if err != nil {
+		t.Fatalf("queue review B failed: %v", err)
+	}
+
+	listRec := httptest.NewRecorder()
+	controller.listMetadataReviewInbox(listRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected inbox list 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var inbox metadataReviewInboxResponse
+	if err := json.NewDecoder(listRec.Body).Decode(&inbox); err != nil {
+		t.Fatalf("decode inbox failed: %v", err)
+	}
+	if inbox.Total != 2 || len(inbox.Items) != 2 {
+		t.Fatalf("expected two inbox items, got %+v", inbox)
+	}
+
+	applyBody := []byte(`{"review_ids":[` + strconv.FormatInt(reviewA.ID, 10) + `],"mode":"fill_empty"}`)
+	applyRec := httptest.NewRecorder()
+	controller.bulkApplyMetadataReviews(applyRec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-apply", bytes.NewReader(applyBody)))
+	if applyRec.Code != http.StatusOK {
+		t.Fatalf("expected bulk apply 200, got %d body=%s", applyRec.Code, applyRec.Body.String())
+	}
+	var applyResp metadataReviewBulkResponse
+	if err := json.NewDecoder(applyRec.Body).Decode(&applyResp); err != nil {
+		t.Fatalf("decode bulk apply failed: %v", err)
+	}
+	if len(applyResp.Applied) != 1 || len(applyResp.Failed) != 0 {
+		t.Fatalf("unexpected bulk apply response: %+v", applyResp)
+	}
+
+	updatedA, err := store.GetSeries(context.Background(), seriesA.ID)
+	if err != nil {
+		t.Fatalf("GetSeries A after bulk apply failed: %v", err)
+	}
+	if !updatedA.Title.Valid || updatedA.Title.String != "Existing Title" {
+		t.Fatalf("expected fill_empty not to overwrite title, got %+v", updatedA.Title)
+	}
+	if !updatedA.Publisher.Valid || updatedA.Publisher.String != "External Publisher" {
+		t.Fatalf("expected fill_empty to set empty publisher, got %+v", updatedA.Publisher)
+	}
+	if !updatedA.Summary.Valid || updatedA.Summary.String != "External summary" {
+		t.Fatalf("expected fill_empty to set empty summary, got %+v", updatedA.Summary)
+	}
+	provenance, err := store.GetSeriesMetadataProvenance(context.Background(), seriesA.ID)
+	if err != nil {
+		t.Fatalf("GetSeriesMetadataProvenance failed: %v", err)
+	}
+	for _, row := range provenance {
+		if row.FieldName == "title" && row.ReviewID.Valid && row.ReviewID.Int64 == reviewA.ID {
+			t.Fatalf("expected title provenance not to point at fill_empty review, got %+v", row)
+		}
+	}
+
+	rejectBody := []byte(`{"review_ids":[` + strconv.FormatInt(reviewB.ID, 10) + `],"mode":"all"}`)
+	rejectRec := httptest.NewRecorder()
+	controller.bulkRejectMetadataReviews(rejectRec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-reject", bytes.NewReader(rejectBody)))
+	if rejectRec.Code != http.StatusOK {
+		t.Fatalf("expected bulk reject 200, got %d body=%s", rejectRec.Code, rejectRec.Body.String())
+	}
+	rejected, err := store.GetMetadataReview(context.Background(), reviewB.ID)
+	if err != nil {
+		t.Fatalf("GetMetadataReview B failed: %v", err)
+	}
+	if rejected.Status != "rejected" {
+		t.Fatalf("expected review B rejected, got %+v", rejected)
 	}
 }
 

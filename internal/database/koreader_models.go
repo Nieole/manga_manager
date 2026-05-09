@@ -18,13 +18,13 @@ type UpsertKOReaderSettingsParams struct {
 }
 
 type KOReaderAccount struct {
-	ID         int64          `json:"id"`
-	Username   string         `json:"username"`
-	SyncKey    string         `json:"sync_key"`
-	Enabled    bool           `json:"enabled"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	LastUsedAt sql.NullTime   `json:"last_used_at"`
+	ID          int64          `json:"id"`
+	Username    string         `json:"username"`
+	SyncKey     string         `json:"sync_key"`
+	Enabled     bool           `json:"enabled"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	LastUsedAt  sql.NullTime   `json:"last_used_at"`
 	LatestError sql.NullString `json:"latest_error"`
 }
 
@@ -84,6 +84,7 @@ type BookIdentityCandidate struct {
 type UpdateBookIdentityParams struct {
 	ID                   int64  `json:"id"`
 	FileHash             string `json:"file_hash"`
+	QuickHash            string `json:"quick_hash"`
 	PathFingerprint      string `json:"path_fingerprint"`
 	PathFingerprintNoExt string `json:"path_fingerprint_no_ext"`
 }

@@ -267,6 +267,18 @@ func (q *Queries) CountBooksMissingIdentity(ctx context.Context, matchMode strin
 	return count, err
 }
 
+func (q *Queries) CountBooksMissingQuickHash(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM books
+		WHERE COALESCE(quick_hash, '') = ''
+	`)
+
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 func (q *Queries) CountUnmatchedKOReaderProgress(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
@@ -457,15 +469,46 @@ func (q *Queries) ListBooksMissingIdentityBatch(ctx context.Context, matchMode s
 	return items, rows.Err()
 }
 
+func (q *Queries) ListBooksMissingQuickHashBatch(ctx context.Context, afterID int64, limit int) ([]BookIdentityCandidate, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+
+	rows, err := q.db.QueryContext(ctx, `
+		SELECT b.id, b.library_id, l.path, b.path
+		FROM books b
+		JOIN libraries l ON l.id = b.library_id
+		WHERE b.id > ?
+		  AND COALESCE(b.quick_hash, '') = ''
+		ORDER BY b.id ASC
+		LIMIT ?
+	`, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]BookIdentityCandidate, 0)
+	for rows.Next() {
+		var item BookIdentityCandidate
+		if err := rows.Scan(&item.ID, &item.LibraryID, &item.LibraryPath, &item.Path); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (q *Queries) UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error {
 	_, err := q.db.ExecContext(ctx, `
 		UPDATE books
 		SET file_hash = CASE WHEN ? = '' THEN file_hash ELSE ? END,
+		    quick_hash = CASE WHEN ? = '' THEN quick_hash ELSE ? END,
 		    path_fingerprint = CASE WHEN ? = '' THEN path_fingerprint ELSE ? END,
 		    path_fingerprint_no_ext = CASE WHEN ? = '' THEN path_fingerprint_no_ext ELSE ? END,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, arg.FileHash, arg.FileHash, arg.PathFingerprint, arg.PathFingerprint, arg.PathFingerprintNoExt, arg.PathFingerprintNoExt, arg.ID)
+	`, arg.FileHash, arg.FileHash, arg.QuickHash, arg.QuickHash, arg.PathFingerprint, arg.PathFingerprint, arg.PathFingerprintNoExt, arg.PathFingerprintNoExt, arg.ID)
 	return err
 }
 

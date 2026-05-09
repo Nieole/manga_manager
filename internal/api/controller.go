@@ -25,7 +25,6 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/metadata"
-	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 
@@ -120,6 +119,8 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		openPath:                 openPathInDefaultFileManager,
 	}
 
+	c.recoverInterruptedTasks()
+
 	go c.startBroker()
 	go c.startDaemon()
 
@@ -146,6 +147,20 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 	}
 
 	return c
+}
+
+func (c *Controller) recoverInterruptedTasks() {
+	if c.store == nil {
+		return
+	}
+	count, err := c.store.MarkInterruptedTasks(context.Background(), "任务因服务重启而中断，可重试")
+	if err != nil {
+		slog.Warn("Failed to recover interrupted tasks", "error", err)
+		return
+	}
+	if count > 0 {
+		slog.Info("Recovered interrupted tasks", "count", count)
+	}
 }
 
 func (c *Controller) currentConfig() config.Config {
@@ -241,12 +256,65 @@ func inferTaskScope(taskType, key string) (string, *int64) {
 
 func isRetryableTaskType(taskType string) bool {
 	switch taskType {
-	case "scan_library", "scan_series", "cleanup_library", "rebuild_index", "rebuild_thumbnails", "scrape", "ai_grouping", "rebuild_book_hashes", "reconcile_koreader_progress":
+	case "scan_library", "scan_series", "cleanup_library", "rebuild_index", "rebuild_thumbnails", "scrape", "ai_grouping", "rebuild_book_hashes", "rebuild_file_identities", "reconcile_koreader_progress":
 		return true
 	case "refresh_koreader_matching":
 		return true
 	default:
 		return false
+	}
+}
+
+func taskStatusFromRecord(record database.TaskRecord) TaskStatus {
+	return TaskStatus{
+		Key:        record.Key,
+		Type:       record.Type,
+		Scope:      record.Scope,
+		ScopeID:    record.ScopeID,
+		ScopeName:  record.ScopeName,
+		Status:     record.Status,
+		Message:    record.Message,
+		Error:      record.Error,
+		Current:    record.Current,
+		Total:      record.Total,
+		CanCancel:  record.CanCancel,
+		Retryable:  record.Retryable,
+		Params:     record.Params,
+		StartedAt:  record.StartedAt,
+		UpdatedAt:  record.UpdatedAt,
+		FinishedAt: record.FinishedAt,
+		Sequence:   record.Sequence,
+	}
+}
+
+func taskRecordFromStatus(task TaskStatus) database.TaskRecord {
+	return database.TaskRecord{
+		Key:        task.Key,
+		Type:       task.Type,
+		Scope:      task.Scope,
+		ScopeID:    task.ScopeID,
+		ScopeName:  task.ScopeName,
+		Status:     task.Status,
+		Message:    task.Message,
+		Error:      task.Error,
+		Current:    task.Current,
+		Total:      task.Total,
+		CanCancel:  task.CanCancel,
+		Retryable:  task.Retryable,
+		Params:     task.Params,
+		StartedAt:  task.StartedAt,
+		UpdatedAt:  task.UpdatedAt,
+		FinishedAt: task.FinishedAt,
+		Sequence:   task.Sequence,
+	}
+}
+
+func (c *Controller) persistTaskStatus(task TaskStatus) {
+	if c.store == nil {
+		return
+	}
+	if err := c.store.UpsertTask(context.Background(), taskRecordFromStatus(task)); err != nil {
+		slog.Warn("Failed to persist task status", "task_key", task.Key, "error", err)
 	}
 }
 
@@ -348,6 +416,7 @@ func (c *Controller) startTask(key, taskType, message string, total int) bool {
 	}
 	c.tasks[key] = task
 	c.pruneTasksLocked()
+	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 	return true
 }
@@ -371,6 +440,7 @@ func (c *Controller) updateTask(key string, current, total int, message string) 
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
+	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
 
@@ -389,6 +459,7 @@ func (c *Controller) setTaskMetadata(key string, params map[string]string, scope
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
+	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
 
@@ -422,6 +493,7 @@ func (c *Controller) completeTask(key, status, message string) {
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
+	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
 
@@ -442,6 +514,7 @@ func (c *Controller) failTaskWithError(key, message, taskError string) {
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
+	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
 
@@ -494,14 +567,6 @@ func (c *Controller) pruneTasksLocked() {
 }
 
 func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
-
-	if c.tasks == nil {
-		c.tasks = make(map[string]TaskStatus)
-	}
-
-	items := make([]TaskStatus, 0, len(c.tasks))
 	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
 	scopeFilter := strings.TrimSpace(r.URL.Query().Get("scope"))
 	typeFilter := strings.TrimSpace(r.URL.Query().Get("type"))
@@ -520,7 +585,34 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	records, err := c.store.ListTasks(r.Context(), database.TaskFilters{
+		Status:  statusFilter,
+		Scope:   scopeFilter,
+		Type:    typeFilter,
+		ScopeID: scopeID,
+		Query:   queryFilter,
+		Limit:   limit,
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to list tasks")
+		return
+	}
+	items := make([]TaskStatus, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		task := taskStatusFromRecord(record)
+		items = append(items, task)
+		seen[task.Key] = true
+	}
+
+	c.taskMutex.Lock()
+	if c.tasks == nil {
+		c.tasks = make(map[string]TaskStatus)
+	}
 	for _, task := range c.tasks {
+		if seen[task.Key] {
+			continue
+		}
 		if statusFilter != "" && task.Status != statusFilter {
 			continue
 		}
@@ -530,10 +622,8 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		if typeFilter != "" && task.Type != typeFilter {
 			continue
 		}
-		if scopeID != nil {
-			if task.ScopeID == nil || *task.ScopeID != *scopeID {
-				continue
-			}
+		if scopeID != nil && (task.ScopeID == nil || *task.ScopeID != *scopeID) {
+			continue
 		}
 		if queryFilter != "" {
 			haystack := strings.ToLower(task.Key + " " + task.Message + " " + task.Error)
@@ -543,6 +633,8 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, task)
 	}
+	c.taskMutex.Unlock()
+
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Sequence == items[j].Sequence {
 			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
@@ -562,17 +654,31 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+	scopeFilter := strings.TrimSpace(r.URL.Query().Get("scope"))
+	typeFilter := strings.TrimSpace(r.URL.Query().Get("type"))
+	scopeIDFilter := strings.TrimSpace(r.URL.Query().Get("scope_id"))
+	var scopeID *int64
+	if scopeIDFilter != "" {
+		if parsed, err := strconv.ParseInt(scopeIDFilter, 10, 64); err == nil {
+			scopeID = &parsed
+		}
+	}
+	removed, err := c.store.DeleteTasks(r.Context(), database.TaskFilters{
+		Status:  statusFilter,
+		Scope:   scopeFilter,
+		Type:    typeFilter,
+		ScopeID: scopeID,
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to clear tasks")
+		return
+	}
 
+	c.taskMutex.Lock()
 	if c.tasks == nil {
 		c.tasks = make(map[string]TaskStatus)
 	}
-
-	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
-	scopeFilter := strings.TrimSpace(r.URL.Query().Get("scope"))
-	removed := 0
-
 	for key, task := range c.tasks {
 		if statusFilter != "" && task.Status != statusFilter {
 			continue
@@ -580,9 +686,18 @@ func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
 		if scopeFilter != "" && task.Scope != scopeFilter {
 			continue
 		}
+		if typeFilter != "" && task.Type != typeFilter {
+			continue
+		}
+		if scopeID != nil && (task.ScopeID == nil || *task.ScopeID != *scopeID) {
+			continue
+		}
+		if task.Status == "running" {
+			continue
+		}
 		delete(c.tasks, key)
-		removed++
 	}
+	c.taskMutex.Unlock()
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"removed": removed,
@@ -600,8 +715,22 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 	task, ok := c.tasks[taskKey]
 	c.taskMutex.Unlock()
 	if !ok {
-		jsonError(w, http.StatusNotFound, "Task not found")
-		return
+		records, err := c.store.ListTasks(r.Context(), database.TaskFilters{Query: taskKey, Limit: 20})
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "Failed to load task")
+			return
+		}
+		for _, record := range records {
+			if record.Key == taskKey {
+				task = taskStatusFromRecord(record)
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			jsonError(w, http.StatusNotFound, "Task not found")
+			return
+		}
 	}
 	if task.Status == "running" {
 		jsonError(w, http.StatusConflict, "Task is already running")
@@ -661,6 +790,8 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		}
 	case "rebuild_book_hashes":
 		err = c.launchRebuildBookHashesTask()
+	case "rebuild_file_identities":
+		err = c.launchRebuildFileIdentitiesTask()
 	case "reconcile_koreader_progress":
 		err = c.launchReconcileKOReaderProgressTask()
 	case "refresh_koreader_matching":
@@ -699,6 +830,16 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/metadata/search", c.searchMetadata)
 		r.Get("/metadata/providers", c.listProviders)
 		r.Get("/recommendations", c.getRecommendations)
+		r.Get("/health/report", c.getHealthReport)
+		r.Get("/metadata/reviews", c.listMetadataReviewInbox)
+		r.Post("/metadata/reviews/bulk-apply", c.bulkApplyMetadataReviews)
+		r.Post("/metadata/reviews/bulk-reject", c.bulkRejectMetadataReviews)
+		r.Get("/ai-grouping/reviews", c.listAIGroupingReviews)
+		r.Post("/ai-grouping/reviews/{reviewId}/apply", c.applyAIGroupingReview)
+		r.Post("/ai-grouping/reviews/{reviewId}/reject", c.rejectAIGroupingReview)
+		r.Get("/series/{seriesId}/metadata-review", c.listSeriesMetadataReview)
+		r.Post("/metadata/reviews/{reviewId}/apply", c.applyMetadataReview)
+		r.Post("/metadata/reviews/{reviewId}/reject", c.rejectMetadataReview)
 		r.Route("/series", func(r chi.Router) {
 			r.Post("/bulk-update", c.bulkUpdateSeries)
 			r.Get("/search", c.searchSeriesPaged)
@@ -738,8 +879,11 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Get("/system/config", c.getSystemConfig)
 		r.Get("/system/capabilities", c.getSystemCapabilities)
+		r.Get("/system/client-connections", c.getClientConnections)
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Get("/system/logs", c.getSystemLogs)
+		r.Get("/system/page-cache", c.getPageCacheStats)
+		r.Delete("/system/page-cache", c.clearPageCache)
 		r.Get("/system/tasks", c.listTasks)
 		r.Delete("/system/tasks", c.clearTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
@@ -756,6 +900,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
+		r.Post("/system/rebuild-file-identities", c.rebuildFileIdentities)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
 		r.Post("/system/test-llm", c.testLLMConfig)
 
@@ -775,6 +920,12 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/{collectionId}/series", c.addSeriesToCollection)
 			r.Delete("/{collectionId}/series/{seriesId}", c.removeSeriesFromCollection)
 		})
+
+		r.Route("/libraries/{libraryId}/smart-filters", func(r chi.Router) {
+			r.Get("/", c.listSmartFilters)
+			r.Post("/", c.upsertSmartFilter)
+		})
+		r.Delete("/smart-filters/{filterId}", c.deleteSmartFilter)
 
 		// 有序阅读清单
 		r.Route("/reading-lists", func(r chi.Router) {
@@ -1959,14 +2110,7 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	arc, err := parser.OpenArchive(book.Path)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to open archive")
-		return
-	}
-	defer arc.Close()
-
-	pagesInfo, err := arc.GetPages()
+	pagesInfo, err := c.ensurePageManifest(ctx, book)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
 		return
@@ -2225,6 +2369,78 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。"})
 }
 
+func (c *Controller) launchRebuildFileIdentitiesTask() error {
+	if !c.startTask("rebuild_file_identities", "rebuild_file_identities", "开始重建文件身份索引", 0) {
+		return fmt.Errorf("task already running")
+	}
+	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "系统")
+
+	go func() {
+		updated, total, err := c.runRebuildFileIdentities(context.Background(), 500, func(current, total int, message string) {
+			c.updateTask("rebuild_file_identities", current, total, message)
+		})
+		if err != nil {
+			c.failTaskWithError("rebuild_file_identities", fmt.Sprintf("文件身份索引重建失败: %v", err), err.Error())
+			return
+		}
+		c.finishTask("rebuild_file_identities", fmt.Sprintf("文件身份索引重建完成，已更新 %d / %d 本书籍", updated, total))
+	}()
+	return nil
+}
+
+func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	missingCount, err := c.store.CountBooksMissingQuickHash(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	total := int(missingCount)
+	updated := 0
+	var afterID int64
+	for {
+		books, err := c.store.ListBooksMissingQuickHashBatch(ctx, afterID, limit)
+		if err != nil {
+			return updated, total, err
+		}
+		if len(books) == 0 {
+			break
+		}
+
+		for _, book := range books {
+			quickHash, err := koreader.FingerprintQuickFile(book.Path)
+			if err != nil {
+				slog.Warn("Failed to quick-fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
+				afterID = book.ID
+				continue
+			}
+			if err := c.store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
+				ID:        book.ID,
+				QuickHash: quickHash,
+			}); err != nil {
+				return updated, total, err
+			}
+
+			updated++
+			afterID = book.ID
+			if progress != nil {
+				progress(updated, total, fmt.Sprintf("已重建 %d / %d 本书籍的 quick_hash", updated, total))
+			}
+		}
+	}
+	return updated, total, nil
+}
+
+func (c *Controller) rebuildFileIdentities(w http.ResponseWriter, r *http.Request) {
+	if err := c.launchRebuildFileIdentitiesTask(); err != nil {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A file identity rebuild is already running"})
+		return
+	}
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "文件身份索引重建已启动"})
+}
+
 // getDashboardStats 返回全局统计看板数据
 func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := c.store.GetDashboardStats(r.Context())
@@ -2421,13 +2637,11 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 		}
 
 		var candidates []metadata.CandidateSeries
-		candidateIDs := make(map[int64]struct{}, len(seriesRows))
 		for _, row := range seriesRows {
 			title := row.Title.String
 			if title == "" {
 				title = row.Name
 			}
-			candidateIDs[row.ID] = struct{}{}
 			candidates = append(candidates, metadata.CandidateSeries{
 				ID:      row.ID,
 				Title:   title,
@@ -2444,51 +2658,18 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 			return
 		}
 
-		createdCollections := 0
-		for _, col := range collections {
-			col.Name = strings.TrimSpace(col.Name)
-			validSeriesIDs := make([]int64, 0, len(col.SeriesIDs))
-			seenSeriesIDs := make(map[int64]struct{}, len(col.SeriesIDs))
-			for _, sid := range col.SeriesIDs {
-				if _, ok := candidateIDs[sid]; !ok {
-					continue
-				}
-				if _, seen := seenSeriesIDs[sid]; seen {
-					continue
-				}
-				seenSeriesIDs[sid] = struct{}{}
-				validSeriesIDs = append(validSeriesIDs, sid)
-			}
-
-			if col.Name == "" || len(validSeriesIDs) == 0 {
-				continue
-			}
-
-			if err := c.store.ExecTx(ctx, func(q *database.Queries) error {
-				created, err := q.CreateCollection(ctx, database.CreateCollectionParams{
-					Name:        col.Name,
-					Description: sql.NullString{String: strings.TrimSpace(col.Description), Valid: true},
-				})
-				if err != nil {
-					return err
-				}
-				for _, sid := range validSeriesIDs {
-					if err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
-						CollectionID: created.ID,
-						SeriesID:     sid,
-					}); err != nil {
-						return err
-					}
-				}
-				return q.TouchCollection(ctx, created.ID)
-			}); err != nil {
-				slog.Error("Insert AI collection failed", "collection", col.Name, "error", err)
-				continue
-			}
-			createdCollections++
+		review, reviewCollections, err := c.createAIGroupingReview(ctx, libraryID, provider.Name(), candidates, collections)
+		if err != nil {
+			slog.Error("Failed to create AI grouping review", "library_id", libraryID, "error", err)
+			c.failTaskWithError(taskKey, "AI 分组审核生成失败", err.Error())
+			return
+		}
+		if reviewCollections == 0 {
+			c.finishTask(taskKey, "AI 智能分组未生成可审核的合集")
+			return
 		}
 
-		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组成功完成 (生成了 %d 个合集)", createdCollections))
+		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组审核已生成 (审核单 #%d，%d 个候选合集)", review.ID, reviewCollections))
 		c.PublishEvent("refresh")
 	}(libID, locale)
 
@@ -2506,5 +2687,5 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组任务已提交至后台"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组审核任务已提交至后台"})
 }

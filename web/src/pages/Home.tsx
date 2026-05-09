@@ -95,6 +95,10 @@ function smartFilterStorageKey(libraryId: string) {
     return `lib_smart_filters_${libraryId}`;
 }
 
+function smartFilterMigrationKey(libraryId: string) {
+    return `lib_smart_filters_migrated_${libraryId}`;
+}
+
 function readSavedSmartFilters(libraryId: string) {
     try {
         const saved = localStorage.getItem(smartFilterStorageKey(libraryId));
@@ -114,6 +118,21 @@ function readSavedSmartFilters(libraryId: string) {
     } catch {
         return [];
     }
+}
+
+function normalizeRemoteSmartFilter(item: SavedSmartFilter): SavedSmartFilter {
+    return {
+        ...item,
+        id: String(item.id),
+        activeTag: item.activeTag ?? null,
+        activeAuthor: item.activeAuthor ?? null,
+        activeStatus: item.activeStatus ?? null,
+        activeLetter: item.activeLetter ?? null,
+        sortByField: item.sortByField || 'name',
+        sortDir: item.sortDir || 'asc',
+        pageSize: item.pageSize || DEFAULT_PAGE_SIZE,
+        createdAt: item.createdAt || new Date().toISOString(),
+    };
 }
 
 export default function Home() {
@@ -182,10 +201,30 @@ export default function Home() {
         setTimeout(() => setToastMsg(null), 3000);
     };
 
-    const persistSmartFilters = (items: SavedSmartFilter[]) => {
-        if (!libId) return;
-        setSavedSmartFilters(items);
-        localStorage.setItem(smartFilterStorageKey(libId), JSON.stringify(items));
+    const loadSmartFilters = async (libraryId: string) => {
+        try {
+            const legacyItems = readSavedSmartFilters(libraryId);
+            const migrated = localStorage.getItem(smartFilterMigrationKey(libraryId)) === 'true';
+            if (!migrated && legacyItems.length > 0) {
+                await Promise.all(legacyItems.map((item) => axios.post(`/api/libraries/${libraryId}/smart-filters/`, {
+                    name: item.name,
+                    activeTag: item.activeTag,
+                    activeAuthor: item.activeAuthor,
+                    activeStatus: item.activeStatus,
+                    activeLetter: item.activeLetter,
+                    sortByField: item.sortByField,
+                    sortDir: item.sortDir,
+                    pageSize: item.pageSize,
+                })));
+                localStorage.setItem(smartFilterMigrationKey(libraryId), 'true');
+            }
+
+            const res = await axios.get<SavedSmartFilter[]>(`/api/libraries/${libraryId}/smart-filters/`);
+            setSavedSmartFilters((res.data || []).map(normalizeRemoteSmartFilter));
+        } catch (error) {
+            console.error('Failed to load smart filters:', error);
+            setSavedSmartFilters(readSavedSmartFilters(libraryId));
+        }
     };
 
     const buildCurrentSmartFilter = (name: string): SavedSmartFilter => ({
@@ -204,12 +243,27 @@ export default function Home() {
     const handleSaveSmartFilter = (rawName: string) => {
         if (!libId) return;
         const name = rawName.trim() || t('home.smartFilters.defaultName', { count: savedSmartFilters.length + 1 });
-        const next = [
-            buildCurrentSmartFilter(name),
-            ...savedSmartFilters.filter((item) => item.name !== name),
-        ].slice(0, 20);
-        persistSmartFilters(next);
-        showToast(t('home.smartFilters.saved'), 'success');
+        const filter = buildCurrentSmartFilter(name);
+        setSavedSmartFilters([filter, ...savedSmartFilters.filter((item) => item.name !== name)].slice(0, 20));
+        axios.post<SavedSmartFilter>(`/api/libraries/${libId}/smart-filters/`, {
+            name: filter.name,
+            activeTag: filter.activeTag,
+            activeAuthor: filter.activeAuthor,
+            activeStatus: filter.activeStatus,
+            activeLetter: filter.activeLetter,
+            sortByField: filter.sortByField,
+            sortDir: filter.sortDir,
+            pageSize: filter.pageSize,
+        }).then((res) => {
+            const saved = normalizeRemoteSmartFilter(res.data);
+            setSavedSmartFilters((current) => [saved, ...current.filter((item) => item.name !== saved.name)].slice(0, 20));
+            localStorage.setItem(smartFilterMigrationKey(libId), 'true');
+            showToast(t('home.smartFilters.saved'), 'success');
+        }).catch((error) => {
+            console.error('Failed to save smart filter:', error);
+            setSavedSmartFilters(savedSmartFilters);
+            showToast(t('home.smartFilters.saveFailed'), 'error');
+        });
     };
 
     const handleApplySmartFilter = (filter: SavedSmartFilter) => {
@@ -225,8 +279,15 @@ export default function Home() {
     };
 
     const handleDeleteSmartFilter = (id: string) => {
-        persistSmartFilters(savedSmartFilters.filter((item) => item.id !== id));
-        showToast(t('home.smartFilters.deleted'), 'success');
+        const previous = savedSmartFilters;
+        setSavedSmartFilters(previous.filter((item) => item.id !== id));
+        axios.delete(`/api/smart-filters/${id}`).then(() => {
+            showToast(t('home.smartFilters.deleted'), 'success');
+        }).catch((error) => {
+            console.error('Failed to delete smart filter:', error);
+            setSavedSmartFilters(previous);
+            showToast(t('home.smartFilters.deleteFailed'), 'error');
+        });
     };
 
     const handleResetSmartFilters = () => {
@@ -464,7 +525,7 @@ export default function Home() {
     // 1. 恢复配置 (仅在 libId 变化时执行一次)
     useEffect(() => {
         if (!libId) return;
-        setSavedSmartFilters(readSavedSmartFilters(libId));
+        void loadSmartFilters(libId);
         const saved = localStorage.getItem(`lib_settings_${libId}`);
         if (saved) {
             try {
@@ -806,7 +867,7 @@ export default function Home() {
         try {
             const res = await axios.post(`/api/series/${scrapingSeries.id}/scrape-apply?provider=${scrapeProvider}`, metadata);
             if (res.data.success) {
-                showToast(t('series.toast.applyMetadataSuccess'), 'success');
+                showToast(res.data.queued ? t('series.toast.metadataReviewQueued', { count: res.data.field_count || 0 }) : t('series.toast.noMetadataReviewChanges'), 'success');
                 fetchSeriesPage(page, true);
             }
         } catch (err: unknown) {

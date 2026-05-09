@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, FolderOpen, HardDrive, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Wrench } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FolderOpen, HardDrive, Link2, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Wrench } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -41,6 +41,12 @@ export function SettingsOverviewPage() {
       description: koreaderStatus?.enabled ? t('settings.overview.koreaderEnabled', { enabled: koreaderStatus.enabled_account_count, total: koreaderStatus.account_count }) : t('settings.overview.koreaderDisabled'),
       icon: <TabletSmartphone className="h-5 w-5 text-sky-400" />,
       action: () => navigateSettingsSection('/settings/koreader'),
+    },
+    {
+      title: t('settings.nav.connections'),
+      description: t('settings.overview.connectionsCard'),
+      icon: <Link2 className="h-5 w-5 text-emerald-400" />,
+      action: () => navigateSettingsSection('/settings/connections'),
     },
     {
       title: t('settings.nav.maintenance'),

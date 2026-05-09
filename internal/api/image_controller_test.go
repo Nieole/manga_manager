@@ -2,6 +2,7 @@ package api
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -162,7 +163,210 @@ func TestServePageImage(t *testing.T) {
 		}
 	})
 
+	t.Run("returns not modified for matching page image etag", func(t *testing.T) {
+		archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+		parser.EvictArchiveFromPool(archivePath)
+		if err := writeTestCBZ(archivePath, map[string][]byte{
+			"001.png": png1x1,
+		}); err != nil {
+			t.Fatalf("write test cbz failed: %v", err)
+		}
+		info, err := os.Stat(archivePath)
+		if err != nil {
+			t.Fatalf("stat archive failed: %v", err)
+		}
+		if _, err := controller.store.(*database.SqlStore).DB().Exec(
+			`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+			archivePath,
+			info.Size(),
+			info.ModTime(),
+			1,
+			book.ID,
+		); err != nil {
+			t.Fatalf("update book archive metadata failed: %v", err)
+		}
+		if err := store.ReplacePageManifest(t.Context(), book.ID, []database.PageManifestEntry{{
+			BookID:     book.ID,
+			PageNumber: 1,
+			EntryName:  "001.png",
+			Size:       int64(len(png1x1)),
+			MediaType:  "image/png",
+		}}); err != nil {
+			t.Fatalf("replace page manifest failed: %v", err)
+		}
+
+		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
+		req = withRouteParam(req, "pageNumber", "1")
+		rec := httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected first etag page request 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		etag := rec.Header().Get("ETag")
+		if etag == "" {
+			t.Fatal("expected page image response to include ETag")
+		}
+
+		controller.imageCache.Purge()
+		parser.EvictArchiveFromPool(archivePath)
+		missingPath := archivePath + ".etag-missing"
+		if err := os.Rename(archivePath, missingPath); err != nil {
+			t.Fatalf("rename archive failed: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = os.Rename(missingPath, archivePath)
+		})
+
+		req = requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
+		req = withRouteParam(req, "pageNumber", "1")
+		req.Header.Set("If-None-Match", etag)
+		rec = httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusNotModified {
+			t.Fatalf("expected matching etag 304, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		if rec.Body.Len() != 0 {
+			t.Fatalf("expected 304 body to be empty, got %q", rec.Body.String())
+		}
+	})
+
+	t.Run("serves processed page from disk cache before opening archive", func(t *testing.T) {
+		cfg := controller.currentConfig()
+		cfg.Cache.Dir = filepath.Join(rootDir, "processed-cache")
+		controller.config.Replace(&cfg)
+
+		archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+		parser.EvictArchiveFromPool(archivePath)
+		if err := writeTestCBZ(archivePath, map[string][]byte{
+			"001.png": png1x1,
+		}); err != nil {
+			t.Fatalf("write test cbz failed: %v", err)
+		}
+		info, err := os.Stat(archivePath)
+		if err != nil {
+			t.Fatalf("stat archive failed: %v", err)
+		}
+		if _, err := controller.store.(*database.SqlStore).DB().Exec(
+			`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+			archivePath,
+			info.Size(),
+			info.ModTime(),
+			1,
+			book.ID,
+		); err != nil {
+			t.Fatalf("update book archive metadata failed: %v", err)
+		}
+		if err := store.ReplacePageManifest(t.Context(), book.ID, []database.PageManifestEntry{{
+			BookID:     book.ID,
+			PageNumber: 1,
+			EntryName:  "001.png",
+			Size:       int64(len(png1x1)),
+			MediaType:  "image/png",
+		}}); err != nil {
+			t.Fatalf("replace page manifest failed: %v", err)
+		}
+
+		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
+		req = withRouteParam(req, "pageNumber", "1")
+		rec := httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected first processed page request 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		cachedBody := append([]byte(nil), rec.Body.Bytes()...)
+		if len(cachedBody) == 0 {
+			t.Fatal("expected non-empty processed page body")
+		}
+
+		controller.imageCache.Purge()
+		parser.EvictArchiveFromPool(archivePath)
+		missingPath := archivePath + ".missing"
+		if err := os.Rename(archivePath, missingPath); err != nil {
+			t.Fatalf("rename archive failed: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = os.Rename(missingPath, archivePath)
+		})
+
+		rec = httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected disk cached page 200 without archive, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		if rec.Body.String() != string(cachedBody) {
+			t.Fatalf("expected disk cached body to match original processed body")
+		}
+	})
+
 	_ = series
+}
+
+func TestPageCacheStatsAndClear(t *testing.T) {
+	controller, _, _, rootDir := newTestController(t)
+	cfg := controller.currentConfig()
+	cfg.Cache.Dir = filepath.Join(rootDir, "processed-cache")
+	controller.config.Replace(&cfg)
+
+	cacheDir := controller.processedImageCacheDir()
+	if err := os.MkdirAll(filepath.Join(cacheDir, "aa"), 0o755); err != nil {
+		t.Fatalf("mkdir page cache failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "aa", "one.webp"), []byte("12345"), 0o644); err != nil {
+		t.Fatalf("write page cache file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "two.jpg"), []byte("123"), 0o644); err != nil {
+		t.Fatalf("write page cache file failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	controller.getPageCacheStats(rec, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected stats 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var stats pageCacheStatsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode stats failed: %v", err)
+	}
+	if stats.Path != filepath.Clean(cacheDir) {
+		t.Fatalf("expected path %q, got %q", filepath.Clean(cacheDir), stats.Path)
+	}
+	if stats.FileCount != 2 {
+		t.Fatalf("expected 2 cache files, got %d", stats.FileCount)
+	}
+	if stats.FileSize != 8 {
+		t.Fatalf("expected 8 cache bytes, got %d", stats.FileSize)
+	}
+
+	controller.imageCache.Add("cached-page", []byte("cached"))
+	rec = httptest.NewRecorder()
+	controller.clearPageCache(rec, httptest.NewRequest(http.MethodDelete, "/api/system/page-cache", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected clear 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := controller.imageCache.Get("cached-page"); ok {
+		t.Fatal("expected in-memory page cache to be purged")
+	}
+
+	remaining, err := os.ReadDir(cacheDir)
+	if err != nil {
+		t.Fatalf("read cache dir failed: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected cache dir to be empty after clear, found %d entries", len(remaining))
+	}
+
+	rec = httptest.NewRecorder()
+	controller.getPageCacheStats(rec, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected stats after clear 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode stats after clear failed: %v", err)
+	}
+	if stats.FileCount != 0 || stats.FileSize != 0 {
+		t.Fatalf("expected empty cache stats after clear, got files=%d bytes=%d", stats.FileCount, stats.FileSize)
+	}
 }
 
 func writeTestCBZ(path string, files map[string][]byte) error {

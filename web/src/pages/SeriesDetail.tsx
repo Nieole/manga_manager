@@ -6,9 +6,10 @@ import AddToCollectionModal from '../components/AddToCollectionModal';
 import { SeriesContentSection } from './series-detail/SeriesContentSection';
 import { SeriesHeader } from './series-detail/SeriesHeader';
 import { SeriesMetadataEditorModal } from './series-detail/SeriesMetadataEditorModal';
+import { SeriesMetadataReviewPanel } from './series-detail/SeriesMetadataReviewPanel';
 import { SeriesRelationsPanel } from './series-detail/SeriesRelationsPanel';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
-import type { Author, Book, MetaTag, SearchResult, Series, SeriesLink, SeriesRelation, SeriesRelationCandidate } from './series-detail/types';
+import type { Author, Book, MetaTag, MetadataProvenance, MetadataReview, MetadataReviewResponse, SearchResult, Series, SeriesLink, SeriesRelation, SeriesRelationCandidate } from './series-detail/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
 type SeriesEditForm = Partial<Series> & {
@@ -42,6 +43,9 @@ export default function SeriesDetail() {
     const [books, setBooks] = useState<Book[]>([]);
     const [links, setLinks] = useState<SeriesLink[]>([]);
     const [relations, setRelations] = useState<SeriesRelation[]>([]);
+    const [metadataReviews, setMetadataReviews] = useState<MetadataReview[]>([]);
+    const [metadataProvenance, setMetadataProvenance] = useState<MetadataProvenance[]>([]);
+    const [busyMetadataReviewId, setBusyMetadataReviewId] = useState<number | null>(null);
     const [relationCandidates, setRelationCandidates] = useState<SeriesRelationCandidate[]>([]);
     const [relationType, setRelationType] = useState('sequel');
     const [relationSearch, setRelationSearch] = useState('');
@@ -136,6 +140,45 @@ export default function SeriesDetail() {
         }
     };
 
+    const loadMetadataReviews = async () => {
+        if (!seriesId) return;
+        try {
+            const res = await axios.get<MetadataReviewResponse>(`/api/series/${seriesId}/metadata-review`);
+            setMetadataReviews(Array.isArray(res.data.reviews) ? res.data.reviews : []);
+            setMetadataProvenance(Array.isArray(res.data.provenance) ? res.data.provenance : []);
+        } catch (err) {
+            console.error("Failed to load metadata reviews", err);
+            setMetadataReviews([]);
+            setMetadataProvenance([]);
+        }
+    };
+
+    const reloadSeriesContext = async () => {
+        if (!seriesId) return;
+        const res = await axios.get(`/api/series/${seriesId}/context`);
+        const { series, books, tags, authors, links } = res.data;
+        setBooks(books || []);
+        setSeriesInfo(series);
+        setTags(tags || []);
+        setAuthors(authors || []);
+        setLinks(links || []);
+
+        if (series) {
+            setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
+            setEditForm({
+                title: series.title,
+                summary: series.summary,
+                publisher: series.publisher,
+                status: series.status,
+                rating: series.rating,
+                language: series.language,
+                tagsInput: (tags || []).map((tag: MetaTag) => tag.name),
+                authorsInput: (authors || []).map((author: Author) => ({ name: author.name, role: author.role })),
+                linksInput: (links || []).map((link: SeriesLink) => ({ name: link.name, url: link.url }))
+            });
+        }
+    };
+
     const handleAddRelation = async () => {
         if (!seriesId || !selectedRelationTargetId) return;
         setIsAddingRelation(true);
@@ -201,7 +244,7 @@ export default function SeriesDetail() {
             const res = await axios.post(`/api/series/${seriesId}/scrape`, { provider: providerKey });
             if (res.data.scraped) {
                 showToast(`[${res.data.provider}] ${res.data.message}`, 'success');
-                setTimeout(() => window.location.reload(), 1500);
+                void loadMetadataReviews();
             } else {
                 showToast(res.data.message || t('series.toast.metadataNotFound'), 'error');
             }
@@ -219,8 +262,8 @@ export default function SeriesDetail() {
         try {
             const res = await axios.post(`/api/series/${seriesId}/scrape-apply?provider=${searchProvider}`, metadata);
             if (res.data.success) {
-                showToast(t('series.toast.applyMetadataSuccess'), 'success');
-                setTimeout(() => window.location.reload(), 1500);
+                showToast(res.data.queued ? t('series.toast.metadataReviewQueued', { count: res.data.field_count || 0 }) : t('series.toast.noMetadataReviewChanges'), 'success');
+                await loadMetadataReviews();
             }
         } catch (err: unknown) {
             showToast(`${t('series.toast.applyMetadataFailed')}: ${getApiErrorMessage(err, t('series.toast.applyMetadataFailed'))}`, 'error');
@@ -228,6 +271,32 @@ export default function SeriesDetail() {
             setIsScraping(false);
             setSearchResults([]);
             setSelectedSearchResult(null);
+        }
+    };
+
+    const handleApplyMetadataReview = async (reviewId: number) => {
+        setBusyMetadataReviewId(reviewId);
+        try {
+            await axios.post(`/api/metadata/reviews/${reviewId}/apply`);
+            await Promise.all([reloadSeriesContext(), loadMetadataReviews()]);
+            showToast(t('series.toast.metadataReviewApplied'), 'success');
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.metadataReviewApplyFailed')}: ${getApiErrorMessage(err, t('series.toast.metadataReviewApplyFailed'))}`, 'error');
+        } finally {
+            setBusyMetadataReviewId(null);
+        }
+    };
+
+    const handleRejectMetadataReview = async (reviewId: number) => {
+        setBusyMetadataReviewId(reviewId);
+        try {
+            await axios.post(`/api/metadata/reviews/${reviewId}/reject`);
+            await loadMetadataReviews();
+            showToast(t('series.toast.metadataReviewRejected'), 'success');
+        } catch (err: unknown) {
+            showToast(`${t('series.toast.metadataReviewRejectFailed')}: ${getApiErrorMessage(err, t('series.toast.metadataReviewRejectFailed'))}`, 'error');
+        } finally {
+            setBusyMetadataReviewId(null);
         }
     };
 
@@ -341,30 +410,7 @@ export default function SeriesDetail() {
         if (seriesId) {
             // 防闪烁：如果是重新刷新且已经有数据，则不显示全屏 loading
             setLoading(!seriesInfo && books.length === 0);
-            axios.get(`/api/series/${seriesId}/context`)
-                .then(res => {
-                    const { series, books, tags, authors, links } = res.data;
-                    setBooks(books || []);
-                    setSeriesInfo(series);
-                    setTags(tags || []);
-                    setAuthors(authors || []);
-                    setLinks(links || []);
-
-                    if (series) {
-                        setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
-                        setEditForm({
-                            title: series.title,
-                            summary: series.summary,
-                            publisher: series.publisher,
-                            status: series.status,
-                            rating: series.rating,
-                            language: series.language,
-                            tagsInput: (tags || []).map((t: MetaTag) => t.name),
-                            authorsInput: (authors || []).map((a: Author) => ({ name: a.name, role: a.role })),
-                            linksInput: (links || []).map((l: SeriesLink) => ({ name: l.name, url: l.url }))
-                        });
-                    }
-                })
+            reloadSeriesContext()
                 .catch(err => {
                     console.error("Failed to load series context", err);
                 })
@@ -378,6 +424,7 @@ export default function SeriesDetail() {
 
     useEffect(() => {
         void loadSeriesRelations();
+        void loadMetadataReviews();
         // loadSeriesRelations intentionally follows seriesId/refreshTrigger only.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [seriesId, refreshTrigger]);
@@ -759,6 +806,16 @@ export default function SeriesDetail() {
                     }}
                     onAddRelation={handleAddRelation}
                     onDeleteRelation={handleDeleteRelation}
+                />
+            )}
+
+            {!selectedVolume && (
+                <SeriesMetadataReviewPanel
+                    reviews={metadataReviews}
+                    provenance={metadataProvenance}
+                    busyReviewId={busyMetadataReviewId}
+                    onApply={handleApplyMetadataReview}
+                    onReject={handleRejectMetadataReview}
                 />
             )}
 

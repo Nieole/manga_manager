@@ -139,6 +139,7 @@ func (o *OpenAILegacyProvider) FetchSeriesMetadata(ctx context.Context, title st
 		return nil, fmt.Errorf("openai-legacy: failed to parse JSON output: %w\nOutput: %s", err, content)
 	}
 	meta.Status = NormalizeStatusCode(meta.Status)
+	meta.Provider = o.Name()
 
 	return &meta, nil
 }
