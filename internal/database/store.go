@@ -233,7 +233,25 @@ func Migrate(dbPath string) error {
 		{table: "books", name: "path_fingerprint", definition: "TEXT"},
 		{table: "books", name: "path_fingerprint_no_ext", definition: "TEXT"},
 		{table: "books", name: "filename_fingerprint", definition: "TEXT"},
+		{table: "books", name: "title", definition: "TEXT"},
+		{table: "books", name: "summary", definition: "TEXT"},
+		{table: "books", name: "number", definition: "TEXT"},
+		{table: "books", name: "sort_number", definition: "REAL"},
+		{table: "books", name: "cover_path", definition: "TEXT"},
+		{table: "books", name: "last_read_page", definition: "INTEGER"},
+		{table: "books", name: "last_read_at", definition: "DATETIME"},
+		{table: "series", name: "title", definition: "TEXT"},
+		{table: "series", name: "summary", definition: "TEXT"},
+		{table: "series", name: "publisher", definition: "TEXT"},
+		{table: "series", name: "status", definition: "TEXT"},
+		{table: "series", name: "rating", definition: "REAL"},
+		{table: "series", name: "language", definition: "TEXT"},
+		{table: "series", name: "locked_fields", definition: "TEXT DEFAULT ''"},
 		{table: "series", name: "name_initial", definition: "TEXT NOT NULL DEFAULT '#'"},
+		{table: "series", name: "is_favorite", definition: "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{table: "series", name: "volume_count", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{table: "series", name: "book_count", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{table: "series", name: "total_pages", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{table: "collections", name: "source_type", definition: "TEXT NOT NULL DEFAULT 'manual'"},
 		{table: "collections", name: "source_review_id", definition: "INTEGER"},
 		{table: "smart_filters", name: "read_state", definition: "TEXT"},
@@ -276,6 +294,10 @@ func Migrate(dbPath string) error {
 		return err
 	}
 
+	if err := backfillSeriesMetadataProvenance(db); err != nil {
+		return err
+	}
+
 	if err := migrateLegacyKOReaderAccounts(db); err != nil {
 		return err
 	}
@@ -284,6 +306,40 @@ func Migrate(dbPath string) error {
 	// 尝试执行，忽略错误因为有些数据库可能原本就没有 auto_scan
 	_, _ = db.Exec(`UPDATE libraries SET scan_mode = 'interval' WHERE auto_scan = 1 AND scan_mode = 'none'`)
 
+	return nil
+}
+
+func backfillSeriesMetadataProvenance(db *sql.DB) error {
+	for _, stmt := range []string{
+		`INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+		SELECT id, 'title', title, 'manual', '', 1.0, NULL
+		FROM series
+		WHERE title IS NOT NULL AND title != ''`,
+		`INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+		SELECT id, 'summary', summary, 'manual', '', 1.0, NULL
+		FROM series
+		WHERE summary IS NOT NULL AND summary != ''`,
+		`INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+		SELECT id, 'publisher', publisher, 'manual', '', 1.0, NULL
+		FROM series
+		WHERE publisher IS NOT NULL AND publisher != ''`,
+		`INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+		SELECT id, 'status', status, 'manual', '', 1.0, NULL
+		FROM series
+		WHERE status IS NOT NULL AND status != ''`,
+		`INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+		SELECT id, 'rating', CAST(rating AS TEXT), 'manual', '', 1.0, NULL
+		FROM series
+		WHERE rating IS NOT NULL`,
+		`INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
+		SELECT id, 'language', language, 'manual', '', 1.0, NULL
+		FROM series
+		WHERE language IS NOT NULL AND language != ''`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

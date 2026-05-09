@@ -33,10 +33,6 @@ CREATE TABLE IF NOT EXISTS series (
 
 CREATE INDEX IF NOT EXISTS idx_series_library_id ON series(library_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_series_path ON series(path);
-CREATE INDEX IF NOT EXISTS idx_series_library_initial ON series(library_id, name_initial);
-CREATE INDEX IF NOT EXISTS idx_series_library_status ON series(library_id, status);
-CREATE INDEX IF NOT EXISTS idx_series_library_updated ON series(library_id, updated_at);
-CREATE INDEX IF NOT EXISTS idx_series_library_created ON series(library_id, created_at);
 
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,9 +95,6 @@ CREATE TABLE IF NOT EXISTS books (
 CREATE INDEX IF NOT EXISTS idx_books_series_id ON books(series_id);
 CREATE INDEX IF NOT EXISTS idx_books_library_id ON books(library_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path);
-CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash);
-CREATE INDEX IF NOT EXISTS idx_books_series_sort ON books(series_id, volume, sort_number, name);
-CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at);
 
 CREATE TABLE IF NOT EXISTS page_manifest (
     book_id INTEGER NOT NULL,
@@ -218,36 +211,6 @@ CREATE TABLE IF NOT EXISTS series_metadata_provenance (
 
 CREATE INDEX IF NOT EXISTS idx_series_metadata_provenance_series_id ON series_metadata_provenance(series_id, field_name);
 
-INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
-SELECT id, 'title', title, 'manual', '', 1.0, NULL
-FROM series
-WHERE title IS NOT NULL AND title != '';
-
-INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
-SELECT id, 'summary', summary, 'manual', '', 1.0, NULL
-FROM series
-WHERE summary IS NOT NULL AND summary != '';
-
-INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
-SELECT id, 'publisher', publisher, 'manual', '', 1.0, NULL
-FROM series
-WHERE publisher IS NOT NULL AND publisher != '';
-
-INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
-SELECT id, 'status', status, 'manual', '', 1.0, NULL
-FROM series
-WHERE status IS NOT NULL AND status != '';
-
-INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
-SELECT id, 'rating', CAST(rating AS TEXT), 'manual', '', 1.0, NULL
-FROM series
-WHERE rating IS NOT NULL;
-
-INSERT OR IGNORE INTO series_metadata_provenance (series_id, field_name, value, source, source_url, confidence, review_id)
-SELECT id, 'language', language, 'manual', '', 1.0, NULL
-FROM series
-WHERE language IS NOT NULL AND language != '';
-
 -- [#2] 自定义合集 / 智能书架
 CREATE TABLE IF NOT EXISTS collections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -295,7 +258,6 @@ CREATE TABLE IF NOT EXISTS smart_filters (
     FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at);
 
 CREATE TABLE IF NOT EXISTS reading_lists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
