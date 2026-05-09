@@ -837,6 +837,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/ai-grouping/reviews", c.listAIGroupingReviews)
 		r.Post("/ai-grouping/reviews/{reviewId}/apply", c.applyAIGroupingReview)
 		r.Post("/ai-grouping/reviews/{reviewId}/reject", c.rejectAIGroupingReview)
+		r.Put("/ai-grouping/reviews/{reviewId}/collections/{collectionId}", c.updateAIGroupingReviewCollection)
+		r.Post("/ai-grouping/reviews/{reviewId}/collections/{collectionId}/apply", c.applyAIGroupingReviewCollection)
+		r.Post("/ai-grouping/reviews/{reviewId}/collections/{collectionId}/reject", c.rejectAIGroupingReviewCollection)
 		r.Get("/series/{seriesId}/metadata-review", c.listSeriesMetadataReview)
 		r.Post("/metadata/reviews/{reviewId}/apply", c.applyMetadataReview)
 		r.Post("/metadata/reviews/{reviewId}/reject", c.rejectMetadataReview)
@@ -920,11 +923,16 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/{collectionId}/series", c.addSeriesToCollection)
 			r.Delete("/{collectionId}/series/{seriesId}", c.removeSeriesFromCollection)
 		})
+		r.Get("/collection-views", c.listCollectionViews)
+		r.Get("/collection-views/smart/{filterId}/series", c.getSmartCollectionSeries)
+		r.Get("/collection-views/smart/{filterId}/snapshot-preview", c.previewSmartCollectionSnapshot)
+		r.Post("/collection-views/smart/{filterId}/snapshot", c.snapshotSmartCollection)
 
 		r.Route("/libraries/{libraryId}/smart-filters", func(r chi.Router) {
 			r.Get("/", c.listSmartFilters)
 			r.Post("/", c.upsertSmartFilter)
 		})
+		r.Put("/smart-filters/{filterId}", c.updateSmartFilter)
 		r.Delete("/smart-filters/{filterId}", c.deleteSmartFilter)
 
 		// 有序阅读清单

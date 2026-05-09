@@ -234,6 +234,14 @@ func Migrate(dbPath string) error {
 		{table: "books", name: "path_fingerprint_no_ext", definition: "TEXT"},
 		{table: "books", name: "filename_fingerprint", definition: "TEXT"},
 		{table: "series", name: "name_initial", definition: "TEXT NOT NULL DEFAULT '#'"},
+		{table: "collections", name: "source_type", definition: "TEXT NOT NULL DEFAULT 'manual'"},
+		{table: "collections", name: "source_review_id", definition: "INTEGER"},
+		{table: "smart_filters", name: "read_state", definition: "TEXT"},
+		{table: "smart_filters", name: "min_rating", definition: "REAL"},
+		{table: "smart_filters", name: "max_rating", definition: "REAL"},
+		{table: "smart_filters", name: "min_progress", definition: "REAL"},
+		{table: "smart_filters", name: "max_progress", definition: "REAL"},
+		{table: "smart_filters", name: "added_within_days", definition: "INTEGER"},
 	} {
 		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
 			return err

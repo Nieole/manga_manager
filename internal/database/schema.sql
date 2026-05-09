@@ -255,8 +255,11 @@ CREATE TABLE IF NOT EXISTS collections (
     description TEXT DEFAULT '',
     cover_url TEXT DEFAULT '',
     sort_order INTEGER NOT NULL DEFAULT 0,
+    source_type TEXT NOT NULL DEFAULT 'manual',
+    source_review_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(source_review_id) REFERENCES ai_grouping_reviews(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS collection_series (
@@ -277,6 +280,12 @@ CREATE TABLE IF NOT EXISTS smart_filters (
     active_author TEXT,
     active_status TEXT,
     active_letter TEXT,
+    read_state TEXT,
+    min_rating REAL,
+    max_rating REAL,
+    min_progress REAL,
+    max_progress REAL,
+    added_within_days INTEGER,
     sort_by_field TEXT NOT NULL DEFAULT 'name',
     sort_dir TEXT NOT NULL DEFAULT 'asc',
     page_size INTEGER NOT NULL DEFAULT 30,

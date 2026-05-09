@@ -42,11 +42,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.countAIGroupingReviewsStmt, err = db.PrepareContext(ctx, countAIGroupingReviews); err != nil {
 		return nil, fmt.Errorf("error preparing query CountAIGroupingReviews: %w", err)
 	}
+	if q.countAppliedAIGroupingReviewCollectionsStmt, err = db.PrepareContext(ctx, countAppliedAIGroupingReviewCollections); err != nil {
+		return nil, fmt.Errorf("error preparing query CountAppliedAIGroupingReviewCollections: %w", err)
+	}
 	if q.countMihonSeriesStmt, err = db.PrepareContext(ctx, countMihonSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query CountMihonSeries: %w", err)
 	}
 	if q.countOPDSSeriesSearchStmt, err = db.PrepareContext(ctx, countOPDSSeriesSearch); err != nil {
 		return nil, fmt.Errorf("error preparing query CountOPDSSeriesSearch: %w", err)
+	}
+	if q.countPendingAIGroupingReviewCollectionsStmt, err = db.PrepareContext(ctx, countPendingAIGroupingReviewCollections); err != nil {
+		return nil, fmt.Errorf("error preparing query CountPendingAIGroupingReviewCollections: %w", err)
 	}
 	if q.countPendingMetadataReviewInboxStmt, err = db.PrepareContext(ctx, countPendingMetadataReviewInbox); err != nil {
 		return nil, fmt.Errorf("error preparing query CountPendingMetadataReviewInbox: %w", err)
@@ -95,6 +101,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getAIGroupingReviewStmt, err = db.PrepareContext(ctx, getAIGroupingReview); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAIGroupingReview: %w", err)
+	}
+	if q.getAIGroupingReviewCollectionStmt, err = db.PrepareContext(ctx, getAIGroupingReviewCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAIGroupingReviewCollection: %w", err)
 	}
 	if q.getAllAuthorsStmt, err = db.PrepareContext(ctx, getAllAuthors); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllAuthors: %w", err)
@@ -216,6 +225,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markAIGroupingReviewCollectionAppliedStmt, err = db.PrepareContext(ctx, markAIGroupingReviewCollectionApplied); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkAIGroupingReviewCollectionApplied: %w", err)
 	}
+	if q.markAIGroupingReviewCollectionRejectedStmt, err = db.PrepareContext(ctx, markAIGroupingReviewCollectionRejected); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkAIGroupingReviewCollectionRejected: %w", err)
+	}
 	if q.markAIGroupingReviewCollectionsRejectedStmt, err = db.PrepareContext(ctx, markAIGroupingReviewCollectionsRejected); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkAIGroupingReviewCollectionsRejected: %w", err)
 	}
@@ -227,6 +239,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.touchCollectionStmt, err = db.PrepareContext(ctx, touchCollection); err != nil {
 		return nil, fmt.Errorf("error preparing query TouchCollection: %w", err)
+	}
+	if q.updateAIGroupingReviewCollectionStmt, err = db.PrepareContext(ctx, updateAIGroupingReviewCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateAIGroupingReviewCollection: %w", err)
 	}
 	if q.updateAIGroupingReviewStatusStmt, err = db.PrepareContext(ctx, updateAIGroupingReviewStatus); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateAIGroupingReviewStatus: %w", err)
@@ -308,6 +323,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing countAIGroupingReviewsStmt: %w", cerr)
 		}
 	}
+	if q.countAppliedAIGroupingReviewCollectionsStmt != nil {
+		if cerr := q.countAppliedAIGroupingReviewCollectionsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countAppliedAIGroupingReviewCollectionsStmt: %w", cerr)
+		}
+	}
 	if q.countMihonSeriesStmt != nil {
 		if cerr := q.countMihonSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countMihonSeriesStmt: %w", cerr)
@@ -316,6 +336,11 @@ func (q *Queries) Close() error {
 	if q.countOPDSSeriesSearchStmt != nil {
 		if cerr := q.countOPDSSeriesSearchStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countOPDSSeriesSearchStmt: %w", cerr)
+		}
+	}
+	if q.countPendingAIGroupingReviewCollectionsStmt != nil {
+		if cerr := q.countPendingAIGroupingReviewCollectionsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countPendingAIGroupingReviewCollectionsStmt: %w", cerr)
 		}
 	}
 	if q.countPendingMetadataReviewInboxStmt != nil {
@@ -396,6 +421,11 @@ func (q *Queries) Close() error {
 	if q.getAIGroupingReviewStmt != nil {
 		if cerr := q.getAIGroupingReviewStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAIGroupingReviewStmt: %w", cerr)
+		}
+	}
+	if q.getAIGroupingReviewCollectionStmt != nil {
+		if cerr := q.getAIGroupingReviewCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAIGroupingReviewCollectionStmt: %w", cerr)
 		}
 	}
 	if q.getAllAuthorsStmt != nil {
@@ -598,6 +628,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markAIGroupingReviewCollectionAppliedStmt: %w", cerr)
 		}
 	}
+	if q.markAIGroupingReviewCollectionRejectedStmt != nil {
+		if cerr := q.markAIGroupingReviewCollectionRejectedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markAIGroupingReviewCollectionRejectedStmt: %w", cerr)
+		}
+	}
 	if q.markAIGroupingReviewCollectionsRejectedStmt != nil {
 		if cerr := q.markAIGroupingReviewCollectionsRejectedStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing markAIGroupingReviewCollectionsRejectedStmt: %w", cerr)
@@ -616,6 +651,11 @@ func (q *Queries) Close() error {
 	if q.touchCollectionStmt != nil {
 		if cerr := q.touchCollectionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing touchCollectionStmt: %w", cerr)
+		}
+	}
+	if q.updateAIGroupingReviewCollectionStmt != nil {
+		if cerr := q.updateAIGroupingReviewCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateAIGroupingReviewCollectionStmt: %w", cerr)
 		}
 	}
 	if q.updateAIGroupingReviewStatusStmt != nil {
@@ -738,8 +778,10 @@ type Queries struct {
 	clearSeriesLinksStmt                        *sql.Stmt
 	clearSeriesTagsStmt                         *sql.Stmt
 	countAIGroupingReviewsStmt                  *sql.Stmt
+	countAppliedAIGroupingReviewCollectionsStmt *sql.Stmt
 	countMihonSeriesStmt                        *sql.Stmt
 	countOPDSSeriesSearchStmt                   *sql.Stmt
+	countPendingAIGroupingReviewCollectionsStmt *sql.Stmt
 	countPendingMetadataReviewInboxStmt         *sql.Stmt
 	createAIGroupingReviewStmt                  *sql.Stmt
 	createAIGroupingReviewCollectionStmt        *sql.Stmt
@@ -756,6 +798,7 @@ type Queries struct {
 	deleteReadingListStmt                       *sql.Stmt
 	deleteSeriesStmt                            *sql.Stmt
 	getAIGroupingReviewStmt                     *sql.Stmt
+	getAIGroupingReviewCollectionStmt           *sql.Stmt
 	getAllAuthorsStmt                           *sql.Stmt
 	getAllTagsStmt                              *sql.Stmt
 	getAuthorsForSeriesStmt                     *sql.Stmt
@@ -796,10 +839,12 @@ type Queries struct {
 	listSeriesByLibraryStmt                     *sql.Stmt
 	listSeriesInitialBackfillCandidatesStmt     *sql.Stmt
 	markAIGroupingReviewCollectionAppliedStmt   *sql.Stmt
+	markAIGroupingReviewCollectionRejectedStmt  *sql.Stmt
 	markAIGroupingReviewCollectionsRejectedStmt *sql.Stmt
 	removeReadingListItemStmt                   *sql.Stmt
 	searchOPDSSeriesStmt                        *sql.Stmt
 	touchCollectionStmt                         *sql.Stmt
+	updateAIGroupingReviewCollectionStmt        *sql.Stmt
 	updateAIGroupingReviewStatusStmt            *sql.Stmt
 	updateBookProgressStmt                      *sql.Stmt
 	updateLibraryStmt                           *sql.Stmt
@@ -819,16 +864,18 @@ type Queries struct {
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                                          tx,
-		tx:                                          tx,
-		addReadingListItemStmt:                      q.addReadingListItemStmt,
-		addSeriesToCollectionStmt:                   q.addSeriesToCollectionStmt,
-		clearSeriesAuthorsStmt:                      q.clearSeriesAuthorsStmt,
-		clearSeriesLinksStmt:                        q.clearSeriesLinksStmt,
-		clearSeriesTagsStmt:                         q.clearSeriesTagsStmt,
-		countAIGroupingReviewsStmt:                  q.countAIGroupingReviewsStmt,
+		db:                         tx,
+		tx:                         tx,
+		addReadingListItemStmt:     q.addReadingListItemStmt,
+		addSeriesToCollectionStmt:  q.addSeriesToCollectionStmt,
+		clearSeriesAuthorsStmt:     q.clearSeriesAuthorsStmt,
+		clearSeriesLinksStmt:       q.clearSeriesLinksStmt,
+		clearSeriesTagsStmt:        q.clearSeriesTagsStmt,
+		countAIGroupingReviewsStmt: q.countAIGroupingReviewsStmt,
+		countAppliedAIGroupingReviewCollectionsStmt: q.countAppliedAIGroupingReviewCollectionsStmt,
 		countMihonSeriesStmt:                        q.countMihonSeriesStmt,
 		countOPDSSeriesSearchStmt:                   q.countOPDSSeriesSearchStmt,
+		countPendingAIGroupingReviewCollectionsStmt: q.countPendingAIGroupingReviewCollectionsStmt,
 		countPendingMetadataReviewInboxStmt:         q.countPendingMetadataReviewInboxStmt,
 		createAIGroupingReviewStmt:                  q.createAIGroupingReviewStmt,
 		createAIGroupingReviewCollectionStmt:        q.createAIGroupingReviewCollectionStmt,
@@ -845,6 +892,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteReadingListStmt:                       q.deleteReadingListStmt,
 		deleteSeriesStmt:                            q.deleteSeriesStmt,
 		getAIGroupingReviewStmt:                     q.getAIGroupingReviewStmt,
+		getAIGroupingReviewCollectionStmt:           q.getAIGroupingReviewCollectionStmt,
 		getAllAuthorsStmt:                           q.getAllAuthorsStmt,
 		getAllTagsStmt:                              q.getAllTagsStmt,
 		getAuthorsForSeriesStmt:                     q.getAuthorsForSeriesStmt,
@@ -885,10 +933,12 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listSeriesByLibraryStmt:                     q.listSeriesByLibraryStmt,
 		listSeriesInitialBackfillCandidatesStmt:     q.listSeriesInitialBackfillCandidatesStmt,
 		markAIGroupingReviewCollectionAppliedStmt:   q.markAIGroupingReviewCollectionAppliedStmt,
+		markAIGroupingReviewCollectionRejectedStmt:  q.markAIGroupingReviewCollectionRejectedStmt,
 		markAIGroupingReviewCollectionsRejectedStmt: q.markAIGroupingReviewCollectionsRejectedStmt,
 		removeReadingListItemStmt:                   q.removeReadingListItemStmt,
 		searchOPDSSeriesStmt:                        q.searchOPDSSeriesStmt,
 		touchCollectionStmt:                         q.touchCollectionStmt,
+		updateAIGroupingReviewCollectionStmt:        q.updateAIGroupingReviewCollectionStmt,
 		updateAIGroupingReviewStatusStmt:            q.updateAIGroupingReviewStatusStmt,
 		updateBookProgressStmt:                      q.updateBookProgressStmt,
 		updateLibraryStmt:                           q.updateLibraryStmt,

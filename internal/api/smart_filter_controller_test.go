@@ -12,7 +12,7 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-	createBody := []byte(`{"name":"Unread long series","activeTag":"Action","activeStatus":"ongoing","sortByField":"updated","sortDir":"desc","pageSize":50}`)
+	createBody := []byte(`{"name":"Unread long series","activeTag":"Action","activeStatus":"ongoing","readState":"unread","minRating":7.5,"maxRating":9.5,"minProgress":0,"maxProgress":20,"addedWithinDays":30,"sortByField":"updated","sortDir":"desc","pageSize":50}`)
 	createReq := requestWithRouteParam(http.MethodPost, "/api/libraries/1/smart-filters", createBody, "libraryId", strconv.FormatInt(lib.ID, 10))
 	createRec := httptest.NewRecorder()
 	controller.upsertSmartFilter(createRec, createReq)
@@ -31,6 +31,9 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 	if created.ActiveTag == nil || *created.ActiveTag != "Action" || created.SortByField != "updated" || created.SortDir != "desc" || created.PageSize != 50 {
 		t.Fatalf("unexpected created smart filter fields: %+v", created)
 	}
+	if created.ReadState == nil || *created.ReadState != "unread" || created.MinRating == nil || *created.MinRating != 7.5 || created.MaxProgress == nil || *created.MaxProgress != 20 || created.AddedWithinDays == nil || *created.AddedWithinDays != 30 {
+		t.Fatalf("unexpected advanced smart filter fields: %+v", created)
+	}
 
 	updateBody := []byte(`{"name":"Unread long series","activeAuthor":"Author A","sortByField":"name","sortDir":"asc","pageSize":30}`)
 	updateRec := httptest.NewRecorder()
@@ -48,6 +51,23 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 	}
 	if updated.ActiveTag != nil || updated.ActiveAuthor == nil || *updated.ActiveAuthor != "Author A" {
 		t.Fatalf("expected upsert to replace filter fields, got %+v", updated)
+	}
+
+	patchBody := []byte(`{"name":"Author rule","activeTag":"Action","readState":"reading","minProgress":10,"maxProgress":90,"sortByField":"books","sortDir":"desc","pageSize":100}`)
+	patchRec := httptest.NewRecorder()
+	controller.updateSmartFilter(patchRec, requestWithRouteParam(http.MethodPut, "/api/smart-filters/1", patchBody, "filterId", strconv.FormatInt(created.ID, 10)))
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("expected update smart filter 200, got %d body=%s", patchRec.Code, patchRec.Body.String())
+	}
+	var patched SmartFilter
+	if err := json.NewDecoder(patchRec.Body).Decode(&patched); err != nil {
+		t.Fatalf("decode patched smart filter failed: %v", err)
+	}
+	if patched.ID != created.ID || patched.Name != "Author rule" || patched.ActiveTag == nil || *patched.ActiveTag != "Action" || patched.SortByField != "books" || patched.PageSize != 100 {
+		t.Fatalf("unexpected patched smart filter: %+v", patched)
+	}
+	if patched.ReadState == nil || *patched.ReadState != "reading" || patched.MinProgress == nil || *patched.MinProgress != 10 || patched.MaxProgress == nil || *patched.MaxProgress != 90 || patched.MinRating != nil {
+		t.Fatalf("unexpected patched advanced smart filter: %+v", patched)
 	}
 
 	listRec := httptest.NewRecorder()
@@ -93,6 +113,10 @@ func TestSmartFilterValidationHandlers(t *testing.T) {
 		{name: "invalid sort", body: `{"name":"bad","sortByField":"path","sortDir":"asc","pageSize":30}`},
 		{name: "invalid dir", body: `{"name":"bad","sortByField":"name","sortDir":"sideways","pageSize":30}`},
 		{name: "invalid page size", body: `{"name":"bad","sortByField":"name","sortDir":"asc","pageSize":999}`},
+		{name: "invalid read state", body: `{"name":"bad","readState":"dropped","sortByField":"name","sortDir":"asc","pageSize":30}`},
+		{name: "invalid rating range", body: `{"name":"bad","minRating":9,"maxRating":3,"sortByField":"name","sortDir":"asc","pageSize":30}`},
+		{name: "invalid progress range", body: `{"name":"bad","minProgress":101,"sortByField":"name","sortDir":"asc","pageSize":30}`},
+		{name: "invalid added window", body: `{"name":"bad","addedWithinDays":0,"sortByField":"name","sortDir":"asc","pageSize":30}`},
 	}
 
 	for _, tt := range tests {
@@ -124,6 +148,14 @@ func TestSmartFilterValidationHandlers(t *testing.T) {
 	t.Run("delete missing filter", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		controller.deleteSmartFilter(rec, requestWithRouteParam(http.MethodDelete, "/api/smart-filters/999", nil, "filterId", "999"))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("update missing filter", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.updateSmartFilter(rec, requestWithRouteParam(http.MethodPut, "/api/smart-filters/999", []byte(`{"name":"x"}`), "filterId", "999"))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", rec.Code)
 		}

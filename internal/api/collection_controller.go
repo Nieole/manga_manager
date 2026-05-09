@@ -16,14 +16,16 @@ import (
 // ============================================
 
 type Collection struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CoverUrl    string    `json:"cover_url"`
-	SortOrder   int       `json:"sort_order"`
-	SeriesCount int       `json:"series_count"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	CoverUrl       string    `json:"cover_url"`
+	SortOrder      int       `json:"sort_order"`
+	SeriesCount    int       `json:"series_count"`
+	SourceType     string    `json:"source_type"`
+	SourceReviewID *int64    `json:"source_review_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type CollectionSeriesItem struct {
@@ -37,7 +39,7 @@ type CollectionSeriesItem struct {
 // listCollections 返回所有合集
 func (c *Controller) listCollections(w http.ResponseWriter, r *http.Request) {
 	rows, err := c.store.(*database.SqlStore).DB().QueryContext(r.Context(), `
-		SELECT c.id, c.name, c.description, c.cover_url, c.sort_order, c.created_at, c.updated_at,
+		SELECT c.id, c.name, c.description, c.cover_url, c.sort_order, c.source_type, c.source_review_id, c.created_at, c.updated_at,
 			(SELECT COUNT(*) FROM collection_series cs WHERE cs.collection_id = c.id) as series_count
 		FROM collections c ORDER BY c.sort_order, c.name
 	`)
@@ -50,9 +52,14 @@ func (c *Controller) listCollections(w http.ResponseWriter, r *http.Request) {
 	var items []Collection
 	for rows.Next() {
 		var item Collection
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.CoverUrl, &item.SortOrder, &item.CreatedAt, &item.UpdatedAt, &item.SeriesCount); err != nil {
+		var sourceReviewID sql.NullInt64
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.CoverUrl, &item.SortOrder, &item.SourceType, &sourceReviewID, &item.CreatedAt, &item.UpdatedAt, &item.SeriesCount); err != nil {
 			slog.Error("Failed to scan collection", "error", err)
 			continue
+		}
+		if sourceReviewID.Valid {
+			value := sourceReviewID.Int64
+			item.SourceReviewID = &value
 		}
 		items = append(items, item)
 	}

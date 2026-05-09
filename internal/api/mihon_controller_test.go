@@ -106,6 +106,86 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 }
 
+func TestMihonCollectionEndpoints(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, seriesA, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	_, seriesB, _ := seedBookFixture(t, store, rootDir, "Library B", "Series Beta", "Beta 01.cbz", 10)
+
+	db := controller.store.(*database.SqlStore).DB()
+	collectionResult, err := db.ExecContext(context.Background(), `INSERT INTO collections (name, description, source_type) VALUES (?, ?, ?)`, "Manual Picks", "static", "manual")
+	if err != nil {
+		t.Fatalf("insert collection failed: %v", err)
+	}
+	collectionID, _ := collectionResult.LastInsertId()
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO collection_series (collection_id, series_id) VALUES (?, ?)`, collectionID, seriesA.ID); err != nil {
+		t.Fatalf("insert collection series failed: %v", err)
+	}
+
+	tag, err := store.UpsertTag(context.Background(), "Action")
+	if err != nil {
+		t.Fatalf("UpsertTag failed: %v", err)
+	}
+	if err := store.LinkSeriesTag(context.Background(), database.LinkSeriesTagParams{SeriesID: seriesA.ID, TagID: tag.ID}); err != nil {
+		t.Fatalf("LinkSeriesTag A failed: %v", err)
+	}
+	if err := store.LinkSeriesTag(context.Background(), database.LinkSeriesTagParams{SeriesID: seriesB.ID, TagID: tag.ID}); err != nil {
+		t.Fatalf("LinkSeriesTag B failed: %v", err)
+	}
+	filterResult, err := db.ExecContext(context.Background(), `
+		INSERT INTO smart_filters (library_id, name, active_tag, sort_by_field, sort_dir, page_size)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, lib.ID, "Action in A", "Action", "name", "asc", 30)
+	if err != nil {
+		t.Fatalf("insert smart filter failed: %v", err)
+	}
+	filterID, _ := filterResult.LastInsertId()
+
+	listRec := httptest.NewRecorder()
+	controller.mihonCollections(listRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/collections", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected collections 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var collections []MihonCollectionResponse
+	if err := json.NewDecoder(listRec.Body).Decode(&collections); err != nil {
+		t.Fatalf("decode collections failed: %v", err)
+	}
+	if len(collections) != 2 {
+		t.Fatalf("expected 2 collections, got %+v", collections)
+	}
+	if collections[0].ID != "collection:"+strconv.FormatInt(collectionID, 10) || collections[0].SeriesCount != 1 {
+		t.Fatalf("unexpected static collection payload: %+v", collections[0])
+	}
+	if collections[1].ID != "smart:"+strconv.FormatInt(filterID, 10) || collections[1].SeriesCount != 1 || collections[1].LibraryID == nil || *collections[1].LibraryID != lib.ID {
+		t.Fatalf("unexpected smart collection payload: %+v", collections[1])
+	}
+
+	staticRec := httptest.NewRecorder()
+	controller.mihonCollectionSeries(staticRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/collections/1/series", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
+	if staticRec.Code != http.StatusOK {
+		t.Fatalf("expected static collection series 200, got %d body=%s", staticRec.Code, staticRec.Body.String())
+	}
+	var staticPage MihonSeriesPageResponse
+	if err := json.NewDecoder(staticRec.Body).Decode(&staticPage); err != nil {
+		t.Fatalf("decode static collection series failed: %v", err)
+	}
+	if staticPage.Total != 1 || len(staticPage.Items) != 1 || staticPage.Items[0].ID != seriesA.ID {
+		t.Fatalf("unexpected static collection series page: %+v", staticPage)
+	}
+
+	smartRec := httptest.NewRecorder()
+	controller.mihonSmartCollectionSeries(smartRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series", nil, "filterId", strconv.FormatInt(filterID, 10)))
+	if smartRec.Code != http.StatusOK {
+		t.Fatalf("expected smart collection series 200, got %d body=%s", smartRec.Code, smartRec.Body.String())
+	}
+	var smartPage MihonSeriesPageResponse
+	if err := json.NewDecoder(smartRec.Body).Decode(&smartPage); err != nil {
+		t.Fatalf("decode smart collection series failed: %v", err)
+	}
+	if smartPage.Total != 1 || len(smartPage.Items) != 1 || smartPage.Items[0].ID != seriesA.ID {
+		t.Fatalf("unexpected smart collection series page: %+v", smartPage)
+	}
+}
+
 func TestMihonAPIRejectsInvalidIDs(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 

@@ -46,11 +46,14 @@ func TestOPDSFeeds(t *testing.T) {
 		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
 			t.Fatalf("decode root feed failed: %v", err)
 		}
-		if feed.Title != "Manga Manager OPDS Catalog" || len(feed.Entries) != 2 {
+		if feed.Title != "Manga Manager OPDS Catalog" || len(feed.Entries) != 3 {
 			t.Fatalf("unexpected root feed payload: %+v", feed)
 		}
 		if feed.Entries[1].ID != "urn:manga-manager:opds:continue" {
 			t.Fatalf("expected continue reading entry, got %+v", feed.Entries)
+		}
+		if feed.Entries[2].ID != "urn:manga-manager:opds:collections" {
+			t.Fatalf("expected collections entry, got %+v", feed.Entries)
 		}
 		if len(feed.Links) != 3 || feed.Links[2].Rel != "search" {
 			t.Fatalf("expected root feed search link, got %+v", feed.Links)
@@ -193,6 +196,86 @@ func TestOPDSFeeds(t *testing.T) {
 			t.Fatalf("unexpected continue feed: %+v", feed)
 		}
 	})
+}
+
+func TestOPDSCollectionFeeds(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, seriesA, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	_, seriesB, _ := seedBookFixture(t, store, rootDir, "Library B", "Series Beta", "Beta 01.cbz", 10)
+
+	db := controller.store.(*database.SqlStore).DB()
+	collectionResult, err := db.ExecContext(context.Background(), `INSERT INTO collections (name, description, source_type) VALUES (?, ?, ?)`, "Manual Picks", "static", "manual")
+	if err != nil {
+		t.Fatalf("insert collection failed: %v", err)
+	}
+	collectionID, _ := collectionResult.LastInsertId()
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO collection_series (collection_id, series_id) VALUES (?, ?)`, collectionID, seriesA.ID); err != nil {
+		t.Fatalf("insert collection series failed: %v", err)
+	}
+
+	tag, err := store.UpsertTag(context.Background(), "Action")
+	if err != nil {
+		t.Fatalf("UpsertTag failed: %v", err)
+	}
+	if err := store.LinkSeriesTag(context.Background(), database.LinkSeriesTagParams{SeriesID: seriesA.ID, TagID: tag.ID}); err != nil {
+		t.Fatalf("LinkSeriesTag A failed: %v", err)
+	}
+	if err := store.LinkSeriesTag(context.Background(), database.LinkSeriesTagParams{SeriesID: seriesB.ID, TagID: tag.ID}); err != nil {
+		t.Fatalf("LinkSeriesTag B failed: %v", err)
+	}
+	filterResult, err := db.ExecContext(context.Background(), `
+		INSERT INTO smart_filters (library_id, name, active_tag, sort_by_field, sort_dir, page_size)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, lib.ID, "Action in A", "Action", "name", "asc", 30)
+	if err != nil {
+		t.Fatalf("insert smart filter failed: %v", err)
+	}
+	filterID, _ := filterResult.LastInsertId()
+
+	listRec := httptest.NewRecorder()
+	controller.opdsCollections(listRec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/collections", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected collections feed 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var listFeed OPDSFeed
+	if err := xml.Unmarshal(listRec.Body.Bytes(), &listFeed); err != nil {
+		t.Fatalf("decode collections feed failed: %v", err)
+	}
+	if len(listFeed.Entries) != 2 {
+		t.Fatalf("expected static and smart collection entries, got %+v", listFeed.Entries)
+	}
+	if listFeed.Entries[0].Title != "Manual Picks" || listFeed.Entries[0].Links[0].Href != "/opds/v1.2/collections/"+strconv.FormatInt(collectionID, 10) {
+		t.Fatalf("unexpected static collection OPDS entry: %+v", listFeed.Entries[0])
+	}
+	if listFeed.Entries[1].Title != "Action in A" || listFeed.Entries[1].Links[0].Href != "/opds/v1.2/smart-collections/"+strconv.FormatInt(filterID, 10) {
+		t.Fatalf("unexpected smart collection OPDS entry: %+v", listFeed.Entries[1])
+	}
+
+	staticRec := httptest.NewRecorder()
+	controller.opdsStaticCollectionSeries(staticRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/collections/1", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
+	if staticRec.Code != http.StatusOK {
+		t.Fatalf("expected static collection series 200, got %d body=%s", staticRec.Code, staticRec.Body.String())
+	}
+	var staticFeed OPDSFeed
+	if err := xml.Unmarshal(staticRec.Body.Bytes(), &staticFeed); err != nil {
+		t.Fatalf("decode static collection series failed: %v", err)
+	}
+	if staticFeed.Title != "Manual Picks" || len(staticFeed.Entries) != 1 || staticFeed.Entries[0].Title != seriesA.Name {
+		t.Fatalf("unexpected static collection series feed: %+v", staticFeed)
+	}
+
+	smartRec := httptest.NewRecorder()
+	controller.opdsSmartCollectionSeries(smartRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1", nil, "filterId", strconv.FormatInt(filterID, 10)))
+	if smartRec.Code != http.StatusOK {
+		t.Fatalf("expected smart collection series 200, got %d body=%s", smartRec.Code, smartRec.Body.String())
+	}
+	var smartFeed OPDSFeed
+	if err := xml.Unmarshal(smartRec.Body.Bytes(), &smartFeed); err != nil {
+		t.Fatalf("decode smart collection series failed: %v", err)
+	}
+	if smartFeed.Title != "Action in A" || len(smartFeed.Entries) != 1 || smartFeed.Entries[0].Title != seriesA.Name {
+		t.Fatalf("unexpected smart collection series feed: %+v", smartFeed)
+	}
 }
 
 func TestOPDSValidationAndEmptyFeeds(t *testing.T) {

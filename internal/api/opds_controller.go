@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -68,6 +69,9 @@ func (c *Controller) SetupOPDSRoutes(r chi.Router) {
 	r.Route("/opds/v1.2", func(r chi.Router) {
 		r.Get("/", c.opdsRoot)
 		r.Get("/continue", c.opdsContinueReading)
+		r.Get("/collections", c.opdsCollections)
+		r.Get("/collections/{collectionId}", c.opdsStaticCollectionSeries)
+		r.Get("/smart-collections/{filterId}", c.opdsSmartCollectionSeries)
 		r.Get("/opensearch.xml", c.opdsOpenSearch)
 		r.Get("/search", c.opdsSearch)
 		r.Get("/libraries", c.opdsLibraries)
@@ -125,6 +129,15 @@ func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
 				Content: "从最近阅读的卷册继续",
 				Links: []OPDSLink{
 					{Href: "/opds/v1.2/continue", Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+				},
+			},
+			{
+				Title:   "合集",
+				ID:      "urn:manga-manager:opds:collections",
+				Updated: now,
+				Content: "浏览手工合集、AI 分组合集、智能快照和动态规则合集",
+				Links: []OPDSLink{
+					{Href: "/opds/v1.2/collections", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 				},
 			},
 		},
@@ -192,6 +205,174 @@ func opdsPaginationLinks(base string, page, limit, total int) []OPDSLink {
 		links = append(links, OPDSLink{Rel: "next", Href: opdsPageHref(base, page+1, limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"})
 	}
 	return links
+}
+
+func opdsSeriesEntryFromListItem(item collectionSeriesListItem) OPDSEntry {
+	title := firstNonEmpty(item.Title, item.Name)
+	links := []OPDSLink{
+		{Href: fmt.Sprintf("/opds/v1.2/series/%d", item.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+	}
+	if item.CoverPath != "" {
+		links = append(links, OPDSLink{
+			Rel:  "http://opds-spec.org/image/thumbnail",
+			Href: fmt.Sprintf("/api/thumbnails/%s", item.CoverPath),
+			Type: "image/jpeg",
+		})
+	}
+	return OPDSEntry{
+		Title:   title,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:series:%d", item.ID),
+		Updated: item.UpdatedAt.Format(time.RFC3339),
+		Content: item.Summary,
+		Links:   links,
+	}
+}
+
+func opdsSeriesEntryFromSearchRow(row database.SearchSeriesPagedRow) OPDSEntry {
+	title := row.Name
+	if row.Title.Valid && row.Title.String != "" {
+		title = row.Title.String
+	}
+	summary := ""
+	if row.Summary.Valid {
+		summary = row.Summary.String
+	}
+	links := []OPDSLink{
+		{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+	}
+	if row.CoverPath.Valid && row.CoverPath.String != "" {
+		links = append(links, OPDSLink{
+			Rel:  "http://opds-spec.org/image/thumbnail",
+			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath.String),
+			Type: "image/jpeg",
+		})
+	}
+	return OPDSEntry{
+		Title:   title,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:series:%d", row.ID),
+		Updated: row.UpdatedAt.Format(time.RFC3339),
+		Content: summary,
+		Links:   links,
+	}
+}
+
+func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
+	views, err := c.loadCollectionViews(r.Context())
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	entries := make([]OPDSEntry, 0, len(views))
+	for _, view := range views {
+		href := fmt.Sprintf("/opds/v1.2/collections/%d", view.NumericID)
+		urnKind := "collection"
+		if view.Kind == "smart" {
+			href = fmt.Sprintf("/opds/v1.2/smart-collections/%d", view.NumericID)
+			urnKind = "smart-collection"
+		}
+		contentParts := []string{view.SourceType, fmt.Sprintf("%d 个系列", view.SeriesCount)}
+		if view.LibraryName != "" {
+			contentParts = append(contentParts, view.LibraryName)
+		}
+		if view.Description != "" {
+			contentParts = append(contentParts, view.Description)
+		}
+		entries = append(entries, OPDSEntry{
+			Title:   view.Name,
+			ID:      fmt.Sprintf("urn:manga-manager:opds:%s:%d", urnKind, view.NumericID),
+			Updated: view.UpdatedAt.Format(time.RFC3339),
+			Content: strings.Join(contentParts, " · "),
+			Links: []OPDSLink{
+				{Href: href, Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+			},
+		})
+	}
+
+	feed := OPDSFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   "合集",
+		ID:      "urn:manga-manager:opds:collections",
+		Updated: now,
+		Links: []OPDSLink{
+			{Rel: "self", Href: "/opds/v1.2/collections", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
+			{Rel: "start", Href: "/opds/v1.2/", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
+		},
+		Entries: entries,
+	}
+	xmlResponse(w, feed)
+}
+
+func (c *Controller) opdsStaticCollectionSeries(w http.ResponseWriter, r *http.Request) {
+	collectionID, err := strconv.ParseInt(chi.URLParam(r, "collectionId"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid collection ID", http.StatusBadRequest)
+		return
+	}
+	page := opdsPositiveQueryInt(r, "page", 1, 0)
+	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
+	view, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, (page-1)*limit)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Collection not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	entries := make([]OPDSEntry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, opdsSeriesEntryFromListItem(row))
+	}
+	now := time.Now().Format(time.RFC3339)
+	feed := OPDSFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   view.Name,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:collection:%d:series", collectionID),
+		Updated: now,
+		Links:   opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/collections/%d", collectionID), page, limit, total),
+		Entries: entries,
+	}
+	xmlResponse(w, feed)
+}
+
+func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
+	filterID, err := strconv.ParseInt(chi.URLParam(r, "filterId"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid smart collection ID", http.StatusBadRequest)
+		return
+	}
+	filter, err := c.getSmartFilterByID(r, filterID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Smart collection not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	page := opdsPositiveQueryInt(r, "page", 1, 0)
+	limit := opdsPositiveQueryInt(r, "limit", filter.PageSize, 200)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, (page-1)*limit)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	entries := make([]OPDSEntry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, opdsSeriesEntryFromSearchRow(row))
+	}
+	now := time.Now().Format(time.RFC3339)
+	feed := OPDSFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   filter.Name,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:smart-collection:%d:series", filterID),
+		Updated: now,
+		Links:   opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/smart-collections/%d", filterID), page, limit, total),
+		Entries: entries,
+	}
+	xmlResponse(w, feed)
 }
 
 // opdsSearch 搜索系列，供 OPDS 客户端通过 OpenSearch 调用。

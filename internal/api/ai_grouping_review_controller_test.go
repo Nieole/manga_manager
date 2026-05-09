@@ -149,3 +149,75 @@ func TestRejectAIGroupingReviewDoesNotCreateCollections(t *testing.T) {
 		t.Fatalf("expected review rejected, got %+v", updated)
 	}
 }
+
+func TestAIGroupingReviewCollectionEditAndPartialActions(t *testing.T) {
+	controller, store, lib, seriesA, seriesB := seedAIGroupingReviewFixture(t)
+
+	review, _, err := controller.createAIGroupingReview(context.Background(), lib.ID, "ollama", []metadata.CandidateSeries{
+		{ID: seriesA.ID, Title: seriesA.Name},
+		{ID: seriesB.ID, Title: "Beta Title"},
+	}, []metadata.AIGroupCollection{
+		{Name: "First", SeriesIDs: []int64{seriesA.ID, seriesB.ID}},
+		{Name: "Second", SeriesIDs: []int64{seriesB.ID}},
+	})
+	if err != nil {
+		t.Fatalf("createAIGroupingReview failed: %v", err)
+	}
+
+	collections, err := store.ListAIGroupingReviewCollections(context.Background(), review.ID)
+	if err != nil {
+		t.Fatalf("ListAIGroupingReviewCollections failed: %v", err)
+	}
+	if len(collections) != 2 {
+		t.Fatalf("expected 2 review collections, got %d", len(collections))
+	}
+
+	updateBody := []byte(`{"name":"Edited","description":"curated","series_ids":[` + strconv.FormatInt(seriesA.ID, 10) + `]}`)
+	updateReq := requestWithRouteParam(http.MethodPut, "/api/ai-grouping/reviews/1/collections/1", updateBody, "reviewId", strconv.FormatInt(review.ID, 10))
+	updateReq = withRouteParam(updateReq, "collectionId", strconv.FormatInt(collections[0].ID, 10))
+	updateRec := httptest.NewRecorder()
+	controller.updateAIGroupingReviewCollection(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected update review collection 200, got %d body=%s", updateRec.Code, updateRec.Body.String())
+	}
+
+	applyReq := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
+	applyReq = withRouteParam(applyReq, "collectionId", strconv.FormatInt(collections[0].ID, 10))
+	applyRec := httptest.NewRecorder()
+	controller.applyAIGroupingReviewCollection(applyRec, applyReq)
+	if applyRec.Code != http.StatusOK {
+		t.Fatalf("expected apply review collection 200, got %d body=%s", applyRec.Code, applyRec.Body.String())
+	}
+
+	rejectReq := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/2/reject", nil, "reviewId", strconv.FormatInt(review.ID, 10))
+	rejectReq = withRouteParam(rejectReq, "collectionId", strconv.FormatInt(collections[1].ID, 10))
+	rejectRec := httptest.NewRecorder()
+	controller.rejectAIGroupingReviewCollection(rejectRec, rejectReq)
+	if rejectRec.Code != http.StatusOK {
+		t.Fatalf("expected reject review collection 200, got %d body=%s", rejectRec.Code, rejectRec.Body.String())
+	}
+
+	updatedReview, err := store.GetAIGroupingReview(context.Background(), review.ID)
+	if err != nil {
+		t.Fatalf("GetAIGroupingReview failed: %v", err)
+	}
+	if updatedReview.Status != "applied" || !updatedReview.AppliedAt.Valid {
+		t.Fatalf("expected mixed review to finalize as applied, got %+v", updatedReview)
+	}
+
+	var name, sourceType string
+	var sourceReviewID sql.NullInt64
+	var linked int
+	row := controller.store.(*database.SqlStore).DB().QueryRowContext(context.Background(), `
+		SELECT c.name, c.source_type, c.source_review_id, COUNT(cs.series_id)
+		FROM collections c
+		LEFT JOIN collection_series cs ON cs.collection_id = c.id
+		GROUP BY c.id
+	`)
+	if err := row.Scan(&name, &sourceType, &sourceReviewID, &linked); err != nil {
+		t.Fatalf("query created collection failed: %v", err)
+	}
+	if name != "Edited" || sourceType != "ai_grouping" || !sourceReviewID.Valid || sourceReviewID.Int64 != review.ID || linked != 1 {
+		t.Fatalf("unexpected collection provenance: name=%q source=%q review=%+v linked=%d", name, sourceType, sourceReviewID, linked)
+	}
+}

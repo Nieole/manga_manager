@@ -55,6 +55,12 @@ type aiGroupingReviewsResponse struct {
 	Offset int64                  `json:"offset"`
 }
 
+type updateAIGroupingReviewCollectionRequest struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	SeriesIDs   []int64 `json:"series_ids"`
+}
+
 func aiGroupingParseSeriesIDs(raw string) []int64 {
 	var ids []int64
 	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
@@ -148,6 +154,23 @@ func aiGroupingReviewToView(ctx context.Context, q database.Querier, review data
 		view.Collections = append(view.Collections, aiGroupingReviewCollectionToView(ctx, q, collection))
 	}
 	return view
+}
+
+func aiGroupingReviewFromListRow(row database.ListAIGroupingReviewsRow) database.AiGroupingReview {
+	return database.AiGroupingReview{
+		ID:              row.ID,
+		LibraryID:       row.LibraryID,
+		Provider:        row.Provider,
+		Status:          row.Status,
+		Summary:         row.Summary,
+		RawPayload:      row.RawPayload,
+		CandidateCount:  row.CandidateCount,
+		CollectionCount: row.CollectionCount,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		AppliedAt:       row.AppliedAt,
+		RejectedAt:      row.RejectedAt,
+	}
 }
 
 type aiGroupingReviewProposal struct {
@@ -284,23 +307,126 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 		Offset: offset,
 	}
 	for _, row := range rows {
-		review := database.AiGroupingReview{
-			ID:              row.ID,
-			LibraryID:       row.LibraryID,
-			Provider:        row.Provider,
-			Status:          row.Status,
-			Summary:         row.Summary,
-			RawPayload:      row.RawPayload,
-			CandidateCount:  row.CandidateCount,
-			CollectionCount: row.CollectionCount,
-			CreatedAt:       row.CreatedAt,
-			UpdatedAt:       row.UpdatedAt,
-			AppliedAt:       row.AppliedAt,
-			RejectedAt:      row.RejectedAt,
-		}
+		review := aiGroupingReviewFromListRow(row)
 		payload.Items = append(payload.Items, aiGroupingReviewToView(r.Context(), c.store, review, row.LibraryName))
 	}
 	jsonResponse(w, http.StatusOK, payload)
+}
+
+func (c *Controller) getAIGroupingReviewCollectionForAction(r *http.Request) (database.AiGroupingReview, database.AiGroupingReviewCollection, bool) {
+	reviewID, err := parseID(r, "reviewId")
+	if err != nil {
+		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
+	}
+	collectionID, err := parseID(r, "collectionId")
+	if err != nil {
+		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
+	}
+	review, err := c.store.GetAIGroupingReview(r.Context(), reviewID)
+	if err != nil {
+		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
+	}
+	collection, err := c.store.GetAIGroupingReviewCollection(r.Context(), collectionID)
+	if err != nil || collection.ReviewID != review.ID {
+		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
+	}
+	return review, collection, true
+}
+
+func (c *Controller) updateAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
+	review, collection, ok := c.getAIGroupingReviewCollectionForAction(r)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
+		return
+	}
+	if review.Status != "pending" || collection.Status != "pending" {
+		jsonError(w, http.StatusConflict, "AI grouping review collection is not editable")
+		return
+	}
+
+	var req updateAIGroupingReviewCollectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		jsonError(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+	cleanIDs := aiGroupingParseSeriesIDs(mustJSON(req.SeriesIDs))
+	if len(cleanIDs) == 0 {
+		jsonError(w, http.StatusBadRequest, "series_ids is required")
+		return
+	}
+	if !c.aiGroupingSeriesIDsBelongToReview(r.Context(), review.ID, collection.ID, cleanIDs) {
+		jsonError(w, http.StatusBadRequest, "series_ids must come from the same review")
+		return
+	}
+	rawIDs, _ := json.Marshal(cleanIDs)
+	updated, err := c.store.UpdateAIGroupingReviewCollection(r.Context(), database.UpdateAIGroupingReviewCollectionParams{
+		Name:        name,
+		Description: strings.TrimSpace(req.Description),
+		SeriesIds:   string(rawIDs),
+		SeriesCount: int64(len(cleanIDs)),
+		ID:          collection.ID,
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to update AI grouping review collection")
+		return
+	}
+	jsonResponse(w, http.StatusOK, aiGroupingReviewCollectionToView(r.Context(), c.store, updated))
+}
+
+func mustJSON(ids []int64) string {
+	raw, _ := json.Marshal(ids)
+	return string(raw)
+}
+
+func (c *Controller) aiGroupingSeriesIDsBelongToReview(ctx context.Context, reviewID, currentCollectionID int64, ids []int64) bool {
+	collections, err := c.store.ListAIGroupingReviewCollections(ctx, reviewID)
+	if err != nil {
+		return false
+	}
+	allowed := make(map[int64]struct{})
+	for _, collection := range collections {
+		if collection.Status != "pending" && collection.ID != currentCollectionID {
+			continue
+		}
+		for _, id := range aiGroupingParseSeriesIDs(collection.SeriesIds) {
+			allowed[id] = struct{}{}
+		}
+	}
+	for _, id := range ids {
+		if _, ok := allowed[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
+	review, collection, ok := c.getAIGroupingReviewCollectionForAction(r)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
+		return
+	}
+	if review.Status != "pending" || collection.Status != "pending" {
+		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
+		return
+	}
+	createdID, err := c.applyAIGroupingReviewCollectionTx(r.Context(), review, collection)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review collection")
+		return
+	}
+	c.PublishEvent("refresh")
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"success":               true,
+		"review_id":             review.ID,
+		"collection_id":         collection.ID,
+		"created_collection_id": createdID,
+	})
 }
 
 func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Request) {
@@ -329,41 +455,12 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 			if item.Status != "pending" {
 				continue
 			}
-			seriesIDs := aiGroupingParseSeriesIDs(item.SeriesIds)
-			if strings.TrimSpace(item.Name) == "" || len(seriesIDs) == 0 {
-				continue
-			}
-			created, err := q.CreateCollection(r.Context(), database.CreateCollectionParams{
-				Name:        item.Name,
-				Description: sql.NullString{String: strings.TrimSpace(item.Description), Valid: strings.TrimSpace(item.Description) != ""},
-			})
-			if err != nil {
-				return err
-			}
-			for _, seriesID := range seriesIDs {
-				if err := q.AddSeriesToCollection(r.Context(), database.AddSeriesToCollectionParams{
-					CollectionID: created.ID,
-					SeriesID:     seriesID,
-				}); err != nil {
-					return err
-				}
-			}
-			if err := q.TouchCollection(r.Context(), created.ID); err != nil {
-				return err
-			}
-			if err := q.MarkAIGroupingReviewCollectionApplied(r.Context(), database.MarkAIGroupingReviewCollectionAppliedParams{
-				CreatedCollectionID: sql.NullInt64{Int64: created.ID, Valid: true},
-				ID:                  item.ID,
-			}); err != nil {
+			if _, err := applyAIGroupingReviewCollectionWithQueries(r.Context(), q, review, item); err != nil {
 				return err
 			}
 			applied++
 		}
-		_, err := q.UpdateAIGroupingReviewStatus(r.Context(), database.UpdateAIGroupingReviewStatusParams{
-			Status: "applied",
-			ID:     review.ID,
-		})
-		return err
+		return finalizeAIGroupingReviewStatus(r.Context(), q, review.ID)
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review")
@@ -375,6 +472,109 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 		"review_id":   reviewID,
 		"collections": applied,
 	})
+}
+
+func (c *Controller) applyAIGroupingReviewCollectionTx(ctx context.Context, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
+	var createdID int64
+	err := c.store.ExecTx(ctx, func(q *database.Queries) error {
+		id, err := applyAIGroupingReviewCollectionWithQueries(ctx, q, review, collection)
+		if err != nil {
+			return err
+		}
+		pending, err := q.CountPendingAIGroupingReviewCollections(ctx, review.ID)
+		if err != nil {
+			return err
+		}
+		if pending == 0 {
+			return finalizeAIGroupingReviewStatus(ctx, q, review.ID)
+		}
+		createdID = id
+		return nil
+	})
+	return createdID, err
+}
+
+func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database.Queries, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
+	seriesIDs := aiGroupingParseSeriesIDs(collection.SeriesIds)
+	if strings.TrimSpace(collection.Name) == "" || len(seriesIDs) == 0 {
+		return 0, sql.ErrNoRows
+	}
+	created, err := q.CreateCollection(ctx, database.CreateCollectionParams{
+		Name:           strings.TrimSpace(collection.Name),
+		Description:    sql.NullString{String: strings.TrimSpace(collection.Description), Valid: strings.TrimSpace(collection.Description) != ""},
+		SourceType:     "ai_grouping",
+		SourceReviewID: sql.NullInt64{Int64: review.ID, Valid: true},
+	})
+	if err != nil {
+		return 0, err
+	}
+	for _, seriesID := range seriesIDs {
+		if err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
+			CollectionID: created.ID,
+			SeriesID:     seriesID,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	if err := q.TouchCollection(ctx, created.ID); err != nil {
+		return 0, err
+	}
+	if err := q.MarkAIGroupingReviewCollectionApplied(ctx, database.MarkAIGroupingReviewCollectionAppliedParams{
+		CreatedCollectionID: sql.NullInt64{Int64: created.ID, Valid: true},
+		ID:                  collection.ID,
+	}); err != nil {
+		return 0, err
+	}
+	return created.ID, nil
+}
+
+func (c *Controller) rejectAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
+	review, collection, ok := c.getAIGroupingReviewCollectionForAction(r)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
+		return
+	}
+	if review.Status != "pending" || collection.Status != "pending" {
+		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
+		return
+	}
+	if err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
+		if err := q.MarkAIGroupingReviewCollectionRejected(r.Context(), collection.ID); err != nil {
+			return err
+		}
+		pending, err := q.CountPendingAIGroupingReviewCollections(r.Context(), review.ID)
+		if err != nil {
+			return err
+		}
+		if pending == 0 {
+			return finalizeAIGroupingReviewStatus(r.Context(), q, review.ID)
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to reject AI grouping review collection")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"success":       true,
+		"review_id":     review.ID,
+		"collection_id": collection.ID,
+	})
+}
+
+func finalizeAIGroupingReviewStatus(ctx context.Context, q *database.Queries, reviewID int64) error {
+	applied, err := q.CountAppliedAIGroupingReviewCollections(ctx, reviewID)
+	if err != nil {
+		return err
+	}
+	status := "rejected"
+	if applied > 0 {
+		status = "applied"
+	}
+	_, err = q.UpdateAIGroupingReviewStatus(ctx, database.UpdateAIGroupingReviewStatusParams{
+		Status: status,
+		ID:     reviewID,
+	})
+	return err
 }
 
 func (c *Controller) rejectAIGroupingReview(w http.ResponseWriter, r *http.Request) {

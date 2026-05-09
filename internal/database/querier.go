@@ -15,8 +15,10 @@ type Querier interface {
 	ClearSeriesLinks(ctx context.Context, seriesID int64) error
 	ClearSeriesTags(ctx context.Context, seriesID int64) error
 	CountAIGroupingReviews(ctx context.Context, arg CountAIGroupingReviewsParams) (int64, error)
+	CountAppliedAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error)
 	CountMihonSeries(ctx context.Context, arg CountMihonSeriesParams) (int64, error)
 	CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error)
+	CountPendingAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error)
 	CountPendingMetadataReviewInbox(ctx context.Context, arg CountPendingMetadataReviewInboxParams) (int64, error)
 	CreateAIGroupingReview(ctx context.Context, arg CreateAIGroupingReviewParams) (AiGroupingReview, error)
 	CreateAIGroupingReviewCollection(ctx context.Context, arg CreateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error)
@@ -33,6 +35,7 @@ type Querier interface {
 	DeleteReadingList(ctx context.Context, id int64) error
 	DeleteSeries(ctx context.Context, id int64) error
 	GetAIGroupingReview(ctx context.Context, id int64) (AiGroupingReview, error)
+	GetAIGroupingReviewCollection(ctx context.Context, id int64) (AiGroupingReviewCollection, error)
 	GetAllAuthors(ctx context.Context) ([]Author, error)
 	GetAllTags(ctx context.Context) ([]Tag, error)
 	GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Author, error)
@@ -73,10 +76,12 @@ type Querier interface {
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
 	ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error)
 	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) error
+	MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error
 	MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
 	SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error)
 	TouchCollection(ctx context.Context, id int64) error
+	UpdateAIGroupingReviewCollection(ctx context.Context, arg UpdateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error)
 	UpdateAIGroupingReviewStatus(ctx context.Context, arg UpdateAIGroupingReviewStatusParams) (AiGroupingReview, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 	UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error)

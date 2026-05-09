@@ -71,13 +71,15 @@ type Book struct {
 }
 
 type Collection struct {
-	ID          int64          `json:"id"`
-	Name        string         `json:"name"`
-	Description sql.NullString `json:"description"`
-	CoverUrl    sql.NullString `json:"cover_url"`
-	SortOrder   int64          `json:"sort_order"`
-	CreatedAt   sql.NullTime   `json:"created_at"`
-	UpdatedAt   sql.NullTime   `json:"updated_at"`
+	ID             int64          `json:"id"`
+	Name           string         `json:"name"`
+	Description    sql.NullString `json:"description"`
+	CoverUrl       sql.NullString `json:"cover_url"`
+	SortOrder      int64          `json:"sort_order"`
+	SourceType     string         `json:"source_type"`
+	SourceReviewID sql.NullInt64  `json:"source_review_id"`
+	CreatedAt      sql.NullTime   `json:"created_at"`
+	UpdatedAt      sql.NullTime   `json:"updated_at"`
 }
 
 type CollectionSeries struct {
@@ -278,18 +280,24 @@ type SeriesTag struct {
 }
 
 type SmartFilter struct {
-	ID           int64          `json:"id"`
-	LibraryID    int64          `json:"library_id"`
-	Name         string         `json:"name"`
-	ActiveTag    sql.NullString `json:"active_tag"`
-	ActiveAuthor sql.NullString `json:"active_author"`
-	ActiveStatus sql.NullString `json:"active_status"`
-	ActiveLetter sql.NullString `json:"active_letter"`
-	SortByField  string         `json:"sort_by_field"`
-	SortDir      string         `json:"sort_dir"`
-	PageSize     int64          `json:"page_size"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	ID              int64           `json:"id"`
+	LibraryID       int64           `json:"library_id"`
+	Name            string          `json:"name"`
+	ActiveTag       sql.NullString  `json:"active_tag"`
+	ActiveAuthor    sql.NullString  `json:"active_author"`
+	ActiveStatus    sql.NullString  `json:"active_status"`
+	ActiveLetter    sql.NullString  `json:"active_letter"`
+	ReadState       sql.NullString  `json:"read_state"`
+	MinRating       sql.NullFloat64 `json:"min_rating"`
+	MaxRating       sql.NullFloat64 `json:"max_rating"`
+	MinProgress     sql.NullFloat64 `json:"min_progress"`
+	MaxProgress     sql.NullFloat64 `json:"max_progress"`
+	AddedWithinDays sql.NullInt64   `json:"added_within_days"`
+	SortByField     string          `json:"sort_by_field"`
+	SortDir         string          `json:"sort_dir"`
+	PageSize        int64           `json:"page_size"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 type Tag struct {

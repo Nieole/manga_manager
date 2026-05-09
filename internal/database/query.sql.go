@@ -108,6 +108,20 @@ func (q *Queries) CountAIGroupingReviews(ctx context.Context, arg CountAIGroupin
 	return count, err
 }
 
+const countAppliedAIGroupingReviewCollections = `-- name: CountAppliedAIGroupingReviewCollections :one
+SELECT COUNT(*)
+FROM ai_grouping_review_collections
+WHERE review_id = ?
+  AND status = 'applied'
+`
+
+func (q *Queries) CountAppliedAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error) {
+	row := q.queryRow(ctx, q.countAppliedAIGroupingReviewCollectionsStmt, countAppliedAIGroupingReviewCollections, reviewID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countMihonSeries = `-- name: CountMihonSeries :one
 SELECT COUNT(*)
 FROM series s
@@ -140,6 +154,20 @@ WHERE instr(lower(s.name), lower(?1)) > 0
 
 func (q *Queries) CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error) {
 	row := q.queryRow(ctx, q.countOPDSSeriesSearchStmt, countOPDSSeriesSearch, query)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countPendingAIGroupingReviewCollections = `-- name: CountPendingAIGroupingReviewCollections :one
+SELECT COUNT(*)
+FROM ai_grouping_review_collections
+WHERE review_id = ?
+  AND status = 'pending'
+`
+
+func (q *Queries) CountPendingAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error) {
+	row := q.queryRow(ctx, q.countPendingAIGroupingReviewCollectionsStmt, countPendingAIGroupingReviewCollections, reviewID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -336,18 +364,30 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 }
 
 const createCollection = `-- name: CreateCollection :one
-INSERT INTO collections (name, description)
-VALUES (?, ?)
-RETURNING id, name, description, cover_url, sort_order, created_at, updated_at
+INSERT INTO collections (name, description, source_type, source_review_id)
+VALUES (
+    ?1,
+    ?2,
+    COALESCE(NULLIF(CAST(?3 AS TEXT), ''), 'manual'),
+    ?4
+)
+RETURNING id, name, description, cover_url, sort_order, source_type, source_review_id, created_at, updated_at
 `
 
 type CreateCollectionParams struct {
-	Name        string         `json:"name"`
-	Description sql.NullString `json:"description"`
+	Name           string         `json:"name"`
+	Description    sql.NullString `json:"description"`
+	SourceType     string         `json:"source_type"`
+	SourceReviewID sql.NullInt64  `json:"source_review_id"`
 }
 
 func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error) {
-	row := q.queryRow(ctx, q.createCollectionStmt, createCollection, arg.Name, arg.Description)
+	row := q.queryRow(ctx, q.createCollectionStmt, createCollection,
+		arg.Name,
+		arg.Description,
+		arg.SourceType,
+		arg.SourceReviewID,
+	)
 	var i Collection
 	err := row.Scan(
 		&i.ID,
@@ -355,6 +395,8 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.Description,
 		&i.CoverUrl,
 		&i.SortOrder,
+		&i.SourceType,
+		&i.SourceReviewID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -654,6 +696,28 @@ func (q *Queries) GetAIGroupingReview(ctx context.Context, id int64) (AiGrouping
 		&i.UpdatedAt,
 		&i.AppliedAt,
 		&i.RejectedAt,
+	)
+	return i, err
+}
+
+const getAIGroupingReviewCollection = `-- name: GetAIGroupingReviewCollection :one
+SELECT id, review_id, name, description, series_ids, series_count, status, created_collection_id, created_at, updated_at FROM ai_grouping_review_collections WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) GetAIGroupingReviewCollection(ctx context.Context, id int64) (AiGroupingReviewCollection, error) {
+	row := q.queryRow(ctx, q.getAIGroupingReviewCollectionStmt, getAIGroupingReviewCollection, id)
+	var i AiGroupingReviewCollection
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewID,
+		&i.Name,
+		&i.Description,
+		&i.SeriesIds,
+		&i.SeriesCount,
+		&i.Status,
+		&i.CreatedCollectionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -2605,6 +2669,19 @@ func (q *Queries) MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg
 	return err
 }
 
+const markAIGroupingReviewCollectionRejected = `-- name: MarkAIGroupingReviewCollectionRejected :exec
+UPDATE ai_grouping_review_collections
+SET status = 'rejected',
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?1
+  AND status = 'pending'
+`
+
+func (q *Queries) MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.markAIGroupingReviewCollectionRejectedStmt, markAIGroupingReviewCollectionRejected, id)
+	return err
+}
+
 const markAIGroupingReviewCollectionsRejected = `-- name: MarkAIGroupingReviewCollectionsRejected :exec
 UPDATE ai_grouping_review_collections
 SET status = 'rejected',
@@ -2707,6 +2784,50 @@ WHERE id = ?
 func (q *Queries) TouchCollection(ctx context.Context, id int64) error {
 	_, err := q.exec(ctx, q.touchCollectionStmt, touchCollection, id)
 	return err
+}
+
+const updateAIGroupingReviewCollection = `-- name: UpdateAIGroupingReviewCollection :one
+UPDATE ai_grouping_review_collections
+SET name = ?1,
+    description = ?2,
+    series_ids = ?3,
+    series_count = ?4,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?5
+  AND status = 'pending'
+RETURNING id, review_id, name, description, series_ids, series_count, status, created_collection_id, created_at, updated_at
+`
+
+type UpdateAIGroupingReviewCollectionParams struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	SeriesIds   string `json:"series_ids"`
+	SeriesCount int64  `json:"series_count"`
+	ID          int64  `json:"id"`
+}
+
+func (q *Queries) UpdateAIGroupingReviewCollection(ctx context.Context, arg UpdateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error) {
+	row := q.queryRow(ctx, q.updateAIGroupingReviewCollectionStmt, updateAIGroupingReviewCollection,
+		arg.Name,
+		arg.Description,
+		arg.SeriesIds,
+		arg.SeriesCount,
+		arg.ID,
+	)
+	var i AiGroupingReviewCollection
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewID,
+		&i.Name,
+		&i.Description,
+		&i.SeriesIds,
+		&i.SeriesCount,
+		&i.Status,
+		&i.CreatedCollectionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateAIGroupingReviewStatus = `-- name: UpdateAIGroupingReviewStatus :one

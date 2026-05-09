@@ -619,6 +619,20 @@ SELECT * FROM ai_grouping_reviews WHERE id = ? LIMIT 1;
 -- name: ListAIGroupingReviewCollections :many
 SELECT * FROM ai_grouping_review_collections WHERE review_id = ? ORDER BY id ASC;
 
+-- name: GetAIGroupingReviewCollection :one
+SELECT * FROM ai_grouping_review_collections WHERE id = ? LIMIT 1;
+
+-- name: UpdateAIGroupingReviewCollection :one
+UPDATE ai_grouping_review_collections
+SET name = sqlc.arg(name),
+    description = sqlc.arg(description),
+    series_ids = sqlc.arg(series_ids),
+    series_count = sqlc.arg(series_count),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id)
+  AND status = 'pending'
+RETURNING *;
+
 -- name: UpdateAIGroupingReviewStatus :one
 UPDATE ai_grouping_reviews
 SET status = sqlc.arg(status),
@@ -635,12 +649,31 @@ SET status = 'applied',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg(id);
 
+-- name: MarkAIGroupingReviewCollectionRejected :exec
+UPDATE ai_grouping_review_collections
+SET status = 'rejected',
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id)
+  AND status = 'pending';
+
 -- name: MarkAIGroupingReviewCollectionsRejected :exec
 UPDATE ai_grouping_review_collections
 SET status = 'rejected',
     updated_at = CURRENT_TIMESTAMP
 WHERE review_id = sqlc.arg(review_id)
   AND status = 'pending';
+
+-- name: CountPendingAIGroupingReviewCollections :one
+SELECT COUNT(*)
+FROM ai_grouping_review_collections
+WHERE review_id = ?
+  AND status = 'pending';
+
+-- name: CountAppliedAIGroupingReviewCollections :one
+SELECT COUNT(*)
+FROM ai_grouping_review_collections
+WHERE review_id = ?
+  AND status = 'applied';
 
 -- name: GetSeriesNamesByIDs :many
 SELECT id, name, COALESCE(title, '') as title
@@ -649,8 +682,13 @@ WHERE id IN (sqlc.slice(ids))
 ORDER BY COALESCE(NULLIF(title, ''), name) COLLATE NOCASE;
 
 -- name: CreateCollection :one
-INSERT INTO collections (name, description)
-VALUES (?, ?)
+INSERT INTO collections (name, description, source_type, source_review_id)
+VALUES (
+    sqlc.arg(name),
+    sqlc.arg(description),
+    COALESCE(NULLIF(CAST(sqlc.arg(source_type) AS TEXT), ''), 'manual'),
+    sqlc.arg(source_review_id)
+)
 RETURNING *;
 
 -- name: AddSeriesToCollection :exec

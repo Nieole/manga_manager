@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Link, useOutletContext } from 'react-router-dom';
-import { CheckCircle2, Filter, Layers3, Loader2, Sparkles, XCircle } from 'lucide-react';
+import { CheckCircle2, Filter, Layers3, Loader2, Pencil, Save, Sparkles, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 
 interface LibraryOption {
@@ -50,6 +50,12 @@ interface AIGroupingReviewsResponse {
   offset: number;
 }
 
+interface CollectionDraft {
+  name: string;
+  description: string;
+  seriesIds: number[];
+}
+
 function getApiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error)) {
     return error.response?.data?.error || error.message || fallback;
@@ -82,7 +88,8 @@ export default function AIGroupingReviews() {
   const [status, setStatus] = useState('pending');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [actingId, setActingId] = useState<number | null>(null);
+  const [actingKey, setActingKey] = useState<string | null>(null);
+  const [editingDrafts, setEditingDrafts] = useState<Record<number, CollectionDraft>>({});
   const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const limit = 20;
@@ -123,7 +130,7 @@ export default function AIGroupingReviews() {
 
   const runAction = async (review: AIGroupingReview, action: 'apply' | 'reject') => {
     if (review.status !== 'pending') return;
-    setActingId(review.id);
+    setActingKey(`review:${review.id}:${action}`);
     try {
       const res = await axios.post(`/api/ai-grouping/reviews/${review.id}/${action}`);
       if (action === 'apply') {
@@ -135,8 +142,89 @@ export default function AIGroupingReviews() {
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
     } finally {
-      setActingId(null);
+      setActingKey(null);
     }
+  };
+
+  const runCollectionAction = async (review: AIGroupingReview, collection: AIGroupingReviewCollection, action: 'apply' | 'reject') => {
+    if (review.status !== 'pending' || collection.status !== 'pending') return;
+    setActingKey(`collection:${collection.id}:${action}`);
+    try {
+      const res = await axios.post(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}/${action}`);
+      if (action === 'apply') {
+        showToast(t('aiGroupingReviews.toast.collectionApplied', { id: res.data.created_collection_id || '' }));
+      } else {
+        showToast(t('aiGroupingReviews.toast.collectionRejected'));
+      }
+      setEditingDrafts((current) => {
+        const next = { ...current };
+        delete next[collection.id];
+        return next;
+      });
+      await loadReviews();
+    } catch (err: unknown) {
+      showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const startEdit = (collection: AIGroupingReviewCollection) => {
+    setEditingDrafts((current) => ({
+      ...current,
+      [collection.id]: {
+        name: collection.name,
+        description: collection.description,
+        seriesIds: collection.series_ids,
+      },
+    }));
+  };
+
+  const cancelEdit = (collectionID: number) => {
+    setEditingDrafts((current) => {
+      const next = { ...current };
+      delete next[collectionID];
+      return next;
+    });
+  };
+
+  const updateDraft = (collectionID: number, patch: Partial<CollectionDraft>) => {
+    setEditingDrafts((current) => ({
+      ...current,
+      [collectionID]: {
+        ...current[collectionID],
+        ...patch,
+      },
+    }));
+  };
+
+  const saveDraft = async (review: AIGroupingReview, collection: AIGroupingReviewCollection) => {
+    const draft = editingDrafts[collection.id];
+    if (!draft || !draft.name.trim() || draft.seriesIds.length === 0) return;
+    setActingKey(`collection:${collection.id}:save`);
+    try {
+      await axios.put(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}`, {
+        name: draft.name,
+        description: draft.description,
+        series_ids: draft.seriesIds,
+      });
+      showToast(t('aiGroupingReviews.toast.collectionUpdated'));
+      cancelEdit(collection.id);
+      await loadReviews();
+    } catch (err: unknown) {
+      showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const toggleDraftSeries = (collectionID: number, seriesID: number) => {
+    const draft = editingDrafts[collectionID];
+    if (!draft) return;
+    const exists = draft.seriesIds.includes(seriesID);
+    updateDraft(collectionID, {
+      seriesIds: exists ? draft.seriesIds.filter((id) => id !== seriesID) : [...draft.seriesIds, seriesID],
+    });
   };
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -209,12 +297,12 @@ export default function AIGroupingReviews() {
                 </div>
                 {review.status === 'pending' && (
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => runAction(review, 'reject')} disabled={actingId === review.id} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-500/15 disabled:opacity-40">
-                      {actingId === review.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                    <button onClick={() => runAction(review, 'reject')} disabled={actingKey === `review:${review.id}:reject`} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-500/15 disabled:opacity-40">
+                      {actingKey === `review:${review.id}:reject` ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                       {t('aiGroupingReviews.reject')}
                     </button>
-                    <button onClick={() => runAction(review, 'apply')} disabled={actingId === review.id} className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-semibold text-white hover:bg-komgaPrimaryHover disabled:opacity-40">
-                      {actingId === review.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    <button onClick={() => runAction(review, 'apply')} disabled={actingKey === `review:${review.id}:apply`} className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-semibold text-white hover:bg-komgaPrimaryHover disabled:opacity-40">
+                      {actingKey === `review:${review.id}:apply` ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                       {t('aiGroupingReviews.apply')}
                     </button>
                   </div>
@@ -222,31 +310,84 @@ export default function AIGroupingReviews() {
               </div>
 
               <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                {review.collections.map((collection) => (
-                  <section key={collection.id} className="rounded-xl border border-white/10 bg-gray-950/60 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Layers3 className="h-4 w-4 shrink-0 text-amber-200" />
-                          <h3 className="truncate text-base font-semibold text-white">{collection.name}</h3>
+                {review.collections.map((collection) => {
+                  const draft = editingDrafts[collection.id];
+                  const editable = review.status === 'pending' && collection.status === 'pending';
+                  return (
+                    <section key={collection.id} className="rounded-xl border border-white/10 bg-gray-950/60 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <Layers3 className="h-4 w-4 shrink-0 text-amber-200" />
+                            {draft ? (
+                              <input value={draft.name} onChange={(event) => updateDraft(collection.id, { name: event.target.value })} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white outline-none focus:border-komgaPrimary" />
+                            ) : (
+                              <h3 className="truncate text-base font-semibold text-white">{collection.name}</h3>
+                            )}
+                          </div>
+                          {draft ? (
+                            <textarea value={draft.description} onChange={(event) => updateDraft(collection.id, { description: event.target.value })} rows={2} className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200 outline-none focus:border-komgaPrimary" />
+                          ) : (
+                            collection.description && <p className="mt-2 text-sm leading-6 text-gray-400">{collection.description}</p>
+                          )}
                         </div>
-                        {collection.description && <p className="mt-2 text-sm leading-6 text-gray-400">{collection.description}</p>}
+                        <span className={`shrink-0 rounded-full border px-2 py-1 text-[11px] ${statusClass(collection.status)}`}>{t(`aiGroupingReviews.status.${collection.status}`)}</span>
                       </div>
-                      <span className={`shrink-0 rounded-full border px-2 py-1 text-[11px] ${statusClass(collection.status)}`}>{t(`aiGroupingReviews.status.${collection.status}`)}</span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {collection.series.map((series) => (
-                        <Link key={series.id} to={`/series/${series.id}`} className="max-w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-gray-200 hover:border-komgaPrimary/50 hover:text-white">
-                          <span className="inline-block max-w-[220px] truncate align-bottom">{displaySeriesName(series)}</span>
-                        </Link>
-                      ))}
-                      {collection.series.length === 0 && <span className="text-xs text-gray-500">{t('aiGroupingReviews.noSeries')}</span>}
-                    </div>
-                    {collection.created_collection_id && (
-                      <p className="mt-3 text-xs text-green-200">{t('aiGroupingReviews.createdCollection', { id: collection.created_collection_id })}</p>
-                    )}
-                  </section>
-                ))}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {collection.series.map((series) => {
+                          const selected = draft ? draft.seriesIds.includes(series.id) : true;
+                          if (draft) {
+                            return (
+                              <button key={series.id} type="button" onClick={() => toggleDraftSeries(collection.id, series.id)} className={`max-w-full rounded-lg border px-2.5 py-1 text-xs transition-colors ${selected ? 'border-komgaPrimary/50 bg-komgaPrimary/15 text-white' : 'border-white/10 bg-white/5 text-gray-500'}`}>
+                                <span className="inline-block max-w-[220px] truncate align-bottom">{displaySeriesName(series)}</span>
+                              </button>
+                            );
+                          }
+                          return (
+                            <Link key={series.id} to={`/series/${series.id}`} className="max-w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-gray-200 hover:border-komgaPrimary/50 hover:text-white">
+                              <span className="inline-block max-w-[220px] truncate align-bottom">{displaySeriesName(series)}</span>
+                            </Link>
+                          );
+                        })}
+                        {collection.series.length === 0 && <span className="text-xs text-gray-500">{t('aiGroupingReviews.noSeries')}</span>}
+                      </div>
+                      {collection.created_collection_id && (
+                        <p className="mt-3 text-xs text-green-200">{t('aiGroupingReviews.createdCollection', { id: collection.created_collection_id })}</p>
+                      )}
+                      {editable && (
+                        <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-white/10 pt-3">
+                          {draft ? (
+                            <>
+                              <button onClick={() => cancelEdit(collection.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10">
+                                <X className="h-3.5 w-3.5" />
+                                {t('modal.cancel')}
+                              </button>
+                              <button onClick={() => saveDraft(review, collection)} disabled={actingKey === `collection:${collection.id}:save` || !draft.name.trim() || draft.seriesIds.length === 0} className="inline-flex items-center gap-1.5 rounded-lg bg-komgaPrimary px-3 py-1.5 text-xs font-semibold text-white hover:bg-komgaPrimaryHover disabled:opacity-40">
+                                {actingKey === `collection:${collection.id}:save` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                                {t('aiGroupingReviews.save')}
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => startEdit(collection)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10">
+                                <Pencil className="h-3.5 w-3.5" />
+                                {t('aiGroupingReviews.edit')}
+                              </button>
+                              <button onClick={() => runCollectionAction(review, collection, 'reject')} disabled={actingKey === `collection:${collection.id}:reject`} className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-xs text-red-200 hover:bg-red-500/15 disabled:opacity-40">
+                                {actingKey === `collection:${collection.id}:reject` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                                {t('aiGroupingReviews.rejectCollection')}
+                              </button>
+                              <button onClick={() => runCollectionAction(review, collection, 'apply')} disabled={actingKey === `collection:${collection.id}:apply`} className="inline-flex items-center gap-1.5 rounded-lg bg-komgaPrimary px-3 py-1.5 text-xs font-semibold text-white hover:bg-komgaPrimaryHover disabled:opacity-40">
+                                {actingKey === `collection:${collection.id}:apply` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                                {t('aiGroupingReviews.applyCollection')}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
               </div>
             </article>
           ))}

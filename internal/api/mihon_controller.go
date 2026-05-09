@@ -19,6 +19,20 @@ type MihonLibraryResponse struct {
 	Name string `json:"name"`
 }
 
+type MihonCollectionResponse struct {
+	ID             string    `json:"id"`
+	NumericID      int64     `json:"numeric_id"`
+	Kind           string    `json:"kind"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	LibraryID      *int64    `json:"library_id,omitempty"`
+	LibraryName    string    `json:"library_name,omitempty"`
+	SeriesCount    int       `json:"series_count"`
+	SourceType     string    `json:"source_type"`
+	SourceReviewID *int64    `json:"source_review_id,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 type MihonSeriesResponse struct {
 	ID          int64     `json:"id"`
 	LibraryID   int64     `json:"library_id"`
@@ -63,6 +77,9 @@ type MihonPageResponse struct {
 func (c *Controller) setupMihonRoutes(r chi.Router) {
 	r.Route("/mihon/v1", func(r chi.Router) {
 		r.Get("/libraries", c.mihonLibraries)
+		r.Get("/collections", c.mihonCollections)
+		r.Get("/collections/{collectionId}/series", c.mihonCollectionSeries)
+		r.Get("/smart-collections/{filterId}/series", c.mihonSmartCollectionSeries)
 		r.Get("/tags", c.mihonTags)
 		r.Get("/authors", c.mihonAuthors)
 		r.Get("/series", c.mihonSeries)
@@ -85,6 +102,84 @@ func (c *Controller) mihonLibraries(w http.ResponseWriter, r *http.Request) {
 		items = append(items, MihonLibraryResponse{ID: lib.ID, Name: lib.Name})
 	}
 	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
+	views, err := c.loadCollectionViews(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch collections")
+		return
+	}
+	items := make([]MihonCollectionResponse, 0, len(views))
+	for _, view := range views {
+		items = append(items, mihonCollectionFromView(view))
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) mihonCollectionSeries(w http.ResponseWriter, r *http.Request) {
+	collectionID, err := parseID(r, "collectionId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
+		return
+	}
+	page := positiveQueryInt(r, "page", 1, 0)
+	limit := positiveQueryInt(r, "limit", 30, 100)
+	_, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, (page-1)*limit)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Collection not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch collection series")
+		return
+	}
+	items := make([]MihonSeriesResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mihonSeriesFromCollectionRow(row))
+	}
+	jsonResponse(w, http.StatusOK, MihonSeriesPageResponse{
+		Items:   items,
+		Total:   int64(total),
+		Page:    page,
+		Limit:   limit,
+		HasNext: page*limit < total,
+	})
+}
+
+func (c *Controller) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
+	filterID, err := parseID(r, "filterId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid smart collection ID")
+		return
+	}
+	filter, err := c.getSmartFilterByID(r, filterID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Smart collection not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch smart collection")
+		return
+	}
+	page := positiveQueryInt(r, "page", 1, 0)
+	limit := positiveQueryInt(r, "limit", filter.PageSize, 100)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, (page-1)*limit)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch smart collection series")
+		return
+	}
+	items := make([]MihonSeriesResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mihonSeriesFromSearchRow(row))
+	}
+	jsonResponse(w, http.StatusOK, MihonSeriesPageResponse{
+		Items:   items,
+		Total:   int64(total),
+		Page:    page,
+		Limit:   limit,
+		HasNext: page*limit < total,
+	})
 }
 
 func (c *Controller) mihonTags(w http.ResponseWriter, r *http.Request) {
@@ -305,6 +400,64 @@ func mihonSeriesFromDetailRow(row database.GetMihonSeriesRow) MihonSeriesRespons
 		CoverBookID: row.CoverBookID,
 		CoverURL:    mihonCoverURL(row.CoverBookID),
 		UpdatedAt:   row.UpdatedAt,
+	}
+}
+
+func mihonCollectionFromView(view CollectionView) MihonCollectionResponse {
+	return MihonCollectionResponse{
+		ID:             view.ID,
+		NumericID:      view.NumericID,
+		Kind:           view.Kind,
+		Name:           view.Name,
+		Description:    view.Description,
+		LibraryID:      view.LibraryID,
+		LibraryName:    view.LibraryName,
+		SeriesCount:    view.SeriesCount,
+		SourceType:     view.SourceType,
+		SourceReviewID: view.SourceReviewID,
+		UpdatedAt:      view.UpdatedAt,
+	}
+}
+
+func mihonSeriesFromCollectionRow(row collectionSeriesListItem) MihonSeriesResponse {
+	coverURL := ""
+	if row.CoverPath != "" {
+		coverURL = "/api/thumbnails/" + row.CoverPath
+	}
+	return MihonSeriesResponse{
+		ID:         row.ID,
+		LibraryID:  row.LibraryID,
+		Name:       row.Name,
+		Title:      firstNonEmpty(row.Title, row.Name),
+		Summary:    row.Summary,
+		Status:     row.Status,
+		BookCount:  row.BookCount,
+		TotalPages: row.TotalPages,
+		CoverURL:   coverURL,
+		UpdatedAt:  row.UpdatedAt,
+	}
+}
+
+func mihonSeriesFromSearchRow(row database.SearchSeriesPagedRow) MihonSeriesResponse {
+	coverURL := ""
+	if row.CoverPath.Valid && row.CoverPath.String != "" {
+		coverURL = "/api/thumbnails/" + row.CoverPath.String
+	}
+	totalPages := int64(0)
+	if row.TotalPages.Valid {
+		totalPages = int64(row.TotalPages.Float64)
+	}
+	return MihonSeriesResponse{
+		ID:         row.ID,
+		LibraryID:  row.LibraryID,
+		Name:       row.Name,
+		Title:      firstNonEmpty(row.Title.String, row.Name),
+		Summary:    row.Summary.String,
+		Status:     row.Status.String,
+		BookCount:  int64(row.ActualBookCount),
+		TotalPages: totalPages,
+		CoverURL:   coverURL,
+		UpdatedAt:  row.UpdatedAt,
 	}
 }
 
