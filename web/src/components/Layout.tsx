@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import axios from 'axios';
-import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, Layers3 } from 'lucide-react';
+import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, Layers3, HardDriveDownload } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
@@ -537,6 +537,14 @@ export default function Layout() {
                         >
                             <ListOrdered className="w-5 h-5 shrink-0" />
                             <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.readingLists')}</span>
+                        </Link>
+                        <Link to="/offline" onClick={() => setIsSidebarOpen(false)}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/offline' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
+                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.offlineShelf') : undefined}
+                        >
+                            <HardDriveDownload className="w-5 h-5 shrink-0" />
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.offlineShelf')}</span>
                         </Link>
                         <Link to="/organize" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/organize' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'

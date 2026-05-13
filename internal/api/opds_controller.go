@@ -21,14 +21,15 @@ import (
 
 // OPDS Atom Feed 结构定义
 type OPDSFeed struct {
-	XMLName xml.Name    `xml:"feed"`
-	XMLNS   string      `xml:"xmlns,attr"`
-	Title   string      `xml:"title"`
-	ID      string      `xml:"id"`
-	Updated string      `xml:"updated"`
-	Author  *OPDSAuthor `xml:"author,omitempty"`
-	Links   []OPDSLink  `xml:"link"`
-	Entries []OPDSEntry `xml:"entry"`
+	XMLName  xml.Name    `xml:"feed"`
+	XMLNS    string      `xml:"xmlns,attr"`
+	XMLNSPSE string      `xml:"xmlns:pse,attr,omitempty"`
+	Title    string      `xml:"title"`
+	ID       string      `xml:"id"`
+	Updated  string      `xml:"updated"`
+	Author   *OPDSAuthor `xml:"author,omitempty"`
+	Links    []OPDSLink  `xml:"link"`
+	Entries  []OPDSEntry `xml:"entry"`
 }
 
 type OPDSAuthor struct {
@@ -36,9 +37,12 @@ type OPDSAuthor struct {
 }
 
 type OPDSLink struct {
-	Rel  string `xml:"rel,attr,omitempty"`
-	Href string `xml:"href,attr"`
-	Type string `xml:"type,attr,omitempty"`
+	Rel         string `xml:"rel,attr,omitempty"`
+	Href        string `xml:"href,attr"`
+	Type        string `xml:"type,attr,omitempty"`
+	Count       int64  `xml:"count,attr,omitempty"`
+	PSECount    int64  `xml:"-"`
+	PSELastRead int64  `xml:"-"`
 }
 
 type OPDSEntry struct {
@@ -64,19 +68,52 @@ type OpenSearchURL struct {
 	Template string `xml:"template,attr"`
 }
 
+func (link OPDSLink) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name.Local = "link"
+	if link.Rel != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "rel"}, Value: link.Rel})
+	}
+	start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "href"}, Value: link.Href})
+	if link.Type != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "type"}, Value: link.Type})
+	}
+	if link.Count > 0 {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "count"}, Value: strconv.FormatInt(link.Count, 10)})
+	}
+	if link.PSECount > 0 {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "pse:count"}, Value: strconv.FormatInt(link.PSECount, 10)})
+	}
+	if link.PSELastRead > 0 {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "pse:lastRead"}, Value: strconv.FormatInt(link.PSELastRead, 10)})
+	}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
+}
+
+const (
+	opdsPSEXMLNS     = "http://vaemendis.net/opds-pse/ns"
+	opdsPSEStreamRel = "http://vaemendis.net/opds-pse/stream"
+)
+
 // SetupOPDSRoutes 注册 OPDS 路由
 func (c *Controller) SetupOPDSRoutes(r chi.Router) {
 	r.Route("/opds/v1.2", func(r chi.Router) {
 		r.Get("/", c.opdsRoot)
 		r.Get("/continue", c.opdsContinueReading)
+		r.Get("/recent", c.opdsRecentAdded)
 		r.Get("/collections", c.opdsCollections)
 		r.Get("/collections/{collectionId}", c.opdsStaticCollectionSeries)
+		r.Get("/reading-lists", c.opdsReadingLists)
+		r.Get("/reading-lists/{listId}", c.opdsReadingListSeries)
 		r.Get("/smart-collections/{filterId}", c.opdsSmartCollectionSeries)
 		r.Get("/opensearch.xml", c.opdsOpenSearch)
 		r.Get("/search", c.opdsSearch)
 		r.Get("/libraries", c.opdsLibraries)
 		r.Get("/libraries/{libraryId}", c.opdsLibrarySeries)
 		r.Get("/series/{seriesId}", c.opdsSeriesBooks)
+		r.Get("/books/{bookId}/pages/{pageNumber}", c.opdsStreamPageImage)
 	})
 }
 
@@ -123,6 +160,15 @@ func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:   "最近添加",
+				ID:      "urn:manga-manager:opds:recent",
+				Updated: now,
+				Content: "按入库时间浏览最近添加的系列",
+				Links: []OPDSLink{
+					{Href: "/opds/v1.2/recent", Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+				},
+			},
+			{
 				Title:   "继续阅读",
 				ID:      "urn:manga-manager:opds:continue",
 				Updated: now,
@@ -138,6 +184,15 @@ func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
 				Content: "浏览手工合集、AI 分组合集、智能快照和动态规则合集",
 				Links: []OPDSLink{
 					{Href: "/opds/v1.2/collections", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
+				},
+			},
+			{
+				Title:   "阅读清单",
+				ID:      "urn:manga-manager:opds:reading-lists",
+				Updated: now,
+				Content: "浏览有序阅读清单",
+				Links: []OPDSLink{
+					{Href: "/opds/v1.2/reading-lists", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 				},
 			},
 		},
@@ -207,6 +262,29 @@ func opdsPaginationLinks(base string, page, limit, total int) []OPDSLink {
 	return links
 }
 
+func opdsBookAcquisitionLinks(bookID, pageCount int64, lastReadPage sql.NullInt64) []OPDSLink {
+	links := []OPDSLink{
+		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf("/api/pages/%d/1", bookID), Type: "image/jpeg"},
+	}
+	if pageCount <= 0 {
+		return links
+	}
+	stream := OPDSLink{
+		Rel:      opdsPSEStreamRel,
+		Href:     fmt.Sprintf("/opds/v1.2/books/%d/pages/{pageNumber}?format=jpeg&w={maxWidth}", bookID),
+		Type:     "image/jpeg",
+		Count:    pageCount,
+		PSECount: pageCount,
+	}
+	if lastReadPage.Valid && lastReadPage.Int64 > 0 {
+		stream.PSELastRead = lastReadPage.Int64
+		if stream.PSELastRead > pageCount {
+			stream.PSELastRead = pageCount
+		}
+	}
+	return append(links, stream)
+}
+
 func opdsSeriesEntryFromListItem(item collectionSeriesListItem) OPDSEntry {
 	title := firstNonEmpty(item.Title, item.Name)
 	links := []OPDSLink{
@@ -256,6 +334,95 @@ func opdsSeriesEntryFromSearchRow(row database.SearchSeriesPagedRow) OPDSEntry {
 	}
 }
 
+func opdsSeriesEntryFromRecentAddedRow(row database.ListRecentAddedSeriesRow) OPDSEntry {
+	title := firstNonEmpty(row.Title, row.Name)
+	links := []OPDSLink{
+		{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+	}
+	if row.CoverPath != "" {
+		links = append(links, OPDSLink{
+			Rel:  "http://opds-spec.org/image/thumbnail",
+			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+			Type: "image/jpeg",
+		})
+	}
+	return OPDSEntry{
+		Title:   title,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:series:%d", row.ID),
+		Updated: row.UpdatedAt.Format(time.RFC3339),
+		Content: row.Summary,
+		Links:   links,
+	}
+}
+
+func opdsSeriesEntryFromReadingListRow(row database.ListReadingListSeriesPageRow) OPDSEntry {
+	title := firstNonEmpty(row.Title, row.Name)
+	content := row.Summary
+	if row.Note != "" {
+		content = firstNonEmpty(content, row.Note)
+		if row.Summary != "" {
+			content = row.Note + " · " + row.Summary
+		}
+	}
+	links := []OPDSLink{
+		{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.SeriesID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+	}
+	if row.CoverPath != "" {
+		links = append(links, OPDSLink{
+			Rel:  "http://opds-spec.org/image/thumbnail",
+			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+			Type: "image/jpeg",
+		})
+	}
+	return OPDSEntry{
+		Title:   title,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:reading-list:%d:series:%d", row.ReadingListID, row.SeriesID),
+		Updated: row.UpdatedAt.Format(time.RFC3339),
+		Content: content,
+		Links:   links,
+	}
+}
+
+func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
+	page := opdsPositiveQueryInt(r, "page", 1, 0)
+	limit := opdsPositiveQueryInt(r, "limit", 30, 100)
+	libraryID := int64(opdsPositiveQueryInt(r, "libraryId", 0, 0))
+
+	total, err := c.store.CountRecentAddedSeries(r.Context(), libraryID)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	rows, err := c.store.ListRecentAddedSeries(r.Context(), database.ListRecentAddedSeriesParams{
+		LibraryID: libraryID,
+		Limit:     int64(limit),
+		Offset:    int64((page - 1) * limit),
+	})
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	entries := make([]OPDSEntry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, opdsSeriesEntryFromRecentAddedRow(row))
+	}
+	now := time.Now().Format(time.RFC3339)
+	base := "/opds/v1.2/recent"
+	if libraryID > 0 {
+		base = fmt.Sprintf("%s?libraryId=%d", base, libraryID)
+	}
+	feed := OPDSFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   "最近添加",
+		ID:      "urn:manga-manager:opds:recent",
+		Updated: now,
+		Links:   opdsPaginationLinks(base, page, limit, int(total)),
+		Entries: entries,
+	}
+	xmlResponse(w, feed)
+}
+
 func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 	views, err := c.loadCollectionViews(r.Context())
 	if err != nil {
@@ -299,6 +466,87 @@ func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 			{Rel: "self", Href: "/opds/v1.2/collections", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 			{Rel: "start", Href: "/opds/v1.2/", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 		},
+		Entries: entries,
+	}
+	xmlResponse(w, feed)
+}
+
+func (c *Controller) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
+	lists, err := c.store.ListReadingLists(r.Context())
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	entries := make([]OPDSEntry, 0, len(lists))
+	for _, list := range lists {
+		entries = append(entries, OPDSEntry{
+			Title:   list.Name,
+			ID:      fmt.Sprintf("urn:manga-manager:opds:reading-list:%d", list.ID),
+			Updated: list.UpdatedAt.Format(time.RFC3339),
+			Content: fmt.Sprintf("%d 个系列", list.ItemCount),
+			Links: []OPDSLink{
+				{Href: fmt.Sprintf("/opds/v1.2/reading-lists/%d", list.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+			},
+		})
+	}
+	feed := OPDSFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   "阅读清单",
+		ID:      "urn:manga-manager:opds:reading-lists",
+		Updated: now,
+		Links: []OPDSLink{
+			{Rel: "self", Href: "/opds/v1.2/reading-lists", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
+			{Rel: "start", Href: "/opds/v1.2/", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
+		},
+		Entries: entries,
+	}
+	xmlResponse(w, feed)
+}
+
+func (c *Controller) opdsReadingListSeries(w http.ResponseWriter, r *http.Request) {
+	listID, err := strconv.ParseInt(chi.URLParam(r, "listId"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid reading list ID", http.StatusBadRequest)
+		return
+	}
+	list, err := c.store.GetReadingList(r.Context(), listID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Reading list not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	page := opdsPositiveQueryInt(r, "page", 1, 0)
+	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
+	total, err := c.store.CountReadingListSeries(r.Context(), listID)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
+		ReadingListID: listID,
+		Limit:         int64(limit),
+		Offset:        int64((page - 1) * limit),
+	})
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	entries := make([]OPDSEntry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, opdsSeriesEntryFromReadingListRow(row))
+	}
+	now := time.Now().Format(time.RFC3339)
+	feed := OPDSFeed{
+		XMLNS:   "http://www.w3.org/2005/Atom",
+		Title:   list.Name,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:reading-list:%d:series", listID),
+		Updated: now,
+		Links:   opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/reading-lists/%d", listID), page, limit, int(total)),
 		Entries: entries,
 	}
 	xmlResponse(w, feed)
@@ -573,9 +821,7 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 			title = b.Title.String
 		}
 
-		links := []OPDSLink{
-			{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf("/api/pages/%d/1", b.ID), Type: "image/jpeg"},
-		}
+		links := opdsBookAcquisitionLinks(b.ID, b.PageCount, b.LastReadPage)
 		if b.CoverPath.Valid && b.CoverPath.String != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
@@ -593,14 +839,29 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	feed := OPDSFeed{
-		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   seriesTitle,
-		ID:      fmt.Sprintf("urn:manga-manager:opds:series:%d:books", seriesID),
-		Updated: now,
-		Links:   opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/series/%d", seriesID), page, limit, total),
-		Entries: entries,
+		XMLNS:    "http://www.w3.org/2005/Atom",
+		XMLNSPSE: opdsPSEXMLNS,
+		Title:    seriesTitle,
+		ID:       fmt.Sprintf("urn:manga-manager:opds:series:%d:books", seriesID),
+		Updated:  now,
+		Links:    opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/series/%d", seriesID), page, limit, total),
+		Entries:  entries,
 	}
 	xmlResponse(w, feed)
+}
+
+func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request) {
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+	pageNumber, err := strconv.ParseInt(chi.URLParam(r, "pageNumber"), 10, 64)
+	if err != nil || pageNumber < 0 {
+		jsonError(w, http.StatusBadRequest, "Invalid page number")
+		return
+	}
+	c.servePageImageByNumber(w, r, bookID, pageNumber+1)
 }
 
 func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
@@ -622,9 +883,7 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 		if item.LastReadPage.Valid && item.PageCount > 0 {
 			content = fmt.Sprintf("%s · 第 %d / %d 页", item.SeriesName, item.LastReadPage.Int64, item.PageCount)
 		}
-		links := []OPDSLink{
-			{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf("/api/pages/%d/1", item.BookID), Type: "image/jpeg"},
-		}
+		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage)
 		if item.CoverPath.Valid && item.CoverPath.String != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
@@ -646,10 +905,11 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 	}
 
 	feed := OPDSFeed{
-		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   "继续阅读",
-		ID:      "urn:manga-manager:opds:continue",
-		Updated: now,
+		XMLNS:    "http://www.w3.org/2005/Atom",
+		XMLNSPSE: opdsPSEXMLNS,
+		Title:    "继续阅读",
+		ID:       "urn:manga-manager:opds:continue",
+		Updated:  now,
 		Links: []OPDSLink{
 			{Rel: "self", Href: fmt.Sprintf("/opds/v1.2/continue?limit=%d", limit), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
 			{Rel: "start", Href: "/opds/v1.2/", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},

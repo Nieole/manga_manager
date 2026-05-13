@@ -1,9 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, CheckCircle2, Copy, ExternalLink, Layers3, Link2, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { SettingsPageIntro, sectionClassName } from './shared';
+
+interface ClientEndpointRequestSnapshot {
+  time: string;
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+  remote_ip: string;
+}
+
+interface ClientEndpointRequestDiagnostics {
+  total: number;
+  success: number;
+  warnings: number;
+  errors: number;
+  slow: number;
+  last_seen?: string;
+  last_status: number;
+  last_duration_ms: number;
+  last_path: string;
+  recent: ClientEndpointRequestSnapshot[];
+}
 
 interface ClientConnectionEndpoint {
   key: string;
@@ -17,6 +39,7 @@ interface ClientConnectionEndpoint {
   health: 'ready' | 'needs_account' | 'disabled' | string;
   auth_note: string;
   diagnostics: string[];
+  requests: ClientEndpointRequestDiagnostics;
 }
 
 interface ClientConnectionsResponse {
@@ -140,6 +163,19 @@ export function SettingsConnectionsPage() {
       className: 'border-gray-700 bg-gray-900 text-gray-400',
       icon: XCircle,
     };
+  };
+
+  const requestStatusClass = (status: number) => {
+    if (status >= 500) return 'border-red-500/25 bg-red-500/10 text-red-200';
+    if (status >= 400) return 'border-amber-500/25 bg-amber-500/10 text-amber-200';
+    return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200';
+  };
+
+  const formatRequestTime = (value?: string) => {
+    if (!value) return t('settings.connections.requests.never');
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return t('settings.connections.requests.never');
+    return date.toLocaleString();
   };
 
   return (
@@ -321,6 +357,66 @@ export function SettingsConnectionsPage() {
                             ))}
                           </div>
                         )}
+
+                        <div className="mt-4 rounded-lg border border-gray-800 bg-black/25 p-3">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex items-center gap-2 text-gray-200">
+                              <Activity className="h-4 w-4 text-komgaPrimary" />
+                              <span className="text-sm font-semibold">{t('settings.connections.requests.title')}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2 text-[11px]">
+                              <span className="rounded-full border border-gray-700 bg-gray-950 px-2 py-0.5 text-gray-400">
+                                {t('settings.connections.requests.total', { count: endpoint.requests?.total ?? 0 })}
+                              </span>
+                              <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-red-200">
+                                {t('settings.connections.requests.errors', { count: endpoint.requests?.errors ?? 0 })}
+                              </span>
+                              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+                                {t('settings.connections.requests.slow', { count: endpoint.requests?.slow ?? 0 })}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 grid gap-2 md:grid-cols-[0.9fr_1.1fr]">
+                            <div className="rounded-lg border border-gray-800 bg-gray-950/70 p-3">
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <Clock3 className="h-3.5 w-3.5" />
+                                {t('settings.connections.requests.lastSeen')}
+                              </div>
+                              <p className="mt-1 text-sm text-white">{formatRequestTime(endpoint.requests?.last_seen)}</p>
+                              {endpoint.requests?.last_seen && (
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                                  <span className={`rounded-full border px-2 py-0.5 ${requestStatusClass(endpoint.requests.last_status)}`}>
+                                    HTTP {endpoint.requests.last_status}
+                                  </span>
+                                  <span className="rounded-full border border-gray-700 bg-black/20 px-2 py-0.5 text-gray-400">
+                                    {endpoint.requests.last_duration_ms}ms
+                                  </span>
+                                </div>
+                              )}
+                              {endpoint.requests?.last_path && (
+                                <p className="mt-2 break-all font-mono text-[11px] text-gray-500">{endpoint.requests.last_path}</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              {(endpoint.requests?.recent?.length ?? 0) === 0 ? (
+                                <div className="flex h-full min-h-24 items-center rounded-lg border border-dashed border-gray-800 bg-gray-950/40 px-3 text-xs text-gray-500">
+                                  {t('settings.connections.requests.empty')}
+                                </div>
+                              ) : (
+                                endpoint.requests.recent.map((item) => (
+                                  <div key={`${item.time}-${item.method}-${item.path}-${item.status}`} className="grid gap-2 rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-2 text-xs sm:grid-cols-[auto_auto_minmax(0,1fr)_auto] sm:items-center">
+                                    <span className="font-semibold text-gray-300">{item.method}</span>
+                                    <span className={`w-fit rounded-full border px-2 py-0.5 ${requestStatusClass(item.status)}`}>{item.status}</span>
+                                    <span className="break-all font-mono text-gray-500">{item.path}</span>
+                                    <span className="text-right text-gray-500">{item.duration_ms}ms</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>

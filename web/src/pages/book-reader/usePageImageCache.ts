@@ -6,7 +6,7 @@ interface PageImageRequest {
   controller: AbortController;
 }
 
-interface ReaderBookCache {
+export interface ReaderBookCache {
   pages?: Page[];
   bookInfo?: ReaderBookInfo;
   nextBookId?: number | null;

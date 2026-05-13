@@ -671,6 +671,78 @@ func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
 	}
 }
 
+func TestKOReaderDeviceDiagnostics(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	account := createTestKOReaderAccount(t, controller, "reader")
+
+	if _, err := store.UpsertKOReaderProgress(context.Background(), database.UpsertKOReaderProgressParams{
+		Username:   account.Username,
+		Document:   "matched-document",
+		Progress:   "p-1",
+		Percentage: 0.75,
+		Device:     "Boox",
+		DeviceID:   "DEVICE-X",
+		BookID:     sql.NullInt64{Int64: book.ID, Valid: true},
+		MatchedBy:  "binary_hash",
+		Timestamp:  time.Now().Unix(),
+		RawPayload: `{"document":"matched-document"}`,
+	}); err != nil {
+		t.Fatalf("Upsert matched KOReaderProgress failed: %v", err)
+	}
+	if _, err := store.UpsertKOReaderProgress(context.Background(), database.UpsertKOReaderProgressParams{
+		Username:   account.Username,
+		Document:   "/mnt/koreader/Unknown/Vol1/Book.cbz",
+		Progress:   "p-x",
+		Percentage: 0.15,
+		Device:     "Boox",
+		DeviceID:   "DEVICE-X",
+		MatchedBy:  "",
+		Timestamp:  time.Now().Unix(),
+		RawPayload: `{"document":"unknown"}`,
+	}); err != nil {
+		t.Fatalf("Upsert unmatched KOReaderProgress failed: %v", err)
+	}
+	if err := store.CreateKOReaderSyncEvent(context.Background(), database.CreateKOReaderSyncEventParams{
+		Direction: "auth",
+		Username:  account.Username,
+		Document:  "/mnt/koreader/Unknown/Vol1/Book.cbz",
+		Status:    "auth_failed_invalid_key",
+		Message:   "Unauthorized",
+	}); err != nil {
+		t.Fatalf("CreateKOReaderSyncEvent failed: %v", err)
+	}
+	if _, err := store.ListKOReaderDeviceDiagnostics(context.Background()); err != nil {
+		t.Fatalf("ListKOReaderDeviceDiagnostics failed: %v", err)
+	}
+	if _, err := store.ListKOReaderDeviceMatchMethods(context.Background()); err != nil {
+		t.Fatalf("ListKOReaderDeviceMatchMethods failed: %v", err)
+	}
+	if _, err := store.ListKOReaderDeviceConflicts(context.Background(), 10); err != nil {
+		t.Fatalf("ListKOReaderDeviceConflicts failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	controller.getKOReaderDeviceDiagnostics(rec, httptest.NewRequest(http.MethodGet, "/api/system/koreader/devices?limit=10", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected device diagnostics 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp KOReaderDeviceDiagnosticsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode device diagnostics failed: %v", err)
+	}
+	if resp.Summary.DeviceCount != 1 || resp.Summary.UnmatchedRecords != 1 || resp.Summary.ConflictCount != 2 {
+		t.Fatalf("unexpected diagnostics summary: %+v", resp.Summary)
+	}
+	if len(resp.Devices) != 1 || resp.Devices[0].Health != "error" || len(resp.Devices[0].MatchMethods) != 2 {
+		t.Fatalf("unexpected device diagnostics: %+v", resp.Devices)
+	}
+	if len(resp.Conflicts) != 2 || resp.Conflicts[0].Suggestion == "" {
+		t.Fatalf("unexpected conflict diagnostics: %+v", resp.Conflicts)
+	}
+}
+
 func TestUpdateSystemConfigRejectsInvalidConfiguration(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	missingCacheDir := filepath.Join(t.TempDir(), "missing-parent", "cache")

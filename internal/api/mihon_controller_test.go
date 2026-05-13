@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"manga-manager/internal/database"
 )
@@ -28,6 +29,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 3, Valid: true},
+		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           book.ID,
 	}); err != nil {
 		t.Fatalf("UpdateBookProgress failed: %v", err)
@@ -51,6 +53,32 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 	if len(libraries) != 1 || libraries[0].ID != lib.ID {
 		t.Fatalf("unexpected libraries payload: %+v", libraries)
+	}
+
+	recentRec := httptest.NewRecorder()
+	controller.mihonRecentlyAdded(recentRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/recently-added?libraryId="+strconv.FormatInt(lib.ID, 10)+"&page=1&limit=10", nil))
+	if recentRec.Code != http.StatusOK {
+		t.Fatalf("expected recently added 200, got %d", recentRec.Code)
+	}
+	var recentPage MihonSeriesPageResponse
+	if err := json.NewDecoder(recentRec.Body).Decode(&recentPage); err != nil {
+		t.Fatalf("decode recently added page failed: %v", err)
+	}
+	if recentPage.Total != 1 || len(recentPage.Items) != 1 || recentPage.Items[0].ID != series.ID {
+		t.Fatalf("unexpected recently added page: %+v", recentPage)
+	}
+
+	continueRec := httptest.NewRecorder()
+	controller.mihonContinueReading(continueRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/continue?limit=10", nil))
+	if continueRec.Code != http.StatusOK {
+		t.Fatalf("expected continue 200, got %d", continueRec.Code)
+	}
+	var continueItems []MihonContinueItemResponse
+	if err := json.NewDecoder(continueRec.Body).Decode(&continueItems); err != nil {
+		t.Fatalf("decode continue items failed: %v", err)
+	}
+	if len(continueItems) != 1 || continueItems[0].BookID != book.ID || continueItems[0].LastReadPage != 3 {
+		t.Fatalf("unexpected continue payload: %+v", continueItems)
 	}
 
 	seriesRec := httptest.NewRecorder()
@@ -103,6 +131,51 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 	if len(pages) != 2 || pages[0].ImageURL != "/api/mihon/v1/books/"+strconv.FormatInt(book.ID, 10)+"/pages/1?format=webp&q=80" || pages[0].MediaType != "image/png" {
 		t.Fatalf("unexpected pages payload: %+v", pages)
+	}
+}
+
+func TestMihonReadingListEndpoints(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	list, err := store.CreateReadingList(context.Background(), database.CreateReadingListParams{
+		Name:        "Weekend Queue",
+		Description: "planned reading",
+	})
+	if err != nil {
+		t.Fatalf("CreateReadingList failed: %v", err)
+	}
+	if _, err := store.AddReadingListItem(context.Background(), database.AddReadingListItemParams{
+		ReadingListID: list.ID,
+		SeriesID:      series.ID,
+		Note:          "start here",
+	}); err != nil {
+		t.Fatalf("AddReadingListItem failed: %v", err)
+	}
+
+	listRec := httptest.NewRecorder()
+	controller.mihonReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/reading-lists", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected reading lists 200, got %d", listRec.Code)
+	}
+	var lists []MihonReadingListResponse
+	if err := json.NewDecoder(listRec.Body).Decode(&lists); err != nil {
+		t.Fatalf("decode reading lists failed: %v", err)
+	}
+	if len(lists) != 1 || lists[0].ID != list.ID || lists[0].ItemCount != 1 {
+		t.Fatalf("unexpected reading lists payload: %+v", lists)
+	}
+
+	seriesRec := httptest.NewRecorder()
+	controller.mihonReadingListSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/reading-lists/1/series", nil, "listId", strconv.FormatInt(list.ID, 10)))
+	if seriesRec.Code != http.StatusOK {
+		t.Fatalf("expected reading list series 200, got %d body=%s", seriesRec.Code, seriesRec.Body.String())
+	}
+	var page MihonSeriesPageResponse
+	if err := json.NewDecoder(seriesRec.Body).Decode(&page); err != nil {
+		t.Fatalf("decode reading list series failed: %v", err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != series.ID {
+		t.Fatalf("unexpected reading list series page: %+v", page)
 	}
 }
 

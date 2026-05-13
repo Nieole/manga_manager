@@ -202,6 +202,33 @@ func (q *Queries) CountPendingMetadataReviewInbox(ctx context.Context, arg Count
 	return count, err
 }
 
+const countReadingListSeries = `-- name: CountReadingListSeries :one
+SELECT COUNT(*)
+FROM reading_list_items rli
+WHERE rli.reading_list_id = ?
+`
+
+func (q *Queries) CountReadingListSeries(ctx context.Context, readingListID int64) (int64, error) {
+	row := q.queryRow(ctx, q.countReadingListSeriesStmt, countReadingListSeries, readingListID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countRecentAddedSeries = `-- name: CountRecentAddedSeries :one
+SELECT COUNT(*)
+FROM series s
+WHERE CAST(?1 AS INTEGER) = 0
+   OR s.library_id = CAST(?1 AS INTEGER)
+`
+
+func (q *Queries) CountRecentAddedSeries(ctx context.Context, libraryID int64) (int64, error) {
+	row := q.queryRow(ctx, q.countRecentAddedSeriesStmt, countRecentAddedSeries, libraryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAIGroupingReview = `-- name: CreateAIGroupingReview :one
 INSERT INTO ai_grouping_reviews (
     library_id, provider, status, summary, raw_payload, candidate_count, collection_count
@@ -2461,6 +2488,128 @@ func (q *Queries) ListReadingListItems(ctx context.Context, readingListID int64)
 	return items, nil
 }
 
+const listReadingListSeriesPage = `-- name: ListReadingListSeriesPage :many
+SELECT
+    rli.id as item_id,
+    rli.reading_list_id,
+    rli.series_id,
+    rli.sort_order,
+    rli.note,
+    rli.updated_at as item_updated_at,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.created_at,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id
+        ORDER BY
+            CASE
+                WHEN b.page_count = 0 THEN 0
+                WHEN b.last_read_page IS NULL THEN 0
+                WHEN b.last_read_page < b.page_count THEN 0
+                ELSE 1
+            END,
+            b.sort_number,
+            b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as next_book_id
+FROM reading_list_items rli
+JOIN series s ON s.id = rli.series_id
+WHERE rli.reading_list_id = ?1
+ORDER BY rli.sort_order, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+LIMIT ?3 OFFSET ?2
+`
+
+type ListReadingListSeriesPageParams struct {
+	ReadingListID int64 `json:"reading_list_id"`
+	Offset        int64 `json:"offset"`
+	Limit         int64 `json:"limit"`
+}
+
+type ListReadingListSeriesPageRow struct {
+	ItemID        int64     `json:"item_id"`
+	ReadingListID int64     `json:"reading_list_id"`
+	SeriesID      int64     `json:"series_id"`
+	SortOrder     int64     `json:"sort_order"`
+	Note          string    `json:"note"`
+	ItemUpdatedAt time.Time `json:"item_updated_at"`
+	LibraryID     int64     `json:"library_id"`
+	Name          string    `json:"name"`
+	Title         string    `json:"title"`
+	Summary       string    `json:"summary"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	BookCount     int64     `json:"book_count"`
+	TotalPages    int64     `json:"total_pages"`
+	CoverPath     string    `json:"cover_path"`
+	CoverBookID   int64     `json:"cover_book_id"`
+	NextBookID    int64     `json:"next_book_id"`
+}
+
+func (q *Queries) ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error) {
+	rows, err := q.query(ctx, q.listReadingListSeriesPageStmt, listReadingListSeriesPage, arg.ReadingListID, arg.Offset, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReadingListSeriesPageRow
+	for rows.Next() {
+		var i ListReadingListSeriesPageRow
+		if err := rows.Scan(
+			&i.ItemID,
+			&i.ReadingListID,
+			&i.SeriesID,
+			&i.SortOrder,
+			&i.Note,
+			&i.ItemUpdatedAt,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BookCount,
+			&i.TotalPages,
+			&i.CoverPath,
+			&i.CoverBookID,
+			&i.NextBookID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReadingLists = `-- name: ListReadingLists :many
 SELECT
     rl.id,
@@ -2503,6 +2652,96 @@ func (q *Queries) ListReadingLists(ctx context.Context) ([]ListReadingListsRow, 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentAddedSeries = `-- name: ListRecentAddedSeries :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.created_at,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE CAST(?1 AS INTEGER) = 0
+   OR s.library_id = CAST(?1 AS INTEGER)
+ORDER BY s.created_at DESC, s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT ?3 OFFSET ?2
+`
+
+type ListRecentAddedSeriesParams struct {
+	LibraryID int64 `json:"library_id"`
+	Offset    int64 `json:"offset"`
+	Limit     int64 `json:"limit"`
+}
+
+type ListRecentAddedSeriesRow struct {
+	ID          int64     `json:"id"`
+	LibraryID   int64     `json:"library_id"`
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	BookCount   int64     `json:"book_count"`
+	TotalPages  int64     `json:"total_pages"`
+	CoverPath   string    `json:"cover_path"`
+	CoverBookID int64     `json:"cover_book_id"`
+}
+
+func (q *Queries) ListRecentAddedSeries(ctx context.Context, arg ListRecentAddedSeriesParams) ([]ListRecentAddedSeriesRow, error) {
+	rows, err := q.query(ctx, q.listRecentAddedSeriesStmt, listRecentAddedSeries, arg.LibraryID, arg.Offset, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecentAddedSeriesRow
+	for rows.Next() {
+		var i ListRecentAddedSeriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BookCount,
+			&i.TotalPages,
+			&i.CoverPath,
+			&i.CoverBookID,
 		); err != nil {
 			return nil, err
 		}

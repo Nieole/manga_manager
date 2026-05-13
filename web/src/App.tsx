@@ -12,6 +12,7 @@ const Organize = lazy(() => import('./pages/Organize'));
 const MetadataReviews = lazy(() => import('./pages/MetadataReviews'));
 const AIGroupingReviews = lazy(() => import('./pages/AIGroupingReviews'));
 const ReadingLists = lazy(() => import('./pages/ReadingLists'));
+const OfflineShelf = lazy(() => import('./pages/OfflineShelf'));
 const SeriesDetail = lazy(() => import('./pages/SeriesDetail'));
 const BookReader = lazy(() => import('./pages/BookReader'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -63,6 +64,8 @@ function App() {
           <Route path="ai-grouping-reviews" element={withRouteFallback(<AIGroupingReviews />)} />
           {/* 有序阅读清单 */}
           <Route path="reading-lists" element={withRouteFallback(<ReadingLists />)} />
+          {/* 离线书架 */}
+          <Route path="offline" element={withRouteFallback(<OfflineShelf />)} />
           {/* 系统日志 */}
           <Route path="logs" element={withRouteFallback(<Logs />)} />
           {/* 系统配置中心 */}

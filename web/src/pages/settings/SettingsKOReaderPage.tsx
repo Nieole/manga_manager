@@ -1,4 +1,4 @@
-import { Copy, KeyRound, RefreshCw, RotateCcw, Save, TabletSmartphone, Trash2, UserPlus } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, KeyRound, RefreshCw, RotateCcw, Save, TabletSmartphone, Trash2, UserPlus } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { FieldErrors, SettingsPageIntro, inputClassName, sectionClassName } from './shared';
@@ -26,6 +26,8 @@ export function SettingsKOReaderPage() {
     handleRotateKOReaderAccount,
     handleToggleKOReaderAccount,
     handleDeleteKOReaderAccount,
+    koreaderDevices,
+    fetchKOReaderDevices,
     unmatchedItems,
     fetchKOReaderUnmatched,
     formatKOReaderLatestSync,
@@ -33,6 +35,28 @@ export function SettingsKOReaderPage() {
   } = useSettings();
 
   if (!koreaderForm) return null;
+
+  const deviceHealthMeta = (health: string) => {
+    if (health === 'ready') {
+      return {
+        label: t('settings.koreader.deviceHealth.ready'),
+        className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200',
+        icon: CheckCircle2,
+      };
+    }
+    if (health === 'error') {
+      return {
+        label: t('settings.koreader.deviceHealth.error'),
+        className: 'border-red-500/25 bg-red-500/10 text-red-200',
+        icon: AlertTriangle,
+      };
+    }
+    return {
+      label: t('settings.koreader.deviceHealth.needsReconcile'),
+      className: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
+      icon: AlertTriangle,
+    };
+  };
 
   return (
     <div className="space-y-6">
@@ -156,6 +180,124 @@ export function SettingsKOReaderPage() {
             <p className="font-medium">{t('settings.koreader.reconcile')}</p>
             <p className="mt-1 text-xs opacity-70">{t('settings.koreader.reconcileHint')}</p>
           </button>
+        </div>
+      </section>
+
+      <section className={sectionClassName}>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-komgaSecondary">
+              <Activity className="h-5 w-5" />
+              <h3 className="text-lg font-semibold text-white">{t('settings.koreader.devicesTitle')}</h3>
+            </div>
+            <p className="mt-1 text-sm text-gray-400">{t('settings.koreader.devicesDescription')}</p>
+          </div>
+          <button onClick={fetchKOReaderDevices} className="inline-flex w-fit items-center gap-2 rounded-lg border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-200 hover:bg-black/30">
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t('common.refresh')}
+          </button>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+            <p className="text-xs uppercase tracking-wide text-gray-500">{t('settings.koreader.deviceMetric.devices')}</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{koreaderDevices?.summary.device_count ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/10 p-4">
+            <p className="text-xs uppercase tracking-wide text-emerald-200/80">{t('settings.koreader.deviceMetric.healthy')}</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{koreaderDevices?.summary.healthy_devices ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-amber-500/15 bg-amber-500/10 p-4">
+            <p className="text-xs uppercase tracking-wide text-amber-200/80">{t('settings.koreader.deviceMetric.attention')}</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{koreaderDevices?.summary.attention_devices ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-red-500/15 bg-red-500/10 p-4">
+            <p className="text-xs uppercase tracking-wide text-red-200/80">{t('settings.koreader.deviceMetric.conflicts')}</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{koreaderDevices?.summary.conflict_count ?? 0}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <div className="space-y-3">
+            {(koreaderDevices?.devices.length ?? 0) === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-800 bg-black/20 p-4 text-sm text-gray-500">{t('settings.koreader.noDevices')}</p>
+            ) : (
+              koreaderDevices?.devices.map((device) => {
+                const meta = deviceHealthMeta(device.health);
+                const HealthIcon = meta.icon;
+                return (
+                  <div key={device.key} className="rounded-lg border border-gray-800 bg-black/20 p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold text-white">{device.device || t('common.unknown')}</p>
+                          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${meta.className}`}>
+                            <HealthIcon className="h-3 w-3" />
+                            {meta.label}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">{device.username}{device.device_id ? ` · ${device.device_id}` : ''}</p>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        <Clock3 className="mr-1 inline h-3.5 w-3.5" />
+                        {device.latest_sync_at ? formatDateTime(device.latest_sync_at) : t('settings.koreader.noSyncRecord')}
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-2">
+                        <p className="text-[11px] text-gray-500">{t('settings.koreader.deviceRecords.total')}</p>
+                        <p className="mt-1 text-sm font-semibold text-white">{device.total_records}</p>
+                      </div>
+                      <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/10 px-3 py-2">
+                        <p className="text-[11px] text-emerald-200/80">{t('settings.koreader.deviceRecords.matched')}</p>
+                        <p className="mt-1 text-sm font-semibold text-white">{device.matched_records}</p>
+                      </div>
+                      <div className="rounded-lg border border-amber-500/15 bg-amber-500/10 px-3 py-2">
+                        <p className="text-[11px] text-amber-200/80">{t('settings.koreader.deviceRecords.unmatched')}</p>
+                        <p className="mt-1 text-sm font-semibold text-white">{device.unmatched_records}</p>
+                      </div>
+                    </div>
+                    {device.match_methods.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {device.match_methods.map((method) => (
+                          <span key={`${device.key}-${method.method}`} className="rounded-full border border-gray-700 bg-gray-950 px-2.5 py-1 text-[11px] text-gray-300">
+                            {method.method}: {method.count}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {device.latest_document && <p className="mt-3 break-all font-mono text-xs text-gray-500">{device.latest_document}</p>}
+                    {device.latest_error && <p className="mt-2 text-xs text-red-400">{device.latest_error}</p>}
+                    <p className="mt-2 text-xs leading-5 text-komgaPrimary">{device.suggestion}</p>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-semibold text-white">{t('settings.koreader.conflictsTitle')}</h4>
+            {(koreaderDevices?.conflicts.length ?? 0) === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-800 bg-black/20 p-4 text-sm text-gray-500">{t('settings.koreader.noConflicts')}</p>
+            ) : (
+              koreaderDevices?.conflicts.map((conflict) => (
+                <div key={`${conflict.type}-${conflict.id}-${conflict.updated_at}`} className={`rounded-lg border p-3 ${conflict.severity === 'error' ? 'border-red-500/20 bg-red-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{t(`settings.koreader.conflictType.${conflict.type}`)}</p>
+                      <p className="mt-1 text-xs text-gray-400">{conflict.username} · {conflict.device || t('common.unknown')}</p>
+                    </div>
+                    <span className="w-fit rounded-full border border-gray-700 bg-black/20 px-2 py-0.5 text-[11px] text-gray-300">{conflict.status}</span>
+                  </div>
+                  <p className="mt-2 break-all font-mono text-xs text-gray-400">{conflict.document}</p>
+                  <p className="mt-1 break-all font-mono text-[11px] text-gray-500">{t('settings.koreader.currentKey', { key: conflict.normalized_key || t('settings.koreader.cannotNormalize') })}</p>
+                  <p className="mt-2 text-xs text-gray-300">{conflict.message}</p>
+                  <p className="mt-2 text-xs leading-5 text-komgaPrimary">{conflict.suggestion}</p>
+                  <p className="mt-2 text-[11px] text-gray-500">{formatDateTime(conflict.updated_at)} · {Math.round(conflict.percentage * 100)}%</p>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </section>
 

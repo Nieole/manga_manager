@@ -32,6 +32,8 @@ func (h *captureLogHandler) WithGroup(string) slog.Handler {
 }
 
 func TestRequestMetricsLogsAPIRequests(t *testing.T) {
+	requestDiagnostics.reset()
+	t.Cleanup(requestDiagnostics.reset)
 	capture := &captureLogHandler{}
 	previous := slog.Default()
 	slog.SetDefault(slog.New(capture))
@@ -65,9 +67,15 @@ func TestRequestMetricsLogsAPIRequests(t *testing.T) {
 	if attrs["bytes"] != int64(len("created")) {
 		t.Fatalf("expected response byte count, got %v", attrs["bytes"])
 	}
+	diagnostics := requestDiagnostics.snapshot()
+	if len(diagnostics) != 1 || diagnostics[0].Path != "/api/libraries" || diagnostics[0].Status != http.StatusCreated {
+		t.Fatalf("unexpected request diagnostics: %+v", diagnostics)
+	}
 }
 
 func TestRequestMetricsSkipsFastStaticSuccess(t *testing.T) {
+	requestDiagnostics.reset()
+	t.Cleanup(requestDiagnostics.reset)
 	capture := &captureLogHandler{}
 	previous := slog.Default()
 	slog.SetDefault(slog.New(capture))
@@ -83,9 +91,14 @@ func TestRequestMetricsSkipsFastStaticSuccess(t *testing.T) {
 	if len(capture.records) != 0 {
 		t.Fatalf("expected static success request to be skipped, got %d logs", len(capture.records))
 	}
+	if got := requestDiagnostics.snapshot(); len(got) != 0 {
+		t.Fatalf("expected static success request to be skipped by diagnostics, got %+v", got)
+	}
 }
 
 func TestRequestMetricsLogsSlowAndFailedStaticRequests(t *testing.T) {
+	requestDiagnostics.reset()
+	t.Cleanup(requestDiagnostics.reset)
 	capture := &captureLogHandler{}
 	previous := slog.Default()
 	slog.SetDefault(slog.New(capture))
@@ -110,6 +123,31 @@ func TestRequestMetricsLogsSlowAndFailedStaticRequests(t *testing.T) {
 	}
 	if capture.records[0].Level != slog.LevelWarn {
 		t.Fatalf("expected warning for failed static request, got %s", capture.records[0].Level)
+	}
+}
+
+func TestRequestMetricsRecordsCustomKOReaderDiagnostics(t *testing.T) {
+	requestDiagnostics.reset()
+	t.Cleanup(requestDiagnostics.reset)
+
+	capture := &captureLogHandler{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(capture))
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+	})
+
+	handler := RequestMetrics(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"state":"OK"}`))
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/sync/custom/healthcheck", nil))
+
+	if len(capture.records) != 0 {
+		t.Fatalf("expected custom KOReader healthcheck to stay out of structured logs, got %d", len(capture.records))
+	}
+	diagnostics := requestDiagnostics.snapshot()
+	if len(diagnostics) != 1 || diagnostics[0].Path != "/sync/custom/healthcheck" {
+		t.Fatalf("expected custom KOReader path in diagnostics, got %+v", diagnostics)
 	}
 }
 

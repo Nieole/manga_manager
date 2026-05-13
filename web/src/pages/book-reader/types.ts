@@ -40,3 +40,12 @@ export interface ReaderBookInfo {
   series_id?: number;
   last_read_page?: NullableInt;
 }
+
+export interface ReadingBookmark {
+  id: number;
+  book_id: number;
+  page: number;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}

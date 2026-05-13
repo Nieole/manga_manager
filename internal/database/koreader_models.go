@@ -122,3 +122,40 @@ type KOReaderSyncEvent struct {
 	Message   string        `json:"message"`
 	CreatedAt time.Time     `json:"created_at"`
 }
+
+type KOReaderDeviceDiagnostic struct {
+	Username         string       `json:"username"`
+	Device           string       `json:"device"`
+	DeviceID         string       `json:"device_id"`
+	TotalRecords     int64        `json:"total_records"`
+	MatchedRecords   int64        `json:"matched_records"`
+	UnmatchedRecords int64        `json:"unmatched_records"`
+	LatestSyncAt     sql.NullTime `json:"latest_sync_at"`
+	LatestDocument   string       `json:"latest_document"`
+	LatestMatchedBy  string       `json:"latest_matched_by"`
+	LatestError      string       `json:"latest_error"`
+}
+
+type KOReaderDeviceMatchMethod struct {
+	Username  string `json:"username"`
+	Device    string `json:"device"`
+	DeviceID  string `json:"device_id"`
+	MatchedBy string `json:"matched_by"`
+	Count     int64  `json:"count"`
+}
+
+type KOReaderDeviceConflict struct {
+	ID         int64         `json:"id"`
+	Type       string        `json:"type"`
+	Severity   string        `json:"severity"`
+	Username   string        `json:"username"`
+	Device     string        `json:"device"`
+	DeviceID   string        `json:"device_id"`
+	Document   string        `json:"document"`
+	BookID     sql.NullInt64 `json:"book_id"`
+	MatchedBy  string        `json:"matched_by"`
+	Status     string        `json:"status"`
+	Message    string        `json:"message"`
+	Percentage float64       `json:"percentage"`
+	UpdatedAt  time.Time     `json:"updated_at"`
+}

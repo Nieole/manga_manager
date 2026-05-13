@@ -6,14 +6,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGetClientConnections(t *testing.T) {
+	requestDiagnostics.reset()
+	t.Cleanup(requestDiagnostics.reset)
+
 	controller, store, _, rootDir := newTestController(t)
 	seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 	if _, err := controller.koreader.CreateAccount(context.Background(), "reader"); err != nil {
 		t.Fatalf("create KOReader account failed: %v", err)
 	}
+	requestDiagnostics.record(RequestDiagnosticEvent{
+		Time:       testNow(),
+		Method:     http.MethodGet,
+		Path:       "/opds/v1.2/recent",
+		Status:     http.StatusOK,
+		DurationMS: 12,
+		Bytes:      128,
+		RemoteIP:   "192.0.2.10:50000",
+	})
+	requestDiagnostics.record(RequestDiagnosticEvent{
+		Time:       testNow(),
+		Method:     http.MethodGet,
+		Path:       "/api/mihon/v1/continue",
+		Status:     http.StatusBadGateway,
+		DurationMS: slowRequestThreshold.Milliseconds() + 1,
+		Bytes:      64,
+		RemoteIP:   "192.0.2.11:50000",
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/client-connections", nil)
 	req.Host = "manga.local:8080"
@@ -33,8 +55,8 @@ func TestGetClientConnections(t *testing.T) {
 	if resp.BaseURL != "https://manga.local:8080" {
 		t.Fatalf("unexpected base URL: %s", resp.BaseURL)
 	}
-	if len(resp.Endpoints) != 6 {
-		t.Fatalf("expected 6 endpoints, got %+v", resp.Endpoints)
+	if len(resp.Endpoints) != 11 {
+		t.Fatalf("expected 11 endpoints, got %+v", resp.Endpoints)
 	}
 	if resp.Endpoints[0].URL != "https://manga.local:8080/opds/v1.2/" {
 		t.Fatalf("unexpected OPDS URL: %+v", resp.Endpoints[0])
@@ -52,6 +74,27 @@ func TestGetClientConnections(t *testing.T) {
 	if byKey["mihon_collections"].URL != "https://manga.local:8080/api/mihon/v1/collections" || byKey["mihon_collections"].Category != "collections" {
 		t.Fatalf("unexpected Mihon collections endpoint: %+v", byKey["mihon_collections"])
 	}
+	if byKey["opds_recent"].URL != "https://manga.local:8080/opds/v1.2/recent" || byKey["opds_recent"].ClientType != "opds" {
+		t.Fatalf("unexpected OPDS recent endpoint: %+v", byKey["opds_recent"])
+	}
+	if byKey["opds_recent"].Requests.Total != 1 || byKey["opds_recent"].Requests.LastStatus != http.StatusOK {
+		t.Fatalf("unexpected OPDS recent request diagnostics: %+v", byKey["opds_recent"].Requests)
+	}
+	if byKey["opds_reading_lists"].URL != "https://manga.local:8080/opds/v1.2/reading-lists" || byKey["opds_reading_lists"].Category != "collections" {
+		t.Fatalf("unexpected OPDS reading lists endpoint: %+v", byKey["opds_reading_lists"])
+	}
+	if byKey["mihon_recent"].URL != "https://manga.local:8080/api/mihon/v1/recently-added" || byKey["mihon_recent"].Category != "catalog" {
+		t.Fatalf("unexpected Mihon recent endpoint: %+v", byKey["mihon_recent"])
+	}
+	if byKey["mihon_reading_lists"].URL != "https://manga.local:8080/api/mihon/v1/reading-lists" || byKey["mihon_reading_lists"].Category != "collections" {
+		t.Fatalf("unexpected Mihon reading lists endpoint: %+v", byKey["mihon_reading_lists"])
+	}
+	if byKey["mihon_continue"].URL != "https://manga.local:8080/api/mihon/v1/continue" || byKey["mihon_continue"].Category != "sync" {
+		t.Fatalf("unexpected Mihon continue endpoint: %+v", byKey["mihon_continue"])
+	}
+	if byKey["mihon_continue"].Requests.Total != 1 || byKey["mihon_continue"].Requests.Errors != 1 || byKey["mihon_continue"].Requests.Slow != 1 {
+		t.Fatalf("unexpected Mihon continue request diagnostics: %+v", byKey["mihon_continue"].Requests)
+	}
 	if byKey["koreader"].Category != "sync" {
 		t.Fatalf("unexpected KOReader endpoint category: %+v", byKey["koreader"])
 	}
@@ -61,6 +104,10 @@ func TestGetClientConnections(t *testing.T) {
 	if resp.Status.KOReaderAccountCount != 1 || resp.Status.KOReaderEnabledAccounts != 1 {
 		t.Fatalf("unexpected KOReader account status: %+v", resp.Status)
 	}
+}
+
+func testNow() time.Time {
+	return time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
 }
 
 func TestKOReaderConnectionHealth(t *testing.T) {

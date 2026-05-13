@@ -20,6 +20,8 @@ type Querier interface {
 	CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error)
 	CountPendingAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error)
 	CountPendingMetadataReviewInbox(ctx context.Context, arg CountPendingMetadataReviewInboxParams) (int64, error)
+	CountReadingListSeries(ctx context.Context, readingListID int64) (int64, error)
+	CountRecentAddedSeries(ctx context.Context, libraryID int64) (int64, error)
 	CreateAIGroupingReview(ctx context.Context, arg CreateAIGroupingReviewParams) (AiGroupingReview, error)
 	CreateAIGroupingReviewCollection(ctx context.Context, arg CreateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error)
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
@@ -72,7 +74,9 @@ type Querier interface {
 	ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error)
 	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error)
 	ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error)
+	ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error)
 	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)
+	ListRecentAddedSeries(ctx context.Context, arg ListRecentAddedSeriesParams) ([]ListRecentAddedSeriesRow, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
 	ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error)
 	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) error

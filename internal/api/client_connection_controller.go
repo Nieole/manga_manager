@@ -4,20 +4,44 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type ClientConnectionEndpoint struct {
-	Key         string   `json:"key"`
-	Category    string   `json:"category"`
-	ClientType  string   `json:"client_type"`
-	Label       string   `json:"label"`
-	URL         string   `json:"url"`
-	Path        string   `json:"path"`
-	Description string   `json:"description"`
-	Enabled     bool     `json:"enabled"`
-	Health      string   `json:"health"`
-	AuthNote    string   `json:"auth_note"`
-	Diagnostics []string `json:"diagnostics"`
+	Key         string                           `json:"key"`
+	Category    string                           `json:"category"`
+	ClientType  string                           `json:"client_type"`
+	Label       string                           `json:"label"`
+	URL         string                           `json:"url"`
+	Path        string                           `json:"path"`
+	Description string                           `json:"description"`
+	Enabled     bool                             `json:"enabled"`
+	Health      string                           `json:"health"`
+	AuthNote    string                           `json:"auth_note"`
+	Diagnostics []string                         `json:"diagnostics"`
+	Requests    ClientEndpointRequestDiagnostics `json:"requests"`
+}
+
+type ClientEndpointRequestDiagnostics struct {
+	Total          int                             `json:"total"`
+	Success        int                             `json:"success"`
+	Warnings       int                             `json:"warnings"`
+	Errors         int                             `json:"errors"`
+	Slow           int                             `json:"slow"`
+	LastSeen       *time.Time                      `json:"last_seen,omitempty"`
+	LastStatus     int                             `json:"last_status"`
+	LastDurationMS int64                           `json:"last_duration_ms"`
+	LastPath       string                          `json:"last_path"`
+	Recent         []ClientEndpointRequestSnapshot `json:"recent"`
+}
+
+type ClientEndpointRequestSnapshot struct {
+	Time       time.Time `json:"time"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Status     int       `json:"status"`
+	DurationMS int64     `json:"duration_ms"`
+	RemoteIP   string    `json:"remote_ip"`
 }
 
 type ClientConnectionStatus struct {
@@ -62,7 +86,7 @@ func (c *Controller) getClientConnections(w http.ResponseWriter, r *http.Request
 			Enabled:     true,
 			Health:      "ready",
 			AuthNote:    "No authentication is required by Manga Manager.",
-			Diagnostics: []string{"Catalog root is always available while the server is running.", "Use this URL for OPDS-compatible readers."},
+			Diagnostics: []string{"Catalog root is always available while the server is running.", "Use this URL for OPDS-compatible readers.", "Book entries include OPDS-PSE page streaming links for clients that support comic page streaming."},
 		},
 		{
 			Key:         "opds_search",
@@ -91,6 +115,32 @@ func (c *Controller) getClientConnections(w http.ResponseWriter, r *http.Request
 			Diagnostics: []string{"Use this when the client supports adding multiple catalog feeds.", "Dynamic smart collections are resolved on request."},
 		},
 		{
+			Key:         "opds_recent",
+			Category:    "catalog",
+			ClientType:  "opds",
+			Label:       "OPDS Recent",
+			Path:        "/opds/v1.2/recent",
+			URL:         baseURL + "/opds/v1.2/recent",
+			Description: "OPDS feed sorted by recently added series.",
+			Enabled:     true,
+			Health:      "ready",
+			AuthNote:    "No authentication is required by Manga Manager.",
+			Diagnostics: []string{"Use this feed when a client supports separate catalog shortcuts.", "Add libraryId as a query parameter to scope the feed to one library."},
+		},
+		{
+			Key:         "opds_reading_lists",
+			Category:    "collections",
+			ClientType:  "opds",
+			Label:       "OPDS Reading Lists",
+			Path:        "/opds/v1.2/reading-lists",
+			URL:         baseURL + "/opds/v1.2/reading-lists",
+			Description: "OPDS navigation feed for ordered reading lists.",
+			Enabled:     true,
+			Health:      "ready",
+			AuthNote:    "No authentication is required by Manga Manager.",
+			Diagnostics: []string{"Use this endpoint for curated reading-order lists.", "Each list opens as a paged series feed."},
+		},
+		{
 			Key:         "mihon",
 			Category:    "catalog",
 			ClientType:  "mihon",
@@ -117,6 +167,45 @@ func (c *Controller) getClientConnections(w http.ResponseWriter, r *http.Request
 			Diagnostics: []string{"Use this endpoint for client-side collection discovery.", "Manual, AI, snapshot, and smart collection views share this gateway."},
 		},
 		{
+			Key:         "mihon_recent",
+			Category:    "catalog",
+			ClientType:  "mihon",
+			Label:       "Mihon Recently Added",
+			Path:        "/api/mihon/v1/recently-added",
+			URL:         baseURL + "/api/mihon/v1/recently-added",
+			Description: "JSON series page sorted by recently added time.",
+			Enabled:     true,
+			Health:      "ready",
+			AuthNote:    "No authentication is required by Manga Manager.",
+			Diagnostics: []string{"Use this endpoint for extension-side recent shelves.", "Supports page, limit, and libraryId query parameters."},
+		},
+		{
+			Key:         "mihon_reading_lists",
+			Category:    "collections",
+			ClientType:  "mihon",
+			Label:       "Mihon Reading Lists",
+			Path:        "/api/mihon/v1/reading-lists",
+			URL:         baseURL + "/api/mihon/v1/reading-lists",
+			Description: "JSON reading-list catalog for Mihon/Tachiyomi style clients.",
+			Enabled:     true,
+			Health:      "ready",
+			AuthNote:    "No authentication is required by Manga Manager.",
+			Diagnostics: []string{"Use this endpoint for curated reading-order discovery.", "List members are available at /api/mihon/v1/reading-lists/{id}/series."},
+		},
+		{
+			Key:         "mihon_continue",
+			Category:    "sync",
+			ClientType:  "mihon",
+			Label:       "Mihon Continue",
+			Path:        "/api/mihon/v1/continue",
+			URL:         baseURL + "/api/mihon/v1/continue",
+			Description: "JSON feed of recently read books for compatible clients.",
+			Enabled:     true,
+			Health:      "ready",
+			AuthNote:    "No authentication is required by Manga Manager.",
+			Diagnostics: []string{"Use this endpoint to build client-side continue-reading shelves.", "Progress writes still use the existing book progress endpoint."},
+		},
+		{
 			Key:         "koreader",
 			Category:    "sync",
 			ClientType:  "koreader",
@@ -131,6 +220,8 @@ func (c *Controller) getClientConnections(w http.ResponseWriter, r *http.Request
 		},
 	}
 
+	attachEndpointRequestDiagnostics(endpoints)
+
 	jsonResponse(w, http.StatusOK, ClientConnectionsResponse{
 		BaseURL:   baseURL,
 		Endpoints: endpoints,
@@ -141,6 +232,69 @@ func (c *Controller) getClientConnections(w http.ResponseWriter, r *http.Request
 			KOReaderMatchMode:       cfg.KOReader.MatchMode,
 		},
 	})
+}
+
+func attachEndpointRequestDiagnostics(endpoints []ClientConnectionEndpoint) {
+	events := requestDiagnostics.snapshot()
+	for index := range endpoints {
+		endpoints[index].Requests = summarizeEndpointRequests(endpoints[index], events)
+	}
+}
+
+func summarizeEndpointRequests(endpoint ClientConnectionEndpoint, events []RequestDiagnosticEvent) ClientEndpointRequestDiagnostics {
+	summary := ClientEndpointRequestDiagnostics{
+		Recent: make([]ClientEndpointRequestSnapshot, 0, 5),
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if !requestMatchesEndpoint(endpoint, event.Path) {
+			continue
+		}
+		summary.Total++
+		switch {
+		case event.Status >= 500:
+			summary.Errors++
+		case event.Status >= 400:
+			summary.Warnings++
+		default:
+			summary.Success++
+		}
+		if event.DurationMS >= slowRequestThreshold.Milliseconds() {
+			summary.Slow++
+		}
+		if summary.LastSeen == nil {
+			seen := event.Time
+			summary.LastSeen = &seen
+			summary.LastStatus = event.Status
+			summary.LastDurationMS = event.DurationMS
+			summary.LastPath = event.Path
+		}
+		if len(summary.Recent) < 5 {
+			summary.Recent = append(summary.Recent, ClientEndpointRequestSnapshot{
+				Time:       event.Time,
+				Method:     event.Method,
+				Path:       event.Path,
+				Status:     event.Status,
+				DurationMS: event.DurationMS,
+				RemoteIP:   event.RemoteIP,
+			})
+		}
+	}
+	return summary
+}
+
+func requestMatchesEndpoint(endpoint ClientConnectionEndpoint, path string) bool {
+	prefix := strings.TrimRight(endpoint.Path, "/")
+	if prefix == "" {
+		prefix = endpoint.Path
+	}
+	if endpoint.Path == "/opds/v1.2/" || endpoint.Path == "/api/mihon/v1" {
+		return path == prefix || strings.HasPrefix(path, prefix+"/")
+	}
+	if endpoint.ClientType == "koreader" {
+		return path == prefix || strings.HasPrefix(path, prefix+"/")
+	}
+	return path == endpoint.Path || strings.HasPrefix(path, prefix+"/")
 }
 
 func koreaderConnectionHealth(enabled bool, enabledAccounts int64) string {

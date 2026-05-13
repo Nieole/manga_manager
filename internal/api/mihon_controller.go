@@ -33,6 +33,14 @@ type MihonCollectionResponse struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type MihonReadingListResponse struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	ItemCount   int64     `json:"item_count"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type MihonSeriesResponse struct {
 	ID          int64     `json:"id"`
 	LibraryID   int64     `json:"library_id"`
@@ -45,6 +53,18 @@ type MihonSeriesResponse struct {
 	CoverBookID int64     `json:"cover_book_id,omitempty"`
 	CoverURL    string    `json:"cover_url,omitempty"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type MihonContinueItemResponse struct {
+	SeriesID     int64     `json:"series_id"`
+	SeriesName   string    `json:"series_name"`
+	BookID       int64     `json:"book_id"`
+	BookName     string    `json:"book_name"`
+	BookTitle    string    `json:"book_title"`
+	CoverURL     string    `json:"cover_url,omitempty"`
+	LastReadPage int64     `json:"last_read_page,omitempty"`
+	PageCount    int64     `json:"page_count"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type MihonSeriesPageResponse struct {
@@ -77,8 +97,12 @@ type MihonPageResponse struct {
 func (c *Controller) setupMihonRoutes(r chi.Router) {
 	r.Route("/mihon/v1", func(r chi.Router) {
 		r.Get("/libraries", c.mihonLibraries)
+		r.Get("/recently-added", c.mihonRecentlyAdded)
+		r.Get("/continue", c.mihonContinueReading)
 		r.Get("/collections", c.mihonCollections)
 		r.Get("/collections/{collectionId}/series", c.mihonCollectionSeries)
+		r.Get("/reading-lists", c.mihonReadingLists)
+		r.Get("/reading-lists/{listId}/series", c.mihonReadingListSeries)
 		r.Get("/smart-collections/{filterId}/series", c.mihonSmartCollectionSeries)
 		r.Get("/tags", c.mihonTags)
 		r.Get("/authors", c.mihonAuthors)
@@ -104,6 +128,74 @@ func (c *Controller) mihonLibraries(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
+func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) {
+	page := positiveQueryInt(r, "page", 1, 0)
+	limit := positiveQueryInt(r, "limit", 30, 100)
+	libraryID := int64(positiveQueryInt(r, "libraryId", 0, 0))
+
+	total, err := c.store.CountRecentAddedSeries(r.Context(), libraryID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to count recent series")
+		return
+	}
+	rows, err := c.store.ListRecentAddedSeries(r.Context(), database.ListRecentAddedSeriesParams{
+		LibraryID: libraryID,
+		Limit:     int64(limit),
+		Offset:    int64((page - 1) * limit),
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent series")
+		return
+	}
+	items := make([]MihonSeriesResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mihonSeriesFromRecentAddedRow(row))
+	}
+	jsonResponse(w, http.StatusOK, MihonSeriesPageResponse{
+		Items:   items,
+		Total:   total,
+		Page:    page,
+		Limit:   limit,
+		HasNext: int64(page*limit) < total,
+	})
+}
+
+func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request) {
+	limit := int64(positiveQueryInt(r, "limit", 30, 100))
+	rows, err := c.store.GetRecentReadAll(r.Context(), limit)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch continue reading")
+		return
+	}
+	items := make([]MihonContinueItemResponse, 0, len(rows))
+	for _, row := range rows {
+		lastReadPage := int64(0)
+		if row.LastReadPage.Valid {
+			lastReadPage = row.LastReadPage.Int64
+		}
+		updatedAt := time.Time{}
+		if row.LastReadAt.Valid {
+			updatedAt = row.LastReadAt.Time
+		}
+		coverURL := ""
+		if row.CoverPath.Valid && row.CoverPath.String != "" {
+			coverURL = "/api/thumbnails/" + row.CoverPath.String
+		}
+		items = append(items, MihonContinueItemResponse{
+			SeriesID:     row.SeriesID,
+			SeriesName:   row.SeriesName,
+			BookID:       row.BookID,
+			BookName:     row.BookName,
+			BookTitle:    firstNonEmpty(row.BookTitle.String, row.BookName),
+			CoverURL:     coverURL,
+			LastReadPage: lastReadPage,
+			PageCount:    row.PageCount,
+			UpdatedAt:    updatedAt,
+		})
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
 func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
 	views, err := c.loadCollectionViews(r.Context())
 	if err != nil {
@@ -115,6 +207,68 @@ func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
 		items = append(items, mihonCollectionFromView(view))
 	}
 	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) mihonReadingLists(w http.ResponseWriter, r *http.Request) {
+	lists, err := c.store.ListReadingLists(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading lists")
+		return
+	}
+	items := make([]MihonReadingListResponse, 0, len(lists))
+	for _, list := range lists {
+		items = append(items, MihonReadingListResponse{
+			ID:          list.ID,
+			Name:        list.Name,
+			Description: list.Description,
+			ItemCount:   list.ItemCount,
+			UpdatedAt:   list.UpdatedAt,
+		})
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Request) {
+	listID, err := parseID(r, "listId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
+		return
+	}
+	if _, err := c.store.GetReadingList(r.Context(), listID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Reading list not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list")
+		return
+	}
+	page := positiveQueryInt(r, "page", 1, 0)
+	limit := positiveQueryInt(r, "limit", 30, 100)
+	total, err := c.store.CountReadingListSeries(r.Context(), listID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to count reading list series")
+		return
+	}
+	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
+		ReadingListID: listID,
+		Limit:         int64(limit),
+		Offset:        int64((page - 1) * limit),
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list series")
+		return
+	}
+	items := make([]MihonSeriesResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mihonSeriesFromReadingListRow(row))
+	}
+	jsonResponse(w, http.StatusOK, MihonSeriesPageResponse{
+		Items:   items,
+		Total:   total,
+		Page:    page,
+		Limit:   limit,
+		HasNext: int64(page*limit) < total,
+	})
 }
 
 func (c *Controller) mihonCollectionSeries(w http.ResponseWriter, r *http.Request) {
@@ -435,6 +589,50 @@ func mihonSeriesFromCollectionRow(row collectionSeriesListItem) MihonSeriesRespo
 		TotalPages: row.TotalPages,
 		CoverURL:   coverURL,
 		UpdatedAt:  row.UpdatedAt,
+	}
+}
+
+func mihonSeriesFromRecentAddedRow(row database.ListRecentAddedSeriesRow) MihonSeriesResponse {
+	coverURL := ""
+	if row.CoverPath != "" {
+		coverURL = "/api/thumbnails/" + row.CoverPath
+	} else {
+		coverURL = mihonCoverURL(row.CoverBookID)
+	}
+	return MihonSeriesResponse{
+		ID:          row.ID,
+		LibraryID:   row.LibraryID,
+		Name:        row.Name,
+		Title:       firstNonEmpty(row.Title, row.Name),
+		Summary:     row.Summary,
+		Status:      row.Status,
+		BookCount:   row.BookCount,
+		TotalPages:  row.TotalPages,
+		CoverBookID: row.CoverBookID,
+		CoverURL:    coverURL,
+		UpdatedAt:   row.UpdatedAt,
+	}
+}
+
+func mihonSeriesFromReadingListRow(row database.ListReadingListSeriesPageRow) MihonSeriesResponse {
+	coverURL := ""
+	if row.CoverPath != "" {
+		coverURL = "/api/thumbnails/" + row.CoverPath
+	} else {
+		coverURL = mihonCoverURL(row.CoverBookID)
+	}
+	return MihonSeriesResponse{
+		ID:          row.SeriesID,
+		LibraryID:   row.LibraryID,
+		Name:        row.Name,
+		Title:       firstNonEmpty(row.Title, row.Name),
+		Summary:     row.Summary,
+		Status:      row.Status,
+		BookCount:   row.BookCount,
+		TotalPages:  row.TotalPages,
+		CoverBookID: row.CoverBookID,
+		CoverURL:    coverURL,
+		UpdatedAt:   row.UpdatedAt,
 	}
 }
 

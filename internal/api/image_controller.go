@@ -26,8 +26,6 @@ type pageCacheStatsResponse struct {
 }
 
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
-	started := time.Now()
-	ctx := r.Context()
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -40,6 +38,12 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid page number")
 		return
 	}
+	c.servePageImageByNumber(w, r, bookID, pageNumber)
+}
+
+func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Request, bookID, pageNumber int64) {
+	started := time.Now()
+	ctx := r.Context()
 
 	book, err := c.store.GetBook(ctx, bookID)
 	if err != nil {

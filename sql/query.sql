@@ -84,6 +84,44 @@ WHERE instr(lower(s.name), lower(sqlc.arg(query))) > 0
 ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
+-- name: CountRecentAddedSeries :one
+SELECT COUNT(*)
+FROM series s
+WHERE CAST(sqlc.arg(library_id) AS INTEGER) = 0
+   OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER);
+
+-- name: ListRecentAddedSeries :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.created_at,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id
+FROM series s
+WHERE CAST(sqlc.arg(library_id) AS INTEGER) = 0
+   OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER)
+ORDER BY s.created_at DESC, s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
 -- name: CountMihonSeries :one
 SELECT COUNT(*)
 FROM series s
@@ -769,6 +807,63 @@ FROM reading_list_items rli
 JOIN series s ON s.id = rli.series_id
 WHERE rli.reading_list_id = ?
 ORDER BY rli.sort_order, s.name;
+
+-- name: CountReadingListSeries :one
+SELECT COUNT(*)
+FROM reading_list_items rli
+WHERE rli.reading_list_id = ?;
+
+-- name: ListReadingListSeriesPage :many
+SELECT
+    rli.id as item_id,
+    rli.reading_list_id,
+    rli.series_id,
+    rli.sort_order,
+    rli.note,
+    rli.updated_at as item_updated_at,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    COALESCE(s.status, '') as status,
+    s.created_at,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) as cover_path,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as cover_book_id,
+    CAST(COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id
+        ORDER BY
+            CASE
+                WHEN b.page_count = 0 THEN 0
+                WHEN b.last_read_page IS NULL THEN 0
+                WHEN b.last_read_page < b.page_count THEN 0
+                ELSE 1
+            END,
+            b.sort_number,
+            b.name
+        LIMIT 1
+    ), 0) AS INTEGER) as next_book_id
+FROM reading_list_items rli
+JOIN series s ON s.id = rli.series_id
+WHERE rli.reading_list_id = sqlc.arg(reading_list_id)
+ORDER BY rli.sort_order, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: AddReadingListItem :one
 INSERT INTO reading_list_items (reading_list_id, series_id, sort_order, note)

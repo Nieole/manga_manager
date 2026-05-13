@@ -57,6 +57,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.countPendingMetadataReviewInboxStmt, err = db.PrepareContext(ctx, countPendingMetadataReviewInbox); err != nil {
 		return nil, fmt.Errorf("error preparing query CountPendingMetadataReviewInbox: %w", err)
 	}
+	if q.countReadingListSeriesStmt, err = db.PrepareContext(ctx, countReadingListSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query CountReadingListSeries: %w", err)
+	}
+	if q.countRecentAddedSeriesStmt, err = db.PrepareContext(ctx, countRecentAddedSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query CountRecentAddedSeries: %w", err)
+	}
 	if q.createAIGroupingReviewStmt, err = db.PrepareContext(ctx, createAIGroupingReview); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateAIGroupingReview: %w", err)
 	}
@@ -213,8 +219,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listReadingListItemsStmt, err = db.PrepareContext(ctx, listReadingListItems); err != nil {
 		return nil, fmt.Errorf("error preparing query ListReadingListItems: %w", err)
 	}
+	if q.listReadingListSeriesPageStmt, err = db.PrepareContext(ctx, listReadingListSeriesPage); err != nil {
+		return nil, fmt.Errorf("error preparing query ListReadingListSeriesPage: %w", err)
+	}
 	if q.listReadingListsStmt, err = db.PrepareContext(ctx, listReadingLists); err != nil {
 		return nil, fmt.Errorf("error preparing query ListReadingLists: %w", err)
+	}
+	if q.listRecentAddedSeriesStmt, err = db.PrepareContext(ctx, listRecentAddedSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query ListRecentAddedSeries: %w", err)
 	}
 	if q.listSeriesByLibraryStmt, err = db.PrepareContext(ctx, listSeriesByLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSeriesByLibrary: %w", err)
@@ -346,6 +358,16 @@ func (q *Queries) Close() error {
 	if q.countPendingMetadataReviewInboxStmt != nil {
 		if cerr := q.countPendingMetadataReviewInboxStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countPendingMetadataReviewInboxStmt: %w", cerr)
+		}
+	}
+	if q.countReadingListSeriesStmt != nil {
+		if cerr := q.countReadingListSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countReadingListSeriesStmt: %w", cerr)
+		}
+	}
+	if q.countRecentAddedSeriesStmt != nil {
+		if cerr := q.countRecentAddedSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countRecentAddedSeriesStmt: %w", cerr)
 		}
 	}
 	if q.createAIGroupingReviewStmt != nil {
@@ -608,9 +630,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listReadingListItemsStmt: %w", cerr)
 		}
 	}
+	if q.listReadingListSeriesPageStmt != nil {
+		if cerr := q.listReadingListSeriesPageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listReadingListSeriesPageStmt: %w", cerr)
+		}
+	}
 	if q.listReadingListsStmt != nil {
 		if cerr := q.listReadingListsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listReadingListsStmt: %w", cerr)
+		}
+	}
+	if q.listRecentAddedSeriesStmt != nil {
+		if cerr := q.listRecentAddedSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listRecentAddedSeriesStmt: %w", cerr)
 		}
 	}
 	if q.listSeriesByLibraryStmt != nil {
@@ -783,6 +815,8 @@ type Queries struct {
 	countOPDSSeriesSearchStmt                   *sql.Stmt
 	countPendingAIGroupingReviewCollectionsStmt *sql.Stmt
 	countPendingMetadataReviewInboxStmt         *sql.Stmt
+	countReadingListSeriesStmt                  *sql.Stmt
+	countRecentAddedSeriesStmt                  *sql.Stmt
 	createAIGroupingReviewStmt                  *sql.Stmt
 	createAIGroupingReviewCollectionStmt        *sql.Stmt
 	createBookStmt                              *sql.Stmt
@@ -835,7 +869,9 @@ type Queries struct {
 	listPendingMetadataReviewInboxStmt          *sql.Stmt
 	listPendingMetadataReviewsBySeriesStmt      *sql.Stmt
 	listReadingListItemsStmt                    *sql.Stmt
+	listReadingListSeriesPageStmt               *sql.Stmt
 	listReadingListsStmt                        *sql.Stmt
+	listRecentAddedSeriesStmt                   *sql.Stmt
 	listSeriesByLibraryStmt                     *sql.Stmt
 	listSeriesInitialBackfillCandidatesStmt     *sql.Stmt
 	markAIGroupingReviewCollectionAppliedStmt   *sql.Stmt
@@ -877,6 +913,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		countOPDSSeriesSearchStmt:                   q.countOPDSSeriesSearchStmt,
 		countPendingAIGroupingReviewCollectionsStmt: q.countPendingAIGroupingReviewCollectionsStmt,
 		countPendingMetadataReviewInboxStmt:         q.countPendingMetadataReviewInboxStmt,
+		countReadingListSeriesStmt:                  q.countReadingListSeriesStmt,
+		countRecentAddedSeriesStmt:                  q.countRecentAddedSeriesStmt,
 		createAIGroupingReviewStmt:                  q.createAIGroupingReviewStmt,
 		createAIGroupingReviewCollectionStmt:        q.createAIGroupingReviewCollectionStmt,
 		createBookStmt:                              q.createBookStmt,
@@ -929,7 +967,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listPendingMetadataReviewInboxStmt:          q.listPendingMetadataReviewInboxStmt,
 		listPendingMetadataReviewsBySeriesStmt:      q.listPendingMetadataReviewsBySeriesStmt,
 		listReadingListItemsStmt:                    q.listReadingListItemsStmt,
+		listReadingListSeriesPageStmt:               q.listReadingListSeriesPageStmt,
 		listReadingListsStmt:                        q.listReadingListsStmt,
+		listRecentAddedSeriesStmt:                   q.listRecentAddedSeriesStmt,
 		listSeriesByLibraryStmt:                     q.listSeriesByLibraryStmt,
 		listSeriesInitialBackfillCandidatesStmt:     q.listSeriesInitialBackfillCandidatesStmt,
 		markAIGroupingReviewCollectionAppliedStmt:   q.markAIGroupingReviewCollectionAppliedStmt,

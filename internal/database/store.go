@@ -50,6 +50,9 @@ type Store interface {
 	DeleteKOReaderAccount(ctx context.Context, id int64) error
 	GetKOReaderStats(ctx context.Context) (KOReaderStats, error)
 	GetLatestKOReaderFailure(ctx context.Context) (KOReaderSyncEvent, error)
+	ListKOReaderDeviceDiagnostics(ctx context.Context) ([]KOReaderDeviceDiagnostic, error)
+	ListKOReaderDeviceMatchMethods(ctx context.Context) ([]KOReaderDeviceMatchMethod, error)
+	ListKOReaderDeviceConflicts(ctx context.Context, limit int) ([]KOReaderDeviceConflict, error)
 	CountBooksMissingIdentity(ctx context.Context, matchMode string) (int64, error)
 	CountUnmatchedKOReaderProgress(ctx context.Context) (int64, error)
 	FindBookByDocumentFingerprint(ctx context.Context, documentKey, matchMode string, pathIgnoreExtension bool) (KOReaderBookMatch, error)

@@ -1,21 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bookmark, CircleHelp, Loader2, RefreshCw, Settings, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
-import { getFilterStyle, getPagedImages, getScaleClasses } from './book-reader/helpers';
+import { PagedReader } from './book-reader/PagedReader';
+import { ReaderHelpPanel } from './book-reader/ReaderHelpPanel';
+import { ReaderProgressTray } from './book-reader/ReaderProgressTray';
+import { ReaderSettingsDrawer } from './book-reader/ReaderSettingsDrawer';
+import { ReaderErrorState, ReaderEyeProtectionOverlay, ReaderLoadingState } from './book-reader/ReaderStateViews';
+import { ReaderTopBar } from './book-reader/ReaderTopBar';
+import { WebtoonReader } from './book-reader/WebtoonReader';
 import { usePageImageCache } from './book-reader/usePageImageCache';
+import { useReaderBookData } from './book-reader/useReaderBookData';
+import { useReaderBookmarks } from './book-reader/useReaderBookmarks';
+import { useReaderOffline } from './book-reader/useReaderOffline';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
-import type { ImageFilter, Page, ReaderBookInfo, ReaderImageFormat, ScaleMode } from './book-reader/types';
+import { useReaderProgressPipeline } from './book-reader/useReaderProgressPipeline';
 import { useI18n } from '../i18n/LocaleProvider';
-
-interface ReadingBookmark {
-    id: number;
-    book_id: number;
-    page: number;
-    note: string;
-    created_at: string;
-    updated_at: string;
-}
 
 function isReaderShortcutInput(target: EventTarget | null) {
     if (!(target instanceof HTMLElement)) return false;
@@ -23,18 +21,10 @@ function isReaderShortcutInput(target: EventTarget | null) {
     return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
 }
 
-function isIgnoredImageLoadError(err: unknown) {
-    return err instanceof DOMException && err.name === 'AbortError';
-}
-
 export default function BookReader() {
     const { t } = useI18n();
     const { bookId } = useParams();
     const navigate = useNavigate();
-    const [pages, setPages] = useState<Page[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState<string | null>(null);
-    const observer = useRef<IntersectionObserver | null>(null);
 
     // Reading Settings
     // --- 拖拉平移操控状态 ---
@@ -90,21 +80,10 @@ export default function BookReader() {
     const [showHelp, setShowHelp] = useState(false);
     // Paged mode state
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
-    const [bookmarks, setBookmarks] = useState<ReadingBookmark[]>([]);
-    const [bookmarkNote, setBookmarkNote] = useState('');
-    const [savingBookmark, setSavingBookmark] = useState(false);
     // 底部进度条本地状态，用于解耦拖拽 UI 与核心渲染
     const [sliderValue, setSliderValue] = useState(1);
     const [hoverPage, setHoverPage] = useState<number | null>(null);
     const [hoverX, setHoverX] = useState(0);
-    // Book context for navigation
-    const seriesIdRef = useRef<number | null>(null);
-    const [nextBookId, setNextBookId] = useState<number | null>(null);
-    const nextBookIdRef = useRef<number | null>(null);
-    const [bookTitle, setBookTitle] = useState<string>('');
-    const [bookVolume, setBookVolume] = useState<string>('');
-    const [pagesBookId, setPagesBookId] = useState<string | null>(null);
-    const pagesBookIdRef = useRef<string | null>(null);
     const currentBookIdRef = useRef<string | null>(bookId ?? null);
     const {
         cachedPageImageUrls,
@@ -128,10 +107,71 @@ export default function BookReader() {
         readerImageQuality,
         currentBookIdRef,
     });
-    const pagesBelongToCurrentBook = Boolean(bookId && bookId === pagesBookId);
-    const activePages = pagesBelongToCurrentBook ? pages : [];
-    const readerLoading = loading || Boolean(bookId && !pagesBelongToCurrentBook);
+    const {
+        pages,
+        activePages,
+        loading,
+        loadError,
+        bookTitle,
+        bookVolume,
+        nextBookId,
+        pagesBelongToCurrentBook,
+        readerLoading,
+        pagesBookIdRef,
+        seriesIdRef,
+        nextBookIdRef,
+        fetchPagesForBook,
+        fetchBookInfoForBook,
+    } = useReaderBookData({
+        bookId,
+        currentBookIdRef,
+        readModeRef,
+        tRef,
+        getBookCache,
+        setCachedPageImageUrls,
+        cachedImageUrlsForBook,
+        retainBookCaches,
+        setCurrentPageIndex,
+        setSliderValue,
+    });
     const currentPageNumber = activePages[currentPageIndex]?.number ?? currentPageIndex + 1;
+    const {
+        bookmarks,
+        bookmarkNote,
+        setBookmarkNote,
+        savingBookmark,
+        currentBookmark,
+        saveBookmark: handleSaveBookmark,
+        deleteBookmark: handleDeleteBookmark,
+    } = useReaderBookmarks({
+        bookId,
+        currentBookIdRef,
+        activePageCount: activePages.length,
+        currentPageNumber,
+    });
+    const {
+        isOnline,
+        offlineSupported,
+        offlineStatus,
+        offlineCaching,
+        offlineDeleting,
+        offlineCachedPages,
+        offlineQueuedPage,
+        offlineCacheError,
+        queueProgress: queueOfflineReaderProgress,
+        cacheBookOffline: handleCacheBookOffline,
+        deleteBookOffline: handleDeleteOfflineBook,
+    } = useReaderOffline({
+        bookId,
+        bookTitle,
+        pages: activePages,
+        imageFilter,
+        autoCrop,
+        readerImageFormat,
+        readerImageQuality,
+        getImageUrlForBook,
+        t,
+    });
 
     const handleBackToSeries = useCallback(() => {
         if (seriesIdRef.current) {
@@ -145,31 +185,26 @@ export default function BookReader() {
         navigate('/');
     }, [bookVolume, navigate]);
 
-    // 回传阅读进度
-    const updateProgress = useCallback((pageNumber: number) => {
-        if (!bookId || loading) return;
-        // 核心保护：如果当前路由的 bookId 与内存中 pages 所属的 ID 不一致，禁止上报
-        if (bookId !== pagesBookIdRef.current) return;
-        if (pageNumber <= 0) return;
-        axios.post(`/api/books/${bookId}/progress`, { page: pageNumber })
-            .catch(err => console.error("Failed to update read progress", err));
-    }, [bookId, loading]);
-
-    const loadBookmarks = useCallback(() => {
-        if (!bookId) return Promise.resolve();
-        return axios.get<ReadingBookmark[]>(`/api/books/${bookId}/bookmarks`)
-            .then((res) => {
-                if (bookId === currentBookIdRef.current) {
-                    setBookmarks(res.data || []);
-                }
-            })
-            .catch((err) => {
-                console.error('Failed to load reading bookmarks', err);
-                if (bookId === currentBookIdRef.current) {
-                    setBookmarks([]);
-                }
-            });
-    }, [bookId]);
+    useReaderProgressPipeline({
+        bookId,
+        loading,
+        pages,
+        pagesBelongToCurrentBook,
+        currentPageIndex,
+        readMode,
+        doublePage,
+        preloadCount,
+        nextBookId,
+        pagesBookIdRef,
+        getBookCache,
+        getImageUrlForBook,
+        ensurePageImageLoaded,
+        fetchPagesForBook,
+        fetchBookInfoForBook,
+        retainBookCaches,
+        setCurrentPageIndex,
+        queueOfflineReaderProgress,
+    });
 
     const jumpToPage = useCallback((pageNumber: number) => {
         const targetIndex = Math.max(0, Math.min(activePages.length - 1, pageNumber - 1));
@@ -184,166 +219,6 @@ export default function BookReader() {
         }
     }, [activePages.length]);
 
-    const handleSaveBookmark = useCallback(() => {
-        if (!bookId || activePages.length === 0) return;
-        setSavingBookmark(true);
-        axios.post<ReadingBookmark>(`/api/books/${bookId}/bookmarks`, {
-            page: currentPageNumber,
-            note: bookmarkNote,
-        }).then((res) => {
-            setBookmarks((prev) => {
-                const next = prev.filter((item) => item.id !== res.data.id && item.page !== res.data.page);
-                next.push(res.data);
-                return next.sort((a, b) => a.page - b.page);
-            });
-            setBookmarkNote('');
-        }).catch((err) => {
-            console.error('Failed to save reading bookmark', err);
-        }).finally(() => {
-            setSavingBookmark(false);
-        });
-    }, [activePages.length, bookId, bookmarkNote, currentPageNumber]);
-
-    const handleDeleteBookmark = useCallback((bookmark: ReadingBookmark) => {
-        if (!bookId) return;
-        axios.delete(`/api/books/${bookId}/bookmarks/${bookmark.id}`)
-            .then(() => setBookmarks((prev) => prev.filter((item) => item.id !== bookmark.id)))
-            .catch((err) => console.error('Failed to delete reading bookmark', err));
-    }, [bookId]);
-
-    const currentBookmark = bookmarks.find((item) => item.page === currentPageNumber) || null;
-
-    const fetchPagesForBook = useCallback((targetBookId: string) => {
-        const cache = getBookCache(targetBookId);
-        if (cache.pages) {
-            return Promise.resolve(cache.pages);
-        }
-        return axios.get<Page[]>(`/api/pages/${targetBookId}`).then((res) => {
-            const sorted = [...res.data].sort((a, b) => a.number - b.number);
-            cache.pages = sorted;
-            return sorted;
-        });
-    }, [getBookCache]);
-
-    const fetchBookInfoForBook = useCallback((targetBookId: string) => {
-        const cache = getBookCache(targetBookId);
-        if (cache.bookInfo) {
-            return Promise.resolve(cache.bookInfo);
-        }
-        return axios.get<ReaderBookInfo>(`/api/book-info/${targetBookId}`).then((res) => {
-            cache.bookInfo = res.data;
-            return res.data;
-        });
-    }, [getBookCache]);
-
-    const fetchNextBookIdForBook = useCallback((targetBookId: string) => {
-        const cache = getBookCache(targetBookId);
-        if (cache.nextBookId !== undefined) {
-            return Promise.resolve(cache.nextBookId);
-        }
-        return axios.get<ReaderBookInfo>(`/api/book-next/${targetBookId}`)
-            .then((res) => {
-                cache.nextBookId = res.data.id ?? null;
-                return cache.nextBookId;
-            })
-            .catch((err) => {
-                if (!axios.isAxiosError(err) || err.response?.status !== 404) {
-                    console.error('Failed to load next book', err);
-                }
-                cache.nextBookId = null;
-                return null;
-            });
-    }, [getBookCache]);
-
-    useEffect(() => {
-        void loadBookmarks();
-    }, [loadBookmarks]);
-
-    useEffect(() => {
-        setBookmarkNote(currentBookmark?.note || '');
-    }, [currentBookmark]);
-
-    useEffect(() => {
-        if (!bookId) return;
-        const targetBookId = bookId;
-        let cancelled = false;
-
-        // 切换书籍时重置所有运行时状态
-        setPagesBookId(null);
-        pagesBookIdRef.current = null;
-        setPages([]);
-        setCachedPageImageUrls({});
-        setBookmarks([]);
-        setBookmarkNote('');
-        setLoading(true);
-        setLoadError(null);
-        setCurrentPageIndex(0);
-        setNextBookId(null);
-        nextBookIdRef.current = null;
-        setBookTitle('');
-        setBookVolume('');
-        retainBookCaches([targetBookId]);
-
-        Promise.all([
-            fetchPagesForBook(targetBookId),
-            fetchBookInfoForBook(targetBookId)
-        ]).then(([sorted, bookInfo]) => {
-            if (cancelled || currentBookIdRef.current !== targetBookId) return;
-            if (sorted.length === 0) {
-                setLoadError(tRef.current('reader.error.noPages'));
-                setLoading(false);
-                return;
-            }
-            setPages(sorted);
-            setCachedPageImageUrls(cachedImageUrlsForBook(targetBookId, sorted));
-            setPagesBookId(targetBookId);
-            pagesBookIdRef.current = targetBookId; // 记录这批 pages 属于哪个 bookId
-
-            // 恢复上次阅读进度
-            const lastPage = bookInfo.last_read_page?.Valid ? bookInfo.last_read_page.Int64 ?? 1 : 1;
-            seriesIdRef.current = bookInfo.series_id || null;
-            setBookTitle(bookInfo.title?.Valid ? bookInfo.title.String ?? bookInfo.name : bookInfo.name);
-            setBookVolume(bookInfo.volume || '');
-            // 获取下一本
-            fetchNextBookIdForBook(targetBookId).then((nextId) => {
-                if (cancelled || currentBookIdRef.current !== targetBookId) return;
-                setNextBookId(nextId);
-                nextBookIdRef.current = nextId;
-                retainBookCaches([targetBookId, nextId ? String(nextId) : null]);
-            });
-
-            if (lastPage > 0) {
-                const safePage = Math.min(lastPage, sorted.length > 0 ? sorted.length : lastPage);
-                const targetIdx = safePage - 1;
-                setSliderValue(safePage);
-
-                if (readModeRef.current === 'paged') {
-                    setCurrentPageIndex(Math.max(0, targetIdx));
-                } else {
-                    setTimeout(() => {
-                        const targetImg = document.querySelector(`img[data-page-number="${safePage}"]`);
-                        if (targetImg) {
-                            targetImg.scrollIntoView({ behavior: 'auto', block: 'start' });
-                        }
-                    }, 500);
-                }
-            }
-
-            setLoading(false);
-        }).catch(err => {
-            if (cancelled || currentBookIdRef.current !== targetBookId) return;
-            console.error("Failed to load book data", err);
-            const message = axios.isAxiosError(err)
-                ? err.response?.data?.error || err.message || tRef.current('reader.error.loadFailed')
-                : tRef.current('reader.error.loadFailed');
-            setLoadError(message);
-            setLoading(false);
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [bookId, cachedImageUrlsForBook, fetchBookInfoForBook, fetchNextBookIdForBook, fetchPagesForBook, retainBookCaches]);
-
     // 当书籍或图像处理参数变化时，预加载去重缓存需要重新开始计算。
     useEffect(() => {
         clearAllPageImageCaches();
@@ -352,140 +227,6 @@ export default function BookReader() {
     useEffect(() => {
         return () => clearAllPageImageCaches();
     }, [clearAllPageImageCaches]);
-
-    // 预加载队列系统 (向后驱取指定页数放入浏览器缓存池) - 增加防抖延迟以防连续翻页/拖拽触发洪峰
-    useEffect(() => {
-        if (!bookId || !pagesBelongToCurrentBook || !pages.length || preloadCount <= 0 || loading) return;
-
-        const timer = setTimeout(() => {
-            const cache = getBookCache(bookId);
-            const startIndex = currentPageIndex + (readMode === 'paged' && doublePage ? 2 : 1);
-            const endIndex = Math.min(startIndex + preloadCount, pages.length);
-            for (let i = startIndex; i < endIndex; i++) {
-                const imageUrl = getImageUrlForBook(bookId, pages[i].number);
-                if (cache.preloadedImageUrls.has(imageUrl)) {
-                    continue;
-                }
-                cache.preloadedImageUrls.add(imageUrl);
-                ensurePageImageLoaded(bookId, pages[i].number).catch((err) => {
-                    if (!isIgnoredImageLoadError(err)) {
-                        console.error('Failed to preload reader page image', err);
-                    }
-                    cache.preloadedImageUrls.delete(imageUrl);
-                });
-            }
-        }, 300);
-
-        return () => clearTimeout(timer);
-    }, [bookId, currentPageIndex, pages, pagesBelongToCurrentBook, preloadCount, readMode, doublePage, loading, getBookCache, getImageUrlForBook, ensurePageImageLoaded]);
-
-    useEffect(() => {
-        if (!bookId || !pagesBelongToCurrentBook || loading || pages.length === 0 || !pages[currentPageIndex]) return;
-        ensurePageImageLoaded(bookId, pages[currentPageIndex].number).catch((err) => {
-            if (!isIgnoredImageLoadError(err)) {
-                console.error('Failed to warm current reader page image', err);
-            }
-        });
-        if (readMode === 'paged' && doublePage && pages[currentPageIndex+1]) {
-            ensurePageImageLoaded(bookId, pages[currentPageIndex + 1].number).catch((err) => {
-                if (!isIgnoredImageLoadError(err)) {
-                    console.error('Failed to warm secondary reader page image', err);
-                }
-            });
-        }
-    }, [bookId, loading, pages, pagesBelongToCurrentBook, currentPageIndex, readMode, doublePage, ensurePageImageLoaded]);
-
-    useEffect(() => {
-        if (!bookId || !pagesBelongToCurrentBook || loading || pages.length === 0 || !nextBookId) return;
-        if (preloadCount <= 0) return;
-        const visiblePageCount = readMode === 'paged' && doublePage ? 2 : 1;
-        const remainingPages = Math.max(0, pages.length - (currentPageIndex + visiblePageCount));
-        const nextBookPreloadCount = preloadCount - remainingPages;
-        if (nextBookPreloadCount <= 0) return;
-
-        const nextBookIdString = String(nextBookId);
-        let cancelled = false;
-
-        Promise.all([
-            fetchPagesForBook(nextBookIdString),
-            fetchBookInfoForBook(nextBookIdString),
-        ]).then(([nextPages]) => {
-            if (cancelled) return;
-            retainBookCaches([bookId, nextBookIdString]);
-
-            const nextCache = getBookCache(nextBookIdString);
-            nextPages.slice(0, nextBookPreloadCount).forEach((page) => {
-                const imageUrl = getImageUrlForBook(nextBookIdString, page.number);
-                if (nextCache.preloadedImageUrls.has(imageUrl)) {
-                    return;
-                }
-                nextCache.preloadedImageUrls.add(imageUrl);
-                ensurePageImageLoaded(nextBookIdString, page.number).catch((err) => {
-                    if (!isIgnoredImageLoadError(err)) {
-                        console.error('Failed to preload next book reader page image', err);
-                    }
-                    nextCache.preloadedImageUrls.delete(imageUrl);
-                });
-            });
-        }).catch((err) => {
-            if (!cancelled) {
-                console.error('Failed to warm next reader book', err);
-            }
-        });
-
-        return () => {
-            cancelled = true;
-        };
-    }, [bookId, currentPageIndex, doublePage, fetchBookInfoForBook, fetchPagesForBook, getBookCache, getImageUrlForBook, ensurePageImageLoaded, loading, nextBookId, pages.length, pagesBelongToCurrentBook, preloadCount, readMode, retainBookCaches]);
-
-    // 独立视口追踪 (仅 webtoon 瀑布流下生效，Paged 模式通过翻页按钮触发计算)
-    useEffect(() => {
-        if (loading || !pagesBelongToCurrentBook || pages.length === 0 || readMode !== 'webtoon') return;
-
-        let debounceTimeout: number;
-        const options = {
-            root: null,
-            rootMargin: '0px',
-            threshold: 0.5
-        };
-
-        observer.current = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const pageNumStr = entry.target.getAttribute('data-page-number');
-                    if (pageNumStr) {
-                        const pageNum = parseInt(pageNumStr, 10);
-                        setCurrentPageIndex(pageNum - 1);
-                        clearTimeout(debounceTimeout);
-                        debounceTimeout = window.setTimeout(() => {
-                            updateProgress(pageNum);
-                        }, 1000);
-                    }
-                }
-            });
-        }, options);
-
-        // 绑定现存图片
-        const imgs = document.querySelectorAll('.ReaderScrollContainer img');
-        imgs.forEach(img => observer.current?.observe(img));
-
-        return () => {
-            if (observer.current) {
-                observer.current.disconnect();
-            }
-            clearTimeout(debounceTimeout);
-        };
-    }, [loading, pages, pagesBelongToCurrentBook, readMode, updateProgress]);
-
-    // Paged 模式翻页延迟上报
-    useEffect(() => {
-        if (!loading && readMode === 'paged' && pagesBelongToCurrentBook && pages.length > 0 && pages[currentPageIndex]) {
-            const timer = setTimeout(() => {
-                updateProgress(pages[currentPageIndex].number);
-            }, 1000); // 停止翻页/拖拽 1s 后上报
-            return () => clearTimeout(timer);
-        }
-    }, [currentPageIndex, readMode, pages, pagesBelongToCurrentBook, updateProgress, loading]);
 
     // 同步 sliderValue 与全局状态（当通过按钮翻页时）
     useEffect(() => {
@@ -597,473 +338,135 @@ export default function BookReader() {
         <div className="absolute inset-0 bg-komgaDark flex flex-col z-50 overflow-hidden">
             {/* 顶栏控制面板区悬浮感应 */}
             <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-komgaDark/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
-                <div className="flex items-center justify-between w-full relative">
-                    <button
-                        onClick={handleBackToSeries}
-                        className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
-                    >
-                        <ArrowLeft className="w-5 h-5 mr-2" />
-                        {t('reader.back')}
-                    </button>
+                <ReaderTopBar
+                    t={t}
+                    bookTitle={bookTitle}
+                    isBookmarked={Boolean(currentBookmark)}
+                    savingBookmark={savingBookmark}
+                    loading={loading}
+                    showHelp={showHelp}
+                    showSettings={showSettings}
+                    onBack={handleBackToSeries}
+                    onSaveBookmark={handleSaveBookmark}
+                    onToggleHelp={() => setShowHelp((value) => !value)}
+                    onToggleSettings={() => setShowSettings((value) => !value)}
+                />
 
-                    {/* 绝对居中书名 */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-32">
-                        <span className="text-white font-medium truncate drop-shadow-md text-center">{bookTitle}</span>
-                    </div>
+                {showHelp && <ReaderHelpPanel t={t} />}
 
-                    <div className="flex items-center gap-2 shrink-0 z-10">
-                        <button
-                            onClick={handleSaveBookmark}
-                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${currentBookmark ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
-                            title={currentBookmark ? t('reader.bookmark.update') : t('reader.bookmark.add')}
-                            disabled={savingBookmark || loading}
-                        >
-                            {savingBookmark ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bookmark className="w-5 h-5" />}
-                        </button>
-                        <button
-                            onClick={() => setShowHelp(!showHelp)}
-                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
-                            title={t('reader.help')}
-                        >
-                            <CircleHelp className="w-5 h-5" />
-                        </button>
-                        <button
-                            onClick={() => setShowSettings(!showSettings)}
-                            className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
-                        >
-                            <Settings className="w-5 h-5" />
-                        </button>
-                    </div>
-                </div>
-
-                {showHelp && (
-                    <div className="self-end mt-3 bg-komgaSurface border border-gray-800 rounded-xl p-4 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 animate-in fade-in slide-in-from-top-4">
-                        <div className="space-y-3">
-                            <div>
-                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpShortcuts')}</p>
-                                <p>{t('reader.helpArrowKeys')}</p>
-                                <p>{t('reader.helpPageKeys')}</p>
-                                <p>{t('reader.helpJumpKeys')}</p>
-                                <p>{t('reader.helpBookmarkKey')}</p>
-                                <p>{t('reader.helpToggleHelp')}</p>
-                            </div>
-                            <div>
-                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpMobile')}</p>
-                                <p>{t('reader.helpMobileDescription')}</p>
-                            </div>
-                            <div>
-                                <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpTroubleshooting')}</p>
-                                <p>{t('reader.helpTroubleshootingDescription')}</p>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* 设置体 */}
                 {showSettings && (
-                    <div className="self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-4 sm:p-5 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 origin-top-right">
-                        <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">{t('reader.layoutSection')}</span>
-                            <div className="flex bg-gray-900 rounded p-1 mb-3">
-                                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'webtoon' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('webtoon')}>{t('reader.modeWebtoon')}</button>
-                                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'paged' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('paged')}>{t('reader.modePaged')}</button>
-                            </div>
-
-                            {readMode === 'paged' && (
-                                <div className="space-y-3">
-                                    <div>
-                                        <span className="text-[10px] text-gray-500 mb-1 block">{t('reader.doublePageTitle')}</span>
-                                        <div className="flex bg-gray-900 rounded p-0.5">
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${!doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(false)}>{t('reader.singlePage')}</button>
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(true)}>{t('reader.doublePage')}</button>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <span className="text-[10px] text-gray-500 mb-1 block">{t('reader.readDirection')}</span>
-                                        <div className="flex bg-gray-900 rounded p-0.5">
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'ltr' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('ltr')}>{t('reader.ltr')}</button>
-                                            <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'rtl' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('rtl')}>{t('reader.rtl')}</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="h-px bg-gray-800 my-1"></div>
-
-                        <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">{t('reader.imageSection')}</span>
-                            <div className="flex bg-gray-900 rounded p-1 mb-3">
-                                {['original', 'fit-height', 'fit-width', 'fit-screen'].map(sm => (
-                                    <button
-                                        key={sm}
-                                        className={`flex-1 py-1 rounded transition text-[10px] ${scaleMode === sm ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
-                                        onClick={() => setScaleMode(sm as ScaleMode)}
-                                        title={sm === 'original' ? t('reader.scaleOriginal') : sm === 'fit-height' ? t('reader.scaleFitHeight') : sm === 'fit-width' ? t('reader.scaleFitWidth') : t('reader.scaleFitScreen')}
-                                    >
-                                        {sm === 'original' ? t('reader.scaleOriginalShort') : sm === 'fit-height' ? t('reader.scaleFitHeightShort') : sm === 'fit-width' ? t('reader.scaleFitWidthShort') : t('reader.scaleFitScreenShort')}
-                                    </button>
-                                ))}
-                            </div>
-
-                            <select
-                                value={imageFilter}
-                                onChange={(e) => setImageFilter(e.target.value as ImageFilter)}
-                                className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded p-2 outline-none cursor-pointer mb-2"
-                            >
-                                <option value="none">{t('reader.filter.raw')}</option>
-                                <option value="nearest">{t('reader.filter.nearest')}</option>
-                                <option value="average">{t('reader.filter.average')}</option>
-                                <option value="bilinear">{t('reader.filter.bilinear')}</option>
-                                <option value="bicubic">{t('reader.filter.bicubic')}</option>
-                                <option value="lanczos2">{t('reader.filter.lanczos2')}</option>
-                                <option value="lanczos3">{t('reader.filter.lanczos3')}</option>
-                                <option value="mitchell">{t('reader.filter.mitchell')}</option>
-                                <option value="bspline">{t('reader.filter.bspline')}</option>
-                                <option value="catmullrom">{t('reader.filter.catmullrom')}</option>
-                                <option value="waifu2x">{t('reader.filter.waifu2x')}</option>
-                                <option value="realcugan">{t('reader.filter.realcugan')}</option>
-                            </select>
-
-                            <button
-                                className={`w-full py-2 rounded text-xs transition font-medium border ${autoCrop ? 'bg-komgaPrimary/20 border-komgaPrimary text-komgaPrimary shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'}`}
-                                onClick={() => setAutoCrop(!autoCrop)}
-                            >
-                                {autoCrop ? t('reader.autoCropOn') : t('reader.autoCropOff')}
-                            </button>
-
-                            <div className="mt-3 rounded-lg border border-gray-800 bg-gray-900/60 p-3">
-                                <div className="mb-2 flex items-center justify-between">
-                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">{t('reader.networkSection')}</span>
-                                    <span className="text-[10px] text-gray-400">{readerImageFormat === 'original' ? t('reader.networkOriginal') : `${readerImageFormat.toUpperCase()} ${readerImageQuality}`}</span>
-                                </div>
-                                <select
-                                    value={readerImageFormat}
-                                    onChange={(e) => setReaderImageFormat(e.target.value as ReaderImageFormat)}
-                                    className="mb-2 w-full rounded border border-gray-700 bg-gray-950 p-2 text-xs text-gray-300 outline-none"
-                                >
-                                    <option value="original">{t('reader.networkOriginal')}</option>
-                                    <option value="webp">{t('reader.networkWebp')}</option>
-                                    <option value="jpeg">{t('reader.networkJpeg')}</option>
-                                </select>
-                                {readerImageFormat !== 'original' && (
-                                    <input
-                                        type="range"
-                                        min={45}
-                                        max={95}
-                                        step={5}
-                                        value={readerImageQuality}
-                                        onChange={(e) => setReaderImageQuality(parseInt(e.target.value, 10))}
-                                        className="w-full accent-komgaPrimary h-1"
-                                        aria-label={t('reader.networkQuality')}
-                                    />
-                                )}
-                                <p className="mt-2 text-[11px] leading-5 text-gray-500">{t('reader.networkHint')}</p>
-                            </div>
-                        </div>
-
-                        {(imageFilter === 'waifu2x' || imageFilter === 'realcugan') && (
-                            <div className="bg-gray-900/50 p-3 rounded border border-komgaPrimary/30 animate-in fade-in slide-in-from-top-2">
-                                <div className="mb-3">
-                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
-                                        <span>{t('reader.engineScale')}</span>
-                                        <span className="text-komgaPrimary">{w2xScale}x</span>
-                                    </span>
-                                    <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
-                                        {[1, 2, 4, 8].map(s => (
-                                            <button key={s} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xScale === s ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xScale(s)}>{s}x</button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="mb-3">
-                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
-                                        <span>{t('reader.noiseLevel')}</span>
-                                        <span className="text-komgaPrimary">{w2xNoise === -1 ? t('settings.koreader.off') : w2xNoise}</span>
-                                    </span>
-                                    <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
-                                        {[-1, 0, 1, 2, 3].map(n => (
-                                            <button key={n} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xNoise === n ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xNoise(n)}>{n === -1 ? t('settings.koreader.off') : n}</button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
-                                        <span>{t('reader.outputFormat')}</span>
-                                        <span className="text-komgaPrimary uppercase text-[10px]">{w2xFormat}</span>
-                                    </span>
-                                    <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
-                                        {['webp', 'png', 'jpg'].map(f => (
-                                            <button key={f} className={`flex-1 py-1 rounded transition text-xs font-semibold uppercase ${w2xFormat === f ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xFormat(f)}>{f}</button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        <div>
-                            <div className="flex items-center justify-between mb-1">
-                                <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">{t('reader.preloadPages')}</span>
-                                <span className="text-[10px] text-gray-400">{t('reader.pageCountShort', { count: preloadCount })}</span>
-                            </div>
-                            <input
-                                type="range"
-                                min={0}
-                                max={10}
-                                step={1}
-                                value={preloadCount}
-                                onChange={(e) => setPreloadCount(parseInt(e.target.value, 10))}
-                                className="w-full accent-komgaPrimary h-1"
-                            />
-                        </div>
-
-                        <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">{t('reader.bookmarks')}</span>
-                                <span className="text-[10px] text-gray-400">{t('reader.bookmark.count', { count: bookmarks.length })}</span>
-                            </div>
-                            <textarea
-                                value={bookmarkNote}
-                                onChange={(e) => setBookmarkNote(e.target.value)}
-                                placeholder={t('reader.bookmark.notePlaceholder')}
-                                className="mb-2 h-16 w-full resize-none rounded border border-gray-700 bg-gray-950 p-2 text-xs text-gray-300 outline-none focus:border-komgaPrimary"
-                            />
-                            <button
-                                onClick={handleSaveBookmark}
-                                disabled={savingBookmark || loading}
-                                className="mb-3 flex w-full items-center justify-center gap-2 rounded bg-komgaPrimary px-3 py-2 text-xs font-semibold text-white hover:bg-komgaPrimaryHover disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                                {savingBookmark ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bookmark className="h-3.5 w-3.5" />}
-                                {currentBookmark ? t('reader.bookmark.update') : t('reader.bookmark.addCurrent', { page: currentPageNumber })}
-                            </button>
-                            <div className="max-h-36 space-y-2 overflow-y-auto pr-1">
-                                {bookmarks.length === 0 ? (
-                                    <p className="text-xs text-gray-500">{t('reader.bookmark.empty')}</p>
-                                ) : bookmarks.map((bookmark) => (
-                                    <div key={bookmark.id} className="flex items-start gap-2 rounded border border-gray-800 bg-gray-950/70 p-2">
-                                        <button
-                                            onClick={() => jumpToPage(bookmark.page)}
-                                            className="shrink-0 rounded bg-gray-800 px-2 py-1 text-[11px] font-semibold text-komgaPrimary hover:bg-gray-700"
-                                        >
-                                            {t('reader.bookmark.page', { page: bookmark.page })}
-                                        </button>
-                                        <button
-                                            onClick={() => jumpToPage(bookmark.page)}
-                                            className="min-w-0 flex-1 text-left text-[11px] leading-5 text-gray-300 hover:text-white"
-                                        >
-                                            {bookmark.note || t('reader.bookmark.noNote')}
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteBookmark(bookmark)}
-                                            className="shrink-0 rounded p-1 text-gray-500 hover:bg-red-500/10 hover:text-red-300"
-                                            title={t('reader.bookmark.delete')}
-                                        >
-                                            <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="h-px bg-gray-800 my-1"></div>
-
-                        <div>
-                            <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">{t('reader.eyeProtection')}</span>
-                            <button
-                                onClick={() => setEyeProtection(!eyeProtection)}
-                                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${eyeProtection ? 'bg-amber-900/40 border border-amber-600/40 text-amber-200' : 'bg-gray-900 border border-gray-800 text-gray-400 hover:bg-gray-800'
-                                    }`}
-                            >
-                                <span className="text-xs flex items-center gap-2">
-                                    <span className="text-base">{eyeProtection ? '🌙' : '☀️'}</span>
-                                    {t('reader.eyeProtectionWarm')}
-                                </span>
-                                <span className={`text-[10px] font-medium ${eyeProtection ? 'text-amber-400' : 'text-gray-600'
-                                    }`}>{eyeProtection ? t('reader.on') : t('settings.koreader.off')}</span>
-                            </button>
-                        </div>
-                    </div>
+                    <ReaderSettingsDrawer
+                        t={t}
+                        readMode={readMode}
+                        setReadMode={setReadMode}
+                        readDirection={readDirection}
+                        setReadDirection={setReadDirection}
+                        doublePage={doublePage}
+                        setDoublePage={setDoublePage}
+                        scaleMode={scaleMode}
+                        setScaleMode={setScaleMode}
+                        imageFilter={imageFilter}
+                        setImageFilter={setImageFilter}
+                        autoCrop={autoCrop}
+                        setAutoCrop={setAutoCrop}
+                        preloadCount={preloadCount}
+                        setPreloadCount={setPreloadCount}
+                        readerImageFormat={readerImageFormat}
+                        setReaderImageFormat={setReaderImageFormat}
+                        readerImageQuality={readerImageQuality}
+                        setReaderImageQuality={setReaderImageQuality}
+                        eyeProtection={eyeProtection}
+                        setEyeProtection={setEyeProtection}
+                        w2xScale={w2xScale}
+                        setW2xScale={setW2xScale}
+                        w2xNoise={w2xNoise}
+                        setW2xNoise={setW2xNoise}
+                        w2xFormat={w2xFormat}
+                        setW2xFormat={setW2xFormat}
+                        isOnline={isOnline}
+                        offlineSupported={offlineSupported}
+                        offlineStatus={offlineStatus}
+                        offlineCaching={offlineCaching}
+                        offlineDeleting={offlineDeleting}
+                        offlineCachedPages={offlineCachedPages}
+                        activePageCount={activePages.length}
+                        offlineQueuedPage={offlineQueuedPage}
+                        offlineCacheError={offlineCacheError}
+                        readerLoading={readerLoading}
+                        onCacheBook={handleCacheBookOffline}
+                        onDeleteOfflineBook={handleDeleteOfflineBook}
+                        bookmarks={bookmarks}
+                        bookmarkNote={bookmarkNote}
+                        savingBookmark={savingBookmark}
+                        loading={loading}
+                        currentBookmark={currentBookmark}
+                        currentPageNumber={currentPageNumber}
+                        onBookmarkNoteChange={setBookmarkNote}
+                        onSaveBookmark={handleSaveBookmark}
+                        onDeleteBookmark={handleDeleteBookmark}
+                        onJumpToPage={jumpToPage}
+                    />
                 )}
             </div>
 
             <div className="flex-1 w-full relative overflow-hidden ReaderScrollContainer">
-                {/* 护眼模式滤镜覆盖层 */}
-                {eyeProtection && (
-                    <div className="absolute inset-0 z-30 pointer-events-none" style={{
-                        background: 'rgba(255, 180, 50, 0.12)',
-                        mixBlendMode: 'multiply'
-                    }} />
-                )}
+                {eyeProtection && <ReaderEyeProtectionOverlay />}
                 {readerLoading ? (
-                    <div className="flex items-center justify-center h-full">
-                        <Loader2 className="w-10 h-10 animate-spin text-komgaPrimary" />
-                    </div>
+                    <ReaderLoadingState />
                 ) : loadError ? (
-                    <div className="flex h-full items-center justify-center px-6">
-                        <div className="max-w-xl rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center">
-                            <p className="text-lg font-semibold text-white">{t('reader.error.title')}</p>
-                            <p className="mt-3 text-sm leading-7 text-red-100/90">{loadError}</p>
-                            <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-                                <button
-                                    onClick={() => window.location.reload()}
-                                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15"
-                                >
-                                    <RefreshCw className="w-4 h-4" />
-                                    {t('reader.retry')}
-                                </button>
-                                <button
-                                    onClick={handleBackToSeries}
-                                    className="inline-flex items-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm text-white hover:bg-komgaPrimaryHover"
-                                >
-                                    <ArrowLeft className="w-4 h-4" />
-                                    {t('reader.backToSeries')}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    <ReaderErrorState
+                        t={t}
+                        message={loadError}
+                        onRetry={() => window.location.reload()}
+                        onBackToSeries={handleBackToSeries}
+                    />
                 ) : readMode === 'webtoon' ? (
-                    <div className="flex flex-col items-center w-full bg-komgaDark relative h-full overflow-y-auto overflow-x-hidden">
-                        {activePages.map(page => (
-                            <img
-                                key={page.number}
-                                data-page-number={page.number}
-                                src={cachedPageImageUrls[page.number] || getImageUrl(bookId, page.number)}
-                                loading="lazy"
-                                decoding="async"
-                                style={getFilterStyle(imageFilter)}
-                                className={getScaleClasses(scaleMode, doublePage, "bg-gray-900 min-h-[50vh] drop-shadow-lg max-w-[100vw]")}
-                                alt={`Page ${page.number}`}
-                            />
-                        ))}
-                        {nextBookId && (
-                            <button
-                                onClick={() => navigate(`/reader/${nextBookId}`, { replace: true })}
-                                className="my-10 px-8 py-4 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white font-bold rounded-xl shadow-2xl text-lg transition-all duration-300 hover:scale-105"
-                            >
-                                {t('reader.nextBook')}
-                            </button>
-                        )}
-                    </div>
+                    <WebtoonReader
+                        t={t}
+                        bookId={bookId}
+                        pages={activePages}
+                        cachedPageImageUrls={cachedPageImageUrls}
+                        imageFilter={imageFilter}
+                        scaleMode={scaleMode}
+                        doublePage={doublePage}
+                        nextBookId={nextBookId}
+                        getImageUrl={getImageUrl}
+                        onOpenNextBook={(targetBookId) => navigate(`/reader/${targetBookId}`, { replace: true })}
+                    />
                 ) : (
-                    <div className="flex items-center justify-center w-full h-full bg-komgaDark relative">
-                        {/* 左触控区/按钮 */}
-                        <div
-                            className="absolute left-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer md:hover:bg-white/5 transition opacity-0 md:hover:opacity-100 group"
-                            onClick={() => readDirection === 'ltr' ? handlePrev() : handleNext()}
-                        >
-                            <ChevronLeft className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors hidden md:block" />
-                        </div>
-
-                        {/* 图像容器 - 根据数量排列并赋予拖拽监听和原生弹性滚动 */}
-                        <div
-                            ref={containerRef}
-                            className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none gap-0 ${doublePage ? 'drop-shadow-[0_20px_50px_rgba(0,0,0,0.9)]' : ''}`}
-                            onMouseDown={handleMouseDown}
-                            onMouseLeave={handleMouseLeave}
-                            onMouseUp={handleMouseUp}
-                            onMouseMove={handleMouseMove}
-                        >
-                            {getPagedImages(activePages, currentPageIndex, doublePage, readDirection).map((p, idx, arr) => {
-                                // 深度修复方案：两张图片各自向中心偏移 -0.5px (逻辑像素) 实现物理重叠
-                                // 这能从底层封死亚像素计算导致的黑色缝隙泄露
-                                const isSpread = doublePage && arr.length > 1;
-                                const overlapStyle: React.CSSProperties = isSpread ? {
-                                    marginLeft: idx === 1 ? '-0.5px' : '0',
-                                    marginRight: idx === 0 ? '-0.5px' : '0',
-                                    zIndex: idx === 0 ? 1 : 0 // 确保层叠不会产生副作用
-                                } : {};
-
-                                return (
-                                    <div
-                                        key={p.number}
-                                        className={`relative flex items-center justify-center ${doublePage ? "max-w-none w-[50vw] sm:w-auto" : "w-full flex-1 shrink-0"} ${scaleMode === 'fit-screen' || scaleMode === 'fit-height' ? 'h-full' : ''}`}
-                                        style={overlapStyle}
-                                    >
-                                        {isPagedImageReady(p.number) ? (
-                                            <img
-                                                src={cachedPageImageUrls[p.number]}
-                                                className={getScaleClasses(scaleMode, doublePage, !doublePage ? "drop-shadow-2xl" : "max-w-none")}
-                                                style={getFilterStyle(imageFilter)}
-                                                alt={`Page ${p.number}`}
-                                                draggable={false}
-                                            />
-                                        ) : (
-                                            <div className="flex min-h-[40vh] min-w-[240px] items-center justify-center rounded-2xl border border-white/10 bg-black/30 px-10 py-16">
-                                                <Loader2 className="h-8 w-8 animate-spin text-komgaPrimary" />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {/* 右触控区/按钮 */}
-                        <div
-                            className="absolute right-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-end sm:px-8 cursor-pointer md:hover:bg-white/5 transition opacity-0 md:hover:opacity-100 group"
-                            onClick={() => readDirection === 'ltr' ? handleNext() : handlePrev()}
-                        >
-                            <ChevronRight className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors hidden md:block" />
-                        </div>
-
-                    </div>
+                    <PagedReader
+                        pages={activePages}
+                        currentPageIndex={currentPageIndex}
+                        doublePage={doublePage}
+                        readDirection={readDirection}
+                        scaleMode={scaleMode}
+                        imageFilter={imageFilter}
+                        isDragging={isDragging}
+                        containerRef={containerRef}
+                        cachedPageImageUrls={cachedPageImageUrls}
+                        isPagedImageReady={isPagedImageReady}
+                        onPrev={handlePrev}
+                        onNext={handleNext}
+                        onMouseDown={handleMouseDown}
+                        onMouseLeave={handleMouseLeave}
+                        onMouseUp={handleMouseUp}
+                        onMouseMove={handleMouseMove}
+                    />
                 )}
 
-                {/* 底部进度与拖动条悬浮托盘 */}
-                <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-komgaDark/90 via-komgaDark/45 to-transparent pb-8 pt-16 px-6 sm:px-12 flex flex-col items-center transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
-                    <div className="w-full max-w-2xl flex items-center gap-4 bg-komgaDark/70 px-6 py-3 rounded-2xl backdrop-blur border border-white/10 shadow-2xl">
-                        <span className="text-white font-medium text-sm whitespace-nowrap w-8 text-right drop-shadow-md">{currentPageIndex + 1}</span>
-                        <div className="flex-1 relative h-6 flex items-center group/slider">
-                            {hoverPage !== null && (
-                                <div
-                                    className="absolute bottom-full mb-3 bg-komgaPrimary text-white text-[10px] font-bold py-1 px-2 rounded-md shadow-[0_0_15px_rgba(168,85,247,0.4)] pointer-events-none transform -translate-x-1/2 whitespace-nowrap z-30 animate-in fade-in zoom-in-95 duration-150"
-                                    style={{ left: `${hoverX}px` }}
-                                >
-                                    {t('reader.pagePreview', { page: hoverPage })}
-                                    {/* 小三角 */}
-                                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-t-[4px] border-t-komgaPrimary"></div>
-                                </div>
-                            )}
-                            <input
-                                type="range"
-                                min={1}
-                                max={activePages.length}
-                                value={sliderValue}
-                                onChange={(e) => {
-                                    const val = parseInt(e.target.value, 10);
-                                    setSliderValue(val);
-                                }}
-                                onMouseMove={(e) => {
-                                    const rect = e.currentTarget.getBoundingClientRect();
-                                    const x = e.clientX - rect.left;
-                                    const percent = x / rect.width;
-                                    const page = Math.round(percent * (activePages.length - 1)) + 1;
-                                    setHoverPage(Math.max(1, Math.min(activePages.length, page)));
-                                    setHoverX(x);
-                                }}
-                                onMouseLeave={() => setHoverPage(null)}
-                                onMouseUp={(e) => {
-                                    const val = parseInt((e.target as HTMLInputElement).value, 10);
-                                    if (readMode === 'paged') {
-                                        setCurrentPageIndex(val - 1);
-                                    } else {
-                                        const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
-                                        if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
-                                    }
-                                }}
-                                onTouchEnd={(e) => {
-                                    const val = parseInt((e.target as HTMLInputElement).value, 10);
-                                    if (readMode === 'paged') {
-                                        setCurrentPageIndex(val - 1);
-                                    } else {
-                                        const targetImg = document.querySelector(`img[data-page-number="${val}"]`);
-                                        if (targetImg) targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
-                                    }
-                                }}
-                                className="w-full accent-komgaPrimary h-1.5 bg-gray-700/50 rounded-lg appearance-none cursor-pointer"
-                            />
-                        </div>
-                        <span className="text-gray-400 font-medium text-sm whitespace-nowrap w-8 drop-shadow-md">{activePages.length}</span>
-                    </div>
-                </div>
+                <ReaderProgressTray
+                    t={t}
+                    showSettings={showSettings}
+                    currentPageIndex={currentPageIndex}
+                    pageCount={activePages.length}
+                    sliderValue={sliderValue}
+                    hoverPage={hoverPage}
+                    hoverX={hoverX}
+                    onSliderChange={setSliderValue}
+                    onHoverPageChange={setHoverPage}
+                    onHoverXChange={setHoverX}
+                    onCommitPage={jumpToPage}
+                />
             </div>
         </div>
     );

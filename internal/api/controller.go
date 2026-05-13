@@ -893,6 +893,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/koreader", c.getKOReaderSettings)
 		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
 		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)
+		r.Get("/system/koreader/devices", c.getKOReaderDeviceDiagnostics)
 		r.Post("/system/koreader", c.updateKOReaderSettings)
 		r.Post("/system/koreader/accounts", c.createKOReaderAccount)
 		r.Post("/system/koreader/accounts/{accountId}/rotate-key", c.rotateKOReaderAccountKey)

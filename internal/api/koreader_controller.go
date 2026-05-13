@@ -69,6 +69,63 @@ type KOReaderUnmatchedItem struct {
 	Suggestion    string  `json:"suggestion"`
 }
 
+type KOReaderDeviceDiagnosticsResponse struct {
+	Summary   KOReaderDeviceDiagnosticsSummary `json:"summary"`
+	Devices   []KOReaderDeviceItem             `json:"devices"`
+	Conflicts []KOReaderDeviceConflictItem     `json:"conflicts"`
+}
+
+type KOReaderDeviceDiagnosticsSummary struct {
+	DeviceCount        int   `json:"device_count"`
+	HealthyDevices     int   `json:"healthy_devices"`
+	AttentionDevices   int   `json:"attention_devices"`
+	TotalRecords       int64 `json:"total_records"`
+	MatchedRecords     int64 `json:"matched_records"`
+	UnmatchedRecords   int64 `json:"unmatched_records"`
+	ConflictCount      int   `json:"conflict_count"`
+	ErrorConflictCount int   `json:"error_conflict_count"`
+}
+
+type KOReaderDeviceItem struct {
+	Key              string                    `json:"key"`
+	Username         string                    `json:"username"`
+	Device           string                    `json:"device"`
+	DeviceID         string                    `json:"device_id"`
+	Health           string                    `json:"health"`
+	TotalRecords     int64                     `json:"total_records"`
+	MatchedRecords   int64                     `json:"matched_records"`
+	UnmatchedRecords int64                     `json:"unmatched_records"`
+	LatestSyncAt     string                    `json:"latest_sync_at,omitempty"`
+	LatestDocument   string                    `json:"latest_document"`
+	LatestMatchedBy  string                    `json:"latest_matched_by"`
+	LatestError      string                    `json:"latest_error,omitempty"`
+	MatchMethods     []KOReaderMatchMethodItem `json:"match_methods"`
+	Suggestion       string                    `json:"suggestion"`
+}
+
+type KOReaderMatchMethodItem struct {
+	Method string `json:"method"`
+	Count  int64  `json:"count"`
+}
+
+type KOReaderDeviceConflictItem struct {
+	ID            int64   `json:"id"`
+	Type          string  `json:"type"`
+	Severity      string  `json:"severity"`
+	Username      string  `json:"username"`
+	Device        string  `json:"device"`
+	DeviceID      string  `json:"device_id"`
+	Document      string  `json:"document"`
+	NormalizedKey string  `json:"normalized_key"`
+	BookID        *int64  `json:"book_id,omitempty"`
+	MatchedBy     string  `json:"matched_by"`
+	Status        string  `json:"status"`
+	Message       string  `json:"message"`
+	Percentage    float64 `json:"percentage"`
+	UpdatedAt     string  `json:"updated_at"`
+	Suggestion    string  `json:"suggestion"`
+}
+
 func koreaderIndexLabel(cfg config.Config) string {
 	if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
 		if cfg.KOReader.PathIgnoreExtension {
@@ -164,6 +221,147 @@ func (c *Controller) listKOReaderUnmatched(w http.ResponseWriter, r *http.Reques
 		result = []KOReaderUnmatchedItem{}
 	}
 	jsonResponse(w, http.StatusOK, result)
+}
+
+func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http.Request) {
+	limit := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	devices, err := c.store.ListKOReaderDeviceDiagnostics(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load KOReader device diagnostics")
+		return
+	}
+	methods, err := c.store.ListKOReaderDeviceMatchMethods(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load KOReader device match methods")
+		return
+	}
+	conflicts, err := c.store.ListKOReaderDeviceConflicts(r.Context(), limit)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load KOReader device conflicts")
+		return
+	}
+
+	cfg := c.currentConfig()
+	methodsByDevice := make(map[string][]KOReaderMatchMethodItem)
+	for _, method := range methods {
+		key := koreaderDeviceKey(method.Username, method.Device, method.DeviceID)
+		methodsByDevice[key] = append(methodsByDevice[key], KOReaderMatchMethodItem{
+			Method: method.MatchedBy,
+			Count:  method.Count,
+		})
+	}
+
+	response := KOReaderDeviceDiagnosticsResponse{
+		Devices:   make([]KOReaderDeviceItem, 0, len(devices)),
+		Conflicts: make([]KOReaderDeviceConflictItem, 0, len(conflicts)),
+	}
+	for _, device := range devices {
+		key := koreaderDeviceKey(device.Username, device.Device, device.DeviceID)
+		health := "ready"
+		if device.UnmatchedRecords > 0 {
+			health = "needs_reconcile"
+		}
+		if strings.TrimSpace(device.LatestError) != "" {
+			health = "error"
+		}
+		if health == "ready" {
+			response.Summary.HealthyDevices++
+		} else {
+			response.Summary.AttentionDevices++
+		}
+		response.Summary.TotalRecords += device.TotalRecords
+		response.Summary.MatchedRecords += device.MatchedRecords
+		response.Summary.UnmatchedRecords += device.UnmatchedRecords
+
+		latestSyncAt := ""
+		if device.LatestSyncAt.Valid {
+			latestSyncAt = device.LatestSyncAt.Time.Format(time.RFC3339)
+		}
+		response.Devices = append(response.Devices, KOReaderDeviceItem{
+			Key:              key,
+			Username:         device.Username,
+			Device:           firstNonEmpty(device.Device, "Unknown device"),
+			DeviceID:         device.DeviceID,
+			Health:           health,
+			TotalRecords:     device.TotalRecords,
+			MatchedRecords:   device.MatchedRecords,
+			UnmatchedRecords: device.UnmatchedRecords,
+			LatestSyncAt:     latestSyncAt,
+			LatestDocument:   device.LatestDocument,
+			LatestMatchedBy:  device.LatestMatchedBy,
+			LatestError:      strings.TrimSpace(device.LatestError),
+			MatchMethods:     methodsByDevice[key],
+			Suggestion:       koreaderDeviceSuggestion(health, cfg, device.UnmatchedRecords),
+		})
+	}
+	response.Summary.DeviceCount = len(response.Devices)
+
+	for _, conflict := range conflicts {
+		item := KOReaderDeviceConflictItem{
+			ID:            conflict.ID,
+			Type:          conflict.Type,
+			Severity:      conflict.Severity,
+			Username:      conflict.Username,
+			Device:        firstNonEmpty(conflict.Device, "Unknown device"),
+			DeviceID:      conflict.DeviceID,
+			Document:      conflict.Document,
+			NormalizedKey: ksvc.NormalizeDocumentForMatch(conflict.Document, cfg.KOReader.MatchMode, cfg.KOReader.PathIgnoreExtension),
+			MatchedBy:     conflict.MatchedBy,
+			Status:        conflict.Status,
+			Message:       conflict.Message,
+			Percentage:    conflict.Percentage,
+			UpdatedAt:     conflict.UpdatedAt.Format(time.RFC3339),
+			Suggestion:    koreaderConflictSuggestion(conflict, cfg),
+		}
+		if conflict.BookID.Valid {
+			bookID := conflict.BookID.Int64
+			item.BookID = &bookID
+		}
+		if item.Severity == "error" {
+			response.Summary.ErrorConflictCount++
+		}
+		response.Conflicts = append(response.Conflicts, item)
+	}
+	response.Summary.ConflictCount = len(response.Conflicts)
+
+	jsonResponse(w, http.StatusOK, response)
+}
+
+func koreaderDeviceKey(username, device, deviceID string) string {
+	return strings.TrimSpace(username) + "|" + strings.TrimSpace(device) + "|" + strings.TrimSpace(deviceID)
+}
+
+func koreaderDeviceSuggestion(health string, cfg config.Config, unmatched int64) string {
+	switch health {
+	case "error":
+		return "最近存在同步或认证错误，请先检查账号 Sync Key 和设备端服务器地址。"
+	case "needs_reconcile":
+		if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
+			return fmt.Sprintf("该设备还有 %d 条未匹配记录，请确认 KOReader 上报路径与本地文件名及向上 %d 层路径一致。", unmatched, config.KOReaderPathMatchDepth)
+		}
+		return fmt.Sprintf("该设备还有 %d 条未匹配记录，请先重建二进制哈希索引再重关联。", unmatched)
+	default:
+		return "该设备最近同步记录均已映射到本地书籍。"
+	}
+}
+
+func koreaderConflictSuggestion(conflict database.KOReaderDeviceConflict, cfg config.Config) string {
+	if strings.HasPrefix(conflict.Status, "auth_failed") {
+		return "认证失败通常由用户名或 Sync Key 不一致导致，请重新复制账号的原始 Sync Key 到设备。"
+	}
+	if conflict.Type == "unmatched_progress" {
+		if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
+			return fmt.Sprintf("当前使用路径匹配，请比较归一化键与本地文件名及向上 %d 层路径。", config.KOReaderPathMatchDepth)
+		}
+		return "当前使用二进制哈希匹配，请确认已为本地书籍重建 KOReader 索引。"
+	}
+	return "查看状态码和消息后重试同步；如果反复出现，可先在连接中心确认请求是否命中正确路径。"
 }
 
 func mapKOReaderAccountResponse(account database.KOReaderAccount) KOReaderAccountResponse {

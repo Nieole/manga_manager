@@ -118,6 +118,56 @@ export interface KOReaderUnmatchedItem {
   suggestion: string;
 }
 
+export interface KOReaderDeviceDiagnostics {
+  summary: {
+    device_count: number;
+    healthy_devices: number;
+    attention_devices: number;
+    total_records: number;
+    matched_records: number;
+    unmatched_records: number;
+    conflict_count: number;
+    error_conflict_count: number;
+  };
+  devices: KOReaderDeviceItem[];
+  conflicts: KOReaderDeviceConflictItem[];
+}
+
+export interface KOReaderDeviceItem {
+  key: string;
+  username: string;
+  device: string;
+  device_id: string;
+  health: 'ready' | 'needs_reconcile' | 'error' | string;
+  total_records: number;
+  matched_records: number;
+  unmatched_records: number;
+  latest_sync_at?: string;
+  latest_document: string;
+  latest_matched_by: string;
+  latest_error?: string;
+  match_methods: Array<{ method: string; count: number }>;
+  suggestion: string;
+}
+
+export interface KOReaderDeviceConflictItem {
+  id: number;
+  type: string;
+  severity: 'warning' | 'error' | string;
+  username: string;
+  device: string;
+  device_id: string;
+  document: string;
+  normalized_key: string;
+  book_id?: number;
+  matched_by: string;
+  status: string;
+  message: string;
+  percentage: number;
+  updated_at: string;
+  suggestion: string;
+}
+
 type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'maintenance';
 
 interface SettingsContextValue {
@@ -148,12 +198,14 @@ interface SettingsContextValue {
   koreaderAccountForm: KOReaderAccountForm;
   setKOReaderAccountForm: React.Dispatch<React.SetStateAction<KOReaderAccountForm>>;
   unmatchedItems: KOReaderUnmatchedItem[];
+  koreaderDevices: KOReaderDeviceDiagnostics | null;
   creatingAccount: boolean;
   accountActionId: number | null;
   applyingMatching: boolean;
   needsMatchingMaintenance: boolean;
   setNeedsMatchingMaintenance: React.Dispatch<React.SetStateAction<boolean>>;
   fetchKOReaderUnmatched: () => Promise<void>;
+  fetchKOReaderDevices: () => Promise<void>;
   handleApplyMatchingChanges: () => Promise<void>;
   handleCreateKOReaderAccount: () => Promise<void>;
   handleCopySyncKey: (account: KOReaderAccount) => Promise<void>;
@@ -260,6 +312,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [koreaderAccounts, setKOReaderAccounts] = useState<KOReaderAccount[]>([]);
   const [koreaderAccountForm, setKOReaderAccountForm] = useState<KOReaderAccountForm>({ username: '' });
   const [unmatchedItems, setUnmatchedItems] = useState<KOReaderUnmatchedItem[]>([]);
+  const [koreaderDevices, setKOReaderDevices] = useState<KOReaderDeviceDiagnostics | null>(null);
   const [applyingMatching, setApplyingMatching] = useState(false);
   const [needsMatchingMaintenance, setNeedsMatchingMaintenance] = useState(false);
   const [creatingAccount, setCreatingAccount] = useState(false);
@@ -310,14 +363,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setUnmatchedItems(Array.isArray(res.data) ? res.data : []);
   }, []);
 
+  const fetchKOReaderDevices = useCallback(async () => {
+    const res = await axios.get<KOReaderDeviceDiagnostics>('/api/system/koreader/devices?limit=20');
+    setKOReaderDevices(res.data);
+  }, []);
+
   useEffect(() => {
-    Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderUnmatched()])
+    Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()])
       .catch((error) => {
         console.error('Failed to fetch settings data', error);
         showToast(t('settings.toast.fetchFailed'), 'error');
       })
       .finally(() => setLoading(false));
-  }, [fetchConfig, fetchKOReader, fetchKOReaderAccounts, fetchKOReaderUnmatched, showToast, t]);
+  }, [fetchConfig, fetchKOReader, fetchKOReaderAccounts, fetchKOReaderDevices, fetchKOReaderUnmatched, showToast, t]);
 
   const validationByField = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -417,7 +475,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setNeedsMatchingMaintenance(requiresMaintenance);
       setKOReaderValidation({ valid: true, issues: [] });
       showToast(t('settings.toast.koreaderSaved'), 'success');
-      await Promise.all([fetchConfig(), fetchKOReaderAccounts(), fetchKOReaderUnmatched()]);
+      await Promise.all([fetchConfig(), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
       if (axios.isAxiosError(error) && error.response?.status === 422) {
@@ -430,7 +488,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     } finally {
       setSavingKOReader(false);
     }
-  }, [config?.koreader, fetchConfig, fetchKOReaderAccounts, fetchKOReaderUnmatched, koreaderForm, koreaderStatus, showToast, t]);
+  }, [config?.koreader, fetchConfig, fetchKOReaderAccounts, fetchKOReaderDevices, fetchKOReaderUnmatched, koreaderForm, koreaderStatus, showToast, t]);
 
   const handleApplyMatchingChanges = useCallback(async () => {
     setApplyingMatching(true);
@@ -456,7 +514,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       });
       showToast(t('settings.toast.koreaderAccountCreated', { username: res.data.username }), 'success');
       setKOReaderAccountForm({ username: '' });
-      await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
+      await Promise.all([fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
       if (axios.isAxiosError(error) && error.response?.status === 422) {
@@ -467,7 +525,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     } finally {
       setCreatingAccount(false);
     }
-  }, [fetchKOReader, fetchKOReaderAccounts, koreaderAccountForm.username, showToast, t]);
+  }, [fetchKOReader, fetchKOReaderAccounts, fetchKOReaderDevices, koreaderAccountForm.username, showToast, t]);
 
   const handleCopySyncKey = useCallback(async (account: KOReaderAccount) => {
     try {
@@ -484,14 +542,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     try {
       await axios.post(`/api/system/koreader/accounts/${account.id}/rotate-key`);
       showToast(t('settings.toast.koreaderSyncKeyRotated', { username: account.username }), 'success');
-      await fetchKOReaderAccounts();
+      await Promise.all([fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
       showToast(t('settings.toast.koreaderSyncKeyRotateFailed'), 'error');
     } finally {
       setAccountActionId(null);
     }
-  }, [fetchKOReaderAccounts, showToast, t]);
+  }, [fetchKOReaderAccounts, fetchKOReaderDevices, showToast, t]);
 
   const handleToggleKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
@@ -506,28 +564,28 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         }),
         'success',
       );
-      await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
+      await Promise.all([fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
       showToast(t('settings.toast.koreaderAccountToggleFailed'), 'error');
     } finally {
       setAccountActionId(null);
     }
-  }, [fetchKOReader, fetchKOReaderAccounts, showToast, t]);
+  }, [fetchKOReader, fetchKOReaderAccounts, fetchKOReaderDevices, showToast, t]);
 
   const handleDeleteKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
     try {
       await axios.delete(`/api/system/koreader/accounts/${account.id}`);
       showToast(t('settings.toast.koreaderAccountDeleted', { username: account.username }), 'success');
-      await Promise.all([fetchKOReader(), fetchKOReaderAccounts()]);
+      await Promise.all([fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
       showToast(t('settings.toast.koreaderAccountDeleteFailed'), 'error');
     } finally {
       setAccountActionId(null);
     }
-  }, [fetchKOReader, fetchKOReaderAccounts, showToast, t]);
+  }, [fetchKOReader, fetchKOReaderAccounts, fetchKOReaderDevices, showToast, t]);
 
   const hasSectionChanges = useCallback(
     (section: SettingsSectionKey) => {
@@ -570,12 +628,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       koreaderAccountForm,
       setKOReaderAccountForm,
       unmatchedItems,
+      koreaderDevices,
       creatingAccount,
       accountActionId,
       applyingMatching,
       needsMatchingMaintenance,
       setNeedsMatchingMaintenance,
       fetchKOReaderUnmatched,
+      fetchKOReaderDevices,
       handleApplyMatchingChanges,
       handleCreateKOReaderAccount,
       handleCopySyncKey,
@@ -595,6 +655,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       creatingAccount,
       fieldErrors,
       fetchKOReaderUnmatched,
+      fetchKOReaderDevices,
       handleAction,
       handleApplyMatchingChanges,
       handleCopySyncKey,
@@ -606,6 +667,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       hasSectionChanges,
       koreaderAccountForm,
       koreaderAccounts,
+      koreaderDevices,
       koreaderFieldErrors,
       koreaderForm,
       koreaderStatus,

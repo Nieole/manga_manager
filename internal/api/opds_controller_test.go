@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,14 +47,20 @@ func TestOPDSFeeds(t *testing.T) {
 		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
 			t.Fatalf("decode root feed failed: %v", err)
 		}
-		if feed.Title != "Manga Manager OPDS Catalog" || len(feed.Entries) != 3 {
+		if feed.Title != "Manga Manager OPDS Catalog" || len(feed.Entries) != 5 {
 			t.Fatalf("unexpected root feed payload: %+v", feed)
 		}
-		if feed.Entries[1].ID != "urn:manga-manager:opds:continue" {
+		if feed.Entries[1].ID != "urn:manga-manager:opds:recent" {
+			t.Fatalf("expected recent entry, got %+v", feed.Entries)
+		}
+		if feed.Entries[2].ID != "urn:manga-manager:opds:continue" {
 			t.Fatalf("expected continue reading entry, got %+v", feed.Entries)
 		}
-		if feed.Entries[2].ID != "urn:manga-manager:opds:collections" {
+		if feed.Entries[3].ID != "urn:manga-manager:opds:collections" {
 			t.Fatalf("expected collections entry, got %+v", feed.Entries)
+		}
+		if feed.Entries[4].ID != "urn:manga-manager:opds:reading-lists" {
+			t.Fatalf("expected reading lists entry, got %+v", feed.Entries)
 		}
 		if len(feed.Links) != 3 || feed.Links[2].Rel != "search" {
 			t.Fatalf("expected root feed search link, got %+v", feed.Links)
@@ -124,6 +131,26 @@ func TestOPDSFeeds(t *testing.T) {
 		}
 	})
 
+	t.Run("recent added feed", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.opdsRecentAdded(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/recent?limit=5", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		var feed OPDSFeed
+		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+			t.Fatalf("decode recent feed failed: %v", err)
+		}
+		if feed.ID != "urn:manga-manager:opds:recent" || len(feed.Entries) != 1 {
+			t.Fatalf("unexpected recent feed: %+v", feed)
+		}
+		if feed.Entries[0].Title != "Alpha Display" || feed.Entries[0].Links[0].Href != "/opds/v1.2/series/"+strconv.FormatInt(series.ID, 10) {
+			t.Fatalf("unexpected recent entry: %+v", feed.Entries[0])
+		}
+	})
+
 	t.Run("library series feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		controller.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
@@ -167,8 +194,18 @@ func TestOPDSFeeds(t *testing.T) {
 		if entry.Title != "Alpha Book Display" {
 			t.Fatalf("unexpected book title: %+v", entry)
 		}
-		if len(entry.Links) != 2 {
-			t.Fatalf("expected acquisition + thumbnail links, got %+v", entry.Links)
+		if len(entry.Links) != 3 {
+			t.Fatalf("expected acquisition + stream + thumbnail links, got %+v", entry.Links)
+		}
+		stream := findOPDSLink(entry.Links, opdsPSEStreamRel)
+		if stream == nil {
+			t.Fatalf("expected OPDS-PSE stream link, got %+v", entry.Links)
+		}
+		if stream.Href != "/opds/v1.2/books/"+strconv.FormatInt(book.ID, 10)+"/pages/{pageNumber}?format=jpeg&w={maxWidth}" {
+			t.Fatalf("unexpected stream href: %+v", stream)
+		}
+		if stream.Type != "image/jpeg" || stream.Count != 12 || !strings.Contains(rec.Body.String(), `pse:count="12"`) {
+			t.Fatalf("unexpected stream attributes: %+v", stream)
 		}
 	})
 
@@ -195,7 +232,115 @@ func TestOPDSFeeds(t *testing.T) {
 		if feed.ID != "urn:manga-manager:opds:continue" || len(feed.Entries) != 1 {
 			t.Fatalf("unexpected continue feed: %+v", feed)
 		}
+		stream := findOPDSLink(feed.Entries[0].Links, opdsPSEStreamRel)
+		if stream == nil || !strings.Contains(rec.Body.String(), `pse:lastRead="6"`) {
+			t.Fatalf("expected continue entry stream link with lastRead, got %+v", feed.Entries[0].Links)
+		}
 	})
+
+	t.Run("reading list feeds", func(t *testing.T) {
+		list, err := store.CreateReadingList(context.Background(), database.CreateReadingListParams{
+			Name:        "Weekend Queue",
+			Description: "planned reading",
+		})
+		if err != nil {
+			t.Fatalf("CreateReadingList failed: %v", err)
+		}
+		if _, err := store.AddReadingListItem(context.Background(), database.AddReadingListItemParams{
+			ReadingListID: list.ID,
+			SeriesID:      series.ID,
+			Note:          "start here",
+		}); err != nil {
+			t.Fatalf("AddReadingListItem failed: %v", err)
+		}
+
+		listRec := httptest.NewRecorder()
+		controller.opdsReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/reading-lists", nil))
+		if listRec.Code != http.StatusOK {
+			t.Fatalf("expected reading lists 200, got %d", listRec.Code)
+		}
+		var listFeed OPDSFeed
+		if err := xml.Unmarshal(listRec.Body.Bytes(), &listFeed); err != nil {
+			t.Fatalf("decode reading lists feed failed: %v", err)
+		}
+		if len(listFeed.Entries) != 1 || listFeed.Entries[0].Links[0].Href != "/opds/v1.2/reading-lists/"+strconv.FormatInt(list.ID, 10) {
+			t.Fatalf("unexpected reading lists feed: %+v", listFeed)
+		}
+
+		seriesRec := httptest.NewRecorder()
+		controller.opdsReadingListSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/reading-lists/1", nil, "listId", strconv.FormatInt(list.ID, 10)))
+		if seriesRec.Code != http.StatusOK {
+			t.Fatalf("expected reading list series 200, got %d body=%s", seriesRec.Code, seriesRec.Body.String())
+		}
+		var seriesFeed OPDSFeed
+		if err := xml.Unmarshal(seriesRec.Body.Bytes(), &seriesFeed); err != nil {
+			t.Fatalf("decode reading list series failed: %v", err)
+		}
+		if seriesFeed.Title != "Weekend Queue" || len(seriesFeed.Entries) != 1 || seriesFeed.Entries[0].Title != "Alpha Display" {
+			t.Fatalf("unexpected reading list series feed: %+v", seriesFeed)
+		}
+	})
+}
+
+func findOPDSLink(links []OPDSLink, rel string) *OPDSLink {
+	for i := range links {
+		if links[i].Rel == rel {
+			return &links[i]
+		}
+	}
+	return nil
+}
+
+func TestOPDSPageStreamingRoute(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 2)
+
+	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+	if err := writeTestCBZ(archivePath, map[string][]byte{
+		"001.png": png1x1,
+		"002.png": png1x1,
+	}); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		t.Fatalf("stat archive failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(
+		`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+		archivePath,
+		info.Size(),
+		info.ModTime(),
+		2,
+		book.ID,
+	); err != nil {
+		t.Fatalf("update book archive metadata failed: %v", err)
+	}
+	if err := store.ReplacePageManifest(t.Context(), book.ID, []database.PageManifestEntry{
+		{BookID: book.ID, PageNumber: 1, EntryName: "001.png", Size: int64(len(png1x1)), MediaType: "image/png"},
+		{BookID: book.ID, PageNumber: 2, EntryName: "002.png", Size: int64(len(png1x1)), MediaType: "image/png"},
+	}); err != nil {
+		t.Fatalf("replace page manifest failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := requestWithRouteParam(http.MethodGet, "/opds/v1.2/books/1/pages/0?format=jpeg&w=320", nil, "bookId", strconv.FormatInt(book.ID, 10))
+	req = withRouteParam(req, "pageNumber", "0")
+	controller.opdsStreamPageImage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected OPDS stream page 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("ETag") == "" {
+		t.Fatal("expected streamed page to reuse page image ETag")
+	}
+
+	rec = httptest.NewRecorder()
+	req = requestWithRouteParam(http.MethodGet, "/opds/v1.2/books/1/pages/-1", nil, "bookId", strconv.FormatInt(book.ID, 10))
+	req = withRouteParam(req, "pageNumber", "-1")
+	controller.opdsStreamPageImage(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected negative OPDS page number 400, got %d", rec.Code)
+	}
 }
 
 func TestOPDSCollectionFeeds(t *testing.T) {

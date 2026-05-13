@@ -1,7 +1,9 @@
-// Manga Manager Service Worker - 静态资产缓存
-const CACHE_NAME = 'manga-manager-v1';
+// Manga Manager Service Worker - 静态资产与离线阅读缓存
+const CACHE_NAME = 'manga-manager-v2';
+const OFFLINE_BOOK_CACHE = 'manga-manager-offline-books-v1';
 const STATIC_ASSETS = [
     '/',
+    '/offline',
     '/manifest.json',
 ];
 
@@ -17,18 +19,42 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then(keys =>
-            Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+            Promise.all(keys.filter(k => ![CACHE_NAME, OFFLINE_BOOK_CACHE].includes(k)).map(k => caches.delete(k)))
         )
     );
     self.clients.claim();
 });
 
+function isReaderOfflineRequest(url) {
+    return url.pathname.startsWith('/api/pages/')
+        || url.pathname.startsWith('/api/book-info/')
+        || url.pathname.startsWith('/reader/');
+}
+
+function offlineFallback(request) {
+    return caches.open(OFFLINE_BOOK_CACHE)
+        .then(cache => cache.match(request))
+        .then(response => response || caches.match(request));
+}
+
 // 网络优先策略：先尝试网络，如断网则降级到缓存
 self.addEventListener('fetch', (event) => {
     const { request } = event;
+    if (request.method !== 'GET') return;
 
-    // API 请求和 SSE 不走缓存
-    if (request.url.includes('/api/')) return;
+    const url = new URL(request.url);
+    if (url.origin !== self.location.origin) return;
+
+    // SSE 与非阅读 API 不走缓存。阅读页和书籍信息允许离线缓存回退。
+    if (url.pathname.startsWith('/api/events')) return;
+    if (url.pathname.startsWith('/api/') && !isReaderOfflineRequest(url)) return;
+
+    if (isReaderOfflineRequest(url)) {
+        event.respondWith(
+            fetch(request).catch(() => offlineFallback(request))
+        );
+        return;
+    }
 
     // 静态资产：网络优先 + 缓存后备
     event.respondWith(

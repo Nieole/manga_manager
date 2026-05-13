@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +13,65 @@ import (
 )
 
 var slowRequestThreshold = 500 * time.Millisecond
+var requestDiagnostics = newRequestDiagnosticsBuffer(300)
+
+type RequestDiagnosticEvent struct {
+	Time       time.Time `json:"time"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Route      string    `json:"route"`
+	Status     int       `json:"status"`
+	Bytes      int       `json:"bytes"`
+	DurationMS int64     `json:"duration_ms"`
+	RemoteIP   string    `json:"remote_ip"`
+}
+
+type requestDiagnosticsBuffer struct {
+	mu     sync.RWMutex
+	limit  int
+	events []RequestDiagnosticEvent
+}
+
+func newRequestDiagnosticsBuffer(limit int) *requestDiagnosticsBuffer {
+	return &requestDiagnosticsBuffer{
+		limit:  limit,
+		events: make([]RequestDiagnosticEvent, 0, limit),
+	}
+}
+
+func (b *requestDiagnosticsBuffer) record(event RequestDiagnosticEvent) {
+	if b == nil || !shouldRecordRequestDiagnostic(event.Path) {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.events) == b.limit {
+		copy(b.events, b.events[1:])
+		b.events[len(b.events)-1] = event
+		return
+	}
+	b.events = append(b.events, event)
+}
+
+func (b *requestDiagnosticsBuffer) snapshot() []RequestDiagnosticEvent {
+	if b == nil {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	items := make([]RequestDiagnosticEvent, len(b.events))
+	copy(items, b.events)
+	return items
+}
+
+func (b *requestDiagnosticsBuffer) reset() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events = b.events[:0]
+}
 
 type metricsResponseWriter struct {
 	http.ResponseWriter
@@ -54,13 +114,25 @@ func RequestMetrics(next http.Handler) http.Handler {
 			status = http.StatusOK
 		}
 		duration := time.Since(started)
-		if !shouldLogRequest(r.URL.Path, status, duration) {
-			return
-		}
 
 		routePattern := ""
 		if routeCtx := chi.RouteContext(r.Context()); routeCtx != nil {
 			routePattern = routeCtx.RoutePattern()
+		}
+
+		requestDiagnostics.record(RequestDiagnosticEvent{
+			Time:       time.Now(),
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Route:      routePattern,
+			Status:     status,
+			Bytes:      rec.bytes,
+			DurationMS: duration.Milliseconds(),
+			RemoteIP:   r.RemoteAddr,
+		})
+
+		if !shouldLogRequest(r.URL.Path, status, duration) {
+			return
 		}
 
 		attrs := []any{
@@ -99,4 +171,25 @@ func shouldLogRequest(path string, status int, duration time.Duration) bool {
 	return strings.HasPrefix(path, "/api/") ||
 		strings.HasPrefix(path, "/opds/") ||
 		strings.HasPrefix(path, "/koreader/")
+}
+
+func shouldRecordRequestDiagnostic(path string) bool {
+	if strings.HasPrefix(path, "/assets/") {
+		return false
+	}
+	if path == "/" || strings.HasPrefix(path, "/reader/") || strings.HasPrefix(path, "/series/") {
+		return false
+	}
+	return strings.HasPrefix(path, "/api/") ||
+		strings.HasPrefix(path, "/opds/") ||
+		strings.HasPrefix(path, "/koreader/") ||
+		looksLikeKOReaderPath(path)
+}
+
+func looksLikeKOReaderPath(path string) bool {
+	return strings.Contains(path, "/syncs/progress") ||
+		strings.Contains(path, "/users/auth") ||
+		strings.Contains(path, "/users/create") ||
+		strings.Contains(path, "/healthcheck") ||
+		strings.Contains(path, "/healthstatus")
 }
