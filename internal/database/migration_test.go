@@ -79,7 +79,15 @@ func TestMigrateAddsIdentityColumnsBeforeDependentIndexes(t *testing.T) {
 		}
 	}
 
-	for _, index := range []string{"idx_books_quick_hash", "idx_books_path_fingerprint", "idx_books_path_fingerprint_no_ext"} {
+	for _, index := range []string{
+		"idx_books_quick_hash",
+		"idx_books_path_fingerprint",
+		"idx_books_path_fingerprint_no_ext",
+		"idx_series_library_initial_name",
+		"idx_series_library_status_books",
+		"idx_books_read_progress_series",
+		"idx_books_cover_pick",
+	} {
 		if !testIndexExists(t, db, index) {
 			t.Fatalf("expected migrated index %s to exist", index)
 		}

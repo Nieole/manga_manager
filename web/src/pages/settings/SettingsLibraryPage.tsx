@@ -20,6 +20,17 @@ export function SettingsLibraryPage() {
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <div>
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.serverHost')}</label>
+            <input
+              type="text"
+              value={config.server.host}
+              onChange={(e) => setConfig({ ...config, server: { ...config.server, host: e.target.value } })}
+              className={inputClassName}
+            />
+            <p className="mt-1 text-xs text-gray-500">{t('settings.library.serverHostHint')}</p>
+            <FieldErrors messages={fieldErrors('server.host')} />
+          </div>
+          <div>
             <label className="mb-1 block text-sm text-gray-400">{t('settings.library.serverPort')}</label>
             <input
               type="number"
@@ -28,6 +39,24 @@ export function SettingsLibraryPage() {
               className={inputClassName}
             />
             <FieldErrors messages={fieldErrors('server.port')} />
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.allowedOrigins')}</label>
+            <textarea
+              value={(config.server.allowed_origins || []).join('\n')}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  server: {
+                    ...config.server,
+                    allowed_origins: e.target.value.split('\n').map((item) => item.trim()).filter(Boolean),
+                  },
+                })
+              }
+              className={`${inputClassName} min-h-24 resize-y`}
+            />
+            <p className="mt-1 text-xs text-gray-500">{t('settings.library.allowedOriginsHint')}</p>
+            <FieldErrors messages={fieldErrors('server.allowed_origins')} />
           </div>
           <div>
             <label className="mb-1 block text-sm text-gray-400">{t('settings.library.databasePath')}</label>

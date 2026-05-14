@@ -33,6 +33,22 @@ CREATE TABLE IF NOT EXISTS series (
 
 CREATE INDEX IF NOT EXISTS idx_series_library_id ON series(library_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_series_path ON series(path);
+CREATE INDEX IF NOT EXISTS idx_series_name_initial ON series(name_initial);
+CREATE INDEX IF NOT EXISTS idx_series_library_initial ON series(library_id, name_initial);
+CREATE INDEX IF NOT EXISTS idx_series_library_status ON series(library_id, status);
+CREATE INDEX IF NOT EXISTS idx_series_library_updated ON series(library_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_series_library_created ON series(library_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_series_library_name ON series(library_id, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_initial_name ON series(library_id, name_initial, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_status_name ON series(library_id, status, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_updated_name ON series(library_id, updated_at, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_created_name ON series(library_id, created_at, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_rating ON series(library_id, rating, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_books ON series(library_id, book_count, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_volumes ON series(library_id, volume_count, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_pages ON series(library_id, total_pages, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_favorite, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name);
 
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +111,15 @@ CREATE TABLE IF NOT EXISTS books (
 CREATE INDEX IF NOT EXISTS idx_books_series_id ON books(series_id);
 CREATE INDEX IF NOT EXISTS idx_books_library_id ON books(library_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path);
+CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
+CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash);
+CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint_no_ext ON books(path_fingerprint_no_ext);
+CREATE INDEX IF NOT EXISTS idx_books_series_sort ON books(series_id, volume, sort_number, name);
+CREATE INDEX IF NOT EXISTS idx_books_series_read ON books(series_id, last_read_page);
+CREATE INDEX IF NOT EXISTS idx_books_read_progress_series ON books(last_read_page, series_id) WHERE last_read_page > 0;
+CREATE INDEX IF NOT EXISTS idx_books_cover_pick ON books(series_id, sort_number, name) WHERE cover_path IS NOT NULL AND cover_path != '';
+CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at);
 
 CREATE TABLE IF NOT EXISTS page_manifest (
     book_id INTEGER NOT NULL,

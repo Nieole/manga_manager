@@ -35,11 +35,36 @@ func TestNormalizeConfigDefaultsLogLevel(t *testing.T) {
 	if cfg.Logging.Level != LogLevelInfo {
 		t.Fatalf("expected default log level %q, got %q", LogLevelInfo, cfg.Logging.Level)
 	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Fatalf("expected default server host 0.0.0.0, got %q", cfg.Server.Host)
+	}
+	if len(cfg.Server.AllowedOrigins) != 2 {
+		t.Fatalf("expected default CORS origins, got %+v", cfg.Server.AllowedOrigins)
+	}
+}
+
+func TestNormalizeConfigCleansAllowedOrigins(t *testing.T) {
+	cfg := &Config{}
+	cfg.Server.AllowedOrigins = []string{" https://reader.example.com ", "", "https://reader.example.com", "http://localhost:8080"}
+
+	NormalizeConfig(cfg)
+
+	want := []string{"https://reader.example.com", "http://localhost:8080"}
+	if len(cfg.Server.AllowedOrigins) != len(want) {
+		t.Fatalf("unexpected origins: %+v", cfg.Server.AllowedOrigins)
+	}
+	for i := range want {
+		if cfg.Server.AllowedOrigins[i] != want[i] {
+			t.Fatalf("expected origin %d to be %q, got %q", i, want[i], cfg.Server.AllowedOrigins[i])
+		}
+	}
 }
 
 func TestValidateConfigRejectsInvalidLogLevel(t *testing.T) {
 	cfg := &Config{}
 	cfg.Server.Port = 8080
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.AllowedOrigins = []string{"http://*"}
 	cfg.Database.Path = "./data/manga.db"
 	cfg.Cache.Dir = "."
 	cfg.Logging.Level = "verbose"

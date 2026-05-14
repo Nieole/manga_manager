@@ -3,7 +3,7 @@ import axios from 'axios';
 import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
 
 export interface Config {
-  server: { port: number };
+  server: { host: string; port: number; allowed_origins: string[] };
   database: { path: string };
   library: { paths: string[] };
   cache: { dir: string };

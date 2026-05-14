@@ -220,7 +220,7 @@ func Migrate(dbPath string) error {
 	}
 	defer db.Close()
 
-	if _, err = db.Exec(schemaSQL); err != nil {
+	if err = execSchemaStatements(db, false); err != nil {
 		return err
 	}
 
@@ -281,7 +281,21 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_series_library_status ON series(library_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_updated ON series(library_id, updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_created ON series(library_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_name ON series(library_id, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_initial_name ON series(library_id, name_initial, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_status_name ON series(library_id, status, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_updated_name ON series(library_id, updated_at, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_created_name ON series(library_id, created_at, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_rating ON series(library_id, rating, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_books ON series(library_id, book_count, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_volumes ON series(library_id, volume_count, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_pages ON series(library_id, total_pages, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_favorite, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_series_sort ON books(series_id, volume, sort_number, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_series_read ON books(series_id, last_read_page)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_read_progress_series ON books(last_read_page, series_id) WHERE last_read_page > 0`,
+		`CREATE INDEX IF NOT EXISTS idx_books_cover_pick ON books(series_id, sort_number, name) WHERE cover_path IS NOT NULL AND cover_path != ''`,
 		`CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
@@ -291,6 +305,10 @@ func Migrate(dbPath string) error {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
 		}
+	}
+
+	if err = execSchemaStatements(db, true); err != nil {
+		return err
 	}
 
 	if err := backfillSeriesInitials(db); err != nil {
@@ -310,6 +328,35 @@ func Migrate(dbPath string) error {
 	_, _ = db.Exec(`UPDATE libraries SET scan_mode = 'interval' WHERE auto_scan = 1 AND scan_mode = 'none'`)
 
 	return nil
+}
+
+func execSchemaStatements(db *sql.DB, indexStatements bool) error {
+	for _, raw := range strings.Split(schemaSQL, ";") {
+		stmt := strings.TrimSpace(raw)
+		if stmt == "" {
+			continue
+		}
+		if isSchemaIndexStatement(stmt) != indexStatements {
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isSchemaIndexStatement(stmt string) bool {
+	normalized := normalizeSchemaStatement(stmt)
+	return strings.HasPrefix(normalized, "CREATE INDEX") || strings.HasPrefix(normalized, "CREATE UNIQUE INDEX")
+}
+
+func normalizeSchemaStatement(stmt string) string {
+	lines := strings.Split(strings.TrimSpace(stmt), "\n")
+	for len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "--") {
+		lines = lines[1:]
+	}
+	return strings.ToUpper(strings.TrimSpace(strings.Join(lines, "\n")))
 }
 
 func backfillSeriesMetadataProvenance(db *sql.DB) error {

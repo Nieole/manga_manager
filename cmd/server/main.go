@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -82,6 +84,7 @@ func main() {
 	r.Use(middleware.RealIP)
 	r.Use(api.RequestMetrics)
 	r.Use(middleware.Recoverer)
+	r.Use(securityHeaders)
 	r.Use(middleware.Compress(5,
 		"text/html",
 		"text/css",
@@ -93,7 +96,7 @@ func main() {
 	))
 
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedOrigins:   cfg.Server.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		AllowCredentials: true,
@@ -150,12 +153,22 @@ func main() {
 		w.Write(content)
 	})
 
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
 	slog.Info("Server listening", "address", addr)
 	if err := http.ListenAndServe(addr, r); err != nil {
 		slog.Error("Server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func setStaticResponseHeaders(w http.ResponseWriter, path string) {

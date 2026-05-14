@@ -11,7 +11,9 @@ import (
 
 type Config struct {
 	Server struct {
-		Port int `yaml:"port" json:"port"`
+		Host           string   `yaml:"host" json:"host"`
+		Port           int      `yaml:"port" json:"port"`
+		AllowedOrigins []string `yaml:"allowed_origins" json:"allowed_origins"`
 	} `yaml:"server" json:"server"`
 	Database struct {
 		Path string `yaml:"path" json:"path"`
@@ -100,7 +102,9 @@ func LoadConfig(path string) (*Config, error) {
 
 func createDefaultConfig(path string) (*Config, error) {
 	cfg := &Config{}
+	cfg.Server.Host = "0.0.0.0"
 	cfg.Server.Port = 8080
+	cfg.Server.AllowedOrigins = []string{"http://*", "https://*"}
 	cfg.Database.Path = "./data/manga.db"
 	cfg.Library.Paths = []string{}
 	cfg.Cache.Dir = "./data/cache"
@@ -197,6 +201,11 @@ func NormalizeConfig(cfg *Config) {
 	if cfg.Server.Port == 0 {
 		cfg.Server.Port = 8080
 	}
+	cfg.Server.Host = strings.TrimSpace(cfg.Server.Host)
+	if cfg.Server.Host == "" {
+		cfg.Server.Host = "0.0.0.0"
+	}
+	cfg.Server.AllowedOrigins = normalizeAllowedOrigins(cfg.Server.AllowedOrigins)
 	if cfg.Database.Path == "" {
 		cfg.Database.Path = "./data/manga.db"
 	}
@@ -239,6 +248,26 @@ func NormalizeConfig(cfg *Config) {
 		matchMode = KOReaderMatchModeBinaryHash
 	}
 	cfg.KOReader.MatchMode = matchMode
+}
+
+func normalizeAllowedOrigins(origins []string) []string {
+	normalized := make([]string, 0, len(origins))
+	seen := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		if _, exists := seen[origin]; exists {
+			continue
+		}
+		seen[origin] = struct{}{}
+		normalized = append(normalized, origin)
+	}
+	if len(normalized) == 0 {
+		return []string{"http://*", "https://*"}
+	}
+	return normalized
 }
 
 func splitEndpoint(raw string) (string, string) {

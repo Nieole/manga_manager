@@ -32,6 +32,20 @@ func ValidateConfig(cfg *Config) ValidationResult {
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		issues = append(issues, ValidationIssue{Field: "server.port", Message: "端口必须在 1 到 65535 之间。", Severity: "error"})
 	}
+	if strings.ContainsAny(strings.TrimSpace(cfg.Server.Host), "/?#") {
+		issues = append(issues, ValidationIssue{Field: "server.host", Message: "监听地址不能包含 URL 路径、查询或片段。", Severity: "error"})
+	}
+	if len(cfg.Server.AllowedOrigins) == 0 {
+		issues = append(issues, ValidationIssue{Field: "server.allowed_origins", Message: "CORS 允许来源不能为空。", Severity: "error"})
+	}
+	for _, origin := range cfg.Server.AllowedOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin == "*" || strings.HasPrefix(origin, "http://") || strings.HasPrefix(origin, "https://") {
+			continue
+		}
+		issues = append(issues, ValidationIssue{Field: "server.allowed_origins", Message: "CORS 来源必须是 http(s) URL 或通配符。", Severity: "error"})
+		break
+	}
 
 	if strings.TrimSpace(cfg.Database.Path) == "" {
 		issues = append(issues, ValidationIssue{Field: "database.path", Message: "数据库路径不能为空。", Severity: "error"})

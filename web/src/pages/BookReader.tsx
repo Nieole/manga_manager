@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PagedReader } from './book-reader/PagedReader';
 import { ReaderHelpPanel } from './book-reader/ReaderHelpPanel';
@@ -10,28 +10,19 @@ import { WebtoonReader } from './book-reader/WebtoonReader';
 import { usePageImageCache } from './book-reader/usePageImageCache';
 import { useReaderBookData } from './book-reader/useReaderBookData';
 import { useReaderBookmarks } from './book-reader/useReaderBookmarks';
+import { useReaderKeyboardShortcuts } from './book-reader/useReaderKeyboardShortcuts';
 import { useReaderOffline } from './book-reader/useReaderOffline';
+import { useReaderPageNavigation } from './book-reader/useReaderPageNavigation';
+import { useReaderPointerDrag } from './book-reader/useReaderPointerDrag';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
 import { useReaderProgressPipeline } from './book-reader/useReaderProgressPipeline';
 import { useI18n } from '../i18n/LocaleProvider';
-
-function isReaderShortcutInput(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) return false;
-    const tagName = target.tagName.toLowerCase();
-    return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
-}
 
 export default function BookReader() {
     const { t } = useI18n();
     const { bookId } = useParams();
     const navigate = useNavigate();
 
-    // Reading Settings
-    // --- 拖拉平移操控状态 ---
-    const containerRef = useRef<HTMLDivElement>(null);
-    const [isDragging, setIsDragging] = useState(false);
-    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-    const [scrollStart, setScrollStart] = useState({ left: 0, top: 0 });
     const {
         readMode,
         setReadMode,
@@ -172,6 +163,14 @@ export default function BookReader() {
         getImageUrlForBook,
         t,
     });
+    const {
+        containerRef,
+        isDragging,
+        handleMouseDown,
+        handleMouseLeave,
+        handleMouseUp,
+        handleMouseMove,
+    } = useReaderPointerDrag();
 
     const handleBackToSeries = useCallback(() => {
         if (seriesIdRef.current) {
@@ -184,6 +183,12 @@ export default function BookReader() {
         }
         navigate('/');
     }, [bookVolume, navigate]);
+    const handleOpenBook = useCallback((targetBookId: number) => {
+        navigate(`/reader/${targetBookId}`, { replace: true });
+    }, [navigate]);
+    const toggleHelp = useCallback(() => {
+        setShowHelp((value) => !value);
+    }, []);
 
     useReaderProgressPipeline({
         bookId,
@@ -206,18 +211,21 @@ export default function BookReader() {
         queueOfflineReaderProgress,
     });
 
-    const jumpToPage = useCallback((pageNumber: number) => {
-        const targetIndex = Math.max(0, Math.min(activePages.length - 1, pageNumber - 1));
-        setSliderValue(targetIndex + 1);
-        if (readModeRef.current === 'paged') {
-            setCurrentPageIndex(targetIndex);
-            return;
-        }
-        const targetImg = document.querySelector(`img[data-page-number="${targetIndex + 1}"]`);
-        if (targetImg) {
-            targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
-        }
-    }, [activePages.length]);
+    const {
+        jumpToPage,
+        handleNext,
+        handlePrev,
+        firstPage,
+        lastPage,
+    } = useReaderPageNavigation({
+        activePages,
+        doublePage,
+        readModeRef,
+        nextBookIdRef,
+        setCurrentPageIndex,
+        setSliderValue,
+        onOpenBook: handleOpenBook,
+    });
 
     // 当书籍或图像处理参数变化时，预加载去重缓存需要重新开始计算。
     useEffect(() => {
@@ -233,106 +241,17 @@ export default function BookReader() {
         setSliderValue(currentPageIndex + 1);
     }, [currentPageIndex]);
 
-    // ==== 渲染相关计算 ====
-
-    // 页码控制
-    const handleNext = useCallback(() => {
-        const step = doublePage ? 2 : 1;
-        setCurrentPageIndex(prev => {
-            if (prev + step >= activePages.length) {
-                // 已到最后一页，尝试跳转下一本
-                if (nextBookIdRef.current) {
-                    setTimeout(() => navigate(`/reader/${nextBookIdRef.current}`, { replace: true }), 0);
-                }
-                return prev; // 保持当前页不变
-            }
-            return Math.min(prev + step, activePages.length - 1);
-        });
-    }, [activePages.length, doublePage, navigate]);
-
-    const handlePrev = useCallback(() => {
-        const step = doublePage ? 2 : 1;
-        setCurrentPageIndex(prev => Math.max(prev - step, 0));
-    }, [doublePage]);
-
-    // 键盘支持
-    useEffect(() => {
-        if (readMode !== 'paged') return;
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (isReaderShortcutInput(e.target)) return;
-            if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
-                e.preventDefault();
-                if (readDirection === 'ltr') {
-                    handleNext();
-                } else {
-                    handlePrev();
-                }
-            } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
-                e.preventDefault();
-                if (readDirection === 'ltr') {
-                    handlePrev();
-                } else {
-                    handleNext();
-                }
-            } else if (e.key === 'Home') {
-                e.preventDefault();
-                setCurrentPageIndex(0);
-            } else if (e.key === 'End') {
-                e.preventDefault();
-                setCurrentPageIndex(Math.max(0, activePages.length - 1));
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [readMode, readDirection, handleNext, handlePrev, activePages.length]);
-
-    useEffect(() => {
-        const handleGlobalHelp = (e: KeyboardEvent) => {
-            if (isReaderShortcutInput(e.target)) return;
-            if (e.key.toLowerCase() === 'h' || e.key === '?') {
-                e.preventDefault();
-                setShowHelp(prev => !prev);
-            } else if (e.key.toLowerCase() === 'b') {
-                e.preventDefault();
-                handleSaveBookmark();
-            }
-        };
-        window.addEventListener('keydown', handleGlobalHelp);
-        return () => window.removeEventListener('keydown', handleGlobalHelp);
-    }, [handleSaveBookmark]);
-
-    // --- 图层鼠标物理拖拽交互方法群 ---
-    const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!containerRef.current) return;
-        setIsDragging(true);
-        // 记录按下时的原始光标位置及容器目前混动余量
-        setDragStart({ x: e.pageX, y: e.pageY });
-        setScrollStart({
-            left: containerRef.current.scrollLeft,
-            top: containerRef.current.scrollTop
-        });
-    };
-
-    const handleMouseLeave = () => {
-        setIsDragging(false);
-    };
-
-    const handleMouseUp = () => {
-        setIsDragging(false);
-    };
-
-    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!isDragging || !containerRef.current) return;
-        e.preventDefault();
-
-        // 计算鼠标位移差
-        const dx = e.pageX - dragStart.x;
-        const dy = e.pageY - dragStart.y;
-
-        // 按照物理相反方向拨动纸张滚动条（向左推光标，纸往右走；向上滑光标，纸往下掉）
-        containerRef.current.scrollLeft = scrollStart.left - dx;
-        containerRef.current.scrollTop = scrollStart.top - dy;
-    };
+    useReaderKeyboardShortcuts({
+        readMode,
+        readDirection,
+        activePageCount: activePages.length,
+        onNext: handleNext,
+        onPrev: handlePrev,
+        onFirstPage: firstPage,
+        onLastPage: lastPage,
+        onToggleHelp: toggleHelp,
+        onSaveBookmark: handleSaveBookmark,
+    });
 
     return (
         <div className="absolute inset-0 bg-komgaDark flex flex-col z-50 overflow-hidden">
@@ -348,7 +267,7 @@ export default function BookReader() {
                     showSettings={showSettings}
                     onBack={handleBackToSeries}
                     onSaveBookmark={handleSaveBookmark}
-                    onToggleHelp={() => setShowHelp((value) => !value)}
+                    onToggleHelp={toggleHelp}
                     onToggleSettings={() => setShowSettings((value) => !value)}
                 />
 
