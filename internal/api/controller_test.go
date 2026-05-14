@@ -2247,6 +2247,66 @@ func TestBulkUpdateBookProgressMarksReadAndUnread(t *testing.T) {
 	}
 }
 
+func TestBulkUpdateSeriesProgressMarksAllBooksReadAndUnread(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, bookA := seedBookFixture(t, store, rootDir, "Lib", "Series", "book-a.cbz", 8)
+	bookB, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      lib.ID,
+		Name:           "book-b.cbz",
+		Path:           filepath.Join(series.Path, "book-b.cbz"),
+		Size:           2048,
+		FileModifiedAt: time.Now(),
+		Volume:         "",
+		Title:          sql.NullString{String: "Book B", Valid: true},
+		PageCount:      12,
+	})
+	if err != nil {
+		t.Fatalf("CreateBook B failed: %v", err)
+	}
+
+	readReq := httptest.NewRequest(http.MethodPost, "/api/series/bulk-progress", bytes.NewReader([]byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`],"is_read":true}`)))
+	readRec := httptest.NewRecorder()
+	controller.bulkUpdateSeriesProgress(readRec, readReq)
+	if readRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when marking series read, got %d body=%s", readRec.Code, readRec.Body.String())
+	}
+
+	updatedA, err := store.GetBook(context.Background(), bookA.ID)
+	if err != nil {
+		t.Fatalf("GetBook A failed: %v", err)
+	}
+	updatedB, err := store.GetBook(context.Background(), bookB.ID)
+	if err != nil {
+		t.Fatalf("GetBook B failed: %v", err)
+	}
+	if !updatedA.LastReadPage.Valid || updatedA.LastReadPage.Int64 != 8 {
+		t.Fatalf("expected book A read page 8, got %+v", updatedA.LastReadPage)
+	}
+	if !updatedB.LastReadPage.Valid || updatedB.LastReadPage.Int64 != 12 {
+		t.Fatalf("expected book B read page 12, got %+v", updatedB.LastReadPage)
+	}
+
+	unreadReq := httptest.NewRequest(http.MethodPost, "/api/series/bulk-progress", bytes.NewReader([]byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`],"is_read":false}`)))
+	unreadRec := httptest.NewRecorder()
+	controller.bulkUpdateSeriesProgress(unreadRec, unreadReq)
+	if unreadRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when marking series unread, got %d body=%s", unreadRec.Code, unreadRec.Body.String())
+	}
+
+	updatedA, err = store.GetBook(context.Background(), bookA.ID)
+	if err != nil {
+		t.Fatalf("GetBook A after unread failed: %v", err)
+	}
+	updatedB, err = store.GetBook(context.Background(), bookB.ID)
+	if err != nil {
+		t.Fatalf("GetBook B after unread failed: %v", err)
+	}
+	if updatedA.LastReadPage.Valid || updatedB.LastReadPage.Valid {
+		t.Fatalf("expected series unread to clear read pages, got A=%+v B=%+v", updatedA.LastReadPage, updatedB.LastReadPage)
+	}
+}
+
 func TestRecentReadHandlersReturnUpdatedBooks(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	lib, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 15)

@@ -158,6 +158,7 @@ export default function Home() {
     const [selectedSeries, setSelectedSeries] = useState<number[]>([]);
     const [showCollectionModal, setShowCollectionModal] = useState(false);
     const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+    const [bulkProgressUpdating, setBulkProgressUpdating] = useState<'read' | 'unread' | null>(null);
     const [rescanningId, setRescanningId] = useState<number | null>(null);
     const [recentExternalPaths, setRecentExternalPaths] = useState<string[]>([]);
     const [externalPath, setExternalPath] = useState('');
@@ -735,6 +736,31 @@ export default function Home() {
         } catch (e) {
             console.error("Bulk update failed", e);
             showToast(t('home.bulkFavoriteFailed'), 'error');
+        }
+    };
+
+    const handleBulkProgressUpdate = async (isRead: boolean) => {
+        setBulkProgressUpdating(isRead ? 'read' : 'unread');
+        try {
+            const res = await axios.post('/api/series/bulk-progress', {
+                series_ids: selectedSeries,
+                is_read: isRead
+            });
+            const updated = Number(res.data?.updated || 0);
+            showToast(
+                isRead
+                    ? t('home.selection.markReadSuccess', { count: updated })
+                    : t('home.selection.markUnreadSuccess', { count: updated }),
+                'success'
+            );
+            setIsSelectionMode(false);
+            setSelectedSeries([]);
+            fetchSeriesPage(page, true);
+        } catch (e) {
+            console.error("Bulk progress update failed", e);
+            showToast(t('home.bulkProgressFailed'), 'error');
+        } finally {
+            setBulkProgressUpdating(null);
         }
     };
 
@@ -1462,6 +1488,22 @@ export default function Home() {
                                     className="bg-komgaPrimary/10 hover:bg-komgaPrimary/20 text-komgaPrimary border border-komgaPrimary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
                                 >
                                     <FolderHeart className="w-4 h-4" /> {t('home.selection.addToCollection')}
+                                </button>
+                                <button
+                                    onClick={() => handleBulkProgressUpdate(true)}
+                                    disabled={bulkProgressUpdating !== null}
+                                    className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {bulkProgressUpdating === 'read' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                                    {bulkProgressUpdating === 'read' ? t('home.selection.updatingReadState') : t('home.selection.markRead')}
+                                </button>
+                                <button
+                                    onClick={() => handleBulkProgressUpdate(false)}
+                                    disabled={bulkProgressUpdating !== null}
+                                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {bulkProgressUpdating === 'unread' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                                    {bulkProgressUpdating === 'unread' ? t('home.selection.updatingReadState') : t('home.selection.markUnread')}
                                 </button>
                                 <button
                                     onClick={handleTransferSelectedSeries}

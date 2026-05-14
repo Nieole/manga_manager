@@ -845,6 +845,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/metadata/reviews/{reviewId}/reject", c.rejectMetadataReview)
 		r.Route("/series", func(r chi.Router) {
 			r.Post("/bulk-update", c.bulkUpdateSeries)
+			r.Post("/bulk-progress", c.bulkUpdateSeriesProgress)
 			r.Get("/search", c.searchSeriesPaged)
 			r.Get("/recent-read", c.getRecentReadSeries)
 			r.Get("/{libraryId}", c.getSeriesByLibrary)
@@ -1865,6 +1866,11 @@ type BulkUpdateBookProgressRequest struct {
 	IsRead  bool    `json:"is_read"` // true=标为已读(最大页码), false=标为未读(1)
 }
 
+type BulkUpdateSeriesProgressRequest struct {
+	SeriesIDs []int64 `json:"series_ids"`
+	IsRead    bool    `json:"is_read"` // true=标为已读(最大页码), false=标为未读(清空阅读记录)
+}
+
 func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Request) {
 	var req BulkUpdateBookProgressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1877,43 +1883,83 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 	}
 
 	ctx := r.Context()
+	updated := 0
 	for _, id := range req.BookIDs {
-		var page int64 = 1
-		validPage := false
-		var readAt sql.NullTime
-
-		if req.IsRead {
-			book, err := c.store.GetBook(ctx, id)
-			if err == nil && book.PageCount > 0 {
-				page = book.PageCount
-			} else {
-				page = 99999 // Fallback
-			}
-			validPage = true
-			readAt = sql.NullTime{Time: time.Now(), Valid: true}
-		} else {
-			// 标记为未读：清空阅读记录
-			validPage = false
-			readAt = sql.NullTime{Valid: false}
-		}
-
-		err := c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
-			LastReadPage: sql.NullInt64{Int64: page, Valid: validPage},
-			LastReadAt:   readAt,
-			ID:           id,
-		})
+		book, err := c.store.GetBook(ctx, id)
 		if err != nil {
-			slog.Error("Failed to bulk update book progress", "book_id", id, "error", err)
+			slog.Error("Failed to load book for bulk progress update", "book_id", id, "error", err)
+			continue
 		}
-		// 记录阅读活动
-		if req.IsRead && validPage {
-			if err := c.store.LogReadingActivity(ctx, id, int(page)); err != nil {
-				slog.Error("Failed to log reading activity", "book_id", id, "error", err)
+		if err := c.updateBookReadState(ctx, book, req.IsRead); err != nil {
+			slog.Error("Failed to bulk update book progress", "book_id", id, "error", err)
+			continue
+		}
+		updated++
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk progress update completed", "updated": updated})
+}
+
+func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Request) {
+	var req BulkUpdateSeriesProgressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if len(req.SeriesIDs) == 0 {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "No series updated", "updated": 0})
+		return
+	}
+
+	ctx := r.Context()
+	updated := 0
+	for _, seriesID := range req.SeriesIDs {
+		books, err := c.store.ListBooksBySeries(ctx, seriesID)
+		if err != nil {
+			slog.Error("Failed to load books for bulk series progress update", "series_id", seriesID, "error", err)
+			continue
+		}
+		for _, book := range books {
+			if err := c.updateBookReadState(ctx, book, req.IsRead); err != nil {
+				slog.Error("Failed to bulk update series book progress", "series_id", seriesID, "book_id", book.ID, "error", err)
+				continue
 			}
+			updated++
 		}
 	}
 
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "Bulk progress update completed"})
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk series progress update completed", "updated": updated})
+}
+
+func (c *Controller) updateBookReadState(ctx context.Context, book database.Book, isRead bool) error {
+	page := int64(1)
+	validPage := false
+	readAt := sql.NullTime{Valid: false}
+
+	if isRead {
+		if book.PageCount > 0 {
+			page = book.PageCount
+		} else {
+			page = 99999
+		}
+		validPage = true
+		readAt = sql.NullTime{Time: time.Now(), Valid: true}
+	}
+
+	if err := c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: page, Valid: validPage},
+		LastReadAt:   readAt,
+		ID:           book.ID,
+	}); err != nil {
+		return err
+	}
+
+	if isRead && validPage {
+		if err := c.store.LogReadingActivity(ctx, book.ID, int(page)); err != nil {
+			slog.Error("Failed to log reading activity", "book_id", book.ID, "error", err)
+		}
+	}
+	return nil
 }
 
 func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
