@@ -316,13 +316,6 @@ func TestOPDSPageStreamingRoute(t *testing.T) {
 	); err != nil {
 		t.Fatalf("update book archive metadata failed: %v", err)
 	}
-	if err := store.ReplacePageManifest(t.Context(), book.ID, []database.PageManifestEntry{
-		{BookID: book.ID, PageNumber: 1, EntryName: "001.png", Size: int64(len(png1x1)), MediaType: "image/png"},
-		{BookID: book.ID, PageNumber: 2, EntryName: "002.png", Size: int64(len(png1x1)), MediaType: "image/png"},
-	}); err != nil {
-		t.Fatalf("replace page manifest failed: %v", err)
-	}
-
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodGet, "/opds/v1.2/books/1/pages/0?format=jpeg&w=320", nil, "bookId", strconv.FormatInt(book.ID, 10))
 	req = withRouteParam(req, "pageNumber", "0")

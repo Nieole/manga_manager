@@ -84,9 +84,6 @@ func TestGetHealthReport(t *testing.T) {
 	if summary["missing_metadata"] != 1 {
 		t.Fatalf("expected one missing metadata series, got %+v", summary)
 	}
-	if summary["missing_page_manifest"] != 1 {
-		t.Fatalf("expected one missing manifest book, got %+v", summary)
-	}
 	if summary["duplicate_file_hash"] != 2 {
 		t.Fatalf("expected two duplicate hash book entries, got %+v", summary)
 	}

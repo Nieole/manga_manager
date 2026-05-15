@@ -121,20 +121,6 @@ CREATE INDEX IF NOT EXISTS idx_books_read_progress_series ON books(last_read_pag
 CREATE INDEX IF NOT EXISTS idx_books_cover_pick ON books(series_id, sort_number, name) WHERE cover_path IS NOT NULL AND cover_path != '';
 CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at);
 
-CREATE TABLE IF NOT EXISTS page_manifest (
-    book_id INTEGER NOT NULL,
-    page_number INTEGER NOT NULL,
-    entry_name TEXT NOT NULL,
-    size INTEGER NOT NULL DEFAULT 0,
-    media_type TEXT NOT NULL DEFAULT 'application/octet-stream',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (book_id, page_number),
-    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_page_manifest_book_id ON page_manifest(book_id, page_number);
-
 CREATE TABLE IF NOT EXISTS series_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     series_id INTEGER NOT NULL,

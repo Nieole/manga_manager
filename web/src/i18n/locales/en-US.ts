@@ -253,8 +253,6 @@ export const messages: MessageCatalog = {
     'organize.issue.missing_cover.hint': 'Rescan the series to regenerate cover cache.',
     'organize.issue.missing_metadata': 'Missing metadata',
     'organize.issue.missing_metadata.hint': 'Missing title, summary, tags, or authors; good candidates for scraping.',
-    'organize.issue.missing_page_manifest': 'Missing page manifest',
-    'organize.issue.missing_page_manifest.hint': 'Old data or abnormal scans can be repaired by rescanning.',
     'organize.issue.missing_quick_hash': 'Missing quick hash',
     'organize.issue.missing_quick_hash.hint': 'Existing books still need their quick identity fingerprint backfilled.',
     'organize.issue.duplicate_file_hash': 'Duplicate file hashes',

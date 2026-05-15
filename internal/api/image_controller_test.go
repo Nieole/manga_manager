@@ -185,16 +185,6 @@ func TestServePageImage(t *testing.T) {
 		); err != nil {
 			t.Fatalf("update book archive metadata failed: %v", err)
 		}
-		if err := store.ReplacePageManifest(t.Context(), book.ID, []database.PageManifestEntry{{
-			BookID:     book.ID,
-			PageNumber: 1,
-			EntryName:  "001.png",
-			Size:       int64(len(png1x1)),
-			MediaType:  "image/png",
-		}}); err != nil {
-			t.Fatalf("replace page manifest failed: %v", err)
-		}
-
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
@@ -256,16 +246,6 @@ func TestServePageImage(t *testing.T) {
 		); err != nil {
 			t.Fatalf("update book archive metadata failed: %v", err)
 		}
-		if err := store.ReplacePageManifest(t.Context(), book.ID, []database.PageManifestEntry{{
-			BookID:     book.ID,
-			PageNumber: 1,
-			EntryName:  "001.png",
-			Size:       int64(len(png1x1)),
-			MediaType:  "image/png",
-		}}); err != nil {
-			t.Fatalf("replace page manifest failed: %v", err)
-		}
-
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()

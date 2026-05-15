@@ -51,23 +51,6 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	pageInfo, err := c.getPageManifestEntry(ctx, book, pageNumber)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Page not found")
-			return
-		}
-		if pageNumber > book.PageCount && book.PageCount > 0 {
-			jsonError(w, http.StatusNotFound, "Page not found")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
-		return
-	}
-
-	targetPage := pageInfo.EntryName
-	targetMediaType := pageInfo.MediaType
-
 	// 图片参数判断
 	qualityStr := r.URL.Query().Get("q")
 	format := r.URL.Query().Get("format") // 支持前端主动请求 webp/jpeg 降低带宽高负载
@@ -116,6 +99,23 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+
+	pageInfo, err := c.getBookArchivePage(ctx, book, pageNumber)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Page not found")
+			return
+		}
+		if pageNumber > book.PageCount && book.PageCount > 0 {
+			jsonError(w, http.StatusNotFound, "Page not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
+		return
+	}
+
+	targetPage := pageInfo.Name
+	targetMediaType := pageInfo.MediaType
 
 	archiver, err := parser.GetArchiveFromPool(book.Path)
 	if err != nil {

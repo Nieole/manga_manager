@@ -175,16 +175,6 @@ type MetadataReviewField struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-type PageManifest struct {
-	BookID     int64     `json:"book_id"`
-	PageNumber int64     `json:"page_number"`
-	EntryName  string    `json:"entry_name"`
-	Size       int64     `json:"size"`
-	MediaType  string    `json:"media_type"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
-
 type ReadingActivity struct {
 	ID        int64        `json:"id"`
 	BookID    int64        `json:"book_id"`

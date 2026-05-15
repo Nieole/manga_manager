@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Database, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
+import { BookOpen, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 
 interface LibraryOption {
@@ -39,7 +39,6 @@ const ISSUE_TYPES = [
   'empty_pages',
   'missing_cover',
   'missing_metadata',
-  'missing_page_manifest',
   'missing_quick_hash',
   'duplicate_file_hash',
   'duplicate_quick_hash',
@@ -54,8 +53,6 @@ function issueIcon(type: string) {
       return <ImageOff className="h-5 w-5" />;
     case 'missing_metadata':
       return <Tags className="h-5 w-5" />;
-    case 'missing_page_manifest':
-      return <Database className="h-5 w-5" />;
     case 'missing_quick_hash':
       return <Fingerprint className="h-5 w-5" />;
     case 'duplicate_file_hash':
@@ -169,7 +166,7 @@ export default function Organize() {
       if (issue.type === 'missing_metadata' && issue.series_id) {
         await axios.post(`/api/series/${issue.series_id}/scrape`);
         showToast(t('organize.toast.scrapeQueued'));
-      } else if ((issue.type === 'empty_pages' || issue.type === 'missing_cover' || issue.type === 'missing_page_manifest') && issue.series_id) {
+      } else if ((issue.type === 'empty_pages' || issue.type === 'missing_cover') && issue.series_id) {
         await axios.post(`/api/series/${issue.series_id}/rescan?force=true`);
         showToast(t('organize.toast.rescanQueued'));
       } else if (issue.type === 'missing_quick_hash') {
@@ -192,7 +189,6 @@ export default function Organize() {
     issue.type === 'missing_metadata' ||
     issue.type === 'empty_pages' ||
     issue.type === 'missing_cover' ||
-    issue.type === 'missing_page_manifest' ||
     issue.type === 'missing_quick_hash' ||
     issue.type === 'unmatched_koreader';
 

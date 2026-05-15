@@ -489,7 +489,7 @@ func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "Book not found")
 		return
 	}
-	pages, err := c.ensurePageManifest(r.Context(), book)
+	pages, err := c.listBookArchivePages(r.Context(), book)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
 		return

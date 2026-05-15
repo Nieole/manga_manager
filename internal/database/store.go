@@ -26,9 +26,6 @@ type Store interface {
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
 	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
-	ListPageManifest(ctx context.Context, bookID int64) ([]PageManifestEntry, error)
-	GetPageManifestEntry(ctx context.Context, bookID, pageNumber int64) (PageManifestEntry, error)
-	ReplacePageManifest(ctx context.Context, bookID int64, pages []PageManifestEntry) error
 	ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error)
 	UpsertReadingBookmark(ctx context.Context, bookID, page int64, note string) (ReadingBookmark, error)
 	DeleteReadingBookmark(ctx context.Context, bookID, bookmarkID int64) error
@@ -81,14 +78,6 @@ type DashboardStats struct {
 	TotalPages   int           `json:"total_pages"`
 	ActiveDays7  int           `json:"active_days_7"` // 最近7天有阅读行为的天数
 	LibrarySizes []LibrarySize `json:"library_sizes"`
-}
-
-type PageManifestEntry struct {
-	BookID     int64  `json:"book_id"`
-	PageNumber int64  `json:"page_number"`
-	EntryName  string `json:"entry_name"`
-	Size       int64  `json:"size"`
-	MediaType  string `json:"media_type"`
 }
 
 type TaskRecord struct {
@@ -276,7 +265,6 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint_no_ext ON books(path_fingerprint_no_ext)`,
 		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_name_initial ON series(name_initial)`,
-		`CREATE INDEX IF NOT EXISTS idx_page_manifest_book_id ON page_manifest(book_id, page_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_initial ON series(library_id, name_initial)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_status ON series(library_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_updated ON series(library_id, updated_at)`,
@@ -497,76 +485,6 @@ func ensureColumn(db *sql.DB, table, column, definition string) error {
 
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
 	return err
-}
-
-func (s *SqlStore) ListPageManifest(ctx context.Context, bookID int64) ([]PageManifestEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT book_id, page_number, entry_name, size, media_type
-		FROM page_manifest
-		WHERE book_id = ?
-		ORDER BY page_number ASC
-	`, bookID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var pages []PageManifestEntry
-	for rows.Next() {
-		var page PageManifestEntry
-		if err := rows.Scan(&page.BookID, &page.PageNumber, &page.EntryName, &page.Size, &page.MediaType); err != nil {
-			return nil, err
-		}
-		pages = append(pages, page)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return pages, nil
-}
-
-func (s *SqlStore) GetPageManifestEntry(ctx context.Context, bookID, pageNumber int64) (PageManifestEntry, error) {
-	var page PageManifestEntry
-	err := s.db.QueryRowContext(ctx, `
-		SELECT book_id, page_number, entry_name, size, media_type
-		FROM page_manifest
-		WHERE book_id = ? AND page_number = ?
-		LIMIT 1
-	`, bookID, pageNumber).Scan(&page.BookID, &page.PageNumber, &page.EntryName, &page.Size, &page.MediaType)
-	return page, err
-}
-
-func (s *SqlStore) ReplacePageManifest(ctx context.Context, bookID int64, pages []PageManifestEntry) error {
-	return s.ExecTx(ctx, func(q *Queries) error {
-		if _, err := q.db.ExecContext(ctx, `DELETE FROM page_manifest WHERE book_id = ?`, bookID); err != nil {
-			return err
-		}
-		if len(pages) == 0 {
-			return nil
-		}
-
-		stmt, err := q.db.PrepareContext(ctx, `
-			INSERT INTO page_manifest (book_id, page_number, entry_name, size, media_type, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`)
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-
-		for _, page := range pages {
-			if page.BookID == 0 {
-				page.BookID = bookID
-			}
-			if page.MediaType == "" {
-				page.MediaType = "application/octet-stream"
-			}
-			if _, err := stmt.ExecContext(ctx, page.BookID, page.PageNumber, page.EntryName, page.Size, page.MediaType); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 func (s *SqlStore) UpsertTask(ctx context.Context, task TaskRecord) error {

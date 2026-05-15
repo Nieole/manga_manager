@@ -1465,13 +1465,6 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	if len(pages) != 2 || pages[0].Number != 1 || pages[0].URL == "" {
 		t.Fatalf("unexpected pages payload: %+v", pages)
 	}
-	manifest, err := store.ListPageManifest(context.Background(), book.ID)
-	if err != nil {
-		t.Fatalf("list page manifest after get pages failed: %v", err)
-	}
-	if len(manifest) != 2 || manifest[0].EntryName != "001.png" || manifest[1].EntryName != "002.png" {
-		t.Fatalf("expected getPagesByBook to backfill page manifest, got %+v", manifest)
-	}
 }
 
 func TestDeleteLibraryAndValidationHandlers(t *testing.T) {

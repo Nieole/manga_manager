@@ -57,7 +57,7 @@ func TestScannerPreventsDuplicateSeriesScans(t *testing.T) {
 	}
 }
 
-func TestScanLibraryWritesPageManifest(t *testing.T) {
+func TestScanLibraryRecordsPageCount(t *testing.T) {
 	rootDir := t.TempDir()
 	dbPath := filepath.Join(rootDir, "manga.db")
 	if err := database.Migrate(dbPath); err != nil {
@@ -113,15 +113,12 @@ func TestScanLibraryWritesPageManifest(t *testing.T) {
 	if len(books) != 1 {
 		t.Fatalf("expected one scanned book, got %d", len(books))
 	}
-	pages, err := store.ListPageManifest(context.Background(), books[0].ID)
+	book, err := store.GetBook(context.Background(), books[0].ID)
 	if err != nil {
-		t.Fatalf("list page manifest failed: %v", err)
+		t.Fatalf("get scanned book failed: %v", err)
 	}
-	if len(pages) != 2 {
-		t.Fatalf("expected two manifest pages, got %d", len(pages))
-	}
-	if pages[0].PageNumber != 1 || pages[0].EntryName != "001.png" || pages[0].MediaType != "image/png" {
-		t.Fatalf("unexpected first page manifest: %+v", pages[0])
+	if book.PageCount != 2 {
+		t.Fatalf("expected scanned book page count 2, got %d", book.PageCount)
 	}
 }
 

@@ -118,28 +118,6 @@ var healthIssueDefinitions = []struct {
 		`,
 	},
 	{
-		Type:     "missing_page_manifest",
-		Severity: "warn",
-		CountSQL: `
-			SELECT COUNT(*)
-			FROM books b
-			WHERE (? = 0 OR b.library_id = ?)
-			  AND b.page_count > 0
-			  AND NOT EXISTS (SELECT 1 FROM page_manifest pm WHERE pm.book_id = b.id)
-		`,
-		ListSQL: `
-			SELECT l.id, l.name, s.id, s.name, b.id, b.name, b.path, 'page manifest is empty', 1
-			FROM books b
-			JOIN series s ON s.id = b.series_id
-			JOIN libraries l ON l.id = b.library_id
-			WHERE (? = 0 OR b.library_id = ?)
-			  AND b.page_count > 0
-			  AND NOT EXISTS (SELECT 1 FROM page_manifest pm WHERE pm.book_id = b.id)
-			ORDER BY b.updated_at DESC, b.id DESC
-			LIMIT ?
-		`,
-	},
-	{
 		Type:     "duplicate_file_hash",
 		Severity: "warn",
 		CountSQL: `
