@@ -119,7 +119,7 @@ export function ReaderSettingsDrawer({
   ];
 
   return (
-    <div className="self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-3 sm:p-4 shadow-2xl w-[92vw] sm:w-[360px] max-w-sm text-sm text-gray-300 flex flex-col gap-3 animate-in fade-in slide-in-from-top-4 origin-top-right">
+    <div className="self-center sm:self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-3 sm:p-4 shadow-2xl w-[92vw] sm:w-[360px] max-w-sm text-sm text-gray-300 flex flex-col gap-3 animate-in fade-in slide-in-from-top-4 origin-top sm:origin-top-right">
       <div className="grid grid-cols-4 gap-1 rounded-lg bg-gray-950/80 p-1">
         {tabs.map((tab) => (
           <button
