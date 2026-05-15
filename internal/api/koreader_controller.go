@@ -611,7 +611,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "系统")
 
-	go func() {
+	c.runBackground(func() {
 		updated, total, err := c.koreader.RebuildBookIdentities(context.Background(), 500, func(current, total int, message string) {
 			c.updateTask(key, current, total, message)
 		})
@@ -620,7 +620,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 			return
 		}
 		c.finishTask(key, fmt.Sprintf("KOReader %s重建完成，已更新 %d / %d 本书籍", indexLabel, updated, total))
-	}()
+	})
 	return nil
 }
 
@@ -635,7 +635,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "系统")
 
-	go func() {
+	c.runBackground(func() {
 		updated, total, err := c.koreader.ReconcileProgress(context.Background(), 500, func(current, total int, message string) {
 			c.updateTask(key, current, total, message)
 		})
@@ -644,7 +644,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 			return
 		}
 		c.finishTask(key, fmt.Sprintf("KOReader 进度重关联完成，已更新 %d / %d 条记录", updated, total))
-	}()
+	})
 	return nil
 }
 
@@ -659,7 +659,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "系统")
 
-	go func() {
+	c.runBackground(func() {
 		indexLabel := koreaderIndexLabel(cfg)
 		c.updateTask(key, 0, 2, fmt.Sprintf("开始重建 KOReader %s", indexLabel))
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(context.Background(), 500, nil)
@@ -676,7 +676,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		}
 
 		c.finishTask(key, fmt.Sprintf("KOReader 匹配规则已应用，%s更新 %d / %d，重关联 %d / %d", indexLabel, updatedBooks, totalBooks, updatedProgress, totalProgress))
-	}()
+	})
 	return nil
 }
 

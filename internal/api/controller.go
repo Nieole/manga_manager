@@ -59,6 +59,13 @@ type Controller struct {
 	taskSeq   int64
 
 	openPath func(string) error
+
+	lifecycleOnce sync.Once
+	shutdownOnce  sync.Once
+	lifecycleMu   sync.Mutex
+	done          chan struct{}
+	closed        bool
+	backgroundWG  sync.WaitGroup
 }
 
 type TaskStatus struct {
@@ -121,8 +128,8 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 
 	c.recoverInterruptedTasks()
 
-	go c.startBroker()
-	go c.startDaemon()
+	c.runBackground(c.startBroker)
+	c.runBackground(c.startDaemon)
 
 	// 初始化文件系统监控
 	fw, err := scanner.NewFileWatcher(scan)
@@ -132,7 +139,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		c.watcher = fw
 		fw.Start(c.PublishEvent)
 		// 为现有库开启监听
-		go func() {
+		c.runBackground(func() {
 			libs, err := store.ListLibraries(context.Background())
 			if err != nil {
 				slog.Warn("Failed to list libraries for watcher", "error", err)
@@ -143,10 +150,46 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 					_ = fw.WatchLibrary(lib.ID, lib.Path)
 				}
 			}
-		}()
+		})
 	}
 
 	return c
+}
+
+func (c *Controller) lifecycleDone() <-chan struct{} {
+	c.lifecycleOnce.Do(func() {
+		c.done = make(chan struct{})
+	})
+	return c.done
+}
+
+func (c *Controller) runBackground(fn func()) {
+	c.lifecycleDone()
+	c.lifecycleMu.Lock()
+	if c.closed {
+		c.lifecycleMu.Unlock()
+		return
+	}
+	c.backgroundWG.Add(1)
+	c.lifecycleMu.Unlock()
+	go func() {
+		defer c.backgroundWG.Done()
+		fn()
+	}()
+}
+
+func (c *Controller) Close() {
+	c.lifecycleDone()
+	c.shutdownOnce.Do(func() {
+		c.lifecycleMu.Lock()
+		c.closed = true
+		close(c.done)
+		c.lifecycleMu.Unlock()
+		if c.watcher != nil {
+			c.watcher.Stop()
+		}
+	})
+	c.backgroundWG.Wait()
 }
 
 func (c *Controller) recoverInterruptedTasks() {
@@ -321,6 +364,8 @@ func (c *Controller) persistTaskStatus(task TaskStatus) {
 func (c *Controller) startBroker() {
 	for {
 		select {
+		case <-c.lifecycleDone():
+			return
 		case s := <-c.newClients:
 			c.clients[s] = true
 		case s := <-c.defunctClients:
@@ -345,7 +390,11 @@ func (c *Controller) startDaemon() {
 	lastScan := make(map[int64]time.Time)
 
 	for {
-		<-ticker.C
+		select {
+		case <-c.lifecycleDone():
+			return
+		case <-ticker.C:
+		}
 
 		libs, err := c.store.ListLibraries(context.Background())
 		if err != nil {
@@ -365,12 +414,13 @@ func (c *Controller) startDaemon() {
 			if !ok || now.Sub(last) >= interval {
 				lastScan[lib.ID] = now
 				slog.Info("Triggering auto-scan for library from Daemon", "library_id", lib.ID, "path", lib.Path)
-				go func(id int64, path string) {
+				c.runBackground(func() {
+					id, path := lib.ID, lib.Path
 					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
 					if err != nil {
 						slog.Error("Auto-scan failed", "library_id", id, "error", err)
 					}
-				}(lib.ID, lib.Path)
+				})
 			}
 		}
 	}
@@ -1151,14 +1201,14 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 触发异步扫描任务，不阻塞前端 API 响应
-	go func() {
+	c.runBackground(func() {
 		// 使用独立 context 避免跟随请求自动取消，创建库默认全量
 		err := c.scanner.ScanLibrary(context.Background(), createdLib.ID, req.Path, false)
 		if err != nil {
 			// 在生产环境需要接入日志中心打印
 			_ = err
 		}
-	}()
+	})
 
 	jsonResponse(w, http.StatusCreated, createdLib)
 }
@@ -1253,14 +1303,14 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) boo
 	}
 	c.setTaskMetadata(taskKey, map[string]string{"force": strconv.FormatBool(force)}, lib.Name)
 
-	go func() {
+	c.runBackground(func() {
 		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, force)
 		if err != nil {
 			c.failTaskWithError(taskKey, fmt.Sprintf("资源库扫描失败: %v", err), err.Error())
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("资源库扫描完成: %s", lib.Name))
-	}()
+	})
 
 	return true
 }
@@ -1304,7 +1354,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	}
 	c.setTaskMetadata(taskKey, map[string]string{"force": strconv.FormatBool(force)}, scopeName)
 
-	go func() {
+	c.runBackground(func() {
 		err := c.scanner.ScanSeries(context.Background(), seriesID, force)
 		if err != nil {
 			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
@@ -1312,7 +1362,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("系列扫描完成 #%d", seriesID))
-	}()
+	})
 
 	return true
 }
@@ -1366,7 +1416,7 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	}
 	c.setTaskMetadata(taskKey, nil, scopeName)
 
-	go func() {
+	c.runBackground(func() {
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
 		if err != nil {
 			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
@@ -1374,7 +1424,7 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("资源库清理完成 #%d", libraryID))
-	}()
+	})
 
 	return true
 }
@@ -2430,7 +2480,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 	}
 	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "系统")
 
-	go func() {
+	c.runBackground(func() {
 		updated, total, err := c.runRebuildFileIdentities(context.Background(), 500, func(current, total int, message string) {
 			c.updateTask("rebuild_file_identities", current, total, message)
 		})
@@ -2439,7 +2489,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 			return
 		}
 		c.finishTask("rebuild_file_identities", fmt.Sprintf("文件身份索引重建完成，已更新 %d / %d 本书籍", updated, total))
-	}()
+	})
 	return nil
 }
 
@@ -2669,7 +2719,8 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	}
 	c.setTaskMetadata(taskKey, nil, scopeName)
 
-	go func(libraryID int64, taskLocale string) {
+	c.runBackground(func() {
+		libraryID, taskLocale := libID, locale
 		ctx := metadata.WithLocale(context.Background(), taskLocale)
 
 		seriesRows, err := c.store.GetSeriesWithoutCollection(ctx, libraryID)
@@ -2726,7 +2777,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 
 		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组审核已生成 (审核单 #%d，%d 个候选合集)", review.ID, reviewCollections))
 		c.PublishEvent("refresh")
-	}(libID, locale)
+	})
 
 	return true
 }

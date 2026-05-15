@@ -84,6 +84,7 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 	}
 
 	t.Cleanup(parser.ResetArchivePool)
+	t.Cleanup(controller.Close)
 
 	return controller, store, engine, tempDir
 }
@@ -2007,6 +2008,7 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 	config.NormalizeConfig(cfg)
 	cfgManager := config.NewManager(cfg)
 	controller := NewController(store, scanner.NewScanner(store, engine, cfgManager), engine, cfgManager, filepath.Join(tempDir, "config.yaml"))
+	t.Cleanup(controller.Close)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=55", nil)
 	rec := httptest.NewRecorder()
