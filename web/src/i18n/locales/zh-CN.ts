@@ -955,6 +955,8 @@ export const messages: MessageCatalog = {
     'settings.media.description': '管理缓存目录、缩略图格式以及本地超分引擎路径与并发。',
     'settings.media.cacheTitle': '缓存与缩略图',
     'settings.media.cacheDir': '缓存目录',
+    'settings.media.pageDiskCache': '启用阅读页磁盘缓存',
+    'settings.media.pageDiskCacheHint': '关闭后，服务端不再把裁切、转码或超分后的阅读页写入磁盘；内存预加载、浏览器缓存和离线阅读缓存不受影响。',
     'settings.media.thumbnailFormat': '缩略图格式',
     'settings.media.format.webp': 'WebP',
     'settings.media.format.avif': 'AVIF',

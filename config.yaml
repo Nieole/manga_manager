@@ -10,6 +10,7 @@ library:
     paths: []
 cache:
     dir: ./data/cache
+    page_disk_cache_enabled: false
 scanner:
     workers: 0
     thumbnail_format: webp

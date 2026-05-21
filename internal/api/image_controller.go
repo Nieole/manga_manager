@@ -77,6 +77,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 
 	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
 	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear") || autoCrop
+	diskPageCacheEnabled := c.diskPageCacheEnabled()
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
 			contentType := http.DetectContentType(cachedData)
@@ -88,15 +89,17 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			w.Write(cachedData)
 			return
 		}
-		if cachedData, cachedContentType, ok := c.readDiskImageCache(cacheKey); ok {
-			c.imageCache.Add(cacheKey, cachedData)
-			c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
-			w.Header().Set("Content-Type", cachedContentType)
-			w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
-			w.Header().Set("Cache-Control", "public, max-age=31536000")
-			w.Header().Set("ETag", etag)
-			w.Write(cachedData)
-			return
+		if diskPageCacheEnabled {
+			if cachedData, cachedContentType, ok := c.readDiskImageCache(cacheKey); ok {
+				c.imageCache.Add(cacheKey, cachedData)
+				c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
+				w.Header().Set("Content-Type", cachedContentType)
+				w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
+				w.Header().Set("Cache-Control", "public, max-age=31536000")
+				w.Header().Set("ETag", etag)
+				w.Write(cachedData)
+				return
+			}
 		}
 	}
 
@@ -175,8 +178,10 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 
 	if isThumbnailReq {
 		c.imageCache.Add(cacheKey, finalData)
-		if err := c.writeDiskImageCache(cacheKey, finalData, finalContentType); err != nil {
-			slog.Warn("Failed to write processed page disk cache", "error", err)
+		if diskPageCacheEnabled {
+			if err := c.writeDiskImageCache(cacheKey, finalData, finalContentType); err != nil {
+				slog.Warn("Failed to write processed page disk cache", "error", err)
+			}
 		}
 	}
 
@@ -224,6 +229,10 @@ func (c *Controller) processedImageCacheDir() string {
 		baseDir = filepath.Join(cfg.Cache.Dir, "pages")
 	}
 	return baseDir
+}
+
+func (c *Controller) diskPageCacheEnabled() bool {
+	return c.currentConfig().Cache.PageDiskCacheEnabled
 }
 
 func processedImageCacheFileName(cacheKey, contentType string) string {

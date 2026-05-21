@@ -22,7 +22,8 @@ type Config struct {
 		Paths []string `yaml:"paths" json:"paths"`
 	} `yaml:"library" json:"library"`
 	Cache struct {
-		Dir string `yaml:"dir" json:"dir"`
+		Dir                  string `yaml:"dir" json:"dir"`
+		PageDiskCacheEnabled bool   `yaml:"page_disk_cache_enabled" json:"page_disk_cache_enabled"`
 	} `yaml:"cache" json:"cache"`
 	Logging struct {
 		Level string `yaml:"level" json:"level"`
@@ -108,6 +109,7 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Database.Path = "./data/manga.db"
 	cfg.Library.Paths = []string{}
 	cfg.Cache.Dir = "./data/cache"
+	cfg.Cache.PageDiskCacheEnabled = false
 	cfg.Logging.Level = LogLevelInfo
 	cfg.Scanner.Workers = 0              // 0 表示自动使用 runtime.NumCPU() * 2
 	cfg.Scanner.ThumbnailFormat = "webp" // 支持 webp, jpg, avif

@@ -223,6 +223,7 @@ func TestServePageImage(t *testing.T) {
 	t.Run("serves processed page from disk cache before opening archive", func(t *testing.T) {
 		cfg := controller.currentConfig()
 		cfg.Cache.Dir = filepath.Join(rootDir, "processed-cache")
+		cfg.Cache.PageDiskCacheEnabled = true
 		controller.config.Replace(&cfg)
 
 		archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
@@ -275,6 +276,67 @@ func TestServePageImage(t *testing.T) {
 		}
 		if rec.Body.String() != string(cachedBody) {
 			t.Fatalf("expected disk cached body to match original processed body")
+		}
+	})
+
+	t.Run("skips processed page disk cache when disabled", func(t *testing.T) {
+		cfg := controller.currentConfig()
+		cfg.Cache.Dir = filepath.Join(rootDir, "processed-cache-disabled")
+		cfg.Cache.PageDiskCacheEnabled = false
+		controller.config.Replace(&cfg)
+
+		archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+		parser.EvictArchiveFromPool(archivePath)
+		if err := writeTestCBZ(archivePath, map[string][]byte{
+			"001.png": png1x1,
+		}); err != nil {
+			t.Fatalf("write test cbz failed: %v", err)
+		}
+		info, err := os.Stat(archivePath)
+		if err != nil {
+			t.Fatalf("stat archive failed: %v", err)
+		}
+		if _, err := controller.store.(*database.SqlStore).DB().Exec(
+			`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+			archivePath,
+			info.Size(),
+			info.ModTime(),
+			1,
+			book.ID,
+		); err != nil {
+			t.Fatalf("update book archive metadata failed: %v", err)
+		}
+
+		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
+		req = withRouteParam(req, "pageNumber", "1")
+		rec := httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected processed page request 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+
+		stats, err := controller.collectPageCacheStats()
+		if err != nil {
+			t.Fatalf("collect page cache stats failed: %v", err)
+		}
+		if stats.FileCount != 0 || stats.FileSize != 0 {
+			t.Fatalf("expected disabled disk cache to write no files, got files=%d bytes=%d", stats.FileCount, stats.FileSize)
+		}
+
+		controller.imageCache.Purge()
+		parser.EvictArchiveFromPool(archivePath)
+		missingPath := archivePath + ".disabled-missing"
+		if err := os.Rename(archivePath, missingPath); err != nil {
+			t.Fatalf("rename archive failed: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = os.Rename(missingPath, archivePath)
+		})
+
+		rec = httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected disabled disk cache to miss and require archive, got %d body=%s", rec.Code, rec.Body.String())
 		}
 	})
 

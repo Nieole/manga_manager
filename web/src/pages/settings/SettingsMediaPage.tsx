@@ -1,4 +1,4 @@
-import { HardDrive, Image as ImageIcon } from 'lucide-react';
+import { HardDrive, Image as ImageIcon, Save } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { FieldErrors, SettingsPageIntro, SettingsSaveBar, inputClassName, sectionClassName } from './shared';
@@ -41,6 +41,26 @@ export function SettingsMediaPage() {
               <option value="jpg">{t('settings.media.format.jpg')}</option>
             </select>
             <FieldErrors messages={fieldErrors('scanner.thumbnail_format')} />
+          </div>
+          <div className="md:col-span-2 rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Save className="h-4 w-4 text-komgaPrimary" />
+                  {t('settings.media.pageDiskCache')}
+                </div>
+                <p className="mt-1 text-xs leading-5 text-gray-500">{t('settings.media.pageDiskCacheHint')}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={config.cache.page_disk_cache_enabled}
+                onClick={() => setConfig({ ...config, cache: { ...config.cache, page_disk_cache_enabled: !config.cache.page_disk_cache_enabled } })}
+                className={`relative h-7 w-12 shrink-0 rounded-full border transition ${config.cache.page_disk_cache_enabled ? 'border-komgaPrimary/60 bg-komgaPrimary/80' : 'border-gray-700 bg-gray-900'}`}
+              >
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${config.cache.page_disk_cache_enabled ? 'left-6' : 'left-1'}`} />
+              </button>
+            </div>
           </div>
         </div>
       </section>

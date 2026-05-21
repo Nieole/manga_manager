@@ -6,7 +6,7 @@ export interface Config {
   server: { host: string; port: number; allowed_origins: string[] };
   database: { path: string };
   library: { paths: string[] };
-  cache: { dir: string };
+  cache: { dir: string; page_disk_cache_enabled: boolean };
   logging: { level: string };
   scanner: {
     workers: number;

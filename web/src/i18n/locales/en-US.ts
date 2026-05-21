@@ -955,6 +955,8 @@ export const messages: MessageCatalog = {
     'settings.media.description': 'Manage cache directory, thumbnail format, and local upscaling engine paths and concurrency.',
     'settings.media.cacheTitle': 'Cache and thumbnails',
     'settings.media.cacheDir': 'Cache directory',
+    'settings.media.pageDiskCache': 'Enable reader page disk cache',
+    'settings.media.pageDiskCacheHint': 'When off, the server will not write cropped, converted, or upscaled reader pages to disk. Memory preload, browser cache, and offline reader cache are unchanged.',
     'settings.media.thumbnailFormat': 'Thumbnail format',
     'settings.media.format.webp': 'WebP',
     'settings.media.format.avif': 'AVIF',
