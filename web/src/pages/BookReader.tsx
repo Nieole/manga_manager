@@ -6,7 +6,7 @@ import { ReaderProgressTray } from './book-reader/ReaderProgressTray';
 import { ReaderSettingsDrawer } from './book-reader/ReaderSettingsDrawer';
 import { ReaderErrorState, ReaderEyeProtectionOverlay, ReaderLoadingState } from './book-reader/ReaderStateViews';
 import { ReaderTopBar } from './book-reader/ReaderTopBar';
-import { WebtoonReader } from './book-reader/WebtoonReader';
+import { WebtoonReader, type WebtoonReaderHandle } from './book-reader/WebtoonReader';
 import { usePageImageCache } from './book-reader/usePageImageCache';
 import { useReaderBookData } from './book-reader/useReaderBookData';
 import { useReaderBookmarks } from './book-reader/useReaderBookmarks';
@@ -53,6 +53,7 @@ export default function BookReader() {
     } = useReaderPreferences();
     const readModeRef = useRef(readMode);
     const tRef = useRef(t);
+    const webtoonReaderRef = useRef<WebtoonReaderHandle>(null);
 
     useEffect(() => {
         readModeRef.current = readMode;
@@ -116,7 +117,6 @@ export default function BookReader() {
     } = useReaderBookData({
         bookId,
         currentBookIdRef,
-        readModeRef,
         tRef,
         getBookCache,
         setCachedPageImageUrls,
@@ -207,7 +207,6 @@ export default function BookReader() {
         fetchPagesForBook,
         fetchBookInfoForBook,
         retainBookCaches,
-        setCurrentPageIndex,
         queueOfflineReaderProgress,
     });
 
@@ -224,6 +223,7 @@ export default function BookReader() {
         nextBookIdRef,
         setCurrentPageIndex,
         setSliderValue,
+        onScrollToWebtoonPage: (pageNumber) => webtoonReaderRef.current?.scrollToPage(pageNumber),
         onOpenBook: handleOpenBook,
     });
 
@@ -341,15 +341,18 @@ export default function BookReader() {
                     />
                 ) : readMode === 'webtoon' ? (
                     <WebtoonReader
+                        ref={webtoonReaderRef}
                         t={t}
                         bookId={bookId}
                         pages={activePages}
+                        currentPageIndex={currentPageIndex}
                         cachedPageImageUrls={cachedPageImageUrls}
                         imageFilter={imageFilter}
                         scaleMode={scaleMode}
                         doublePage={doublePage}
                         nextBookId={nextBookId}
                         getImageUrl={getImageUrl}
+                        onVisiblePageChange={setCurrentPageIndex}
                         onOpenNextBook={(targetBookId) => navigate(`/reader/${targetBookId}`, { replace: true })}
                     />
                 ) : (

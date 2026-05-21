@@ -87,11 +87,29 @@ func TestMigrateAddsIdentityColumnsBeforeDependentIndexes(t *testing.T) {
 		"idx_series_library_status_books",
 		"idx_books_read_progress_series",
 		"idx_books_cover_pick",
+		"idx_series_stats_read_pages",
 	} {
 		if !testIndexExists(t, db, index) {
 			t.Fatalf("expected migrated index %s to exist", index)
 		}
 	}
+
+	if !testTableExists(t, db, "series_stats") {
+		t.Fatal("expected migrated series_stats table to exist")
+	}
+}
+
+func testTableExists(t *testing.T, db *sql.DB, table string) bool {
+	t.Helper()
+	var name string
+	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("read table %s failed: %v", table, err)
+	}
+	return true
 }
 
 func testColumnExists(t *testing.T, db *sql.DB, table, column string) bool {

@@ -24,11 +24,15 @@ import (
 )
 
 type Scanner struct {
-	store  database.Store
-	engine *search.Engine
-	config *config.Manager
-	mu     sync.Mutex
-	active struct {
+	store       database.Store
+	engine      *search.Engine
+	config      *config.Manager
+	openArchive func(string) (parser.Archive, error)
+	coverOnce   sync.Once
+	coverQueue  chan coverJob
+	coverWG     sync.WaitGroup
+	mu          sync.Mutex
+	active      struct {
 		libraries map[int64]struct{}
 		series    map[int64]struct{}
 	}
@@ -38,9 +42,10 @@ type Scanner struct {
 
 func NewScanner(store database.Store, engine *search.Engine, cfg *config.Manager) *Scanner {
 	s := &Scanner{
-		store:  store,
-		engine: engine,
-		config: cfg,
+		store:       store,
+		engine:      engine,
+		config:      cfg,
+		openArchive: parser.OpenArchive,
 	}
 	s.active.libraries = make(map[int64]struct{})
 	s.active.series = make(map[int64]struct{})
@@ -57,6 +62,15 @@ func (s *Scanner) currentConfig() config.Config {
 		return config.Config{}
 	}
 	return s.config.Snapshot()
+}
+
+func (s *Scanner) scanOptions(force bool) ScanOptions {
+	cfg := s.currentConfig()
+	profile := NormalizeScanProfile(cfg.Scanner.ScanProfile)
+	if profile == ScanProfileRepair {
+		force = true
+	}
+	return ScanOptions{Force: force, Profile: profile}
 }
 
 func (s *Scanner) beginLibraryScan(libraryID int64) bool {
@@ -96,15 +110,78 @@ type scanJob struct {
 	info os.FileInfo
 }
 
+type bookScanSnapshot struct {
+	modTime time.Time
+	size    int64
+}
+
+type ScanProfile string
+
+const (
+	ScanProfileFast     ScanProfile = "fast_scan"
+	ScanProfileMetadata ScanProfile = "metadata_scan"
+	ScanProfileIdentity ScanProfile = "identity_scan"
+	ScanProfileRepair   ScanProfile = "repair_scan"
+)
+
+type ScanOptions struct {
+	Force   bool
+	Profile ScanProfile
+}
+
+func NormalizeScanProfile(raw string) ScanProfile {
+	switch ScanProfile(strings.ToLower(strings.TrimSpace(raw))) {
+	case ScanProfileFast:
+		return ScanProfileFast
+	case ScanProfileIdentity:
+		return ScanProfileIdentity
+	case ScanProfileRepair:
+		return ScanProfileRepair
+	default:
+		return ScanProfileMetadata
+	}
+}
+
+func (p ScanProfile) opensArchive() bool {
+	return p != ScanProfileFast
+}
+
+func (p ScanProfile) extractsMetadata() bool {
+	return p == ScanProfileMetadata || p == ScanProfileIdentity || p == ScanProfileRepair
+}
+
+func (p ScanProfile) computesQuickHash() bool {
+	return p == ScanProfileIdentity || p == ScanProfileRepair
+}
+
+func (p ScanProfile) computesFullHash(cfg config.Config) bool {
+	return p == ScanProfileIdentity || p == ScanProfileRepair
+}
+
 type scanResult struct {
 	seriesName           string
 	seriesPath           string
 	book                 database.UpsertBookByPathParams
+	coverCandidate       *coverCandidate
 	comicInfo            *parser.ComicInfo
 	fileHash             string
 	quickHash            string
 	pathFingerprint      string
 	pathFingerprintNoExt string
+}
+
+type coverCandidate struct {
+	path      string
+	pageName  string
+	mediaType string
+	bookHash  string
+}
+
+type coverJob struct {
+	ctx       context.Context
+	bookID    int64
+	seriesID  int64
+	candidate coverCandidate
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
@@ -115,10 +192,12 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	}
 	defer s.endLibraryScan(libraryID)
 
-	// Step 0: Pre-load cache for increment scanning
-	bookCache := make(map[string]time.Time)
+	opts := s.scanOptions(force)
 
-	if !force {
+	// Step 0: Pre-load cache for increment scanning
+	bookCache := make(map[string]bookScanSnapshot)
+
+	if !opts.Force {
 		existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
 		if err != nil {
 			slog.Warn("Failed to load existing books cache", "library_id", libraryID, "error", err)
@@ -126,7 +205,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		}
 
 		for _, b := range existingBooks {
-			bookCache[b.Path] = b.FileModifiedAt
+			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size}
 		}
 	}
 
@@ -147,7 +226,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, libraryID, rootPath, job, results)
+				s.workerProcess(ctx, libraryID, rootPath, job, opts, results)
 			}
 		}()
 	}
@@ -165,6 +244,9 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	// 使用极速的 filepath.WalkDir 替代 filepath.Walk 减少系统软中断
 	var walkErr error
 	walkErr = filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			slog.Warn("Error accessing path", "path", path, "error", err)
 			return nil
@@ -182,10 +264,10 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 			}
 
 			// 增量拦截：非强制扫描下检查修改时间
-			if !force {
-				if lastMod, exists := bookCache[path]; exists {
-					// 若存在同名记录且时间精确吻合，跳过这本卷的解析派发
-					if lastMod.Equal(info.ModTime()) {
+			if !opts.Force {
+				if existing, exists := bookCache[path]; exists {
+					// 若存在同名记录且时间与大小精确吻合，跳过这本卷的解析派发
+					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
 						return nil
 					}
 				}
@@ -205,7 +287,10 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	close(results)  // 通知 Ingester 没数据投递了
 	ingestWg.Wait() // 等待 Ingester 将批次强刷入磁盘
 
-	slog.Info("Scan completely flushed for library", "library_id", libraryID)
+	if walkErr == nil {
+		walkErr = ctx.Err()
+	}
+	slog.Info("Scan completely flushed for library", "library_id", libraryID, "scan_profile", opts.Profile)
 	return walkErr
 }
 
@@ -227,12 +312,13 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		return fmt.Errorf("failed to get library: %w", err)
 	}
 
-	bookCache := make(map[string]time.Time)
-	if !force {
+	opts := s.scanOptions(force)
+	bookCache := make(map[string]bookScanSnapshot)
+	if !opts.Force {
 		existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID)
 		if err == nil {
 			for _, b := range existingBooks {
-				bookCache[b.Path] = b.FileModifiedAt
+				bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size}
 			}
 		}
 	}
@@ -251,7 +337,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, series.LibraryID, library.Path, job, results)
+				s.workerProcess(ctx, series.LibraryID, library.Path, job, opts, results)
 			}
 		}()
 	}
@@ -265,6 +351,9 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 
 	var walkErr error
 	walkErr = filepath.WalkDir(series.Path, func(path string, d os.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			slog.Warn("Error accessing path", "path", path, "error", err)
 			return nil
@@ -280,9 +369,9 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 				return nil
 			}
 
-			if !force {
-				if lastMod, exists := bookCache[path]; exists {
-					if lastMod.Equal(info.ModTime()) {
+			if !opts.Force {
+				if existing, exists := bookCache[path]; exists {
+					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
 						return nil
 					}
 				}
@@ -302,7 +391,10 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	close(results)
 	ingestWg.Wait()
 
-	slog.Info("Scan completely flushed for series", "series_id", seriesID)
+	if walkErr == nil {
+		walkErr = ctx.Err()
+	}
+	slog.Info("Scan completely flushed for series", "series_id", seriesID, "scan_profile", opts.Profile)
 	return walkErr
 }
 
@@ -352,18 +444,30 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 	return nil
 }
 
-func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, results chan<- scanResult) {
-	arc, err := parser.OpenArchive(job.path)
-	if err != nil {
-		slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
+func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, opts ScanOptions, results chan<- scanResult) {
+	select {
+	case <-ctx.Done():
 		return
+	default:
 	}
-	defer arc.Close()
 
-	pages, err := arc.GetPages()
-	if err != nil {
-		slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
-		return
+	cfg := s.currentConfig()
+	var arc parser.Archive
+	var pages []parser.PageMetadata
+	if opts.Profile.opensArchive() {
+		var err error
+		arc, err = s.openArchive(job.path)
+		if err != nil {
+			slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
+			return
+		}
+		defer arc.Close()
+
+		pages, err = arc.GetPages()
+		if err != nil {
+			slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
+			return
+		}
 	}
 
 	// 基于路径、修改时间和大小生成复合哈希，确保文件内容变动时缩略图强制刷新
@@ -408,79 +512,21 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		}
 	}
 
-	// 尝试生成冷热分离封面缓存图
+	// 封面缓存只在扫描 worker 内做轻量命中检查；缺失时交给后台封面队列生成。
 	var coverPath sql.NullString
-	if len(pages) > 0 {
-		subDir := ""
-		if len(bookHash) >= 2 {
-			subDir = bookHash[:2]
-		}
-
-		baseThumbDir := filepath.Join(".", "data", "thumbnails")
-		cfg := s.currentConfig()
-		if cfg.Cache.Dir != "" {
-			baseThumbDir = cfg.Cache.Dir
-		}
-		thumbDir := filepath.Join(baseThumbDir, subDir)
-		err = os.MkdirAll(thumbDir, 0755)
-
-		// 检查任何支持的格式是否存在，如果哈希变了，此处会自动判定为不存在从而重写
-		webpPath := filepath.Join(thumbDir, bookHash+".webp")
-		jpgPath := filepath.Join(thumbDir, bookHash+".jpg")
-		avifPath := filepath.Join(thumbDir, bookHash+".avif")
-
-		if _, err := os.Stat(webpPath); err == nil {
-			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".webp")), Valid: true}
-		} else if _, err := os.Stat(jpgPath); err == nil {
-			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".jpg")), Valid: true}
-		} else if _, err := os.Stat(avifPath); err == nil {
-			coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, bookHash+".avif")), Valid: true}
+	var coverHint *coverCandidate
+	if opts.Profile.extractsMetadata() && len(pages) > 0 {
+		if existing := existingThumbnailPath(cfg, bookHash); existing.Valid {
+			coverPath = existing
 		} else {
-			pageData, err := arc.ReadPage(pages[0].Name)
-			if err == nil {
-				var processed []byte
-				var fileName string
-
-				targetFormat := cfg.Scanner.ThumbnailFormat
-				if targetFormat == "" {
-					targetFormat = "webp"
-				}
-
-				thumbData, thumbContentType, thumbErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-					Width: 400, Quality: 82, Format: targetFormat,
-				})
-
-				if thumbErr == nil && len(thumbData) > 0 {
-					processed = thumbData
-					fileName = bookHash + extensionFromContentType(thumbContentType, targetFormat)
-				} else {
-					slog.Warn("Primary format generation failed, falling back to jpeg", "format", targetFormat, "path", job.path, "error", thumbErr)
-					jpegData, jpegContentType, jpegErr := images.ProcessImage(pageData, pages[0].MediaType, images.ProcessOptions{
-						Width: 400, Quality: 82, Format: "jpeg",
-					})
-					if jpegErr == nil {
-						processed = jpegData
-						fileName = bookHash + extensionFromContentType(jpegContentType, "jpeg")
-					} else {
-						slog.Warn("JPEG fallback generation failed", "path", job.path, "error", jpegErr)
-					}
-				}
-
-				if len(processed) > 0 && fileName != "" {
-					fullPath := filepath.Join(thumbDir, fileName)
-					if err := os.WriteFile(fullPath, processed, 0644); err == nil {
-						coverPath = sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}
-					} else {
-						slog.Error("Failed to write thumbnail file", "path", fullPath, "error", err)
-					}
-				} else {
-					slog.Warn("No processed thumbnail data generated", "path", job.path)
-				}
-			} else {
-				slog.Warn("Failed to ReadPage to parse cover", "page_name", pages[0].Name, "path", job.path, "error", err)
+			coverHint = &coverCandidate{
+				path:      job.path,
+				pageName:  pages[0].Name,
+				mediaType: pages[0].MediaType,
+				bookHash:  bookHash,
 			}
 		}
-	} else {
+	} else if opts.Profile.extractsMetadata() {
 		slog.Warn("No pages found in archive to extract cover", "path", job.path)
 	}
 
@@ -496,20 +542,32 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
 		CoverPath:      coverPath,
 	}
-	fileHash, err := koreader.FingerprintFile(job.path)
-	if err != nil {
-		slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err)
+	var fileHash string
+	if opts.Profile.computesFullHash(cfg) {
+		var err error
+		fileHash, err = koreader.FingerprintFile(job.path)
+		if err != nil {
+			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
+		}
 	}
-	quickHash, err := koreader.FingerprintQuickFile(job.path)
-	if err != nil {
-		slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err)
+
+	var quickHash string
+	if opts.Profile.computesQuickHash() {
+		var err error
+		quickHash, err = koreader.FingerprintQuickFile(job.path)
+		if err != nil {
+			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
+		}
 	}
 
 	// 尝试提取 ComicInfo.xml
 	var cInfo *parser.ComicInfo
-	if xmlData, err := arc.ReadMetadataFile("ComicInfo.xml"); err == nil {
-		if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
-			cInfo = parsed
+	if opts.Profile.extractsMetadata() && arc != nil {
+		xmlData, err := arc.ReadMetadataFile("ComicInfo.xml")
+		if err == nil {
+			if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
+				cInfo = parsed
+			}
 		}
 	}
 
@@ -517,6 +575,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		seriesName:           seriesName,
 		seriesPath:           seriesPath,
 		book:                 book,
+		coverCandidate:       coverHint,
 		comicInfo:            cInfo,
 		fileHash:             fileHash,
 		quickHash:            quickHash,
@@ -563,6 +622,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			seriesName string
 		}
 		var tasks []indexTask
+		var coverJobs []coverJob
 		updatedSeriesIDs := make(map[int64]bool)
 
 		err := s.store.ExecTx(ctx, func(q *database.Queries) error {
@@ -703,6 +763,14 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}); err != nil {
 					slog.Warn("Failed to update book identity", "book_id", actualBook.ID, "path", actualBook.Path, "error", err)
 				}
+				if res.coverCandidate != nil && (!actualBook.CoverPath.Valid || actualBook.CoverPath.String == "") {
+					coverJobs = append(coverJobs, coverJob{
+						ctx:       ctx,
+						bookID:    actualBook.ID,
+						seriesID:  actualBook.SeriesID,
+						candidate: *res.coverCandidate,
+					})
+				}
 
 				if s.engine != nil {
 					tasks = append(tasks, indexTask{book: actualBook, seriesName: res.seriesName})
@@ -718,6 +786,9 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					ID:         sid,
 				}); err != nil {
 					slog.Warn("Failed to update series statistics", "series_id", sid, "err", err)
+				}
+				if err := q.RefreshSeriesStats(ctx, sid); err != nil {
+					slog.Warn("Failed to refresh series stats", "series_id", sid, "err", err)
 				}
 			}
 
@@ -753,6 +824,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			if s.onBatchIngested != nil {
 				s.onBatchIngested("batch_inserted")
 			}
+			s.enqueueCoverJobs(ctx, coverJobs)
 		}
 
 		batch = batch[:0]
@@ -788,6 +860,194 @@ func getKeys(m map[string]bool) string {
 		keys = append(keys, k)
 	}
 	return strings.Join(keys, ",")
+}
+
+func thumbnailBaseDir(cfg config.Config) string {
+	if cfg.Cache.Dir != "" {
+		return cfg.Cache.Dir
+	}
+	return filepath.Join(".", "data", "thumbnails")
+}
+
+func thumbnailSubDir(bookHash string) string {
+	if len(bookHash) >= 2 {
+		return bookHash[:2]
+	}
+	return ""
+}
+
+func existingThumbnailPath(cfg config.Config, bookHash string) sql.NullString {
+	subDir := thumbnailSubDir(bookHash)
+	thumbDir := filepath.Join(thumbnailBaseDir(cfg), subDir)
+	for _, ext := range []string{".webp", ".jpg", ".jpeg", ".png", ".avif"} {
+		fileName := bookHash + ext
+		if _, err := os.Stat(filepath.Join(thumbDir, fileName)); err == nil {
+			return sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}
+		}
+	}
+	return sql.NullString{}
+}
+
+func (s *Scanner) enqueueCoverJobs(ctx context.Context, jobs []coverJob) {
+	if len(jobs) == 0 {
+		return
+	}
+	s.startCoverWorkers()
+	for _, job := range jobs {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		s.coverWG.Add(1)
+		select {
+		case s.coverQueue <- job:
+		case <-ctx.Done():
+			s.coverWG.Done()
+			return
+		}
+	}
+}
+
+func (s *Scanner) startCoverWorkers() {
+	s.coverOnce.Do(func() {
+		s.coverQueue = make(chan coverJob, 1024)
+		workers := s.currentConfig().Scanner.Workers
+		if workers <= 0 {
+			workers = runtime.NumCPU()
+		}
+		workers = workers / 2
+		if workers < 1 {
+			workers = 1
+		}
+		if workers > 4 {
+			workers = 4
+		}
+		for i := 0; i < workers; i++ {
+			go func() {
+				for job := range s.coverQueue {
+					s.runCoverJob(job)
+					s.coverWG.Done()
+				}
+			}()
+		}
+	})
+}
+
+func (s *Scanner) runCoverJob(job coverJob) {
+	ctx := job.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	cfg := s.currentConfig()
+	coverPath, err := s.generateBookThumbnail(ctx, job.candidate, cfg)
+	if err != nil {
+		slog.Warn("Failed to generate queued thumbnail", "book_id", job.bookID, "path", job.candidate.path, "error", err)
+		return
+	}
+	if !coverPath.Valid || coverPath.String == "" {
+		return
+	}
+
+	sqlStore, ok := s.store.(*database.SqlStore)
+	if !ok {
+		slog.Warn("Queued thumbnail generated but store does not support direct cover update", "book_id", job.bookID)
+		return
+	}
+	result, err := sqlStore.DB().ExecContext(ctx, `
+		UPDATE books
+		SET cover_path = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND (cover_path IS NULL OR cover_path = '')
+	`, coverPath.String, job.bookID)
+	if err != nil {
+		slog.Warn("Failed to update queued thumbnail cover path", "book_id", job.bookID, "error", err)
+		return
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return
+	}
+	if err := s.store.RefreshSeriesStats(ctx, job.seriesID); err != nil {
+		slog.Warn("Failed to refresh series stats after queued thumbnail", "series_id", job.seriesID, "error", err)
+	}
+	if s.onBatchIngested != nil {
+		s.onBatchIngested("thumbnail_updated")
+	}
+}
+
+func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config) (sql.NullString, error) {
+	if existing := existingThumbnailPath(cfg, candidate.bookHash); existing.Valid {
+		return existing, nil
+	}
+
+	arc, err := s.openArchive(candidate.path)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	defer arc.Close()
+
+	select {
+	case <-ctx.Done():
+		return sql.NullString{}, ctx.Err()
+	default:
+	}
+
+	pageData, err := arc.ReadPage(candidate.pageName)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+
+	targetFormat := cfg.Scanner.ThumbnailFormat
+	if targetFormat == "" {
+		targetFormat = "webp"
+	}
+
+	processed, contentType, err := images.ProcessImage(pageData, candidate.mediaType, images.ProcessOptions{
+		Width: 400, Quality: 82, Format: targetFormat,
+	})
+	if err != nil || len(processed) == 0 {
+		slog.Warn("Primary thumbnail format generation failed, falling back to jpeg", "format", targetFormat, "path", candidate.path, "error", err)
+		processed, contentType, err = images.ProcessImage(pageData, candidate.mediaType, images.ProcessOptions{
+			Width: 400, Quality: 82, Format: "jpeg",
+		})
+		if err != nil {
+			return sql.NullString{}, err
+		}
+	}
+	if len(processed) == 0 {
+		return sql.NullString{}, fmt.Errorf("no processed thumbnail data generated")
+	}
+
+	subDir := thumbnailSubDir(candidate.bookHash)
+	thumbDir := filepath.Join(thumbnailBaseDir(cfg), subDir)
+	if err := os.MkdirAll(thumbDir, 0755); err != nil {
+		return sql.NullString{}, err
+	}
+	fileName := candidate.bookHash + extensionFromContentType(contentType, targetFormat)
+	fullPath := filepath.Join(thumbDir, fileName)
+	if err := os.WriteFile(fullPath, processed, 0644); err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}, nil
+}
+
+func (s *Scanner) waitForCoverQueue(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		s.coverWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func extensionFromContentType(contentType, fallbackFormat string) string {

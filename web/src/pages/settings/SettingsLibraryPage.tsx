@@ -79,6 +79,22 @@ export function SettingsLibraryPage() {
 
         <div className="grid gap-4 md:grid-cols-2">
           <div>
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.scanProfile')}</label>
+            <select
+              value={config.scanner.scan_profile}
+              onChange={(e) => setConfig({ ...config, scanner: { ...config.scanner, scan_profile: e.target.value } })}
+              className={inputClassName}
+            >
+              {(capabilities?.supported_scan_profiles || ['fast_scan', 'metadata_scan', 'identity_scan', 'repair_scan']).map((profile) => (
+                <option key={profile} value={profile}>
+                  {t(`settings.library.scanProfile.${profile}`)}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">{t(`settings.library.scanProfileHint.${config.scanner.scan_profile}`)}</p>
+            <FieldErrors messages={fieldErrors('scanner.scan_profile')} />
+          </div>
+          <div>
             <label className="mb-1 block text-sm text-gray-400">{t('settings.library.scanWorkers', { count: config.scanner.workers })}</label>
             <input
               type="range"

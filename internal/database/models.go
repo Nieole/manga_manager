@@ -264,6 +264,20 @@ type SeriesRelation struct {
 	CreatedAt      sql.NullTime `json:"created_at"`
 }
 
+type SeriesStat struct {
+	SeriesID           int64        `json:"series_id"`
+	CoverPath          string       `json:"cover_path"`
+	CoverBookID        int64        `json:"cover_book_id"`
+	ReadPages          int64        `json:"read_pages"`
+	ReadBookCount      int64        `json:"read_book_count"`
+	CompletedBookCount int64        `json:"completed_book_count"`
+	LastReadAt         sql.NullTime `json:"last_read_at"`
+	LastReadBookID     int64        `json:"last_read_book_id"`
+	TagNamesCache      string       `json:"tag_names_cache"`
+	AuthorNamesCache   string       `json:"author_names_cache"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+}
+
 type SeriesTag struct {
 	SeriesID int64 `json:"series_id"`
 	TagID    int64 `json:"tag_id"`

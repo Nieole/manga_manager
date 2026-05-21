@@ -45,7 +45,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	started := time.Now()
 	ctx := r.Context()
 
-	book, err := c.store.GetBook(ctx, bookID)
+	source, err := c.getBookPageSource(ctx, bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book entity not found")
 		return
@@ -56,7 +56,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	format := r.URL.Query().Get("format") // 支持前端主动请求 webp/jpeg 降低带宽高负载
 	widthStr := r.URL.Query().Get("w")
 	heightStr := r.URL.Query().Get("h")
-	filter := r.URL.Query().Get("filter")
+	filter := normalizeServerImageFilter(r.URL.Query().Get("filter"))
 	autoCrop := r.URL.Query().Get("auto_crop") == "true"
 
 	// 构建缓存 Key（包含了全部可能改变画像最终形态的环境音阶，阻断 Waifu2x 翻页复读老图的缓存雪崩击穿）
@@ -64,11 +64,13 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	w2xScaleStr := r.URL.Query().Get("w2x_scale")
 	w2xNoiseStr := r.URL.Query().Get("w2x_noise")
 	w2xFormatStr := r.URL.Query().Get("w2x_format")
+	transform := pageImageTransformProfile(format, widthStr, heightStr, filter, autoCrop, w2xScaleStr, w2xNoiseStr, w2xFormatStr)
 	cacheKey := fmt.Sprintf("%d-%d-%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t",
-		bookID, pageNumber, book.FileModifiedAt.UnixNano(), book.Size,
+		bookID, pageNumber, source.FileModifiedAt.UnixNano(), source.Size,
 		widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr, autoCrop)
 	etag := weakETag(cacheKey)
 	if r.Header.Get("If-None-Match") == etag {
+		annotatePageImageRequest(ctx, bookID, pageNumber, true, "client", transform)
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.WriteHeader(http.StatusNotModified)
@@ -81,6 +83,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
 			contentType := http.DetectContentType(cachedData)
+			annotatePageImageRequest(ctx, bookID, pageNumber, true, "memory", transform)
 			c.logPageImageServed(bookID, pageNumber, "memory", contentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 			w.Header().Set("Content-Type", contentType) // 告别祖传写死的 jpeg 格式假传导致的前端崩溃
 			w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
@@ -92,6 +95,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		if diskPageCacheEnabled {
 			if cachedData, cachedContentType, ok := c.readDiskImageCache(cacheKey); ok {
 				c.imageCache.Add(cacheKey, cachedData)
+				annotatePageImageRequest(ctx, bookID, pageNumber, true, "disk", transform)
 				c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 				w.Header().Set("Content-Type", cachedContentType)
 				w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
@@ -103,13 +107,13 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	pageInfo, err := c.getBookArchivePage(ctx, book, pageNumber)
+	pageInfo, err := c.getBookArchiveSourcePage(ctx, source, pageNumber)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Page not found")
 			return
 		}
-		if pageNumber > book.PageCount && book.PageCount > 0 {
+		if pageNumber > source.PageCount && source.PageCount > 0 {
 			jsonError(w, http.StatusNotFound, "Page not found")
 			return
 		}
@@ -120,7 +124,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	targetPage := pageInfo.Name
 	targetMediaType := pageInfo.MediaType
 
-	archiver, err := parser.GetArchiveFromPool(book.Path)
+	archiver, err := parser.GetArchiveFromPool(source.Path)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
 		return
@@ -197,6 +201,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	if isThumbnailReq {
 		cacheSource = "processed"
 	}
+	annotatePageImageRequest(ctx, bookID, pageNumber, false, cacheSource, transform)
 	c.logPageImageServed(bookID, pageNumber, cacheSource, finalContentType, len(finalData), time.Since(started), format, filter, autoCrop)
 	w.Write(finalData)
 }
@@ -220,6 +225,38 @@ func (c *Controller) logPageImageServed(bookID, pageNumber int64, source, conten
 
 func weakETag(value string) string {
 	return `W/"` + fmt.Sprintf("%x", sha1.Sum([]byte(value))) + `"`
+}
+
+func normalizeServerImageFilter(filter string) string {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case "", "none", "nearest", "average", "bilinear":
+		return ""
+	default:
+		return filter
+	}
+}
+
+func pageImageTransformProfile(format, width, height, filter string, autoCrop bool, w2xScale, w2xNoise, w2xFormat string) string {
+	parts := make([]string, 0, 6)
+	if format != "" {
+		parts = append(parts, "format:"+format)
+	}
+	if width != "" || height != "" {
+		parts = append(parts, "resize:"+width+"x"+height)
+	}
+	if filter != "" {
+		parts = append(parts, "filter:"+filter)
+	}
+	if autoCrop {
+		parts = append(parts, "auto_crop")
+	}
+	if w2xScale != "" || w2xNoise != "" || w2xFormat != "" {
+		parts = append(parts, "ai:"+w2xScale+":"+w2xNoise+":"+w2xFormat)
+	}
+	if len(parts) == 0 {
+		return "raw"
+	}
+	return strings.Join(parts, "|")
 }
 
 func (c *Controller) processedImageCacheDir() string {

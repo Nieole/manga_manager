@@ -68,6 +68,9 @@ func ValidateConfig(cfg *Config) ValidationResult {
 	if cfg.Scanner.Workers < 0 {
 		issues = append(issues, ValidationIssue{Field: "scanner.workers", Message: "工作协程数不能小于 0。", Severity: "error"})
 	}
+	if !IsSupportedScanProfile(cfg.Scanner.ScanProfile) {
+		issues = append(issues, ValidationIssue{Field: "scanner.scan_profile", Message: "扫描等级必须是 fast_scan、metadata_scan、identity_scan 或 repair_scan。", Severity: "error"})
+	}
 	if cfg.Scanner.ArchivePoolSize < 1 {
 		issues = append(issues, ValidationIssue{Field: "scanner.archive_pool_size", Message: "归档句柄池大小至少为 1。", Severity: "error"})
 	}

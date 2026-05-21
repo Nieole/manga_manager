@@ -1,3 +1,5 @@
+import { forwardRef, useImperativeHandle, useRef } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import type { ImageFilter, Page, ScaleMode } from './types';
 import { getFilterStyle, getScaleClasses } from './helpers';
 
@@ -7,49 +9,88 @@ interface WebtoonReaderProps {
   t: Translate;
   bookId?: string;
   pages: Page[];
+  currentPageIndex: number;
   cachedPageImageUrls: Record<number, string>;
   imageFilter: ImageFilter;
   scaleMode: ScaleMode;
   doublePage: boolean;
   nextBookId: number | null;
   getImageUrl: (bookId: string | undefined, pageNum: number) => string;
+  onVisiblePageChange: (pageIndex: number) => void;
   onOpenNextBook: (bookId: number) => void;
 }
 
-export function WebtoonReader({
+export interface WebtoonReaderHandle {
+  scrollToPage: (pageNumber: number) => void;
+}
+
+export const WebtoonReader = forwardRef<WebtoonReaderHandle, WebtoonReaderProps>(function WebtoonReader({
   t,
   bookId,
   pages,
+  currentPageIndex,
   cachedPageImageUrls,
   imageFilter,
   scaleMode,
   doublePage,
   nextBookId,
   getImageUrl,
+  onVisiblePageChange,
   onOpenNextBook,
-}: WebtoonReaderProps) {
+}, ref) {
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const itemCount = pages.length + (nextBookId ? 1 : 0);
+
+  useImperativeHandle(ref, () => ({
+    scrollToPage(pageNumber: number) {
+      const index = Math.max(0, Math.min(pages.length - 1, pageNumber - 1));
+      virtuosoRef.current?.scrollToIndex({ index, align: 'start', behavior: 'auto' });
+    },
+  }), [pages.length]);
+
   return (
-    <div className="flex flex-col items-center w-full bg-komgaDark relative h-full overflow-y-auto overflow-x-hidden">
-      {pages.map((page) => (
-        <img
-          key={page.number}
-          data-page-number={page.number}
-          src={cachedPageImageUrls[page.number] || getImageUrl(bookId, page.number)}
-          loading="lazy"
-          decoding="async"
-          style={getFilterStyle(imageFilter)}
-          className={getScaleClasses(scaleMode, doublePage, 'bg-gray-900 min-h-[50vh] drop-shadow-lg max-w-[100vw]')}
-          alt={`Page ${page.number}`}
-        />
-      ))}
-      {nextBookId && (
-        <button
-          onClick={() => onOpenNextBook(nextBookId)}
-          className="my-10 px-8 py-4 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white font-bold rounded-xl shadow-2xl text-lg transition-all duration-300 hover:scale-105"
-        >
-          {t('reader.nextBook')}
-        </button>
-      )}
-    </div>
+    <Virtuoso
+      ref={virtuosoRef}
+      className="h-full w-full bg-komgaDark"
+      totalCount={itemCount}
+      initialTopMostItemIndex={Math.max(0, Math.min(currentPageIndex, pages.length - 1))}
+      increaseViewportBy={{ top: 900, bottom: 1400 }}
+      overscan={6}
+      rangeChanged={({ startIndex }) => {
+        if (startIndex < pages.length) {
+          onVisiblePageChange(startIndex);
+        }
+      }}
+      itemContent={(index) => {
+        const page = pages[index];
+        if (!page) {
+          if (!nextBookId) return null;
+          return (
+            <div className="flex justify-center py-10">
+              <button
+                onClick={() => onOpenNextBook(nextBookId)}
+                className="rounded-lg bg-komgaPrimary px-8 py-4 text-lg font-bold text-white shadow-2xl transition-all duration-300 hover:bg-komgaPrimaryHover hover:scale-105"
+              >
+                {t('reader.nextBook')}
+              </button>
+            </div>
+          );
+        }
+
+        return (
+          <div className="flex w-full justify-center">
+            <img
+              data-page-number={page.number}
+              src={cachedPageImageUrls[page.number] || getImageUrl(bookId, page.number)}
+              loading="lazy"
+              decoding="async"
+              style={getFilterStyle(imageFilter)}
+              className={getScaleClasses(scaleMode, doublePage, 'bg-gray-900 min-h-[50vh] drop-shadow-lg max-w-[100vw]')}
+              alt={`Page ${page.number}`}
+            />
+          </div>
+        );
+      }}
+    />
   );
-}
+});

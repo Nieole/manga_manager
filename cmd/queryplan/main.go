@@ -79,6 +79,12 @@ func main() {
 			expected: []string{"idx_series_library_favorite"},
 		},
 		{
+			name:     "series-stats/library/default",
+			query:    `SELECT s.id, s.name, ss.cover_path, ss.tag_names_cache, ss.read_pages FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id WHERE s.library_id = ? ORDER BY s.updated_at DESC, s.name ASC LIMIT 50`,
+			args:     []any{*libraryID},
+			expected: []string{"idx_series_library_updated_name", "idx_series_library_updated"},
+		},
+		{
 			name:     "books/series/sort",
 			query:    `SELECT id, name FROM books WHERE series_id = ? ORDER BY volume ASC, sort_number ASC, name ASC`,
 			args:     []any{*seriesID},

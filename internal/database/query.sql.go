@@ -2934,6 +2934,112 @@ func (q *Queries) MarkAIGroupingReviewCollectionsRejected(ctx context.Context, r
 	return err
 }
 
+const refreshSeriesStats = `-- name: RefreshSeriesStats :exec
+INSERT INTO series_stats (
+    series_id,
+    cover_path,
+    cover_book_id,
+    read_pages,
+    read_book_count,
+    completed_book_count,
+    last_read_at,
+    last_read_book_id,
+    tag_names_cache,
+    author_names_cache,
+    updated_at
+)
+SELECT
+    s.id,
+    COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS cover_path,
+    COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS cover_book_id,
+    COALESCE((
+        SELECT SUM(
+            CASE
+                WHEN b.last_read_page IS NULL OR b.last_read_page <= 0 THEN 0
+                WHEN b.page_count > 0 AND b.last_read_page > b.page_count THEN b.page_count
+                ELSE b.last_read_page
+            END
+        )
+        FROM books b
+        WHERE b.series_id = s.id
+    ), 0) AS read_pages,
+    COALESCE((
+        SELECT COUNT(*)
+        FROM books b
+        WHERE b.series_id = s.id AND b.last_read_page IS NOT NULL AND b.last_read_page > 0
+    ), 0) AS read_book_count,
+    COALESCE((
+        SELECT COUNT(*)
+        FROM books b
+        WHERE b.series_id = s.id AND b.page_count > 0 AND b.last_read_page >= b.page_count
+    ), 0) AS completed_book_count,
+    (
+        SELECT b.last_read_at
+        FROM books b
+        WHERE b.series_id = s.id AND b.last_read_at IS NOT NULL
+        ORDER BY b.last_read_at DESC, b.id DESC
+        LIMIT 1
+    ) AS last_read_at,
+    COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.last_read_at IS NOT NULL
+        ORDER BY b.last_read_at DESC, b.id DESC
+        LIMIT 1
+    ), 0) AS last_read_book_id,
+    COALESCE((
+        SELECT GROUP_CONCAT(name)
+        FROM (
+            SELECT DISTINCT t.name AS name
+            FROM tags t
+            JOIN series_tags st ON st.tag_id = t.id
+            WHERE st.series_id = s.id
+            ORDER BY t.name
+        )
+    ), '') AS tag_names_cache,
+    COALESCE((
+        SELECT GROUP_CONCAT(name)
+        FROM (
+            SELECT DISTINCT a.name AS name
+            FROM authors a
+            JOIN series_authors sa ON sa.author_id = a.id
+            WHERE sa.series_id = s.id
+            ORDER BY a.name
+        )
+    ), '') AS author_names_cache,
+    CURRENT_TIMESTAMP
+FROM series s
+WHERE s.id = ?
+ON CONFLICT(series_id) DO UPDATE SET
+    cover_path = excluded.cover_path,
+    cover_book_id = excluded.cover_book_id,
+    read_pages = excluded.read_pages,
+    read_book_count = excluded.read_book_count,
+    completed_book_count = excluded.completed_book_count,
+    last_read_at = excluded.last_read_at,
+    last_read_book_id = excluded.last_read_book_id,
+    tag_names_cache = excluded.tag_names_cache,
+    author_names_cache = excluded.author_names_cache,
+    updated_at = CURRENT_TIMESTAMP
+`
+
+func (q *Queries) RefreshSeriesStats(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.refreshSeriesStatsStmt, refreshSeriesStats, id)
+	return err
+}
+
 const removeReadingListItem = `-- name: RemoveReadingListItem :exec
 DELETE FROM reading_list_items WHERE reading_list_id = ? AND id = ?
 `

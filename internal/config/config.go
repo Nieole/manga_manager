@@ -30,6 +30,7 @@ type Config struct {
 	} `yaml:"logging" json:"logging"`
 	Scanner struct {
 		Workers          int    `yaml:"workers" json:"workers"`
+		ScanProfile      string `yaml:"scan_profile" json:"scan_profile"`
 		ThumbnailFormat  string `yaml:"thumbnail_format" json:"thumbnail_format"`
 		Waifu2xPath      string `yaml:"waifu2x_path" json:"waifu2x_path"`
 		RealCuganPath    string `yaml:"realcugan_path" json:"realcugan_path"`
@@ -111,7 +112,8 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Cache.Dir = "./data/cache"
 	cfg.Cache.PageDiskCacheEnabled = false
 	cfg.Logging.Level = LogLevelInfo
-	cfg.Scanner.Workers = 0              // 0 表示自动使用 runtime.NumCPU() * 2
+	cfg.Scanner.Workers = 0 // 0 表示自动使用 runtime.NumCPU() * 2
+	cfg.Scanner.ScanProfile = ScanProfileMetadata
 	cfg.Scanner.ThumbnailFormat = "webp" // 支持 webp, jpg, avif
 	cfg.Scanner.Waifu2xPath = ""
 	cfg.Scanner.RealCuganPath = ""
@@ -224,6 +226,7 @@ func NormalizeConfig(cfg *Config) {
 	if cfg.Scanner.ThumbnailFormat == "" {
 		cfg.Scanner.ThumbnailFormat = "webp"
 	}
+	cfg.Scanner.ScanProfile = NormalizeScanProfile(cfg.Scanner.ScanProfile)
 	if cfg.Scanner.ArchivePoolSize == 0 {
 		cfg.Scanner.ArchivePoolSize = 5
 	}

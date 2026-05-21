@@ -243,6 +243,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markAIGroupingReviewCollectionsRejectedStmt, err = db.PrepareContext(ctx, markAIGroupingReviewCollectionsRejected); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkAIGroupingReviewCollectionsRejected: %w", err)
 	}
+	if q.refreshSeriesStatsStmt, err = db.PrepareContext(ctx, refreshSeriesStats); err != nil {
+		return nil, fmt.Errorf("error preparing query RefreshSeriesStats: %w", err)
+	}
 	if q.removeReadingListItemStmt, err = db.PrepareContext(ctx, removeReadingListItem); err != nil {
 		return nil, fmt.Errorf("error preparing query RemoveReadingListItem: %w", err)
 	}
@@ -670,6 +673,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markAIGroupingReviewCollectionsRejectedStmt: %w", cerr)
 		}
 	}
+	if q.refreshSeriesStatsStmt != nil {
+		if cerr := q.refreshSeriesStatsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing refreshSeriesStatsStmt: %w", cerr)
+		}
+	}
 	if q.removeReadingListItemStmt != nil {
 		if cerr := q.removeReadingListItemStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing removeReadingListItemStmt: %w", cerr)
@@ -877,6 +885,7 @@ type Queries struct {
 	markAIGroupingReviewCollectionAppliedStmt   *sql.Stmt
 	markAIGroupingReviewCollectionRejectedStmt  *sql.Stmt
 	markAIGroupingReviewCollectionsRejectedStmt *sql.Stmt
+	refreshSeriesStatsStmt                      *sql.Stmt
 	removeReadingListItemStmt                   *sql.Stmt
 	searchOPDSSeriesStmt                        *sql.Stmt
 	touchCollectionStmt                         *sql.Stmt
@@ -975,6 +984,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		markAIGroupingReviewCollectionAppliedStmt:   q.markAIGroupingReviewCollectionAppliedStmt,
 		markAIGroupingReviewCollectionRejectedStmt:  q.markAIGroupingReviewCollectionRejectedStmt,
 		markAIGroupingReviewCollectionsRejectedStmt: q.markAIGroupingReviewCollectionsRejectedStmt,
+		refreshSeriesStatsStmt:                      q.refreshSeriesStatsStmt,
 		removeReadingListItemStmt:                   q.removeReadingListItemStmt,
 		searchOPDSSeriesStmt:                        q.searchOPDSSeriesStmt,
 		touchCollectionStmt:                         q.touchCollectionStmt,

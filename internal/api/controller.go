@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 
@@ -33,15 +35,18 @@ import (
 )
 
 type Controller struct {
-	store      database.Store
-	imageCache *lru.Cache[string, []byte]
-	scanner    *scanner.Scanner
-	engine     *search.Engine
-	config     *config.Manager
-	koreader   *koreader.Service
-	external   *external.Manager
-	configPath string
-	watcher    *scanner.FileWatcher
+	store               database.Store
+	imageCache          *lru.Cache[string, []byte]
+	pageCache           *lru.Cache[string, []parser.PageMetadata]
+	bookPageSourceCache *lru.Cache[int64, cachedBookPageSource]
+	progressWriteCache  *lru.Cache[int64, cachedProgressWrite]
+	scanner             *scanner.Scanner
+	engine              *search.Engine
+	config              *config.Manager
+	koreader            *koreader.Service
+	external            *external.Manager
+	configPath          string
+	watcher             *scanner.FileWatcher
 
 	// SSE Broker
 	clients        map[chan string]bool
@@ -54,9 +59,10 @@ type Controller struct {
 	recommendationsCacheTime map[string]time.Time
 	recommendationsMutex     sync.RWMutex
 
-	taskMutex sync.Mutex
-	tasks     map[string]TaskStatus
-	taskSeq   int64
+	taskMutex   sync.Mutex
+	tasks       map[string]TaskStatus
+	taskCancels map[string]context.CancelFunc
+	taskSeq     int64
 
 	openPath func(string) error
 
@@ -90,6 +96,7 @@ type TaskStatus struct {
 
 type SystemCapabilitiesResponse struct {
 	SupportedScanFormats  []string `json:"supported_scan_formats"`
+	SupportedScanProfiles []string `json:"supported_scan_profiles"`
 	SupportedLogLevels    []string `json:"supported_log_levels"`
 	DefaultScanFormats    string   `json:"default_scan_formats"`
 	DefaultScanInterval   int      `json:"default_scan_interval"`
@@ -105,11 +112,23 @@ type SystemConfigResponse struct {
 
 const maxRetainedTasks = 200
 
+const (
+	lowPriorityBookHashTaskKey   = "background_book_hash_backfill"
+	lowPriorityBookHashBatchSize = 32
+	lowPriorityBookHashBatchGap  = 100 * time.Millisecond
+)
+
 func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
+	pageCache, _ := lru.New[string, []parser.PageMetadata](128)
+	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](512)
+	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](2048)
 	c := &Controller{
 		store:                    store,
 		imageCache:               cache,
+		pageCache:                pageCache,
+		bookPageSourceCache:      bookPageSourceCache,
+		progressWriteCache:       progressWriteCache,
 		scanner:                  scan,
 		engine:                   engine,
 		config:                   cfg,
@@ -121,6 +140,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		defunctClients:           make(chan chan string),
 		messages:                 make(chan string, 64),
 		tasks:                    make(map[string]TaskStatus),
+		taskCancels:              make(map[string]context.CancelFunc),
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
 		openPath:                 openPathInDefaultFileManager,
@@ -188,6 +208,17 @@ func (c *Controller) Close() {
 		if c.watcher != nil {
 			c.watcher.Stop()
 		}
+		c.taskMutex.Lock()
+		cancels := make([]context.CancelFunc, 0, len(c.taskCancels))
+		for _, cancel := range c.taskCancels {
+			if cancel != nil {
+				cancels = append(cancels, cancel)
+			}
+		}
+		c.taskMutex.Unlock()
+		for _, cancel := range cancels {
+			cancel()
+		}
 	})
 	c.backgroundWG.Wait()
 }
@@ -243,6 +274,7 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
 	return SystemCapabilitiesResponse{
 		SupportedScanFormats:  append([]string{}, config.SupportedScanFormats...),
+		SupportedScanProfiles: append([]string{}, config.SupportedScanProfiles...),
 		SupportedLogLevels:    append([]string{}, config.SupportedLogLevels...),
 		DefaultScanFormats:    config.DefaultScanFormatsCSV,
 		DefaultScanInterval:   config.DefaultScanInterval,
@@ -416,6 +448,7 @@ func (c *Controller) startDaemon() {
 				slog.Info("Triggering auto-scan for library from Daemon", "library_id", lib.ID, "path", lib.Path)
 				c.runBackground(func() {
 					id, path := lib.ID, lib.Path
+					defer c.purgeReadingPathCaches()
 					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
 					if err != nil {
 						slog.Error("Auto-scan failed", "library_id", id, "error", err)
@@ -435,6 +468,14 @@ func (c *Controller) PublishEvent(event string) {
 }
 
 func (c *Controller) startTask(key, taskType, message string, total int) bool {
+	return c.startTaskWithOptions(key, taskType, message, total, false)
+}
+
+func (c *Controller) startCancelableTask(key, taskType, message string, total int) bool {
+	return c.startTaskWithOptions(key, taskType, message, total, true)
+}
+
+func (c *Controller) startTaskWithOptions(key, taskType, message string, total int, canCancel bool) bool {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -458,7 +499,7 @@ func (c *Controller) startTask(key, taskType, message string, total int) bool {
 		Message:   message,
 		Current:   0,
 		Total:     total,
-		CanCancel: false,
+		CanCancel: canCancel,
 		Retryable: isRetryableTaskType(taskType),
 		StartedAt: now,
 		UpdatedAt: now,
@@ -469,6 +510,25 @@ func (c *Controller) startTask(key, taskType, message string, total int) bool {
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 	return true
+}
+
+func (c *Controller) newTaskContext(key string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	c.taskMutex.Lock()
+	if c.taskCancels == nil {
+		c.taskCancels = make(map[string]context.CancelFunc)
+	}
+	c.taskCancels[key] = cancel
+	c.taskMutex.Unlock()
+
+	cleanup := func() {
+		c.taskMutex.Lock()
+		delete(c.taskCancels, key)
+		c.taskMutex.Unlock()
+	}
+
+	return ctx, cleanup
 }
 
 func (c *Controller) updateTask(key string, current, total int, message string) {
@@ -535,6 +595,7 @@ func (c *Controller) completeTask(key, status, message string) {
 	if status != "failed" {
 		task.Error = ""
 	}
+	task.CanCancel = false
 	if task.Total > 0 {
 		task.Current = task.Total
 	}
@@ -543,6 +604,7 @@ func (c *Controller) completeTask(key, status, message string) {
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
+	delete(c.taskCancels, key)
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -559,11 +621,13 @@ func (c *Controller) failTaskWithError(key, message, taskError string) {
 	task.Status = "failed"
 	task.Message = message
 	task.Error = taskError
+	task.CanCancel = false
 	task.UpdatedAt = now
 	task.FinishedAt = &now
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
+	delete(c.taskCancels, key)
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -635,7 +699,7 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	records, err := c.store.ListTasks(r.Context(), database.TaskFilters{
+	items, err := c.listTaskStatuses(r.Context(), database.TaskFilters{
 		Status:  statusFilter,
 		Scope:   scopeFilter,
 		Type:    typeFilter,
@@ -646,6 +710,14 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list tasks")
 		return
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) listTaskStatuses(ctx context.Context, filters database.TaskFilters) ([]TaskStatus, error) {
+	records, err := c.store.ListTasks(ctx, filters)
+	if err != nil {
+		return nil, err
 	}
 	items := make([]TaskStatus, 0, len(records))
 	seen := make(map[string]bool, len(records))
@@ -663,21 +735,21 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		if seen[task.Key] {
 			continue
 		}
-		if statusFilter != "" && task.Status != statusFilter {
+		if filters.Status != "" && task.Status != filters.Status {
 			continue
 		}
-		if scopeFilter != "" && task.Scope != scopeFilter {
+		if filters.Scope != "" && task.Scope != filters.Scope {
 			continue
 		}
-		if typeFilter != "" && task.Type != typeFilter {
+		if filters.Type != "" && task.Type != filters.Type {
 			continue
 		}
-		if scopeID != nil && (task.ScopeID == nil || *task.ScopeID != *scopeID) {
+		if filters.ScopeID != nil && (task.ScopeID == nil || *task.ScopeID != *filters.ScopeID) {
 			continue
 		}
-		if queryFilter != "" {
+		if filters.Query != "" {
 			haystack := strings.ToLower(task.Key + " " + task.Message + " " + task.Error)
-			if !strings.Contains(haystack, queryFilter) {
+			if !strings.Contains(haystack, strings.ToLower(filters.Query)) {
 				continue
 			}
 		}
@@ -697,10 +769,10 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		return items[i].Sequence > items[j].Sequence
 	})
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
+	if filters.Limit > 0 && len(items) > filters.Limit {
+		items = items[:filters.Limit]
 	}
-	jsonResponse(w, http.StatusOK, items)
+	return items, nil
 }
 
 func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
@@ -858,6 +930,51 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task retry queued"})
 }
 
+func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
+	taskKey := chi.URLParam(r, "taskKey")
+	if taskKey == "" {
+		jsonError(w, http.StatusBadRequest, "Missing task key")
+		return
+	}
+
+	c.taskMutex.Lock()
+	task, ok := c.tasks[taskKey]
+	if !ok {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+	if task.Status != "running" {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task is not running")
+		return
+	}
+	if !task.CanCancel {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task cannot be cancelled")
+		return
+	}
+	cancel, ok := c.taskCancels[taskKey]
+	if !ok || cancel == nil {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task cancellation is not available")
+		return
+	}
+
+	task.CanCancel = false
+	task.Message = "正在取消任务..."
+	task.UpdatedAt = time.Now()
+	c.taskSeq++
+	task.Sequence = c.taskSeq
+	c.tasks[taskKey] = task
+	c.persistTaskStatus(task)
+	c.publishTaskStatusLocked(task)
+	c.taskMutex.Unlock()
+
+	cancel()
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task cancellation requested"})
+}
+
 func (c *Controller) SetupRoutes(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
 		c.setupMihonRoutes(r)
@@ -934,6 +1051,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/config", c.getSystemConfig)
 		r.Get("/system/capabilities", c.getSystemCapabilities)
 		r.Get("/system/client-connections", c.getClientConnections)
+		r.Get("/system/performance", c.getSystemPerformance)
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Get("/system/logs", c.getSystemLogs)
 		r.Get("/system/page-cache", c.getPageCacheStats)
@@ -941,6 +1059,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/tasks", c.listTasks)
 		r.Delete("/system/tasks", c.clearTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
+		r.Post("/system/tasks/{taskKey}/cancel", c.cancelTask)
 		r.Get("/system/koreader", c.getKOReaderSettings)
 		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
 		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)
@@ -1203,6 +1322,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	// 触发异步扫描任务，不阻塞前端 API 响应
 	c.runBackground(func() {
 		// 使用独立 context 避免跟随请求自动取消，创建库默认全量
+		defer c.purgeReadingPathCaches()
 		err := c.scanner.ScanLibrary(context.Background(), createdLib.ID, req.Path, false)
 		if err != nil {
 			// 在生产环境需要接入日志中心打印
@@ -1298,18 +1418,29 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) bool {
 	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
-	if !c.startTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 1) {
+	if !c.startCancelableTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 1) {
 		return false
 	}
-	c.setTaskMetadata(taskKey, map[string]string{"force": strconv.FormatBool(force)}, lib.Name)
+	c.setTaskMetadata(taskKey, map[string]string{
+		"force":        strconv.FormatBool(force),
+		"scan_profile": c.currentConfig().Scanner.ScanProfile,
+	}, lib.Name)
+	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
 
 	c.runBackground(func() {
-		err := c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, force)
+		defer c.purgeReadingPathCaches()
+		err := c.scanner.ScanLibrary(taskCtx, lib.ID, lib.Path, force)
+		cleanupCancel()
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", fmt.Sprintf("资源库扫描已取消: %s", lib.Name))
+			return
+		}
 		if err != nil {
 			c.failTaskWithError(taskKey, fmt.Sprintf("资源库扫描失败: %v", err), err.Error())
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("资源库扫描完成: %s", lib.Name))
+		c.launchLowPriorityBookHashBackfillTask("scan_library")
 	})
 
 	return true
@@ -1341,7 +1472,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
-	if !c.startTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 1) {
+	if !c.startCancelableTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 1) {
 		return false
 	}
 	scopeName := ""
@@ -1352,16 +1483,27 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 			scopeName = series.Name
 		}
 	}
-	c.setTaskMetadata(taskKey, map[string]string{"force": strconv.FormatBool(force)}, scopeName)
+	c.setTaskMetadata(taskKey, map[string]string{
+		"force":        strconv.FormatBool(force),
+		"scan_profile": c.currentConfig().Scanner.ScanProfile,
+	}, scopeName)
+	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
 
 	c.runBackground(func() {
-		err := c.scanner.ScanSeries(context.Background(), seriesID, force)
+		defer c.purgeReadingPathCaches()
+		err := c.scanner.ScanSeries(taskCtx, seriesID, force)
+		cleanupCancel()
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", fmt.Sprintf("系列扫描已取消 #%d", seriesID))
+			return
+		}
 		if err != nil {
 			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
 			c.failTaskWithError(taskKey, fmt.Sprintf("系列扫描失败: %v", err), err.Error())
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("系列扫描完成 #%d", seriesID))
+		c.launchLowPriorityBookHashBackfillTask("scan_series")
 	})
 
 	return true
@@ -1691,7 +1833,7 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		return nil
+		return q.RefreshSeriesStats(r.Context(), seriesID)
 	})
 
 	if err != nil {
@@ -1750,11 +1892,38 @@ func (c *Controller) getSeriesLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 type SeriesContextResponse struct {
-	Series  database.Series       `json:"series"`
-	Books   []database.Book       `json:"books"`
-	Tags    []database.Tag        `json:"tags"`
-	Authors []database.Author     `json:"authors"`
-	Links   []database.SeriesLink `json:"links"`
+	Series            database.Series         `json:"series"`
+	Books             []database.Book         `json:"books"`
+	Tags              []database.Tag          `json:"tags"`
+	Authors           []database.Author       `json:"authors"`
+	Links             []database.SeriesLink   `json:"links"`
+	Volumes           []SeriesVolumeSummary   `json:"volumes"`
+	Relations         []SeriesRelation        `json:"relations"`
+	MetadataReview    metadataReviewResponse  `json:"metadata_review"`
+	MetadataSummary   SeriesMetadataSummary   `json:"metadata_summary"`
+	FailedTasks       []TaskStatus            `json:"failed_tasks"`
+	FailedTaskSummary SeriesFailedTaskSummary `json:"failed_task_summary"`
+}
+
+type SeriesVolumeSummary struct {
+	Name        string          `json:"name"`
+	BookCount   int             `json:"book_count"`
+	TotalPages  int64           `json:"total_pages"`
+	ReadPages   int64           `json:"read_pages"`
+	CoverBookID int64           `json:"cover_book_id,omitempty"`
+	CoverPath   sql.NullString  `json:"cover_path"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	Books       []database.Book `json:"books,omitempty"`
+}
+
+type SeriesFailedTaskSummary struct {
+	Count    int        `json:"count"`
+	LatestAt *time.Time `json:"latest_at,omitempty"`
+}
+
+type SeriesMetadataSummary struct {
+	PendingReviewCount int `json:"pending_review_count"`
+	ProvenanceCount    int `json:"provenance_count"`
 }
 
 func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
@@ -1809,13 +1978,110 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		links = []database.SeriesLink{}
 	}
 
-	jsonResponse(w, http.StatusOK, SeriesContextResponse{
-		Series:  series,
-		Books:   books,
-		Tags:    tags,
-		Authors: authors,
-		Links:   links,
+	relations, err := c.loadSeriesRelations(ctx, seriesID)
+	if err != nil {
+		slog.Error("Failed to fetch relations for context", "series_id", seriesID, "error", err)
+		relations = []SeriesRelation{}
+	}
+
+	metadataReview, err := c.loadSeriesMetadataReview(ctx, seriesID)
+	if err != nil {
+		slog.Error("Failed to fetch metadata review for context", "series_id", seriesID, "error", err)
+		metadataReview = emptyMetadataReviewResponse()
+	}
+
+	failedTasks, err := c.listTaskStatuses(ctx, database.TaskFilters{
+		Status:  "failed",
+		Scope:   "series",
+		ScopeID: &seriesID,
+		Limit:   5,
 	})
+	if err != nil {
+		slog.Error("Failed to fetch failed tasks for context", "series_id", seriesID, "error", err)
+		failedTasks = []TaskStatus{}
+	}
+	if failedTasks == nil {
+		failedTasks = []TaskStatus{}
+	}
+
+	jsonResponse(w, http.StatusOK, SeriesContextResponse{
+		Series:            series,
+		Books:             books,
+		Tags:              tags,
+		Authors:           authors,
+		Links:             links,
+		Volumes:           buildSeriesVolumeSummaries(books, false),
+		Relations:         relations,
+		MetadataReview:    metadataReview,
+		MetadataSummary:   summarizeSeriesMetadata(metadataReview),
+		FailedTasks:       failedTasks,
+		FailedTaskSummary: summarizeFailedTasks(failedTasks),
+	})
+}
+
+func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []SeriesVolumeSummary {
+	type volumeAccumulator struct {
+		summary SeriesVolumeSummary
+		books   []database.Book
+	}
+	volumeMap := make(map[string]*volumeAccumulator)
+	for _, book := range books {
+		volumeName := strings.TrimSpace(book.Volume)
+		if volumeName == "" {
+			continue
+		}
+		acc, ok := volumeMap[volumeName]
+		if !ok {
+			acc = &volumeAccumulator{summary: SeriesVolumeSummary{Name: volumeName}}
+			volumeMap[volumeName] = acc
+		}
+		acc.summary.BookCount++
+		acc.summary.TotalPages += book.PageCount
+		if book.LastReadPage.Valid {
+			readPages := book.LastReadPage.Int64
+			if book.PageCount > 0 && readPages > int64(book.PageCount) {
+				readPages = int64(book.PageCount)
+			}
+			acc.summary.ReadPages += readPages
+		}
+		if acc.summary.CoverBookID == 0 && book.CoverPath.Valid && strings.TrimSpace(book.CoverPath.String) != "" {
+			acc.summary.CoverBookID = book.ID
+			acc.summary.CoverPath = book.CoverPath
+			acc.summary.UpdatedAt = book.UpdatedAt
+		}
+		if includeBooks {
+			acc.books = append(acc.books, book)
+		}
+	}
+	items := make([]SeriesVolumeSummary, 0, len(volumeMap))
+	for _, acc := range volumeMap {
+		if includeBooks {
+			acc.summary.Books = acc.books
+		}
+		items = append(items, acc.summary)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+	})
+	return items
+}
+
+func summarizeFailedTasks(tasks []TaskStatus) SeriesFailedTaskSummary {
+	summary := SeriesFailedTaskSummary{Count: len(tasks)}
+	for _, task := range tasks {
+		if summary.LatestAt == nil || task.UpdatedAt.After(*summary.LatestAt) {
+			updatedAt := task.UpdatedAt
+			summary.LatestAt = &updatedAt
+		}
+	}
+	return summary
+}
+
+func summarizeSeriesMetadata(review metadataReviewResponse) SeriesMetadataSummary {
+	return SeriesMetadataSummary{
+		PendingReviewCount: len(review.Reviews),
+		ProvenanceCount:    len(review.Provenance),
+	}
 }
 
 func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {
@@ -2033,6 +2299,13 @@ type UpdateProgressRequest struct {
 	Page int64 `json:"page"`
 }
 
+const progressWriteThrottleWindow = 2 * time.Second
+
+type cachedProgressWrite struct {
+	page      int64
+	updatedAt time.Time
+}
+
 func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	bookID, err := parseID(r, "bookId")
@@ -2045,6 +2318,16 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+
+	if c.progressWriteCache != nil {
+		if cached, ok := c.progressWriteCache.Get(bookID); ok && cached.page == req.Page && time.Since(cached.updatedAt) < progressWriteThrottleWindow {
+			jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
+			return
+		}
 	}
 
 	// 校验页码合法性
@@ -2062,6 +2345,18 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		validPage = 1
 	}
 
+	previousPage := int64(0)
+	if book.LastReadPage.Valid {
+		previousPage = book.LastReadPage.Int64
+	}
+	if book.LastReadPage.Valid && previousPage == validPage && book.LastReadAt.Valid && time.Since(book.LastReadAt.Time) < progressWriteThrottleWindow {
+		if c.progressWriteCache != nil {
+			c.progressWriteCache.Add(bookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
+		}
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
+		return
+	}
+
 	params := database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
@@ -2072,10 +2367,19 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusInternalServerError, "Failed to update progress")
 		return
 	}
+	if c.progressWriteCache != nil {
+		c.progressWriteCache.Add(bookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
+	}
 
-	// 记录阅读活动到 reading_activity 表
-	if err := c.store.LogReadingActivity(ctx, bookID, int(validPage)); err != nil {
-		slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
+	// 阅读活动只记录前进页，避免 Webtoon 滚动和重复上报刷高活动写入。
+	if validPage > previousPage {
+		if err := c.store.LogReadingActivity(ctx, bookID, int(validPage)); err != nil {
+			slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
+		}
+	} else if !book.LastReadPage.Valid {
+		if err := c.store.LogReadingActivity(ctx, bookID, int(validPage)); err != nil {
+			slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
+		}
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})
@@ -2403,7 +2707,10 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 	libs, err := c.store.ListLibraries(ctx)
 	if err == nil {
 		for _, lib := range libs {
-			go c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, true)
+			go func(lib database.Library) {
+				defer c.purgeReadingPathCaches()
+				c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, true)
+			}(lib)
 		}
 	}
 }
@@ -2532,6 +2839,112 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 			afterID = book.ID
 			if progress != nil {
 				progress(updated, total, fmt.Sprintf("已重建 %d / %d 本书籍的 quick_hash", updated, total))
+			}
+		}
+	}
+	return updated, total, nil
+}
+
+func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
+	cfg := c.currentConfig()
+	if !cfg.KOReader.Enabled || cfg.KOReader.MatchMode != config.KOReaderMatchModeBinaryHash {
+		return false
+	}
+
+	missingCount, err := c.store.CountBooksMissingIdentity(context.Background(), config.KOReaderMatchModeBinaryHash)
+	if err != nil {
+		slog.Warn("Failed to count missing full hashes for background backfill", "error", err)
+		return false
+	}
+	if missingCount == 0 {
+		return false
+	}
+
+	if !c.startCancelableTask(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "开始后台低优先级补算 KOReader 二进制哈希", int(missingCount)) {
+		return false
+	}
+	c.setTaskMetadata(lowPriorityBookHashTaskKey, map[string]string{
+		"match_mode": config.KOReaderMatchModeBinaryHash,
+		"profile":    "full_hash_low_priority",
+		"reason":     reason,
+	}, "系统")
+	taskCtx, cleanupCancel := c.newTaskContext(lowPriorityBookHashTaskKey)
+
+	c.runBackground(func() {
+		updated, total, err := c.runBackfillFullHashesLowPriority(taskCtx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, message string) {
+			c.updateTask(lowPriorityBookHashTaskKey, current, total, message)
+		})
+		cleanupCancel()
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(lowPriorityBookHashTaskKey, "cancelled", "后台 KOReader 二进制哈希补算已取消")
+			return
+		}
+		if err != nil {
+			c.failTaskWithError(lowPriorityBookHashTaskKey, fmt.Sprintf("后台 KOReader 二进制哈希补算失败: %v", err), err.Error())
+			return
+		}
+		c.finishTask(lowPriorityBookHashTaskKey, fmt.Sprintf("后台 KOReader 二进制哈希补算完成，已更新 %d / %d 本书籍", updated, total))
+	})
+	return true
+}
+
+func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, batchGap time.Duration, progress func(current, total int, message string)) (int, int, error) {
+	if limit <= 0 {
+		limit = lowPriorityBookHashBatchSize
+	}
+	missingCount, err := c.store.CountBooksMissingIdentity(ctx, config.KOReaderMatchModeBinaryHash)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	total := int(missingCount)
+	updated := 0
+	var afterID int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return updated, total, err
+		}
+		books, err := c.store.ListBooksMissingIdentityBatch(ctx, config.KOReaderMatchModeBinaryHash, afterID, limit)
+		if err != nil {
+			return updated, total, err
+		}
+		if len(books) == 0 {
+			break
+		}
+
+		for _, book := range books {
+			if err := ctx.Err(); err != nil {
+				return updated, total, err
+			}
+			fileHash, err := koreader.FingerprintFile(book.Path)
+			if err != nil {
+				slog.Warn("Failed to backfill full book hash", "book_id", book.ID, "path", book.Path, "error", err)
+				afterID = book.ID
+				continue
+			}
+			if err := c.store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
+				ID:       book.ID,
+				FileHash: fileHash,
+			}); err != nil {
+				return updated, total, err
+			}
+
+			updated++
+			afterID = book.ID
+			if progress != nil {
+				progress(updated, total, fmt.Sprintf("后台低优先级补算 %d / %d 本书籍的 full hash", updated, total))
+			}
+		}
+
+		if batchGap > 0 {
+			timer := time.NewTimer(batchGap)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return updated, total, ctx.Err()
 			}
 		}
 	}

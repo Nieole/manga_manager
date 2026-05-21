@@ -13,6 +13,7 @@ cache:
     page_disk_cache_enabled: false
 scanner:
     workers: 0
+    scan_profile: metadata_scan
     thumbnail_format: webp
     waifu2x_path: ""
     realcugan_path: ""

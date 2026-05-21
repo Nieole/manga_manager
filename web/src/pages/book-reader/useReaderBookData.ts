@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import type { ReaderBookCache } from './usePageImageCache';
-import type { Page, ReaderBookInfo, ReadMode } from './types';
+import type { Page, ReaderBookInfo } from './types';
 
 interface UseReaderBookDataOptions {
   bookId?: string;
   currentBookIdRef: {
     current: string | null;
-  };
-  readModeRef: {
-    current: ReadMode;
   };
   tRef: {
     current: (key: string) => string;
@@ -25,7 +22,6 @@ interface UseReaderBookDataOptions {
 export function useReaderBookData({
   bookId,
   currentBookIdRef,
-  readModeRef,
   tRef,
   getBookCache,
   setCachedPageImageUrls,
@@ -144,17 +140,7 @@ export function useReaderBookData({
         const safePage = Math.min(lastPage, sorted.length > 0 ? sorted.length : lastPage);
         const targetIdx = safePage - 1;
         setSliderValue(safePage);
-
-        if (readModeRef.current === 'paged') {
-          setCurrentPageIndex(Math.max(0, targetIdx));
-        } else {
-          setTimeout(() => {
-            const targetImg = document.querySelector(`img[data-page-number="${safePage}"]`);
-            if (targetImg) {
-              targetImg.scrollIntoView({ behavior: 'auto', block: 'start' });
-            }
-          }, 500);
-        }
+        setCurrentPageIndex(Math.max(0, targetIdx));
       }
 
       setLoading(false);
@@ -178,7 +164,6 @@ export function useReaderBookData({
     fetchBookInfoForBook,
     fetchNextBookIdForBook,
     fetchPagesForBook,
-    readModeRef,
     retainBookCaches,
     setCachedPageImageUrls,
     setCurrentPageIndex,

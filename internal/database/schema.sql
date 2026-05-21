@@ -50,6 +50,25 @@ CREATE INDEX IF NOT EXISTS idx_series_library_pages ON series(library_id, total_
 CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_favorite, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name);
 
+CREATE TABLE IF NOT EXISTS series_stats (
+    series_id INTEGER PRIMARY KEY,
+    cover_path TEXT NOT NULL DEFAULT '',
+    cover_book_id INTEGER NOT NULL DEFAULT 0,
+    read_pages INTEGER NOT NULL DEFAULT 0,
+    read_book_count INTEGER NOT NULL DEFAULT 0,
+    completed_book_count INTEGER NOT NULL DEFAULT 0,
+    last_read_at DATETIME,
+    last_read_book_id INTEGER NOT NULL DEFAULT 0,
+    tag_names_cache TEXT NOT NULL DEFAULT '',
+    author_names_cache TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_series_stats_last_read ON series_stats(last_read_at);
+CREATE INDEX IF NOT EXISTS idx_series_stats_read_pages ON series_stats(read_pages);
+CREATE INDEX IF NOT EXISTS idx_series_stats_completed ON series_stats(completed_book_count);
+
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,

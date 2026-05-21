@@ -146,3 +146,41 @@ export interface MetadataReviewResponse {
   reviews: MetadataReview[];
   provenance: MetadataProvenance[];
 }
+
+export interface SeriesFailedTask {
+  key: string;
+  type: string;
+  scope_name?: string;
+  message: string;
+  error?: string;
+  retryable: boolean;
+  updated_at: string;
+}
+
+export interface SeriesVolumeSummary {
+  name: string;
+  book_count: number;
+  total_pages: number;
+  read_pages: number;
+  cover_book_id?: number;
+  cover_path?: NullString;
+  updated_at?: string;
+}
+
+export interface SeriesMetadataSummary {
+  pending_review_count: number;
+  provenance_count: number;
+}
+
+export interface SeriesContextResponse {
+  series: Series;
+  books: Book[];
+  tags: MetaTag[];
+  authors: Author[];
+  links: SeriesLink[];
+  volumes?: SeriesVolumeSummary[];
+  relations?: SeriesRelation[];
+  metadata_review?: MetadataReviewResponse;
+  metadata_summary?: SeriesMetadataSummary;
+  failed_tasks?: SeriesFailedTask[];
+}

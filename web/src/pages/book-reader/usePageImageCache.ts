@@ -23,6 +23,10 @@ function createReaderBookCache(): ReaderBookCache {
   };
 }
 
+function isServerSideImageFilter(imageFilter: ImageFilter) {
+  return !['none', 'nearest', 'average', 'bilinear'].includes(imageFilter);
+}
+
 interface UsePageImageCacheOptions {
   imageFilter: ImageFilter;
   w2xScale: number;
@@ -69,7 +73,7 @@ export function usePageImageCache({
 
   const getImageUrlForBook = useCallback((targetBookId: string, pageNum: number) => {
     const params = new URLSearchParams();
-    if (imageFilter && imageFilter !== 'none') {
+    if (imageFilter && isServerSideImageFilter(imageFilter)) {
       params.set('filter', imageFilter);
       if (imageFilter === 'waifu2x' || imageFilter === 'realcugan') {
         params.set('w2x_scale', String(w2xScale));

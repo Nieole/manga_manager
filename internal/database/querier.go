@@ -82,6 +82,7 @@ type Querier interface {
 	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) error
 	MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error
 	MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error
+	RefreshSeriesStats(ctx context.Context, id int64) error
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
 	SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error)
 	TouchCollection(ctx context.Context, id int64) error

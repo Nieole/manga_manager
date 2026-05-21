@@ -41,6 +41,9 @@ func TestNormalizeConfigDefaultsLogLevel(t *testing.T) {
 	if len(cfg.Server.AllowedOrigins) != 2 {
 		t.Fatalf("expected default CORS origins, got %+v", cfg.Server.AllowedOrigins)
 	}
+	if cfg.Scanner.ScanProfile != ScanProfileMetadata {
+		t.Fatalf("expected default scan profile %q, got %q", ScanProfileMetadata, cfg.Scanner.ScanProfile)
+	}
 }
 
 func TestNormalizeConfigCleansAllowedOrigins(t *testing.T) {
@@ -57,6 +60,15 @@ func TestNormalizeConfigCleansAllowedOrigins(t *testing.T) {
 		if cfg.Server.AllowedOrigins[i] != want[i] {
 			t.Fatalf("expected origin %d to be %q, got %q", i, want[i], cfg.Server.AllowedOrigins[i])
 		}
+	}
+}
+
+func TestNormalizeScanProfile(t *testing.T) {
+	if got := NormalizeScanProfile(" FAST_SCAN "); got != ScanProfileFast {
+		t.Fatalf("expected fast scan profile, got %q", got)
+	}
+	if got := NormalizeScanProfile("unknown"); got != ScanProfileMetadata {
+		t.Fatalf("expected unknown scan profile to fall back to metadata, got %q", got)
 	}
 }
 

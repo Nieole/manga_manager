@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, AlertTriangle, FolderPlus, Settings as SettingsIcon } from 'lucide-react';
+import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, AlertTriangle, FolderPlus, Settings as SettingsIcon, Gauge, Timer, ServerCrash, Route as RouteIcon } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskTypeLabel } from '../i18n/task';
 
@@ -76,6 +76,66 @@ interface LibraryOverview {
     koreader_sync_enabled?: boolean;
 }
 
+interface PerformanceRoute {
+    route: string;
+    path: string;
+    count: number;
+    errors: number;
+    slow: number;
+    average_ms: number;
+    p95_ms: number;
+    max_ms: number;
+    last_seen: string;
+    last_status: number;
+    last_path: string;
+}
+
+interface PerformanceTransform {
+    transform: string;
+    count: number;
+    cache_hits: number;
+    average_ms: number;
+    p95_ms: number;
+    max_ms: number;
+}
+
+interface PerformanceEvent {
+    time: string;
+    method: string;
+    path: string;
+    route: string;
+    status: number;
+    bytes: number;
+    duration_ms: number;
+    remote_ip: string;
+}
+
+interface PerformanceSummary {
+    sample_count: number;
+    slow_threshold_ms: number;
+    total_requests: number;
+    error_requests: number;
+    slow_requests: number;
+    total_bytes: number;
+    cache_hits: number;
+    page_image_requests: number;
+    page_image_cache_hits: number;
+    average_ms: number;
+    p95_ms: number;
+    max_ms: number;
+    routes: PerformanceRoute[];
+    transforms: PerformanceTransform[];
+    recent_slow: PerformanceEvent[];
+    recent_errors: PerformanceEvent[];
+    protocol_counts: {
+        api: number;
+        opds: number;
+        mihon: number;
+        koreader: number;
+        other: number;
+    };
+}
+
 export default function Dashboard() {
     const { t, formatNumber } = useI18n();
     const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -85,6 +145,7 @@ export default function Dashboard() {
     const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
     const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
     const [koreaderOverview, setKOReaderOverview] = useState<KOReaderOverview | null>(null);
+    const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const scrollRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
@@ -97,8 +158,9 @@ export default function Dashboard() {
             axios.get('/api/system/tasks').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
             axios.get('/api/stats/activity-heatmap?weeks=52').catch(() => ({ data: [] })),
-            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, match_mode: 'binary_hash', path_ignore_extension: false, path_match_depth: 2, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } }))
-        ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes, koreaderRes]) => {
+            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, match_mode: 'binary_hash', path_ignore_extension: false, path_match_depth: 2, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } })),
+            axios.get('/api/system/performance').catch(() => ({ data: null })),
+        ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes, koreaderRes, performanceRes]) => {
             if (!active) return;
             setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
@@ -106,6 +168,7 @@ export default function Dashboard() {
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
             setKOReaderOverview(koreaderRes.data || null);
+            setPerformance(performanceRes.data || null);
         }).catch(console.error).finally(() => {
             if (active) setLoading(false);
         });
@@ -269,6 +332,8 @@ export default function Dashboard() {
                     />
                 </div>
             )}
+
+            <PerformancePanel performance={performance} />
 
             <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
                 <div className="flex items-center justify-between gap-3">
@@ -568,6 +633,165 @@ function MiniStat({ label, value, accent }: { label: string; value: string | num
             <p className="mt-1 text-xs text-gray-400">{label}</p>
         </div>
     );
+}
+
+function PerformancePanel({ performance }: { performance: PerformanceSummary | null }) {
+    const { t, formatNumber } = useI18n();
+    const navigate = useNavigate();
+    const sampleCount = performance?.sample_count ?? 0;
+    const errorRate = performance && performance.total_requests > 0
+        ? Math.round((performance.error_requests / performance.total_requests) * 100)
+        : 0;
+    const slowRate = performance && performance.total_requests > 0
+        ? Math.round((performance.slow_requests / performance.total_requests) * 100)
+        : 0;
+    const pageCacheHitRate = performance && performance.page_image_requests > 0
+        ? Math.round((performance.page_image_cache_hits / performance.page_image_requests) * 100)
+        : 0;
+    const topRoutes = performance?.routes?.slice(0, 4) ?? [];
+    const topTransforms = performance?.transforms?.slice(0, 4) ?? [];
+    const recentEvents = [
+        ...(performance?.recent_errors ?? []).map((event) => ({ ...event, kind: 'error' as const })),
+        ...(performance?.recent_slow ?? []).map((event) => ({ ...event, kind: 'slow' as const })),
+    ]
+        .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+        .slice(0, 4);
+
+    return (
+        <section className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="rounded-xl border border-cyan-400/20 bg-black/20 p-2 text-cyan-300">
+                        <Gauge className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <h2 className="text-lg font-semibold text-white">{t('dashboard.performance.title')}</h2>
+                        <p className="mt-1 text-sm text-gray-300">
+                            {sampleCount > 0
+                                ? t('dashboard.performance.summary', {
+                                    count: formatNumber(sampleCount),
+                                    threshold: performance?.slow_threshold_ms ?? 0,
+                                })
+                                : t('dashboard.performance.empty')}
+                        </p>
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => navigate('/logs')}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-400/20 bg-black/20 px-3 py-2 text-xs font-medium text-cyan-100 hover:bg-black/30"
+                >
+                    <RouteIcon className="h-3.5 w-3.5" />
+                    {t('dashboard.performance.openLogs')}
+                </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-5">
+                <MiniStat label={t('dashboard.performance.avg')} value={`${performance?.average_ms ?? 0}ms`} accent="text-cyan-200" />
+                <MiniStat label={t('dashboard.performance.p95')} value={`${performance?.p95_ms ?? 0}ms`} accent="text-blue-200" />
+                <MiniStat label={t('dashboard.performance.slowRate')} value={`${slowRate}%`} accent="text-amber-200" />
+                <MiniStat label={t('dashboard.performance.pageCacheHitRate')} value={`${pageCacheHitRate}%`} accent="text-emerald-200" />
+                <MiniStat label={t('dashboard.performance.errorRate')} value={`${errorRate}%`} accent="text-red-200" />
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                        <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+                            <Timer className="h-4 w-4 text-cyan-300" />
+                            {t('dashboard.performance.hotRoutes')}
+                        </h3>
+                        <span className="text-xs text-gray-500">{formatBytes(performance?.total_bytes ?? 0)}</span>
+                    </div>
+                    {topRoutes.length > 0 ? (
+                        <div className="space-y-2">
+                            {topRoutes.map((route) => (
+                                <div key={`${route.route}-${route.last_path}`} className="grid gap-3 rounded-lg border border-white/5 bg-gray-950/40 p-3 md:grid-cols-[1fr_auto]">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <p className="truncate text-sm font-medium text-gray-100">{route.route || route.path}</p>
+                                            {route.errors > 0 && <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-200">{route.errors}</span>}
+                                            {route.slow > 0 && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-200">{route.slow}</span>}
+                                        </div>
+                                        <p className="mt-1 truncate text-xs text-gray-500">{route.last_path}</p>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2 text-right text-xs md:min-w-[170px]">
+                                        <span className="text-gray-400">{t('dashboard.performance.countValue', { count: route.count })}</span>
+                                        <span className="text-cyan-200">P95 {route.p95_ms}ms</span>
+                                        <span className="text-gray-400">Max {route.max_ms}ms</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="rounded-lg border border-white/5 bg-gray-950/40 p-4 text-sm text-gray-500">{t('dashboard.performance.noRoutes')}</p>
+                    )}
+                </div>
+
+                <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+                            <Gauge className="h-4 w-4 text-emerald-300" />
+                            {t('dashboard.performance.transforms')}
+                        </h3>
+                        {topTransforms.length > 0 ? (
+                            <div className="space-y-2">
+                                {topTransforms.map((item) => {
+                                    const hitRate = item.count > 0 ? Math.round((item.cache_hits / item.count) * 100) : 0;
+                                    return (
+                                        <div key={item.transform} className="rounded-lg border border-white/5 bg-gray-950/40 p-3">
+                                            <div className="flex items-center justify-between gap-2 text-xs">
+                                                <span className="truncate text-gray-200">{item.transform}</span>
+                                                <span className="shrink-0 text-emerald-200">{hitRate}%</span>
+                                            </div>
+                                            <div className="mt-1 flex items-center justify-between text-[11px] text-gray-500">
+                                                <span>{t('dashboard.performance.countValue', { count: item.count })}</span>
+                                                <span>P95 {item.p95_ms}ms</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <p className="rounded-lg border border-white/5 bg-gray-950/40 p-4 text-sm text-gray-500">{t('dashboard.performance.noTransforms')}</p>
+                        )}
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+                            <ServerCrash className="h-4 w-4 text-amber-300" />
+                            {t('dashboard.performance.recentEvents')}
+                        </h3>
+                        {recentEvents.length > 0 ? (
+                            <div className="space-y-2">
+                                {recentEvents.map((event) => (
+                                    <div key={`${event.time}-${event.path}-${event.kind}`} className="rounded-lg border border-white/5 bg-gray-950/40 p-3">
+                                        <div className="flex items-center justify-between gap-2 text-xs">
+                                            <span className={event.kind === 'error' ? 'text-red-200' : 'text-amber-200'}>
+                                                {event.status} · {event.duration_ms}ms
+                                            </span>
+                                            <span className="text-gray-500">{formatEventTime(event.time)}</span>
+                                        </div>
+                                        <p className="mt-1 truncate text-xs text-gray-300">{event.method} {event.path}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="rounded-lg border border-white/5 bg-gray-950/40 p-4 text-sm text-gray-500">{t('dashboard.performance.noEvents')}</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+function formatEventTime(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 // GitHub 风格活跃热力图组件

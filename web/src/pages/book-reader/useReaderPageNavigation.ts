@@ -8,6 +8,7 @@ interface UseReaderPageNavigationOptions {
   nextBookIdRef: MutableRefObject<number | null>;
   setCurrentPageIndex: Dispatch<SetStateAction<number>>;
   setSliderValue: Dispatch<SetStateAction<number>>;
+  onScrollToWebtoonPage?: (pageNumber: number) => void;
   onOpenBook: (bookId: number) => void;
 }
 
@@ -18,6 +19,7 @@ export function useReaderPageNavigation({
   nextBookIdRef,
   setCurrentPageIndex,
   setSliderValue,
+  onScrollToWebtoonPage,
   onOpenBook,
 }: UseReaderPageNavigationOptions) {
   const jumpToPage = useCallback((pageNumber: number) => {
@@ -28,11 +30,9 @@ export function useReaderPageNavigation({
       return;
     }
 
-    const targetImg = document.querySelector(`img[data-page-number="${targetIndex + 1}"]`);
-    if (targetImg) {
-      targetImg.scrollIntoView({ behavior: 'auto', block: 'center' });
-    }
-  }, [activePages.length, readModeRef, setCurrentPageIndex, setSliderValue]);
+    setCurrentPageIndex(targetIndex);
+    onScrollToWebtoonPage?.(targetIndex + 1);
+  }, [activePages.length, onScrollToWebtoonPage, readModeRef, setCurrentPageIndex, setSliderValue]);
 
   const handleNext = useCallback(() => {
     const step = doublePage ? 2 : 1;

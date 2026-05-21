@@ -303,7 +303,7 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 			}
 		}
 
-		return nil
+		return q.RefreshSeriesStats(ctx, series.ID)
 	})
 }
 

@@ -27,7 +27,7 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
-func newTestController(t *testing.T) (*Controller, database.Store, *search.Engine, string) {
+func newTestController(t testing.TB) (*Controller, database.Store, *search.Engine, string) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -67,20 +67,27 @@ func newTestController(t *testing.T) (*Controller, database.Store, *search.Engin
 
 	cfgManager := config.NewManager(cfg)
 	imageCache, _ := lru.New[string, []byte](8)
+	pageCache, _ := lru.New[string, []parser.PageMetadata](8)
+	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](8)
+	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](8)
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
 	scan := scanner.NewScanner(store, engine, cfgManager)
 
 	controller := &Controller{
-		store:      store,
-		imageCache: imageCache,
-		scanner:    scan,
-		engine:     engine,
-		config:     cfgManager,
-		koreader:   koreader.NewService(store, cfgManager),
-		external:   external.NewManager(store, 30*time.Minute),
-		configPath: configPath,
-		tasks:      make(map[string]TaskStatus),
-		messages:   make(chan string, 32),
+		store:               store,
+		imageCache:          imageCache,
+		pageCache:           pageCache,
+		bookPageSourceCache: bookPageSourceCache,
+		progressWriteCache:  progressWriteCache,
+		scanner:             scan,
+		engine:              engine,
+		config:              cfgManager,
+		koreader:            koreader.NewService(store, cfgManager),
+		external:            external.NewManager(store, 30*time.Minute),
+		configPath:          configPath,
+		tasks:               make(map[string]TaskStatus),
+		taskCancels:         make(map[string]context.CancelFunc),
+		messages:            make(chan string, 32),
 	}
 
 	t.Cleanup(parser.ResetArchivePool)
@@ -109,6 +116,28 @@ func requestWithRouteParams(method, path string, body []byte, params map[string]
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 }
 
+type countingStore struct {
+	database.Store
+	getBookCalls            int
+	updateBookProgressCalls int
+	logReadingActivityCalls int
+}
+
+func (s *countingStore) GetBook(ctx context.Context, id int64) (database.Book, error) {
+	s.getBookCalls++
+	return s.Store.GetBook(ctx, id)
+}
+
+func (s *countingStore) UpdateBookProgress(ctx context.Context, arg database.UpdateBookProgressParams) error {
+	s.updateBookProgressCalls++
+	return s.Store.UpdateBookProgress(ctx, arg)
+}
+
+func (s *countingStore) LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error {
+	s.logReadingActivityCalls++
+	return s.Store.LogReadingActivity(ctx, bookID, pagesRead)
+}
+
 func createTestKOReaderAccount(t *testing.T, controller *Controller, username string) KOReaderAccountResponse {
 	t.Helper()
 
@@ -127,7 +156,7 @@ func createTestKOReaderAccount(t *testing.T, controller *Controller, username st
 	return resp
 }
 
-func seedBookFixture(t *testing.T, store database.Store, rootDir, libName, seriesName, bookName string, pageCount int64) (database.Library, database.Series, database.Book) {
+func seedBookFixture(t testing.TB, store database.Store, rootDir, libName, seriesName, bookName string, pageCount int64) (database.Library, database.Series, database.Book) {
 	t.Helper()
 
 	libPath := filepath.Join(rootDir, libName)
@@ -1022,6 +1051,59 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 		t.Fatalf("unexpected books response: %+v", books)
 	}
 
+	volumeBook, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      series.LibraryID,
+		Name:           "Alpha Vol 01.cbz",
+		Path:           filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha Vol 01.cbz"),
+		Size:           2048,
+		FileModifiedAt: time.Now(),
+		Volume:         "Volume 1",
+		PageCount:      20,
+		CoverPath:      sql.NullString{String: "cover.jpg", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateBook volume failed: %v", err)
+	}
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 8, Valid: true},
+		ID:           volumeBook.ID,
+	}); err != nil {
+		t.Fatalf("UpdateBookProgress volume failed: %v", err)
+	}
+
+	targetSeries, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
+		LibraryID:   series.LibraryID,
+		Name:        "Series Beta",
+		Path:        filepath.Join(rootDir, "Library A", "Series Beta"),
+		NameInitial: database.SeriesInitial("", "Series Beta"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSeries target failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().ExecContext(context.Background(),
+		`INSERT INTO series_relations (source_series_id, target_series_id, relation_type) VALUES (?, ?, ?)`,
+		series.ID, targetSeries.ID, "spinoff"); err != nil {
+		t.Fatalf("insert relation failed: %v", err)
+	}
+
+	if _, _, err := controller.queueMetadataReview(context.Background(), info, &metadata.SeriesMetadata{
+		Provider:   "bangumi",
+		Title:      "Alpha Metadata",
+		Summary:    "Reviewed summary",
+		SourceID:   42,
+		SourceURL:  "https://bgm.tv/subject/42",
+		Confidence: 0.9,
+	}, "bangumi", "Alpha"); err != nil {
+		t.Fatalf("queue metadata review failed: %v", err)
+	}
+
+	taskKey := "scan_series_" + strconv.FormatInt(series.ID, 10)
+	if !controller.startTask(taskKey, "scan_series", "scan series", 1) {
+		t.Fatal("expected scan series task to start")
+	}
+	controller.failTaskWithError(taskKey, "failed series scan", "archive error")
+
 	contextRec := httptest.NewRecorder()
 	controller.getSeriesContext(contextRec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if contextRec.Code != http.StatusOK {
@@ -1032,8 +1114,23 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	if err := json.NewDecoder(contextRec.Body).Decode(&seriesContext); err != nil {
 		t.Fatalf("decode series context failed: %v", err)
 	}
-	if seriesContext.Series.ID != series.ID || len(seriesContext.Books) != 1 || len(seriesContext.Tags) != 2 || len(seriesContext.Authors) != 2 || len(seriesContext.Links) != 1 {
+	if seriesContext.Series.ID != series.ID || len(seriesContext.Books) != 2 || len(seriesContext.Tags) != 2 || len(seriesContext.Authors) != 2 || len(seriesContext.Links) != 1 {
 		t.Fatalf("unexpected series context payload: %+v", seriesContext)
+	}
+	if len(seriesContext.Volumes) != 1 || seriesContext.Volumes[0].Name != "Volume 1" || seriesContext.Volumes[0].ReadPages != 8 {
+		t.Fatalf("unexpected volume summary: %+v", seriesContext.Volumes)
+	}
+	if len(seriesContext.Relations) != 1 || seriesContext.Relations[0].TargetSeriesID != targetSeries.ID {
+		t.Fatalf("unexpected relation context: %+v", seriesContext.Relations)
+	}
+	if len(seriesContext.MetadataReview.Reviews) != 1 || seriesContext.MetadataReview.Reviews[0].Provider != "bangumi" {
+		t.Fatalf("unexpected metadata review context: %+v", seriesContext.MetadataReview)
+	}
+	if seriesContext.MetadataSummary.PendingReviewCount != 1 {
+		t.Fatalf("unexpected metadata summary: %+v", seriesContext.MetadataSummary)
+	}
+	if len(seriesContext.FailedTasks) != 1 || seriesContext.FailedTasks[0].Key != taskKey || seriesContext.FailedTaskSummary.Count != 1 {
+		t.Fatalf("unexpected failed task context: tasks=%+v summary=%+v", seriesContext.FailedTasks, seriesContext.FailedTaskSummary)
 	}
 }
 
@@ -1333,7 +1430,11 @@ func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET volume_count = ?, total_pages = ? WHERE id = ?`, 1, 10, seriesA.ID); err != nil {
 		t.Fatalf("update series A stats failed: %v", err)
 	}
-	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET last_read_page = ? WHERE id = ?`, 3, bookA.ID); err != nil {
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 3, Valid: true},
+		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
+		ID:           bookA.ID,
+	}); err != nil {
 		t.Fatalf("update book A read progress failed: %v", err)
 	}
 
@@ -1362,7 +1463,11 @@ func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBook B failed: %v", err)
 	}
-	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET last_read_page = ? WHERE id = ?`, 20, bookB.ID); err != nil {
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 20, Valid: true},
+		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
+		ID:           bookB.ID,
+	}); err != nil {
 		t.Fatalf("update book B read progress failed: %v", err)
 	}
 	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET volume_count = ?, book_count = ?, total_pages = ? WHERE id = ?`, 4, 1, 30, seriesB.ID); err != nil {
@@ -1938,17 +2043,23 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 
 	cfg := controller.config
 	imageCache, _ := lru.New[string, []byte](8)
+	pageCache, _ := lru.New[string, []parser.PageMetadata](8)
+	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](8)
+	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](8)
 	reloaded := &Controller{
-		store:      store,
-		imageCache: imageCache,
-		scanner:    scanner.NewScanner(store, engine, cfg),
-		engine:     engine,
-		config:     cfg,
-		koreader:   koreader.NewService(store, cfg),
-		external:   external.NewManager(store, 30*time.Minute),
-		configPath: filepath.Join(tempDir, "config.yaml"),
-		tasks:      make(map[string]TaskStatus),
-		messages:   make(chan string, 32),
+		store:               store,
+		imageCache:          imageCache,
+		pageCache:           pageCache,
+		bookPageSourceCache: bookPageSourceCache,
+		progressWriteCache:  progressWriteCache,
+		scanner:             scanner.NewScanner(store, engine, cfg),
+		engine:              engine,
+		config:              cfg,
+		koreader:            koreader.NewService(store, cfg),
+		external:            external.NewManager(store, 30*time.Minute),
+		configPath:          filepath.Join(tempDir, "config.yaml"),
+		tasks:               make(map[string]TaskStatus),
+		messages:            make(chan string, 32),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)
@@ -2122,6 +2233,58 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	}
 }
 
+func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	taskKey := "scan_library_42"
+	if !controller.startCancelableTask(taskKey, "scan_library", "running", 1) {
+		t.Fatal("expected task to start")
+	}
+	ctx, cleanup := controller.newTaskContext(taskKey)
+	defer cleanup()
+
+	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
+	rec := httptest.NewRecorder()
+	controller.cancelTask(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("expected task context to be cancelled")
+	}
+
+	controller.taskMutex.Lock()
+	task := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	if task.CanCancel {
+		t.Fatalf("expected task to be marked non-cancellable after cancel request: %+v", task)
+	}
+	if task.Message != "正在取消任务..." {
+		t.Fatalf("expected cancelling message, got %q", task.Message)
+	}
+}
+
+func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	taskKey := "rebuild_index"
+	if !controller.startTask(taskKey, "rebuild_index", "running", 1) {
+		t.Fatal("expected task to start")
+	}
+
+	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/cancel", nil, "taskKey", taskKey)
+	rec := httptest.NewRecorder()
+	controller.cancelTask(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
@@ -2202,6 +2365,34 @@ func TestUpdateBookProgressClampsToPageCount(t *testing.T) {
 	}
 	if !updated.LastReadPage.Valid || updated.LastReadPage.Int64 != 12 {
 		t.Fatalf("expected clamped page 12, got %+v", updated.LastReadPage)
+	}
+}
+
+func TestUpdateBookProgressThrottlesRepeatedWrites(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 12)
+	counting := &countingStore{Store: store}
+	controller.store = counting
+
+	postProgress := func(page int64) {
+		t.Helper()
+		req := requestWithRouteParam(http.MethodPost, "/api/books/1/progress", []byte(`{"page":`+strconv.FormatInt(page, 10)+`}`), "bookId", strconv.FormatInt(book.ID, 10))
+		rec := httptest.NewRecorder()
+		controller.updateBookProgress(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected progress update 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	postProgress(6)
+	postProgress(6)
+	postProgress(4)
+
+	if counting.updateBookProgressCalls != 2 {
+		t.Fatalf("expected repeated same-page progress write to be throttled, got %d writes", counting.updateBookProgressCalls)
+	}
+	if counting.logReadingActivityCalls != 1 {
+		t.Fatalf("expected reading activity only for forward progress, got %d calls", counting.logReadingActivityCalls)
 	}
 }
 
@@ -2502,6 +2693,36 @@ func TestRunRebuildFileIdentitiesBackfillsQuickHash(t *testing.T) {
 	}
 	if !got.QuickHash.Valid || got.QuickHash.String == "" {
 		t.Fatalf("expected quick hash to be backfilled, got %+v", got.QuickHash)
+	}
+}
+
+func TestRunBackfillFullHashesLowPriorityBackfillsFileHash(t *testing.T) {
+	controller, store, _, tempDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, tempDir, "Lib", "Series", "Book.cbz", 12)
+	if err := os.WriteFile(book.Path, []byte("full-hash-book-content"), 0o644); err != nil {
+		t.Fatalf("write book file failed: %v", err)
+	}
+
+	var progressCalls int
+	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, func(current, total int, message string) {
+		progressCalls++
+	})
+	if err != nil {
+		t.Fatalf("runBackfillFullHashesLowPriority failed: %v", err)
+	}
+	if updated != 1 || total != 1 {
+		t.Fatalf("expected one full hash update, got updated=%d total=%d", updated, total)
+	}
+	if progressCalls == 0 {
+		t.Fatal("expected progress callback")
+	}
+
+	got, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("GetBook failed: %v", err)
+	}
+	if !got.FileHash.Valid || got.FileHash.String == "" {
+		t.Fatalf("expected full hash to be backfilled, got %+v", got.FileHash)
 	}
 }
 

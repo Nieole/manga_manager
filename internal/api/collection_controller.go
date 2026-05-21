@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -274,18 +275,26 @@ func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	items, err := c.loadSeriesRelations(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get relations")
+		return
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
+func (c *Controller) loadSeriesRelations(ctx context.Context, seriesID int64) ([]SeriesRelation, error) {
 	db := c.store.(*database.SqlStore).DB()
 
 	// Forward relations: this series is the source
-	forwardRows, err := db.QueryContext(r.Context(), `
+	forwardRows, err := db.QueryContext(ctx, `
 		SELECT sr.id, sr.target_series_id, s.name, sr.relation_type
 		FROM series_relations sr
 		JOIN series s ON s.id = sr.target_series_id
 		WHERE sr.source_series_id = ?
 	`, seriesID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to get relations")
-		return
+		return nil, err
 	}
 
 	var items []SeriesRelation
@@ -297,17 +306,19 @@ func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) 
 		items = append(items, item)
 	}
 	forwardRows.Close()
+	if err := forwardRows.Err(); err != nil {
+		return nil, err
+	}
 
 	// Reverse relations: this series is the target, apply inverse type
-	reverseRows, err := db.QueryContext(r.Context(), `
+	reverseRows, err := db.QueryContext(ctx, `
 		SELECT sr.id, sr.source_series_id, s.name, sr.relation_type
 		FROM series_relations sr
 		JOIN series s ON s.id = sr.source_series_id
 		WHERE sr.target_series_id = ?
 	`, seriesID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to get reverse relations")
-		return
+		return nil, err
 	}
 
 	for reverseRows.Next() {
@@ -319,11 +330,14 @@ func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) 
 		items = append(items, item)
 	}
 	reverseRows.Close()
+	if err := reverseRows.Err(); err != nil {
+		return nil, err
+	}
 
 	if items == nil {
 		items = []SeriesRelation{}
 	}
-	jsonResponse(w, http.StatusOK, items)
+	return items, nil
 }
 
 type CreateRelationRequest struct {

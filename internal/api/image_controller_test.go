@@ -2,6 +2,7 @@ package api
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -160,6 +161,44 @@ func TestServePageImage(t *testing.T) {
 		}
 		if len(rec.Body.Bytes()) == 0 {
 			t.Fatal("expected non-empty page bytes")
+		}
+	})
+
+	t.Run("passes browser-only filters through without processing", func(t *testing.T) {
+		archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+		parser.EvictArchiveFromPool(archivePath)
+		if err := writeTestCBZ(archivePath, map[string][]byte{
+			"001.png": png1x1,
+		}); err != nil {
+			t.Fatalf("write test cbz failed: %v", err)
+		}
+		info, err := os.Stat(archivePath)
+		if err != nil {
+			t.Fatalf("stat archive failed: %v", err)
+		}
+		if _, err := controller.store.(*database.SqlStore).DB().Exec(
+			`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+			archivePath,
+			info.Size(),
+			info.ModTime(),
+			1,
+			book.ID,
+		); err != nil {
+			t.Fatalf("update book archive metadata failed: %v", err)
+		}
+
+		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?filter=bilinear", nil, "bookId", strconv.FormatInt(book.ID, 10))
+		req = withRouteParam(req, "pageNumber", "1")
+		rec := httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected browser-only filter page request 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("Content-Type") != "image/png" {
+			t.Fatalf("unexpected content type: %q", rec.Header().Get("Content-Type"))
+		}
+		if string(rec.Body.Bytes()) != string(png1x1) {
+			t.Fatal("expected browser-only filter to return original page bytes")
 		}
 	})
 
@@ -341,6 +380,108 @@ func TestServePageImage(t *testing.T) {
 	})
 
 	_ = series
+}
+
+func TestBookArchivePageManifestCache(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+	if err := writeTestCBZ(archivePath, map[string][]byte{
+		"001.png": png1x1,
+		"002.png": png1x1,
+	}); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		t.Fatalf("stat archive failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(
+		`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+		archivePath,
+		info.Size(),
+		info.ModTime(),
+		2,
+		book.ID,
+	); err != nil {
+		t.Fatalf("update book archive metadata failed: %v", err)
+	}
+	book, err = store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatalf("get updated book failed: %v", err)
+	}
+
+	pages, err := controller.listBookArchivePages(context.Background(), book)
+	if err != nil {
+		t.Fatalf("first page manifest load failed: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("expected 2 pages, got %d", len(pages))
+	}
+
+	parser.EvictArchiveFromPool(archivePath)
+	missingPath := archivePath + ".manifest-missing"
+	if err := os.Rename(archivePath, missingPath); err != nil {
+		t.Fatalf("rename archive failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Rename(missingPath, archivePath)
+	})
+
+	cachedPages, err := controller.listBookArchivePages(context.Background(), book)
+	if err != nil {
+		t.Fatalf("expected cached page manifest after archive rename, got %v", err)
+	}
+	if len(cachedPages) != 2 {
+		t.Fatalf("expected cached 2 pages, got %d", len(cachedPages))
+	}
+
+	book.Size++
+	if _, err := controller.listBookArchivePages(context.Background(), book); err == nil {
+		t.Fatal("expected changed book source key to bypass manifest cache")
+	}
+}
+
+func TestServePageImageUsesBookPageSourceCache(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 2)
+	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+	if err := writeTestCBZ(archivePath, map[string][]byte{
+		"001.png": png1x1,
+		"002.png": png1x1,
+	}); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		t.Fatalf("stat archive failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(
+		`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+		archivePath,
+		info.Size(),
+		info.ModTime(),
+		2,
+		book.ID,
+	); err != nil {
+		t.Fatalf("update book archive metadata failed: %v", err)
+	}
+
+	counting := &countingStore{Store: store}
+	controller.store = counting
+
+	for page := int64(1); page <= 2; page++ {
+		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
+		req = withRouteParam(req, "pageNumber", strconv.FormatInt(page, 10))
+		rec := httptest.NewRecorder()
+		controller.servePageImage(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected page %d response 200, got %d body=%s", page, rec.Code, rec.Body.String())
+		}
+	}
+	if counting.getBookCalls != 1 {
+		t.Fatalf("expected one GetBook call for consecutive page image requests, got %d", counting.getBookCalls)
+	}
 }
 
 func TestPageCacheStatsAndClear(t *testing.T) {

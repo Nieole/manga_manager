@@ -567,19 +567,27 @@ func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	reviews, err := c.store.ListPendingMetadataReviewsBySeries(r.Context(), seriesID)
+	payload, err := c.loadSeriesMetadataReview(r.Context(), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list metadata reviews")
 		return
+	}
+
+	jsonResponse(w, http.StatusOK, payload)
+}
+
+func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int64) (metadataReviewResponse, error) {
+	reviews, err := c.store.ListPendingMetadataReviewsBySeries(ctx, seriesID)
+	if err != nil {
+		return metadataReviewResponse{}, err
 	}
 	if reviews == nil {
 		reviews = []database.MetadataReview{}
 	}
 
-	provenanceRows, err := c.store.GetSeriesMetadataProvenance(r.Context(), seriesID)
+	provenanceRows, err := c.store.GetSeriesMetadataProvenance(ctx, seriesID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load metadata provenance")
-		return
+		return metadataReviewResponse{}, err
 	}
 	if provenanceRows == nil {
 		provenanceRows = []database.SeriesMetadataProvenance{}
@@ -590,10 +598,9 @@ func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Req
 		Provenance: make([]metadataProvenanceView, 0, len(provenanceRows)),
 	}
 	for _, review := range reviews {
-		fields, err := c.store.ListMetadataReviewFields(r.Context(), review.ID)
+		fields, err := c.store.ListMetadataReviewFields(ctx, review.ID)
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to load metadata review fields")
-			return
+			return metadataReviewResponse{}, err
 		}
 		payload.Reviews = append(payload.Reviews, metadataReviewToView(review, fields))
 	}
@@ -601,7 +608,14 @@ func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Req
 		payload.Provenance = append(payload.Provenance, provenanceToView(row))
 	}
 
-	jsonResponse(w, http.StatusOK, payload)
+	return payload, nil
+}
+
+func emptyMetadataReviewResponse() metadataReviewResponse {
+	return metadataReviewResponse{
+		Reviews:    []metadataReviewView{},
+		Provenance: []metadataProvenanceView{},
+	}
 }
 
 func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Request) {

@@ -201,6 +201,116 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 	return tx.Commit()
 }
 
+func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error {
+	_, err := s.db.ExecContext(ctx, refreshSeriesStatsStatement("s.id = ?"), seriesID)
+	return err
+}
+
+func (s *SqlStore) refreshSeriesStatsForBook(ctx context.Context, bookID int64) error {
+	var seriesID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT series_id FROM books WHERE id = ?`, bookID).Scan(&seriesID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	return s.RefreshSeriesStats(ctx, seriesID)
+}
+
+func (s *SqlStore) CreateBook(ctx context.Context, arg CreateBookParams) (Book, error) {
+	book, err := s.Queries.CreateBook(ctx, arg)
+	if err != nil {
+		return Book{}, err
+	}
+	if err := s.RefreshSeriesStats(ctx, book.SeriesID); err != nil {
+		return Book{}, err
+	}
+	return book, nil
+}
+
+func (s *SqlStore) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error) {
+	book, err := s.Queries.UpsertBookByPath(ctx, arg)
+	if err != nil {
+		return Book{}, err
+	}
+	if err := s.RefreshSeriesStats(ctx, book.SeriesID); err != nil {
+		return Book{}, err
+	}
+	return book, nil
+}
+
+func (s *SqlStore) DeleteBook(ctx context.Context, id int64) error {
+	var seriesID int64
+	err := s.db.QueryRowContext(ctx, `SELECT series_id FROM books WHERE id = ?`, id).Scan(&seriesID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err := s.Queries.DeleteBook(ctx, id); err != nil {
+		return err
+	}
+	if err == nil {
+		return s.RefreshSeriesStats(ctx, seriesID)
+	}
+	return nil
+}
+
+func (s *SqlStore) DeleteBookByPath(ctx context.Context, path string) error {
+	var seriesID int64
+	err := s.db.QueryRowContext(ctx, `SELECT series_id FROM books WHERE path = ?`, path).Scan(&seriesID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err := s.Queries.DeleteBookByPath(ctx, path); err != nil {
+		return err
+	}
+	if err == nil {
+		return s.RefreshSeriesStats(ctx, seriesID)
+	}
+	return nil
+}
+
+func (s *SqlStore) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
+	if err := s.Queries.UpdateBookProgress(ctx, arg); err != nil {
+		return err
+	}
+	return s.refreshSeriesStatsForBook(ctx, arg.ID)
+}
+
+func (s *SqlStore) UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error {
+	if err := s.Queries.UpdateSeriesStatistics(ctx, arg); err != nil {
+		return err
+	}
+	return s.RefreshSeriesStats(ctx, arg.ID)
+}
+
+func (s *SqlStore) LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error {
+	if err := s.Queries.LinkSeriesTag(ctx, arg); err != nil {
+		return err
+	}
+	return s.RefreshSeriesStats(ctx, arg.SeriesID)
+}
+
+func (s *SqlStore) ClearSeriesTags(ctx context.Context, seriesID int64) error {
+	if err := s.Queries.ClearSeriesTags(ctx, seriesID); err != nil {
+		return err
+	}
+	return s.RefreshSeriesStats(ctx, seriesID)
+}
+
+func (s *SqlStore) LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error {
+	if err := s.Queries.LinkSeriesAuthor(ctx, arg); err != nil {
+		return err
+	}
+	return s.RefreshSeriesStats(ctx, arg.SeriesID)
+}
+
+func (s *SqlStore) ClearSeriesAuthors(ctx context.Context, seriesID int64) error {
+	if err := s.Queries.ClearSeriesAuthors(ctx, seriesID); err != nil {
+		return err
+	}
+	return s.RefreshSeriesStats(ctx, seriesID)
+}
+
 // 供启动时执行迁移
 func Migrate(dbPath string) error {
 	db, err := sql.Open("sqlite", dbPath)
@@ -303,6 +413,10 @@ func Migrate(dbPath string) error {
 		return err
 	}
 
+	if err := backfillSeriesStats(db); err != nil {
+		return err
+	}
+
 	if err := backfillSeriesMetadataProvenance(db); err != nil {
 		return err
 	}
@@ -345,6 +459,117 @@ func normalizeSchemaStatement(stmt string) string {
 		lines = lines[1:]
 	}
 	return strings.ToUpper(strings.TrimSpace(strings.Join(lines, "\n")))
+}
+
+func refreshSeriesStatsStatement(whereClause string) string {
+	if strings.TrimSpace(whereClause) == "" {
+		whereClause = "1 = 1"
+	}
+	return `
+		INSERT INTO series_stats (
+			series_id,
+			cover_path,
+			cover_book_id,
+			read_pages,
+			read_book_count,
+			completed_book_count,
+			last_read_at,
+			last_read_book_id,
+			tag_names_cache,
+			author_names_cache,
+			updated_at
+		)
+		SELECT
+			s.id,
+			COALESCE((
+				SELECT b.cover_path
+				FROM books b
+				WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+				ORDER BY b.sort_number, b.name
+				LIMIT 1
+			), '') AS cover_path,
+			COALESCE((
+				SELECT b.id
+				FROM books b
+				WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+				ORDER BY b.sort_number, b.name
+				LIMIT 1
+			), 0) AS cover_book_id,
+			COALESCE((
+				SELECT SUM(
+					CASE
+						WHEN b.last_read_page IS NULL OR b.last_read_page <= 0 THEN 0
+						WHEN b.page_count > 0 AND b.last_read_page > b.page_count THEN b.page_count
+						ELSE b.last_read_page
+					END
+				)
+				FROM books b
+				WHERE b.series_id = s.id
+			), 0) AS read_pages,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM books b
+				WHERE b.series_id = s.id AND b.last_read_page IS NOT NULL AND b.last_read_page > 0
+			), 0) AS read_book_count,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM books b
+				WHERE b.series_id = s.id AND b.page_count > 0 AND b.last_read_page >= b.page_count
+			), 0) AS completed_book_count,
+			(
+				SELECT b.last_read_at
+				FROM books b
+				WHERE b.series_id = s.id AND b.last_read_at IS NOT NULL
+				ORDER BY b.last_read_at DESC, b.id DESC
+				LIMIT 1
+			) AS last_read_at,
+			COALESCE((
+				SELECT b.id
+				FROM books b
+				WHERE b.series_id = s.id AND b.last_read_at IS NOT NULL
+				ORDER BY b.last_read_at DESC, b.id DESC
+				LIMIT 1
+			), 0) AS last_read_book_id,
+			COALESCE((
+				SELECT GROUP_CONCAT(name)
+				FROM (
+					SELECT DISTINCT t.name AS name
+					FROM tags t
+					JOIN series_tags st ON st.tag_id = t.id
+					WHERE st.series_id = s.id
+					ORDER BY t.name
+				)
+			), '') AS tag_names_cache,
+			COALESCE((
+				SELECT GROUP_CONCAT(name)
+				FROM (
+					SELECT DISTINCT a.name AS name
+					FROM authors a
+					JOIN series_authors sa ON sa.author_id = a.id
+					WHERE sa.series_id = s.id
+					ORDER BY a.name
+				)
+			), '') AS author_names_cache,
+			CURRENT_TIMESTAMP
+		FROM series s
+		WHERE ` + whereClause + `
+		ON CONFLICT(series_id) DO UPDATE SET
+			cover_path = excluded.cover_path,
+			cover_book_id = excluded.cover_book_id,
+			read_pages = excluded.read_pages,
+			read_book_count = excluded.read_book_count,
+			completed_book_count = excluded.completed_book_count,
+			last_read_at = excluded.last_read_at,
+			last_read_book_id = excluded.last_read_book_id,
+			tag_names_cache = excluded.tag_names_cache,
+			author_names_cache = excluded.author_names_cache,
+			updated_at = CURRENT_TIMESTAMP
+	`
+}
+
+func backfillSeriesStats(db *sql.DB) error {
+	_, err := db.Exec(refreshSeriesStatsStatement("1 = 1"))
+	return err
 }
 
 func backfillSeriesMetadataProvenance(db *sql.DB) error {
@@ -684,51 +909,33 @@ func scanTaskRecord(row taskScanner) (TaskRecord, error) {
 	return task, nil
 }
 
-// SearchSeriesPaged 供主页根据标签和作者进行交集查询并分页
+// SearchSeriesPaged 供主页根据标签和作者查询并分页。
+// 默认列表只走 series + series_stats，只有标签/作者筛选时才进入关联表。
 func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
-	// 构建动态 SQL - 使用预聚合子查询替代关联子查询提升查询性能
 	baseQuery := `
 		SELECT
             s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
-            bc.cover_path,
-            GROUP_CONCAT(DISTINCT t.name) as tags_string,
-            COALESCE(rc.read_count, 0) as read_count
+            ss.cover_path,
+            COALESCE(ss.tag_names_cache, '') as tags_string,
+            COALESCE(ss.read_pages, 0) as read_count
 		FROM series s
-		LEFT JOIN (
-			SELECT series_id, cover_path,
-				ROW_NUMBER() OVER (PARTITION BY series_id ORDER BY sort_number, name) as rn
-			FROM books WHERE cover_path IS NOT NULL AND cover_path != ''
-		) bc ON bc.series_id = s.id AND bc.rn = 1
-		LEFT JOIN (
-			SELECT series_id, COALESCE(SUM(last_read_page), 0) as read_count FROM books WHERE last_read_page > 0 GROUP BY series_id
-		) rc ON rc.series_id = s.id
-		LEFT JOIN series_tags st ON s.id = st.series_id
-		LEFT JOIN tags t ON st.tag_id = t.id
-		LEFT JOIN series_authors sa ON s.id = sa.series_id
-		LEFT JOIN authors a ON sa.author_id = a.id
-		WHERE (CAST(? AS INTEGER) = 0 OR s.library_id = CAST(? AS INTEGER))
-	`
-	// 因为使用了 GROUP BY，所以不能再外层 COUNT(DISTINCT s.id)，我们需要一个单独的包裹写法
-	countFilters := `
-		FROM series s
-		LEFT JOIN series_tags st ON s.id = st.series_id
-		LEFT JOIN tags t ON st.tag_id = t.id
-		LEFT JOIN series_authors sa ON s.id = sa.series_id
-		LEFT JOIN authors a ON sa.author_id = a.id
-		WHERE (CAST(? AS INTEGER) = 0 OR s.library_id = CAST(? AS INTEGER))
+		LEFT JOIN series_stats ss ON ss.series_id = s.id
 	`
 
-	args := []interface{}{libraryID, libraryID}
+	filters := make([]string, 0, 5)
+	args := make([]interface{}, 0, 8)
+	if libraryID != 0 {
+		filters = append(filters, `s.library_id = ?`)
+		args = append(args, libraryID)
+	}
 
 	if keyword != "" {
-		baseQuery += ` AND (instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`
-		countFilters += ` AND (instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`
+		filters = append(filters, `(instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`)
 		args = append(args, keyword, keyword)
 	}
 
 	if status != "" {
-		baseQuery += ` AND s.status = ?`
-		countFilters += ` AND s.status = ?`
+		filters = append(filters, `s.status = ?`)
 		args = append(args, status)
 	}
 
@@ -736,58 +943,69 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 		normalizedLetter := strings.ToUpper(strings.TrimSpace(letter))
 		if normalizedLetter != "" {
 			if normalizedLetter == "#" {
-				baseQuery += ` AND s.name_initial = '#'`
-				countFilters += ` AND s.name_initial = '#'`
+				filters = append(filters, `s.name_initial = '#'`)
 			} else {
-				baseQuery += ` AND s.name_initial = ?`
-				countFilters += ` AND s.name_initial = ?`
+				filters = append(filters, `s.name_initial = ?`)
 				args = append(args, normalizedLetter)
 			}
 		}
 	}
 
 	if len(tags) > 0 {
-		baseQuery += ` AND t.name IN (`
-		countFilters += ` AND t.name IN (`
+		filter := `EXISTS (
+			SELECT 1
+			FROM series_tags st
+			JOIN tags t ON st.tag_id = t.id
+			WHERE st.series_id = s.id AND t.name IN (`
 		for i, tag := range tags {
 			if i > 0 {
-				baseQuery += `, `
-				countFilters += `, `
+				filter += `, `
 			}
-			baseQuery += `?`
-			countFilters += `?`
+			filter += `?`
 			args = append(args, tag)
 		}
-		baseQuery += `)`
-		countFilters += `)`
+		filter += `))`
+		filters = append(filters, filter)
 	}
 
 	if len(authors) > 0 {
-		baseQuery += ` AND a.name IN (`
-		countFilters += ` AND a.name IN (`
+		filter := `EXISTS (
+			SELECT 1
+			FROM series_authors sa
+			JOIN authors a ON sa.author_id = a.id
+			WHERE sa.series_id = s.id AND a.name IN (`
 		for i, author := range authors {
 			if i > 0 {
-				baseQuery += `, `
-				countFilters += `, `
+				filter += `, `
 			}
-			baseQuery += `?`
-			countFilters += `?`
+			filter += `?`
 			args = append(args, author)
 		}
-		baseQuery += `)`
-		countFilters += `)`
+		filter += `))`
+		filters = append(filters, filter)
 	}
 
-	countQuery := `SELECT COUNT(DISTINCT s.id) ` + countFilters
+	whereClause := ""
+	if len(filters) > 0 {
+		whereClause = " WHERE " + strings.Join(filters, " AND ")
+	}
 
-	// Fetch Total Count First
 	var total int
-	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total) // Use all args for count query
-	if err != nil {
-		return nil, 0, err
+	if keyword == "" && status == "" && letter == "" && len(tags) == 0 && len(authors) == 0 {
+		if libraryID == 0 {
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series`).Scan(&total); err != nil {
+				return nil, 0, err
+			}
+		} else if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series WHERE library_id = ?`, libraryID).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		countQuery := `SELECT COUNT(*) FROM series s` + whereClause
+		if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
-	// Dynamic Ordering
 	orderClause := "s.name ASC" // Default Sort fallback
 	parts := strings.Split(sortBy, "_")
 	if len(parts) == 2 {
@@ -805,7 +1023,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 		case "pages":
 			orderClause = fmt.Sprintf("s.total_pages %s, s.name ASC", dir)
 		case "read":
-			orderClause = fmt.Sprintf("read_count %s, s.name ASC", dir)
+			orderClause = fmt.Sprintf("COALESCE(ss.read_pages, 0) %s, s.name ASC", dir)
 		case "created":
 			orderClause = fmt.Sprintf("s.created_at %s, s.name ASC", dir)
 		case "updated":
@@ -817,11 +1035,11 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 		}
 	}
 
-	// Finish Paginated Query
-	baseQuery += fmt.Sprintf(` GROUP BY s.id ORDER BY %s LIMIT ? OFFSET ?`, orderClause)
-	args = append(args, limit, offset)
+	queryArgs := append([]interface{}{}, args...)
+	baseQuery += whereClause + fmt.Sprintf(` ORDER BY %s LIMIT ? OFFSET ?`, orderClause)
+	queryArgs = append(queryArgs, limit, offset)
 
-	rows, err := s.db.QueryContext(ctx, baseQuery, args...)
+	rows, err := s.db.QueryContext(ctx, baseQuery, queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}

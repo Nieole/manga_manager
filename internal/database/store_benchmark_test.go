@@ -31,6 +31,7 @@ func BenchmarkSearchSeriesPaged(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
+			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				rows, total, err := store.SearchSeriesPaged(ctx, 1, tc.keyword, tc.letter, tc.status, nil, nil, 50, 0, tc.sortBy)
 				if err != nil {
@@ -41,6 +42,24 @@ func BenchmarkSearchSeriesPaged(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkSearchSeriesPaged_10k(b *testing.B) {
+	ctx := context.Background()
+	store := newBenchmarkStore(b)
+	seedBenchmarkLibrary(b, store, 10000, 2)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, total, err := store.SearchSeriesPaged(ctx, 1, "", "", "", nil, nil, 50, 0, "updated_desc")
+		if err != nil {
+			b.Fatalf("search series failed: %v", err)
+		}
+		if total != 10000 || len(rows) != 50 {
+			b.Fatalf("unexpected result rows=%d total=%d", len(rows), total)
+		}
 	}
 }
 
@@ -118,6 +137,19 @@ func seedBenchmarkLibrary(b *testing.B, store *SqlStore, seriesCount, booksPerSe
 				_ = tx.Rollback()
 				b.Fatalf("create book failed: %v", err)
 			}
+		}
+		if err := q.UpdateSeriesStatistics(ctx, UpdateSeriesStatisticsParams{
+			SeriesID:   series.ID,
+			SeriesID_2: series.ID,
+			SeriesID_3: series.ID,
+			ID:         series.ID,
+		}); err != nil {
+			_ = tx.Rollback()
+			b.Fatalf("update series statistics failed: %v", err)
+		}
+		if err := q.RefreshSeriesStats(ctx, series.ID); err != nil {
+			_ = tx.Rollback()
+			b.Fatalf("refresh series stats failed: %v", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

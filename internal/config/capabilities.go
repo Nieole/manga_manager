@@ -4,9 +4,18 @@ import "strings"
 
 var SupportedScanFormats = []string{"zip", "cbz", "rar", "cbr"}
 
+var SupportedScanProfiles = []string{ScanProfileFast, ScanProfileMetadata, ScanProfileIdentity, ScanProfileRepair}
+
 const DefaultScanInterval = 60
 
 const DefaultScanFormatsCSV = "zip,cbz,rar,cbr"
+
+const (
+	ScanProfileFast     = "fast_scan"
+	ScanProfileMetadata = "metadata_scan"
+	ScanProfileIdentity = "identity_scan"
+	ScanProfileRepair   = "repair_scan"
+)
 
 var SupportedLogLevels = []string{LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError}
 
@@ -54,4 +63,24 @@ func IsSupportedScanFormat(format string) bool {
 
 func IsSupportedArchiveExtension(ext string) bool {
 	return IsSupportedScanFormat(strings.TrimPrefix(ext, "."))
+}
+
+func NormalizeScanProfile(raw string) string {
+	profile := strings.ToLower(strings.TrimSpace(raw))
+	for _, supported := range SupportedScanProfiles {
+		if profile == supported {
+			return profile
+		}
+	}
+	return ScanProfileMetadata
+}
+
+func IsSupportedScanProfile(profile string) bool {
+	profile = strings.ToLower(strings.TrimSpace(profile))
+	for _, supported := range SupportedScanProfiles {
+		if profile == supported {
+			return true
+		}
+	}
+	return false
 }

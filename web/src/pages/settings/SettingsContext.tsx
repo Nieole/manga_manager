@@ -10,6 +10,7 @@ export interface Config {
   logging: { level: string };
   scanner: {
     workers: number;
+    scan_profile: string;
     thumbnail_format: string;
     waifu2x_path: string;
     realcugan_path: string;
@@ -48,6 +49,7 @@ export interface ValidationResult {
 
 export interface Capabilities {
   supported_scan_formats: string[];
+  supported_scan_profiles: string[];
   supported_log_levels: string[];
   default_scan_formats: string;
   default_scan_interval: number;
@@ -245,6 +247,7 @@ function pickSectionSnapshot(config: Config, section: Exclude<SettingsSectionKey
         logging: config.logging,
         scanner: {
           workers: config.scanner.workers,
+          scan_profile: config.scanner.scan_profile,
           archive_pool_size: config.scanner.archive_pool_size,
         },
       };

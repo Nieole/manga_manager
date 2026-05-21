@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, RotateCcw, Search, Terminal } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, RotateCcw, Search, Terminal, XCircle } from 'lucide-react';
 import { isToday, isYesterday } from 'date-fns';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskTypeLabel } from '../i18n/task';
@@ -46,6 +46,7 @@ interface TaskStatus {
   error?: string;
   current: number;
   total: number;
+  can_cancel: boolean;
   retryable: boolean;
   params?: Record<string, string>;
   started_at: string;
@@ -87,6 +88,7 @@ export default function Logs() {
   const [taskScopeIdFilter, setTaskScopeIdFilter] = useState('');
   const [taskQuery, setTaskQuery] = useState('');
   const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
+  const [cancellingTaskKey, setCancellingTaskKey] = useState<string | null>(null);
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
@@ -180,6 +182,8 @@ export default function Logs() {
         return 'bg-red-500/10 text-red-500 border-red-500/20';
       case 'completed':
         return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+      case 'cancelled':
+        return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
       default:
         return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
     }
@@ -202,6 +206,23 @@ export default function Logs() {
       setError(err instanceof Error ? err.message : t('logs.error.retry'));
     } finally {
       setRetryingTaskKey(null);
+    }
+  };
+
+  const cancelTask = async (taskKey: string) => {
+    setCancellingTaskKey(taskKey);
+    try {
+      const resp = await fetch(`/api/system/tasks/${encodeURIComponent(taskKey)}/cancel`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => null);
+        throw new Error(data?.error || t('logs.error.cancelTask'));
+      }
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : t('logs.error.cancelTask'));
+    } finally {
+      setCancellingTaskKey(null);
     }
   };
 
@@ -389,6 +410,7 @@ export default function Logs() {
                   <option value="running">{t('logs.taskStatus.running')}</option>
                   <option value="failed">{t('logs.taskStatus.failed')}</option>
                   <option value="completed">{t('logs.taskStatus.completed')}</option>
+                  <option value="cancelled">{t('logs.taskStatus.cancelled')}</option>
                 </select>
                 <select
                   value={taskScopeFilter}
@@ -458,16 +480,28 @@ export default function Logs() {
                             {task.scope_name || task.scope}
                             {task.scope_id ? ` #${task.scope_id}` : ''}
                           </span>
-                          {task.retryable && task.status !== 'running' && (
-                            <button
-                              onClick={() => retryTask(task.key)}
-                              disabled={retryingTaskKey === task.key}
-                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-800 disabled:opacity-60"
-                            >
-                              <RotateCcw className={`w-3 h-3 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
-                              {t('common.retry')}
-                            </button>
-                          )}
+                          <div className="ml-auto flex items-center gap-2">
+                            {task.can_cancel && task.status === 'running' && (
+                              <button
+                                onClick={() => cancelTask(task.key)}
+                                disabled={cancellingTaskKey === task.key}
+                                className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 px-2 py-1 text-[11px] text-amber-300 hover:bg-amber-500/10 disabled:opacity-60"
+                              >
+                                <XCircle className={`w-3 h-3 ${cancellingTaskKey === task.key ? 'animate-pulse' : ''}`} />
+                                {t('common.cancel')}
+                              </button>
+                            )}
+                            {task.retryable && task.status !== 'running' && (
+                              <button
+                                onClick={() => retryTask(task.key)}
+                                disabled={retryingTaskKey === task.key}
+                                className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-800 disabled:opacity-60"
+                              >
+                                <RotateCcw className={`w-3 h-3 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
+                                {t('common.retry')}
+                              </button>
+                            )}
+                          </div>
                           {hasTaskDetails(task) && (
                             <button
                               onClick={() => setExpandedTaskKey((current) => (current === task.key ? null : task.key))}

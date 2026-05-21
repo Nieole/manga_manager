@@ -9,7 +9,7 @@ import { SeriesMetadataEditorModal } from './series-detail/SeriesMetadataEditorM
 import { SeriesMetadataReviewPanel } from './series-detail/SeriesMetadataReviewPanel';
 import { SeriesRelationsPanel } from './series-detail/SeriesRelationsPanel';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
-import type { Author, Book, MetaTag, MetadataProvenance, MetadataReview, MetadataReviewResponse, SearchResult, Series, SeriesLink, SeriesRelation, SeriesRelationCandidate } from './series-detail/types';
+import type { Author, Book, MetaTag, MetadataProvenance, MetadataReview, MetadataReviewResponse, SearchResult, Series, SeriesContextResponse, SeriesFailedTask, SeriesLink, SeriesRelation, SeriesRelationCandidate } from './series-detail/types';
 import { useI18n } from '../i18n/LocaleProvider';
 
 type SeriesEditForm = Partial<Series> & {
@@ -81,15 +81,7 @@ export default function SeriesDetail() {
     const [currentOffset, setCurrentOffset] = useState(0);
     const [searchTotal, setSearchTotal] = useState(0);
     const [selectedSearchResult, setSelectedSearchResult] = useState<SearchResult | null>(null);
-    const [relatedFailedTasks, setRelatedFailedTasks] = useState<Array<{
-        key: string;
-        type: string;
-        scope_name?: string;
-        message: string;
-        error?: string;
-        retryable: boolean;
-        updated_at: string;
-    }>>([]);
+    const [relatedFailedTasks, setRelatedFailedTasks] = useState<SeriesFailedTask[]>([]);
     const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
 
     const showToast = (text: string, type: 'success' | 'error') => {
@@ -155,13 +147,17 @@ export default function SeriesDetail() {
 
     const reloadSeriesContext = async () => {
         if (!seriesId) return;
-        const res = await axios.get(`/api/series/${seriesId}/context`);
-        const { series, books, tags, authors, links } = res.data;
+        const res = await axios.get<SeriesContextResponse>(`/api/series/${seriesId}/context`);
+        const { series, books, tags, authors, links, relations, metadata_review, failed_tasks } = res.data;
         setBooks(books || []);
         setSeriesInfo(series);
         setTags(tags || []);
         setAuthors(authors || []);
         setLinks(links || []);
+        setRelations(Array.isArray(relations) ? relations : []);
+        setMetadataReviews(Array.isArray(metadata_review?.reviews) ? metadata_review.reviews : []);
+        setMetadataProvenance(Array.isArray(metadata_review?.provenance) ? metadata_review.provenance : []);
+        setRelatedFailedTasks(Array.isArray(failed_tasks) ? failed_tasks : []);
 
         if (series) {
             setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
@@ -345,8 +341,7 @@ export default function SeriesDetail() {
                 setSelectedBooks([]);
                 setSelectedVolumes([]);
             }
-            const res = await axios.get(`/api/books/${seriesId}`);
-            setBooks(res.data || []);
+            await reloadSeriesContext();
             showToast(ids ? t('series.toast.statusUpdated') : t('series.toast.bulkProgressSuccess'), 'success');
         } catch (e) {
             console.error("Bulk progress update failed", e, ids);
@@ -423,13 +418,6 @@ export default function SeriesDetail() {
     }, [seriesId, refreshTrigger]);
 
     useEffect(() => {
-        void loadSeriesRelations();
-        void loadMetadataReviews();
-        // loadSeriesRelations intentionally follows seriesId/refreshTrigger only.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [seriesId, refreshTrigger]);
-
-    useEffect(() => {
         if (!seriesInfo?.library_id || !relationSearch.trim()) {
             setRelationCandidates([]);
             return;
@@ -466,17 +454,6 @@ export default function SeriesDetail() {
             window.clearTimeout(timer);
         };
     }, [relationSearch, relations, seriesId, seriesInfo?.library_id]);
-
-    useEffect(() => {
-        if (!seriesId) return;
-        axios.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`)
-            .then((res) => {
-                setRelatedFailedTasks(Array.isArray(res.data) ? res.data : []);
-            })
-            .catch(() => {
-                setRelatedFailedTasks([]);
-            });
-    }, [seriesId, refreshTrigger]);
 
     const retryTask = async (taskKey: string) => {
         setRetryingTaskKey(taskKey);
@@ -587,17 +564,7 @@ export default function SeriesDetail() {
                 authors: editForm.authorsInput || [],
                 links: editForm.linksInput || []
             });
-            // Reload info
-            const [infoRes, tagsRes, authorsRes, linksRes] = await Promise.all([
-                axios.get(`/api/series/info/${seriesId}`),
-                axios.get(`/api/series/${seriesId}/tags`),
-                axios.get(`/api/series/${seriesId}/authors`),
-                axios.get(`/api/series/${seriesId}/links`),
-            ]);
-            setSeriesInfo(infoRes.data);
-            setTags(tagsRes.data || []);
-            setAuthors(authorsRes.data || []);
-            setLinks(linksRes.data || []);
+            await reloadSeriesContext();
             setIsEditing(false);
         } catch (err) {
             console.error("Failed to update metadata", err);

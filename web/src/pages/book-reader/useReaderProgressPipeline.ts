@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import axios from 'axios';
 import type { ReaderBookCache } from './usePageImageCache';
 import type { Page, ReaderBookInfo, ReadMode } from './types';
@@ -26,7 +26,6 @@ interface UseReaderProgressPipelineOptions {
   fetchPagesForBook: (bookId: string) => Promise<Page[]>;
   fetchBookInfoForBook: (bookId: string) => Promise<ReaderBookInfo>;
   retainBookCaches: (bookIds: Array<string | null | undefined>) => void;
-  setCurrentPageIndex: (index: number) => void;
   queueOfflineReaderProgress: (pageNumber: number) => void;
 }
 
@@ -47,11 +46,8 @@ export function useReaderProgressPipeline({
   fetchPagesForBook,
   fetchBookInfoForBook,
   retainBookCaches,
-  setCurrentPageIndex,
   queueOfflineReaderProgress,
 }: UseReaderProgressPipelineOptions) {
-  const observer = useRef<IntersectionObserver | null>(null);
-
   const updateProgress = useCallback((pageNumber: number) => {
     if (!bookId || loading) return;
     if (bookId !== pagesBookIdRef.current) return;
@@ -180,42 +176,7 @@ export function useReaderProgressPipeline({
   ]);
 
   useEffect(() => {
-    if (loading || !pagesBelongToCurrentBook || pages.length === 0 || readMode !== 'webtoon') return undefined;
-
-    let debounceTimeout: number;
-    const options = {
-      root: null,
-      rootMargin: '0px',
-      threshold: 0.5,
-    };
-
-    observer.current = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const pageNumStr = entry.target.getAttribute('data-page-number');
-          if (pageNumStr) {
-            const pageNum = parseInt(pageNumStr, 10);
-            setCurrentPageIndex(pageNum - 1);
-            clearTimeout(debounceTimeout);
-            debounceTimeout = window.setTimeout(() => {
-              updateProgress(pageNum);
-            }, 1000);
-          }
-        }
-      });
-    }, options);
-
-    const imgs = document.querySelectorAll('.ReaderScrollContainer img');
-    imgs.forEach((img) => observer.current?.observe(img));
-
-    return () => {
-      observer.current?.disconnect();
-      clearTimeout(debounceTimeout);
-    };
-  }, [loading, pages, pagesBelongToCurrentBook, readMode, setCurrentPageIndex, updateProgress]);
-
-  useEffect(() => {
-    if (!loading && readMode === 'paged' && pagesBelongToCurrentBook && pages.length > 0 && pages[currentPageIndex]) {
+    if (!loading && pagesBelongToCurrentBook && pages.length > 0 && pages[currentPageIndex]) {
       const timer = setTimeout(() => {
         updateProgress(pages[currentPageIndex].number);
       }, 1000);
@@ -223,5 +184,5 @@ export function useReaderProgressPipeline({
     }
 
     return undefined;
-  }, [currentPageIndex, loading, pages, pagesBelongToCurrentBook, readMode, updateProgress]);
+  }, [currentPageIndex, loading, pages, pagesBelongToCurrentBook, updateProgress]);
 }
