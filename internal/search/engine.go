@@ -131,6 +131,10 @@ func (e *Engine) IndexSeries(id int64, name string, coverPath string) error {
 }
 
 func (e *Engine) Search(queryStr string, target string, limit int) (*bleve.SearchResult, error) {
+	return e.SearchWithOffset(queryStr, target, limit, 0)
+}
+
+func (e *Engine) SearchWithOffset(queryStr string, target string, limit, offset int) (*bleve.SearchResult, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -202,6 +206,9 @@ func (e *Engine) Search(queryStr string, target string, limit int) (*bleve.Searc
 	}
 
 	searchRequest.Size = limit
+	if offset > 0 {
+		searchRequest.From = offset
+	}
 	// 要求返回哪些切片字段
 	searchRequest.Fields = []string{"id", "title", "series_name", "type", "cover_path"}
 

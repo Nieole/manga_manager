@@ -31,6 +31,9 @@ type Store interface {
 	DeleteReadingBookmark(ctx context.Context, bookID, bookmarkID int64) error
 	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
 	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
+	ListProtocolSeriesByIDs(ctx context.Context, ids []int64) ([]ProtocolSeriesRow, error)
+	SearchTags(ctx context.Context, query string, limit int) ([]Tag, error)
+	SearchAuthors(ctx context.Context, query string, limit int) ([]Author, error)
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
@@ -118,6 +121,21 @@ type SearchSeriesPagedRow struct {
 	ReadCount       int             `json:"read_count"`
 	TotalPages      sql.NullFloat64 `json:"total_pages"`
 	IsFavorite      bool            `json:"is_favorite"`
+}
+
+type ProtocolSeriesRow struct {
+	ID          int64     `json:"id"`
+	LibraryID   int64     `json:"library_id"`
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	BookCount   int64     `json:"book_count"`
+	TotalPages  int64     `json:"total_pages"`
+	CoverPath   string    `json:"cover_path"`
+	CoverBookID int64     `json:"cover_book_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type SqlStore struct {
@@ -1247,23 +1265,24 @@ type RecentReadAllRow struct {
 // GetRecentReadAll 跨库查询最近阅读的书籍（每个系列取最新一本）
 func (s *SqlStore) GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error) {
 	query := `
-		WITH RankedBooks AS (
-			SELECT
-				b.series_id, b.id AS book_id, b.name AS book_name, b.title AS book_title,
-				b.last_read_at, b.last_read_page, b.page_count,
-				ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY b.last_read_at DESC) as rn
-			FROM books b
-			WHERE b.last_read_at IS NOT NULL AND b.last_read_page > 0
-		)
 		SELECT
 			s.name AS series_name,
-			rb.series_id, rb.book_id, rb.book_name, rb.book_title,
-			rb.last_read_at, rb.last_read_page, rb.page_count,
-			(SELECT b2.cover_path FROM books b2 WHERE b2.series_id = s.id AND b2.cover_path IS NOT NULL AND b2.cover_path != '' ORDER BY b2.sort_number, b2.name LIMIT 1) as cover_path
-		FROM RankedBooks rb
-		JOIN series s ON s.id = rb.series_id
-		WHERE rb.rn = 1
-		ORDER BY rb.last_read_at DESC
+			s.id AS series_id,
+			b.id AS book_id,
+			b.name AS book_name,
+			b.title AS book_title,
+			ss.last_read_at,
+			b.last_read_page,
+			b.page_count,
+			COALESCE(ss.cover_path, '') AS cover_path
+		FROM series_stats ss
+		JOIN series s ON s.id = ss.series_id
+		JOIN books b ON b.id = ss.last_read_book_id
+		WHERE ss.last_read_at IS NOT NULL
+		  AND ss.last_read_book_id > 0
+		  AND b.last_read_page IS NOT NULL
+		  AND b.last_read_page > 0
+		ORDER BY ss.last_read_at DESC, s.name ASC
 		LIMIT ?
 	`
 
@@ -1345,4 +1364,175 @@ func (s *SqlStore) GetRecommendations(ctx context.Context, limit int) ([]Recomme
 		items = append(items, i)
 	}
 	return items, rows.Err()
+}
+
+func normalizeFacetLimit(limit int) int {
+	if limit <= 0 {
+		return 30
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}
+
+func (s *SqlStore) SearchTags(ctx context.Context, query string, limit int) ([]Tag, error) {
+	limit = normalizeFacetLimit(limit)
+	query = strings.TrimSpace(query)
+	args := make([]any, 0, 2)
+	where := ""
+	if query != "" {
+		where = "WHERE lower(t.name) LIKE ?"
+		args = append(args, "%"+strings.ToLower(query)+"%")
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.name, t.created_at
+		FROM tags t
+		LEFT JOIN series_tags st ON st.tag_id = t.id
+		`+where+`
+		GROUP BY t.id
+		ORDER BY COUNT(st.series_id) DESC, t.name ASC
+		LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]Tag, 0)
+	for rows.Next() {
+		var item Tag
+		if err := rows.Scan(&item.ID, &item.Name, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SqlStore) SearchAuthors(ctx context.Context, query string, limit int) ([]Author, error) {
+	limit = normalizeFacetLimit(limit)
+	query = strings.TrimSpace(query)
+	args := make([]any, 0, 2)
+	where := ""
+	if query != "" {
+		where = "WHERE lower(a.name) LIKE ?"
+		args = append(args, "%"+strings.ToLower(query)+"%")
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, `
+		WITH ranked_authors AS (
+			SELECT
+				a.id,
+				a.name,
+				a.role,
+				a.created_at,
+				COUNT(sa.series_id) AS usage_count,
+				ROW_NUMBER() OVER (
+					PARTITION BY lower(a.name)
+					ORDER BY COUNT(sa.series_id) DESC, a.id ASC
+				) AS rank
+			FROM authors a
+			LEFT JOIN series_authors sa ON sa.author_id = a.id
+			`+where+`
+			GROUP BY a.id
+		)
+		SELECT id, name, role, created_at
+		FROM ranked_authors
+		WHERE rank = 1
+		ORDER BY usage_count DESC, name ASC
+		LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]Author, 0)
+	for rows.Next() {
+		var item Author
+		if err := rows.Scan(&item.ID, &item.Name, &item.Role, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SqlStore) ListProtocolSeriesByIDs(ctx context.Context, ids []int64) ([]ProtocolSeriesRow, error) {
+	if len(ids) == 0 {
+		return []ProtocolSeriesRow{}, nil
+	}
+
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	if len(args) == 0 {
+		return []ProtocolSeriesRow{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			s.id,
+			s.library_id,
+			s.name,
+			COALESCE(s.title, '') AS title,
+			COALESCE(s.summary, '') AS summary,
+			COALESCE(s.status, '') AS status,
+			s.book_count,
+			s.total_pages,
+			COALESCE(ss.cover_path, '') AS cover_path,
+			COALESCE(ss.cover_book_id, 0) AS cover_book_id,
+			s.created_at,
+			s.updated_at
+		FROM series s
+		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		WHERE s.id IN (`+strings.Join(placeholders, ",")+`)
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byID := make(map[int64]ProtocolSeriesRow, len(args))
+	for rows.Next() {
+		var item ProtocolSeriesRow
+		if err := rows.Scan(
+			&item.ID,
+			&item.LibraryID,
+			&item.Name,
+			&item.Title,
+			&item.Summary,
+			&item.Status,
+			&item.BookCount,
+			&item.TotalPages,
+			&item.CoverPath,
+			&item.CoverBookID,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		byID[item.ID] = item
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	items := make([]ProtocolSeriesRow, 0, len(byID))
+	for _, id := range ids {
+		if item, ok := byID[id]; ok {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }

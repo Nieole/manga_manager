@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestMihonAPILifecycle(t *testing.T) {
@@ -33,6 +35,9 @@ func TestMihonAPILifecycle(t *testing.T) {
 		ID:           book.ID,
 	}); err != nil {
 		t.Fatalf("UpdateBookProgress failed: %v", err)
+	}
+	if err := controller.engine.IndexSeries(series.ID, "Display Alpha", ""); err != nil {
+		t.Fatalf("IndexSeries failed: %v", err)
 	}
 	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
 	if err := writeTestCBZ(archivePath, map[string][]byte{
@@ -131,6 +136,30 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 	if len(pages) != 2 || pages[0].ImageURL != "/api/mihon/v1/books/"+strconv.FormatInt(book.ID, 10)+"/pages/1?format=webp&q=80" || pages[0].MediaType != "image/png" {
 		t.Fatalf("unexpected pages payload: %+v", pages)
+	}
+}
+
+func TestMihonRoutesRespectProtocolToggle(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	router := chi.NewRouter()
+	router.Route("/api", func(r chi.Router) {
+		controller.setupMihonRoutes(r)
+	})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/libraries", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected disabled Mihon route 404, got %d", rec.Code)
+	}
+
+	cfg := controller.currentConfig()
+	cfg.Protocols.Mihon.Enabled = true
+	controller.config.Replace(&cfg)
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/libraries", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected enabled Mihon route 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

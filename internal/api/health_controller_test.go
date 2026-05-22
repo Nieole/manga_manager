@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,10 @@ import (
 )
 
 func TestGetHealthReport(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
+	controller, store, _, _ := newTestController(t)
+	if _, err := store.(*database.SqlStore).DB().ExecContext(context.Background(), `INSERT INTO koreader_progress (username, document, progress, percentage, device, device_id, book_id) VALUES ('reader', 'missing.cbz', '{}', 0.5, 'device', 'id', NULL)`); err != nil {
+		t.Fatalf("insert unmatched progress failed: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	controller.getHealthReport(rec, httptest.NewRequest(http.MethodGet, "/api/health/report?limit=5", nil))
@@ -26,6 +30,11 @@ func TestGetHealthReport(t *testing.T) {
 	}
 	if len(report.Summary) == 0 {
 		t.Fatal("expected health report summary")
+	}
+	for _, item := range report.Summary {
+		if item.Type == "unmatched_koreader" {
+			t.Fatalf("expected disabled KOReader health report to skip unmatched KOReader, got %+v", report.Summary)
+		}
 	}
 
 	rec = httptest.NewRecorder()

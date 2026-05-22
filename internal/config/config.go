@@ -52,6 +52,14 @@ type Config struct {
 		APIKey      string `yaml:"api_key" json:"api_key"`           // Optional API Key for OpenAI/DeepSeek
 		Timeout     int    `yaml:"timeout" json:"timeout"`           // 请求超时时间（秒），默认 120
 	} `yaml:"llm" json:"llm"`
+	Protocols struct {
+		OPDS struct {
+			Enabled bool `yaml:"enabled" json:"enabled"`
+		} `yaml:"opds" json:"opds"`
+		Mihon struct {
+			Enabled bool `yaml:"enabled" json:"enabled"`
+		} `yaml:"mihon" json:"mihon"`
+	} `yaml:"protocols" json:"protocols"`
 	KOReader struct {
 		Enabled             bool   `yaml:"enabled" json:"enabled"`
 		BasePath            string `yaml:"base_path" json:"base_path"`
@@ -126,6 +134,8 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.LLM.APIMode = ""
 	cfg.LLM.Model = "qwen2.5"
 	cfg.LLM.Timeout = 120
+	cfg.Protocols.OPDS.Enabled = false
+	cfg.Protocols.Mihon.Enabled = false
 	cfg.KOReader.Enabled = false
 	cfg.KOReader.BasePath = "/koreader"
 	cfg.KOReader.AllowRegistration = false

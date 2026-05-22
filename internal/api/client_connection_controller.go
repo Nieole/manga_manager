@@ -45,6 +45,8 @@ type ClientEndpointRequestSnapshot struct {
 }
 
 type ClientConnectionStatus struct {
+	OPDSEnabled             bool   `json:"opds_enabled"`
+	MihonEnabled            bool   `json:"mihon_enabled"`
 	KOReaderEnabled         bool   `json:"koreader_enabled"`
 	KOReaderAccountCount    int64  `json:"koreader_account_count"`
 	KOReaderEnabledAccounts int64  `json:"koreader_enabled_accounts"`
@@ -220,18 +222,43 @@ func (c *Controller) getClientConnections(w http.ResponseWriter, r *http.Request
 		},
 	}
 
+	endpoints = filterEnabledClientEndpoints(endpoints, cfg.Protocols.OPDS.Enabled, cfg.Protocols.Mihon.Enabled, cfg.KOReader.Enabled)
 	attachEndpointRequestDiagnostics(endpoints)
 
 	jsonResponse(w, http.StatusOK, ClientConnectionsResponse{
 		BaseURL:   baseURL,
 		Endpoints: endpoints,
 		Status: ClientConnectionStatus{
+			OPDSEnabled:             cfg.Protocols.OPDS.Enabled,
+			MihonEnabled:            cfg.Protocols.Mihon.Enabled,
 			KOReaderEnabled:         cfg.KOReader.Enabled,
 			KOReaderAccountCount:    stats.AccountCount,
 			KOReaderEnabledAccounts: stats.EnabledAccountCount,
 			KOReaderMatchMode:       cfg.KOReader.MatchMode,
 		},
 	})
+}
+
+func filterEnabledClientEndpoints(endpoints []ClientConnectionEndpoint, opdsEnabled, mihonEnabled, koreaderEnabled bool) []ClientConnectionEndpoint {
+	visible := make([]ClientConnectionEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		switch endpoint.ClientType {
+		case "opds":
+			if !opdsEnabled {
+				continue
+			}
+		case "mihon":
+			if !mihonEnabled {
+				continue
+			}
+		case "koreader":
+			if !koreaderEnabled {
+				continue
+			}
+		}
+		visible = append(visible, endpoint)
+	}
+	return visible
 }
 
 func attachEndpointRequestDiagnostics(endpoints []ClientConnectionEndpoint) {

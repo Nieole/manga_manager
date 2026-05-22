@@ -96,6 +96,7 @@ type MihonPageResponse struct {
 
 func (c *Controller) setupMihonRoutes(r chi.Router) {
 	r.Route("/mihon/v1", func(r chi.Router) {
+		r.Use(c.requireProtocolEnabled("mihon"))
 		r.Get("/libraries", c.mihonLibraries)
 		r.Get("/recently-added", c.mihonRecentlyAdded)
 		r.Get("/continue", c.mihonContinueReading)
@@ -382,6 +383,34 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	sortBy := strings.TrimSpace(r.URL.Query().Get("sort"))
 
+	if query != "" && len(tags) == 0 && len(authors) == 0 && status == "" {
+		if rows, searchTotal, usedEngine, err := c.searchProtocolSeries(r.Context(), query, page, limit); usedEngine {
+			if err != nil {
+				jsonError(w, http.StatusInternalServerError, "Failed to search series")
+				return
+			}
+			items := make([]MihonSeriesResponse, 0, len(rows))
+			for _, row := range rows {
+				if libraryID != 0 && row.LibraryID != libraryID {
+					continue
+				}
+				items = append(items, mihonSeriesFromProtocolRow(row))
+			}
+			total := int64(searchTotal)
+			if libraryID != 0 {
+				total = int64(len(items))
+			}
+			jsonResponse(w, http.StatusOK, MihonSeriesPageResponse{
+				Items:   items,
+				Total:   total,
+				Page:    page,
+				Limit:   limit,
+				HasNext: int64(page*limit) < total,
+			})
+			return
+		}
+	}
+
 	// Map Mihon sort parameters to our SearchSeriesPaged sort parameters
 	// Our backend uses format: field_dir (e.g. updated_DESC)
 	searchSortBy := ""
@@ -623,6 +652,28 @@ func mihonSeriesFromReadingListRow(row database.ListReadingListSeriesPageRow) Mi
 	}
 	return MihonSeriesResponse{
 		ID:          row.SeriesID,
+		LibraryID:   row.LibraryID,
+		Name:        row.Name,
+		Title:       firstNonEmpty(row.Title, row.Name),
+		Summary:     row.Summary,
+		Status:      row.Status,
+		BookCount:   row.BookCount,
+		TotalPages:  row.TotalPages,
+		CoverBookID: row.CoverBookID,
+		CoverURL:    coverURL,
+		UpdatedAt:   row.UpdatedAt,
+	}
+}
+
+func mihonSeriesFromProtocolRow(row database.ProtocolSeriesRow) MihonSeriesResponse {
+	coverURL := ""
+	if row.CoverPath != "" {
+		coverURL = "/api/thumbnails/" + row.CoverPath
+	} else {
+		coverURL = mihonCoverURL(row.CoverBookID)
+	}
+	return MihonSeriesResponse{
+		ID:          row.ID,
 		LibraryID:   row.LibraryID,
 		Name:        row.Name,
 		Title:       firstNonEmpty(row.Title, row.Name),

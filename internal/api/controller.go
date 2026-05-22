@@ -40,6 +40,9 @@ type Controller struct {
 	pageCache           *lru.Cache[string, []parser.PageMetadata]
 	bookPageSourceCache *lru.Cache[int64, cachedBookPageSource]
 	progressWriteCache  *lru.Cache[int64, cachedProgressWrite]
+	dashboardStatsMu    sync.RWMutex
+	dashboardStatsCache *cachedDashboardStats
+	dashboardStatsGen   int64
 	scanner             *scanner.Scanner
 	engine              *search.Engine
 	config              *config.Manager
@@ -116,7 +119,13 @@ const (
 	lowPriorityBookHashTaskKey   = "background_book_hash_backfill"
 	lowPriorityBookHashBatchSize = 32
 	lowPriorityBookHashBatchGap  = 100 * time.Millisecond
+	dashboardStatsCacheTTL       = 30 * time.Second
 )
+
+type cachedDashboardStats struct {
+	stats     database.DashboardStats
+	expiresAt time.Time
+}
 
 func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
@@ -144,6 +153,9 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
 		openPath:                 openPathInDefaultFileManager,
+	}
+	if scan != nil {
+		scan.SetBatchCallback(c.handleScannerBatchEvent)
 	}
 
 	c.recoverInterruptedTasks()
@@ -242,6 +254,30 @@ func (c *Controller) currentConfig() config.Config {
 		return config.Config{}
 	}
 	return c.config.Snapshot()
+}
+
+func (c *Controller) protocolEnabled(protocol string) bool {
+	cfg := c.currentConfig()
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "opds":
+		return cfg.Protocols.OPDS.Enabled
+	case "mihon":
+		return cfg.Protocols.Mihon.Enabled
+	default:
+		return false
+	}
+}
+
+func (c *Controller) requireProtocolEnabled(protocol string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !c.protocolEnabled(protocol) {
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func (c *Controller) persistConfig(cfg *config.Config) error {
@@ -452,7 +488,10 @@ func (c *Controller) startDaemon() {
 					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
 					if err != nil {
 						slog.Error("Auto-scan failed", "library_id", id, "error", err)
+						c.invalidateDashboardStatsCache("auto_scan_failed")
+						return
 					}
+					c.warmDashboardStatsCacheAsync("auto_scan_completed")
 				})
 			}
 		}
@@ -465,6 +504,14 @@ func (c *Controller) PublishEvent(event string) {
 		return
 	}
 	c.messages <- event
+}
+
+func (c *Controller) handleScannerBatchEvent(action string) {
+	c.invalidateDashboardStatsCache("scanner_" + action)
+	if action == "scan_completed" {
+		c.warmDashboardStatsCacheAsync("scanner_" + action)
+	}
+	c.PublishEvent(action)
 }
 
 func (c *Controller) startTask(key, taskType, message string, total int) bool {
@@ -1042,10 +1089,12 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		r.Route("/tags", func(r chi.Router) {
 			r.Get("/all", c.getAllTags)
+			r.Get("/search", c.searchTags)
 		})
 
 		r.Route("/authors", func(r chi.Router) {
 			r.Get("/all", c.getAllAuthors)
+			r.Get("/search", c.searchAuthors)
 		})
 
 		r.Get("/system/config", c.getSystemConfig)
@@ -1314,6 +1363,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "Failed to create library")
 		return
 	}
+	c.invalidateDashboardStatsCache("library_created")
 
 	if createdLib.ScanMode == "watch" && c.watcher != nil {
 		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path)
@@ -1327,7 +1377,10 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// 在生产环境需要接入日志中心打印
 			_ = err
+			c.invalidateDashboardStatsCache("library_initial_scan_failed")
+			return
 		}
+		c.warmDashboardStatsCacheAsync("library_initial_scan_completed")
 	})
 
 	jsonResponse(w, http.StatusCreated, createdLib)
@@ -1405,6 +1458,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "Failed to update library")
 		return
 	}
+	c.invalidateDashboardStatsCache("library_updated")
 
 	if c.watcher != nil {
 		c.watcher.UnwatchLibrary(existingLib.Path)
@@ -1432,14 +1486,17 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) boo
 		err := c.scanner.ScanLibrary(taskCtx, lib.ID, lib.Path, force)
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
+			c.invalidateDashboardStatsCache("scan_library_cancelled")
 			c.completeTask(taskKey, "cancelled", fmt.Sprintf("资源库扫描已取消: %s", lib.Name))
 			return
 		}
 		if err != nil {
+			c.invalidateDashboardStatsCache("scan_library_failed")
 			c.failTaskWithError(taskKey, fmt.Sprintf("资源库扫描失败: %v", err), err.Error())
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("资源库扫描完成: %s", lib.Name))
+		c.warmDashboardStatsCacheAsync("scan_library_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_library")
 	})
 
@@ -1494,15 +1551,18 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 		err := c.scanner.ScanSeries(taskCtx, seriesID, force)
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
+			c.invalidateDashboardStatsCache("scan_series_cancelled")
 			c.completeTask(taskKey, "cancelled", fmt.Sprintf("系列扫描已取消 #%d", seriesID))
 			return
 		}
 		if err != nil {
 			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
+			c.invalidateDashboardStatsCache("scan_series_failed")
 			c.failTaskWithError(taskKey, fmt.Sprintf("系列扫描失败: %v", err), err.Error())
 			return
 		}
 		c.finishTask(taskKey, fmt.Sprintf("系列扫描完成 #%d", seriesID))
+		c.warmDashboardStatsCacheAsync("scan_series_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_series")
 	})
 
@@ -2096,6 +2156,34 @@ func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, tags)
 }
 
+func parseFacetSearchLimit(r *http.Request) int {
+	limit := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	if limit < 1 {
+		return 30
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}
+
+func (c *Controller) searchTags(w http.ResponseWriter, r *http.Request) {
+	items, err := c.store.SearchTags(r.Context(), r.URL.Query().Get("q"), parseFacetSearchLimit(r))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to search tags")
+		return
+	}
+	if items == nil {
+		items = []database.Tag{}
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
 func (c *Controller) getAllAuthors(w http.ResponseWriter, r *http.Request) {
 	authors, err := c.store.GetAllAuthors(r.Context())
 	if err != nil {
@@ -2106,6 +2194,18 @@ func (c *Controller) getAllAuthors(w http.ResponseWriter, r *http.Request) {
 		authors = []database.Author{}
 	}
 	jsonResponse(w, http.StatusOK, authors)
+}
+
+func (c *Controller) searchAuthors(w http.ResponseWriter, r *http.Request) {
+	items, err := c.store.SearchAuthors(r.Context(), r.URL.Query().Get("q"), parseFacetSearchLimit(r))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to search authors")
+		return
+	}
+	if items == nil {
+		items = []database.Author{}
+	}
+	jsonResponse(w, http.StatusOK, items)
 }
 
 func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
@@ -2212,6 +2312,9 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 		}
 		updated++
 	}
+	if updated > 0 {
+		c.invalidateDashboardStatsCache("bulk_book_progress")
+	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk progress update completed", "updated": updated})
 }
@@ -2242,6 +2345,9 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 			}
 			updated++
 		}
+	}
+	if updated > 0 {
+		c.invalidateDashboardStatsCache("bulk_series_progress")
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk series progress update completed", "updated": updated})
@@ -2276,6 +2382,71 @@ func (c *Controller) updateBookReadState(ctx context.Context, book database.Book
 		}
 	}
 	return nil
+}
+
+func cloneDashboardStats(stats *database.DashboardStats) *database.DashboardStats {
+	if stats == nil {
+		return nil
+	}
+	cloned := *stats
+	if stats.LibrarySizes != nil {
+		cloned.LibrarySizes = append([]database.LibrarySize(nil), stats.LibrarySizes...)
+	}
+	return &cloned
+}
+
+func (c *Controller) invalidateDashboardStatsCache(reason string) {
+	c.dashboardStatsMu.Lock()
+	c.dashboardStatsGen++
+	c.dashboardStatsCache = nil
+	c.dashboardStatsMu.Unlock()
+	if reason != "" {
+		slog.Debug("Invalidated dashboard stats cache", "reason", reason)
+	}
+}
+
+func (c *Controller) warmDashboardStatsCacheAsync(reason string) {
+	c.runBackground(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := c.loadDashboardStats(ctx); err != nil {
+			slog.Debug("Failed to warm dashboard stats cache", "reason", reason, "error", err)
+		}
+	})
+}
+
+func (c *Controller) loadDashboardStats(ctx context.Context) (*database.DashboardStats, error) {
+	if c.store == nil {
+		return nil, errors.New("store is not configured")
+	}
+
+	now := time.Now()
+	c.dashboardStatsMu.RLock()
+	if c.dashboardStatsCache != nil && now.Before(c.dashboardStatsCache.expiresAt) {
+		stats := cloneDashboardStats(&c.dashboardStatsCache.stats)
+		c.dashboardStatsMu.RUnlock()
+		return stats, nil
+	}
+	generation := c.dashboardStatsGen
+	c.dashboardStatsMu.RUnlock()
+
+	stats, err := c.store.GetDashboardStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if stats == nil {
+		stats = &database.DashboardStats{}
+	}
+	cacheStats := cloneDashboardStats(stats)
+	c.dashboardStatsMu.Lock()
+	if generation == c.dashboardStatsGen {
+		c.dashboardStatsCache = &cachedDashboardStats{
+			stats:     *cacheStats,
+			expiresAt: now.Add(dashboardStatsCacheTTL),
+		}
+	}
+	c.dashboardStatsMu.Unlock()
+	return cloneDashboardStats(stats), nil
 }
 
 func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
@@ -2367,6 +2538,7 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusInternalServerError, "Failed to update progress")
 		return
 	}
+	c.invalidateDashboardStatsCache("book_progress")
 	if c.progressWriteCache != nil {
 		c.progressWriteCache.Add(bookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
 	}
@@ -2961,7 +3133,7 @@ func (c *Controller) rebuildFileIdentities(w http.ResponseWriter, r *http.Reques
 
 // getDashboardStats 返回全局统计看板数据
 func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := c.store.GetDashboardStats(r.Context())
+	stats, err := c.loadDashboardStats(r.Context())
 	if err != nil {
 		slog.Error("GetDashboardStats failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get dashboard stats")

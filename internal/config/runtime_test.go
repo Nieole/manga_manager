@@ -44,6 +44,9 @@ func TestNormalizeConfigDefaultsLogLevel(t *testing.T) {
 	if cfg.Scanner.ScanProfile != ScanProfileMetadata {
 		t.Fatalf("expected default scan profile %q, got %q", ScanProfileMetadata, cfg.Scanner.ScanProfile)
 	}
+	if cfg.Protocols.OPDS.Enabled || cfg.Protocols.Mihon.Enabled {
+		t.Fatalf("expected external protocols disabled by default, got OPDS=%v Mihon=%v", cfg.Protocols.OPDS.Enabled, cfg.Protocols.Mihon.Enabled)
+	}
 }
 
 func TestNormalizeConfigCleansAllowedOrigins(t *testing.T) {

@@ -27,6 +27,10 @@ export interface Config {
     api_key: string;
     timeout: number;
   };
+  protocols: {
+    opds: { enabled: boolean };
+    mihon: { enabled: boolean };
+  };
   koreader: {
     enabled: boolean;
     base_path: string;

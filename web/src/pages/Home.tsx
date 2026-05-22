@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import axios, { type AxiosResponse } from 'axios';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, HardDrive, Heart, ImageIcon, Loader2, RefreshCw, Send, FolderHeart, PackageCheck, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
@@ -89,6 +89,13 @@ function requestSeriesSearch(query: string) {
         });
     inflightSeriesSearchRequests.set(query, request);
     return request;
+}
+
+function includeActiveOption(options: NamedOption[], value: string | null) {
+    if (!value || options.some((item) => item.name === value)) {
+        return options;
+    }
+    return [{ name: value }, ...options];
 }
 
 function smartFilterStorageKey(libraryId: string) {
@@ -304,6 +311,8 @@ export default function Home() {
 
     const [allTags, setAllTags] = useState<NamedOption[]>([]);
     const [allAuthors, setAllAuthors] = useState<NamedOption[]>([]);
+    const [filterOptionsLoaded, setFilterOptionsLoaded] = useState(false);
+    const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
     const allStatuses = ['completed', 'ongoing', 'cancelled', 'hiatus'];
 
     const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
@@ -447,10 +456,12 @@ export default function Home() {
             .finally(() => setLoadingAI(false));
     };
 
-    useEffect(() => {
+    const loadFilterOptions = useCallback(() => {
+        if (filterOptionsLoaded || filterOptionsLoading) return;
+        setFilterOptionsLoading(true);
         Promise.all([
-            axios.get('/api/tags/all').catch(() => ({ data: [] })),
-            axios.get('/api/authors/all').catch(() => ({ data: [] })),
+            axios.get('/api/tags/search?limit=30').catch(() => ({ data: [] })),
+            axios.get('/api/authors/search?limit=30').catch(() => ({ data: [] })),
         ]).then(([tRes, aRes]) => {
             // Deduplicate authors by name since we might have Writer, Penciller combinations
             const tNames = Array.isArray(tRes.data) ? tRes.data as NamedOption[] : [];
@@ -458,10 +469,41 @@ export default function Home() {
             const map = new Map<string, NamedOption>();
             aList.forEach((a) => map.set(a.name, a));
 
-            setAllTags(tNames);
-            setAllAuthors(Array.from(map.values()));
+            setAllTags(includeActiveOption(tNames, activeTag));
+            setAllAuthors(includeActiveOption(Array.from(map.values()), activeAuthor));
+            setFilterOptionsLoaded(true);
+        }).catch((error) => {
+            console.error('Failed to load filter options:', error);
+        }).finally(() => {
+            setFilterOptionsLoading(false);
         });
+    }, [activeAuthor, activeTag, filterOptionsLoaded, filterOptionsLoading]);
 
+    const searchTagOptions = useCallback((query: string) => {
+        const params = new URLSearchParams();
+        params.set('limit', query ? '50' : '30');
+        if (query) params.set('q', query);
+        axios.get(`/api/tags/search?${params.toString()}`)
+            .then((res) => {
+                const items = Array.isArray(res.data) ? res.data as NamedOption[] : [];
+                setAllTags(includeActiveOption(items, activeTag));
+            })
+            .catch((error) => console.error('Failed to search tags:', error));
+    }, [activeTag]);
+
+    const searchAuthorOptions = useCallback((query: string) => {
+        const params = new URLSearchParams();
+        params.set('limit', query ? '50' : '30');
+        if (query) params.set('q', query);
+        axios.get(`/api/authors/search?${params.toString()}`)
+            .then((res) => {
+                const items = Array.isArray(res.data) ? res.data as NamedOption[] : [];
+                setAllAuthors(includeActiveOption(items, activeAuthor));
+            })
+            .catch((error) => console.error('Failed to search authors:', error));
+    }, [activeAuthor]);
+
+    useEffect(() => {
         try {
             const stored = localStorage.getItem('manga_manager_recent_external_paths');
             if (stored) {
@@ -478,6 +520,12 @@ export default function Home() {
             // ignore invalid local storage
         }
     }, []);
+
+    useEffect(() => {
+        if (activeTag || activeAuthor) {
+            loadFilterOptions();
+        }
+    }, [activeTag, activeAuthor, loadFilterOptions]);
 
     useEffect(() => {
         localStorage.setItem('manga_manager_external_ignore_extension', externalIgnoreExtension ? 'true' : 'false');
@@ -1153,6 +1201,10 @@ export default function Home() {
                     setActiveLetter(value);
                     setPage(1);
                 }}
+                filterOptionsLoading={filterOptionsLoading}
+                onFiltersOpen={loadFilterOptions}
+                onTagSearch={searchTagOptions}
+                onAuthorSearch={searchAuthorOptions}
             />
 
             {externalSession && (

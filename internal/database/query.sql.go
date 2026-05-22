@@ -2678,21 +2678,10 @@ SELECT
     s.updated_at,
     s.book_count,
     s.total_pages,
-    CAST(COALESCE((
-        SELECT b.cover_path
-        FROM books b
-        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
-        ORDER BY b.sort_number, b.name
-        LIMIT 1
-    ), '') AS TEXT) as cover_path,
-    CAST(COALESCE((
-        SELECT b.id
-        FROM books b
-        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
-        ORDER BY b.sort_number, b.name
-        LIMIT 1
-    ), 0) AS INTEGER) as cover_book_id
+    CAST(COALESCE(ss.cover_path, '') AS TEXT) as cover_path,
+    CAST(COALESCE(ss.cover_book_id, 0) AS INTEGER) as cover_book_id
 FROM series s
+LEFT JOIN series_stats ss ON ss.series_id = s.id
 WHERE CAST(?1 AS INTEGER) = 0
    OR s.library_id = CAST(?1 AS INTEGER)
 ORDER BY s.created_at DESC, s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
@@ -3061,14 +3050,9 @@ SELECT
     COALESCE(s.title, '') as title,
     COALESCE(s.summary, '') as summary,
     s.updated_at,
-    CAST(COALESCE((
-        SELECT b.cover_path
-        FROM books b
-        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
-        ORDER BY b.sort_number, b.name
-        LIMIT 1
-    ), '') AS TEXT) as cover_path
+    CAST(COALESCE(ss.cover_path, '') AS TEXT) as cover_path
 FROM series s
+LEFT JOIN series_stats ss ON ss.series_id = s.id
 WHERE instr(lower(s.name), lower(?1)) > 0
    OR instr(lower(COALESCE(s.title, '')), lower(?1)) > 0
 ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE

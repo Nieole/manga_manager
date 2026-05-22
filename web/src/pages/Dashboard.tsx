@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, AlertTriangle, FolderPlus, Settings as SettingsIcon, Gauge, Timer, ServerCrash, Route as RouteIcon } from 'lucide-react';
@@ -147,7 +147,12 @@ export default function Dashboard() {
     const [koreaderOverview, setKOReaderOverview] = useState<KOReaderOverview | null>(null);
     const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
     const [loading, setLoading] = useState(true);
+    const [performanceRequested, setPerformanceRequested] = useState(false);
+    const [recommendationsRequested, setRecommendationsRequested] = useState(false);
+    const [recsLoading, setRecsLoading] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const performanceRef = useRef<HTMLDivElement>(null);
+    const recommendationsRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -155,20 +160,14 @@ export default function Dashboard() {
         Promise.all([
             axios.get('/api/stats/dashboard'),
             axios.get('/api/libraries').catch(() => ({ data: [] })),
-            axios.get('/api/system/tasks').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
             axios.get('/api/stats/activity-heatmap?weeks=52').catch(() => ({ data: [] })),
-            axios.get('/api/system/koreader').catch(() => ({ data: { enabled: false, match_mode: 'binary_hash', path_ignore_extension: false, path_match_depth: 2, stats: { matched_progress_count: 0, unmatched_progress_count: 0 } } })),
-            axios.get('/api/system/performance').catch(() => ({ data: null })),
-        ]).then(([statsRes, librariesRes, tasksRes, recentRes, heatmapRes, koreaderRes, performanceRes]) => {
+        ]).then(([statsRes, librariesRes, recentRes, heatmapRes]) => {
             if (!active) return;
             setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
-            setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
-            setKOReaderOverview(koreaderRes.data || null);
-            setPerformance(performanceRes.data || null);
         }).catch(console.error).finally(() => {
             if (active) setLoading(false);
         });
@@ -177,32 +176,99 @@ export default function Dashboard() {
         };
     }, []);
 
-    // AI 推荐独立加载，不阻塞页面主体渲染
-    const [recsLoading, setRecsLoading] = useState(true);
+    useEffect(() => {
+        if (loading) return;
+        let active = true;
+        const timer = window.setTimeout(() => {
+            Promise.all([
+                axios.get('/api/system/tasks?status=failed&limit=3').catch(() => ({ data: [] })),
+                axios.get('/api/system/tasks?status=running&limit=3').catch(() => ({ data: [] })),
+            ]).then(([failedRes, runningRes]) => {
+                if (!active) return;
+                const failed = Array.isArray(failedRes.data) ? failedRes.data as TaskStatus[] : [];
+                const running = Array.isArray(runningRes.data) ? runningRes.data as TaskStatus[] : [];
+                setTasks([...failed, ...running]);
+            }).catch(console.error);
+        }, 600);
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [loading]);
 
-    const loadRecommendations = (forceRefresh = false) => {
+    useEffect(() => {
+        if (loading || libraries.length === 0) return;
+        const hasKOReaderLibrary = libraries.some((library) => library.koreader_sync_enabled ?? true);
+        if (!hasKOReaderLibrary) return;
+        let active = true;
+        const timer = window.setTimeout(() => {
+            axios.get('/api/system/koreader')
+                .then((res) => {
+                    if (active) setKOReaderOverview(res.data || null);
+                })
+                .catch(() => {
+                    if (active) {
+                        setKOReaderOverview({
+                            enabled: false,
+                            base_path: '/koreader',
+                            match_mode: 'binary_hash',
+                            path_ignore_extension: false,
+                            path_match_depth: 2,
+                            stats: { matched_progress_count: 0, unmatched_progress_count: 0 },
+                        });
+                    }
+                });
+        }, 900);
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [loading, libraries]);
+
+    const loadPerformance = useCallback(() => {
+        if (performanceRequested) return;
+        setPerformanceRequested(true);
+        axios.get('/api/system/performance')
+            .then(res => setPerformance(res.data || null))
+            .catch(() => setPerformance(null));
+    }, [performanceRequested]);
+
+    useEffect(() => {
+        if (loading || performanceRequested) return;
+        const target = performanceRef.current;
+        if (!target) return;
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                loadPerformance();
+            }
+        }, { rootMargin: '240px 0px' });
+        observer.observe(target);
+        return () => observer.disconnect();
+    }, [loadPerformance, loading, performanceRequested]);
+
+    const loadRecommendations = useCallback((forceRefresh = false) => {
+        if (recsLoading) return;
+        setRecommendationsRequested(true);
         setRecsLoading(true);
         const url = forceRefresh ? '/api/stats/recommendations?limit=10&refresh=true' : '/api/stats/recommendations?limit=10';
         axios.get(url)
             .then(res => setRecommendations(Array.isArray(res.data) ? res.data : []))
             .catch(console.error)
             .finally(() => setRecsLoading(false));
-    };
+    }, [recsLoading]);
 
     useEffect(() => {
-        let active = true;
-        axios.get('/api/stats/recommendations?limit=10')
-            .then(res => {
-                if (active) setRecommendations(Array.isArray(res.data) ? res.data : []);
-            })
-            .catch(console.error)
-            .finally(() => {
-                if (active) setRecsLoading(false);
-            });
-        return () => {
-            active = false;
-        };
-    }, []);
+        if (loading || recommendationsRequested) return;
+        const target = recommendationsRef.current;
+        if (!target) return;
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                loadRecommendations(false);
+            }
+        }, { rootMargin: '320px 0px' });
+        observer.observe(target);
+        return () => observer.disconnect();
+    }, [loadRecommendations, loading, recommendationsRequested]);
 
     const scrollCarousel = (dir: 'left' | 'right') => {
         if (!scrollRef.current) return;
@@ -333,8 +399,20 @@ export default function Dashboard() {
                 </div>
             )}
 
-            <PerformancePanel performance={performance} />
+            <div ref={performanceRef}>
+                {(performanceRequested || performance) ? (
+                    <PerformancePanel performance={performance} />
+                ) : (
+                    <button
+                        onClick={loadPerformance}
+                        className="w-full rounded-2xl border border-cyan-500/10 bg-gray-950/60 p-5 text-left text-sm text-gray-500 hover:border-cyan-500/25 hover:bg-gray-900/70"
+                    >
+                        {t('dashboard.performance.deferred')}
+                    </button>
+                )}
+            </div>
 
+            {koreaderOverview && (
             <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
                 <div className="flex items-center justify-between gap-3">
                     <div>
@@ -369,6 +447,7 @@ export default function Dashboard() {
                     <MiniStat label={t('dashboard.koreader.unmatchedRecords')} value={koreaderOverview?.stats?.unmatched_progress_count ?? 0} accent="text-amber-300" />
                 </div>
             </div>
+            )}
 
             {failedTasks.length > 0 && (
                 <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
@@ -541,7 +620,8 @@ export default function Dashboard() {
             )}
 
             {/* 猜你喜欢 - AI 推荐 */}
-            {(recsLoading || recommendations.length > 0) && (
+            <div ref={recommendationsRef}>
+            {(recsLoading || recommendations.length > 0 || !recommendationsRequested) && (
                 <div>
                     <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
                         <Sparkles className="w-5 h-5 text-amber-400" />
@@ -573,6 +653,10 @@ export default function Dashboard() {
                                 </div>
                             ))}
                         </div>
+                    ) : !recommendationsRequested ? (
+                        <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-5 text-sm text-gray-500">
+                            {t('dashboard.recommendations.deferred')}
+                        </div>
                     ) : (
                         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
                             {recommendations.map(item => {
@@ -600,6 +684,7 @@ export default function Dashboard() {
                     )}
                 </div>
             )}
+            </div>
         </div>
     );
 }

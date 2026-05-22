@@ -31,6 +31,11 @@ llm:
     model: qwen2.5
     api_key: ""
     timeout: 120
+protocols:
+    opds:
+        enabled: false
+    mihon:
+        enabled: false
 koreader:
     enabled: false
     base_path: /koreader

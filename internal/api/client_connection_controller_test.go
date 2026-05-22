@@ -18,6 +18,11 @@ func TestGetClientConnections(t *testing.T) {
 	if _, err := controller.koreader.CreateAccount(context.Background(), "reader"); err != nil {
 		t.Fatalf("create KOReader account failed: %v", err)
 	}
+	cfg := controller.currentConfig()
+	cfg.Protocols.OPDS.Enabled = true
+	cfg.Protocols.Mihon.Enabled = true
+	cfg.KOReader.Enabled = true
+	controller.config.Replace(&cfg)
 	requestDiagnostics.record(RequestDiagnosticEvent{
 		Time:       testNow(),
 		Method:     http.MethodGet,
@@ -98,11 +103,32 @@ func TestGetClientConnections(t *testing.T) {
 	if byKey["koreader"].Category != "sync" {
 		t.Fatalf("unexpected KOReader endpoint category: %+v", byKey["koreader"])
 	}
-	if byKey["koreader"].Health != "disabled" {
-		t.Fatalf("unexpected KOReader health before enabling service: %+v", byKey["koreader"])
+	if byKey["koreader"].Health != "ready" {
+		t.Fatalf("unexpected KOReader health with enabled service: %+v", byKey["koreader"])
 	}
-	if resp.Status.KOReaderAccountCount != 1 || resp.Status.KOReaderEnabledAccounts != 1 {
-		t.Fatalf("unexpected KOReader account status: %+v", resp.Status)
+	if !resp.Status.OPDSEnabled || !resp.Status.MihonEnabled || !resp.Status.KOReaderEnabled || resp.Status.KOReaderAccountCount != 1 || resp.Status.KOReaderEnabledAccounts != 1 {
+		t.Fatalf("unexpected client connection status: %+v", resp.Status)
+	}
+}
+
+func TestGetClientConnectionsHidesDisabledProtocolEndpoints(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	rec := httptest.NewRecorder()
+	controller.getClientConnections(rec, httptest.NewRequest(http.MethodGet, "/api/system/client-connections", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp ClientConnectionsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode client connections failed: %v", err)
+	}
+	if len(resp.Endpoints) != 0 {
+		t.Fatalf("expected no disabled protocol endpoints, got %+v", resp.Endpoints)
+	}
+	if resp.Status.OPDSEnabled || resp.Status.MihonEnabled || resp.Status.KOReaderEnabled {
+		t.Fatalf("expected all external protocols disabled by default, got %+v", resp.Status)
 	}
 }
 

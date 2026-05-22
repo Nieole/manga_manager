@@ -28,9 +28,10 @@ type HealthIssue struct {
 }
 
 type HealthIssueFilters struct {
-	LibraryID int64
-	Type      string
-	Limit     int
+	LibraryID    int64
+	Type         string
+	Limit        int
+	SkipKOReader bool
 }
 
 type HealthReport struct {
@@ -232,6 +233,9 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 		Limit:   limit,
 	}
 	for _, def := range healthIssueDefinitions {
+		if filters.SkipKOReader && def.Type == "unmatched_koreader" {
+			continue
+		}
 		if filters.Type != "" && filters.Type != def.Type {
 			continue
 		}

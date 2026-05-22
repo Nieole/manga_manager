@@ -20,9 +20,10 @@ func (c *Controller) getHealthReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	report, err := c.store.GetHealthReport(r.Context(), database.HealthIssueFilters{
-		LibraryID: libraryID,
-		Type:      strings.TrimSpace(r.URL.Query().Get("type")),
-		Limit:     limit,
+		LibraryID:    libraryID,
+		Type:         strings.TrimSpace(r.URL.Query().Get("type")),
+		Limit:        limit,
+		SkipKOReader: !c.currentConfig().KOReader.Enabled,
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to build health report")

@@ -119,6 +119,7 @@ func requestWithRouteParams(method, path string, body []byte, params map[string]
 type countingStore struct {
 	database.Store
 	getBookCalls            int
+	getDashboardStatsCalls  int
 	updateBookProgressCalls int
 	logReadingActivityCalls int
 }
@@ -126,6 +127,11 @@ type countingStore struct {
 func (s *countingStore) GetBook(ctx context.Context, id int64) (database.Book, error) {
 	s.getBookCalls++
 	return s.Store.GetBook(ctx, id)
+}
+
+func (s *countingStore) GetDashboardStats(ctx context.Context) (*database.DashboardStats, error) {
+	s.getDashboardStatsCalls++
+	return s.Store.GetDashboardStats(ctx)
 }
 
 func (s *countingStore) UpdateBookProgress(ctx context.Context, arg database.UpdateBookProgressParams) error {
@@ -238,6 +244,8 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	updated.Server.Port = 9090
 	updated.Cache.Dir = "./custom-cache"
 	updated.Logging.Level = config.LogLevelDebug
+	updated.Protocols.OPDS.Enabled = true
+	updated.Protocols.Mihon.Enabled = true
 
 	body, err := json.Marshal(updated)
 	if err != nil {
@@ -261,6 +269,9 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	}
 	if snapshot.Logging.Level != config.LogLevelDebug {
 		t.Fatalf("expected updated log level %q, got %q", config.LogLevelDebug, snapshot.Logging.Level)
+	}
+	if !snapshot.Protocols.OPDS.Enabled || !snapshot.Protocols.Mihon.Enabled {
+		t.Fatalf("expected protocol toggles to persist, got OPDS=%v Mihon=%v", snapshot.Protocols.OPDS.Enabled, snapshot.Protocols.Mihon.Enabled)
 	}
 
 	if _, err := os.Stat(controller.configPath); err != nil {
@@ -1388,6 +1399,32 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 	if len(authors) != 1 || authors[0].Name != "Writer A" {
 		t.Fatalf("unexpected authors payload: %+v", authors)
+	}
+
+	searchTagsRec := httptest.NewRecorder()
+	controller.searchTags(searchTagsRec, httptest.NewRequest(http.MethodGet, "/api/tags/search?q=mys&limit=5", nil))
+	if searchTagsRec.Code != http.StatusOK {
+		t.Fatalf("expected search tags 200, got %d", searchTagsRec.Code)
+	}
+	var searchedTags []database.Tag
+	if err := json.NewDecoder(searchTagsRec.Body).Decode(&searchedTags); err != nil {
+		t.Fatalf("decode searched tags failed: %v", err)
+	}
+	if len(searchedTags) != 1 || searchedTags[0].Name != "Mystery" {
+		t.Fatalf("unexpected searched tags payload: %+v", searchedTags)
+	}
+
+	searchAuthorsRec := httptest.NewRecorder()
+	controller.searchAuthors(searchAuthorsRec, httptest.NewRequest(http.MethodGet, "/api/authors/search?q=writer&limit=5", nil))
+	if searchAuthorsRec.Code != http.StatusOK {
+		t.Fatalf("expected search authors 200, got %d", searchAuthorsRec.Code)
+	}
+	var searchedAuthors []database.Author
+	if err := json.NewDecoder(searchAuthorsRec.Body).Decode(&searchedAuthors); err != nil {
+		t.Fatalf("decode searched authors failed: %v", err)
+	}
+	if len(searchedAuthors) != 1 || searchedAuthors[0].Name != "Writer A" {
+		t.Fatalf("unexpected searched authors payload: %+v", searchedAuthors)
 	}
 
 	bookInfoRec := httptest.NewRecorder()
@@ -2593,6 +2630,62 @@ func TestGetDashboardStatsReflectsReadingProgress(t *testing.T) {
 	}
 	if stats.ActiveDays7 < 1 {
 		t.Fatalf("expected active_days_7 >= 1, got %d", stats.ActiveDays7)
+	}
+}
+
+func TestDashboardStatsCacheAvoidsRepeatedStoreQueriesAndInvalidates(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 12)
+	counting := &countingStore{Store: store}
+	controller.store = counting
+
+	fetchStats := func() database.DashboardStats {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		controller.getDashboardStats(rec, httptest.NewRequest(http.MethodGet, "/api/stats/dashboard", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected dashboard stats 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		var stats database.DashboardStats
+		if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+			t.Fatalf("decode dashboard stats failed: %v", err)
+		}
+		return stats
+	}
+
+	first := fetchStats()
+	second := fetchStats()
+	if counting.getDashboardStatsCalls != 1 {
+		t.Fatalf("expected one store dashboard query for repeated reads, got %d", counting.getDashboardStatsCalls)
+	}
+	if first.TotalBooks != second.TotalBooks || second.ReadBooks != 0 {
+		t.Fatalf("unexpected cached dashboard stats: first=%+v second=%+v", first, second)
+	}
+
+	controller.handleScannerBatchEvent("batch_inserted")
+	_ = fetchStats()
+	if counting.getDashboardStatsCalls != 2 {
+		t.Fatalf("expected scanner batch event to invalidate dashboard cache, got %d store calls", counting.getDashboardStatsCalls)
+	}
+
+	req := requestWithRouteParam(
+		http.MethodPost,
+		"/api/books/progress",
+		[]byte(`{"page":5}`),
+		"bookId",
+		strconv.FormatInt(book.ID, 10),
+	)
+	rec := httptest.NewRecorder()
+	controller.updateBookProgress(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected progress update 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	afterProgress := fetchStats()
+	if counting.getDashboardStatsCalls != 3 {
+		t.Fatalf("expected progress update to invalidate dashboard cache, got %d store calls", counting.getDashboardStatsCalls)
+	}
+	if afterProgress.ReadBooks != 1 {
+		t.Fatalf("expected refreshed read book count 1, got %+v", afterProgress)
 	}
 }
 

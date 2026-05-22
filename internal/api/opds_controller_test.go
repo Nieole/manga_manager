@@ -15,6 +15,8 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestOPDSFeeds(t *testing.T) {
@@ -30,6 +32,12 @@ func TestOPDSFeeds(t *testing.T) {
 		UPDATE books SET title = ?, cover_path = ? WHERE id = ?;
 	`, "Alpha Book Display", "covers/alpha.jpg", book.ID); err != nil {
 		t.Fatalf("update book metadata failed: %v", err)
+	}
+	if err := controller.store.(*database.SqlStore).RefreshSeriesStats(context.Background(), series.ID); err != nil {
+		t.Fatalf("refresh series stats failed: %v", err)
+	}
+	if err := controller.engine.IndexSeries(series.ID, "Alpha Display", "covers/alpha.jpg"); err != nil {
+		t.Fatalf("index OPDS series failed: %v", err)
 	}
 
 	t.Run("root feed", func(t *testing.T) {
@@ -280,6 +288,28 @@ func TestOPDSFeeds(t *testing.T) {
 			t.Fatalf("unexpected reading list series feed: %+v", seriesFeed)
 		}
 	})
+}
+
+func TestOPDSRoutesRespectProtocolToggle(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	router := chi.NewRouter()
+	controller.SetupOPDSRoutes(router)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected disabled OPDS route 404, got %d", rec.Code)
+	}
+
+	cfg := controller.currentConfig()
+	cfg.Protocols.OPDS.Enabled = true
+	controller.config.Replace(&cfg)
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected enabled OPDS route 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func findOPDSLink(links []OPDSLink, rel string) *OPDSLink {

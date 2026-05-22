@@ -100,6 +100,7 @@ const (
 // SetupOPDSRoutes 注册 OPDS 路由
 func (c *Controller) SetupOPDSRoutes(r chi.Router) {
 	r.Route("/opds/v1.2", func(r chi.Router) {
+		r.Use(c.requireProtocolEnabled("opds"))
 		r.Get("/", c.opdsRoot)
 		r.Get("/continue", c.opdsContinueReading)
 		r.Get("/recent", c.opdsRecentAdded)
@@ -349,6 +350,27 @@ func opdsSeriesEntryFromRecentAddedRow(row database.ListRecentAddedSeriesRow) OP
 	return OPDSEntry{
 		Title:   title,
 		ID:      fmt.Sprintf("urn:manga-manager:opds:series:%d", row.ID),
+		Updated: row.UpdatedAt.Format(time.RFC3339),
+		Content: row.Summary,
+		Links:   links,
+	}
+}
+
+func opdsSeriesEntryFromProtocolRow(row database.ProtocolSeriesRow) OPDSEntry {
+	title := firstNonEmpty(row.Title, row.Name)
+	links := []OPDSLink{
+		{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+	}
+	if row.CoverPath != "" {
+		links = append(links, OPDSLink{
+			Rel:  "http://opds-spec.org/image/thumbnail",
+			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+			Type: "image/jpeg",
+		})
+	}
+	return OPDSEntry{
+		Title:   title,
+		ID:      fmt.Sprintf("urn:manga-manager:opds:search:series:%d", row.ID),
 		Updated: row.UpdatedAt.Format(time.RFC3339),
 		Content: row.Summary,
 		Links:   links,
@@ -633,45 +655,56 @@ func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
 	total := 0
 	entries := []OPDSEntry{}
 	if query != "" {
-		searchTotal, err := c.store.CountOPDSSeriesSearch(r.Context(), query)
-		if err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-		total = int(searchTotal)
-
-		rows, err := c.store.SearchOPDSSeries(r.Context(), database.SearchOPDSSeriesParams{
-			Query:  query,
-			Limit:  int64(limit),
-			Offset: int64((page - 1) * limit),
-		})
-		if err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-
-		for _, row := range rows {
-			title := row.Title
-			if title == "" {
-				title = row.Name
+		if rows, searchTotal, usedEngine, err := c.searchProtocolSeries(r.Context(), query, page, limit); usedEngine {
+			if err != nil {
+				http.Error(w, "Internal error", http.StatusInternalServerError)
+				return
 			}
-			links := []OPDSLink{
-				{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+			total = searchTotal
+			for _, row := range rows {
+				entries = append(entries, opdsSeriesEntryFromProtocolRow(row))
 			}
-			if row.CoverPath != "" {
-				links = append(links, OPDSLink{
-					Rel:  "http://opds-spec.org/image/thumbnail",
-					Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
-					Type: "image/jpeg",
+		} else {
+			searchTotal, err := c.store.CountOPDSSeriesSearch(r.Context(), query)
+			if err != nil {
+				http.Error(w, "Internal error", http.StatusInternalServerError)
+				return
+			}
+			total = int(searchTotal)
+
+			rows, err := c.store.SearchOPDSSeries(r.Context(), database.SearchOPDSSeriesParams{
+				Query:  query,
+				Limit:  int64(limit),
+				Offset: int64((page - 1) * limit),
+			})
+			if err != nil {
+				http.Error(w, "Internal error", http.StatusInternalServerError)
+				return
+			}
+
+			for _, row := range rows {
+				title := row.Title
+				if title == "" {
+					title = row.Name
+				}
+				links := []OPDSLink{
+					{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
+				}
+				if row.CoverPath != "" {
+					links = append(links, OPDSLink{
+						Rel:  "http://opds-spec.org/image/thumbnail",
+						Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+						Type: "image/jpeg",
+					})
+				}
+				entries = append(entries, OPDSEntry{
+					Title:   title,
+					ID:      fmt.Sprintf("urn:manga-manager:opds:search:series:%d", row.ID),
+					Updated: row.UpdatedAt.Format(time.RFC3339),
+					Content: row.Summary,
+					Links:   links,
 				})
 			}
-			entries = append(entries, OPDSEntry{
-				Title:   title,
-				ID:      fmt.Sprintf("urn:manga-manager:opds:search:series:%d", row.ID),
-				Updated: row.UpdatedAt.Format(time.RFC3339),
-				Content: row.Summary,
-				Links:   links,
-			})
 		}
 	}
 

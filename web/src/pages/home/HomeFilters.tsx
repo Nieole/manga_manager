@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Search, ChevronDown, ChevronUp, Filter } from 'lucide-react';
 import type { NamedOption } from './types';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -16,6 +16,10 @@ interface HomeFiltersProps {
   onTagChange: (value: string | null) => void;
   onAuthorChange: (value: string | null) => void;
   onLetterChange: (value: string | null) => void;
+  filterOptionsLoading?: boolean;
+  onFiltersOpen?: () => void;
+  onTagSearch?: (query: string) => void;
+  onAuthorSearch?: (query: string) => void;
 }
 
 const COLLAPSED_VISIBLE_COUNT = 15;
@@ -33,6 +37,10 @@ export function HomeFilters({
   onTagChange,
   onAuthorChange,
   onLetterChange,
+  filterOptionsLoading = false,
+  onFiltersOpen,
+  onTagSearch,
+  onAuthorSearch,
 }: HomeFiltersProps) {
   const { t } = useI18n();
   
@@ -40,6 +48,18 @@ export function HomeFilters({
   const [authorSearch, setAuthorSearch] = useState('');
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [authorsExpanded, setAuthorsExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!tagsExpanded || !onTagSearch) return;
+    const timer = window.setTimeout(() => onTagSearch(tagSearch.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [onTagSearch, tagSearch, tagsExpanded]);
+
+  useEffect(() => {
+    if (!authorsExpanded || !onAuthorSearch) return;
+    const timer = window.setTimeout(() => onAuthorSearch(authorSearch.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [authorSearch, authorsExpanded, onAuthorSearch]);
 
   const processedTags = useMemo(() => allTags.map(t => ({ name: t.name, lower: t.name.toLowerCase() })), [allTags]);
   const processedAuthors = useMemo(() => allAuthors.map(a => ({ name: a.name, lower: a.name.toLowerCase() })), [allAuthors]);
@@ -66,7 +86,8 @@ export function HomeFilters({
     onToggleExpand: () => void,
     searchValue: string,
     setSearchValue: (val: string) => void,
-    expandable: boolean
+    expandable: boolean,
+    searchable = false
   ) => {
     
     let displayList = filteredList;
@@ -91,6 +112,8 @@ export function HomeFilters({
       }
     }
 
+    const canToggleDetails = expandable || searchable;
+
     return (
       <div className="flex flex-col lg:flex-row gap-3 py-5 border-t border-gray-800/30 first:border-0 last:border-b-0">
         <div className="flex items-center justify-between lg:w-32 shrink-0 h-9">
@@ -98,7 +121,7 @@ export function HomeFilters({
         </div>
         
         <div className="flex-1 min-w-0 flex flex-col gap-3">
-            {expandable && expanded && (
+            {searchable && expanded && (
                 <div className="relative max-w-sm mb-1">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Search className="h-4 w-4 text-gray-400" />
@@ -143,14 +166,21 @@ export function HomeFilters({
                 </span>
               )}
 
-              {expandable && (
+              {canToggleDetails && (
                 <button
                   onClick={onToggleExpand}
                   className="flex items-center justify-center px-3 py-1 text-xs font-medium text-komgaPrimary hover:text-komgaPrimaryHover bg-transparent hover:bg-komgaPrimary/10 rounded-lg transition-colors ml-1 h-8"
                 >
                   {expanded
                     ? <><ChevronUp className="w-3.5 h-3.5 mr-1" /> {t('home.filters.collapse')}</>
-                    : <><ChevronDown className="w-3.5 h-3.5 mr-1" /> {t('home.filters.expandMore', { count: filteredList.length - displayList.length })}</>}
+                    : (
+                      <>
+                        <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                        {expandable
+                          ? t('home.filters.expandMore', { count: Math.max(0, filteredList.length - displayList.length) })
+                          : t('common.search')}
+                      </>
+                    )}
                 </button>
               )}
             </div>
@@ -160,12 +190,18 @@ export function HomeFilters({
   };
 
   const [isFiltersExpanded, setIsFiltersExpanded] = useState(false);
+  const toggleFilters = () => {
+    if (!isFiltersExpanded) {
+      onFiltersOpen?.();
+    }
+    setIsFiltersExpanded(!isFiltersExpanded);
+  };
 
   return (
     <div className="mb-6 rounded-3xl bg-gradient-to-br from-gray-900/60 to-komgaSurface/80 border border-white/5 shadow-sm backdrop-blur-xl overflow-hidden transition-all">
       <div 
         className="px-5 sm:px-8 py-4 flex items-center justify-between cursor-pointer group"
-        onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+        onClick={toggleFilters}
       >
          <div className="flex items-center gap-2 text-gray-200 group-hover:text-white transition-colors">
             <Filter className="w-5 h-5 text-komgaPrimary" />
@@ -194,7 +230,14 @@ export function HomeFilters({
             () => {}, 
             '', 
             () => {}, 
+            false,
             false
+          )}
+
+          {filterOptionsLoading && (
+            <div className="py-5 border-t border-gray-800/30 text-sm text-gray-500">
+              {t('home.filters.loadingOptions')}
+            </div>
           )}
 
           {allTags.length > 0 && renderFilterRow(
@@ -210,7 +253,8 @@ export function HomeFilters({
             }, 
             tagSearch, 
             setTagSearch, 
-            allTags.length > COLLAPSED_VISIBLE_COUNT
+            allTags.length > COLLAPSED_VISIBLE_COUNT,
+            Boolean(onTagSearch)
           )}
 
           {allAuthors.length > 0 && renderFilterRow(
@@ -226,7 +270,8 @@ export function HomeFilters({
             }, 
             authorSearch, 
             setAuthorSearch, 
-            allAuthors.length > COLLAPSED_VISIBLE_COUNT
+            allAuthors.length > COLLAPSED_VISIBLE_COUNT,
+            Boolean(onAuthorSearch)
           )}
           
           <div className="flex flex-col lg:flex-row gap-3 py-5 border-t border-gray-800/30">

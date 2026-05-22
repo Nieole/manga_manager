@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, PlugZap, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { SettingsPageIntro, sectionClassName } from './shared';
@@ -46,6 +46,8 @@ interface ClientConnectionsResponse {
   base_url: string;
   endpoints: ClientConnectionEndpoint[];
   status: {
+    opds_enabled: boolean;
+    mihon_enabled: boolean;
     koreader_enabled: boolean;
     koreader_account_count: number;
     koreader_enabled_accounts: number;
@@ -55,9 +57,10 @@ interface ClientConnectionsResponse {
 
 export function SettingsConnectionsPage() {
   const { t } = useI18n();
-  const { showToast } = useSettings();
+  const { config, setConfig, showToast } = useSettings();
   const [loading, setLoading] = useState(true);
   const [copying, setCopying] = useState<string | null>(null);
+  const [savingProtocol, setSavingProtocol] = useState<'opds' | 'mihon' | null>(null);
   const [data, setData] = useState<ClientConnectionsResponse | null>(null);
 
   const loadConnections = async () => {
@@ -81,6 +84,8 @@ export function SettingsConnectionsPage() {
   const metrics = useMemo(() => [
     { label: t('settings.connections.metric.baseUrl'), value: data?.base_url || t('common.none') },
     { label: t('settings.connections.metric.endpoints'), value: data?.endpoints.filter((endpoint) => endpoint.enabled).length ?? 0 },
+    { label: 'OPDS', value: data?.status.opds_enabled ? t('settings.connections.enabled') : t('settings.connections.disabled') },
+    { label: 'Mihon', value: data?.status.mihon_enabled ? t('settings.connections.enabled') : t('settings.connections.disabled') },
     { label: t('settings.connections.metric.koreader'), value: data?.status.koreader_enabled ? t('settings.connections.enabled') : t('settings.connections.disabled') },
   ], [data, t]);
 
@@ -143,6 +148,35 @@ export function SettingsConnectionsPage() {
     }
   };
 
+  const setProtocolEnabled = async (protocol: 'opds' | 'mihon', enabled: boolean) => {
+    if (!config) return;
+    const nextConfig = {
+      ...config,
+      protocols: {
+        opds: { enabled: config.protocols?.opds?.enabled ?? false },
+        mihon: { enabled: config.protocols?.mihon?.enabled ?? false },
+      },
+    };
+    nextConfig.protocols[protocol] = { enabled };
+    setSavingProtocol(protocol);
+    try {
+      const res = await axios.post('/api/system/config', nextConfig);
+      setConfig(res.data?.config || nextConfig);
+      showToast(
+        t(enabled ? 'settings.connections.protocolEnabledToast' : 'settings.connections.protocolDisabledToast', {
+          label: protocol === 'opds' ? 'OPDS' : 'Mihon',
+        }),
+        'success',
+      );
+      await loadConnections();
+    } catch (error) {
+      console.error(error);
+      showToast(t('settings.toast.configSaveFailed'), 'error');
+    } finally {
+      setSavingProtocol(null);
+    }
+  };
+
   const healthMeta = (health: string) => {
     if (health === 'ready') {
       return {
@@ -197,7 +231,7 @@ export function SettingsConnectionsPage() {
           <h3 className="text-lg font-semibold text-white">{t('settings.connections.summaryTitle')}</h3>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-5">
           {metrics.map((metric) => (
             <div key={metric.label} className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
               <p className="text-xs uppercase tracking-wide text-gray-500">{metric.label}</p>
@@ -236,6 +270,23 @@ export function SettingsConnectionsPage() {
           </div>
         </div>
 
+        <div className="grid gap-3 lg:grid-cols-2">
+          <ProtocolToggleCard
+            label="OPDS"
+            description={t('settings.connections.protocol.opdsDescription')}
+            enabled={config?.protocols?.opds?.enabled ?? data?.status.opds_enabled ?? false}
+            saving={savingProtocol === 'opds'}
+            onToggle={(enabled) => setProtocolEnabled('opds', enabled)}
+          />
+          <ProtocolToggleCard
+            label="Mihon"
+            description={t('settings.connections.protocol.mihonDescription')}
+            enabled={config?.protocols?.mihon?.enabled ?? data?.status.mihon_enabled ?? false}
+            saving={savingProtocol === 'mihon'}
+            onToggle={(enabled) => setProtocolEnabled('mihon', enabled)}
+          />
+        </div>
+
         {data?.status.koreader_enabled && (
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
             <div className="flex items-center gap-2 font-medium">
@@ -271,6 +322,11 @@ export function SettingsConnectionsPage() {
           </div>
         ) : (
           <div className="space-y-5">
+            {endpointGroups.length === 0 && (
+              <div className="rounded-xl border border-dashed border-gray-800 bg-black/20 p-6 text-sm text-gray-500">
+                {t('settings.connections.noEnabledEndpoints')}
+              </div>
+            )}
             {endpointGroups.map((group) => {
               const Icon = group.icon;
               return (
@@ -426,6 +482,49 @@ export function SettingsConnectionsPage() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function ProtocolToggleCard({
+  label,
+  description,
+  enabled,
+  saving,
+  onToggle,
+}: {
+  label: string;
+  description: string;
+  enabled: boolean;
+  saving: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="rounded-xl border border-gray-800 bg-black/20 p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <PlugZap className={enabled ? 'h-4 w-4 text-emerald-300' : 'h-4 w-4 text-gray-500'} />
+            <p className="text-sm font-semibold text-white">{label}</p>
+            <span className={`rounded-full border px-2 py-0.5 text-[11px] ${enabled ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
+              {enabled ? t('settings.connections.enabled') : t('settings.connections.disabled')}
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-5 text-gray-400">{description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggle(!enabled)}
+          disabled={saving}
+          className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors disabled:opacity-60 ${enabled ? 'border-emerald-400/40 bg-emerald-500/25' : 'border-gray-700 bg-gray-900'}`}
+          aria-pressed={enabled}
+          aria-label={label}
+        >
+          <span className={`absolute left-0 top-1 h-5 w-5 rounded-full bg-white transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+          {saving && <RefreshCw className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 animate-spin text-gray-900" />}
+        </button>
+      </div>
     </div>
   );
 }
