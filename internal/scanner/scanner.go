@@ -22,6 +22,7 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/search"
+	"manga-manager/internal/storageio"
 )
 
 type Scanner struct {
@@ -39,6 +40,7 @@ type Scanner struct {
 	}
 	// 批量插入结束后的回调播送机制
 	onBatchIngested func(action string)
+	onScanMetrics   func(ScanMetricsReport)
 }
 
 func NewScanner(store database.Store, engine *search.Engine, cfg *config.Manager) *Scanner {
@@ -56,6 +58,10 @@ func NewScanner(store database.Store, engine *search.Engine, cfg *config.Manager
 // SetBatchCallback 允许外部注册事件通知钩子
 func (s *Scanner) SetBatchCallback(cb func(string)) {
 	s.onBatchIngested = cb
+}
+
+func (s *Scanner) SetScanMetricsCallback(cb func(ScanMetricsReport)) {
+	s.onScanMetrics = cb
 }
 
 func (s *Scanner) currentConfig() config.Config {
@@ -117,6 +123,7 @@ type scanMetrics struct {
 	processedArchives  atomic.Int64
 	openedArchives     atomic.Int64
 	hashedFiles        atomic.Int64
+	ioWaitMillis       atomic.Int64
 }
 
 type scanMetricsSnapshot struct {
@@ -125,6 +132,23 @@ type scanMetricsSnapshot struct {
 	processedArchives  int64
 	openedArchives     int64
 	hashedFiles        int64
+	ioWaitMillis       int64
+}
+
+type ScanMetricsReport struct {
+	Scope                  string
+	ID                     int64
+	StorageProfile         string
+	VolumeKey              string
+	ArchiveOpenConcurrency int
+	CoverConcurrency       int
+	DiscoveredArchives     int64
+	SkippedArchives        int64
+	ProcessedArchives      int64
+	OpenedArchives         int64
+	HashedFiles            int64
+	IOWaitMillis           int64
+	DurationMillis         int64
 }
 
 func (m *scanMetrics) snapshot() scanMetricsSnapshot {
@@ -137,6 +161,7 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 		processedArchives:  m.processedArchives.Load(),
 		openedArchives:     m.openedArchives.Load(),
 		hashedFiles:        m.hashedFiles.Load(),
+		ioWaitMillis:       m.ioWaitMillis.Load(),
 	}
 }
 
@@ -157,6 +182,58 @@ const (
 type ScanOptions struct {
 	Force   bool
 	Profile ScanProfile
+}
+
+func (s *Scanner) scanWorkerCount(cfg config.Config, rootPath string, opts ScanOptions) int {
+	workers := cfg.Scanner.Workers
+	if workers <= 0 {
+		workers = runtime.NumCPU() * 2
+	}
+	policy := config.ResolveStoragePolicy(cfg, rootPath)
+	limit := policy.IOPolicy.ScanConcurrency
+	if opts.Profile.opensArchive() {
+		limit = storageIOLimit(limit, policy.IOPolicy.ArchiveOpenConcurrency)
+	}
+	if opts.Profile.computesQuickHash() || opts.Profile.computesFullHash(cfg) {
+		limit = storageIOLimit(limit, policy.IOPolicy.HashConcurrency)
+	}
+	if limit > 0 && workers > limit {
+		workers = limit
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	return workers
+}
+
+func storageIOLimit(values ...int) int {
+	limit := 0
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if limit == 0 || value < limit {
+			limit = value
+		}
+	}
+	return limit
+}
+
+func (s *Scanner) acquireStorageToken(ctx context.Context, policy config.ResolvedStoragePolicy, limit int, kind storageio.WorkKind) (func(), time.Duration, error) {
+	if limit <= 0 || strings.TrimSpace(policy.VolumeKey) == "" {
+		return func() {}, 0, nil
+	}
+	lease, err := storageio.Default.Acquire(ctx, storageio.Request{
+		VolumeKey:        policy.VolumeKey,
+		Limit:            limit,
+		Kind:             kind,
+		PauseWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
+		IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
+	})
+	if err != nil {
+		return nil, lease.Wait, err
+	}
+	return lease.Release, lease.Wait, nil
 }
 
 func NormalizeScanProfile(raw string) ScanProfile {
@@ -249,10 +326,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	// 第 2 阶段：解析工作池 (The Worker Pool)
 	// 在此处限制最大同时榨取的数量，保证文件描述符 FD 不枯竭且避免 CPU 长时间锁顿
 	cfg := s.currentConfig()
-	numWorkers := cfg.Scanner.Workers
-	if numWorkers <= 0 {
-		numWorkers = runtime.NumCPU() * 2
-	}
+	numWorkers := s.scanWorkerCount(cfg, rootPath, opts)
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -325,7 +399,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("library", libraryID, opts, metrics, time.Since(started), walkErr)
+	s.logScanCompleted("library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr)
 	return walkErr
 }
 
@@ -365,10 +439,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 
 	var wg sync.WaitGroup
 	cfg := s.currentConfig()
-	numWorkers := cfg.Scanner.Workers
-	if numWorkers <= 0 {
-		numWorkers = runtime.NumCPU() * 2
-	}
+	numWorkers := s.scanWorkerCount(cfg, library.Path, opts)
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -434,7 +505,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("series", seriesID, opts, metrics, time.Since(started), walkErr)
+	s.logScanCompleted("series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr)
 	return walkErr
 }
 
@@ -484,17 +555,23 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 	return nil
 }
 
-func (s *Scanner) logScanCompleted(scope string, id int64, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error) {
+func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error) {
 	snapshot := metrics.snapshot()
+	policy := config.ResolveStoragePolicy(s.currentConfig(), rootPath)
 	attrs := []any{
 		"scope", scope,
 		"scan_profile", opts.Profile,
 		"force", opts.Force,
+		"storage_profile", policy.StorageProfile,
+		"volume_key", policy.VolumeKey,
+		"archive_open_concurrency", policy.IOPolicy.ArchiveOpenConcurrency,
+		"cover_concurrency", policy.IOPolicy.CoverConcurrency,
 		"discovered_archives", snapshot.discoveredArchives,
 		"skipped_archives", snapshot.skippedArchives,
 		"processed_archives", snapshot.processedArchives,
 		"opened_archives", snapshot.openedArchives,
 		"hashed_files", snapshot.hashedFiles,
+		"io_wait_ms", snapshot.ioWaitMillis,
 		"duration_ms", duration.Milliseconds(),
 	}
 	switch scope {
@@ -506,9 +583,32 @@ func (s *Scanner) logScanCompleted(scope string, id int64, opts ScanOptions, met
 	if err != nil {
 		attrs = append(attrs, "error", err)
 		slog.Warn("Scan completed with errors", attrs...)
+		s.publishScanMetrics(scope, id, policy, snapshot, duration)
 		return
 	}
 	slog.Info("Scan completed", attrs...)
+	s.publishScanMetrics(scope, id, policy, snapshot, duration)
+}
+
+func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.ResolvedStoragePolicy, snapshot scanMetricsSnapshot, duration time.Duration) {
+	if s.onScanMetrics == nil {
+		return
+	}
+	s.onScanMetrics(ScanMetricsReport{
+		Scope:                  scope,
+		ID:                     id,
+		StorageProfile:         policy.StorageProfile,
+		VolumeKey:              policy.VolumeKey,
+		ArchiveOpenConcurrency: policy.IOPolicy.ArchiveOpenConcurrency,
+		CoverConcurrency:       policy.IOPolicy.CoverConcurrency,
+		DiscoveredArchives:     snapshot.discoveredArchives,
+		SkippedArchives:        snapshot.skippedArchives,
+		ProcessedArchives:      snapshot.processedArchives,
+		OpenedArchives:         snapshot.openedArchives,
+		HashedFiles:            snapshot.hashedFiles,
+		IOWaitMillis:           snapshot.ioWaitMillis,
+		DurationMillis:         duration.Milliseconds(),
+	})
 }
 
 func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, opts ScanOptions, metrics *scanMetrics, results chan<- scanResult) {
@@ -519,19 +619,38 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 
 	cfg := s.currentConfig()
+	storagePolicy := config.ResolveStoragePolicy(cfg, rootPath)
 	var arc parser.Archive
 	var pages []parser.PageMetadata
+	closeArchive := func() {}
 	if opts.Profile.opensArchive() {
 		var err error
+		releaseToken, waited, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.ArchiveOpenConcurrency), storageio.WorkKindMetadataScan)
+		if err != nil {
+			return
+		}
+		if metrics != nil && waited > 0 {
+			metrics.ioWaitMillis.Add(waited.Milliseconds())
+		}
 		arc, err = s.openArchive(job.path)
 		if err != nil {
+			releaseToken()
 			slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
 			return
 		}
 		if metrics != nil {
 			metrics.openedArchives.Add(1)
 		}
-		defer arc.Close()
+		closed := false
+		closeArchive = func() {
+			if closed {
+				return
+			}
+			closed = true
+			arc.Close()
+			releaseToken()
+		}
+		defer closeArchive()
 
 		pages, err = arc.GetPages()
 		if err != nil {
@@ -600,6 +719,18 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		slog.Warn("No pages found in archive to extract cover", "path", job.path)
 	}
 
+	// 尝试提取 ComicInfo.xml；归档读取完成后立即释放 IO token，避免后续 hash 再申请同盘 token 时自我等待。
+	var cInfo *parser.ComicInfo
+	if opts.Profile.extractsMetadata() && arc != nil {
+		xmlData, err := arc.ReadMetadataFile("ComicInfo.xml")
+		if err == nil {
+			if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
+				cInfo = parsed
+			}
+		}
+	}
+	closeArchive()
+
 	book := database.UpsertBookByPathParams{
 		LibraryID:      libIDInt,
 		Name:           baseName,
@@ -615,7 +746,15 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	var fileHash string
 	if opts.Profile.computesFullHash(cfg) {
 		var err error
+		releaseToken, waited, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
+		if tokenErr != nil {
+			return
+		}
+		if metrics != nil && waited > 0 {
+			metrics.ioWaitMillis.Add(waited.Milliseconds())
+		}
 		fileHash, err = koreader.FingerprintFile(job.path)
+		releaseToken()
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
@@ -627,23 +766,20 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	var quickHash string
 	if opts.Profile.computesQuickHash() {
 		var err error
+		releaseToken, waited, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
+		if tokenErr != nil {
+			return
+		}
+		if metrics != nil && waited > 0 {
+			metrics.ioWaitMillis.Add(waited.Milliseconds())
+		}
 		quickHash, err = koreader.FingerprintQuickFile(job.path)
+		releaseToken()
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
 		if err != nil {
 			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
-		}
-	}
-
-	// 尝试提取 ComicInfo.xml
-	var cInfo *parser.ComicInfo
-	if opts.Profile.extractsMetadata() && arc != nil {
-		xmlData, err := arc.ReadMetadataFile("ComicInfo.xml")
-		if err == nil {
-			if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
-				cInfo = parsed
-			}
 		}
 	}
 
@@ -999,6 +1135,13 @@ func (s *Scanner) startCoverWorkers() {
 		if workers > 4 {
 			workers = 4
 		}
+		policy := config.ResolveStoragePolicy(s.currentConfig(), "")
+		if policy.IOPolicy.CoverConcurrency > 0 && workers > policy.IOPolicy.CoverConcurrency {
+			workers = policy.IOPolicy.CoverConcurrency
+		}
+		if workers < 1 {
+			workers = 1
+		}
 		for i := 0; i < workers; i++ {
 			go func() {
 				for job := range s.coverQueue {
@@ -1059,6 +1202,21 @@ func (s *Scanner) runCoverJob(job coverJob) {
 func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config) (sql.NullString, error) {
 	if existing := existingThumbnailPath(cfg, candidate.bookHash); existing.Valid {
 		return existing, nil
+	}
+
+	storagePolicy := config.ResolveStoragePolicy(cfg, candidate.path)
+	releaseToken, waited, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ArchiveOpenConcurrency, storagePolicy.IOPolicy.CoverConcurrency), storageio.WorkKindCoverBuild)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	defer releaseToken()
+	if waited >= 250*time.Millisecond {
+		slog.Info("Queued thumbnail waited for storage IO token",
+			"path", candidate.path,
+			"storage_profile", storagePolicy.StorageProfile,
+			"volume_key", storagePolicy.VolumeKey,
+			"io_wait_ms", waited.Milliseconds(),
+		)
 	}
 
 	arc, err := s.openArchive(candidate.path)

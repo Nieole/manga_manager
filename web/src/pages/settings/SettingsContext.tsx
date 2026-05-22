@@ -5,7 +5,12 @@ import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocalePr
 export interface Config {
   server: { host: string; port: number; allowed_origins: string[] };
   database: { path: string };
-  library: { paths: string[] };
+  library: {
+    paths: string[];
+    storage_profile: string;
+    io_policy: StorageIOPolicy;
+    storage_policies: LibraryStoragePolicy[];
+  };
   cache: { dir: string; page_disk_cache_enabled: boolean };
   logging: { level: string };
   scanner: {
@@ -55,10 +60,27 @@ export interface Capabilities {
   supported_scan_formats: string[];
   supported_scan_profiles: string[];
   supported_log_levels: string[];
+  supported_storage_profiles: string[];
   default_scan_formats: string;
   default_scan_interval: number;
   supported_llm_providers: string[];
   supported_llm_api_modes: string[];
+}
+
+export interface StorageIOPolicy {
+  scan_concurrency: number;
+  archive_open_concurrency: number;
+  cover_concurrency: number;
+  hash_concurrency: number;
+  pause_background_when_reading: boolean;
+  idle_only_heavy_tasks: boolean;
+  disable_same_disk_page_cache: boolean;
+}
+
+export interface LibraryStoragePolicy {
+  path: string;
+  storage_profile: string;
+  io_policy: StorageIOPolicy;
 }
 
 interface ConfigEnvelope {

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"testing"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
 )
@@ -77,6 +78,26 @@ func TestServeCoverImage(t *testing.T) {
 			t.Fatalf("expected 404, got %d", rec.Code)
 		}
 	})
+}
+
+func TestDiskPageCacheDisabledForSameDiskExternalHDDPolicy(t *testing.T) {
+	controller, _, _, rootDir := newTestController(t)
+	cfg := controller.currentConfig()
+	cfg.Cache.Dir = filepath.Join(rootDir, "cache")
+	cfg.Cache.PageDiskCacheEnabled = true
+	cfg.Library.StorageProfile = config.StorageProfileHDDExternal
+	config.NormalizeConfig(&cfg)
+	controller.config.Replace(&cfg)
+
+	source := bookPageSource{
+		ID:        1,
+		LibraryID: 1,
+		Path:      filepath.Join(rootDir, "library", "Series", "Book.cbz"),
+	}
+
+	if controller.diskPageCacheEnabled(source) {
+		t.Fatal("expected same-disk page cache to be disabled for external HDD policy")
+	}
 }
 
 func TestServePageImage(t *testing.T) {

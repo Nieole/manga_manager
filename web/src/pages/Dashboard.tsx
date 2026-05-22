@@ -125,6 +125,7 @@ interface PerformanceSummary {
     page_image_manifest_hits: number;
     page_image_raw_passthroughs: number;
     page_image_processed: number;
+    page_image_io_wait_ms: number;
     average_ms: number;
     p95_ms: number;
     max_ms: number;
@@ -810,7 +811,7 @@ function PerformancePanel({
                 <MiniStat label={t('dashboard.performance.rawPassthroughRate')} value={`${rawPassthroughRate}%`} accent="text-emerald-200" />
                 <MiniStat label={t('dashboard.performance.manifestHitRate')} value={`${manifestHitRate}%`} accent="text-blue-200" />
                 <MiniStat label={t('dashboard.performance.archiveOpenCount')} value={formatNumber(performance?.page_image_archive_opens ?? 0)} accent="text-amber-200" />
-                <MiniStat label={t('dashboard.performance.processedCount')} value={formatNumber(performance?.page_image_processed ?? 0)} accent="text-cyan-200" />
+                <MiniStat label={t('dashboard.performance.readerIOWait')} value={`${formatNumber(performance?.page_image_io_wait_ms ?? 0)}ms`} accent="text-rose-200" />
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-4">
                 <MiniStat

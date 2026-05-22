@@ -13,8 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/images"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/storageio"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -80,7 +82,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
 	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear") || autoCrop
 	rawPassthrough := !isThumbnailReq && w2xScaleStr == "" && w2xNoiseStr == "" && w2xFormatStr == ""
-	diskPageCacheEnabled := c.diskPageCacheEnabled()
+	diskPageCacheEnabled := c.diskPageCacheEnabled(source)
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
 			contentType := http.DetectContentType(cachedData)
@@ -109,6 +111,20 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
+
+	storagePolicy := config.ResolveStoragePolicy(c.currentConfig(), source.Path)
+	readerLease, err := storageio.Default.Acquire(ctx, storageio.Request{
+		VolumeKey:        storagePolicy.VolumeKey,
+		Limit:            storagePolicy.IOPolicy.ArchiveOpenConcurrency,
+		Kind:             storageio.WorkKindReader,
+		PauseWhenReading: storagePolicy.IOPolicy.PauseBackgroundWhenReading,
+	})
+	if err != nil {
+		jsonError(w, http.StatusServiceUnavailable, "Storage is busy")
+		return
+	}
+	annotatePageImageStorage(ctx, storagePolicy.StorageProfile, storagePolicy.VolumeKey, readerLease.Wait)
+	defer readerLease.Release()
 
 	pageInfo, manifestCacheHit, err := c.getBookArchiveSourcePageWithStats(ctx, source, pageNumber)
 	annotatePageImageDiagnostics(ctx, false, manifestCacheHit, false, false)
@@ -140,6 +156,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusInternalServerError, "Failed to read physical page data")
 		return
 	}
+	readerLease.Release()
 
 	// 准备处理并发送响应头
 	opts := images.ProcessOptions{
@@ -274,8 +291,16 @@ func (c *Controller) processedImageCacheDir() string {
 	return baseDir
 }
 
-func (c *Controller) diskPageCacheEnabled() bool {
-	return c.currentConfig().Cache.PageDiskCacheEnabled
+func (c *Controller) diskPageCacheEnabled(source bookPageSource) bool {
+	cfg := c.currentConfig()
+	if !cfg.Cache.PageDiskCacheEnabled {
+		return false
+	}
+	policy := config.ResolveStoragePolicy(cfg, source.Path)
+	if policy.IOPolicy.DisableSameDiskPageCache && config.SameVolume(cfg.Cache.Dir, source.Path) {
+		return false
+	}
+	return true
 }
 
 func processedImageCacheFileName(cacheKey, contentType string) string {

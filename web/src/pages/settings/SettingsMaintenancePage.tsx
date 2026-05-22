@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { SettingsPageIntro, sectionClassName } from './shared';
@@ -9,6 +9,33 @@ interface PageCacheStats {
   path: string;
   file_size: number;
   file_count: number;
+}
+
+interface StorageIODiagnostics {
+  cache_dir: string;
+  cache_volume: string;
+  same_disk_caches: number;
+  paused: boolean;
+  scheduler: Array<{
+    volume_key: string;
+    active: number;
+    limit: number;
+    reader_active: number;
+    reader_waiting: number;
+    background_waiting: number;
+    background_paused: boolean;
+    pause_reason?: string;
+  }>;
+  libraries: Array<{
+    id: number;
+    name: string;
+    path: string;
+    volume_key: string;
+    storage_profile: string;
+    cache_on_same_volume: boolean;
+    disable_same_disk_page_cache: boolean;
+    heavy_background_concurrency: number;
+  }>;
 }
 
 function formatBytes(value: number) {
@@ -28,7 +55,9 @@ export function SettingsMaintenancePage() {
   const { t } = useI18n();
   const { handleAction, showToast } = useSettings();
   const [pageCacheStats, setPageCacheStats] = useState<PageCacheStats | null>(null);
+  const [storageIO, setStorageIO] = useState<StorageIODiagnostics | null>(null);
   const [loadingPageCache, setLoadingPageCache] = useState(false);
+  const [loadingStorageIO, setLoadingStorageIO] = useState(false);
   const [clearingPageCache, setClearingPageCache] = useState(false);
 
   const fetchPageCacheStats = useCallback(async () => {
@@ -44,9 +73,23 @@ export function SettingsMaintenancePage() {
     }
   }, [showToast, t]);
 
+  const fetchStorageIO = useCallback(async () => {
+    setLoadingStorageIO(true);
+    try {
+      const res = await axios.get<StorageIODiagnostics>('/api/system/storage-io');
+      setStorageIO(res.data);
+    } catch (error) {
+      console.error(error);
+      showToast(t('settings.maintenance.storageIOFailed'), 'error');
+    } finally {
+      setLoadingStorageIO(false);
+    }
+  }, [showToast, t]);
+
   useEffect(() => {
     fetchPageCacheStats();
-  }, [fetchPageCacheStats]);
+    fetchStorageIO();
+  }, [fetchPageCacheStats, fetchStorageIO]);
 
   const handleClearPageCache = useCallback(async () => {
     setClearingPageCache(true);
@@ -61,6 +104,17 @@ export function SettingsMaintenancePage() {
       setClearingPageCache(false);
     }
   }, [fetchPageCacheStats, showToast, t]);
+
+  const setStorageIOPaused = useCallback(async (paused: boolean) => {
+    try {
+      await axios.post(`/api/system/storage-io/${paused ? 'pause' : 'resume'}`);
+      showToast(t(paused ? 'settings.maintenance.storageIOPaused' : 'settings.maintenance.storageIOResumed'), 'success');
+      await fetchStorageIO();
+    } catch (error) {
+      console.error(error);
+      showToast(t('settings.maintenance.storageIOPauseFailed'), 'error');
+    }
+  }, [fetchStorageIO, showToast, t]);
 
   return (
     <div className="space-y-6">
@@ -88,6 +142,107 @@ export function SettingsMaintenancePage() {
             <p className="font-medium">{t('settings.maintenance.batchScrape')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.batchScrapeHint')}</p>
           </button>
+        </div>
+      </section>
+
+      <section className={sectionClassName}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-komgaPrimary">
+            <HardDrive className="h-5 w-5" />
+            <h3 className="text-lg font-semibold text-white">{t('settings.maintenance.storageIOTitle')}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={fetchStorageIO}
+            disabled={loadingStorageIO}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loadingStorageIO ? 'animate-spin' : ''}`} />
+            {t('settings.maintenance.refreshStorageIO')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setStorageIOPaused(!storageIO?.paused)}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${storageIO?.paused ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15' : 'border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15'}`}
+          >
+            {storageIO?.paused ? t('settings.maintenance.resumeStorageIO') : t('settings.maintenance.pauseStorageIO')}
+          </button>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.cacheVolume')}</p>
+            <p className="mt-2 truncate text-lg font-semibold text-white">{storageIO?.cache_volume || '-'}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.libraryCount')}</p>
+            <p className="mt-2 text-lg font-semibold text-white">{storageIO?.libraries?.length ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.sameDiskProtected')}</p>
+            <p className="mt-2 text-lg font-semibold text-white">{storageIO?.same_disk_caches ?? 0}</p>
+          </div>
+        </div>
+
+        {(storageIO?.scheduler?.length ?? 0) > 0 && (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {storageIO?.scheduler.map((item) => (
+              <div key={item.volume_key} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-white">{item.volume_key}</p>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs ${item.background_paused ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}>
+                    {item.background_paused ? t('settings.maintenance.backgroundPaused') : t('settings.maintenance.backgroundRunning')}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+                  <p className="rounded-lg bg-gray-950/70 px-2 py-2 text-white/60">{t('settings.maintenance.schedulerActive')}<span className="mt-1 block text-white">{item.active}</span></p>
+                  <p className="rounded-lg bg-gray-950/70 px-2 py-2 text-white/60">{t('settings.maintenance.schedulerLimit')}<span className="mt-1 block text-white">{item.limit}</span></p>
+                  <p className="rounded-lg bg-gray-950/70 px-2 py-2 text-white/60">{t('settings.maintenance.readerActive')}<span className="mt-1 block text-white">{item.reader_active}</span></p>
+                  <p className="rounded-lg bg-gray-950/70 px-2 py-2 text-white/60">{t('settings.maintenance.readerWaiting')}<span className="mt-1 block text-white">{item.reader_waiting}</span></p>
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 text-xs">
+                  <p className="rounded-lg bg-gray-950/70 px-2 py-2 text-white/60">
+                    {t('settings.maintenance.backgroundWaiting')}<span className="mt-1 block text-white">{item.background_waiting}</span>
+                  </p>
+                  <p className="rounded-lg bg-gray-950/70 px-2 py-2 text-white/60">
+                    {t('settings.maintenance.pauseReason')}<span className="mt-1 block text-white">{item.pause_reason ? t(`settings.maintenance.pauseReason.${item.pause_reason}`) : '-'}</span>
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          {(storageIO?.libraries || []).map((library) => (
+            <div key={library.id} className="rounded-xl border border-white/10 bg-gray-950/50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white">{library.name}</p>
+                  <p className="mt-1 truncate text-xs text-white/40" title={library.path}>{library.path}</p>
+                </div>
+                <span className={`rounded-full border px-2.5 py-1 text-xs ${library.storage_profile === 'hdd_external' ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-gray-700 bg-gray-900 text-gray-300'}`}>
+                  {t(`settings.library.storageProfile.${library.storage_profile}`)}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60">
+                  {t('settings.maintenance.volume')}: <span className="text-white">{library.volume_key || '-'}</span>
+                </p>
+                <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60">
+                  {t('settings.maintenance.heavyConcurrency')}: <span className="text-white">{library.heavy_background_concurrency || t('settings.maintenance.unlimited')}</span>
+                </p>
+                <p className={`rounded-lg border px-3 py-2 text-xs ${library.cache_on_same_volume && library.disable_same_disk_page_cache ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-white/10 bg-white/[0.03] text-white/60'}`}>
+                  {library.cache_on_same_volume
+                    ? t(library.disable_same_disk_page_cache ? 'settings.maintenance.sameDiskCacheBlocked' : 'settings.maintenance.sameDiskCacheEnabled')
+                    : t('settings.maintenance.cacheOnDifferentDisk')}
+                </p>
+              </div>
+            </div>
+          ))}
+          {storageIO && storageIO.libraries.length === 0 && (
+            <p className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/50">{t('settings.maintenance.noStorageIOLibraries')}</p>
+          )}
         </div>
       </section>
 

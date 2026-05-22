@@ -47,6 +47,9 @@ func TestNormalizeConfigDefaultsLogLevel(t *testing.T) {
 	if cfg.Protocols.OPDS.Enabled || cfg.Protocols.Mihon.Enabled {
 		t.Fatalf("expected external protocols disabled by default, got OPDS=%v Mihon=%v", cfg.Protocols.OPDS.Enabled, cfg.Protocols.Mihon.Enabled)
 	}
+	if cfg.Library.StorageProfile != StorageProfileAuto {
+		t.Fatalf("expected default storage profile %q, got %q", StorageProfileAuto, cfg.Library.StorageProfile)
+	}
 }
 
 func TestNormalizeConfigCleansAllowedOrigins(t *testing.T) {
@@ -63,6 +66,39 @@ func TestNormalizeConfigCleansAllowedOrigins(t *testing.T) {
 		if cfg.Server.AllowedOrigins[i] != want[i] {
 			t.Fatalf("expected origin %d to be %q, got %q", i, want[i], cfg.Server.AllowedOrigins[i])
 		}
+	}
+}
+
+func TestExternalHDDStorageProfileDefaultsToLowImpactPolicy(t *testing.T) {
+	cfg := &Config{}
+	cfg.Library.StorageProfile = StorageProfileHDDExternal
+
+	NormalizeConfig(cfg)
+
+	policy := cfg.Library.IOPolicy
+	if policy.ArchiveOpenConcurrency != 1 || policy.CoverConcurrency != 1 || policy.HashConcurrency != 1 {
+		t.Fatalf("expected external HDD low-impact concurrency of 1, got %+v", policy)
+	}
+	if !policy.PauseBackgroundWhenReading || !policy.IdleOnlyHeavyTasks || !policy.DisableSameDiskPageCache {
+		t.Fatalf("expected external HDD low-impact toggles enabled, got %+v", policy)
+	}
+}
+
+func TestResolveStoragePolicyUsesMostSpecificPathOverride(t *testing.T) {
+	cfg := Config{}
+	cfg.Library.StorageProfile = StorageProfileAuto
+	cfg.Library.StoragePolicies = []LibraryStoragePolicy{
+		{Path: `D:\Manga`, StorageProfile: StorageProfileSSD},
+		{Path: `D:\Manga\External`, StorageProfile: StorageProfileHDDExternal},
+	}
+
+	resolved := ResolveStoragePolicy(cfg, `D:\Manga\External\Series\Book.cbz`)
+
+	if resolved.StorageProfile != StorageProfileHDDExternal {
+		t.Fatalf("expected most specific external HDD profile, got %+v", resolved)
+	}
+	if resolved.IOPolicy.ArchiveOpenConcurrency != 1 {
+		t.Fatalf("expected low-impact archive concurrency, got %+v", resolved.IOPolicy)
 	}
 }
 

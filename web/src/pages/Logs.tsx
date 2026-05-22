@@ -72,6 +72,16 @@ function isInterruptedTask(task: TaskStatus) {
   return task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart'));
 }
 
+const TASK_IO_PARAM_KEYS = [
+  'storage_profile',
+  'volume_key',
+  'opened_archives',
+  'hashed_files',
+  'io_wait_ms',
+  'duration_ms',
+  'pause_reason',
+];
+
 export default function Logs() {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const navigate = useNavigate();
@@ -191,6 +201,9 @@ export default function Logs() {
 
   const hasTaskDetails = (task: TaskStatus) =>
     Boolean(task.error || (task.params && Object.keys(task.params).length > 0) || task.started_at || task.finished_at);
+
+  const taskIOParams = (task: TaskStatus) => Object.entries(task.params || {})
+    .filter(([key, value]) => TASK_IO_PARAM_KEYS.includes(key) && value !== '' && value !== '0');
 
   const retryTask = async (taskKey: string) => {
     setRetryingTaskKey(taskKey);
@@ -512,6 +525,18 @@ export default function Logs() {
                           )}
                         </div>
                         <p className="mt-2 text-sm text-gray-100">{task.message}</p>
+                        {taskIOParams(task).length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {taskIOParams(task).map(([key, value]) => (
+                              <span
+                                key={`${task.key}-io-${key}`}
+                                className="rounded-md border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-200"
+                              >
+                                {t(`logs.task.io.${key}`)}: {key === 'pause_reason' ? t(`logs.task.pauseReason.${value}`) : value}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {isInterruptedTask(task) && (
                           <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-2 text-xs text-amber-300">
                             {t('logs.task.interruptedHint')}

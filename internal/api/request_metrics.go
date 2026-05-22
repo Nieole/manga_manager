@@ -36,6 +36,9 @@ type RequestDiagnosticEvent struct {
 	ManifestCacheHit bool      `json:"manifest_cache_hit"`
 	RawPassthrough   bool      `json:"raw_passthrough"`
 	Processed        bool      `json:"processed"`
+	StorageProfile   string    `json:"storage_profile,omitempty"`
+	VolumeKey        string    `json:"volume_key,omitempty"`
+	IOWaitMS         int64     `json:"io_wait_ms,omitempty"`
 }
 
 type SystemPerformanceResponse struct {
@@ -54,6 +57,7 @@ type SystemPerformanceResponse struct {
 	PageImageManifestHits    int                          `json:"page_image_manifest_hits"`
 	PageImageRawPassthroughs int                          `json:"page_image_raw_passthroughs"`
 	PageImageProcessed       int                          `json:"page_image_processed"`
+	PageImageIOWaitMS        int64                        `json:"page_image_io_wait_ms"`
 	AverageMS                int64                        `json:"average_ms"`
 	P95MS                    int64                        `json:"p95_ms"`
 	MaxMS                    int64                        `json:"max_ms"`
@@ -128,6 +132,9 @@ type RequestPerformanceInfo struct {
 	ManifestCacheHit bool
 	RawPassthrough   bool
 	Processed        bool
+	StorageProfile   string
+	VolumeKey        string
+	IOWaitMS         int64
 }
 
 type requestPerformanceInfoKey struct{}
@@ -210,6 +217,20 @@ func annotatePageImageDiagnostics(ctx context.Context, archiveOpen, manifestCach
 	})
 }
 
+func annotatePageImageStorage(ctx context.Context, storageProfile, volumeKey string, ioWait time.Duration) {
+	annotateRequestPerformance(ctx, func(info *RequestPerformanceInfo) {
+		if storageProfile != "" {
+			info.StorageProfile = storageProfile
+		}
+		if volumeKey != "" {
+			info.VolumeKey = volumeKey
+		}
+		if ioWait > 0 {
+			info.IOWaitMS += ioWait.Milliseconds()
+		}
+	})
+}
+
 func int64Ptr(value int64) *int64 {
 	v := value
 	return &v
@@ -281,6 +302,9 @@ func RequestMetrics(next http.Handler) http.Handler {
 			ManifestCacheHit: performanceInfo.ManifestCacheHit,
 			RawPassthrough:   performanceInfo.RawPassthrough,
 			Processed:        performanceInfo.Processed,
+			StorageProfile:   performanceInfo.StorageProfile,
+			VolumeKey:        performanceInfo.VolumeKey,
+			IOWaitMS:         performanceInfo.IOWaitMS,
 		})
 
 		if !shouldLogRequest(r.URL.Path, status, duration) {
@@ -315,6 +339,13 @@ func RequestMetrics(next http.Handler) http.Handler {
 				"raw_passthrough", performanceInfo.RawPassthrough,
 				"processed", performanceInfo.Processed,
 			)
+			if performanceInfo.StorageProfile != "" {
+				attrs = append(attrs,
+					"storage_profile", performanceInfo.StorageProfile,
+					"volume_key", performanceInfo.VolumeKey,
+					"io_wait_ms", performanceInfo.IOWaitMS,
+				)
+			}
 		}
 		if requestID := middleware.GetReqID(r.Context()); requestID != "" {
 			attrs = append(attrs, "request_id", requestID)
@@ -420,6 +451,7 @@ func buildSystemPerformanceSummary(events []RequestDiagnosticEvent) SystemPerfor
 			if event.Processed {
 				response.PageImageProcessed++
 			}
+			response.PageImageIOWaitMS += event.IOWaitMS
 		}
 		if event.Status >= 400 {
 			response.ErrorRequests++

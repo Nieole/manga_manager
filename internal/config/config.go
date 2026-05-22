@@ -19,7 +19,10 @@ type Config struct {
 		Path string `yaml:"path" json:"path"`
 	} `yaml:"database" json:"database"`
 	Library struct {
-		Paths []string `yaml:"paths" json:"paths"`
+		Paths           []string               `yaml:"paths" json:"paths"`
+		StorageProfile  string                 `yaml:"storage_profile" json:"storage_profile"`
+		IOPolicy        StorageIOPolicy        `yaml:"io_policy" json:"io_policy"`
+		StoragePolicies []LibraryStoragePolicy `yaml:"storage_policies" json:"storage_policies"`
 	} `yaml:"library" json:"library"`
 	Cache struct {
 		Dir                  string `yaml:"dir" json:"dir"`
@@ -117,6 +120,7 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Server.AllowedOrigins = []string{"http://*", "https://*"}
 	cfg.Database.Path = "./data/manga.db"
 	cfg.Library.Paths = []string{}
+	cfg.Library.StorageProfile = StorageProfileAuto
 	cfg.Cache.Dir = "./data/cache"
 	cfg.Cache.PageDiskCacheEnabled = false
 	cfg.Logging.Level = LogLevelInfo
@@ -223,6 +227,7 @@ func NormalizeConfig(cfg *Config) {
 	if cfg.Database.Path == "" {
 		cfg.Database.Path = "./data/manga.db"
 	}
+	NormalizeLibraryStorageConfig(cfg)
 	if cfg.Cache.Dir == "" {
 		cfg.Cache.Dir = "./data/cache"
 	}

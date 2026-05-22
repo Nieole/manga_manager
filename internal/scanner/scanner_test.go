@@ -13,6 +13,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/storageio"
 )
 
 var testPNG1x1 = []byte{
@@ -74,6 +75,61 @@ func TestScanLibraryReturnsContextCancelled(t *testing.T) {
 	err := s.ScanLibrary(ctx, lib.ID, libraryPath, true)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled, got %v", err)
+	}
+}
+
+func TestScanWorkerCountUsesExternalHDDPolicy(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Scanner.Workers = 16
+	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
+	cfg.Library.StorageProfile = config.StorageProfileHDDExternal
+	config.NormalizeConfig(&cfg)
+
+	s := NewScanner(nil, nil, config.NewManager(&cfg))
+	workers := s.scanWorkerCount(cfg, `E:\Manga`, ScanOptions{Profile: ScanProfileMetadata})
+
+	if workers != 1 {
+		t.Fatalf("expected external HDD metadata scan to use one worker, got %d", workers)
+	}
+}
+
+func TestAcquireStorageTokenSerializesSameVolume(t *testing.T) {
+	s := NewScanner(nil, nil, config.NewManager(&config.Config{}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	policy := config.ResolvedStoragePolicy{
+		StorageProfile: config.StorageProfileHDDExternal,
+		VolumeKey:      "e:",
+		IOPolicy: config.StorageIOPolicy{
+			PauseBackgroundWhenReading: true,
+		},
+	}
+
+	release, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
+	if err != nil {
+		t.Fatalf("acquire first token failed: %v", err)
+	}
+
+	acquired := make(chan struct{})
+	go func() {
+		secondRelease, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
+		if err == nil {
+			secondRelease()
+			close(acquired)
+		}
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("expected second token acquisition to wait")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("expected second token acquisition after release")
 	}
 }
 
@@ -336,6 +392,43 @@ func TestKOReaderEnabledMetadataScanDefersBinaryHash(t *testing.T) {
 		t.Fatalf("expected KOReader-enabled metadata scan to defer binary file hash, got %q", book.FileHash.String)
 	}
 	waitForScannerBookCover(t, s, store, book.ID)
+}
+
+func TestIdentityScanWithExternalHDDPolicyDoesNotSelfDeadlock(t *testing.T) {
+	rootDir, store, lib, libraryPath := newScannerTestLibrary(t)
+	seriesPath := filepath.Join(libraryPath, "Series Alpha")
+	archivePath := filepath.Join(seriesPath, "Alpha 01.cbz")
+	if err := writeScannerTestCBZ(archivePath, map[string][]byte{"001.png": testPNG1x1}); err != nil {
+		t.Fatalf("write cbz failed: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Scanner.Workers = 4
+	cfg.Scanner.ScanProfile = config.ScanProfileIdentity
+	cfg.Scanner.ThumbnailFormat = "webp"
+	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
+	cfg.Library.StorageProfile = config.StorageProfileHDDExternal
+	cfg.KOReader.Enabled = true
+	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
+	config.NormalizeConfig(cfg)
+	s := NewScanner(store, nil, config.NewManager(cfg))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true); err != nil {
+		t.Fatalf("identity scan failed: %v", err)
+	}
+	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
+	if err != nil || len(books) != 1 {
+		t.Fatalf("list books failed: books=%d err=%v", len(books), err)
+	}
+	book, err := store.GetBook(context.Background(), books[0].ID)
+	if err != nil {
+		t.Fatalf("get scanned book failed: %v", err)
+	}
+	if !book.FileHash.Valid || book.FileHash.String == "" || !book.QuickHash.Valid || book.QuickHash.String == "" {
+		t.Fatalf("expected identity scan to populate hashes, got file=%q quick=%q", book.FileHash.String, book.QuickHash.String)
+	}
 }
 
 func TestScanLibraryQueuesMissingCoverGeneration(t *testing.T) {

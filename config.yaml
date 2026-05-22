@@ -8,6 +8,16 @@ database:
     path: ./data/manga.db
 library:
     paths: []
+    storage_profile: auto
+    io_policy:
+        scan_concurrency: 0
+        archive_open_concurrency: 0
+        cover_concurrency: 0
+        hash_concurrency: 0
+        pause_background_when_reading: false
+        idle_only_heavy_tasks: false
+        disable_same_disk_page_cache: false
+    storage_policies: []
 cache:
     dir: ./data/cache
     page_disk_cache_enabled: false

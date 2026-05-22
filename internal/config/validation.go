@@ -78,6 +78,34 @@ func ValidateConfig(cfg *Config) ValidationResult {
 		issues = append(issues, ValidationIssue{Field: "scanner.max_ai_concurrency", Message: "AI 并发数至少为 1。", Severity: "error"})
 	}
 
+	if !isSupportedStorageProfile(cfg.Library.StorageProfile) {
+		issues = append(issues, ValidationIssue{Field: "library.storage_profile", Message: "存储介质策略必须是 auto、ssd、hdd_external、network 或 custom。", Severity: "error"})
+	}
+	validateIOPolicy := func(prefix string, policy StorageIOPolicy) {
+		if policy.ScanConcurrency < 0 {
+			issues = append(issues, ValidationIssue{Field: prefix + ".scan_concurrency", Message: "扫描并发不能小于 0。", Severity: "error"})
+		}
+		if policy.ArchiveOpenConcurrency < 0 {
+			issues = append(issues, ValidationIssue{Field: prefix + ".archive_open_concurrency", Message: "归档打开并发不能小于 0。", Severity: "error"})
+		}
+		if policy.CoverConcurrency < 0 {
+			issues = append(issues, ValidationIssue{Field: prefix + ".cover_concurrency", Message: "封面生成并发不能小于 0。", Severity: "error"})
+		}
+		if policy.HashConcurrency < 0 {
+			issues = append(issues, ValidationIssue{Field: prefix + ".hash_concurrency", Message: "Hash 并发不能小于 0。", Severity: "error"})
+		}
+	}
+	validateIOPolicy("library.io_policy", cfg.Library.IOPolicy)
+	for i, policy := range cfg.Library.StoragePolicies {
+		if strings.TrimSpace(policy.Path) == "" {
+			issues = append(issues, ValidationIssue{Field: fmt.Sprintf("library.storage_policies[%d].path", i), Message: "资源库策略路径不能为空。", Severity: "error"})
+		}
+		if !isSupportedStorageProfile(policy.StorageProfile) {
+			issues = append(issues, ValidationIssue{Field: fmt.Sprintf("library.storage_policies[%d].storage_profile", i), Message: "资源库策略必须是 auto、ssd、hdd_external、network 或 custom。", Severity: "error"})
+		}
+		validateIOPolicy(fmt.Sprintf("library.storage_policies[%d].io_policy", i), policy.IOPolicy)
+	}
+
 	format := strings.ToLower(strings.TrimSpace(cfg.Scanner.ThumbnailFormat))
 	switch format {
 	case "webp", "avif", "jpg", "jpeg":
@@ -144,6 +172,15 @@ func ValidateConfig(cfg *Config) ValidationResult {
 	return ValidationResult{
 		Valid:  len(issues) == 0,
 		Issues: issues,
+	}
+}
+
+func isSupportedStorageProfile(profile string) bool {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "", StorageProfileAuto, StorageProfileSSD, StorageProfileHDDExternal, StorageProfileNetwork, StorageProfileCustom:
+		return true
+	default:
+		return false
 	}
 }
 

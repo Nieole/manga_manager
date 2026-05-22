@@ -22,6 +22,7 @@ import (
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
+	"manga-manager/internal/storageio"
 
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -781,6 +782,108 @@ func TestKOReaderDeviceDiagnostics(t *testing.T) {
 	}
 	if len(resp.Conflicts) != 2 || resp.Conflicts[0].Suggestion == "" {
 		t.Fatalf("unexpected conflict diagnostics: %+v", resp.Conflicts)
+	}
+}
+
+func TestGetStorageIODiagnostics(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	cfg := controller.currentConfig()
+	cfg.Cache.Dir = filepath.Join(rootDir, "cache")
+	cfg.Library.StorageProfile = config.StorageProfileHDDExternal
+	config.NormalizeConfig(&cfg)
+	controller.config.Replace(&cfg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/system/storage-io", nil)
+	controller.getStorageIODiagnostics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response StorageIODiagnosticsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode diagnostics failed: %v", err)
+	}
+	if len(response.Libraries) == 0 {
+		t.Fatalf("expected library diagnostics, got %+v", response)
+	}
+	found := false
+	for _, item := range response.Libraries {
+		if item.ID != lib.ID {
+			continue
+		}
+		found = true
+		if item.StorageProfile != config.StorageProfileHDDExternal {
+			t.Fatalf("expected external HDD profile, got %+v", item)
+		}
+		if item.HeavyBackgroundConcurrency != 1 || !item.CacheOnSameVolume || !item.DisableSameDiskPageCache {
+			t.Fatalf("unexpected external HDD diagnostics: %+v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("expected diagnostics for library %d, got %+v", lib.ID, response.Libraries)
+	}
+}
+
+func TestPauseAndResumeStorageIO(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	storageio.Default.ResumeBackground()
+	t.Cleanup(storageio.Default.ResumeBackground)
+
+	pauseRec := httptest.NewRecorder()
+	controller.pauseStorageIO(pauseRec, httptest.NewRequest(http.MethodPost, "/api/system/storage-io/pause", nil))
+	if pauseRec.Code != http.StatusAccepted {
+		t.Fatalf("expected pause 202, got %d", pauseRec.Code)
+	}
+
+	getRec := httptest.NewRecorder()
+	controller.getStorageIODiagnostics(getRec, httptest.NewRequest(http.MethodGet, "/api/system/storage-io", nil))
+	var response StorageIODiagnosticsResponse
+	if err := json.NewDecoder(getRec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode diagnostics failed: %v", err)
+	}
+	if !response.Paused {
+		t.Fatalf("expected paused diagnostics, got %+v", response)
+	}
+
+	resumeRec := httptest.NewRecorder()
+	controller.resumeStorageIO(resumeRec, httptest.NewRequest(http.MethodPost, "/api/system/storage-io/resume", nil))
+	if resumeRec.Code != http.StatusAccepted {
+		t.Fatalf("expected resume 202, got %d", resumeRec.Code)
+	}
+	if storageio.Default.BackgroundPaused() {
+		t.Fatal("expected storage IO scheduler to be resumed")
+	}
+}
+
+func TestScannerMetricsUpdateTaskParams(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	taskKey := "scan_library_42"
+	if !controller.startTask(taskKey, "scan_library", "scan", 1) {
+		t.Fatal("expected task to start")
+	}
+	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
+		Scope:                  "library",
+		ID:                     42,
+		StorageProfile:         config.StorageProfileHDDExternal,
+		VolumeKey:              "e:",
+		ArchiveOpenConcurrency: 1,
+		CoverConcurrency:       1,
+		DiscoveredArchives:     12,
+		SkippedArchives:        7,
+		ProcessedArchives:      5,
+		OpenedArchives:         5,
+		HashedFiles:            2,
+		IOWaitMillis:           123,
+		DurationMillis:         456,
+	})
+
+	controller.taskMutex.Lock()
+	task := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	if task.Params["opened_archives"] != "5" || task.Params["hashed_files"] != "2" || task.Params["io_wait_ms"] != "123" {
+		t.Fatalf("expected scanner metrics params, got %+v", task.Params)
 	}
 }
 
@@ -2856,8 +2959,10 @@ func TestRunBackfillFullHashesLowPriorityBackfillsFileHash(t *testing.T) {
 	}
 
 	var progressCalls int
-	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, func(current, total int, message string) {
+	var lastMetrics taskIOMetrics
+	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, func(current, total int, message string, metrics taskIOMetrics) {
 		progressCalls++
+		lastMetrics = metrics
 	})
 	if err != nil {
 		t.Fatalf("runBackfillFullHashesLowPriority failed: %v", err)
@@ -2867,6 +2972,9 @@ func TestRunBackfillFullHashesLowPriorityBackfillsFileHash(t *testing.T) {
 	}
 	if progressCalls == 0 {
 		t.Fatal("expected progress callback")
+	}
+	if lastMetrics.HashedFiles != 1 {
+		t.Fatalf("expected one hashed file metric, got %+v", lastMetrics)
 	}
 
 	got, err := store.GetBook(context.Background(), book.ID)

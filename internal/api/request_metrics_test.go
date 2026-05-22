@@ -221,6 +221,9 @@ func TestBuildSystemPerformanceSummary(t *testing.T) {
 			ArchiveOpen:      true,
 			ManifestCacheHit: true,
 			RawPassthrough:   true,
+			StorageProfile:   "hdd_external",
+			VolumeKey:        "e:",
+			IOWaitMS:         15,
 		},
 		{
 			Time:        base.Add(time.Second),
@@ -273,6 +276,9 @@ func TestBuildSystemPerformanceSummary(t *testing.T) {
 	}
 	if summary.PageImageArchiveOpens != 1 || summary.PageImageManifestHits != 1 || summary.PageImageRawPassthroughs != 1 || summary.PageImageProcessed != 1 {
 		t.Fatalf("unexpected page image diagnostic aggregates: %+v", summary)
+	}
+	if summary.PageImageIOWaitMS != 15 {
+		t.Fatalf("expected page image IO wait aggregate 15ms, got %d", summary.PageImageIOWaitMS)
 	}
 	if len(summary.RecentSlow) != 1 || summary.RecentSlow[0].Path != "/api/pages/1/2" {
 		t.Fatalf("unexpected recent slow events: %+v", summary.RecentSlow)

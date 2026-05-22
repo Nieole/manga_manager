@@ -15,6 +15,7 @@ const bookPageSourceCacheTTL = 30 * time.Second
 
 type bookPageSource struct {
 	ID             int64
+	LibraryID      int64
 	Path           string
 	FileModifiedAt time.Time
 	Size           int64
@@ -48,6 +49,7 @@ func (c *Controller) getBookPageSource(ctx context.Context, bookID int64) (bookP
 func bookPageSourceFromBook(book database.Book) bookPageSource {
 	return bookPageSource{
 		ID:             book.ID,
+		LibraryID:      book.LibraryID,
 		Path:           book.Path,
 		FileModifiedAt: book.FileModifiedAt,
 		Size:           book.Size,
