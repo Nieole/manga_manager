@@ -6,9 +6,11 @@ import { ThemeProvider } from './theme/ThemeProvider.tsx'
 import { initializeTheme } from './theme/themes.ts'
 import { DEFAULT_LOCALE, type AppLocale } from './i18n/core.ts'
 import { LocaleProvider, getClientLocale, loadLocaleMessages } from './i18n/LocaleProvider.tsx'
+import { initializeFrontendPerformance } from './utils/frontendPerformance.ts'
 import './index.css'
 
 initializeTheme()
+initializeFrontendPerformance()
 
 async function bootstrap() {
   const initialLocale = getClientLocale()

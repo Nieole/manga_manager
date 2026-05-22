@@ -4,6 +4,7 @@ import axios from 'axios';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, AlertTriangle, FolderPlus, Settings as SettingsIcon, Gauge, Timer, ServerCrash, Route as RouteIcon } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskTypeLabel } from '../i18n/task';
+import { getFrontendPerformanceSnapshot, type FrontendPerformanceSnapshot } from '../utils/frontendPerformance';
 
 interface LibrarySize {
     library_id: number;
@@ -120,6 +121,10 @@ interface PerformanceSummary {
     cache_hits: number;
     page_image_requests: number;
     page_image_cache_hits: number;
+    page_image_archive_opens: number;
+    page_image_manifest_hits: number;
+    page_image_raw_passthroughs: number;
+    page_image_processed: number;
     average_ms: number;
     p95_ms: number;
     max_ms: number;
@@ -146,6 +151,7 @@ export default function Dashboard() {
     const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
     const [koreaderOverview, setKOReaderOverview] = useState<KOReaderOverview | null>(null);
     const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
+    const [frontendPerformance, setFrontendPerformance] = useState<FrontendPerformanceSnapshot>(() => getFrontendPerformanceSnapshot());
     const [loading, setLoading] = useState(true);
     const [performanceRequested, setPerformanceRequested] = useState(false);
     const [recommendationsRequested, setRecommendationsRequested] = useState(false);
@@ -154,6 +160,14 @@ export default function Dashboard() {
     const performanceRef = useRef<HTMLDivElement>(null);
     const recommendationsRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
+
+    useEffect(() => {
+        const handleFrontendPerformance = () => setFrontendPerformance(getFrontendPerformanceSnapshot());
+        window.addEventListener('manga-manager:frontend-performance', handleFrontendPerformance);
+        return () => {
+            window.removeEventListener('manga-manager:frontend-performance', handleFrontendPerformance);
+        };
+    }, []);
 
     useEffect(() => {
         let active = true;
@@ -401,7 +415,7 @@ export default function Dashboard() {
 
             <div ref={performanceRef}>
                 {(performanceRequested || performance) ? (
-                    <PerformancePanel performance={performance} />
+                    <PerformancePanel performance={performance} frontendPerformance={frontendPerformance} />
                 ) : (
                     <button
                         onClick={loadPerformance}
@@ -720,7 +734,13 @@ function MiniStat({ label, value, accent }: { label: string; value: string | num
     );
 }
 
-function PerformancePanel({ performance }: { performance: PerformanceSummary | null }) {
+function PerformancePanel({
+    performance,
+    frontendPerformance,
+}: {
+    performance: PerformanceSummary | null;
+    frontendPerformance: FrontendPerformanceSnapshot;
+}) {
     const { t, formatNumber } = useI18n();
     const navigate = useNavigate();
     const sampleCount = performance?.sample_count ?? 0;
@@ -733,6 +753,14 @@ function PerformancePanel({ performance }: { performance: PerformanceSummary | n
     const pageCacheHitRate = performance && performance.page_image_requests > 0
         ? Math.round((performance.page_image_cache_hits / performance.page_image_requests) * 100)
         : 0;
+    const rawPassthroughRate = performance && performance.page_image_requests > 0
+        ? Math.round((performance.page_image_raw_passthroughs / performance.page_image_requests) * 100)
+        : 0;
+    const manifestHitRate = performance && performance.page_image_requests > 0
+        ? Math.round((performance.page_image_manifest_hits / performance.page_image_requests) * 100)
+        : 0;
+    const latestFirstScreen = frontendPerformance.firstScreens[0];
+    const latestSeriesRender = frontendPerformance.seriesListRenders[0];
     const topRoutes = performance?.routes?.slice(0, 4) ?? [];
     const topTransforms = performance?.transforms?.slice(0, 4) ?? [];
     const recentEvents = [
@@ -777,6 +805,34 @@ function PerformancePanel({ performance }: { performance: PerformanceSummary | n
                 <MiniStat label={t('dashboard.performance.slowRate')} value={`${slowRate}%`} accent="text-amber-200" />
                 <MiniStat label={t('dashboard.performance.pageCacheHitRate')} value={`${pageCacheHitRate}%`} accent="text-emerald-200" />
                 <MiniStat label={t('dashboard.performance.errorRate')} value={`${errorRate}%`} accent="text-red-200" />
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+                <MiniStat label={t('dashboard.performance.rawPassthroughRate')} value={`${rawPassthroughRate}%`} accent="text-emerald-200" />
+                <MiniStat label={t('dashboard.performance.manifestHitRate')} value={`${manifestHitRate}%`} accent="text-blue-200" />
+                <MiniStat label={t('dashboard.performance.archiveOpenCount')} value={formatNumber(performance?.page_image_archive_opens ?? 0)} accent="text-amber-200" />
+                <MiniStat label={t('dashboard.performance.processedCount')} value={formatNumber(performance?.page_image_processed ?? 0)} accent="text-cyan-200" />
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+                <MiniStat
+                    label={t('dashboard.performance.firstScreenRequests')}
+                    value={formatNumber(latestFirstScreen?.request_count ?? 0)}
+                    accent="text-violet-200"
+                />
+                <MiniStat
+                    label={t('dashboard.performance.firstScreenDuration')}
+                    value={`${formatNumber(latestFirstScreen?.duration_ms ?? 0)}ms`}
+                    accent="text-indigo-200"
+                />
+                <MiniStat
+                    label={t('dashboard.performance.seriesRenderTime')}
+                    value={`${formatNumber(latestSeriesRender?.total_ms ?? 0)}ms`}
+                    accent="text-lime-200"
+                />
+                <MiniStat
+                    label={t('dashboard.performance.seriesRenderItems')}
+                    value={formatNumber(latestSeriesRender?.item_count ?? 0)}
+                    accent="text-teal-200"
+                />
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">

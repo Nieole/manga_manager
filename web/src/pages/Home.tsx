@@ -12,17 +12,13 @@ import { HomeFilters } from './home/HomeFilters';
 import { HomeSmartFilters } from './home/HomeSmartFilters';
 import { HomeToolbar } from './home/HomeToolbar';
 import { RecentSeriesStrip } from './home/RecentSeriesStrip';
-import type { AIRecommendation, NamedOption, SavedSmartFilter, Series } from './home/types';
+import type { AIRecommendation, NamedOption, SavedSmartFilter, Series, SeriesSearchResponse } from './home/types';
 import { useI18n } from '../i18n/LocaleProvider';
 import { SeriesSearchModal } from './series-detail/SeriesSearchModal';
 import type { MetaTag, SearchResult, Series as DetailSeries } from './series-detail/types';
+import { recordSeriesListRenderMetric } from '../utils/frontendPerformance';
 
 const DEFAULT_PAGE_SIZE = 30;
-
-interface SeriesSearchResponse {
-    items?: Series[];
-    total?: number;
-}
 
 interface SavedLibrarySettings {
     activeTag?: string | null;
@@ -160,6 +156,8 @@ export default function Home() {
     const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
     const [savedSmartFilters, setSavedSmartFilters] = useState<SavedSmartFilter[]>([]);
     const [settingsReady, setSettingsReady] = useState(false);
+    const [pageCursorMap, setPageCursorMap] = useState<Record<number, string>>({});
+    const [cursorModePage, setCursorModePage] = useState<number | null>(null);
 
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedSeries, setSelectedSeries] = useState<number[]>([]);
@@ -188,6 +186,19 @@ export default function Home() {
     // External Library section collapse state
     const [isExternalExpanded, setIsExternalExpanded] = useState(false);
     const hasMountedRefreshEffect = useRef(false);
+    const lastLoadedPageRef = useRef(1);
+    const pendingSeriesRenderMetricRef = useRef<{
+        requestStartedAt: number;
+        responseReceivedAt: number;
+        libraryId: string;
+        pageNumber: number;
+        currentPageSize: number;
+        currentSortBy: string;
+        currentSortDir: string;
+        filters: string;
+        itemCount: number;
+        totalCount: number;
+    } | null>(null);
 
     // Scrape Modal states
     const [scrapeProvider, setScrapeProvider] = useState('');
@@ -321,6 +332,7 @@ export default function Home() {
     const currentPageSeriesIds = allSeries.map((series) => series.id);
     const currentPageSelectedCount = currentPageSeriesIds.filter((id) => selectedSeries.includes(id)).length;
     const allCurrentPageSelected = currentPageSeriesIds.length > 0 && currentPageSelectedCount === currentPageSeriesIds.length;
+    const supportsCursorPagination = ['name', 'updated', 'created', 'favorite'].includes(sortByField);
 
     const externalVisibilitySummary = allSeries.reduce((acc, series) => {
         const externalStatus = externalSeriesMap[series.id];
@@ -549,17 +561,55 @@ export default function Home() {
         params.append('libraryId', libId);
         params.append('limit', pageSize.toString());
         params.append('page', pageNumber.toString());
+        const cursor = supportsCursorPagination && pageNumber > 1 ? pageCursorMap[pageNumber] : '';
+        if (cursor) params.append('cursor', cursor);
         if (activeTag) params.append('tags', activeTag);
         if (activeAuthor) params.append('authors', activeAuthor);
         if (activeStatus) params.append('status', activeStatus);
         if (activeLetter) params.append('letter', activeLetter);
         if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
 
+        const requestStartedAt = performance.now();
+        const filters = [
+            activeTag ? `tag:${activeTag}` : '',
+            activeAuthor ? `author:${activeAuthor}` : '',
+            activeStatus ? `status:${activeStatus}` : '',
+            activeLetter ? `letter:${activeLetter}` : '',
+        ].filter(Boolean).join(',');
+
         requestSeriesSearch(params.toString())
             .then((res) => {
                 const newItems = res.data.items || [];
+                pendingSeriesRenderMetricRef.current = {
+                    requestStartedAt,
+                    responseReceivedAt: performance.now(),
+                    libraryId: libId,
+                    pageNumber,
+                    currentPageSize: pageSize,
+                    currentSortBy: sortByField,
+                    currentSortDir: sortDir,
+                    filters,
+                    itemCount: newItems.length,
+                    totalCount: res.data.total || 0,
+                };
                 setAllSeries(newItems);
-                setTotalSeries(res.data.total || 0);
+                if (!cursor) {
+                    setTotalSeries(res.data.total || 0);
+                }
+                setCursorModePage(cursor ? pageNumber : null);
+                lastLoadedPageRef.current = pageNumber;
+                if (res.data.next_cursor) {
+                    setPageCursorMap((current) => ({
+                        ...current,
+                        [pageNumber + 1]: res.data.next_cursor || '',
+                    }));
+                } else if (!res.data.has_more) {
+                    setPageCursorMap((current) => {
+                        const next = { ...current };
+                        delete next[pageNumber + 1];
+                        return next;
+                    });
+                }
                 if (!silent) {
                     setLoading(false);
                     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -570,6 +620,37 @@ export default function Home() {
                 setLoading(false);
             });
     };
+
+    useEffect(() => {
+        const pending = pendingSeriesRenderMetricRef.current;
+        if (!pending) return;
+
+        let cancelled = false;
+        const frame = window.requestAnimationFrame(() => {
+            if (cancelled || pendingSeriesRenderMetricRef.current !== pending) return;
+            pendingSeriesRenderMetricRef.current = null;
+            const renderedAt = performance.now();
+            recordSeriesListRenderMetric({
+                path: window.location.pathname,
+                library_id: pending.libraryId,
+                page: pending.pageNumber,
+                page_size: pending.currentPageSize,
+                sort: `${pending.currentSortBy}_${pending.currentSortDir}`,
+                filters: pending.filters || 'none',
+                item_count: pending.itemCount,
+                total_count: pending.totalCount,
+                request_ms: Math.max(0, Math.round(pending.responseReceivedAt - pending.requestStartedAt)),
+                render_ms: Math.max(0, Math.round(renderedAt - pending.responseReceivedAt)),
+                total_ms: Math.max(0, Math.round(renderedAt - pending.requestStartedAt)),
+                measured_at: new Date().toISOString(),
+            });
+        });
+
+        return () => {
+            cancelled = true;
+            window.cancelAnimationFrame(frame);
+        };
+    }, [allSeries]);
 
     // 1. 恢复配置 (仅在 libId 变化时执行一次)
     useEffect(() => {
@@ -608,6 +689,11 @@ export default function Home() {
     useEffect(() => {
         if (!libId || !settingsReady) return;
 
+        if (page === 1) {
+            setPageCursorMap({});
+            setCursorModePage(null);
+        }
+
         // 保存配置
         const config = { activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, pageSize, page };
         localStorage.setItem(`lib_settings_${libId}`, JSON.stringify(config));
@@ -626,6 +712,8 @@ export default function Home() {
     useEffect(() => {
         setIsSelectionMode(false);
         setSelectedSeries([]);
+        setPageCursorMap({});
+        setCursorModePage(null);
     }, [libId, activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir]);
 
     // 3. SSE 专用静默刷新
@@ -1478,14 +1566,18 @@ export default function Home() {
 
                             <button
                                 onClick={() => setPage(p => Math.min(Math.ceil(totalSeries / pageSize) || 1, p + 1))}
-                                disabled={page >= (Math.ceil(totalSeries / pageSize) || 1)}
+                                disabled={page >= (Math.ceil(totalSeries / pageSize) || 1) || (supportsCursorPagination && page + 1 > lastLoadedPageRef.current + 1 && !pageCursorMap[page + 1])}
                                 className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
                                 {t('home.pagination.next')}
                             </button>
                             <button
-                                onClick={() => setPage(Math.ceil(totalSeries / pageSize) || 1)}
-                                disabled={page >= (Math.ceil(totalSeries / pageSize) || 1)}
+                                onClick={() => {
+                                    setPageCursorMap({});
+                                    setCursorModePage(null);
+                                    setPage(Math.ceil(totalSeries / pageSize) || 1);
+                                }}
+                                disabled={page >= (Math.ceil(totalSeries / pageSize) || 1) || cursorModePage !== null}
                                 className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                             >
                                 {t('home.pagination.last')}
@@ -1504,7 +1596,11 @@ export default function Home() {
                                         if (e.key === 'Enter') {
                                             const val = parseInt(e.currentTarget.value);
                                             const max = Math.ceil(totalSeries / pageSize) || 1;
-                                            if (val > 0 && val <= max) setPage(val);
+                                            if (val > 0 && val <= max) {
+                                                setPageCursorMap({});
+                                                setCursorModePage(null);
+                                                setPage(val);
+                                            }
                                             e.currentTarget.value = '';
                                         }
                                     }}

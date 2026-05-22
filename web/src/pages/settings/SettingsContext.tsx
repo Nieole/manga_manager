@@ -376,13 +376,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()])
+    Promise.all([fetchConfig(), fetchKOReader(), fetchKOReaderAccounts()])
       .catch((error) => {
         console.error('Failed to fetch settings data', error);
         showToast(t('settings.toast.fetchFailed'), 'error');
       })
       .finally(() => setLoading(false));
-  }, [fetchConfig, fetchKOReader, fetchKOReaderAccounts, fetchKOReaderDevices, fetchKOReaderUnmatched, showToast, t]);
+  }, [fetchConfig, fetchKOReader, fetchKOReaderAccounts, showToast, t]);
 
   const validationByField = useMemo(() => {
     const map = new Map<string, string[]>();

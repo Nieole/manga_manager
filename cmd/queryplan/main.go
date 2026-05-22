@@ -79,13 +79,31 @@ func main() {
 			expected: []string{"idx_series_library_favorite"},
 		},
 		{
-			name:     "series-stats/library/default",
+			name:     "home/default-updated",
 			query:    `SELECT s.id, s.name, ss.cover_path, ss.tag_names_cache, ss.read_pages FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id WHERE s.library_id = ? ORDER BY s.updated_at DESC, s.name ASC LIMIT 50`,
 			args:     []any{*libraryID},
 			expected: []string{"idx_series_library_updated_name", "idx_series_library_updated"},
 		},
 		{
-			name:     "books/series/sort",
+			name:     "home/name",
+			query:    `SELECT s.id, s.name, ss.cover_path, ss.tag_names_cache, ss.read_pages FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id WHERE s.library_id = ? ORDER BY s.name ASC LIMIT 50 OFFSET 0`,
+			args:     []any{*libraryID},
+			expected: []string{"idx_series_library_name"},
+		},
+		{
+			name:     "home/created",
+			query:    `SELECT s.id, s.name, ss.cover_path, ss.tag_names_cache, ss.read_pages FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id WHERE s.library_id = ? ORDER BY s.created_at DESC, s.name ASC LIMIT 50 OFFSET 0`,
+			args:     []any{*libraryID},
+			expected: []string{"idx_series_library_created_name", "idx_series_library_created"},
+		},
+		{
+			name:     "home/favorite",
+			query:    `SELECT s.id, s.name, ss.cover_path, ss.tag_names_cache, ss.read_pages FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id WHERE s.library_id = ? ORDER BY s.is_favorite DESC, s.name ASC LIMIT 50 OFFSET 0`,
+			args:     []any{*libraryID},
+			expected: []string{"idx_series_library_favorite"},
+		},
+		{
+			name:     "series-detail/books",
 			query:    `SELECT id, name FROM books WHERE series_id = ? ORDER BY volume ASC, sort_number ASC, name ASC`,
 			args:     []any{*seriesID},
 			expected: []string{"idx_books_series_sort"},
@@ -100,6 +118,21 @@ func main() {
 			name:     "books/read-progress",
 			query:    `SELECT series_id, SUM(last_read_page) FROM books WHERE last_read_page > 0 GROUP BY series_id LIMIT 50`,
 			expected: []string{"idx_books_series_read", "idx_books_read_progress_series"},
+		},
+		{
+			name:     "recent-read/all",
+			query:    `SELECT s.name, s.id, b.id, b.name, b.title, ss.last_read_at, b.last_read_page, b.page_count, COALESCE(ss.cover_path, '') FROM series_stats ss INDEXED BY idx_series_stats_last_read JOIN series s ON s.id = ss.series_id JOIN books b ON b.id = ss.last_read_book_id WHERE ss.last_read_at IS NOT NULL AND ss.last_read_book_id > 0 AND b.last_read_page IS NOT NULL AND b.last_read_page > 0 ORDER BY ss.last_read_at DESC, s.name ASC LIMIT 10`,
+			expected: []string{"idx_series_stats_last_read"},
+		},
+		{
+			name:     "dashboard/stats-counts",
+			query:    `SELECT (SELECT COUNT(*) FROM series), (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM books WHERE last_read_page > 0), (SELECT COALESCE(SUM(page_count), 0) FROM books), (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days'))`,
+			expected: []string{"idx_books_read_progress_series", "idx_reading_activity_date"},
+		},
+		{
+			name:     "dashboard/library-sizes",
+			query:    `SELECT l.id, l.name, COALESCE(bs.total_size, 0) FROM libraries l LEFT JOIN (SELECT library_id, SUM(size) as total_size FROM books INDEXED BY idx_books_library_size GROUP BY library_id) bs ON bs.library_id = l.id ORDER BY bs.total_size DESC`,
+			expected: []string{"idx_books_library_size"},
 		},
 	}
 

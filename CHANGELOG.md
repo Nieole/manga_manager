@@ -75,6 +75,19 @@
 - **健康报告跳过关闭的 KOReader 诊断**：KOReader 关闭时 `/api/health/report` 不再计算 `unmatched_koreader`，降低维护页非核心查询负担。
 - **协议查询独立优化**：OPDS 搜索和简单 Mihon 关键字搜索优先走 Bleve 搜索索引，最近添加 feed 改用 `series_stats` 封面读模型，继续阅读列表改用 `series_stats.last_read_*`，避免协议请求重复窗口函数和逐行封面子查询。
 
+### 📌 增量记录 — 2026-05-22（性能观测与基准体系）
+
+#### 性能可观测
+- **页图请求归因补齐**：请求诊断新增 `archive_open`、`manifest_cache_hit`、`raw_passthrough`、`processed`，可区分归档打开、页清单缓存命中、默认原图透传和服务端处理路径。
+- **Dashboard 性能摘要增强**：系统性能接口聚合页图归档打开次数、manifest 命中数、原图透传数和服务端处理页数，Dashboard 性能面板同步展示关键比例与计数。
+- **扫描完成日志新增计数**：资源库/系列扫描完成日志输出发现、跳过、处理、打开归档和 hash 文件计数，便于验证增量扫描是否真正不打开归档、不计算 hash。
+- **扩展查询计划检查**：`cmd/queryplan` 覆盖首页默认与 name/created/favorite 排序、系列详情 books、recent read 和 dashboard stats 查询形状。
+- **首页深页分页支持 cursor**：`/api/series/search` 在保留 page number 兼容的同时返回 `next_cursor` / `has_more`，资源库连续翻页在 name、updated、created、favorite 排序下改用 keyset/cursor，直接跳页仍走原分页路径。
+- **补强大库查询计划基线**：样本库生成后自动回填派生读模型，最近阅读固定走 `series_stats.last_read_at` 索引，Dashboard 库大小统计走 `books(library_id, size)` 聚合索引；新增 1 万和 10 万系列本地基线记录。
+- **Webtoon 前端观测与释放**：Webtoon 虚拟列表按当前渲染窗口释放远离视口的 object URL，并通过浏览器事件输出当前 DOM 图片数量，便于验证长漫画窗口化效果。
+- **新增前端首屏与列表渲染观测**：浏览器端记录每次路由首屏采样窗口内的 API 请求数，并记录资源库列表从请求到渲染完成的耗时；Dashboard 性能面板同步展示最近一次观测值。
+- **新增性能基线模板**：`docs/performance-baseline-template.md` 统一记录 benchmark、queryplan、请求指标、扫描指标和前端观测数据。
+
 ### 📌 增量记录 — 2026-05-21（阶段 39 系统性能摘要）
 
 #### 性能可观测

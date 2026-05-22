@@ -60,29 +60,34 @@ func (c *Controller) listBookArchivePages(ctx context.Context, book database.Boo
 }
 
 func (c *Controller) listBookArchiveSourcePages(ctx context.Context, source bookPageSource) ([]parser.PageMetadata, error) {
+	pages, _, err := c.listBookArchiveSourcePagesWithStats(ctx, source)
+	return pages, err
+}
+
+func (c *Controller) listBookArchiveSourcePagesWithStats(ctx context.Context, source bookPageSource) ([]parser.PageMetadata, bool, error) {
 	cacheKey := bookArchivePageCacheKey(source)
 	if c.pageCache != nil {
 		if cached, ok := c.pageCache.Get(cacheKey); ok {
-			return clonePageMetadata(cached), nil
+			return clonePageMetadata(cached), true, nil
 		}
 	}
 
 	arc, err := parser.GetArchiveFromPool(source.Path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	pages, err := arc.GetPages()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(pages) == 0 {
-		return nil, fmt.Errorf("archive has no pages")
+		return nil, false, fmt.Errorf("archive has no pages")
 	}
 	if c.pageCache != nil {
 		c.pageCache.Add(cacheKey, clonePageMetadata(pages))
 	}
-	return pages, nil
+	return pages, false, nil
 }
 
 func (c *Controller) getBookArchivePage(ctx context.Context, book database.Book, pageNumber int64) (parser.PageMetadata, error) {
@@ -90,18 +95,23 @@ func (c *Controller) getBookArchivePage(ctx context.Context, book database.Book,
 }
 
 func (c *Controller) getBookArchiveSourcePage(ctx context.Context, source bookPageSource, pageNumber int64) (parser.PageMetadata, error) {
+	page, _, err := c.getBookArchiveSourcePageWithStats(ctx, source, pageNumber)
+	return page, err
+}
+
+func (c *Controller) getBookArchiveSourcePageWithStats(ctx context.Context, source bookPageSource, pageNumber int64) (parser.PageMetadata, bool, error) {
 	if pageNumber < 1 {
-		return parser.PageMetadata{}, sql.ErrNoRows
+		return parser.PageMetadata{}, false, sql.ErrNoRows
 	}
 
-	pages, err := c.listBookArchiveSourcePages(ctx, source)
+	pages, manifestCacheHit, err := c.listBookArchiveSourcePagesWithStats(ctx, source)
 	if err != nil {
-		return parser.PageMetadata{}, err
+		return parser.PageMetadata{}, manifestCacheHit, err
 	}
 	if int(pageNumber) > len(pages) {
-		return parser.PageMetadata{}, sql.ErrNoRows
+		return parser.PageMetadata{}, manifestCacheHit, sql.ErrNoRows
 	}
-	return pages[pageNumber-1], nil
+	return pages[pageNumber-1], manifestCacheHit, nil
 }
 
 func bookArchivePageCacheKey(source bookPageSource) string {

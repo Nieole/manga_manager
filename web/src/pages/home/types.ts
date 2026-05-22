@@ -48,3 +48,12 @@ export interface SavedSmartFilter {
   pageSize: number;
   createdAt: string;
 }
+
+export interface SeriesSearchResponse {
+  items?: Series[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  next_cursor?: string;
+  has_more?: boolean;
+}

@@ -212,6 +212,9 @@ func seed(ctx context.Context, db *sql.DB, cfg seedConfig) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit sample database: %w", err)
 	}
+	if err := database.Migrate(cfg.dbPath); err != nil {
+		return fmt.Errorf("refresh derived sample data: %w", err)
+	}
 	return nil
 }
 

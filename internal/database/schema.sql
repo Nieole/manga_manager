@@ -43,11 +43,15 @@ CREATE INDEX IF NOT EXISTS idx_series_library_initial_name ON series(library_id,
 CREATE INDEX IF NOT EXISTS idx_series_library_status_name ON series(library_id, status, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_updated_name ON series(library_id, updated_at, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_created_name ON series(library_id, created_at, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_updated_name_id ON series(library_id, updated_at, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_created_name_id ON series(library_id, created_at, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_name_id ON series(library_id, name, id);
 CREATE INDEX IF NOT EXISTS idx_series_library_rating ON series(library_id, rating, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_books ON series(library_id, book_count, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_volumes ON series(library_id, volume_count, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_pages ON series(library_id, total_pages, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_favorite, name);
+CREATE INDEX IF NOT EXISTS idx_series_library_favorite_name_id ON series(library_id, is_favorite, name, id);
 CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name);
 
 CREATE TABLE IF NOT EXISTS series_stats (
@@ -129,6 +133,7 @@ CREATE TABLE IF NOT EXISTS books (
 
 CREATE INDEX IF NOT EXISTS idx_books_series_id ON books(series_id);
 CREATE INDEX IF NOT EXISTS idx_books_library_id ON books(library_id);
+CREATE INDEX IF NOT EXISTS idx_books_library_size ON books(library_id, size);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path);
 CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
 CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash);

@@ -17,6 +17,8 @@ interface WebtoonReaderProps {
   nextBookId: number | null;
   getImageUrl: (bookId: string | undefined, pageNum: number) => string;
   onVisiblePageChange: (pageIndex: number) => void;
+  onRenderRangeChange: (startIndex: number, endIndex: number) => void;
+  onRenderedImageCountChange: (count: number) => void;
   onOpenNextBook: (bookId: number) => void;
 }
 
@@ -36,9 +38,12 @@ export const WebtoonReader = forwardRef<WebtoonReaderHandle, WebtoonReaderProps>
   nextBookId,
   getImageUrl,
   onVisiblePageChange,
+  onRenderRangeChange,
+  onRenderedImageCountChange,
   onOpenNextBook,
 }, ref) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const itemCount = pages.length + (nextBookId ? 1 : 0);
 
   useImperativeHandle(ref, () => ({
@@ -52,14 +57,21 @@ export const WebtoonReader = forwardRef<WebtoonReaderHandle, WebtoonReaderProps>
     <Virtuoso
       ref={virtuosoRef}
       className="h-full w-full bg-komgaDark"
+      scrollerRef={(element) => {
+        rootRef.current = element as HTMLDivElement | null;
+      }}
       totalCount={itemCount}
       initialTopMostItemIndex={Math.max(0, Math.min(currentPageIndex, pages.length - 1))}
       increaseViewportBy={{ top: 900, bottom: 1400 }}
       overscan={6}
-      rangeChanged={({ startIndex }) => {
+      rangeChanged={({ startIndex, endIndex }) => {
         if (startIndex < pages.length) {
           onVisiblePageChange(startIndex);
         }
+        onRenderRangeChange(startIndex, Math.min(endIndex, pages.length - 1));
+        window.requestAnimationFrame(() => {
+          onRenderedImageCountChange(rootRef.current?.querySelectorAll('img[data-page-number]').length ?? 0);
+        });
       }}
       itemContent={(index) => {
         const page = pages[index];

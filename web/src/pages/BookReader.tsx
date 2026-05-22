@@ -87,6 +87,7 @@ export default function BookReader() {
         clearAllPageImageCaches,
         cachedImageUrlsForBook,
         retainBookCaches,
+        releasePageImagesOutsideWindow,
         ensurePageImageLoaded,
         isPagedImageReady,
     } = usePageImageCache({
@@ -189,6 +190,29 @@ export default function BookReader() {
     const toggleHelp = useCallback(() => {
         setShowHelp((value) => !value);
     }, []);
+    const handleWebtoonRenderRangeChange = useCallback((startIndex: number, endIndex: number) => {
+        if (!bookId || readModeRef.current !== 'webtoon') return;
+        const keepStart = Math.max(0, startIndex - Math.max(2, preloadCount));
+        const keepEnd = Math.min(activePages.length - 1, endIndex + Math.max(2, preloadCount));
+        const keepPages: number[] = [];
+        for (let index = keepStart; index <= keepEnd; index += 1) {
+            const page = activePages[index];
+            if (page) {
+                keepPages.push(page.number);
+            }
+        }
+        releasePageImagesOutsideWindow(bookId, keepPages);
+    }, [activePages, bookId, preloadCount, releasePageImagesOutsideWindow]);
+    const handleWebtoonRenderedImageCountChange = useCallback((count: number) => {
+        if (typeof window === 'undefined') return;
+        window.dispatchEvent(new CustomEvent('manga-reader:webtoon-dom-images', {
+            detail: {
+                bookId,
+                count,
+                pageCount: activePages.length,
+            },
+        }));
+    }, [activePages.length, bookId]);
 
     useReaderProgressPipeline({
         bookId,
@@ -353,6 +377,8 @@ export default function BookReader() {
                         nextBookId={nextBookId}
                         getImageUrl={getImageUrl}
                         onVisiblePageChange={setCurrentPageIndex}
+                        onRenderRangeChange={handleWebtoonRenderRangeChange}
+                        onRenderedImageCountChange={handleWebtoonRenderedImageCountChange}
                         onOpenNextBook={(targetBookId) => navigate(`/reader/${targetBookId}`, { replace: true })}
                     />
                 ) : (

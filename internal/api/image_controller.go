@@ -79,10 +79,12 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 
 	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
 	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear") || autoCrop
+	rawPassthrough := !isThumbnailReq && w2xScaleStr == "" && w2xNoiseStr == "" && w2xFormatStr == ""
 	diskPageCacheEnabled := c.diskPageCacheEnabled()
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
 			contentType := http.DetectContentType(cachedData)
+			annotatePageImageDiagnostics(ctx, false, false, false, true)
 			annotatePageImageRequest(ctx, bookID, pageNumber, true, "memory", transform)
 			c.logPageImageServed(bookID, pageNumber, "memory", contentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 			w.Header().Set("Content-Type", contentType) // 告别祖传写死的 jpeg 格式假传导致的前端崩溃
@@ -95,6 +97,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		if diskPageCacheEnabled {
 			if cachedData, cachedContentType, ok := c.readDiskImageCache(cacheKey); ok {
 				c.imageCache.Add(cacheKey, cachedData)
+				annotatePageImageDiagnostics(ctx, false, false, false, true)
 				annotatePageImageRequest(ctx, bookID, pageNumber, true, "disk", transform)
 				c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 				w.Header().Set("Content-Type", cachedContentType)
@@ -107,7 +110,8 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	pageInfo, err := c.getBookArchiveSourcePage(ctx, source, pageNumber)
+	pageInfo, manifestCacheHit, err := c.getBookArchiveSourcePageWithStats(ctx, source, pageNumber)
+	annotatePageImageDiagnostics(ctx, false, manifestCacheHit, false, false)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Page not found")
@@ -129,6 +133,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
 		return
 	}
+	annotatePageImageDiagnostics(ctx, true, false, false, false)
 
 	data, err := archiver.ReadPage(targetPage)
 	if err != nil {
@@ -201,6 +206,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	if isThumbnailReq {
 		cacheSource = "processed"
 	}
+	annotatePageImageDiagnostics(ctx, false, false, rawPassthrough, isThumbnailReq)
 	annotatePageImageRequest(ctx, bookID, pageNumber, false, cacheSource, transform)
 	c.logPageImageServed(bookID, pageNumber, cacheSource, finalContentType, len(finalData), time.Since(started), format, filter, autoCrop)
 	w.Write(finalData)

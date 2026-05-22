@@ -19,41 +19,49 @@ var slowRequestThreshold = 500 * time.Millisecond
 var requestDiagnostics = newRequestDiagnosticsBuffer(300)
 
 type RequestDiagnosticEvent struct {
-	Time        time.Time `json:"time"`
-	Method      string    `json:"method"`
-	Path        string    `json:"path"`
-	Route       string    `json:"route"`
-	Status      int       `json:"status"`
-	Bytes       int       `json:"bytes"`
-	DurationMS  int64     `json:"duration_ms"`
-	RemoteIP    string    `json:"remote_ip"`
-	CacheHit    bool      `json:"cache_hit"`
-	CacheSource string    `json:"cache_source,omitempty"`
-	BookID      *int64    `json:"book_id,omitempty"`
-	PageNumber  *int64    `json:"page_number,omitempty"`
-	Transform   string    `json:"transform,omitempty"`
+	Time             time.Time `json:"time"`
+	Method           string    `json:"method"`
+	Path             string    `json:"path"`
+	Route            string    `json:"route"`
+	Status           int       `json:"status"`
+	Bytes            int       `json:"bytes"`
+	DurationMS       int64     `json:"duration_ms"`
+	RemoteIP         string    `json:"remote_ip"`
+	CacheHit         bool      `json:"cache_hit"`
+	CacheSource      string    `json:"cache_source,omitempty"`
+	BookID           *int64    `json:"book_id,omitempty"`
+	PageNumber       *int64    `json:"page_number,omitempty"`
+	Transform        string    `json:"transform,omitempty"`
+	ArchiveOpen      bool      `json:"archive_open"`
+	ManifestCacheHit bool      `json:"manifest_cache_hit"`
+	RawPassthrough   bool      `json:"raw_passthrough"`
+	Processed        bool      `json:"processed"`
 }
 
 type SystemPerformanceResponse struct {
-	SampleCount        int                          `json:"sample_count"`
-	StartedAt          *time.Time                   `json:"started_at,omitempty"`
-	EndedAt            *time.Time                   `json:"ended_at,omitempty"`
-	SlowThresholdMS    int64                        `json:"slow_threshold_ms"`
-	TotalRequests      int                          `json:"total_requests"`
-	ErrorRequests      int                          `json:"error_requests"`
-	SlowRequests       int                          `json:"slow_requests"`
-	TotalBytes         int64                        `json:"total_bytes"`
-	CacheHits          int                          `json:"cache_hits"`
-	PageImageRequests  int                          `json:"page_image_requests"`
-	PageImageCacheHits int                          `json:"page_image_cache_hits"`
-	AverageMS          int64                        `json:"average_ms"`
-	P95MS              int64                        `json:"p95_ms"`
-	MaxMS              int64                        `json:"max_ms"`
-	Routes             []SystemRoutePerformance     `json:"routes"`
-	Transforms         []SystemTransformPerformance `json:"transforms"`
-	RecentSlow         []RequestDiagnosticEvent     `json:"recent_slow"`
-	RecentErrors       []RequestDiagnosticEvent     `json:"recent_errors"`
-	ProtocolCounts     SystemProtocolCounts         `json:"protocol_counts"`
+	SampleCount              int                          `json:"sample_count"`
+	StartedAt                *time.Time                   `json:"started_at,omitempty"`
+	EndedAt                  *time.Time                   `json:"ended_at,omitempty"`
+	SlowThresholdMS          int64                        `json:"slow_threshold_ms"`
+	TotalRequests            int                          `json:"total_requests"`
+	ErrorRequests            int                          `json:"error_requests"`
+	SlowRequests             int                          `json:"slow_requests"`
+	TotalBytes               int64                        `json:"total_bytes"`
+	CacheHits                int                          `json:"cache_hits"`
+	PageImageRequests        int                          `json:"page_image_requests"`
+	PageImageCacheHits       int                          `json:"page_image_cache_hits"`
+	PageImageArchiveOpens    int                          `json:"page_image_archive_opens"`
+	PageImageManifestHits    int                          `json:"page_image_manifest_hits"`
+	PageImageRawPassthroughs int                          `json:"page_image_raw_passthroughs"`
+	PageImageProcessed       int                          `json:"page_image_processed"`
+	AverageMS                int64                        `json:"average_ms"`
+	P95MS                    int64                        `json:"p95_ms"`
+	MaxMS                    int64                        `json:"max_ms"`
+	Routes                   []SystemRoutePerformance     `json:"routes"`
+	Transforms               []SystemTransformPerformance `json:"transforms"`
+	RecentSlow               []RequestDiagnosticEvent     `json:"recent_slow"`
+	RecentErrors             []RequestDiagnosticEvent     `json:"recent_errors"`
+	ProtocolCounts           SystemProtocolCounts         `json:"protocol_counts"`
 }
 
 type SystemRoutePerformance struct {
@@ -111,11 +119,15 @@ type transformPerformanceAccumulator struct {
 }
 
 type RequestPerformanceInfo struct {
-	CacheHit    bool
-	CacheSource string
-	BookID      *int64
-	PageNumber  *int64
-	Transform   string
+	CacheHit         bool
+	CacheSource      string
+	BookID           *int64
+	PageNumber       *int64
+	Transform        string
+	ArchiveOpen      bool
+	ManifestCacheHit bool
+	RawPassthrough   bool
+	Processed        bool
 }
 
 type requestPerformanceInfoKey struct{}
@@ -189,6 +201,15 @@ func annotatePageImageRequest(ctx context.Context, bookID, pageNumber int64, cac
 	})
 }
 
+func annotatePageImageDiagnostics(ctx context.Context, archiveOpen, manifestCacheHit, rawPassthrough, processed bool) {
+	annotateRequestPerformance(ctx, func(info *RequestPerformanceInfo) {
+		info.ArchiveOpen = info.ArchiveOpen || archiveOpen
+		info.ManifestCacheHit = info.ManifestCacheHit || manifestCacheHit
+		info.RawPassthrough = info.RawPassthrough || rawPassthrough
+		info.Processed = info.Processed || processed
+	})
+}
+
 func int64Ptr(value int64) *int64 {
 	v := value
 	return &v
@@ -243,19 +264,23 @@ func RequestMetrics(next http.Handler) http.Handler {
 		}
 
 		requestDiagnostics.record(RequestDiagnosticEvent{
-			Time:        time.Now(),
-			Method:      r.Method,
-			Path:        r.URL.Path,
-			Route:       routePattern,
-			Status:      status,
-			Bytes:       rec.bytes,
-			DurationMS:  duration.Milliseconds(),
-			RemoteIP:    r.RemoteAddr,
-			CacheHit:    performanceInfo.CacheHit,
-			CacheSource: performanceInfo.CacheSource,
-			BookID:      performanceInfo.BookID,
-			PageNumber:  performanceInfo.PageNumber,
-			Transform:   performanceInfo.Transform,
+			Time:             time.Now(),
+			Method:           r.Method,
+			Path:             r.URL.Path,
+			Route:            routePattern,
+			Status:           status,
+			Bytes:            rec.bytes,
+			DurationMS:       duration.Milliseconds(),
+			RemoteIP:         r.RemoteAddr,
+			CacheHit:         performanceInfo.CacheHit,
+			CacheSource:      performanceInfo.CacheSource,
+			BookID:           performanceInfo.BookID,
+			PageNumber:       performanceInfo.PageNumber,
+			Transform:        performanceInfo.Transform,
+			ArchiveOpen:      performanceInfo.ArchiveOpen,
+			ManifestCacheHit: performanceInfo.ManifestCacheHit,
+			RawPassthrough:   performanceInfo.RawPassthrough,
+			Processed:        performanceInfo.Processed,
 		})
 
 		if !shouldLogRequest(r.URL.Path, status, duration) {
@@ -282,6 +307,14 @@ func RequestMetrics(next http.Handler) http.Handler {
 		}
 		if performanceInfo.Transform != "" {
 			attrs = append(attrs, "transform", performanceInfo.Transform)
+		}
+		if performanceInfo.BookID != nil && performanceInfo.PageNumber != nil {
+			attrs = append(attrs,
+				"archive_open", performanceInfo.ArchiveOpen,
+				"manifest_cache_hit", performanceInfo.ManifestCacheHit,
+				"raw_passthrough", performanceInfo.RawPassthrough,
+				"processed", performanceInfo.Processed,
+			)
 		}
 		if requestID := middleware.GetReqID(r.Context()); requestID != "" {
 			attrs = append(attrs, "request_id", requestID)
@@ -374,6 +407,18 @@ func buildSystemPerformanceSummary(events []RequestDiagnosticEvent) SystemPerfor
 			response.PageImageRequests++
 			if event.CacheHit {
 				response.PageImageCacheHits++
+			}
+			if event.ArchiveOpen {
+				response.PageImageArchiveOpens++
+			}
+			if event.ManifestCacheHit {
+				response.PageImageManifestHits++
+			}
+			if event.RawPassthrough {
+				response.PageImageRawPassthroughs++
+			}
+			if event.Processed {
+				response.PageImageProcessed++
 			}
 		}
 		if event.Status >= 400 {

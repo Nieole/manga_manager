@@ -286,6 +286,24 @@ func TestFastScanDoesNotOpenArchive(t *testing.T) {
 	}
 }
 
+func TestScanMetricsSnapshot(t *testing.T) {
+	metrics := &scanMetrics{}
+	metrics.discoveredArchives.Add(2)
+	metrics.skippedArchives.Add(1)
+	metrics.processedArchives.Add(1)
+	metrics.openedArchives.Add(1)
+	metrics.hashedFiles.Add(2)
+
+	snapshot := metrics.snapshot()
+	if snapshot.discoveredArchives != 2 ||
+		snapshot.skippedArchives != 1 ||
+		snapshot.processedArchives != 1 ||
+		snapshot.openedArchives != 1 ||
+		snapshot.hashedFiles != 2 {
+		t.Fatalf("unexpected scan metrics snapshot: %+v", snapshot)
+	}
+}
+
 func TestKOReaderEnabledMetadataScanDefersBinaryHash(t *testing.T) {
 	rootDir, store, lib, libraryPath := newScannerTestLibrary(t)
 	seriesPath := filepath.Join(libraryPath, "Series Alpha")

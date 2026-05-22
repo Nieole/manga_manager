@@ -163,6 +163,7 @@ func TestRequestMetricsRecordsPerformanceFields(t *testing.T) {
 
 	handler := RequestMetrics(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		annotatePageImageRequest(r.Context(), 10, 3, true, "memory", "format:webp")
+		annotatePageImageDiagnostics(r.Context(), true, true, false, true)
 		_, _ = w.Write([]byte("image"))
 	}))
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/pages/10/3?format=webp", nil))
@@ -178,6 +179,9 @@ func TestRequestMetricsRecordsPerformanceFields(t *testing.T) {
 	if event.BookID == nil || *event.BookID != 10 || event.PageNumber == nil || *event.PageNumber != 3 {
 		t.Fatalf("unexpected page identity fields: %+v", event)
 	}
+	if !event.ArchiveOpen || !event.ManifestCacheHit || event.RawPassthrough || !event.Processed {
+		t.Fatalf("unexpected page diagnostic fields: %+v", event)
+	}
 
 	if len(capture.records) != 1 {
 		t.Fatalf("expected one request log, got %d", len(capture.records))
@@ -188,6 +192,9 @@ func TestRequestMetricsRecordsPerformanceFields(t *testing.T) {
 	}
 	if attrs["book_id"] != int64(10) || attrs["page_number"] != int64(3) || attrs["transform"] != "format:webp" {
 		t.Fatalf("expected page attrs, got %+v", attrs)
+	}
+	if attrs["archive_open"] != true || attrs["manifest_cache_hit"] != true || attrs["raw_passthrough"] != false || attrs["processed"] != true {
+		t.Fatalf("expected page diagnostic attrs, got %+v", attrs)
 	}
 }
 
@@ -201,16 +208,19 @@ func TestBuildSystemPerformanceSummary(t *testing.T) {
 	base := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
 	summary := buildSystemPerformanceSummary([]RequestDiagnosticEvent{
 		{
-			Time:       base,
-			Method:     http.MethodGet,
-			Path:       "/api/pages/1/1",
-			Route:      "/api/pages/{bookId}/{pageNumber}",
-			Status:     http.StatusOK,
-			Bytes:      100,
-			DurationMS: 40,
-			BookID:     int64Ptr(1),
-			PageNumber: int64Ptr(1),
-			Transform:  "raw",
+			Time:             base,
+			Method:           http.MethodGet,
+			Path:             "/api/pages/1/1",
+			Route:            "/api/pages/{bookId}/{pageNumber}",
+			Status:           http.StatusOK,
+			Bytes:            100,
+			DurationMS:       40,
+			BookID:           int64Ptr(1),
+			PageNumber:       int64Ptr(1),
+			Transform:        "raw",
+			ArchiveOpen:      true,
+			ManifestCacheHit: true,
+			RawPassthrough:   true,
 		},
 		{
 			Time:        base.Add(time.Second),
@@ -225,6 +235,7 @@ func TestBuildSystemPerformanceSummary(t *testing.T) {
 			BookID:      int64Ptr(1),
 			PageNumber:  int64Ptr(2),
 			Transform:   "format:webp",
+			Processed:   true,
 		},
 		{
 			Time:       base.Add(2 * time.Second),
@@ -259,6 +270,9 @@ func TestBuildSystemPerformanceSummary(t *testing.T) {
 	}
 	if summary.CacheHits != 1 || summary.PageImageRequests != 2 || summary.PageImageCacheHits != 1 {
 		t.Fatalf("unexpected cache aggregates: cache=%d page=%d page_cache=%d", summary.CacheHits, summary.PageImageRequests, summary.PageImageCacheHits)
+	}
+	if summary.PageImageArchiveOpens != 1 || summary.PageImageManifestHits != 1 || summary.PageImageRawPassthroughs != 1 || summary.PageImageProcessed != 1 {
+		t.Fatalf("unexpected page image diagnostic aggregates: %+v", summary)
 	}
 	if len(summary.RecentSlow) != 1 || summary.RecentSlow[0].Path != "/api/pages/1/2" {
 		t.Fatalf("unexpected recent slow events: %+v", summary.RecentSlow)

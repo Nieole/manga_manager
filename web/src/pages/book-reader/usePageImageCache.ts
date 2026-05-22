@@ -135,6 +135,51 @@ export function usePageImageCache({
     });
   }, [clearImagesInCache]);
 
+  const releasePageImagesOutsideWindow = useCallback((targetBookId: string, keepPageNumbers: number[]) => {
+    const cache = readerBookCacheRef.current.get(targetBookId);
+    if (!cache) return;
+
+    const keepPages = new Set(keepPageNumbers);
+    const keepUrls = new Set<string>();
+    keepPages.forEach((pageNumber) => {
+      keepUrls.add(getImageUrlForBook(targetBookId, pageNumber));
+    });
+
+    cache.imageRequests.forEach(({ controller }, requestUrl) => {
+      if (!keepUrls.has(requestUrl)) {
+        controller.abort();
+        cache.imageRequests.delete(requestUrl);
+      }
+    });
+    cache.preloadedImageUrls.forEach((requestUrl) => {
+      if (!keepUrls.has(requestUrl)) {
+        cache.preloadedImageUrls.delete(requestUrl);
+      }
+    });
+    cache.imageUrls.forEach((objectUrl, requestUrl) => {
+      if (!keepUrls.has(requestUrl)) {
+        URL.revokeObjectURL(objectUrl);
+        cache.imageUrls.delete(requestUrl);
+      }
+    });
+
+    if (targetBookId === currentBookIdRef.current) {
+      setCachedPageImageUrls((prev) => {
+        let changed = false;
+        const next: Record<number, string> = {};
+        Object.entries(prev).forEach(([pageNumber, objectUrl]) => {
+          const page = Number(pageNumber);
+          if (keepPages.has(page)) {
+            next[page] = objectUrl;
+          } else {
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }
+  }, [currentBookIdRef, getImageUrlForBook]);
+
   const ensurePageImageLoaded = useCallback((targetBookId: string, pageNum: number) => {
     const cache = getBookCache(targetBookId);
     const requestUrl = getImageUrlForBook(targetBookId, pageNum);
@@ -199,6 +244,7 @@ export function usePageImageCache({
     clearAllPageImageCaches,
     cachedImageUrlsForBook,
     retainBookCaches,
+    releasePageImagesOutsideWindow,
     ensurePageImageLoaded,
     isPagedImageReady,
   };

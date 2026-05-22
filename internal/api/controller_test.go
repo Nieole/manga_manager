@@ -1539,6 +1539,65 @@ func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 	assertFirst("read_desc", seriesB.ID)
 }
 
+func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 10)
+
+	for _, name := range []string{"Series Beta", "Series Gamma"} {
+		series, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
+			LibraryID:   lib.ID,
+			Name:        name,
+			Path:        filepath.Join(rootDir, "Library A", name),
+			NameInitial: database.SeriesInitial("", name),
+		})
+		if err != nil {
+			t.Fatalf("CreateSeries %s failed: %v", name, err)
+		}
+		if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET updated_at = ? WHERE id = ?`, time.Now().Add(time.Duration(len(name))*time.Minute), series.ID); err != nil {
+			t.Fatalf("update series %s failed: %v", name, err)
+		}
+	}
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=1&page=1&sortBy=name_asc", nil)
+	firstRec := httptest.NewRecorder()
+	controller.searchSeriesPaged(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected first page 200, got %d body=%s", firstRec.Code, firstRec.Body.String())
+	}
+	var firstResp struct {
+		Items      []database.SearchSeriesPagedRow `json:"items"`
+		Total      int                             `json:"total"`
+		NextCursor string                          `json:"next_cursor"`
+		HasMore    bool                            `json:"has_more"`
+	}
+	if err := json.NewDecoder(firstRec.Body).Decode(&firstResp); err != nil {
+		t.Fatalf("decode first response failed: %v", err)
+	}
+	if firstResp.Total != 3 || len(firstResp.Items) != 1 || firstResp.NextCursor == "" || !firstResp.HasMore {
+		t.Fatalf("unexpected first response: %+v", firstResp)
+	}
+
+	secondURL := "/api/series/search?libraryId=" + strconv.FormatInt(lib.ID, 10) + "&limit=1&page=2&sortBy=name_asc&cursor=" + url.QueryEscape(firstResp.NextCursor)
+	secondReq := httptest.NewRequest(http.MethodGet, secondURL, nil)
+	secondRec := httptest.NewRecorder()
+	controller.searchSeriesPaged(secondRec, secondReq)
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("expected cursor page 200, got %d body=%s", secondRec.Code, secondRec.Body.String())
+	}
+	var secondResp struct {
+		Items      []database.SearchSeriesPagedRow `json:"items"`
+		Total      int                             `json:"total"`
+		NextCursor string                          `json:"next_cursor"`
+		HasMore    bool                            `json:"has_more"`
+	}
+	if err := json.NewDecoder(secondRec.Body).Decode(&secondResp); err != nil {
+		t.Fatalf("decode second response failed: %v", err)
+	}
+	if secondResp.Total != 0 || len(secondResp.Items) != 1 || secondResp.Items[0].Name <= firstResp.Items[0].Name {
+		t.Fatalf("unexpected cursor response: first=%+v second=%+v", firstResp, secondResp)
+	}
+}
+
 func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	_, series, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)

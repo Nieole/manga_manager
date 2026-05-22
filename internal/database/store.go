@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +25,7 @@ type Store interface {
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
 	SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
+	SearchSeriesCursor(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
 	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
@@ -121,6 +124,19 @@ type SearchSeriesPagedRow struct {
 	ReadCount       int             `json:"read_count"`
 	TotalPages      sql.NullFloat64 `json:"total_pages"`
 	IsFavorite      bool            `json:"is_favorite"`
+}
+
+type seriesSearchSort struct {
+	Field string
+	Dir   string
+	Expr  string
+}
+
+type seriesCursorPayload struct {
+	SortBy string `json:"sort_by"`
+	Value  string `json:"value"`
+	Name   string `json:"name"`
+	ID     int64  `json:"id"`
 }
 
 type ProtocolSeriesRow struct {
@@ -391,6 +407,7 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint_no_ext ON books(path_fingerprint_no_ext)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_library_size ON books(library_id, size)`,
 		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_name_initial ON series(name_initial)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_initial ON series(library_id, name_initial)`,
@@ -402,11 +419,15 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_series_library_status_name ON series(library_id, status, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_updated_name ON series(library_id, updated_at, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_created_name ON series(library_id, created_at, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_updated_name_id ON series(library_id, updated_at, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_created_name_id ON series(library_id, created_at, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_name_id ON series(library_id, name, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_rating ON series(library_id, rating, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_books ON series(library_id, book_count, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_volumes ON series(library_id, volume_count, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_pages ON series(library_id, total_pages, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_favorite, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_favorite_name_id ON series(library_id, is_favorite, name, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_series_sort ON books(series_id, volume, sort_number, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_series_read ON books(series_id, last_read_page)`,
@@ -930,6 +951,101 @@ func scanTaskRecord(row taskScanner) (TaskRecord, error) {
 // SearchSeriesPaged 供主页根据标签和作者查询并分页。
 // 默认列表只走 series + series_stats，只有标签/作者筛选时才进入关联表。
 func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
+	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, keyword, letter, status, tags, authors)
+
+	var total int
+	if keyword == "" && status == "" && letter == "" && len(tags) == 0 && len(authors) == 0 {
+		if libraryID == 0 {
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series`).Scan(&total); err != nil {
+				return nil, 0, err
+			}
+		} else if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series WHERE library_id = ?`, libraryID).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		countQuery := `SELECT COUNT(*) FROM series s` + whereClause
+		if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	sortSpec := parseSeriesSearchSort(sortBy)
+	orderClause := seriesSearchOffsetOrderClause(sortSpec)
+
+	queryArgs := append([]interface{}{}, args...)
+	baseQuery += whereClause + fmt.Sprintf(` ORDER BY %s LIMIT ? OFFSET ?`, orderClause)
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, baseQuery, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, err := scanSearchSeriesPagedRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error) {
+	sortSpec := parseSeriesSearchSort(sortBy)
+	if !sortSpec.supportsCursor() {
+		return nil, "", false, fmt.Errorf("sort %q does not support cursor pagination", sortBy)
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, keyword, letter, status, tags, authors)
+	filters := strings.TrimPrefix(whereClause, " WHERE ")
+	queryArgs := append([]interface{}{}, args...)
+
+	if cursor != "" {
+		payload, err := decodeSeriesCursor(cursor)
+		if err != nil {
+			return nil, "", false, err
+		}
+		if payload.SortBy != seriesSearchSortKey(sortSpec) {
+			return nil, "", false, fmt.Errorf("cursor sort %q does not match request sort %q", payload.SortBy, seriesSearchSortKey(sortSpec))
+		}
+		seekClause, seekArgs := seriesSearchSeekClause(sortSpec, payload)
+		if seekClause != "" {
+			if filters != "" {
+				filters += " AND "
+			}
+			filters += seekClause
+			queryArgs = append(queryArgs, seekArgs...)
+		}
+	}
+
+	if filters != "" {
+		baseQuery += " WHERE " + filters
+	}
+	orderClause := seriesSearchCursorOrderClause(sortSpec)
+	queryArgs = append(queryArgs, int(limit)+1)
+	baseQuery += fmt.Sprintf(` ORDER BY %s LIMIT ?`, orderClause)
+
+	rows, err := s.db.QueryContext(ctx, baseQuery, queryArgs...)
+	if err != nil {
+		return nil, "", false, err
+	}
+	items, err := scanSearchSeriesPagedRows(rows)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	hasMore := len(items) > int(limit)
+	if hasMore {
+		items = items[:int(limit)]
+	}
+	nextCursor := ""
+	if hasMore && len(items) > 0 {
+		nextCursor = encodeSeriesCursor(sortSpec, items[len(items)-1])
+	}
+	return items, nextCursor, hasMore, nil
+}
+
+func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tags, authors []string) (string, string, []interface{}) {
 	baseQuery := `
 		SELECT
             s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
@@ -1007,60 +1123,10 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 	if len(filters) > 0 {
 		whereClause = " WHERE " + strings.Join(filters, " AND ")
 	}
+	return baseQuery, whereClause, args
+}
 
-	var total int
-	if keyword == "" && status == "" && letter == "" && len(tags) == 0 && len(authors) == 0 {
-		if libraryID == 0 {
-			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series`).Scan(&total); err != nil {
-				return nil, 0, err
-			}
-		} else if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series WHERE library_id = ?`, libraryID).Scan(&total); err != nil {
-			return nil, 0, err
-		}
-	} else {
-		countQuery := `SELECT COUNT(*) FROM series s` + whereClause
-		if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-			return nil, 0, err
-		}
-	}
-
-	orderClause := "s.name ASC" // Default Sort fallback
-	parts := strings.Split(sortBy, "_")
-	if len(parts) == 2 {
-		field, dir := parts[0], strings.ToUpper(parts[1])
-		if dir != "ASC" && dir != "DESC" {
-			dir = "ASC"
-		}
-		switch field {
-		case "rating":
-			orderClause = fmt.Sprintf("s.rating %s, s.name ASC", dir)
-		case "books":
-			orderClause = fmt.Sprintf("s.book_count %s, s.name ASC", dir)
-		case "volumes":
-			orderClause = fmt.Sprintf("s.volume_count %s, s.name ASC", dir)
-		case "pages":
-			orderClause = fmt.Sprintf("s.total_pages %s, s.name ASC", dir)
-		case "read":
-			orderClause = fmt.Sprintf("COALESCE(ss.read_pages, 0) %s, s.name ASC", dir)
-		case "created":
-			orderClause = fmt.Sprintf("s.created_at %s, s.name ASC", dir)
-		case "updated":
-			orderClause = fmt.Sprintf("s.updated_at %s, s.name ASC", dir)
-		case "name":
-			orderClause = fmt.Sprintf("s.name %s", dir)
-		case "favorite":
-			orderClause = fmt.Sprintf("is_favorite %s, s.name ASC", dir)
-		}
-	}
-
-	queryArgs := append([]interface{}{}, args...)
-	baseQuery += whereClause + fmt.Sprintf(` ORDER BY %s LIMIT ? OFFSET ?`, orderClause)
-	queryArgs = append(queryArgs, limit, offset)
-
-	rows, err := s.db.QueryContext(ctx, baseQuery, queryArgs...)
-	if err != nil {
-		return nil, 0, err
-	}
+func scanSearchSeriesPagedRows(rows *sql.Rows) ([]SearchSeriesPagedRow, error) {
 	defer rows.Close()
 
 	var items []SearchSeriesPagedRow
@@ -1089,19 +1155,172 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 			&i.TagsString,
 			&i.ReadCount,
 		); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		i.ActualBookCount = int(i.BookCount)
 		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, err
+	}
+	return items, nil
+}
+
+func parseSeriesSearchSort(sortBy string) seriesSearchSort {
+	spec := seriesSearchSort{Field: "name", Dir: "ASC", Expr: "s.name"}
+	parts := strings.Split(sortBy, "_")
+	if len(parts) != 2 {
+		return spec
 	}
 
-	return items, total, nil
+	field, dir := parts[0], strings.ToUpper(parts[1])
+	if dir != "ASC" && dir != "DESC" {
+		dir = "ASC"
+	}
+	spec.Field = field
+	spec.Dir = dir
+	switch field {
+	case "rating":
+		spec.Expr = "s.rating"
+	case "books":
+		spec.Expr = "s.book_count"
+	case "volumes":
+		spec.Expr = "s.volume_count"
+	case "pages":
+		spec.Expr = "s.total_pages"
+	case "read":
+		spec.Expr = "COALESCE(ss.read_pages, 0)"
+	case "created":
+		spec.Expr = "s.created_at"
+	case "updated":
+		spec.Expr = "s.updated_at"
+	case "favorite":
+		spec.Expr = "s.is_favorite"
+	case "name":
+		spec.Expr = "s.name"
+	default:
+		spec.Field = "name"
+		spec.Expr = "s.name"
+	}
+	return spec
+}
+
+func (s seriesSearchSort) supportsCursor() bool {
+	switch s.Field {
+	case "name", "updated", "created", "favorite":
+		return true
+	default:
+		return false
+	}
+}
+
+func SeriesSearchSortSupportsCursor(sortBy string) bool {
+	return parseSeriesSearchSort(sortBy).supportsCursor()
+}
+
+func NextSeriesSearchCursor(sortBy string, row SearchSeriesPagedRow) string {
+	sortSpec := parseSeriesSearchSort(sortBy)
+	if !sortSpec.supportsCursor() {
+		return ""
+	}
+	return encodeSeriesCursor(sortSpec, row)
+}
+
+func seriesSearchSortKey(s seriesSearchSort) string {
+	return s.Field + "_" + strings.ToLower(s.Dir)
+}
+
+func seriesSearchOffsetOrderClause(s seriesSearchSort) string {
+	switch s.Field {
+	case "rating", "books", "volumes", "pages", "read", "created", "updated":
+		return fmt.Sprintf("%s %s, s.name ASC", s.Expr, s.Dir)
+	case "favorite":
+		return fmt.Sprintf("s.is_favorite %s, s.name ASC", s.Dir)
+	case "name":
+		return fmt.Sprintf("s.name %s", s.Dir)
+	default:
+		return "s.name ASC"
+	}
+}
+
+func seriesSearchCursorOrderClause(s seriesSearchSort) string {
+	if s.Field == "name" {
+		return fmt.Sprintf("s.name %s, s.id %s", s.Dir, s.Dir)
+	}
+	return fmt.Sprintf("%s %s, s.name ASC, s.id ASC", s.Expr, s.Dir)
+}
+
+func seriesSearchSeekClause(s seriesSearchSort, cursor seriesCursorPayload) (string, []interface{}) {
+	if s.Field == "name" {
+		operator := ">"
+		if s.Dir == "DESC" {
+			operator = "<"
+		}
+		return fmt.Sprintf(`(s.name %s ? OR (s.name = ? AND s.id %s ?))`, operator, operator), []interface{}{cursor.Name, cursor.Name, cursor.ID}
+	}
+
+	operator := ">"
+	if s.Dir == "DESC" {
+		operator = "<"
+	}
+	value := interface{}(cursor.Value)
+	switch s.Field {
+	case "updated", "created":
+		if parsed, err := time.Parse(time.RFC3339Nano, cursor.Value); err == nil {
+			value = parsed
+		}
+	case "favorite":
+		if parsed, err := strconv.Atoi(cursor.Value); err == nil {
+			value = parsed
+		}
+	}
+	return fmt.Sprintf(`(%s %s ? OR (%s = ? AND (s.name > ? OR (s.name = ? AND s.id > ?))))`, s.Expr, operator, s.Expr),
+		[]interface{}{value, value, cursor.Name, cursor.Name, cursor.ID}
+}
+
+func encodeSeriesCursor(s seriesSearchSort, row SearchSeriesPagedRow) string {
+	payload := seriesCursorPayload{
+		SortBy: seriesSearchSortKey(s),
+		Name:   row.Name,
+		ID:     row.ID,
+	}
+	switch s.Field {
+	case "updated":
+		payload.Value = row.UpdatedAt.Format(time.RFC3339Nano)
+	case "created":
+		payload.Value = row.CreatedAt.Format(time.RFC3339Nano)
+	case "favorite":
+		if row.IsFavorite {
+			payload.Value = "1"
+		} else {
+			payload.Value = "0"
+		}
+	default:
+		payload.Value = row.Name
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeSeriesCursor(cursor string) (seriesCursorPayload, error) {
+	var payload seriesCursorPayload
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return payload, err
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return payload, err
+	}
+	if payload.SortBy == "" || payload.ID <= 0 {
+		return payload, fmt.Errorf("invalid series cursor")
+	}
+	return payload, nil
 }
 
 // GetDashboardStats 一次性拿到全局统计看板所需的聚合数据
@@ -1127,11 +1346,14 @@ func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 	}
 
 	sizeQuery := `
-		SELECT l.id, l.name, COALESCE(SUM(b.size), 0) as total_size
+		SELECT l.id, l.name, COALESCE(bs.total_size, 0) as total_size
 		FROM libraries l
-		LEFT JOIN books b ON l.id = b.library_id
-		GROUP BY l.id, l.name
-		ORDER BY total_size DESC
+		LEFT JOIN (
+			SELECT library_id, SUM(size) as total_size
+			FROM books INDEXED BY idx_books_library_size
+			GROUP BY library_id
+		) bs ON bs.library_id = l.id
+		ORDER BY bs.total_size DESC
 	`
 	rows, err := s.db.QueryContext(ctx, sizeQuery)
 	if err == nil {
@@ -1275,7 +1497,7 @@ func (s *SqlStore) GetRecentReadAll(ctx context.Context, limit int64) ([]RecentR
 			b.last_read_page,
 			b.page_count,
 			COALESCE(ss.cover_path, '') AS cover_path
-		FROM series_stats ss
+		FROM series_stats ss INDEXED BY idx_series_stats_last_read
 		JOIN series s ON s.id = ss.series_id
 		JOIN books b ON b.id = ss.last_read_book_id
 		WHERE ss.last_read_at IS NOT NULL

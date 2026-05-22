@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,6 +100,80 @@ func TestSeriesStatsRefreshDrivesSearchSeriesPaged(t *testing.T) {
 	if rows[0].ReadCount != 7 {
 		t.Fatalf("expected read count from stats, got %d", rows[0].ReadCount)
 	}
+}
+
+func TestSearchSeriesCursorSupportsKeysetSorts(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name:                "Main",
+		Path:                filepath.Join(t.TempDir(), "library"),
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library failed: %v", err)
+	}
+
+	names := []string{"Alpha", "Beta", "Gamma", "Delta"}
+	createdBase := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	for idx, name := range names {
+		series, err := store.CreateSeries(ctx, CreateSeriesParams{
+			LibraryID:   lib.ID,
+			Name:        name,
+			Path:        filepath.Join(lib.Path, name),
+			NameInitial: SeriesInitial("", name),
+		})
+		if err != nil {
+			t.Fatalf("create series %s failed: %v", name, err)
+		}
+		favorite := 0
+		if name == "Gamma" || name == "Delta" {
+			favorite = 1
+		}
+		if _, err := store.(*SqlStore).db.ExecContext(ctx,
+			`UPDATE series SET created_at = ?, updated_at = ?, is_favorite = ? WHERE id = ?`,
+			createdBase.Add(time.Duration(idx)*time.Hour),
+			createdBase.Add(time.Duration(10-idx)*time.Hour),
+			favorite,
+			series.ID,
+		); err != nil {
+			t.Fatalf("update series %s ordering fields failed: %v", name, err)
+		}
+	}
+
+	assertCursorOrder := func(sortBy string, expected []string) {
+		t.Helper()
+		var got []string
+		cursor := ""
+		for {
+			rows, nextCursor, hasMore, err := store.SearchSeriesCursor(ctx, lib.ID, "", "", "", nil, nil, 2, sortBy, cursor)
+			if err != nil {
+				t.Fatalf("cursor search %s failed: %v", sortBy, err)
+			}
+			for _, row := range rows {
+				got = append(got, row.Name)
+			}
+			if !hasMore {
+				break
+			}
+			if nextCursor == "" {
+				t.Fatalf("expected next cursor for %s", sortBy)
+			}
+			cursor = nextCursor
+		}
+		if strings.Join(got, ",") != strings.Join(expected, ",") {
+			t.Fatalf("unexpected order for %s: got %v want %v", sortBy, got, expected)
+		}
+	}
+
+	assertCursorOrder("name_asc", []string{"Alpha", "Beta", "Delta", "Gamma"})
+	assertCursorOrder("updated_desc", []string{"Alpha", "Beta", "Gamma", "Delta"})
+	assertCursorOrder("created_asc", []string{"Alpha", "Beta", "Gamma", "Delta"})
+	assertCursorOrder("favorite_desc", []string{"Delta", "Gamma", "Alpha", "Beta"})
 }
 
 func TestSearchTagsAndAuthorsReturnsPopularAndQueryMatches(t *testing.T) {

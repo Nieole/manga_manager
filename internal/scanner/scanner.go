@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"manga-manager/internal/config"
@@ -110,6 +111,35 @@ type scanJob struct {
 	info os.FileInfo
 }
 
+type scanMetrics struct {
+	discoveredArchives atomic.Int64
+	skippedArchives    atomic.Int64
+	processedArchives  atomic.Int64
+	openedArchives     atomic.Int64
+	hashedFiles        atomic.Int64
+}
+
+type scanMetricsSnapshot struct {
+	discoveredArchives int64
+	skippedArchives    int64
+	processedArchives  int64
+	openedArchives     int64
+	hashedFiles        int64
+}
+
+func (m *scanMetrics) snapshot() scanMetricsSnapshot {
+	if m == nil {
+		return scanMetricsSnapshot{}
+	}
+	return scanMetricsSnapshot{
+		discoveredArchives: m.discoveredArchives.Load(),
+		skippedArchives:    m.skippedArchives.Load(),
+		processedArchives:  m.processedArchives.Load(),
+		openedArchives:     m.openedArchives.Load(),
+		hashedFiles:        m.hashedFiles.Load(),
+	}
+}
+
 type bookScanSnapshot struct {
 	modTime time.Time
 	size    int64
@@ -193,6 +223,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	defer s.endLibraryScan(libraryID)
 
 	opts := s.scanOptions(force)
+	started := time.Now()
+	metrics := &scanMetrics{}
 
 	// Step 0: Pre-load cache for increment scanning
 	bookCache := make(map[string]bookScanSnapshot)
@@ -226,7 +258,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, libraryID, rootPath, job, opts, results)
+				s.workerProcess(ctx, libraryID, rootPath, job, opts, metrics, results)
 			}
 		}()
 	}
@@ -258,6 +290,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 
 		ext := strings.ToLower(filepath.Ext(path))
 		if config.IsSupportedArchiveExtension(ext) {
+			metrics.discoveredArchives.Add(1)
 			info, err := d.Info()
 			if err != nil {
 				return nil
@@ -268,6 +301,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 				if existing, exists := bookCache[path]; exists {
 					// 若存在同名记录且时间与大小精确吻合，跳过这本卷的解析派发
 					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
+						metrics.skippedArchives.Add(1)
 						return nil
 					}
 				}
@@ -275,6 +309,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 
 			select {
 			case jobs <- scanJob{path: path, info: info}:
+				metrics.processedArchives.Add(1)
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -290,7 +325,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	slog.Info("Scan completely flushed for library", "library_id", libraryID, "scan_profile", opts.Profile)
+	s.logScanCompleted("library", libraryID, opts, metrics, time.Since(started), walkErr)
 	return walkErr
 }
 
@@ -313,6 +348,8 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	}
 
 	opts := s.scanOptions(force)
+	started := time.Now()
+	metrics := &scanMetrics{}
 	bookCache := make(map[string]bookScanSnapshot)
 	if !opts.Force {
 		existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID)
@@ -337,7 +374,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, series.LibraryID, library.Path, job, opts, results)
+				s.workerProcess(ctx, series.LibraryID, library.Path, job, opts, metrics, results)
 			}
 		}()
 	}
@@ -364,6 +401,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 
 		ext := strings.ToLower(filepath.Ext(path))
 		if config.IsSupportedArchiveExtension(ext) {
+			metrics.discoveredArchives.Add(1)
 			info, err := d.Info()
 			if err != nil {
 				return nil
@@ -372,6 +410,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 			if !opts.Force {
 				if existing, exists := bookCache[path]; exists {
 					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
+						metrics.skippedArchives.Add(1)
 						return nil
 					}
 				}
@@ -379,6 +418,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 
 			select {
 			case jobs <- scanJob{path: path, info: info}:
+				metrics.processedArchives.Add(1)
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -394,7 +434,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	slog.Info("Scan completely flushed for series", "series_id", seriesID, "scan_profile", opts.Profile)
+	s.logScanCompleted("series", seriesID, opts, metrics, time.Since(started), walkErr)
 	return walkErr
 }
 
@@ -444,7 +484,34 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 	return nil
 }
 
-func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, opts ScanOptions, results chan<- scanResult) {
+func (s *Scanner) logScanCompleted(scope string, id int64, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error) {
+	snapshot := metrics.snapshot()
+	attrs := []any{
+		"scope", scope,
+		"scan_profile", opts.Profile,
+		"force", opts.Force,
+		"discovered_archives", snapshot.discoveredArchives,
+		"skipped_archives", snapshot.skippedArchives,
+		"processed_archives", snapshot.processedArchives,
+		"opened_archives", snapshot.openedArchives,
+		"hashed_files", snapshot.hashedFiles,
+		"duration_ms", duration.Milliseconds(),
+	}
+	switch scope {
+	case "series":
+		attrs = append(attrs, "series_id", id)
+	default:
+		attrs = append(attrs, "library_id", id)
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err)
+		slog.Warn("Scan completed with errors", attrs...)
+		return
+	}
+	slog.Info("Scan completed", attrs...)
+}
+
+func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, opts ScanOptions, metrics *scanMetrics, results chan<- scanResult) {
 	select {
 	case <-ctx.Done():
 		return
@@ -460,6 +527,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		if err != nil {
 			slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
 			return
+		}
+		if metrics != nil {
+			metrics.openedArchives.Add(1)
 		}
 		defer arc.Close()
 
@@ -546,6 +616,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	if opts.Profile.computesFullHash(cfg) {
 		var err error
 		fileHash, err = koreader.FingerprintFile(job.path)
+		if metrics != nil {
+			metrics.hashedFiles.Add(1)
+		}
 		if err != nil {
 			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
 		}
@@ -555,6 +628,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	if opts.Profile.computesQuickHash() {
 		var err error
 		quickHash, err = koreader.FingerprintQuickFile(job.path)
+		if metrics != nil {
+			metrics.hashedFiles.Add(1)
+		}
 		if err != nil {
 			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
 		}

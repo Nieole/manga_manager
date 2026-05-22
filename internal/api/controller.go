@@ -1681,6 +1681,28 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	letter := r.URL.Query().Get("letter")
 	sortBy := r.URL.Query().Get("sortBy")
 	keyword := r.URL.Query().Get("q")
+	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
+
+	if cursor != "" {
+		series, nextCursor, hasMore, err := c.store.SearchSeriesCursor(ctx, libID, keyword, letter, status, tags, authors, int32(limit), sortBy, cursor)
+		if err != nil {
+			slog.Error("SearchSeriesCursor Failed", "error", err)
+			jsonError(w, http.StatusBadRequest, "Invalid cursor")
+			return
+		}
+		if series == nil {
+			series = []database.SearchSeriesPagedRow{}
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"items":       series,
+			"total":       0,
+			"page":        page,
+			"limit":       limit,
+			"next_cursor": nextCursor,
+			"has_more":    hasMore,
+		})
+		return
+	}
 
 	series, total, err := c.store.SearchSeriesPaged(ctx, libID, keyword, letter, status, tags, authors, int32(limit), int32(offset), sortBy)
 	if err != nil {
@@ -1692,12 +1714,19 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	if series == nil {
 		series = []database.SearchSeriesPagedRow{}
 	}
+	hasMore := page*limit < total
+	nextCursor := ""
+	if hasMore && len(series) > 0 && database.SeriesSearchSortSupportsCursor(sortBy) {
+		nextCursor = database.NextSeriesSearchCursor(sortBy, series[len(series)-1])
+	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"items": series,
-		"total": total,
-		"page":  page,
-		"limit": limit,
+		"items":       series,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"next_cursor": nextCursor,
+		"has_more":    hasMore,
 	})
 }
 
