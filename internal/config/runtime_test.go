@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestManagerSnapshotAndReplace(t *testing.T) {
 	initial := &Config{}
@@ -85,14 +88,18 @@ func TestExternalHDDStorageProfileDefaultsToLowImpactPolicy(t *testing.T) {
 }
 
 func TestResolveStoragePolicyUsesMostSpecificPathOverride(t *testing.T) {
+	root := t.TempDir()
+	mangaRoot := filepath.Join(root, "Manga")
+	externalRoot := filepath.Join(mangaRoot, "External")
+	bookPath := filepath.Join(externalRoot, "Series", "Book.cbz")
 	cfg := Config{}
 	cfg.Library.StorageProfile = StorageProfileAuto
 	cfg.Library.StoragePolicies = []LibraryStoragePolicy{
-		{Path: `D:\Manga`, StorageProfile: StorageProfileSSD},
-		{Path: `D:\Manga\External`, StorageProfile: StorageProfileHDDExternal},
+		{Path: mangaRoot, StorageProfile: StorageProfileSSD},
+		{Path: externalRoot, StorageProfile: StorageProfileHDDExternal},
 	}
 
-	resolved := ResolveStoragePolicy(cfg, `D:\Manga\External\Series\Book.cbz`)
+	resolved := ResolveStoragePolicy(cfg, bookPath)
 
 	if resolved.StorageProfile != StorageProfileHDDExternal {
 		t.Fatalf("expected most specific external HDD profile, got %+v", resolved)
