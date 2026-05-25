@@ -163,6 +163,78 @@ func TestSchedulerLetsWaitingReaderPrecedeBackground(t *testing.T) {
 	}
 }
 
+func TestSchedulerLetsReaderBypassPauseableBackground(t *testing.T) {
+	s := NewScheduler()
+	ctx := context.Background()
+
+	background, err := s.Acquire(ctx, Request{
+		VolumeKey:        "e:",
+		Limit:            1,
+		Kind:             WorkKindMetadataScan,
+		PauseWhenReading: true,
+	})
+	if err != nil {
+		t.Fatalf("acquire background lease failed: %v", err)
+	}
+	defer background.Release()
+
+	reader, err := s.Acquire(ctx, Request{VolumeKey: "e:", Limit: 1, Kind: WorkKindReader})
+	if err != nil {
+		t.Fatalf("expected reader to bypass active pauseable background: %v", err)
+	}
+	defer reader.Release()
+
+	snapshots := s.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].ReaderActive != 1 || snapshots[0].Active != 2 {
+		t.Fatalf("unexpected snapshot after reader bypass: %+v", snapshots)
+	}
+}
+
+func TestSchedulerCapsReaderBypassToReaderLimit(t *testing.T) {
+	s := NewScheduler()
+	ctx := context.Background()
+
+	background, err := s.Acquire(ctx, Request{
+		VolumeKey:        "e:",
+		Limit:            1,
+		Kind:             WorkKindCoverBuild,
+		PauseWhenReading: true,
+	})
+	if err != nil {
+		t.Fatalf("acquire background lease failed: %v", err)
+	}
+	defer background.Release()
+
+	firstReader, err := s.Acquire(ctx, Request{VolumeKey: "e:", Limit: 1, Kind: WorkKindReader})
+	if err != nil {
+		t.Fatalf("acquire first reader failed: %v", err)
+	}
+	defer firstReader.Release()
+
+	acquired := make(chan Lease, 1)
+	go func() {
+		secondReader, err := s.Acquire(ctx, Request{VolumeKey: "e:", Limit: 1, Kind: WorkKindReader})
+		if err == nil {
+			acquired <- secondReader
+		}
+	}()
+
+	select {
+	case secondReader := <-acquired:
+		secondReader.Release()
+		t.Fatal("expected second reader to wait for the active reader bypass slot")
+	case <-time.After(60 * time.Millisecond):
+	}
+
+	firstReader.Release()
+	select {
+	case secondReader := <-acquired:
+		secondReader.Release()
+	case <-time.After(time.Second):
+		t.Fatal("expected second reader after first reader releases")
+	}
+}
+
 func TestSchedulerPauseBackgroundKeepsReaderAvailable(t *testing.T) {
 	s := NewScheduler()
 	s.PauseBackground()

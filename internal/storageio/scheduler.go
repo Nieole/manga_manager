@@ -17,6 +17,8 @@ const (
 	WorkKindCoverBuild   WorkKind = "cover_build"
 	WorkKindCacheWrite   WorkKind = "cache_write"
 	WorkKindIdentityHash WorkKind = "identity_hash"
+
+	defaultReaderIdleDuration = 30 * time.Second
 )
 
 type Request struct {
@@ -45,6 +47,7 @@ type Scheduler struct {
 	limiters         map[string]*limiter
 	readers          map[string]*readerState
 	backgroundWaits  map[string]int
+	pauseableActive  map[string]int
 	backgroundPaused bool
 }
 
@@ -77,6 +80,7 @@ func NewScheduler() *Scheduler {
 		limiters:        make(map[string]*limiter),
 		readers:         make(map[string]*readerState),
 		backgroundWaits: make(map[string]int),
+		pauseableActive: make(map[string]int),
 	}
 	return s
 }
@@ -90,7 +94,7 @@ func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
 	}
 	idleDuration := req.ReaderIdleDuration
 	if idleDuration <= 0 {
-		idleDuration = 750 * time.Millisecond
+		idleDuration = defaultReaderIdleDuration
 	}
 
 	key := limiterKey(req.VolumeKey, req.Limit)
@@ -125,10 +129,12 @@ func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
 		l := s.limiterLocked(key, req.Limit)
 		pauseReason := s.pauseReasonLocked(req, idleDuration)
 		lastBlockedByPause = pauseReason != ""
-		if l.used < l.limit && pauseReason == "" {
+		if (l.used < l.limit || s.readerMayBypassBackgroundLocked(req, l)) && pauseReason == "" {
 			l.used++
 			if req.Kind == WorkKindReader {
 				s.readerStateLocked(req.VolumeKey).active++
+			} else if req.PauseWhenReading || req.IdleOnly {
+				s.pauseableActive[req.VolumeKey]++
 			}
 			s.decrementWaitingLocked(req)
 			s.mu.Unlock()
@@ -243,7 +249,22 @@ func (s *Scheduler) release(req Request, key string) {
 			state.active--
 		}
 		state.lastEnd = time.Now()
+	} else if req.PauseWhenReading || req.IdleOnly {
+		if s.pauseableActive[req.VolumeKey] > 0 {
+			s.pauseableActive[req.VolumeKey]--
+		}
 	}
+}
+
+func (s *Scheduler) readerMayBypassBackgroundLocked(req Request, l *limiter) bool {
+	if req.Kind != WorkKindReader || l == nil || l.limit <= 0 {
+		return false
+	}
+	if s.pauseableActive[req.VolumeKey] <= 0 {
+		return false
+	}
+	state := s.readerStateLocked(req.VolumeKey)
+	return state.active < l.limit
 }
 
 func (s *Scheduler) pauseReasonLocked(req Request, idleDuration time.Duration) string {
