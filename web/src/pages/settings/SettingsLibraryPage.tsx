@@ -1,22 +1,30 @@
-import { FolderOpen, HardDrive, Server } from 'lucide-react';
+import { FolderOpen, HardDrive, Plus, Server, Trash2 } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings } from './SettingsContext';
+import { type LibraryStoragePolicy, type StorageIOPolicy, useSettings } from './SettingsContext';
 import { FieldErrors, SettingsPageIntro, SettingsSaveBar, inputClassName, sectionClassName } from './shared';
+
+const defaultStorageIOPolicy: StorageIOPolicy = {
+  scan_concurrency: 0,
+  archive_open_concurrency: 0,
+  cover_concurrency: 0,
+  hash_concurrency: 0,
+  pause_background_when_reading: false,
+  idle_only_heavy_tasks: false,
+  disable_same_disk_page_cache: false,
+};
+
+function normalizeStorageIOPolicy(policy?: Partial<StorageIOPolicy>): StorageIOPolicy {
+  return { ...defaultStorageIOPolicy, ...(policy || {}) };
+}
 
 export function SettingsLibraryPage() {
   const { t } = useI18n();
   const { config, setConfig, fieldErrors, capabilities, saving, saveConfig } = useSettings();
 
   if (!config) return null;
-  const ioPolicy = config.library.io_policy || {
-    scan_concurrency: 0,
-    archive_open_concurrency: 0,
-    cover_concurrency: 0,
-    hash_concurrency: 0,
-    pause_background_when_reading: false,
-    idle_only_heavy_tasks: false,
-    disable_same_disk_page_cache: false,
-  };
+  const ioPolicy = normalizeStorageIOPolicy(config.library.io_policy);
+  const storageProfiles = capabilities?.supported_storage_profiles || ['auto', 'ssd', 'hdd_external', 'network', 'custom'];
+  const storagePolicies = config.library.storage_policies || [];
   const updateIOPolicy = (patch: Partial<typeof ioPolicy>) =>
     setConfig({
       ...config,
@@ -25,6 +33,41 @@ export function SettingsLibraryPage() {
         io_policy: { ...ioPolicy, ...patch },
       },
     });
+  const updateStoragePolicies = (next: LibraryStoragePolicy[]) =>
+    setConfig({
+      ...config,
+      library: {
+        ...config.library,
+        storage_policies: next,
+      },
+    });
+  const updateStoragePolicyAt = (index: number, patch: Partial<LibraryStoragePolicy>) =>
+    updateStoragePolicies(storagePolicies.map((policy, i) => (i === index ? { ...policy, ...patch } : policy)));
+  const updateStoragePolicyIOAt = (index: number, patch: Partial<StorageIOPolicy>) =>
+    updateStoragePolicies(
+      storagePolicies.map((policy, i) =>
+        i === index ? { ...policy, io_policy: { ...normalizeStorageIOPolicy(policy.io_policy), ...patch } } : policy,
+      ),
+    );
+  const removeStoragePolicyAt = (index: number) => updateStoragePolicies(storagePolicies.filter((_, i) => i !== index));
+  const addStoragePolicy = (path = '') =>
+    updateStoragePolicies([
+      ...storagePolicies,
+      {
+        path,
+        storage_profile: 'hdd_external',
+        io_policy: {
+          scan_concurrency: 1,
+          archive_open_concurrency: 1,
+          cover_concurrency: 1,
+          hash_concurrency: 1,
+          pause_background_when_reading: true,
+          idle_only_heavy_tasks: true,
+          disable_same_disk_page_cache: true,
+        },
+      },
+    ]);
+  const pathsWithoutPolicy = (config.library.paths || []).filter((path) => !storagePolicies.some((policy) => policy.path === path));
 
   return (
     <div className="space-y-6">
@@ -168,7 +211,7 @@ export function SettingsLibraryPage() {
               }
               className={inputClassName}
             >
-              {(capabilities?.supported_storage_profiles || ['auto', 'ssd', 'hdd_external', 'network', 'custom']).map((profile) => (
+              {storageProfiles.map((profile) => (
                 <option key={profile} value={profile}>
                   {t(`settings.library.storageProfile.${profile}`)}
                 </option>
@@ -239,6 +282,132 @@ export function SettingsLibraryPage() {
               </button>
             );
           })}
+        </div>
+
+        <div className="space-y-3 rounded-lg border border-gray-800 bg-gray-900/40 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-semibold text-white">{t('settings.library.storageOverridesTitle')}</h4>
+              <p className="mt-1 text-xs text-gray-500">{t('settings.library.storageOverridesHint')}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {pathsWithoutPolicy.slice(0, 3).map((path) => (
+                <button
+                  key={path}
+                  type="button"
+                  onClick={() => addStoragePolicy(path)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-2 text-xs text-komgaPrimary hover:bg-komgaPrimary/15"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span className="max-w-48 truncate">{path}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => addStoragePolicy()}
+                className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t('settings.library.addStorageOverride')}
+              </button>
+            </div>
+          </div>
+
+          {storagePolicies.length ? (
+            <div className="space-y-3">
+              {storagePolicies.map((policy, index) => {
+                const policyIO = normalizeStorageIOPolicy(policy.io_policy);
+                return (
+                  <div key={`${policy.path}-${index}`} className="rounded-lg border border-gray-800 bg-gray-950/50 p-3">
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1.5fr)_220px_40px]">
+                      <div>
+                        <label className="mb-1 block text-xs text-gray-500">{t('settings.library.storageOverridePath')}</label>
+                        <input
+                          type="text"
+                          value={policy.path}
+                          onChange={(e) => updateStoragePolicyAt(index, { path: e.target.value })}
+                          className={inputClassName}
+                          placeholder={t('settings.library.storageOverridePathPlaceholder')}
+                        />
+                        <FieldErrors messages={fieldErrors(`library.storage_policies[${index}].path`)} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-gray-500">{t('settings.library.storageProfile')}</label>
+                        <select
+                          value={policy.storage_profile || 'auto'}
+                          onChange={(e) => updateStoragePolicyAt(index, { storage_profile: e.target.value })}
+                          className={inputClassName}
+                        >
+                          {storageProfiles.map((profile) => (
+                            <option key={profile} value={profile}>
+                              {t(`settings.library.storageProfile.${profile}`)}
+                            </option>
+                          ))}
+                        </select>
+                        <FieldErrors messages={fieldErrors(`library.storage_policies[${index}].storage_profile`)} />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeStoragePolicyAt(index)}
+                        className="mt-6 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-500/20 text-red-300 hover:bg-red-500/10"
+                        aria-label={t('settings.library.removeStorageOverride')}
+                        title={t('settings.library.removeStorageOverride')}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 md:grid-cols-4">
+                      {[
+                        ['archive_open_concurrency', 'settings.library.archiveOpenConcurrency'],
+                        ['cover_concurrency', 'settings.library.coverConcurrency'],
+                        ['hash_concurrency', 'settings.library.hashConcurrency'],
+                        ['scan_concurrency', 'settings.library.scanConcurrency'],
+                      ].map(([key, label]) => {
+                        const typedKey = key as keyof StorageIOPolicy;
+                        return (
+                          <div key={key}>
+                            <label className="mb-1 block text-xs text-gray-500">{t(label, { count: policyIO[typedKey] })}</label>
+                            <input
+                              type="range"
+                              min="0"
+                              max="16"
+                              value={Number(policyIO[typedKey]) || 0}
+                              onChange={(e) => updateStoragePolicyIOAt(index, { [typedKey]: Number(e.target.value) || 0 } as Partial<StorageIOPolicy>)}
+                              className="w-full accent-komgaPrimary"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      {[
+                        ['pause_background_when_reading', 'settings.library.pauseWhenReading'],
+                        ['idle_only_heavy_tasks', 'settings.library.idleOnlyHeavyTasks'],
+                        ['disable_same_disk_page_cache', 'settings.library.disableSameDiskPageCache'],
+                      ].map(([key, label]) => {
+                        const typedKey = key as keyof StorageIOPolicy;
+                        const enabled = Boolean(policyIO[typedKey]);
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => updateStoragePolicyIOAt(index, { [typedKey]: !enabled } as Partial<StorageIOPolicy>)}
+                            className={`rounded-lg border px-3 py-2 text-left text-xs transition ${enabled ? 'border-komgaPrimary/50 bg-komgaPrimary/10 text-white' : 'border-gray-800 bg-gray-900/50 text-gray-400 hover:border-gray-700'}`}
+                          >
+                            {t(label)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="rounded-lg border border-dashed border-gray-800 px-3 py-4 text-sm text-gray-500">{t('settings.library.noStorageOverrides')}</p>
+          )}
         </div>
       </section>
 

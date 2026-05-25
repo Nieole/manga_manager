@@ -105,14 +105,14 @@ func TestAcquireStorageTokenSerializesSameVolume(t *testing.T) {
 		},
 	}
 
-	release, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
+	release, _, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
 	if err != nil {
 		t.Fatalf("acquire first token failed: %v", err)
 	}
 
 	acquired := make(chan struct{})
 	go func() {
-		secondRelease, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
+		secondRelease, _, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
 		if err == nil {
 			secondRelease()
 			close(acquired)

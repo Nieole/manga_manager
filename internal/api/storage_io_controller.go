@@ -2,18 +2,23 @@ package api
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/storageio"
 )
 
 type StorageIODiagnosticsResponse struct {
-	CacheDir       string                     `json:"cache_dir"`
-	CacheVolume    string                     `json:"cache_volume"`
-	Libraries      []StorageIOLibraryResponse `json:"libraries"`
-	SameDiskCaches int                        `json:"same_disk_caches"`
-	Scheduler      []StorageIOSchedulerState  `json:"scheduler"`
-	Paused         bool                       `json:"paused"`
+	CacheDir                   string                     `json:"cache_dir"`
+	CacheVolume                string                     `json:"cache_volume"`
+	Libraries                  []StorageIOLibraryResponse `json:"libraries"`
+	SameDiskCaches             int                        `json:"same_disk_caches"`
+	Scheduler                  []StorageIOSchedulerState  `json:"scheduler"`
+	Paused                     bool                       `json:"paused"`
+	RecentScanArchiveOpenRate  float64                    `json:"recent_scan_archive_open_rate"`
+	RecentCoverArchiveOpenRate float64                    `json:"recent_cover_archive_open_rate"`
+	RecentThumbnailWriteMillis int64                      `json:"recent_thumbnail_write_ms"`
 }
 
 type StorageIOSchedulerState struct {
@@ -48,6 +53,7 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 		Scheduler:   []StorageIOSchedulerState{},
 		Paused:      storageio.Default.BackgroundPaused(),
 	}
+	response.RecentScanArchiveOpenRate, response.RecentCoverArchiveOpenRate, response.RecentThumbnailWriteMillis = c.recentStorageIOTaskRates()
 
 	libraries, err := c.store.ListLibraries(r.Context())
 	if err != nil {
@@ -87,6 +93,58 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 	}
 
 	jsonResponse(w, http.StatusOK, response)
+}
+
+func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	var latestScan *TaskStatus
+	var latestCover *TaskStatus
+	for _, task := range c.tasks {
+		switch task.Type {
+		case "scan_library", "scan_series":
+			if latestScan == nil || task.UpdatedAt.After(latestScan.UpdatedAt) {
+				copyTask := task
+				latestScan = &copyTask
+			}
+		case "rebuild_thumbnails":
+			if latestCover == nil || task.UpdatedAt.After(latestCover.UpdatedAt) {
+				copyTask := task
+				latestCover = &copyTask
+			}
+		}
+	}
+
+	scanRate := taskArchiveOpenRate(latestScan)
+	coverRate := taskArchiveOpenRate(latestCover)
+	var thumbnailWriteMillis int64
+	if latestCover != nil && latestCover.Params != nil {
+		thumbnailWriteMillis, _ = parseTaskInt64(latestCover.Params["thumbnail_write_ms"])
+	}
+	return scanRate, coverRate, thumbnailWriteMillis
+}
+
+func taskArchiveOpenRate(task *TaskStatus) float64 {
+	if task == nil || task.Params == nil {
+		return 0
+	}
+	opened, _ := parseTaskInt64(task.Params["opened_archives"])
+	if opened <= 0 {
+		return 0
+	}
+	durationMillis, _ := parseTaskInt64(task.Params["duration_ms"])
+	if durationMillis <= 0 && !task.StartedAt.IsZero() {
+		durationMillis = time.Since(task.StartedAt).Milliseconds()
+	}
+	if durationMillis <= 0 {
+		return 0
+	}
+	return float64(opened) * 60000 / float64(durationMillis)
+}
+
+func parseTaskInt64(raw string) (int64, error) {
+	return strconv.ParseInt(raw, 10, 64)
 }
 
 func (c *Controller) pauseStorageIO(w http.ResponseWriter, r *http.Request) {

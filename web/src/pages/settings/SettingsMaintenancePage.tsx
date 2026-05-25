@@ -16,6 +16,9 @@ interface StorageIODiagnostics {
   cache_volume: string;
   same_disk_caches: number;
   paused: boolean;
+  recent_scan_archive_open_rate: number;
+  recent_cover_archive_open_rate: number;
+  recent_thumbnail_write_ms: number;
   scheduler: Array<{
     volume_key: string;
     active: number;
@@ -49,6 +52,11 @@ function formatBytes(value: number) {
   }
   const digits = unitIndex === 0 ? 0 : size >= 10 ? 1 : 2;
   return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function formatRate(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '0/min';
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}/min`;
 }
 
 export function SettingsMaintenancePage() {
@@ -116,6 +124,11 @@ export function SettingsMaintenancePage() {
     }
   }, [fetchStorageIO, showToast, t]);
 
+  const handleRiskyAction = useCallback((url: string, successMessage: string, errorMessage: string, confirmMessage: string) => {
+    if (!window.confirm(confirmMessage)) return;
+    handleAction(url, successMessage, errorMessage);
+  }, [handleAction]);
+
   return (
     <div className="space-y-6">
       <SettingsPageIntro title={t('settings.maintenance.title')} description={t('settings.maintenance.description')} />
@@ -130,11 +143,11 @@ export function SettingsMaintenancePage() {
             <p className="font-medium">{t('settings.maintenance.rebuildIndex')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildIndexHint')}</p>
           </button>
-          <button onClick={() => handleAction('/api/system/rebuild-thumbnails', t('settings.maintenance.rebuildThumbnailsSuccess'), t('settings.maintenance.rebuildThumbnailsFailed'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
+          <button onClick={() => handleRiskyAction('/api/system/rebuild-thumbnails', t('settings.maintenance.rebuildThumbnailsSuccess'), t('settings.maintenance.rebuildThumbnailsFailed'), t('settings.maintenance.rebuildThumbnailsConfirm'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
             <p className="font-medium">{t('settings.maintenance.rebuildThumbnails')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildThumbnailsHint')}</p>
           </button>
-          <button onClick={() => handleAction('/api/system/rebuild-file-identities', t('settings.maintenance.rebuildFileIdentitiesSuccess'), t('settings.maintenance.rebuildFileIdentitiesFailed'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
+          <button onClick={() => handleRiskyAction('/api/system/rebuild-file-identities', t('settings.maintenance.rebuildFileIdentitiesSuccess'), t('settings.maintenance.rebuildFileIdentitiesFailed'), t('settings.maintenance.rebuildFileIdentitiesConfirm'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
             <p className="font-medium">{t('settings.maintenance.rebuildFileIdentities')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildFileIdentitiesHint')}</p>
           </button>
@@ -169,7 +182,7 @@ export function SettingsMaintenancePage() {
           </button>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.cacheVolume')}</p>
             <p className="mt-2 truncate text-lg font-semibold text-white">{storageIO?.cache_volume || '-'}</p>
@@ -181,6 +194,18 @@ export function SettingsMaintenancePage() {
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.sameDiskProtected')}</p>
             <p className="mt-2 text-lg font-semibold text-white">{storageIO?.same_disk_caches ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.scanArchiveRate')}</p>
+            <p className="mt-2 text-lg font-semibold text-white">{formatRate(storageIO?.recent_scan_archive_open_rate ?? 0)}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.coverArchiveRate')}</p>
+            <p className="mt-2 text-lg font-semibold text-white">{formatRate(storageIO?.recent_cover_archive_open_rate ?? 0)}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.thumbnailWriteTime')}</p>
+            <p className="mt-2 text-lg font-semibold text-white">{storageIO?.recent_thumbnail_write_ms ?? 0} ms</p>
           </div>
         </div>
 

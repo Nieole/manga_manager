@@ -887,6 +887,51 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	}
 }
 
+func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	if !controller.startTask("rebuild_thumbnails", "rebuild_thumbnails", "running", 1) {
+		t.Fatal("expected thumbnail rebuild task to start")
+	}
+	if !controller.startTask("scan_library_42", "scan_library", "running", 1) {
+		t.Fatal("expected scan task to start")
+	}
+
+	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
+		Scope:                "library",
+		ID:                   42,
+		StorageProfile:       config.StorageProfileHDDExternal,
+		VolumeKey:            "e:",
+		OpenedArchives:       3,
+		IOWaitMillis:         120,
+		PausedMillis:         80,
+		ThumbnailWriteMillis: 40,
+		DurationMillis:       60000,
+	})
+	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
+		Scope:                "library",
+		ID:                   43,
+		StorageProfile:       config.StorageProfileHDDExternal,
+		VolumeKey:            "e:",
+		OpenedArchives:       2,
+		IOWaitMillis:         30,
+		PausedMillis:         20,
+		ThumbnailWriteMillis: 10,
+		DurationMillis:       30000,
+	})
+
+	controller.taskMutex.Lock()
+	task := controller.tasks["rebuild_thumbnails"]
+	controller.taskMutex.Unlock()
+	if task.Params["opened_archives"] != "5" || task.Params["io_wait_ms"] != "150" || task.Params["paused_ms"] != "100" || task.Params["thumbnail_write_ms"] != "50" {
+		t.Fatalf("expected aggregated thumbnail metrics, got %+v", task.Params)
+	}
+
+	scanRate, coverRate, thumbnailWriteMillis := controller.recentStorageIOTaskRates()
+	if scanRate <= 0 || coverRate <= 0 || thumbnailWriteMillis != 50 {
+		t.Fatalf("expected recent storage IO rates, got scan=%f cover=%f writes=%d", scanRate, coverRate, thumbnailWriteMillis)
+	}
+}
+
 func TestUpdateSystemConfigRejectsInvalidConfiguration(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	missingCacheDir := filepath.Join(t.TempDir(), "missing-parent", "cache")
@@ -2481,6 +2526,32 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	if err := controller.launchRebuildThumbnailsTask(); err != nil {
+		t.Fatalf("launch rebuild thumbnails failed: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var task TaskStatus
+	for time.Now().Before(deadline) {
+		controller.taskMutex.Lock()
+		task = controller.tasks["rebuild_thumbnails"]
+		controller.taskMutex.Unlock()
+		if task.Status != "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if task.Status != "completed" {
+		t.Fatalf("expected thumbnail rebuild task to complete, got %+v", task)
+	}
+	if task.Params["execution_mode"] != "low_impact" {
+		t.Fatalf("expected low impact task metadata, got %+v", task.Params)
 	}
 }
 

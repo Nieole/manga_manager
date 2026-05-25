@@ -118,21 +118,25 @@ type scanJob struct {
 }
 
 type scanMetrics struct {
-	discoveredArchives atomic.Int64
-	skippedArchives    atomic.Int64
-	processedArchives  atomic.Int64
-	openedArchives     atomic.Int64
-	hashedFiles        atomic.Int64
-	ioWaitMillis       atomic.Int64
+	discoveredArchives   atomic.Int64
+	skippedArchives      atomic.Int64
+	processedArchives    atomic.Int64
+	openedArchives       atomic.Int64
+	hashedFiles          atomic.Int64
+	ioWaitMillis         atomic.Int64
+	pausedMillis         atomic.Int64
+	thumbnailWriteMillis atomic.Int64
 }
 
 type scanMetricsSnapshot struct {
-	discoveredArchives int64
-	skippedArchives    int64
-	processedArchives  int64
-	openedArchives     int64
-	hashedFiles        int64
-	ioWaitMillis       int64
+	discoveredArchives   int64
+	skippedArchives      int64
+	processedArchives    int64
+	openedArchives       int64
+	hashedFiles          int64
+	ioWaitMillis         int64
+	pausedMillis         int64
+	thumbnailWriteMillis int64
 }
 
 type ScanMetricsReport struct {
@@ -148,6 +152,8 @@ type ScanMetricsReport struct {
 	OpenedArchives         int64
 	HashedFiles            int64
 	IOWaitMillis           int64
+	PausedMillis           int64
+	ThumbnailWriteMillis   int64
 	DurationMillis         int64
 }
 
@@ -156,12 +162,14 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 		return scanMetricsSnapshot{}
 	}
 	return scanMetricsSnapshot{
-		discoveredArchives: m.discoveredArchives.Load(),
-		skippedArchives:    m.skippedArchives.Load(),
-		processedArchives:  m.processedArchives.Load(),
-		openedArchives:     m.openedArchives.Load(),
-		hashedFiles:        m.hashedFiles.Load(),
-		ioWaitMillis:       m.ioWaitMillis.Load(),
+		discoveredArchives:   m.discoveredArchives.Load(),
+		skippedArchives:      m.skippedArchives.Load(),
+		processedArchives:    m.processedArchives.Load(),
+		openedArchives:       m.openedArchives.Load(),
+		hashedFiles:          m.hashedFiles.Load(),
+		ioWaitMillis:         m.ioWaitMillis.Load(),
+		pausedMillis:         m.pausedMillis.Load(),
+		thumbnailWriteMillis: m.thumbnailWriteMillis.Load(),
 	}
 }
 
@@ -219,9 +227,9 @@ func storageIOLimit(values ...int) int {
 	return limit
 }
 
-func (s *Scanner) acquireStorageToken(ctx context.Context, policy config.ResolvedStoragePolicy, limit int, kind storageio.WorkKind) (func(), time.Duration, error) {
+func (s *Scanner) acquireStorageToken(ctx context.Context, policy config.ResolvedStoragePolicy, limit int, kind storageio.WorkKind) (func(), time.Duration, time.Duration, error) {
 	if limit <= 0 || strings.TrimSpace(policy.VolumeKey) == "" {
-		return func() {}, 0, nil
+		return func() {}, 0, 0, nil
 	}
 	lease, err := storageio.Default.Acquire(ctx, storageio.Request{
 		VolumeKey:        policy.VolumeKey,
@@ -231,9 +239,9 @@ func (s *Scanner) acquireStorageToken(ctx context.Context, policy config.Resolve
 		IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
 	})
 	if err != nil {
-		return nil, lease.Wait, err
+		return nil, lease.Wait, lease.PausedWait, err
 	}
-	return lease.Release, lease.Wait, nil
+	return lease.Release, lease.Wait, lease.PausedWait, nil
 }
 
 func NormalizeScanProfile(raw string) ScanProfile {
@@ -289,6 +297,7 @@ type coverJob struct {
 	bookID    int64
 	seriesID  int64
 	candidate coverCandidate
+	metrics   *scanMetrics
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
@@ -343,7 +352,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, libraryID, results)
+		s.ingestResults(ctx, libraryID, results, metrics)
 	}()
 
 	// 第 1 阶段：发现者 (The Discoverer)
@@ -454,7 +463,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, series.LibraryID, results)
+		s.ingestResults(ctx, series.LibraryID, results, metrics)
 	}()
 
 	var walkErr error
@@ -572,6 +581,8 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 		"opened_archives", snapshot.openedArchives,
 		"hashed_files", snapshot.hashedFiles,
 		"io_wait_ms", snapshot.ioWaitMillis,
+		"paused_ms", snapshot.pausedMillis,
+		"thumbnail_write_ms", snapshot.thumbnailWriteMillis,
 		"duration_ms", duration.Milliseconds(),
 	}
 	switch scope {
@@ -607,6 +618,8 @@ func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.Resol
 		OpenedArchives:         snapshot.openedArchives,
 		HashedFiles:            snapshot.hashedFiles,
 		IOWaitMillis:           snapshot.ioWaitMillis,
+		PausedMillis:           snapshot.pausedMillis,
+		ThumbnailWriteMillis:   snapshot.thumbnailWriteMillis,
 		DurationMillis:         duration.Milliseconds(),
 	})
 }
@@ -625,12 +638,15 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	closeArchive := func() {}
 	if opts.Profile.opensArchive() {
 		var err error
-		releaseToken, waited, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.ArchiveOpenConcurrency), storageio.WorkKindMetadataScan)
+		releaseToken, waited, paused, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.ArchiveOpenConcurrency), storageio.WorkKindMetadataScan)
 		if err != nil {
 			return
 		}
 		if metrics != nil && waited > 0 {
 			metrics.ioWaitMillis.Add(waited.Milliseconds())
+		}
+		if metrics != nil && paused > 0 {
+			metrics.pausedMillis.Add(paused.Milliseconds())
 		}
 		arc, err = s.openArchive(job.path)
 		if err != nil {
@@ -746,12 +762,15 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	var fileHash string
 	if opts.Profile.computesFullHash(cfg) {
 		var err error
-		releaseToken, waited, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
+		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
 		if tokenErr != nil {
 			return
 		}
 		if metrics != nil && waited > 0 {
 			metrics.ioWaitMillis.Add(waited.Milliseconds())
+		}
+		if metrics != nil && paused > 0 {
+			metrics.pausedMillis.Add(paused.Milliseconds())
 		}
 		fileHash, err = koreader.FingerprintFile(job.path)
 		releaseToken()
@@ -766,12 +785,15 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	var quickHash string
 	if opts.Profile.computesQuickHash() {
 		var err error
-		releaseToken, waited, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
+		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
 		if tokenErr != nil {
 			return
 		}
 		if metrics != nil && waited > 0 {
 			metrics.ioWaitMillis.Add(waited.Milliseconds())
+		}
+		if metrics != nil && paused > 0 {
+			metrics.pausedMillis.Add(paused.Milliseconds())
 		}
 		quickHash, err = koreader.FingerprintQuickFile(job.path)
 		releaseToken()
@@ -801,7 +823,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 }
 
-func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult) {
+func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics) {
 	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
 	seriesCache := make(map[string]database.ListSeriesByLibraryRow)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
@@ -981,6 +1003,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						bookID:    actualBook.ID,
 						seriesID:  actualBook.SeriesID,
 						candidate: *res.coverCandidate,
+						metrics:   metrics,
 					})
 				}
 
@@ -1165,7 +1188,7 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	}
 
 	cfg := s.currentConfig()
-	coverPath, err := s.generateBookThumbnail(ctx, job.candidate, cfg)
+	coverPath, err := s.generateBookThumbnail(ctx, job.candidate, cfg, job.metrics)
 	if err != nil {
 		slog.Warn("Failed to generate queued thumbnail", "book_id", job.bookID, "path", job.candidate.path, "error", err)
 		return
@@ -1199,17 +1222,31 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	}
 }
 
-func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config) (sql.NullString, error) {
+func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config, metrics *scanMetrics) (sql.NullString, error) {
 	if existing := existingThumbnailPath(cfg, candidate.bookHash); existing.Valid {
 		return existing, nil
 	}
 
 	storagePolicy := config.ResolveStoragePolicy(cfg, candidate.path)
-	releaseToken, waited, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ArchiveOpenConcurrency, storagePolicy.IOPolicy.CoverConcurrency), storageio.WorkKindCoverBuild)
+	releaseToken, waited, paused, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ArchiveOpenConcurrency, storagePolicy.IOPolicy.CoverConcurrency), storageio.WorkKindCoverBuild)
 	if err != nil {
 		return sql.NullString{}, err
 	}
-	defer releaseToken()
+	tokenReleased := false
+	releaseSourceToken := func() {
+		if tokenReleased {
+			return
+		}
+		tokenReleased = true
+		releaseToken()
+	}
+	defer releaseSourceToken()
+	if metrics != nil && waited > 0 {
+		metrics.ioWaitMillis.Add(waited.Milliseconds())
+	}
+	if metrics != nil && paused > 0 {
+		metrics.pausedMillis.Add(paused.Milliseconds())
+	}
 	if waited >= 250*time.Millisecond {
 		slog.Info("Queued thumbnail waited for storage IO token",
 			"path", candidate.path,
@@ -1223,15 +1260,17 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 	if err != nil {
 		return sql.NullString{}, err
 	}
-	defer arc.Close()
 
 	select {
 	case <-ctx.Done():
+		arc.Close()
 		return sql.NullString{}, ctx.Err()
 	default:
 	}
 
 	pageData, err := arc.ReadPage(candidate.pageName)
+	arc.Close()
+	releaseSourceToken()
 	if err != nil {
 		return sql.NullString{}, err
 	}
@@ -1259,15 +1298,57 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 
 	subDir := thumbnailSubDir(candidate.bookHash)
 	thumbDir := filepath.Join(thumbnailBaseDir(cfg), subDir)
-	if err := os.MkdirAll(thumbDir, 0755); err != nil {
-		return sql.NullString{}, err
-	}
 	fileName := candidate.bookHash + extensionFromContentType(contentType, targetFormat)
 	fullPath := filepath.Join(thumbDir, fileName)
-	if err := os.WriteFile(fullPath, processed, 0644); err != nil {
+	writeWait, writePaused, writeDuration, err := s.writeThumbnailFile(ctx, cfg, storagePolicy, candidate.path, thumbDir, fullPath, processed)
+	if metrics != nil {
+		if writeWait > 0 {
+			metrics.ioWaitMillis.Add(writeWait.Milliseconds())
+		}
+		if writePaused > 0 {
+			metrics.pausedMillis.Add(writePaused.Milliseconds())
+		}
+		if writeDuration > 0 {
+			metrics.thumbnailWriteMillis.Add(writeDuration.Milliseconds())
+		}
+	}
+	if err != nil {
 		return sql.NullString{}, err
 	}
+	if writeDuration >= 250*time.Millisecond || writeWait >= 250*time.Millisecond {
+		slog.Info("Queued thumbnail cache write completed",
+			"path", candidate.path,
+			"thumbnail_path", fullPath,
+			"storage_profile", storagePolicy.StorageProfile,
+			"volume_key", config.VolumeKey(fullPath),
+			"io_wait_ms", writeWait.Milliseconds(),
+			"paused_ms", writePaused.Milliseconds(),
+			"thumbnail_write_ms", writeDuration.Milliseconds(),
+		)
+	}
 	return sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}, nil
+}
+
+func (s *Scanner) writeThumbnailFile(ctx context.Context, cfg config.Config, sourcePolicy config.ResolvedStoragePolicy, sourcePath, thumbDir, fullPath string, data []byte) (time.Duration, time.Duration, time.Duration, error) {
+	writePolicy := config.ResolveStoragePolicy(cfg, thumbDir)
+	if config.SameVolume(sourcePath, thumbDir) {
+		writePolicy = sourcePolicy
+		writePolicy.VolumeKey = config.VolumeKey(thumbDir)
+	}
+	releaseToken, waited, paused, err := s.acquireStorageToken(ctx, writePolicy, writePolicy.IOPolicy.CoverConcurrency, storageio.WorkKindCacheWrite)
+	if err != nil {
+		return waited, paused, 0, err
+	}
+	defer releaseToken()
+
+	started := time.Now()
+	if err := os.MkdirAll(thumbDir, 0755); err != nil {
+		return waited, paused, time.Since(started), err
+	}
+	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+		return waited, paused, time.Since(started), err
+	}
+	return waited, paused, time.Since(started), nil
 }
 
 func (s *Scanner) waitForCoverQueue(ctx context.Context) error {
@@ -1282,6 +1363,10 @@ func (s *Scanner) waitForCoverQueue(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (s *Scanner) WaitForCoverQueue(ctx context.Context) error {
+	return s.waitForCoverQueue(ctx)
 }
 
 func extensionFromContentType(contentType, fallbackFormat string) string {

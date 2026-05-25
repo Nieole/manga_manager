@@ -15,6 +15,7 @@ const (
 	WorkKindScanFast     WorkKind = "scan_fast"
 	WorkKindMetadataScan WorkKind = "metadata_scan"
 	WorkKindCoverBuild   WorkKind = "cover_build"
+	WorkKindCacheWrite   WorkKind = "cache_write"
 	WorkKindIdentityHash WorkKind = "identity_hash"
 )
 
@@ -28,8 +29,9 @@ type Request struct {
 }
 
 type Lease struct {
-	Wait time.Duration
-	done func()
+	Wait       time.Duration
+	PausedWait time.Duration
+	done       func()
 }
 
 func (l Lease) Release() {
@@ -93,6 +95,9 @@ func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
 
 	key := limiterKey(req.VolumeKey, req.Limit)
 	started := time.Now()
+	lastChecked := started
+	lastBlockedByPause := false
+	var pausedWait time.Duration
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -105,14 +110,22 @@ func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
 	}
 
 	for {
+		now := time.Now()
+		if lastBlockedByPause {
+			pausedWait += now.Sub(lastChecked)
+		}
+		lastChecked = now
+
 		if err := ctx.Err(); err != nil {
 			s.decrementWaitingLocked(req)
 			s.mu.Unlock()
-			return Lease{Wait: time.Since(started)}, err
+			return Lease{Wait: time.Since(started), PausedWait: pausedWait}, err
 		}
 
 		l := s.limiterLocked(key, req.Limit)
-		if l.used < l.limit && s.pauseReasonLocked(req, idleDuration) == "" {
+		pauseReason := s.pauseReasonLocked(req, idleDuration)
+		lastBlockedByPause = pauseReason != ""
+		if l.used < l.limit && pauseReason == "" {
 			l.used++
 			if req.Kind == WorkKindReader {
 				s.readerStateLocked(req.VolumeKey).active++
@@ -121,7 +134,8 @@ func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
 			s.mu.Unlock()
 			releaseOnce := sync.Once{}
 			return Lease{
-				Wait: time.Since(started),
+				Wait:       time.Since(started),
+				PausedWait: pausedWait,
 				done: func() {
 					releaseOnce.Do(func() {
 						s.release(req, key)

@@ -76,6 +76,44 @@ func TestSchedulerPausesBackgroundWhileReaderActive(t *testing.T) {
 	}
 }
 
+func TestSchedulerReportsPausedWait(t *testing.T) {
+	s := NewScheduler()
+	reader, err := s.Acquire(context.Background(), Request{VolumeKey: "e:", Limit: 1, Kind: WorkKindReader})
+	if err != nil {
+		t.Fatalf("acquire reader lease failed: %v", err)
+	}
+
+	done := make(chan Lease, 1)
+	go func() {
+		background, err := s.Acquire(context.Background(), Request{
+			VolumeKey:          "e:",
+			Limit:              1,
+			Kind:               WorkKindCacheWrite,
+			PauseWhenReading:   true,
+			ReaderIdleDuration: 10 * time.Millisecond,
+		})
+		if err == nil {
+			done <- background
+		}
+	}()
+
+	time.Sleep(60 * time.Millisecond)
+	reader.Release()
+	var background Lease
+	select {
+	case background = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("expected background lease after reader release")
+	}
+	defer background.Release()
+	if background.PausedWait <= 0 {
+		t.Fatalf("expected paused wait to be recorded, got %+v", background)
+	}
+	if background.Wait < background.PausedWait {
+		t.Fatalf("expected total wait to include paused wait, got %+v", background)
+	}
+}
+
 func TestSchedulerLetsWaitingReaderPrecedeBackground(t *testing.T) {
 	s := NewScheduler()
 	ctx := context.Background()

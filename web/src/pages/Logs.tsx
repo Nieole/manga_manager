@@ -78,6 +78,8 @@ const TASK_IO_PARAM_KEYS = [
   'opened_archives',
   'hashed_files',
   'io_wait_ms',
+  'paused_ms',
+  'thumbnail_write_ms',
   'duration_ms',
   'pause_reason',
 ];

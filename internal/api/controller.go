@@ -128,6 +128,7 @@ type taskIOMetrics struct {
 	StorageProfile string
 	VolumeKey      string
 	IOWaitMillis   int64
+	PausedMillis   int64
 	HashedFiles    int64
 }
 
@@ -544,7 +545,25 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 		"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
 		"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
 		"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
+		"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
+		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
 		"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
+	})
+	c.mergeRunningTaskMetricSums("rebuild_thumbnails", map[string]int64{
+		"discovered_archives": report.DiscoveredArchives,
+		"skipped_archives":    report.SkippedArchives,
+		"processed_archives":  report.ProcessedArchives,
+		"opened_archives":     report.OpenedArchives,
+		"hashed_files":        report.HashedFiles,
+		"io_wait_ms":          report.IOWaitMillis,
+		"paused_ms":           report.PausedMillis,
+		"thumbnail_write_ms":  report.ThumbnailWriteMillis,
+		"duration_ms":         report.DurationMillis,
+	}, map[string]string{
+		"storage_profile":          report.StorageProfile,
+		"volume_key":               report.VolumeKey,
+		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
+		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
 	})
 }
 
@@ -679,14 +698,45 @@ func (c *Controller) mergeTaskParams(key string, params map[string]string) {
 	c.publishTaskStatusLocked(task)
 }
 
-func (c *Controller) acquireTaskStorageToken(ctx context.Context, libraryPath string, kind storageio.WorkKind) (config.ResolvedStoragePolicy, func(), time.Duration, error) {
+func (c *Controller) mergeRunningTaskMetricSums(key string, increments map[string]int64, params map[string]string) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	task, ok := c.tasks[key]
+	if !ok || task.Status != "running" {
+		return
+	}
+	if task.Params == nil {
+		task.Params = make(map[string]string, len(params)+len(increments))
+	}
+	for k, v := range params {
+		if strings.TrimSpace(v) != "" {
+			task.Params[k] = v
+		}
+	}
+	for k, inc := range increments {
+		if inc == 0 {
+			continue
+		}
+		current, _ := strconv.ParseInt(task.Params[k], 10, 64)
+		task.Params[k] = strconv.FormatInt(current+inc, 10)
+	}
+	task.UpdatedAt = time.Now()
+	c.taskSeq++
+	task.Sequence = c.taskSeq
+	c.tasks[key] = task
+	c.persistTaskStatus(task)
+	c.publishTaskStatusLocked(task)
+}
+
+func (c *Controller) acquireTaskStorageToken(ctx context.Context, libraryPath string, kind storageio.WorkKind) (config.ResolvedStoragePolicy, func(), time.Duration, time.Duration, error) {
 	policy := config.ResolveStoragePolicy(c.currentConfig(), libraryPath)
 	limit := minPositiveStorageLimit(policy.IOPolicy.HashConcurrency, policy.IOPolicy.ArchiveOpenConcurrency)
 	if kind == storageio.WorkKindCoverBuild {
 		limit = minPositiveStorageLimit(policy.IOPolicy.CoverConcurrency, policy.IOPolicy.ArchiveOpenConcurrency)
 	}
 	if limit <= 0 || strings.TrimSpace(policy.VolumeKey) == "" {
-		return policy, func() {}, 0, nil
+		return policy, func() {}, 0, 0, nil
 	}
 	lease, err := storageio.Default.Acquire(ctx, storageio.Request{
 		VolumeKey:        policy.VolumeKey,
@@ -696,9 +746,9 @@ func (c *Controller) acquireTaskStorageToken(ctx context.Context, libraryPath st
 		IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
 	})
 	if err != nil {
-		return policy, nil, lease.Wait, err
+		return policy, nil, lease.Wait, lease.PausedWait, err
 	}
-	return policy, lease.Release, lease.Wait, nil
+	return policy, lease.Release, lease.Wait, lease.PausedWait, nil
 }
 
 func minPositiveStorageLimit(values ...int) int {
@@ -717,6 +767,7 @@ func minPositiveStorageLimit(values ...int) int {
 func taskIOMetricsParams(metrics taskIOMetrics) map[string]string {
 	params := map[string]string{
 		"io_wait_ms":   strconv.FormatInt(metrics.IOWaitMillis, 10),
+		"paused_ms":    strconv.FormatInt(metrics.PausedMillis, 10),
 		"hashed_files": strconv.FormatInt(metrics.HashedFiles, 10),
 	}
 	if metrics.StorageProfile != "" {
@@ -3036,10 +3087,34 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 		for _, lib := range libs {
 			go func(lib database.Library) {
 				defer c.purgeReadingPathCaches()
-				c.scanner.ScanLibrary(context.Background(), lib.ID, lib.Path, true)
+				c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true)
 			}(lib)
 		}
 	}
+}
+
+func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress func(current, total int, lib database.Library)) error {
+	libs, err := c.store.ListLibraries(ctx)
+	if err != nil {
+		return err
+	}
+	total := len(libs)
+	for i, lib := range libs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if progress != nil {
+			progress(i, total, lib)
+		}
+		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force); err != nil {
+			return err
+		}
+		c.purgeReadingPathCaches()
+		if progress != nil {
+			progress(i+1, total, lib)
+		}
+	}
+	return nil
 }
 
 func (c *Controller) launchRebuildIndexTask() error {
@@ -3080,7 +3155,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchRebuildThumbnailsTask() error {
-	if !c.startTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 1) {
+	if !c.startCancelableTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 1) {
 		return fmt.Errorf("task already running")
 	}
 	policy := config.ResolveStoragePolicy(c.currentConfig(), "")
@@ -3088,7 +3163,9 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		"storage_profile":   policy.StorageProfile,
 		"volume_key":        policy.VolumeKey,
 		"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
+		"execution_mode":    "low_impact",
 	}, "系统")
+	taskCtx, cleanupCancel := c.newTaskContext("rebuild_thumbnails")
 
 	thumbDir := filepath.Join(".", "data", "thumbnails")
 	cfg := c.currentConfig()
@@ -3096,11 +3173,38 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		thumbDir = cfg.Cache.Dir
 	}
 
-	_ = os.RemoveAll(thumbDir)
-	_ = os.MkdirAll(thumbDir, 0o755)
-
-	go c.triggerGlobalScan(context.Background())
-	c.finishTask("rebuild_thumbnails", "缩略图缓存已清空，后台重建已启动")
+	c.runBackground(func() {
+		defer cleanupCancel()
+		if err := os.RemoveAll(thumbDir); err != nil {
+			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("清理缩略图缓存失败: %v", err), err.Error())
+			return
+		}
+		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
+			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("创建缩略图缓存目录失败: %v", err), err.Error())
+			return
+		}
+		c.updateTask("rebuild_thumbnails", 0, -1, "缩略图缓存已清空，正在按低冲击策略重建")
+		err := c.runGlobalScan(taskCtx, true, func(current, total int, lib database.Library) {
+			c.updateTask("rebuild_thumbnails", current, total, fmt.Sprintf("正在重建缩略图: %s", lib.Name))
+		})
+		if errors.Is(err, context.Canceled) {
+			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
+			return
+		}
+		if err != nil {
+			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("缩略图重建失败: %v", err), err.Error())
+			return
+		}
+		if err := c.scanner.WaitForCoverQueue(taskCtx); errors.Is(err, context.Canceled) {
+			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
+			return
+		} else if err != nil {
+			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("等待缩略图队列失败: %v", err), err.Error())
+			return
+		}
+		c.finishTask("rebuild_thumbnails", "缩略图缓存已按低冲击策略重建完成")
+		c.warmDashboardStatsCacheAsync("rebuild_thumbnails_completed")
+	})
 	c.PublishEvent("refresh_thumbnails")
 	return nil
 }
@@ -3156,12 +3260,15 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 		}
 
 		for _, book := range books {
-			policy, releaseToken, waited, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
+			policy, releaseToken, waited, paused, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
 			if tokenErr != nil {
 				return updated, total, tokenErr
 			}
 			if waited > 0 {
 				metrics.IOWaitMillis += waited.Milliseconds()
+			}
+			if paused > 0 {
+				metrics.PausedMillis += paused.Milliseconds()
 			}
 			metrics.StorageProfile = policy.StorageProfile
 			metrics.VolumeKey = policy.VolumeKey
@@ -3263,12 +3370,15 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 			if err := ctx.Err(); err != nil {
 				return updated, total, err
 			}
-			policy, releaseToken, waited, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
+			policy, releaseToken, waited, paused, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
 			if tokenErr != nil {
 				return updated, total, tokenErr
 			}
 			if waited > 0 {
 				metrics.IOWaitMillis += waited.Milliseconds()
+			}
+			if paused > 0 {
+				metrics.PausedMillis += paused.Milliseconds()
 			}
 			metrics.StorageProfile = policy.StorageProfile
 			metrics.VolumeKey = policy.VolumeKey
