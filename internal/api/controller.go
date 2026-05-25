@@ -20,6 +20,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"manga-manager/internal/booksort"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/external"
@@ -2216,6 +2217,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 	if books == nil {
 		books = []database.Book{}
 	}
+	sortBooksForReading(books)
 
 	// 3. 标签
 	tags, err := c.store.GetTagsForSeries(ctx, seriesID)
@@ -2327,7 +2329,7 @@ func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []Seri
 		items = append(items, acc.summary)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+		return booksort.CompareLabels(items[i].Name, items[j].Name) < 0
 	})
 	return items
 }
@@ -2431,6 +2433,7 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 	if books == nil {
 		books = []database.Book{}
 	}
+	sortBooksForReading(books)
 	jsonResponse(w, http.StatusOK, books)
 }
 
@@ -2663,13 +2666,31 @@ func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nextBook, err := c.store.GetNextBookInSeries(ctx, bookID)
+	currentBook, err := c.store.GetBook(ctx, bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "No next book")
 		return
 	}
+	books, err := c.store.ListBooksBySeries(ctx, currentBook.SeriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "No next book")
+		return
+	}
+	sortBooksForReading(books)
+	for i := range books {
+		if books[i].ID == currentBook.ID && i+1 < len(books) {
+			jsonResponse(w, http.StatusOK, books[i+1])
+			return
+		}
+	}
 
-	jsonResponse(w, http.StatusOK, nextBook)
+	jsonError(w, http.StatusNotFound, "No next book")
+}
+
+func sortBooksForReading(books []database.Book) {
+	sort.SliceStable(books, func(i, j int) bool {
+		return booksort.CompareBooks(books[i], books[j]) < 0
+	})
 }
 
 type UpdateProgressRequest struct {

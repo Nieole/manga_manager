@@ -8,14 +8,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"manga-manager/internal/booksort"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/images"
@@ -709,12 +708,10 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		seriesName = filepath.Base(seriesPath)
 	}
 
-	// 尝试解析文件名中的第一个可能代表卷号的数字作为自然排序依据 (Komga 默认策略之一)
+	// 尝试解析文件名中的第一个可能代表话数的数字作为自然排序依据，支持 01、第十话 等格式。
 	var sortNumber float64 = 0
-	if matches := regexp.MustCompile(`\d+(\.\d+)?`).FindString(bookTitle.String); matches != "" {
-		if val, err := strconv.ParseFloat(matches, 64); err == nil {
-			sortNumber = val
-		}
+	if val, ok := booksort.ExtractSortNumber(bookTitle.String); ok {
+		sortNumber = val
 	}
 
 	// 封面缓存只在扫描 worker 内做轻量命中检查；缺失时交给后台封面队列生成。

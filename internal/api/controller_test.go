@@ -1608,6 +1608,70 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 }
 
+func TestGetNextBookUsesChineseChapterOrder(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+
+	_, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series Chinese", "第一话.cbz", 10)
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE books SET sort_number = ? WHERE id = ?`, 0, firstBook.ID); err != nil {
+		t.Fatalf("update first sort failed: %v", err)
+	}
+	createBook := func(name string) database.Book {
+		t.Helper()
+		book, err := store.CreateBook(context.Background(), database.CreateBookParams{
+			SeriesID:       series.ID,
+			LibraryID:      firstBook.LibraryID,
+			Name:           name,
+			Path:           filepath.Join(rootDir, "Library A", "Series Chinese", name),
+			Size:           1024,
+			FileModifiedAt: time.Now(),
+			Volume:         "",
+			Title:          sql.NullString{String: name, Valid: true},
+			SortNumber:     sql.NullFloat64{Float64: 0, Valid: true},
+			PageCount:      10,
+		})
+		if err != nil {
+			t.Fatalf("CreateBook %s failed: %v", name, err)
+		}
+		return book
+	}
+	secondBook := createBook("第二话.cbz")
+	tenthBook := createBook("第十话.cbz")
+	eleventhBook := createBook("第十一话.cbz")
+
+	listRec := httptest.NewRecorder()
+	controller.getBooksBySeries(listRec, requestWithRouteParam(http.MethodGet, "/api/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected get books 200, got %d", listRec.Code)
+	}
+	var books []database.Book
+	if err := json.NewDecoder(listRec.Body).Decode(&books); err != nil {
+		t.Fatalf("decode books failed: %v", err)
+	}
+	if len(books) != 4 {
+		t.Fatalf("expected 4 books, got %+v", books)
+	}
+	gotOrder := []int64{books[0].ID, books[1].ID, books[2].ID, books[3].ID}
+	wantOrder := []int64{firstBook.ID, secondBook.ID, tenthBook.ID, eleventhBook.ID}
+	for i := range wantOrder {
+		if gotOrder[i] != wantOrder[i] {
+			t.Fatalf("unexpected Chinese chapter order: got %+v want %+v", gotOrder, wantOrder)
+		}
+	}
+
+	nextRec := httptest.NewRecorder()
+	controller.getNextBook(nextRec, requestWithRouteParam(http.MethodGet, "/api/books/10/next", nil, "bookId", strconv.FormatInt(tenthBook.ID, 10)))
+	if nextRec.Code != http.StatusOK {
+		t.Fatalf("expected get next book 200, got %d body=%s", nextRec.Code, nextRec.Body.String())
+	}
+	var nextBook database.Book
+	if err := json.NewDecoder(nextRec.Body).Decode(&nextBook); err != nil {
+		t.Fatalf("decode next book failed: %v", err)
+	}
+	if nextBook.ID != eleventhBook.ID {
+		t.Fatalf("expected eleventh book as next, got %+v", nextBook)
+	}
+}
+
 func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 
