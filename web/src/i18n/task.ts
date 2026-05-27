@@ -35,6 +35,7 @@ export function getTaskActionHint(task: TaskWithParams, t: Translator) {
     case 'scan_external_library':
     case 'rebuild_index':
     case 'rebuild_thumbnails':
+    case 'cleanup_thumbnails':
     case 'scrape':
     case 'ai_grouping':
     case 'transfer_external_library':

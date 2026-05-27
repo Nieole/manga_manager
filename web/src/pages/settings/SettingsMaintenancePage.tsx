@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { AlertTriangle, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
 import { TaskCenter, type TaskAction, type TaskStatus } from '../../components/tasks/TaskCenter';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { SettingsPageIntro, sectionClassName } from './shared';
@@ -71,6 +72,7 @@ export function SettingsMaintenancePage() {
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [clearingPageCache, setClearingPageCache] = useState(false);
   const [taskActionKey, setTaskActionKey] = useState<string | null>(null);
+  const [confirmDialogState, setConfirmDialogState] = useState<{ open: boolean; message: string; url: string; successMessage: string; errorMessage: string; } | null>(null);
 
   const fetchPageCacheStats = useCallback(async () => {
     setLoadingPageCache(true);
@@ -174,9 +176,8 @@ export function SettingsMaintenancePage() {
   }, [fetchStorageIO, showToast, t]);
 
   const handleRiskyAction = useCallback((url: string, successMessage: string, errorMessage: string, confirmMessage: string) => {
-    if (!window.confirm(confirmMessage)) return;
-    handleAction(url, successMessage, errorMessage);
-  }, [handleAction]);
+    setConfirmDialogState({ open: true, message: confirmMessage, url, successMessage, errorMessage });
+  }, []);
 
   const runTaskAction = useCallback(async (task: TaskStatus, action: TaskAction) => {
     setTaskActionKey(`${task.key}:${action}`);
@@ -213,11 +214,15 @@ export function SettingsMaintenancePage() {
             <p className="font-medium">{t('settings.maintenance.rebuildThumbnails')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildThumbnailsHint')}</p>
           </button>
+          <button onClick={() => handleRiskyAction('/api/system/cleanup-thumbnails', t('settings.maintenance.cleanupThumbnailsSuccess'), t('settings.maintenance.cleanupThumbnailsFailed'), t('settings.maintenance.cleanupThumbnailsConfirm'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
+            <p className="font-medium">{t('settings.maintenance.cleanupThumbnails')}</p>
+            <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.cleanupThumbnailsHint')}</p>
+          </button>
           <button onClick={() => handleRiskyAction('/api/system/rebuild-file-identities', t('settings.maintenance.rebuildFileIdentitiesSuccess'), t('settings.maintenance.rebuildFileIdentitiesFailed'), t('settings.maintenance.rebuildFileIdentitiesConfirm'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
             <p className="font-medium">{t('settings.maintenance.rebuildFileIdentities')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildFileIdentitiesHint')}</p>
           </button>
-          <button onClick={() => handleAction('/api/system/batch-scrape', t('settings.maintenance.batchScrapeSuccess'), t('settings.maintenance.batchScrapeFailed'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
+          <button onClick={() => handleRiskyAction('/api/system/batch-scrape', t('settings.maintenance.batchScrapeSuccess'), t('settings.maintenance.batchScrapeFailed'), t('settings.maintenance.batchScrapeConfirm'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
             <p className="font-medium">{t('settings.maintenance.batchScrape')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.batchScrapeHint')}</p>
           </button>
@@ -385,6 +390,20 @@ export function SettingsMaintenancePage() {
           {pageCacheStats?.path || t('settings.maintenance.pageCachePathPending')}
         </p>
       </section>
+
+      <ConfirmDialog
+        open={confirmDialogState !== null && confirmDialogState.open}
+        title={t('modal.confirm') || '确认操作'}
+        description={confirmDialogState?.message}
+        onClose={() => setConfirmDialogState(null)}
+        onConfirm={() => {
+          if (confirmDialogState) {
+            handleAction(confirmDialogState.url, confirmDialogState.successMessage, confirmDialogState.errorMessage);
+          }
+          setConfirmDialogState(null);
+        }}
+        tone="danger"
+      />
     </div>
   );
 }

@@ -110,11 +110,11 @@ export function ModalShell({
             style={{ background: 'radial-gradient(circle at top, rgb(var(--color-white) / 0.08), transparent 65%)' }}
           />
 
-          {(title || description || headerActions || headerContent || showCloseButton) && (
+          {(title || headerActions || headerContent || showCloseButton) && (
             <div className={`relative border-b border-gray-800/90 bg-gray-950/35 px-5 py-5 sm:px-6 ${headerClassName}`}>
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  {(title || description || icon) && (
+                  {(title || icon) && (
                     <div className="min-w-0">
                       {title && (
                         <div className="flex items-center gap-3">
@@ -127,11 +127,6 @@ export function ModalShell({
                             <h3 id={titleId} className="truncate text-xl font-semibold tracking-tight text-white">
                               {title}
                             </h3>
-                            {description ? (
-                              <p id={descriptionId} className="mt-1 max-w-2xl text-sm leading-6 text-gray-400">
-                                {description}
-                              </p>
-                            ) : null}
                           </div>
                         </div>
                       )}
@@ -157,7 +152,16 @@ export function ModalShell({
             </div>
           )}
 
-          <div className={`relative flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6 ${bodyClassName}`}>{children}</div>
+          {(description || children) ? (
+            <div className={`relative flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6 ${bodyClassName}`}>
+              {description ? (
+                <div id={descriptionId} className={`text-sm leading-6 text-gray-400 ${children ? 'mb-4' : ''}`}>
+                  {description}
+                </div>
+              ) : null}
+              {children}
+            </div>
+          ) : null}
 
           {footer ? (
             <div className={`relative border-t border-gray-800/90 bg-gray-950/45 px-5 py-4 sm:px-6 ${footerClassName}`}>{footer}</div>

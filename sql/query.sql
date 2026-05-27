@@ -969,3 +969,9 @@ DELETE FROM reading_list_items WHERE reading_list_id = ? AND id = ?;
 UPDATE reading_list_items
 SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
 WHERE reading_list_id = ? AND id = ?;
+
+-- name: GetReferencedBookCoverPaths :many
+SELECT DISTINCT cover_path FROM books WHERE cover_path IS NOT NULL AND cover_path != '';
+
+-- name: GetReferencedSeriesCoverPaths :many
+SELECT DISTINCT cover_path FROM series_stats WHERE cover_path IS NOT NULL AND cover_path != '';

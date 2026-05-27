@@ -1,5 +1,6 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
@@ -34,6 +35,7 @@ export default function Layout() {
         } catch { return false; }
     });
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
     const [isReaderSpaceExpanded, setIsReaderSpaceExpanded] = useState(true);
     const [isMaintenanceExpanded, setIsMaintenanceExpanded] = useState(true);
     const [isOpsExpanded, setIsOpsExpanded] = useState(true);
@@ -729,12 +731,19 @@ export default function Layout() {
                                         </div>
                                     </div>
                                     {!isDesktopSidebarCollapsed && (
-                                    <div className="relative">
+                                    <div>
                                         <button
                                             onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                setOpenMenuId(openMenuId === String(lib.id) ? null : String(lib.id));
+                                                if (openMenuId === String(lib.id)) {
+                                                    setOpenMenuId(null);
+                                                    setMenuPos(null);
+                                                } else {
+                                                    const rect = e.currentTarget.getBoundingClientRect();
+                                                    setMenuPos({ top: rect.bottom + 4, left: rect.right - 192 });
+                                                    setOpenMenuId(String(lib.id));
+                                                }
                                             }}
                                             className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700 focus:outline-none"
                                             title={t('common.details')}
@@ -742,7 +751,7 @@ export default function Layout() {
                                             <MoreHorizontal className="w-5 h-5" />
                                         </button>
 
-                                        {openMenuId === String(lib.id) && (
+                                        {openMenuId === String(lib.id) && menuPos && createPortal(
                                             <>
                                                 <div
                                                     className="fixed inset-0 z-40"
@@ -750,9 +759,13 @@ export default function Layout() {
                                                         e.preventDefault();
                                                         e.stopPropagation();
                                                         setOpenMenuId(null);
+                                                        setMenuPos(null);
                                                     }}
                                                 />
-                                                <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                <div 
+                                                    className="fixed w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200"
+                                                    style={{ top: menuPos.top, left: menuPos.left }}
+                                                >
                                                     <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
                                                         {t('layout.libraryActions.title')}
                                                     </div>
@@ -872,7 +885,8 @@ export default function Layout() {
                                                         {t('layout.libraryActions.delete')}
                                                     </button>
                                                 </div>
-                                            </>
+                                            </>,
+                                            document.body
                                         )}
                                     </div>
                                     )}

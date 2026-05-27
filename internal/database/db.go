@@ -150,6 +150,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getRecentReadSeriesStmt, err = db.PrepareContext(ctx, getRecentReadSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRecentReadSeries: %w", err)
 	}
+	if q.getReferencedBookCoverPathsStmt, err = db.PrepareContext(ctx, getReferencedBookCoverPaths); err != nil {
+		return nil, fmt.Errorf("error preparing query GetReferencedBookCoverPaths: %w", err)
+	}
+	if q.getReferencedSeriesCoverPathsStmt, err = db.PrepareContext(ctx, getReferencedSeriesCoverPaths); err != nil {
+		return nil, fmt.Errorf("error preparing query GetReferencedSeriesCoverPaths: %w", err)
+	}
 	if q.getSeriesStmt, err = db.PrepareContext(ctx, getSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeries: %w", err)
 	}
@@ -518,6 +524,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getRecentReadSeriesStmt: %w", cerr)
 		}
 	}
+	if q.getReferencedBookCoverPathsStmt != nil {
+		if cerr := q.getReferencedBookCoverPathsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getReferencedBookCoverPathsStmt: %w", cerr)
+		}
+	}
+	if q.getReferencedSeriesCoverPathsStmt != nil {
+		if cerr := q.getReferencedSeriesCoverPathsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getReferencedSeriesCoverPathsStmt: %w", cerr)
+		}
+	}
 	if q.getSeriesStmt != nil {
 		if cerr := q.getSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSeriesStmt: %w", cerr)
@@ -854,6 +870,8 @@ type Queries struct {
 	getNextBookInSeriesStmt                     *sql.Stmt
 	getReadingListStmt                          *sql.Stmt
 	getRecentReadSeriesStmt                     *sql.Stmt
+	getReferencedBookCoverPathsStmt             *sql.Stmt
+	getReferencedSeriesCoverPathsStmt           *sql.Stmt
 	getSeriesStmt                               *sql.Stmt
 	getSeriesByLibraryStmt                      *sql.Stmt
 	getSeriesMetadataProvenanceStmt             *sql.Stmt
@@ -953,6 +971,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getNextBookInSeriesStmt:                     q.getNextBookInSeriesStmt,
 		getReadingListStmt:                          q.getReadingListStmt,
 		getRecentReadSeriesStmt:                     q.getRecentReadSeriesStmt,
+		getReferencedBookCoverPathsStmt:             q.getReferencedBookCoverPathsStmt,
+		getReferencedSeriesCoverPathsStmt:           q.getReferencedSeriesCoverPathsStmt,
 		getSeriesStmt:                               q.getSeriesStmt,
 		getSeriesByLibraryStmt:                      q.getSeriesByLibraryStmt,
 		getSeriesMetadataProvenanceStmt:             q.getSeriesMetadataProvenanceStmt,

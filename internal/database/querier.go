@@ -6,6 +6,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -51,6 +52,8 @@ type Querier interface {
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
 	GetReadingList(ctx context.Context, id int64) (ReadingList, error)
 	GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error)
+	GetReferencedBookCoverPaths(ctx context.Context) ([]sql.NullString, error)
+	GetReferencedSeriesCoverPaths(ctx context.Context) ([]string, error)
 	GetSeries(ctx context.Context, id int64) (Series, error)
 	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
 	GetSeriesMetadataProvenance(ctx context.Context, seriesID int64) ([]SeriesMetadataProvenance, error)

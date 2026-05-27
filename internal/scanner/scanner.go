@@ -1547,3 +1547,101 @@ func extensionFromContentType(contentType, fallbackFormat string) string {
 		return ".webp"
 	}
 }
+
+// CleanupThumbnails scans the thumbnails directory and removes any files
+// that are not referenced in the database (by books or series_stats).
+// It also cleans up empty subdirectories.
+func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current, total int, msg string)) error {
+	cfg := s.currentConfig()
+	thumbDir := thumbnailBaseDir(cfg)
+
+	// Fetch all referenced cover paths from DB
+	usedPaths := make(map[string]bool)
+
+	// Books
+	bookCovers, err := s.store.GetReferencedBookCoverPaths(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch book covers: %w", err)
+	}
+	for _, p := range bookCovers {
+		if p.Valid && p.String != "" {
+			usedPaths[filepath.ToSlash(p.String)] = true
+		}
+	}
+
+	// Series Stats
+	seriesCovers, err := s.store.GetReferencedSeriesCoverPaths(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch series covers: %w", err)
+	}
+	for _, p := range seriesCovers {
+		if p != "" {
+			usedPaths[filepath.ToSlash(p)] = true
+		}
+	}
+
+	if err := taskcontrol.Wait(ctx); err != nil {
+		return err
+	}
+
+	// Walk the directory structure
+	var dirsToDelete []string
+	var deletedFiles int
+	var scannedFiles int
+
+	err = filepath.WalkDir(thumbDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return err
+		}
+
+		if path == thumbDir {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(thumbDir, path)
+		if err != nil {
+			return nil // ignore
+		}
+
+		if d.IsDir() {
+			dirsToDelete = append(dirsToDelete, path)
+			return nil
+		}
+
+		scannedFiles++
+		if scannedFiles%100 == 0 && progressCb != nil {
+			progressCb(deletedFiles, scannedFiles, fmt.Sprintf("已扫描 %d 个文件，删除 %d 个", scannedFiles, deletedFiles))
+		}
+
+		slashRelPath := filepath.ToSlash(relPath)
+		if !usedPaths[slashRelPath] {
+			if removeErr := os.Remove(path); removeErr == nil {
+				deletedFiles++
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to walk thumbnails directory: %w", err)
+	}
+
+	// Cleanup empty directories (bottom up since we traverse top down)
+	for i := len(dirsToDelete) - 1; i >= 0; i-- {
+		_ = os.Remove(dirsToDelete[i]) // os.Remove only deletes empty directories
+	}
+
+	if progressCb != nil {
+		progressCb(deletedFiles, scannedFiles, fmt.Sprintf("清理完成，共删除 %d 个冗余缩略图", deletedFiles))
+	}
+
+	return nil
+}

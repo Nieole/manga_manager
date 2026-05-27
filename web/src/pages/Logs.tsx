@@ -13,6 +13,7 @@ const TASK_TYPE_OPTIONS = [
   'cleanup_library',
   'rebuild_index',
   'rebuild_thumbnails',
+  'cleanup_thumbnails',
   'scrape',
   'ai_grouping',
   'rebuild_book_hashes',

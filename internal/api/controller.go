@@ -1759,6 +1759,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
+		r.Post("/system/cleanup-thumbnails", c.cleanupThumbnails)
 		r.Post("/system/rebuild-file-identities", c.rebuildFileIdentities)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
 		r.Post("/system/test-llm", c.testLLMConfig)
@@ -3499,8 +3500,20 @@ func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, result)
 }
 
+func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.Config) {
+	libs, err := c.store.ListLibraries(ctx)
+	if err == nil {
+		cfg.Library.Paths = make([]string, 0, len(libs))
+		for _, lib := range libs {
+			cfg.Library.Paths = append(cfg.Library.Paths, lib.Path)
+		}
+	}
+}
+
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(c.currentConfig()))
+	cfg := c.currentConfig()
+	c.enrichConfigWithDatabase(r.Context(), &cfg)
+	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(cfg))
 }
 
 func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -3527,6 +3540,8 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusInternalServerError, "Failed to persist configuration")
 		return
 	}
+
+	c.enrichConfigWithDatabase(r.Context(), &newCfg)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"message":    "配置已成功保存。大部分设定会立刻生效。",
@@ -3725,6 +3740,43 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。"})
+}
+
+func (c *Controller) launchCleanupThumbnailsTask() error {
+	if !c.startPausableCancelableTask("cleanup_thumbnails", "cleanup_thumbnails", "开始清理未使用的缩略图", 0) {
+		return fmt.Errorf("task already running")
+	}
+	taskCtx, cleanupCancel := c.newTaskContext("cleanup_thumbnails")
+	c.setTaskMetadata("cleanup_thumbnails", nil, "系统")
+
+	go c.runBackground(func() {
+		defer cleanupCancel()
+
+		c.updateTaskDetails("cleanup_thumbnails", 0, -1, "正在扫描未使用的缩略图...", "cleanup", "", nil, nil)
+		
+		err := c.scanner.CleanupThumbnails(taskCtx, func(deleted, scanned int, msg string) {
+			c.updateTaskDetails("cleanup_thumbnails", deleted, scanned, msg, "cleanup", "", nil, nil)
+		})
+		
+		if errors.Is(err, context.Canceled) {
+			c.completeTask("cleanup_thumbnails", "cancelled", "清理缩略图已取消")
+			return
+		}
+		if err != nil {
+			c.failTaskWithError("cleanup_thumbnails", fmt.Sprintf("清理缩略图失败: %v", err), err.Error())
+			return
+		}
+		c.finishTask("cleanup_thumbnails", "缩略图清理完成")
+	})
+	return nil
+}
+
+func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
+	if err := c.launchCleanupThumbnailsTask(); err != nil {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail cleanup is already running"})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "已在后台启动无效封面资源清理任务。"})
 }
 
 func (c *Controller) launchRebuildFileIdentitiesTask() error {

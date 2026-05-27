@@ -1253,6 +1253,60 @@ func (q *Queries) GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeri
 	return items, nil
 }
 
+const getReferencedBookCoverPaths = `-- name: GetReferencedBookCoverPaths :many
+SELECT DISTINCT cover_path FROM books WHERE cover_path IS NOT NULL AND cover_path != ''
+`
+
+func (q *Queries) GetReferencedBookCoverPaths(ctx context.Context) ([]sql.NullString, error) {
+	rows, err := q.query(ctx, q.getReferencedBookCoverPathsStmt, getReferencedBookCoverPaths)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var cover_path sql.NullString
+		if err := rows.Scan(&cover_path); err != nil {
+			return nil, err
+		}
+		items = append(items, cover_path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getReferencedSeriesCoverPaths = `-- name: GetReferencedSeriesCoverPaths :many
+SELECT DISTINCT cover_path FROM series_stats WHERE cover_path IS NOT NULL AND cover_path != ''
+`
+
+func (q *Queries) GetReferencedSeriesCoverPaths(ctx context.Context) ([]string, error) {
+	rows, err := q.query(ctx, q.getReferencedSeriesCoverPathsStmt, getReferencedSeriesCoverPaths)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var cover_path string
+		if err := rows.Scan(&cover_path); err != nil {
+			return nil, err
+		}
+		items = append(items, cover_path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSeries = `-- name: GetSeries :one
 SELECT id, library_id, name, title, summary, publisher, status, rating, language, locked_fields, name_initial, path, created_at, updated_at, is_favorite, volume_count, book_count, total_pages FROM series WHERE id = ? LIMIT 1
 `
