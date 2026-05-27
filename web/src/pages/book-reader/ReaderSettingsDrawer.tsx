@@ -183,7 +183,7 @@ export function ReaderSettingsDrawer({
               <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">{t('reader.eyeProtection')}</span>
               <button
                 onClick={() => setEyeProtection(!eyeProtection)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${eyeProtection ? 'bg-amber-900/40 border border-amber-600/40 text-amber-200' : 'bg-gray-900 border border-gray-800 text-gray-400 hover:bg-gray-800'}`}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${eyeProtection ? 'bg-amber-900/40 border border-amber-600/40 text-amber-500' : 'bg-gray-900 border border-gray-800 text-gray-400 hover:bg-gray-800'}`}
               >
                 <span className="text-xs flex items-center gap-2">
                   <span className="text-base">{eyeProtection ? '\u{1F319}' : '\u{2600}\u{FE0F}'}</span>

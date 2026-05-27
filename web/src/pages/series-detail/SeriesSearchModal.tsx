@@ -340,7 +340,7 @@ export function SeriesSearchModal({
                             <div className="flex items-center justify-between gap-3 mb-3">
                               <span className="text-sm font-medium text-white">{field.label}</span>
                               {locked ? (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-500">
                                   <Lock className="w-3 h-3" />
                                   {t('series.searchModal.locked')}
                                 </span>

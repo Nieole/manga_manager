@@ -43,7 +43,7 @@ export function OfflineReadingPanel({
     <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider">{t('reader.offline.title')}</span>
-        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] ${isOnline ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/25 bg-amber-500/10 text-amber-200'}`}>
+        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${isOnline ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500' : 'border-amber-500/25 bg-amber-500/10 text-amber-500'}`}>
           {isOnline ? <CheckCircle2 className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
           {isOnline ? t('reader.offline.online') : t('reader.offline.offline')}
         </span>
@@ -66,7 +66,7 @@ export function OfflineReadingPanel({
               </p>
             )}
             {offlineQueuedPage && (
-              <p className="mt-2 text-[11px] leading-5 text-amber-200">
+              <p className="mt-2 text-[11px] leading-5 text-amber-500">
                 {t('reader.offline.progressQueued', { page: offlineQueuedPage })}
               </p>
             )}

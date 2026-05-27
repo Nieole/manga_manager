@@ -40,7 +40,7 @@ export function SettingsKOReaderPage() {
     if (health === 'ready') {
       return {
         label: t('settings.koreader.deviceHealth.ready'),
-        className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200',
+        className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
         icon: CheckCircle2,
       };
     }
@@ -53,7 +53,7 @@ export function SettingsKOReaderPage() {
     }
     return {
       label: t('settings.koreader.deviceHealth.needsReconcile'),
-      className: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
+      className: 'border-amber-500/25 bg-amber-500/10 text-amber-500',
       icon: AlertTriangle,
     };
   };
@@ -204,11 +204,11 @@ export function SettingsKOReaderPage() {
             <p className="mt-2 text-2xl font-semibold text-white">{koreaderDevices?.summary.device_count ?? 0}</p>
           </div>
           <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/10 p-4">
-            <p className="text-xs uppercase tracking-wide text-emerald-200/80">{t('settings.koreader.deviceMetric.healthy')}</p>
+            <p className="text-xs uppercase tracking-wide text-emerald-500">{t('settings.koreader.deviceMetric.healthy')}</p>
             <p className="mt-2 text-2xl font-semibold text-white">{koreaderDevices?.summary.healthy_devices ?? 0}</p>
           </div>
           <div className="rounded-xl border border-amber-500/15 bg-amber-500/10 p-4">
-            <p className="text-xs uppercase tracking-wide text-amber-200/80">{t('settings.koreader.deviceMetric.attention')}</p>
+            <p className="text-xs uppercase tracking-wide text-amber-500">{t('settings.koreader.deviceMetric.attention')}</p>
             <p className="mt-2 text-2xl font-semibold text-white">{koreaderDevices?.summary.attention_devices ?? 0}</p>
           </div>
           <div className="rounded-xl border border-red-500/15 bg-red-500/10 p-4">
@@ -249,11 +249,11 @@ export function SettingsKOReaderPage() {
                         <p className="mt-1 text-sm font-semibold text-white">{device.total_records}</p>
                       </div>
                       <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/10 px-3 py-2">
-                        <p className="text-[11px] text-emerald-200/80">{t('settings.koreader.deviceRecords.matched')}</p>
+                        <p className="text-[11px] text-emerald-500">{t('settings.koreader.deviceRecords.matched')}</p>
                         <p className="mt-1 text-sm font-semibold text-white">{device.matched_records}</p>
                       </div>
                       <div className="rounded-lg border border-amber-500/15 bg-amber-500/10 px-3 py-2">
-                        <p className="text-[11px] text-amber-200/80">{t('settings.koreader.deviceRecords.unmatched')}</p>
+                        <p className="text-[11px] text-amber-500">{t('settings.koreader.deviceRecords.unmatched')}</p>
                         <p className="mt-1 text-sm font-semibold text-white">{device.unmatched_records}</p>
                       </div>
                     </div>

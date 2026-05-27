@@ -251,7 +251,7 @@ export function SettingsMaintenancePage() {
           <button
             type="button"
             onClick={() => setStorageIOPaused(!storageIO?.paused)}
-            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${storageIO?.paused ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15' : 'border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15'}`}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${storageIO?.paused ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15' : 'border-amber-500/30 bg-amber-500/10 text-amber-500 hover:bg-amber-500/15'}`}
           >
             {storageIO?.paused ? t('settings.maintenance.resumeStorageIO') : t('settings.maintenance.pauseStorageIO')}
           </button>
@@ -290,7 +290,7 @@ export function SettingsMaintenancePage() {
               <div key={item.volume_key} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold text-white">{item.volume_key}</p>
-                  <span className={`rounded-full border px-2.5 py-1 text-xs ${item.background_paused ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs ${item.background_paused ? 'border-amber-500/30 bg-amber-500/10 text-amber-500' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'}`}>
                     {item.background_paused ? t('settings.maintenance.backgroundPaused') : t('settings.maintenance.backgroundRunning')}
                   </span>
                 </div>
@@ -321,7 +321,7 @@ export function SettingsMaintenancePage() {
                   <p className="truncate text-sm font-semibold text-white">{library.name}</p>
                   <p className="mt-1 truncate text-xs text-white/40" title={library.path}>{library.path}</p>
                 </div>
-                <span className={`rounded-full border px-2.5 py-1 text-xs ${library.storage_profile === 'hdd_external' ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-gray-700 bg-gray-900 text-gray-300'}`}>
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${library.storage_profile === 'hdd_external' ? 'border-amber-500/30 bg-amber-500/10 text-amber-500' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
                   {t(`settings.library.storageProfile.${library.storage_profile}`)}
                 </span>
               </div>
@@ -332,7 +332,7 @@ export function SettingsMaintenancePage() {
                 <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60">
                   {t('settings.maintenance.heavyConcurrency')}: <span className="text-white">{library.heavy_background_concurrency || t('settings.maintenance.unlimited')}</span>
                 </p>
-                <p className={`rounded-lg border px-3 py-2 text-xs ${library.cache_on_same_volume && library.disable_same_disk_page_cache ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-white/10 bg-white/[0.03] text-white/60'}`}>
+                <p className={`rounded-lg border px-3 py-2 text-xs font-medium ${library.cache_on_same_volume && library.disable_same_disk_page_cache ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
                   {library.cache_on_same_volume
                     ? t(library.disable_same_disk_page_cache ? 'settings.maintenance.sameDiskCacheBlocked' : 'settings.maintenance.sameDiskCacheEnabled')
                     : t('settings.maintenance.cacheOnDifferentDisk')}

@@ -96,7 +96,7 @@ export function SeriesMetadataReviewPanel({
                       <span className="text-sm font-semibold text-white">{field.label}</span>
                       <div className="flex items-center gap-2">
                         {field.locked && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-200">
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] font-medium text-amber-500">
                             <ShieldCheck className="h-3 w-3" />
                             {t('series.metadataReview.locked')}
                           </span>

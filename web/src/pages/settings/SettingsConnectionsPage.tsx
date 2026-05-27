@@ -181,14 +181,14 @@ export function SettingsConnectionsPage() {
     if (health === 'ready') {
       return {
         label: t('settings.connections.health.ready'),
-        className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200',
+        className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
         icon: CheckCircle2,
       };
     }
     if (health === 'needs_account') {
       return {
         label: t('settings.connections.health.needsAccount'),
-        className: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
+        className: 'border-amber-500/25 bg-amber-500/10 text-amber-500',
         icon: AlertTriangle,
       };
     }
@@ -201,8 +201,8 @@ export function SettingsConnectionsPage() {
 
   const requestStatusClass = (status: number) => {
     if (status >= 500) return 'border-red-500/25 bg-red-500/10 text-red-200';
-    if (status >= 400) return 'border-amber-500/25 bg-amber-500/10 text-amber-200';
-    return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200';
+    if (status >= 400) return 'border-amber-500/25 bg-amber-500/10 text-amber-500';
+    return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500';
   };
 
   const formatRequestTime = (value?: string) => {
@@ -259,11 +259,11 @@ export function SettingsConnectionsPage() {
             <p className="text-sm font-semibold text-white">{t('settings.connections.healthTitle')}</p>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/10 p-3">
-                <p className="text-xs text-emerald-200/80">{t('settings.connections.health.ready')}</p>
+                <p className="text-xs text-emerald-500">{t('settings.connections.health.ready')}</p>
                 <p className="mt-1 text-2xl font-semibold text-white">{healthCounts.ready}</p>
               </div>
               <div className="rounded-lg border border-amber-500/15 bg-amber-500/10 p-3">
-                <p className="text-xs text-amber-200/80">{t('settings.connections.health.attention')}</p>
+                <p className="text-xs text-amber-500">{t('settings.connections.health.attention')}</p>
                 <p className="mt-1 text-2xl font-semibold text-white">{healthCounts.attention}</p>
               </div>
             </div>
@@ -366,7 +366,7 @@ export function SettingsConnectionsPage() {
                                   </span>
                                 );
                               })()}
-                              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${endpoint.enabled ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
+                              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${endpoint.enabled ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
                                 {endpoint.enabled ? t('settings.connections.enabled') : t('settings.connections.disabled')}
                               </span>
                             </div>
@@ -427,7 +427,7 @@ export function SettingsConnectionsPage() {
                               <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-red-200">
                                 {t('settings.connections.requests.errors', { count: endpoint.requests?.errors ?? 0 })}
                               </span>
-                              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+                              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-500 font-medium">
                                 {t('settings.connections.requests.slow', { count: endpoint.requests?.slow ?? 0 })}
                               </span>
                             </div>
@@ -507,7 +507,7 @@ function ProtocolToggleCard({
           <div className="flex items-center gap-2">
             <PlugZap className={enabled ? 'h-4 w-4 text-emerald-300' : 'h-4 w-4 text-gray-500'} />
             <p className="text-sm font-semibold text-white">{label}</p>
-            <span className={`rounded-full border px-2 py-0.5 text-[11px] ${enabled ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
+            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${enabled ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
               {enabled ? t('settings.connections.enabled') : t('settings.connections.disabled')}
             </span>
           </div>

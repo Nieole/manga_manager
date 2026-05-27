@@ -96,9 +96,9 @@ function formatDuration(seconds?: number) {
 function taskBadgeClass(status: string) {
   switch (status) {
     case 'running':
-      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500';
     case 'paused':
-      return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-500';
     case 'cancelling':
       return 'border-orange-500/30 bg-orange-500/10 text-orange-200';
     case 'failed':
@@ -145,7 +145,7 @@ function TaskSummaryStrip({ tasks, backgroundPaused }: { tasks: TaskStatus[]; ba
       ))}
       <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
         <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.backgroundIO')}</p>
-        <p className={`mt-2 text-sm font-semibold ${backgroundPaused ? 'text-amber-200' : 'text-emerald-200'}`}>
+        <p className={`mt-2 text-sm font-semibold ${backgroundPaused ? 'text-amber-500' : 'text-emerald-500'}`}>
           {backgroundPaused ? t('settings.maintenance.backgroundPaused') : t('settings.maintenance.backgroundRunning')}
         </p>
       </div>
@@ -183,13 +183,13 @@ function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: TaskSt
   return (
     <div className="flex flex-wrap gap-2">
       {task.can_pause && task.status === 'running' && (
-        <button type="button" onClick={() => onTaskAction(task, 'pause')} disabled={taskActionKey === `${task.key}:pause`} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-200 hover:bg-amber-500/10 disabled:opacity-50">
+        <button type="button" onClick={() => onTaskAction(task, 'pause')} disabled={taskActionKey === `${task.key}:pause`} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-500 hover:bg-amber-500/10 disabled:opacity-50">
           <Pause className="h-3.5 w-3.5" />
           {t('settings.maintenance.pauseTask')}
         </button>
       )}
       {task.can_resume && task.status === 'paused' && (
-        <button type="button" onClick={() => onTaskAction(task, 'resume')} disabled={taskActionKey === `${task.key}:resume`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-50">
+        <button type="button" onClick={() => onTaskAction(task, 'resume')} disabled={taskActionKey === `${task.key}:resume`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-500 hover:bg-emerald-500/10 disabled:opacity-50">
           <Play className="h-3.5 w-3.5" />
           {t('settings.maintenance.resumeTask')}
         </button>

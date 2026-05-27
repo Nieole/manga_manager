@@ -256,7 +256,7 @@ export default function MetadataReviews({ embedded }: { embedded?: boolean } = {
                           <span>{t('metadataReviews.confidence', { value: percent(item.confidence) })}</span>
                           <span>{t('metadataReviews.fieldCount', { count: item.field_count })}</span>
                           {item.locked_field_count > 0 && (
-                            <span className="inline-flex items-center gap-1 rounded-lg border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-200">
+                            <span className="inline-flex items-center gap-1 rounded-lg border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-500">
                               <ShieldCheck className="h-3 w-3" />
                               {t('metadataReviews.lockedCount', { count: item.locked_field_count })}
                             </span>
@@ -275,11 +275,11 @@ export default function MetadataReviews({ embedded }: { embedded?: boolean } = {
                         <div key={field.name} className="rounded-xl border border-white/10 bg-gray-950/70 p-3">
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <span className="text-sm font-semibold text-white">{field.label}</span>
-                            {field.locked && <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-200">{t('metadataReviews.locked')}</span>}
+                            {field.locked && <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-500">{t('metadataReviews.locked')}</span>}
                           </div>
                           <div className="grid gap-2 sm:grid-cols-2">
                             <div className="min-w-0 rounded-lg border border-red-500/10 bg-red-500/[0.01] px-3 py-2 text-xs text-gray-400/80 whitespace-pre-wrap break-words">{field.current || t('common.none')}</div>
-                            <div className={`min-w-0 rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap break-words ${field.current !== field.proposed ? 'border-emerald-500/30 bg-emerald-500/[0.04] text-emerald-200 font-medium ring-1 ring-emerald-500/10' : 'border-white/5 bg-white/[0.01] text-gray-300'}`}>{field.proposed || t('common.none')}</div>
+                            <div className={`min-w-0 rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap break-words ${field.current !== field.proposed ? 'border-emerald-500/30 bg-emerald-500/[0.04] text-emerald-500 font-medium ring-1 ring-emerald-500/10' : 'border-white/5 bg-white/[0.01] text-gray-300'}`}>{field.proposed || t('common.none')}</div>
                           </div>
                         </div>
                       ))}

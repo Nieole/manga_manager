@@ -78,7 +78,7 @@ export function SettingsOverviewPage() {
           <p className="text-sm font-medium text-amber-100">{t('settings.overview.blockingIssues')}</p>
           <div className="mt-2 space-y-1">
             {validation.issues.slice(0, 5).map((issue) => (
-              <p key={`${issue.field}-${issue.message}`} className="text-sm text-amber-200/90">
+              <p key={`${issue.field}-${issue.message}`} className="text-sm text-amber-500">
                 {issue.field}: {issue.message}
               </p>
             ))}

@@ -481,7 +481,7 @@ export default function Collections() {
                             </div>
                         </div>
                         {snapshotPreview?.name_conflict && (
-                            <div className="mt-4 flex gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                            <div className="mt-4 flex gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-500">
                                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                                 <span>{t('collections.snapshotPreview.nameConflict')}</span>
                             </div>

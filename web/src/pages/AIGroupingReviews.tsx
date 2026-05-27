@@ -339,7 +339,7 @@ export default function AIGroupingReviews({ embedded }: { embedded?: boolean } =
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <Layers3 className="h-4 w-4 shrink-0 text-amber-200" />
+                            <Layers3 className="h-4 w-4 shrink-0 text-amber-500" />
                             {draft ? (
                               <input value={draft.name} onChange={(event) => updateDraft(collection.id, { name: event.target.value })} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white outline-none focus:border-komgaPrimary" />
                             ) : (

@@ -175,7 +175,7 @@ function SettingsLayoutInner() {
       </ConfirmDialog>
 
       {toastMsg && (
-        <div className={`fixed bottom-6 right-6 z-50 rounded-xl border px-4 py-3 text-sm shadow-xl ${toastMsg.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
+        <div className={`fixed bottom-6 right-6 z-50 rounded-xl border px-4 py-3 text-sm shadow-xl ${toastMsg.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-red-500/30 bg-red-500/10 text-red-500'}`}>
           {toastMsg.text}
           <button onClick={() => setToastMsg(null)} className="ml-3 text-white/60 hover:text-white">
             ✕
