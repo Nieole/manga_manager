@@ -1,26 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, RotateCcw, Search, Terminal, XCircle } from 'lucide-react';
-import { isToday, isYesterday } from 'date-fns';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, Search, Terminal } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
-import { getTaskActionHint, getTaskTypeLabel } from '../i18n/task';
-
-
-const TASK_TYPE_OPTIONS = [
-  'scan_library',
-  'scan_external_library',
-  'scan_series',
-  'cleanup_library',
-  'rebuild_index',
-  'rebuild_thumbnails',
-  'cleanup_thumbnails',
-  'scrape',
-  'ai_grouping',
-  'rebuild_book_hashes',
-  'reconcile_koreader_progress',
-  'refresh_koreader_matching',
-  'transfer_external_library',
-];
 
 interface LogEntry {
   time: string;
@@ -37,25 +17,6 @@ interface LogsResponse {
   };
 }
 
-interface TaskStatus {
-  key: string;
-  type: string;
-  scope: string;
-  scope_id?: number;
-  scope_name?: string;
-  status: string;
-  message: string;
-  error?: string;
-  current: number;
-  total: number;
-  can_cancel: boolean;
-  retryable: boolean;
-  params?: Record<string, string>;
-  started_at: string;
-  updated_at: string;
-  finished_at?: string;
-}
-
 function logLevelBadgeClass(level: string) {
   switch (level) {
     case 'ERROR':
@@ -69,23 +30,6 @@ function logLevelBadgeClass(level: string) {
   }
 }
 
-function isInterruptedTask(task: TaskStatus) {
-  const error = task.error || '';
-  return task.status === 'interrupted' || (task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart')));
-}
-
-const TASK_IO_PARAM_KEYS = [
-  'storage_profile',
-  'volume_key',
-  'opened_archives',
-  'hashed_files',
-  'io_wait_ms',
-  'paused_ms',
-  'thumbnail_write_ms',
-  'duration_ms',
-  'pause_reason',
-];
-
 interface LogsPerformanceSummary {
   average_ms: number;
   p95_ms: number;
@@ -97,41 +41,22 @@ interface LogsPerformanceSummary {
 }
 
 export default function Logs() {
-  const { t, formatDateTime, formatRelativeTime } = useI18n();
-  const navigate = useNavigate();
+  const { t, formatDateTime } = useI18n();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [summary, setSummary] = useState<LogsResponse['summary']>({ total: 0, by_level: { DEBUG: 0, ERROR: 0, WARN: 0, INFO: 0 } });
-  const [tasks, setTasks] = useState<TaskStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterLevel, setFilterLevel] = useState('ALL');
   const [query, setQuery] = useState('');
-  const [taskStatusFilter, setTaskStatusFilter] = useState('ALL');
-  const [taskScopeFilter, setTaskScopeFilter] = useState('ALL');
-  const [taskTypeFilter, setTaskTypeFilter] = useState('ALL');
-  const [taskScopeIdFilter, setTaskScopeIdFilter] = useState('');
-  const [taskQuery, setTaskQuery] = useState('');
-  const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
-  const [cancellingTaskKey, setCancellingTaskKey] = useState<string | null>(null);
-  const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [performance, setPerformance] = useState<LogsPerformanceSummary | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const taskParams = new URLSearchParams();
-      taskParams.set('limit', '50');
-      if (taskStatusFilter !== 'ALL') taskParams.set('status', taskStatusFilter);
-      if (taskScopeFilter !== 'ALL') taskParams.set('scope', taskScopeFilter);
-      if (taskTypeFilter !== 'ALL') taskParams.set('type', taskTypeFilter);
-      if (taskScopeIdFilter.trim()) taskParams.set('scope_id', taskScopeIdFilter.trim());
-      if (taskQuery.trim()) taskParams.set('q', taskQuery.trim());
-
-      const [logsResp, tasksResp, perfResp] = await Promise.all([
+      const [logsResp, perfResp] = await Promise.all([
         fetch(`/api/system/logs?limit=300&level=${filterLevel}&q=${encodeURIComponent(query)}`),
-        fetch(`/api/system/tasks?${taskParams.toString()}`),
         fetch('/api/system/performance').catch(() => null),
       ]);
 
@@ -143,11 +68,6 @@ export default function Logs() {
       setLogs(logsData.items || []);
       setSummary(logsData.summary || { total: 0, by_level: { DEBUG: 0, ERROR: 0, WARN: 0, INFO: 0 } });
 
-      if (tasksResp.ok) {
-        const tasksData: TaskStatus[] = await tasksResp.json();
-        setTasks(Array.isArray(tasksData) ? tasksData : []);
-      }
-
       if (perfResp && perfResp.ok) {
         const perfData = await perfResp.json().catch(() => null);
         setPerformance(perfData);
@@ -157,45 +77,11 @@ export default function Logs() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterLevel, query, t]);
 
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterLevel, taskStatusFilter, taskScopeFilter, taskTypeFilter]);
-
-  const failedTasks = useMemo(() => tasks.filter((task) => task.status === 'failed'), [tasks]);
-  const runningTasks = useMemo(() => tasks.filter((task) => task.status === 'running'), [tasks]);
-  const completedTasks = useMemo(() => tasks.filter((task) => task.status === 'completed'), [tasks]);
-  const interruptedTasks = useMemo(() => tasks.filter(isInterruptedTask), [tasks]);
-  const groupedTasks = useMemo(() => {
-    const today: TaskStatus[] = [];
-    const yesterday: TaskStatus[] = [];
-    const earlier: TaskStatus[] = [];
-
-    tasks.forEach((task) => {
-      const date = new Date(task.updated_at);
-      if (isToday(date)) {
-        today.push(task);
-      } else if (isYesterday(date)) {
-        yesterday.push(task);
-      } else {
-        earlier.push(task);
-      }
-    });
-
-    return [
-      { title: t('logs.group.today'), items: today },
-      { title: t('logs.group.yesterday'), items: yesterday },
-      { title: t('logs.group.earlier'), items: earlier },
-    ].filter((group) => group.items.length > 0);
-  }, [t, tasks]);
-
-  const formatProgress = (task: TaskStatus) => {
-    const total = task.total || 1;
-    const percent = Math.max(0, Math.min(100, Math.round((task.current / total) * 100)));
-    return `${task.current}/${total} · ${percent}%`;
-  };
+  }, [fetchData]);
 
   const copyRawLog = async (raw: string, index: number) => {
     try {
@@ -205,99 +91,6 @@ export default function Logs() {
     } catch (err) {
       console.error('copy failed', err);
     }
-  };
-
-  const badgeClass = (status: string) => {
-    switch (status) {
-      case 'failed':
-        return 'bg-red-500/10 text-red-500 border-red-500/20';
-      case 'completed':
-        return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
-      case 'cancelled':
-        return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
-      default:
-        return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
-    }
-  };
-
-  const hasTaskDetails = (task: TaskStatus) =>
-    Boolean(task.error || (task.params && Object.keys(task.params).length > 0) || task.started_at || task.finished_at);
-
-  const taskIOParams = (task: TaskStatus) => Object.entries(task.params || {})
-    .filter(([key, value]) => TASK_IO_PARAM_KEYS.includes(key) && value !== '' && value !== '0');
-
-  const retryTask = async (taskKey: string) => {
-    setRetryingTaskKey(taskKey);
-    try {
-      const resp = await fetch(`/api/system/tasks/${encodeURIComponent(taskKey)}/retry`, { method: 'POST' });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => null);
-        throw new Error(data?.error || t('logs.error.retry'));
-      }
-      await fetchData();
-    } catch (err) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : t('logs.error.retry'));
-    } finally {
-      setRetryingTaskKey(null);
-    }
-  };
-
-  const cancelTask = async (taskKey: string) => {
-    setCancellingTaskKey(taskKey);
-    try {
-      const resp = await fetch(`/api/system/tasks/${encodeURIComponent(taskKey)}/cancel`, { method: 'POST' });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => null);
-        throw new Error(data?.error || t('logs.error.cancelTask'));
-      }
-      await fetchData();
-    } catch (err) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : t('logs.error.cancelTask'));
-    } finally {
-      setCancellingTaskKey(null);
-    }
-  };
-
-  const taskTypeLabelFromType = (type: string) => getTaskTypeLabel({ type, params: {} }, t);
-
-  const currentTaskFilterCanClear = taskStatusFilter !== 'ALL' && taskStatusFilter !== 'running';
-
-  const clearTasks = async (status?: 'completed' | 'failed', useCurrentFilters = false) => {
-    try {
-      const params = new URLSearchParams();
-      if (status) {
-        params.set('status', status);
-      } else if (useCurrentFilters && taskStatusFilter !== 'ALL') {
-        params.set('status', taskStatusFilter);
-      }
-      if (useCurrentFilters) {
-        if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
-        if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
-        if (taskScopeIdFilter.trim()) params.set('scope_id', taskScopeIdFilter.trim());
-      }
-      const resp = await fetch(`/api/system/tasks?${params.toString()}`, { method: 'DELETE' });
-      if (!resp.ok) {
-        throw new Error(t('logs.error.cleanup'));
-      }
-      await fetchData();
-    } catch (err) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : t('logs.error.cleanup'));
-    }
-  };
-
-  const openTaskTarget = (task: TaskStatus) => {
-    if (task.scope === 'series' && task.scope_id) {
-      navigate(`/series/${task.scope_id}`);
-      return;
-    }
-    if (task.scope === 'library' && task.scope_id) {
-      navigate(`/library/${task.scope_id}`);
-      return;
-    }
-    navigate('/settings');
   };
 
   return (
@@ -341,19 +134,11 @@ export default function Logs() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label={t('logs.metric.logs')} value={summary.total} tone="blue" />
         <MetricCard label={t('logs.metric.debug')} value={summary.by_level.DEBUG || 0} tone="purple" />
         <MetricCard label={t('logs.metric.error')} value={summary.by_level.ERROR || 0} tone="red" />
         <MetricCard label={t('logs.metric.warn')} value={summary.by_level.WARN || 0} tone="amber" />
-        <MetricCard label={t('logs.metric.failedTasks')} value={failedTasks.length} tone="purple" />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-4">
-        <TaskMetricCard label={t('logs.metric.runningTasks')} value={runningTasks.length} hint={t('logs.metric.runningTasksHint')} tone="blue" />
-        <TaskMetricCard label={t('logs.metric.failedTasks')} value={failedTasks.length} hint={t('logs.metric.failedTasksHint')} tone="red" />
-        <TaskMetricCard label={t('logs.metric.interruptedTasks')} value={interruptedTasks.length} hint={t('logs.metric.interruptedTasksHint')} tone="amber" />
-        <TaskMetricCard label={t('logs.metric.completedTasks')} value={completedTasks.length} hint={t('logs.metric.completedTasksHint')} tone="emerald" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
@@ -442,221 +227,6 @@ export default function Logs() {
 
           <div className="rounded-2xl border border-gray-700 bg-gray-900 p-4">
             <div className="mb-3 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-gray-500" />
-              <h2 className="text-sm font-semibold text-white">{t('logs.taskCenter')}</h2>
-            </div>
-            <div className="mb-4 flex flex-wrap gap-2">
-              <button
-                onClick={() => clearTasks('completed')}
-                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
-              >
-                {t('logs.clearCompleted')}
-              </button>
-              <button
-                onClick={() => clearTasks('failed')}
-                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
-              >
-                {t('logs.clearFailed')}
-              </button>
-              <button
-                onClick={() => clearTasks(undefined, true)}
-                disabled={!currentTaskFilterCanClear}
-                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                title={currentTaskFilterCanClear ? t('logs.clearCurrentFilterHint') : t('logs.clearCurrentFilterDisabled')}
-              >
-                {t('logs.clearCurrentFilter')}
-              </button>
-            </div>
-            <div className="mb-4 grid gap-2">
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={taskStatusFilter}
-                  onChange={(e) => setTaskStatusFilter(e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
-                >
-                  <option value="ALL">{t('logs.taskStatus.all')}</option>
-                  <option value="running">{t('logs.taskStatus.running')}</option>
-                  <option value="failed">{t('logs.taskStatus.failed')}</option>
-                  <option value="completed">{t('logs.taskStatus.completed')}</option>
-                  <option value="cancelled">{t('logs.taskStatus.cancelled')}</option>
-                </select>
-                <select
-                  value={taskScopeFilter}
-                  onChange={(e) => setTaskScopeFilter(e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
-                >
-                  <option value="ALL">{t('logs.taskScope.all')}</option>
-                  <option value="system">{t('logs.taskScope.system')}</option>
-                  <option value="library">{t('logs.taskScope.library')}</option>
-                  <option value="series">{t('logs.taskScope.series')}</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={taskTypeFilter}
-                  onChange={(e) => setTaskTypeFilter(e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
-                >
-                  <option value="ALL">{t('logs.taskType.all')}</option>
-                  {TASK_TYPE_OPTIONS.map((type) => (
-                    <option key={type} value={type}>{taskTypeLabelFromType(type)}</option>
-                  ))}
-                </select>
-                <input
-                  value={taskScopeIdFilter}
-                  onChange={(e) => setTaskScopeIdFilter(e.target.value.replace(/[^\d]/g, ''))}
-                  onKeyDown={(e) => e.key === 'Enter' && fetchData()}
-                  inputMode="numeric"
-                  placeholder={t('logs.taskScopeIdPlaceholder')}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
-                />
-              </div>
-              <div className="flex gap-2">
-                <input
-                  value={taskQuery}
-                  onChange={(e) => setTaskQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && fetchData()}
-                  placeholder={t('logs.taskSearchPlaceholder')}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
-                />
-                <button
-                  onClick={fetchData}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
-                >
-                  {t('logs.query')}
-                </button>
-              </div>
-            </div>
-            <div className="space-y-3">
-              {tasks.length === 0 ? (
-                <p className="text-sm text-gray-500">{t('logs.noTasks')}</p>
-              ) : (
-                groupedTasks.map((group) => (
-                  <div key={group.title} className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">{group.title}</h3>
-                      <span className="text-xs text-gray-600">{t('common.itemCount', { count: group.items.length })}</span>
-                    </div>
-                    {group.items.map((task) => (
-                      <div key={task.key} className="rounded-xl border border-gray-700 bg-gray-950 p-3">
-                        <div className="flex items-center gap-2">
-                          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${badgeClass(task.status)}`}>
-                            {task.status}
-                          </span>
-                          <span className="text-xs text-gray-500">{getTaskTypeLabel(task, t)}</span>
-                          <span className="text-xs text-gray-500">
-                            {task.scope_name || task.scope}
-                            {task.scope_id ? ` #${task.scope_id}` : ''}
-                          </span>
-                          <div className="ml-auto flex items-center gap-2">
-                            {task.can_cancel && task.status === 'running' && (
-                              <button
-                                onClick={() => cancelTask(task.key)}
-                                disabled={cancellingTaskKey === task.key}
-                                className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 px-2 py-1 text-[11px] text-amber-500 hover:bg-amber-500/10 disabled:opacity-60"
-                              >
-                                <XCircle className={`w-3 h-3 ${cancellingTaskKey === task.key ? 'animate-pulse' : ''}`} />
-                                {t('common.cancel')}
-                              </button>
-                            )}
-                            {task.retryable && task.status !== 'running' && (
-                              <button
-                                onClick={() => retryTask(task.key)}
-                                disabled={retryingTaskKey === task.key}
-                                className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-60"
-                              >
-                                <RotateCcw className={`w-3 h-3 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
-                                {t('common.retry')}
-                              </button>
-                            )}
-                          </div>
-                          {hasTaskDetails(task) && (
-                            <button
-                              onClick={() => setExpandedTaskKey((current) => (current === task.key ? null : task.key))}
-                              className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-white"
-                            >
-                              {expandedTaskKey === task.key ? t('common.collapseDetails') : t('common.viewDetails')}
-                            </button>
-                          )}
-                        </div>
-                        <p className="mt-2 text-sm text-white">{task.message}</p>
-                        {taskIOParams(task).length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {taskIOParams(task).map(([key, value]) => (
-                              <span
-                                key={`${task.key}-io-${key}`}
-                                className="rounded-md border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-[11px] text-komgaPrimary"
-                              >
-                                {t(`logs.task.io.${key}`)}: {key === 'pause_reason' ? t(`logs.task.pauseReason.${value}`) : value}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {isInterruptedTask(task) && (
-                          <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-2 text-xs text-amber-500">
-                            {t('logs.task.interruptedHint')}
-                          </p>
-                        )}
-                        <p className="mt-1 text-xs text-gray-500">
-                          {formatProgress(task)} · {formatRelativeTime(task.updated_at)} · {formatDateTime(task.updated_at)}
-                        </p>
-                        {task.error && (
-                          <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-2 text-xs text-red-500">{task.error}</p>
-                        )}
-                        <p className="mt-2 text-xs text-gray-500">{getTaskActionHint(task, t)}</p>
-                        {expandedTaskKey === task.key && (
-                          <div className="mt-3 rounded-xl border border-gray-700 bg-gray-900/60 p-3 space-y-3">
-                            <div className="grid gap-2 sm:grid-cols-2">
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('logs.task.startedAt')}</p>
-                                <p className="mt-1 text-xs text-gray-400">{formatDateTime(task.started_at)}</p>
-                              </div>
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('logs.task.finishedAt')}</p>
-                                <p className="mt-1 text-xs text-gray-400">{task.finished_at ? formatDateTime(task.finished_at) : t('logs.task.runningNow')}</p>
-                              </div>
-                            </div>
-                            {task.params && Object.keys(task.params).length > 0 && (
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-2">{t('logs.task.params')}</p>
-                                <div className="flex flex-wrap gap-2">
-                                  {Object.entries(task.params).map(([key, value]) => (
-                                    <span
-                                      key={`${task.key}-${key}`}
-                                      className="rounded-full border border-gray-700 bg-gray-950 px-2.5 py-1 text-xs text-gray-400"
-                                    >
-                                      {key}: {value}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {task.error && (
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-2">{t('logs.task.errorDetails')}</p>
-                                <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs text-red-500 whitespace-pre-wrap break-words">
-                                  {task.error}
-                                </pre>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => openTaskTarget(task)}
-                          className="mt-3 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
-                        >
-                          {t('logs.task.openPage')}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-gray-700 bg-gray-900 p-4">
-            <div className="mb-3 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-gray-500" />
               <h2 className="text-sm font-semibold text-white">{t('logs.tips.title')}</h2>
             </div>
@@ -684,33 +254,6 @@ function MetricCard({ label, value, tone }: { label: string; value: number; tone
     <div className={`rounded-2xl border p-4 ${toneClass}`}>
       <p className="text-sm opacity-80">{label}</p>
       <p className="mt-2 text-3xl font-semibold text-white">{value}</p>
-    </div>
-  );
-}
-
-function TaskMetricCard({
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: number;
-  hint: string;
-  tone: 'blue' | 'red' | 'amber' | 'emerald';
-}) {
-  const toneClass = {
-    blue: 'border-komgaPrimary/20 bg-komgaPrimary/10 text-komgaPrimary',
-    red: 'border-red-500/20 bg-red-500/10 text-red-500',
-    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-500',
-    emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
-  }[tone];
-
-  return (
-    <div className={`rounded-2xl border p-4 ${toneClass}`}>
-      <p className="text-sm opacity-80">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
-      <p className="mt-1 text-xs opacity-80">{hint}</p>
     </div>
   );
 }

@@ -30,7 +30,12 @@ function displaySeriesTitle(item: MetadataReviewInboxItem) {
   return item.series_title || item.series_name;
 }
 
-export default function MetadataReviews({ embedded }: { embedded?: boolean } = {}) {
+interface MetadataReviewsProps {
+  embedded?: boolean;
+  onReviewChange?: () => void;
+}
+
+export default function MetadataReviews({ embedded, onReviewChange }: MetadataReviewsProps = {}) {
   const { t, formatDateTime } = useI18n();
   const globalToast = useToast();
 
@@ -138,6 +143,7 @@ export default function MetadataReviews({ embedded }: { embedded?: boolean } = {
       }), failedCount > 0 ? 'error' : 'success');
       setSelectedIds([]);
       await loadReviews();
+      onReviewChange?.();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('metadataReviews.toast.actionFailed')), 'error');
     } finally {

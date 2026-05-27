@@ -80,7 +80,12 @@ function displaySeriesName(series: AIGroupingReviewSeries) {
   return series.title || series.name;
 }
 
-export default function AIGroupingReviews({ embedded }: { embedded?: boolean } = {}) {
+interface AIGroupingReviewsProps {
+  embedded?: boolean;
+  onReviewChange?: () => void;
+}
+
+export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupingReviewsProps = {}) {
   const { t, formatDateTime } = useI18n();
   const globalToast = useToast();
 
@@ -158,6 +163,7 @@ export default function AIGroupingReviews({ embedded }: { embedded?: boolean } =
         showToast(t('aiGroupingReviews.toast.rejected'));
       }
       await loadReviews();
+      onReviewChange?.();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
     } finally {
@@ -181,6 +187,7 @@ export default function AIGroupingReviews({ embedded }: { embedded?: boolean } =
         return next;
       });
       await loadReviews();
+      onReviewChange?.();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
     } finally {

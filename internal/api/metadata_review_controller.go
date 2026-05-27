@@ -447,6 +447,38 @@ func filterMetadataReviewFieldsForMode(fields []database.MetadataReviewField, mo
 	return filtered
 }
 
+func normalizeMetadataReviewValue(value string) string {
+	return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
+}
+
+func metadataReviewDraftSignature(changes []metadataReviewFieldDraft) map[string]string {
+	signature := make(map[string]string, len(changes))
+	for _, change := range changes {
+		signature[change.Name] = normalizeMetadataReviewValue(change.Current) + "\x00" + normalizeMetadataReviewValue(change.Proposed)
+	}
+	return signature
+}
+
+func metadataReviewFieldsSignature(fields []database.MetadataReviewField) map[string]string {
+	signature := make(map[string]string, len(fields))
+	for _, field := range fields {
+		signature[field.FieldName] = normalizeMetadataReviewValue(field.CurrentValue) + "\x00" + normalizeMetadataReviewValue(field.ProposedValue)
+	}
+	return signature
+}
+
+func metadataReviewSignaturesEqual(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		if right[key] != leftValue {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Controller) queueMetadataReview(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, providerName, sourceQuery string) (database.MetadataReview, []database.MetadataReviewField, error) {
 	var createdReview database.MetadataReview
 	var createdFields []database.MetadataReviewField
@@ -465,6 +497,22 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 		changes := metadataBuildFieldDrafts(series, tags, result, providerName)
 		if len(changes) == 0 {
 			return errNoMetadataChanges
+		}
+		nextSignature := metadataReviewDraftSignature(changes)
+		pendingReviews, err := q.ListPendingMetadataReviewsBySeries(ctx, series.ID)
+		if err != nil {
+			return err
+		}
+		for _, pendingReview := range pendingReviews {
+			fields, err := q.ListMetadataReviewFields(ctx, pendingReview.ID)
+			if err != nil {
+				return err
+			}
+			if metadataReviewSignaturesEqual(nextSignature, metadataReviewFieldsSignature(fields)) {
+				createdReview = pendingReview
+				createdFields = fields
+				return nil
+			}
 		}
 
 		payload, _ := json.Marshal(result)

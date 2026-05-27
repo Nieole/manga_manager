@@ -2,7 +2,7 @@ import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
-import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench } from 'lucide-react';
+import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
@@ -614,6 +614,18 @@ export default function Layout() {
                                     >
                                         <ClipboardCheck className="w-4 h-4 shrink-0" />
                                         <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.organize')}</span>
+                                    </Link>
+
+                                    {/* 后台任务中心 */}
+                                    <Link to="/organize/tasks" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/organize/tasks'
+                                            ? 'bg-gradient-to-r from-emerald-500/10 to-transparent text-emerald-300 font-semibold border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.04)]'
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.backgroundTasks')}
+                                    >
+                                        <Activity className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.backgroundTasks')}</span>
                                     </Link>
                                     
                                     {/* 审核中心 */}

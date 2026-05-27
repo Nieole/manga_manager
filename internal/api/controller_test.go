@@ -3738,6 +3738,48 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 	}
 }
 
+func TestQueueMetadataReviewDeduplicatesPendingEquivalentContent(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
+	info, err := store.GetSeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetSeries failed: %v", err)
+	}
+
+	result := &metadata.SeriesMetadata{
+		Provider:   "bangumi",
+		Title:      "Updated Title",
+		Summary:    "Updated summary",
+		Publisher:  "Kodansha",
+		Tags:       []string{"Action", "Drama"},
+		SourceID:   12345,
+		SourceURL:  "https://bgm.tv/subject/12345",
+		Confidence: 0.92,
+	}
+	firstReview, firstFields, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
+	if err != nil {
+		t.Fatalf("first queue metadata review failed: %v", err)
+	}
+	secondReview, secondFields, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
+	if err != nil {
+		t.Fatalf("second queue metadata review failed: %v", err)
+	}
+	if secondReview.ID != firstReview.ID {
+		t.Fatalf("expected duplicate queue to reuse review %d, got %d", firstReview.ID, secondReview.ID)
+	}
+	if len(secondFields) != len(firstFields) {
+		t.Fatalf("expected duplicate queue to return existing fields, first=%d second=%d", len(firstFields), len(secondFields))
+	}
+
+	pending, err := store.ListPendingMetadataReviewsBySeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("ListPendingMetadataReviewsBySeries failed: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected one pending review after duplicate queue, got %+v", pending)
+	}
+}
+
 func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, seriesA, _ := seedBookFixture(t, store, t.TempDir(), "LibA", "Series Alpha", "book-a.cbz", 10)

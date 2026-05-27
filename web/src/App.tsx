@@ -9,6 +9,7 @@ const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Collections = lazy(() => import('./pages/Collections'));
 const Organize = lazy(() => import('./pages/Organize'));
+const BackgroundTasks = lazy(() => import('./pages/BackgroundTasks'));
 const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
 const ReadingLists = lazy(() => import('./pages/ReadingLists'));
 const OfflineShelf = lazy(() => import('./pages/OfflineShelf'));
@@ -57,6 +58,7 @@ function App() {
           <Route path="collections" element={withRouteFallback(<Collections />)} />
           {/* 整理工作台 */}
           <Route path="organize" element={withRouteFallback(<Organize />)} />
+          <Route path="organize/tasks" element={withRouteFallback(<BackgroundTasks />)} />
           {/* 审核中心（合并元数据审核 + AI 分组审核） */}
           <Route path="reviews" element={withRouteFallback(<ReviewCenter />)} />
           {/* 向后兼容旧路由 */}

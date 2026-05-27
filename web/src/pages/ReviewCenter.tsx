@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useCallback, useState, useEffect, lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { GitCompareArrows, Layers3, Loader2, ShieldCheck } from 'lucide-react';
 import { PageShell, PageHeader } from '../components/PageShell';
@@ -20,8 +20,7 @@ export default function ReviewCenter() {
     setSearchParams({ tab }, { replace: true });
   };
 
-  // Fetch pending counts
-  useEffect(() => {
+  const refreshCounts = useCallback(() => {
     fetch('/api/metadata/reviews?limit=1&page=1')
       .then((res) => res.json())
       .then((data) => setMetadataCount(data.total ?? 0))
@@ -32,6 +31,11 @@ export default function ReviewCenter() {
       .then((data) => setAiGroupingCount(data.total ?? 0))
       .catch(() => setAiGroupingCount(0));
   }, []);
+
+  // Fetch pending counts
+  useEffect(() => {
+    refreshCounts();
+  }, [refreshCounts]);
 
   const tabs: { key: TabKey; label: string; icon: typeof GitCompareArrows; count: number }[] = [
     { key: 'metadata', label: t('reviewCenter.tab.metadata'), icon: GitCompareArrows, count: metadataCount },
@@ -87,7 +91,7 @@ export default function ReviewCenter() {
           </div>
         }
       >
-        {activeTab === 'metadata' ? <MetadataReviews embedded /> : <AIGroupingReviews embedded />}
+        {activeTab === 'metadata' ? <MetadataReviews embedded onReviewChange={refreshCounts} /> : <AIGroupingReviews embedded onReviewChange={refreshCounts} />}
       </Suspense>
     </PageShell>
   );
