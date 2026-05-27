@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"manga-manager/internal/external"
+	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -217,7 +218,7 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 
 func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) (string, bool) {
 	taskKey := externalLibraryScanTaskKey(libraryID, sessionID)
-	if !c.startTask(taskKey, "scan_external_library", "正在扫描外部资源库", 0) {
+	if !c.startPausableCancelableTask(taskKey, "scan_external_library", "正在扫描外部资源库", 0) {
 		return taskKey, false
 	}
 
@@ -225,16 +226,24 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	if err == nil {
 		c.setTaskMetadata(taskKey, map[string]string{"session_id": sessionID}, lib.Name)
 	}
+	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
 
-	go func() {
+	c.runBackground(func() {
+		defer cleanupCancel()
 		var lastUpdate time.Time
-		snapshot, err := c.external.ScanSession(context.Background(), sessionID, func(current, total int, message string) {
+		snapshot, err := c.external.ScanSession(taskCtx, sessionID, func(current, total int, message string) {
 			now := time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTask(taskKey, current, total, message)
+				c.updateTaskDetails(taskKey, current, total, message, "discovering", "", map[string]int64{
+					"scanned_files": int64(current),
+				}, nil)
 				lastUpdate = now
 			}
 		})
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", "外部资源库扫描已取消")
+			return
+		}
 		if err != nil {
 			c.failTaskWithError(taskKey, "外部资源库扫描失败", err.Error())
 			return
@@ -246,13 +255,13 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 			c.completeTask(taskKey, "completed", "外部资源库扫描完成（未发现可处理资源）")
 		}
 		c.PublishEvent("refresh")
-	}()
+	})
 	return taskKey, true
 }
 
 func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, seriesIDs []int64) (string, bool) {
 	taskKey := externalLibraryTransferTaskKey(libraryID, sessionID)
-	if !c.startTask(taskKey, "transfer_external_library", "正在传输到外部资源库", 0) {
+	if !c.startPausableCancelableTask(taskKey, "transfer_external_library", "正在传输到外部资源库", 0) {
 		return taskKey, false
 	}
 
@@ -263,9 +272,15 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			"series_count": strconv.Itoa(len(seriesIDs)),
 		}, lib.Name)
 	}
+	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
 
-	go func() {
-		plan, err := c.external.PrepareTransfer(context.Background(), libraryID, sessionID, seriesIDs)
+	c.runBackground(func() {
+		defer cleanupCancel()
+		plan, err := c.external.PrepareTransfer(taskCtx, libraryID, sessionID, seriesIDs)
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", "外部资源库传输已取消")
+			return
+		}
 		if err != nil {
 			c.failTaskWithError(taskKey, "外部资源库传输失败", err.Error())
 			return
@@ -281,9 +296,15 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		createdDirs := make(map[string]struct{})
 		var lastUpdate time.Time
 		for index, op := range plan.Operations {
+			if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
+				c.completeTask(taskKey, "cancelled", "外部资源库传输已取消")
+				return
+			}
 			now := time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTask(taskKey, index, len(plan.Operations), fmt.Sprintf("正在传输 %s", op.RelativePath))
+				c.updateTaskDetails(taskKey, index, len(plan.Operations), fmt.Sprintf("正在传输 %s", op.RelativePath), "transferring_files", op.RelativePath, map[string]int64{
+					"transferred_files": int64(index),
+				}, nil)
 				lastUpdate = now
 			}
 			skippedCopy, err := copyFileToExternalLibrary(op.SourcePath, op.Destination, createdDirs)
@@ -300,7 +321,9 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			}
 			now = time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTask(taskKey, index+1, len(plan.Operations), fmt.Sprintf("已传输 %d / %d 本资源", index+1, len(plan.Operations)))
+				c.updateTaskDetails(taskKey, index+1, len(plan.Operations), fmt.Sprintf("已传输 %d / %d 本资源", index+1, len(plan.Operations)), "transferring_files", op.RelativePath, map[string]int64{
+					"transferred_files": int64(index + 1),
+				}, nil)
 				lastUpdate = now
 			}
 		}
@@ -315,7 +338,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 
 		c.finishTask(taskKey, fmt.Sprintf("外部资源库传输完成，新增 %d，本已存在 %d", len(plan.Operations), plan.ExistingBooks+skipped))
 		c.PublishEvent("refresh")
-	}()
+	})
 	return taskKey, true
 }
 

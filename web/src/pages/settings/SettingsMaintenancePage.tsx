@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { AlertTriangle, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
+import { TaskCenter, type TaskAction, type TaskStatus } from '../../components/tasks/TaskCenter';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
 import { SettingsPageIntro, sectionClassName } from './shared';
@@ -64,9 +65,12 @@ export function SettingsMaintenancePage() {
   const { handleAction, showToast } = useSettings();
   const [pageCacheStats, setPageCacheStats] = useState<PageCacheStats | null>(null);
   const [storageIO, setStorageIO] = useState<StorageIODiagnostics | null>(null);
+  const [tasks, setTasks] = useState<TaskStatus[]>([]);
   const [loadingPageCache, setLoadingPageCache] = useState(false);
   const [loadingStorageIO, setLoadingStorageIO] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(false);
   const [clearingPageCache, setClearingPageCache] = useState(false);
+  const [taskActionKey, setTaskActionKey] = useState<string | null>(null);
 
   const fetchPageCacheStats = useCallback(async () => {
     setLoadingPageCache(true);
@@ -94,10 +98,55 @@ export function SettingsMaintenancePage() {
     }
   }, [showToast, t]);
 
+  const fetchTasks = useCallback(async () => {
+    setLoadingTasks(true);
+    try {
+      const [activeRes, recentRes] = await Promise.all([
+        axios.get<TaskStatus[]>('/api/system/tasks?status=running&limit=30'),
+        axios.get<TaskStatus[]>('/api/system/tasks?limit=30'),
+      ]);
+      const merged = [...(Array.isArray(activeRes.data) ? activeRes.data : []), ...(Array.isArray(recentRes.data) ? recentRes.data : [])];
+      const seen = new Set<string>();
+      setTasks(merged.filter((task) => {
+        if (seen.has(task.key)) return false;
+        seen.add(task.key);
+        return true;
+      }).slice(0, 30));
+    } catch (error) {
+      console.error(error);
+      showToast(t('settings.maintenance.taskCenterLoadFailed'), 'error');
+    } finally {
+      setLoadingTasks(false);
+    }
+  }, [showToast, t]);
+
   useEffect(() => {
     fetchPageCacheStats();
     fetchStorageIO();
-  }, [fetchPageCacheStats, fetchStorageIO]);
+    fetchTasks();
+  }, [fetchPageCacheStats, fetchStorageIO, fetchTasks]);
+
+  useEffect(() => {
+    const eventSource = new EventSource('/api/events');
+    eventSource.onmessage = (event) => {
+      const data = String(event.data || '');
+      if (!data.startsWith('task_progress:')) return;
+      try {
+        const task = JSON.parse(data.slice('task_progress:'.length)) as TaskStatus;
+        setTasks((prev) => {
+          const next = [task, ...prev.filter((item) => item.key !== task.key)];
+          return next.slice(0, 30);
+        });
+      } catch (error) {
+        console.error(error);
+      }
+    };
+    const poll = window.setInterval(fetchTasks, 15000);
+    return () => {
+      eventSource.close();
+      window.clearInterval(poll);
+    };
+  }, [fetchTasks]);
 
   const handleClearPageCache = useCallback(async () => {
     setClearingPageCache(true);
@@ -129,6 +178,23 @@ export function SettingsMaintenancePage() {
     handleAction(url, successMessage, errorMessage);
   }, [handleAction]);
 
+  const runTaskAction = useCallback(async (task: TaskStatus, action: TaskAction) => {
+    setTaskActionKey(`${task.key}:${action}`);
+    try {
+      await axios.post(`/api/system/tasks/${encodeURIComponent(task.key)}/${action}`);
+      showToast(t(`settings.maintenance.taskAction.${action}Success`), 'success');
+      await fetchTasks();
+      if (action === 'pause' || action === 'resume') {
+        await fetchStorageIO();
+      }
+    } catch (error) {
+      console.error(error);
+      showToast(t(`settings.maintenance.taskAction.${action}Failed`), 'error');
+    } finally {
+      setTaskActionKey(null);
+    }
+  }, [fetchStorageIO, fetchTasks, showToast, t]);
+
   return (
     <div className="space-y-6">
       <SettingsPageIntro title={t('settings.maintenance.title')} description={t('settings.maintenance.description')} />
@@ -157,6 +223,15 @@ export function SettingsMaintenancePage() {
           </button>
         </div>
       </section>
+
+      <TaskCenter
+        tasks={tasks}
+        loading={loadingTasks}
+        backgroundPaused={storageIO?.paused}
+        taskActionKey={taskActionKey}
+        onRefresh={fetchTasks}
+        onTaskAction={runTaskAction}
+      />
 
       <section className={sectionClassName}>
         <div className="flex flex-wrap items-center justify-between gap-3">

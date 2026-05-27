@@ -603,18 +603,27 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 	key := "rebuild_book_hashes"
 	cfg := c.currentConfig()
 	indexLabel := koreaderIndexLabel(cfg)
-	if !c.startTask(key, "rebuild_book_hashes", fmt.Sprintf("开始重建 KOReader %s", indexLabel), 0) {
+	if !c.startPausableCancelableTask(key, "rebuild_book_hashes", fmt.Sprintf("开始重建 KOReader %s", indexLabel), 0) {
 		return fmt.Errorf("task already running")
 	}
 	c.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "系统")
+	c.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.newTaskContext(key)
 
 	c.runBackground(func() {
-		updated, total, err := c.koreader.RebuildBookIdentities(context.Background(), 500, func(current, total int, message string) {
-			c.updateTask(key, current, total, message)
+		defer cleanupCancel()
+		updated, total, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, message string) {
+			c.updateTaskDetails(key, current, total, message, "hashing", "", map[string]int64{
+				"processed_books": int64(current),
+			}, nil)
 		})
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(key, "cancelled", fmt.Sprintf("KOReader %s重建已取消", indexLabel))
+			return
+		}
 		if err != nil {
 			c.failTaskWithError(key, fmt.Sprintf("KOReader %s重建失败: %v", indexLabel, err), err.Error())
 			return
@@ -626,7 +635,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 
 func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	key := "reconcile_koreader_progress"
-	if !c.startTask(key, "reconcile_koreader_progress", "开始重关联 KOReader 未匹配进度", 0) {
+	if !c.startPausableCancelableTask(key, "reconcile_koreader_progress", "开始重关联 KOReader 未匹配进度", 0) {
 		return fmt.Errorf("task already running")
 	}
 	cfg := c.currentConfig()
@@ -634,11 +643,19 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "系统")
+	taskCtx, cleanupCancel := c.newTaskContext(key)
 
 	c.runBackground(func() {
-		updated, total, err := c.koreader.ReconcileProgress(context.Background(), 500, func(current, total int, message string) {
-			c.updateTask(key, current, total, message)
+		defer cleanupCancel()
+		updated, total, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, message string) {
+			c.updateTaskDetails(key, current, total, message, "reconciling_progress", "", map[string]int64{
+				"processed_progress": int64(current),
+			}, nil)
 		})
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(key, "cancelled", "KOReader 进度重关联已取消")
+			return
+		}
 		if err != nil {
 			c.failTaskWithError(key, fmt.Sprintf("KOReader 进度重关联失败: %v", err), err.Error())
 			return
@@ -650,7 +667,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 
 func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	key := "refresh_koreader_matching"
-	if !c.startTask(key, "refresh_koreader_matching", "开始应用 KOReader 匹配规则变更", 2) {
+	if !c.startPausableCancelableTask(key, "refresh_koreader_matching", "开始应用 KOReader 匹配规则变更", 2) {
 		return fmt.Errorf("task already running")
 	}
 	cfg := c.currentConfig()
@@ -658,18 +675,33 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "系统")
+	c.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.newTaskContext(key)
 
 	c.runBackground(func() {
+		defer cleanupCancel()
 		indexLabel := koreaderIndexLabel(cfg)
-		c.updateTask(key, 0, 2, fmt.Sprintf("开始重建 KOReader %s", indexLabel))
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(context.Background(), 500, nil)
+		c.updateTaskDetails(key, 0, 2, fmt.Sprintf("开始重建 KOReader %s", indexLabel), "hashing", "", nil, nil)
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, message string) {
+			c.updateTaskDetails(key, 0, 2, message, "hashing", "", map[string]int64{"processed_books": int64(current)}, nil)
+		})
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(key, "cancelled", "KOReader 匹配规则应用已取消")
+			return
+		}
 		if err != nil {
 			c.failTaskWithError(key, fmt.Sprintf("KOReader %s重建失败: %v", indexLabel, err), err.Error())
 			return
 		}
 
-		c.updateTask(key, 1, 2, fmt.Sprintf("%s已更新 %d / %d，本阶段开始重关联未匹配记录", indexLabel, updatedBooks, totalBooks))
-		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(context.Background(), 500, nil)
+		c.updateTaskDetails(key, 1, 2, fmt.Sprintf("%s已更新 %d / %d，本阶段开始重关联未匹配记录", indexLabel, updatedBooks, totalBooks), "reconciling_progress", "", nil, nil)
+		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, message string) {
+			c.updateTaskDetails(key, 1, 2, message, "reconciling_progress", "", map[string]int64{"processed_progress": int64(current)}, nil)
+		})
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(key, "cancelled", "KOReader 匹配规则应用已取消")
+			return
+		}
 		if err != nil {
 			c.failTaskWithError(key, fmt.Sprintf("KOReader 进度重关联失败: %v", err), err.Error())
 			return

@@ -14,6 +14,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/taskcontrol"
 )
 
 var testPNG1x1 = []byte{
@@ -131,6 +132,69 @@ func TestAcquireStorageTokenSerializesSameVolume(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected second token acquisition after release")
 	}
+}
+
+func TestScanLibraryPauseCheckpointBlocksBeforeOpeningArchive(t *testing.T) {
+	rootDir, store, lib, libraryPath := newScannerTestLibrary(t)
+	seriesPath := filepath.Join(libraryPath, "Series Alpha")
+	archivePath := filepath.Join(seriesPath, "Alpha 01.cbz")
+	if err := writeScannerTestCBZ(archivePath, map[string][]byte{"001.png": testPNG1x1}); err != nil {
+		t.Fatalf("write cbz failed: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Scanner.Workers = 1
+	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
+	cfg.Scanner.ThumbnailFormat = "webp"
+	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
+	s := NewScanner(store, nil, config.NewManager(cfg))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gate := taskcontrol.NewPauseGate()
+	ctx = taskcontrol.WithPauseGate(ctx, gate)
+	gate.Pause()
+
+	openCount := 0
+	s.openArchive = func(path string) (parser.Archive, error) {
+		openCount++
+		return parser.OpenArchive(path)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.ScanLibrary(ctx, lib.ID, libraryPath, true)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("expected scan to block while paused, got %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if openCount != 0 {
+		t.Fatalf("expected paused scan to block before opening archive, opened %d archives", openCount)
+	}
+
+	gate.Resume()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected scan to finish after resume, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected scan to finish after resume")
+	}
+	if openCount == 0 {
+		t.Fatal("expected resumed scan to open archive")
+	}
+	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
+	if err != nil {
+		t.Fatalf("list books failed: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("expected one scanned book after resume, got %d", len(books))
+	}
+	waitForScannerBookCover(t, s, store, books[0].ID)
 }
 
 func TestScanLibraryRecordsPageCount(t *testing.T) {
@@ -303,6 +367,7 @@ func TestScanLibraryInvalidatesIncrementalCacheWhenSizeChanges(t *testing.T) {
 	if updated.PageCount != 2 {
 		t.Fatalf("expected size-only change to refresh page count, got %d", updated.PageCount)
 	}
+	waitForScannerBookCover(t, s, store, updatedBooks[0].ID)
 }
 
 func TestFastScanDoesNotOpenArchive(t *testing.T) {
@@ -429,6 +494,7 @@ func TestIdentityScanWithExternalHDDPolicyDoesNotSelfDeadlock(t *testing.T) {
 	if !book.FileHash.Valid || book.FileHash.String == "" || !book.QuickHash.Valid || book.QuickHash.String == "" {
 		t.Fatalf("expected identity scan to populate hashes, got file=%q quick=%q", book.FileHash.String, book.QuickHash.String)
 	}
+	waitForScannerBookCover(t, s, store, book.ID)
 }
 
 func TestScanLibraryQueuesMissingCoverGeneration(t *testing.T) {

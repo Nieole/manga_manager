@@ -31,6 +31,7 @@ import (
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -64,12 +65,13 @@ type Controller struct {
 	recommendationsCacheTime map[string]time.Time
 	recommendationsMutex     sync.RWMutex
 
-	taskMutex   sync.Mutex
-	tasks       map[string]TaskStatus
-	taskCancels map[string]context.CancelFunc
-	taskSeq     int64
+	taskMutex    sync.Mutex
+	tasks        map[string]TaskStatus
+	taskRuntimes map[string]*TaskRuntime
+	taskSeq      int64
 
-	openPath func(string) error
+	openPath        func(string) error
+	providerFactory func(string) metadata.Provider
 
 	lifecycleOnce sync.Once
 	shutdownOnce  sync.Once
@@ -80,23 +82,57 @@ type Controller struct {
 }
 
 type TaskStatus struct {
-	Key        string            `json:"key"`
-	Type       string            `json:"type"`
-	Scope      string            `json:"scope"`
-	ScopeID    *int64            `json:"scope_id,omitempty"`
-	ScopeName  string            `json:"scope_name,omitempty"`
-	Status     string            `json:"status"`
-	Message    string            `json:"message"`
-	Error      string            `json:"error,omitempty"`
-	Current    int               `json:"current"`
-	Total      int               `json:"total"`
-	CanCancel  bool              `json:"can_cancel"`
-	Retryable  bool              `json:"retryable"`
-	Params     map[string]string `json:"params,omitempty"`
-	StartedAt  time.Time         `json:"started_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
-	FinishedAt *time.Time        `json:"finished_at,omitempty"`
-	Sequence   int64             `json:"-"`
+	Key            string            `json:"key"`
+	Type           string            `json:"type"`
+	Scope          string            `json:"scope"`
+	ScopeID        *int64            `json:"scope_id,omitempty"`
+	ScopeName      string            `json:"scope_name,omitempty"`
+	Status         string            `json:"status"`
+	Message        string            `json:"message"`
+	Error          string            `json:"error,omitempty"`
+	Current        int               `json:"current"`
+	Total          int               `json:"total"`
+	Percent        *float64          `json:"percent,omitempty"`
+	RatePerMinute  float64           `json:"rate_per_minute,omitempty"`
+	EtaSeconds     *int64            `json:"eta_seconds,omitempty"`
+	CanCancel      bool              `json:"can_cancel"`
+	CanPause       bool              `json:"can_pause"`
+	CanResume      bool              `json:"can_resume"`
+	Retryable      bool              `json:"retryable"`
+	PausedAt       *time.Time        `json:"paused_at,omitempty"`
+	PauseReason    string            `json:"pause_reason,omitempty"`
+	Phase          string            `json:"phase,omitempty"`
+	CurrentItem    string            `json:"current_item,omitempty"`
+	EffectiveLimit *TaskLimits       `json:"effective_limit,omitempty"`
+	Metrics        map[string]int64  `json:"metrics,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	Params         map[string]string `json:"params,omitempty"`
+	StartedAt      time.Time         `json:"started_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+	FinishedAt     *time.Time        `json:"finished_at,omitempty"`
+	Sequence       int64             `json:"-"`
+}
+
+type TaskRuntime struct {
+	Context   context.Context
+	Cancel    context.CancelFunc
+	PauseGate *taskcontrol.PauseGate
+	StartedAt time.Time
+}
+
+type TaskLimits struct {
+	ScanProfile                string `json:"scan_profile,omitempty"`
+	ScannerWorkersConfigured   int    `json:"scanner_workers_configured,omitempty"`
+	ScannerWorkersEffective    int    `json:"scanner_workers_effective,omitempty"`
+	StorageProfile             string `json:"storage_profile,omitempty"`
+	VolumeKey                  string `json:"volume_key,omitempty"`
+	ScanConcurrency            int    `json:"scan_concurrency,omitempty"`
+	ArchiveOpenConcurrency     int    `json:"archive_open_concurrency,omitempty"`
+	CoverConcurrency           int    `json:"cover_concurrency,omitempty"`
+	HashConcurrency            int    `json:"hash_concurrency,omitempty"`
+	PauseBackgroundWhenReading bool   `json:"pause_background_when_reading"`
+	IdleOnlyHeavyTasks         bool   `json:"idle_only_heavy_tasks"`
+	DisableSameDiskPageCache   bool   `json:"disable_same_disk_page_cache"`
 }
 
 type SystemCapabilitiesResponse struct {
@@ -160,7 +196,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		defunctClients:           make(chan chan string),
 		messages:                 make(chan string, 64),
 		tasks:                    make(map[string]TaskStatus),
-		taskCancels:              make(map[string]context.CancelFunc),
+		taskRuntimes:             make(map[string]*TaskRuntime),
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
 		openPath:                 openPathInDefaultFileManager,
@@ -168,6 +204,7 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 	if scan != nil {
 		scan.SetBatchCallback(c.handleScannerBatchEvent)
 		scan.SetScanMetricsCallback(c.handleScannerMetricsEvent)
+		scan.SetScanProgressCallback(c.handleScannerProgressEvent)
 	}
 
 	c.recoverInterruptedTasks()
@@ -233,13 +270,23 @@ func (c *Controller) Close() {
 			c.watcher.Stop()
 		}
 		c.taskMutex.Lock()
-		cancels := make([]context.CancelFunc, 0, len(c.taskCancels))
-		for _, cancel := range c.taskCancels {
-			if cancel != nil {
-				cancels = append(cancels, cancel)
+		cancels := make([]context.CancelFunc, 0, len(c.taskRuntimes))
+		pauses := make([]*taskcontrol.PauseGate, 0, len(c.taskRuntimes))
+		for _, runtime := range c.taskRuntimes {
+			if runtime == nil {
+				continue
+			}
+			if runtime.PauseGate != nil {
+				pauses = append(pauses, runtime.PauseGate)
+			}
+			if runtime.Cancel != nil {
+				cancels = append(cancels, runtime.Cancel)
 			}
 		}
 		c.taskMutex.Unlock()
+		for _, gate := range pauses {
+			gate.Resume()
+		}
 		for _, cancel := range cancels {
 			cancel()
 		}
@@ -390,7 +437,7 @@ func isRetryableTaskType(taskType string) bool {
 }
 
 func taskStatusFromRecord(record database.TaskRecord) TaskStatus {
-	return TaskStatus{
+	task := TaskStatus{
 		Key:        record.Key,
 		Type:       record.Type,
 		Scope:      record.Scope,
@@ -409,9 +456,12 @@ func taskStatusFromRecord(record database.TaskRecord) TaskStatus {
 		FinishedAt: record.FinishedAt,
 		Sequence:   record.Sequence,
 	}
+	hydrateTaskStatusDerivedFields(&task)
+	return task
 }
 
 func taskRecordFromStatus(task TaskStatus) database.TaskRecord {
+	task.Params = taskParamsWithDerivedFields(task)
 	return database.TaskRecord{
 		Key:        task.Key,
 		Type:       task.Type,
@@ -430,6 +480,163 @@ func taskRecordFromStatus(task TaskStatus) database.TaskRecord {
 		UpdatedAt:  task.UpdatedAt,
 		FinishedAt: task.FinishedAt,
 		Sequence:   task.Sequence,
+	}
+}
+
+func hydrateTaskStatusDerivedFields(task *TaskStatus) {
+	if task == nil || task.Params == nil {
+		enrichTaskProgress(task)
+		return
+	}
+	task.Phase = firstNonEmptyTaskValue(task.Phase, task.Params["phase"])
+	task.CurrentItem = firstNonEmptyTaskValue(task.CurrentItem, task.Params["current_item"])
+	task.PauseReason = firstNonEmptyTaskValue(task.PauseReason, task.Params["pause_reason"])
+	if raw := strings.TrimSpace(task.Params["can_pause"]); raw != "" {
+		task.CanPause, _ = strconv.ParseBool(raw)
+	}
+	if raw := strings.TrimSpace(task.Params["can_resume"]); raw != "" {
+		task.CanResume, _ = strconv.ParseBool(raw)
+	}
+	if pausedAt := strings.TrimSpace(task.Params["paused_at"]); task.PausedAt == nil && pausedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, pausedAt); err == nil {
+			task.PausedAt = &parsed
+		}
+	}
+
+	for key, value := range task.Params {
+		switch {
+		case strings.HasPrefix(key, "metric."):
+			if task.Metrics == nil {
+				task.Metrics = make(map[string]int64)
+			}
+			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+				task.Metrics[strings.TrimPrefix(key, "metric.")] = parsed
+			}
+		case strings.HasPrefix(key, "label."):
+			if task.Labels == nil {
+				task.Labels = make(map[string]string)
+			}
+			task.Labels[strings.TrimPrefix(key, "label.")] = value
+		case strings.HasPrefix(key, "limit."):
+			applyTaskLimitParam(task, strings.TrimPrefix(key, "limit."), value)
+		}
+	}
+	enrichTaskProgress(task)
+}
+
+func applyTaskLimitParam(task *TaskStatus, key, value string) {
+	if task.EffectiveLimit == nil {
+		task.EffectiveLimit = &TaskLimits{}
+	}
+	parseInt := func() int {
+		parsed, _ := strconv.Atoi(value)
+		return parsed
+	}
+	parseBool := func() bool {
+		parsed, _ := strconv.ParseBool(value)
+		return parsed
+	}
+	switch key {
+	case "scan_profile":
+		task.EffectiveLimit.ScanProfile = value
+	case "scanner_workers_configured":
+		task.EffectiveLimit.ScannerWorkersConfigured = parseInt()
+	case "scanner_workers_effective":
+		task.EffectiveLimit.ScannerWorkersEffective = parseInt()
+	case "storage_profile":
+		task.EffectiveLimit.StorageProfile = value
+	case "volume_key":
+		task.EffectiveLimit.VolumeKey = value
+	case "scan_concurrency":
+		task.EffectiveLimit.ScanConcurrency = parseInt()
+	case "archive_open_concurrency":
+		task.EffectiveLimit.ArchiveOpenConcurrency = parseInt()
+	case "cover_concurrency":
+		task.EffectiveLimit.CoverConcurrency = parseInt()
+	case "hash_concurrency":
+		task.EffectiveLimit.HashConcurrency = parseInt()
+	case "pause_background_when_reading":
+		task.EffectiveLimit.PauseBackgroundWhenReading = parseBool()
+	case "idle_only_heavy_tasks":
+		task.EffectiveLimit.IdleOnlyHeavyTasks = parseBool()
+	case "disable_same_disk_page_cache":
+		task.EffectiveLimit.DisableSameDiskPageCache = parseBool()
+	}
+}
+
+func taskParamsWithDerivedFields(task TaskStatus) map[string]string {
+	params := make(map[string]string, len(task.Params)+24)
+	for k, v := range task.Params {
+		params[k] = v
+	}
+	put := func(key, value string) {
+		if strings.TrimSpace(value) != "" {
+			params[key] = value
+		}
+	}
+	put("phase", task.Phase)
+	put("current_item", task.CurrentItem)
+	put("pause_reason", task.PauseReason)
+	params["can_pause"] = strconv.FormatBool(task.CanPause)
+	params["can_resume"] = strconv.FormatBool(task.CanResume)
+	if task.PausedAt != nil {
+		params["paused_at"] = task.PausedAt.Format(time.RFC3339Nano)
+	}
+	for key, value := range task.Metrics {
+		params["metric."+key] = strconv.FormatInt(value, 10)
+	}
+	for key, value := range task.Labels {
+		put("label."+key, value)
+	}
+	if task.EffectiveLimit != nil {
+		limit := task.EffectiveLimit
+		put("limit.scan_profile", limit.ScanProfile)
+		params["limit.scanner_workers_configured"] = strconv.Itoa(limit.ScannerWorkersConfigured)
+		params["limit.scanner_workers_effective"] = strconv.Itoa(limit.ScannerWorkersEffective)
+		put("limit.storage_profile", limit.StorageProfile)
+		put("limit.volume_key", limit.VolumeKey)
+		params["limit.scan_concurrency"] = strconv.Itoa(limit.ScanConcurrency)
+		params["limit.archive_open_concurrency"] = strconv.Itoa(limit.ArchiveOpenConcurrency)
+		params["limit.cover_concurrency"] = strconv.Itoa(limit.CoverConcurrency)
+		params["limit.hash_concurrency"] = strconv.Itoa(limit.HashConcurrency)
+		params["limit.pause_background_when_reading"] = strconv.FormatBool(limit.PauseBackgroundWhenReading)
+		params["limit.idle_only_heavy_tasks"] = strconv.FormatBool(limit.IdleOnlyHeavyTasks)
+		params["limit.disable_same_disk_page_cache"] = strconv.FormatBool(limit.DisableSameDiskPageCache)
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	return params
+}
+
+func firstNonEmptyTaskValue(preferred, fallback string) string {
+	if strings.TrimSpace(preferred) != "" {
+		return preferred
+	}
+	return fallback
+}
+
+func enrichTaskProgress(task *TaskStatus) {
+	if task == nil {
+		return
+	}
+	if task.Total > 0 {
+		percent := float64(task.Current) * 100 / float64(task.Total)
+		if percent > 100 {
+			percent = 100
+		}
+		task.Percent = &percent
+	}
+	elapsed := time.Since(task.StartedAt).Seconds()
+	if task.Status != "running" && task.Status != "paused" && task.FinishedAt != nil {
+		elapsed = task.FinishedAt.Sub(task.StartedAt).Seconds()
+	}
+	if elapsed > 0 && task.Current > 0 {
+		task.RatePerMinute = float64(task.Current) * 60 / elapsed
+		if task.Total > task.Current {
+			eta := int64(float64(task.Total-task.Current) / task.RatePerMinute * 60)
+			task.EtaSeconds = &eta
+		}
 	}
 }
 
@@ -545,6 +752,9 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 		"processed_archives":       strconv.FormatInt(report.ProcessedArchives, 10),
 		"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
 		"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
+		"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
+		"generated_covers":         strconv.FormatInt(report.GeneratedCovers, 10),
+		"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
 		"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
 		"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
 		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
@@ -556,6 +766,9 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 		"processed_archives":  report.ProcessedArchives,
 		"opened_archives":     report.OpenedArchives,
 		"hashed_files":        report.HashedFiles,
+		"queued_covers":       report.QueuedCovers,
+		"generated_covers":    report.GeneratedCovers,
+		"failed_archives":     report.FailedArchives,
 		"io_wait_ms":          report.IOWaitMillis,
 		"paused_ms":           report.PausedMillis,
 		"thumbnail_write_ms":  report.ThumbnailWriteMillis,
@@ -568,15 +781,40 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 	})
 }
 
+func (c *Controller) handleScannerProgressEvent(report scanner.ScanProgressReport) {
+	taskKey := ""
+	switch report.Scope {
+	case "series":
+		taskKey = fmt.Sprintf("scan_series_%d", report.ID)
+	default:
+		taskKey = fmt.Sprintf("scan_library_%d", report.ID)
+	}
+	metrics := make(map[string]int64, len(report.Metrics))
+	for key, value := range report.Metrics {
+		metrics[key] = value
+	}
+	current := int(report.Current)
+	total := int(report.Total)
+	message := "扫描中"
+	if report.CurrentItem != "" {
+		message = fmt.Sprintf("扫描: %s", filepath.Base(report.CurrentItem))
+	}
+	c.updateTaskDetails(taskKey, current, total, message, report.Phase, report.CurrentItem, metrics, nil)
+}
+
 func (c *Controller) startTask(key, taskType, message string, total int) bool {
-	return c.startTaskWithOptions(key, taskType, message, total, false)
+	return c.startTaskWithOptions(key, taskType, message, total, false, false)
 }
 
 func (c *Controller) startCancelableTask(key, taskType, message string, total int) bool {
-	return c.startTaskWithOptions(key, taskType, message, total, true)
+	return c.startTaskWithOptions(key, taskType, message, total, true, false)
 }
 
-func (c *Controller) startTaskWithOptions(key, taskType, message string, total int, canCancel bool) bool {
+func (c *Controller) startPausableCancelableTask(key, taskType, message string, total int) bool {
+	return c.startTaskWithOptions(key, taskType, message, total, true, true)
+}
+
+func (c *Controller) startTaskWithOptions(key, taskType, message string, total int, canCancel bool, canPause bool) bool {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -584,7 +822,7 @@ func (c *Controller) startTaskWithOptions(key, taskType, message string, total i
 		c.tasks = make(map[string]TaskStatus)
 	}
 
-	if existing, ok := c.tasks[key]; ok && existing.Status == "running" {
+	if existing, ok := c.tasks[key]; ok && taskIsActive(existing.Status) {
 		return false
 	}
 
@@ -601,6 +839,7 @@ func (c *Controller) startTaskWithOptions(key, taskType, message string, total i
 		Current:   0,
 		Total:     total,
 		CanCancel: canCancel,
+		CanPause:  canPause,
 		Retryable: isRetryableTaskType(taskType),
 		StartedAt: now,
 		UpdatedAt: now,
@@ -613,23 +852,34 @@ func (c *Controller) startTaskWithOptions(key, taskType, message string, total i
 	return true
 }
 
+func taskIsActive(status string) bool {
+	return status == "running" || status == "paused" || status == "cancelling"
+}
+
 func (c *Controller) newTaskContext(key string) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
+	gate := taskcontrol.NewPauseGate()
+	taskCtx := taskcontrol.WithPauseGate(ctx, gate)
 
 	c.taskMutex.Lock()
-	if c.taskCancels == nil {
-		c.taskCancels = make(map[string]context.CancelFunc)
+	if c.taskRuntimes == nil {
+		c.taskRuntimes = make(map[string]*TaskRuntime)
 	}
-	c.taskCancels[key] = cancel
+	c.taskRuntimes[key] = &TaskRuntime{
+		Context:   taskCtx,
+		Cancel:    cancel,
+		PauseGate: gate,
+		StartedAt: time.Now(),
+	}
 	c.taskMutex.Unlock()
 
 	cleanup := func() {
 		c.taskMutex.Lock()
-		delete(c.taskCancels, key)
+		delete(c.taskRuntimes, key)
 		c.taskMutex.Unlock()
 	}
 
-	return ctx, cleanup
+	return taskCtx, cleanup
 }
 
 func (c *Controller) updateTask(key string, current, total int, message string) {
@@ -650,6 +900,53 @@ func (c *Controller) updateTask(key string, current, total int, message string) 
 	task.UpdatedAt = time.Now()
 	c.taskSeq++
 	task.Sequence = c.taskSeq
+	enrichTaskProgress(&task)
+	c.tasks[key] = task
+	c.persistTaskStatus(task)
+	c.publishTaskStatusLocked(task)
+}
+
+func (c *Controller) updateTaskDetails(key string, current, total int, message, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	task, ok := c.tasks[key]
+	if !ok {
+		return
+	}
+	task.Current = current
+	if total >= 0 {
+		task.Total = total
+	}
+	if message != "" {
+		task.Message = message
+	}
+	if phase != "" {
+		task.Phase = phase
+	}
+	if currentItem != "" {
+		task.CurrentItem = currentItem
+	}
+	if len(metrics) > 0 {
+		if task.Metrics == nil {
+			task.Metrics = make(map[string]int64, len(metrics))
+		}
+		for k, v := range metrics {
+			task.Metrics[k] = v
+		}
+	}
+	if len(labels) > 0 {
+		if task.Labels == nil {
+			task.Labels = make(map[string]string, len(labels))
+		}
+		for k, v := range labels {
+			task.Labels[k] = v
+		}
+	}
+	task.UpdatedAt = time.Now()
+	c.taskSeq++
+	task.Sequence = c.taskSeq
+	enrichTaskProgress(&task)
 	c.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
@@ -669,6 +966,7 @@ func (c *Controller) setTaskMetadata(key string, params map[string]string, scope
 	}
 	c.taskSeq++
 	task.Sequence = c.taskSeq
+	hydrateTaskStatusDerivedFields(&task)
 	c.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
@@ -694,6 +992,7 @@ func (c *Controller) mergeTaskParams(key string, params map[string]string) {
 	task.UpdatedAt = time.Now()
 	c.taskSeq++
 	task.Sequence = c.taskSeq
+	hydrateTaskStatusDerivedFields(&task)
 	c.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
@@ -721,10 +1020,15 @@ func (c *Controller) mergeRunningTaskMetricSums(key string, increments map[strin
 		}
 		current, _ := strconv.ParseInt(task.Params[k], 10, 64)
 		task.Params[k] = strconv.FormatInt(current+inc, 10)
+		if task.Metrics == nil {
+			task.Metrics = make(map[string]int64)
+		}
+		task.Metrics[k] += inc
 	}
 	task.UpdatedAt = time.Now()
 	c.taskSeq++
 	task.Sequence = c.taskSeq
+	hydrateTaskStatusDerivedFields(&task)
 	c.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
@@ -780,6 +1084,66 @@ func taskIOMetricsParams(metrics taskIOMetrics) map[string]string {
 	return params
 }
 
+func (c *Controller) taskLimitsForPath(path string, force bool) TaskLimits {
+	cfg := c.currentConfig()
+	profile := scanner.NormalizeScanProfile(cfg.Scanner.ScanProfile)
+	if profile == scanner.ScanProfileRepair {
+		force = true
+	}
+	_ = force
+	policy := config.ResolveStoragePolicy(cfg, path)
+	workers := cfg.Scanner.Workers
+	if workers <= 0 {
+		workers = runtime.NumCPU() * 2
+	}
+	limit := policy.IOPolicy.ScanConcurrency
+	if profile != scanner.ScanProfileFast {
+		limit = minPositiveStorageLimit(limit, policy.IOPolicy.ArchiveOpenConcurrency)
+	}
+	if profile == scanner.ScanProfileIdentity || profile == scanner.ScanProfileRepair {
+		limit = minPositiveStorageLimit(limit, policy.IOPolicy.HashConcurrency)
+	}
+	effectiveWorkers := workers
+	if limit > 0 && effectiveWorkers > limit {
+		effectiveWorkers = limit
+	}
+	if effectiveWorkers < 1 {
+		effectiveWorkers = 1
+	}
+	return TaskLimits{
+		ScanProfile:                string(profile),
+		ScannerWorkersConfigured:   cfg.Scanner.Workers,
+		ScannerWorkersEffective:    effectiveWorkers,
+		StorageProfile:             policy.StorageProfile,
+		VolumeKey:                  policy.VolumeKey,
+		ScanConcurrency:            policy.IOPolicy.ScanConcurrency,
+		ArchiveOpenConcurrency:     policy.IOPolicy.ArchiveOpenConcurrency,
+		CoverConcurrency:           policy.IOPolicy.CoverConcurrency,
+		HashConcurrency:            policy.IOPolicy.HashConcurrency,
+		PauseBackgroundWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
+		IdleOnlyHeavyTasks:         policy.IOPolicy.IdleOnlyHeavyTasks,
+		DisableSameDiskPageCache:   policy.IOPolicy.DisableSameDiskPageCache,
+	}
+}
+
+func (c *Controller) setTaskEffectiveLimit(key string, limit TaskLimits) {
+	c.taskMutex.Lock()
+	defer c.taskMutex.Unlock()
+
+	task, ok := c.tasks[key]
+	if !ok {
+		return
+	}
+	task.EffectiveLimit = &limit
+	task.UpdatedAt = time.Now()
+	c.taskSeq++
+	task.Sequence = c.taskSeq
+	hydrateTaskStatusDerivedFields(&task)
+	c.tasks[key] = task
+	c.persistTaskStatus(task)
+	c.publishTaskStatusLocked(task)
+}
+
 func (c *Controller) finishTask(key, message string) {
 	c.completeTask(key, "completed", message)
 }
@@ -803,6 +1167,10 @@ func (c *Controller) completeTask(key, status, message string) {
 		task.Error = ""
 	}
 	task.CanCancel = false
+	task.CanPause = false
+	task.CanResume = false
+	task.PausedAt = nil
+	task.PauseReason = ""
 	if task.Total > 0 {
 		task.Current = task.Total
 	}
@@ -811,7 +1179,7 @@ func (c *Controller) completeTask(key, status, message string) {
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
-	delete(c.taskCancels, key)
+	delete(c.taskRuntimes, key)
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -829,12 +1197,15 @@ func (c *Controller) failTaskWithError(key, message, taskError string) {
 	task.Message = message
 	task.Error = taskError
 	task.CanCancel = false
+	task.CanPause = false
+	task.CanResume = false
+	task.PausedAt = nil
 	task.UpdatedAt = now
 	task.FinishedAt = &now
 	c.taskSeq++
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
-	delete(c.taskCancels, key)
+	delete(c.taskRuntimes, key)
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -1137,7 +1508,7 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task retry queued"})
 }
 
-func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
+func (c *Controller) pauseTask(w http.ResponseWriter, r *http.Request) {
 	taskKey := chi.URLParam(r, "taskKey")
 	if taskKey == "" {
 		jsonError(w, http.StatusBadRequest, "Missing task key")
@@ -1156,19 +1527,120 @@ func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusConflict, "Task is not running")
 		return
 	}
+	if !task.CanPause {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task cannot be paused")
+		return
+	}
+	runtime := c.taskRuntimes[taskKey]
+	if runtime == nil || runtime.PauseGate == nil {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task pause gate is not available")
+		return
+	}
+	now := time.Now()
+	runtime.PauseGate.Pause()
+	task.Status = "paused"
+	task.CanPause = false
+	task.CanResume = true
+	task.PausedAt = &now
+	task.PauseReason = "manual_pause"
+	task.Message = "任务已暂停，等待继续执行"
+	task.UpdatedAt = now
+	c.taskSeq++
+	task.Sequence = c.taskSeq
+	enrichTaskProgress(&task)
+	c.tasks[taskKey] = task
+	c.persistTaskStatus(task)
+	c.publishTaskStatusLocked(task)
+	c.taskMutex.Unlock()
+
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task pause requested"})
+}
+
+func (c *Controller) resumeTask(w http.ResponseWriter, r *http.Request) {
+	taskKey := chi.URLParam(r, "taskKey")
+	if taskKey == "" {
+		jsonError(w, http.StatusBadRequest, "Missing task key")
+		return
+	}
+
+	c.taskMutex.Lock()
+	task, ok := c.tasks[taskKey]
+	if !ok {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+	if task.Status != "paused" {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task is not paused")
+		return
+	}
+	runtime := c.taskRuntimes[taskKey]
+	if runtime == nil || runtime.PauseGate == nil {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task pause gate is not available")
+		return
+	}
+	runtime.PauseGate.Resume()
+	task.Status = "running"
+	task.CanPause = true
+	task.CanResume = false
+	task.PausedAt = nil
+	task.PauseReason = ""
+	task.Message = "任务已继续执行"
+	task.UpdatedAt = time.Now()
+	c.taskSeq++
+	task.Sequence = c.taskSeq
+	enrichTaskProgress(&task)
+	c.tasks[taskKey] = task
+	c.persistTaskStatus(task)
+	c.publishTaskStatusLocked(task)
+	c.taskMutex.Unlock()
+
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task resumed"})
+}
+
+func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
+	taskKey := chi.URLParam(r, "taskKey")
+	if taskKey == "" {
+		jsonError(w, http.StatusBadRequest, "Missing task key")
+		return
+	}
+
+	c.taskMutex.Lock()
+	task, ok := c.tasks[taskKey]
+	if !ok {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+	if task.Status != "running" && task.Status != "paused" {
+		c.taskMutex.Unlock()
+		jsonError(w, http.StatusConflict, "Task is not running")
+		return
+	}
 	if !task.CanCancel {
 		c.taskMutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task cannot be cancelled")
 		return
 	}
-	cancel, ok := c.taskCancels[taskKey]
-	if !ok || cancel == nil {
+	runtime := c.taskRuntimes[taskKey]
+	if runtime == nil || runtime.Cancel == nil {
 		c.taskMutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task cancellation is not available")
 		return
 	}
 
+	runtime.Cancel()
+	if runtime.PauseGate != nil {
+		runtime.PauseGate.Resume()
+	}
 	task.CanCancel = false
+	task.CanPause = false
+	task.CanResume = false
+	task.Status = "cancelling"
 	task.Message = "正在取消任务..."
 	task.UpdatedAt = time.Now()
 	c.taskSeq++
@@ -1178,7 +1650,6 @@ func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
 	c.publishTaskStatusLocked(task)
 	c.taskMutex.Unlock()
 
-	cancel()
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task cancellation requested"})
 }
 
@@ -1271,6 +1742,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/tasks", c.listTasks)
 		r.Delete("/system/tasks", c.clearTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
+		r.Post("/system/tasks/{taskKey}/pause", c.pauseTask)
+		r.Post("/system/tasks/{taskKey}/resume", c.resumeTask)
 		r.Post("/system/tasks/{taskKey}/cancel", c.cancelTask)
 		r.Get("/system/koreader", c.getKOReaderSettings)
 		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
@@ -1635,9 +2108,10 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) bool {
 	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
-	if !c.startCancelableTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 1) {
+	if !c.startPausableCancelableTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 0) {
 		return false
 	}
+	limits := c.taskLimitsForPath(lib.Path, force)
 	storagePolicy := config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
 	c.setTaskMetadata(taskKey, map[string]string{
 		"force":                    strconv.FormatBool(force),
@@ -1647,6 +2121,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) boo
 		"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
 		"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
 	}, lib.Name)
+	c.setTaskEffectiveLimit(taskKey, limits)
 	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
 
 	c.runBackground(func() {
@@ -1697,7 +2172,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
-	if !c.startCancelableTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 1) {
+	if !c.startPausableCancelableTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 0) {
 		return false
 	}
 	scopeName := ""
@@ -1712,6 +2187,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	if series, err := c.store.GetSeries(context.Background(), seriesID); err == nil {
 		if lib, libErr := c.store.GetLibrary(context.Background(), series.LibraryID); libErr == nil {
 			storagePolicy = config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
+			c.setTaskEffectiveLimit(taskKey, c.taskLimitsForPath(lib.Path, force))
 		}
 	}
 	c.setTaskMetadata(taskKey, map[string]string{
@@ -1797,6 +2273,7 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	c.setTaskMetadata(taskKey, nil, scopeName)
 
 	c.runBackground(func() {
+		c.updateTaskDetails(taskKey, 0, 1, fmt.Sprintf("开始清理资源库 #%d", libraryID), "scanning_records", "", nil, nil)
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
 		if err != nil {
 			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
@@ -3121,6 +3598,9 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 	}
 	total := len(libs)
 	for i, lib := range libs {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return err
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -3176,7 +3656,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchRebuildThumbnailsTask() error {
-	if !c.startCancelableTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 1) {
+	if !c.startPausableCancelableTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 1) {
 		return fmt.Errorf("task already running")
 	}
 	policy := config.ResolveStoragePolicy(c.currentConfig(), "")
@@ -3186,6 +3666,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
 		"execution_mode":    "low_impact",
 	}, "系统")
+	c.setTaskEffectiveLimit("rebuild_thumbnails", c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.newTaskContext("rebuild_thumbnails")
 
 	thumbDir := filepath.Join(".", "data", "thumbnails")
@@ -3196,17 +3677,24 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 
 	c.runBackground(func() {
 		defer cleanupCancel()
+		c.updateTaskDetails("rebuild_thumbnails", 0, 1, "正在清理缩略图缓存", "clearing_cache", thumbDir, nil, nil)
 		if err := os.RemoveAll(thumbDir); err != nil {
 			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("清理缩略图缓存失败: %v", err), err.Error())
+			return
+		}
+		if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
+			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
 			return
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
 			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("创建缩略图缓存目录失败: %v", err), err.Error())
 			return
 		}
-		c.updateTask("rebuild_thumbnails", 0, -1, "缩略图缓存已清空，正在按低冲击策略重建")
+		c.updateTaskDetails("rebuild_thumbnails", 0, -1, "缩略图缓存已清空，正在按低冲击策略重建", "reading_metadata", "", nil, nil)
 		err := c.runGlobalScan(taskCtx, true, func(current, total int, lib database.Library) {
-			c.updateTask("rebuild_thumbnails", current, total, fmt.Sprintf("正在重建缩略图: %s", lib.Name))
+			c.updateTaskDetails("rebuild_thumbnails", current, total, fmt.Sprintf("正在重建缩略图: %s", lib.Name), "reading_metadata", lib.Path, nil, map[string]string{
+				"current_library": lib.Name,
+			})
 		})
 		if errors.Is(err, context.Canceled) {
 			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
@@ -3216,6 +3704,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("缩略图重建失败: %v", err), err.Error())
 			return
 		}
+		c.updateTaskDetails("rebuild_thumbnails", 1, 1, "正在等待封面队列收尾", "queueing_covers", "", nil, nil)
 		if err := c.scanner.WaitForCoverQueue(taskCtx); errors.Is(err, context.Canceled) {
 			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
 			return
@@ -3239,16 +3728,30 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
-	if !c.startTask("rebuild_file_identities", "rebuild_file_identities", "开始重建文件身份索引", 0) {
+	if !c.startPausableCancelableTask("rebuild_file_identities", "rebuild_file_identities", "开始重建文件身份索引", 0) {
 		return fmt.Errorf("task already running")
 	}
 	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "系统")
+	c.setTaskEffectiveLimit("rebuild_file_identities", c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.newTaskContext("rebuild_file_identities")
 
 	c.runBackground(func() {
-		updated, total, err := c.runRebuildFileIdentities(context.Background(), 500, func(current, total int, message string, metrics taskIOMetrics) {
-			c.updateTask("rebuild_file_identities", current, total, message)
+		defer cleanupCancel()
+		updated, total, err := c.runRebuildFileIdentities(taskCtx, 500, func(current, total int, message string, metrics taskIOMetrics) {
+			c.updateTaskDetails("rebuild_file_identities", current, total, message, "hashing", "", map[string]int64{
+				"hashed_files": metrics.HashedFiles,
+				"io_wait_ms":   metrics.IOWaitMillis,
+				"paused_ms":    metrics.PausedMillis,
+			}, map[string]string{
+				"storage_profile": metrics.StorageProfile,
+				"volume_key":      metrics.VolumeKey,
+			})
 			c.mergeTaskParams("rebuild_file_identities", taskIOMetricsParams(metrics))
 		})
+		if errors.Is(err, context.Canceled) {
+			c.completeTask("rebuild_file_identities", "cancelled", "文件身份索引重建已取消")
+			return
+		}
 		if err != nil {
 			c.failTaskWithError("rebuild_file_identities", fmt.Sprintf("文件身份索引重建失败: %v", err), err.Error())
 			return
@@ -3272,6 +3775,9 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 	metrics := taskIOMetrics{}
 	var afterID int64
 	for {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return updated, total, err
+		}
 		books, err := c.store.ListBooksMissingQuickHashBatch(ctx, afterID, limit)
 		if err != nil {
 			return updated, total, err
@@ -3281,6 +3787,9 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 		}
 
 		for _, book := range books {
+			if err := taskcontrol.Wait(ctx); err != nil {
+				return updated, total, err
+			}
 			policy, releaseToken, waited, paused, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
 			if tokenErr != nil {
 				return updated, total, tokenErr
@@ -3333,7 +3842,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 		return false
 	}
 
-	if !c.startCancelableTask(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "开始后台低优先级补算 KOReader 二进制哈希", int(missingCount)) {
+	if !c.startPausableCancelableTask(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "开始后台低优先级补算 KOReader 二进制哈希", int(missingCount)) {
 		return false
 	}
 	c.setTaskMetadata(lowPriorityBookHashTaskKey, map[string]string{
@@ -3341,11 +3850,19 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 		"profile":    "full_hash_low_priority",
 		"reason":     reason,
 	}, "系统")
+	c.setTaskEffectiveLimit(lowPriorityBookHashTaskKey, c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.newTaskContext(lowPriorityBookHashTaskKey)
 
 	c.runBackground(func() {
 		updated, total, err := c.runBackfillFullHashesLowPriority(taskCtx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, message string, metrics taskIOMetrics) {
-			c.updateTask(lowPriorityBookHashTaskKey, current, total, message)
+			c.updateTaskDetails(lowPriorityBookHashTaskKey, current, total, message, "hashing", "", map[string]int64{
+				"hashed_files": metrics.HashedFiles,
+				"io_wait_ms":   metrics.IOWaitMillis,
+				"paused_ms":    metrics.PausedMillis,
+			}, map[string]string{
+				"storage_profile": metrics.StorageProfile,
+				"volume_key":      metrics.VolumeKey,
+			})
 			c.mergeTaskParams(lowPriorityBookHashTaskKey, taskIOMetricsParams(metrics))
 		})
 		cleanupCancel()
@@ -3376,7 +3893,7 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 	metrics := taskIOMetrics{}
 	var afterID int64
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return updated, total, err
 		}
 		books, err := c.store.ListBooksMissingIdentityBatch(ctx, config.KOReaderMatchModeBinaryHash, afterID, limit)
@@ -3388,7 +3905,7 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 		}
 
 		for _, book := range books {
-			if err := ctx.Err(); err != nil {
+			if err := taskcontrol.Wait(ctx); err != nil {
 				return updated, total, err
 			}
 			policy, releaseToken, waited, paused, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
@@ -3426,6 +3943,9 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 		}
 
 		if batchGap > 0 {
+			if err := taskcontrol.Wait(ctx); err != nil {
+				return updated, total, err
+			}
 			timer := time.NewTimer(batchGap)
 			select {
 			case <-timer.C:
@@ -3612,7 +4132,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 // aiGroupingLibrary 扫描资料库中没有集合的系列，利用 LLM 进行智能分组
 func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	taskKey := fmt.Sprintf("ai_grouping_library_%d", libID)
-	if !c.startTask(taskKey, "ai_grouping", "AI 智能分组开始...", 1) {
+	if !c.startPausableCancelableTask(taskKey, "ai_grouping", "AI 智能分组开始...", 1) {
 		return false
 	}
 	scopeName := ""
@@ -3620,12 +4140,19 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 		scopeName = lib.Name
 	}
 	c.setTaskMetadata(taskKey, nil, scopeName)
+	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
 
 	c.runBackground(func() {
+		defer cleanupCancel()
 		libraryID, taskLocale := libID, locale
-		ctx := metadata.WithLocale(context.Background(), taskLocale)
+		ctx := metadata.WithLocale(taskCtx, taskLocale)
 
+		c.updateTaskDetails(taskKey, 0, 1, "正在读取待分组系列", "collecting_series", "", nil, nil)
 		seriesRows, err := c.store.GetSeriesWithoutCollection(ctx, libraryID)
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
+			return
+		}
 		if err != nil {
 			slog.Error("Failed to fetch series for grouping", "error", err)
 			c.failTaskWithError(taskKey, "AI 分组失败 (数据库获取异常)", err.Error())
@@ -3636,6 +4163,10 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 
 		if len(seriesRows) == 0 {
 			c.finishTask(taskKey, "此库中所有作品已分组完成")
+			return
+		}
+		if err := taskcontrol.Wait(ctx); errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
 			return
 		}
 
@@ -3659,14 +4190,28 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 
 		cfg := c.currentConfig()
 		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
+		c.updateTaskDetails(taskKey, 0, 1, "正在请求 AI 分组", "requesting_provider", "", map[string]int64{
+			"candidate_series": int64(len(candidates)),
+		}, map[string]string{
+			"provider": provider.Name(),
+		})
 		collections, err := provider.GenerateGrouping(ctx, candidates)
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
+			return
+		}
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)
 			c.failTaskWithError(taskKey, fmt.Sprintf("AI 分组失败: %s", err.Error()), err.Error())
 			return
 		}
 
+		c.updateTaskDetails(taskKey, 1, 1, "正在写入 AI 分组审阅", "queueing_review", "", nil, nil)
 		review, reviewCollections, err := c.createAIGroupingReview(ctx, libraryID, provider.Name(), candidates, collections)
+		if errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
+			return
+		}
 		if err != nil {
 			slog.Error("Failed to create AI grouping review", "library_id", libraryID, "error", err)
 			c.failTaskWithError(taskKey, "AI 分组审核生成失败", err.Error())

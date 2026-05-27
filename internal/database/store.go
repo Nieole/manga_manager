@@ -872,7 +872,7 @@ func (s *SqlStore) ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRe
 }
 
 func (s *SqlStore) DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error) {
-	query := `DELETE FROM tasks WHERE status != 'running'`
+	query := `DELETE FROM tasks WHERE status NOT IN ('running', 'paused', 'cancelling')`
 	args := make([]any, 0)
 	if filters.Status != "" {
 		query += ` AND status = ?`
@@ -903,12 +903,12 @@ func (s *SqlStore) MarkInterruptedTasks(ctx context.Context, message string) (in
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks
-		SET status = 'failed',
+		SET status = 'interrupted',
 		    message = ?,
 		    error = ?,
 		    updated_at = CURRENT_TIMESTAMP,
 		    finished_at = CURRENT_TIMESTAMP
-		WHERE status = 'running'
+		WHERE status IN ('running', 'paused', 'cancelling')
 	`, message, message)
 	if err != nil {
 		return 0, err

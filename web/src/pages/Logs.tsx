@@ -69,7 +69,7 @@ function logLevelBadgeClass(level: string) {
 
 function isInterruptedTask(task: TaskStatus) {
   const error = task.error || '';
-  return task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart'));
+  return task.status === 'interrupted' || (task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart')));
 }
 
 const TASK_IO_PARAM_KEYS = [

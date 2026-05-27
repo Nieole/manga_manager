@@ -14,6 +14,7 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/taskcontrol"
 )
 
 var (
@@ -259,6 +260,9 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 	updated := 0
 	var afterID int64
 	for {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return updated, total, err
+		}
 		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchConfig.MatchMode, afterID, limit)
 		if err != nil {
 			return updated, total, err
@@ -268,6 +272,9 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 		}
 
 		for _, book := range books {
+			if err := taskcontrol.Wait(ctx); err != nil {
+				return updated, total, err
+			}
 			params := database.UpdateBookIdentityParams{ID: book.ID}
 			if matchConfig.MatchMode == config.KOReaderMatchModeBinaryHash {
 				fileHash, err := FingerprintFile(book.Path)
@@ -310,6 +317,9 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 	processed := 0
 	var afterID int64
 	for {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return updated, total, err
+		}
 		items, err := s.store.ListUnmatchedKOReaderProgressBatch(ctx, afterID, limit)
 		if err != nil {
 			return updated, total, err
@@ -319,6 +329,9 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 		}
 
 		for _, item := range items {
+			if err := taskcontrol.Wait(ctx); err != nil {
+				return updated, total, err
+			}
 			matchConfig := s.currentMatchConfig()
 			documentKey := normalizeDocumentForMatch(item.Document, matchConfig)
 			match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension)

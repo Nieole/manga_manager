@@ -22,6 +22,7 @@ import (
 	"manga-manager/internal/parser"
 	"manga-manager/internal/search"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/taskcontrol"
 )
 
 type Scanner struct {
@@ -40,6 +41,7 @@ type Scanner struct {
 	// 批量插入结束后的回调播送机制
 	onBatchIngested func(action string)
 	onScanMetrics   func(ScanMetricsReport)
+	onScanProgress  func(ScanProgressReport)
 }
 
 func NewScanner(store database.Store, engine *search.Engine, cfg *config.Manager) *Scanner {
@@ -61,6 +63,10 @@ func (s *Scanner) SetBatchCallback(cb func(string)) {
 
 func (s *Scanner) SetScanMetricsCallback(cb func(ScanMetricsReport)) {
 	s.onScanMetrics = cb
+}
+
+func (s *Scanner) SetScanProgressCallback(cb func(ScanProgressReport)) {
+	s.onScanProgress = cb
 }
 
 func (s *Scanner) currentConfig() config.Config {
@@ -122,6 +128,9 @@ type scanMetrics struct {
 	processedArchives    atomic.Int64
 	openedArchives       atomic.Int64
 	hashedFiles          atomic.Int64
+	queuedCovers         atomic.Int64
+	generatedCovers      atomic.Int64
+	failedArchives       atomic.Int64
 	ioWaitMillis         atomic.Int64
 	pausedMillis         atomic.Int64
 	thumbnailWriteMillis atomic.Int64
@@ -133,6 +142,9 @@ type scanMetricsSnapshot struct {
 	processedArchives    int64
 	openedArchives       int64
 	hashedFiles          int64
+	queuedCovers         int64
+	generatedCovers      int64
+	failedArchives       int64
 	ioWaitMillis         int64
 	pausedMillis         int64
 	thumbnailWriteMillis int64
@@ -150,10 +162,80 @@ type ScanMetricsReport struct {
 	ProcessedArchives      int64
 	OpenedArchives         int64
 	HashedFiles            int64
+	QueuedCovers           int64
+	GeneratedCovers        int64
+	FailedArchives         int64
 	IOWaitMillis           int64
 	PausedMillis           int64
 	ThumbnailWriteMillis   int64
 	DurationMillis         int64
+}
+
+type ScanProgressReport struct {
+	Scope       string
+	ID          int64
+	Phase       string
+	CurrentItem string
+	Current     int64
+	Total       int64
+	Metrics     map[string]int64
+}
+
+type scanProgressReporter struct {
+	scope   string
+	id      int64
+	metrics *scanMetrics
+	cb      func(ScanProgressReport)
+
+	mu       sync.Mutex
+	lastSent time.Time
+}
+
+func newScanProgressReporter(scope string, id int64, metrics *scanMetrics, cb func(ScanProgressReport)) *scanProgressReporter {
+	return &scanProgressReporter{scope: scope, id: id, metrics: metrics, cb: cb}
+}
+
+func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
+	if r == nil || r.cb == nil {
+		return
+	}
+	now := time.Now()
+	r.mu.Lock()
+	if !force && now.Sub(r.lastSent) < 250*time.Millisecond {
+		r.mu.Unlock()
+		return
+	}
+	r.lastSent = now
+	r.mu.Unlock()
+
+	snapshot := r.metrics.snapshot()
+	current := snapshot.skippedArchives + snapshot.processedArchives
+	total := snapshot.discoveredArchives
+	if phase == "discovering" {
+		current = snapshot.discoveredArchives
+		total = 0
+	}
+	r.cb(ScanProgressReport{
+		Scope:       r.scope,
+		ID:          r.id,
+		Phase:       phase,
+		CurrentItem: currentItem,
+		Current:     current,
+		Total:       total,
+		Metrics: map[string]int64{
+			"discovered_archives": snapshot.discoveredArchives,
+			"skipped_archives":    snapshot.skippedArchives,
+			"processed_archives":  snapshot.processedArchives,
+			"opened_archives":     snapshot.openedArchives,
+			"hashed_files":        snapshot.hashedFiles,
+			"queued_covers":       snapshot.queuedCovers,
+			"generated_covers":    snapshot.generatedCovers,
+			"failed_archives":     snapshot.failedArchives,
+			"io_wait_ms":          snapshot.ioWaitMillis,
+			"paused_ms":           snapshot.pausedMillis,
+			"thumbnail_write_ms":  snapshot.thumbnailWriteMillis,
+		},
+	})
 }
 
 func (m *scanMetrics) snapshot() scanMetricsSnapshot {
@@ -166,6 +248,9 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 		processedArchives:    m.processedArchives.Load(),
 		openedArchives:       m.openedArchives.Load(),
 		hashedFiles:          m.hashedFiles.Load(),
+		queuedCovers:         m.queuedCovers.Load(),
+		generatedCovers:      m.generatedCovers.Load(),
+		failedArchives:       m.failedArchives.Load(),
 		ioWaitMillis:         m.ioWaitMillis.Load(),
 		pausedMillis:         m.pausedMillis.Load(),
 		thumbnailWriteMillis: m.thumbnailWriteMillis.Load(),
@@ -310,6 +395,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	opts := s.scanOptions(force)
 	started := time.Now()
 	metrics := &scanMetrics{}
+	progress := newScanProgressReporter("library", libraryID, metrics, s.onScanProgress)
+	progress.publish("loading_existing_books", "", true)
 
 	// Step 0: Pre-load cache for increment scanning
 	bookCache := make(map[string]bookScanSnapshot)
@@ -340,7 +427,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, libraryID, rootPath, job, opts, metrics, results)
+				s.workerProcess(ctx, libraryID, rootPath, job, opts, metrics, progress, results)
 			}
 		}()
 	}
@@ -351,13 +438,17 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, libraryID, results, metrics)
+		s.ingestResults(ctx, libraryID, results, metrics, progress)
 	}()
 
 	// 第 1 阶段：发现者 (The Discoverer)
 	// 使用极速的 filepath.WalkDir 替代 filepath.Walk 减少系统软中断
 	var walkErr error
+	progress.publish("discovering", rootPath, true)
 	walkErr = filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return err
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -373,6 +464,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		ext := strings.ToLower(filepath.Ext(path))
 		if config.IsSupportedArchiveExtension(ext) {
 			metrics.discoveredArchives.Add(1)
+			progress.publish("discovering", path, false)
 			info, err := d.Info()
 			if err != nil {
 				return nil
@@ -384,6 +476,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 					// 若存在同名记录且时间与大小精确吻合，跳过这本卷的解析派发
 					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
 						metrics.skippedArchives.Add(1)
+						progress.publish("comparing", path, false)
 						return nil
 					}
 				}
@@ -392,6 +485,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 			select {
 			case jobs <- scanJob{path: path, info: info}:
 				metrics.processedArchives.Add(1)
+				progress.publish("reading_metadata", path, false)
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -399,7 +493,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		return nil
 	})
 
-	close(jobs)     // 通知 Workers 没活儿了
+	close(jobs) // 通知 Workers 没活儿了
+	progress.publish("reading_metadata", "", true)
 	wg.Wait()       // 等待所有 Worker 的解析收尾
 	close(results)  // 通知 Ingester 没数据投递了
 	ingestWg.Wait() // 等待 Ingester 将批次强刷入磁盘
@@ -408,6 +503,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		walkErr = ctx.Err()
 	}
 	s.logScanCompleted("library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr)
+	progress.publish("completed", "", true)
 	return walkErr
 }
 
@@ -432,6 +528,8 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	opts := s.scanOptions(force)
 	started := time.Now()
 	metrics := &scanMetrics{}
+	progress := newScanProgressReporter("series", seriesID, metrics, s.onScanProgress)
+	progress.publish("loading_existing_books", "", true)
 	bookCache := make(map[string]bookScanSnapshot)
 	if !opts.Force {
 		existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID)
@@ -453,7 +551,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				s.workerProcess(ctx, series.LibraryID, library.Path, job, opts, metrics, results)
+				s.workerProcess(ctx, series.LibraryID, library.Path, job, opts, metrics, progress, results)
 			}
 		}()
 	}
@@ -462,11 +560,15 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, series.LibraryID, results, metrics)
+		s.ingestResults(ctx, series.LibraryID, results, metrics, progress)
 	}()
 
 	var walkErr error
+	progress.publish("discovering", series.Path, true)
 	walkErr = filepath.WalkDir(series.Path, func(path string, d os.DirEntry, err error) error {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return err
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -481,6 +583,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		ext := strings.ToLower(filepath.Ext(path))
 		if config.IsSupportedArchiveExtension(ext) {
 			metrics.discoveredArchives.Add(1)
+			progress.publish("discovering", path, false)
 			info, err := d.Info()
 			if err != nil {
 				return nil
@@ -490,6 +593,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 				if existing, exists := bookCache[path]; exists {
 					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
 						metrics.skippedArchives.Add(1)
+						progress.publish("comparing", path, false)
 						return nil
 					}
 				}
@@ -498,6 +602,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 			select {
 			case jobs <- scanJob{path: path, info: info}:
 				metrics.processedArchives.Add(1)
+				progress.publish("reading_metadata", path, false)
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -506,6 +611,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	})
 
 	close(jobs)
+	progress.publish("reading_metadata", "", true)
 	wg.Wait()
 	close(results)
 	ingestWg.Wait()
@@ -514,6 +620,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		walkErr = ctx.Err()
 	}
 	s.logScanCompleted("series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr)
+	progress.publish("completed", "", true)
 	return walkErr
 }
 
@@ -579,6 +686,9 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 		"processed_archives", snapshot.processedArchives,
 		"opened_archives", snapshot.openedArchives,
 		"hashed_files", snapshot.hashedFiles,
+		"queued_covers", snapshot.queuedCovers,
+		"generated_covers", snapshot.generatedCovers,
+		"failed_archives", snapshot.failedArchives,
 		"io_wait_ms", snapshot.ioWaitMillis,
 		"paused_ms", snapshot.pausedMillis,
 		"thumbnail_write_ms", snapshot.thumbnailWriteMillis,
@@ -616,6 +726,9 @@ func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.Resol
 		ProcessedArchives:      snapshot.processedArchives,
 		OpenedArchives:         snapshot.openedArchives,
 		HashedFiles:            snapshot.hashedFiles,
+		QueuedCovers:           snapshot.queuedCovers,
+		GeneratedCovers:        snapshot.generatedCovers,
+		FailedArchives:         snapshot.failedArchives,
 		IOWaitMillis:           snapshot.ioWaitMillis,
 		PausedMillis:           snapshot.pausedMillis,
 		ThumbnailWriteMillis:   snapshot.thumbnailWriteMillis,
@@ -623,11 +736,14 @@ func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.Resol
 	})
 }
 
-func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, opts ScanOptions, metrics *scanMetrics, results chan<- scanResult) {
+func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath string, job scanJob, opts ScanOptions, metrics *scanMetrics, progress *scanProgressReporter, results chan<- scanResult) {
 	select {
 	case <-ctx.Done():
 		return
 	default:
+	}
+	if err := taskcontrol.Wait(ctx); err != nil {
+		return
 	}
 
 	cfg := s.currentConfig()
@@ -637,6 +753,10 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	closeArchive := func() {}
 	if opts.Profile.opensArchive() {
 		var err error
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return
+		}
+		progress.publish("reading_metadata", job.path, false)
 		releaseToken, waited, paused, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.ArchiveOpenConcurrency), storageio.WorkKindMetadataScan)
 		if err != nil {
 			return
@@ -650,12 +770,16 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		arc, err = s.openArchive(job.path)
 		if err != nil {
 			releaseToken()
+			if metrics != nil {
+				metrics.failedArchives.Add(1)
+			}
 			slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
 			return
 		}
 		if metrics != nil {
 			metrics.openedArchives.Add(1)
 		}
+		progress.publish("reading_metadata", job.path, false)
 		closed := false
 		closeArchive = func() {
 			if closed {
@@ -669,6 +793,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 
 		pages, err = arc.GetPages()
 		if err != nil {
+			if metrics != nil {
+				metrics.failedArchives.Add(1)
+			}
 			slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
 			return
 		}
@@ -759,6 +886,10 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	var fileHash string
 	if opts.Profile.computesFullHash(cfg) {
 		var err error
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return
+		}
+		progress.publish("hashing", job.path, false)
 		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
 		if tokenErr != nil {
 			return
@@ -774,6 +905,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
+		progress.publish("hashing", job.path, false)
 		if err != nil {
 			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
 		}
@@ -782,6 +914,10 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	var quickHash string
 	if opts.Profile.computesQuickHash() {
 		var err error
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return
+		}
+		progress.publish("hashing", job.path, false)
 		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
 		if tokenErr != nil {
 			return
@@ -797,6 +933,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
+		progress.publish("hashing", job.path, false)
 		if err != nil {
 			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
 		}
@@ -820,7 +957,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 }
 
-func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics) {
+func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics, progress *scanProgressReporter) {
 	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
 	seriesCache := make(map[string]database.ListSeriesByLibraryRow)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
@@ -847,6 +984,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		if len(batch) == 0 {
 			return
 		}
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return
+		}
+		progress.publish("writing_database", "", true)
 
 		type indexTask struct {
 			book       database.Book
@@ -1035,6 +1176,9 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				name      string
 				coverPath string
 			}
+			if len(tasks) > 0 && s.engine != nil {
+				progress.publish("refreshing_search", "", true)
+			}
 			seriesIdxMap := make(map[int64]sInfo)
 			for _, t := range tasks {
 				_ = s.engine.IndexBook(t.book, t.seriesName)
@@ -1056,6 +1200,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			if s.onBatchIngested != nil {
 				s.onBatchIngested("batch_inserted")
 			}
+			progress.publish("queueing_covers", "", true)
 			s.enqueueCoverJobs(ctx, coverJobs)
 		}
 
@@ -1126,14 +1271,15 @@ func (s *Scanner) enqueueCoverJobs(ctx context.Context, jobs []coverJob) {
 	}
 	s.startCoverWorkers()
 	for _, job := range jobs {
-		select {
-		case <-ctx.Done():
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return
-		default:
 		}
 		s.coverWG.Add(1)
 		select {
 		case s.coverQueue <- job:
+			if job.metrics != nil {
+				job.metrics.queuedCovers.Add(1)
+			}
 		case <-ctx.Done():
 			s.coverWG.Done()
 			return
@@ -1178,10 +1324,8 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	select {
-	case <-ctx.Done():
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return
-	default:
 	}
 
 	cfg := s.currentConfig()
@@ -1196,6 +1340,7 @@ func (s *Scanner) runCoverJob(job coverJob) {
 
 	sqlStore, ok := s.store.(*database.SqlStore)
 	if !ok {
+		removeGeneratedThumbnail(cfg, coverPath.String)
 		slog.Warn("Queued thumbnail generated but store does not support direct cover update", "book_id", job.bookID)
 		return
 	}
@@ -1205,11 +1350,15 @@ func (s *Scanner) runCoverJob(job coverJob) {
 		WHERE id = ? AND (cover_path IS NULL OR cover_path = '')
 	`, coverPath.String, job.bookID)
 	if err != nil {
+		removeGeneratedThumbnail(cfg, coverPath.String)
 		slog.Warn("Failed to update queued thumbnail cover path", "book_id", job.bookID, "error", err)
 		return
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return
+	}
+	if job.metrics != nil {
+		job.metrics.generatedCovers.Add(1)
 	}
 	if err := s.store.RefreshSeriesStats(ctx, job.seriesID); err != nil {
 		slog.Warn("Failed to refresh series stats after queued thumbnail", "series_id", job.seriesID, "error", err)
@@ -1324,6 +1473,15 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 		)
 	}
 	return sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}, nil
+}
+
+func removeGeneratedThumbnail(cfg config.Config, relativePath string) {
+	relativePath = strings.TrimSpace(relativePath)
+	if relativePath == "" || filepath.IsAbs(relativePath) {
+		return
+	}
+	fullPath := filepath.Join(thumbnailBaseDir(cfg), filepath.FromSlash(relativePath))
+	_ = os.Remove(fullPath)
 }
 
 func (s *Scanner) writeThumbnailFile(ctx context.Context, cfg config.Config, sourcePolicy config.ResolvedStoragePolicy, sourcePath, thumbDir, fullPath string, data []byte) (time.Duration, time.Duration, time.Duration, error) {

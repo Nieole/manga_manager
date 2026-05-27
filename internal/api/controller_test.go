@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,6 +24,7 @@ import (
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/search"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -87,7 +89,7 @@ func newTestController(t testing.TB) (*Controller, database.Store, *search.Engin
 		external:            external.NewManager(store, 30*time.Minute),
 		configPath:          configPath,
 		tasks:               make(map[string]TaskStatus),
-		taskCancels:         make(map[string]context.CancelFunc),
+		taskRuntimes:        make(map[string]*TaskRuntime),
 		messages:            make(chan string, 32),
 	}
 
@@ -143,6 +145,49 @@ func (s *countingStore) UpdateBookProgress(ctx context.Context, arg database.Upd
 func (s *countingStore) LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error {
 	s.logReadingActivityCalls++
 	return s.Store.LogReadingActivity(ctx, bookID, pagesRead)
+}
+
+type blockingMetadataProvider struct {
+	requests chan string
+	release  chan struct{}
+}
+
+func newBlockingMetadataProvider() *blockingMetadataProvider {
+	return &blockingMetadataProvider{
+		requests: make(chan string, 8),
+		release:  make(chan struct{}),
+	}
+}
+
+func (p *blockingMetadataProvider) Name() string {
+	return "TestProvider"
+}
+
+func (p *blockingMetadataProvider) FetchSeriesMetadata(ctx context.Context, title string) (*metadata.SeriesMetadata, error) {
+	select {
+	case p.requests <- title:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return &metadata.SeriesMetadata{
+		Title:      title + " scraped",
+		Summary:    "summary " + title,
+		Provider:   p.Name(),
+		Confidence: 0.95,
+	}, nil
+}
+
+func (p *blockingMetadataProvider) SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*metadata.SeriesMetadata, int, error) {
+	result, err := p.FetchSeriesMetadata(ctx, title)
+	if err != nil || result == nil {
+		return nil, 0, err
+	}
+	return []*metadata.SeriesMetadata{result}, 1, nil
 }
 
 func createTestKOReaderAccount(t *testing.T, controller *Controller, username string) KOReaderAccountResponse {
@@ -2443,8 +2488,8 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 	if len(tasks) != 1 {
 		t.Fatalf("expected one task, got %+v", tasks)
 	}
-	if tasks[0].Status != "failed" || tasks[0].Error == "" {
-		t.Fatalf("expected interrupted task to be failed with error, got %+v", tasks[0])
+	if tasks[0].Status != "interrupted" || tasks[0].Error == "" {
+		t.Fatalf("expected interrupted task status with error, got %+v", tasks[0])
 	}
 	if !tasks[0].Retryable {
 		t.Fatalf("expected interrupted task to remain retryable")
@@ -2571,8 +2616,392 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	if task.CanCancel {
 		t.Fatalf("expected task to be marked non-cancellable after cancel request: %+v", task)
 	}
+	if task.Status != "cancelling" {
+		t.Fatalf("expected cancelling status, got %+v", task)
+	}
 	if task.Message != "正在取消任务..." {
 		t.Fatalf("expected cancelling message, got %q", task.Message)
+	}
+}
+
+func TestPauseResumeTaskLifecycle(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	taskKey := "scan_library_42"
+	if !controller.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
+		t.Fatal("expected task to start")
+	}
+	ctx, cleanup := controller.newTaskContext(taskKey)
+	defer cleanup()
+
+	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
+	rec := httptest.NewRecorder()
+	controller.pauseTask(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	controller.taskMutex.Lock()
+	paused := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	if paused.Status != "paused" || !paused.CanResume || paused.CanPause {
+		t.Fatalf("expected paused resumable task, got %+v", paused)
+	}
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- taskcontrol.Wait(ctx)
+	}()
+	select {
+	case err := <-waitDone:
+		t.Fatalf("expected checkpoint to block while paused, got %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	req = requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/resume", nil, "taskKey", taskKey)
+	rec = httptest.NewRecorder()
+	controller.resumeTask(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected resume 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case err := <-waitDone:
+		if err != nil {
+			t.Fatalf("expected resumed checkpoint without error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected checkpoint to unblock after resume")
+	}
+
+	controller.taskMutex.Lock()
+	resumed := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	if resumed.Status != "running" || resumed.CanResume || !resumed.CanPause {
+		t.Fatalf("expected running pausable task, got %+v", resumed)
+	}
+}
+
+func TestTaskStatusHydratesDerivedFieldsFromParams(t *testing.T) {
+	pausedAt := time.Now().UTC().Truncate(time.Second)
+	record := database.TaskRecord{
+		Key:       "scan_library_7",
+		Type:      "scan_library",
+		Scope:     "library",
+		Status:    "paused",
+		Message:   "paused",
+		Current:   5,
+		Total:     10,
+		StartedAt: time.Now().Add(-time.Minute),
+		UpdatedAt: time.Now(),
+		Params: map[string]string{
+			"phase":                               "reading_metadata",
+			"current_item":                        "book.cbz",
+			"can_pause":                           "false",
+			"can_resume":                          "true",
+			"paused_at":                           pausedAt.Format(time.RFC3339Nano),
+			"pause_reason":                        "manual_pause",
+			"metric.opened_archives":              "5",
+			"label.current_library":               "Main",
+			"limit.scanner_workers_effective":     "1",
+			"limit.storage_profile":               "hdd_external",
+			"limit.archive_open_concurrency":      "1",
+			"limit.pause_background_when_reading": "true",
+			"limit.disable_same_disk_page_cache":  "true",
+			"limit.idle_only_heavy_tasks":         "true",
+			"limit.scan_profile":                  "metadata_scan",
+			"limit.scanner_workers_configured":    "0",
+			"limit.scan_concurrency":              "1",
+			"limit.cover_concurrency":             "1",
+			"limit.hash_concurrency":              "1",
+			"limit.volume_key":                    "e:",
+		},
+	}
+
+	task := taskStatusFromRecord(record)
+	if task.Phase != "reading_metadata" || task.CurrentItem != "book.cbz" {
+		t.Fatalf("expected derived phase/current item, got %+v", task)
+	}
+	if task.PausedAt == nil || !task.CanResume || task.CanPause || task.PauseReason != "manual_pause" {
+		t.Fatalf("expected pause fields to hydrate, got %+v", task)
+	}
+	if task.Metrics["opened_archives"] != 5 || task.Labels["current_library"] != "Main" {
+		t.Fatalf("expected metrics and labels to hydrate, got %+v", task)
+	}
+	if task.EffectiveLimit == nil || task.EffectiveLimit.ScannerWorkersEffective != 1 || task.EffectiveLimit.StorageProfile != "hdd_external" {
+		t.Fatalf("expected effective limit to hydrate, got %+v", task.EffectiveLimit)
+	}
+	if task.Percent == nil || *task.Percent != 50 {
+		t.Fatalf("expected percent from current/total, got %+v", task.Percent)
+	}
+}
+
+func TestScanTaskEffectiveLimitsUseExternalHDDPolicy(t *testing.T) {
+	controller, _, _, tempDir := newTestController(t)
+
+	libraryPath := filepath.Join(tempDir, "external-hdd", "library-a")
+	cfg := controller.config.Snapshot()
+	cfg.Scanner.Workers = 8
+	cfg.Scanner.ScanProfile = string(scanner.ScanProfileIdentity)
+	cfg.Library.StorageProfile = config.StorageProfileAuto
+	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{
+		{
+			Path:           libraryPath,
+			StorageProfile: config.StorageProfileHDDExternal,
+			IOPolicy: config.StorageIOPolicy{
+				ScanConcurrency:            1,
+				ArchiveOpenConcurrency:     1,
+				CoverConcurrency:           1,
+				HashConcurrency:            1,
+				PauseBackgroundWhenReading: true,
+				IdleOnlyHeavyTasks:         true,
+				DisableSameDiskPageCache:   true,
+			},
+		},
+	}
+	config.NormalizeConfig(&cfg)
+	controller.config.Replace(&cfg)
+
+	limit := controller.taskLimitsForPath(libraryPath, true)
+	if limit.ScanProfile != string(scanner.ScanProfileIdentity) {
+		t.Fatalf("expected identity scan profile, got %+v", limit)
+	}
+	if limit.ScannerWorkersConfigured != 8 || limit.ScannerWorkersEffective != 1 {
+		t.Fatalf("expected worker limit 8 -> 1, got %+v", limit)
+	}
+	if limit.StorageProfile != config.StorageProfileHDDExternal {
+		t.Fatalf("expected external HDD storage profile, got %+v", limit)
+	}
+	if limit.ScanConcurrency != 1 || limit.ArchiveOpenConcurrency != 1 || limit.HashConcurrency != 1 || limit.CoverConcurrency != 1 {
+		t.Fatalf("expected all IO concurrency limits to be 1, got %+v", limit)
+	}
+	if !limit.PauseBackgroundWhenReading || !limit.IdleOnlyHeavyTasks || !limit.DisableSameDiskPageCache {
+		t.Fatalf("expected external HDD pause/cache flags, got %+v", limit)
+	}
+}
+
+func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	taskKey := "scrape_library_7"
+	if !controller.startPausableCancelableTask(taskKey, "scrape", "running", 3) {
+		t.Fatal("expected task to start")
+	}
+	controller.updateTaskDetails(taskKey, 1, 3, "写入审阅队列: Foo", "queueing_review", "Foo", map[string]int64{
+		"total_series":         3,
+		"processed_series":     1,
+		"success_count":        1,
+		"failed_count":         0,
+		"not_found_count":      0,
+		"queued_review_count":  1,
+		"provider_requests":    1,
+		"provider_errors":      0,
+		"rate_limited_wait_ms": 500,
+	}, map[string]string{
+		"provider":            "bangumi",
+		"provider_name":       "Bangumi",
+		"current_series_id":   "42",
+		"current_series_name": "Foo",
+	})
+
+	controller.taskMutex.Lock()
+	task := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	if task.Phase != "queueing_review" || task.CurrentItem != "Foo" {
+		t.Fatalf("expected scrape phase/current item, got %+v", task)
+	}
+	if task.Metrics["queued_review_count"] != 1 || task.Metrics["rate_limited_wait_ms"] != 500 {
+		t.Fatalf("expected scrape metrics, got %+v", task.Metrics)
+	}
+	if task.Labels["provider_name"] != "Bangumi" || task.Labels["current_series_name"] != "Foo" {
+		t.Fatalf("expected scrape labels, got %+v", task.Labels)
+	}
+}
+
+func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
+	controller, store, _, tempDir := newTestController(t)
+	provider := newBlockingMetadataProvider()
+	controller.providerFactory = func(string) metadata.Provider {
+		return provider
+	}
+
+	libPath := filepath.Join(tempDir, "library")
+	if err := os.MkdirAll(libPath, 0o755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
+		Name:                "Library",
+		Path:                libPath,
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         config.DefaultScanFormatsCSV,
+	})
+	if err != nil {
+		t.Fatalf("CreateLibrary failed: %v", err)
+	}
+	for _, name := range []string{"Alpha", "Beta"} {
+		if _, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
+			LibraryID:    lib.ID,
+			Name:         name,
+			Path:         filepath.Join(libPath, name),
+			Title:        sql.NullString{},
+			Summary:      sql.NullString{},
+			Publisher:    sql.NullString{},
+			Status:       sql.NullString{},
+			Rating:       sql.NullFloat64{},
+			Language:     sql.NullString{},
+			LockedFields: sql.NullString{},
+			NameInitial:  database.SeriesInitial("", name),
+		}); err != nil {
+			t.Fatalf("CreateSeries %s failed: %v", name, err)
+		}
+	}
+
+	if err := controller.launchLibraryScrapeTask(context.Background(), lib.ID, "test"); err != nil {
+		t.Fatalf("launch library scrape failed: %v", err)
+	}
+	taskKey := "scrape_library_" + strconv.FormatInt(lib.ID, 10)
+
+	first := waitForProviderRequest(t, provider.requests)
+	if first != "Alpha" {
+		t.Fatalf("expected first provider request Alpha, got %q", first)
+	}
+
+	pauseReq := requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+taskKey+"/pause", nil, "taskKey", taskKey)
+	pauseRec := httptest.NewRecorder()
+	controller.pauseTask(pauseRec, pauseReq)
+	if pauseRec.Code != http.StatusAccepted {
+		t.Fatalf("expected pause 202, got %d body=%s", pauseRec.Code, pauseRec.Body.String())
+	}
+
+	provider.release <- struct{}{}
+	assertNoProviderRequest(t, provider.requests, 150*time.Millisecond)
+
+	controller.taskMutex.Lock()
+	paused := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	if paused.Status != "paused" || paused.Metrics["provider_requests"] != 1 {
+		t.Fatalf("expected paused scrape after first request, got %+v", paused)
+	}
+
+	resumeReq := requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+taskKey+"/resume", nil, "taskKey", taskKey)
+	resumeRec := httptest.NewRecorder()
+	controller.resumeTask(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusAccepted {
+		t.Fatalf("expected resume 202, got %d body=%s", resumeRec.Code, resumeRec.Body.String())
+	}
+
+	second := waitForProviderRequest(t, provider.requests)
+	if second != "Beta" {
+		t.Fatalf("expected second provider request Beta after resume, got %q", second)
+	}
+	provider.release <- struct{}{}
+	waitForTaskStatus(t, controller, taskKey, "completed")
+
+	controller.taskMutex.Lock()
+	done := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	if done.Metrics["provider_requests"] != 2 || done.Metrics["processed_series"] != 2 {
+		t.Fatalf("expected completed scrape metrics, got %+v", done.Metrics)
+	}
+}
+
+func waitForProviderRequest(t testing.TB, requests <-chan string) string {
+	t.Helper()
+	select {
+	case title := <-requests:
+		return title
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for provider request")
+		return ""
+	}
+}
+
+func assertNoProviderRequest(t testing.TB, requests <-chan string, duration time.Duration) {
+	t.Helper()
+	select {
+	case title := <-requests:
+		t.Fatalf("expected no provider request while paused, got %q", title)
+	case <-time.After(duration):
+	}
+}
+
+func waitForTaskStatus(t testing.TB, controller *Controller, taskKey, status string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		controller.taskMutex.Lock()
+		task := controller.tasks[taskKey]
+		controller.taskMutex.Unlock()
+		if task.Status == status {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	controller.taskMutex.Lock()
+	task := controller.tasks[taskKey]
+	controller.taskMutex.Unlock()
+	t.Fatalf("timed out waiting for task %s status %s, got %+v", taskKey, status, task)
+}
+
+func TestPauseTaskRejectsNonPausableTask(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	taskKey := "rebuild_index"
+	if !controller.startTask(taskKey, "rebuild_index", "running", 1) {
+		t.Fatal("expected task to start")
+	}
+
+	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/pause", nil, "taskKey", taskKey)
+	rec := httptest.NewRecorder()
+	controller.pauseTask(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	taskKey := "scan_library_42"
+	if !controller.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
+		t.Fatal("expected task to start")
+	}
+	ctx, cleanup := controller.newTaskContext(taskKey)
+	defer cleanup()
+
+	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
+	rec := httptest.NewRecorder()
+	controller.pauseTask(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- taskcontrol.Wait(ctx)
+	}()
+	select {
+	case err := <-waitDone:
+		t.Fatalf("expected checkpoint to block while paused, got %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	req = requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
+	rec = httptest.NewRecorder()
+	controller.cancelTask(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected cancel 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case err := <-waitDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected checkpoint cancellation, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected cancel to unblock paused checkpoint")
 	}
 }
 
