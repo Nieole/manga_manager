@@ -170,10 +170,7 @@ func NewStore(dbPath string) (Store, error) {
 	// cache_size=-128000  (128MB，页缓存亦完全够用，不需要分配夸张的 500MB 防御性冗余)
 	// busy_timeout=15000  (保持长超时，预防因高并发读写引发 sqlite3 busy lock)
 	// temp_store=2        (MEMORY：百兆规模下，内存聚合 ORDER 操作极快，保持使用内存)
-	dsn := dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)" +
-		"&_pragma=mmap_size=268435456&_pragma=cache_size=-128000&_pragma=busy_timeout=15000&_pragma=temp_store=2"
-
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -347,7 +344,7 @@ func (s *SqlStore) ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 
 // 供启动时执行迁移
 func Migrate(dbPath string) error {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return err
 	}
@@ -402,7 +399,7 @@ func Migrate(dbPath string) error {
 		}
 	}
 
-	for _, stmt := range []string{
+	if err := execMigrationStatements(db, []string{
 		`CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
@@ -438,10 +435,8 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at)`,
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			return err
-		}
+	}); err != nil {
+		return err
 	}
 
 	if err = execSchemaStatements(db, true); err != nil {
@@ -471,7 +466,13 @@ func Migrate(dbPath string) error {
 	return nil
 }
 
+func sqliteDSN(dbPath string) string {
+	return dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)" +
+		"&_pragma=mmap_size=268435456&_pragma=cache_size=-128000&_pragma=busy_timeout=15000&_pragma=temp_store=2"
+}
+
 func execSchemaStatements(db *sql.DB, indexStatements bool) error {
+	statements := make([]string, 0)
 	for _, raw := range strings.Split(schemaSQL, ";") {
 		stmt := strings.TrimSpace(raw)
 		if stmt == "" {
@@ -480,11 +481,27 @@ func execSchemaStatements(db *sql.DB, indexStatements bool) error {
 		if isSchemaIndexStatement(stmt) != indexStatements {
 			continue
 		}
-		if _, err := db.Exec(stmt); err != nil {
+		statements = append(statements, stmt)
+	}
+	return execMigrationStatements(db, statements)
+}
+
+func execMigrationStatements(db *sql.DB, statements []string) error {
+	if len(statements) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, stmt := range statements {
+		if _, err := tx.Exec(stmt); err != nil {
+			_ = tx.Rollback()
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func isSchemaIndexStatement(stmt string) bool {
