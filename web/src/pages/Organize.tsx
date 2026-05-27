@@ -66,11 +66,11 @@ function issueIcon(type: string) {
 function severityClass(severity: string) {
   switch (severity) {
     case 'error':
-      return 'border-red-500/20 bg-red-500/10 text-red-200';
+      return 'border-red-300/60 bg-red-50 text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200';
     case 'warn':
-      return 'border-amber-500/20 bg-amber-500/10 text-amber-100';
+      return 'border-amber-300/60 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100';
     default:
-      return 'border-sky-500/20 bg-sky-500/10 text-sky-100';
+      return 'border-sky-300/60 bg-sky-50 text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100';
   }
 }
 
@@ -96,7 +96,6 @@ export default function Organize() {
     try {
       const params = new URLSearchParams({ limit: '80' });
       if (libraryId !== 'ALL') params.set('library_id', libraryId);
-      if (issueType !== 'ALL') params.set('type', issueType);
       const [librariesRes, reportRes] = await Promise.all([
         axios.get<LibraryOption[]>('/api/libraries').catch(() => ({ data: [] as LibraryOption[] })),
         axios.get<HealthReport>(`/api/health/report?${params.toString()}`),
@@ -114,7 +113,7 @@ export default function Organize() {
   useEffect(() => {
     fetchReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libraryId, issueType]);
+  }, [libraryId]);
 
   const summaryByType = useMemo(() => {
     const map = new Map<string, HealthSummary>();
@@ -124,7 +123,10 @@ export default function Organize() {
 
   const filteredIssues = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const items = report?.issues || [];
+    let items = report?.issues || [];
+    if (issueType !== 'ALL') {
+      items = items.filter((item) => item.type === issueType);
+    }
     if (!needle) return items;
     return items.filter((item) => [
       item.series_name,
@@ -133,7 +135,7 @@ export default function Organize() {
       item.path,
       item.detail,
     ].some((value) => value?.toLowerCase().includes(needle)));
-  }, [query, report?.issues]);
+  }, [query, report?.issues, issueType]);
 
   const totalIssueCount = report?.summary.reduce((sum, item) => sum + item.count, 0) ?? 0;
   const missingQuickHashCount = summaryByType.get('missing_quick_hash')?.count ?? 0;
@@ -206,202 +208,218 @@ export default function Organize() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-8">
+    <div className="mx-auto max-w-[1600px] space-y-6 p-4 sm:p-8 select-none">
       {toast && (
-        <div className={`fixed right-6 top-20 z-50 rounded-xl border px-4 py-3 text-sm shadow-xl ${toast.type === 'error' ? 'border-red-500/20 bg-red-500/15 text-red-100' : 'border-emerald-500/20 bg-emerald-500/15 text-emerald-100'}`}>
+        <div className={`fixed right-6 top-24 z-50 rounded-xl border px-4 py-3 text-sm shadow-xl animate-in slide-in-from-top duration-300 ${toast.type === 'error' ? 'border-red-500/30 bg-red-950/80 backdrop-blur-md text-red-200' : 'border-emerald-500/30 bg-emerald-950/80 backdrop-blur-md text-emerald-200'}`}>
           {toast.text}
         </div>
       )}
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      {/* 顶栏 */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-gray-800/60 pb-6">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-200">
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-300">
             <ListChecks className="h-4 w-4" />
-            {t('organize.badge')}
+            {t('organize.badge') || '整理维护'}
           </div>
-          <h1 className="mt-4 text-3xl font-bold tracking-tight text-white">{t('organize.title')}</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-400">{t('organize.description')}</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-white">{t('organize.title')}</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-400">{t('organize.description')}</p>
         </div>
         <button
           onClick={fetchReport}
           disabled={loading}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-900 px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 disabled:opacity-60"
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-900 px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 disabled:opacity-60 transition-all active:scale-95 shrink-0"
         >
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           {t('common.refresh')}
         </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
-          <p className="text-xs uppercase tracking-wide text-gray-500">{t('organize.metric.totalIssues')}</p>
-          <p className="mt-2 text-3xl font-semibold text-white">{formatNumber(totalIssueCount)}</p>
-        </div>
-        <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
-          <p className="text-xs uppercase tracking-wide text-gray-500">{t('organize.metric.visibleIssues')}</p>
-          <p className="mt-2 text-3xl font-semibold text-white">{formatNumber(filteredIssues.length)}</p>
-        </div>
-        <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
-          <p className="text-xs uppercase tracking-wide text-gray-500">{t('organize.metric.libraries')}</p>
-          <p className="mt-2 text-3xl font-semibold text-white">{formatNumber(libraries.length)}</p>
-        </div>
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6 items-start">
+        {/* 左侧：健康指标看板与全局哈希重建 */}
+        <div className="space-y-6">
+          {/* 指标总览 */}
+          <div className="rounded-2xl border border-gray-800/80 bg-gray-950/50 backdrop-blur-md p-4 space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.title') || '健康总览'}</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                <p className="text-[10px] uppercase tracking-wide text-gray-500">{t('organize.metric.totalIssues')}</p>
+                <p className="mt-1 text-2xl font-bold text-white">{formatNumber(totalIssueCount)}</p>
+              </div>
+              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                <p className="text-[10px] uppercase tracking-wide text-gray-500">{t('organize.metric.visibleIssues')}</p>
+                <p className="mt-1 text-2xl font-bold text-emerald-400">{formatNumber(filteredIssues.length)}</p>
+              </div>
+            </div>
+          </div>
 
-      <section className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-gray-500">{t('organize.identity.badge')}</p>
-            <h2 className="mt-2 text-lg font-semibold text-white">{t('organize.identity.title')}</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-400">{t('organize.identity.description')}</p>
-          </div>
-          <button
-            onClick={rebuildFileIdentities}
-            disabled={actionKey === 'rebuild_file_identities'}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2.5 text-sm text-komgaPrimary hover:bg-komgaPrimary/20 disabled:opacity-60"
-          >
-            <RefreshCw className={`h-4 w-4 ${actionKey === 'rebuild_file_identities' ? 'animate-spin' : ''}`} />
-            {t('organize.identity.rebuild')}
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">{t('organize.identity.missingQuickHash')}</p>
-            <p className="mt-2 text-2xl font-semibold text-white">{formatNumber(missingQuickHashCount)}</p>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">{t('organize.identity.duplicateQuickHash')}</p>
-            <p className="mt-2 text-2xl font-semibold text-white">{formatNumber(duplicateQuickHashCount)}</p>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">{t('organize.identity.duplicateFileHash')}</p>
-            <p className="mt-2 text-2xl font-semibold text-white">{formatNumber(duplicateFileHashCount)}</p>
-          </div>
-        </div>
-      </section>
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {ISSUE_TYPES.map((type) => {
-          const summary = summaryByType.get(type);
-          const active = issueType === type;
-          return (
+          {/* 7 大健康过滤卡片 */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.diagnostics') || '问题分类'}</h3>
             <button
-              key={type}
-              onClick={() => setIssueType(active ? 'ALL' : type)}
-              className={`rounded-2xl border p-4 text-left transition ${active ? 'border-komgaPrimary/50 bg-komgaPrimary/10' : 'border-gray-800 bg-gray-900 hover:bg-gray-800/70'}`}
+              onClick={() => setIssueType('ALL')}
+              className={`w-full flex items-center justify-between rounded-xl border p-3 text-left transition-all ${issueType === 'ALL' ? 'border-komgaPrimary/40 bg-komgaPrimary/10 text-white font-medium shadow-[0_0_15px_rgba(147,51,234,0.05)]' : 'border-gray-800/60 bg-gray-900/40 hover:bg-gray-800/50 text-gray-400'}`}
             >
-              <div className="flex items-center justify-between gap-3">
-                <div className={`rounded-xl border p-2 ${severityClass(summary?.severity || 'info')}`}>
-                  {issueIcon(type)}
-                </div>
-                <span className="text-2xl font-semibold text-white">{formatNumber(summary?.count ?? 0)}</span>
-              </div>
-              <p className="mt-3 text-sm font-semibold text-white">{t(`organize.issue.${type}`)}</p>
-              <p className="mt-1 text-xs text-gray-500">{t(`organize.issue.${type}.hint`)}</p>
+              <span className="text-xs font-semibold">{t('organize.filters.allIssues') || '所有发现的问题'}</span>
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${issueType === 'ALL' ? 'bg-komgaPrimary/20 text-white' : 'bg-gray-700 text-white'}`}>{formatNumber(totalIssueCount)}</span>
             </button>
-          );
-        })}
-      </div>
 
-      <section className="rounded-2xl border border-gray-800 bg-gray-900">
-        <div className="grid gap-3 border-b border-gray-800 p-4 lg:grid-cols-[220px_220px_1fr]">
-          <select
-            value={libraryId}
-            onChange={(e) => setLibraryId(e.target.value)}
-            className="rounded-xl border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200"
-          >
-            <option value="ALL">{t('organize.filters.allLibraries')}</option>
-            {libraries.map((library) => (
-              <option key={library.id} value={library.id}>{library.name}</option>
-            ))}
-          </select>
-          <select
-            value={issueType}
-            onChange={(e) => setIssueType(e.target.value)}
-            className="rounded-xl border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200"
-          >
-            <option value="ALL">{t('organize.filters.allIssues')}</option>
-            {ISSUE_TYPES.map((type) => (
-              <option key={type} value={type}>{t(`organize.issue.${type}`)}</option>
-            ))}
-          </select>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('organize.filters.search')}
-              className="w-full rounded-xl border border-gray-700 bg-gray-950 py-2 pl-10 pr-3 text-sm text-gray-200"
-            />
-          </div>
-        </div>
-
-        <div className="divide-y divide-gray-800">
-          {loading ? (
-            <div className="flex h-56 items-center justify-center text-gray-500">
-              <RefreshCw className="h-7 w-7 animate-spin" />
-            </div>
-          ) : filteredIssues.length === 0 ? (
-            <div className="flex h-56 flex-col items-center justify-center gap-3 text-gray-500">
-              <Library className="h-8 w-8" />
-              <p>{t('organize.empty')}</p>
-            </div>
-          ) : filteredIssues.map((issue, index) => {
-            const actionKeyForIssue = issue.type === 'missing_quick_hash'
-              ? 'rebuild_file_identities'
-              : `${issue.type}-${issue.series_id || issue.library_id || issue.path}`;
-            return (
-              <div key={`${issue.type}-${issue.book_id || issue.series_id || issue.path}-${index}`} className="p-4">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-                  <button onClick={() => openIssue(issue)} className="min-w-0 text-left">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${severityClass(issue.severity)}`}>
-                        {issueIcon(issue.type)}
-                        {t(`organize.issue.${issue.type}`)}
-                      </span>
-                      {issue.count && issue.count > 1 && (
-                        <span className="rounded-full border border-gray-700 px-2.5 py-1 text-xs text-gray-400">
-                          {t('organize.duplicateCount', { count: issue.count })}
-                        </span>
-                      )}
+            {ISSUE_TYPES.map((type) => {
+              const summary = summaryByType.get(type);
+              const active = issueType === type;
+              return (
+                <button
+                  key={type}
+                  onClick={() => setIssueType(active ? 'ALL' : type)}
+                  className={`w-full rounded-xl border p-3 text-left transition-all hover:scale-[1.01] ${active ? 'border-komgaPrimary/50 bg-komgaPrimary/10 shadow-[0_0_15px_rgba(147,51,234,0.05)]' : 'border-gray-800 bg-gray-900/60 hover:bg-gray-800/40'}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`rounded-lg border p-1.5 shrink-0 ${severityClass(summary?.severity || 'info')}`}>
+                        {issueIcon(type)}
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-white">{t(`organize.issue.${type}`)}</p>
+                        <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">{t(`organize.issue.${type}.hint`)}</p>
+                      </div>
                     </div>
-                    <p className="mt-3 text-base font-semibold text-white">
-                      {issue.book_name || issue.series_name || issue.path || t('common.unknown')}
-                    </p>
-                    <p className="mt-1 text-sm text-gray-400">
-                      {[issue.library_name, issue.series_name, issue.detail].filter(Boolean).join(' / ')}
-                    </p>
-                    {issue.path && <p className="mt-2 truncate text-xs text-gray-600">{issue.path}</p>}
-                  </button>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <button
-                      onClick={() => openIssue(issue)}
-                      className="rounded-lg border border-gray-700 px-3 py-2 text-xs text-gray-200 hover:bg-gray-800"
-                    >
-                      {issue.series_id ? t('organize.openSeries') : issue.book_id ? t('organize.openReader') : t('organize.openTarget')}
-                    </button>
-                    {canRunAction(issue) && (
-                      <button
-                        onClick={() => runIssueAction(issue)}
-                        disabled={actionKey === actionKeyForIssue}
-                        className="inline-flex items-center gap-2 rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-2 text-xs text-komgaPrimary hover:bg-komgaPrimary/20 disabled:opacity-60"
-                      >
-                        <RefreshCw className={`h-3.5 w-3.5 ${actionKey === actionKeyForIssue ? 'animate-spin' : ''}`} />
-                        {issue.type === 'missing_metadata'
-                          ? t('organize.action.scrape')
-                          : issue.type === 'unmatched_koreader'
-                            ? t('organize.action.reconcile')
-                            : issue.type === 'missing_quick_hash'
-                              ? t('organize.action.rebuildIdentity')
-                              : t('organize.action.rescan')}
-                      </button>
-                    )}
+                    <span className={`text-sm font-bold shrink-0 px-2 py-0.5 rounded-full ${active ? 'bg-komgaPrimary/20 text-white' : 'bg-gray-700 text-white'}`}>{formatNumber(summary?.count ?? 0)}</span>
                   </div>
-                </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 哈希重建工具 */}
+          <section className="rounded-2xl border border-gray-800 bg-gray-900 p-4 space-y-4">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-purple-400 font-bold">{t('organize.identity.badge')}</p>
+              <h2 className="mt-1 text-sm font-semibold text-white">{t('organize.identity.title')}</h2>
+              <p className="mt-1 text-xs leading-relaxed text-gray-500">{t('organize.identity.description')}</p>
+            </div>
+            <button
+              onClick={rebuildFileIdentities}
+              disabled={actionKey === 'rebuild_file_identities'}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-komgaPrimary/30 bg-komgaPrimary/10 px-4 py-2.5 text-xs text-komgaPrimary hover:bg-komgaPrimary/20 disabled:opacity-60 transition-all font-medium"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${actionKey === 'rebuild_file_identities' ? 'animate-spin' : ''}`} />
+              {t('organize.identity.rebuild')}
+            </button>
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.01] px-3 py-2">
+                <span className="text-[11px] text-gray-500">{t('organize.identity.missingQuickHash')}</span>
+                <span className="text-xs font-semibold text-white">{formatNumber(missingQuickHashCount)}</span>
               </div>
-            );
-          })}
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.01] px-3 py-2">
+                <span className="text-[11px] text-gray-500">{t('organize.identity.duplicateQuickHash')}</span>
+                <span className="text-xs font-semibold text-white">{formatNumber(duplicateQuickHashCount)}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.01] px-3 py-2">
+                <span className="text-[11px] text-gray-500">{t('organize.identity.duplicateFileHash')}</span>
+                <span className="text-xs font-semibold text-white">{formatNumber(duplicateFileHashCount)}</span>
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
+
+        {/* 右侧：错误大列表与原地快捷修复台 */}
+        <div className="space-y-4">
+          <section className="rounded-2xl border border-gray-800 bg-gray-950/40 backdrop-blur-md overflow-hidden">
+            {/* 顶栏过滤器 */}
+            <div className="grid gap-3 border-b border-gray-800/80 p-4 md:grid-cols-[200px_1fr]">
+              <select
+                value={libraryId}
+                onChange={(e) => setLibraryId(e.target.value)}
+                className="rounded-xl border border-gray-800 bg-gray-900 px-3 py-2 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-komgaPrimary/40"
+              >
+                <option value="ALL">{t('organize.filters.allLibraries')}</option>
+                {libraries.map((library) => (
+                  <option key={library.id} value={library.id}>{library.name}</option>
+                ))}
+              </select>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('organize.filters.search')}
+                  className="w-full rounded-xl border border-gray-800 bg-gray-900 py-2 pl-10 pr-3 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-komgaPrimary/40"
+                />
+              </div>
+            </div>
+
+            {/* 修复项目列表 */}
+            <div className="divide-y divide-gray-900/60 max-h-[80vh] overflow-y-auto">
+              {loading ? (
+                <div className="flex h-64 items-center justify-center text-gray-500">
+                  <RefreshCw className="h-6 w-6 animate-spin text-komgaPrimary" />
+                </div>
+              ) : filteredIssues.length === 0 ? (
+                <div className="flex h-64 flex-col items-center justify-center gap-2 text-gray-600">
+                  <Library className="h-8 w-8 opacity-40" />
+                  <p className="text-sm">{t('organize.empty')}</p>
+                </div>
+              ) : filteredIssues.map((issue, index) => {
+                const actionKeyForIssue = issue.type === 'missing_quick_hash'
+                  ? 'rebuild_file_identities'
+                  : `${issue.type}-${issue.series_id || issue.library_id || issue.path}`;
+                return (
+                  <div key={`${issue.type}-${issue.book_id || issue.series_id || issue.path}-${index}`} className="p-4 hover:bg-white/[0.01] transition-all group">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <button onClick={() => openIssue(issue)} className="min-w-0 text-left flex-1 space-y-2 focus:outline-none">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${severityClass(issue.severity)}`}>
+                            {issueIcon(issue.type)}
+                            {t(`organize.issue.${issue.type}`)}
+                          </span>
+                          {issue.count && issue.count > 1 && (
+                            <span className="rounded-full border border-gray-800 px-2 py-0.5 text-[10px] text-gray-500">
+                              {t('organize.duplicateCount', { count: issue.count })}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm font-semibold text-white group-hover:text-komgaPrimary transition-colors">
+                          {issue.book_name || issue.series_name || issue.path || t('common.unknown')}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {[issue.library_name, issue.series_name, issue.detail].filter(Boolean).join(' / ')}
+                        </p>
+                        {issue.path && <p className="truncate text-[10px] text-gray-600">{issue.path}</p>}
+                      </button>
+
+                      {/* 行尾悬浮动作组 */}
+                      <div className="flex shrink-0 flex-wrap gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                        <button
+                          onClick={() => openIssue(issue)}
+                          className="rounded-lg border border-gray-800 px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-800/60 transition-colors"
+                        >
+                          {issue.series_id ? t('organize.openSeries') : issue.book_id ? t('organize.openReader') : t('organize.openTarget')}
+                        </button>
+                        {canRunAction(issue) && (
+                          <button
+                            onClick={() => runIssueAction(issue)}
+                            disabled={actionKey === actionKeyForIssue}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-1.5 text-xs text-komgaPrimary hover:bg-komgaPrimary/20 disabled:opacity-60 transition-all"
+                          >
+                            <RefreshCw className={`h-3 w-3 ${actionKey === actionKeyForIssue ? 'animate-spin' : ''}`} />
+                            {issue.type === 'missing_metadata'
+                              ? t('organize.action.scrape')
+                              : issue.type === 'unmatched_koreader'
+                                ? t('organize.action.reconcile')
+                                : issue.type === 'missing_quick_hash'
+                                  ? t('organize.action.rebuildIdentity')
+                                  : t('organize.action.rescan')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      </div>
     </div>
   );
 }

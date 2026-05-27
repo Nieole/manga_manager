@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import axios from 'axios';
-import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload } from 'lucide-react';
+import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
@@ -34,6 +34,9 @@ export default function Layout() {
         } catch { return false; }
     });
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const [isReaderSpaceExpanded, setIsReaderSpaceExpanded] = useState(true);
+    const [isMaintenanceExpanded, setIsMaintenanceExpanded] = useState(true);
+    const [isOpsExpanded, setIsOpsExpanded] = useState(true);
 
     const toggleDesktopSidebar = () => {
         setIsDesktopSidebarCollapsed(prev => {
@@ -455,7 +458,7 @@ export default function Layout() {
                     </button>
                     <Link to="/" className="flex items-center space-x-2 sm:space-x-3 w-auto sm:w-56">
                         <BookOpen className="text-komgaPrimary h-7 w-7 sm:h-8 sm:w-8" />
-                        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition hidden sm:block">{t('app.name')}</h1>
+                        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white hover:text-komgaPrimary transition hidden sm:block whitespace-nowrap">{t('app.name')}</h1>
                     </Link>
                 </div>
 
@@ -492,95 +495,214 @@ export default function Layout() {
                     />
                 )}
 
-                <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 bg-komgaSurface border-r border-gray-800 flex flex-col pt-6 transform transition-all duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 overflow-y-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:h-[calc(100vh-73px)] ${isDesktopSidebarCollapsed ? 'w-64 md:w-[72px]' : 'w-64'}`}>
-                    <div className={`mb-4 flex items-center text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0 ${isDesktopSidebarCollapsed ? 'md:px-0 md:justify-center' : 'px-6 justify-between'}`}>
-                        <span className={`transition-opacity duration-300 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.libraries')}</span>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={toggleDesktopSidebar}
-                                className="text-gray-400 hover:text-white transition-colors hidden md:block"
-                                title={isDesktopSidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')}
-                            >
-                                {isDesktopSidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
-                            </button>
-                            <button
-                                onClick={() => setShowAddModal(true)}
-                                className={`text-gray-400 hover:text-white transition-colors ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}
-                                title={t('layout.sidebar.addLibrary')}
-                            >
-                                <Plus className="w-5 h-5" />
-                            </button>
-                        </div>
+                <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 bg-komgaSurface border-r border-gray-800 flex flex-col pt-4 transform transition-all duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:h-[calc(100vh-73px)] ${isDesktopSidebarCollapsed ? 'w-64 md:w-[72px]' : 'w-64'}`}>
+                    {/* 折叠按钮与顶栏控制 */}
+                    <div className={`mb-4 flex items-center text-xs font-semibold uppercase tracking-wider shrink-0 ${isDesktopSidebarCollapsed ? 'md:px-0 md:justify-center' : 'px-6 justify-between'}`}>
+                        <span className={`transition-opacity duration-300 text-gray-500 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.menu') || '控制台'}</span>
+                        <button
+                            onClick={toggleDesktopSidebar}
+                            className="text-gray-400 hover:text-white transition-colors hidden md:block p-1 hover:bg-gray-800 rounded-md"
+                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')}
+                        >
+                            {isDesktopSidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+                        </button>
                     </div>
-                    {/* 快捷导航 */}
-                    <nav className="px-4 mb-4 space-y-1" onClick={() => setOpenMenuId(null)}>
-                        <Link to="/" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.dashboard') : undefined}
-                        >
-                            <LayoutDashboard className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.dashboard')}</span>
-                        </Link>
 
-                        <div className={`pt-3 pb-1 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>
-                            <span className="px-3 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">{t('layout.sidebar.groupCollection')}</span>
-                        </div>
-                        <Link to="/collections" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/collections' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.collections') : undefined}
-                        >
-                            <FolderHeart className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.collections')}</span>
-                        </Link>
-                        <Link to="/reading-lists" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/reading-lists' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.readingLists') : undefined}
-                        >
-                            <ListOrdered className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.readingLists')}</span>
-                        </Link>
-                        <Link to="/offline" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/offline' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.offlineShelf') : undefined}
-                        >
-                            <HardDriveDownload className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.offlineShelf')}</span>
-                        </Link>
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-4 px-2 select-none">
+                        {/* 1. 阅览空间 (Reader Space) */}
+                        <div className="space-y-1">
+                            {!isDesktopSidebarCollapsed ? (
+                                <button 
+                                    onClick={() => setIsReaderSpaceExpanded(!isReaderSpaceExpanded)}
+                                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-purple-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <BookOpen className="w-4 h-4 text-purple-400" />
+                                        <span>{t('layout.sidebar.readerSpace') || '阅览空间'}</span>
+                                    </span>
+                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isReaderSpaceExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                                </button>
+                            ) : (
+                                <div className="w-full flex justify-center py-2 text-purple-400/50">
+                                    <BookOpen className="w-5 h-5" />
+                                </div>
+                            )}
+                            
+                            {(isReaderSpaceExpanded || isDesktopSidebarCollapsed) && (
+                                <div className="space-y-1">
+                                    {/* 仪表板 */}
+                                    <Link to="/" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/' 
+                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.dashboard')}
+                                    >
+                                        <LayoutDashboard className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.dashboard')}</span>
+                                    </Link>
+                                    
+                                    {/* 合集 */}
+                                    <Link to="/collections" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/collections' 
+                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.collections')}
+                                    >
+                                        <FolderHeart className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.collections')}</span>
+                                    </Link>
 
-                        <div className={`pt-3 pb-1 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>
-                            <span className="px-3 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">{t('layout.sidebar.groupMaintenance')}</span>
+                                    {/* 阅读清单 */}
+                                    <Link to="/reading-lists" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/reading-lists' 
+                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.readingLists')}
+                                    >
+                                        <ListOrdered className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.readingLists')}</span>
+                                    </Link>
+
+                                    {/* 离线书架 */}
+                                    <Link to="/offline" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/offline' 
+                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
+                                        title={t('layout.sidebar.offlineShelf')}
+                                    >
+                                        <HardDriveDownload className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.offlineShelf')}</span>
+                                    </Link>
+                                </div>
+                            )}
                         </div>
-                        <Link to="/organize" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/organize' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.organize') : undefined}
-                        >
-                            <ClipboardCheck className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.organize')}</span>
-                        </Link>
-                        <Link to="/reviews" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname.startsWith('/reviews') || location.pathname === '/metadata-reviews' || location.pathname === '/ai-grouping-reviews' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.reviews') : undefined}
-                        >
-                            <GitCompareArrows className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.reviews')}</span>
-                        </Link>
-                        <Link to="/logs" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/logs' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.logs') : undefined}
-                        >
-                            <Terminal className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.logs')}</span>
-                        </Link>
-                    </nav>
-                    <div className={`px-6 mb-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wider ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.libraries')}</div>
-                    <nav className="flex-1 space-y-1 px-4 overflow-y-auto">
+
+                        {/* 2. 数据工坊 (Maintenance Hub) */}
+                        <div className="space-y-1">
+                            {!isDesktopSidebarCollapsed ? (
+                                <button 
+                                    onClick={() => setIsMaintenanceExpanded(!isMaintenanceExpanded)}
+                                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-emerald-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <Wrench className="w-4 h-4 text-emerald-400" />
+                                        <span>{t('layout.sidebar.maintenanceHub') || '数据工坊'}</span>
+                                    </span>
+                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isMaintenanceExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                                </button>
+                            ) : (
+                                <div className="w-full flex justify-center py-2 text-emerald-400/50">
+                                    <Wrench className="w-5 h-5" />
+                                </div>
+                            )}
+                            
+                            {(isMaintenanceExpanded || isDesktopSidebarCollapsed) && (
+                                <div className="space-y-1">
+                                    {/* 整理工作台 */}
+                                    <Link to="/organize" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/organize' 
+                                            ? 'bg-gradient-to-r from-emerald-500/10 to-transparent text-emerald-300 font-semibold border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.organize')}
+                                    >
+                                        <ClipboardCheck className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.organize')}</span>
+                                    </Link>
+                                    
+                                    {/* 审核中心 */}
+                                    <Link to="/reviews" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname.startsWith('/reviews') || location.pathname === '/metadata-reviews' || location.pathname === '/ai-grouping-reviews'
+                                            ? 'bg-gradient-to-r from-emerald-500/10 to-transparent text-emerald-300 font-semibold border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.reviews')}
+                                    >
+                                        <GitCompareArrows className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.reviews')}</span>
+                                    </Link>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 3. 系统监控 (Ops Watchtower) */}
+                        <div className="space-y-1">
+                            {!isDesktopSidebarCollapsed ? (
+                                <button 
+                                    onClick={() => setIsOpsExpanded(!isOpsExpanded)}
+                                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-sky-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <Terminal className="w-4 h-4 text-sky-400" />
+                                        <span>{t('layout.sidebar.opsWatchtower') || '系统监控'}</span>
+                                    </span>
+                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isOpsExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                                </button>
+                            ) : (
+                                <div className="w-full flex justify-center py-2 text-sky-400/50">
+                                    <Terminal className="w-5 h-5" />
+                                </div>
+                            )}
+                            
+                            {(isOpsExpanded || isDesktopSidebarCollapsed) && (
+                                <div className="space-y-1">
+                                    {/* 系统日志 */}
+                                    <Link to="/logs" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/logs' 
+                                            ? 'bg-gradient-to-r from-sky-500/10 to-transparent text-sky-300 font-semibold border-sky-500 shadow-[0_0_15px_rgba(56,189,248,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.logs')}
+                                    >
+                                        <Terminal className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.logs')}</span>
+                                    </Link>
+                                    
+                                    {/* 配置中心 */}
+                                    <Link to="/settings" onClick={() => setIsSidebarOpen(false)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname.startsWith('/settings') 
+                                            ? 'bg-gradient-to-r from-sky-500/10 to-transparent text-sky-300 font-semibold border-sky-500 shadow-[0_0_15px_rgba(56,189,248,0.04)]' 
+                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
+                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+                                        title={t('layout.sidebar.settings')}
+                                    >
+                                        <SettingsIcon className="w-4 h-4 shrink-0" />
+                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.settings')}</span>
+                                    </Link>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 分割线 */}
+                        <div className="border-t border-gray-800/60 my-2 mx-3"></div>
+
+                        {/* 4. 资源库列表 */}
+                        <div className="space-y-1">
+                            {!isDesktopSidebarCollapsed ? (
+                                <div className="flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-amber-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group">
+                                    <span className="flex items-center gap-2">
+                                        <FolderOpen className="w-4 h-4 text-amber-400" />
+                                        <span>{t('layout.sidebar.libraries')}</span>
+                                    </span>
+                                    <button
+                                        onClick={() => setShowAddModal(true)}
+                                        className="text-gray-500 hover:text-white transition-colors"
+                                        title={t('layout.sidebar.addLibrary')}
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="w-full flex justify-center py-2 text-amber-400/50">
+                                    <FolderOpen className="w-5 h-5 cursor-pointer hover:text-white" onClick={() => setShowAddModal(true)} />
+                                </div>
+                            )}
+                            
+                            <nav className="space-y-1 overflow-y-auto max-h-[25vh]">
                         {loading ? (
                             <div className="animate-pulse px-3 py-2 bg-gray-800 rounded-md h-10 w-full mb-2" />
                         ) : libraries.length === 0 ? (
@@ -757,7 +879,9 @@ export default function Layout() {
                                 </Link>
                             ))
                         )}
-                    </nav>
+                            </nav>
+                        </div>
+                    </div>
                 </aside>
 
                 <div className="flex-1 overflow-y-auto bg-komgaDark relative h-[calc(100vh-73px)]">

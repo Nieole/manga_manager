@@ -201,26 +201,16 @@ export default function MetadataReviews({ embedded }: { embedded?: boolean } = {
         </button>
       </form>
 
-      <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-white/10 bg-gray-950/50 p-4 md:flex-row md:items-center md:justify-between">
+      <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-white/10 bg-gray-950/45 p-4 md:flex-row md:items-center md:justify-between select-none">
         <div className="flex flex-wrap items-center gap-3">
-          <button onClick={toggleCurrentPage} disabled={items.length === 0} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-gray-200 hover:bg-white/10 disabled:opacity-40">
+          <button onClick={toggleCurrentPage} disabled={items.length === 0} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-gray-200 hover:bg-white/10 disabled:opacity-40 active:scale-95 transition-all font-medium">
             {currentPageSelected ? t('metadataReviews.unselectPage') : t('metadataReviews.selectPage')}
           </button>
-          <select value={mode} onChange={(event) => setMode(event.target.value as BulkMode)} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-komgaPrimary">
-            <option value="fill_empty">{t('metadataReviews.mode.fillEmpty')}</option>
-            <option value="all">{t('metadataReviews.mode.all')}</option>
-          </select>
-          <span className="text-xs text-gray-500">{t('metadataReviews.modeHint')}</span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => runBulkAction('reject')} disabled={acting || selectedIds.length === 0} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-500/15 disabled:opacity-40">
-            {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-            {t('metadataReviews.bulkReject')}
-          </button>
-          <button onClick={() => runBulkAction('apply')} disabled={acting || selectedIds.length === 0} className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-semibold text-white hover:bg-komgaPrimaryHover disabled:opacity-40">
-            {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            {t('metadataReviews.bulkApply')}
-          </button>
+          {selectedIds.length > 0 && (
+            <span className="text-xs text-gray-500">
+              已选定 <span className="text-komgaPrimary font-semibold">{selectedIds.length}</span> 项元数据
+            </span>
+          )}
         </div>
       </div>
 
@@ -288,8 +278,8 @@ export default function MetadataReviews({ embedded }: { embedded?: boolean } = {
                             {field.locked && <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-200">{t('metadataReviews.locked')}</span>}
                           </div>
                           <div className="grid gap-2 sm:grid-cols-2">
-                            <div className="min-w-0 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-gray-400 whitespace-pre-wrap break-words">{field.current || t('common.none')}</div>
-                            <div className="min-w-0 rounded-lg border border-cyan-400/15 bg-cyan-400/5 px-3 py-2 text-xs text-gray-100 whitespace-pre-wrap break-words">{field.proposed || t('common.none')}</div>
+                            <div className="min-w-0 rounded-lg border border-red-500/10 bg-red-500/[0.01] px-3 py-2 text-xs text-gray-400/80 whitespace-pre-wrap break-words">{field.current || t('common.none')}</div>
+                            <div className={`min-w-0 rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap break-words ${field.current !== field.proposed ? 'border-emerald-500/30 bg-emerald-500/[0.04] text-emerald-200 font-medium ring-1 ring-emerald-500/10' : 'border-white/5 bg-white/[0.01] text-gray-300'}`}>{field.proposed || t('common.none')}</div>
                           </div>
                         </div>
                       ))}
@@ -315,6 +305,30 @@ export default function MetadataReviews({ embedded }: { embedded?: boolean } = {
           <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg ${toastMsg.type === 'success' ? 'border-green-700 bg-green-900 text-green-100' : 'border-red-700 bg-red-900 text-red-100'}`}>
             <span className="text-sm font-medium">{toastMsg.text}</span>
             <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">x</button>
+          </div>
+        </div>
+      )}
+      {/* 底部浮动控制 Dock (选定项数 > 0 时呼出) */}
+      {selectedIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900/90 backdrop-blur-xl border border-white/10 rounded-2xl px-6 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col sm:flex-row items-center gap-4 animate-in slide-in-from-bottom duration-300 select-none">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-white">
+              已选定 <span className="text-komgaPrimary font-bold text-base">{selectedIds.length}</span> 项元数据建议
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <select value={mode} onChange={(event) => setMode(event.target.value as BulkMode)} className="rounded-xl border border-white/10 bg-black px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary">
+              <option value="fill_empty">{t('metadataReviews.mode.fillEmpty')}</option>
+              <option value="all">{t('metadataReviews.mode.all')}</option>
+            </select>
+            <button onClick={() => runBulkAction('reject')} disabled={acting} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-950/40 px-4 py-2 text-xs font-semibold text-red-200 hover:bg-red-950 transition-all active:scale-95">
+              {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+              {t('metadataReviews.bulkReject')}
+            </button>
+            <button onClick={() => runBulkAction('apply')} disabled={acting} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-komgaPrimary px-5 py-2 text-xs font-semibold text-white hover:bg-komgaPrimaryHover shadow-lg shadow-komgaPrimary/20 transition-all active:scale-95">
+              {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              {t('metadataReviews.bulkApply')}
+            </button>
           </div>
         </div>
       )}

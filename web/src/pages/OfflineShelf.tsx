@@ -148,10 +148,10 @@ export default function OfflineShelf() {
             {t('offlineShelf.badge')}
           </div>
           <h1 className="mt-3 text-3xl font-bold text-white">{t('offlineShelf.title')}</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-400">{t('offlineShelf.description')}</p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-500">{t('offlineShelf.description')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${isOnline ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/25 bg-amber-500/10 text-amber-200'}`}>
+          <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${isOnline ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-amber-500/30 bg-amber-500/10 text-amber-500'}`}>
             {isOnline ? <CheckCircle2 className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
             {isOnline ? t('offlineShelf.online') : t('offlineShelf.offline')}
           </span>
@@ -159,7 +159,7 @@ export default function OfflineShelf() {
             type="button"
             onClick={refresh}
             disabled={loading}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/70 px-3 py-2 text-sm text-gray-200 hover:bg-gray-800 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-50 transition-colors"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             {t('common.refresh')}
@@ -168,7 +168,7 @@ export default function OfflineShelf() {
             type="button"
             onClick={handleClearAll}
             disabled={clearingAll || books.length === 0}
-            className="inline-flex items-center gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-red-200 hover:bg-red-500/15 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
           >
             {clearingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
             {t('offlineShelf.clearAll')}
@@ -177,41 +177,41 @@ export default function OfflineShelf() {
       </div>
 
       {!offlineSupported && (
-        <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-4 text-sm text-amber-100">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
           {t('offlineShelf.unsupported')}
         </div>
       )}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
+        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
           <p className="text-xs uppercase tracking-wide text-gray-500">{t('offlineShelf.metric.books')}</p>
           <p className="mt-2 text-2xl font-semibold text-white">{stats?.bookCount ?? 0}</p>
         </div>
-        <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
+        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
           <p className="text-xs uppercase tracking-wide text-gray-500">{t('offlineShelf.metric.pages')}</p>
           <p className="mt-2 text-2xl font-semibold text-white">{stats?.cachedPages ?? 0} / {stats?.totalPages ?? 0}</p>
         </div>
-        <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
+        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
           <p className="text-xs uppercase tracking-wide text-gray-500">{t('offlineShelf.metric.cacheSize')}</p>
           <p className="mt-2 text-2xl font-semibold text-white">{formatBytes(stats?.cacheBytes)}</p>
         </div>
-        <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
+        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
           <p className="text-xs uppercase tracking-wide text-gray-500">{t('offlineShelf.metric.storage')}</p>
           <p className="mt-2 text-2xl font-semibold text-white">{quotaPercent}%</p>
           <p className="mt-1 text-xs text-gray-500">
             {formatBytes(stats?.storageUsage)} / {formatBytes(stats?.storageQuota)}
           </p>
         </div>
-        <div className="rounded-lg border border-amber-500/15 bg-amber-500/5 p-4">
-          <p className="text-xs uppercase tracking-wide text-amber-200/70">{t('offlineShelf.metric.pendingSync')}</p>
-          <p className="mt-2 text-2xl font-semibold text-amber-100">{queuedProgress.length}</p>
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+          <p className="text-xs uppercase tracking-wide text-amber-500">{t('offlineShelf.metric.pendingSync')}</p>
+          <p className="mt-2 text-2xl font-semibold text-amber-500">{queuedProgress.length}</p>
         </div>
       </div>
 
-      <section className="rounded-lg border border-gray-800 bg-gray-950/50">
-        <div className="flex flex-col gap-3 border-b border-gray-800 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 text-gray-200">
-            <Clock3 className="h-4 w-4 text-amber-200" />
+      <section className="rounded-lg border border-gray-700 bg-gray-950/50">
+        <div className="flex flex-col gap-3 border-b border-gray-700 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-white">
+            <Clock3 className="h-4 w-4 text-amber-500" />
             <div>
               <h2 className="text-sm font-semibold">{t('offlineShelf.queueTitle')}</h2>
               <p className="mt-1 text-xs text-gray-500">{t('offlineShelf.queueDescription')}</p>
@@ -231,7 +231,7 @@ export default function OfflineShelf() {
               type="button"
               onClick={handleClearQueuedProgress}
               disabled={clearingProgress || queuedProgress.length === 0}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-50 transition-colors"
             >
               {clearingProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
               {t('offlineShelf.clearQueue')}
@@ -239,7 +239,7 @@ export default function OfflineShelf() {
           </div>
         </div>
         {syncResult && (
-          <div className="border-b border-gray-800 px-4 py-3 text-xs text-gray-400">
+          <div className="border-b border-gray-700 px-4 py-3 text-xs text-gray-500">
             {t('offlineShelf.syncResult', {
               synced: syncResult.synced,
               failed: syncResult.failed,
@@ -249,16 +249,16 @@ export default function OfflineShelf() {
         )}
         {queuedProgress.length === 0 ? (
           <div className="flex min-h-28 items-center gap-3 px-4 py-6 text-sm text-gray-500">
-            <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
             {t('offlineShelf.queueEmpty')}
           </div>
         ) : (
-          <div className="divide-y divide-gray-800">
+          <div className="divide-y divide-gray-700">
             {queuedProgress.map((item) => (
               <div key={item.bookId} className="grid gap-3 px-4 py-4 md:grid-cols-[1fr_auto] md:items-center">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-200" />
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
                     <h3 className="truncate text-sm font-medium text-white">{item.title || t('offlineShelf.unknownBook', { id: item.bookId })}</h3>
                   </div>
                   <p className="mt-2 text-xs text-gray-500">
@@ -271,7 +271,7 @@ export default function OfflineShelf() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Link
                     to={`/reader/${item.bookId}`}
-                    className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
                   >
                     <BookOpen className="h-4 w-4" />
                     {t('offlineShelf.openReader')}
@@ -280,7 +280,7 @@ export default function OfflineShelf() {
                     type="button"
                     onClick={() => handleDeleteQueuedProgress(item.bookId)}
                     disabled={deletingProgressId === item.bookId}
-                    className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-50 transition-colors"
                   >
                     {deletingProgressId === item.bookId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                     {t('offlineShelf.dropQueued')}
@@ -292,9 +292,9 @@ export default function OfflineShelf() {
         )}
       </section>
 
-      <section className="rounded-lg border border-gray-800 bg-gray-950/50">
-        <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-          <div className="flex items-center gap-2 text-gray-200">
+      <section className="rounded-lg border border-gray-700 bg-gray-950/50">
+        <div className="flex items-center justify-between border-b border-gray-700 px-4 py-3">
+          <div className="flex items-center gap-2 text-white">
             <Database className="h-4 w-4 text-komgaPrimary" />
             <h2 className="text-sm font-semibold">{t('offlineShelf.listTitle')}</h2>
           </div>
@@ -311,7 +311,7 @@ export default function OfflineShelf() {
             <p className="mt-2 max-w-md text-sm leading-6 text-gray-500">{t('offlineShelf.emptyDescription')}</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-800">
+          <div className="divide-y divide-gray-700">
             {books.map((book) => {
               const percent = book.pageCount > 0 ? Math.round((book.cachedPages / book.pageCount) * 100) : 0;
               return (
@@ -319,7 +319,7 @@ export default function OfflineShelf() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate text-base font-semibold text-white">{book.title}</h3>
-                      <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
+                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-500">
                         {percent}%
                       </span>
                     </div>
@@ -328,7 +328,7 @@ export default function OfflineShelf() {
                       <span>{book.imageProfile}</span>
                       <span>{t('offlineShelf.cachedAt', { time: formatDateTime(book.cachedAt) })}</span>
                     </div>
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-gray-800">
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-gray-700">
                       <div className="h-full rounded-full bg-komgaPrimary" style={{ width: `${percent}%` }} />
                     </div>
                   </div>
@@ -344,7 +344,7 @@ export default function OfflineShelf() {
                       type="button"
                       onClick={() => handleDeleteBook(book.bookId)}
                       disabled={deletingId === book.bookId}
-                      className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-50 transition-colors"
                     >
                       {deletingId === book.bookId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                       {t('offlineShelf.remove')}

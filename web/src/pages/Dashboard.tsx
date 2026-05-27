@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, AlertTriangle, FolderPlus, Settings as SettingsIcon, Gauge, Timer, ServerCrash, Route as RouteIcon } from 'lucide-react';
+import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
-import { getTaskTypeLabel } from '../i18n/task';
-import { getFrontendPerformanceSnapshot, type FrontendPerformanceSnapshot } from '../utils/frontendPerformance';
+
+interface LibraryOverview {
+    id: number;
+    name: string;
+}
 
 interface LibrarySize {
     library_id: number;
@@ -45,130 +48,19 @@ interface RecommendedItem {
     reason: string;
 }
 
-interface TaskStatus {
-    key: string;
-    type: string;
-    scope: string;
-    scope_id?: number;
-    scope_name?: string;
-    status: string;
-    message: string;
-    error?: string;
-    retryable?: boolean;
-    updated_at: string;
-    params?: Record<string, string>;
-}
-
-interface KOReaderOverview {
-    enabled: boolean;
-    base_path: string;
-    match_mode: string;
-    path_ignore_extension: boolean;
-    path_match_depth: number;
-    stats?: {
-        matched_progress_count: number;
-        unmatched_progress_count: number;
-    };
-}
-
-interface LibraryOverview {
-    id: number;
-    name: string;
-    koreader_sync_enabled?: boolean;
-}
-
-interface PerformanceRoute {
-    route: string;
-    path: string;
-    count: number;
-    errors: number;
-    slow: number;
-    average_ms: number;
-    p95_ms: number;
-    max_ms: number;
-    last_seen: string;
-    last_status: number;
-    last_path: string;
-}
-
-interface PerformanceTransform {
-    transform: string;
-    count: number;
-    cache_hits: number;
-    average_ms: number;
-    p95_ms: number;
-    max_ms: number;
-}
-
-interface PerformanceEvent {
-    time: string;
-    method: string;
-    path: string;
-    route: string;
-    status: number;
-    bytes: number;
-    duration_ms: number;
-    remote_ip: string;
-}
-
-interface PerformanceSummary {
-    sample_count: number;
-    slow_threshold_ms: number;
-    total_requests: number;
-    error_requests: number;
-    slow_requests: number;
-    total_bytes: number;
-    cache_hits: number;
-    page_image_requests: number;
-    page_image_cache_hits: number;
-    page_image_archive_opens: number;
-    page_image_manifest_hits: number;
-    page_image_raw_passthroughs: number;
-    page_image_processed: number;
-    page_image_io_wait_ms: number;
-    average_ms: number;
-    p95_ms: number;
-    max_ms: number;
-    routes: PerformanceRoute[];
-    transforms: PerformanceTransform[];
-    recent_slow: PerformanceEvent[];
-    recent_errors: PerformanceEvent[];
-    protocol_counts: {
-        api: number;
-        opds: number;
-        mihon: number;
-        koreader: number;
-        other: number;
-    };
-}
-
 export default function Dashboard() {
     const { t, formatNumber } = useI18n();
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [libraries, setLibraries] = useState<LibraryOverview[]>([]);
-    const [tasks, setTasks] = useState<TaskStatus[]>([]);
     const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
     const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
     const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
-    const [koreaderOverview, setKOReaderOverview] = useState<KOReaderOverview | null>(null);
-    const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
-    const [frontendPerformance, setFrontendPerformance] = useState<FrontendPerformanceSnapshot>(() => getFrontendPerformanceSnapshot());
     const [loading, setLoading] = useState(true);
-    const [performanceRequested, setPerformanceRequested] = useState(false);
     const [recommendationsRequested, setRecommendationsRequested] = useState(false);
     const [recsLoading, setRecsLoading] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
-    const performanceRef = useRef<HTMLDivElement>(null);
     const recommendationsRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
-
-    useEffect(() => {
-        const handleFrontendPerformance = () => setFrontendPerformance(getFrontendPerformanceSnapshot());
-        window.addEventListener('manga-manager:frontend-performance', handleFrontendPerformance);
-        return () => {
-            window.removeEventListener('manga-manager:frontend-performance', handleFrontendPerformance);
-        };
-    }, []);
 
     useEffect(() => {
         let active = true;
@@ -190,76 +82,6 @@ export default function Dashboard() {
             active = false;
         };
     }, []);
-
-    useEffect(() => {
-        if (loading) return;
-        let active = true;
-        const timer = window.setTimeout(() => {
-            Promise.all([
-                axios.get('/api/system/tasks?status=failed&limit=3').catch(() => ({ data: [] })),
-                axios.get('/api/system/tasks?status=running&limit=3').catch(() => ({ data: [] })),
-            ]).then(([failedRes, runningRes]) => {
-                if (!active) return;
-                const failed = Array.isArray(failedRes.data) ? failedRes.data as TaskStatus[] : [];
-                const running = Array.isArray(runningRes.data) ? runningRes.data as TaskStatus[] : [];
-                setTasks([...failed, ...running]);
-            }).catch(console.error);
-        }, 600);
-        return () => {
-            active = false;
-            window.clearTimeout(timer);
-        };
-    }, [loading]);
-
-    useEffect(() => {
-        if (loading || libraries.length === 0) return;
-        const hasKOReaderLibrary = libraries.some((library) => library.koreader_sync_enabled ?? true);
-        if (!hasKOReaderLibrary) return;
-        let active = true;
-        const timer = window.setTimeout(() => {
-            axios.get('/api/system/koreader')
-                .then((res) => {
-                    if (active) setKOReaderOverview(res.data || null);
-                })
-                .catch(() => {
-                    if (active) {
-                        setKOReaderOverview({
-                            enabled: false,
-                            base_path: '/koreader',
-                            match_mode: 'binary_hash',
-                            path_ignore_extension: false,
-                            path_match_depth: 2,
-                            stats: { matched_progress_count: 0, unmatched_progress_count: 0 },
-                        });
-                    }
-                });
-        }, 900);
-        return () => {
-            active = false;
-            window.clearTimeout(timer);
-        };
-    }, [loading, libraries]);
-
-    const loadPerformance = useCallback(() => {
-        if (performanceRequested) return;
-        setPerformanceRequested(true);
-        axios.get('/api/system/performance')
-            .then(res => setPerformance(res.data || null))
-            .catch(() => setPerformance(null));
-    }, [performanceRequested]);
-
-    useEffect(() => {
-        if (loading || performanceRequested) return;
-        const target = performanceRef.current;
-        if (!target) return;
-        const observer = new IntersectionObserver((entries) => {
-            if (entries.some((entry) => entry.isIntersecting)) {
-                loadPerformance();
-            }
-        }, { rootMargin: '240px 0px' });
-        observer.observe(target);
-        return () => observer.disconnect();
-    }, [loadPerformance, loading, performanceRequested]);
 
     const loadRecommendations = useCallback((forceRefresh = false) => {
         if (recsLoading) return;
@@ -292,26 +114,6 @@ export default function Dashboard() {
     };
 
     const readPercent = stats ? (stats.total_books > 0 ? Math.round((stats.read_books / stats.total_books) * 100) : 0) : 0;
-    const failedTasks = tasks.filter((task) => task.status === 'failed').slice(0, 3);
-    const runningTasks = tasks.filter((task) => task.status === 'running').slice(0, 3);
-    const koreaderEnabledLibraries = libraries.filter((library) => library.koreader_sync_enabled ?? true).length;
-    const koreaderDisabledLibraries = Math.max(0, libraries.length - koreaderEnabledLibraries);
-
-    const openTaskTarget = (task: TaskStatus) => {
-        if (task.scope === 'series' && task.scope_id) {
-            navigate(`/series/${task.scope_id}`);
-            return;
-        }
-        if (task.scope === 'library' && task.scope_id) {
-            navigate(`/library/${task.scope_id}`);
-            return;
-        }
-        navigate('/logs');
-    };
-
-    const taskTypeLabel = (task: TaskStatus) => {
-        return getTaskTypeLabel(task, t);
-    };
 
     if (loading) {
         return (
@@ -414,112 +216,7 @@ export default function Dashboard() {
                 </div>
             )}
 
-            <div ref={performanceRef}>
-                {(performanceRequested || performance) ? (
-                    <PerformancePanel performance={performance} frontendPerformance={frontendPerformance} />
-                ) : (
-                    <button
-                        onClick={loadPerformance}
-                        className="w-full rounded-2xl border border-cyan-500/10 bg-gray-950/60 p-5 text-left text-sm text-gray-500 hover:border-cyan-500/25 hover:bg-gray-900/70"
-                    >
-                        {t('dashboard.performance.deferred')}
-                    </button>
-                )}
-            </div>
 
-            {koreaderOverview && (
-            <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
-                <div className="flex items-center justify-between gap-3">
-                    <div>
-                        <h2 className="text-lg font-semibold text-white">{t('dashboard.koreader.title')}</h2>
-                        <p className="mt-1 text-sm text-gray-300">
-                            {t('dashboard.koreader.status', { state: koreaderOverview?.enabled ? t('dashboard.koreader.enabled') : t('dashboard.koreader.disabled') })}
-                        </p>
-                        <p className="mt-1 text-xs text-gray-500">
-                            {t('dashboard.koreader.matchMode', {
-                                mode: koreaderOverview?.match_mode === 'file_path'
-                                    ? t('dashboard.koreader.matchModeFilePath', {
-                                        depth: koreaderOverview?.path_match_depth ?? 2,
-                                        extensionMode: koreaderOverview?.path_ignore_extension
-                                            ? t('dashboard.koreader.ignoreExtension')
-                                            : t('dashboard.koreader.keepExtension'),
-                                    })
-                                    : t('dashboard.koreader.matchModeBinaryHash'),
-                            })}
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => navigate('/settings')}
-                        className="rounded-lg border border-sky-500/20 bg-black/20 px-3 py-1.5 text-xs text-sky-100 hover:bg-black/30"
-                    >
-                        {t('dashboard.koreader.openSettings')}
-                    </button>
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-4">
-                    <MiniStat label={t('dashboard.koreader.enabledLibraries')} value={koreaderEnabledLibraries} accent="text-sky-300" />
-                    <MiniStat label={t('dashboard.koreader.disabledLibraries')} value={koreaderDisabledLibraries} accent="text-gray-300" />
-                    <MiniStat label={t('dashboard.koreader.matchedRecords')} value={koreaderOverview?.stats?.matched_progress_count ?? 0} accent="text-emerald-300" />
-                    <MiniStat label={t('dashboard.koreader.unmatchedRecords')} value={koreaderOverview?.stats?.unmatched_progress_count ?? 0} accent="text-amber-300" />
-                </div>
-            </div>
-            )}
-
-            {failedTasks.length > 0 && (
-                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                        <div className="flex items-center gap-2 text-red-500">
-                            <AlertTriangle className="w-5 h-5" />
-                            <h2 className="text-lg font-semibold">{t('dashboard.failedTasks.title')}</h2>
-                        </div>
-                        <button
-                            onClick={() => navigate('/logs')}
-                            className="rounded-lg border border-red-500/20 bg-black/20 px-3 py-1.5 text-xs text-red-500 hover:bg-black/30"
-                        >
-                            {t('dashboard.failedTasks.open')}
-                        </button>
-                    </div>
-                    <div className="space-y-3">
-                        {failedTasks.map((task) => (
-                            <button
-                                key={task.key}
-                                onClick={() => openTaskTarget(task)}
-                                className="w-full text-left rounded-xl border border-red-500/10 bg-black/20 p-3 hover:bg-black/30"
-                            >
-                                <div className="flex items-center gap-2 text-xs text-red-500/80 mb-2">
-                                    <span>{taskTypeLabel(task)}</span>
-                                    <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
-                                </div>
-                                <p className="text-sm font-medium text-white">{task.message}</p>
-                                {task.error && <p className="mt-1 text-xs text-red-500/90">{task.error}</p>}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {runningTasks.length > 0 && (
-                <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
-                    <div className="flex items-center gap-2 mb-3 text-blue-500">
-                        <Library className="w-5 h-5" />
-                        <h2 className="text-lg font-semibold">{t('dashboard.runningTasks.title')}</h2>
-                    </div>
-                    <div className="space-y-3">
-                        {runningTasks.map((task) => (
-                            <button
-                                key={task.key}
-                                onClick={() => openTaskTarget(task)}
-                                className="w-full text-left rounded-xl border border-blue-500/10 bg-black/20 p-3 hover:bg-black/30"
-                            >
-                                <div className="flex items-center gap-2 text-xs text-blue-500/80 mb-2">
-                                    <span>{taskTypeLabel(task)}</span>
-                                    <span>{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
-                                </div>
-                                <p className="text-sm font-medium text-white">{task.message}</p>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* 阅读进度、存储空间与热力图 */}
             {stats && (
@@ -726,215 +423,9 @@ function StatCard({ icon, label, value, subtitle, color, borderColor, iconColor 
     );
 }
 
-function MiniStat({ label, value, accent }: { label: string; value: string | number; accent: string }) {
-    return (
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-            <p className={`text-xl font-semibold ${accent}`}>{value}</p>
-            <p className="mt-1 text-xs text-gray-400">{label}</p>
-        </div>
-    );
-}
 
-function PerformancePanel({
-    performance,
-    frontendPerformance,
-}: {
-    performance: PerformanceSummary | null;
-    frontendPerformance: FrontendPerformanceSnapshot;
-}) {
-    const { t, formatNumber } = useI18n();
-    const navigate = useNavigate();
-    const sampleCount = performance?.sample_count ?? 0;
-    const errorRate = performance && performance.total_requests > 0
-        ? Math.round((performance.error_requests / performance.total_requests) * 100)
-        : 0;
-    const slowRate = performance && performance.total_requests > 0
-        ? Math.round((performance.slow_requests / performance.total_requests) * 100)
-        : 0;
-    const pageCacheHitRate = performance && performance.page_image_requests > 0
-        ? Math.round((performance.page_image_cache_hits / performance.page_image_requests) * 100)
-        : 0;
-    const rawPassthroughRate = performance && performance.page_image_requests > 0
-        ? Math.round((performance.page_image_raw_passthroughs / performance.page_image_requests) * 100)
-        : 0;
-    const manifestHitRate = performance && performance.page_image_requests > 0
-        ? Math.round((performance.page_image_manifest_hits / performance.page_image_requests) * 100)
-        : 0;
-    const latestFirstScreen = frontendPerformance.firstScreens[0];
-    const latestSeriesRender = frontendPerformance.seriesListRenders[0];
-    const topRoutes = performance?.routes?.slice(0, 4) ?? [];
-    const topTransforms = performance?.transforms?.slice(0, 4) ?? [];
-    const recentEvents = [
-        ...(performance?.recent_errors ?? []).map((event) => ({ ...event, kind: 'error' as const })),
-        ...(performance?.recent_slow ?? []).map((event) => ({ ...event, kind: 'slow' as const })),
-    ]
-        .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-        .slice(0, 4);
 
-    return (
-        <section className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-5">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="rounded-xl border border-cyan-400/20 bg-black/20 p-2 text-cyan-300">
-                        <Gauge className="h-5 w-5" />
-                    </div>
-                    <div>
-                        <h2 className="text-lg font-semibold text-white">{t('dashboard.performance.title')}</h2>
-                        <p className="mt-1 text-sm text-gray-300">
-                            {sampleCount > 0
-                                ? t('dashboard.performance.summary', {
-                                    count: formatNumber(sampleCount),
-                                    threshold: performance?.slow_threshold_ms ?? 0,
-                                })
-                                : t('dashboard.performance.empty')}
-                        </p>
-                    </div>
-                </div>
-                <button
-                    type="button"
-                    onClick={() => navigate('/logs')}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-400/20 bg-black/20 px-3 py-2 text-xs font-medium text-cyan-100 hover:bg-black/30"
-                >
-                    <RouteIcon className="h-3.5 w-3.5" />
-                    {t('dashboard.performance.openLogs')}
-                </button>
-            </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-5">
-                <MiniStat label={t('dashboard.performance.avg')} value={`${performance?.average_ms ?? 0}ms`} accent="text-cyan-200" />
-                <MiniStat label={t('dashboard.performance.p95')} value={`${performance?.p95_ms ?? 0}ms`} accent="text-blue-200" />
-                <MiniStat label={t('dashboard.performance.slowRate')} value={`${slowRate}%`} accent="text-amber-200" />
-                <MiniStat label={t('dashboard.performance.pageCacheHitRate')} value={`${pageCacheHitRate}%`} accent="text-emerald-200" />
-                <MiniStat label={t('dashboard.performance.errorRate')} value={`${errorRate}%`} accent="text-red-200" />
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-4">
-                <MiniStat label={t('dashboard.performance.rawPassthroughRate')} value={`${rawPassthroughRate}%`} accent="text-emerald-200" />
-                <MiniStat label={t('dashboard.performance.manifestHitRate')} value={`${manifestHitRate}%`} accent="text-blue-200" />
-                <MiniStat label={t('dashboard.performance.archiveOpenCount')} value={formatNumber(performance?.page_image_archive_opens ?? 0)} accent="text-amber-200" />
-                <MiniStat label={t('dashboard.performance.readerIOWait')} value={`${formatNumber(performance?.page_image_io_wait_ms ?? 0)}ms`} accent="text-rose-200" />
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-4">
-                <MiniStat
-                    label={t('dashboard.performance.firstScreenRequests')}
-                    value={formatNumber(latestFirstScreen?.request_count ?? 0)}
-                    accent="text-violet-200"
-                />
-                <MiniStat
-                    label={t('dashboard.performance.firstScreenDuration')}
-                    value={`${formatNumber(latestFirstScreen?.duration_ms ?? 0)}ms`}
-                    accent="text-indigo-200"
-                />
-                <MiniStat
-                    label={t('dashboard.performance.seriesRenderTime')}
-                    value={`${formatNumber(latestSeriesRender?.total_ms ?? 0)}ms`}
-                    accent="text-lime-200"
-                />
-                <MiniStat
-                    label={t('dashboard.performance.seriesRenderItems')}
-                    value={formatNumber(latestSeriesRender?.item_count ?? 0)}
-                    accent="text-teal-200"
-                />
-            </div>
-
-            <div className="mt-4 grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
-                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                    <div className="mb-3 flex items-center justify-between">
-                        <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
-                            <Timer className="h-4 w-4 text-cyan-300" />
-                            {t('dashboard.performance.hotRoutes')}
-                        </h3>
-                        <span className="text-xs text-gray-500">{formatBytes(performance?.total_bytes ?? 0)}</span>
-                    </div>
-                    {topRoutes.length > 0 ? (
-                        <div className="space-y-2">
-                            {topRoutes.map((route) => (
-                                <div key={`${route.route}-${route.last_path}`} className="grid gap-3 rounded-lg border border-white/5 bg-gray-950/40 p-3 md:grid-cols-[1fr_auto]">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <p className="truncate text-sm font-medium text-gray-100">{route.route || route.path}</p>
-                                            {route.errors > 0 && <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-200">{route.errors}</span>}
-                                            {route.slow > 0 && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-200">{route.slow}</span>}
-                                        </div>
-                                        <p className="mt-1 truncate text-xs text-gray-500">{route.last_path}</p>
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-2 text-right text-xs md:min-w-[170px]">
-                                        <span className="text-gray-400">{t('dashboard.performance.countValue', { count: route.count })}</span>
-                                        <span className="text-cyan-200">P95 {route.p95_ms}ms</span>
-                                        <span className="text-gray-400">Max {route.max_ms}ms</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <p className="rounded-lg border border-white/5 bg-gray-950/40 p-4 text-sm text-gray-500">{t('dashboard.performance.noRoutes')}</p>
-                    )}
-                </div>
-
-                <div className="space-y-4">
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
-                            <Gauge className="h-4 w-4 text-emerald-300" />
-                            {t('dashboard.performance.transforms')}
-                        </h3>
-                        {topTransforms.length > 0 ? (
-                            <div className="space-y-2">
-                                {topTransforms.map((item) => {
-                                    const hitRate = item.count > 0 ? Math.round((item.cache_hits / item.count) * 100) : 0;
-                                    return (
-                                        <div key={item.transform} className="rounded-lg border border-white/5 bg-gray-950/40 p-3">
-                                            <div className="flex items-center justify-between gap-2 text-xs">
-                                                <span className="truncate text-gray-200">{item.transform}</span>
-                                                <span className="shrink-0 text-emerald-200">{hitRate}%</span>
-                                            </div>
-                                            <div className="mt-1 flex items-center justify-between text-[11px] text-gray-500">
-                                                <span>{t('dashboard.performance.countValue', { count: item.count })}</span>
-                                                <span>P95 {item.p95_ms}ms</span>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <p className="rounded-lg border border-white/5 bg-gray-950/40 p-4 text-sm text-gray-500">{t('dashboard.performance.noTransforms')}</p>
-                        )}
-                    </div>
-
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
-                            <ServerCrash className="h-4 w-4 text-amber-300" />
-                            {t('dashboard.performance.recentEvents')}
-                        </h3>
-                        {recentEvents.length > 0 ? (
-                            <div className="space-y-2">
-                                {recentEvents.map((event) => (
-                                    <div key={`${event.time}-${event.path}-${event.kind}`} className="rounded-lg border border-white/5 bg-gray-950/40 p-3">
-                                        <div className="flex items-center justify-between gap-2 text-xs">
-                                            <span className={event.kind === 'error' ? 'text-red-200' : 'text-amber-200'}>
-                                                {event.status} · {event.duration_ms}ms
-                                            </span>
-                                            <span className="text-gray-500">{formatEventTime(event.time)}</span>
-                                        </div>
-                                        <p className="mt-1 truncate text-xs text-gray-300">{event.method} {event.path}</p>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <p className="rounded-lg border border-white/5 bg-gray-950/40 p-4 text-sm text-gray-500">{t('dashboard.performance.noEvents')}</p>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </section>
-    );
-}
-
-function formatEventTime(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-        return value;
-    }
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
 
 // GitHub 风格活跃热力图组件
 function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDays7: number }) {
@@ -1114,7 +605,7 @@ function OnboardingCard({
     description: string;
     actionLabel: string;
     onClick: () => void;
-    icon: ReactNode;
+    icon: React.ReactNode;
 }) {
     return (
         <div className="rounded-2xl border border-gray-800 bg-black/20 p-5">
@@ -1170,14 +661,18 @@ function StoragePieChart({ librarySizes }: { librarySizes: LibrarySize[] }) {
     ];
 
     // 计算 SVG 环形的分段
-    let currentAngle = 0;
     const segments = librarySizes.map((ls, index) => {
         const percentage = totalSize > 0 ? (ls.total_size / totalSize) : 0;
         const length = percentage * 100;
         const gap = 100 - length;
         const strokeDasharray = `${length} ${gap}`;
-        const strokeDashoffset = -currentAngle;
-        currentAngle += length;
+
+        // 使用纯函数方式计算 index 之前的所有百分比之和，规避 immutability 重新赋值报错
+        const previousSum = librarySizes.slice(0, index).reduce((sum, item) => {
+            const pct = totalSize > 0 ? (item.total_size / totalSize) : 0;
+            return sum + pct * 100;
+        }, 0);
+        const strokeDashoffset = -previousSum;
 
         return {
             ...ls,

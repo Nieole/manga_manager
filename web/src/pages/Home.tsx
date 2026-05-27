@@ -1770,7 +1770,7 @@ export default function Home() {
                     searchResults={scrapeSearchResults}
                     currentOffset={scrapeOffset}
                     searchTotal={scrapeTotal}
-                    currentSeries={scrapeSeriesDetail || scrapingSeries as any}
+                    currentSeries={scrapeSeriesDetail || (scrapingSeries as unknown as DetailSeries)}
                     currentTags={scrapeCurrentTags}
                     lockedFields={scrapeLockedFields}
                     selectedResult={selectedScrapeResult}

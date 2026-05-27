@@ -5,6 +5,7 @@ import { isToday, isYesterday } from 'date-fns';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskTypeLabel } from '../i18n/task';
 
+
 const TASK_TYPE_OPTIONS = [
   'scan_library',
   'scan_external_library',
@@ -84,6 +85,16 @@ const TASK_IO_PARAM_KEYS = [
   'pause_reason',
 ];
 
+interface LogsPerformanceSummary {
+  average_ms: number;
+  p95_ms: number;
+  page_image_requests: number;
+  page_image_cache_hits: number;
+  page_image_io_wait_ms: number;
+  page_image_archive_opens: number;
+  total_bytes: number;
+}
+
 export default function Logs() {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const navigate = useNavigate();
@@ -103,6 +114,7 @@ export default function Logs() {
   const [cancellingTaskKey, setCancellingTaskKey] = useState<string | null>(null);
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [performance, setPerformance] = useState<LogsPerformanceSummary | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -116,9 +128,10 @@ export default function Logs() {
       if (taskScopeIdFilter.trim()) taskParams.set('scope_id', taskScopeIdFilter.trim());
       if (taskQuery.trim()) taskParams.set('q', taskQuery.trim());
 
-      const [logsResp, tasksResp] = await Promise.all([
+      const [logsResp, tasksResp, perfResp] = await Promise.all([
         fetch(`/api/system/logs?limit=300&level=${filterLevel}&q=${encodeURIComponent(query)}`),
         fetch(`/api/system/tasks?${taskParams.toString()}`),
+        fetch('/api/system/performance').catch(() => null),
       ]);
 
       if (!logsResp.ok) {
@@ -132,6 +145,11 @@ export default function Logs() {
       if (tasksResp.ok) {
         const tasksData: TaskStatus[] = await tasksResp.json();
         setTasks(Array.isArray(tasksData) ? tasksData : []);
+      }
+
+      if (perfResp && perfResp.ok) {
+        const perfData = await perfResp.json().catch(() => null);
+        setPerformance(perfData);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('logs.error.unknown'));
@@ -286,24 +304,24 @@ export default function Logs() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">{t('logs.title')}</h1>
-          <p className="text-gray-400 mt-1">{t('logs.subtitle')}</p>
+          <p className="text-gray-500 mt-1">{t('logs.subtitle')}</p>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -trangray-y-1/2 w-4 h-4 text-gray-500" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && fetchData()}
               placeholder={t('logs.searchPlaceholder')}
-              className="w-full sm:w-64 rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+              className="w-full sm:w-64 rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40"
             />
           </div>
           <select
             value={filterLevel}
             onChange={(e) => setFilterLevel(e.target.value)}
-            className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40"
           >
             <option value="ALL">{t('logs.level.all')}</option>
             <option value="DEBUG">{t('logs.level.debug')}</option>
@@ -314,7 +332,7 @@ export default function Logs() {
           <button
             onClick={fetchData}
             disabled={loading}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-komgaPrimary px-4 py-2 text-sm text-gray-950 font-medium hover:bg-komgaPrimaryHover disabled:opacity-60 transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             {t('common.refresh')}
@@ -338,10 +356,10 @@ export default function Logs() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-        <div className="rounded-2xl border border-gray-800 bg-gray-950 overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-gray-800 px-4 py-3">
-            <Terminal className="w-4 h-4 text-gray-400" />
-            <span className="text-sm text-gray-300">{t('logs.systemLogs')}</span>
+        <div className="rounded-2xl border border-gray-700 bg-gray-950 overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-gray-700 px-4 py-3">
+            <Terminal className="w-4 h-4 text-gray-500" />
+            <span className="text-sm text-gray-400">{t('logs.systemLogs')}</span>
           </div>
           <div className="max-h-[70vh] overflow-auto p-4 font-mono text-sm">
             {loading && logs.length === 0 ? (
@@ -361,7 +379,7 @@ export default function Logs() {
             ) : (
               <div className="space-y-2">
                 {logs.map((log, index) => (
-                  <div key={`${log.time}-${index}`} className="rounded-xl border border-gray-800 bg-gray-900/70 p-3">
+                  <div key={`${log.time}-${index}`} className="rounded-xl border border-gray-700 bg-gray-900/70 p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-gray-500">{formatDateTime(log.time)}</span>
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${logLevelBadgeClass(log.level)}`}>
@@ -369,13 +387,13 @@ export default function Logs() {
                       </span>
                       <button
                         onClick={() => copyRawLog(log.raw, index)}
-                        className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-white"
+                        className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white"
                       >
                         <Copy className="w-3 h-3" />
                         {copiedIndex === index ? t('logs.copied') : t('logs.copyRaw')}
                       </button>
                     </div>
-                    <p className="mt-2 whitespace-pre-wrap break-words text-gray-200">{log.msg || log.raw}</p>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-white">{log.msg || log.raw}</p>
                     {log.msg !== log.raw && (
                       <p className="mt-2 whitespace-pre-wrap break-words text-xs text-gray-500">{log.raw}</p>
                     )}
@@ -387,28 +405,62 @@ export default function Logs() {
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+          {/* 系统运行性能迷你看板 */}
+          {performance && (
+            <div className="rounded-2xl border border-gray-700 bg-gray-900 p-4 space-y-3 shadow-lg shadow-black/5 select-none">
+              <div className="flex items-center gap-2 border-b border-gray-700 pb-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-komgaPrimary animate-ping shrink-0"></span>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-komgaPrimary">系统性能 Ops Dashboard</h2>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">平均响应时间</p>
+                  <p className="mt-1 text-base font-bold text-komgaPrimary">{performance.average_ms ?? 0}ms</p>
+                </div>
+                <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">P95 响应延迟</p>
+                  <p className="mt-1 text-base font-bold text-komgaSecondary">{performance.p95_ms ?? 0}ms</p>
+                </div>
+                <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">图片缓存率</p>
+                  <p className="mt-1 text-base font-bold text-komgaPrimary">
+                    {performance.page_image_requests > 0 ? Math.round((performance.page_image_cache_hits / performance.page_image_requests) * 100) : 0}%
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">IO 等待时间</p>
+                  <p className="mt-1 text-base font-bold text-komgaSecondary">{performance.page_image_io_wait_ms ?? 0}ms</p>
+                </div>
+              </div>
+              <div className="text-[10px] text-gray-500 flex justify-between px-1">
+                <span>并发处理归档: {performance.page_image_archive_opens ?? 0} 个</span>
+                <span>总处理流量: {performance.total_bytes ? `${Math.round(performance.total_bytes / 1024 / 1024)} MB` : '0 B'}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-gray-700 bg-gray-900 p-4">
             <div className="mb-3 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-gray-400" />
+              <AlertCircle className="w-4 h-4 text-gray-500" />
               <h2 className="text-sm font-semibold text-white">{t('logs.taskCenter')}</h2>
             </div>
             <div className="mb-4 flex flex-wrap gap-2">
               <button
                 onClick={() => clearTasks('completed')}
-                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800"
+                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
               >
                 {t('logs.clearCompleted')}
               </button>
               <button
                 onClick={() => clearTasks('failed')}
-                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800"
+                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
               >
                 {t('logs.clearFailed')}
               </button>
               <button
                 onClick={() => clearTasks(undefined, true)}
                 disabled={!currentTaskFilterCanClear}
-                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 title={currentTaskFilterCanClear ? t('logs.clearCurrentFilterHint') : t('logs.clearCurrentFilterDisabled')}
               >
                 {t('logs.clearCurrentFilter')}
@@ -419,7 +471,7 @@ export default function Logs() {
                 <select
                   value={taskStatusFilter}
                   onChange={(e) => setTaskStatusFilter(e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
                 >
                   <option value="ALL">{t('logs.taskStatus.all')}</option>
                   <option value="running">{t('logs.taskStatus.running')}</option>
@@ -430,7 +482,7 @@ export default function Logs() {
                 <select
                   value={taskScopeFilter}
                   onChange={(e) => setTaskScopeFilter(e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
                 >
                   <option value="ALL">{t('logs.taskScope.all')}</option>
                   <option value="system">{t('logs.taskScope.system')}</option>
@@ -442,7 +494,7 @@ export default function Logs() {
                 <select
                   value={taskTypeFilter}
                   onChange={(e) => setTaskTypeFilter(e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
                 >
                   <option value="ALL">{t('logs.taskType.all')}</option>
                   {TASK_TYPE_OPTIONS.map((type) => (
@@ -455,7 +507,7 @@ export default function Logs() {
                   onKeyDown={(e) => e.key === 'Enter' && fetchData()}
                   inputMode="numeric"
                   placeholder={t('logs.taskScopeIdPlaceholder')}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
                 />
               </div>
               <div className="flex gap-2">
@@ -464,11 +516,11 @@ export default function Logs() {
                   onChange={(e) => setTaskQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && fetchData()}
                   placeholder={t('logs.taskSearchPlaceholder')}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-200"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white"
                 />
                 <button
                   onClick={fetchData}
-                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800"
+                  className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
                 >
                   {t('logs.query')}
                 </button>
@@ -485,7 +537,7 @@ export default function Logs() {
                       <span className="text-xs text-gray-600">{t('common.itemCount', { count: group.items.length })}</span>
                     </div>
                     {group.items.map((task) => (
-                      <div key={task.key} className="rounded-xl border border-gray-800 bg-gray-950 p-3">
+                      <div key={task.key} className="rounded-xl border border-gray-700 bg-gray-950 p-3">
                         <div className="flex items-center gap-2">
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${badgeClass(task.status)}`}>
                             {task.status}
@@ -500,7 +552,7 @@ export default function Logs() {
                               <button
                                 onClick={() => cancelTask(task.key)}
                                 disabled={cancellingTaskKey === task.key}
-                                className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 px-2 py-1 text-[11px] text-amber-300 hover:bg-amber-500/10 disabled:opacity-60"
+                                className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 px-2 py-1 text-[11px] text-amber-500 hover:bg-amber-500/10 disabled:opacity-60"
                               >
                                 <XCircle className={`w-3 h-3 ${cancellingTaskKey === task.key ? 'animate-pulse' : ''}`} />
                                 {t('common.cancel')}
@@ -510,7 +562,7 @@ export default function Logs() {
                               <button
                                 onClick={() => retryTask(task.key)}
                                 disabled={retryingTaskKey === task.key}
-                                className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-800 disabled:opacity-60"
+                                className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-60"
                               >
                                 <RotateCcw className={`w-3 h-3 ${retryingTaskKey === task.key ? 'animate-spin' : ''}`} />
                                 {t('common.retry')}
@@ -520,19 +572,19 @@ export default function Logs() {
                           {hasTaskDetails(task) && (
                             <button
                               onClick={() => setExpandedTaskKey((current) => (current === task.key ? null : task.key))}
-                              className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-800"
+                              className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-white"
                             >
                               {expandedTaskKey === task.key ? t('common.collapseDetails') : t('common.viewDetails')}
                             </button>
                           )}
                         </div>
-                        <p className="mt-2 text-sm text-gray-100">{task.message}</p>
+                        <p className="mt-2 text-sm text-white">{task.message}</p>
                         {taskIOParams(task).length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1.5">
                             {taskIOParams(task).map(([key, value]) => (
                               <span
                                 key={`${task.key}-io-${key}`}
-                                className="rounded-md border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-200"
+                                className="rounded-md border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-[11px] text-komgaPrimary"
                               >
                                 {t(`logs.task.io.${key}`)}: {key === 'pause_reason' ? t(`logs.task.pauseReason.${value}`) : value}
                               </span>
@@ -540,7 +592,7 @@ export default function Logs() {
                           </div>
                         )}
                         {isInterruptedTask(task) && (
-                          <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-2 text-xs text-amber-300">
+                          <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-2 text-xs text-amber-500">
                             {t('logs.task.interruptedHint')}
                           </p>
                         )}
@@ -552,15 +604,15 @@ export default function Logs() {
                         )}
                         <p className="mt-2 text-xs text-gray-500">{getTaskActionHint(task, t)}</p>
                         {expandedTaskKey === task.key && (
-                          <div className="mt-3 rounded-xl border border-gray-800 bg-gray-900/60 p-3 space-y-3">
+                          <div className="mt-3 rounded-xl border border-gray-700 bg-gray-900/60 p-3 space-y-3">
                             <div className="grid gap-2 sm:grid-cols-2">
                               <div>
                                 <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('logs.task.startedAt')}</p>
-                                <p className="mt-1 text-xs text-gray-300">{formatDateTime(task.started_at)}</p>
+                                <p className="mt-1 text-xs text-gray-400">{formatDateTime(task.started_at)}</p>
                               </div>
                               <div>
                                 <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('logs.task.finishedAt')}</p>
-                                <p className="mt-1 text-xs text-gray-300">{task.finished_at ? formatDateTime(task.finished_at) : t('logs.task.runningNow')}</p>
+                                <p className="mt-1 text-xs text-gray-400">{task.finished_at ? formatDateTime(task.finished_at) : t('logs.task.runningNow')}</p>
                               </div>
                             </div>
                             {task.params && Object.keys(task.params).length > 0 && (
@@ -570,7 +622,7 @@ export default function Logs() {
                                   {Object.entries(task.params).map(([key, value]) => (
                                     <span
                                       key={`${task.key}-${key}`}
-                                      className="rounded-full border border-gray-700 bg-gray-950 px-2.5 py-1 text-xs text-gray-300"
+                                      className="rounded-full border border-gray-700 bg-gray-950 px-2.5 py-1 text-xs text-gray-400"
                                     >
                                       {key}: {value}
                                     </span>
@@ -590,7 +642,7 @@ export default function Logs() {
                         )}
                         <button
                           onClick={() => openTaskTarget(task)}
-                          className="mt-3 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
+                          className="mt-3 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
                         >
                           {t('logs.task.openPage')}
                         </button>
@@ -602,12 +654,12 @@ export default function Logs() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+          <div className="rounded-2xl border border-gray-700 bg-gray-900 p-4">
             <div className="mb-3 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-gray-400" />
+              <CheckCircle2 className="w-4 h-4 text-gray-500" />
               <h2 className="text-sm font-semibold text-white">{t('logs.tips.title')}</h2>
             </div>
-            <ul className="space-y-2 text-sm text-gray-400">
+            <ul className="space-y-2 text-sm text-gray-500">
               <li>{t('logs.tips.one')}</li>
               <li>{t('logs.tips.two')}</li>
               <li>{t('logs.tips.three')}</li>
@@ -621,10 +673,10 @@ export default function Logs() {
 
 function MetricCard({ label, value, tone }: { label: string; value: number; tone: 'blue' | 'red' | 'amber' | 'purple' }) {
   const toneClass = {
-    blue: 'border-blue-500/20 bg-blue-500/10 text-blue-500',
+    blue: 'border-komgaPrimary/20 bg-komgaPrimary/10 text-komgaPrimary',
     red: 'border-red-500/20 bg-red-500/10 text-red-500',
-    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-600',
-    purple: 'border-purple-500/20 bg-purple-500/10 text-purple-500',
+    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-500',
+    purple: 'border-komgaSecondary/20 bg-komgaSecondary/10 text-komgaSecondary',
   }[tone];
 
   return (
@@ -647,7 +699,7 @@ function TaskMetricCard({
   tone: 'blue' | 'red' | 'amber' | 'emerald';
 }) {
   const toneClass = {
-    blue: 'border-blue-500/20 bg-blue-500/10 text-blue-500',
+    blue: 'border-komgaPrimary/20 bg-komgaPrimary/10 text-komgaPrimary',
     red: 'border-red-500/20 bg-red-500/10 text-red-500',
     amber: 'border-amber-500/20 bg-amber-500/10 text-amber-500',
     emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
