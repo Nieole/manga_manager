@@ -1,7 +1,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import axios from 'axios';
-import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, Layers3, HardDriveDownload } from 'lucide-react';
+import { BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
@@ -522,6 +522,10 @@ export default function Layout() {
                             <LayoutDashboard className="w-5 h-5 shrink-0" />
                             <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.dashboard')}</span>
                         </Link>
+
+                        <div className={`pt-3 pb-1 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>
+                            <span className="px-3 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">{t('layout.sidebar.groupCollection')}</span>
+                        </div>
                         <Link to="/collections" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/collections' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                 } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
@@ -546,6 +550,10 @@ export default function Layout() {
                             <HardDriveDownload className="w-5 h-5 shrink-0" />
                             <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.offlineShelf')}</span>
                         </Link>
+
+                        <div className={`pt-3 pb-1 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>
+                            <span className="px-3 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">{t('layout.sidebar.groupMaintenance')}</span>
+                        </div>
                         <Link to="/organize" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/organize' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                 } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
@@ -554,21 +562,13 @@ export default function Layout() {
                             <ClipboardCheck className="w-5 h-5 shrink-0" />
                             <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.organize')}</span>
                         </Link>
-                        <Link to="/metadata-reviews" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/metadata-reviews' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                        <Link to="/reviews" onClick={() => setIsSidebarOpen(false)}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname.startsWith('/reviews') || location.pathname === '/metadata-reviews' || location.pathname === '/ai-grouping-reviews' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                                 } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.metadataReviews') : undefined}
+                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.reviews') : undefined}
                         >
                             <GitCompareArrows className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.metadataReviews')}</span>
-                        </Link>
-                        <Link to="/ai-grouping-reviews" onClick={() => setIsSidebarOpen(false)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/ai-grouping-reviews' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                                } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                            title={isDesktopSidebarCollapsed ? t('layout.sidebar.aiGroupingReviews') : undefined}
-                        >
-                            <Layers3 className="w-5 h-5 shrink-0" />
-                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.aiGroupingReviews')}</span>
+                            <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.reviews')}</span>
                         </Link>
                         <Link to="/logs" onClick={() => setIsSidebarOpen(false)}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${location.pathname === '/logs' ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium' : 'text-gray-300 hover:bg-gray-800 hover:text-white'

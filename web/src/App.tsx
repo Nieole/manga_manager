@@ -9,8 +9,7 @@ const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Collections = lazy(() => import('./pages/Collections'));
 const Organize = lazy(() => import('./pages/Organize'));
-const MetadataReviews = lazy(() => import('./pages/MetadataReviews'));
-const AIGroupingReviews = lazy(() => import('./pages/AIGroupingReviews'));
+const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
 const ReadingLists = lazy(() => import('./pages/ReadingLists'));
 const OfflineShelf = lazy(() => import('./pages/OfflineShelf'));
 const SeriesDetail = lazy(() => import('./pages/SeriesDetail'));
@@ -58,10 +57,11 @@ function App() {
           <Route path="collections" element={withRouteFallback(<Collections />)} />
           {/* 整理工作台 */}
           <Route path="organize" element={withRouteFallback(<Organize />)} />
-          {/* 元数据审核收件箱 */}
-          <Route path="metadata-reviews" element={withRouteFallback(<MetadataReviews />)} />
-          {/* AI 分组审核队列 */}
-          <Route path="ai-grouping-reviews" element={withRouteFallback(<AIGroupingReviews />)} />
+          {/* 审核中心（合并元数据审核 + AI 分组审核） */}
+          <Route path="reviews" element={withRouteFallback(<ReviewCenter />)} />
+          {/* 向后兼容旧路由 */}
+          <Route path="metadata-reviews" element={<Navigate to="/reviews?tab=metadata" replace />} />
+          <Route path="ai-grouping-reviews" element={<Navigate to="/reviews?tab=ai-grouping" replace />} />
           {/* 有序阅读清单 */}
           <Route path="reading-lists" element={withRouteFallback(<ReadingLists />)} />
           {/* 离线书架 */}

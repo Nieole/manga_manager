@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, Filter, Layers3, Loader2, Pencil, Save, Sparkles, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
+import { useToast } from '../components/ToastProvider';
 
 interface LibraryOption {
   id: number | string;
@@ -79,9 +80,23 @@ function displaySeriesName(series: AIGroupingReviewSeries) {
   return series.title || series.name;
 }
 
-export default function AIGroupingReviews() {
+export default function AIGroupingReviews({ embedded }: { embedded?: boolean } = {}) {
   const { t, formatDateTime } = useI18n();
-  const { refreshTrigger, libraries } = useOutletContext<{ refreshTrigger: number; libraries?: LibraryOption[] }>() || { refreshTrigger: 0, libraries: [] };
+  const globalToast = useToast();
+
+  // When embedded, we don't have an outlet context, so we use defaults
+  let refreshTrigger = 0;
+  let libraries: LibraryOption[] = [];
+  try {
+    if (!embedded) {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const ctx = useOutletContext<{ refreshTrigger: number; libraries?: LibraryOption[] }>();
+      refreshTrigger = ctx?.refreshTrigger ?? 0;
+      libraries = ctx?.libraries ?? [];
+    }
+  } catch {
+    // Fallback if not in outlet context
+  }
   const [items, setItems] = useState<AIGroupingReview[]>([]);
   const [total, setTotal] = useState(0);
   const [libraryId, setLibraryId] = useState('0');
@@ -96,6 +111,10 @@ export default function AIGroupingReviews() {
   const pendingCount = useMemo(() => items.filter((item) => item.status === 'pending').length, [items]);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+    if (embedded) {
+      globalToast.showToast(text, type);
+      return;
+    }
     setToastMsg({ text, type });
     window.setTimeout(() => setToastMsg(null), 3200);
   };
@@ -230,7 +249,8 @@ export default function AIGroupingReviews() {
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
-    <div className="min-h-screen bg-komgaDark p-6 lg:p-10">
+    <div className={embedded ? '' : 'min-h-screen bg-komgaDark p-6 lg:p-10'}>
+      {!embedded && (
       <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-100">
@@ -251,6 +271,7 @@ export default function AIGroupingReviews() {
           </div>
         </div>
       </div>
+      )}
 
       <div className="mb-6 grid gap-3 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 backdrop-blur md:grid-cols-[1fr_180px_auto]">
         <select value={libraryId} onChange={(event) => { setLibraryId(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-none focus:border-komgaPrimary">
@@ -402,7 +423,7 @@ export default function AIGroupingReviews() {
         </div>
       </div>
 
-      {toastMsg && (
+      {!embedded && toastMsg && (
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
           <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg ${toastMsg.type === 'success' ? 'border-green-700 bg-green-900 text-green-100' : 'border-red-700 bg-red-900 text-red-100'}`}>
             <span className="text-sm font-medium">{toastMsg.text}</span>

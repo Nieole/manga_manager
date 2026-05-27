@@ -7,6 +7,7 @@ import { initializeTheme } from './theme/themes.ts'
 import { DEFAULT_LOCALE, type AppLocale } from './i18n/core.ts'
 import { LocaleProvider, getClientLocale, loadLocaleMessages } from './i18n/LocaleProvider.tsx'
 import { initializeFrontendPerformance } from './utils/frontendPerformance.ts'
+import { ToastProvider } from './components/ToastProvider.tsx'
 import './index.css'
 
 initializeTheme()
@@ -29,9 +30,11 @@ async function bootstrap() {
         fallbackMessages={fallbackMessages}
       >
         <ThemeProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
+          <ToastProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </ToastProvider>
         </ThemeProvider>
       </LocaleProvider>
     </StrictMode>,
