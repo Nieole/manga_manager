@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -206,6 +207,7 @@ func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult, ran
 
 	// 推断出版商：尝试从 infobox 中解析
 	publisher := extractPublisherFromInfobox(best.Infobox)
+	authors := extractAuthorsFromInfobox(best.Infobox)
 	confidence := 0.92 - float64(rank)*0.04
 	if confidence < 0.55 {
 		confidence = 0.55
@@ -231,6 +233,7 @@ func (b *BangumiProvider) convertToSeriesMetadata(best bangumiSubjectResult, ran
 		CoverURL:      coverURL,
 		Rating:        rating,
 		Tags:          tags,
+		Authors:       authors,
 		SourceID:      best.ID,
 		SourceURL:     fmt.Sprintf("https://bgm.tv/subject/%d", best.ID),
 		Provider:      b.Name(),
@@ -255,4 +258,72 @@ func extractPublisherFromInfobox(infobox []interface{}) string {
 		}
 	}
 	return ""
+}
+
+// extractAuthorsFromInfobox 从 Bangumi infobox 抽取作者/作画/原作等参与人员
+func extractAuthorsFromInfobox(infobox []interface{}) []SeriesAuthor {
+	roleMap := map[string]string{
+		"作者":  "Writer",
+		"原作":  "Writer",
+		"漫画":  "Penciller",
+		"作画":  "Penciller",
+		"插图":  "Cover",
+		"插画":  "Cover",
+		"出品":  "Editor",
+		"编辑":  "Editor",
+		"编剧":  "Writer",
+		"author": "Writer",
+		"writer": "Writer",
+		"artist": "Penciller",
+	}
+	var authors []SeriesAuthor
+	seen := make(map[string]struct{})
+	addAuthor := func(name, role string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := role + "|" + name
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		authors = append(authors, SeriesAuthor{Name: name, Role: role})
+	}
+	for _, item := range infobox {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		key, _ := m["key"].(string)
+		role, ok := roleMap[strings.ToLower(strings.TrimSpace(key))]
+		if !ok {
+			role, ok = roleMap[strings.TrimSpace(key)]
+		}
+		if !ok {
+			continue
+		}
+		switch v := m["value"].(type) {
+		case string:
+			for _, name := range strings.FieldsFunc(v, func(r rune) bool {
+				return r == ',' || r == '、' || r == '/' || r == '\n'
+			}) {
+				addAuthor(name, role)
+			}
+		case []interface{}:
+			for _, entry := range v {
+				switch entry := entry.(type) {
+				case string:
+					addAuthor(entry, role)
+				case map[string]interface{}:
+					if name, ok := entry["v"].(string); ok {
+						addAuthor(name, role)
+					} else if name, ok := entry["name"].(string); ok {
+						addAuthor(name, role)
+					}
+				}
+			}
+		}
+	}
+	return authors
 }

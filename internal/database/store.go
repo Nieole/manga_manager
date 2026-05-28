@@ -69,6 +69,14 @@ type Store interface {
 	ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterID int64, limit int) ([]KOReaderProgress, error)
 	LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error
 	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
+	GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error)
+}
+
+type ReadingListSeriesProgress struct {
+	SeriesID       int64 `json:"series_id"`
+	ReadBooks      int64 `json:"read_books"`
+	CompletedBooks int64 `json:"completed_books"`
+	TotalBooks     int64 `json:"total_books"`
 }
 
 type LibrarySize struct {
@@ -235,6 +243,33 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error {
 	_, err := s.db.ExecContext(ctx, refreshSeriesStatsStatement("s.id = ?"), seriesID)
 	return err
+}
+
+func (s *SqlStore) GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			rli.series_id,
+			COALESCE(ss.read_book_count, 0),
+			COALESCE(ss.completed_book_count, 0),
+			COALESCE(s.book_count, 0)
+		FROM reading_list_items rli
+		JOIN series s ON s.id = rli.series_id
+		LEFT JOIN series_stats ss ON ss.series_id = rli.series_id
+		WHERE rli.reading_list_id = ?
+	`, readingListID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]ReadingListSeriesProgress)
+	for rows.Next() {
+		var row ReadingListSeriesProgress
+		if err := rows.Scan(&row.SeriesID, &row.ReadBooks, &row.CompletedBooks, &row.TotalBooks); err != nil {
+			return nil, err
+		}
+		out[row.SeriesID] = row
+	}
+	return out, rows.Err()
 }
 
 func (s *SqlStore) refreshSeriesStatsForBook(ctx context.Context, bookID int64) error {

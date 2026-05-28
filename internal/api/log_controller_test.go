@@ -50,3 +50,39 @@ func TestGetSystemLogsHonorsFilterAndLimit(t *testing.T) {
 		t.Fatalf("expected debug summary count 1, got %+v", response.Summary.ByLevel)
 	}
 }
+
+func TestGetSystemLogsTaskKeyFilter(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	cfg := controller.currentConfig()
+	logPath := filepath.Join(filepath.Dir(cfg.Database.Path), "manga_manager.log")
+
+	content := "" +
+		"time=2026-01-01T00:00:00Z level=ERROR msg=\"unrelated\"\n" +
+		"time=2026-01-01T00:01:00Z level=ERROR msg=\"scan failure\" task_key=scan_library_1\n" +
+		"time=2026-01-01T00:02:00Z level=ERROR msg=\"scrape failure\" task_key=scrape_library_2\n" +
+		"time=2026-01-01T00:03:00Z level=ERROR msg=\"scan retry\" task_key=scan_library_1\n"
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write log file failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/logs?level=ERROR&task_key=scan_library_1", nil)
+	rec := httptest.NewRecorder()
+	controller.getSystemLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var response LogsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode logs response failed: %v", err)
+	}
+	if len(response.Items) != 2 {
+		t.Fatalf("expected 2 log items filtered by task_key, got %d", len(response.Items))
+	}
+	for _, item := range response.Items {
+		if item.Msg != "scan failure" && item.Msg != "scan retry" {
+			t.Fatalf("unexpected item leaked into task_key filter: %+v", item)
+		}
+	}
+}

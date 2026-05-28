@@ -4,9 +4,54 @@
 
 ---
 
-## [Unreleased] — 2026-04-10
+### 📌 增量记录 — 2026-05-28（前端导航重构 + 任务进度修复）
 
-> 本次集中改动对应 [面向公开发布的系统性改进路线图] 中的 **P0 发布阻塞** 全部五项、**P1 产品完善**（设置页信息架构、日志与任务中心、库管理交互、元数据工作流）以及 **P2 体验增强**（仪表板产品化、文案与视觉统一）。下方各节标题中的 `[Pn]` 标记对应路线图条目。
+#### 侧栏导航重构
+- **侧栏分组改为 4 组**：原本的"阅读空间 / 维护工具 / 系统数据"等分组重写为"我的书架（Shelf）/ 我的视图（Views）/ 整理与审核（Curate）/ 系统（System）"，新增 `SidebarGroup` 与 `SidebarLink` 复用组件，折叠/展开状态由各组独立持有。
+- **资源库快速过滤**：侧栏资源库列表新增搜索框，支持按名称模糊过滤；资源库分组展开状态会写入 `localStorage` 持久化。
+- **新增侧栏任务气泡**：抽出 `SidebarTaskBubble` 组件，订阅 `task_progress` SSE，在侧栏底部展示进行中、刚完成或失败的任务卡片，可单条关闭或一键清理已完成项。
+- **新增键盘快捷键面板**：抽出 `ShortcutsPanel`，按 `?` 打开/关闭，按 `g+r/o/c/...` 跳转板块；面板和 i18n 文案覆盖全局、审核中心、整理工作台、任务等四组快捷键。
+
+#### 任务与日志合并
+- **任务中心与系统日志合并到 `/ops`**：新增 `Ops.tsx` 容器页，把 `BackgroundTasks` 与 `Logs` 合并为同一页签内的两个 tab，URL 通过 `?tab=tasks|logs&task_key=...` 控制；旧路由 `/organize/tasks` 与 `/logs` 自动 `Navigate` 到 `/ops` 对应 tab。
+- **日志按 task_key 过滤**：`GET /api/system/logs` 新增 `task_key` 参数（在 raw 行中匹配 `task_key=...` 子串），任务详情面板可一键跳到该任务相关日志。
+- **健康问题携带 last_task_key**：`HealthIssue` 增加 `last_task_key` 字段，"整理与审核"入口可由问题直接跳到对应任务的日志。
+
+#### 概览（Dashboard）改造
+- **概览首屏置顶继续阅读 Hero**：把"继续阅读"从下半区提至首屏，覆盖最近 20 本带封面与进度条；空态时回退到推荐区。
+- **待审核横幅**：当 `/api/reviews/inbox/summary` 返回 total > 0 时，概览顶部展示挂起待审核条目数与"前往待办审核"入口。
+
+#### 审核中心
+- **新增统一审核入口接口**：`GET /api/reviews/inbox/summary` 返回元数据审核、AI 分组审核、KOReader 未匹配进度三类待办计数总和，前端侧栏徽标与概览横幅复用同一接口。
+- **元数据 / AI 审核详情面板**：`MetadataReviews` 与 `AIGroupingReviews` 引入 `activeReviewId` + 右侧详情面板模式，列表多选与详情查看分离；toast 行为统一收敛到 `useToast` 全局通道，移除组件内部 toast 状态。
+- **元数据审核字段化**：拆出 `metadataAuthorEntryString / metadataJoinAuthors / metadataJoinProposedAuthors / metadataParseAuthors` 等帮助函数，作者审核改为按 `name (role)` 规范化对比与展示。
+- **批量刮削回写作者**：`applyMetadataToSeries` 在未锁定 `authors` 字段时按 `name|role` 去重 upsert 作者并 link 到系列，记录字段变更到审核日志。
+- **Bangumi provider 抽取作者**：新增 `extractAuthorsFromInfobox`，从 infobox 中按 `作者 / 原作 / 漫画 / 作画` 等中文 key 推断 `SeriesAuthor`（角色映射到 `Writer / Penciller` 等标准 role）。
+
+#### 整理工作台
+- **健康问题按严重度折叠**：`Organize.tsx` 按 `error / warn / info` 分组并折叠，error/warn 默认展开、info 默认收起，状态独立持有。
+- **聚焦回页面自动刷新**：监听 `visibilitychange` 与 `focus` 事件，切回页签后自动重新拉取健康报告。
+- **修复元数据缺失误报**：原本只要"缺 tag 或 缺 author"就算缺失，改为同时缺 tag 和缺 author 才计入；展示语改为"missing tags and authors"。
+
+#### 合集与阅读清单
+- **合集类型 Tab**：`Collections` 顶部新增 `全部 / 手动 / 智能` 切换 tab，按 `kind` 过滤左侧列表，附计数徽标。
+- **阅读清单进度聚合**：`/api/reading-lists/{id}/items` 响应增加 `read_books / completed_books / total_books`，前端把当前清单的累计进度展示在头部。
+- **新增 `GetReadingListItemProgress` store 方法**：聚合系列已读/已完成/总卷数，给 reading list controller 复用。
+
+#### 离线书架
+- **离线健康条**：抽出 `OfflineHealthBar`，把在线状态、Service Worker 支持情况、配额占比、排队任务、缓存数量统一展示在书架顶部。
+- **缓存列表改为卡片网格**：从原本的纵向 divider 列表改为 lg:grid-cols-2 的卡片排版，更适合大量条目浏览。
+
+#### 任务中心（重建缩略图任务进度修复）
+- **修复重建缩略图进度过早跑满**：`rebuild_thumbnails` 任务的进度展开为归档处理与封面生成两阶段（`current = processed + skipped + generated_covers`，`total = discovered + queued_covers`），归档全部入队时进度只走到约 50%，cover queue 异步生成阶段继续推进到 100%，避免任务一开始进度条就到顶但封面信息仍在滚动的视觉矛盾。
+- **修复归档进度临时高于发现数时被钳成 100%**：聚合器在 `processed > discovered` 抖动窗口内不再回退到占位 `total=1`，而是让 `total` 跟住 `current`，进度条始终落在合理区间。
+- **库切换边界不再覆盖归档进度**：`runGlobalScan` 的库切换回调不再用"库索引/库数"覆盖任务的 `current/total`，库进度只用于消息文案，进度条统一由聚合器基于归档与封面 metrics 驱动。
+- **等待封面队列阶段保留真实进度**：`WaitForCoverQueue` 期间不再写死 `1/1`，而是用聚合器累计的 metrics 驱动进度条，配合阶段消息切换。
+- **任务启动初始 total 改为 0**：`launchRebuildThumbnailsTask` 启动时不再设占位 `total=1`，前端在 metrics 抵达前显示不确定进度动画，避免 0/1 与后续大数字之间的视觉跳动。
+
+#### 缩略图重建
+- **修复重建缩略图未真正全量重建**：删盘后新增 `clearAllCoverPaths`，将 `books.cover_path` 置 NULL、`series_stats.cover_path` 置空串。原本 scanner 仅在 `cover_path` 为空时入队 cover job、cover worker 也仅在 `cover_path` 为空时回写，导致已存在 cover_path 的归档既不重新入队也不会被回填，重建后磁盘缩略图实际未恢复。
+- **cover job 携带 library 上下文**：`coverJob` 增加 `libraryID` 与 `progress reporter`，cover worker 完成时按归档发布 `queueing_covers` 阶段进度事件。
 
 ### 📌 增量记录 — 2026-05-27（后台任务状态与进度可观测）
 
@@ -1652,3 +1697,7 @@
   - 正常打开目录
   - 系列不存在
   - 打开文件管理器失败
+
+## [Unreleased] — 2026-04-10
+
+> 本次集中改动对应 [面向公开发布的系统性改进路线图] 中的 **P0 发布阻塞** 全部五项、**P1 产品完善**（设置页信息架构、日志与任务中心、库管理交互、元数据工作流）以及 **P2 体验增强**（仪表板产品化、文案与视觉统一）。下方各节标题中的 `[Pn]` 标记对应路线图条目。

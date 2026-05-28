@@ -43,6 +43,11 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	searchQuery := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	taskKeyFilter := strings.TrimSpace(r.URL.Query().Get("task_key"))
+	taskKeyNeedle := ""
+	if taskKeyFilter != "" {
+		taskKeyNeedle = "task_key=" + taskKeyFilter
+	}
 
 	cfg := c.currentConfig()
 	logFilePath := filepath.Join(filepath.Dir(cfg.Database.Path), "manga_manager.log")
@@ -88,6 +93,9 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 			if !strings.Contains(raw, searchQuery) && !strings.Contains(msg, searchQuery) {
 				continue
 			}
+		}
+		if taskKeyNeedle != "" && !strings.Contains(entry.Raw, taskKeyNeedle) {
+			continue
 		}
 
 		summary.Total++

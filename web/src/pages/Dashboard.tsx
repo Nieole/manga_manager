@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon } from 'lucide-react';
+import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon, ClipboardCheck, ArrowRight } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 
 interface LibraryOverview {
@@ -55,6 +55,7 @@ export default function Dashboard() {
     const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
     const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
     const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
+    const [reviewPending, setReviewPending] = useState(0);
     const [loading, setLoading] = useState(true);
     const [recommendationsRequested, setRecommendationsRequested] = useState(false);
     const [recsLoading, setRecsLoading] = useState(false);
@@ -69,12 +70,14 @@ export default function Dashboard() {
             axios.get('/api/libraries').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
             axios.get('/api/stats/activity-heatmap?weeks=52').catch(() => ({ data: [] })),
-        ]).then(([statsRes, librariesRes, recentRes, heatmapRes]) => {
+            axios.get('/api/reviews/inbox/summary').catch(() => ({ data: { counts: { total: 0 } } })),
+        ]).then(([statsRes, librariesRes, recentRes, heatmapRes, reviewSummaryRes]) => {
             if (!active) return;
             setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
+            setReviewPending(reviewSummaryRes?.data?.counts?.total ?? 0);
         }).catch(console.error).finally(() => {
             if (active) setLoading(false);
         });
@@ -176,6 +179,93 @@ export default function Dashboard() {
                 <h1 className="text-2xl font-bold text-white tracking-tight">{t('dashboard.title')}</h1>
             </div>
 
+            {/* 待审核提示行（仅有挂起项时显示） */}
+            {reviewPending > 0 && (
+                <button
+                    type="button"
+                    onClick={() => navigate('/reviews')}
+                    className="flex items-center gap-3 w-full sm:w-auto px-4 py-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15 transition-colors"
+                >
+                    <ClipboardCheck className="w-4 h-4" />
+                    <span className="text-sm">{t('dashboard.reviewPending.label', { count: reviewPending })}</span>
+                    <ArrowRight className="w-3.5 h-3.5 ml-auto" />
+                </button>
+            )}
+
+            {/* 继续阅读 Hero —— 提至首屏 */}
+            {recentReads.length > 0 && (
+                <div>
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                            <BookOpen className="w-5 h-5 text-komgaPrimary" />
+                            {t('dashboard.continueReading.title')}
+                        </h2>
+                        <div className="flex gap-2">
+                            <button onClick={() => scrollCarousel('left')} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+                                <ChevronLeft className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => scrollCarousel('right')} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+                                <ChevronRight className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div
+                        ref={scrollRef}
+                        className="flex gap-4 overflow-x-auto scroll-smooth pb-2 snap-x snap-mandatory"
+                        style={{ scrollbarWidth: 'none' }}
+                    >
+                        {recentReads.map((item) => {
+                            const progress = item.page_count > 0 && item.last_read_page?.Valid
+                                ? Math.round((item.last_read_page.Int64 / item.page_count) * 100) : 0;
+                            const coverUrl = item.cover_path?.Valid ? `/api/thumbnails/${item.cover_path.String}` : '';
+
+                            return (
+                                <div
+                                    key={`${item.series_id}-${item.book_id}`}
+                                    onClick={() => navigate(`/reader/${item.book_id}`)}
+                                    className="group flex-shrink-0 w-40 snap-start cursor-pointer"
+                                >
+                                    <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-komgaPrimary/50 transition-all duration-300 shadow-lg group-hover:shadow-komgaPrimary/10">
+                                        {coverUrl ? (
+                                            <img
+                                                src={coverUrl}
+                                                alt={item.series_name}
+                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center text-gray-700">
+                                                <BookOpen className="w-10 h-10" />
+                                            </div>
+                                        )}
+
+                                        {/* 进度条覆盖 */}
+                                        <div className="absolute bottom-0 inset-x-0 h-1 bg-gray-900/80">
+                                            <div className="h-full bg-komgaPrimary transition-all" style={{ width: `${progress}%` }} />
+                                        </div>
+
+                                        {/* 悬停覆盖层 */}
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
+                                            <span className="text-xs text-white font-medium">
+                                                {t('dashboard.continueReading.resumeToPage', { page: item.last_read_page?.Valid ? item.last_read_page.Int64 : 1 })}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-2 px-1">
+                                        <p className="text-sm font-medium text-gray-200 truncate group-hover:text-komgaPrimary transition-colors">{item.series_name}</p>
+                                        <p className="text-xs text-gray-500 truncate mt-0.5">
+                                            {item.book_title?.Valid ? item.book_title.String : item.book_name}
+                                        </p>
+                                        <p className="text-[10px] text-gray-600 mt-1">{t('dashboard.continueReading.readPercent', { percent: progress })}</p>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
             {/* 统计卡片网格 */}
             {stats && (
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -257,79 +347,7 @@ export default function Dashboard() {
                 </div>
             )}
 
-            {/* 继续阅读横向轮播 */}
-            {recentReads.length > 0 && (
-                <div>
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                            <BookOpen className="w-5 h-5 text-komgaPrimary" />
-                            {t('dashboard.continueReading.title')}
-                        </h2>
-                        <div className="flex gap-2">
-                            <button onClick={() => scrollCarousel('left')} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
-                                <ChevronLeft className="w-4 h-4" />
-                            </button>
-                            <button onClick={() => scrollCarousel('right')} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
-                                <ChevronRight className="w-4 h-4" />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div
-                        ref={scrollRef}
-                        className="flex gap-4 overflow-x-auto scroll-smooth pb-2 snap-x snap-mandatory"
-                        style={{ scrollbarWidth: 'none' }}
-                    >
-                        {recentReads.map((item) => {
-                            const progress = item.page_count > 0 && item.last_read_page?.Valid
-                                ? Math.round((item.last_read_page.Int64 / item.page_count) * 100) : 0;
-                            const coverUrl = item.cover_path?.Valid ? `/api/thumbnails/${item.cover_path.String}` : '';
-
-                            return (
-                                <div
-                                    key={`${item.series_id}-${item.book_id}`}
-                                    onClick={() => navigate(`/reader/${item.book_id}`)}
-                                    className="group flex-shrink-0 w-40 snap-start cursor-pointer"
-                                >
-                                    <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-komgaPrimary/50 transition-all duration-300 shadow-lg group-hover:shadow-komgaPrimary/10">
-                                        {coverUrl ? (
-                                            <img
-                                                src={coverUrl}
-                                                alt={item.series_name}
-                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                            />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-gray-700">
-                                                <BookOpen className="w-10 h-10" />
-                                            </div>
-                                        )}
-
-                                        {/* 进度条覆盖 */}
-                                        <div className="absolute bottom-0 inset-x-0 h-1 bg-gray-900/80">
-                                            <div className="h-full bg-komgaPrimary transition-all" style={{ width: `${progress}%` }} />
-                                        </div>
-
-                                        {/* 悬停覆盖层 */}
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
-                                            <span className="text-xs text-white font-medium">
-                                                {t('dashboard.continueReading.resumeToPage', { page: item.last_read_page?.Valid ? item.last_read_page.Int64 : 1 })}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="mt-2 px-1">
-                                        <p className="text-sm font-medium text-gray-200 truncate group-hover:text-komgaPrimary transition-colors">{item.series_name}</p>
-                                        <p className="text-xs text-gray-500 truncate mt-0.5">
-                                            {item.book_title?.Valid ? item.book_title.String : item.book_name}
-                                        </p>
-                                        <p className="text-[10px] text-gray-600 mt-1">{t('dashboard.continueReading.readPercent', { percent: progress })}</p>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
+            {/* 继续阅读横向轮播：原位置内容已移动到 Hero 区 */}
 
             {/* 猜你喜欢 - AI 推荐 */}
             <div ref={recommendationsRef}>

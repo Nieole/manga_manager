@@ -1,13 +1,16 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
-import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Terminal, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench } from 'lucide-react';
+import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
+import { useToast } from './ToastProvider';
+import { ShortcutsPanel } from './ShortcutsPanel';
+import { SidebarTaskBubble, type TaskBubbleEntry } from './SidebarTaskBubble';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -19,6 +22,66 @@ interface ConfirmDialogState {
     confirmLabel?: string;
     tone?: 'primary' | 'warning' | 'danger';
     onConfirm: (() => Promise<void> | void) | null;
+}
+
+interface SidebarGroupProps {
+    label: string;
+    collapsed: boolean;
+    expanded: boolean;
+    onToggle: () => void;
+    collapsedIcon: ReactNode;
+    children: ReactNode;
+}
+
+function SidebarGroup({ label, collapsed, expanded, onToggle, collapsedIcon, children }: SidebarGroupProps) {
+    return (
+        <div className="space-y-1">
+            {!collapsed ? (
+                <button
+                    onClick={onToggle}
+                    className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-semibold tracking-wider text-gray-500 uppercase rounded-md hover:bg-gray-800/40 hover:text-gray-300 transition-colors"
+                >
+                    <span>{label}</span>
+                    <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-0' : '-rotate-90'}`} />
+                </button>
+            ) : (
+                <div className="w-full flex justify-center py-2 text-gray-600">
+                    {collapsedIcon}
+                </div>
+            )}
+            {(expanded || collapsed) && <div className="space-y-0.5">{children}</div>}
+        </div>
+    );
+}
+
+interface SidebarLinkProps {
+    to: string;
+    icon: ReactNode;
+    label: string;
+    collapsed: boolean;
+    pathname: string;
+    matcher?: (pathname: string) => boolean;
+    exact?: boolean;
+    onClick?: () => void;
+}
+
+function SidebarLink({ to, icon, label, collapsed, pathname, matcher, exact, onClick }: SidebarLinkProps) {
+    const active = matcher ? matcher(pathname) : exact ? pathname === to : pathname === to;
+    return (
+        <Link
+            to={to}
+            onClick={onClick}
+            title={label}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-sm border-l-2 ${
+                active
+                    ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium border-komgaPrimary'
+                    : 'text-gray-400 border-transparent hover:bg-gray-800/40 hover:text-white'
+            } ${collapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
+        >
+            {icon}
+            <span className={collapsed ? 'md:hidden' : 'block'}>{label}</span>
+        </Link>
+    );
 }
 
 export default function Layout() {
@@ -36,9 +99,26 @@ export default function Layout() {
     });
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-    const [isReaderSpaceExpanded, setIsReaderSpaceExpanded] = useState(true);
-    const [isMaintenanceExpanded, setIsMaintenanceExpanded] = useState(true);
-    const [isOpsExpanded, setIsOpsExpanded] = useState(true);
+    const [isShelfExpanded, setIsShelfExpanded] = useState(true);
+    const [isViewsExpanded, setIsViewsExpanded] = useState(true);
+    const [isCurateExpanded, setIsCurateExpanded] = useState(true);
+    const [isSystemExpanded, setIsSystemExpanded] = useState(true);
+    const [isLibrariesExpanded, setIsLibrariesExpanded] = useState(() => {
+        try {
+            const stored = localStorage.getItem('manga_manager_libraries_expanded');
+            return stored == null ? true : stored === 'true';
+        } catch { return true; }
+    });
+    const [librariesQuery, setLibrariesQuery] = useState('');
+    const toggleLibrariesExpanded = () => {
+        setIsLibrariesExpanded((prev) => {
+            const next = !prev;
+            try {
+                localStorage.setItem('manga_manager_libraries_expanded', String(next));
+            } catch { /* ignore */ }
+            return next;
+        });
+    };
 
     const toggleDesktopSidebar = () => {
         setIsDesktopSidebarCollapsed(prev => {
@@ -70,17 +150,8 @@ export default function Layout() {
     const [refreshTrigger, setRefreshTrigger] = useState(0);
 
     // 全局任务进度状态
-    const [taskProgress, setTaskProgress] = useState<{
-        key?: string;
-        status: string;
-        message: string;
-        error?: string;
-        current: number;
-        total: number;
-        type: string;
-        params?: Record<string, string>;
-    } | null>(null);
-    const taskDismissTimer = useRef<number | null>(null);
+    const [taskBubbleEntries, setTaskBubbleEntries] = useState<Record<string, TaskBubbleEntry>>({});
+    const taskBubbleCleanupTimers = useRef<Map<string, number>>(new Map());
 
     // 文件夹浏览器状态
     const [browsing, setBrowsing] = useState(false);
@@ -88,7 +159,6 @@ export default function Layout() {
     const [browseCurrent, setBrowseCurrent] = useState('');
     const [browseParent, setBrowseParent] = useState('');
     const [browseDrives, setBrowseDrives] = useState<BrowseDrive[]>([]);
-    const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
         open: false,
         title: '',
@@ -98,6 +168,7 @@ export default function Layout() {
         onConfirm: null,
     });
     const [confirmLoading, setConfirmLoading] = useState(false);
+    const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
     const {
         searchQuery,
@@ -115,11 +186,7 @@ export default function Layout() {
     const { libId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
-
-    const showToast = (text: string, type: 'success' | 'error') => {
-        setToastMsg({ text, type });
-        window.setTimeout(() => setToastMsg(null), 3200);
-    };
+    const { showToast } = useToast();
 
     const openConfirmDialog = (next: Omit<ConfirmDialogState, 'open'>) => {
         setConfirmDialog({ open: true, ...next });
@@ -279,23 +346,23 @@ export default function Layout() {
             const detail = customEvent.detail;
             if (!detail?.key) return;
 
-            setTaskProgress((current) => {
-                if (!current || current.key !== detail.key) return current;
+            setTaskBubbleEntries((prev) => {
+                const existing = prev[detail.key!];
+                if (!existing) return prev;
                 return {
-                    ...current,
-                    status: detail.status || current.status,
-                    message: detail.message || current.message,
-                    error: detail.error ?? current.error,
-                    current: detail.current ?? current.current,
-                    total: detail.total ?? current.total,
-                    type: detail.type || current.type,
+                    ...prev,
+                    [detail.key!]: {
+                        ...existing,
+                        status: detail.status || existing.status,
+                        message: detail.message || existing.message,
+                        error: detail.error ?? existing.error,
+                        current: detail.current ?? existing.current,
+                        total: detail.total ?? existing.total,
+                        type: detail.type || existing.type,
+                        updatedAt: Date.now(),
+                    },
                 };
             });
-
-            if (detail.status === 'completed' || detail.status === 'failed') {
-                if (taskDismissTimer.current) clearTimeout(taskDismissTimer.current);
-                taskDismissTimer.current = window.setTimeout(() => setTaskProgress(null), 3000);
-            }
         };
         window.addEventListener('manga-manager:task-progress-override', handleTaskProgressOverride as EventListener);
 
@@ -314,12 +381,36 @@ export default function Layout() {
                 try {
                     const progress = JSON.parse(data.slice('task_progress:'.length));
                     window.dispatchEvent(new CustomEvent('manga-manager:task-progress', { detail: progress }));
-                    setTaskProgress(progress);
-                    // 清除之前的自动关闭计时器
-                    if (taskDismissTimer.current) clearTimeout(taskDismissTimer.current);
-                    // 如果任务完成或失败，3 秒后自动隐藏。某些任务的 total 可能为 0（例如极快完成或无可处理项）。
-                    if (progress.status === 'completed' || progress.status === 'failed') {
-                        taskDismissTimer.current = window.setTimeout(() => setTaskProgress(null), 3000);
+                    if (progress.key) {
+                        const entry: TaskBubbleEntry = {
+                            key: progress.key,
+                            type: progress.type || '',
+                            status: progress.status || 'running',
+                            message: progress.message || '',
+                            error: progress.error,
+                            current: progress.current ?? 0,
+                            total: progress.total ?? 0,
+                            scope_name: progress.scope_name,
+                            updatedAt: Date.now(),
+                        };
+                        setTaskBubbleEntries((prev) => ({ ...prev, [progress.key]: entry }));
+                        const existingTimer = taskBubbleCleanupTimers.current.get(progress.key);
+                        if (existingTimer) {
+                            clearTimeout(existingTimer);
+                            taskBubbleCleanupTimers.current.delete(progress.key);
+                        }
+                        if (entry.status === 'completed' || entry.status === 'failed' || entry.status === 'canceled') {
+                            const timer = window.setTimeout(() => {
+                                setTaskBubbleEntries((prev) => {
+                                    if (!prev[progress.key]) return prev;
+                                    const next = { ...prev };
+                                    delete next[progress.key];
+                                    return next;
+                                });
+                                taskBubbleCleanupTimers.current.delete(progress.key);
+                            }, entry.status === 'completed' ? 8000 : 20000);
+                            taskBubbleCleanupTimers.current.set(progress.key, timer);
+                        }
                     }
                 } catch (e) {
                     console.warn('Failed to parse task progress SSE:', e);
@@ -336,10 +427,93 @@ export default function Layout() {
             window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
             window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
             window.removeEventListener('manga-manager:task-progress-override', handleTaskProgressOverride as EventListener);
+            taskBubbleCleanupTimers.current.forEach((timer) => clearTimeout(timer));
+            taskBubbleCleanupTimers.current.clear();
             eventSource.close();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    useEffect(() => {
+        let pendingPrefix: string | null = null;
+        let pendingTimer: number | null = null;
+        const isEditable = (target: EventTarget | null) => {
+            if (!(target instanceof HTMLElement)) return false;
+            const tag = target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+            if (target.isContentEditable) return true;
+            return false;
+        };
+        const clearPrefix = () => {
+            pendingPrefix = null;
+            if (pendingTimer) {
+                window.clearTimeout(pendingTimer);
+                pendingTimer = null;
+            }
+        };
+        const handler = (e: KeyboardEvent) => {
+            if (e.metaKey || e.ctrlKey || e.altKey) {
+                if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+                    e.preventDefault();
+                    setIsSearchModalOpen(true);
+                }
+                return;
+            }
+            if (isEditable(e.target)) return;
+            if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+                e.preventDefault();
+                setShortcutsOpen((prev) => !prev);
+                clearPrefix();
+                return;
+            }
+            if (e.key === '/') {
+                e.preventDefault();
+                setIsSearchModalOpen(true);
+                clearPrefix();
+                return;
+            }
+            if (e.key === 'Escape') {
+                setShortcutsOpen(false);
+                clearPrefix();
+                return;
+            }
+            if (e.key === '[') {
+                e.preventDefault();
+                toggleDesktopSidebar();
+                clearPrefix();
+                return;
+            }
+            if (pendingPrefix === 'g') {
+                const key = e.key.toLowerCase();
+                const map: Record<string, string> = {
+                    h: '/',
+                    r: '/reviews',
+                    o: '/ops',
+                    c: '/collections',
+                    l: '/reading-lists',
+                    s: '/settings',
+                    f: '/offline',
+                };
+                if (map[key]) {
+                    e.preventDefault();
+                    navigate(map[key]);
+                }
+                clearPrefix();
+                return;
+            }
+            if (e.key === 'g') {
+                pendingPrefix = 'g';
+                if (pendingTimer) window.clearTimeout(pendingTimer);
+                pendingTimer = window.setTimeout(clearPrefix, 1200);
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => {
+            window.removeEventListener('keydown', handler);
+            if (pendingTimer) window.clearTimeout(pendingTimer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [navigate]);
 
     const handleAddLibrary = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -477,7 +651,16 @@ export default function Layout() {
                     </button>
                 </div>
 
-                <div className="w-auto sm:w-64 flex justify-end">
+                <div className="w-auto sm:w-64 flex justify-end items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={() => setShortcutsOpen(true)}
+                        className="p-2 text-gray-400 hover:text-komgaPrimary hover:bg-gray-800 rounded-full transition-colors"
+                        title={t('shortcuts.title')}
+                        aria-label={t('shortcuts.title')}
+                    >
+                        <HelpCircle className="w-5 h-5" />
+                    </button>
                     <Link
                         to="/settings"
                         className="p-2 text-gray-400 hover:text-komgaPrimary hover:bg-gray-800 rounded-full transition-colors"
@@ -510,198 +693,134 @@ export default function Layout() {
                         </button>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-4 px-2 select-none">
-                        {/* 1. 阅览空间 (Reader Space) */}
-                        <div className="space-y-1">
-                            {!isDesktopSidebarCollapsed ? (
-                                <button 
-                                    onClick={() => setIsReaderSpaceExpanded(!isReaderSpaceExpanded)}
-                                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-purple-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group"
-                                >
-                                    <span className="flex items-center gap-2">
-                                        <BookOpen className="w-4 h-4 text-purple-400" />
-                                        <span>{t('layout.sidebar.readerSpace') || '阅览空间'}</span>
-                                    </span>
-                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isReaderSpaceExpanded ? 'rotate-0' : '-rotate-90'}`} />
-                                </button>
-                            ) : (
-                                <div className="w-full flex justify-center py-2 text-purple-400/50">
-                                    <BookOpen className="w-5 h-5" />
-                                </div>
-                            )}
-                            
-                            {(isReaderSpaceExpanded || isDesktopSidebarCollapsed) && (
-                                <div className="space-y-1">
-                                    {/* 仪表板 */}
-                                    <Link to="/" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/' 
-                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.dashboard')}
-                                    >
-                                        <LayoutDashboard className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.dashboard')}</span>
-                                    </Link>
-                                    
-                                    {/* 合集 */}
-                                    <Link to="/collections" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/collections' 
-                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.collections')}
-                                    >
-                                        <FolderHeart className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.collections')}</span>
-                                    </Link>
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-3 px-2 select-none">
+                        {/* 1. 我的书架 */}
+                        <SidebarGroup
+                            label={t('layout.sidebar.groupShelf')}
+                            collapsed={isDesktopSidebarCollapsed}
+                            expanded={isShelfExpanded}
+                            onToggle={() => setIsShelfExpanded(!isShelfExpanded)}
+                            collapsedIcon={<LayoutDashboard className="w-5 h-5" />}
+                        >
+                            <SidebarLink
+                                to="/"
+                                exact
+                                icon={<LayoutDashboard className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.overview')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                        </SidebarGroup>
 
-                                    {/* 阅读清单 */}
-                                    <Link to="/reading-lists" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/reading-lists' 
-                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.readingLists')}
-                                    >
-                                        <ListOrdered className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.readingLists')}</span>
-                                    </Link>
+                        {/* 2. 我的视图 */}
+                        <SidebarGroup
+                            label={t('layout.sidebar.groupViews')}
+                            collapsed={isDesktopSidebarCollapsed}
+                            expanded={isViewsExpanded}
+                            onToggle={() => setIsViewsExpanded(!isViewsExpanded)}
+                            collapsedIcon={<FolderHeart className="w-5 h-5" />}
+                        >
+                            <SidebarLink
+                                to="/collections"
+                                icon={<FolderHeart className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.collections')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                            <SidebarLink
+                                to="/reading-lists"
+                                icon={<ListOrdered className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.readingLists')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                            <SidebarLink
+                                to="/offline"
+                                icon={<HardDriveDownload className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.offlineShelf')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                        </SidebarGroup>
 
-                                    {/* 离线书架 */}
-                                    <Link to="/offline" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/offline' 
-                                            ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-purple-300 font-semibold border-purple-500 shadow-[0_0_15px_rgba(147,51,234,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
-                                        title={t('layout.sidebar.offlineShelf')}
-                                    >
-                                        <HardDriveDownload className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.offlineShelf')}</span>
-                                    </Link>
-                                </div>
-                            )}
-                        </div>
+                        {/* 3. 整理与审核 */}
+                        <SidebarGroup
+                            label={t('layout.sidebar.groupCurate')}
+                            collapsed={isDesktopSidebarCollapsed}
+                            expanded={isCurateExpanded}
+                            onToggle={() => setIsCurateExpanded(!isCurateExpanded)}
+                            collapsedIcon={<Wrench className="w-5 h-5" />}
+                        >
+                            <SidebarLink
+                                to="/organize"
+                                icon={<ClipboardCheck className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.organize')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                            <SidebarLink
+                                to="/reviews"
+                                icon={<GitCompareArrows className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.reviewsInbox')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                matcher={(p) => p.startsWith('/reviews') || p === '/metadata-reviews' || p === '/ai-grouping-reviews'}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                        </SidebarGroup>
 
-                        {/* 2. 数据工坊 (Maintenance Hub) */}
-                        <div className="space-y-1">
-                            {!isDesktopSidebarCollapsed ? (
-                                <button 
-                                    onClick={() => setIsMaintenanceExpanded(!isMaintenanceExpanded)}
-                                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-emerald-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group"
-                                >
-                                    <span className="flex items-center gap-2">
-                                        <Wrench className="w-4 h-4 text-emerald-400" />
-                                        <span>{t('layout.sidebar.maintenanceHub') || '数据工坊'}</span>
-                                    </span>
-                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isMaintenanceExpanded ? 'rotate-0' : '-rotate-90'}`} />
-                                </button>
-                            ) : (
-                                <div className="w-full flex justify-center py-2 text-emerald-400/50">
-                                    <Wrench className="w-5 h-5" />
-                                </div>
-                            )}
-                            
-                            {(isMaintenanceExpanded || isDesktopSidebarCollapsed) && (
-                                <div className="space-y-1">
-                                    {/* 整理工作台 */}
-                                    <Link to="/organize" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/organize' 
-                                            ? 'bg-gradient-to-r from-emerald-500/10 to-transparent text-emerald-300 font-semibold border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.organize')}
-                                    >
-                                        <ClipboardCheck className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.organize')}</span>
-                                    </Link>
-
-                                    {/* 后台任务中心 */}
-                                    <Link to="/organize/tasks" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/organize/tasks'
-                                            ? 'bg-gradient-to-r from-emerald-500/10 to-transparent text-emerald-300 font-semibold border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.04)]'
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.backgroundTasks')}
-                                    >
-                                        <Activity className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.backgroundTasks')}</span>
-                                    </Link>
-                                    
-                                    {/* 审核中心 */}
-                                    <Link to="/reviews" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname.startsWith('/reviews') || location.pathname === '/metadata-reviews' || location.pathname === '/ai-grouping-reviews'
-                                            ? 'bg-gradient-to-r from-emerald-500/10 to-transparent text-emerald-300 font-semibold border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.reviews')}
-                                    >
-                                        <GitCompareArrows className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.reviews')}</span>
-                                    </Link>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* 3. 系统监控 (Ops Watchtower) */}
-                        <div className="space-y-1">
-                            {!isDesktopSidebarCollapsed ? (
-                                <button 
-                                    onClick={() => setIsOpsExpanded(!isOpsExpanded)}
-                                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-sky-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group"
-                                >
-                                    <span className="flex items-center gap-2">
-                                        <Terminal className="w-4 h-4 text-sky-400" />
-                                        <span>{t('layout.sidebar.opsWatchtower') || '系统监控'}</span>
-                                    </span>
-                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isOpsExpanded ? 'rotate-0' : '-rotate-90'}`} />
-                                </button>
-                            ) : (
-                                <div className="w-full flex justify-center py-2 text-sky-400/50">
-                                    <Terminal className="w-5 h-5" />
-                                </div>
-                            )}
-                            
-                            {(isOpsExpanded || isDesktopSidebarCollapsed) && (
-                                <div className="space-y-1">
-                                    {/* 系统日志 */}
-                                    <Link to="/logs" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname === '/logs' 
-                                            ? 'bg-gradient-to-r from-sky-500/10 to-transparent text-sky-300 font-semibold border-sky-500 shadow-[0_0_15px_rgba(56,189,248,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.logs')}
-                                    >
-                                        <Terminal className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.logs')}</span>
-                                    </Link>
-                                    
-                                    {/* 配置中心 */}
-                                    <Link to="/settings" onClick={() => setIsSidebarOpen(false)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 border-l-2 ${location.pathname.startsWith('/settings') 
-                                            ? 'bg-gradient-to-r from-sky-500/10 to-transparent text-sky-300 font-semibold border-sky-500 shadow-[0_0_15px_rgba(56,189,248,0.04)]' 
-                                            : 'text-gray-400 border-transparent hover:bg-gray-800/30 hover:text-white hover:pl-4'
-                                        } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-                                        title={t('layout.sidebar.settings')}
-                                    >
-                                        <SettingsIcon className="w-4 h-4 shrink-0" />
-                                        <span className={`${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'} text-sm`}>{t('layout.sidebar.settings')}</span>
-                                    </Link>
-                                </div>
-                            )}
-                        </div>
+                        {/* 4. 系统 */}
+                        <SidebarGroup
+                            label={t('layout.sidebar.groupSystem')}
+                            collapsed={isDesktopSidebarCollapsed}
+                            expanded={isSystemExpanded}
+                            onToggle={() => setIsSystemExpanded(!isSystemExpanded)}
+                            collapsedIcon={<Activity className="w-5 h-5" />}
+                        >
+                            <SidebarLink
+                                to="/ops"
+                                icon={<Activity className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.ops')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                matcher={(p) => p.startsWith('/ops') || p === '/logs' || p === '/organize/tasks'}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                            <SidebarLink
+                                to="/settings"
+                                icon={<SettingsIcon className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.settings')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                matcher={(p) => p.startsWith('/settings')}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                        </SidebarGroup>
 
                         {/* 分割线 */}
                         <div className="border-t border-gray-800/60 my-2 mx-3"></div>
 
-                        {/* 4. 资源库列表 */}
+                        {/* 资源库列表 */}
                         <div className="space-y-1">
                             {!isDesktopSidebarCollapsed ? (
                                 <div className="flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-amber-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group">
-                                    <span className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={toggleLibrariesExpanded}
+                                        className="flex items-center gap-2 flex-1 text-left text-amber-400 hover:text-amber-300 transition-colors"
+                                    >
                                         <FolderOpen className="w-4 h-4 text-amber-400" />
                                         <span>{t('layout.sidebar.libraries')}</span>
-                                    </span>
+                                        {libraries.length > 0 && (
+                                            <span className="text-[10px] font-mono text-amber-400/60">{libraries.length}</span>
+                                        )}
+                                        <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isLibrariesExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                                    </button>
                                     <button
                                         onClick={() => setShowAddModal(true)}
                                         className="text-gray-500 hover:text-white transition-colors"
@@ -715,14 +834,47 @@ export default function Layout() {
                                     <FolderOpen className="w-5 h-5 cursor-pointer hover:text-white" onClick={() => setShowAddModal(true)} />
                                 </div>
                             )}
-                            
+
+                            {!isDesktopSidebarCollapsed && isLibrariesExpanded && libraries.length > 6 && (
+                                <div className="px-2">
+                                    <div className="relative">
+                                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                                        <input
+                                            type="text"
+                                            value={librariesQuery}
+                                            onChange={(e) => setLibrariesQuery(e.target.value)}
+                                            placeholder={t('layout.sidebar.searchLibraries')}
+                                            className="w-full pl-7 pr-2 py-1.5 text-xs bg-gray-900/60 border border-gray-800 rounded-md text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-komgaPrimary/40 focus:bg-gray-900"
+                                        />
+                                        {librariesQuery && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setLibrariesQuery('')}
+                                                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                                                title={t('common.close')}
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {(isDesktopSidebarCollapsed || isLibrariesExpanded) && (
                             <nav className="space-y-1 overflow-y-auto max-h-[25vh]">
                         {loading ? (
                             <div className="animate-pulse px-3 py-2 bg-gray-800 rounded-md h-10 w-full mb-2" />
                         ) : libraries.length === 0 ? (
                             <div className="text-gray-500 px-3 text-sm">{t('layout.sidebar.noLibraries')}</div>
-                        ) : (
-                            libraries.map(lib => (
+                        ) : (() => {
+                            const q = librariesQuery.trim().toLowerCase();
+                            const filtered = !isDesktopSidebarCollapsed && q
+                                ? libraries.filter((lib) => lib.name.toLowerCase().includes(q))
+                                : libraries;
+                            if (filtered.length === 0) {
+                                return <div className="text-gray-500 px-3 text-xs italic">{t('layout.sidebar.searchEmpty')}</div>;
+                            }
+                            return filtered.map(lib => (
                                 <Link
                                     key={lib.id}
                                     to={`/library/${lib.id}`}
@@ -903,9 +1055,10 @@ export default function Layout() {
                                     </div>
                                     )}
                                 </Link>
-                            ))
-                        )}
+                            ));
+                        })()}
                             </nav>
+                            )}
                         </div>
                     </div>
                 </aside>
@@ -914,55 +1067,42 @@ export default function Layout() {
                     <Outlet context={{ refreshTrigger, libraries }} />
                 </div>
 
-                {/* 全局任务进度浮动条 */}
-                {taskProgress && (
-                    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-lg animate-in slide-in-from-bottom-4 fade-in duration-300">
-                        <div className="bg-gray-900/95 border border-gray-700 rounded-2xl px-5 py-4 shadow-2xl backdrop-blur">
-                            <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                    {taskProgress.status === 'failed' ? (
-                                        <span className="text-red-400 text-sm">!</span>
-                                    ) : taskProgress.current < taskProgress.total ? (
-                                        <Loader2 className="w-4 h-4 text-komgaPrimary animate-spin" />
-                                    ) : (
-                                        <span className="text-green-400 text-sm">✓</span>
-                                    )}
-                                    <span className="text-sm text-gray-200 font-medium truncate max-w-[280px]">
-                                        {taskProgress.message}
-                                    </span>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
-                                        {taskProgress.total > 0 ? `${taskProgress.current}/${taskProgress.total}` : taskProgress.status === 'completed' ? t('layout.task.completed') : taskProgress.status === 'failed' ? t('layout.task.failed') : t('layout.task.running')}
-                                    </span>
-                                    <button onClick={() => setTaskProgress(null)} className="text-gray-500 hover:text-white transition-colors">
-                                        <X className="w-3.5 h-3.5" />
-                                    </button>
-                                </div>
-                            </div>
-                            {taskProgress.error && (
-                                <div className="mb-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                                    {taskProgress.error}
-                                </div>
-                            )}
-                            {taskProgress.total > 0 && (
-                                <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                                    <div
-                                        className={`h-full rounded-full transition-all duration-500 ease-out ${taskProgress.status === 'failed' ? 'bg-red-500' : taskProgress.current >= taskProgress.total ? 'bg-green-500' : 'bg-komgaPrimary'
-                                            }`}
-                                        style={{ width: `${Math.min(100, (taskProgress.current / taskProgress.total) * 100)}%` }}
-                                    />
-                                </div>
-                            )}
-                            {taskProgress.total <= 0 && taskProgress.status === 'running' && (
-                                <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                                    <div className="h-full w-1/3 rounded-full bg-komgaPrimary animate-pulse" />
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )}
+                <SidebarTaskBubble
+                    tasks={Object.values(taskBubbleEntries)}
+                    onDismiss={(key) => {
+                        setTaskBubbleEntries((prev) => {
+                            if (!prev[key]) return prev;
+                            const next = { ...prev };
+                            delete next[key];
+                            return next;
+                        });
+                        const timer = taskBubbleCleanupTimers.current.get(key);
+                        if (timer) {
+                            clearTimeout(timer);
+                            taskBubbleCleanupTimers.current.delete(key);
+                        }
+                    }}
+                    onClearFinished={() => {
+                        setTaskBubbleEntries((prev) => {
+                            const next: Record<string, TaskBubbleEntry> = {};
+                            for (const [key, entry] of Object.entries(prev)) {
+                                if (entry.status !== 'completed' && entry.status !== 'failed' && entry.status !== 'canceled') {
+                                    next[key] = entry;
+                                } else {
+                                    const timer = taskBubbleCleanupTimers.current.get(key);
+                                    if (timer) {
+                                        clearTimeout(timer);
+                                        taskBubbleCleanupTimers.current.delete(key);
+                                    }
+                                }
+                            }
+                            return next;
+                        });
+                    }}
+                />
             </main>
+
+            <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
             {(showAddModal || showEditModal || isSearchModalOpen) ? (
                 <Suspense fallback={modalFallback}>
@@ -1077,15 +1217,6 @@ export default function Layout() {
                 tone={confirmDialog.tone}
                 loading={confirmLoading}
             />
-
-            {toastMsg && (
-                <div className="fixed bottom-6 right-6 z-[60] animate-in slide-in-from-bottom-5 fade-in duration-300">
-                    <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg ${toastMsg.type === 'success' ? 'border-green-700 bg-green-900 text-green-100' : 'border-red-700 bg-red-900 text-red-100'}`}>
-                        <span className="text-sm font-medium">{toastMsg.text}</span>
-                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

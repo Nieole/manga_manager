@@ -40,7 +40,13 @@ interface LogsPerformanceSummary {
   total_bytes: number;
 }
 
-export default function Logs() {
+interface LogsProps {
+  embedded?: boolean;
+  taskKey?: string;
+  onClearTaskKey?: () => void;
+}
+
+export default function Logs({ embedded = false, taskKey, onClearTaskKey }: LogsProps = {}) {
   const { t, formatDateTime } = useI18n();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [summary, setSummary] = useState<LogsResponse['summary']>({ total: 0, by_level: { DEBUG: 0, ERROR: 0, WARN: 0, INFO: 0 } });
@@ -55,8 +61,11 @@ export default function Logs() {
     setLoading(true);
     setError(null);
     try {
+      const params = new URLSearchParams({ limit: '300', level: filterLevel });
+      if (query) params.set('q', query);
+      if (taskKey) params.set('task_key', taskKey);
       const [logsResp, perfResp] = await Promise.all([
-        fetch(`/api/system/logs?limit=300&level=${filterLevel}&q=${encodeURIComponent(query)}`),
+        fetch(`/api/system/logs?${params.toString()}`),
         fetch('/api/system/performance').catch(() => null),
       ]);
 
@@ -77,7 +86,7 @@ export default function Logs() {
     } finally {
       setLoading(false);
     }
-  }, [filterLevel, query, t]);
+  }, [filterLevel, query, taskKey, t]);
 
   useEffect(() => {
     fetchData();
@@ -94,7 +103,8 @@ export default function Logs() {
   };
 
   return (
-    <div className="p-6 max-w-[1600px] mx-auto space-y-6">
+    <div className={embedded ? 'space-y-6' : 'p-6 max-w-[1600px] mx-auto space-y-6'}>
+      {!embedded && (
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">{t('logs.title')}</h1>
@@ -133,6 +143,7 @@ export default function Logs() {
           </button>
         </div>
       </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label={t('logs.metric.logs')} value={summary.total} tone="blue" />
@@ -140,6 +151,21 @@ export default function Logs() {
         <MetricCard label={t('logs.metric.error')} value={summary.by_level.ERROR || 0} tone="red" />
         <MetricCard label={t('logs.metric.warn')} value={summary.by_level.WARN || 0} tone="amber" />
       </div>
+
+      {taskKey && (
+        <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+          <span className="font-mono text-xs">task_key = {taskKey}</span>
+          {onClearTaskKey && (
+            <button
+              type="button"
+              onClick={onClearTaskKey}
+              className="ml-auto rounded border border-amber-500/40 px-2 py-0.5 text-xs hover:bg-amber-500/20"
+            >
+              {t('logs.taskFilter.clear')}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
         <div className="rounded-2xl border border-gray-700 bg-gray-950 overflow-hidden">

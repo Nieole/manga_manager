@@ -380,8 +380,10 @@ type coverJob struct {
 	ctx       context.Context
 	bookID    int64
 	seriesID  int64
+	libraryID int64
 	candidate coverCandidate
 	metrics   *scanMetrics
+	progress  *scanProgressReporter
 }
 
 // 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
@@ -1140,8 +1142,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						ctx:       ctx,
 						bookID:    actualBook.ID,
 						seriesID:  actualBook.SeriesID,
+						libraryID: libIDInt,
 						candidate: *res.coverCandidate,
 						metrics:   metrics,
+						progress:  progress,
 					})
 				}
 
@@ -1359,6 +1363,9 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	}
 	if job.metrics != nil {
 		job.metrics.generatedCovers.Add(1)
+	}
+	if job.progress != nil {
+		job.progress.publish("queueing_covers", job.candidate.path, false)
 	}
 	if err := s.store.RefreshSeriesStats(ctx, job.seriesID); err != nil {
 		slog.Warn("Failed to refresh series stats after queued thumbnail", "series_id", job.seriesID, "error", err)

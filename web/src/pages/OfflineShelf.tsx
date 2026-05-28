@@ -208,6 +208,15 @@ export default function OfflineShelf() {
         </div>
       </div>
 
+      <OfflineHealthBar
+        t={t}
+        isOnline={isOnline}
+        offlineSupported={offlineSupported}
+        quotaPercent={quotaPercent}
+        queuedCount={queuedProgress.length}
+        bookCount={stats?.bookCount ?? 0}
+      />
+
       <section className="rounded-lg border border-gray-700 bg-gray-950/50">
         <div className="flex flex-col gap-3 border-b border-gray-700 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 text-white">
@@ -311,11 +320,11 @@ export default function OfflineShelf() {
             <p className="mt-2 max-w-md text-sm leading-6 text-gray-500">{t('offlineShelf.emptyDescription')}</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-700">
+          <div className="grid gap-3 px-4 py-4 lg:grid-cols-2">
             {books.map((book) => {
               const percent = book.pageCount > 0 ? Math.round((book.cachedPages / book.pageCount) * 100) : 0;
               return (
-                <div key={book.bookId} className="grid gap-4 px-4 py-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                <div key={book.bookId} className="flex flex-col gap-3 rounded-xl border border-gray-800 bg-gray-900/40 p-4">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate text-base font-semibold text-white">{book.title}</h3>
@@ -356,6 +365,81 @@ export default function OfflineShelf() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+interface OfflineHealthBarProps {
+  t: (key: string, vars?: Record<string, unknown>) => string;
+  isOnline: boolean;
+  offlineSupported: boolean;
+  quotaPercent: number;
+  queuedCount: number;
+  bookCount: number;
+}
+
+function OfflineHealthBar({ t, isOnline, offlineSupported, quotaPercent, queuedCount, bookCount }: OfflineHealthBarProps) {
+  const items: { key: string; tone: 'ok' | 'warn' | 'error'; label: string; detail: string }[] = [];
+  items.push({
+    key: 'connection',
+    tone: isOnline ? 'ok' : 'warn',
+    label: t(isOnline ? 'offlineShelf.health.online' : 'offlineShelf.health.offline'),
+    detail: t(isOnline ? 'offlineShelf.health.onlineDetail' : 'offlineShelf.health.offlineDetail'),
+  });
+  items.push({
+    key: 'support',
+    tone: offlineSupported ? 'ok' : 'error',
+    label: t(offlineSupported ? 'offlineShelf.health.supported' : 'offlineShelf.health.unsupported'),
+    detail: t(offlineSupported ? 'offlineShelf.health.supportedDetail' : 'offlineShelf.health.unsupportedDetail'),
+  });
+  const storageTone: 'ok' | 'warn' | 'error' = quotaPercent >= 90 ? 'error' : quotaPercent >= 70 ? 'warn' : 'ok';
+  items.push({
+    key: 'storage',
+    tone: storageTone,
+    label: t('offlineShelf.health.storage', { percent: quotaPercent }),
+    detail: t('offlineShelf.health.storageDetail'),
+  });
+  const queueTone: 'ok' | 'warn' | 'error' = queuedCount === 0 ? 'ok' : queuedCount >= 5 ? 'warn' : 'ok';
+  items.push({
+    key: 'queue',
+    tone: queueTone,
+    label: t('offlineShelf.health.queue', { count: queuedCount }),
+    detail: t('offlineShelf.health.queueDetail'),
+  });
+  items.push({
+    key: 'cache',
+    tone: bookCount > 0 ? 'ok' : 'warn',
+    label: t('offlineShelf.health.cache', { count: bookCount }),
+    detail: t('offlineShelf.health.cacheDetail'),
+  });
+
+  const toneClass = (tone: 'ok' | 'warn' | 'error') => {
+    if (tone === 'ok') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+    if (tone === 'warn') return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+    return 'border-red-500/30 bg-red-500/10 text-red-300';
+  };
+  const toneIcon = (tone: 'ok' | 'warn' | 'error') => {
+    if (tone === 'ok') return <CheckCircle2 className="h-4 w-4" />;
+    if (tone === 'warn') return <AlertTriangle className="h-4 w-4" />;
+    return <XCircle className="h-4 w-4" />;
+  };
+
+  return (
+    <div className="rounded-2xl border border-gray-800 bg-gray-950/60 p-3">
+      <div className="flex items-center justify-between px-1 pb-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('offlineShelf.health.title')}</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        {items.map((item) => (
+          <div key={item.key} className={`flex items-start gap-2 rounded-xl border px-3 py-2 ${toneClass(item.tone)}`}>
+            <span className="mt-0.5">{toneIcon(item.tone)}</span>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold">{item.label}</p>
+              <p className="mt-0.5 text-[10px] opacity-80">{item.detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

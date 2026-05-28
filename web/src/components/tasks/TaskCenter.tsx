@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Activity, ChevronDown, ExternalLink, Pause, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
+import { Activity, ChevronDown, ExternalLink, FileText, Pause, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskTypeLabel } from '../../i18n/task';
 
@@ -71,6 +71,7 @@ interface TaskCenterProps {
   onFilterChange?: (patch: Partial<TaskCenterFilters>) => void;
   onClearTasks?: (status?: 'completed' | 'failed', useCurrentFilters?: boolean) => void;
   onOpenTaskTarget?: (task: TaskStatus) => void;
+  onViewTaskLogs?: (task: TaskStatus) => void;
 }
 
 const activeStatuses = ['running', 'paused', 'cancelling'];
@@ -494,6 +495,7 @@ function TaskCard({
   onToggleExpanded,
   onTaskAction,
   onOpenTaskTarget,
+  onViewTaskLogs,
 }: {
   task: TaskStatus;
   expanded: boolean;
@@ -501,6 +503,7 @@ function TaskCard({
   onToggleExpanded: () => void;
   onTaskAction: (task: TaskStatus, action: TaskAction) => void;
   onOpenTaskTarget?: (task: TaskStatus) => void;
+  onViewTaskLogs?: (task: TaskStatus) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const statusLabel = t(`logs.taskStatus.${task.status}`);
@@ -527,6 +530,12 @@ function TaskCard({
             <button type="button" onClick={() => onOpenTaskTarget(task)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
               <ExternalLink className="h-3.5 w-3.5" />
               {t('logs.task.openPage')}
+            </button>
+          )}
+          {onViewTaskLogs && (
+            <button type="button" onClick={() => onViewTaskLogs(task)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+              <FileText className="h-3.5 w-3.5" />
+              {t('logs.task.viewLogs')}
             </button>
           )}
           {hasTaskDetails(task) && (
@@ -560,11 +569,13 @@ function TaskList({
   taskActionKey,
   onTaskAction,
   onOpenTaskTarget,
+  onViewTaskLogs,
 }: {
   tasks: TaskStatus[];
   taskActionKey: string | null;
   onTaskAction: (task: TaskStatus, action: TaskAction) => void;
   onOpenTaskTarget?: (task: TaskStatus) => void;
+  onViewTaskLogs?: (task: TaskStatus) => void;
 }) {
   const { t } = useI18n();
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
@@ -584,6 +595,7 @@ function TaskList({
           onToggleExpanded={() => setExpandedTaskKey((current) => (current === task.key ? null : task.key))}
           onTaskAction={onTaskAction}
           onOpenTaskTarget={onOpenTaskTarget}
+          onViewTaskLogs={onViewTaskLogs}
         />
       ))}
     </>
@@ -603,6 +615,7 @@ export function TaskCenter({
   onFilterChange,
   onClearTasks,
   onOpenTaskTarget,
+  onViewTaskLogs,
 }: TaskCenterProps) {
   const { t } = useI18n();
   const visibleTasks = useMemo(() => tasks.slice(0, 50), [tasks]);
@@ -634,7 +647,7 @@ export function TaskCenter({
       )}
 
       <div className="space-y-3">
-        <TaskList tasks={visibleTasks} taskActionKey={taskActionKey} onTaskAction={onTaskAction} onOpenTaskTarget={onOpenTaskTarget} />
+        <TaskList tasks={visibleTasks} taskActionKey={taskActionKey} onTaskAction={onTaskAction} onOpenTaskTarget={onOpenTaskTarget} onViewTaskLogs={onViewTaskLogs} />
       </div>
     </section>
   );

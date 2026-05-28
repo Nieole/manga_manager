@@ -74,6 +74,12 @@ type CandidateSeries struct {
 	Summary string `json:"summary"`
 }
 
+// SeriesAuthor 表示外部元数据中的作者条目（姓名 + 角色）
+type SeriesAuthor struct {
+	Name string
+	Role string
+}
+
 // SeriesMetadata 供多数据源统一返回的内部使用的数据承载对象
 type SeriesMetadata struct {
 	Title         string
@@ -84,7 +90,8 @@ type SeriesMetadata struct {
 	CoverURL      string
 	Rating        float64
 	Tags          []string
-	SourceID      int // 外部数据源条目 ID（如 Bangumi subject ID）
+	Authors       []SeriesAuthor // 作者/绘师等参与人员
+	SourceID      int            // 外部数据源条目 ID（如 Bangumi subject ID）
 	SourceURL     string
 	Provider      string
 	Confidence    float64

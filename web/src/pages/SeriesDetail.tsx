@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useParams, Link, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
 import { AlertTriangle, BookImage, CheckCircle2, FileDown, RotateCcw } from 'lucide-react';
 import AddToCollectionModal from '../components/AddToCollectionModal';
+import { useToast } from '../components/ToastProvider';
 import { SeriesContentSection } from './series-detail/SeriesContentSection';
 import { SeriesHeader } from './series-detail/SeriesHeader';
 import { SeriesMetadataEditorModal } from './series-detail/SeriesMetadataEditorModal';
@@ -137,7 +138,6 @@ export default function SeriesDetail() {
     const [isRescanning, setIsRescanning] = useState(false);
     const [isOpeningDirectory, setIsOpeningDirectory] = useState(false);
     const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
-    const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [showSearchModal, setShowSearchModal] = useState(false);
@@ -150,10 +150,7 @@ export default function SeriesDetail() {
     const [relatedFailedTasks, setRelatedFailedTasks] = useState<SeriesFailedTask[]>([]);
     const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
 
-    const showToast = (text: string, type: 'success' | 'error') => {
-        setToastMsg({ text, type });
-        setTimeout(() => setToastMsg(null), 3000);
-    };
+    const { showToast } = useToast();
 
     const handleRescan = async () => {
         if (!seriesId) return;
@@ -969,16 +966,7 @@ export default function SeriesDetail() {
                 onApplyMetadata={handleApplyMetadata}
             />
 
-            {/* Toast 通知 */}
-            {toastMsg && (
-                <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
-                    <div className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 border ${toastMsg.type === 'success' ? 'bg-green-900 border-green-700 text-green-100' : 'bg-red-900 border-red-700 text-red-100'
-                        }`}>
-                        <span className="text-sm font-medium">{toastMsg.text}</span>
-                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
-                    </div>
-                </div>
-            )}
+            {/* Toast 通知由全局 ToastProvider 处理 */}
 
             {/* 添加到合集弹窗 */}
             {showCollectionModal && seriesId && (

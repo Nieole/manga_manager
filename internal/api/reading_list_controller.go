@@ -124,7 +124,31 @@ func (c *Controller) listReadingListItems(w http.ResponseWriter, r *http.Request
 	if items == nil {
 		items = []database.ListReadingListItemsRow{}
 	}
-	jsonResponse(w, http.StatusOK, items)
+	progress, err := c.store.GetReadingListItemProgress(r.Context(), listID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load reading list progress")
+		return
+	}
+	enriched := make([]readingListItemResponse, 0, len(items))
+	for _, item := range items {
+		row := readingListItemResponse{ListReadingListItemsRow: item}
+		if p, ok := progress[item.SeriesID]; ok {
+			row.ReadBooks = p.ReadBooks
+			row.CompletedBooks = p.CompletedBooks
+			row.TotalBooks = p.TotalBooks
+		} else {
+			row.TotalBooks = item.BookCount
+		}
+		enriched = append(enriched, row)
+	}
+	jsonResponse(w, http.StatusOK, enriched)
+}
+
+type readingListItemResponse struct {
+	database.ListReadingListItemsRow
+	ReadBooks      int64 `json:"read_books"`
+	CompletedBooks int64 `json:"completed_books"`
+	TotalBooks     int64 `json:"total_books"`
 }
 
 func (c *Controller) addReadingListItem(w http.ResponseWriter, r *http.Request) {

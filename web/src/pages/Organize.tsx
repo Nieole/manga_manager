@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { BookOpen, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
+import { useToast } from '../components/ToastProvider';
 
 interface LibraryOption {
   id: number;
@@ -27,6 +28,7 @@ interface HealthIssue {
   path?: string;
   detail?: string;
   count?: number;
+  last_task_key?: string;
 }
 
 interface HealthReport {
@@ -84,12 +86,8 @@ export default function Organize() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [actionKey, setActionKey] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
-    setToast({ text, type });
-    window.setTimeout(() => setToast(null), 3000);
-  };
+  const [severityExpanded, setSeverityExpanded] = useState<Record<string, boolean>>({ error: true, warn: true, info: false });
+  const { showToast } = useToast();
 
   const fetchReport = async () => {
     setLoading(true);
@@ -112,6 +110,21 @@ export default function Organize() {
 
   useEffect(() => {
     fetchReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libraryId]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchReport();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
 
@@ -142,6 +155,25 @@ export default function Organize() {
   const duplicateQuickHashCount = summaryByType.get('duplicate_quick_hash')?.count ?? 0;
   const duplicateFileHashCount = summaryByType.get('duplicate_file_hash')?.count ?? 0;
 
+  const severityCounts = useMemo(() => {
+    const out: Record<string, number> = { error: 0, warn: 0, info: 0 };
+    report?.summary.forEach((item) => {
+      const key = item.severity === 'error' || item.severity === 'warn' ? item.severity : 'info';
+      out[key] += item.count;
+    });
+    return out;
+  }, [report?.summary]);
+
+  const groupedTypes = useMemo(() => {
+    const groups: Record<string, string[]> = { error: [], warn: [], info: [] };
+    ISSUE_TYPES.forEach((type) => {
+      const sev = summaryByType.get(type)?.severity || 'info';
+      const bucket = sev === 'error' || sev === 'warn' ? sev : 'info';
+      groups[bucket].push(type);
+    });
+    return groups;
+  }, [summaryByType]);
+
   const openIssue = (issue: HealthIssue) => {
     if (issue.series_id) {
       navigate(`/series/${issue.series_id}`);
@@ -155,7 +187,7 @@ export default function Organize() {
       navigate('/settings/koreader');
       return;
     }
-    navigate('/logs');
+    navigate('/ops?tab=logs');
   };
 
   const runIssueAction = async (issue: HealthIssue) => {
@@ -209,12 +241,6 @@ export default function Organize() {
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-4 sm:p-8 select-none">
-      {toast && (
-        <div className={`fixed right-6 top-24 z-50 rounded-xl border px-4 py-3 text-sm shadow-xl animate-in slide-in-from-top duration-300 ${toast.type === 'error' ? 'border-red-500/30 bg-red-950/80 backdrop-blur-md text-red-200' : 'border-emerald-500/30 bg-emerald-950/80 backdrop-blur-md text-emerald-200'}`}>
-          {toast.text}
-        </div>
-      )}
-
       {/* 顶栏 */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-gray-800/60 pb-6">
         <div>
@@ -256,6 +282,14 @@ export default function Organize() {
           {/* 7 大健康过滤卡片 */}
           <div className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.diagnostics') || '问题分类'}</h3>
+            <div className="rounded-xl border border-gray-800 bg-gray-950/50 px-2 py-2 grid grid-cols-3 gap-1 text-center">
+              {(['error', 'warn', 'info'] as const).map((sev) => (
+                <div key={sev} className={`rounded-lg px-2 py-1.5 ${severityClass(sev)}`}>
+                  <p className="text-[10px] uppercase tracking-wide opacity-80">{t(`organize.severity.${sev}`)}</p>
+                  <p className="mt-0.5 text-base font-bold">{formatNumber(severityCounts[sev] || 0)}</p>
+                </div>
+              ))}
+            </div>
             <button
               onClick={() => setIssueType('ALL')}
               className={`w-full flex items-center justify-between rounded-xl border p-3 text-left transition-all ${issueType === 'ALL' ? 'border-komgaPrimary/40 bg-komgaPrimary/10 text-white font-medium shadow-[0_0_15px_rgba(147,51,234,0.05)]' : 'border-gray-800/60 bg-gray-900/40 hover:bg-gray-800/50 text-gray-400'}`}
@@ -264,28 +298,49 @@ export default function Organize() {
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${issueType === 'ALL' ? 'bg-komgaPrimary/20 text-white' : 'bg-gray-700 text-white'}`}>{formatNumber(totalIssueCount)}</span>
             </button>
 
-            {ISSUE_TYPES.map((type) => {
-              const summary = summaryByType.get(type);
-              const active = issueType === type;
+            {(['error', 'warn', 'info'] as const).map((sev) => {
+              const types = groupedTypes[sev] || [];
+              if (types.length === 0) return null;
+              const expanded = severityExpanded[sev];
+              const groupCount = types.reduce((sum, type) => sum + (summaryByType.get(type)?.count ?? 0), 0);
               return (
-                <button
-                  key={type}
-                  onClick={() => setIssueType(active ? 'ALL' : type)}
-                  className={`w-full rounded-xl border p-3 text-left transition-all hover:scale-[1.01] ${active ? 'border-komgaPrimary/50 bg-komgaPrimary/10 shadow-[0_0_15px_rgba(147,51,234,0.05)]' : 'border-gray-800 bg-gray-900/60 hover:bg-gray-800/40'}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className={`rounded-lg border p-1.5 shrink-0 ${severityClass(summary?.severity || 'info')}`}>
-                        {issueIcon(type)}
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-white">{t(`organize.issue.${type}`)}</p>
-                        <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">{t(`organize.issue.${type}.hint`)}</p>
-                      </div>
-                    </div>
-                    <span className={`text-sm font-bold shrink-0 px-2 py-0.5 rounded-full ${active ? 'bg-komgaPrimary/20 text-white' : 'bg-gray-700 text-white'}`}>{formatNumber(summary?.count ?? 0)}</span>
-                  </div>
-                </button>
+                <div key={sev} className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => setSeverityExpanded((prev) => ({ ...prev, [sev]: !prev[sev] }))}
+                    className={`w-full flex items-center justify-between rounded-lg border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${severityClass(sev)}`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      {t(`organize.severity.${sev}`)}
+                    </span>
+                    <span className="text-xs font-bold opacity-90">{formatNumber(groupCount)}</span>
+                  </button>
+                  {expanded && types.map((type) => {
+                    const summary = summaryByType.get(type);
+                    const active = issueType === type;
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => setIssueType(active ? 'ALL' : type)}
+                        className={`w-full rounded-xl border p-3 text-left transition-all hover:scale-[1.01] ${active ? 'border-komgaPrimary/50 bg-komgaPrimary/10 shadow-[0_0_15px_rgba(147,51,234,0.05)]' : 'border-gray-800 bg-gray-900/60 hover:bg-gray-800/40'}`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`rounded-lg border p-1.5 shrink-0 ${severityClass(summary?.severity || 'info')}`}>
+                              {issueIcon(type)}
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold text-white">{t(`organize.issue.${type}`)}</p>
+                              <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">{t(`organize.issue.${type}.hint`)}</p>
+                            </div>
+                          </div>
+                          <span className={`text-sm font-bold shrink-0 px-2 py-0.5 rounded-full ${active ? 'bg-komgaPrimary/20 text-white' : 'bg-gray-700 text-white'}`}>{formatNumber(summary?.count ?? 0)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
           </div>
@@ -389,6 +444,15 @@ export default function Organize() {
 
                       {/* 行尾悬浮动作组 */}
                       <div className="flex shrink-0 flex-wrap gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                        {issue.last_task_key && (
+                          <button
+                            onClick={() => navigate(`/ops?tab=tasks&task=${encodeURIComponent(issue.last_task_key!)}`)}
+                            className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-1.5 text-xs text-cyan-200/90 hover:bg-cyan-500/15 transition-colors"
+                            title={issue.last_task_key}
+                          >
+                            {t('organize.openSourceTask')}
+                          </button>
+                        )}
                         <button
                           onClick={() => openIssue(issue)}
                           className="rounded-lg border border-gray-800 px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-800/60 transition-colors"

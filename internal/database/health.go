@@ -25,6 +25,7 @@ type HealthIssue struct {
 	Path        string `json:"path,omitempty"`
 	Detail      string `json:"detail,omitempty"`
 	Count       int64  `json:"count,omitempty"`
+	LastTaskKey string `json:"last_task_key,omitempty"`
 }
 
 type HealthIssueFilters struct {
@@ -92,8 +93,10 @@ var healthIssueDefinitions = []struct {
 			  AND (
 				s.title IS NULL OR s.title = ''
 				OR s.summary IS NULL OR s.summary = ''
-				OR NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
-				OR NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
+				OR (
+					NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
+					AND NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
+				)
 			  )
 		`,
 		ListSQL: `
@@ -101,8 +104,7 @@ var healthIssueDefinitions = []struct {
 				CASE
 					WHEN s.title IS NULL OR s.title = '' THEN 'missing title'
 					WHEN s.summary IS NULL OR s.summary = '' THEN 'missing summary'
-					WHEN NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id) THEN 'missing tags'
-					ELSE 'missing authors'
+					ELSE 'missing tags and authors'
 				END,
 				1
 			FROM series s
@@ -111,8 +113,10 @@ var healthIssueDefinitions = []struct {
 			  AND (
 				s.title IS NULL OR s.title = ''
 				OR s.summary IS NULL OR s.summary = ''
-				OR NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
-				OR NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
+				OR (
+					NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
+					AND NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
+				)
 			  )
 			ORDER BY s.updated_at DESC, s.id DESC
 			LIMIT ?
@@ -258,7 +262,63 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 		report.Issues = append(report.Issues, items...)
 	}
 
+	if err := s.attachLastTaskKeys(ctx, report.Issues); err != nil {
+		return report, err
+	}
+
 	return report, nil
+}
+
+func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	type scopeKey struct {
+		scope string
+		id    int64
+	}
+	wanted := make(map[scopeKey]struct{})
+	for _, issue := range issues {
+		if issue.SeriesID != nil {
+			wanted[scopeKey{"series", *issue.SeriesID}] = struct{}{}
+		}
+		if issue.LibraryID != 0 {
+			wanted[scopeKey{"library", issue.LibraryID}] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	latest := make(map[scopeKey]string, len(wanted))
+	for key := range wanted {
+		var taskKey string
+		err := s.db.QueryRowContext(ctx, `
+			SELECT key FROM tasks WHERE scope = ? AND scope_id = ?
+			ORDER BY updated_at DESC LIMIT 1
+		`, key.scope, key.id).Scan(&taskKey)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		latest[key] = taskKey
+	}
+	for i := range issues {
+		issue := &issues[i]
+		if issue.SeriesID != nil {
+			if k, ok := latest[scopeKey{"series", *issue.SeriesID}]; ok {
+				issue.LastTaskKey = k
+				continue
+			}
+		}
+		if issue.LibraryID != 0 {
+			if k, ok := latest[scopeKey{"library", issue.LibraryID}]; ok {
+				issue.LastTaskKey = k
+			}
+		}
+	}
+	return nil
 }
 
 func (s *SqlStore) countHealthIssue(ctx context.Context, issueType, query string, libraryID int64) (int64, error) {

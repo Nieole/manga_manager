@@ -21,15 +21,16 @@ export default function ReviewCenter() {
   };
 
   const refreshCounts = useCallback(() => {
-    fetch('/api/metadata/reviews?limit=1&page=1')
+    fetch('/api/reviews/inbox/summary')
       .then((res) => res.json())
-      .then((data) => setMetadataCount(data.total ?? 0))
-      .catch(() => setMetadataCount(0));
-
-    fetch('/api/ai-grouping/reviews?status=pending&limit=1&page=1')
-      .then((res) => res.json())
-      .then((data) => setAiGroupingCount(data.total ?? 0))
-      .catch(() => setAiGroupingCount(0));
+      .then((data) => {
+        setMetadataCount(data?.counts?.metadata ?? 0);
+        setAiGroupingCount(data?.counts?.ai_grouping ?? 0);
+      })
+      .catch(() => {
+        setMetadataCount(0);
+        setAiGroupingCount(0);
+      });
   }, []);
 
   // Fetch pending counts

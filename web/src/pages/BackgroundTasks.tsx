@@ -4,6 +4,7 @@ import axios from 'axios';
 import { Activity, RefreshCw } from 'lucide-react';
 import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskStatus } from '../components/tasks/TaskCenter';
 import { useI18n } from '../i18n/LocaleProvider';
+import { useToast } from '../components/ToastProvider';
 
 const TASK_TYPE_OPTIONS = [
   'scan_library',
@@ -26,7 +27,12 @@ interface StorageIODiagnostics {
   paused: boolean;
 }
 
-export default function BackgroundTasks() {
+interface BackgroundTasksProps {
+  embedded?: boolean;
+  onViewTaskLogs?: (task: TaskStatus) => void;
+}
+
+export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: BackgroundTasksProps = {}) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<TaskStatus[]>([]);
@@ -38,12 +44,7 @@ export default function BackgroundTasks() {
   const [taskScopeIdFilter, setTaskScopeIdFilter] = useState('');
   const [taskQuery, setTaskQuery] = useState('');
   const [storageIO, setStorageIO] = useState<StorageIODiagnostics | null>(null);
-  const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-
-  const showToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
-    setToast({ text, type });
-    window.setTimeout(() => setToast(null), 3000);
-  }, []);
+  const { showToast } = useToast();
 
   const taskFilters = useMemo<TaskCenterFilters>(() => ({
     status: taskStatusFilter,
@@ -205,17 +206,12 @@ export default function BackgroundTasks() {
       navigate(`/library/${task.scope_id}`);
       return;
     }
-    navigate('/organize/tasks');
+    navigate('/ops?tab=tasks');
   };
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-6 p-4 sm:p-8 select-none">
-      {toast && (
-        <div className={`fixed right-6 top-24 z-50 rounded-xl border px-4 py-3 text-sm shadow-xl animate-in slide-in-from-top duration-300 ${toast.type === 'error' ? 'border-red-500/30 bg-red-950/80 backdrop-blur-md text-red-200' : 'border-emerald-500/30 bg-emerald-950/80 backdrop-blur-md text-emerald-200'}`}>
-          {toast.text}
-        </div>
-      )}
-
+    <div className={embedded ? 'space-y-6 select-none' : 'mx-auto max-w-[1600px] space-y-6 p-4 sm:p-8 select-none'}>
+      {!embedded && (
       <div className="flex flex-col gap-4 border-b border-gray-800/60 pb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-300">
@@ -234,6 +230,7 @@ export default function BackgroundTasks() {
           {t('common.refresh')}
         </button>
       </div>
+      )}
 
       <TaskCenter
         tasks={tasks}
@@ -248,6 +245,7 @@ export default function BackgroundTasks() {
         onFilterChange={updateTaskFilters}
         onClearTasks={clearTasks}
         onOpenTaskTarget={openTaskTarget}
+        onViewTaskLogs={onViewTaskLogs}
       />
     </div>
   );

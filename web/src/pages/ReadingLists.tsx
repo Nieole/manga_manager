@@ -25,6 +25,9 @@ interface ReadingListItem {
   cover_path: string;
   next_book_id: number;
   note: string;
+  read_books: number;
+  completed_books: number;
+  total_books: number;
 }
 
 export default function ReadingLists() {
@@ -41,6 +44,7 @@ export default function ReadingLists() {
   const [pendingDelete, setPendingDelete] = useState<ReadingList | null>(null);
   const [seriesQuery, setSeriesQuery] = useState('');
   const [seriesResults, setSeriesResults] = useState<SearchHit[]>([]);
+  const [listProgress, setListProgress] = useState<Record<number, { read: number; total: number }>>({});
 
   const loadLists = () => {
     setLoading(true);
@@ -63,7 +67,19 @@ export default function ReadingLists() {
       return;
     }
     axios.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`)
-      .then((res) => setItems(res.data || []));
+      .then((res) => {
+        const next = res.data || [];
+        setItems(next);
+        const aggregate = next.reduce(
+          (acc, item) => {
+            acc.read += item.read_books || 0;
+            acc.total += item.total_books || item.book_count || 0;
+            return acc;
+          },
+          { read: 0, total: 0 },
+        );
+        setListProgress((prev) => ({ ...prev, [selected.id]: aggregate }));
+      });
   }, [selected]);
 
   useEffect(() => {
@@ -182,16 +198,33 @@ export default function ReadingLists() {
               <ListOrdered className="mx-auto mb-3 h-10 w-10 opacity-40" />
               <p className="text-sm">{t('readingLists.empty')}</p>
             </div>
-          ) : lists.map((list) => (
-            <button
-              key={list.id}
-              onClick={() => setSelected(list)}
-              className={`w-full rounded-xl border p-4 text-left transition ${selected?.id === list.id ? 'border-komgaPrimary/50 bg-komgaPrimary/10' : 'border-gray-800 bg-komgaSurface hover:border-gray-700'}`}
-            >
-              <div className="font-medium text-white">{list.name}</div>
-              <div className="mt-1 text-xs text-gray-500">{t('readingLists.itemCount', { count: list.item_count })}</div>
-            </button>
-          ))}
+          ) : lists.map((list) => {
+            const progress = listProgress[list.id];
+            const total = progress?.total ?? 0;
+            const read = progress?.read ?? 0;
+            const percent = total > 0 ? Math.round((read / total) * 100) : 0;
+            return (
+              <button
+                key={list.id}
+                onClick={() => setSelected(list)}
+                className={`w-full rounded-xl border p-4 text-left transition ${selected?.id === list.id ? 'border-komgaPrimary/50 bg-komgaPrimary/10' : 'border-gray-800 bg-komgaSurface hover:border-gray-700'}`}
+              >
+                <div className="font-medium text-white">{list.name}</div>
+                <div className="mt-1 text-xs text-gray-500">{t('readingLists.itemCount', { count: list.item_count })}</div>
+                {selected?.id === list.id && total > 0 && (
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between text-[10px] text-gray-500">
+                      <span>{t('readingLists.progressLabel', { read, total })}</span>
+                      <span>{percent}%</span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-900">
+                      <div className="h-full bg-komgaPrimary transition-all" style={{ width: `${percent}%` }} />
+                    </div>
+                  </div>
+                )}
+              </button>
+            );
+          })}
         </aside>
 
         <section className="lg:col-span-2">
@@ -243,6 +276,9 @@ export default function ReadingLists() {
                 <div className="space-y-3">
                   {items.map((item, index) => {
                     const title = item.series_title || item.series_name;
+                    const total = item.total_books || item.book_count || 0;
+                    const read = item.read_books || 0;
+                    const percent = total > 0 ? Math.round((read / total) * 100) : 0;
                     return (
                       <div key={item.id} className="flex gap-4 rounded-2xl border border-gray-800 bg-komgaSurface p-3">
                         <div className="h-24 w-16 shrink-0 overflow-hidden rounded-lg bg-gray-900">
@@ -251,6 +287,17 @@ export default function ReadingLists() {
                         <div className="min-w-0 flex-1">
                           <button onClick={() => navigate(`/series/${item.series_id}`)} className="truncate text-left font-medium text-white hover:text-komgaPrimary">{title}</button>
                           <p className="mt-1 text-xs text-gray-500">{t('common.books', { count: item.book_count })}</p>
+                          {total > 0 && (
+                            <div className="mt-2">
+                              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                                <span>{t('readingLists.progressLabel', { read, total })}</span>
+                                <span>{percent}%</span>
+                              </div>
+                              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-900">
+                                <div className={`h-full transition-all ${percent >= 100 ? 'bg-emerald-500' : 'bg-komgaPrimary'}`} style={{ width: `${percent}%` }} />
+                              </div>
+                            </div>
+                          )}
                           {item.note && <p className="mt-2 text-xs text-gray-400">{item.note}</p>}
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button disabled={!item.next_book_id} onClick={() => navigate(`/reader/${item.next_book_id}`)} className="inline-flex items-center gap-1 rounded-lg bg-komgaPrimary px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-500">

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import axios from 'axios';
 import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
+import { useToast } from '../../components/ToastProvider';
 
 export interface Config {
   server: { host: string; port: number; allowed_origins: string[] };
@@ -209,8 +210,6 @@ interface SettingsContextValue {
   llmTestPrompt: string;
   setLlmTestPrompt: React.Dispatch<React.SetStateAction<string>>;
   llmTestResult: string | null;
-  toastMsg: { text: string; type: 'success' | 'error' } | null;
-  setToastMsg: React.Dispatch<React.SetStateAction<{ text: string; type: 'success' | 'error' } | null>>;
   showToast: (text: string, type?: 'success' | 'error') => void;
   fieldErrors: (field: string) => string[];
   saveConfig: (successMessage?: string) => Promise<void>;
@@ -333,7 +332,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     translateInLocale(getClientLocale(), 'settings.ai.defaultTestPrompt'),
   );
   const [llmTestResult, setLlmTestResult] = useState<string | null>(null);
-  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [koreaderStatus, setKOReaderStatus] = useState<KOReaderStatus | null>(null);
   const [koreaderForm, setKOReaderForm] = useState<KOReaderForm | null>(null);
   const [initialKOReaderForm, setInitialKOReaderForm] = useState<KOReaderForm | null>(null);
@@ -348,11 +346,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [accountActionId, setAccountActionId] = useState<number | null>(null);
   const configRef = useRef<Config | null>(null);
   const koreaderStatusRef = useRef<KOReaderStatus | null>(null);
-
-  const showToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
-    setToastMsg({ text, type });
-    window.setTimeout(() => setToastMsg(null), 3200);
-  }, []);
+  const { showToast } = useToast();
 
   useEffect(() => {
     configRef.current = config;
@@ -640,8 +634,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       llmTestPrompt,
       setLlmTestPrompt,
       llmTestResult,
-      toastMsg,
-      setToastMsg,
       showToast,
       fieldErrors,
       saveConfig,
@@ -711,7 +703,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       savingKOReader,
       showToast,
       testingLLM,
-      toastMsg,
       unmatchedItems,
       validation,
     ],

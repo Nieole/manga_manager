@@ -37,7 +37,7 @@ interface MetadataReviewsProps {
 
 export default function MetadataReviews({ embedded, onReviewChange }: MetadataReviewsProps = {}) {
   const { t, formatDateTime } = useI18n();
-  const globalToast = useToast();
+  const { showToast } = useToast();
 
   // When embedded, we don't have an outlet context, so we use defaults
   let refreshTrigger = 0;
@@ -57,26 +57,22 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [activeReviewId, setActiveReviewId] = useState<number | null>(null);
   const [libraryId, setLibraryId] = useState('0');
   const [provider, setProvider] = useState('');
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<BulkMode>('fill_empty');
   const [page, setPage] = useState(1);
-  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const limit = 30;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const currentPageSelected = items.length > 0 && items.every((item) => selectedSet.has(item.id));
   const providers = useMemo(() => Array.from(new Set(items.map((item) => item.provider).filter(Boolean))).sort(), [items]);
+  const activeReview = useMemo(
+    () => (activeReviewId == null ? null : items.find((item) => item.id === activeReviewId) || null),
+    [activeReviewId, items],
+  );
 
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
-    if (embedded) {
-      globalToast.showToast(text, type);
-      return;
-    }
-    setToastMsg({ text, type });
-    window.setTimeout(() => setToastMsg(null), 3200);
-  };
 
   const loadReviews = async () => {
     setLoading(true);
@@ -94,6 +90,11 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
       setItems(res.data.items || []);
       setTotal(res.data.total || 0);
       setSelectedIds((current) => current.filter((id) => (res.data.items || []).some((item) => item.id === id)));
+      setActiveReviewId((current) => {
+        const next = res.data.items || [];
+        if (current != null && next.some((item) => item.id === current)) return current;
+        return next[0]?.id ?? null;
+      });
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('metadataReviews.toast.loadFailed')), 'error');
       setItems([]);
@@ -230,71 +231,121 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
           {t('metadataReviews.empty')}
         </div>
       ) : (
-        <div className="space-y-4">
-          {items.map((item) => {
-            const checked = selectedSet.has(item.id);
-            return (
-              <article key={item.id} className={`rounded-2xl border p-4 transition-colors ${checked ? 'border-komgaPrimary/40 bg-komgaPrimary/10' : 'border-white/10 bg-komgaSurface/70'}`}>
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-                  <label className="flex cursor-pointer items-center gap-3">
-                    <input type="checkbox" checked={checked} onChange={() => toggleSelected(item.id)} className="h-4 w-4 rounded border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary" />
-                    <div className="h-24 w-16 overflow-hidden rounded-lg border border-white/10 bg-gray-900">
-                      {item.cover_book_id > 0 ? (
-                        <img src={`/api/covers/${item.cover_book_id}`} alt="" className="h-full w-full object-cover" loading="lazy" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xs text-gray-600">?</div>
-                      )}
-                    </div>
-                  </label>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <Link to={`/series/${item.series_id}`} className="text-lg font-semibold text-white hover:text-komgaPrimary">
-                          {displaySeriesTitle(item)}
-                        </Link>
-                        {item.series_title && item.series_title !== item.series_name && (
-                          <p className="mt-0.5 truncate text-sm text-gray-500">{item.series_name}</p>
+        <div className="grid gap-4 lg:grid-cols-[minmax(300px,30%)_1fr]">
+          {/* 左：高密度 inbox 列表 */}
+          <div className="rounded-2xl border border-white/10 bg-gray-950/40 overflow-hidden">
+            <ul className="max-h-[70vh] overflow-y-auto divide-y divide-white/5">
+              {items.map((item) => {
+                const checked = selectedSet.has(item.id);
+                const isActive = activeReviewId === item.id;
+                const changedFields = item.fields.filter((f) => f.current !== f.proposed).length;
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveReviewId(item.id)}
+                      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${isActive ? 'bg-komgaPrimary/15 ring-1 ring-inset ring-komgaPrimary/40' : 'hover:bg-white/5'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => toggleSelected(item.id)}
+                        className="h-4 w-4 shrink-0 rounded border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
+                      />
+                      <div className="h-12 w-9 shrink-0 overflow-hidden rounded border border-white/10 bg-gray-900">
+                        {item.cover_book_id > 0 ? (
+                          <img src={`/api/covers/${item.cover_book_id}`} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[10px] text-gray-600">?</div>
                         )}
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1">{item.library_name}</span>
-                          <span className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-cyan-200">{item.provider}</span>
-                          <span>{formatDateTime(item.created_at)}</span>
-                          <span>{t('metadataReviews.confidence', { value: percent(item.confidence) })}</span>
-                          <span>{t('metadataReviews.fieldCount', { count: item.field_count })}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`truncate text-sm font-medium ${isActive ? 'text-white' : 'text-gray-200'}`}>{displaySeriesTitle(item)}</p>
+                        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-gray-500">
+                          <span className="truncate">{item.library_name}</span>
+                          <span className="shrink-0 text-cyan-300/80">{item.provider}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[11px]">
+                          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300">{t('metadataReviews.diffChanged', { count: changedFields })}</span>
                           {item.locked_field_count > 0 && (
-                            <span className="inline-flex items-center gap-1 rounded-lg border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-500">
+                            <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">
                               <ShieldCheck className="h-3 w-3" />
-                              {t('metadataReviews.lockedCount', { count: item.locked_field_count })}
+                              {item.locked_field_count}
                             </span>
                           )}
                         </div>
-                        {item.source_url && (
-                          <a href={item.source_url} target="_blank" rel="noreferrer" className="mt-2 inline-flex max-w-full items-center gap-1 truncate text-xs text-cyan-300 hover:text-cyan-200">
-                            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                            <span className="truncate">{item.source_url}</span>
-                          </a>
-                        )}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* 右：当前选中条目详情 diff */}
+          <div className="rounded-2xl border border-white/10 bg-komgaSurface/70 p-4">
+            {activeReview ? (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <Link to={`/series/${activeReview.series_id}`} className="text-lg font-semibold text-white hover:text-komgaPrimary">
+                      {displaySeriesTitle(activeReview)}
+                    </Link>
+                    {activeReview.series_title && activeReview.series_title !== activeReview.series_name && (
+                      <p className="mt-0.5 truncate text-sm text-gray-500">{activeReview.series_name}</p>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1">{activeReview.library_name}</span>
+                      <span className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-cyan-200">{activeReview.provider}</span>
+                      <span>{formatDateTime(activeReview.created_at)}</span>
+                      <span>{t('metadataReviews.confidence', { value: percent(activeReview.confidence) })}</span>
+                      <span>{t('metadataReviews.fieldCount', { count: activeReview.field_count })}</span>
+                      {activeReview.locked_field_count > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-500">
+                          <ShieldCheck className="h-3 w-3" />
+                          {t('metadataReviews.lockedCount', { count: activeReview.locked_field_count })}
+                        </span>
+                      )}
+                    </div>
+                    {activeReview.source_url && (
+                      <a href={activeReview.source_url} target="_blank" rel="noreferrer" className="mt-2 inline-flex max-w-full items-center gap-1 truncate text-xs text-cyan-300 hover:text-cyan-200">
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{activeReview.source_url}</span>
+                      </a>
+                    )}
+                  </div>
+                  <label className="flex shrink-0 items-center gap-2 text-xs text-gray-400">
+                    <input
+                      type="checkbox"
+                      checked={selectedSet.has(activeReview.id)}
+                      onChange={() => toggleSelected(activeReview.id)}
+                      className="h-4 w-4 rounded border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
+                    />
+                    {t('metadataReviews.selectThis')}
+                  </label>
+                </div>
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {activeReview.fields.map((field) => (
+                    <div key={field.name} className="rounded-xl border border-white/10 bg-gray-950/70 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-white">{field.label}</span>
+                        {field.locked && <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-500">{t('metadataReviews.locked')}</span>}
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="min-w-0 rounded-lg border border-red-500/10 bg-red-500/[0.01] px-3 py-2 text-xs text-gray-400/80 whitespace-pre-wrap break-words">{field.current || t('common.none')}</div>
+                        <div className={`min-w-0 rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap break-words ${field.current !== field.proposed ? 'border-emerald-500/30 bg-emerald-500/[0.04] text-emerald-500 font-medium ring-1 ring-emerald-500/10' : 'border-white/5 bg-white/[0.01] text-gray-300'}`}>{field.proposed || t('common.none')}</div>
                       </div>
                     </div>
-                    <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                      {item.fields.map((field) => (
-                        <div key={field.name} className="rounded-xl border border-white/10 bg-gray-950/70 p-3">
-                          <div className="mb-2 flex items-center justify-between gap-2">
-                            <span className="text-sm font-semibold text-white">{field.label}</span>
-                            {field.locked && <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-500">{t('metadataReviews.locked')}</span>}
-                          </div>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <div className="min-w-0 rounded-lg border border-red-500/10 bg-red-500/[0.01] px-3 py-2 text-xs text-gray-400/80 whitespace-pre-wrap break-words">{field.current || t('common.none')}</div>
-                            <div className={`min-w-0 rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap break-words ${field.current !== field.proposed ? 'border-emerald-500/30 bg-emerald-500/[0.04] text-emerald-500 font-medium ring-1 ring-emerald-500/10' : 'border-white/5 bg-white/[0.01] text-gray-300'}`}>{field.proposed || t('common.none')}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  ))}
                 </div>
-              </article>
-            );
-          })}
+              </div>
+            ) : (
+              <div className="flex min-h-[320px] items-center justify-center text-sm text-gray-500">
+                {t('metadataReviews.detail.empty')}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -306,14 +357,6 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
         </div>
       </div>
 
-      {!embedded && toastMsg && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
-          <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg ${toastMsg.type === 'success' ? 'border-green-700 bg-green-900 text-green-100' : 'border-red-700 bg-red-900 text-red-100'}`}>
-            <span className="text-sm font-medium">{toastMsg.text}</span>
-            <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">x</button>
-          </div>
-        </div>
-      )}
       {/* 底部浮动控制 Dock (选定项数 > 0 时呼出) */}
       {selectedIds.length > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900/90 backdrop-blur-xl border border-white/10 rounded-2xl px-6 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col sm:flex-row items-center gap-4 animate-in slide-in-from-bottom duration-300 select-none">

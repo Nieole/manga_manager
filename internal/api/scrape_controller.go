@@ -282,6 +282,34 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 			}
 		}
 
+		// 作者
+		var authorEntries []string
+		if !lockedSet["authors"] && len(result.Authors) > 0 {
+			seen := make(map[string]struct{}, len(result.Authors))
+			for _, a := range result.Authors {
+				name := strings.TrimSpace(a.Name)
+				role := strings.TrimSpace(a.Role)
+				if name == "" {
+					continue
+				}
+				key := strings.ToLower(name + "|" + role)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{Name: name, Role: role}); err == nil {
+					_ = q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: series.ID, AuthorID: inserted.ID})
+				}
+				authorEntries = append(authorEntries, metadataAuthorEntryString(name, role))
+			}
+		}
+		if len(authorEntries) > 0 {
+			sort.Strings(authorEntries)
+			if err := recordField("authors", strings.Join(authorEntries, " / ")); err != nil {
+				return err
+			}
+		}
+
 		// 来源链接
 		if result.SourceID > 0 && providerName != "" && strings.ToLower(providerName) != "ollama" && strings.ToLower(providerName) != "llm" {
 			linkName := providerName

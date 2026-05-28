@@ -9,14 +9,13 @@ const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Collections = lazy(() => import('./pages/Collections'));
 const Organize = lazy(() => import('./pages/Organize'));
-const BackgroundTasks = lazy(() => import('./pages/BackgroundTasks'));
+const Ops = lazy(() => import('./pages/Ops'));
 const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
 const ReadingLists = lazy(() => import('./pages/ReadingLists'));
 const OfflineShelf = lazy(() => import('./pages/OfflineShelf'));
 const SeriesDetail = lazy(() => import('./pages/SeriesDetail'));
 const BookReader = lazy(() => import('./pages/BookReader'));
 const Settings = lazy(() => import('./pages/Settings'));
-const Logs = lazy(() => import('./pages/Logs'));
 const SettingsOverviewPage = lazy(() => import('./pages/settings/SettingsOverviewPage').then((module) => ({ default: module.SettingsOverviewPage })));
 const SettingsAppearancePage = lazy(() => import('./pages/settings/SettingsAppearancePage').then((module) => ({ default: module.SettingsAppearancePage })));
 const SettingsLibraryPage = lazy(() => import('./pages/settings/SettingsLibraryPage').then((module) => ({ default: module.SettingsLibraryPage })));
@@ -58,7 +57,11 @@ function App() {
           <Route path="collections" element={withRouteFallback(<Collections />)} />
           {/* 整理工作台 */}
           <Route path="organize" element={withRouteFallback(<Organize />)} />
-          <Route path="organize/tasks" element={withRouteFallback(<BackgroundTasks />)} />
+          {/* 任务与日志（合并自 BackgroundTasks + Logs） */}
+          <Route path="ops" element={withRouteFallback(<Ops />)} />
+          {/* 向后兼容旧路由 */}
+          <Route path="organize/tasks" element={<Navigate to="/ops?tab=tasks" replace />} />
+          <Route path="logs" element={<Navigate to="/ops?tab=logs" replace />} />
           {/* 审核中心（合并元数据审核 + AI 分组审核） */}
           <Route path="reviews" element={withRouteFallback(<ReviewCenter />)} />
           {/* 向后兼容旧路由 */}
@@ -68,8 +71,6 @@ function App() {
           <Route path="reading-lists" element={withRouteFallback(<ReadingLists />)} />
           {/* 离线书架 */}
           <Route path="offline" element={withRouteFallback(<OfflineShelf />)} />
-          {/* 系统日志 */}
-          <Route path="logs" element={withRouteFallback(<Logs />)} />
           {/* 系统配置中心 */}
           <Route path="settings" element={withRouteFallback(<Settings />)}>
             <Route index element={withRouteFallback(<SettingsOverviewPage />)} />

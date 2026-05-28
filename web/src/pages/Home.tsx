@@ -6,6 +6,7 @@ import AddToCollectionModal from '../components/AddToCollectionModal';
 import { DirectoryPicker } from '../components/layout/DirectoryPicker';
 import type { BrowseDirEntry, BrowseDrive } from '../components/layout/types';
 import { ModalShell } from '../components/ui/ModalShell';
+import { useToast } from '../components/ToastProvider';
 import { modalGhostButtonClass, modalPrimaryButtonClass } from '../components/ui/modalStyles';
 import { AIRecommendationsSection } from './home/AIRecommendationsSection';
 import { HomeFilters } from './home/HomeFilters';
@@ -162,7 +163,6 @@ export default function Home() {
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedSeries, setSelectedSeries] = useState<number[]>([]);
     const [showCollectionModal, setShowCollectionModal] = useState(false);
-    const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [bulkProgressUpdating, setBulkProgressUpdating] = useState<'read' | 'unread' | null>(null);
     const [rescanningId, setRescanningId] = useState<number | null>(null);
     const [recentExternalPaths, setRecentExternalPaths] = useState<string[]>([]);
@@ -215,10 +215,7 @@ export default function Home() {
     const [scrapeLockedFields, setScrapeLockedFields] = useState<Set<string>>(new Set());
     const [scrapeMenuOpenId, setScrapeMenuOpenId] = useState<number | null>(null);
 
-    const showToast = (text: string, type: 'success' | 'error') => {
-        setToastMsg({ text, type });
-        setTimeout(() => setToastMsg(null), 3000);
-    };
+    const { showToast } = useToast();
 
     const loadSmartFilters = async (libraryId: string) => {
         try {
@@ -1782,15 +1779,6 @@ export default function Home() {
             )}
 
             {/* Toast 通知 */}
-            {toastMsg && (
-                <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
-                    <div className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 border ${toastMsg.type === 'success' ? 'bg-green-900 border-green-700 text-green-100' : 'bg-red-900 border-red-700 text-red-100'
-                        }`}>
-                        <span className="text-sm font-medium">{toastMsg.text}</span>
-                        <button onClick={() => setToastMsg(null)} className="ml-2 text-white/50 hover:text-white">✕</button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

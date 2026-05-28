@@ -100,6 +100,7 @@ export default function Collections() {
     const [loading, setLoading] = useState(true);
     const [pendingDeleteCollection, setPendingDeleteCollection] = useState<Collection | null>(null);
     const [pendingDeleteSmart, setPendingDeleteSmart] = useState<Collection | null>(null);
+    const [kindTab, setKindTab] = useState<'all' | 'manual' | 'smart'>('all');
     const navigate = useNavigate();
 
     const fetchCollections = () => {
@@ -524,15 +525,48 @@ export default function Collections() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* 左侧：合集列表 */}
-                <div className="lg:col-span-1 space-y-2">
-                    {collections.length === 0 ? (
-                        <div className="text-center py-16 text-gray-600">
-                            <FolderHeart className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                            <p className="text-sm">{t('collections.empty')}</p>
-                            <p className="text-xs mt-1">{t('collections.emptyHint')}</p>
-                        </div>
-                    ) : (
-                        collections.map(c => (
+                <div className="lg:col-span-1 space-y-3">
+                    <div className="flex gap-1 rounded-xl border border-gray-800 bg-gray-950/60 p-1">
+                        {(['all', 'manual', 'smart'] as const).map((key) => {
+                            const count = key === 'all'
+                                ? collections.length
+                                : key === 'manual'
+                                    ? collections.filter((c) => c.kind === 'collection').length
+                                    : collections.filter((c) => c.kind === 'smart').length;
+                            const isActive = kindTab === key;
+                            return (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => setKindTab(key)}
+                                    className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                                        isActive ? 'bg-komgaPrimary text-white' : 'text-gray-400 hover:bg-gray-800/60 hover:text-white'
+                                    }`}
+                                >
+                                    {t(`collections.kindTab.${key}`)}
+                                    <span className={`ml-1.5 text-[10px] ${isActive ? 'text-white/80' : 'text-gray-500'}`}>{count}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {(() => {
+                        const filtered = collections.filter((c) =>
+                            kindTab === 'all'
+                                ? true
+                                : kindTab === 'manual'
+                                    ? c.kind === 'collection'
+                                    : c.kind === 'smart',
+                        );
+                        if (filtered.length === 0) {
+                            return (
+                                <div className="text-center py-16 text-gray-600">
+                                    <FolderHeart className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                                    <p className="text-sm">{t('collections.empty')}</p>
+                                    <p className="text-xs mt-1">{t('collections.emptyHint')}</p>
+                                </div>
+                            );
+                        }
+                        return filtered.map(c => (
                             <div
                                 key={c.view_id}
                                 onClick={() => selectCollection(c)}
@@ -554,6 +588,7 @@ export default function Collections() {
                                         <p className="text-xs text-gray-500">{t('common.seriesCount', { count: c.series_count })}</p>
                                         <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-gray-400">{t(`collections.source.${c.source_type || 'manual'}`)}</span>
                                     </div>
+                                    {c.kind === 'smart' && <SmartFilterChips collection={c} t={t} />}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     {c.kind === 'collection' && (
@@ -575,8 +610,8 @@ export default function Collections() {
                                     <ChevronRight className={`w-4 h-4 transition-colors ${selected?.view_id === c.view_id ? 'text-komgaPrimary' : 'text-gray-700'}`} />
                                 </div>
                             </div>
-                        ))
-                    )}
+                        ));
+                    })()}
                 </div>
 
                 {/* 右侧：选中合集的系列 */}
@@ -665,6 +700,48 @@ export default function Collections() {
                     )}
                 </div>
             </div>
+        </div>
+    );
+}
+
+function SmartFilterChips({ collection, t }: { collection: Collection; t: (key: string, vars?: Record<string, unknown>) => string }) {
+    const chips: { key: string; label: string }[] = [];
+    if (collection.activeTag) chips.push({ key: 'tag', label: `#${collection.activeTag}` });
+    if (collection.activeAuthor) chips.push({ key: 'author', label: `@${collection.activeAuthor}` });
+    if (collection.activeStatus) chips.push({ key: 'status', label: t(`collections.smartChip.status.${collection.activeStatus}`) });
+    if (collection.activeLetter) chips.push({ key: 'letter', label: collection.activeLetter });
+    if (collection.readState) chips.push({ key: 'readState', label: t(`collections.smartChip.read.${collection.readState}`) });
+    if (collection.minRating != null || collection.maxRating != null) {
+        const lo = collection.minRating != null ? collection.minRating : '';
+        const hi = collection.maxRating != null ? collection.maxRating : '';
+        chips.push({ key: 'rating', label: `★ ${lo}${lo !== '' || hi !== '' ? '–' : ''}${hi}` });
+    }
+    if (collection.minProgress != null || collection.maxProgress != null) {
+        const lo = collection.minProgress != null ? `${collection.minProgress}%` : '';
+        const hi = collection.maxProgress != null ? `${collection.maxProgress}%` : '';
+        chips.push({ key: 'progress', label: `${t('collections.smartChip.progress')} ${lo}${lo !== '' || hi !== '' ? '–' : ''}${hi}` });
+    }
+    if (collection.addedWithinDays != null) {
+        chips.push({ key: 'addedDays', label: t('collections.smartChip.addedWithinDays', { days: collection.addedWithinDays }) });
+    }
+    if (collection.sortByField) {
+        const dir = collection.sortDir === 'desc' ? '↓' : '↑';
+        chips.push({ key: 'sort', label: `${t(`collections.smartChip.sort.${collection.sortByField}`)} ${dir}` });
+    }
+    if (chips.length === 0) {
+        return (
+            <div className="mt-1 ml-6 flex flex-wrap items-center gap-1">
+                <span className="rounded-full border border-white/5 bg-white/[0.02] px-2 py-0.5 text-[10px] text-gray-600">{t('collections.smartChip.noFilter')}</span>
+            </div>
+        );
+    }
+    return (
+        <div className="mt-1 ml-6 flex flex-wrap items-center gap-1">
+            {chips.map((chip) => (
+                <span key={chip.key} className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-200/90">
+                    {chip.label}
+                </span>
+            ))}
         </div>
     );
 }

@@ -129,6 +129,8 @@ func metadataFieldLabel(name string) string {
 		return "Rating"
 	case "tags":
 		return "Tags"
+	case "authors":
+		return "Authors"
 	case "source_link":
 		return "Source link"
 	default:
@@ -194,6 +196,77 @@ func metadataJoinProposedTags(tags []string) string {
 	return strings.Join(metadataCleanTags(tags), " / ")
 }
 
+func metadataAuthorEntryString(name, role string) string {
+	name = strings.TrimSpace(name)
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return name
+	}
+	return name + " (" + role + ")"
+}
+
+func metadataJoinAuthors(authors []database.Author) string {
+	if len(authors) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(authors))
+	for _, a := range authors {
+		if strings.TrimSpace(a.Name) == "" {
+			continue
+		}
+		parts = append(parts, metadataAuthorEntryString(a.Name, a.Role))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " / ")
+}
+
+func metadataJoinProposedAuthors(authors []metadata.SeriesAuthor) string {
+	if len(authors) == 0 {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(authors))
+	parts := make([]string, 0, len(authors))
+	for _, a := range authors {
+		entry := metadataAuthorEntryString(a.Name, a.Role)
+		if entry == "" {
+			continue
+		}
+		key := strings.ToLower(entry)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		parts = append(parts, entry)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " / ")
+}
+
+func metadataParseAuthors(value string) []metadata.SeriesAuthor {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	out := make([]metadata.SeriesAuthor, 0)
+	for _, raw := range strings.Split(value, " / ") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		role := ""
+		name := raw
+		if idx := strings.LastIndex(raw, " ("); idx >= 0 && strings.HasSuffix(raw, ")") {
+			name = strings.TrimSpace(raw[:idx])
+			role = strings.TrimSpace(raw[idx+2 : len(raw)-1])
+		}
+		if name == "" {
+			continue
+		}
+		out = append(out, metadata.SeriesAuthor{Name: name, Role: role})
+	}
+	return out
+}
+
 func metadataDefaultConfidence(providerName string) float64 {
 	switch strings.ToLower(strings.TrimSpace(providerName)) {
 	case "bangumi":
@@ -218,10 +291,12 @@ func metadataSourceURL(providerName string, result *metadata.SeriesMetadata) str
 	return ""
 }
 
-func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, result *metadata.SeriesMetadata, providerName string) []metadataReviewFieldDraft {
+func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, authors []database.Author, result *metadata.SeriesMetadata, providerName string) []metadataReviewFieldDraft {
 	locked := metadataLockedFieldSet(series)
 	currentTags := metadataJoinTags(tags)
 	proposedTags := metadataJoinProposedTags(result.Tags)
+	currentAuthors := metadataJoinAuthors(authors)
+	proposedAuthors := metadataJoinProposedAuthors(result.Authors)
 	confidence := result.Confidence
 	if confidence <= 0 {
 		confidence = metadataDefaultConfidence(providerName)
@@ -275,6 +350,14 @@ func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, resul
 			Proposed:   proposedTags,
 			Confidence: confidence,
 			Locked:     locked["tags"],
+		},
+		{
+			Name:       "authors",
+			Label:      metadataFieldLabel("authors"),
+			Current:    currentAuthors,
+			Proposed:   proposedAuthors,
+			Confidence: confidence,
+			Locked:     locked["authors"],
 		},
 	}
 
@@ -493,8 +576,12 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 		if err != nil {
 			return err
 		}
+		authors, err := q.GetAuthorsForSeries(ctx, series.ID)
+		if err != nil {
+			return err
+		}
 
-		changes := metadataBuildFieldDrafts(series, tags, result, providerName)
+		changes := metadataBuildFieldDrafts(series, tags, authors, result, providerName)
 		if len(changes) == 0 {
 			return errNoMetadataChanges
 		}
@@ -595,6 +682,8 @@ func (c *Controller) applyReviewedMetadata(ctx context.Context, series database.
 					}
 				}
 			}
+		case "authors":
+			metadataResult.Authors = metadataParseAuthors(field.ProposedValue)
 		}
 	}
 
