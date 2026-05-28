@@ -4,6 +4,33 @@
 
 ---
 
+### 📌 增量记录 — 2026-05-29（阅读器阶段 3 重构 · 沉浸式 + 续读上下文）
+
+#### 阅读器（阶段 3 重构）
+- **沉浸式 Shell**：新增 `useReaderImmersive.ts` + `ReaderImmersiveShell.tsx`，默认 5s 自动隐藏顶部条 / 进度条，鼠标移动 / 键盘 / 触摸 / 滚轮触发的「唤醒」只在已可见时延长停留，不在隐藏态被动唤起；`forcedVisible` 模式在 `showSettings || showHelp` 期间锁定显示；顶 / 底各保留 `h-10 / h-12` 触发条作为「找不到设置」时的兜底入口。
+- **中央点击切换**：`PagedReader.tsx` 通过 `pointerdown / pointerup` 检测短距离 + 短时长的 tap，按视口左 30 / 中 40 / 右 30 三段语义触发 `onPrev / onCenterTap / onNext`，hover 模式下另保留两侧大箭头作为桌面端引导；`WebtoonReader.tsx` 同款 tap 检测 + button / a / input 元素自动豁免，避免影响虚拟滚动。
+- **上一本 / 下一本 / 卷内章节**：新增 `useReaderSiblings.ts`，`/api/book-prev/{id}` + `/api/book-next/{id}` 拉取兄弟书；同时按 `seriesIdRef` 复用 `/api/series/{id}/context` 的 books 列表派生 `allInVolume`。`ReaderProgressTray.tsx` 在底部进度条左右两侧增加 SkipBack / SkipForward 胶囊按钮（无可用兄弟时降级为禁用占位）；`ReaderTopBar.tsx` 右侧新增 `ListOrdered` 卷内章节 popover，列出当前卷所有书籍并高亮当前位置。
+- **末页"下一本"具名**：WebtoonReader 末页按钮文案改为 `reader.nextBookNamed`（`▶ 继续阅读：{name}` / `▶ Continue: {name}`），自动从 `useReaderSiblings.next.title` 取名；无下一本时回落到原 `reader.nextBook`。
+- **进度同步状态指示**：新增 `useReaderProgressIndicator.ts`，状态机 `'idle' | 'syncing' | 'synced' | 'offline-queued'`，将原 `useReaderProgressPipeline` 内的 `updateProgress` 反向注入，集中处理在线 / 离线分支与 1.5s synced 闪显。`ReaderTopBar` 在标题前显示直径 8px 状态点（gray / amber pulse / emerald / rose），hover tooltip 文案对应 4 条 `reader.progress.*` 翻译。
+- **设置抽屉模式拆分**：`ReaderSettingsDrawer.tsx` 顶部新增"全局阅读偏好 / 本书状态"模式切换；切换后自动校正 tab（`reading` / `image` 归全局，`cache` / `bookmarks` 归本书），用户偏好持久化到 `localStorage('manga-reader:settings-mode')`，默认 `global`。
+- **离线进度 bulk 同步**：`offlineReader.ts::syncQueuedOfflineProgress` 改为 `POST /api/books/bulk-progress/sync`，请求体 `{ items: [{book_id, page, updated_at}] }`，识别 `updated | skipped_stale | skipped_unchanged` 视为成功；HTTP 失败 / 网络异常时退回逐条 `POST /api/books/{id}/progress` 兜底，避免离线积压在恢复在线时打雷一样砸出峰值写入。
+- **顶部条卷子标题**：`ReaderTopBar` 在标题下补一行 `bookVolume` 子标题（`text-[11px] text-gray-300/80`），切书时阅读器顶端能直接看到所在卷，免去回系列页确认。
+
+#### i18n
+- **新增 zh-CN / en-US 同步 key**：
+  - `reader.progress.{idle | syncing | synced | offlineQueued}` —— 状态点 tooltip
+  - `reader.siblings.{prev | next | volumeChapters | unavailable}` —— 上一本 / 下一本 / 卷内章节按钮 + 占位
+  - `reader.center.toggleUI` / `reader.immersive.{show | hide}` —— 沉浸式辅助文案
+  - `reader.settingsMode.{global | book | toggle}` —— 设置抽屉新模式开关
+  - `reader.nextBookNamed` —— `▶ 继续阅读：{{name}}` / `▶ Continue: {{name}}`
+
+#### 验证 & 收尾
+- `npx tsc -b` 通过；`npx eslint src/pages/book-reader src/pages/BookReader.tsx` 0 错误 0 警告（同批新增的 6 处 set-state-in-effect / exhaustive-deps 误报已用 directive 注释豁免，含 `useReaderImmersive` 强制可见、`useReaderProgressIndicator` 状态重置、`useReaderSiblings` 切书清空、`ReaderSettingsDrawer` 模式校正、`useReaderBookmarks` / `useReaderBookData` / `useReaderOffline` 切书重置）。
+- 仓库剩余 1 错（`Ops.tsx:27`）+ 1 警告（`Layout.tsx:431`）均与本批次无关，单独跟进。
+- `docs/library-series-reader-todo.md` 阶段 3 八个子节点（3.1 - 3.8）全部标记 `[x]`，仅剩 3.8 浏览器手动回归；进度看板写入「阶段 3 阅读器 = ✅ 代码项已完成」。
+
+---
+
 ### 📌 增量记录 — 2026-05-29（系列详情阶段 2 重构 + Hero 现代化）
 
 #### 系列详情（阶段 2 重构）

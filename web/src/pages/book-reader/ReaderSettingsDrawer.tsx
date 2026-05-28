@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { BookmarkPanel } from './BookmarkPanel';
 import { OfflineReadingPanel } from './OfflineReadingPanel';
 import type { OfflineBookStatus } from './offlineReader';
@@ -6,6 +6,11 @@ import type { ImageFilter, ReaderImageFormat, ReadDirection, ReadingBookmark, Re
 
 type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
 type ReaderSettingsTab = 'reading' | 'image' | 'cache' | 'bookmarks';
+type ReaderSettingsMode = 'global' | 'book';
+
+const SETTINGS_MODE_STORAGE_KEY = 'manga-reader:settings-mode';
+const GLOBAL_TABS: ReaderSettingsTab[] = ['reading', 'image'];
+const BOOK_TABS: ReaderSettingsTab[] = ['cache', 'bookmarks'];
 
 interface ReaderSettingsDrawerProps {
   t: Translate;
@@ -110,17 +115,58 @@ export function ReaderSettingsDrawer({
   onDeleteBookmark,
   onJumpToPage,
 }: ReaderSettingsDrawerProps) {
-  const [activeTab, setActiveTab] = useState<ReaderSettingsTab>('reading');
-  const tabs: Array<{ id: ReaderSettingsTab; label: string }> = [
-    { id: 'reading', label: t('reader.settingsTab.reading') },
-    { id: 'image', label: t('reader.settingsTab.image') },
-    { id: 'cache', label: t('reader.settingsTab.cache') },
-    { id: 'bookmarks', label: t('reader.settingsTab.bookmarks') },
-  ];
+  const [mode, setMode] = useState<ReaderSettingsMode>(() => {
+    if (typeof window === 'undefined') return 'global';
+    const stored = window.localStorage.getItem(SETTINGS_MODE_STORAGE_KEY);
+    return stored === 'book' ? 'book' : 'global';
+  });
+  const [activeTab, setActiveTab] = useState<ReaderSettingsTab>(() => (mode === 'book' ? 'cache' : 'reading'));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(SETTINGS_MODE_STORAGE_KEY, mode);
+    if (mode === 'global' && !GLOBAL_TABS.includes(activeTab)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveTab('reading');
+    } else if (mode === 'book' && !BOOK_TABS.includes(activeTab)) {
+      setActiveTab('cache');
+    }
+  }, [mode, activeTab]);
+
+  const tabs = useMemo<Array<{ id: ReaderSettingsTab; label: string }>>(() => {
+    if (mode === 'global') {
+      return [
+        { id: 'reading', label: t('reader.settingsTab.reading') },
+        { id: 'image', label: t('reader.settingsTab.image') },
+      ];
+    }
+    return [
+      { id: 'cache', label: t('reader.settingsTab.cache') },
+      { id: 'bookmarks', label: t('reader.settingsTab.bookmarks') },
+    ];
+  }, [mode, t]);
 
   return (
     <div className="self-center sm:self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-3 sm:p-4 shadow-2xl w-[92vw] sm:w-[360px] max-w-sm text-sm text-gray-300 flex flex-col gap-3 animate-in fade-in slide-in-from-top-4 origin-top sm:origin-top-right">
-      <div className="grid grid-cols-4 gap-1 rounded-lg bg-gray-950/80 p-1">
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-950/80 p-1 border border-gray-800">
+        <button
+          type="button"
+          onClick={() => setMode('global')}
+          className={`min-w-0 rounded-md px-2 py-1.5 text-xs font-semibold transition ${mode === 'global' ? 'bg-komgaPrimary text-white shadow' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+          aria-pressed={mode === 'global'}
+        >
+          <span className="block truncate">{t('reader.settingsMode.global')}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('book')}
+          className={`min-w-0 rounded-md px-2 py-1.5 text-xs font-semibold transition ${mode === 'book' ? 'bg-komgaPrimary text-white shadow' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+          aria-pressed={mode === 'book'}
+        >
+          <span className="block truncate">{t('reader.settingsMode.book')}</span>
+        </button>
+      </div>
+      <div className={`grid gap-1 rounded-lg bg-gray-950/80 p-1 ${tabs.length === 2 ? 'grid-cols-2' : 'grid-cols-4'}`}>
         {tabs.map((tab) => (
           <button
             key={tab.id}

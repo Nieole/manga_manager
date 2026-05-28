@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PagedReader } from './book-reader/PagedReader';
+
 import { ReaderHelpPanel } from './book-reader/ReaderHelpPanel';
+import { ReaderImmersiveShell } from './book-reader/ReaderImmersiveShell';
 import { ReaderProgressTray } from './book-reader/ReaderProgressTray';
 import { ReaderSettingsDrawer } from './book-reader/ReaderSettingsDrawer';
 import { ReaderErrorState, ReaderEyeProtectionOverlay, ReaderLoadingState } from './book-reader/ReaderStateViews';
@@ -10,12 +12,15 @@ import { WebtoonReader, type WebtoonReaderHandle } from './book-reader/WebtoonRe
 import { usePageImageCache } from './book-reader/usePageImageCache';
 import { useReaderBookData } from './book-reader/useReaderBookData';
 import { useReaderBookmarks } from './book-reader/useReaderBookmarks';
+import { useReaderImmersive } from './book-reader/useReaderImmersive';
 import { useReaderKeyboardShortcuts } from './book-reader/useReaderKeyboardShortcuts';
 import { useReaderOffline } from './book-reader/useReaderOffline';
 import { useReaderPageNavigation } from './book-reader/useReaderPageNavigation';
 import { useReaderPointerDrag } from './book-reader/useReaderPointerDrag';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
 import { useReaderProgressPipeline } from './book-reader/useReaderProgressPipeline';
+import { useReaderProgressIndicator } from './book-reader/useReaderProgressIndicator';
+import { useReaderSiblings } from './book-reader/useReaderSiblings';
 import { useI18n } from '../i18n/LocaleProvider';
 
 export default function BookReader() {
@@ -164,6 +169,14 @@ export default function BookReader() {
         getImageUrlForBook,
         t,
     });
+    const progressIndicator = useReaderProgressIndicator({
+        bookId,
+        pagesBookIdRef,
+        loading,
+        isOnline,
+        offlineQueuedPage,
+        queueOfflineReaderProgress,
+    });
     const {
         containerRef,
         isDragging,
@@ -183,6 +196,8 @@ export default function BookReader() {
             return;
         }
         navigate('/');
+    // seriesIdRef.current 在加载书本信息时被命令式赋值，无需进入依赖数组
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bookVolume, navigate]);
     const handleOpenBook = useCallback((targetBookId: number) => {
         navigate(`/reader/${targetBookId}`, { replace: true });
@@ -231,7 +246,7 @@ export default function BookReader() {
         fetchPagesForBook,
         fetchBookInfoForBook,
         retainBookCaches,
-        queueOfflineReaderProgress,
+        updateProgress: progressIndicator.updateProgress,
     });
 
     const {
@@ -249,6 +264,16 @@ export default function BookReader() {
         setSliderValue,
         onScrollToWebtoonPage: (pageNumber) => webtoonReaderRef.current?.scrollToPage(pageNumber),
         onOpenBook: handleOpenBook,
+    });
+
+    const siblings = useReaderSiblings({
+        bookId,
+        seriesIdRef,
+        bookVolume,
+        loading,
+    });
+    const immersive = useReaderImmersive({
+        forcedVisible: showSettings || showHelp,
     });
 
     // 当书籍或图像处理参数变化时，预加载去重缓存需要重新开始计算。
@@ -279,79 +304,6 @@ export default function BookReader() {
 
     return (
         <div className="absolute inset-0 bg-komgaDark flex flex-col z-50 overflow-hidden">
-            {/* 顶栏控制面板区悬浮感应 */}
-            <div className={`absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-komgaDark/90 to-transparent flex flex-col justify-start pt-4 px-6 transition-all duration-300 z-20 ${showSettings ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 hover:translate-y-0 hover:opacity-100'}`}>
-                <ReaderTopBar
-                    t={t}
-                    bookTitle={bookTitle}
-                    isBookmarked={Boolean(currentBookmark)}
-                    savingBookmark={savingBookmark}
-                    loading={loading}
-                    showHelp={showHelp}
-                    showSettings={showSettings}
-                    onBack={handleBackToSeries}
-                    onSaveBookmark={handleSaveBookmark}
-                    onToggleHelp={toggleHelp}
-                    onToggleSettings={() => setShowSettings((value) => !value)}
-                />
-
-                {showHelp && <ReaderHelpPanel t={t} />}
-
-                {showSettings && (
-                    <ReaderSettingsDrawer
-                        t={t}
-                        readMode={readMode}
-                        setReadMode={setReadMode}
-                        readDirection={readDirection}
-                        setReadDirection={setReadDirection}
-                        doublePage={doublePage}
-                        setDoublePage={setDoublePage}
-                        scaleMode={scaleMode}
-                        setScaleMode={setScaleMode}
-                        imageFilter={imageFilter}
-                        setImageFilter={setImageFilter}
-                        autoCrop={autoCrop}
-                        setAutoCrop={setAutoCrop}
-                        preloadCount={preloadCount}
-                        setPreloadCount={setPreloadCount}
-                        readerImageFormat={readerImageFormat}
-                        setReaderImageFormat={setReaderImageFormat}
-                        readerImageQuality={readerImageQuality}
-                        setReaderImageQuality={setReaderImageQuality}
-                        eyeProtection={eyeProtection}
-                        setEyeProtection={setEyeProtection}
-                        w2xScale={w2xScale}
-                        setW2xScale={setW2xScale}
-                        w2xNoise={w2xNoise}
-                        setW2xNoise={setW2xNoise}
-                        w2xFormat={w2xFormat}
-                        setW2xFormat={setW2xFormat}
-                        isOnline={isOnline}
-                        offlineSupported={offlineSupported}
-                        offlineStatus={offlineStatus}
-                        offlineCaching={offlineCaching}
-                        offlineDeleting={offlineDeleting}
-                        offlineCachedPages={offlineCachedPages}
-                        activePageCount={activePages.length}
-                        offlineQueuedPage={offlineQueuedPage}
-                        offlineCacheError={offlineCacheError}
-                        readerLoading={readerLoading}
-                        onCacheBook={handleCacheBookOffline}
-                        onDeleteOfflineBook={handleDeleteOfflineBook}
-                        bookmarks={bookmarks}
-                        bookmarkNote={bookmarkNote}
-                        savingBookmark={savingBookmark}
-                        loading={loading}
-                        currentBookmark={currentBookmark}
-                        currentPageNumber={currentPageNumber}
-                        onBookmarkNoteChange={setBookmarkNote}
-                        onSaveBookmark={handleSaveBookmark}
-                        onDeleteBookmark={handleDeleteBookmark}
-                        onJumpToPage={jumpToPage}
-                    />
-                )}
-            </div>
-
             <div className="flex-1 w-full relative overflow-hidden ReaderScrollContainer">
                 {eyeProtection && <ReaderEyeProtectionOverlay />}
                 {readerLoading ? (
@@ -375,11 +327,13 @@ export default function BookReader() {
                         scaleMode={scaleMode}
                         doublePage={doublePage}
                         nextBookId={nextBookId}
+                        nextBookLabel={siblings.next?.title ?? null}
                         getImageUrl={getImageUrl}
                         onVisiblePageChange={setCurrentPageIndex}
                         onRenderRangeChange={handleWebtoonRenderRangeChange}
                         onRenderedImageCountChange={handleWebtoonRenderedImageCountChange}
                         onOpenNextBook={(targetBookId) => navigate(`/reader/${targetBookId}`, { replace: true })}
+                        onCenterTap={immersive.toggle}
                     />
                 ) : (
                     <PagedReader
@@ -395,25 +349,111 @@ export default function BookReader() {
                         isPagedImageReady={isPagedImageReady}
                         onPrev={handlePrev}
                         onNext={handleNext}
+                        onCenterTap={immersive.toggle}
                         onMouseDown={handleMouseDown}
                         onMouseLeave={handleMouseLeave}
                         onMouseUp={handleMouseUp}
                         onMouseMove={handleMouseMove}
                     />
                 )}
+                <ReaderImmersiveShell
+                    visible={immersive.visible}
+                    onEdgeReveal={immersive.show}
+                    topBar={
+                        <>
+                            <ReaderTopBar
+                                t={t}
+                                bookTitle={bookTitle}
+                                bookVolume={bookVolume}
+                                isBookmarked={Boolean(currentBookmark)}
+                                savingBookmark={savingBookmark}
+                                loading={loading}
+                                showHelp={showHelp}
+                                showSettings={showSettings}
+                                progressStatus={progressIndicator.status}
+                                allInVolume={siblings.allInVolume}
+                                currentBookId={bookId ? Number(bookId) : null}
+                                onOpenBook={handleOpenBook}
+                                onBack={handleBackToSeries}
+                                onSaveBookmark={handleSaveBookmark}
+                                onToggleHelp={toggleHelp}
+                                onToggleSettings={() => setShowSettings((value) => !value)}
+                            />
 
-                <ReaderProgressTray
-                    t={t}
-                    showSettings={showSettings}
-                    currentPageIndex={currentPageIndex}
-                    pageCount={activePages.length}
-                    sliderValue={sliderValue}
-                    hoverPage={hoverPage}
-                    hoverX={hoverX}
-                    onSliderChange={setSliderValue}
-                    onHoverPageChange={setHoverPage}
-                    onHoverXChange={setHoverX}
-                    onCommitPage={jumpToPage}
+                            {showHelp && <ReaderHelpPanel t={t} />}
+
+                            {showSettings && (
+                                <ReaderSettingsDrawer
+                                    t={t}
+                                    readMode={readMode}
+                                    setReadMode={setReadMode}
+                                    readDirection={readDirection}
+                                    setReadDirection={setReadDirection}
+                                    doublePage={doublePage}
+                                    setDoublePage={setDoublePage}
+                                    scaleMode={scaleMode}
+                                    setScaleMode={setScaleMode}
+                                    imageFilter={imageFilter}
+                                    setImageFilter={setImageFilter}
+                                    autoCrop={autoCrop}
+                                    setAutoCrop={setAutoCrop}
+                                    preloadCount={preloadCount}
+                                    setPreloadCount={setPreloadCount}
+                                    readerImageFormat={readerImageFormat}
+                                    setReaderImageFormat={setReaderImageFormat}
+                                    readerImageQuality={readerImageQuality}
+                                    setReaderImageQuality={setReaderImageQuality}
+                                    eyeProtection={eyeProtection}
+                                    setEyeProtection={setEyeProtection}
+                                    w2xScale={w2xScale}
+                                    setW2xScale={setW2xScale}
+                                    w2xNoise={w2xNoise}
+                                    setW2xNoise={setW2xNoise}
+                                    w2xFormat={w2xFormat}
+                                    setW2xFormat={setW2xFormat}
+                                    isOnline={isOnline}
+                                    offlineSupported={offlineSupported}
+                                    offlineStatus={offlineStatus}
+                                    offlineCaching={offlineCaching}
+                                    offlineDeleting={offlineDeleting}
+                                    offlineCachedPages={offlineCachedPages}
+                                    activePageCount={activePages.length}
+                                    offlineQueuedPage={offlineQueuedPage}
+                                    offlineCacheError={offlineCacheError}
+                                    readerLoading={readerLoading}
+                                    onCacheBook={handleCacheBookOffline}
+                                    onDeleteOfflineBook={handleDeleteOfflineBook}
+                                    bookmarks={bookmarks}
+                                    bookmarkNote={bookmarkNote}
+                                    savingBookmark={savingBookmark}
+                                    loading={loading}
+                                    currentBookmark={currentBookmark}
+                                    currentPageNumber={currentPageNumber}
+                                    onBookmarkNoteChange={setBookmarkNote}
+                                    onSaveBookmark={handleSaveBookmark}
+                                    onDeleteBookmark={handleDeleteBookmark}
+                                    onJumpToPage={jumpToPage}
+                                />
+                            )}
+                        </>
+                    }
+                    tray={
+                        <ReaderProgressTray
+                            t={t}
+                            currentPageIndex={currentPageIndex}
+                            pageCount={activePages.length}
+                            sliderValue={sliderValue}
+                            hoverPage={hoverPage}
+                            hoverX={hoverX}
+                            prev={siblings.prev}
+                            next={siblings.next}
+                            onSliderChange={setSliderValue}
+                            onHoverPageChange={setHoverPage}
+                            onHoverXChange={setHoverX}
+                            onCommitPage={jumpToPage}
+                            onOpenBook={handleOpenBook}
+                        />
+                    }
                 />
             </div>
         </div>

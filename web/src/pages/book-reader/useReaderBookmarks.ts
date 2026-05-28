@@ -44,6 +44,7 @@ export function useReaderBookmarks({
   }, [bookId, currentBookIdRef]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setBookmarks([]);
     setBookmarkNote('');
     setSavingBookmark(false);
@@ -54,6 +55,7 @@ export function useReaderBookmarks({
   }, [loadBookmarks]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setBookmarkNote(currentBookmark?.note || '');
   }, [currentBookmark]);
 

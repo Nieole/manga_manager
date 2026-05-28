@@ -95,6 +95,7 @@ export function useReaderBookData({
     const targetBookId = bookId;
     let cancelled = false;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPagesBookId(null);
     pagesBookIdRef.current = null;
     setPages([]);

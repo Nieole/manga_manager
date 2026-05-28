@@ -288,25 +288,74 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
     return { synced: 0, failed: 0, remaining: Object.keys(progress).length };
   }
   const progress = readQueuedProgress();
+  const entries = Object.entries(progress);
+  if (entries.length === 0) {
+    return { synced: 0, failed: 0, remaining: 0 };
+  }
+
+  const payload = entries.map(([, item]) => ({
+    book_id: Number(item.bookId),
+    page: item.page,
+    updated_at: item.updatedAt,
+  })).filter((row) => Number.isFinite(row.book_id) && row.book_id > 0);
+
   let synced = 0;
   let failed = 0;
-  for (const [bookId, item] of Object.entries(progress)) {
-    try {
-      const response = await fetch(`/api/books/${bookId}/progress`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ page: item.page }),
-      });
-      if (response.ok) {
-        delete progress[bookId];
-        synced += 1;
-      } else {
+  let bulkOk = false;
+
+  try {
+    const response = await fetch('/api/books/bulk-progress/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: payload }),
+    });
+    if (response.ok) {
+      bulkOk = true;
+      const data = await response.json().catch(() => null) as { results?: Array<{ book_id: number; status: string }> } | null;
+      const results = data?.results ?? [];
+      const successStatuses = new Set(['updated', 'skipped_stale', 'skipped_unchanged']);
+      const successIds = new Set<number>();
+      for (const row of results) {
+        if (successStatuses.has(row.status)) {
+          successIds.add(Number(row.book_id));
+        }
+      }
+      for (const [bookId, item] of entries) {
+        const id = Number(item.bookId);
+        if (results.length === 0 || successIds.has(id)) {
+          delete progress[bookId];
+          synced += 1;
+        } else {
+          failed += 1;
+        }
+      }
+    }
+  } catch {
+    // fall through to per-book fallback
+  }
+
+  if (!bulkOk) {
+    synced = 0;
+    failed = 0;
+    for (const [bookId, item] of entries) {
+      try {
+        const response = await fetch(`/api/books/${bookId}/progress`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ page: item.page }),
+        });
+        if (response.ok) {
+          delete progress[bookId];
+          synced += 1;
+        } else {
+          failed += 1;
+        }
+      } catch {
         failed += 1;
       }
-    } catch {
-      failed += 1;
     }
   }
+
   writeQueuedProgress(progress);
   return { synced, failed, remaining: Object.keys(progress).length };
 }

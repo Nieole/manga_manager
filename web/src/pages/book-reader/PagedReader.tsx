@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent, RefObject } from 'react';
+import { useRef, type CSSProperties, type MouseEvent, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { getFilterStyle, getPagedImages, getScaleClasses } from './helpers';
 import type { ImageFilter, Page, ReadDirection, ScaleMode } from './types';
@@ -16,6 +16,7 @@ interface PagedReaderProps {
   isPagedImageReady: (pageNum: number) => boolean;
   onPrev: () => void;
   onNext: () => void;
+  onCenterTap?: () => void;
   onMouseDown: (event: MouseEvent<HTMLDivElement>) => void;
   onMouseLeave: () => void;
   onMouseUp: () => void;
@@ -35,27 +36,64 @@ export function PagedReader({
   isPagedImageReady,
   onPrev,
   onNext,
+  onCenterTap,
   onMouseDown,
   onMouseLeave,
   onMouseUp,
   onMouseMove,
 }: PagedReaderProps) {
+  const tapStateRef = useRef<{ x: number; y: number; t: number } | null>(null);
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onCenterTap) return;
+    tapStateRef.current = { x: event.clientX, y: event.clientY, t: performance.now() };
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onCenterTap || !tapStateRef.current) return;
+    const start = tapStateRef.current;
+    tapStateRef.current = null;
+    const dx = Math.abs(event.clientX - start.x);
+    const dy = Math.abs(event.clientY - start.y);
+    if (dx < 8 && dy < 8 && performance.now() - start.t < 400) {
+      const screenWidth = window.innerWidth;
+      const x = event.clientX;
+      if (x < screenWidth * 0.3) {
+        if (readDirection === 'ltr') onPrev(); else onNext();
+      } else if (x > screenWidth * 0.7) {
+        if (readDirection === 'ltr') onNext(); else onPrev();
+      } else {
+        onCenterTap();
+      }
+    }
+  };
+
   return (
-    <div className="flex items-center justify-center w-full h-full bg-komgaDark relative">
-      <div
-        className="absolute left-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-start sm:px-8 cursor-pointer md:hover:bg-white/5 transition opacity-0 md:hover:opacity-100 group"
-        onClick={() => readDirection === 'ltr' ? onPrev() : onNext()}
-      >
-        <ChevronLeft className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors hidden md:block" />
+    <div className="flex items-center justify-center w-full h-full bg-komgaDark relative overflow-hidden group">
+      {/* Desktop hover indicators for left/right */}
+      <div className="absolute left-0 inset-y-0 w-[30%] z-10 flex items-center justify-start px-8 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+        <ChevronLeft className="w-12 h-12 text-white/40 drop-shadow-lg hidden md:block" />
+      </div>
+      <div className="absolute right-0 inset-y-0 w-[30%] z-10 flex items-center justify-end px-8 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+        <ChevronRight className="w-12 h-12 text-white/40 drop-shadow-lg hidden md:block" />
       </div>
 
       <div
         ref={containerRef}
-        className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none gap-0 ${doublePage ? 'drop-shadow-[0_20px_50px_rgba(0,0,0,0.9)]' : ''}`}
-        onMouseDown={onMouseDown}
-        onMouseLeave={onMouseLeave}
-        onMouseUp={onMouseUp}
-        onMouseMove={onMouseMove}
+        className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto touch-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none gap-0 ${doublePage ? 'drop-shadow-[0_20px_50px_rgba(0,0,0,0.9)]' : ''}`}
+        onPointerDown={(e) => {
+          handlePointerDown(e);
+          onMouseDown(e);
+        }}
+        onPointerMove={onMouseMove}
+        onPointerUp={(e) => {
+          handlePointerUp(e);
+          onMouseUp();
+        }}
+        onPointerLeave={() => {
+          onMouseLeave();
+          onMouseUp();
+        }}
       >
         {getPagedImages(pages, currentPageIndex, doublePage, readDirection).map((page, index, spread) => {
           const isSpread = doublePage && spread.length > 1;
@@ -87,13 +125,6 @@ export function PagedReader({
             </div>
           );
         })}
-      </div>
-
-      <div
-        className="absolute right-0 inset-y-0 w-[20vw] sm:w-1/3 z-10 flex items-center justify-end sm:px-8 cursor-pointer md:hover:bg-white/5 transition opacity-0 md:hover:opacity-100 group"
-        onClick={() => readDirection === 'ltr' ? onNext() : onPrev()}
-      >
-        <ChevronRight className="w-12 h-12 text-white/40 group-hover:text-white/80 drop-shadow-lg transition-colors hidden md:block" />
       </div>
     </div>
   );

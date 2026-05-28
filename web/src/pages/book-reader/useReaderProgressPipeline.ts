@@ -1,5 +1,4 @@
-import { useCallback, useEffect } from 'react';
-import axios from 'axios';
+import { useEffect } from 'react';
 import type { ReaderBookCache } from './usePageImageCache';
 import type { Page, ReaderBookInfo, ReadMode } from './types';
 
@@ -26,7 +25,7 @@ interface UseReaderProgressPipelineOptions {
   fetchPagesForBook: (bookId: string) => Promise<Page[]>;
   fetchBookInfoForBook: (bookId: string) => Promise<ReaderBookInfo>;
   retainBookCaches: (bookIds: Array<string | null | undefined>) => void;
-  queueOfflineReaderProgress: (pageNumber: number) => void;
+  updateProgress: (pageNumber: number) => void;
 }
 
 export function useReaderProgressPipeline({
@@ -39,28 +38,14 @@ export function useReaderProgressPipeline({
   doublePage,
   preloadCount,
   nextBookId,
-  pagesBookIdRef,
   getBookCache,
   getImageUrlForBook,
   ensurePageImageLoaded,
   fetchPagesForBook,
   fetchBookInfoForBook,
   retainBookCaches,
-  queueOfflineReaderProgress,
+  updateProgress,
 }: UseReaderProgressPipelineOptions) {
-  const updateProgress = useCallback((pageNumber: number) => {
-    if (!bookId || loading) return;
-    if (bookId !== pagesBookIdRef.current) return;
-    if (pageNumber <= 0) return;
-
-    axios.post(`/api/books/${bookId}/progress`, { page: pageNumber })
-      .catch((err) => {
-        if (!axios.isAxiosError(err) || !err.response) {
-          queueOfflineReaderProgress(pageNumber);
-        }
-        console.error('Failed to update read progress', err);
-      });
-  }, [bookId, loading, pagesBookIdRef, queueOfflineReaderProgress]);
 
   useEffect(() => {
     if (!bookId || !pagesBelongToCurrentBook || !pages.length || preloadCount <= 0 || loading) return undefined;
