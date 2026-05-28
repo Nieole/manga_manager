@@ -55,13 +55,13 @@ export function SeriesBookCard({
           onCardClick(book);
         }
       }}
-      className={`group flex flex-col rounded-xl overflow-hidden bg-komgaSurface border ${
+      className={`group flex flex-col rounded-2xl overflow-hidden bg-gray-950/40 backdrop-blur-md border ${
         isSelected
-          ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20'
-          : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'
-      } transition-all duration-300 cursor-pointer`}
+          ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-[0_0_20px_rgba(var(--color-komga-primary),0.3)]'
+          : 'border-white/5 hover:border-white/20 hover:-translate-y-1.5 hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.7)]'
+      } transition-all duration-500 cursor-pointer`}
     >
-      <div className="aspect-[3/4] w-full bg-gray-900 border-b border-gray-800 flex items-center justify-center relative overflow-hidden">
+      <div className="aspect-[3/4] w-full bg-gray-900/50 border-b border-white/5 flex items-center justify-center relative overflow-hidden">
         {isSelectionMode && (
           <div className="absolute top-2 left-2 z-30">
             <div
@@ -74,12 +74,16 @@ export function SeriesBookCard({
           </div>
         )}
         {coverSrc ? (
-          <img
-            src={coverSrc}
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            alt={t('common.cover')}
-            loading="lazy"
-          />
+          <>
+            <img
+              src={coverSrc}
+              className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+              alt={t('common.cover')}
+              loading="lazy"
+            />
+            <div className="absolute inset-0 ring-1 ring-inset ring-white/10 pointer-events-none transition-opacity group-hover:opacity-50" />
+            <div className="absolute inset-0 bg-gradient-to-t from-gray-950/80 via-transparent to-gray-950/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+          </>
         ) : (
           <BookImage className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
         )}
@@ -140,28 +144,28 @@ export function SeriesBookCard({
         )}
 
         {showResumeBadge && (
-          <div className="absolute right-2 bottom-2 z-20 px-2 py-0.5 rounded-md bg-black/70 border border-white/10 text-[11px] font-semibold text-amber-200">
+          <div className="absolute right-2 bottom-2 z-20 px-2 py-0.5 rounded-md bg-gray-950/70 border border-white/10 text-[11px] font-semibold text-amber-200">
             {readPage}/{book.page_count}
           </div>
         )}
 
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-3 z-10 pointer-events-none">
-          <span className="text-xs font-semibold text-white px-2 py-1 bg-black/60 rounded backdrop-blur drop-shadow-md">
+        <div className="absolute inset-0 bg-gradient-to-t from-gray-950/90 via-gray-950/10 to-transparent flex items-end p-3 z-10 pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-white px-2 py-1 bg-gray-950/40 border border-white/10 rounded-md backdrop-blur-md drop-shadow-md">
             {book.page_count} Pages
           </span>
         </div>
 
         {showProgress && (
-          <div className="absolute inset-x-0 bottom-0 h-1 bg-gray-800/40 z-20">
+          <div className="absolute inset-x-0 bottom-0 h-1.5 bg-gray-950/60 z-20 shadow-inner">
             <div
-              className={`h-full transition-all duration-500 ${isFinished ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+              className={`h-full transition-all duration-700 ease-out ${isFinished ? 'bg-gradient-to-r from-green-500 to-green-400' : 'bg-gradient-to-r from-komgaPrimary to-komgaPrimaryHover'}`}
               style={{ width: `${progressPct}%` }}
             />
           </div>
         )}
       </div>
-      <div className="p-4 flex-1">
-        <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-komgaPrimary transition-colors">
+      <div className="p-4 flex-1 bg-gradient-to-b from-transparent to-gray-950/20">
+        <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-white transition-colors drop-shadow-sm">
           {book.title?.Valid ? book.title.String : book.name}
         </h4>
       </div>

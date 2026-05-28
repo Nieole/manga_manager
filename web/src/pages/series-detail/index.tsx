@@ -167,11 +167,11 @@ export default function SeriesDetailPage() {
         <>
           <div className="fixed inset-0 z-0 bg-gray-950 pointer-events-none" />
           <div
-            className="fixed inset-0 z-0 bg-cover bg-[center_top] bg-no-repeat blur-lg opacity-100 transform scale-105 pointer-events-none"
+            className="fixed inset-0 z-0 bg-cover bg-[center_top] bg-no-repeat blur-[80px] opacity-50 transform scale-110 pointer-events-none saturate-150"
             style={{ backgroundImage: `url("${coverUrl}")` }}
           />
-          <div className="fixed inset-0 z-0 bg-gray-950/70 pointer-events-none" />
-          <div className="fixed inset-0 z-0 bg-gradient-to-t from-gray-950 via-gray-950/40 to-transparent pointer-events-none" />
+          <div className="fixed inset-0 z-0 bg-gradient-to-t from-gray-950 via-gray-950/80 to-transparent pointer-events-none" />
+          <div className="fixed inset-0 z-0 bg-gradient-to-b from-gray-950/60 via-transparent to-transparent pointer-events-none" />
         </>
       )}
 
@@ -220,9 +220,9 @@ export default function SeriesDetailPage() {
         />
 
         {ctx.books.length === 0 ? (
-          <div className="rounded-2xl border border-gray-800 bg-komgaSurface/60 backdrop-blur-md p-10 text-center text-gray-500">
-            <BookImage className="mx-auto w-10 h-10 text-gray-700 mb-3" />
-            {t('series.content.empty')}
+          <div className="rounded-[2rem] border border-white/5 bg-gray-950/40 backdrop-blur-xl p-16 text-center text-gray-400 shadow-2xl">
+            <BookImage className="mx-auto w-16 h-16 text-gray-600 mb-6 opacity-60 drop-shadow-md" />
+            <h3 className="text-xl font-bold text-gray-200">{t('series.content.empty')}</h3>
           </div>
         ) : (
           <div className="space-y-8">
@@ -243,7 +243,10 @@ export default function SeriesDetailPage() {
             />
             {standaloneBooks.length > 0 && (
               <div>
-                <h3 className="text-base font-semibold text-gray-200 mb-3">{t('series.content.standalone')}</h3>
+                <h3 className="text-sm font-extrabold text-white tracking-widest uppercase flex items-center gap-2 drop-shadow-md mb-4 ml-1">
+                  <BookImage className="w-5 h-5 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
+                  {t('series.content.standalone')}
+                </h3>
                 <SeriesBookGrid
                   books={standaloneBooks}
                   isSelectionMode={selection.isSelectionMode}

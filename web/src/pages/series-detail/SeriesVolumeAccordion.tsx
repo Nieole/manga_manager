@@ -40,8 +40,8 @@ export function SeriesVolumeAccordion({
 
   return (
     <div className="space-y-3">
-      <h3 className="text-base font-semibold text-gray-200 flex items-center gap-2">
-        <FolderOpen className="w-5 h-5 text-komgaPrimary" />
+      <h3 className="text-sm font-extrabold text-white tracking-widest uppercase flex items-center gap-2 drop-shadow-md mb-4 ml-1">
+        <FolderOpen className="w-5 h-5 text-komgaPrimary drop-shadow-[0_0_8px_rgba(var(--color-komga-primary),0.5)]" />
         {t('series.content.volumes')}
       </h3>
       <div className="space-y-2">
@@ -58,11 +58,11 @@ export function SeriesVolumeAccordion({
           return (
             <div
               key={volume.name}
-              className={`rounded-xl border overflow-hidden bg-komgaSurface/70 backdrop-blur-sm transition-colors ${
-                selected ? 'border-komgaPrimary' : 'border-gray-800'
+              className={`rounded-2xl overflow-hidden bg-gray-950/40 backdrop-blur-xl border border-white/5 shadow-xl transition-all duration-300 ${
+                selected ? 'ring-2 ring-komgaPrimary shadow-komgaPrimary/20 bg-komgaPrimary/5' : 'hover:bg-white/5 hover:border-white/10 hover:shadow-2xl'
               }`}
             >
-              <div className="flex items-center gap-3 p-3">
+              <div className="flex items-center gap-4 p-4">
                 {isSelectionMode && (
                   <button
                     type="button"
@@ -75,35 +75,38 @@ export function SeriesVolumeAccordion({
                     {selected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
                   </button>
                 )}
-                <div className="w-12 h-16 rounded-lg overflow-hidden border border-white/10 bg-gray-900 shrink-0 flex items-center justify-center">
+                <div className="w-14 h-20 rounded-xl overflow-hidden border border-white/10 bg-gray-950/50 shadow-inner shrink-0 flex items-center justify-center relative group-hover:scale-105 transition-transform duration-500">
                   {coverSrc ? (
                     <img src={coverSrc} alt={volume.name} className="w-full h-full object-cover" loading="lazy" />
                   ) : (
-                    <FolderOpen className="w-6 h-6 text-gray-700" />
+                    <FolderOpen className="w-6 h-6 text-gray-600 drop-shadow-md" />
                   )}
+                  <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-xl pointer-events-none" />
                 </div>
                 <button
                   type="button"
                   onClick={() => onToggle(volume.name)}
-                  className="flex-1 min-w-0 text-left"
+                  className="flex-1 min-w-0 text-left group cursor-pointer"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <h4 className="font-medium text-gray-100 truncate">{volume.name}</h4>
-                    <ChevronDown className={`w-4 h-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+                    <h4 className="font-bold text-lg text-white truncate drop-shadow-md group-hover:text-komgaPrimary transition-colors">{volume.name}</h4>
+                    <div className={`p-1.5 rounded-full bg-white/5 border border-white/5 transition-all duration-300 ${open ? 'rotate-180 bg-white/10' : ''}`}>
+                      <ChevronDown className="w-4 h-4 shrink-0 text-gray-300" />
+                    </div>
                   </div>
-                  <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-400">
+                  <div className="mt-2 flex items-center gap-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">
                     <span>{t('series.content.bookCount', { count: volume.books.length })}</span>
                     <span>{t('series.content.pageCount', { count: volume.total_pages })}</span>
                     {volume.total_pages > 0 && (
-                      <span className={isFullyRead ? 'text-green-400' : 'text-komgaPrimary'}>
+                      <span className={`px-1.5 py-0.5 rounded-md ${isFullyRead ? 'bg-green-500/20 text-green-300' : 'bg-komgaPrimary/20 text-komgaPrimary'}`}>
                         {Math.round(progressPct)}%
                       </span>
                     )}
                   </div>
                   {volume.total_pages > 0 && (
-                    <div className="mt-1.5 h-1 rounded-full bg-gray-800 overflow-hidden">
+                    <div className="mt-2.5 h-1.5 rounded-full bg-gray-950/50 border border-white/5 overflow-hidden shadow-inner">
                       <div
-                        className={`h-full transition-all duration-500 ${isFullyRead ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+                        className={`h-full transition-all duration-700 ease-out ${isFullyRead ? 'bg-gradient-to-r from-green-500 to-green-400 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-gradient-to-r from-komgaPrimary to-komgaPrimaryHover shadow-[0_0_10px_rgba(var(--color-komga-primary),0.5)]'}`}
                         style={{ width: `${progressPct}%` }}
                       />
                     </div>
@@ -122,7 +125,7 @@ export function SeriesVolumeAccordion({
               </div>
 
               {open && (
-                <div className="border-t border-gray-800 p-4 bg-black/10">
+                <div className="border-t border-white/5 p-5 bg-gray-950/20 shadow-inner">
                   <SeriesBookGrid
                     books={volume.books}
                     isSelectionMode={isSelectionMode}
