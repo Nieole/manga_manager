@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { BookImage } from 'lucide-react';
+import { useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
+import { BookImage, List, Grid, FolderOpen, ArrowLeft } from 'lucide-react';
 import AddToCollectionModal from '../../components/AddToCollectionModal';
 import { useToast } from '../../components/ToastProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n/LocaleProvider';
 import { SeriesHeroBar } from './SeriesHeroBar';
 import { SeriesQuickActions } from './SeriesQuickActions';
 import { SeriesVolumeAccordion } from './SeriesVolumeAccordion';
+import { SeriesVolumeGrid } from './SeriesVolumeGrid';
 import { SeriesBookGrid } from './SeriesBookGrid';
 import { SeriesSelectionBar } from './SeriesSelectionBar';
 import { SeriesSidePanel, SeriesSidePanelBadge } from './SeriesSidePanel';
@@ -37,6 +38,18 @@ export default function SeriesDetailPage() {
   const ctx = useSeriesContext({ seriesId, refreshTrigger });
   const { volumes, standaloneBooks, allBookIds } = useSeriesVolumes(ctx.books);
   const openVolumes = useSeriesOpenVolumes({ seriesId, knownVolumes: volumes.map((v) => v.name) });
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeVolumeName = searchParams.get('volume');
+
+  const [volumeViewMode, setVolumeViewMode] = useState<'accordion' | 'grid'>(
+    () => (localStorage.getItem('komga-volume-view-mode') as 'accordion' | 'grid') || 'accordion'
+  );
+
+  const handleVolumeViewModeChange = useCallback((mode: 'accordion' | 'grid') => {
+    setVolumeViewMode(mode);
+    localStorage.setItem('komga-volume-view-mode', mode);
+  }, []);
 
   const totalSelectableCount = volumes.length + standaloneBooks.length + ctx.books.length;
   const selection = useSeriesSelection({
@@ -226,29 +239,26 @@ export default function SeriesDetailPage() {
           </div>
         ) : (
           <div className="space-y-8">
-            <SeriesVolumeAccordion
-              volumes={volumes}
-              isOpen={openVolumes.isOpen}
-              onToggle={openVolumes.toggle}
-              isSelectionMode={selection.isSelectionMode}
-              selectedVolumes={selection.selectedVolumes}
-              selectedBooks={selection.selectedBooks}
-              onToggleVolumeSelection={selection.toggleVolume}
-              onCardClick={(b) => selection.toggleBook(b.id)}
-              onQuickToggleVolumeRead={handleQuickToggleVolumeRead}
-              onQuickToggleBookRead={handleQuickToggleBookRead}
-              onExportComicInfo={handleExportBookComicInfo}
-              onCopyPath={handleCopyBookPath}
-              seriesUpdatedAt={ctx.series?.updated_at}
-            />
-            {standaloneBooks.length > 0 && (
-              <div>
-                <h3 className="text-sm font-extrabold text-white tracking-widest uppercase flex items-center gap-2 drop-shadow-md mb-4 ml-1">
-                  <BookImage className="w-5 h-5 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
-                  {t('series.content.standalone')}
-                </h3>
+            {activeVolumeName ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => {
+                      const newParams = new URLSearchParams(searchParams);
+                      newParams.delete('volume');
+                      setSearchParams(newParams);
+                    }}
+                    className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors border border-white/5 shadow-sm"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </button>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <FolderOpen className="w-5 h-5 text-komgaPrimary" />
+                    {activeVolumeName}
+                  </h3>
+                </div>
                 <SeriesBookGrid
-                  books={standaloneBooks}
+                  books={volumes.find((v) => v.name === activeVolumeName)?.books || []}
                   isSelectionMode={selection.isSelectionMode}
                   selectedBooks={selection.selectedBooks}
                   onCardClick={(b) => selection.toggleBook(b.id)}
@@ -257,6 +267,87 @@ export default function SeriesDetailPage() {
                   onCopyPath={handleCopyBookPath}
                 />
               </div>
+            ) : (
+              <>
+                {volumes.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between mb-4 ml-1">
+                      <h3 className="text-sm font-extrabold text-white tracking-widest uppercase flex items-center gap-2 drop-shadow-md">
+                        <FolderOpen className="w-5 h-5 text-komgaPrimary drop-shadow-[0_0_8px_rgba(var(--color-komga-primary),0.5)]" />
+                        {t('series.content.volumes')}
+                      </h3>
+                      <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/5 shadow-inner">
+                        <button
+                          onClick={() => handleVolumeViewModeChange('accordion')}
+                          className={`p-1.5 rounded-md transition-all ${
+                            volumeViewMode === 'accordion' ? 'bg-white/10 text-komgaPrimary shadow-sm' : 'text-gray-500 hover:text-gray-300'
+                          }`}
+                        >
+                          <List className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleVolumeViewModeChange('grid')}
+                          className={`p-1.5 rounded-md transition-all ${
+                            volumeViewMode === 'grid' ? 'bg-white/10 text-komgaPrimary shadow-sm' : 'text-gray-500 hover:text-gray-300'
+                          }`}
+                        >
+                          <Grid className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {volumeViewMode === 'accordion' ? (
+                      <SeriesVolumeAccordion
+                        volumes={volumes}
+                        isOpen={openVolumes.isOpen}
+                        onToggle={openVolumes.toggle}
+                        isSelectionMode={selection.isSelectionMode}
+                        selectedVolumes={selection.selectedVolumes}
+                        selectedBooks={selection.selectedBooks}
+                        onToggleVolumeSelection={selection.toggleVolume}
+                        onCardClick={(b) => selection.toggleBook(b.id)}
+                        onQuickToggleVolumeRead={handleQuickToggleVolumeRead}
+                        onQuickToggleBookRead={handleQuickToggleBookRead}
+                        onExportComicInfo={handleExportBookComicInfo}
+                        onCopyPath={handleCopyBookPath}
+                        seriesUpdatedAt={ctx.series?.updated_at}
+                      />
+                    ) : (
+                      <SeriesVolumeGrid
+                        volumes={volumes}
+                        isSelectionMode={selection.isSelectionMode}
+                        selectedVolumes={selection.selectedVolumes}
+                        onToggleVolumeSelection={selection.toggleVolume}
+                        onCardClick={(vName) => {
+                          const newParams = new URLSearchParams(searchParams);
+                          newParams.set('volume', vName);
+                          setSearchParams(newParams);
+                        }}
+                        onQuickToggleVolumeRead={handleQuickToggleVolumeRead}
+                        seriesUpdatedAt={ctx.series?.updated_at}
+                      />
+                    )}
+                  </div>
+                )}
+                
+                {standaloneBooks.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-extrabold text-white tracking-widest uppercase flex items-center gap-2 drop-shadow-md mb-4 ml-1">
+                      <BookImage className="w-5 h-5 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
+                      {t('series.content.standalone')}
+                    </h3>
+                    <SeriesBookGrid
+                      books={standaloneBooks}
+                      isSelectionMode={selection.isSelectionMode}
+                      selectedBooks={selection.selectedBooks}
+                      onCardClick={(b) => selection.toggleBook(b.id)}
+                      onQuickToggleRead={handleQuickToggleBookRead}
+                      onExportComicInfo={handleExportBookComicInfo}
+                      onCopyPath={handleCopyBookPath}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

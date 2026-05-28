@@ -14,7 +14,7 @@ export function ReaderImmersiveShell({ visible, topBar, tray, onEdgeReveal }: Re
         aria-hidden
         onMouseEnter={onEdgeReveal}
         onTouchStart={onEdgeReveal}
-        className="absolute top-0 inset-x-0 h-10 z-30 pointer-events-auto"
+        className={`absolute top-0 inset-x-0 h-10 z-30 ${visible ? 'pointer-events-none' : 'pointer-events-auto'}`}
       />
       <div
         className={`absolute top-0 inset-x-0 px-6 pt-4 pb-3 bg-gradient-to-b from-komgaDark/90 via-komgaDark/55 to-transparent z-20 transition-all duration-300 ${
@@ -27,7 +27,7 @@ export function ReaderImmersiveShell({ visible, topBar, tray, onEdgeReveal }: Re
         aria-hidden
         onMouseEnter={onEdgeReveal}
         onTouchStart={onEdgeReveal}
-        className="absolute bottom-0 inset-x-0 h-12 z-30 pointer-events-auto"
+        className={`absolute bottom-0 inset-x-0 h-12 z-30 ${visible ? 'pointer-events-none' : 'pointer-events-auto'}`}
       />
       <div
         className={`absolute bottom-0 inset-x-0 z-20 transition-all duration-300 ${
