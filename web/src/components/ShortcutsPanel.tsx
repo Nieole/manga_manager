@@ -30,6 +30,16 @@ const GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    titleKey: 'shortcuts.group.library',
+    entries: [
+      { keys: ['/'], labelKey: 'shortcuts.library.search' },
+      { keys: ['g'], labelKey: 'shortcuts.library.jumpFirst' },
+      { keys: ['Shift', 'G'], labelKey: 'shortcuts.library.jumpLast' },
+      { keys: ['e'], labelKey: 'shortcuts.library.toggleSelection' },
+      { keys: ['Esc'], labelKey: 'shortcuts.library.exitSelection' },
+    ],
+  },
+  {
     titleKey: 'shortcuts.group.reviews',
     entries: [
       { keys: ['j'], labelKey: 'shortcuts.reviews.next' },

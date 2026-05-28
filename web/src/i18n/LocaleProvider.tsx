@@ -11,7 +11,7 @@ const localeCatalogLoaders: Record<AppLocale, () => Promise<{ messages: MessageC
 };
 const localeCatalogCache: Partial<Record<AppLocale, MessageCatalog>> = {};
 
-type TranslationParams = Record<string, string | number | boolean | null | undefined>;
+type TranslationParams = Record<string, string | number | boolean | null | undefined | unknown>;
 
 interface I18nContextValue {
   locale: AppLocale;

@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -79,7 +80,7 @@ func (c *Controller) updateReadingList(w http.ResponseWriter, r *http.Request) {
 		Description: strings.TrimSpace(req.Description),
 	})
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Reading list not found")
 			return
 		}
@@ -109,7 +110,7 @@ func (c *Controller) listReadingListItems(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if _, err := c.store.GetReadingList(r.Context(), listID); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Reading list not found")
 			return
 		}
@@ -163,7 +164,7 @@ func (c *Controller) addReadingListItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if _, err := c.store.GetSeries(r.Context(), req.SeriesID); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Series not found")
 			return
 		}

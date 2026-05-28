@@ -5,7 +5,7 @@ import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useI18n } from './i18n/LocaleProvider';
 
-const Home = lazy(() => import('./pages/Home'));
+const Home = lazy(() => import('./pages/library'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Collections = lazy(() => import('./pages/Collections'));
 const Organize = lazy(() => import('./pages/Organize'));

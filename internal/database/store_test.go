@@ -100,6 +100,64 @@ func TestSeriesStatsRefreshDrivesSearchSeriesPaged(t *testing.T) {
 	if rows[0].ReadCount != 7 {
 		t.Fatalf("expected read count from stats, got %d", rows[0].ReadCount)
 	}
+	if !rows[0].LastReadAt.Valid {
+		t.Fatalf("expected last_read_at to be populated, got %+v", rows[0].LastReadAt)
+	}
+	if !rows[0].LastReadBookID.Valid || rows[0].LastReadBookID.Int64 != book.ID {
+		t.Fatalf("expected last_read_book_id=%d, got %+v", book.ID, rows[0].LastReadBookID)
+	}
+	if !rows[0].LastReadPage.Valid || rows[0].LastReadPage.Int64 != 7 {
+		t.Fatalf("expected last_read_page=7, got %+v", rows[0].LastReadPage)
+	}
+}
+
+// TestSearchSeriesPagedReturnsNullLastReadForUnreadSeries 验证未阅读系列三个 last_read 字段都为 NULL。
+func TestSearchSeriesPagedReturnsNullLastReadForUnreadSeries(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name:                "Main",
+		Path:                filepath.Join(t.TempDir(), "library"),
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library: %v", err)
+	}
+	series, err := store.CreateSeries(ctx, CreateSeriesParams{
+		LibraryID:   lib.ID,
+		Name:        "Untouched",
+		Path:        filepath.Join(lib.Path, "Untouched"),
+		NameInitial: "U",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	if _, err := store.CreateBook(ctx, CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      lib.ID,
+		Name:           "u01.cbz",
+		Path:           filepath.Join(series.Path, "u01.cbz"),
+		Size:           1,
+		FileModifiedAt: time.Now(),
+		PageCount:      10,
+	}); err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+
+	rows, _, err := store.SearchSeriesPaged(ctx, lib.ID, "", "", "", nil, nil, 10, 0, "name_asc")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].LastReadAt.Valid || rows[0].LastReadBookID.Valid || rows[0].LastReadPage.Valid {
+		t.Fatalf("expected all last_read_* fields to be NULL, got %+v", rows[0])
+	}
 }
 
 func TestSearchSeriesCursorSupportsKeysetSorts(t *testing.T) {

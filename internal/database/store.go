@@ -132,6 +132,9 @@ type SearchSeriesPagedRow struct {
 	ReadCount       int             `json:"read_count"`
 	TotalPages      sql.NullFloat64 `json:"total_pages"`
 	IsFavorite      bool            `json:"is_favorite"`
+	LastReadAt      sql.NullTime    `json:"last_read_at"`
+	LastReadBookID  sql.NullInt64   `json:"last_read_book_id"`
+	LastReadPage    sql.NullInt64   `json:"last_read_page"`
 }
 
 type seriesSearchSort struct {
@@ -1103,9 +1106,22 @@ func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tag
             s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
             ss.cover_path,
             COALESCE(ss.tag_names_cache, '') as tags_string,
-            COALESCE(ss.read_pages, 0) as read_count
+            COALESCE(ss.read_pages, 0) as read_count,
+            lr.last_read_at,
+            lr.last_read_book_id,
+            lr.last_read_page
 		FROM series s
 		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		LEFT JOIN (
+			SELECT b.series_id, b.id AS last_read_book_id, b.last_read_at, b.last_read_page
+			FROM books b
+			JOIN (
+				SELECT series_id, MAX(last_read_at) AS max_read_at
+				FROM books
+				WHERE last_read_at IS NOT NULL
+				GROUP BY series_id
+			) m ON m.series_id = b.series_id AND m.max_read_at = b.last_read_at
+		) lr ON lr.series_id = s.id
 	`
 
 	filters := make([]string, 0, 5)
@@ -1206,6 +1222,9 @@ func scanSearchSeriesPagedRows(rows *sql.Rows) ([]SearchSeriesPagedRow, error) {
 			&i.CoverPath,
 			&i.TagsString,
 			&i.ReadCount,
+			&i.LastReadAt,
+			&i.LastReadBookID,
+			&i.LastReadPage,
 		); err != nil {
 			return nil, err
 		}

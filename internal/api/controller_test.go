@@ -1336,6 +1336,9 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	if len(seriesContext.FailedTasks) != 1 || seriesContext.FailedTasks[0].Key != taskKey || seriesContext.FailedTaskSummary.Count != 1 {
 		t.Fatalf("unexpected failed task context: tasks=%+v summary=%+v", seriesContext.FailedTasks, seriesContext.FailedTaskSummary)
 	}
+	if seriesContext.Continue.TotalBooks != 2 {
+		t.Fatalf("expected continue.total_books=2, got %+v", seriesContext.Continue)
+	}
 }
 
 func TestMetadataLookupValidationHandlers(t *testing.T) {
@@ -3960,5 +3963,354 @@ func TestScrapeSeriesMetadataReturnsErrorForInvalidLLMEndpoint(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- 阶段 0 后端调整：上一本 / 系列续读 / 批量进度同步 ---
+
+func seedBookInSeries(t testing.TB, store database.Store, series database.Series, libraryID int64, name string, pageCount int64) database.Book {
+	t.Helper()
+	book, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      libraryID,
+		Name:           name,
+		Path:           filepath.Join(series.Path, name),
+		Size:           1024,
+		FileModifiedAt: time.Now(),
+		Volume:         "",
+		Title:          sql.NullString{String: name, Valid: true},
+		PageCount:      pageCount,
+	})
+	if err != nil {
+		t.Fatalf("CreateBook %s failed: %v", name, err)
+	}
+	return book
+}
+
+func TestGetPrevBookReturnsPriorEntry(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series", "01.cbz", 10)
+	secondBook := seedBookInSeries(t, store, series, lib.ID, "02.cbz", 10)
+	thirdBook := seedBookInSeries(t, store, series, lib.ID, "03.cbz", 10)
+
+	prevRec := httptest.NewRecorder()
+	controller.getPrevBook(prevRec, requestWithRouteParam(http.MethodGet, "/api/book-prev/2", nil, "bookId", strconv.FormatInt(secondBook.ID, 10)))
+	if prevRec.Code != http.StatusOK {
+		t.Fatalf("expected prev 200, got %d body=%s", prevRec.Code, prevRec.Body.String())
+	}
+	var prev database.Book
+	if err := json.NewDecoder(prevRec.Body).Decode(&prev); err != nil {
+		t.Fatalf("decode prev: %v", err)
+	}
+	if prev.ID != firstBook.ID {
+		t.Fatalf("expected first book as prev of second, got %d", prev.ID)
+	}
+
+	// 第一本无前一本
+	prevFirst := httptest.NewRecorder()
+	controller.getPrevBook(prevFirst, requestWithRouteParam(http.MethodGet, "/api/book-prev/1", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
+	if prevFirst.Code != http.StatusNotFound {
+		t.Fatalf("expected first book to have no prev (404), got %d", prevFirst.Code)
+	}
+
+	// 末尾本前一本是中间本
+	prevLast := httptest.NewRecorder()
+	controller.getPrevBook(prevLast, requestWithRouteParam(http.MethodGet, "/api/book-prev/3", nil, "bookId", strconv.FormatInt(thirdBook.ID, 10)))
+	if prevLast.Code != http.StatusOK {
+		t.Fatalf("expected prev of third 200, got %d", prevLast.Code)
+	}
+	var prevOfLast database.Book
+	if err := json.NewDecoder(prevLast.Body).Decode(&prevOfLast); err != nil {
+		t.Fatalf("decode prev: %v", err)
+	}
+	if prevOfLast.ID != secondBook.ID {
+		t.Fatalf("expected second book as prev of third, got %d", prevOfLast.ID)
+	}
+
+	// 非法 ID
+	bad := httptest.NewRecorder()
+	controller.getPrevBook(bad, requestWithRouteParam(http.MethodGet, "/api/book-prev/bad", nil, "bookId", "bad"))
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid id, got %d", bad.Code)
+	}
+
+	// 不存在 ID
+	missing := httptest.NewRecorder()
+	controller.getPrevBook(missing, requestWithRouteParam(http.MethodGet, "/api/book-prev/9999", nil, "bookId", "9999"))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing book, got %d", missing.Code)
+	}
+}
+
+func TestGetSeriesContinueAcrossStates(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series", "01.cbz", 10)
+	secondBook := seedBookInSeries(t, store, series, lib.ID, "02.cbz", 10)
+	thirdBook := seedBookInSeries(t, store, series, lib.ID, "03.cbz", 10)
+
+	// 全部未读：next_unread = first；read_books = 0；last_read_* 为零
+	rec := httptest.NewRecorder()
+	controller.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected continue 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var c1 SeriesContinue
+	if err := json.NewDecoder(rec.Body).Decode(&c1); err != nil {
+		t.Fatalf("decode continue: %v", err)
+	}
+	if c1.NextUnreadBookID != firstBook.ID {
+		t.Fatalf("expected next_unread=first, got %d", c1.NextUnreadBookID)
+	}
+	if c1.ReadBooks != 0 || c1.TotalBooks != 3 {
+		t.Fatalf("unexpected counts: %+v", c1)
+	}
+	if c1.LastReadBookID != 0 || c1.LastReadAt != nil {
+		t.Fatalf("expected last_read empty, got %+v", c1)
+	}
+
+	// 把第一本标完成；第二本读到第 5 页（未读完）；第三本未读
+	now := time.Now()
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 10, Valid: true},
+		LastReadAt:   sql.NullTime{Time: now.Add(-2 * time.Hour), Valid: true},
+		ID:           firstBook.ID,
+	}); err != nil {
+		t.Fatalf("update first progress: %v", err)
+	}
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 5, Valid: true},
+		LastReadAt:   sql.NullTime{Time: now.Add(-1 * time.Hour), Valid: true},
+		ID:           secondBook.ID,
+	}); err != nil {
+		t.Fatalf("update second progress: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	controller.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var c2 SeriesContinue
+	if err := json.NewDecoder(rec.Body).Decode(&c2); err != nil {
+		t.Fatalf("decode continue: %v", err)
+	}
+	if c2.NextUnreadBookID != secondBook.ID {
+		t.Fatalf("expected next_unread=second, got %d", c2.NextUnreadBookID)
+	}
+	if c2.LastReadBookID != secondBook.ID {
+		t.Fatalf("expected last_read=second (most recent), got %d", c2.LastReadBookID)
+	}
+	if c2.LastReadPage != 5 {
+		t.Fatalf("expected last_read_page=5, got %d", c2.LastReadPage)
+	}
+	if c2.ReadBooks != 1 {
+		t.Fatalf("expected read_books=1, got %d", c2.ReadBooks)
+	}
+	if c2.ReadPages != 15 {
+		t.Fatalf("expected read_pages=15 (10+5), got %d", c2.ReadPages)
+	}
+	if c2.TotalPages != 30 {
+		t.Fatalf("expected total_pages=30, got %d", c2.TotalPages)
+	}
+
+	// 全部读完
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 10, Valid: true},
+		LastReadAt:   sql.NullTime{Time: now.Add(-30 * time.Minute), Valid: true},
+		ID:           secondBook.ID,
+	}); err != nil {
+		t.Fatalf("update second progress: %v", err)
+	}
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 10, Valid: true},
+		LastReadAt:   sql.NullTime{Time: now, Valid: true},
+		ID:           thirdBook.ID,
+	}); err != nil {
+		t.Fatalf("update third progress: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	controller.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	var c3 SeriesContinue
+	if err := json.NewDecoder(rec.Body).Decode(&c3); err != nil {
+		t.Fatalf("decode continue: %v", err)
+	}
+	if c3.NextUnreadBookID != 0 {
+		t.Fatalf("expected no next_unread when all read, got %d", c3.NextUnreadBookID)
+	}
+	if c3.ReadBooks != 3 {
+		t.Fatalf("expected read_books=3, got %d", c3.ReadBooks)
+	}
+	if c3.LastReadBookID != thirdBook.ID {
+		t.Fatalf("expected last_read=third (most recent), got %d", c3.LastReadBookID)
+	}
+
+	// 非法 ID
+	bad := httptest.NewRecorder()
+	controller.getSeriesContinueEndpoint(bad, requestWithRouteParam(http.MethodGet, "/api/series/bad/continue", nil, "seriesId", "bad"))
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid id, got %d", bad.Code)
+	}
+
+	// 不存在的系列
+	missing := httptest.NewRecorder()
+	controller.getSeriesContinueEndpoint(missing, requestWithRouteParam(http.MethodGet, "/api/series/9999/continue", nil, "seriesId", "9999"))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing series, got %d", missing.Code)
+	}
+}
+
+func TestGetSeriesContextIncludesContinue(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series", "01.cbz", 10)
+	_ = seedBookInSeries(t, store, series, lib.ID, "02.cbz", 10)
+
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 4, Valid: true},
+		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
+		ID:           firstBook.ID,
+	}); err != nil {
+		t.Fatalf("update progress: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	controller.getSeriesContext(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected context 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp SeriesContextResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode context: %v", err)
+	}
+	if resp.Continue.NextUnreadBookID != firstBook.ID {
+		t.Fatalf("expected continue.next_unread=first, got %+v", resp.Continue)
+	}
+	if resp.Continue.LastReadBookID != firstBook.ID || resp.Continue.LastReadPage != 4 {
+		t.Fatalf("expected continue last_read=first/page4, got %+v", resp.Continue)
+	}
+	if resp.Continue.TotalBooks != 2 || resp.Continue.TotalPages != 20 {
+		t.Fatalf("unexpected continue totals: %+v", resp.Continue)
+	}
+}
+
+func TestBulkSyncBookProgressResolvesConflicts(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series", "01.cbz", 10)
+	secondBook := seedBookInSeries(t, store, series, lib.ID, "02.cbz", 10)
+
+	// 服务器先记录 second 已读到第 7 页（较新）
+	serverNewer := time.Now()
+	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 7, Valid: true},
+		LastReadAt:   sql.NullTime{Time: serverNewer, Valid: true},
+		ID:           secondBook.ID,
+	}); err != nil {
+		t.Fatalf("seed server progress: %v", err)
+	}
+
+	clientStale := serverNewer.Add(-1 * time.Hour)
+	clientNew := serverNewer.Add(10 * time.Minute)
+
+	body := struct {
+		Items []BulkSyncProgressItem `json:"items"`
+	}{
+		Items: []BulkSyncProgressItem{
+			{BookID: firstBook.ID, Page: 5, UpdatedAt: &clientNew},     // 首次写入应被接受
+			{BookID: secondBook.ID, Page: 3, UpdatedAt: &clientStale},  // 客户端时间戳更早，应跳过
+			{BookID: 9999, Page: 1, UpdatedAt: &clientNew},             // 不存在
+			{BookID: 0, Page: 1},                                       // 非法
+		},
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	controller.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader(payload)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Updated int                          `json:"updated"`
+		Results []BulkSyncProgressResultItem `json:"results"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Updated != 1 {
+		t.Fatalf("expected 1 updated, got %d (results=%+v)", resp.Updated, resp.Results)
+	}
+	if len(resp.Results) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(resp.Results))
+	}
+	wantStatuses := map[int64]string{
+		firstBook.ID:  "updated",
+		secondBook.ID: "skipped_stale",
+		9999:          "not_found",
+		0:             "invalid",
+	}
+	for _, r := range resp.Results {
+		want, ok := wantStatuses[r.BookID]
+		if !ok {
+			t.Fatalf("unexpected result book_id=%d", r.BookID)
+		}
+		if r.Status != want {
+			t.Fatalf("book %d: expected %s, got %s (msg=%s)", r.BookID, want, r.Status, r.Message)
+		}
+	}
+
+	// 验证 server 状态：first 写入到 5；second 仍是 7
+	gotFirst, err := store.GetBook(context.Background(), firstBook.ID)
+	if err != nil {
+		t.Fatalf("get first: %v", err)
+	}
+	if !gotFirst.LastReadPage.Valid || gotFirst.LastReadPage.Int64 != 5 {
+		t.Fatalf("expected first.last_read_page=5, got %+v", gotFirst.LastReadPage)
+	}
+	gotSecond, err := store.GetBook(context.Background(), secondBook.ID)
+	if err != nil {
+		t.Fatalf("get second: %v", err)
+	}
+	if !gotSecond.LastReadPage.Valid || gotSecond.LastReadPage.Int64 != 7 {
+		t.Fatalf("expected second.last_read_page=7 (untouched), got %+v", gotSecond.LastReadPage)
+	}
+
+	// 重发同一笔（updated_at 相同）应被相同页节流为 skipped_unchanged
+	bodyAgain, _ := json.Marshal(struct {
+		Items []BulkSyncProgressItem `json:"items"`
+	}{
+		Items: []BulkSyncProgressItem{
+			{BookID: firstBook.ID, Page: 5, UpdatedAt: &clientNew},
+		},
+	})
+	recAgain := httptest.NewRecorder()
+	controller.bulkSyncBookProgress(recAgain, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader(bodyAgain)))
+	var respAgain struct {
+		Updated int                          `json:"updated"`
+		Results []BulkSyncProgressResultItem `json:"results"`
+	}
+	if err := json.NewDecoder(recAgain.Body).Decode(&respAgain); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if respAgain.Updated != 0 || len(respAgain.Results) != 1 || respAgain.Results[0].Status != "skipped_unchanged" {
+		t.Fatalf("expected skipped_unchanged on resend, got %+v", respAgain)
+	}
+}
+
+func TestBulkSyncBookProgressEmptyBody(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	rec := httptest.NewRecorder()
+	controller.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader([]byte(`{"items":[]}`))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		Updated int `json:"updated"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Updated != 0 {
+		t.Fatalf("expected updated=0, got %d", resp.Updated)
 	}
 }

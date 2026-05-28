@@ -1991,11 +1991,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 			r.Get("/{seriesId}/links", c.getSeriesLinks)
 			r.Get("/{seriesId}/context", c.getSeriesContext)
+			r.Get("/{seriesId}/continue", c.getSeriesContinueEndpoint)
 			r.Get("/{seriesId}/comicinfo.zip", c.exportSeriesComicInfoArchive)
 		})
 
 		r.Route("/books", func(r chi.Router) {
 			r.Post("/bulk-progress", c.bulkUpdateBookProgress)
+			r.Post("/bulk-progress/sync", c.bulkSyncBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
 			r.Get("/{bookId}/comicinfo.xml", c.exportBookComicInfo)
 			r.Get("/{bookId}/bookmarks", c.listReadingBookmarks)
@@ -2098,6 +2100,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)
 		r.Get("/book-next/{bookId}", c.getNextBook)
+		r.Get("/book-prev/{bookId}", c.getPrevBook)
 
 		r.Route("/pages", func(r chi.Router) {
 			r.Get("/{bookId}", c.getPagesByBook)
@@ -2934,6 +2937,19 @@ type SeriesContextResponse struct {
 	MetadataSummary   SeriesMetadataSummary   `json:"metadata_summary"`
 	FailedTasks       []TaskStatus            `json:"failed_tasks"`
 	FailedTaskSummary SeriesFailedTaskSummary `json:"failed_task_summary"`
+	Continue          SeriesContinue          `json:"continue"`
+}
+
+// SeriesContinue 描述用户在某系列内的续读位置，用于资源库 / 详情页 CTA。
+type SeriesContinue struct {
+	NextUnreadBookID int64      `json:"next_unread_book_id,omitempty"`
+	LastReadBookID   int64      `json:"last_read_book_id,omitempty"`
+	LastReadPage     int64      `json:"last_read_page,omitempty"`
+	LastReadAt       *time.Time `json:"last_read_at,omitempty"`
+	TotalBooks       int        `json:"total_books"`
+	ReadBooks        int        `json:"read_books"`
+	TotalPages       int64      `json:"total_pages"`
+	ReadPages        int64      `json:"read_pages"`
 }
 
 type SeriesVolumeSummary struct {
@@ -3048,7 +3064,73 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		MetadataSummary:   summarizeSeriesMetadata(metadataReview),
 		FailedTasks:       failedTasks,
 		FailedTaskSummary: summarizeFailedTasks(failedTasks),
+		Continue:          buildSeriesContinue(books),
 	})
+}
+
+func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	ctx := r.Context()
+	if _, err := c.store.GetSeries(ctx, seriesID); err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+
+	books, err := c.store.ListBooksBySeries(ctx, seriesID)
+	if err != nil {
+		slog.Error("Failed to fetch books for continue", "series_id", seriesID, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to compute continue position")
+		return
+	}
+	sortBooksForReading(books)
+	jsonResponse(w, http.StatusOK, buildSeriesContinue(books))
+}
+
+// buildSeriesContinue 假设 books 已按阅读顺序排序。
+// 规则：
+//   - next_unread_book_id：第一本未完成的书（last_read_page < page_count，含完全未读）。
+//   - last_read_book_id：last_read_at 最大的书，用作"上次读到这里"。
+//   - 全部读完时 next_unread 为 0；用户可前端落到 first 或 last。
+func buildSeriesContinue(books []database.Book) SeriesContinue {
+	out := SeriesContinue{TotalBooks: len(books)}
+	var latestAt *time.Time
+	for i := range books {
+		book := books[i]
+		out.TotalPages += book.PageCount
+		readPages := int64(0)
+		if book.LastReadPage.Valid {
+			readPages = book.LastReadPage.Int64
+			if book.PageCount > 0 && readPages > book.PageCount {
+				readPages = book.PageCount
+			}
+		}
+		out.ReadPages += readPages
+		isFinished := book.PageCount > 0 && readPages >= book.PageCount
+		if isFinished {
+			out.ReadBooks++
+		}
+		if out.NextUnreadBookID == 0 && !isFinished {
+			out.NextUnreadBookID = book.ID
+		}
+		if book.LastReadAt.Valid {
+			at := book.LastReadAt.Time
+			if latestAt == nil || at.After(*latestAt) {
+				captured := at
+				latestAt = &captured
+				out.LastReadBookID = book.ID
+				out.LastReadPage = readPages
+			}
+		}
+	}
+	if latestAt != nil {
+		out.LastReadAt = latestAt
+	}
+	return out
 }
 
 func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []SeriesVolumeSummary {
@@ -3071,8 +3153,8 @@ func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []Seri
 		acc.summary.TotalPages += book.PageCount
 		if book.LastReadPage.Valid {
 			readPages := book.LastReadPage.Int64
-			if book.PageCount > 0 && readPages > int64(book.PageCount) {
-				readPages = int64(book.PageCount)
+			if book.PageCount > 0 && readPages > book.PageCount {
+				readPages = book.PageCount
 			}
 			acc.summary.ReadPages += readPages
 		}
@@ -3451,6 +3533,35 @@ func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
 	jsonError(w, http.StatusNotFound, "No next book")
 }
 
+func (c *Controller) getPrevBook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+
+	currentBook, err := c.store.GetBook(ctx, bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "No previous book")
+		return
+	}
+	books, err := c.store.ListBooksBySeries(ctx, currentBook.SeriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "No previous book")
+		return
+	}
+	sortBooksForReading(books)
+	for i := range books {
+		if books[i].ID == currentBook.ID && i > 0 {
+			jsonResponse(w, http.StatusOK, books[i-1])
+			return
+		}
+	}
+
+	jsonError(w, http.StatusNotFound, "No previous book")
+}
+
 func sortBooksForReading(books []database.Book) {
 	sort.SliceStable(books, func(i, j int) bool {
 		return booksort.CompareBooks(books[i], books[j]) < 0
@@ -3548,6 +3659,149 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})
 }
 
+type BulkSyncProgressItem struct {
+	BookID    int64      `json:"book_id"`
+	Page      int64      `json:"page"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+type BulkSyncProgressRequest struct {
+	Items []BulkSyncProgressItem `json:"items"`
+}
+
+type BulkSyncProgressResultItem struct {
+	BookID  int64  `json:"book_id"`
+	Status  string `json:"status"` // updated | skipped_stale | skipped_unchanged | not_found | invalid
+	Page    int64  `json:"page,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// bulkSyncBookProgress 接受多本书的离线进度并按 updated_at 解决冲突。
+// 离线 / 在线恢复时 useReaderOffline 调用，避免逐条 POST 的峰值写入。
+func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req BulkSyncProgressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if len(req.Items) == 0 {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"updated": 0,
+			"results": []BulkSyncProgressResultItem{},
+		})
+		return
+	}
+
+	results := make([]BulkSyncProgressResultItem, 0, len(req.Items))
+	updatedCount := 0
+
+	for _, item := range req.Items {
+		if item.BookID <= 0 {
+			results = append(results, BulkSyncProgressResultItem{
+				BookID:  item.BookID,
+				Status:  "invalid",
+				Message: "book_id is required",
+			})
+			continue
+		}
+
+		book, err := c.store.GetBook(ctx, item.BookID)
+		if err != nil {
+			results = append(results, BulkSyncProgressResultItem{
+				BookID: item.BookID,
+				Status: "not_found",
+			})
+			continue
+		}
+
+		validPage := item.Page
+		if validPage <= 0 {
+			validPage = 1
+		}
+		if book.PageCount > 0 && validPage > book.PageCount {
+			validPage = book.PageCount
+		}
+
+		// updated_at 冲突解决：若客户端时间戳 < 数据库 last_read_at，认为本地数据已陈旧，跳过。
+		// 没有 updated_at 时按顺序覆盖（与单本 updateBookProgress 行为一致）。
+		if item.UpdatedAt != nil && book.LastReadAt.Valid && item.UpdatedAt.Before(book.LastReadAt.Time) {
+			results = append(results, BulkSyncProgressResultItem{
+				BookID:  item.BookID,
+				Status:  "skipped_stale",
+				Page:    book.LastReadPage.Int64,
+				Message: "server has newer progress",
+			})
+			continue
+		}
+
+		// 与单本端点对齐的相同页节流。
+		previousPage := int64(0)
+		if book.LastReadPage.Valid {
+			previousPage = book.LastReadPage.Int64
+		}
+		if book.LastReadPage.Valid && previousPage == validPage {
+			results = append(results, BulkSyncProgressResultItem{
+				BookID: item.BookID,
+				Status: "skipped_unchanged",
+				Page:   validPage,
+			})
+			continue
+		}
+
+		readAt := time.Now()
+		if item.UpdatedAt != nil {
+			readAt = *item.UpdatedAt
+		}
+		params := database.UpdateBookProgressParams{
+			LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
+			LastReadAt:   sql.NullTime{Time: readAt, Valid: true},
+			ID:           item.BookID,
+		}
+		if err := c.store.UpdateBookProgress(ctx, params); err != nil {
+			slog.Error("bulk sync progress update failed", "book_id", item.BookID, "error", err)
+			results = append(results, BulkSyncProgressResultItem{
+				BookID:  item.BookID,
+				Status:  "invalid",
+				Message: "update failed",
+			})
+			continue
+		}
+		updatedCount++
+
+		if c.progressWriteCache != nil {
+			c.progressWriteCache.Add(item.BookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
+		}
+
+		// 仅前进的页码记录活动，与单本接口策略一致。
+		if validPage > previousPage {
+			if err := c.store.LogReadingActivity(ctx, item.BookID, int(validPage)); err != nil {
+				slog.Error("Failed to log reading activity", "book_id", item.BookID, "error", err)
+			}
+		} else if !book.LastReadPage.Valid {
+			if err := c.store.LogReadingActivity(ctx, item.BookID, int(validPage)); err != nil {
+				slog.Error("Failed to log reading activity", "book_id", item.BookID, "error", err)
+			}
+		}
+
+		results = append(results, BulkSyncProgressResultItem{
+			BookID: item.BookID,
+			Status: "updated",
+			Page:   validPage,
+		})
+	}
+
+	if updatedCount > 0 {
+		c.invalidateDashboardStatsCache("bulk_progress_sync")
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"updated": updatedCount,
+		"results": results,
+	})
+}
+
 type UpsertReadingBookmarkRequest struct {
 	Page int64  `json:"page"`
 	Note string `json:"note"`
@@ -3621,7 +3875,7 @@ func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := c.store.DeleteReadingBookmark(r.Context(), bookID, bookmarkID); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Bookmark not found")
 			return
 		}
@@ -4062,11 +4316,11 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 		defer cleanupCancel()
 
 		c.updateTaskDetails("cleanup_thumbnails", 0, -1, "正在扫描未使用的缩略图...", "cleanup", "", nil, nil)
-		
+
 		err := c.scanner.CleanupThumbnails(taskCtx, func(deleted, scanned int, msg string) {
 			c.updateTaskDetails("cleanup_thumbnails", deleted, scanned, msg, "cleanup", "", nil, nil)
 		})
-		
+
 		if errors.Is(err, context.Canceled) {
 			c.completeTask("cleanup_thumbnails", "cancelled", "清理缩略图已取消")
 			return

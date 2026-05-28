@@ -4,6 +4,33 @@
 
 ---
 
+### 📌 增量记录 — 2026-05-29（资源库重构上线 + 续读位置后端契约）
+
+#### 资源库（阶段 1 重构）
+- **新增 `/library/:libId` 路由与目录骨架**：原 `Home.tsx`（~1800 行）拆分为 `web/src/pages/library/` 下的入口 + 10 个展示组件 + 10 个 hook，旧路由经 `<Navigate replace />` 自动迁移；删除整个 `web/src/pages/home/` 目录与 `Home.tsx`。
+- **数据钩子拆分**：`useLibraryFilters`（filter 状态 ↔ URL query 双向同步 + serializedFilters）、`useLibrarySeries`（封装 `/api/series/search` cursor + offset，带 `recordSeriesListRenderMetric` 埋点）、`useLibrarySelection`（多选 + 批量已读 / 收藏 / 加合集 / 重扫）、`useLibraryKeyboard`、`useExternalLibrary`、`useSeriesScraping`、`useSmartFilters`。
+- **页面级派生 hook**：本轮再抽出 `useLibraryFilterOptions`（标签/作者懒加载 + 搜索）、`useLibraryCardActions`（卡片点击 / 收藏 / 重扫 + `getApiErrorMessage` 内化）、`useLibraryTransfer`（转移摘要计算 + 模态状态机），主入口稳定在 413 行。
+- **Modal 抽离**：`TransferConfirmModal.tsx`（独立 props + 内部 `submitting` 守卫）、`LibraryScrapeModal.tsx`（包装 `SeriesSearchModal` 的 props mapping），不再内联在 `index.tsx`。
+- **顶部 / 筛选 / 网格 / 多选 / 分页**：`LibraryHeader`（标题 + 视图 + 进入选择 + 外部库）、`LibraryFilterBar`（已应用 chip + "+ 添加筛选"）、`LibraryGrid`（IntersectionObserver 触发 `loadMore`）、`LibrarySelectionBar`（基于新增的共享 `components/ui/SelectionBar.tsx`，整合标已读 / 标未读 / 加合集 / 重扫 / 取消，以及全选 / 反选）、`LibraryPagination`（保留显式分页器，`localStorage('lib_pagination_mode_${libId}')` 切换无限滚动 vs 分页）。
+- **外部库抽屉化**：`ExternalLibraryDrawer.tsx` 复用 `DirectoryPicker` + 状态 + 转移确认；外部状态、SSE 联动、`fetchExternalSession` / `startExternalLibraryScan` / `transferToExternalLibrary` 全部封装到 `useLibraryExternal.ts`，抽屉关闭 / 重开保留任务订阅；抽屉改为 `createPortal` + 主题变量驱动蒙层、面板换 `bg-komgaSurface`，修复浅色主题下整页糊白。
+- **资源库快捷键**：`useLibraryKeyboard` 启用 `/`（聚焦搜索）、`g`（回顶部） / `Shift+G`（到底部）、`e`（切换选择模式）、`Esc`（退出选择）；`ShortcutsPanel` 新增 `shortcuts.group.library` 分组与对应 zh-CN / en-US 文案。
+- **卡片续读角标**：`LibraryCard.tsx` 在封面右下方显示 `continue · {page}/{total}` chip（无 totalPages 时退化为 `Continue · p.{page}`），仅当 `last_read_at.Valid && last_read_page > 0 && !fullyRead` 时出现；新增 `home.card.lastReadAtPage` / `home.card.lastReadAtPageOfTotal` i18n 文案。**底部 "{P}" 总页数应用户要求保留。**
+- **智能筛选视图 404 修复**：前端 `DELETE` 路径从 `/api/libraries/${libId}/smart-filters/${id}/` 改为 `/api/smart-filters/${id}` 对齐后端注册。
+
+#### 续读位置 / 阅读进度（阶段 0 后端契约完结）
+- **`SearchSeriesPagedRow` 增加续读字段**：`last_read_at` / `last_read_book_id` / `last_read_page`，由 `buildSeriesSearchQuery` 通过 `LEFT JOIN (SELECT series_id, MAX(last_read_at) ... FROM books)` 聚合得到；资源库 `/api/series/search` 现在直接返回该信息，避免前端按系列再请求一次。
+- **新增 `GET /api/series/{id}/continue` 端点**：返回 `next_unread_book_id` / `last_read_book_id` / `last_read_page` / `last_read_at` / `total_books` / `read_books` / `total_pages` / `read_pages`，规则：第一本未完成的书作为 `next_unread`、`last_read_at` 最大的书作为"上次读到这里"，全部读完时 `next_unread` 为 0。
+- **`SeriesContextResponse` 内联续读摘要**：`/api/series/{id}/context` 同时返回新加的 `continue` 字段，详情页 hero 一次请求即可拼出 CTA 文案，无需二次访问。
+- **新增 `POST /api/books/bulk-progress/sync`**：批量同步阅读进度（含 `last_read_page` / `last_read_at`），用于 KOReader / 客户端回写场景。
+- **新增 `GET /api/book-prev/{bookId}`**：阅读器 / 详情页跳"上一本"补全，与既有 `book-next` 对称。
+- **`reading_list_controller.go`**：把 `if err == sql.ErrNoRows` 改成 `errors.Is(err, sql.ErrNoRows)`，避免被 `fmt.Errorf("...: %w", err)` 包装时漏判。
+
+#### i18n / 杂项
+- **`TranslationParams` 类型放宽**：增加 `unknown` 兜底，方便把后端 `sql.NullX` 字段直接塞进占位符。
+- **`.gitignore`**：新增 `config.yaml` 忽略，避免本地 server 配置泄漏入库。
+
+---
+
 ### 📌 增量记录 — 2026-05-28（前端导航重构 + 任务进度修复）
 
 #### 侧栏导航重构
