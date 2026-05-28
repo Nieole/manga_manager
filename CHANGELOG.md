@@ -4,6 +4,46 @@
 
 ---
 
+### 📌 增量记录 — 2026-05-29（系列详情阶段 2 重构 + Hero 现代化）
+
+#### 系列详情（阶段 2 重构）
+- **`SeriesDetail.tsx` 整体拆分**：原 982 行单文件页面拆为 `web/src/pages/series-detail/` 下的 `index.tsx`（339 行）+ 7 个展示组件（`SeriesHeroBar` / `SeriesQuickActions` / `SeriesVolumeAccordion` / `SeriesBookGrid` / `SeriesBookCard` / `SeriesSelectionBar` / `SeriesSidePanel`）+ 12 个 hook（`useSeriesContext` / `useSeriesSelection` / `useSeriesContinue` / `useSeriesScrape` / `useSeriesEdit` / `useSeriesActions` / `useSeriesMetadataReview` / `useSeriesRelations` / `useSeriesProgress` / `useSeriesFailedTasks` / `useSeriesVolumes` / `useSeriesOpenVolumes`），删除老的 `SeriesHeader.tsx` / `SeriesContentSection.tsx` / 原 `SeriesDetail.tsx`。
+- **数据请求合并**：`/tags` `/authors` `/links` `/relations` `/metadata-review` `/failed-tasks` 6 个并行请求合并为单次 `GET /api/series/{id}/context`，由 `useSeriesContext` 统一持有 + `reload()` 重置；mutation hook 通过 setters 维持本地最新态。
+- **续读 CTA**：消费 `context.continue` 字段，`buildContinueCta` 输出 `{ bookId, page, totalPages, volumeLabel, bookLabel }`；hero 区域渲染三种状态文案（`series.continue.start` / `resume` / `reread`），CTA 直接 `<Link to="/reader/{bookId}">` 跳到阅读器。
+- **卷折叠列表**：`SeriesVolumeAccordion` 替换原"点击卷 → 路由切换 → 子视图"模式，折叠状态写入 `localStorage('series_open_volumes_${id}')`；`useSeriesOpenVolumes` 兼容 `?volume=...` 旧链接，进入时自动展开匹配项，用户主动操作后清除 query。
+- **侧抽屉下沉管理面板**：`SeriesSidePanel` 用 `createPortal` 投到 body，含三个 tab（关系 / 元数据审核 / 失败任务），主区域只在右上角显示 `SeriesSidePanelBadge`（`series.sidePanel.badge.metadata` + `badge.failed`），仅在 `pendingMetadata > 0 || failedCount > 0` 时出现。
+- **多选底部栏**：`SeriesSelectionBar` 复用 `components/ui/SelectionBar.tsx` 共享基础组件，与资源库风格对齐（标已读 / 标未读 / 全选 / 反选）。
+- **书卡 hover 操作**：`SeriesBookCard` 把原顶部按钮收入"⋯"菜单（导出 ComicInfo / 复制识别码），保留快速标记已读按钮和 `Y/Z` 进度徽章。
+- **路由迁移**：`App.tsx` 的 `SeriesDetail` 懒加载路径由 `./pages/SeriesDetail` 改为 `./pages/series-detail`，旧 `?volume=` 链接由 hook 自动兼容。
+
+#### 系列详情 Hero 现代化
+- **整体视觉重设计**：`SeriesHeroBar` 从原"封面 + 标题 + chip 列表"扁平结构升级为：封面区（双层效果，前景圆角投影 + ring，背后 `from-komgaPrimary/40 to-komgaSecondary/40` 柔光晕，桌面端额外加封面背景模糊"halo"）→ 信息区（状态脉冲点 → "By 作者A · 作者B" 行 → `bg-clip-text` 渐变大字号标题 `text-3xl→6xl font-black` → 简介 → CTA + 进度环 → 统计卡片组 → 标签 → 外链）。
+- **信息平铺，移除"更多信息" popover**：评分 / 语言 / 出版社 / 外链全部直接平铺渲染；`useState` / `useRef` / `useEffect` / `infoOpen` 相关代码连同 popover 一并删除。
+- **状态彩色脉冲点**：`statusDotColor` 把 `normalizeSeriesStatus()` 输出映射到 emerald(ongoing) / sky(completed) / amber(hiatus) / rose(cancelled) / gray(unknown)，使用 `animate-ping` 在外层做扩散动画 + `shadow-[0_0_10px]` 发光。
+- **主 CTA 渐变胶囊按钮**：`from-komgaPrimary to-komgaPrimaryHover` 渐变背景 + 内嵌圆形播放图标 + 尾部箭头，hover 上浮 `-translate-y-0.5` + `shadow-2xl` 加深 + 高光扫过动画（`-translate-x-full → translate-x-full`）。
+- **进度环卡片**：新增 `ProgressRing` SVG 组件（`r=16`，`strokeDasharray` 动画，`rgb(var(--color-komga-primary))` 主色，已读完切翠绿 `#34d399`），与 CTA 按钮并列。读完时 label 切换为 `series.stats.completed`。
+- **统计卡片组**：新增 `StatCard` 组件 + `StatTone` 类型，6 种语义化色调（amber / indigo / violet / cyan / emerald / rose），统一 `bg-{tone}-400/10` + `text-{tone}-300` + `border-{tone}-400/30` + `backdrop-blur-sm`。评分作为第一张卡片（amber 色 + ★图标 + `tabular-nums` 数字 + 小写灰底"评分"标签），其后接册数 / 卷数 / 单行本 / 语言 / 出版社。
+- **标签可展开**：`tagsExpanded` state 控制；默认展示前 10 个，超出时尾部加 `▼ 展开 +N 个标签` 胶囊按钮，点击展开全部并切换为 `▲ 收起标签`；每个 tag truncate 宽度从 `10rem` 提到 `14rem` 并附 `title` 让长标签可 hover 看全。
+- **外链行**：作为独立行平铺，不再嵌在 popover；图标加 `shrink-0` 保证不被压扁。
+- **作者行内化**：原"作者 chip"改为 hero 顶部 "By 林惠美 · 山田悟" 语义文本（最多 3 位 + `+N`），点击跳到资源库 `?author=...`。
+- **响应式优化**：移动端封面 `w-32` 居中、`sm:w-44 lg:w-52`；标题 / chips / CTA 在 mobile 居中（`text-center`），`sm:` 起左对齐；CTA 在窄屏 `w-full justify-center`，桌面端回归内联宽度；外层 padding 从 `p-6 lg:p-10` 调成 `p-4 sm:p-6 lg:p-10`，移动端不再浪费 24px 边距。
+
+#### i18n
+- **新增 zh-CN / en-US 同步 key**：
+  - `series.failedTasks.retry`、`series.selection.selectVolume` / `unselectVolume`
+  - `series.book.moreActions` / `copyPath` / `pathCopied` / `copyPathFailed`
+  - `series.continue.reread` / `resume` / `start`
+  - `series.sidePanel.title` / `tabs.relations|metadata|failed` / `metadataEmpty` / `failedEmpty` / `badge.metadata` / `badge.failed`
+  - `series.header.enterSelection` / `exitSelection` / `infoMore` / `byAuthors`
+  - `series.stats.books` / `volumes` / `standalones` / `pages` / `progress` / `completed` / `rating`
+  - `series.tags.showAll` / `collapse`
+- **`series.header.seriesSummary`** 升级为 3 占位符版本（`{{count}} · {{volumes}} 卷 · {{standalone}} 单行本`）。
+
+#### 待办清单同步
+- `docs/library-series-reader-todo.md` 阶段 2 全部 9 个子节点 (2.1 - 2.9) 标记为 `[x]`，仅剩 2.9 浏览器手动回归；进度看板更新 "阶段 2 系列详情 = ✅ 代码项已完成"；阶段 4 同步把 `web/src/pages/SeriesDetail.tsx` 删除项标 `[x]`。
+
+---
+
 ### 📌 增量记录 — 2026-05-29（资源库重构上线 + 续读位置后端契约）
 
 #### 资源库（阶段 1 重构）

@@ -64,6 +64,7 @@ export interface Book {
   summary?: NullString;
   page_count: number;
   last_read_page?: { Valid: boolean; Int64: number };
+  last_read_at?: { Valid: boolean; Time: string };
   cover_path?: NullString;
   updated_at?: string;
 }
@@ -172,6 +173,17 @@ export interface SeriesMetadataSummary {
   provenance_count: number;
 }
 
+export interface SeriesContinue {
+  next_unread_book_id?: number;
+  last_read_book_id?: number;
+  last_read_page?: number;
+  last_read_at?: string;
+  total_books: number;
+  read_books: number;
+  total_pages: number;
+  read_pages: number;
+}
+
 export interface SeriesContextResponse {
   series: Series;
   books: Book[];
@@ -183,4 +195,5 @@ export interface SeriesContextResponse {
   metadata_review?: MetadataReviewResponse;
   metadata_summary?: SeriesMetadataSummary;
   failed_tasks?: SeriesFailedTask[];
+  continue?: SeriesContinue;
 }

@@ -13,7 +13,7 @@ const Ops = lazy(() => import('./pages/Ops'));
 const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
 const ReadingLists = lazy(() => import('./pages/ReadingLists'));
 const OfflineShelf = lazy(() => import('./pages/OfflineShelf'));
-const SeriesDetail = lazy(() => import('./pages/SeriesDetail'));
+const SeriesDetail = lazy(() => import('./pages/series-detail'));
 const BookReader = lazy(() => import('./pages/BookReader'));
 const Settings = lazy(() => import('./pages/Settings'));
 const SettingsOverviewPage = lazy(() => import('./pages/settings/SettingsOverviewPage').then((module) => ({ default: module.SettingsOverviewPage })));
