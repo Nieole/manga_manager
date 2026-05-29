@@ -95,7 +95,7 @@ export function SeriesHeroBar({
   return (
     <div className="mb-8 relative z-10">
       {/* 顶栏：返回 / 工具组 */}
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-6 relative z-20">
         <button
           onClick={onBack}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-300/90 hover:text-white transition-colors group"

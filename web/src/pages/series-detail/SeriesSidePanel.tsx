@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, GitCompareArrows, Loader2, RefreshCw, Repeat2, X } from 'lucide-react';
 import type { MetadataProvenance, MetadataReview, SeriesFailedTask, SeriesRelation, SeriesRelationCandidate } from './types';
@@ -46,6 +47,45 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
     failed: props.failedTasks.length,
   };
 
+  const [drawerWidth, setDrawerWidth] = useState(() => {
+    const saved = localStorage.getItem('komga-series-sidepanel-width');
+    return saved ? parseInt(saved, 10) : 576;
+  });
+  const isDragging = useRef(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const newWidth = document.documentElement.clientWidth - e.clientX;
+      setDrawerWidth(Math.max(320, Math.min(newWidth, 1200))); // Min 320, Max 1200
+    };
+
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        setDrawerWidth((currentWidth) => {
+          localStorage.setItem('komga-series-sidepanel-width', currentWidth.toString());
+          return currentWidth;
+        });
+      }
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const handleMouseDown = () => {
+    isDragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
   return createPortal(
     <div className={`fixed inset-0 z-[80] ${props.open ? '' : 'pointer-events-none'}`} aria-hidden={!props.open}>
       <div
@@ -58,10 +98,15 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
         }}
       />
       <aside
-        className={`absolute top-0 right-0 h-full w-full max-w-xl bg-komgaSurface border-l border-gray-800 shadow-2xl transition-transform duration-300 ${
+        className={`absolute top-0 right-0 h-full bg-komgaSurface shadow-2xl transition-transform duration-300 ${
           props.open ? 'translate-x-0' : 'translate-x-full'
         }`}
+        style={{ width: drawerWidth, maxWidth: '100vw' }}
       >
+        <div
+          onMouseDown={handleMouseDown}
+          className="absolute top-0 left-0 bottom-0 w-2 -ml-1 cursor-col-resize hover:bg-komgaPrimary/50 transition-colors z-50 border-l border-gray-800"
+        />
         <div className="flex h-full flex-col">
           <header className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
             <div className="flex items-center gap-2 text-white">

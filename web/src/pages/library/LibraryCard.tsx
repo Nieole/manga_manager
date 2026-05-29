@@ -269,27 +269,35 @@ export function LibraryCard({
       </div>
 
       {scrapeMenuOpen && !scrapingActive && (
-        <div className="absolute right-3 top-12 z-50 w-44 rounded-lg border border-gray-800 bg-gray-950/95 shadow-2xl backdrop-blur">
-          <div
-            onPointerDown={(e) => {
+        <div
+          className="absolute right-3 top-12 z-50 w-44 rounded-lg border border-gray-800 bg-gray-950/95 shadow-2xl backdrop-blur"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               onChooseScrapeProvider(s, 'bangumi');
             }}
-            className="w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors cursor-pointer truncate"
+            className="block w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors cursor-pointer truncate"
           >
             {t('series.header.bangumiRecommended')}
-          </div>
-          <div
-            onPointerDown={(e) => {
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               onChooseScrapeProvider(s, 'ollama');
             }}
-            className="w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-800 cursor-pointer truncate"
+            className="block w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-800 cursor-pointer truncate"
           >
             {t('series.header.ollama')}
-          </div>
+          </button>
         </div>
       )}
     </Link>

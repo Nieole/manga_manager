@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { CheckCircle2, ChevronDown, ExternalLink, GitCompareArrows, ShieldCheck, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, GitCompareArrows, ShieldCheck, XCircle } from 'lucide-react';
 import type { MetadataProvenance, MetadataReview } from './types';
 import { useI18n } from '../../i18n/LocaleProvider';
 
@@ -24,13 +23,12 @@ export function SeriesMetadataReviewPanel({
   onReject,
 }: SeriesMetadataReviewPanelProps) {
   const { t, formatDateTime } = useI18n();
-  const [isExpanded, setIsExpanded] = useState(false);
 
   if (reviews.length === 0 && provenance.length === 0) return null;
 
   return (
     <section className="relative z-20 mb-8 rounded-2xl border border-cyan-400/15 bg-gray-950/75 p-5 shadow-xl backdrop-blur-md">
-      <div className={`${isExpanded ? 'mb-5' : ''} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="flex items-center gap-2 text-lg font-semibold text-white">
             <GitCompareArrows className="h-5 w-5 text-cyan-300" />
@@ -44,18 +42,10 @@ export function SeriesMetadataReviewPanel({
               {t('series.metadataReview.pendingCount', { count: reviews.length })}
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => setIsExpanded((current) => !current)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-medium text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-            {isExpanded ? t('common.collapseDetails') : t('common.viewDetails')}
-          </button>
         </div>
       </div>
 
-      {isExpanded && reviews.length > 0 && (
+      {reviews.length > 0 && (
         <div className="space-y-4">
           {reviews.map((review) => (
             <div key={review.id} className="rounded-2xl border border-white/10 bg-black/25 p-4">
@@ -140,7 +130,7 @@ export function SeriesMetadataReviewPanel({
         </div>
       )}
 
-      {isExpanded && provenance.length > 0 && (
+      {provenance.length > 0 && (
         <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
           <h4 className="mb-3 text-sm font-semibold text-gray-100">{t('series.metadataReview.provenanceTitle')}</h4>
           <div className="flex flex-wrap gap-2">
