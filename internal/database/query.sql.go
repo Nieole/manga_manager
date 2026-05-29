@@ -62,6 +62,25 @@ func (q *Queries) AddSeriesToCollection(ctx context.Context, arg AddSeriesToColl
 	return err
 }
 
+const clearAllBookCoverPaths = `-- name: ClearAllBookCoverPaths :exec
+UPDATE books SET cover_path = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE cover_path IS NOT NULL AND cover_path != ''
+`
+
+func (q *Queries) ClearAllBookCoverPaths(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearAllBookCoverPathsStmt, clearAllBookCoverPaths)
+	return err
+}
+
+const clearAllSeriesStatsCoverPaths = `-- name: ClearAllSeriesStatsCoverPaths :exec
+UPDATE series_stats SET cover_path = '' WHERE cover_path != ''
+`
+
+func (q *Queries) ClearAllSeriesStatsCoverPaths(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearAllSeriesStatsCoverPathsStmt, clearAllSeriesStatsCoverPaths)
+	return err
+}
+
 const clearSeriesAuthors = `-- name: ClearSeriesAuthors :exec
 DELETE FROM series_authors WHERE series_id = ?
 `
@@ -87,6 +106,17 @@ DELETE FROM series_tags WHERE series_id = ?
 func (q *Queries) ClearSeriesTags(ctx context.Context, seriesID int64) error {
 	_, err := q.exec(ctx, q.clearSeriesTagsStmt, clearSeriesTags, seriesID)
 	return err
+}
+
+const collectionNameExists = `-- name: CollectionNameExists :one
+SELECT 1 FROM collections WHERE name = ? COLLATE NOCASE LIMIT 1
+`
+
+func (q *Queries) CollectionNameExists(ctx context.Context, name string) (int64, error) {
+	row := q.queryRow(ctx, q.collectionNameExistsStmt, collectionNameExists, name)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countAIGroupingReviews = `-- name: CountAIGroupingReviews :one
@@ -117,6 +147,116 @@ WHERE review_id = ?
 
 func (q *Queries) CountAppliedAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error) {
 	row := q.queryRow(ctx, q.countAppliedAIGroupingReviewCollectionsStmt, countAppliedAIGroupingReviewCollections, reviewID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countHealthDuplicateFileHash = `-- name: CountHealthDuplicateFileHash :one
+SELECT COALESCE(SUM(cnt), 0) FROM (
+    SELECT COUNT(*) AS cnt
+    FROM books b
+    WHERE (?1 = 0 OR b.library_id = ?1)
+      AND b.file_hash IS NOT NULL AND b.file_hash != ''
+    GROUP BY b.file_hash
+    HAVING COUNT(*) > 1
+)
+`
+
+func (q *Queries) CountHealthDuplicateFileHash(ctx context.Context, libraryID interface{}) (interface{}, error) {
+	row := q.queryRow(ctx, q.countHealthDuplicateFileHashStmt, countHealthDuplicateFileHash, libraryID)
+	var coalesce interface{}
+	err := row.Scan(&coalesce)
+	return coalesce, err
+}
+
+const countHealthDuplicateQuickHash = `-- name: CountHealthDuplicateQuickHash :one
+SELECT COALESCE(SUM(cnt), 0) FROM (
+    SELECT COUNT(*) AS cnt
+    FROM books b
+    WHERE (?1 = 0 OR b.library_id = ?1)
+      AND b.quick_hash IS NOT NULL AND b.quick_hash != ''
+    GROUP BY b.quick_hash
+    HAVING COUNT(*) > 1
+)
+`
+
+func (q *Queries) CountHealthDuplicateQuickHash(ctx context.Context, libraryID interface{}) (interface{}, error) {
+	row := q.queryRow(ctx, q.countHealthDuplicateQuickHashStmt, countHealthDuplicateQuickHash, libraryID)
+	var coalesce interface{}
+	err := row.Scan(&coalesce)
+	return coalesce, err
+}
+
+const countHealthEmptyPages = `-- name: CountHealthEmptyPages :one
+SELECT COUNT(*)
+FROM books b
+WHERE (?1 = 0 OR b.library_id = ?1)
+  AND b.page_count <= 0
+`
+
+func (q *Queries) CountHealthEmptyPages(ctx context.Context, libraryID interface{}) (int64, error) {
+	row := q.queryRow(ctx, q.countHealthEmptyPagesStmt, countHealthEmptyPages, libraryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countHealthMissingCover = `-- name: CountHealthMissingCover :one
+SELECT COUNT(*)
+FROM books b
+WHERE (?1 = 0 OR b.library_id = ?1)
+  AND (b.cover_path IS NULL OR b.cover_path = '')
+`
+
+func (q *Queries) CountHealthMissingCover(ctx context.Context, libraryID interface{}) (int64, error) {
+	row := q.queryRow(ctx, q.countHealthMissingCoverStmt, countHealthMissingCover, libraryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countHealthMissingMetadata = `-- name: CountHealthMissingMetadata :one
+SELECT COUNT(*)
+FROM series s
+WHERE (?1 = 0 OR s.library_id = ?1)
+  AND (
+    s.title IS NULL OR s.title = ''
+    OR s.summary IS NULL OR s.summary = ''
+    OR (
+        NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
+    )
+  )
+`
+
+func (q *Queries) CountHealthMissingMetadata(ctx context.Context, libraryID interface{}) (int64, error) {
+	row := q.queryRow(ctx, q.countHealthMissingMetadataStmt, countHealthMissingMetadata, libraryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countHealthMissingQuickHash = `-- name: CountHealthMissingQuickHash :one
+SELECT COUNT(*)
+FROM books b
+WHERE (?1 = 0 OR b.library_id = ?1)
+  AND COALESCE(b.quick_hash, '') = ''
+`
+
+func (q *Queries) CountHealthMissingQuickHash(ctx context.Context, libraryID interface{}) (int64, error) {
+	row := q.queryRow(ctx, q.countHealthMissingQuickHashStmt, countHealthMissingQuickHash, libraryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countHealthUnmatchedKOReader = `-- name: CountHealthUnmatchedKOReader :one
+SELECT COUNT(*) FROM koreader_progress kp WHERE kp.book_id IS NULL
+`
+
+func (q *Queries) CountHealthUnmatchedKOReader(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countHealthUnmatchedKOReaderStmt, countHealthUnmatchedKOReader)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -658,6 +798,39 @@ func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Ser
 	return i, err
 }
 
+const createSeriesRelation = `-- name: CreateSeriesRelation :exec
+INSERT OR IGNORE INTO series_relations (source_series_id, target_series_id, relation_type)
+VALUES (?, ?, ?)
+`
+
+type CreateSeriesRelationParams struct {
+	SourceSeriesID int64  `json:"source_series_id"`
+	TargetSeriesID int64  `json:"target_series_id"`
+	RelationType   string `json:"relation_type"`
+}
+
+func (q *Queries) CreateSeriesRelation(ctx context.Context, arg CreateSeriesRelationParams) error {
+	_, err := q.exec(ctx, q.createSeriesRelationStmt, createSeriesRelation, arg.SourceSeriesID, arg.TargetSeriesID, arg.RelationType)
+	return err
+}
+
+const createSimpleCollection = `-- name: CreateSimpleCollection :one
+INSERT INTO collections (name, description) VALUES (?, ?)
+RETURNING id
+`
+
+type CreateSimpleCollectionParams struct {
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+}
+
+func (q *Queries) CreateSimpleCollection(ctx context.Context, arg CreateSimpleCollectionParams) (int64, error) {
+	row := q.queryRow(ctx, q.createSimpleCollectionStmt, createSimpleCollection, arg.Name, arg.Description)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const deleteBook = `-- name: DeleteBook :exec
 DELETE FROM books WHERE id = ?
 `
@@ -676,6 +849,15 @@ func (q *Queries) DeleteBookByPath(ctx context.Context, path string) error {
 	return err
 }
 
+const deleteCollection = `-- name: DeleteCollection :exec
+DELETE FROM collections WHERE id = ?
+`
+
+func (q *Queries) DeleteCollection(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.deleteCollectionStmt, deleteCollection, id)
+	return err
+}
+
 const deleteLibrary = `-- name: DeleteLibrary :exec
 DELETE FROM libraries WHERE id = ?
 `
@@ -683,6 +865,24 @@ DELETE FROM libraries WHERE id = ?
 func (q *Queries) DeleteLibrary(ctx context.Context, id int64) error {
 	_, err := q.exec(ctx, q.deleteLibraryStmt, deleteLibrary, id)
 	return err
+}
+
+const deleteReadingBookmark = `-- name: DeleteReadingBookmark :execrows
+DELETE FROM reading_bookmarks
+WHERE id = ? AND book_id = ?
+`
+
+type DeleteReadingBookmarkParams struct {
+	ID     int64 `json:"id"`
+	BookID int64 `json:"book_id"`
+}
+
+func (q *Queries) DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error) {
+	result, err := q.exec(ctx, q.deleteReadingBookmarkStmt, deleteReadingBookmark, arg.ID, arg.BookID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteReadingList = `-- name: DeleteReadingList :exec
@@ -701,6 +901,46 @@ DELETE FROM series WHERE id = ?
 func (q *Queries) DeleteSeries(ctx context.Context, id int64) error {
 	_, err := q.exec(ctx, q.deleteSeriesStmt, deleteSeries, id)
 	return err
+}
+
+const deleteSeriesRelation = `-- name: DeleteSeriesRelation :exec
+DELETE FROM series_relations WHERE id = ?
+`
+
+func (q *Queries) DeleteSeriesRelation(ctx context.Context, id int64) error {
+	_, err := q.exec(ctx, q.deleteSeriesRelationStmt, deleteSeriesRelation, id)
+	return err
+}
+
+const deleteSmartFilter = `-- name: DeleteSmartFilter :execrows
+DELETE FROM smart_filters WHERE id = ?
+`
+
+func (q *Queries) DeleteSmartFilter(ctx context.Context, id int64) (int64, error) {
+	result, err := q.exec(ctx, q.deleteSmartFilterStmt, deleteSmartFilter, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const findExistingSeriesRelation = `-- name: FindExistingSeriesRelation :one
+SELECT id FROM series_relations
+WHERE (source_series_id = ?1 AND target_series_id = ?2)
+   OR (source_series_id = ?2 AND target_series_id = ?1)
+LIMIT 1
+`
+
+type FindExistingSeriesRelationParams struct {
+	LeftID  int64 `json:"left_id"`
+	RightID int64 `json:"right_id"`
+}
+
+func (q *Queries) FindExistingSeriesRelation(ctx context.Context, arg FindExistingSeriesRelationParams) (int64, error) {
+	row := q.queryRow(ctx, q.findExistingSeriesRelationStmt, findExistingSeriesRelation, arg.LeftID, arg.RightID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getAIGroupingReview = `-- name: GetAIGroupingReview :one
@@ -747,6 +987,42 @@ func (q *Queries) GetAIGroupingReviewCollection(ctx context.Context, id int64) (
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getActivityHeatmap = `-- name: GetActivityHeatmap :many
+SELECT date, SUM(pages_read) AS page_count
+FROM reading_activity
+WHERE date >= DATE('now', ?1)
+GROUP BY date
+ORDER BY date ASC
+`
+
+type GetActivityHeatmapRow struct {
+	Date      string          `json:"date"`
+	PageCount sql.NullFloat64 `json:"page_count"`
+}
+
+func (q *Queries) GetActivityHeatmap(ctx context.Context, offsetClause interface{}) ([]GetActivityHeatmapRow, error) {
+	rows, err := q.query(ctx, q.getActivityHeatmapStmt, getActivityHeatmap, offsetClause)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetActivityHeatmapRow
+	for rows.Next() {
+		var i GetActivityHeatmapRow
+		if err := rows.Scan(&i.Date, &i.PageCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAllAuthors = `-- name: GetAllAuthors :many
@@ -959,6 +1235,55 @@ func (q *Queries) GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]G
 	return items, nil
 }
 
+const getDashboardCoreStats = `-- name: GetDashboardCoreStats :one
+SELECT
+    (SELECT COUNT(*) FROM series) AS total_series,
+    (SELECT COUNT(*) FROM books) AS total_books,
+    (SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
+    (SELECT COALESCE(SUM(page_count), 0) FROM books) AS total_pages,
+    (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) AS active_days_7
+`
+
+type GetDashboardCoreStatsRow struct {
+	TotalSeries int64       `json:"total_series"`
+	TotalBooks  int64       `json:"total_books"`
+	ReadBooks   int64       `json:"read_books"`
+	TotalPages  interface{} `json:"total_pages"`
+	ActiveDays7 int64       `json:"active_days_7"`
+}
+
+func (q *Queries) GetDashboardCoreStats(ctx context.Context) (GetDashboardCoreStatsRow, error) {
+	row := q.queryRow(ctx, q.getDashboardCoreStatsStmt, getDashboardCoreStats)
+	var i GetDashboardCoreStatsRow
+	err := row.Scan(
+		&i.TotalSeries,
+		&i.TotalBooks,
+		&i.ReadBooks,
+		&i.TotalPages,
+		&i.ActiveDays7,
+	)
+	return i, err
+}
+
+const getLastTaskKeyForScope = `-- name: GetLastTaskKeyForScope :one
+SELECT key FROM tasks
+WHERE scope = ? AND scope_id = ?
+ORDER BY updated_at DESC
+LIMIT 1
+`
+
+type GetLastTaskKeyForScopeParams struct {
+	Scope   string        `json:"scope"`
+	ScopeID sql.NullInt64 `json:"scope_id"`
+}
+
+func (q *Queries) GetLastTaskKeyForScope(ctx context.Context, arg GetLastTaskKeyForScopeParams) (string, error) {
+	row := q.queryRow(ctx, q.getLastTaskKeyForScopeStmt, getLastTaskKeyForScope, arg.Scope, arg.ScopeID)
+	var key string
+	err := row.Scan(&key)
+	return key, err
+}
+
 const getLibrary = `-- name: GetLibrary :one
 SELECT id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
 `
@@ -1152,6 +1477,120 @@ func (q *Queries) GetReadingList(ctx context.Context, id int64) (ReadingList, er
 	return i, err
 }
 
+const getReadingListItemProgressByList = `-- name: GetReadingListItemProgressByList :many
+SELECT
+    rli.series_id,
+    COALESCE(ss.read_book_count, 0) AS read_books,
+    COALESCE(ss.completed_book_count, 0) AS completed_books,
+    COALESCE(s.book_count, 0) AS total_books
+FROM reading_list_items rli
+JOIN series s ON s.id = rli.series_id
+LEFT JOIN series_stats ss ON ss.series_id = rli.series_id
+WHERE rli.reading_list_id = ?
+`
+
+type GetReadingListItemProgressByListRow struct {
+	SeriesID       int64 `json:"series_id"`
+	ReadBooks      int64 `json:"read_books"`
+	CompletedBooks int64 `json:"completed_books"`
+	TotalBooks     int64 `json:"total_books"`
+}
+
+func (q *Queries) GetReadingListItemProgressByList(ctx context.Context, readingListID int64) ([]GetReadingListItemProgressByListRow, error) {
+	rows, err := q.query(ctx, q.getReadingListItemProgressByListStmt, getReadingListItemProgressByList, readingListID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetReadingListItemProgressByListRow
+	for rows.Next() {
+		var i GetReadingListItemProgressByListRow
+		if err := rows.Scan(
+			&i.SeriesID,
+			&i.ReadBooks,
+			&i.CompletedBooks,
+			&i.TotalBooks,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecentReadAll = `-- name: GetRecentReadAll :many
+SELECT
+    s.name AS series_name,
+    s.id AS series_id,
+    b.id AS book_id,
+    b.name AS book_name,
+    b.title AS book_title,
+    ss.last_read_at,
+    b.last_read_page,
+    b.page_count,
+    COALESCE(ss.cover_path, '') AS cover_path
+FROM series_stats ss INDEXED BY idx_series_stats_last_read
+JOIN series s ON s.id = ss.series_id
+JOIN books b ON b.id = ss.last_read_book_id
+WHERE ss.last_read_at IS NOT NULL
+  AND ss.last_read_book_id > 0
+  AND b.last_read_page IS NOT NULL
+  AND b.last_read_page > 0
+ORDER BY ss.last_read_at DESC, s.name ASC
+LIMIT ?
+`
+
+type GetRecentReadAllRow struct {
+	SeriesName   string         `json:"series_name"`
+	SeriesID     int64          `json:"series_id"`
+	BookID       int64          `json:"book_id"`
+	BookName     string         `json:"book_name"`
+	BookTitle    sql.NullString `json:"book_title"`
+	LastReadAt   sql.NullTime   `json:"last_read_at"`
+	LastReadPage sql.NullInt64  `json:"last_read_page"`
+	PageCount    int64          `json:"page_count"`
+	CoverPath    string         `json:"cover_path"`
+}
+
+func (q *Queries) GetRecentReadAll(ctx context.Context, limit int64) ([]GetRecentReadAllRow, error) {
+	rows, err := q.query(ctx, q.getRecentReadAllStmt, getRecentReadAll, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecentReadAllRow
+	for rows.Next() {
+		var i GetRecentReadAllRow
+		if err := rows.Scan(
+			&i.SeriesName,
+			&i.SeriesID,
+			&i.BookID,
+			&i.BookName,
+			&i.BookTitle,
+			&i.LastReadAt,
+			&i.LastReadPage,
+			&i.PageCount,
+			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRecentReadSeries = `-- name: GetRecentReadSeries :many
 WITH RankedBooks AS (
     SELECT 
@@ -1239,6 +1678,72 @@ func (q *Queries) GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeri
 			&i.LastReadAt,
 			&i.LastReadPage,
 			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecommendations = `-- name: GetRecommendations :many
+WITH preferred_tags AS (
+    SELECT DISTINCT st.tag_id
+    FROM series_tags st
+    JOIN series s ON s.id = st.series_id
+    WHERE s.is_favorite = 1
+       OR (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) >= 2
+),
+unread_series AS (
+    SELECT s.id
+    FROM series s
+    WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0)
+)
+SELECT s.id, s.name, s.title, s.book_count,
+    (SELECT b.cover_path FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name LIMIT 1) AS cover_path,
+    COUNT(st.tag_id) AS score
+FROM unread_series us
+JOIN series s ON s.id = us.id
+JOIN series_tags st ON st.series_id = s.id
+JOIN preferred_tags pt ON pt.tag_id = st.tag_id
+GROUP BY s.id
+ORDER BY score DESC
+LIMIT ?
+`
+
+type GetRecommendationsRow struct {
+	ID        int64          `json:"id"`
+	Name      string         `json:"name"`
+	Title     sql.NullString `json:"title"`
+	BookCount int64          `json:"book_count"`
+	CoverPath sql.NullString `json:"cover_path"`
+	Score     int64          `json:"score"`
+}
+
+func (q *Queries) GetRecommendations(ctx context.Context, limit int64) ([]GetRecommendationsRow, error) {
+	rows, err := q.query(ctx, q.getRecommendationsStmt, getRecommendations, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecommendationsRow
+	for rows.Next() {
+		var i GetRecommendationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Title,
+			&i.BookCount,
+			&i.CoverPath,
+			&i.Score,
 		); err != nil {
 			return nil, err
 		}
@@ -1437,6 +1942,28 @@ func (q *Queries) GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]Ge
 	return items, nil
 }
 
+const getSeriesIDByBookID = `-- name: GetSeriesIDByBookID :one
+SELECT series_id FROM books WHERE id = ?
+`
+
+func (q *Queries) GetSeriesIDByBookID(ctx context.Context, id int64) (int64, error) {
+	row := q.queryRow(ctx, q.getSeriesIDByBookIDStmt, getSeriesIDByBookID, id)
+	var series_id int64
+	err := row.Scan(&series_id)
+	return series_id, err
+}
+
+const getSeriesIDByBookPath = `-- name: GetSeriesIDByBookPath :one
+SELECT series_id FROM books WHERE path = ?
+`
+
+func (q *Queries) GetSeriesIDByBookPath(ctx context.Context, path string) (int64, error) {
+	row := q.queryRow(ctx, q.getSeriesIDByBookPathStmt, getSeriesIDByBookPath, path)
+	var series_id int64
+	err := row.Scan(&series_id)
+	return series_id, err
+}
+
 const getSeriesMetadataProvenance = `-- name: GetSeriesMetadataProvenance :many
 SELECT series_id, field_name, value, source, source_url, confidence, review_id, updated_at FROM series_metadata_provenance WHERE series_id = ? ORDER BY field_name
 `
@@ -1559,6 +2086,92 @@ func (q *Queries) GetSeriesWithoutCollection(ctx context.Context, libraryID int6
 		return nil, err
 	}
 	return items, nil
+}
+
+const getSmartFilterByID = `-- name: GetSmartFilterByID :one
+SELECT id, library_id, name, active_tag, active_author, active_status, active_letter,
+       read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
+       sort_by_field, sort_dir, page_size, created_at, updated_at
+FROM smart_filters
+WHERE id = ?
+LIMIT 1
+`
+
+func (q *Queries) GetSmartFilterByID(ctx context.Context, id int64) (SmartFilter, error) {
+	row := q.queryRow(ctx, q.getSmartFilterByIDStmt, getSmartFilterByID, id)
+	var i SmartFilter
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Name,
+		&i.ActiveTag,
+		&i.ActiveAuthor,
+		&i.ActiveStatus,
+		&i.ActiveLetter,
+		&i.ReadState,
+		&i.MinRating,
+		&i.MaxRating,
+		&i.MinProgress,
+		&i.MaxProgress,
+		&i.AddedWithinDays,
+		&i.SortByField,
+		&i.SortDir,
+		&i.PageSize,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getStaticCollectionView = `-- name: GetStaticCollectionView :one
+SELECT
+    'collection:' || c.id AS view_id,
+    c.id,
+    'collection' AS kind,
+    c.name,
+    c.description,
+    (SELECT COUNT(*) FROM collection_series cs WHERE cs.collection_id = c.id) AS series_count,
+    c.source_type,
+    c.source_review_id,
+    c.sort_order,
+    c.created_at,
+    c.updated_at
+FROM collections c
+WHERE c.id = ?
+LIMIT 1
+`
+
+type GetStaticCollectionViewRow struct {
+	ViewID         interface{}    `json:"view_id"`
+	ID             int64          `json:"id"`
+	Kind           string         `json:"kind"`
+	Name           string         `json:"name"`
+	Description    sql.NullString `json:"description"`
+	SeriesCount    int64          `json:"series_count"`
+	SourceType     string         `json:"source_type"`
+	SourceReviewID sql.NullInt64  `json:"source_review_id"`
+	SortOrder      int64          `json:"sort_order"`
+	CreatedAt      sql.NullTime   `json:"created_at"`
+	UpdatedAt      sql.NullTime   `json:"updated_at"`
+}
+
+func (q *Queries) GetStaticCollectionView(ctx context.Context, id int64) (GetStaticCollectionViewRow, error) {
+	row := q.queryRow(ctx, q.getStaticCollectionViewStmt, getStaticCollectionView, id)
+	var i GetStaticCollectionViewRow
+	err := row.Scan(
+		&i.ViewID,
+		&i.ID,
+		&i.Kind,
+		&i.Name,
+		&i.Description,
+		&i.SeriesCount,
+		&i.SourceType,
+		&i.SourceReviewID,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getTagsForSeries = `-- name: GetTagsForSeries :many
@@ -1899,6 +2512,799 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book
 	return items, nil
 }
 
+const listCollectionSeries = `-- name: ListCollectionSeries :many
+SELECT
+    s.id AS series_id,
+    s.name AS series_name,
+    (SELECT b.cover_path FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name LIMIT 1) AS cover_path,
+    s.book_count,
+    cs.added_at
+FROM collection_series cs
+JOIN series s ON s.id = cs.series_id
+WHERE cs.collection_id = ?
+ORDER BY cs.sort_order, s.name
+`
+
+type ListCollectionSeriesRow struct {
+	SeriesID   int64          `json:"series_id"`
+	SeriesName string         `json:"series_name"`
+	CoverPath  sql.NullString `json:"cover_path"`
+	BookCount  int64          `json:"book_count"`
+	AddedAt    sql.NullTime   `json:"added_at"`
+}
+
+func (q *Queries) ListCollectionSeries(ctx context.Context, collectionID int64) ([]ListCollectionSeriesRow, error) {
+	rows, err := q.query(ctx, q.listCollectionSeriesStmt, listCollectionSeries, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCollectionSeriesRow
+	for rows.Next() {
+		var i ListCollectionSeriesRow
+		if err := rows.Scan(
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.CoverPath,
+			&i.BookCount,
+			&i.AddedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCollectionViews = `-- name: ListCollectionViews :many
+SELECT
+    'collection:' || c.id AS view_id,
+    c.id,
+    'collection' AS kind,
+    c.name,
+    COALESCE(c.description, '') AS description,
+    CAST(NULL AS INTEGER) AS library_id,
+    CAST('' AS TEXT) AS library_name,
+    (SELECT COUNT(*) FROM collection_series cs WHERE cs.collection_id = c.id) AS series_count,
+    c.source_type,
+    c.source_review_id,
+    c.sort_order,
+    c.created_at,
+    c.updated_at
+FROM collections c
+UNION ALL
+SELECT
+    'smart:' || sf.id AS view_id,
+    sf.id,
+    'smart' AS kind,
+    sf.name,
+    TRIM(
+        COALESCE('tag=' || sf.active_tag, '') || ' ' ||
+        COALESCE('author=' || sf.active_author, '') || ' ' ||
+        COALESCE('status=' || sf.active_status, '') || ' ' ||
+        COALESCE('letter=' || sf.active_letter, '') || ' ' ||
+        COALESCE('read=' || sf.read_state, '') || ' ' ||
+        COALESCE('rating>=' || sf.min_rating, '') || ' ' ||
+        COALESCE('rating<=' || sf.max_rating, '') || ' ' ||
+        COALESCE('progress>=' || sf.min_progress, '') || ' ' ||
+        COALESCE('progress<=' || sf.max_progress, '') || ' ' ||
+        COALESCE('added<=' || sf.added_within_days || 'd', '')
+    ) AS description,
+    sf.library_id,
+    l.name AS library_name,
+    (
+        SELECT COUNT(DISTINCT s.id)
+        FROM series s
+        LEFT JOIN series_tags st ON s.id = st.series_id
+        LEFT JOIN tags t ON st.tag_id = t.id
+        LEFT JOIN series_authors sa ON s.id = sa.series_id
+        LEFT JOIN authors a ON sa.author_id = a.id
+        LEFT JOIN (
+            SELECT
+                series_id,
+                COUNT(*) as book_count,
+                SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN 1 ELSE 0 END) as read_books,
+                SUM(CASE WHEN page_count > 0 AND last_read_page >= page_count THEN 1 ELSE 0 END) as completed_books,
+                CASE
+                    WHEN SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END) > 0
+                    THEN SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN MIN(last_read_page, page_count) ELSE 0 END) * 100.0 / SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END)
+                    ELSE 0
+                END as progress_percent
+            FROM books
+            GROUP BY series_id
+        ) rp ON rp.series_id = s.id
+        WHERE s.library_id = sf.library_id
+          AND (sf.active_status IS NULL OR s.status = sf.active_status)
+          AND (sf.active_letter IS NULL OR s.name_initial = sf.active_letter)
+          AND (sf.active_tag IS NULL OR t.name = sf.active_tag)
+          AND (sf.active_author IS NULL OR a.name = sf.active_author)
+          AND (sf.min_rating IS NULL OR s.rating >= sf.min_rating)
+          AND (sf.max_rating IS NULL OR s.rating <= sf.max_rating)
+          AND (sf.min_progress IS NULL OR COALESCE(rp.progress_percent, 0) >= sf.min_progress)
+          AND (sf.max_progress IS NULL OR COALESCE(rp.progress_percent, 0) <= sf.max_progress)
+          AND (sf.added_within_days IS NULL OR s.created_at >= datetime('now', '-' || sf.added_within_days || ' days'))
+          AND (
+            sf.read_state IS NULL
+            OR (sf.read_state = 'unread' AND COALESCE(rp.read_books, 0) = 0)
+            OR (sf.read_state = 'reading' AND COALESCE(rp.read_books, 0) > 0 AND COALESCE(rp.completed_books, 0) < COALESCE(rp.book_count, 0))
+            OR (sf.read_state = 'completed' AND COALESCE(rp.book_count, 0) > 0 AND COALESCE(rp.completed_books, 0) = COALESCE(rp.book_count, 0))
+          )
+    ) AS series_count,
+    'smart_filter' AS source_type,
+    CAST(NULL AS INTEGER) AS source_review_id,
+    CAST(0 AS INTEGER) AS sort_order,
+    sf.created_at,
+    sf.updated_at
+FROM smart_filters sf
+JOIN libraries l ON l.id = sf.library_id
+ORDER BY kind, sort_order, name
+`
+
+type ListCollectionViewsRow struct {
+	ViewID         interface{}   `json:"view_id"`
+	ID             int64         `json:"id"`
+	Kind           string        `json:"kind"`
+	Name           string        `json:"name"`
+	Description    string        `json:"description"`
+	LibraryID      sql.NullInt64 `json:"library_id"`
+	LibraryName    string        `json:"library_name"`
+	SeriesCount    int64         `json:"series_count"`
+	SourceType     string        `json:"source_type"`
+	SourceReviewID sql.NullInt64 `json:"source_review_id"`
+	SortOrder      int64         `json:"sort_order"`
+	CreatedAt      sql.NullTime  `json:"created_at"`
+	UpdatedAt      sql.NullTime  `json:"updated_at"`
+}
+
+func (q *Queries) ListCollectionViews(ctx context.Context) ([]ListCollectionViewsRow, error) {
+	rows, err := q.query(ctx, q.listCollectionViewsStmt, listCollectionViews)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCollectionViewsRow
+	for rows.Next() {
+		var i ListCollectionViewsRow
+		if err := rows.Scan(
+			&i.ViewID,
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.Description,
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesCount,
+			&i.SourceType,
+			&i.SourceReviewID,
+			&i.SortOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCollectionsWithSeriesCount = `-- name: ListCollectionsWithSeriesCount :many
+SELECT
+    c.id, c.name, c.description, c.cover_url, c.sort_order, c.source_type, c.source_review_id,
+    c.created_at, c.updated_at,
+    (SELECT COUNT(*) FROM collection_series cs WHERE cs.collection_id = c.id) AS series_count
+FROM collections c
+ORDER BY c.sort_order, c.name
+`
+
+type ListCollectionsWithSeriesCountRow struct {
+	ID             int64          `json:"id"`
+	Name           string         `json:"name"`
+	Description    sql.NullString `json:"description"`
+	CoverUrl       sql.NullString `json:"cover_url"`
+	SortOrder      int64          `json:"sort_order"`
+	SourceType     string         `json:"source_type"`
+	SourceReviewID sql.NullInt64  `json:"source_review_id"`
+	CreatedAt      sql.NullTime   `json:"created_at"`
+	UpdatedAt      sql.NullTime   `json:"updated_at"`
+	SeriesCount    int64          `json:"series_count"`
+}
+
+func (q *Queries) ListCollectionsWithSeriesCount(ctx context.Context) ([]ListCollectionsWithSeriesCountRow, error) {
+	rows, err := q.query(ctx, q.listCollectionsWithSeriesCountStmt, listCollectionsWithSeriesCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCollectionsWithSeriesCountRow
+	for rows.Next() {
+		var i ListCollectionsWithSeriesCountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CoverUrl,
+			&i.SortOrder,
+			&i.SourceType,
+			&i.SourceReviewID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SeriesCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExternalLibraryBooks = `-- name: ListExternalLibraryBooks :many
+SELECT b.id AS book_id, b.series_id, s.name AS series_name, b.path
+FROM books b
+JOIN series s ON s.id = b.series_id
+WHERE b.library_id = ?
+ORDER BY s.name, b.path
+`
+
+type ListExternalLibraryBooksRow struct {
+	BookID     int64  `json:"book_id"`
+	SeriesID   int64  `json:"series_id"`
+	SeriesName string `json:"series_name"`
+	Path       string `json:"path"`
+}
+
+func (q *Queries) ListExternalLibraryBooks(ctx context.Context, libraryID int64) ([]ListExternalLibraryBooksRow, error) {
+	rows, err := q.query(ctx, q.listExternalLibraryBooksStmt, listExternalLibraryBooks, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExternalLibraryBooksRow
+	for rows.Next() {
+		var i ListExternalLibraryBooksRow
+		if err := rows.Scan(
+			&i.BookID,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.Path,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listForwardSeriesRelations = `-- name: ListForwardSeriesRelations :many
+SELECT sr.id, sr.target_series_id, s.name AS target_series_name, sr.relation_type
+FROM series_relations sr
+JOIN series s ON s.id = sr.target_series_id
+WHERE sr.source_series_id = ?
+`
+
+type ListForwardSeriesRelationsRow struct {
+	ID               int64  `json:"id"`
+	TargetSeriesID   int64  `json:"target_series_id"`
+	TargetSeriesName string `json:"target_series_name"`
+	RelationType     string `json:"relation_type"`
+}
+
+func (q *Queries) ListForwardSeriesRelations(ctx context.Context, sourceSeriesID int64) ([]ListForwardSeriesRelationsRow, error) {
+	rows, err := q.query(ctx, q.listForwardSeriesRelationsStmt, listForwardSeriesRelations, sourceSeriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListForwardSeriesRelationsRow
+	for rows.Next() {
+		var i ListForwardSeriesRelationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetSeriesID,
+			&i.TargetSeriesName,
+			&i.RelationType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHealthDuplicateFileHash = `-- name: ListHealthDuplicateFileHash :many
+WITH duplicates AS (
+    SELECT b.file_hash, COUNT(*) AS cnt
+    FROM books b
+    WHERE (?1 = 0 OR b.library_id = ?1)
+      AND b.file_hash IS NOT NULL AND b.file_hash != ''
+    GROUP BY b.file_hash
+    HAVING COUNT(*) > 1
+)
+SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
+       b.id AS book_id, b.name AS book_name, b.path,
+       'file_hash=' || b.file_hash AS detail, d.cnt AS issue_count
+FROM duplicates d
+JOIN books b ON b.file_hash = d.file_hash
+JOIN series s ON s.id = b.series_id
+JOIN libraries l ON l.id = b.library_id
+WHERE (?1 = 0 OR b.library_id = ?1)
+ORDER BY d.cnt DESC, b.file_hash, b.id
+LIMIT ?2
+`
+
+type ListHealthDuplicateFileHashParams struct {
+	LibraryID  interface{} `json:"library_id"`
+	LimitCount int64       `json:"limit_count"`
+}
+
+type ListHealthDuplicateFileHashRow struct {
+	LibraryID   int64       `json:"library_id"`
+	LibraryName string      `json:"library_name"`
+	SeriesID    int64       `json:"series_id"`
+	SeriesName  string      `json:"series_name"`
+	BookID      int64       `json:"book_id"`
+	BookName    string      `json:"book_name"`
+	Path        string      `json:"path"`
+	Detail      interface{} `json:"detail"`
+	IssueCount  int64       `json:"issue_count"`
+}
+
+func (q *Queries) ListHealthDuplicateFileHash(ctx context.Context, arg ListHealthDuplicateFileHashParams) ([]ListHealthDuplicateFileHashRow, error) {
+	rows, err := q.query(ctx, q.listHealthDuplicateFileHashStmt, listHealthDuplicateFileHash, arg.LibraryID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHealthDuplicateFileHashRow
+	for rows.Next() {
+		var i ListHealthDuplicateFileHashRow
+		if err := rows.Scan(
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.BookID,
+			&i.BookName,
+			&i.Path,
+			&i.Detail,
+			&i.IssueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHealthDuplicateQuickHash = `-- name: ListHealthDuplicateQuickHash :many
+WITH duplicates AS (
+    SELECT b.quick_hash, COUNT(*) AS cnt
+    FROM books b
+    WHERE (?1 = 0 OR b.library_id = ?1)
+      AND b.quick_hash IS NOT NULL AND b.quick_hash != ''
+    GROUP BY b.quick_hash
+    HAVING COUNT(*) > 1
+)
+SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
+       b.id AS book_id, b.name AS book_name, b.path,
+       'quick_hash=' || b.quick_hash AS detail, d.cnt AS issue_count
+FROM duplicates d
+JOIN books b ON b.quick_hash = d.quick_hash
+JOIN series s ON s.id = b.series_id
+JOIN libraries l ON l.id = b.library_id
+WHERE (?1 = 0 OR b.library_id = ?1)
+ORDER BY d.cnt DESC, b.quick_hash, b.id
+LIMIT ?2
+`
+
+type ListHealthDuplicateQuickHashParams struct {
+	LibraryID  interface{} `json:"library_id"`
+	LimitCount int64       `json:"limit_count"`
+}
+
+type ListHealthDuplicateQuickHashRow struct {
+	LibraryID   int64       `json:"library_id"`
+	LibraryName string      `json:"library_name"`
+	SeriesID    int64       `json:"series_id"`
+	SeriesName  string      `json:"series_name"`
+	BookID      int64       `json:"book_id"`
+	BookName    string      `json:"book_name"`
+	Path        string      `json:"path"`
+	Detail      interface{} `json:"detail"`
+	IssueCount  int64       `json:"issue_count"`
+}
+
+func (q *Queries) ListHealthDuplicateQuickHash(ctx context.Context, arg ListHealthDuplicateQuickHashParams) ([]ListHealthDuplicateQuickHashRow, error) {
+	rows, err := q.query(ctx, q.listHealthDuplicateQuickHashStmt, listHealthDuplicateQuickHash, arg.LibraryID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHealthDuplicateQuickHashRow
+	for rows.Next() {
+		var i ListHealthDuplicateQuickHashRow
+		if err := rows.Scan(
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.BookID,
+			&i.BookName,
+			&i.Path,
+			&i.Detail,
+			&i.IssueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHealthEmptyPages = `-- name: ListHealthEmptyPages :many
+SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
+       b.id AS book_id, b.name AS book_name, b.path,
+       'page_count <= 0' AS detail, CAST(1 AS INTEGER) AS issue_count
+FROM books b
+JOIN series s ON s.id = b.series_id
+JOIN libraries l ON l.id = b.library_id
+WHERE (?1 = 0 OR b.library_id = ?1)
+  AND b.page_count <= 0
+ORDER BY b.updated_at DESC, b.id DESC
+LIMIT ?2
+`
+
+type ListHealthEmptyPagesParams struct {
+	LibraryID  interface{} `json:"library_id"`
+	LimitCount int64       `json:"limit_count"`
+}
+
+type ListHealthEmptyPagesRow struct {
+	LibraryID   int64  `json:"library_id"`
+	LibraryName string `json:"library_name"`
+	SeriesID    int64  `json:"series_id"`
+	SeriesName  string `json:"series_name"`
+	BookID      int64  `json:"book_id"`
+	BookName    string `json:"book_name"`
+	Path        string `json:"path"`
+	Detail      string `json:"detail"`
+	IssueCount  int64  `json:"issue_count"`
+}
+
+func (q *Queries) ListHealthEmptyPages(ctx context.Context, arg ListHealthEmptyPagesParams) ([]ListHealthEmptyPagesRow, error) {
+	rows, err := q.query(ctx, q.listHealthEmptyPagesStmt, listHealthEmptyPages, arg.LibraryID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHealthEmptyPagesRow
+	for rows.Next() {
+		var i ListHealthEmptyPagesRow
+		if err := rows.Scan(
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.BookID,
+			&i.BookName,
+			&i.Path,
+			&i.Detail,
+			&i.IssueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHealthMissingCover = `-- name: ListHealthMissingCover :many
+SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
+       b.id AS book_id, b.name AS book_name, b.path,
+       'cover_path is empty' AS detail, CAST(1 AS INTEGER) AS issue_count
+FROM books b
+JOIN series s ON s.id = b.series_id
+JOIN libraries l ON l.id = b.library_id
+WHERE (?1 = 0 OR b.library_id = ?1)
+  AND (b.cover_path IS NULL OR b.cover_path = '')
+ORDER BY b.updated_at DESC, b.id DESC
+LIMIT ?2
+`
+
+type ListHealthMissingCoverParams struct {
+	LibraryID  interface{} `json:"library_id"`
+	LimitCount int64       `json:"limit_count"`
+}
+
+type ListHealthMissingCoverRow struct {
+	LibraryID   int64  `json:"library_id"`
+	LibraryName string `json:"library_name"`
+	SeriesID    int64  `json:"series_id"`
+	SeriesName  string `json:"series_name"`
+	BookID      int64  `json:"book_id"`
+	BookName    string `json:"book_name"`
+	Path        string `json:"path"`
+	Detail      string `json:"detail"`
+	IssueCount  int64  `json:"issue_count"`
+}
+
+func (q *Queries) ListHealthMissingCover(ctx context.Context, arg ListHealthMissingCoverParams) ([]ListHealthMissingCoverRow, error) {
+	rows, err := q.query(ctx, q.listHealthMissingCoverStmt, listHealthMissingCover, arg.LibraryID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHealthMissingCoverRow
+	for rows.Next() {
+		var i ListHealthMissingCoverRow
+		if err := rows.Scan(
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.BookID,
+			&i.BookName,
+			&i.Path,
+			&i.Detail,
+			&i.IssueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHealthMissingMetadata = `-- name: ListHealthMissingMetadata :many
+SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
+       NULL AS book_id, '' AS book_name, s.path,
+       CASE
+           WHEN s.title IS NULL OR s.title = '' THEN 'missing title'
+           WHEN s.summary IS NULL OR s.summary = '' THEN 'missing summary'
+           ELSE 'missing tags and authors'
+       END AS detail,
+       CAST(1 AS INTEGER) AS issue_count
+FROM series s
+JOIN libraries l ON l.id = s.library_id
+WHERE (?1 = 0 OR s.library_id = ?1)
+  AND (
+    s.title IS NULL OR s.title = ''
+    OR s.summary IS NULL OR s.summary = ''
+    OR (
+        NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
+    )
+  )
+ORDER BY s.updated_at DESC, s.id DESC
+LIMIT ?2
+`
+
+type ListHealthMissingMetadataParams struct {
+	LibraryID  interface{} `json:"library_id"`
+	LimitCount int64       `json:"limit_count"`
+}
+
+type ListHealthMissingMetadataRow struct {
+	LibraryID   int64       `json:"library_id"`
+	LibraryName string      `json:"library_name"`
+	SeriesID    int64       `json:"series_id"`
+	SeriesName  string      `json:"series_name"`
+	BookID      interface{} `json:"book_id"`
+	BookName    string      `json:"book_name"`
+	Path        string      `json:"path"`
+	Detail      string      `json:"detail"`
+	IssueCount  int64       `json:"issue_count"`
+}
+
+func (q *Queries) ListHealthMissingMetadata(ctx context.Context, arg ListHealthMissingMetadataParams) ([]ListHealthMissingMetadataRow, error) {
+	rows, err := q.query(ctx, q.listHealthMissingMetadataStmt, listHealthMissingMetadata, arg.LibraryID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHealthMissingMetadataRow
+	for rows.Next() {
+		var i ListHealthMissingMetadataRow
+		if err := rows.Scan(
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.BookID,
+			&i.BookName,
+			&i.Path,
+			&i.Detail,
+			&i.IssueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHealthMissingQuickHash = `-- name: ListHealthMissingQuickHash :many
+SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
+       b.id AS book_id, b.name AS book_name, b.path,
+       'quick_hash is empty' AS detail, CAST(1 AS INTEGER) AS issue_count
+FROM books b
+JOIN series s ON s.id = b.series_id
+JOIN libraries l ON l.id = b.library_id
+WHERE (?1 = 0 OR b.library_id = ?1)
+  AND COALESCE(b.quick_hash, '') = ''
+ORDER BY b.updated_at DESC, b.id DESC
+LIMIT ?2
+`
+
+type ListHealthMissingQuickHashParams struct {
+	LibraryID  interface{} `json:"library_id"`
+	LimitCount int64       `json:"limit_count"`
+}
+
+type ListHealthMissingQuickHashRow struct {
+	LibraryID   int64  `json:"library_id"`
+	LibraryName string `json:"library_name"`
+	SeriesID    int64  `json:"series_id"`
+	SeriesName  string `json:"series_name"`
+	BookID      int64  `json:"book_id"`
+	BookName    string `json:"book_name"`
+	Path        string `json:"path"`
+	Detail      string `json:"detail"`
+	IssueCount  int64  `json:"issue_count"`
+}
+
+func (q *Queries) ListHealthMissingQuickHash(ctx context.Context, arg ListHealthMissingQuickHashParams) ([]ListHealthMissingQuickHashRow, error) {
+	rows, err := q.query(ctx, q.listHealthMissingQuickHashStmt, listHealthMissingQuickHash, arg.LibraryID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHealthMissingQuickHashRow
+	for rows.Next() {
+		var i ListHealthMissingQuickHashRow
+		if err := rows.Scan(
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.BookID,
+			&i.BookName,
+			&i.Path,
+			&i.Detail,
+			&i.IssueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHealthUnmatchedKOReader = `-- name: ListHealthUnmatchedKOReader :many
+SELECT CAST(0 AS INTEGER) AS library_id, CAST('' AS TEXT) AS library_name,
+       NULL AS series_id, '' AS series_name,
+       NULL AS book_id, '' AS book_name,
+       kp.document AS path,
+       (kp.username || ' / ' || kp.device) AS detail,
+       CAST(1 AS INTEGER) AS issue_count
+FROM koreader_progress kp
+WHERE kp.book_id IS NULL
+ORDER BY kp.updated_at DESC, kp.id DESC
+LIMIT ?
+`
+
+type ListHealthUnmatchedKOReaderRow struct {
+	LibraryID   int64       `json:"library_id"`
+	LibraryName string      `json:"library_name"`
+	SeriesID    interface{} `json:"series_id"`
+	SeriesName  string      `json:"series_name"`
+	BookID      interface{} `json:"book_id"`
+	BookName    string      `json:"book_name"`
+	Path        string      `json:"path"`
+	Detail      interface{} `json:"detail"`
+	IssueCount  int64       `json:"issue_count"`
+}
+
+func (q *Queries) ListHealthUnmatchedKOReader(ctx context.Context, limit int64) ([]ListHealthUnmatchedKOReaderRow, error) {
+	rows, err := q.query(ctx, q.listHealthUnmatchedKOReaderStmt, listHealthUnmatchedKOReader, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHealthUnmatchedKOReaderRow
+	for rows.Next() {
+		var i ListHealthUnmatchedKOReaderRow
+		if err := rows.Scan(
+			&i.LibraryID,
+			&i.LibraryName,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.BookID,
+			&i.BookName,
+			&i.Path,
+			&i.Detail,
+			&i.IssueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLibraries = `-- name: ListLibraries :many
 SELECT id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries ORDER BY name
 `
@@ -1922,6 +3328,46 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 			&i.ScanFormats,
 			&i.CreatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLibrarySizes = `-- name: ListLibrarySizes :many
+SELECT l.id AS library_id, l.name AS library_name, COALESCE(bs.total_size, 0) AS total_size
+FROM libraries l
+LEFT JOIN (
+    SELECT library_id, SUM(size) AS total_size
+    FROM books INDEXED BY idx_books_library_size
+    GROUP BY library_id
+) bs ON bs.library_id = l.id
+ORDER BY bs.total_size DESC
+`
+
+type ListLibrarySizesRow struct {
+	LibraryID   int64   `json:"library_id"`
+	LibraryName string  `json:"library_name"`
+	TotalSize   float64 `json:"total_size"`
+}
+
+func (q *Queries) ListLibrarySizes(ctx context.Context) ([]ListLibrarySizesRow, error) {
+	rows, err := q.query(ctx, q.listLibrarySizesStmt, listLibrarySizes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLibrarySizesRow
+	for rows.Next() {
+		var i ListLibrarySizesRow
+		if err := rows.Scan(&i.LibraryID, &i.LibraryName, &i.TotalSize); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2451,6 +3897,43 @@ func (q *Queries) ListPendingMetadataReviewsBySeries(ctx context.Context, series
 	return items, nil
 }
 
+const listReadingBookmarks = `-- name: ListReadingBookmarks :many
+SELECT id, book_id, page, note, created_at, updated_at
+FROM reading_bookmarks
+WHERE book_id = ?
+ORDER BY page ASC, id ASC
+`
+
+func (q *Queries) ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error) {
+	rows, err := q.query(ctx, q.listReadingBookmarksStmt, listReadingBookmarks, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadingBookmark
+	for rows.Next() {
+		var i ReadingBookmark
+		if err := rows.Scan(
+			&i.ID,
+			&i.BookID,
+			&i.Page,
+			&i.Note,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReadingListItems = `-- name: ListReadingListItems :many
 SELECT
     rli.id,
@@ -2799,6 +4282,48 @@ func (q *Queries) ListRecentAddedSeries(ctx context.Context, arg ListRecentAdded
 	return items, nil
 }
 
+const listReverseSeriesRelations = `-- name: ListReverseSeriesRelations :many
+SELECT sr.id, sr.source_series_id AS target_series_id, s.name AS target_series_name, sr.relation_type
+FROM series_relations sr
+JOIN series s ON s.id = sr.source_series_id
+WHERE sr.target_series_id = ?
+`
+
+type ListReverseSeriesRelationsRow struct {
+	ID               int64  `json:"id"`
+	TargetSeriesID   int64  `json:"target_series_id"`
+	TargetSeriesName string `json:"target_series_name"`
+	RelationType     string `json:"relation_type"`
+}
+
+func (q *Queries) ListReverseSeriesRelations(ctx context.Context, targetSeriesID int64) ([]ListReverseSeriesRelationsRow, error) {
+	rows, err := q.query(ctx, q.listReverseSeriesRelationsStmt, listReverseSeriesRelations, targetSeriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReverseSeriesRelationsRow
+	for rows.Next() {
+		var i ListReverseSeriesRelationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetSeriesID,
+			&i.TargetSeriesName,
+			&i.RelationType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSeriesByLibrary = `-- name: ListSeriesByLibrary :many
 SELECT
        s.id,
@@ -2933,6 +4458,152 @@ func (q *Queries) ListSeriesInitialBackfillCandidates(ctx context.Context) ([]Li
 	return items, nil
 }
 
+const listSmartFiltersByLibrary = `-- name: ListSmartFiltersByLibrary :many
+SELECT id, library_id, name, active_tag, active_author, active_status, active_letter,
+       read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
+       sort_by_field, sort_dir, page_size, created_at, updated_at
+FROM smart_filters
+WHERE library_id = ?
+ORDER BY updated_at DESC, id DESC
+`
+
+func (q *Queries) ListSmartFiltersByLibrary(ctx context.Context, libraryID int64) ([]SmartFilter, error) {
+	rows, err := q.query(ctx, q.listSmartFiltersByLibraryStmt, listSmartFiltersByLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SmartFilter
+	for rows.Next() {
+		var i SmartFilter
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.ActiveTag,
+			&i.ActiveAuthor,
+			&i.ActiveStatus,
+			&i.ActiveLetter,
+			&i.ReadState,
+			&i.MinRating,
+			&i.MaxRating,
+			&i.MinProgress,
+			&i.MaxProgress,
+			&i.AddedWithinDays,
+			&i.SortByField,
+			&i.SortDir,
+			&i.PageSize,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaticCollectionSeriesPaged = `-- name: ListStaticCollectionSeriesPaged :many
+SELECT
+    s.id,
+    s.library_id,
+    s.name,
+    COALESCE(s.title, '') AS title,
+    COALESCE(s.summary, '') AS summary,
+    COALESCE(s.status, '') AS status,
+    s.updated_at,
+    s.book_count,
+    s.total_pages,
+    CAST(COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS TEXT) AS cover_path
+FROM collection_series cs
+JOIN series s ON s.id = cs.series_id
+WHERE cs.collection_id = ?1
+ORDER BY cs.sort_order, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+LIMIT ?3 OFFSET ?2
+`
+
+type ListStaticCollectionSeriesPagedParams struct {
+	CollectionID int64 `json:"collection_id"`
+	OffsetValue  int64 `json:"offset_value"`
+	LimitCount   int64 `json:"limit_count"`
+}
+
+type ListStaticCollectionSeriesPagedRow struct {
+	ID         int64     `json:"id"`
+	LibraryID  int64     `json:"library_id"`
+	Name       string    `json:"name"`
+	Title      string    `json:"title"`
+	Summary    string    `json:"summary"`
+	Status     string    `json:"status"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	BookCount  int64     `json:"book_count"`
+	TotalPages int64     `json:"total_pages"`
+	CoverPath  string    `json:"cover_path"`
+}
+
+func (q *Queries) ListStaticCollectionSeriesPaged(ctx context.Context, arg ListStaticCollectionSeriesPagedParams) ([]ListStaticCollectionSeriesPagedRow, error) {
+	rows, err := q.query(ctx, q.listStaticCollectionSeriesPagedStmt, listStaticCollectionSeriesPaged, arg.CollectionID, arg.OffsetValue, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStaticCollectionSeriesPagedRow
+	for rows.Next() {
+		var i ListStaticCollectionSeriesPagedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.BookCount,
+			&i.TotalPages,
+			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const logReadingActivity = `-- name: LogReadingActivity :exec
+INSERT INTO reading_activity (book_id, date, pages_read)
+VALUES (?, DATE('now'), ?)
+ON CONFLICT(book_id, date) DO UPDATE SET
+    pages_read = MAX(reading_activity.pages_read, excluded.pages_read)
+`
+
+type LogReadingActivityParams struct {
+	BookID    int64 `json:"book_id"`
+	PagesRead int64 `json:"pages_read"`
+}
+
+func (q *Queries) LogReadingActivity(ctx context.Context, arg LogReadingActivityParams) error {
+	_, err := q.exec(ctx, q.logReadingActivityStmt, logReadingActivity, arg.BookID, arg.PagesRead)
+	return err
+}
+
 const markAIGroupingReviewCollectionApplied = `-- name: MarkAIGroupingReviewCollectionApplied :exec
 UPDATE ai_grouping_review_collections
 SET status = 'applied',
@@ -2975,6 +4646,29 @@ WHERE review_id = ?1
 func (q *Queries) MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error {
 	_, err := q.exec(ctx, q.markAIGroupingReviewCollectionsRejectedStmt, markAIGroupingReviewCollectionsRejected, reviewID)
 	return err
+}
+
+const markInterruptedTasks = `-- name: MarkInterruptedTasks :execrows
+UPDATE tasks
+SET status = 'interrupted',
+    message = ?,
+    error = ?,
+    updated_at = CURRENT_TIMESTAMP,
+    finished_at = CURRENT_TIMESTAMP
+WHERE status IN ('running', 'paused', 'cancelling')
+`
+
+type MarkInterruptedTasksParams struct {
+	Message string `json:"message"`
+	Error   string `json:"error"`
+}
+
+func (q *Queries) MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error) {
+	result, err := q.exec(ctx, q.markInterruptedTasksStmt, markInterruptedTasks, arg.Message, arg.Error)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const refreshSeriesStats = `-- name: RefreshSeriesStats :exec
@@ -3097,6 +4791,20 @@ func (q *Queries) RemoveReadingListItem(ctx context.Context, arg RemoveReadingLi
 	return err
 }
 
+const removeSeriesFromCollection = `-- name: RemoveSeriesFromCollection :exec
+DELETE FROM collection_series WHERE collection_id = ? AND series_id = ?
+`
+
+type RemoveSeriesFromCollectionParams struct {
+	CollectionID int64 `json:"collection_id"`
+	SeriesID     int64 `json:"series_id"`
+}
+
+func (q *Queries) RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) error {
+	_, err := q.exec(ctx, q.removeSeriesFromCollectionStmt, removeSeriesFromCollection, arg.CollectionID, arg.SeriesID)
+	return err
+}
+
 const searchOPDSSeries = `-- name: SearchOPDSSeries :many
 SELECT
     s.id,
@@ -3156,6 +4864,36 @@ func (q *Queries) SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const seriesExistsByID = `-- name: SeriesExistsByID :one
+SELECT id FROM series WHERE id = ?
+`
+
+func (q *Queries) SeriesExistsByID(ctx context.Context, id int64) (int64, error) {
+	row := q.queryRow(ctx, q.seriesExistsByIDStmt, seriesExistsByID, id)
+	var id_2 int64
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const setBookCoverIfMissing = `-- name: SetBookCoverIfMissing :execrows
+UPDATE books
+SET cover_path = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND (cover_path IS NULL OR cover_path = '')
+`
+
+type SetBookCoverIfMissingParams struct {
+	CoverPath sql.NullString `json:"cover_path"`
+	ID        int64          `json:"id"`
+}
+
+func (q *Queries) SetBookCoverIfMissing(ctx context.Context, arg SetBookCoverIfMissingParams) (int64, error) {
+	result, err := q.exec(ctx, q.setBookCoverIfMissingStmt, setBookCoverIfMissing, arg.CoverPath, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const touchCollection = `-- name: TouchCollection :exec
@@ -3262,6 +5000,23 @@ type UpdateBookProgressParams struct {
 
 func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
 	_, err := q.exec(ctx, q.updateBookProgressStmt, updateBookProgress, arg.LastReadPage, arg.LastReadAt, arg.ID)
+	return err
+}
+
+const updateCollectionDetails = `-- name: UpdateCollectionDetails :exec
+UPDATE collections
+SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateCollectionDetailsParams struct {
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+	ID          int64          `json:"id"`
+}
+
+func (q *Queries) UpdateCollectionDetails(ctx context.Context, arg UpdateCollectionDetailsParams) error {
+	_, err := q.exec(ctx, q.updateCollectionDetailsStmt, updateCollectionDetails, arg.Name, arg.Description, arg.ID)
 	return err
 }
 
@@ -3506,6 +5261,89 @@ func (q *Queries) UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesSt
 	return err
 }
 
+const updateSmartFilter = `-- name: UpdateSmartFilter :one
+UPDATE smart_filters
+SET name = ?,
+    active_tag = ?,
+    active_author = ?,
+    active_status = ?,
+    active_letter = ?,
+    read_state = ?,
+    min_rating = ?,
+    max_rating = ?,
+    min_progress = ?,
+    max_progress = ?,
+    added_within_days = ?,
+    sort_by_field = ?,
+    sort_dir = ?,
+    page_size = ?,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, library_id, name, active_tag, active_author, active_status, active_letter,
+          read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
+          sort_by_field, sort_dir, page_size, created_at, updated_at
+`
+
+type UpdateSmartFilterParams struct {
+	Name            string          `json:"name"`
+	ActiveTag       sql.NullString  `json:"active_tag"`
+	ActiveAuthor    sql.NullString  `json:"active_author"`
+	ActiveStatus    sql.NullString  `json:"active_status"`
+	ActiveLetter    sql.NullString  `json:"active_letter"`
+	ReadState       sql.NullString  `json:"read_state"`
+	MinRating       sql.NullFloat64 `json:"min_rating"`
+	MaxRating       sql.NullFloat64 `json:"max_rating"`
+	MinProgress     sql.NullFloat64 `json:"min_progress"`
+	MaxProgress     sql.NullFloat64 `json:"max_progress"`
+	AddedWithinDays sql.NullInt64   `json:"added_within_days"`
+	SortByField     string          `json:"sort_by_field"`
+	SortDir         string          `json:"sort_dir"`
+	PageSize        int64           `json:"page_size"`
+	ID              int64           `json:"id"`
+}
+
+func (q *Queries) UpdateSmartFilter(ctx context.Context, arg UpdateSmartFilterParams) (SmartFilter, error) {
+	row := q.queryRow(ctx, q.updateSmartFilterStmt, updateSmartFilter,
+		arg.Name,
+		arg.ActiveTag,
+		arg.ActiveAuthor,
+		arg.ActiveStatus,
+		arg.ActiveLetter,
+		arg.ReadState,
+		arg.MinRating,
+		arg.MaxRating,
+		arg.MinProgress,
+		arg.MaxProgress,
+		arg.AddedWithinDays,
+		arg.SortByField,
+		arg.SortDir,
+		arg.PageSize,
+		arg.ID,
+	)
+	var i SmartFilter
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Name,
+		&i.ActiveTag,
+		&i.ActiveAuthor,
+		&i.ActiveStatus,
+		&i.ActiveLetter,
+		&i.ReadState,
+		&i.MinRating,
+		&i.MaxRating,
+		&i.MinProgress,
+		&i.MaxProgress,
+		&i.AddedWithinDays,
+		&i.SortByField,
+		&i.SortDir,
+		&i.PageSize,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertAuthor = `-- name: UpsertAuthor :one
 INSERT INTO authors (name, role) VALUES (?, ?)
 ON CONFLICT(name, role) DO UPDATE SET name = excluded.name, role=excluded.role
@@ -3608,6 +5446,35 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 		&i.PathFingerprint,
 		&i.PathFingerprintNoExt,
 		&i.FilenameFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertReadingBookmark = `-- name: UpsertReadingBookmark :one
+INSERT INTO reading_bookmarks (book_id, page, note)
+VALUES (?, ?, ?)
+ON CONFLICT(book_id, page) DO UPDATE SET
+    note = excluded.note,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING id, book_id, page, note, created_at, updated_at
+`
+
+type UpsertReadingBookmarkParams struct {
+	BookID int64  `json:"book_id"`
+	Page   int64  `json:"page"`
+	Note   string `json:"note"`
+}
+
+func (q *Queries) UpsertReadingBookmark(ctx context.Context, arg UpsertReadingBookmarkParams) (ReadingBookmark, error) {
+	row := q.queryRow(ctx, q.upsertReadingBookmarkStmt, upsertReadingBookmark, arg.BookID, arg.Page, arg.Note)
+	var i ReadingBookmark
+	err := row.Scan(
+		&i.ID,
+		&i.BookID,
+		&i.Page,
+		&i.Note,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -3749,6 +5616,92 @@ func (q *Queries) UpsertSeriesMetadataProvenance(ctx context.Context, arg Upsert
 	return i, err
 }
 
+const upsertSmartFilter = `-- name: UpsertSmartFilter :one
+INSERT INTO smart_filters (
+    library_id, name, active_tag, active_author, active_status, active_letter,
+    read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
+    sort_by_field, sort_dir, page_size, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(library_id, name) DO UPDATE SET
+    active_tag = excluded.active_tag,
+    active_author = excluded.active_author,
+    active_status = excluded.active_status,
+    active_letter = excluded.active_letter,
+    read_state = excluded.read_state,
+    min_rating = excluded.min_rating,
+    max_rating = excluded.max_rating,
+    min_progress = excluded.min_progress,
+    max_progress = excluded.max_progress,
+    added_within_days = excluded.added_within_days,
+    sort_by_field = excluded.sort_by_field,
+    sort_dir = excluded.sort_dir,
+    page_size = excluded.page_size,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING id, library_id, name, active_tag, active_author, active_status, active_letter,
+          read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
+          sort_by_field, sort_dir, page_size, created_at, updated_at
+`
+
+type UpsertSmartFilterParams struct {
+	LibraryID       int64           `json:"library_id"`
+	Name            string          `json:"name"`
+	ActiveTag       sql.NullString  `json:"active_tag"`
+	ActiveAuthor    sql.NullString  `json:"active_author"`
+	ActiveStatus    sql.NullString  `json:"active_status"`
+	ActiveLetter    sql.NullString  `json:"active_letter"`
+	ReadState       sql.NullString  `json:"read_state"`
+	MinRating       sql.NullFloat64 `json:"min_rating"`
+	MaxRating       sql.NullFloat64 `json:"max_rating"`
+	MinProgress     sql.NullFloat64 `json:"min_progress"`
+	MaxProgress     sql.NullFloat64 `json:"max_progress"`
+	AddedWithinDays sql.NullInt64   `json:"added_within_days"`
+	SortByField     string          `json:"sort_by_field"`
+	SortDir         string          `json:"sort_dir"`
+	PageSize        int64           `json:"page_size"`
+}
+
+func (q *Queries) UpsertSmartFilter(ctx context.Context, arg UpsertSmartFilterParams) (SmartFilter, error) {
+	row := q.queryRow(ctx, q.upsertSmartFilterStmt, upsertSmartFilter,
+		arg.LibraryID,
+		arg.Name,
+		arg.ActiveTag,
+		arg.ActiveAuthor,
+		arg.ActiveStatus,
+		arg.ActiveLetter,
+		arg.ReadState,
+		arg.MinRating,
+		arg.MaxRating,
+		arg.MinProgress,
+		arg.MaxProgress,
+		arg.AddedWithinDays,
+		arg.SortByField,
+		arg.SortDir,
+		arg.PageSize,
+	)
+	var i SmartFilter
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Name,
+		&i.ActiveTag,
+		&i.ActiveAuthor,
+		&i.ActiveStatus,
+		&i.ActiveLetter,
+		&i.ReadState,
+		&i.MinRating,
+		&i.MaxRating,
+		&i.MinProgress,
+		&i.MaxProgress,
+		&i.AddedWithinDays,
+		&i.SortByField,
+		&i.SortDir,
+		&i.PageSize,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertTag = `-- name: UpsertTag :one
 INSERT INTO tags (name) VALUES (?)
 ON CONFLICT(name) DO UPDATE SET name = excluded.name
@@ -3760,4 +5713,72 @@ func (q *Queries) UpsertTag(ctx context.Context, name string) (Tag, error) {
 	var i Tag
 	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
 	return i, err
+}
+
+const upsertTaskRecord = `-- name: UpsertTaskRecord :exec
+INSERT INTO tasks (
+    key, type, scope, scope_id, scope_name, status, message, error,
+    current, total, can_cancel, retryable, params,
+    started_at, updated_at, finished_at, sequence
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+    type = excluded.type,
+    scope = excluded.scope,
+    scope_id = excluded.scope_id,
+    scope_name = excluded.scope_name,
+    status = excluded.status,
+    message = excluded.message,
+    error = excluded.error,
+    current = excluded.current,
+    total = excluded.total,
+    can_cancel = excluded.can_cancel,
+    retryable = excluded.retryable,
+    params = excluded.params,
+    started_at = excluded.started_at,
+    updated_at = excluded.updated_at,
+    finished_at = excluded.finished_at,
+    sequence = excluded.sequence
+`
+
+type UpsertTaskRecordParams struct {
+	Key        string        `json:"key"`
+	Type       string        `json:"type"`
+	Scope      string        `json:"scope"`
+	ScopeID    sql.NullInt64 `json:"scope_id"`
+	ScopeName  string        `json:"scope_name"`
+	Status     string        `json:"status"`
+	Message    string        `json:"message"`
+	Error      string        `json:"error"`
+	Current    int64         `json:"current"`
+	Total      int64         `json:"total"`
+	CanCancel  bool          `json:"can_cancel"`
+	Retryable  bool          `json:"retryable"`
+	Params     string        `json:"params"`
+	StartedAt  time.Time     `json:"started_at"`
+	UpdatedAt  time.Time     `json:"updated_at"`
+	FinishedAt sql.NullTime  `json:"finished_at"`
+	Sequence   int64         `json:"sequence"`
+}
+
+func (q *Queries) UpsertTaskRecord(ctx context.Context, arg UpsertTaskRecordParams) error {
+	_, err := q.exec(ctx, q.upsertTaskRecordStmt, upsertTaskRecord,
+		arg.Key,
+		arg.Type,
+		arg.Scope,
+		arg.ScopeID,
+		arg.ScopeName,
+		arg.Status,
+		arg.Message,
+		arg.Error,
+		arg.Current,
+		arg.Total,
+		arg.CanCancel,
+		arg.Retryable,
+		arg.Params,
+		arg.StartedAt,
+		arg.UpdatedAt,
+		arg.FinishedAt,
+		arg.Sequence,
+	)
+	return err
 }

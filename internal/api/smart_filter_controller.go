@@ -64,29 +64,14 @@ func (c *Controller) listSmartFilters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
-	rows, err := db.QueryContext(r.Context(), `
-		SELECT id, library_id, name, active_tag, active_author, active_status, active_letter,
-		       read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
-		       sort_by_field, sort_dir, page_size, created_at, updated_at
-		FROM smart_filters
-		WHERE library_id = ?
-		ORDER BY updated_at DESC, id DESC
-	`, libraryID)
+	rows, err := c.store.ListSmartFiltersByLibrary(r.Context(), libraryID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list smart filters")
 		return
 	}
-	defer rows.Close()
-
-	items := make([]SmartFilter, 0)
-	for rows.Next() {
-		item, err := scanSmartFilter(rows)
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to scan smart filters")
-			return
-		}
-		items = append(items, item)
+	items := make([]SmartFilter, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, smartFilterFromDB(row))
 	}
 	jsonResponse(w, http.StatusOK, items)
 }
@@ -117,41 +102,28 @@ func (c *Controller) upsertSmartFilter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
-	row := db.QueryRowContext(r.Context(), `
-		INSERT INTO smart_filters (
-			library_id, name, active_tag, active_author, active_status, active_letter,
-			read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
-			sort_by_field, sort_dir, page_size, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT(library_id, name) DO UPDATE SET
-			active_tag = excluded.active_tag,
-			active_author = excluded.active_author,
-			active_status = excluded.active_status,
-			active_letter = excluded.active_letter,
-			read_state = excluded.read_state,
-			min_rating = excluded.min_rating,
-			max_rating = excluded.max_rating,
-			min_progress = excluded.min_progress,
-			max_progress = excluded.max_progress,
-			added_within_days = excluded.added_within_days,
-			sort_by_field = excluded.sort_by_field,
-			sort_dir = excluded.sort_dir,
-			page_size = excluded.page_size,
-			updated_at = CURRENT_TIMESTAMP
-		RETURNING id, library_id, name, active_tag, active_author, active_status, active_letter,
-		          read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
-		          sort_by_field, sort_dir, page_size, created_at, updated_at
-	`, libraryID, normalized.Name, normalized.ActiveTag, normalized.ActiveAuthor, normalized.ActiveStatus, normalized.ActiveLetter,
-		normalized.ReadState, normalized.MinRating, normalized.MaxRating, normalized.MinProgress, normalized.MaxProgress, normalized.AddedWithinDays,
-		normalized.SortByField, normalized.SortDir, normalized.PageSize)
-
-	item, err := scanSmartFilter(row)
+	row, err := c.store.UpsertSmartFilter(r.Context(), database.UpsertSmartFilterParams{
+		LibraryID:       libraryID,
+		Name:            normalized.Name,
+		ActiveTag:       nullStringFromPointer(normalized.ActiveTag),
+		ActiveAuthor:    nullStringFromPointer(normalized.ActiveAuthor),
+		ActiveStatus:    nullStringFromPointer(normalized.ActiveStatus),
+		ActiveLetter:    nullStringFromPointer(normalized.ActiveLetter),
+		ReadState:       nullStringFromPointer(normalized.ReadState),
+		MinRating:       nullFloatFromPointer(normalized.MinRating),
+		MaxRating:       nullFloatFromPointer(normalized.MaxRating),
+		MinProgress:     nullFloatFromPointer(normalized.MinProgress),
+		MaxProgress:     nullFloatFromPointer(normalized.MaxProgress),
+		AddedWithinDays: nullIntFromPointer(normalized.AddedWithinDays),
+		SortByField:     normalized.SortByField,
+		SortDir:         normalized.SortDir,
+		PageSize:        int64(normalized.PageSize),
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to save smart filter")
 		return
 	}
-	jsonResponse(w, http.StatusCreated, item)
+	jsonResponse(w, http.StatusCreated, smartFilterFromDB(row))
 }
 
 func (c *Controller) updateSmartFilter(w http.ResponseWriter, r *http.Request) {
@@ -181,38 +153,28 @@ func (c *Controller) updateSmartFilter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
-	row := db.QueryRowContext(r.Context(), `
-		UPDATE smart_filters
-		SET name = ?,
-		    active_tag = ?,
-		    active_author = ?,
-		    active_status = ?,
-		    active_letter = ?,
-		    read_state = ?,
-		    min_rating = ?,
-		    max_rating = ?,
-		    min_progress = ?,
-		    max_progress = ?,
-		    added_within_days = ?,
-		    sort_by_field = ?,
-		    sort_dir = ?,
-		    page_size = ?,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-		RETURNING id, library_id, name, active_tag, active_author, active_status, active_letter,
-		          read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
-		          sort_by_field, sort_dir, page_size, created_at, updated_at
-	`, normalized.Name, normalized.ActiveTag, normalized.ActiveAuthor, normalized.ActiveStatus, normalized.ActiveLetter,
-		normalized.ReadState, normalized.MinRating, normalized.MaxRating, normalized.MinProgress, normalized.MaxProgress, normalized.AddedWithinDays,
-		normalized.SortByField, normalized.SortDir, normalized.PageSize, current.ID)
-
-	item, err := scanSmartFilter(row)
+	row, err := c.store.UpdateSmartFilter(r.Context(), database.UpdateSmartFilterParams{
+		ID:              current.ID,
+		Name:            normalized.Name,
+		ActiveTag:       nullStringFromPointer(normalized.ActiveTag),
+		ActiveAuthor:    nullStringFromPointer(normalized.ActiveAuthor),
+		ActiveStatus:    nullStringFromPointer(normalized.ActiveStatus),
+		ActiveLetter:    nullStringFromPointer(normalized.ActiveLetter),
+		ReadState:       nullStringFromPointer(normalized.ReadState),
+		MinRating:       nullFloatFromPointer(normalized.MinRating),
+		MaxRating:       nullFloatFromPointer(normalized.MaxRating),
+		MinProgress:     nullFloatFromPointer(normalized.MinProgress),
+		MaxProgress:     nullFloatFromPointer(normalized.MaxProgress),
+		AddedWithinDays: nullIntFromPointer(normalized.AddedWithinDays),
+		SortByField:     normalized.SortByField,
+		SortDir:         normalized.SortDir,
+		PageSize:        int64(normalized.PageSize),
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to update smart filter")
 		return
 	}
-	jsonResponse(w, http.StatusOK, item)
+	jsonResponse(w, http.StatusOK, smartFilterFromDB(row))
 }
 
 func (c *Controller) deleteSmartFilter(w http.ResponseWriter, r *http.Request) {
@@ -221,63 +183,39 @@ func (c *Controller) deleteSmartFilter(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid smart filter ID")
 		return
 	}
-	db := c.store.(*database.SqlStore).DB()
-	res, err := db.ExecContext(r.Context(), `DELETE FROM smart_filters WHERE id = ?`, filterID)
+	affected, err := c.store.DeleteSmartFilter(r.Context(), filterID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete smart filter")
 		return
 	}
-	if rows, _ := res.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		jsonError(w, http.StatusNotFound, "Smart filter not found")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-type smartFilterScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanSmartFilter(row smartFilterScanner) (SmartFilter, error) {
-	var item SmartFilter
-	var tag, author, status, letter sql.NullString
-	var readState sql.NullString
-	var minRating, maxRating, minProgress, maxProgress sql.NullFloat64
-	var addedWithinDays sql.NullInt64
-	err := row.Scan(
-		&item.ID,
-		&item.LibraryID,
-		&item.Name,
-		&tag,
-		&author,
-		&status,
-		&letter,
-		&readState,
-		&minRating,
-		&maxRating,
-		&minProgress,
-		&maxProgress,
-		&addedWithinDays,
-		&item.SortByField,
-		&item.SortDir,
-		&item.PageSize,
-		&item.CreatedAt,
-		&item.UpdatedAt,
-	)
-	if err != nil {
-		return item, err
+func smartFilterFromDB(row database.SmartFilter) SmartFilter {
+	return SmartFilter{
+		ID:              row.ID,
+		LibraryID:       row.LibraryID,
+		Name:            row.Name,
+		ActiveTag:       nullStringPointer(row.ActiveTag),
+		ActiveAuthor:    nullStringPointer(row.ActiveAuthor),
+		ActiveStatus:    nullStringPointer(row.ActiveStatus),
+		ActiveLetter:    nullStringPointer(row.ActiveLetter),
+		ReadState:       nullStringPointer(row.ReadState),
+		MinRating:       nullFloatPointer(row.MinRating),
+		MaxRating:       nullFloatPointer(row.MaxRating),
+		MinProgress:     nullFloatPointer(row.MinProgress),
+		MaxProgress:     nullFloatPointer(row.MaxProgress),
+		AddedWithinDays: nullIntPointer(row.AddedWithinDays),
+		SortByField:     row.SortByField,
+		SortDir:         row.SortDir,
+		PageSize:        int(row.PageSize),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
 	}
-	item.ActiveTag = nullStringPointer(tag)
-	item.ActiveAuthor = nullStringPointer(author)
-	item.ActiveStatus = nullStringPointer(status)
-	item.ActiveLetter = nullStringPointer(letter)
-	item.ReadState = nullStringPointer(readState)
-	item.MinRating = nullFloatPointer(minRating)
-	item.MaxRating = nullFloatPointer(maxRating)
-	item.MinProgress = nullFloatPointer(minProgress)
-	item.MaxProgress = nullFloatPointer(maxProgress)
-	item.AddedWithinDays = nullIntPointer(addedWithinDays)
-	return item, nil
 }
 
 func normalizeSmartFilterRequest(req UpsertSmartFilterRequest) (UpsertSmartFilterRequest, error) {
@@ -384,4 +322,25 @@ func nullIntPointer(value sql.NullInt64) *int {
 	}
 	result := int(value.Int64)
 	return &result
+}
+
+func nullStringFromPointer(value *string) sql.NullString {
+	if value == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *value, Valid: true}
+}
+
+func nullFloatFromPointer(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
+}
+
+func nullIntFromPointer(value *int) sql.NullInt64 {
+	if value == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(*value), Valid: true}
 }

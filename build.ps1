@@ -44,11 +44,25 @@ else {
 Write-Host "Building backend..."
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
+# 显式锁定 Windows/amd64 目标平台，避免被会话级 GOOS/GOARCH 覆盖
+# 项目通过 chai2010/webp 依赖 CGO，因此沿用环境默认的 CGO_ENABLED（Windows 本机构建一般为 1）
+$prevGOOS = $env:GOOS
+$prevGOARCH = $env:GOARCH
+
 Push-Location $repoRoot
 try {
-    go build -o $binaryPath .\cmd\server
+    $env:GOOS = "windows"
+    $env:GOARCH = "amd64"
+
+    Write-Host "  GOOS=$env:GOOS GOARCH=$env:GOARCH"
+    go build -trimpath -o $binaryPath .\cmd\server
+    if ($LASTEXITCODE -ne 0) {
+        throw "go build failed with exit code $LASTEXITCODE"
+    }
 }
 finally {
+    $env:GOOS = $prevGOOS
+    $env:GOARCH = $prevGOARCH
     Pop-Location
 }
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import axios from 'axios';
 import { DEFAULT_PAGE_SIZE } from '../types';
 
 export interface SavedLibrarySettings {
@@ -39,6 +38,29 @@ interface UseLibraryFiltersResult {
 
 const VALID_SORT_DIRS = new Set(['asc', 'desc']);
 const SUPPORTS_CURSOR_FIELDS = new Set(['name', 'updated', 'created', 'favorite']);
+
+const settingsStorageKey = (libId: string) => `library:${libId}:settings`;
+
+function readStoredSettings(libId: string): SavedLibrarySettings | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(settingsStorageKey(libId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as SavedLibrarySettings) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSettings(libId: string, payload: SavedLibrarySettings) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(settingsStorageKey(libId), JSON.stringify(payload));
+  } catch {
+    // 配额或隐私模式下写入失败不影响 UI
+  }
+}
 
 export function supportsCursorPagination(field: string) {
   return SUPPORTS_CURSOR_FIELDS.has(field);
@@ -81,23 +103,18 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       setSettingsReady(true);
       return;
     }
-    axios
-      .get<SavedLibrarySettings>(`/api/libraries/${libId}/settings/`)
-      .then((res) => {
-        const raw = res.data ?? {};
-        setActiveTag(raw.activeTag ?? null);
-        setActiveAuthor(raw.activeAuthor ?? null);
-        setActiveStatus(raw.activeStatus ?? null);
-        setActiveLetter(raw.activeLetter ?? null);
-        setSortByField(raw.sortByField || 'name');
-        setSortDir(raw.sortDir || 'asc');
-        setPage(raw.page || 1);
-        setPageSize(raw.pageSize || DEFAULT_PAGE_SIZE);
-      })
-      .catch(() => {
-        // 没有 settings 时使用默认值
-      })
-      .finally(() => setSettingsReady(true));
+    const stored = readStoredSettings(libId);
+    if (stored) {
+      setActiveTag(stored.activeTag ?? null);
+      setActiveAuthor(stored.activeAuthor ?? null);
+      setActiveStatus(stored.activeStatus ?? null);
+      setActiveLetter(stored.activeLetter ?? null);
+      setSortByField(stored.sortByField || 'name');
+      setSortDir(stored.sortDir || 'asc');
+      setPage(stored.page || 1);
+      setPageSize(stored.pageSize || DEFAULT_PAGE_SIZE);
+    }
+    setSettingsReady(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libId]);
 
@@ -131,9 +148,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     if (signature === lastWrittenSettings.current) return;
     lastWrittenSettings.current = signature;
     const timer = window.setTimeout(() => {
-      axios.put(`/api/libraries/${libId}/settings/`, payload).catch(() => {
-        // 持久化失败不影响 UI；丢弃即可
-      });
+      writeStoredSettings(libId, payload);
     }, 400);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps

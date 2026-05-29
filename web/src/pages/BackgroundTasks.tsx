@@ -77,18 +77,10 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const fetchTasks = useCallback(async () => {
     setLoadingTasks(true);
     try {
-      const requests = taskStatusFilter === 'ALL'
-        ? [
-          axios.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams('running').toString()}`),
-          axios.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams('paused').toString()}`),
-          axios.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams('cancelling').toString()}`),
-          axios.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`),
-        ]
-        : [axios.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`)];
-      const responses = await Promise.all(requests);
+      const res = await axios.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`);
+      const items = Array.isArray(res.data) ? res.data : [];
       const seen = new Set<string>();
-      const merged = responses.flatMap((res) => (Array.isArray(res.data) ? res.data : []));
-      setTasks(merged.filter((task) => {
+      setTasks(items.filter((task) => {
         if (seen.has(task.key)) return false;
         seen.add(task.key);
         return true;
@@ -99,7 +91,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     } finally {
       setLoadingTasks(false);
     }
-  }, [buildTaskParams, showToast, t, taskStatusFilter]);
+  }, [buildTaskParams, showToast, t]);
 
   useEffect(() => {
     fetchTasks();
@@ -107,38 +99,36 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   }, [fetchStorageIO, fetchTasks]);
 
   useEffect(() => {
-    const eventSource = new EventSource('/api/events');
-    eventSource.onmessage = (event) => {
-      const data = String(event.data || '');
-      if (!data.startsWith('task_progress:')) return;
-      try {
-        const task = JSON.parse(data.slice('task_progress:'.length)) as TaskStatus;
-        setTasks((prev) => {
-          const matchesStatus = taskFilters.status === 'ALL' || task.status === taskFilters.status;
-          const matchesScope = taskFilters.scope === 'ALL' || task.scope === taskFilters.scope;
-          const matchesType = taskFilters.type === 'ALL' || task.type === taskFilters.type;
-          const matchesScopeId = !taskFilters.scopeId.trim() || String(task.scope_id || '') === taskFilters.scopeId.trim();
-          const q = taskFilters.query.trim().toLowerCase();
-          const matchesQuery = !q || [
-            task.key,
-            task.type,
-            task.scope,
-            task.scope_name,
-            task.message,
-            task.error,
-            task.current_item,
-          ].some((value) => String(value || '').toLowerCase().includes(q));
-          const nextWithoutTask = prev.filter((item) => item.key !== task.key);
-          if (!matchesStatus || !matchesScope || !matchesType || !matchesScopeId || !matchesQuery) {
-            return nextWithoutTask;
-          }
-          return [task, ...nextWithoutTask].slice(0, 50);
-        });
-      } catch (error) {
-        console.error(error);
-      }
+    // 复用 Layout 中已挂载的全局 EventSource：它接收 task_progress 后会
+    // dispatch 'manga-manager:task-progress' 自定义事件。这里只监听自定义事件，
+    // 避免对同一 origin 再开第二条 SSE 长连接占用浏览器并发额度。
+    const handler = (event: Event) => {
+      const task = (event as CustomEvent<TaskStatus>).detail;
+      if (!task || typeof task !== 'object') return;
+      setTasks((prev) => {
+        const matchesStatus = taskFilters.status === 'ALL' || task.status === taskFilters.status;
+        const matchesScope = taskFilters.scope === 'ALL' || task.scope === taskFilters.scope;
+        const matchesType = taskFilters.type === 'ALL' || task.type === taskFilters.type;
+        const matchesScopeId = !taskFilters.scopeId.trim() || String(task.scope_id || '') === taskFilters.scopeId.trim();
+        const q = taskFilters.query.trim().toLowerCase();
+        const matchesQuery = !q || [
+          task.key,
+          task.type,
+          task.scope,
+          task.scope_name,
+          task.message,
+          task.error,
+          task.current_item,
+        ].some((value) => String(value || '').toLowerCase().includes(q));
+        const nextWithoutTask = prev.filter((item) => item.key !== task.key);
+        if (!matchesStatus || !matchesScope || !matchesType || !matchesScopeId || !matchesQuery) {
+          return nextWithoutTask;
+        }
+        return [task, ...nextWithoutTask].slice(0, 50);
+      });
     };
-    return () => eventSource.close();
+    window.addEventListener('manga-manager:task-progress', handler as EventListener);
+    return () => window.removeEventListener('manga-manager:task-progress', handler as EventListener);
   }, [taskFilters]);
 
   useEffect(() => {

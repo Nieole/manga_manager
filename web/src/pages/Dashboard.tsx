@@ -35,7 +35,7 @@ interface RecentReadItem {
     book_id: number;
     book_name: string;
     book_title: { String: string; Valid: boolean };
-    cover_path: { String: string; Valid: boolean };
+    cover_path: string;
     last_read_page: { Int64: number; Valid: boolean };
     last_read_at: { Time: string; Valid: boolean };
     page_count: number;
@@ -218,7 +218,7 @@ export default function Dashboard() {
                         {recentReads.map((item) => {
                             const progress = item.page_count > 0 && item.last_read_page?.Valid
                                 ? Math.round((item.last_read_page.Int64 / item.page_count) * 100) : 0;
-                            const coverUrl = item.cover_path?.Valid ? `/api/thumbnails/${item.cover_path.String}` : '';
+                            const coverUrl = item.cover_path ? `/api/thumbnails/${item.cover_path}` : '';
 
                             return (
                                 <div

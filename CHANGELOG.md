@@ -4,6 +4,55 @@
 
 ---
 
+### 📌 增量记录 — 2026-05-29（数据层 sqlc 全面迁移 + SSE Broker 加固 + Windows 构建加固）
+
+#### 后端：raw-SQL → sqlc 全面迁移
+- **Store / Health / 外部库 / 集合 / 智能筛选** 路径上的原生 `db.QueryContext` / `db.ExecContext` 全部下沉到 sqlc 生成的 `*database.Queries` 预编译入口：
+  - `internal/database/store.go`：`UpsertTask` 改写为 `Queries.UpsertTaskRecord` + `UpsertTaskRecordParams`（`sql.NullInt64` / `sql.NullTime` 显式装箱）；`GetReadingListItemProgress` 改用 `GetReadingListItemProgressByList`；`refreshSeriesStatsForBook` / `DeleteBook` / `DeleteBookByPath` 通过 `GetSeriesIDByBookID` / `GetSeriesIDByBookPath` 查 series id；`GetDashboardStats` 改写为 `GetDashboardCoreStats` + `ListLibrarySizes`，对 `TotalPages` 做 `int64 / float64` 类型分支处理。
+  - `internal/database/health.go`：`healthIssueDefinitions` 由 SQL 字符串瘦身为 `{Type, Severity}` 元组；`countHealthIssue` / `listHealthIssues` 在内部按 `issueType` 分派到 `CountHealthEmptyPages` / `CountHealthMissingCover` / `CountHealthMissingMetadata` / `CountHealthDuplicateFileHash` / `CountHealthMissingQuickHash` / `CountHealthDuplicateQuickHash` / `CountHealthUnmatchedKOReader` 等 sqlc 方法；新增 `interfaceToInt64` / `interfaceToString` / `nullToInt64Ptr` / `makeHealthIssue` 辅助；`attachLastTaskKeys` 调用 `GetLastTaskKeyForScope` + `GetLastTaskKeyForScopeParams`。
+  - `internal/database/external_queries.go`：`ListExternalLibraryBooksByLibrary` 改用 `Queries.ListExternalLibraryBooks` + 行映射。
+  - `internal/database/smart_collection.go`（**新增**，+199 行）：智能合集动态成员查询从 `collection_view_controller` 下沉到 store 层，对外暴露 `SearchSmartCollectionSeries(ctx, filter, limit, offset) ([]SearchSeriesPagedRow, int, error)`。
+  - `internal/api/collection_controller.go`：`listCollections` 改用 `ListCollectionsWithSeriesCount`；`createCollection` / `deleteCollection` / `updateCollection` 改用 `CreateSimpleCollection` / `DeleteCollection` / `UpdateCollectionDetails` + 对应 Params。
+  - `internal/api/collection_view_controller.go`：`loadCollectionViews` 删除约 70 行 collections + smart_filters 的内联 UNION ALL，改用 `ListCollectionViews`；`loadStaticCollectionSeries` 改用 `GetStaticCollectionView`。
+  - `internal/api/smart_filter_controller.go`：`listSmartFilters` / `upsertSmartFilter` / `updateSmartFilter` 改用 `ListSmartFiltersByLibrary` / `UpsertSmartFilter` 与 `database.UpsertSmartFilterParams`，含完整字段（LibraryID、Name、Active*、Min/Max Rating/Progress、AddedWithinDays、Sort 与 PageSize），通过 `nullStringFromPointer` / `nullFloatFromPointer` / `nullIntFromPointer` 装箱。
+  - `internal/scanner/scanner.go::runCoverJob`：去掉 `*database.SqlStore` 类型断言，改用 `store.SetBookCoverIfMissing(ctx, SetBookCoverIfMissingParams{CoverPath, ID})`。
+  - `internal/koreader/service.go::applyBookProgress`：`store.LogReadingActivity` 改为 params struct 写法。
+  - `internal/api/controller.go`：`getActivityHeatmap` / `getRecentReadAll` / `getRecommendations` 全部走 store 方法（前者拿 `NullFloat64` 后映射 `[]ActivityDay`，后者直接返回 sqlc Row 切片）；`recoverInterruptedTasks` 改用 `MarkInterruptedTasksParams{Message, Error}`；`clearAllCoverPaths` 拆为 `ClearAllBookCoverPaths` + `ClearAllSeriesStatsCoverPaths`；`DeleteReadingBookmark` 调用点改为 `(affected int64, err)` 返回，`affected == 0` 回 404。
+- **sqlc 重新生成**：`internal/database/querier.go` +54 行、`internal/database/query.sql.go` +2063 行、`sql/query.sql` +594 行；`internal/database/db.go` +556 行（`Prepare` 注册了 `clearAllBookCoverPaths` / `clearAllSeriesStatsCoverPaths` / `countHealth*` / `getDashboardCoreStats` / `getLastTaskKeyForScope` / `getReadingListItemProgressByList` / `getSeriesIDByBookID` / `getSeriesIDByBookPath` 等大量新预编译语句）。
+
+#### Store 接口契约调整
+- **移除**：`GetActivityHeatmap`（重命名后回到 sqlc 生成版本）、旧签名 `LogReadingActivity(bookID, page)`、`ListReadingBookmarks` / `UpsertReadingBookmark` / `DeleteReadingBookmark`（旧签名）、`GetRecentReadAll`、`GetRecommendations`、`MarkInterruptedTasks`（旧签名）。所有移除项现统一通过 `*Queries` 暴露。
+- **签名变更**：`LogReadingActivity` 改为 `LogReadingActivity(ctx, LogReadingActivityParams{BookID, PagesRead})`；`DeleteReadingBookmark` 改为 `(affected int64, err error)`，便于上层根据是否真正删除回 404；`MarkInterruptedTasks` 接受 `MarkInterruptedTasksParams{Message, Error}` 以便统一中断原因。
+- **新增**：`SearchSmartCollectionSeries`（智能合集动态成员）。
+- **测试同步**：`internal/api/controller_test.go` 中假 store `countingStore.LogReadingActivity` 与 `TestGetActivityHeatmapReturnsReadingData` 调用点一并切到新签名。
+
+#### SSE Broker 加固
+- `internal/api/controller.go::startBroker`：客户端 channel 缓冲从 16 提升到 64；写入时改为非阻塞 `select` + `default`，触发 backpressure 时主动断开慢客户端并落 `"SSE client backpressure, dropping client connection"` 日志。
+- `PublishEvent`：同样改为非阻塞 `select default`，事件队列拥塞时丢弃并 warn，不再卡住生产线程。
+- `sseHandler`：连接建立时下发 `retry: 5000\n\n` 给浏览器一致的重连节奏；新增 25s 心跳 ticker 输出 `: ping\n\n` 防止反代/浏览器空闲断流；`request.Context().Done()` 与 channel 关闭都会干净退出。
+- 新增 `eventPrefix(event string) string` 辅助，避免日志被超长事件 payload 撑爆。
+
+#### Windows 跨机构建加固（`build.ps1`）
+- 显式锁定 `$env:GOOS = "windows"` / `$env:GOARCH = "amd64"`，避免被会话级环境变量污染产出非 Windows 二进制（这正是上一台机器跑出来"拒绝访问"的可疑根因）。
+- `try { … } finally { … }` 中保存并还原 `$prevGOOS` / `$prevGOARCH`，不留副作用到调用方 shell。
+- 增加 `-trimpath`；`go build` 后显式校验 `$LASTEXITCODE` 非 0 则 `throw`，防止"看起来成功但产物为空"。
+- 注释明确：项目通过 `chai2010/webp` 依赖 CGO，因此沿用环境默认的 `CGO_ENABLED`（Windows 本机构建一般为 1），不强制关闭。
+
+#### 前端连带改动
+- `web/src/pages/BackgroundTasks.tsx`：取消自建 `new EventSource('/api/events')`，改为监听 Layout 中已挂载的全局 `manga-manager:task-progress` 自定义事件（同源浏览器 SSE 并发上限只剩个位数，原本任务中心 / 阅读器 / Layout 三处各开一条会快速触顶），同时把 `fetchTasks` 的"ALL 时并发拉 running/paused/cancelling/全量"四请求合并为单次请求由后端统一返回。
+- `web/src/pages/library/hooks/useLibraryFilters.ts`：原本切库即 `GET /api/libraries/{id}/settings/` + 防抖 `PUT` 回写，改为纯 `localStorage` 持久化（key = `library:${libId}:settings`），避免每次切库阻塞 UI 等待 settings 接口；服务端同名接口仍可独立保留供后续多端同步。
+- `web/src/pages/library/hooks/useSmartFilters.ts`：增加 `lib_smart_filters_cache_${libId}` 本地缓存 + `loadedLibIdRef`，挂载时先从缓存即时填充；新增 `ensureLoaded()`，仅在用户真正展开"智能筛选视图"面板时才发 `GET /api/libraries/{id}/smart-filters/` 并把结果回写缓存；保存 / 删除走乐观更新 + 回滚 + 同步缓存。
+- `web/src/pages/library/LibrarySavedViews.tsx` & `library/index.tsx`：`LibrarySavedViews` 新增 `onExpand` 回调并在首次展开时调用，由 `index.tsx` 接到 `smartFilters.ensureLoaded`，实现"展开才加载"。
+- `web/src/pages/book-reader/ReaderProgressTray.tsx` & `BookReader.tsx`：底部进度托盘新增 `readDirection` prop；当阅读方向为 `rtl` 时，左右两侧的"上一本 / 下一本"按钮整组镜像（左侧渲染 next、右侧渲染 prev，并连同 SkipBack/SkipForward 图标与 tooltip 文案一起翻转），与日漫从右往左的翻页直觉一致。
+- `web/src/pages/Dashboard.tsx`：`RecentReadItem.cover_path` 由 `{String, Valid}` 调整为裸 `string`，跟随后端 `GetRecentReadAllRow` 的新映射；`coverUrl` 渲染条件同步简化。
+
+#### 验证 & 收尾
+- 改动跨 26 个文件、约 +4210 / -1402 行；本批 staged 后会进入单次提交。
+- 数据层 sqlc 迁移后，旧的 `*database.SqlStore` 类型断言在调用方已无残留，全部走 `Store` 接口；`internal/database/db.go` 上游加载完整 prepared statement set，单测与现有 `controller_test.go` 已同步。
+- 暂未运行 `go build`；`build.ps1` 加固后会自然在下次构建时验证 GOOS/GOARCH 与产物。
+
+---
+
 ### 📌 增量记录 — 2026-05-29（阅读器阶段 3 重构 · 沉浸式 + 续读上下文）
 
 #### 阅读器（阶段 3 重构）

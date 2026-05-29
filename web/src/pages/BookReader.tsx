@@ -440,6 +440,7 @@ export default function BookReader() {
                     tray={
                         <ReaderProgressTray
                             t={t}
+                            readDirection={readDirection}
                             currentPageIndex={currentPageIndex}
                             pageCount={activePages.length}
                             sliderValue={sliderValue}

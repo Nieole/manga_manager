@@ -272,6 +272,7 @@ export default function LibraryPage() {
         }
         onApply={smartFilters.applySmartFilter}
         onDelete={smartFilters.deleteSmartFilter}
+        onExpand={smartFilters.ensureLoaded}
       />
 
       <LibraryFilterBar

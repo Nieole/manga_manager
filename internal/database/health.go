@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"strings"
 )
 
@@ -41,185 +40,19 @@ type HealthReport struct {
 	Limit   int                  `json:"limit"`
 }
 
-var healthIssueDefinitions = []struct {
+type healthDef struct {
 	Type     string
 	Severity string
-	CountSQL string
-	ListSQL  string
-}{
-	{
-		Type:     "empty_pages",
-		Severity: "error",
-		CountSQL: `
-			SELECT COUNT(*)
-			FROM books b
-			WHERE (? = 0 OR b.library_id = ?) AND b.page_count <= 0
-		`,
-		ListSQL: `
-			SELECT l.id, l.name, s.id, s.name, b.id, b.name, b.path, 'page_count <= 0', 1
-			FROM books b
-			JOIN series s ON s.id = b.series_id
-			JOIN libraries l ON l.id = b.library_id
-			WHERE (? = 0 OR b.library_id = ?) AND b.page_count <= 0
-			ORDER BY b.updated_at DESC, b.id DESC
-			LIMIT ?
-		`,
-	},
-	{
-		Type:     "missing_cover",
-		Severity: "warn",
-		CountSQL: `
-			SELECT COUNT(*)
-			FROM books b
-			WHERE (? = 0 OR b.library_id = ?) AND (b.cover_path IS NULL OR b.cover_path = '')
-		`,
-		ListSQL: `
-			SELECT l.id, l.name, s.id, s.name, b.id, b.name, b.path, 'cover_path is empty', 1
-			FROM books b
-			JOIN series s ON s.id = b.series_id
-			JOIN libraries l ON l.id = b.library_id
-			WHERE (? = 0 OR b.library_id = ?) AND (b.cover_path IS NULL OR b.cover_path = '')
-			ORDER BY b.updated_at DESC, b.id DESC
-			LIMIT ?
-		`,
-	},
-	{
-		Type:     "missing_metadata",
-		Severity: "warn",
-		CountSQL: `
-			SELECT COUNT(*)
-			FROM series s
-			WHERE (? = 0 OR s.library_id = ?)
-			  AND (
-				s.title IS NULL OR s.title = ''
-				OR s.summary IS NULL OR s.summary = ''
-				OR (
-					NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
-					AND NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
-				)
-			  )
-		`,
-		ListSQL: `
-			SELECT l.id, l.name, s.id, s.name, NULL, '', s.path,
-				CASE
-					WHEN s.title IS NULL OR s.title = '' THEN 'missing title'
-					WHEN s.summary IS NULL OR s.summary = '' THEN 'missing summary'
-					ELSE 'missing tags and authors'
-				END,
-				1
-			FROM series s
-			JOIN libraries l ON l.id = s.library_id
-			WHERE (? = 0 OR s.library_id = ?)
-			  AND (
-				s.title IS NULL OR s.title = ''
-				OR s.summary IS NULL OR s.summary = ''
-				OR (
-					NOT EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = s.id)
-					AND NOT EXISTS (SELECT 1 FROM series_authors sa WHERE sa.series_id = s.id)
-				)
-			  )
-			ORDER BY s.updated_at DESC, s.id DESC
-			LIMIT ?
-		`,
-	},
-	{
-		Type:     "duplicate_file_hash",
-		Severity: "warn",
-		CountSQL: `
-			SELECT COALESCE(SUM(cnt), 0)
-			FROM (
-				SELECT COUNT(*) AS cnt
-				FROM books b
-				WHERE (? = 0 OR b.library_id = ?) AND b.file_hash IS NOT NULL AND b.file_hash != ''
-				GROUP BY b.file_hash
-				HAVING COUNT(*) > 1
-			)
-		`,
-		ListSQL: `
-			WITH duplicates AS (
-				SELECT b.file_hash, COUNT(*) AS cnt
-				FROM books b
-				WHERE (? = 0 OR b.library_id = ?) AND b.file_hash IS NOT NULL AND b.file_hash != ''
-				GROUP BY b.file_hash
-				HAVING COUNT(*) > 1
-			)
-			SELECT l.id, l.name, s.id, s.name, b.id, b.name, b.path, 'file_hash=' || b.file_hash, d.cnt
-			FROM duplicates d
-			JOIN books b ON b.file_hash = d.file_hash
-			JOIN series s ON s.id = b.series_id
-			JOIN libraries l ON l.id = b.library_id
-			WHERE (? = 0 OR b.library_id = ?)
-			ORDER BY d.cnt DESC, b.file_hash, b.id
-			LIMIT ?
-		`,
-	},
-	{
-		Type:     "missing_quick_hash",
-		Severity: "warn",
-		CountSQL: `
-			SELECT COUNT(*)
-			FROM books b
-			WHERE (? = 0 OR b.library_id = ?)
-			  AND COALESCE(b.quick_hash, '') = ''
-		`,
-		ListSQL: `
-			SELECT l.id, l.name, s.id, s.name, b.id, b.name, b.path, 'quick_hash is empty', 1
-			FROM books b
-			JOIN series s ON s.id = b.series_id
-			JOIN libraries l ON l.id = b.library_id
-			WHERE (? = 0 OR b.library_id = ?)
-			  AND COALESCE(b.quick_hash, '') = ''
-			ORDER BY b.updated_at DESC, b.id DESC
-			LIMIT ?
-		`,
-	},
-	{
-		Type:     "duplicate_quick_hash",
-		Severity: "warn",
-		CountSQL: `
-			SELECT COALESCE(SUM(cnt), 0)
-			FROM (
-				SELECT COUNT(*) AS cnt
-				FROM books b
-				WHERE (? = 0 OR b.library_id = ?) AND b.quick_hash IS NOT NULL AND b.quick_hash != ''
-				GROUP BY b.quick_hash
-				HAVING COUNT(*) > 1
-			)
-		`,
-		ListSQL: `
-			WITH duplicates AS (
-				SELECT b.quick_hash, COUNT(*) AS cnt
-				FROM books b
-				WHERE (? = 0 OR b.library_id = ?) AND b.quick_hash IS NOT NULL AND b.quick_hash != ''
-				GROUP BY b.quick_hash
-				HAVING COUNT(*) > 1
-			)
-			SELECT l.id, l.name, s.id, s.name, b.id, b.name, b.path, 'quick_hash=' || b.quick_hash, d.cnt
-			FROM duplicates d
-			JOIN books b ON b.quick_hash = d.quick_hash
-			JOIN series s ON s.id = b.series_id
-			JOIN libraries l ON l.id = b.library_id
-			WHERE (? = 0 OR b.library_id = ?)
-			ORDER BY d.cnt DESC, b.quick_hash, b.id
-			LIMIT ?
-		`,
-	},
-	{
-		Type:     "unmatched_koreader",
-		Severity: "info",
-		CountSQL: `
-			SELECT COUNT(*)
-			FROM koreader_progress kp
-			WHERE kp.book_id IS NULL
-		`,
-		ListSQL: `
-			SELECT 0, '', NULL, '', NULL, '', kp.document, kp.username || ' / ' || kp.device, 1
-			FROM koreader_progress kp
-			WHERE kp.book_id IS NULL
-			ORDER BY kp.updated_at DESC, kp.id DESC
-			LIMIT ?
-		`,
-	},
+}
+
+var healthIssueDefinitions = []healthDef{
+	{Type: "empty_pages", Severity: "error"},
+	{Type: "missing_cover", Severity: "warn"},
+	{Type: "missing_metadata", Severity: "warn"},
+	{Type: "duplicate_file_hash", Severity: "warn"},
+	{Type: "missing_quick_hash", Severity: "warn"},
+	{Type: "duplicate_quick_hash", Severity: "warn"},
+	{Type: "unmatched_koreader", Severity: "info"},
 }
 
 func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilters) (HealthReport, error) {
@@ -243,7 +76,7 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 		if filters.Type != "" && filters.Type != def.Type {
 			continue
 		}
-		count, err := s.countHealthIssue(ctx, def.Type, def.CountSQL, filters.LibraryID)
+		count, err := s.countHealthIssue(ctx, def.Type, filters.LibraryID)
 		if err != nil {
 			return report, err
 		}
@@ -255,7 +88,7 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 		if count == 0 {
 			continue
 		}
-		items, err := s.listHealthIssues(ctx, def.Type, def.Severity, def.ListSQL, filters.LibraryID, limit)
+		items, err := s.listHealthIssues(ctx, def.Type, def.Severity, filters.LibraryID, limit)
 		if err != nil {
 			return report, err
 		}
@@ -291,11 +124,10 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 	}
 	latest := make(map[scopeKey]string, len(wanted))
 	for key := range wanted {
-		var taskKey string
-		err := s.db.QueryRowContext(ctx, `
-			SELECT key FROM tasks WHERE scope = ? AND scope_id = ?
-			ORDER BY updated_at DESC LIMIT 1
-		`, key.scope, key.id).Scan(&taskKey)
+		taskKey, err := s.Queries.GetLastTaskKeyForScope(ctx, GetLastTaskKeyForScopeParams{
+			Scope:   key.scope,
+			ScopeID: sql.NullInt64{Int64: key.id, Valid: true},
+		})
 		if err == sql.ErrNoRows {
 			continue
 		}
@@ -321,64 +153,169 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 	return nil
 }
 
-func (s *SqlStore) countHealthIssue(ctx context.Context, issueType, query string, libraryID int64) (int64, error) {
-	var count int64
-	var err error
-	if issueType == "unmatched_koreader" {
-		err = s.db.QueryRowContext(ctx, query).Scan(&count)
-	} else {
-		err = s.db.QueryRowContext(ctx, query, libraryID, libraryID).Scan(&count)
+func (s *SqlStore) countHealthIssue(ctx context.Context, issueType string, libraryID int64) (int64, error) {
+	switch issueType {
+	case "empty_pages":
+		return s.Queries.CountHealthEmptyPages(ctx, libraryID)
+	case "missing_cover":
+		return s.Queries.CountHealthMissingCover(ctx, libraryID)
+	case "missing_metadata":
+		return s.Queries.CountHealthMissingMetadata(ctx, libraryID)
+	case "duplicate_file_hash":
+		v, err := s.Queries.CountHealthDuplicateFileHash(ctx, libraryID)
+		if err != nil {
+			return 0, err
+		}
+		return interfaceToInt64(v), nil
+	case "missing_quick_hash":
+		return s.Queries.CountHealthMissingQuickHash(ctx, libraryID)
+	case "duplicate_quick_hash":
+		v, err := s.Queries.CountHealthDuplicateQuickHash(ctx, libraryID)
+		if err != nil {
+			return 0, err
+		}
+		return interfaceToInt64(v), nil
+	case "unmatched_koreader":
+		return s.Queries.CountHealthUnmatchedKOReader(ctx)
 	}
-	return count, err
+	return 0, nil
 }
 
-func (s *SqlStore) listHealthIssues(ctx context.Context, issueType, severity, query string, libraryID int64, limit int) ([]HealthIssue, error) {
-	var rows *sql.Rows
-	var err error
-	switch issueType {
-	case "unmatched_koreader":
-		rows, err = s.db.QueryContext(ctx, query, limit)
-	case "duplicate_file_hash", "duplicate_quick_hash":
-		rows, err = s.db.QueryContext(ctx, query, libraryID, libraryID, libraryID, libraryID, limit)
-	default:
-		rows, err = s.db.QueryContext(ctx, query, libraryID, libraryID, limit)
+func interfaceToInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
 	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	return 0
+}
 
+func interfaceToString(v interface{}) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case []byte:
+		return string(s)
+	}
+	return ""
+}
+
+func nullToInt64Ptr(v interface{}) *int64 {
+	if v == nil {
+		return nil
+	}
+	if n := interfaceToInt64(v); n != 0 {
+		return &n
+	}
+	return nil
+}
+
+func (s *SqlStore) listHealthIssues(ctx context.Context, issueType, severity string, libraryID int64, limit int) ([]HealthIssue, error) {
 	items := make([]HealthIssue, 0)
-	for rows.Next() {
-		var item HealthIssue
-		item.Type = issueType
-		item.Severity = severity
-		var seriesID sql.NullInt64
-		var bookID sql.NullInt64
-		if err := rows.Scan(
-			&item.LibraryID,
-			&item.LibraryName,
-			&seriesID,
-			&item.SeriesName,
-			&bookID,
-			&item.BookName,
-			&item.Path,
-			&item.Detail,
-			&item.Count,
-		); err != nil {
+	switch issueType {
+	case "empty_pages":
+		rows, err := s.Queries.ListHealthEmptyPages(ctx, ListHealthEmptyPagesParams{LibraryID: libraryID, LimitCount: int64(limit)})
+		if err != nil {
 			return nil, err
 		}
-		if seriesID.Valid {
-			item.SeriesID = &seriesID.Int64
+		for _, r := range rows {
+			items = append(items, makeHealthIssue(issueType, severity, r.LibraryID, r.LibraryName, r.SeriesID, r.SeriesName, r.BookID, r.BookName, r.Path, r.Detail, r.IssueCount))
 		}
-		if bookID.Valid {
-			item.BookID = &bookID.Int64
+	case "missing_cover":
+		rows, err := s.Queries.ListHealthMissingCover(ctx, ListHealthMissingCoverParams{LibraryID: libraryID, LimitCount: int64(limit)})
+		if err != nil {
+			return nil, err
 		}
-		item.Detail = strings.TrimSpace(item.Detail)
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scan health issues: %w", err)
+		for _, r := range rows {
+			items = append(items, makeHealthIssue(issueType, severity, r.LibraryID, r.LibraryName, r.SeriesID, r.SeriesName, r.BookID, r.BookName, r.Path, r.Detail, r.IssueCount))
+		}
+	case "missing_metadata":
+		rows, err := s.Queries.ListHealthMissingMetadata(ctx, ListHealthMissingMetadataParams{LibraryID: libraryID, LimitCount: int64(limit)})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			seriesID := r.SeriesID
+			items = append(items, HealthIssue{
+				Type:        issueType,
+				Severity:    severity,
+				LibraryID:   r.LibraryID,
+				LibraryName: r.LibraryName,
+				SeriesID:    &seriesID,
+				SeriesName:  r.SeriesName,
+				Path:        r.Path,
+				Detail:      strings.TrimSpace(r.Detail),
+				Count:       r.IssueCount,
+			})
+		}
+	case "duplicate_file_hash":
+		rows, err := s.Queries.ListHealthDuplicateFileHash(ctx, ListHealthDuplicateFileHashParams{LibraryID: libraryID, LimitCount: int64(limit)})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			items = append(items, makeHealthIssue(issueType, severity, r.LibraryID, r.LibraryName, r.SeriesID, r.SeriesName, r.BookID, r.BookName, r.Path, interfaceToString(r.Detail), r.IssueCount))
+		}
+	case "missing_quick_hash":
+		rows, err := s.Queries.ListHealthMissingQuickHash(ctx, ListHealthMissingQuickHashParams{LibraryID: libraryID, LimitCount: int64(limit)})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			items = append(items, makeHealthIssue(issueType, severity, r.LibraryID, r.LibraryName, r.SeriesID, r.SeriesName, r.BookID, r.BookName, r.Path, r.Detail, r.IssueCount))
+		}
+	case "duplicate_quick_hash":
+		rows, err := s.Queries.ListHealthDuplicateQuickHash(ctx, ListHealthDuplicateQuickHashParams{LibraryID: libraryID, LimitCount: int64(limit)})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			items = append(items, makeHealthIssue(issueType, severity, r.LibraryID, r.LibraryName, r.SeriesID, r.SeriesName, r.BookID, r.BookName, r.Path, interfaceToString(r.Detail), r.IssueCount))
+		}
+	case "unmatched_koreader":
+		rows, err := s.Queries.ListHealthUnmatchedKOReader(ctx, int64(limit))
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			items = append(items, HealthIssue{
+				Type:        issueType,
+				Severity:    severity,
+				LibraryID:   r.LibraryID,
+				LibraryName: r.LibraryName,
+				SeriesID:    nullToInt64Ptr(r.SeriesID),
+				SeriesName:  r.SeriesName,
+				BookID:      nullToInt64Ptr(r.BookID),
+				BookName:    r.BookName,
+				Path:        r.Path,
+				Detail:      strings.TrimSpace(interfaceToString(r.Detail)),
+				Count:       r.IssueCount,
+			})
+		}
 	}
 	return items, nil
+}
+
+func makeHealthIssue(issueType, severity string, libraryID int64, libraryName string, seriesID int64, seriesName string, bookID int64, bookName, path, detail string, count int64) HealthIssue {
+	issue := HealthIssue{
+		Type:        issueType,
+		Severity:    severity,
+		LibraryID:   libraryID,
+		LibraryName: libraryName,
+		SeriesName:  seriesName,
+		BookName:    bookName,
+		Path:        path,
+		Detail:      strings.TrimSpace(detail),
+		Count:       count,
+	}
+	if seriesID != 0 {
+		issue.SeriesID = &seriesID
+	}
+	if bookID != 0 {
+		issue.BookID = &bookID
+	}
+	return issue
 }

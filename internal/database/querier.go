@@ -12,11 +12,21 @@ import (
 type Querier interface {
 	AddReadingListItem(ctx context.Context, arg AddReadingListItemParams) (ReadingListItem, error)
 	AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) error
+	ClearAllBookCoverPaths(ctx context.Context) error
+	ClearAllSeriesStatsCoverPaths(ctx context.Context) error
 	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 	ClearSeriesLinks(ctx context.Context, seriesID int64) error
 	ClearSeriesTags(ctx context.Context, seriesID int64) error
+	CollectionNameExists(ctx context.Context, name string) (int64, error)
 	CountAIGroupingReviews(ctx context.Context, arg CountAIGroupingReviewsParams) (int64, error)
 	CountAppliedAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error)
+	CountHealthDuplicateFileHash(ctx context.Context, libraryID interface{}) (interface{}, error)
+	CountHealthDuplicateQuickHash(ctx context.Context, libraryID interface{}) (interface{}, error)
+	CountHealthEmptyPages(ctx context.Context, libraryID interface{}) (int64, error)
+	CountHealthMissingCover(ctx context.Context, libraryID interface{}) (int64, error)
+	CountHealthMissingMetadata(ctx context.Context, libraryID interface{}) (int64, error)
+	CountHealthMissingQuickHash(ctx context.Context, libraryID interface{}) (int64, error)
+	CountHealthUnmatchedKOReader(ctx context.Context) (int64, error)
 	CountMihonSeries(ctx context.Context, arg CountMihonSeriesParams) (int64, error)
 	CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error)
 	CountPendingAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error)
@@ -32,33 +42,50 @@ type Querier interface {
 	CreateMetadataReviewField(ctx context.Context, arg CreateMetadataReviewFieldParams) (MetadataReviewField, error)
 	CreateReadingList(ctx context.Context, arg CreateReadingListParams) (ReadingList, error)
 	CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error)
+	CreateSeriesRelation(ctx context.Context, arg CreateSeriesRelationParams) error
+	CreateSimpleCollection(ctx context.Context, arg CreateSimpleCollectionParams) (int64, error)
 	DeleteBook(ctx context.Context, id int64) error
 	DeleteBookByPath(ctx context.Context, path string) error
+	DeleteCollection(ctx context.Context, id int64) error
 	DeleteLibrary(ctx context.Context, id int64) error
+	DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error)
 	DeleteReadingList(ctx context.Context, id int64) error
 	DeleteSeries(ctx context.Context, id int64) error
+	DeleteSeriesRelation(ctx context.Context, id int64) error
+	DeleteSmartFilter(ctx context.Context, id int64) (int64, error)
+	FindExistingSeriesRelation(ctx context.Context, arg FindExistingSeriesRelationParams) (int64, error)
 	GetAIGroupingReview(ctx context.Context, id int64) (AiGroupingReview, error)
 	GetAIGroupingReviewCollection(ctx context.Context, id int64) (AiGroupingReviewCollection, error)
+	GetActivityHeatmap(ctx context.Context, offsetClause interface{}) ([]GetActivityHeatmapRow, error)
 	GetAllAuthors(ctx context.Context) ([]Author, error)
 	GetAllTags(ctx context.Context) ([]Tag, error)
 	GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Author, error)
 	GetBook(ctx context.Context, id int64) (Book, error)
 	GetBookByPath(ctx context.Context, path string) (Book, error)
 	GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error)
+	GetDashboardCoreStats(ctx context.Context) (GetDashboardCoreStatsRow, error)
+	GetLastTaskKeyForScope(ctx context.Context, arg GetLastTaskKeyForScopeParams) (string, error)
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetMetadataReview(ctx context.Context, id int64) (MetadataReview, error)
 	GetMihonSeries(ctx context.Context, id int64) (GetMihonSeriesRow, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
 	GetReadingList(ctx context.Context, id int64) (ReadingList, error)
+	GetReadingListItemProgressByList(ctx context.Context, readingListID int64) ([]GetReadingListItemProgressByListRow, error)
+	GetRecentReadAll(ctx context.Context, limit int64) ([]GetRecentReadAllRow, error)
 	GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error)
+	GetRecommendations(ctx context.Context, limit int64) ([]GetRecommendationsRow, error)
 	GetReferencedBookCoverPaths(ctx context.Context) ([]sql.NullString, error)
 	GetReferencedSeriesCoverPaths(ctx context.Context) ([]string, error)
 	GetSeries(ctx context.Context, id int64) (Series, error)
 	GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error)
+	GetSeriesIDByBookID(ctx context.Context, id int64) (int64, error)
+	GetSeriesIDByBookPath(ctx context.Context, path string) (int64, error)
 	GetSeriesMetadataProvenance(ctx context.Context, seriesID int64) ([]SeriesMetadataProvenance, error)
 	GetSeriesNamesByIDs(ctx context.Context, ids []int64) ([]GetSeriesNamesByIDsRow, error)
 	GetSeriesWithoutCollection(ctx context.Context, libraryID int64) ([]GetSeriesWithoutCollectionRow, error)
+	GetSmartFilterByID(ctx context.Context, id int64) (SmartFilter, error)
+	GetStaticCollectionView(ctx context.Context, id int64) (GetStaticCollectionViewRow, error)
 	GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, error)
 	GetTopReadingTags(ctx context.Context, limit int64) ([]GetTopReadingTagsRow, error)
 	LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error
@@ -68,7 +95,20 @@ type Querier interface {
 	ListAIGroupingReviews(ctx context.Context, arg ListAIGroupingReviewsParams) ([]ListAIGroupingReviewsRow, error)
 	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)
+	ListCollectionSeries(ctx context.Context, collectionID int64) ([]ListCollectionSeriesRow, error)
+	ListCollectionViews(ctx context.Context) ([]ListCollectionViewsRow, error)
+	ListCollectionsWithSeriesCount(ctx context.Context) ([]ListCollectionsWithSeriesCountRow, error)
+	ListExternalLibraryBooks(ctx context.Context, libraryID int64) ([]ListExternalLibraryBooksRow, error)
+	ListForwardSeriesRelations(ctx context.Context, sourceSeriesID int64) ([]ListForwardSeriesRelationsRow, error)
+	ListHealthDuplicateFileHash(ctx context.Context, arg ListHealthDuplicateFileHashParams) ([]ListHealthDuplicateFileHashRow, error)
+	ListHealthDuplicateQuickHash(ctx context.Context, arg ListHealthDuplicateQuickHashParams) ([]ListHealthDuplicateQuickHashRow, error)
+	ListHealthEmptyPages(ctx context.Context, arg ListHealthEmptyPagesParams) ([]ListHealthEmptyPagesRow, error)
+	ListHealthMissingCover(ctx context.Context, arg ListHealthMissingCoverParams) ([]ListHealthMissingCoverRow, error)
+	ListHealthMissingMetadata(ctx context.Context, arg ListHealthMissingMetadataParams) ([]ListHealthMissingMetadataRow, error)
+	ListHealthMissingQuickHash(ctx context.Context, arg ListHealthMissingQuickHashParams) ([]ListHealthMissingQuickHashRow, error)
+	ListHealthUnmatchedKOReader(ctx context.Context, limit int64) ([]ListHealthUnmatchedKOReaderRow, error)
 	ListLibraries(ctx context.Context) ([]Library, error)
+	ListLibrarySizes(ctx context.Context) ([]ListLibrarySizesRow, error)
 	ListMetadataReviewFields(ctx context.Context, reviewID int64) ([]MetadataReviewField, error)
 	ListMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error)
 	ListMihonSeries(ctx context.Context, arg ListMihonSeriesParams) ([]ListMihonSeriesRow, error)
@@ -76,22 +116,32 @@ type Querier interface {
 	ListMihonSeriesByUpdated(ctx context.Context, arg ListMihonSeriesByUpdatedParams) ([]ListMihonSeriesByUpdatedRow, error)
 	ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error)
 	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error)
+	ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error)
 	ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error)
 	ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error)
 	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)
 	ListRecentAddedSeries(ctx context.Context, arg ListRecentAddedSeriesParams) ([]ListRecentAddedSeriesRow, error)
+	ListReverseSeriesRelations(ctx context.Context, targetSeriesID int64) ([]ListReverseSeriesRelationsRow, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
 	ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error)
+	ListSmartFiltersByLibrary(ctx context.Context, libraryID int64) ([]SmartFilter, error)
+	ListStaticCollectionSeriesPaged(ctx context.Context, arg ListStaticCollectionSeriesPagedParams) ([]ListStaticCollectionSeriesPagedRow, error)
+	LogReadingActivity(ctx context.Context, arg LogReadingActivityParams) error
 	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) error
 	MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error
 	MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error
+	MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error)
 	RefreshSeriesStats(ctx context.Context, id int64) error
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
+	RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) error
 	SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error)
+	SeriesExistsByID(ctx context.Context, id int64) (int64, error)
+	SetBookCoverIfMissing(ctx context.Context, arg SetBookCoverIfMissingParams) (int64, error)
 	TouchCollection(ctx context.Context, id int64) error
 	UpdateAIGroupingReviewCollection(ctx context.Context, arg UpdateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error)
 	UpdateAIGroupingReviewStatus(ctx context.Context, arg UpdateAIGroupingReviewStatusParams) (AiGroupingReview, error)
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
+	UpdateCollectionDetails(ctx context.Context, arg UpdateCollectionDetailsParams) error
 	UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error)
 	UpdateMetadataReviewStatus(ctx context.Context, arg UpdateMetadataReviewStatusParams) (MetadataReview, error)
 	UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error)
@@ -100,11 +150,15 @@ type Querier interface {
 	UpdateSeriesInitial(ctx context.Context, arg UpdateSeriesInitialParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error
+	UpdateSmartFilter(ctx context.Context, arg UpdateSmartFilterParams) (SmartFilter, error)
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
 	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error)
+	UpsertReadingBookmark(ctx context.Context, arg UpsertReadingBookmarkParams) (ReadingBookmark, error)
 	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error)
 	UpsertSeriesMetadataProvenance(ctx context.Context, arg UpsertSeriesMetadataProvenanceParams) (SeriesMetadataProvenance, error)
+	UpsertSmartFilter(ctx context.Context, arg UpsertSmartFilterParams) (SmartFilter, error)
 	UpsertTag(ctx context.Context, name string) (Tag, error)
+	UpsertTaskRecord(ctx context.Context, arg UpsertTaskRecordParams) error
 }
 
 var _ Querier = (*Queries)(nil)

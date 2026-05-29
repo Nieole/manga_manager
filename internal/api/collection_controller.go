@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log/slog"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -39,33 +39,30 @@ type CollectionSeriesItem struct {
 
 // listCollections 返回所有合集
 func (c *Controller) listCollections(w http.ResponseWriter, r *http.Request) {
-	rows, err := c.store.(*database.SqlStore).DB().QueryContext(r.Context(), `
-		SELECT c.id, c.name, c.description, c.cover_url, c.sort_order, c.source_type, c.source_review_id, c.created_at, c.updated_at,
-			(SELECT COUNT(*) FROM collection_series cs WHERE cs.collection_id = c.id) as series_count
-		FROM collections c ORDER BY c.sort_order, c.name
-	`)
+	rows, err := c.store.ListCollectionsWithSeriesCount(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list collections")
 		return
 	}
-	defer rows.Close()
 
-	var items []Collection
-	for rows.Next() {
-		var item Collection
-		var sourceReviewID sql.NullInt64
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.CoverUrl, &item.SortOrder, &item.SourceType, &sourceReviewID, &item.CreatedAt, &item.UpdatedAt, &item.SeriesCount); err != nil {
-			slog.Error("Failed to scan collection", "error", err)
-			continue
+	items := make([]Collection, 0, len(rows))
+	for _, row := range rows {
+		item := Collection{
+			ID:          row.ID,
+			Name:        row.Name,
+			Description: row.Description.String,
+			CoverUrl:    row.CoverUrl.String,
+			SortOrder:   int(row.SortOrder),
+			SeriesCount: int(row.SeriesCount),
+			SourceType:  row.SourceType,
+			CreatedAt:   row.CreatedAt.Time,
+			UpdatedAt:   row.UpdatedAt.Time,
 		}
-		if sourceReviewID.Valid {
-			value := sourceReviewID.Int64
+		if row.SourceReviewID.Valid {
+			value := row.SourceReviewID.Int64
 			item.SourceReviewID = &value
 		}
 		items = append(items, item)
-	}
-	if items == nil {
-		items = []Collection{}
 	}
 	jsonResponse(w, http.StatusOK, items)
 }
@@ -83,15 +80,14 @@ func (c *Controller) createCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
-	result, err := db.ExecContext(r.Context(),
-		`INSERT INTO collections (name, description) VALUES (?, ?)`, req.Name, req.Description)
+	id, err := c.store.CreateSimpleCollection(r.Context(), database.CreateSimpleCollectionParams{
+		Name:        req.Name,
+		Description: nullStringFromString(req.Description),
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to create collection")
 		return
 	}
-
-	id, _ := result.LastInsertId()
 	jsonResponse(w, http.StatusCreated, map[string]interface{}{"id": id, "name": req.Name})
 }
 
@@ -102,9 +98,7 @@ func (c *Controller) deleteCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
-	db := c.store.(*database.SqlStore).DB()
-	_, err = db.ExecContext(r.Context(), `DELETE FROM collections WHERE id = ?`, id)
-	if err != nil {
+	if err := c.store.DeleteCollection(r.Context(), id); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete collection")
 		return
 	}
@@ -128,11 +122,11 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	db := c.store.(*database.SqlStore).DB()
-	_, err = db.ExecContext(r.Context(),
-		`UPDATE collections SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		req.Name, req.Description, id)
-	if err != nil {
+	if err := c.store.UpdateCollectionDetails(r.Context(), database.UpdateCollectionDetailsParams{
+		Name:        req.Name,
+		Description: nullStringFromString(req.Description),
+		ID:          id,
+	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to update collection")
 		return
 	}
@@ -147,32 +141,21 @@ func (c *Controller) getCollectionSeries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
-	rows, err := db.QueryContext(r.Context(), `
-		SELECT s.id, s.name,
-			(SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
-			s.book_count, cs.added_at
-		FROM collection_series cs
-		JOIN series s ON s.id = cs.series_id
-		WHERE cs.collection_id = ?
-		ORDER BY cs.sort_order, s.name
-	`, id)
+	rows, err := c.store.ListCollectionSeries(r.Context(), id)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get collection series")
 		return
 	}
-	defer rows.Close()
 
-	var items []CollectionSeriesItem
-	for rows.Next() {
-		var item CollectionSeriesItem
-		if err := rows.Scan(&item.SeriesID, &item.SeriesName, &item.CoverPath, &item.BookCount, &item.AddedAt); err != nil {
-			continue
-		}
-		items = append(items, item)
-	}
-	if items == nil {
-		items = []CollectionSeriesItem{}
+	items := make([]CollectionSeriesItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, CollectionSeriesItem{
+			SeriesID:   row.SeriesID,
+			SeriesName: row.SeriesName,
+			CoverPath:  row.CoverPath,
+			BookCount:  row.BookCount,
+			AddedAt:    row.AddedAt.Time,
+		})
 	}
 	jsonResponse(w, http.StatusOK, items)
 }
@@ -194,18 +177,18 @@ func (c *Controller) addSeriesToCollection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
 	ctx := r.Context()
 	added := 0
 	for _, sid := range req.SeriesIDs {
-		_, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO collection_series (collection_id, series_id) VALUES (?, ?)`, id, sid)
-		if err == nil {
+		if err := c.store.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
+			CollectionID: id,
+			SeriesID:     sid,
+		}); err == nil {
 			added++
 		}
 	}
 
-	// 更新合集 updated_at
-	_, _ = db.ExecContext(ctx, `UPDATE collections SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	_ = c.store.TouchCollection(ctx, id)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"added": added})
 }
@@ -223,9 +206,10 @@ func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
-	_, err = db.ExecContext(r.Context(), `DELETE FROM collection_series WHERE collection_id = ? AND series_id = ?`, collectionID, seriesID)
-	if err != nil {
+	if err := c.store.RemoveSeriesFromCollection(r.Context(), database.RemoveSeriesFromCollectionParams{
+		CollectionID: collectionID,
+		SeriesID:     seriesID,
+	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to remove series")
 		return
 	}
@@ -284,59 +268,34 @@ func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) 
 }
 
 func (c *Controller) loadSeriesRelations(ctx context.Context, seriesID int64) ([]SeriesRelation, error) {
-	db := c.store.(*database.SqlStore).DB()
-
-	// Forward relations: this series is the source
-	forwardRows, err := db.QueryContext(ctx, `
-		SELECT sr.id, sr.target_series_id, s.name, sr.relation_type
-		FROM series_relations sr
-		JOIN series s ON s.id = sr.target_series_id
-		WHERE sr.source_series_id = ?
-	`, seriesID)
+	forward, err := c.store.ListForwardSeriesRelations(ctx, seriesID)
 	if err != nil {
 		return nil, err
 	}
 
-	var items []SeriesRelation
-	for forwardRows.Next() {
-		var item SeriesRelation
-		if err := forwardRows.Scan(&item.ID, &item.TargetSeriesID, &item.TargetSeriesName, &item.RelationType); err != nil {
-			continue
-		}
-		items = append(items, item)
-	}
-	forwardRows.Close()
-	if err := forwardRows.Err(); err != nil {
-		return nil, err
+	items := make([]SeriesRelation, 0, len(forward))
+	for _, row := range forward {
+		items = append(items, SeriesRelation{
+			ID:               row.ID,
+			TargetSeriesID:   row.TargetSeriesID,
+			TargetSeriesName: row.TargetSeriesName,
+			RelationType:     row.RelationType,
+		})
 	}
 
-	// Reverse relations: this series is the target, apply inverse type
-	reverseRows, err := db.QueryContext(ctx, `
-		SELECT sr.id, sr.source_series_id, s.name, sr.relation_type
-		FROM series_relations sr
-		JOIN series s ON s.id = sr.source_series_id
-		WHERE sr.target_series_id = ?
-	`, seriesID)
+	reverse, err := c.store.ListReverseSeriesRelations(ctx, seriesID)
 	if err != nil {
 		return nil, err
 	}
-
-	for reverseRows.Next() {
-		var item SeriesRelation
-		if err := reverseRows.Scan(&item.ID, &item.TargetSeriesID, &item.TargetSeriesName, &item.RelationType); err != nil {
-			continue
-		}
-		item.RelationType = inverseRelationType(item.RelationType)
-		items = append(items, item)
-	}
-	reverseRows.Close()
-	if err := reverseRows.Err(); err != nil {
-		return nil, err
+	for _, row := range reverse {
+		items = append(items, SeriesRelation{
+			ID:               row.ID,
+			TargetSeriesID:   row.TargetSeriesID,
+			TargetSeriesName: row.TargetSeriesName,
+			RelationType:     inverseRelationType(row.RelationType),
+		})
 	}
 
-	if items == nil {
-		items = []SeriesRelation{}
-	}
 	return items, nil
 }
 
@@ -369,31 +328,29 @@ func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	db := c.store.(*database.SqlStore).DB()
-	if err := db.QueryRowContext(r.Context(), `SELECT id FROM series WHERE id = ?`, req.TargetSeriesID).Scan(new(int64)); err != nil {
+	if _, err := c.store.SeriesExistsByID(r.Context(), req.TargetSeriesID); err != nil {
 		jsonError(w, http.StatusNotFound, "Target series not found")
 		return
 	}
-	var existingID int64
-	err = db.QueryRowContext(r.Context(), `
-		SELECT id FROM series_relations
-		WHERE (source_series_id = ? AND target_series_id = ?)
-		   OR (source_series_id = ? AND target_series_id = ?)
-		LIMIT 1
-	`, seriesID, req.TargetSeriesID, req.TargetSeriesID, seriesID).Scan(&existingID)
+
+	existingID, err := c.store.FindExistingSeriesRelation(r.Context(), database.FindExistingSeriesRelationParams{
+		LeftID:  seriesID,
+		RightID: req.TargetSeriesID,
+	})
 	if err == nil {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "exists", "id": existingID})
 		return
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		jsonError(w, http.StatusInternalServerError, "Failed to check relation")
 		return
 	}
 
-	_, err = db.ExecContext(r.Context(),
-		`INSERT OR IGNORE INTO series_relations (source_series_id, target_series_id, relation_type) VALUES (?, ?, ?)`,
-		seriesID, req.TargetSeriesID, req.RelationType)
-	if err != nil {
+	if err := c.store.CreateSeriesRelation(r.Context(), database.CreateSeriesRelationParams{
+		SourceSeriesID: seriesID,
+		TargetSeriesID: req.TargetSeriesID,
+		RelationType:   req.RelationType,
+	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to create relation")
 		return
 	}
@@ -407,7 +364,13 @@ func (c *Controller) deleteSeriesRelation(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid relation ID")
 		return
 	}
-	db := c.store.(*database.SqlStore).DB()
-	_, _ = db.ExecContext(r.Context(), `DELETE FROM series_relations WHERE id = ?`, relationID)
+	_ = c.store.DeleteSeriesRelation(r.Context(), relationID)
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func nullStringFromString(value string) sql.NullString {
+	if value == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: value, Valid: true}
 }

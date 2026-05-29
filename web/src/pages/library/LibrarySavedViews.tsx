@@ -9,18 +9,27 @@ interface LibrarySavedViewsProps {
   onSave: (name: string) => void;
   onApply: (view: SavedSmartFilter) => void;
   onDelete: (id: string) => void;
+  onExpand?: () => void;
 }
 
-export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDelete }: LibrarySavedViewsProps) {
+export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDelete, onExpand }: LibrarySavedViewsProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [draftName, setDraftName] = useState('');
+
+  const toggleOpen = () => {
+    setOpen((prev) => {
+      const next = !prev;
+      if (next) onExpand?.();
+      return next;
+    });
+  };
 
   return (
     <div className="mb-4 rounded-xl border border-white/10 bg-komgaSurface/50 px-4 py-2">
       <div className="flex items-center gap-2">
         <button
-          onClick={() => setOpen((p) => !p)}
+          onClick={toggleOpen}
           className="inline-flex items-center gap-1 text-sm font-medium text-gray-300 hover:text-white transition-colors"
         >
           {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}

@@ -512,7 +512,7 @@ func (s *Service) applyBookProgress(ctx context.Context, match database.KOReader
 	}); err != nil {
 		return err
 	}
-	return s.store.LogReadingActivity(ctx, match.BookID, int(page))
+	return s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page})
 }
 
 func nullableInt64Ptr(v sql.NullInt64) *int64 {

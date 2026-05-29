@@ -27,20 +27,12 @@ type Store interface {
 	SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 	SearchSeriesCursor(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
-	GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error)
-	LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error
-	ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error)
-	UpsertReadingBookmark(ctx context.Context, bookID, page int64, note string) (ReadingBookmark, error)
-	DeleteReadingBookmark(ctx context.Context, bookID, bookmarkID int64) error
-	GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error)
-	GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error)
 	ListProtocolSeriesByIDs(ctx context.Context, ids []int64) ([]ProtocolSeriesRow, error)
 	SearchTags(ctx context.Context, query string, limit int) ([]Tag, error)
 	SearchAuthors(ctx context.Context, query string, limit int) ([]Author, error)
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
-	MarkInterruptedTasks(ctx context.Context, message string) (int64, error)
 	GetHealthReport(ctx context.Context, filters HealthIssueFilters) (HealthReport, error)
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
 	UpsertKOReaderSettings(ctx context.Context, arg UpsertKOReaderSettingsParams) (KOReaderSettings, error)
@@ -70,6 +62,7 @@ type Store interface {
 	LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error
 	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
 	GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error)
+	SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error)
 }
 
 type ReadingListSeriesProgress struct {
@@ -249,35 +242,25 @@ func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error
 }
 
 func (s *SqlStore) GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT
-			rli.series_id,
-			COALESCE(ss.read_book_count, 0),
-			COALESCE(ss.completed_book_count, 0),
-			COALESCE(s.book_count, 0)
-		FROM reading_list_items rli
-		JOIN series s ON s.id = rli.series_id
-		LEFT JOIN series_stats ss ON ss.series_id = rli.series_id
-		WHERE rli.reading_list_id = ?
-	`, readingListID)
+	rows, err := s.Queries.GetReadingListItemProgressByList(ctx, readingListID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make(map[int64]ReadingListSeriesProgress)
-	for rows.Next() {
-		var row ReadingListSeriesProgress
-		if err := rows.Scan(&row.SeriesID, &row.ReadBooks, &row.CompletedBooks, &row.TotalBooks); err != nil {
-			return nil, err
+	out := make(map[int64]ReadingListSeriesProgress, len(rows))
+	for _, r := range rows {
+		out[r.SeriesID] = ReadingListSeriesProgress{
+			SeriesID:       r.SeriesID,
+			ReadBooks:      r.ReadBooks,
+			CompletedBooks: r.CompletedBooks,
+			TotalBooks:     r.TotalBooks,
 		}
-		out[row.SeriesID] = row
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SqlStore) refreshSeriesStatsForBook(ctx context.Context, bookID int64) error {
-	var seriesID int64
-	if err := s.db.QueryRowContext(ctx, `SELECT series_id FROM books WHERE id = ?`, bookID).Scan(&seriesID); err != nil {
+	seriesID, err := s.Queries.GetSeriesIDByBookID(ctx, bookID)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -309,8 +292,7 @@ func (s *SqlStore) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPar
 }
 
 func (s *SqlStore) DeleteBook(ctx context.Context, id int64) error {
-	var seriesID int64
-	err := s.db.QueryRowContext(ctx, `SELECT series_id FROM books WHERE id = ?`, id).Scan(&seriesID)
+	seriesID, err := s.Queries.GetSeriesIDByBookID(ctx, id)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -324,8 +306,7 @@ func (s *SqlStore) DeleteBook(ctx context.Context, id int64) error {
 }
 
 func (s *SqlStore) DeleteBookByPath(ctx context.Context, path string) error {
-	var seriesID int64
-	err := s.db.QueryRowContext(ctx, `SELECT series_id FROM books WHERE path = ?`, path).Scan(&seriesID)
+	seriesID, err := s.Queries.GetSeriesIDByBookPath(ctx, path)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -816,42 +797,34 @@ func (s *SqlStore) UpsertTask(ctx context.Context, task TaskRecord) error {
 		paramsJSON = string(data)
 	}
 
-	var scopeID any
+	var scopeID sql.NullInt64
 	if task.ScopeID != nil {
-		scopeID = *task.ScopeID
+		scopeID = sql.NullInt64{Int64: *task.ScopeID, Valid: true}
 	}
-	var finishedAt any
+	var finishedAt sql.NullTime
 	if task.FinishedAt != nil {
-		finishedAt = *task.FinishedAt
+		finishedAt = sql.NullTime{Time: *task.FinishedAt, Valid: true}
 	}
 
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO tasks (
-			key, type, scope, scope_id, scope_name, status, message, error,
-			current, total, can_cancel, retryable, params,
-			started_at, updated_at, finished_at, sequence
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(key) DO UPDATE SET
-			type = excluded.type,
-			scope = excluded.scope,
-			scope_id = excluded.scope_id,
-			scope_name = excluded.scope_name,
-			status = excluded.status,
-			message = excluded.message,
-			error = excluded.error,
-			current = excluded.current,
-			total = excluded.total,
-			can_cancel = excluded.can_cancel,
-			retryable = excluded.retryable,
-			params = excluded.params,
-			started_at = excluded.started_at,
-			updated_at = excluded.updated_at,
-			finished_at = excluded.finished_at,
-			sequence = excluded.sequence
-	`, task.Key, task.Type, task.Scope, scopeID, task.ScopeName, task.Status, task.Message, task.Error,
-		task.Current, task.Total, task.CanCancel, task.Retryable, paramsJSON,
-		task.StartedAt, task.UpdatedAt, finishedAt, task.Sequence)
-	return err
+	return s.Queries.UpsertTaskRecord(ctx, UpsertTaskRecordParams{
+		Key:        task.Key,
+		Type:       task.Type,
+		Scope:      task.Scope,
+		ScopeID:    scopeID,
+		ScopeName:  task.ScopeName,
+		Status:     task.Status,
+		Message:    task.Message,
+		Error:      task.Error,
+		Current:    int64(task.Current),
+		Total:      int64(task.Total),
+		CanCancel:  task.CanCancel,
+		Retryable:  task.Retryable,
+		Params:     paramsJSON,
+		StartedAt:  task.StartedAt,
+		UpdatedAt:  task.UpdatedAt,
+		FinishedAt: finishedAt,
+		Sequence:   task.Sequence,
+	})
 }
 
 func (s *SqlStore) ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error) {
@@ -929,25 +902,6 @@ func (s *SqlStore) DeleteTasks(ctx context.Context, filters TaskFilters) (int64,
 		args = append(args, *filters.ScopeID)
 	}
 	result, err := s.db.ExecContext(ctx, query, args...)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-func (s *SqlStore) MarkInterruptedTasks(ctx context.Context, message string) (int64, error) {
-	if strings.TrimSpace(message) == "" {
-		message = "任务因服务重启而中断，可重试"
-	}
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE tasks
-		SET status = 'interrupted',
-		    message = ?,
-		    error = ?,
-		    updated_at = CURRENT_TIMESTAMP,
-		    finished_at = CURRENT_TIMESTAMP
-		WHERE status IN ('running', 'paused', 'cancelling')
-	`, message, message)
 	if err != nil {
 		return 0, err
 	}
@@ -1396,45 +1350,32 @@ func decodeSeriesCursor(cursor string) (seriesCursorPayload, error) {
 
 // GetDashboardStats 一次性拿到全局统计看板所需的聚合数据
 func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
-	query := `
-		SELECT
-			(SELECT COUNT(*) FROM series) as total_series,
-			(SELECT COUNT(*) FROM books) as total_books,
-			(SELECT COUNT(*) FROM books WHERE last_read_page > 0) as read_books,
-			(SELECT COALESCE(SUM(page_count), 0) FROM books) as total_pages,
-			(SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) as active_days_7
-	`
-	var stats DashboardStats
-	err := s.db.QueryRowContext(ctx, query).Scan(
-		&stats.TotalSeries,
-		&stats.TotalBooks,
-		&stats.ReadBooks,
-		&stats.TotalPages,
-		&stats.ActiveDays7,
-	)
+	core, err := s.Queries.GetDashboardCoreStats(ctx)
 	if err != nil {
 		return nil, err
 	}
+	stats := DashboardStats{
+		TotalSeries: int(core.TotalSeries),
+		TotalBooks:  int(core.TotalBooks),
+		ReadBooks:   int(core.ReadBooks),
+		ActiveDays7: int(core.ActiveDays7),
+	}
+	switch v := core.TotalPages.(type) {
+	case int64:
+		stats.TotalPages = int(v)
+	case float64:
+		stats.TotalPages = int(v)
+	}
 
-	sizeQuery := `
-		SELECT l.id, l.name, COALESCE(bs.total_size, 0) as total_size
-		FROM libraries l
-		LEFT JOIN (
-			SELECT library_id, SUM(size) as total_size
-			FROM books INDEXED BY idx_books_library_size
-			GROUP BY library_id
-		) bs ON bs.library_id = l.id
-		ORDER BY bs.total_size DESC
-	`
-	rows, err := s.db.QueryContext(ctx, sizeQuery)
+	sizeRows, err := s.Queries.ListLibrarySizes(ctx)
 	if err == nil {
-		defer rows.Close()
-		var sizes []LibrarySize
-		for rows.Next() {
-			var ls LibrarySize
-			if err := rows.Scan(&ls.LibraryID, &ls.LibraryName, &ls.TotalSize); err == nil {
-				sizes = append(sizes, ls)
-			}
+		sizes := make([]LibrarySize, 0, len(sizeRows))
+		for _, r := range sizeRows {
+			sizes = append(sizes, LibrarySize{
+				LibraryID:   r.LibraryID,
+				LibraryName: r.LibraryName,
+				TotalSize:   int64(r.TotalSize),
+			})
 		}
 		stats.LibrarySizes = sizes
 	}
@@ -1446,217 +1387,6 @@ func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 type ActivityDay struct {
 	Date      string `json:"date"`       // YYYY-MM-DD
 	PageCount int    `json:"page_count"` // 当天阅读的总页数
-}
-
-// GetActivityHeatmap 返回最近 weeks 周每天的阅读页数（基于 reading_activity 表精确统计）
-func (s *SqlStore) GetActivityHeatmap(ctx context.Context, weeks int) ([]ActivityDay, error) {
-	days := weeks * 7
-	query := `
-		SELECT date, SUM(pages_read) as page_count
-		FROM reading_activity
-		WHERE date >= DATE('now', ? || ' days')
-		GROUP BY date
-		ORDER BY date ASC
-	`
-	offset := fmt.Sprintf("-%d", days)
-	rows, err := s.db.QueryContext(ctx, query, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []ActivityDay
-	for rows.Next() {
-		var d ActivityDay
-		if err := rows.Scan(&d.Date, &d.PageCount); err != nil {
-			return nil, err
-		}
-		items = append(items, d)
-	}
-	return items, rows.Err()
-}
-
-// LogReadingActivity 记录一次阅读活动到 reading_activity 表（同 book 同日 UPSERT 累加）
-func (s *SqlStore) LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error {
-	query := `
-		INSERT INTO reading_activity (book_id, date, pages_read)
-		VALUES (?, DATE('now'), ?)
-		ON CONFLICT(book_id, date) DO UPDATE SET
-			pages_read = MAX(reading_activity.pages_read, excluded.pages_read)
-	`
-	_, err := s.db.ExecContext(ctx, query, bookID, pagesRead)
-	return err
-}
-
-func (s *SqlStore) ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, book_id, page, note, created_at, updated_at
-		FROM reading_bookmarks
-		WHERE book_id = ?
-		ORDER BY page ASC, id ASC
-	`, bookID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := make([]ReadingBookmark, 0)
-	for rows.Next() {
-		var item ReadingBookmark
-		if err := rows.Scan(&item.ID, &item.BookID, &item.Page, &item.Note, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func (s *SqlStore) UpsertReadingBookmark(ctx context.Context, bookID, page int64, note string) (ReadingBookmark, error) {
-	var item ReadingBookmark
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO reading_bookmarks (book_id, page, note)
-		VALUES (?, ?, ?)
-		ON CONFLICT(book_id, page) DO UPDATE SET
-			note = excluded.note,
-			updated_at = CURRENT_TIMESTAMP
-		RETURNING id, book_id, page, note, created_at, updated_at
-	`, bookID, page, note).Scan(&item.ID, &item.BookID, &item.Page, &item.Note, &item.CreatedAt, &item.UpdatedAt)
-	return item, err
-}
-
-func (s *SqlStore) DeleteReadingBookmark(ctx context.Context, bookID, bookmarkID int64) error {
-	result, err := s.db.ExecContext(ctx, `
-		DELETE FROM reading_bookmarks
-		WHERE id = ? AND book_id = ?
-	`, bookmarkID, bookID)
-	if err != nil {
-		return err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
-// RecentReadAllRow Dashboard 继续阅读列表的简化返回结构
-type RecentReadAllRow struct {
-	SeriesID     int64          `json:"series_id"`
-	SeriesName   string         `json:"series_name"`
-	BookID       int64          `json:"book_id"`
-	BookName     string         `json:"book_name"`
-	BookTitle    sql.NullString `json:"book_title"`
-	CoverPath    sql.NullString `json:"cover_path"`
-	LastReadPage sql.NullInt64  `json:"last_read_page"`
-	LastReadAt   sql.NullTime   `json:"last_read_at"`
-	PageCount    int64          `json:"page_count"`
-}
-
-// GetRecentReadAll 跨库查询最近阅读的书籍（每个系列取最新一本）
-func (s *SqlStore) GetRecentReadAll(ctx context.Context, limit int64) ([]RecentReadAllRow, error) {
-	query := `
-		SELECT
-			s.name AS series_name,
-			s.id AS series_id,
-			b.id AS book_id,
-			b.name AS book_name,
-			b.title AS book_title,
-			ss.last_read_at,
-			b.last_read_page,
-			b.page_count,
-			COALESCE(ss.cover_path, '') AS cover_path
-		FROM series_stats ss INDEXED BY idx_series_stats_last_read
-		JOIN series s ON s.id = ss.series_id
-		JOIN books b ON b.id = ss.last_read_book_id
-		WHERE ss.last_read_at IS NOT NULL
-		  AND ss.last_read_book_id > 0
-		  AND b.last_read_page IS NOT NULL
-		  AND b.last_read_page > 0
-		ORDER BY ss.last_read_at DESC, s.name ASC
-		LIMIT ?
-	`
-
-	rows, err := s.db.QueryContext(ctx, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []RecentReadAllRow
-	for rows.Next() {
-		var i RecentReadAllRow
-		if err := rows.Scan(
-			&i.SeriesName,
-			&i.SeriesID, &i.BookID, &i.BookName, &i.BookTitle,
-			&i.LastReadAt, &i.LastReadPage, &i.PageCount,
-			&i.CoverPath,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
-}
-
-// RecommendedSeries 推荐系列的返回结构
-type RecommendedSeries struct {
-	ID        int64          `json:"id"`
-	Name      string         `json:"name"`
-	Title     sql.NullString `json:"title"`
-	CoverPath sql.NullString `json:"cover_path"`
-	BookCount int64          `json:"book_count"`
-	Score     int            `json:"score"` // 匹配权重
-}
-
-// GetRecommendations 基于用户阅读偏好（收藏 + 已读）的 Tag 权重推荐未读系列
-func (s *SqlStore) GetRecommendations(ctx context.Context, limit int) ([]RecommendedSeries, error) {
-	// 使用一条 SQL 完成全部逻辑：
-	// 1. 从用户偏好系列（收藏或已读 2+ 本的系列）提取 Tag
-	// 2. 找到拥有这些 Tag 但未被阅读过的系列
-	// 3. 按匹配 Tag 数量降序排列
-	query := `
-		WITH preferred_tags AS (
-			SELECT DISTINCT st.tag_id
-			FROM series_tags st
-			JOIN series s ON s.id = st.series_id
-			WHERE s.is_favorite = 1
-			   OR (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) >= 2
-		),
-		unread_series AS (
-			SELECT s.id
-			FROM series s
-			WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0)
-		)
-		SELECT s.id, s.name, s.title, s.book_count,
-			(SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
-			COUNT(st.tag_id) as score
-		FROM unread_series us
-		JOIN series s ON s.id = us.id
-		JOIN series_tags st ON st.series_id = s.id
-		JOIN preferred_tags pt ON pt.tag_id = st.tag_id
-		GROUP BY s.id
-		ORDER BY score DESC
-		LIMIT ?
-	`
-
-	rows, err := s.db.QueryContext(ctx, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []RecommendedSeries
-	for rows.Next() {
-		var i RecommendedSeries
-		if err := rows.Scan(&i.ID, &i.Name, &i.Title, &i.BookCount, &i.CoverPath, &i.Score); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
 }
 
 func normalizeFacetLimit(limit int) int {

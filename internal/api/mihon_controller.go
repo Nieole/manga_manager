@@ -179,8 +179,8 @@ func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request
 			updatedAt = row.LastReadAt.Time
 		}
 		coverURL := ""
-		if row.CoverPath.Valid && row.CoverPath.String != "" {
-			coverURL = "/api/thumbnails/" + row.CoverPath.String
+		if row.CoverPath != "" {
+			coverURL = "/api/thumbnails/" + row.CoverPath
 		}
 		items = append(items, MihonContinueItemResponse{
 			SeriesID:     row.SeriesID,

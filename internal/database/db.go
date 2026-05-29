@@ -30,6 +30,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.addSeriesToCollectionStmt, err = db.PrepareContext(ctx, addSeriesToCollection); err != nil {
 		return nil, fmt.Errorf("error preparing query AddSeriesToCollection: %w", err)
 	}
+	if q.clearAllBookCoverPathsStmt, err = db.PrepareContext(ctx, clearAllBookCoverPaths); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearAllBookCoverPaths: %w", err)
+	}
+	if q.clearAllSeriesStatsCoverPathsStmt, err = db.PrepareContext(ctx, clearAllSeriesStatsCoverPaths); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearAllSeriesStatsCoverPaths: %w", err)
+	}
 	if q.clearSeriesAuthorsStmt, err = db.PrepareContext(ctx, clearSeriesAuthors); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesAuthors: %w", err)
 	}
@@ -39,11 +45,35 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.clearSeriesTagsStmt, err = db.PrepareContext(ctx, clearSeriesTags); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearSeriesTags: %w", err)
 	}
+	if q.collectionNameExistsStmt, err = db.PrepareContext(ctx, collectionNameExists); err != nil {
+		return nil, fmt.Errorf("error preparing query CollectionNameExists: %w", err)
+	}
 	if q.countAIGroupingReviewsStmt, err = db.PrepareContext(ctx, countAIGroupingReviews); err != nil {
 		return nil, fmt.Errorf("error preparing query CountAIGroupingReviews: %w", err)
 	}
 	if q.countAppliedAIGroupingReviewCollectionsStmt, err = db.PrepareContext(ctx, countAppliedAIGroupingReviewCollections); err != nil {
 		return nil, fmt.Errorf("error preparing query CountAppliedAIGroupingReviewCollections: %w", err)
+	}
+	if q.countHealthDuplicateFileHashStmt, err = db.PrepareContext(ctx, countHealthDuplicateFileHash); err != nil {
+		return nil, fmt.Errorf("error preparing query CountHealthDuplicateFileHash: %w", err)
+	}
+	if q.countHealthDuplicateQuickHashStmt, err = db.PrepareContext(ctx, countHealthDuplicateQuickHash); err != nil {
+		return nil, fmt.Errorf("error preparing query CountHealthDuplicateQuickHash: %w", err)
+	}
+	if q.countHealthEmptyPagesStmt, err = db.PrepareContext(ctx, countHealthEmptyPages); err != nil {
+		return nil, fmt.Errorf("error preparing query CountHealthEmptyPages: %w", err)
+	}
+	if q.countHealthMissingCoverStmt, err = db.PrepareContext(ctx, countHealthMissingCover); err != nil {
+		return nil, fmt.Errorf("error preparing query CountHealthMissingCover: %w", err)
+	}
+	if q.countHealthMissingMetadataStmt, err = db.PrepareContext(ctx, countHealthMissingMetadata); err != nil {
+		return nil, fmt.Errorf("error preparing query CountHealthMissingMetadata: %w", err)
+	}
+	if q.countHealthMissingQuickHashStmt, err = db.PrepareContext(ctx, countHealthMissingQuickHash); err != nil {
+		return nil, fmt.Errorf("error preparing query CountHealthMissingQuickHash: %w", err)
+	}
+	if q.countHealthUnmatchedKOReaderStmt, err = db.PrepareContext(ctx, countHealthUnmatchedKOReader); err != nil {
+		return nil, fmt.Errorf("error preparing query CountHealthUnmatchedKOReader: %w", err)
 	}
 	if q.countMihonSeriesStmt, err = db.PrepareContext(ctx, countMihonSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query CountMihonSeries: %w", err)
@@ -90,14 +120,26 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createSeriesStmt, err = db.PrepareContext(ctx, createSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateSeries: %w", err)
 	}
+	if q.createSeriesRelationStmt, err = db.PrepareContext(ctx, createSeriesRelation); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateSeriesRelation: %w", err)
+	}
+	if q.createSimpleCollectionStmt, err = db.PrepareContext(ctx, createSimpleCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateSimpleCollection: %w", err)
+	}
 	if q.deleteBookStmt, err = db.PrepareContext(ctx, deleteBook); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteBook: %w", err)
 	}
 	if q.deleteBookByPathStmt, err = db.PrepareContext(ctx, deleteBookByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteBookByPath: %w", err)
 	}
+	if q.deleteCollectionStmt, err = db.PrepareContext(ctx, deleteCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteCollection: %w", err)
+	}
 	if q.deleteLibraryStmt, err = db.PrepareContext(ctx, deleteLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteLibrary: %w", err)
+	}
+	if q.deleteReadingBookmarkStmt, err = db.PrepareContext(ctx, deleteReadingBookmark); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteReadingBookmark: %w", err)
 	}
 	if q.deleteReadingListStmt, err = db.PrepareContext(ctx, deleteReadingList); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteReadingList: %w", err)
@@ -105,11 +147,23 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteSeriesStmt, err = db.PrepareContext(ctx, deleteSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSeries: %w", err)
 	}
+	if q.deleteSeriesRelationStmt, err = db.PrepareContext(ctx, deleteSeriesRelation); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteSeriesRelation: %w", err)
+	}
+	if q.deleteSmartFilterStmt, err = db.PrepareContext(ctx, deleteSmartFilter); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteSmartFilter: %w", err)
+	}
+	if q.findExistingSeriesRelationStmt, err = db.PrepareContext(ctx, findExistingSeriesRelation); err != nil {
+		return nil, fmt.Errorf("error preparing query FindExistingSeriesRelation: %w", err)
+	}
 	if q.getAIGroupingReviewStmt, err = db.PrepareContext(ctx, getAIGroupingReview); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAIGroupingReview: %w", err)
 	}
 	if q.getAIGroupingReviewCollectionStmt, err = db.PrepareContext(ctx, getAIGroupingReviewCollection); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAIGroupingReviewCollection: %w", err)
+	}
+	if q.getActivityHeatmapStmt, err = db.PrepareContext(ctx, getActivityHeatmap); err != nil {
+		return nil, fmt.Errorf("error preparing query GetActivityHeatmap: %w", err)
 	}
 	if q.getAllAuthorsStmt, err = db.PrepareContext(ctx, getAllAuthors); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllAuthors: %w", err)
@@ -129,6 +183,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getCandidateSeriesForAIStmt, err = db.PrepareContext(ctx, getCandidateSeriesForAI); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCandidateSeriesForAI: %w", err)
 	}
+	if q.getDashboardCoreStatsStmt, err = db.PrepareContext(ctx, getDashboardCoreStats); err != nil {
+		return nil, fmt.Errorf("error preparing query GetDashboardCoreStats: %w", err)
+	}
+	if q.getLastTaskKeyForScopeStmt, err = db.PrepareContext(ctx, getLastTaskKeyForScope); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLastTaskKeyForScope: %w", err)
+	}
 	if q.getLibraryStmt, err = db.PrepareContext(ctx, getLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLibrary: %w", err)
 	}
@@ -147,8 +207,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getReadingListStmt, err = db.PrepareContext(ctx, getReadingList); err != nil {
 		return nil, fmt.Errorf("error preparing query GetReadingList: %w", err)
 	}
+	if q.getReadingListItemProgressByListStmt, err = db.PrepareContext(ctx, getReadingListItemProgressByList); err != nil {
+		return nil, fmt.Errorf("error preparing query GetReadingListItemProgressByList: %w", err)
+	}
+	if q.getRecentReadAllStmt, err = db.PrepareContext(ctx, getRecentReadAll); err != nil {
+		return nil, fmt.Errorf("error preparing query GetRecentReadAll: %w", err)
+	}
 	if q.getRecentReadSeriesStmt, err = db.PrepareContext(ctx, getRecentReadSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRecentReadSeries: %w", err)
+	}
+	if q.getRecommendationsStmt, err = db.PrepareContext(ctx, getRecommendations); err != nil {
+		return nil, fmt.Errorf("error preparing query GetRecommendations: %w", err)
 	}
 	if q.getReferencedBookCoverPathsStmt, err = db.PrepareContext(ctx, getReferencedBookCoverPaths); err != nil {
 		return nil, fmt.Errorf("error preparing query GetReferencedBookCoverPaths: %w", err)
@@ -162,6 +231,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getSeriesByLibraryStmt, err = db.PrepareContext(ctx, getSeriesByLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeriesByLibrary: %w", err)
 	}
+	if q.getSeriesIDByBookIDStmt, err = db.PrepareContext(ctx, getSeriesIDByBookID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSeriesIDByBookID: %w", err)
+	}
+	if q.getSeriesIDByBookPathStmt, err = db.PrepareContext(ctx, getSeriesIDByBookPath); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSeriesIDByBookPath: %w", err)
+	}
 	if q.getSeriesMetadataProvenanceStmt, err = db.PrepareContext(ctx, getSeriesMetadataProvenance); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeriesMetadataProvenance: %w", err)
 	}
@@ -170,6 +245,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getSeriesWithoutCollectionStmt, err = db.PrepareContext(ctx, getSeriesWithoutCollection); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeriesWithoutCollection: %w", err)
+	}
+	if q.getSmartFilterByIDStmt, err = db.PrepareContext(ctx, getSmartFilterByID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSmartFilterByID: %w", err)
+	}
+	if q.getStaticCollectionViewStmt, err = db.PrepareContext(ctx, getStaticCollectionView); err != nil {
+		return nil, fmt.Errorf("error preparing query GetStaticCollectionView: %w", err)
 	}
 	if q.getTagsForSeriesStmt, err = db.PrepareContext(ctx, getTagsForSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTagsForSeries: %w", err)
@@ -198,8 +279,47 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listBooksBySeriesStmt, err = db.PrepareContext(ctx, listBooksBySeries); err != nil {
 		return nil, fmt.Errorf("error preparing query ListBooksBySeries: %w", err)
 	}
+	if q.listCollectionSeriesStmt, err = db.PrepareContext(ctx, listCollectionSeries); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCollectionSeries: %w", err)
+	}
+	if q.listCollectionViewsStmt, err = db.PrepareContext(ctx, listCollectionViews); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCollectionViews: %w", err)
+	}
+	if q.listCollectionsWithSeriesCountStmt, err = db.PrepareContext(ctx, listCollectionsWithSeriesCount); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCollectionsWithSeriesCount: %w", err)
+	}
+	if q.listExternalLibraryBooksStmt, err = db.PrepareContext(ctx, listExternalLibraryBooks); err != nil {
+		return nil, fmt.Errorf("error preparing query ListExternalLibraryBooks: %w", err)
+	}
+	if q.listForwardSeriesRelationsStmt, err = db.PrepareContext(ctx, listForwardSeriesRelations); err != nil {
+		return nil, fmt.Errorf("error preparing query ListForwardSeriesRelations: %w", err)
+	}
+	if q.listHealthDuplicateFileHashStmt, err = db.PrepareContext(ctx, listHealthDuplicateFileHash); err != nil {
+		return nil, fmt.Errorf("error preparing query ListHealthDuplicateFileHash: %w", err)
+	}
+	if q.listHealthDuplicateQuickHashStmt, err = db.PrepareContext(ctx, listHealthDuplicateQuickHash); err != nil {
+		return nil, fmt.Errorf("error preparing query ListHealthDuplicateQuickHash: %w", err)
+	}
+	if q.listHealthEmptyPagesStmt, err = db.PrepareContext(ctx, listHealthEmptyPages); err != nil {
+		return nil, fmt.Errorf("error preparing query ListHealthEmptyPages: %w", err)
+	}
+	if q.listHealthMissingCoverStmt, err = db.PrepareContext(ctx, listHealthMissingCover); err != nil {
+		return nil, fmt.Errorf("error preparing query ListHealthMissingCover: %w", err)
+	}
+	if q.listHealthMissingMetadataStmt, err = db.PrepareContext(ctx, listHealthMissingMetadata); err != nil {
+		return nil, fmt.Errorf("error preparing query ListHealthMissingMetadata: %w", err)
+	}
+	if q.listHealthMissingQuickHashStmt, err = db.PrepareContext(ctx, listHealthMissingQuickHash); err != nil {
+		return nil, fmt.Errorf("error preparing query ListHealthMissingQuickHash: %w", err)
+	}
+	if q.listHealthUnmatchedKOReaderStmt, err = db.PrepareContext(ctx, listHealthUnmatchedKOReader); err != nil {
+		return nil, fmt.Errorf("error preparing query ListHealthUnmatchedKOReader: %w", err)
+	}
 	if q.listLibrariesStmt, err = db.PrepareContext(ctx, listLibraries); err != nil {
 		return nil, fmt.Errorf("error preparing query ListLibraries: %w", err)
+	}
+	if q.listLibrarySizesStmt, err = db.PrepareContext(ctx, listLibrarySizes); err != nil {
+		return nil, fmt.Errorf("error preparing query ListLibrarySizes: %w", err)
 	}
 	if q.listMetadataReviewFieldsStmt, err = db.PrepareContext(ctx, listMetadataReviewFields); err != nil {
 		return nil, fmt.Errorf("error preparing query ListMetadataReviewFields: %w", err)
@@ -222,6 +342,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listPendingMetadataReviewsBySeriesStmt, err = db.PrepareContext(ctx, listPendingMetadataReviewsBySeries); err != nil {
 		return nil, fmt.Errorf("error preparing query ListPendingMetadataReviewsBySeries: %w", err)
 	}
+	if q.listReadingBookmarksStmt, err = db.PrepareContext(ctx, listReadingBookmarks); err != nil {
+		return nil, fmt.Errorf("error preparing query ListReadingBookmarks: %w", err)
+	}
 	if q.listReadingListItemsStmt, err = db.PrepareContext(ctx, listReadingListItems); err != nil {
 		return nil, fmt.Errorf("error preparing query ListReadingListItems: %w", err)
 	}
@@ -234,11 +357,23 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listRecentAddedSeriesStmt, err = db.PrepareContext(ctx, listRecentAddedSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRecentAddedSeries: %w", err)
 	}
+	if q.listReverseSeriesRelationsStmt, err = db.PrepareContext(ctx, listReverseSeriesRelations); err != nil {
+		return nil, fmt.Errorf("error preparing query ListReverseSeriesRelations: %w", err)
+	}
 	if q.listSeriesByLibraryStmt, err = db.PrepareContext(ctx, listSeriesByLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSeriesByLibrary: %w", err)
 	}
 	if q.listSeriesInitialBackfillCandidatesStmt, err = db.PrepareContext(ctx, listSeriesInitialBackfillCandidates); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSeriesInitialBackfillCandidates: %w", err)
+	}
+	if q.listSmartFiltersByLibraryStmt, err = db.PrepareContext(ctx, listSmartFiltersByLibrary); err != nil {
+		return nil, fmt.Errorf("error preparing query ListSmartFiltersByLibrary: %w", err)
+	}
+	if q.listStaticCollectionSeriesPagedStmt, err = db.PrepareContext(ctx, listStaticCollectionSeriesPaged); err != nil {
+		return nil, fmt.Errorf("error preparing query ListStaticCollectionSeriesPaged: %w", err)
+	}
+	if q.logReadingActivityStmt, err = db.PrepareContext(ctx, logReadingActivity); err != nil {
+		return nil, fmt.Errorf("error preparing query LogReadingActivity: %w", err)
 	}
 	if q.markAIGroupingReviewCollectionAppliedStmt, err = db.PrepareContext(ctx, markAIGroupingReviewCollectionApplied); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkAIGroupingReviewCollectionApplied: %w", err)
@@ -249,14 +384,26 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markAIGroupingReviewCollectionsRejectedStmt, err = db.PrepareContext(ctx, markAIGroupingReviewCollectionsRejected); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkAIGroupingReviewCollectionsRejected: %w", err)
 	}
+	if q.markInterruptedTasksStmt, err = db.PrepareContext(ctx, markInterruptedTasks); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkInterruptedTasks: %w", err)
+	}
 	if q.refreshSeriesStatsStmt, err = db.PrepareContext(ctx, refreshSeriesStats); err != nil {
 		return nil, fmt.Errorf("error preparing query RefreshSeriesStats: %w", err)
 	}
 	if q.removeReadingListItemStmt, err = db.PrepareContext(ctx, removeReadingListItem); err != nil {
 		return nil, fmt.Errorf("error preparing query RemoveReadingListItem: %w", err)
 	}
+	if q.removeSeriesFromCollectionStmt, err = db.PrepareContext(ctx, removeSeriesFromCollection); err != nil {
+		return nil, fmt.Errorf("error preparing query RemoveSeriesFromCollection: %w", err)
+	}
 	if q.searchOPDSSeriesStmt, err = db.PrepareContext(ctx, searchOPDSSeries); err != nil {
 		return nil, fmt.Errorf("error preparing query SearchOPDSSeries: %w", err)
+	}
+	if q.seriesExistsByIDStmt, err = db.PrepareContext(ctx, seriesExistsByID); err != nil {
+		return nil, fmt.Errorf("error preparing query SeriesExistsByID: %w", err)
+	}
+	if q.setBookCoverIfMissingStmt, err = db.PrepareContext(ctx, setBookCoverIfMissing); err != nil {
+		return nil, fmt.Errorf("error preparing query SetBookCoverIfMissing: %w", err)
 	}
 	if q.touchCollectionStmt, err = db.PrepareContext(ctx, touchCollection); err != nil {
 		return nil, fmt.Errorf("error preparing query TouchCollection: %w", err)
@@ -269,6 +416,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.updateBookProgressStmt, err = db.PrepareContext(ctx, updateBookProgress); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateBookProgress: %w", err)
+	}
+	if q.updateCollectionDetailsStmt, err = db.PrepareContext(ctx, updateCollectionDetails); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateCollectionDetails: %w", err)
 	}
 	if q.updateLibraryStmt, err = db.PrepareContext(ctx, updateLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateLibrary: %w", err)
@@ -294,11 +444,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSeriesStatisticsStmt, err = db.PrepareContext(ctx, updateSeriesStatistics); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSeriesStatistics: %w", err)
 	}
+	if q.updateSmartFilterStmt, err = db.PrepareContext(ctx, updateSmartFilter); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateSmartFilter: %w", err)
+	}
 	if q.upsertAuthorStmt, err = db.PrepareContext(ctx, upsertAuthor); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertAuthor: %w", err)
 	}
 	if q.upsertBookByPathStmt, err = db.PrepareContext(ctx, upsertBookByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertBookByPath: %w", err)
+	}
+	if q.upsertReadingBookmarkStmt, err = db.PrepareContext(ctx, upsertReadingBookmark); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertReadingBookmark: %w", err)
 	}
 	if q.upsertSeriesByPathStmt, err = db.PrepareContext(ctx, upsertSeriesByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertSeriesByPath: %w", err)
@@ -306,8 +462,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.upsertSeriesMetadataProvenanceStmt, err = db.PrepareContext(ctx, upsertSeriesMetadataProvenance); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertSeriesMetadataProvenance: %w", err)
 	}
+	if q.upsertSmartFilterStmt, err = db.PrepareContext(ctx, upsertSmartFilter); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertSmartFilter: %w", err)
+	}
 	if q.upsertTagStmt, err = db.PrepareContext(ctx, upsertTag); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertTag: %w", err)
+	}
+	if q.upsertTaskRecordStmt, err = db.PrepareContext(ctx, upsertTaskRecord); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertTaskRecord: %w", err)
 	}
 	return &q, nil
 }
@@ -322,6 +484,16 @@ func (q *Queries) Close() error {
 	if q.addSeriesToCollectionStmt != nil {
 		if cerr := q.addSeriesToCollectionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing addSeriesToCollectionStmt: %w", cerr)
+		}
+	}
+	if q.clearAllBookCoverPathsStmt != nil {
+		if cerr := q.clearAllBookCoverPathsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearAllBookCoverPathsStmt: %w", cerr)
+		}
+	}
+	if q.clearAllSeriesStatsCoverPathsStmt != nil {
+		if cerr := q.clearAllSeriesStatsCoverPathsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearAllSeriesStatsCoverPathsStmt: %w", cerr)
 		}
 	}
 	if q.clearSeriesAuthorsStmt != nil {
@@ -339,6 +511,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing clearSeriesTagsStmt: %w", cerr)
 		}
 	}
+	if q.collectionNameExistsStmt != nil {
+		if cerr := q.collectionNameExistsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing collectionNameExistsStmt: %w", cerr)
+		}
+	}
 	if q.countAIGroupingReviewsStmt != nil {
 		if cerr := q.countAIGroupingReviewsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countAIGroupingReviewsStmt: %w", cerr)
@@ -347,6 +524,41 @@ func (q *Queries) Close() error {
 	if q.countAppliedAIGroupingReviewCollectionsStmt != nil {
 		if cerr := q.countAppliedAIGroupingReviewCollectionsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countAppliedAIGroupingReviewCollectionsStmt: %w", cerr)
+		}
+	}
+	if q.countHealthDuplicateFileHashStmt != nil {
+		if cerr := q.countHealthDuplicateFileHashStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countHealthDuplicateFileHashStmt: %w", cerr)
+		}
+	}
+	if q.countHealthDuplicateQuickHashStmt != nil {
+		if cerr := q.countHealthDuplicateQuickHashStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countHealthDuplicateQuickHashStmt: %w", cerr)
+		}
+	}
+	if q.countHealthEmptyPagesStmt != nil {
+		if cerr := q.countHealthEmptyPagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countHealthEmptyPagesStmt: %w", cerr)
+		}
+	}
+	if q.countHealthMissingCoverStmt != nil {
+		if cerr := q.countHealthMissingCoverStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countHealthMissingCoverStmt: %w", cerr)
+		}
+	}
+	if q.countHealthMissingMetadataStmt != nil {
+		if cerr := q.countHealthMissingMetadataStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countHealthMissingMetadataStmt: %w", cerr)
+		}
+	}
+	if q.countHealthMissingQuickHashStmt != nil {
+		if cerr := q.countHealthMissingQuickHashStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countHealthMissingQuickHashStmt: %w", cerr)
+		}
+	}
+	if q.countHealthUnmatchedKOReaderStmt != nil {
+		if cerr := q.countHealthUnmatchedKOReaderStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countHealthUnmatchedKOReaderStmt: %w", cerr)
 		}
 	}
 	if q.countMihonSeriesStmt != nil {
@@ -424,6 +636,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing createSeriesStmt: %w", cerr)
 		}
 	}
+	if q.createSeriesRelationStmt != nil {
+		if cerr := q.createSeriesRelationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createSeriesRelationStmt: %w", cerr)
+		}
+	}
+	if q.createSimpleCollectionStmt != nil {
+		if cerr := q.createSimpleCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createSimpleCollectionStmt: %w", cerr)
+		}
+	}
 	if q.deleteBookStmt != nil {
 		if cerr := q.deleteBookStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteBookStmt: %w", cerr)
@@ -434,9 +656,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteBookByPathStmt: %w", cerr)
 		}
 	}
+	if q.deleteCollectionStmt != nil {
+		if cerr := q.deleteCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteCollectionStmt: %w", cerr)
+		}
+	}
 	if q.deleteLibraryStmt != nil {
 		if cerr := q.deleteLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteLibraryStmt: %w", cerr)
+		}
+	}
+	if q.deleteReadingBookmarkStmt != nil {
+		if cerr := q.deleteReadingBookmarkStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteReadingBookmarkStmt: %w", cerr)
 		}
 	}
 	if q.deleteReadingListStmt != nil {
@@ -449,6 +681,21 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteSeriesStmt: %w", cerr)
 		}
 	}
+	if q.deleteSeriesRelationStmt != nil {
+		if cerr := q.deleteSeriesRelationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteSeriesRelationStmt: %w", cerr)
+		}
+	}
+	if q.deleteSmartFilterStmt != nil {
+		if cerr := q.deleteSmartFilterStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteSmartFilterStmt: %w", cerr)
+		}
+	}
+	if q.findExistingSeriesRelationStmt != nil {
+		if cerr := q.findExistingSeriesRelationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findExistingSeriesRelationStmt: %w", cerr)
+		}
+	}
 	if q.getAIGroupingReviewStmt != nil {
 		if cerr := q.getAIGroupingReviewStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAIGroupingReviewStmt: %w", cerr)
@@ -457,6 +704,11 @@ func (q *Queries) Close() error {
 	if q.getAIGroupingReviewCollectionStmt != nil {
 		if cerr := q.getAIGroupingReviewCollectionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAIGroupingReviewCollectionStmt: %w", cerr)
+		}
+	}
+	if q.getActivityHeatmapStmt != nil {
+		if cerr := q.getActivityHeatmapStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getActivityHeatmapStmt: %w", cerr)
 		}
 	}
 	if q.getAllAuthorsStmt != nil {
@@ -489,6 +741,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getCandidateSeriesForAIStmt: %w", cerr)
 		}
 	}
+	if q.getDashboardCoreStatsStmt != nil {
+		if cerr := q.getDashboardCoreStatsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getDashboardCoreStatsStmt: %w", cerr)
+		}
+	}
+	if q.getLastTaskKeyForScopeStmt != nil {
+		if cerr := q.getLastTaskKeyForScopeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLastTaskKeyForScopeStmt: %w", cerr)
+		}
+	}
 	if q.getLibraryStmt != nil {
 		if cerr := q.getLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getLibraryStmt: %w", cerr)
@@ -519,9 +781,24 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getReadingListStmt: %w", cerr)
 		}
 	}
+	if q.getReadingListItemProgressByListStmt != nil {
+		if cerr := q.getReadingListItemProgressByListStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getReadingListItemProgressByListStmt: %w", cerr)
+		}
+	}
+	if q.getRecentReadAllStmt != nil {
+		if cerr := q.getRecentReadAllStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getRecentReadAllStmt: %w", cerr)
+		}
+	}
 	if q.getRecentReadSeriesStmt != nil {
 		if cerr := q.getRecentReadSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getRecentReadSeriesStmt: %w", cerr)
+		}
+	}
+	if q.getRecommendationsStmt != nil {
+		if cerr := q.getRecommendationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getRecommendationsStmt: %w", cerr)
 		}
 	}
 	if q.getReferencedBookCoverPathsStmt != nil {
@@ -544,6 +821,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getSeriesByLibraryStmt: %w", cerr)
 		}
 	}
+	if q.getSeriesIDByBookIDStmt != nil {
+		if cerr := q.getSeriesIDByBookIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSeriesIDByBookIDStmt: %w", cerr)
+		}
+	}
+	if q.getSeriesIDByBookPathStmt != nil {
+		if cerr := q.getSeriesIDByBookPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSeriesIDByBookPathStmt: %w", cerr)
+		}
+	}
 	if q.getSeriesMetadataProvenanceStmt != nil {
 		if cerr := q.getSeriesMetadataProvenanceStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSeriesMetadataProvenanceStmt: %w", cerr)
@@ -557,6 +844,16 @@ func (q *Queries) Close() error {
 	if q.getSeriesWithoutCollectionStmt != nil {
 		if cerr := q.getSeriesWithoutCollectionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSeriesWithoutCollectionStmt: %w", cerr)
+		}
+	}
+	if q.getSmartFilterByIDStmt != nil {
+		if cerr := q.getSmartFilterByIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSmartFilterByIDStmt: %w", cerr)
+		}
+	}
+	if q.getStaticCollectionViewStmt != nil {
+		if cerr := q.getStaticCollectionViewStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getStaticCollectionViewStmt: %w", cerr)
 		}
 	}
 	if q.getTagsForSeriesStmt != nil {
@@ -604,9 +901,74 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listBooksBySeriesStmt: %w", cerr)
 		}
 	}
+	if q.listCollectionSeriesStmt != nil {
+		if cerr := q.listCollectionSeriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCollectionSeriesStmt: %w", cerr)
+		}
+	}
+	if q.listCollectionViewsStmt != nil {
+		if cerr := q.listCollectionViewsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCollectionViewsStmt: %w", cerr)
+		}
+	}
+	if q.listCollectionsWithSeriesCountStmt != nil {
+		if cerr := q.listCollectionsWithSeriesCountStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCollectionsWithSeriesCountStmt: %w", cerr)
+		}
+	}
+	if q.listExternalLibraryBooksStmt != nil {
+		if cerr := q.listExternalLibraryBooksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listExternalLibraryBooksStmt: %w", cerr)
+		}
+	}
+	if q.listForwardSeriesRelationsStmt != nil {
+		if cerr := q.listForwardSeriesRelationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listForwardSeriesRelationsStmt: %w", cerr)
+		}
+	}
+	if q.listHealthDuplicateFileHashStmt != nil {
+		if cerr := q.listHealthDuplicateFileHashStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listHealthDuplicateFileHashStmt: %w", cerr)
+		}
+	}
+	if q.listHealthDuplicateQuickHashStmt != nil {
+		if cerr := q.listHealthDuplicateQuickHashStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listHealthDuplicateQuickHashStmt: %w", cerr)
+		}
+	}
+	if q.listHealthEmptyPagesStmt != nil {
+		if cerr := q.listHealthEmptyPagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listHealthEmptyPagesStmt: %w", cerr)
+		}
+	}
+	if q.listHealthMissingCoverStmt != nil {
+		if cerr := q.listHealthMissingCoverStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listHealthMissingCoverStmt: %w", cerr)
+		}
+	}
+	if q.listHealthMissingMetadataStmt != nil {
+		if cerr := q.listHealthMissingMetadataStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listHealthMissingMetadataStmt: %w", cerr)
+		}
+	}
+	if q.listHealthMissingQuickHashStmt != nil {
+		if cerr := q.listHealthMissingQuickHashStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listHealthMissingQuickHashStmt: %w", cerr)
+		}
+	}
+	if q.listHealthUnmatchedKOReaderStmt != nil {
+		if cerr := q.listHealthUnmatchedKOReaderStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listHealthUnmatchedKOReaderStmt: %w", cerr)
+		}
+	}
 	if q.listLibrariesStmt != nil {
 		if cerr := q.listLibrariesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listLibrariesStmt: %w", cerr)
+		}
+	}
+	if q.listLibrarySizesStmt != nil {
+		if cerr := q.listLibrarySizesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listLibrarySizesStmt: %w", cerr)
 		}
 	}
 	if q.listMetadataReviewFieldsStmt != nil {
@@ -644,6 +1006,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listPendingMetadataReviewsBySeriesStmt: %w", cerr)
 		}
 	}
+	if q.listReadingBookmarksStmt != nil {
+		if cerr := q.listReadingBookmarksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listReadingBookmarksStmt: %w", cerr)
+		}
+	}
 	if q.listReadingListItemsStmt != nil {
 		if cerr := q.listReadingListItemsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listReadingListItemsStmt: %w", cerr)
@@ -664,6 +1031,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listRecentAddedSeriesStmt: %w", cerr)
 		}
 	}
+	if q.listReverseSeriesRelationsStmt != nil {
+		if cerr := q.listReverseSeriesRelationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listReverseSeriesRelationsStmt: %w", cerr)
+		}
+	}
 	if q.listSeriesByLibraryStmt != nil {
 		if cerr := q.listSeriesByLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSeriesByLibraryStmt: %w", cerr)
@@ -672,6 +1044,21 @@ func (q *Queries) Close() error {
 	if q.listSeriesInitialBackfillCandidatesStmt != nil {
 		if cerr := q.listSeriesInitialBackfillCandidatesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSeriesInitialBackfillCandidatesStmt: %w", cerr)
+		}
+	}
+	if q.listSmartFiltersByLibraryStmt != nil {
+		if cerr := q.listSmartFiltersByLibraryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listSmartFiltersByLibraryStmt: %w", cerr)
+		}
+	}
+	if q.listStaticCollectionSeriesPagedStmt != nil {
+		if cerr := q.listStaticCollectionSeriesPagedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listStaticCollectionSeriesPagedStmt: %w", cerr)
+		}
+	}
+	if q.logReadingActivityStmt != nil {
+		if cerr := q.logReadingActivityStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing logReadingActivityStmt: %w", cerr)
 		}
 	}
 	if q.markAIGroupingReviewCollectionAppliedStmt != nil {
@@ -689,6 +1076,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markAIGroupingReviewCollectionsRejectedStmt: %w", cerr)
 		}
 	}
+	if q.markInterruptedTasksStmt != nil {
+		if cerr := q.markInterruptedTasksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markInterruptedTasksStmt: %w", cerr)
+		}
+	}
 	if q.refreshSeriesStatsStmt != nil {
 		if cerr := q.refreshSeriesStatsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing refreshSeriesStatsStmt: %w", cerr)
@@ -699,9 +1091,24 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing removeReadingListItemStmt: %w", cerr)
 		}
 	}
+	if q.removeSeriesFromCollectionStmt != nil {
+		if cerr := q.removeSeriesFromCollectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing removeSeriesFromCollectionStmt: %w", cerr)
+		}
+	}
 	if q.searchOPDSSeriesStmt != nil {
 		if cerr := q.searchOPDSSeriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing searchOPDSSeriesStmt: %w", cerr)
+		}
+	}
+	if q.seriesExistsByIDStmt != nil {
+		if cerr := q.seriesExistsByIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing seriesExistsByIDStmt: %w", cerr)
+		}
+	}
+	if q.setBookCoverIfMissingStmt != nil {
+		if cerr := q.setBookCoverIfMissingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setBookCoverIfMissingStmt: %w", cerr)
 		}
 	}
 	if q.touchCollectionStmt != nil {
@@ -722,6 +1129,11 @@ func (q *Queries) Close() error {
 	if q.updateBookProgressStmt != nil {
 		if cerr := q.updateBookProgressStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateBookProgressStmt: %w", cerr)
+		}
+	}
+	if q.updateCollectionDetailsStmt != nil {
+		if cerr := q.updateCollectionDetailsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateCollectionDetailsStmt: %w", cerr)
 		}
 	}
 	if q.updateLibraryStmt != nil {
@@ -764,6 +1176,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateSeriesStatisticsStmt: %w", cerr)
 		}
 	}
+	if q.updateSmartFilterStmt != nil {
+		if cerr := q.updateSmartFilterStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateSmartFilterStmt: %w", cerr)
+		}
+	}
 	if q.upsertAuthorStmt != nil {
 		if cerr := q.upsertAuthorStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertAuthorStmt: %w", cerr)
@@ -772,6 +1189,11 @@ func (q *Queries) Close() error {
 	if q.upsertBookByPathStmt != nil {
 		if cerr := q.upsertBookByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertBookByPathStmt: %w", cerr)
+		}
+	}
+	if q.upsertReadingBookmarkStmt != nil {
+		if cerr := q.upsertReadingBookmarkStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertReadingBookmarkStmt: %w", cerr)
 		}
 	}
 	if q.upsertSeriesByPathStmt != nil {
@@ -784,9 +1206,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing upsertSeriesMetadataProvenanceStmt: %w", cerr)
 		}
 	}
+	if q.upsertSmartFilterStmt != nil {
+		if cerr := q.upsertSmartFilterStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertSmartFilterStmt: %w", cerr)
+		}
+	}
 	if q.upsertTagStmt != nil {
 		if cerr := q.upsertTagStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertTagStmt: %w", cerr)
+		}
+	}
+	if q.upsertTaskRecordStmt != nil {
+		if cerr := q.upsertTaskRecordStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertTaskRecordStmt: %w", cerr)
 		}
 	}
 	return err
@@ -830,11 +1262,21 @@ type Queries struct {
 	tx                                          *sql.Tx
 	addReadingListItemStmt                      *sql.Stmt
 	addSeriesToCollectionStmt                   *sql.Stmt
+	clearAllBookCoverPathsStmt                  *sql.Stmt
+	clearAllSeriesStatsCoverPathsStmt           *sql.Stmt
 	clearSeriesAuthorsStmt                      *sql.Stmt
 	clearSeriesLinksStmt                        *sql.Stmt
 	clearSeriesTagsStmt                         *sql.Stmt
+	collectionNameExistsStmt                    *sql.Stmt
 	countAIGroupingReviewsStmt                  *sql.Stmt
 	countAppliedAIGroupingReviewCollectionsStmt *sql.Stmt
+	countHealthDuplicateFileHashStmt            *sql.Stmt
+	countHealthDuplicateQuickHashStmt           *sql.Stmt
+	countHealthEmptyPagesStmt                   *sql.Stmt
+	countHealthMissingCoverStmt                 *sql.Stmt
+	countHealthMissingMetadataStmt              *sql.Stmt
+	countHealthMissingQuickHashStmt             *sql.Stmt
+	countHealthUnmatchedKOReaderStmt            *sql.Stmt
 	countMihonSeriesStmt                        *sql.Stmt
 	countOPDSSeriesSearchStmt                   *sql.Stmt
 	countPendingAIGroupingReviewCollectionsStmt *sql.Stmt
@@ -850,33 +1292,50 @@ type Queries struct {
 	createMetadataReviewFieldStmt               *sql.Stmt
 	createReadingListStmt                       *sql.Stmt
 	createSeriesStmt                            *sql.Stmt
+	createSeriesRelationStmt                    *sql.Stmt
+	createSimpleCollectionStmt                  *sql.Stmt
 	deleteBookStmt                              *sql.Stmt
 	deleteBookByPathStmt                        *sql.Stmt
+	deleteCollectionStmt                        *sql.Stmt
 	deleteLibraryStmt                           *sql.Stmt
+	deleteReadingBookmarkStmt                   *sql.Stmt
 	deleteReadingListStmt                       *sql.Stmt
 	deleteSeriesStmt                            *sql.Stmt
+	deleteSeriesRelationStmt                    *sql.Stmt
+	deleteSmartFilterStmt                       *sql.Stmt
+	findExistingSeriesRelationStmt              *sql.Stmt
 	getAIGroupingReviewStmt                     *sql.Stmt
 	getAIGroupingReviewCollectionStmt           *sql.Stmt
+	getActivityHeatmapStmt                      *sql.Stmt
 	getAllAuthorsStmt                           *sql.Stmt
 	getAllTagsStmt                              *sql.Stmt
 	getAuthorsForSeriesStmt                     *sql.Stmt
 	getBookStmt                                 *sql.Stmt
 	getBookByPathStmt                           *sql.Stmt
 	getCandidateSeriesForAIStmt                 *sql.Stmt
+	getDashboardCoreStatsStmt                   *sql.Stmt
+	getLastTaskKeyForScopeStmt                  *sql.Stmt
 	getLibraryStmt                              *sql.Stmt
 	getLinksForSeriesStmt                       *sql.Stmt
 	getMetadataReviewStmt                       *sql.Stmt
 	getMihonSeriesStmt                          *sql.Stmt
 	getNextBookInSeriesStmt                     *sql.Stmt
 	getReadingListStmt                          *sql.Stmt
+	getReadingListItemProgressByListStmt        *sql.Stmt
+	getRecentReadAllStmt                        *sql.Stmt
 	getRecentReadSeriesStmt                     *sql.Stmt
+	getRecommendationsStmt                      *sql.Stmt
 	getReferencedBookCoverPathsStmt             *sql.Stmt
 	getReferencedSeriesCoverPathsStmt           *sql.Stmt
 	getSeriesStmt                               *sql.Stmt
 	getSeriesByLibraryStmt                      *sql.Stmt
+	getSeriesIDByBookIDStmt                     *sql.Stmt
+	getSeriesIDByBookPathStmt                   *sql.Stmt
 	getSeriesMetadataProvenanceStmt             *sql.Stmt
 	getSeriesNamesByIDsStmt                     *sql.Stmt
 	getSeriesWithoutCollectionStmt              *sql.Stmt
+	getSmartFilterByIDStmt                      *sql.Stmt
+	getStaticCollectionViewStmt                 *sql.Stmt
 	getTagsForSeriesStmt                        *sql.Stmt
 	getTopReadingTagsStmt                       *sql.Stmt
 	linkSeriesAuthorStmt                        *sql.Stmt
@@ -886,7 +1345,20 @@ type Queries struct {
 	listAIGroupingReviewsStmt                   *sql.Stmt
 	listBooksByLibraryStmt                      *sql.Stmt
 	listBooksBySeriesStmt                       *sql.Stmt
+	listCollectionSeriesStmt                    *sql.Stmt
+	listCollectionViewsStmt                     *sql.Stmt
+	listCollectionsWithSeriesCountStmt          *sql.Stmt
+	listExternalLibraryBooksStmt                *sql.Stmt
+	listForwardSeriesRelationsStmt              *sql.Stmt
+	listHealthDuplicateFileHashStmt             *sql.Stmt
+	listHealthDuplicateQuickHashStmt            *sql.Stmt
+	listHealthEmptyPagesStmt                    *sql.Stmt
+	listHealthMissingCoverStmt                  *sql.Stmt
+	listHealthMissingMetadataStmt               *sql.Stmt
+	listHealthMissingQuickHashStmt              *sql.Stmt
+	listHealthUnmatchedKOReaderStmt             *sql.Stmt
 	listLibrariesStmt                           *sql.Stmt
+	listLibrarySizesStmt                        *sql.Stmt
 	listMetadataReviewFieldsStmt                *sql.Stmt
 	listMetadataReviewsBySeriesStmt             *sql.Stmt
 	listMihonSeriesStmt                         *sql.Stmt
@@ -894,22 +1366,32 @@ type Queries struct {
 	listMihonSeriesByUpdatedStmt                *sql.Stmt
 	listPendingMetadataReviewInboxStmt          *sql.Stmt
 	listPendingMetadataReviewsBySeriesStmt      *sql.Stmt
+	listReadingBookmarksStmt                    *sql.Stmt
 	listReadingListItemsStmt                    *sql.Stmt
 	listReadingListSeriesPageStmt               *sql.Stmt
 	listReadingListsStmt                        *sql.Stmt
 	listRecentAddedSeriesStmt                   *sql.Stmt
+	listReverseSeriesRelationsStmt              *sql.Stmt
 	listSeriesByLibraryStmt                     *sql.Stmt
 	listSeriesInitialBackfillCandidatesStmt     *sql.Stmt
+	listSmartFiltersByLibraryStmt               *sql.Stmt
+	listStaticCollectionSeriesPagedStmt         *sql.Stmt
+	logReadingActivityStmt                      *sql.Stmt
 	markAIGroupingReviewCollectionAppliedStmt   *sql.Stmt
 	markAIGroupingReviewCollectionRejectedStmt  *sql.Stmt
 	markAIGroupingReviewCollectionsRejectedStmt *sql.Stmt
+	markInterruptedTasksStmt                    *sql.Stmt
 	refreshSeriesStatsStmt                      *sql.Stmt
 	removeReadingListItemStmt                   *sql.Stmt
+	removeSeriesFromCollectionStmt              *sql.Stmt
 	searchOPDSSeriesStmt                        *sql.Stmt
+	seriesExistsByIDStmt                        *sql.Stmt
+	setBookCoverIfMissingStmt                   *sql.Stmt
 	touchCollectionStmt                         *sql.Stmt
 	updateAIGroupingReviewCollectionStmt        *sql.Stmt
 	updateAIGroupingReviewStatusStmt            *sql.Stmt
 	updateBookProgressStmt                      *sql.Stmt
+	updateCollectionDetailsStmt                 *sql.Stmt
 	updateLibraryStmt                           *sql.Stmt
 	updateMetadataReviewStatusStmt              *sql.Stmt
 	updateReadingListStmt                       *sql.Stmt
@@ -918,24 +1400,38 @@ type Queries struct {
 	updateSeriesInitialStmt                     *sql.Stmt
 	updateSeriesMetadataStmt                    *sql.Stmt
 	updateSeriesStatisticsStmt                  *sql.Stmt
+	updateSmartFilterStmt                       *sql.Stmt
 	upsertAuthorStmt                            *sql.Stmt
 	upsertBookByPathStmt                        *sql.Stmt
+	upsertReadingBookmarkStmt                   *sql.Stmt
 	upsertSeriesByPathStmt                      *sql.Stmt
 	upsertSeriesMetadataProvenanceStmt          *sql.Stmt
+	upsertSmartFilterStmt                       *sql.Stmt
 	upsertTagStmt                               *sql.Stmt
+	upsertTaskRecordStmt                        *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                         tx,
-		tx:                         tx,
-		addReadingListItemStmt:     q.addReadingListItemStmt,
-		addSeriesToCollectionStmt:  q.addSeriesToCollectionStmt,
-		clearSeriesAuthorsStmt:     q.clearSeriesAuthorsStmt,
-		clearSeriesLinksStmt:       q.clearSeriesLinksStmt,
-		clearSeriesTagsStmt:        q.clearSeriesTagsStmt,
-		countAIGroupingReviewsStmt: q.countAIGroupingReviewsStmt,
+		db:                                tx,
+		tx:                                tx,
+		addReadingListItemStmt:            q.addReadingListItemStmt,
+		addSeriesToCollectionStmt:         q.addSeriesToCollectionStmt,
+		clearAllBookCoverPathsStmt:        q.clearAllBookCoverPathsStmt,
+		clearAllSeriesStatsCoverPathsStmt: q.clearAllSeriesStatsCoverPathsStmt,
+		clearSeriesAuthorsStmt:            q.clearSeriesAuthorsStmt,
+		clearSeriesLinksStmt:              q.clearSeriesLinksStmt,
+		clearSeriesTagsStmt:               q.clearSeriesTagsStmt,
+		collectionNameExistsStmt:          q.collectionNameExistsStmt,
+		countAIGroupingReviewsStmt:        q.countAIGroupingReviewsStmt,
 		countAppliedAIGroupingReviewCollectionsStmt: q.countAppliedAIGroupingReviewCollectionsStmt,
+		countHealthDuplicateFileHashStmt:            q.countHealthDuplicateFileHashStmt,
+		countHealthDuplicateQuickHashStmt:           q.countHealthDuplicateQuickHashStmt,
+		countHealthEmptyPagesStmt:                   q.countHealthEmptyPagesStmt,
+		countHealthMissingCoverStmt:                 q.countHealthMissingCoverStmt,
+		countHealthMissingMetadataStmt:              q.countHealthMissingMetadataStmt,
+		countHealthMissingQuickHashStmt:             q.countHealthMissingQuickHashStmt,
+		countHealthUnmatchedKOReaderStmt:            q.countHealthUnmatchedKOReaderStmt,
 		countMihonSeriesStmt:                        q.countMihonSeriesStmt,
 		countOPDSSeriesSearchStmt:                   q.countOPDSSeriesSearchStmt,
 		countPendingAIGroupingReviewCollectionsStmt: q.countPendingAIGroupingReviewCollectionsStmt,
@@ -951,33 +1447,50 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createMetadataReviewFieldStmt:               q.createMetadataReviewFieldStmt,
 		createReadingListStmt:                       q.createReadingListStmt,
 		createSeriesStmt:                            q.createSeriesStmt,
+		createSeriesRelationStmt:                    q.createSeriesRelationStmt,
+		createSimpleCollectionStmt:                  q.createSimpleCollectionStmt,
 		deleteBookStmt:                              q.deleteBookStmt,
 		deleteBookByPathStmt:                        q.deleteBookByPathStmt,
+		deleteCollectionStmt:                        q.deleteCollectionStmt,
 		deleteLibraryStmt:                           q.deleteLibraryStmt,
+		deleteReadingBookmarkStmt:                   q.deleteReadingBookmarkStmt,
 		deleteReadingListStmt:                       q.deleteReadingListStmt,
 		deleteSeriesStmt:                            q.deleteSeriesStmt,
+		deleteSeriesRelationStmt:                    q.deleteSeriesRelationStmt,
+		deleteSmartFilterStmt:                       q.deleteSmartFilterStmt,
+		findExistingSeriesRelationStmt:              q.findExistingSeriesRelationStmt,
 		getAIGroupingReviewStmt:                     q.getAIGroupingReviewStmt,
 		getAIGroupingReviewCollectionStmt:           q.getAIGroupingReviewCollectionStmt,
+		getActivityHeatmapStmt:                      q.getActivityHeatmapStmt,
 		getAllAuthorsStmt:                           q.getAllAuthorsStmt,
 		getAllTagsStmt:                              q.getAllTagsStmt,
 		getAuthorsForSeriesStmt:                     q.getAuthorsForSeriesStmt,
 		getBookStmt:                                 q.getBookStmt,
 		getBookByPathStmt:                           q.getBookByPathStmt,
 		getCandidateSeriesForAIStmt:                 q.getCandidateSeriesForAIStmt,
+		getDashboardCoreStatsStmt:                   q.getDashboardCoreStatsStmt,
+		getLastTaskKeyForScopeStmt:                  q.getLastTaskKeyForScopeStmt,
 		getLibraryStmt:                              q.getLibraryStmt,
 		getLinksForSeriesStmt:                       q.getLinksForSeriesStmt,
 		getMetadataReviewStmt:                       q.getMetadataReviewStmt,
 		getMihonSeriesStmt:                          q.getMihonSeriesStmt,
 		getNextBookInSeriesStmt:                     q.getNextBookInSeriesStmt,
 		getReadingListStmt:                          q.getReadingListStmt,
+		getReadingListItemProgressByListStmt:        q.getReadingListItemProgressByListStmt,
+		getRecentReadAllStmt:                        q.getRecentReadAllStmt,
 		getRecentReadSeriesStmt:                     q.getRecentReadSeriesStmt,
+		getRecommendationsStmt:                      q.getRecommendationsStmt,
 		getReferencedBookCoverPathsStmt:             q.getReferencedBookCoverPathsStmt,
 		getReferencedSeriesCoverPathsStmt:           q.getReferencedSeriesCoverPathsStmt,
 		getSeriesStmt:                               q.getSeriesStmt,
 		getSeriesByLibraryStmt:                      q.getSeriesByLibraryStmt,
+		getSeriesIDByBookIDStmt:                     q.getSeriesIDByBookIDStmt,
+		getSeriesIDByBookPathStmt:                   q.getSeriesIDByBookPathStmt,
 		getSeriesMetadataProvenanceStmt:             q.getSeriesMetadataProvenanceStmt,
 		getSeriesNamesByIDsStmt:                     q.getSeriesNamesByIDsStmt,
 		getSeriesWithoutCollectionStmt:              q.getSeriesWithoutCollectionStmt,
+		getSmartFilterByIDStmt:                      q.getSmartFilterByIDStmt,
+		getStaticCollectionViewStmt:                 q.getStaticCollectionViewStmt,
 		getTagsForSeriesStmt:                        q.getTagsForSeriesStmt,
 		getTopReadingTagsStmt:                       q.getTopReadingTagsStmt,
 		linkSeriesAuthorStmt:                        q.linkSeriesAuthorStmt,
@@ -987,7 +1500,20 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listAIGroupingReviewsStmt:                   q.listAIGroupingReviewsStmt,
 		listBooksByLibraryStmt:                      q.listBooksByLibraryStmt,
 		listBooksBySeriesStmt:                       q.listBooksBySeriesStmt,
+		listCollectionSeriesStmt:                    q.listCollectionSeriesStmt,
+		listCollectionViewsStmt:                     q.listCollectionViewsStmt,
+		listCollectionsWithSeriesCountStmt:          q.listCollectionsWithSeriesCountStmt,
+		listExternalLibraryBooksStmt:                q.listExternalLibraryBooksStmt,
+		listForwardSeriesRelationsStmt:              q.listForwardSeriesRelationsStmt,
+		listHealthDuplicateFileHashStmt:             q.listHealthDuplicateFileHashStmt,
+		listHealthDuplicateQuickHashStmt:            q.listHealthDuplicateQuickHashStmt,
+		listHealthEmptyPagesStmt:                    q.listHealthEmptyPagesStmt,
+		listHealthMissingCoverStmt:                  q.listHealthMissingCoverStmt,
+		listHealthMissingMetadataStmt:               q.listHealthMissingMetadataStmt,
+		listHealthMissingQuickHashStmt:              q.listHealthMissingQuickHashStmt,
+		listHealthUnmatchedKOReaderStmt:             q.listHealthUnmatchedKOReaderStmt,
 		listLibrariesStmt:                           q.listLibrariesStmt,
+		listLibrarySizesStmt:                        q.listLibrarySizesStmt,
 		listMetadataReviewFieldsStmt:                q.listMetadataReviewFieldsStmt,
 		listMetadataReviewsBySeriesStmt:             q.listMetadataReviewsBySeriesStmt,
 		listMihonSeriesStmt:                         q.listMihonSeriesStmt,
@@ -995,22 +1521,32 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listMihonSeriesByUpdatedStmt:                q.listMihonSeriesByUpdatedStmt,
 		listPendingMetadataReviewInboxStmt:          q.listPendingMetadataReviewInboxStmt,
 		listPendingMetadataReviewsBySeriesStmt:      q.listPendingMetadataReviewsBySeriesStmt,
+		listReadingBookmarksStmt:                    q.listReadingBookmarksStmt,
 		listReadingListItemsStmt:                    q.listReadingListItemsStmt,
 		listReadingListSeriesPageStmt:               q.listReadingListSeriesPageStmt,
 		listReadingListsStmt:                        q.listReadingListsStmt,
 		listRecentAddedSeriesStmt:                   q.listRecentAddedSeriesStmt,
+		listReverseSeriesRelationsStmt:              q.listReverseSeriesRelationsStmt,
 		listSeriesByLibraryStmt:                     q.listSeriesByLibraryStmt,
 		listSeriesInitialBackfillCandidatesStmt:     q.listSeriesInitialBackfillCandidatesStmt,
+		listSmartFiltersByLibraryStmt:               q.listSmartFiltersByLibraryStmt,
+		listStaticCollectionSeriesPagedStmt:         q.listStaticCollectionSeriesPagedStmt,
+		logReadingActivityStmt:                      q.logReadingActivityStmt,
 		markAIGroupingReviewCollectionAppliedStmt:   q.markAIGroupingReviewCollectionAppliedStmt,
 		markAIGroupingReviewCollectionRejectedStmt:  q.markAIGroupingReviewCollectionRejectedStmt,
 		markAIGroupingReviewCollectionsRejectedStmt: q.markAIGroupingReviewCollectionsRejectedStmt,
+		markInterruptedTasksStmt:                    q.markInterruptedTasksStmt,
 		refreshSeriesStatsStmt:                      q.refreshSeriesStatsStmt,
 		removeReadingListItemStmt:                   q.removeReadingListItemStmt,
+		removeSeriesFromCollectionStmt:              q.removeSeriesFromCollectionStmt,
 		searchOPDSSeriesStmt:                        q.searchOPDSSeriesStmt,
+		seriesExistsByIDStmt:                        q.seriesExistsByIDStmt,
+		setBookCoverIfMissingStmt:                   q.setBookCoverIfMissingStmt,
 		touchCollectionStmt:                         q.touchCollectionStmt,
 		updateAIGroupingReviewCollectionStmt:        q.updateAIGroupingReviewCollectionStmt,
 		updateAIGroupingReviewStatusStmt:            q.updateAIGroupingReviewStatusStmt,
 		updateBookProgressStmt:                      q.updateBookProgressStmt,
+		updateCollectionDetailsStmt:                 q.updateCollectionDetailsStmt,
 		updateLibraryStmt:                           q.updateLibraryStmt,
 		updateMetadataReviewStatusStmt:              q.updateMetadataReviewStatusStmt,
 		updateReadingListStmt:                       q.updateReadingListStmt,
@@ -1019,10 +1555,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		updateSeriesInitialStmt:                     q.updateSeriesInitialStmt,
 		updateSeriesMetadataStmt:                    q.updateSeriesMetadataStmt,
 		updateSeriesStatisticsStmt:                  q.updateSeriesStatisticsStmt,
+		updateSmartFilterStmt:                       q.updateSmartFilterStmt,
 		upsertAuthorStmt:                            q.upsertAuthorStmt,
 		upsertBookByPathStmt:                        q.upsertBookByPathStmt,
+		upsertReadingBookmarkStmt:                   q.upsertReadingBookmarkStmt,
 		upsertSeriesByPathStmt:                      q.upsertSeriesByPathStmt,
 		upsertSeriesMetadataProvenanceStmt:          q.upsertSeriesMetadataProvenanceStmt,
+		upsertSmartFilterStmt:                       q.upsertSmartFilterStmt,
 		upsertTagStmt:                               q.upsertTagStmt,
+		upsertTaskRecordStmt:                        q.upsertTaskRecordStmt,
 	}
 }

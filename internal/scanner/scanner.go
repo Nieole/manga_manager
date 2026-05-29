@@ -1342,23 +1342,16 @@ func (s *Scanner) runCoverJob(job coverJob) {
 		return
 	}
 
-	sqlStore, ok := s.store.(*database.SqlStore)
-	if !ok {
-		removeGeneratedThumbnail(cfg, coverPath.String)
-		slog.Warn("Queued thumbnail generated but store does not support direct cover update", "book_id", job.bookID)
-		return
-	}
-	result, err := sqlStore.DB().ExecContext(ctx, `
-		UPDATE books
-		SET cover_path = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND (cover_path IS NULL OR cover_path = '')
-	`, coverPath.String, job.bookID)
+	rowsAffected, err := s.store.SetBookCoverIfMissing(ctx, database.SetBookCoverIfMissingParams{
+		CoverPath: coverPath,
+		ID:        job.bookID,
+	})
 	if err != nil {
 		removeGeneratedThumbnail(cfg, coverPath.String)
 		slog.Warn("Failed to update queued thumbnail cover path", "book_id", job.bookID, "error", err)
 		return
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if rowsAffected == 0 {
 		return
 	}
 	if job.metrics != nil {

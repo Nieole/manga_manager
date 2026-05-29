@@ -917,10 +917,10 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 			content = fmt.Sprintf("%s · 第 %d / %d 页", item.SeriesName, item.LastReadPage.Int64, item.PageCount)
 		}
 		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage)
-		if item.CoverPath.Valid && item.CoverPath.String != "" {
+		if item.CoverPath != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
-				Href: fmt.Sprintf("/api/thumbnails/%s", item.CoverPath.String),
+				Href: fmt.Sprintf("/api/thumbnails/%s", item.CoverPath),
 				Type: "image/jpeg",
 			})
 		}

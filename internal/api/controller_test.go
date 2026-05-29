@@ -142,9 +142,9 @@ func (s *countingStore) UpdateBookProgress(ctx context.Context, arg database.Upd
 	return s.Store.UpdateBookProgress(ctx, arg)
 }
 
-func (s *countingStore) LogReadingActivity(ctx context.Context, bookID int64, pagesRead int) error {
+func (s *countingStore) LogReadingActivity(ctx context.Context, arg database.LogReadingActivityParams) error {
 	s.logReadingActivityCalls++
-	return s.Store.LogReadingActivity(ctx, bookID, pagesRead)
+	return s.Store.LogReadingActivity(ctx, arg)
 }
 
 type blockingMetadataProvider struct {
@@ -3422,7 +3422,7 @@ func TestGetActivityHeatmapReturnsReadingData(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
 
-	if err := store.LogReadingActivity(context.Background(), book.ID, 7); err != nil {
+	if err := store.LogReadingActivity(context.Background(), database.LogReadingActivityParams{BookID: book.ID, PagesRead: 7}); err != nil {
 		t.Fatalf("LogReadingActivity failed: %v", err)
 	}
 

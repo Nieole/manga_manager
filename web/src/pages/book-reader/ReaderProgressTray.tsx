@@ -5,6 +5,7 @@ type Translate = (key: string, params?: Record<string, string | number | boolean
 
 interface ReaderProgressTrayProps {
   t: Translate;
+  readDirection: string;
   currentPageIndex: number;
   pageCount: number;
   sliderValue: number;
@@ -21,6 +22,7 @@ interface ReaderProgressTrayProps {
 
 export function ReaderProgressTray({
   t,
+  readDirection,
   currentPageIndex,
   pageCount,
   sliderValue,
@@ -49,21 +51,27 @@ export function ReaderProgressTray({
     onCommitPage(parseInt(target.value, 10));
   };
 
+  const isRtl = readDirection === 'rtl';
+  const leftSibl = isRtl ? next : prev;
+  const leftLabel = isRtl ? t('reader.siblings.next') : t('reader.siblings.prev');
+  const rightSibl = isRtl ? prev : next;
+  const rightLabel = isRtl ? t('reader.siblings.prev') : t('reader.siblings.next');
+
   return (
     <div className="bg-gradient-to-t from-komgaDark/90 via-komgaDark/45 to-transparent pb-8 pt-16 px-4 sm:px-8 flex flex-col items-center pointer-events-none">
       <div className="w-full max-w-4xl flex items-center justify-center gap-2 sm:gap-4 pointer-events-auto">
         
-        {/* Previous Book Button */}
+        {/* Left Book Button */}
         <div className="shrink-0 w-12 sm:w-48 flex justify-end">
-          {prev ? (
+          {leftSibl ? (
             <button
-              onClick={() => onOpenBook(prev.id)}
-              title={`${t('reader.siblings.prev')}: ${prev.title}`}
+              onClick={() => onOpenBook(leftSibl.id)}
+              title={`${leftLabel}: ${leftSibl.title}`}
               className="group flex items-center gap-2 bg-komgaDark/70 hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-all border border-white/10 rounded-full sm:rounded-2xl px-0 sm:px-4 py-3 sm:py-2.5 backdrop-blur shadow-xl text-white w-12 sm:w-auto h-12 sm:h-auto justify-center"
             >
               <SkipBack className="w-5 h-5 shrink-0 text-gray-300 group-hover:text-komgaPrimary transition-colors" />
               <span className="hidden sm:block text-xs font-medium truncate text-gray-200 group-hover:text-white max-w-[120px]">
-                {prev.title}
+                {leftSibl.title}
               </span>
             </button>
           ) : (
@@ -102,16 +110,16 @@ export function ReaderProgressTray({
           <span className="text-gray-400 font-medium text-xs sm:text-sm whitespace-nowrap w-6 sm:w-8 drop-shadow-md">{pageCount}</span>
         </div>
 
-        {/* Next Book Button */}
+        {/* Right Book Button */}
         <div className="shrink-0 w-12 sm:w-48 flex justify-start">
-          {next ? (
+          {rightSibl ? (
             <button
-              onClick={() => onOpenBook(next.id)}
-              title={`${t('reader.siblings.next')}: ${next.title}`}
+              onClick={() => onOpenBook(rightSibl.id)}
+              title={`${rightLabel}: ${rightSibl.title}`}
               className="group flex items-center gap-2 bg-komgaDark/70 hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-all border border-white/10 rounded-full sm:rounded-2xl px-0 sm:px-4 py-3 sm:py-2.5 backdrop-blur shadow-xl text-white w-12 sm:w-auto h-12 sm:h-auto justify-center"
             >
               <span className="hidden sm:block text-xs font-medium truncate text-gray-200 group-hover:text-white max-w-[120px]">
-                {next.title}
+                {rightSibl.title}
               </span>
               <SkipForward className="w-5 h-5 shrink-0 text-gray-300 group-hover:text-komgaPrimary transition-colors" />
             </button>

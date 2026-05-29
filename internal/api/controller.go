@@ -319,7 +319,10 @@ func (c *Controller) recoverInterruptedTasks() {
 	if c.store == nil {
 		return
 	}
-	count, err := c.store.MarkInterruptedTasks(context.Background(), "任务因服务重启而中断，可重试")
+	count, err := c.store.MarkInterruptedTasks(context.Background(), database.MarkInterruptedTasksParams{
+		Message: "任务因服务重启而中断，可重试",
+		Error:   "任务因服务重启而中断，可重试",
+	})
 	if err != nil {
 		slog.Warn("Failed to recover interrupted tasks", "error", err)
 		return
@@ -678,13 +681,21 @@ func (c *Controller) startBroker() {
 		case s := <-c.newClients:
 			c.clients[s] = true
 		case s := <-c.defunctClients:
-			delete(c.clients, s)
-			close(s)
+			if _, ok := c.clients[s]; ok {
+				delete(c.clients, s)
+				close(s)
+			}
 		case msg := <-c.messages:
 			for s := range c.clients {
 				select {
 				case s <- msg:
-				default: // 如果客户端积压，抛弃或在此断开逻辑
+				default:
+					// 客户端 buffer 已满（默认 64 条），说明该消费者卡死或网络背压。
+					// 主动断开它的 channel，sseHandler 会在下一轮 select 收到关闭信号并退出，
+					// 浏览器端 EventSource 会按 retry 间隔自动重连。
+					slog.Warn("SSE client backpressure, dropping client connection")
+					delete(c.clients, s)
+					close(s)
 				}
 			}
 		}
@@ -744,7 +755,22 @@ func (c *Controller) PublishEvent(event string) {
 	if c.messages == nil {
 		return
 	}
-	c.messages <- event
+	select {
+	case c.messages <- event:
+	default:
+		slog.Warn("SSE broker channel full, dropping event", "event_prefix", eventPrefix(event))
+	}
+}
+
+// eventPrefix 截取事件前缀用于日志，避免输出整段 JSON
+func eventPrefix(event string) string {
+	if i := strings.IndexByte(event, ':'); i >= 0 {
+		return event[:i]
+	}
+	if len(event) > 32 {
+		return event[:32]
+	}
+	return event
 }
 
 func (c *Controller) handleScannerBatchEvent(action string) {
@@ -3432,7 +3458,7 @@ func (c *Controller) updateBookReadState(ctx context.Context, book database.Book
 	}
 
 	if isRead && validPage {
-		if err := c.store.LogReadingActivity(ctx, book.ID, int(page)); err != nil {
+		if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page}); err != nil {
 			slog.Error("Failed to log reading activity", "book_id", book.ID, "error", err)
 		}
 	}
@@ -3647,11 +3673,11 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 
 	// 阅读活动只记录前进页，避免 Webtoon 滚动和重复上报刷高活动写入。
 	if validPage > previousPage {
-		if err := c.store.LogReadingActivity(ctx, bookID, int(validPage)); err != nil {
+		if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: validPage}); err != nil {
 			slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
 		}
 	} else if !book.LastReadPage.Valid {
-		if err := c.store.LogReadingActivity(ctx, bookID, int(validPage)); err != nil {
+		if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: validPage}); err != nil {
 			slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
 		}
 	}
@@ -3776,11 +3802,11 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 
 		// 仅前进的页码记录活动，与单本接口策略一致。
 		if validPage > previousPage {
-			if err := c.store.LogReadingActivity(ctx, item.BookID, int(validPage)); err != nil {
+			if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: item.BookID, PagesRead: validPage}); err != nil {
 				slog.Error("Failed to log reading activity", "book_id", item.BookID, "error", err)
 			}
 		} else if !book.LastReadPage.Valid {
-			if err := c.store.LogReadingActivity(ctx, item.BookID, int(validPage)); err != nil {
+			if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: item.BookID, PagesRead: validPage}); err != nil {
 				slog.Error("Failed to log reading activity", "book_id", item.BookID, "error", err)
 			}
 		}
@@ -3855,7 +3881,11 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 		page = book.PageCount
 	}
 
-	item, err := c.store.UpsertReadingBookmark(r.Context(), bookID, page, strings.TrimSpace(req.Note))
+	item, err := c.store.UpsertReadingBookmark(r.Context(), database.UpsertReadingBookmarkParams{
+		BookID: bookID,
+		Page:   page,
+		Note:   strings.TrimSpace(req.Note),
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to save reading bookmark")
 		return
@@ -3874,12 +3904,16 @@ func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "Invalid bookmark ID")
 		return
 	}
-	if err := c.store.DeleteReadingBookmark(r.Context(), bookID, bookmarkID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Bookmark not found")
-			return
-		}
+	affected, err := c.store.DeleteReadingBookmark(r.Context(), database.DeleteReadingBookmarkParams{
+		ID:     bookmarkID,
+		BookID: bookID,
+	})
+	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete reading bookmark")
+		return
+	}
+	if affected == 0 {
+		jsonError(w, http.StatusNotFound, "Bookmark not found")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Bookmark deleted"})
@@ -3893,8 +3927,18 @@ func (c *Controller) sseHandler(w http.ResponseWriter, r *http.Request) {
 	// 允许跨域及凭证支持长链接
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
+	flusher, _ := w.(http.Flusher)
+
+	// 提示客户端断线重连间隔（毫秒），并立刻刷一次响应头
+	if _, err := w.Write([]byte("retry: 5000\n\n")); err != nil {
+		return
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+
 	// 注册客户端通道
-	messageChan := make(chan string, 16)
+	messageChan := make(chan string, 64)
 	c.newClients <- messageChan
 
 	// 监听从客户端意外断开链接
@@ -3904,20 +3948,32 @@ func (c *Controller) sseHandler(w http.ResponseWriter, r *http.Request) {
 		c.defunctClients <- messageChan
 	}()
 
-	for {
-		msg, open := <-messageChan
-		if !open {
-			break // 连接已从服务端侧切断
-		}
-		// 按 SSE 格式写入流
-		_, err := w.Write([]byte("data: " + msg + "\n\n"))
-		if err != nil {
-			break
-		}
+	// 心跳：每 25 秒发送一次 SSE 注释行，避免反向代理（nginx/cloudflare 等）
+	// 在长时间空闲时切断空连接。注释行以 `:` 开头，浏览器会忽略。
+	heartbeat := time.NewTicker(25 * time.Second)
+	defer heartbeat.Stop()
 
-		// 强制刷新缓冲区使客户端即刻收到
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
+	for {
+		select {
+		case msg, open := <-messageChan:
+			if !open {
+				return // 连接已从服务端侧切断（例如 broker 检测到客户端积压）
+			}
+			if _, err := w.Write([]byte("data: " + msg + "\n\n")); err != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-heartbeat.C:
+			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-notify:
+			return
 		}
 	}
 }
@@ -4149,15 +4205,10 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 // clearAllCoverPaths 把数据库中 books 与 series_stats 的 cover_path 字段清空，
 // 用于"重建缩略图缓存"任务在删盘后强制让 scanner 重新生成所有缩略图。
 func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
-	sqlStore, ok := c.store.(*database.SqlStore)
-	if !ok {
-		return fmt.Errorf("store does not support direct cover path clearing")
-	}
-	db := sqlStore.DB()
-	if _, err := db.ExecContext(ctx, `UPDATE books SET cover_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE cover_path IS NOT NULL AND cover_path != ''`); err != nil {
+	if err := c.store.ClearAllBookCoverPaths(ctx); err != nil {
 		return fmt.Errorf("clear book cover paths: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE series_stats SET cover_path = '' WHERE cover_path != ''`); err != nil {
+	if err := c.store.ClearAllSeriesStatsCoverPaths(ctx); err != nil {
 		return fmt.Errorf("clear series cover paths: %w", err)
 	}
 	return nil
@@ -4602,14 +4653,20 @@ func (c *Controller) getActivityHeatmap(w http.ResponseWriter, r *http.Request) 
 		weeks = w
 	}
 
-	data, err := c.store.GetActivityHeatmap(r.Context(), weeks)
+	offset := fmt.Sprintf("-%d days", weeks*7)
+	rows, err := c.store.GetActivityHeatmap(r.Context(), offset)
 	if err != nil {
 		slog.Error("GetActivityHeatmap failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get activity heatmap")
 		return
 	}
-	if data == nil {
-		data = []database.ActivityDay{}
+	data := make([]database.ActivityDay, 0, len(rows))
+	for _, row := range rows {
+		count := 0
+		if row.PageCount.Valid {
+			count = int(row.PageCount.Float64)
+		}
+		data = append(data, database.ActivityDay{Date: row.Date, PageCount: count})
 	}
 	jsonResponse(w, http.StatusOK, data)
 }
@@ -4631,7 +4688,7 @@ func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if items == nil {
-		items = []database.RecentReadAllRow{}
+		items = []database.GetRecentReadAllRow{}
 	}
 	jsonResponse(w, http.StatusOK, items)
 }
@@ -4661,10 +4718,8 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 		c.recommendationsMutex.RUnlock()
 	}
 
-	dbCache := c.store.(*database.SqlStore)
-
 	// 1. 获取用户最常看的 10 个标签
-	tagRows, err := dbCache.GetTopReadingTags(ctx, 10)
+	tagRows, err := c.store.GetTopReadingTags(ctx, 10)
 	var userTags []string
 	if err == nil {
 		for _, tr := range tagRows {
@@ -4673,7 +4728,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 2. 随机获取 20 本可能有兴趣的候选漫画
-	candidateRows, err := dbCache.GetCandidateSeriesForAI(ctx, 20)
+	candidateRows, err := c.store.GetCandidateSeriesForAI(ctx, 20)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch candidates from database")
 		return
