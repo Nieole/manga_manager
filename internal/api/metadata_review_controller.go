@@ -562,7 +562,7 @@ func metadataReviewSignaturesEqual(left, right map[string]string) bool {
 	return true
 }
 
-func (c *Controller) queueMetadataReview(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, providerName, sourceQuery string) (database.MetadataReview, []database.MetadataReviewField, error) {
+func (c *Controller) queueMetadataReview(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, providerName, sourceQuery string) (database.MetadataReview, []database.MetadataReviewField, bool, error) {
 	var createdReview database.MetadataReview
 	var createdFields []database.MetadataReviewField
 	sourceURL := metadataSourceURL(providerName, result)
@@ -571,6 +571,7 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 		confidence = metadataDefaultConfidence(providerName)
 	}
 
+	var isNew bool
 	err := c.store.ExecTx(ctx, func(q *database.Queries) error {
 		tags, err := q.GetTagsForSeries(ctx, series.ID)
 		if err != nil {
@@ -598,6 +599,7 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 			if metadataReviewSignaturesEqual(nextSignature, metadataReviewFieldsSignature(fields)) {
 				createdReview = pendingReview
 				createdFields = fields
+				isNew = false
 				return nil
 			}
 		}
@@ -637,14 +639,15 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 		}
 
 		createdReview = review
+		isNew = true
 		return nil
 	})
 
 	if err != nil {
-		return database.MetadataReview{}, nil, err
+		return database.MetadataReview{}, nil, false, err
 	}
 
-	return createdReview, createdFields, nil
+	return createdReview, createdFields, isNew, nil
 }
 
 func (c *Controller) applyReviewedMetadata(ctx context.Context, series database.Series, review database.MetadataReview, fields []database.MetadataReviewField) error {

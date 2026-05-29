@@ -1291,7 +1291,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 		t.Fatalf("insert relation failed: %v", err)
 	}
 
-	if _, _, err := controller.queueMetadataReview(context.Background(), info, &metadata.SeriesMetadata{
+	if _, _, _, err := controller.queueMetadataReview(context.Background(), info, &metadata.SeriesMetadata{
 		Provider:   "bangumi",
 		Title:      "Alpha Metadata",
 		Summary:    "Reviewed summary",
@@ -3759,11 +3759,11 @@ func TestQueueMetadataReviewDeduplicatesPendingEquivalentContent(t *testing.T) {
 		SourceURL:  "https://bgm.tv/subject/12345",
 		Confidence: 0.92,
 	}
-	firstReview, firstFields, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
+	firstReview, firstFields, _, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
 	if err != nil {
 		t.Fatalf("first queue metadata review failed: %v", err)
 	}
-	secondReview, secondFields, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
+	secondReview, secondFields, _, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
 	if err != nil {
 		t.Fatalf("second queue metadata review failed: %v", err)
 	}
@@ -3798,7 +3798,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 		t.Fatalf("GetSeries A failed: %v", err)
 	}
 
-	reviewA, _, err := controller.queueMetadataReview(context.Background(), seriesA, &metadata.SeriesMetadata{
+	reviewA, _, _, err := controller.queueMetadataReview(context.Background(), seriesA, &metadata.SeriesMetadata{
 		Title:      "External Title",
 		Publisher:  "External Publisher",
 		Summary:    "External summary",
@@ -3810,7 +3810,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queue review A failed: %v", err)
 	}
-	reviewB, _, err := controller.queueMetadataReview(context.Background(), seriesB, &metadata.SeriesMetadata{
+	reviewB, _, _, err := controller.queueMetadataReview(context.Background(), seriesB, &metadata.SeriesMetadata{
 		Title:      "Beta Title",
 		Publisher:  "Beta Publisher",
 		SourceID:   2,

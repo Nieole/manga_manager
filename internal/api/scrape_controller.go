@@ -155,17 +155,26 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, err := c.queueMetadataReview(r.Context(), series, &result, providerName, series.Name)
+	review, fields, isNew, err := c.queueMetadataReview(r.Context(), series, &result, providerName, series.Name)
 	if err != nil {
 		if errors.Is(err, errNoMetadataChanges) {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"success": true,
 				"queued":  false,
-				"message": "No metadata changes to review",
+				"message": "所有数据与当前信息完全一致，无需更新",
 			})
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "Failed to queue metadata review")
+		return
+	}
+
+	if !isNew {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success": true,
+			"queued":  false,
+			"message": "待审核队列中已存在完全相同的记录，已为您忽略",
+		})
 		return
 	}
 
@@ -383,16 +392,24 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, err := c.queueMetadataReview(r.Context(), series, result, provider.Name(), searchTitle)
+	review, fields, isNew, err := c.queueMetadataReview(r.Context(), series, result, provider.Name(), searchTitle)
 	if err != nil {
 		if errors.Is(err, errNoMetadataChanges) {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"scraped": false,
-				"message": fmt.Sprintf("从 %s 找到条目，但没有可加入审阅队列的字段", provider.Name()),
+				"message": fmt.Sprintf("从 %s 找到条目，但所有数据与当前信息完全一致，无需加入待审核队列", provider.Name()),
 			})
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "Failed to save scraped metadata")
+		return
+	}
+
+	if !isNew {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"scraped": false,
+			"message": fmt.Sprintf("从 %s 找到条目，但待审核队列中已存在完全相同的记录，已为您忽略", provider.Name()),
+		})
 		return
 	}
 
@@ -529,10 +546,12 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 				c.completeTask(taskKey, "cancelled", "批量刮削已取消")
 				return
 			}
-			if _, _, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
+			if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
 				successCount++
-				queuedReviewCount++
-				slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
+				if isNew {
+					queuedReviewCount++
+					slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
+				}
 			} else if !errors.Is(err, errNoMetadataChanges) {
 				failedCount++
 				slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
@@ -718,9 +737,11 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 				c.completeTask(taskKey, "cancelled", "资源库批量刮削已取消")
 				return
 			}
-			if _, _, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
+			if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
 				successCount++
-				queuedReviewCount++
+				if isNew {
+					queuedReviewCount++
+				}
 			} else if !errors.Is(err, errNoMetadataChanges) {
 				failedCount++
 			}

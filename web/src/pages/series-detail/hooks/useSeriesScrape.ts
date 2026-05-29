@@ -70,7 +70,8 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
           showToast(`[${res.data.provider}] ${res.data.message}`, 'success');
           await reload();
         } else {
-          showToast(res.data.message || t('series.toast.metadataNotFound'), 'error');
+          // If it found a duplicate, it's not strictly an error, but we'll show it as a notification.
+          showToast(res.data.message || t('series.toast.metadataNotFound'), res.data.message?.includes('完全一致') || res.data.message?.includes('已为您忽略') ? 'success' : 'error');
         }
       } catch (err) {
         showToast(`${t('series.toast.scrapeFailed')}: ${getApiErrorMessage(err, t('series.toast.scrapeFailed'))}`, 'error');
@@ -92,7 +93,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
           showToast(
             res.data.queued
               ? t('series.toast.metadataReviewQueued', { count: res.data.field_count || 0 })
-              : t('series.toast.noMetadataReviewChanges'),
+              : (res.data.message || t('series.toast.noMetadataReviewChanges')),
             'success',
           );
           await reload();
