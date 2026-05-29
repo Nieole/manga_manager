@@ -14,6 +14,8 @@ const BOOK_TABS: ReaderSettingsTab[] = ['cache', 'bookmarks'];
 
 interface ReaderSettingsDrawerProps {
   t: Translate;
+  readerTheme: string;
+  setReaderTheme: Dispatch<SetStateAction<any>>;
   readMode: ReadMode;
   setReadMode: Dispatch<SetStateAction<ReadMode>>;
   readDirection: ReadDirection;
@@ -66,6 +68,8 @@ interface ReaderSettingsDrawerProps {
 
 export function ReaderSettingsDrawer({
   t,
+  readerTheme,
+  setReaderTheme,
   readMode,
   setReadMode,
   readDirection,
@@ -183,6 +187,12 @@ export function ReaderSettingsDrawer({
         {activeTab === 'reading' && (
           <div className="space-y-4">
             <div>
+              <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">Theme</span>
+              <div className="flex bg-gray-900 rounded p-1 mb-3">
+                <button className={`flex-1 py-1.5 rounded transition ${readerTheme === 'base' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReaderTheme('base')}>Base Theme</button>
+                <button className={`flex-1 py-1.5 rounded transition ${readerTheme === 'comimi' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReaderTheme('comimi')}>Comimi Theme</button>
+              </div>
+
               <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">{t('reader.layoutSection')}</span>
               <div className="flex bg-gray-900 rounded p-1 mb-3">
                 <button className={`flex-1 py-1.5 rounded transition ${readMode === 'webtoon' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('webtoon')}>{t('reader.modeWebtoon')}</button>

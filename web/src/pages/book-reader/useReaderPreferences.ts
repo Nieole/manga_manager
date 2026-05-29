@@ -1,7 +1,8 @@
 import { useStickyState } from './useStickyState';
-import type { ImageFilter, ReaderImageFormat, ReadDirection, ReadMode, ScaleMode } from './types';
+import type { ImageFilter, ReaderImageFormat, ReadDirection, ReadMode, ScaleMode, ReaderTheme } from './types';
 
 export function useReaderPreferences() {
+  const [readerTheme, setReaderTheme] = useStickyState<ReaderTheme>('base', 'manga_reader_theme');
   const [readMode, setReadMode] = useStickyState<ReadMode>('webtoon', 'manga_read_mode');
   const [readDirection, setReadDirection] = useStickyState<ReadDirection>('ltr', 'manga_read_direction');
   const [doublePage, setDoublePage] = useStickyState<boolean>(false, 'manga_double_page');
@@ -17,6 +18,8 @@ export function useReaderPreferences() {
   const [w2xFormat, setW2xFormat] = useStickyState<string>('webp', 'manga_waifu2x_format');
 
   return {
+    readerTheme,
+    setReaderTheme,
     readMode,
     setReadMode,
     readDirection,

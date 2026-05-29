@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@yui540/comimi": "^0.3.1",
+    "@yui540/comimi-react": "^0.1.2",
     "axios": "^1.13.5",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.575.0",
