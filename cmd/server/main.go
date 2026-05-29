@@ -184,16 +184,31 @@ func staticContentType(path string) string {
 		return ""
 	}
 
-	contentType := mime.TypeByExtension(ext)
-	if contentType == "" {
-		return ""
-	}
-
-	if ext == ".js" {
+	// Always fallback to built-in overrides first to prevent Windows registry issues
+	switch ext {
+	case ".js", ".mjs":
 		return "application/javascript"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".json":
+		return "application/json"
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".wasm":
+		return "application/wasm"
 	}
 
-	return contentType
+	return mime.TypeByExtension(ext)
 }
 
 func staticCacheControl(path string) string {
