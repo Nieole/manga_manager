@@ -10,6 +10,7 @@ import { initializeFrontendPerformance } from './utils/frontendPerformance.ts'
 import { ToastProvider } from './components/ToastProvider.tsx'
 import './index.css'
 
+// Cache buster: 1
 initializeTheme()
 initializeFrontendPerformance()
 
