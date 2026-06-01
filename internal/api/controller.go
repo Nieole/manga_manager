@@ -44,8 +44,11 @@ type Controller struct {
 	bookPageSourceCache *lru.Cache[int64, cachedBookPageSource]
 	progressWriteCache  *lru.Cache[int64, cachedProgressWrite]
 	dashboardStatsMu    sync.RWMutex
-	dashboardStatsCache *cachedDashboardStats
+	volatileStatsCache  *cachedVolatileStats
 	dashboardStatsGen   int64
+	structuralStatsMu   sync.RWMutex
+	structuralStatsCache *cachedStructuralStats
+	structuralStatsGen  int64
 	scanner             *scanner.Scanner
 	engine              *search.Engine
 	config              *config.Manager
@@ -190,8 +193,16 @@ type rebuildThumbAggregator struct {
 	currentLibPath     string
 }
 
-type cachedDashboardStats struct {
-	stats     database.DashboardStats
+// cachedStructuralStats 缓存结构性统计（含 books 全表扫描），仅在扫描/库结构变化时失效。
+// 阅读进度变化不会失效它，从而避免高频阅读触发 70w 行全表 COUNT/SUM。
+type cachedStructuralStats struct {
+	stats     database.DashboardStructuralStats
+	expiresAt time.Time
+}
+
+// cachedVolatileStats 缓存随阅读进度高频变化的统计（走索引，代价低）。
+type cachedVolatileStats struct {
+	stats     database.DashboardVolatileStats
 	expiresAt time.Time
 }
 
@@ -3394,7 +3405,7 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 		updated++
 	}
 	if updated > 0 {
-		c.invalidateDashboardStatsCache("bulk_book_progress")
+		c.invalidateVolatileStatsCache("bulk_book_progress")
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk progress update completed", "updated": updated})
@@ -3428,7 +3439,7 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 		}
 	}
 	if updated > 0 {
-		c.invalidateDashboardStatsCache("bulk_series_progress")
+		c.invalidateVolatileStatsCache("bulk_series_progress")
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk series progress update completed", "updated": updated})
@@ -3476,13 +3487,32 @@ func cloneDashboardStats(stats *database.DashboardStats) *database.DashboardStat
 	return &cloned
 }
 
+// invalidateDashboardStatsCache 失效全部统计缓存（结构性 + 阅读类）。
+// 用于扫描/库结构变化等会改变 total_books/total_pages 的场景。
 func (c *Controller) invalidateDashboardStatsCache(reason string) {
+	c.structuralStatsMu.Lock()
+	c.structuralStatsGen++
+	c.structuralStatsCache = nil
+	c.structuralStatsMu.Unlock()
+
 	c.dashboardStatsMu.Lock()
 	c.dashboardStatsGen++
-	c.dashboardStatsCache = nil
+	c.volatileStatsCache = nil
 	c.dashboardStatsMu.Unlock()
 	if reason != "" {
 		slog.Debug("Invalidated dashboard stats cache", "reason", reason)
+	}
+}
+
+// invalidateVolatileStatsCache 仅失效阅读类统计缓存（read_books/active_days）。
+// 用于阅读进度更新等高频场景——这些操作不改变结构性统计，避免触发 books 全表扫描。
+func (c *Controller) invalidateVolatileStatsCache(reason string) {
+	c.dashboardStatsMu.Lock()
+	c.dashboardStatsGen++
+	c.volatileStatsCache = nil
+	c.dashboardStatsMu.Unlock()
+	if reason != "" {
+		slog.Debug("Invalidated volatile dashboard stats cache", "reason", reason)
 	}
 }
 
@@ -3496,37 +3526,86 @@ func (c *Controller) warmDashboardStatsCacheAsync(reason string) {
 	})
 }
 
+func (c *Controller) loadStructuralStats(ctx context.Context) (*database.DashboardStructuralStats, error) {
+	now := time.Now()
+	c.structuralStatsMu.RLock()
+	if c.structuralStatsCache != nil && now.Before(c.structuralStatsCache.expiresAt) {
+		stats := c.structuralStatsCache.stats
+		c.structuralStatsMu.RUnlock()
+		return &stats, nil
+	}
+	generation := c.structuralStatsGen
+	c.structuralStatsMu.RUnlock()
+
+	stats, err := c.store.GetDashboardStructuralStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if stats == nil {
+		stats = &database.DashboardStructuralStats{}
+	}
+	c.structuralStatsMu.Lock()
+	if generation == c.structuralStatsGen {
+		c.structuralStatsCache = &cachedStructuralStats{
+			stats:     *stats,
+			expiresAt: now.Add(dashboardStatsCacheTTL),
+		}
+	}
+	c.structuralStatsMu.Unlock()
+	return stats, nil
+}
+
+func (c *Controller) loadVolatileStats(ctx context.Context) (*database.DashboardVolatileStats, error) {
+	now := time.Now()
+	c.dashboardStatsMu.RLock()
+	if c.volatileStatsCache != nil && now.Before(c.volatileStatsCache.expiresAt) {
+		stats := c.volatileStatsCache.stats
+		c.dashboardStatsMu.RUnlock()
+		return &stats, nil
+	}
+	generation := c.dashboardStatsGen
+	c.dashboardStatsMu.RUnlock()
+
+	stats, err := c.store.GetDashboardVolatileStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if stats == nil {
+		stats = &database.DashboardVolatileStats{}
+	}
+	c.dashboardStatsMu.Lock()
+	if generation == c.dashboardStatsGen {
+		c.volatileStatsCache = &cachedVolatileStats{
+			stats:     *stats,
+			expiresAt: now.Add(dashboardStatsCacheTTL),
+		}
+	}
+	c.dashboardStatsMu.Unlock()
+	return stats, nil
+}
+
 func (c *Controller) loadDashboardStats(ctx context.Context) (*database.DashboardStats, error) {
 	if c.store == nil {
 		return nil, errors.New("store is not configured")
 	}
 
-	now := time.Now()
-	c.dashboardStatsMu.RLock()
-	if c.dashboardStatsCache != nil && now.Before(c.dashboardStatsCache.expiresAt) {
-		stats := cloneDashboardStats(&c.dashboardStatsCache.stats)
-		c.dashboardStatsMu.RUnlock()
-		return stats, nil
-	}
-	generation := c.dashboardStatsGen
-	c.dashboardStatsMu.RUnlock()
-
-	stats, err := c.store.GetDashboardStats(ctx)
+	structural, err := c.loadStructuralStats(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if stats == nil {
-		stats = &database.DashboardStats{}
+	volatile, err := c.loadVolatileStats(ctx)
+	if err != nil {
+		return nil, err
 	}
-	cacheStats := cloneDashboardStats(stats)
-	c.dashboardStatsMu.Lock()
-	if generation == c.dashboardStatsGen {
-		c.dashboardStatsCache = &cachedDashboardStats{
-			stats:     *cacheStats,
-			expiresAt: now.Add(dashboardStatsCacheTTL),
-		}
+
+	stats := &database.DashboardStats{
+		TotalSeries:  structural.TotalSeries,
+		TotalBooks:   structural.TotalBooks,
+		TotalPages:   structural.TotalPages,
+		LibrarySizes: structural.LibrarySizes,
+		ReadBooks:    volatile.ReadBooks,
+		ActiveDays7:  volatile.ActiveDays7,
 	}
-	c.dashboardStatsMu.Unlock()
 	return cloneDashboardStats(stats), nil
 }
 
@@ -3666,7 +3745,7 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusInternalServerError, "Failed to update progress")
 		return
 	}
-	c.invalidateDashboardStatsCache("book_progress")
+	c.invalidateVolatileStatsCache("book_progress")
 	if c.progressWriteCache != nil {
 		c.progressWriteCache.Add(bookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
 	}
@@ -3819,7 +3898,7 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 	}
 
 	if updatedCount > 0 {
-		c.invalidateDashboardStatsCache("bulk_progress_sync")
+		c.invalidateVolatileStatsCache("bulk_progress_sync")
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{

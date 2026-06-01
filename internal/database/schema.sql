@@ -76,7 +76,8 @@ CREATE INDEX IF NOT EXISTS idx_series_stats_completed ON series_stats(completed_
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    series_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS series_tags (
@@ -86,6 +87,11 @@ CREATE TABLE IF NOT EXISTS series_tags (
     FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE,
     FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_series_tags_tag_id ON series_tags(tag_id);
+
+-- tags.series_count by triggers in store.go migration. facet sort uses idx_tags_series_count.
+CREATE INDEX IF NOT EXISTS idx_tags_series_count ON tags(series_count DESC, name);
 
 CREATE TABLE IF NOT EXISTS authors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

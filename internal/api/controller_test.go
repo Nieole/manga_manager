@@ -123,6 +123,8 @@ type countingStore struct {
 	database.Store
 	getBookCalls            int
 	getDashboardStatsCalls  int
+	structuralStatsCalls    int
+	volatileStatsCalls      int
 	updateBookProgressCalls int
 	logReadingActivityCalls int
 }
@@ -135,6 +137,16 @@ func (s *countingStore) GetBook(ctx context.Context, id int64) (database.Book, e
 func (s *countingStore) GetDashboardStats(ctx context.Context) (*database.DashboardStats, error) {
 	s.getDashboardStatsCalls++
 	return s.Store.GetDashboardStats(ctx)
+}
+
+func (s *countingStore) GetDashboardStructuralStats(ctx context.Context) (*database.DashboardStructuralStats, error) {
+	s.structuralStatsCalls++
+	return s.Store.GetDashboardStructuralStats(ctx)
+}
+
+func (s *countingStore) GetDashboardVolatileStats(ctx context.Context) (*database.DashboardVolatileStats, error) {
+	s.volatileStatsCalls++
+	return s.Store.GetDashboardVolatileStats(ctx)
 }
 
 func (s *countingStore) UpdateBookProgress(ctx context.Context, arg database.UpdateBookProgressParams) error {
@@ -3384,8 +3396,11 @@ func TestDashboardStatsCacheAvoidsRepeatedStoreQueriesAndInvalidates(t *testing.
 
 	first := fetchStats()
 	second := fetchStats()
-	if counting.getDashboardStatsCalls != 1 {
-		t.Fatalf("expected one store dashboard query for repeated reads, got %d", counting.getDashboardStatsCalls)
+	if counting.structuralStatsCalls != 1 {
+		t.Fatalf("expected one structural query for repeated reads, got %d", counting.structuralStatsCalls)
+	}
+	if counting.volatileStatsCalls != 1 {
+		t.Fatalf("expected one volatile query for repeated reads, got %d", counting.volatileStatsCalls)
 	}
 	if first.TotalBooks != second.TotalBooks || second.ReadBooks != 0 {
 		t.Fatalf("unexpected cached dashboard stats: first=%+v second=%+v", first, second)
@@ -3393,8 +3408,8 @@ func TestDashboardStatsCacheAvoidsRepeatedStoreQueriesAndInvalidates(t *testing.
 
 	controller.handleScannerBatchEvent("batch_inserted")
 	_ = fetchStats()
-	if counting.getDashboardStatsCalls != 2 {
-		t.Fatalf("expected scanner batch event to invalidate dashboard cache, got %d store calls", counting.getDashboardStatsCalls)
+	if counting.structuralStatsCalls != 2 {
+		t.Fatalf("expected scanner batch event to invalidate structural cache, got %d structural calls", counting.structuralStatsCalls)
 	}
 
 	req := requestWithRouteParam(
@@ -3409,9 +3424,11 @@ func TestDashboardStatsCacheAvoidsRepeatedStoreQueriesAndInvalidates(t *testing.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected progress update 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
+	structuralBefore := counting.structuralStatsCalls
 	afterProgress := fetchStats()
-	if counting.getDashboardStatsCalls != 3 {
-		t.Fatalf("expected progress update to invalidate dashboard cache, got %d store calls", counting.getDashboardStatsCalls)
+	// 阅读进度更新只失效阅读类缓存：结构性统计（含 books 全表扫描）不应被重新查询。
+	if counting.structuralStatsCalls != structuralBefore {
+		t.Fatalf("progress update should NOT invalidate structural cache: before=%d after=%d", structuralBefore, counting.structuralStatsCalls)
 	}
 	if afterProgress.ReadBooks != 1 {
 		t.Fatalf("expected refreshed read book count 1, got %+v", afterProgress)

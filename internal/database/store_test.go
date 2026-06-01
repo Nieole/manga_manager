@@ -9,6 +9,92 @@ import (
 	"time"
 )
 
+func tagSeriesCount(t *testing.T, store Store, tagID int64) int {
+	t.Helper()
+	sqlStore, ok := store.(*SqlStore)
+	if !ok {
+		t.Fatalf("expected *SqlStore, got %T", store)
+	}
+	var count int
+	if err := sqlStore.db.QueryRow(`SELECT series_count FROM tags WHERE id = ?`, tagID).Scan(&count); err != nil {
+		t.Fatalf("query series_count failed: %v", err)
+	}
+	return count
+}
+
+// TestTagSeriesCountTriggerMaintainsCount 验证 series_tags 的 INSERT/DELETE 触发器
+// 在 link、clear、以及删除 series 触发 FK 级联删除时都能正确维护 tags.series_count。
+func TestTagSeriesCountTriggerMaintainsCount(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name:                "Main",
+		Path:                filepath.Join(t.TempDir(), "library"),
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library failed: %v", err)
+	}
+	tag, err := store.UpsertTag(ctx, "Action")
+	if err != nil {
+		t.Fatalf("upsert tag failed: %v", err)
+	}
+
+	mkSeries := func(name string) int64 {
+		s, err := store.CreateSeries(ctx, CreateSeriesParams{
+			LibraryID:   lib.ID,
+			Name:        name,
+			Path:        filepath.Join(lib.Path, name),
+			NameInitial: SeriesInitial("", name),
+		})
+		if err != nil {
+			t.Fatalf("create series %s failed: %v", name, err)
+		}
+		return s.ID
+	}
+
+	s1 := mkSeries("Alpha")
+	s2 := mkSeries("Beta")
+
+	if err := store.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: s1, TagID: tag.ID}); err != nil {
+		t.Fatalf("link s1 failed: %v", err)
+	}
+	if err := store.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: s2, TagID: tag.ID}); err != nil {
+		t.Fatalf("link s2 failed: %v", err)
+	}
+	if got := tagSeriesCount(t, store, tag.ID); got != 2 {
+		t.Fatalf("after two links: series_count=%d want 2", got)
+	}
+
+	// 重复 link 同一组合应被 INSERT OR IGNORE 吞掉，不应重复 +1
+	if err := store.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: s1, TagID: tag.ID}); err != nil {
+		t.Fatalf("relink s1 failed: %v", err)
+	}
+	if got := tagSeriesCount(t, store, tag.ID); got != 2 {
+		t.Fatalf("after duplicate link: series_count=%d want 2", got)
+	}
+
+	// ClearSeriesTags 删除 s1 的关联，应 -1
+	if err := store.ClearSeriesTags(ctx, s1); err != nil {
+		t.Fatalf("clear s1 tags failed: %v", err)
+	}
+	if got := tagSeriesCount(t, store, tag.ID); got != 1 {
+		t.Fatalf("after clear s1: series_count=%d want 1", got)
+	}
+
+	// 删除 s2 触发 FK 级联删除 series_tags 行，触发器应 -1 归零
+	if err := store.DeleteSeries(ctx, s2); err != nil {
+		t.Fatalf("delete s2 failed: %v", err)
+	}
+	if got := tagSeriesCount(t, store, tag.ID); got != 0 {
+		t.Fatalf("after delete s2 (cascade): series_count=%d want 0", got)
+	}
+}
+
 func newStoreForTest(t *testing.T) Store {
 	t.Helper()
 

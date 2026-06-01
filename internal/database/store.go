@@ -27,6 +27,8 @@ type Store interface {
 	SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 	SearchSeriesCursor(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
+	GetDashboardStructuralStats(ctx context.Context) (*DashboardStructuralStats, error)
+	GetDashboardVolatileStats(ctx context.Context) (*DashboardVolatileStats, error)
 	ListProtocolSeriesByIDs(ctx context.Context, ids []int64) ([]ProtocolSeriesRow, error)
 	SearchTags(ctx context.Context, query string, limit int) ([]Tag, error)
 	SearchAuthors(ctx context.Context, query string, limit int) ([]Author, error)
@@ -85,6 +87,22 @@ type DashboardStats struct {
 	TotalPages   int           `json:"total_pages"`
 	ActiveDays7  int           `json:"active_days_7"` // 最近7天有阅读行为的天数
 	LibrarySizes []LibrarySize `json:"library_sizes"`
+}
+
+// DashboardStructuralStats 是仅在扫描增删书/库时才变化的结构性统计。
+// 其中 TotalBooks/TotalPages 是对 books 表的全表扫描（70w 行级别），代价高，
+// 故与高频变化的阅读类统计分开缓存，避免阅读进度更新触发全表重算。
+type DashboardStructuralStats struct {
+	TotalSeries  int
+	TotalBooks   int
+	TotalPages   int
+	LibrarySizes []LibrarySize
+}
+
+// DashboardVolatileStats 是随阅读进度高频变化的统计，查询均走索引/时间窗口，代价低。
+type DashboardVolatileStats struct {
+	ReadBooks   int
+	ActiveDays7 int
 }
 
 type TaskRecord struct {
@@ -412,6 +430,7 @@ func Migrate(dbPath string) error {
 		{table: "smart_filters", name: "min_progress", definition: "REAL"},
 		{table: "smart_filters", name: "max_progress", definition: "REAL"},
 		{table: "smart_filters", name: "added_within_days", definition: "INTEGER"},
+		{table: "tags", name: "series_count", definition: "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
 			return err
@@ -454,6 +473,8 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at)`,
+		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ai AFTER INSERT ON series_tags BEGIN UPDATE tags SET series_count = series_count + 1 WHERE id = NEW.tag_id; END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ad AFTER DELETE ON series_tags BEGIN UPDATE tags SET series_count = series_count - 1 WHERE id = OLD.tag_id; END`,
 	}); err != nil {
 		return err
 	}
@@ -467,6 +488,10 @@ func Migrate(dbPath string) error {
 	}
 
 	if err := backfillSeriesStats(db); err != nil {
+		return err
+	}
+
+	if err := backfillTagSeriesCount(db); err != nil {
 		return err
 	}
 
@@ -644,6 +669,15 @@ func refreshSeriesStatsStatement(whereClause string) string {
 
 func backfillSeriesStats(db *sql.DB) error {
 	_, err := db.Exec(refreshSeriesStatsStatement("1 = 1"))
+	return err
+}
+
+// backfillTagSeriesCount 全量重算 tags.series_count，供迁移/重建时初始化既有数据。
+// 触发器只维护增量，历史数据需此处一次性回填。
+func backfillTagSeriesCount(db *sql.DB) error {
+	_, err := db.Exec(`UPDATE tags SET series_count = (
+		SELECT COUNT(*) FROM series_tags WHERE series_tags.tag_id = tags.id
+	)`)
 	return err
 }
 
@@ -1338,19 +1372,41 @@ func decodeSeriesCursor(cursor string) (seriesCursorPayload, error) {
 	return payload, nil
 }
 
-// GetDashboardStats 一次性拿到全局统计看板所需的聚合数据
+// GetDashboardStats 一次性拿到全局统计看板所需的聚合数据（组合结构性+阅读类统计）
 func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
-	core, err := s.Queries.GetDashboardCoreStats(ctx)
+	structural, err := s.GetDashboardStructuralStats(ctx)
 	if err != nil {
 		return nil, err
 	}
-	stats := DashboardStats{
-		TotalSeries: int(core.TotalSeries),
-		TotalBooks:  int(core.TotalBooks),
-		ReadBooks:   int(core.ReadBooks),
-		ActiveDays7: int(core.ActiveDays7),
+	volatile, err := s.GetDashboardVolatileStats(ctx)
+	if err != nil {
+		return nil, err
 	}
-	switch v := core.TotalPages.(type) {
+	return &DashboardStats{
+		TotalSeries:  structural.TotalSeries,
+		TotalBooks:   structural.TotalBooks,
+		TotalPages:   structural.TotalPages,
+		LibrarySizes: structural.LibrarySizes,
+		ReadBooks:    volatile.ReadBooks,
+		ActiveDays7:  volatile.ActiveDays7,
+	}, nil
+}
+
+// GetDashboardStructuralStats 计算仅随扫描增删书/库变化的结构性统计。
+// total_books / total_pages 是对 books 表的全表扫描，代价高，调用方应缓存且仅在扫描后失效。
+func (s *SqlStore) GetDashboardStructuralStats(ctx context.Context) (*DashboardStructuralStats, error) {
+	var stats DashboardStructuralStats
+	var totalPages any
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM series) AS total_series,
+			(SELECT COUNT(*) FROM books) AS total_books,
+			(SELECT COALESCE(SUM(page_count), 0) FROM books) AS total_pages
+	`).Scan(&stats.TotalSeries, &stats.TotalBooks, &totalPages)
+	if err != nil {
+		return nil, err
+	}
+	switch v := totalPages.(type) {
 	case int64:
 		stats.TotalPages = int(v)
 	case float64:
@@ -1370,6 +1426,20 @@ func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 		stats.LibrarySizes = sizes
 	}
 
+	return &stats, nil
+}
+
+// GetDashboardVolatileStats 计算随阅读进度高频变化的统计，均走索引/时间窗口，代价低。
+func (s *SqlStore) GetDashboardVolatileStats(ctx context.Context) (*DashboardVolatileStats, error) {
+	var stats DashboardVolatileStats
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
+			(SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) AS active_days_7
+	`).Scan(&stats.ReadBooks, &stats.ActiveDays7)
+	if err != nil {
+		return nil, err
+	}
 	return &stats, nil
 }
 
@@ -1395,18 +1465,18 @@ func (s *SqlStore) SearchTags(ctx context.Context, query string, limit int) ([]T
 	args := make([]any, 0, 2)
 	where := ""
 	if query != "" {
-		where = "WHERE lower(t.name) LIKE ?"
+		where = "WHERE lower(name) LIKE ?"
 		args = append(args, "%"+strings.ToLower(query)+"%")
 	}
 	args = append(args, limit)
 
+	// series_count 由 series_tags 触发器维护，按其倒序走 idx_tags_series_count，
+	// 避免对 25000+ 标签做 LEFT JOIN + GROUP BY + COUNT 全量聚合。
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.id, t.name, t.created_at
-		FROM tags t
-		LEFT JOIN series_tags st ON st.tag_id = t.id
+		SELECT id, name, created_at
+		FROM tags
 		`+where+`
-		GROUP BY t.id
-		ORDER BY COUNT(st.series_id) DESC, t.name ASC
+		ORDER BY series_count DESC, name ASC
 		LIMIT ?
 	`, args...)
 	if err != nil {
