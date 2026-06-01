@@ -59,6 +59,7 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [recommendationsRequested, setRecommendationsRequested] = useState(false);
     const [recsLoading, setRecsLoading] = useState(false);
+    const [heatmapWeeks, setHeatmapWeeks] = useState(52);
     const scrollRef = useRef<HTMLDivElement>(null);
     const recommendationsRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
@@ -69,14 +70,12 @@ export default function Dashboard() {
             axios.get('/api/stats/dashboard'),
             axios.get('/api/libraries').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
-            axios.get('/api/stats/activity-heatmap?weeks=52').catch(() => ({ data: [] })),
             axios.get('/api/reviews/inbox/summary').catch(() => ({ data: { counts: { total: 0 } } })),
-        ]).then(([statsRes, librariesRes, recentRes, heatmapRes, reviewSummaryRes]) => {
+        ]).then(([statsRes, librariesRes, recentRes, reviewSummaryRes]) => {
             if (!active) return;
             setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
-            setHeatmapData(Array.isArray(heatmapRes.data) ? heatmapRes.data : []);
             setReviewPending(reviewSummaryRes?.data?.counts?.total ?? 0);
         }).catch(console.error).finally(() => {
             if (active) setLoading(false);
@@ -85,6 +84,19 @@ export default function Dashboard() {
             active = false;
         };
     }, []);
+
+    useEffect(() => {
+        let active = true;
+        axios.get(`/api/stats/activity-heatmap?weeks=${heatmapWeeks}`)
+            .then(res => {
+                if (!active) return;
+                setHeatmapData(Array.isArray(res.data) ? res.data : []);
+            })
+            .catch(console.error);
+        return () => {
+            active = false;
+        };
+    }, [heatmapWeeks]);
 
     const loadRecommendations = useCallback((forceRefresh = false) => {
         if (recsLoading) return;
@@ -342,7 +354,7 @@ export default function Dashboard() {
 
                     {/* GitHub 风格活跃热力图 */}
                     <div className="lg:col-span-2">
-                        <ActivityHeatmap data={heatmapData} activeDays7={stats.active_days_7} />
+                        <ActivityHeatmap data={heatmapData} activeDays7={stats.active_days_7} weeks={heatmapWeeks} onChangeWeeks={setHeatmapWeeks} />
                     </div>
                 </div>
             )}
@@ -446,10 +458,9 @@ function StatCard({ icon, label, value, subtitle, color, borderColor, iconColor 
 
 
 // GitHub 风格活跃热力图组件
-function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDays7: number }) {
+function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: ActivityDay[]; activeDays7: number; weeks: number; onChangeWeeks: (w: number) => void }) {
     const { locale, t, formatNumber } = useI18n();
-    const WEEKS = 52;
-    const TOTAL_DAYS = WEEKS * 7;
+    const TOTAL_DAYS = weeks * 7;
 
     // 构建日期 → 页数的映射
     const activityMap = new Map<string, number>();
@@ -495,21 +506,21 @@ function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDay
     }
 
     // 按周分组（每列一周，每行一天）
-    const weeks: typeof cells[] = [];
+    const weekColumns: typeof cells[] = [];
     let weekBuf: typeof cells = [];
     for (const cell of cells) {
         weekBuf.push(cell);
         if (cell.dayOfWeek === 0) { // 周日结束一周
-            weeks.push(weekBuf);
+            weekColumns.push(weekBuf);
             weekBuf = [];
         }
     }
-    if (weekBuf.length > 0) weeks.push(weekBuf);
+    if (weekBuf.length > 0) weekColumns.push(weekBuf);
 
     // 月份标签
     const monthLabels: { label: string; colIndex: number }[] = [];
     let lastMonth = -1;
-    weeks.forEach((week, colIdx) => {
+    weekColumns.forEach((week, colIdx) => {
         const firstDay = week[0];
         if (firstDay) {
             const monthDate = new Date(firstDay.date);
@@ -531,17 +542,30 @@ function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDay
     return (
         <div className="bg-komgaSurface border border-gray-800 rounded-2xl p-6 relative">
             <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-white">{t('dashboard.activity.title')}</h3>
-                <p className="text-xs text-gray-500">
-                    {t('dashboard.activity.summary', { count: formatNumber(activeDays7) })}
-                </p>
+                <div>
+                    <h3 className="text-lg font-semibold text-white">{t('dashboard.activity.title')}</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                        {t('dashboard.activity.summary', { count: formatNumber(activeDays7) })}
+                    </p>
+                </div>
+                <div className="flex items-center">
+                    <select
+                        value={weeks}
+                        onChange={(e) => onChangeWeeks(Number(e.target.value))}
+                        className="bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block px-2.5 py-1.5 transition-colors"
+                    >
+                        <option value={13}>{t('dashboard.activity.range.13weeks')}</option>
+                        <option value={26}>{t('dashboard.activity.range.26weeks')}</option>
+                        <option value={52}>{t('dashboard.activity.range.52weeks')}</option>
+                    </select>
+                </div>
             </div>
 
             <div className="overflow-x-auto">
                 <div className="inline-flex flex-col gap-0.5 min-w-fit">
                     {/* 月份标签行 */}
                     <div className="flex ml-8 mb-1">
-                        {weeks.map((_, colIdx) => {
+                        {weekColumns.map((_, colIdx) => {
                             const ml = monthLabels.find(m => m.colIndex === colIdx);
                             return (
                                 <div key={colIdx} className="w-[13px] mx-[1.5px] shrink-0">
@@ -558,7 +582,7 @@ function ActivityHeatmap({ data, activeDays7 }: { data: ActivityDay[]; activeDay
                                 <span className="text-[10px] text-gray-600 leading-none">{dayLabels[rowIdx]}</span>
                             </div>
                             <div className="flex gap-[3px]">
-                                {weeks.map((week, colIdx) => {
+                                {weekColumns.map((week, colIdx) => {
                                     // 行索引对应周一=0, 周二=1, ..., 周日=6
                                     const mappedDow = rowIdx === 6 ? 0 : rowIdx + 1;
                                     const cell = week.find(c => c.dayOfWeek === mappedDow);

@@ -93,7 +93,7 @@ export function ShortcutsPanel({ open, onClose }: ShortcutsPanelProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl"
+        className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
@@ -114,7 +114,7 @@ export function ShortcutsPanel({ open, onClose }: ShortcutsPanelProps) {
             <X className="h-4 w-4" />
           </button>
         </header>
-        <div className="grid gap-4 p-5 sm:grid-cols-2">
+        <div className="grid gap-4 p-5 sm:grid-cols-2 overflow-y-auto min-h-0">
           {GROUPS.map((group) => (
             <section key={group.titleKey} className="rounded-xl border border-gray-800 bg-gray-900/40 p-3">
               <h3 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">

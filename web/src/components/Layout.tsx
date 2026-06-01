@@ -641,13 +641,13 @@ export default function Layout() {
                 <div className="flex-1 max-w-xl flex justify-center px-4">
                     <button
                         onClick={() => setIsSearchModalOpen(true)}
-                        className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 flex items-center justify-between text-sm text-gray-500 hover:border-gray-700 hover:text-gray-300 transition-all opacity-80 hover:opacity-100 shadow-inner group"
+                        className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 flex items-center justify-between text-sm text-gray-500 hover:border-gray-700 hover:text-gray-300 transition-all opacity-80 hover:opacity-100 shadow-inner group overflow-hidden"
                     >
-                        <div className="flex items-center">
-                            <Search className="w-4 h-4 mr-3 group-hover:text-komgaPrimary transition-colors" />
-                            <span>{t('layout.searchPlaceholder')}</span>
+                        <div className="flex items-center min-w-0 overflow-hidden">
+                            <Search className="w-4 h-4 mr-3 group-hover:text-komgaPrimary transition-colors shrink-0" />
+                            <span className="truncate">{t('layout.searchPlaceholder')}</span>
                         </div>
-                        <kbd className="hidden sm:inline-block bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono text-gray-400">⌘K</kbd>
+                        <kbd className="hidden sm:inline-block bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono text-gray-400 shrink-0 ml-3">⌘K</kbd>
                     </button>
                 </div>
 

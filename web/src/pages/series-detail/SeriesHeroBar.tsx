@@ -196,22 +196,22 @@ export function SeriesHeroBar({
             )}
 
             {/* Primary Action & Progress */}
-            <div className="flex flex-col sm:flex-row items-center gap-4 mb-8">
+            <div className="flex flex-wrap items-center gap-4 mb-8 justify-center sm:justify-start">
               {continueCta && (
                 <Link
                   to={`/reader/${continueCta.bookId}`}
-                  className="group relative inline-flex items-center justify-center gap-4 pl-2 pr-6 py-2 rounded-full bg-white text-gray-950 font-bold shadow-xl shadow-white/20 hover:shadow-2xl hover:scale-105 transition-all overflow-hidden"
+                  className="group relative inline-flex items-center justify-center gap-4 pl-2 pr-6 py-2 rounded-full bg-white text-gray-950 font-bold shadow-xl shadow-white/20 hover:shadow-2xl hover:scale-105 transition-all overflow-hidden shrink-0"
                 >
                   <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-gray-950/10 shrink-0">
                     <Play className="w-5 h-5 fill-current translate-x-0.5" />
                   </span>
-                  <span className="relative text-base uppercase tracking-wide">{ctaLabel}</span>
+                  <span className="relative text-base uppercase tracking-wide whitespace-nowrap">{ctaLabel}</span>
                 </Link>
               )}
               {totalPages > 0 && (
-                <div className="flex items-center gap-4 px-5 py-3 rounded-full bg-gray-950/40 border border-white/10 backdrop-blur-xl shadow-xl shadow-black/40">
+                <div className="flex items-center gap-4 px-5 py-3 rounded-full bg-gray-950/40 border border-white/10 backdrop-blur-xl shadow-xl shadow-black/40 shrink-0">
                   <ProgressRing pct={progressPct} finished={!!hasFinished} />
-                  <div className="flex flex-col">
+                  <div className="flex flex-col whitespace-nowrap">
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                       {hasFinished ? t('series.stats.completed') : t('series.stats.progress')}
                     </span>
@@ -270,7 +270,7 @@ export function SeriesHeroBar({
                     key={tag.id}
                     type="button"
                     onClick={() => navigate(libraryFilterTo(series?.library_id, 'tag', tag.name))}
-                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-komgaSecondary/10 text-komgaSecondary border border-komgaSecondary/30 hover:bg-komgaSecondary/20 hover:border-komgaSecondary/50 transition-colors max-w-full"
+                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-komgaSecondary/10 text-komgaSecondary border border-komgaSecondary/30 hover:bg-komgaSecondary/20 hover:border-komgaSecondary/50 transition-colors max-w-full shrink-0"
                     title={tag.name}
                   >
                     <Tag className="w-3 h-3 shrink-0" />
@@ -281,7 +281,7 @@ export function SeriesHeroBar({
                   <button
                     type="button"
                     onClick={() => setTagsExpanded((v) => !v)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-white/5 text-gray-200 border border-white/15 hover:bg-white/15 hover:border-white/25 transition-colors"
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-white/5 text-gray-200 border border-white/15 hover:bg-white/15 hover:border-white/25 transition-colors shrink-0"
                     aria-expanded={tagsExpanded}
                   >
                     {tagsExpanded ? (
@@ -338,17 +338,17 @@ function StatCard({
 }) {
   return (
     <div
-      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gray-950/40 border border-white/10 backdrop-blur-md shadow-lg shadow-black/20 hover:bg-white/10 transition-colors"
+      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gray-950/40 border border-white/10 backdrop-blur-md shadow-lg shadow-black/20 hover:bg-white/10 transition-colors shrink-0"
       title={value ? `${label}: ${value}` : label}
     >
       <span className="shrink-0 drop-shadow-md">{icon}</span>
       {value ? (
-        <span className="flex items-baseline gap-1.5 leading-none">
+        <span className="flex items-baseline gap-1.5 leading-none whitespace-nowrap">
           <span className="text-sm font-extrabold text-white tracking-tight">{value}</span>
           <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</span>
         </span>
       ) : (
-        <span className="text-xs font-bold leading-none text-gray-300 truncate max-w-[14rem] tracking-wide">{label}</span>
+        <span className="text-xs font-bold leading-none text-gray-300 truncate max-w-[14rem] tracking-wide whitespace-nowrap">{label}</span>
       )}
     </div>
   );
