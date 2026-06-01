@@ -305,9 +305,10 @@ type SmartFilter struct {
 }
 
 type Tag struct {
-	ID        int64        `json:"id"`
-	Name      string       `json:"name"`
-	CreatedAt sql.NullTime `json:"created_at"`
+	ID          int64        `json:"id"`
+	Name        string       `json:"name"`
+	CreatedAt   sql.NullTime `json:"created_at"`
+	SeriesCount int64        `json:"series_count"`
 }
 
 type Task struct {

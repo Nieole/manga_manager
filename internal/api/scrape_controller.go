@@ -26,7 +26,7 @@ func (c *Controller) getProvider(name string) metadata.Provider {
 		return c.providerFactory(name)
 	}
 	switch strings.ToLower(name) {
-	case "ollama", "llm", "openai":
+	case "ollama", "llm", "openai", "openai-legacy":
 		cfg := c.currentConfig()
 		provider := cfg.LLM.Provider
 		model := cfg.LLM.Model
@@ -319,12 +319,10 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 			}
 		}
 
-		// 来源链接
-		if result.SourceID > 0 && providerName != "" && strings.ToLower(providerName) != "ollama" && strings.ToLower(providerName) != "llm" {
-			linkName := providerName
-			if strings.ToLower(providerName) == "bangumi" {
-				linkName = "Bangumi"
-			}
+		// 来源链接：仅 Bangumi 提供 bgm.tv 外链。providerName 可能是 key（"bangumi"）
+		// 或显示名，统一用包含匹配，避免 LLM 显示名（如 "Ollama LLM"）被误判为可写外链。
+		if result.SourceID > 0 && strings.Contains(strings.ToLower(providerName), "bangumi") {
+			linkName := "Bangumi"
 			linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
 
 			existingLinks, _ := q.GetLinksForSeries(ctx, series.ID)

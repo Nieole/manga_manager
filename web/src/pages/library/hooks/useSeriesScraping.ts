@@ -62,18 +62,21 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
       setScrapeModalSearchQuery(series.title?.Valid ? series.title.String : series.name);
       setIsScraping(true);
       try {
-        const [seriesRes, tagsRes, lockedRes, searchRes] = await Promise.all([
+        const [seriesRes, tagsRes, searchRes] = await Promise.all([
           axios.get<DetailSeries>(`/api/series/${series.id}`),
           axios.get<MetaTag[]>(`/api/series/${series.id}/tags`).catch(() => ({ data: [] as MetaTag[] })),
-          axios.get<{ locked_fields?: string[] }>(`/api/series/${series.id}/locked-fields`).catch(() => ({ data: { locked_fields: [] } })),
-          axios.get<{ items?: SearchResult[]; total?: number }>(
+          axios.get<{ results?: SearchResult[]; total?: number }>(
             `/api/series/${series.id}/scrape-search?provider=${providerKey}&q=${encodeURIComponent(series.title?.Valid ? series.title.String : series.name)}&offset=0`,
           ),
         ]);
         setScrapeSeriesDetail(seriesRes.data);
         setScrapeCurrentTags(tagsRes.data || []);
-        setScrapeLockedFields(new Set(lockedRes.data?.locked_fields || []));
-        setScrapeSearchResults(searchRes.data?.items || []);
+        // locked_fields 已包含在 series 详情里（逗号分隔），与详情页解析方式一致，
+        // 无需再请求独立的 /locked-fields 端点（该端点不存在，会产生 404）。
+        const lockedRaw = seriesRes.data?.locked_fields;
+        const lockedList = lockedRaw?.Valid && lockedRaw.String ? lockedRaw.String.split(',') : [];
+        setScrapeLockedFields(new Set(lockedList));
+        setScrapeSearchResults(searchRes.data?.results || []);
         setScrapeTotal(searchRes.data?.total || 0);
         setScrapeOffset(0);
         setShowScrapeModal(true);
@@ -92,10 +95,10 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
       if (!scrapingSeries) return;
       setIsScraping(true);
       try {
-        const res = await axios.get<{ items?: SearchResult[]; total?: number }>(
+        const res = await axios.get<{ results?: SearchResult[]; total?: number }>(
           `/api/series/${scrapingSeries.id}/scrape-search?provider=${scrapeProvider}&q=${encodeURIComponent(scrapeModalSearchQuery)}&offset=${offset}`,
         );
-        setScrapeSearchResults(res.data?.items || []);
+        setScrapeSearchResults(res.data?.results || []);
         setScrapeTotal(res.data?.total || 0);
         setScrapeOffset(offset);
       } catch (err) {
@@ -113,8 +116,17 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
       if (!scrapingSeries) return;
       setIsScraping(true);
       try {
-        await axios.post(`/api/series/${scrapingSeries.id}/scrape-apply?provider=${scrapeProvider}`, metadata);
-        onSuccess(scrapingSeries.id);
+        const res = await axios.post<{ queued?: boolean; message?: string }>(
+          `/api/series/${scrapingSeries.id}/scrape-apply?provider=${scrapeProvider}`,
+          metadata,
+        );
+        // 后端可能因待审核队列中已存在完全相同的记录而忽略本次提交（queued=false），
+        // 此时应提示用户而非静默当作成功。
+        if (res.data?.queued === false) {
+          onError('series.toast.scrapeDuplicate');
+        } else {
+          onSuccess(scrapingSeries.id);
+        }
         closeScrapeModal();
       } catch (err) {
         console.error('Apply scrape failed', err);

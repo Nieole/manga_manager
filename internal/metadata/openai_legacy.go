@@ -145,7 +145,14 @@ func (o *OpenAILegacyProvider) FetchSeriesMetadata(ctx context.Context, title st
 }
 
 func (o *OpenAILegacyProvider) SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*SeriesMetadata, int, error) {
-	return nil, 0, fmt.Errorf("openai-legacy search metadata: not implemented")
+	result, err := o.FetchSeriesMetadata(ctx, title)
+	if err != nil {
+		return nil, 0, err
+	}
+	if result == nil || (result.Title == "" && result.Summary == "") {
+		return []*SeriesMetadata{}, 0, nil
+	}
+	return []*SeriesMetadata{result}, 1, nil
 }
 
 func (o *OpenAILegacyProvider) GenerateRecommendations(ctx context.Context, userTags []string, candidates []CandidateSeries, limit int) ([]AIRecommendation, error) {

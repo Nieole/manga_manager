@@ -180,6 +180,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBookByPathStmt, err = db.PrepareContext(ctx, getBookByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBookByPath: %w", err)
 	}
+	if q.getBookCoverPathsByIDsStmt, err = db.PrepareContext(ctx, getBookCoverPathsByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBookCoverPathsByIDs: %w", err)
+	}
 	if q.getCandidateSeriesForAIStmt, err = db.PrepareContext(ctx, getCandidateSeriesForAI); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCandidateSeriesForAI: %w", err)
 	}
@@ -230,6 +233,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getSeriesByLibraryStmt, err = db.PrepareContext(ctx, getSeriesByLibrary); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeriesByLibrary: %w", err)
+	}
+	if q.getSeriesCoverPathsByIDsStmt, err = db.PrepareContext(ctx, getSeriesCoverPathsByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSeriesCoverPathsByIDs: %w", err)
 	}
 	if q.getSeriesIDByBookIDStmt, err = db.PrepareContext(ctx, getSeriesIDByBookID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSeriesIDByBookID: %w", err)
@@ -736,6 +742,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getBookByPathStmt: %w", cerr)
 		}
 	}
+	if q.getBookCoverPathsByIDsStmt != nil {
+		if cerr := q.getBookCoverPathsByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBookCoverPathsByIDsStmt: %w", cerr)
+		}
+	}
 	if q.getCandidateSeriesForAIStmt != nil {
 		if cerr := q.getCandidateSeriesForAIStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getCandidateSeriesForAIStmt: %w", cerr)
@@ -819,6 +830,11 @@ func (q *Queries) Close() error {
 	if q.getSeriesByLibraryStmt != nil {
 		if cerr := q.getSeriesByLibraryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSeriesByLibraryStmt: %w", cerr)
+		}
+	}
+	if q.getSeriesCoverPathsByIDsStmt != nil {
+		if cerr := q.getSeriesCoverPathsByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSeriesCoverPathsByIDsStmt: %w", cerr)
 		}
 	}
 	if q.getSeriesIDByBookIDStmt != nil {
@@ -1312,6 +1328,7 @@ type Queries struct {
 	getAuthorsForSeriesStmt                     *sql.Stmt
 	getBookStmt                                 *sql.Stmt
 	getBookByPathStmt                           *sql.Stmt
+	getBookCoverPathsByIDsStmt                  *sql.Stmt
 	getCandidateSeriesForAIStmt                 *sql.Stmt
 	getDashboardCoreStatsStmt                   *sql.Stmt
 	getLastTaskKeyForScopeStmt                  *sql.Stmt
@@ -1329,6 +1346,7 @@ type Queries struct {
 	getReferencedSeriesCoverPathsStmt           *sql.Stmt
 	getSeriesStmt                               *sql.Stmt
 	getSeriesByLibraryStmt                      *sql.Stmt
+	getSeriesCoverPathsByIDsStmt                *sql.Stmt
 	getSeriesIDByBookIDStmt                     *sql.Stmt
 	getSeriesIDByBookPathStmt                   *sql.Stmt
 	getSeriesMetadataProvenanceStmt             *sql.Stmt
@@ -1467,6 +1485,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getAuthorsForSeriesStmt:                     q.getAuthorsForSeriesStmt,
 		getBookStmt:                                 q.getBookStmt,
 		getBookByPathStmt:                           q.getBookByPathStmt,
+		getBookCoverPathsByIDsStmt:                  q.getBookCoverPathsByIDsStmt,
 		getCandidateSeriesForAIStmt:                 q.getCandidateSeriesForAIStmt,
 		getDashboardCoreStatsStmt:                   q.getDashboardCoreStatsStmt,
 		getLastTaskKeyForScopeStmt:                  q.getLastTaskKeyForScopeStmt,
@@ -1484,6 +1503,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getReferencedSeriesCoverPathsStmt:           q.getReferencedSeriesCoverPathsStmt,
 		getSeriesStmt:                               q.getSeriesStmt,
 		getSeriesByLibraryStmt:                      q.getSeriesByLibraryStmt,
+		getSeriesCoverPathsByIDsStmt:                q.getSeriesCoverPathsByIDsStmt,
 		getSeriesIDByBookIDStmt:                     q.getSeriesIDByBookIDStmt,
 		getSeriesIDByBookPathStmt:                   q.getSeriesIDByBookPathStmt,
 		getSeriesMetadataProvenanceStmt:             q.getSeriesMetadataProvenanceStmt,

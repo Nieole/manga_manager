@@ -976,6 +976,17 @@ SELECT DISTINCT cover_path FROM books WHERE cover_path IS NOT NULL AND cover_pat
 -- name: GetReferencedSeriesCoverPaths :many
 SELECT DISTINCT cover_path FROM series_stats WHERE cover_path IS NOT NULL AND cover_path != '';
 
+-- name: GetBookCoverPathsByIDs :many
+SELECT id, COALESCE(cover_path, '') AS cover_path
+FROM books
+WHERE id IN (sqlc.slice(ids));
+
+-- name: GetSeriesCoverPathsByIDs :many
+SELECT s.id, CAST(COALESCE(ss.cover_path, '') AS TEXT) AS cover_path
+FROM series s
+LEFT JOIN series_stats ss ON ss.series_id = s.id
+WHERE s.id IN (sqlc.slice(ids));
+
 -- name: ListCollectionsWithSeriesCount :many
 SELECT
     c.id, c.name, c.description, c.cover_url, c.sort_order, c.source_type, c.source_review_id,

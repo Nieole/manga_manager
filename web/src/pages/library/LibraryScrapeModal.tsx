@@ -17,7 +17,7 @@ export function LibraryScrapeModal({ scraping }: LibraryScrapeModalProps) {
     <SeriesSearchModal
       open={scraping.showScrapeModal}
       onClose={scraping.closeScrapeModal}
-      providerLabel={scraping.scrapeProvider === 'bangumi' ? 'Bangumi' : scraping.scrapeProvider}
+      providerLabel={scraping.scrapeProvider === 'bangumi' ? 'Bangumi' : 'AI/LLM'}
       modalSearchQuery={scraping.scrapeModalSearchQuery}
       isScraping={scraping.isScraping}
       searchResults={scraping.scrapeSearchResults}

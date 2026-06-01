@@ -1058,7 +1058,7 @@ func (q *Queries) GetAllAuthors(ctx context.Context) ([]Author, error) {
 }
 
 const getAllTags = `-- name: GetAllTags :many
-SELECT id, name, created_at FROM tags ORDER BY name
+SELECT id, name, created_at, series_count FROM tags ORDER BY name
 `
 
 func (q *Queries) GetAllTags(ctx context.Context) ([]Tag, error) {
@@ -1070,7 +1070,12 @@ func (q *Queries) GetAllTags(ctx context.Context) ([]Tag, error) {
 	var items []Tag
 	for rows.Next() {
 		var i Tag
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.SeriesCount,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1186,6 +1191,50 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getBookCoverPathsByIDs = `-- name: GetBookCoverPathsByIDs :many
+SELECT id, COALESCE(cover_path, '') AS cover_path
+FROM books
+WHERE id IN (/*SLICE:ids*/?)
+`
+
+type GetBookCoverPathsByIDsRow struct {
+	ID        int64  `json:"id"`
+	CoverPath string `json:"cover_path"`
+}
+
+func (q *Queries) GetBookCoverPathsByIDs(ctx context.Context, ids []int64) ([]GetBookCoverPathsByIDsRow, error) {
+	query := getBookCoverPathsByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetBookCoverPathsByIDsRow
+	for rows.Next() {
+		var i GetBookCoverPathsByIDsRow
+		if err := rows.Scan(&i.ID, &i.CoverPath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getCandidateSeriesForAI = `-- name: GetCandidateSeriesForAI :many
@@ -1942,6 +1991,51 @@ func (q *Queries) GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]Ge
 	return items, nil
 }
 
+const getSeriesCoverPathsByIDs = `-- name: GetSeriesCoverPathsByIDs :many
+SELECT s.id, CAST(COALESCE(ss.cover_path, '') AS TEXT) AS cover_path
+FROM series s
+LEFT JOIN series_stats ss ON ss.series_id = s.id
+WHERE s.id IN (/*SLICE:ids*/?)
+`
+
+type GetSeriesCoverPathsByIDsRow struct {
+	ID        int64  `json:"id"`
+	CoverPath string `json:"cover_path"`
+}
+
+func (q *Queries) GetSeriesCoverPathsByIDs(ctx context.Context, ids []int64) ([]GetSeriesCoverPathsByIDsRow, error) {
+	query := getSeriesCoverPathsByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSeriesCoverPathsByIDsRow
+	for rows.Next() {
+		var i GetSeriesCoverPathsByIDsRow
+		if err := rows.Scan(&i.ID, &i.CoverPath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSeriesIDByBookID = `-- name: GetSeriesIDByBookID :one
 SELECT series_id FROM books WHERE id = ?
 `
@@ -2175,7 +2269,7 @@ func (q *Queries) GetStaticCollectionView(ctx context.Context, id int64) (GetSta
 }
 
 const getTagsForSeries = `-- name: GetTagsForSeries :many
-SELECT t.id, t.name, t.created_at FROM tags t
+SELECT t.id, t.name, t.created_at, t.series_count FROM tags t
 JOIN series_tags st ON t.id = st.tag_id
 WHERE st.series_id = ? ORDER BY t.name
 `
@@ -2189,7 +2283,12 @@ func (q *Queries) GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, 
 	var items []Tag
 	for rows.Next() {
 		var i Tag
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.SeriesCount,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -5705,13 +5804,18 @@ func (q *Queries) UpsertSmartFilter(ctx context.Context, arg UpsertSmartFilterPa
 const upsertTag = `-- name: UpsertTag :one
 INSERT INTO tags (name) VALUES (?)
 ON CONFLICT(name) DO UPDATE SET name = excluded.name
-RETURNING id, name, created_at
+RETURNING id, name, created_at, series_count
 `
 
 func (q *Queries) UpsertTag(ctx context.Context, name string) (Tag, error) {
 	row := q.queryRow(ctx, q.upsertTagStmt, upsertTag, name)
 	var i Tag
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.SeriesCount,
+	)
 	return i, err
 }
 

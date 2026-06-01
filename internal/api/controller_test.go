@@ -1065,6 +1065,130 @@ func TestSearchBooksHandler(t *testing.T) {
 	})
 }
 
+// TestSearchNormalizesScores 验证搜索响应里命中得分被归一化到 (0,1]，最佳匹配为 1.0。
+func TestSearchNormalizesScores(t *testing.T) {
+	controller, _, engine, _ := newTestController(t)
+
+	// 索引若干书，使不同命中的原始相关性得分存在差异。
+	books := []database.Book{
+		{ID: 1, Name: "Naruto Volume 01"},
+		{ID: 2, Name: "Naruto Gaiden Special Edition"},
+		{ID: 3, Name: "Naruto Shippuden Complete"},
+	}
+	for _, b := range books {
+		if err := engine.IndexBook(b, "Naruto"); err != nil {
+			t.Fatalf("IndexBook failed: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=Naruto&target=book", nil)
+	rec := httptest.NewRecorder()
+	controller.searchBooks(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Hits []struct {
+			ID    string  `json:"id"`
+			Score float64 `json:"score"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode search response failed: %v", err)
+	}
+	if len(response.Hits) == 0 {
+		t.Fatal("expected at least one search hit")
+	}
+
+	var maxScore float64
+	for _, hit := range response.Hits {
+		if hit.Score <= 0 || hit.Score > 1.0000001 {
+			t.Fatalf("score out of (0,1] range: id=%s score=%f", hit.ID, hit.Score)
+		}
+		if hit.Score > maxScore {
+			maxScore = hit.Score
+		}
+	}
+	if maxScore < 0.9999999 {
+		t.Fatalf("expected top hit normalized to 1.0, got max=%f", maxScore)
+	}
+}
+
+// TestSearchHydratesCoversFromDB 验证：即使搜索索引里 cover_path 为空（封面在扫描后才异步生成），
+// 搜索响应也会用数据库中的最新封面回填 book/series 命中。
+func TestSearchHydratesCoversFromDB(t *testing.T) {
+	controller, store, engine, rootDir := newTestController(t)
+	ctx := context.Background()
+
+	lib, series, book := seedBookFixture(t, store, rootDir, "Library A", "Beta", "Beta 01.cbz", 10)
+
+	// 模拟扫描后异步生成封面：写入数据库（同时刷新 series_stats 派生 series 封面）。
+	const bookCover = "covers/beta-01.webp"
+	if _, err := store.SetBookCoverIfMissing(ctx, database.SetBookCoverIfMissingParams{
+		CoverPath: sql.NullString{String: bookCover, Valid: true},
+		ID:        book.ID,
+	}); err != nil {
+		t.Fatalf("SetBookCoverIfMissing failed: %v", err)
+	}
+	if err := store.RefreshSeriesStats(ctx, series.ID); err != nil {
+		t.Fatalf("RefreshSeriesStats failed: %v", err)
+	}
+
+	// 关键：索引时 cover_path 为空，复现 bug 场景。
+	if err := engine.IndexBook(book, series.Name); err != nil {
+		t.Fatalf("IndexBook failed: %v", err)
+	}
+	if err := engine.IndexSeries(series.ID, series.Name, ""); err != nil {
+		t.Fatalf("IndexSeries failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=Beta&target=all", nil)
+	rec := httptest.NewRecorder()
+	controller.searchBooks(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Hits []struct {
+			ID     string         `json:"id"`
+			Fields map[string]any `json:"fields"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode search response failed: %v", err)
+	}
+	if len(response.Hits) == 0 {
+		t.Fatal("expected at least one search hit")
+	}
+
+	var sawBook, sawSeries bool
+	for _, hit := range response.Hits {
+		cover, _ := hit.Fields["cover_path"].(string)
+		switch hit.ID {
+		case "b_" + strconv.FormatInt(book.ID, 10):
+			sawBook = true
+			if cover != bookCover {
+				t.Fatalf("book hit cover not hydrated: got %q want %q", cover, bookCover)
+			}
+		case "s_" + strconv.FormatInt(series.ID, 10):
+			sawSeries = true
+			// series 封面由 RefreshSeriesStats 从书的封面派生而来，应非空。
+			if cover == "" {
+				t.Fatal("series hit cover not hydrated: got empty string")
+			}
+		}
+	}
+	if !sawBook {
+		t.Fatal("expected book hit in response")
+	}
+	if !sawSeries {
+		t.Fatal("expected series hit in response")
+	}
+	_ = lib
+}
+
 func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	libPath := filepath.Join(t.TempDir(), "library")
@@ -3797,6 +3921,63 @@ func TestQueueMetadataReviewDeduplicatesPendingEquivalentContent(t *testing.T) {
 	}
 	if len(pending) != 1 {
 		t.Fatalf("expected one pending review after duplicate queue, got %+v", pending)
+	}
+}
+
+// TestQueueMetadataReviewKeepsDistinctSourcesSeparate 验证：字段 diff 相同但来源条目（SourceID）
+// 不同的两次提交不会被去重复用，而是各自独立入队并保留自己的 source_url。
+// 复现 bug：选中第 3 条候选应用后，审核页超链接却指向第 1 条。
+func TestQueueMetadataReviewKeepsDistinctSourcesSeparate(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
+	info, err := store.GetSeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("GetSeries failed: %v", err)
+	}
+
+	// 两条候选的字段值完全一致，仅 SourceID/SourceURL 不同（同一作品的不同 Bangumi 条目）。
+	first := &metadata.SeriesMetadata{
+		Provider:  "bangumi",
+		Title:     "Same Title",
+		Summary:   "Same summary",
+		SourceID:  111,
+		SourceURL: "https://bgm.tv/subject/111",
+	}
+	third := &metadata.SeriesMetadata{
+		Provider:  "bangumi",
+		Title:     "Same Title",
+		Summary:   "Same summary",
+		SourceID:  333,
+		SourceURL: "https://bgm.tv/subject/333",
+	}
+
+	firstReview, _, firstIsNew, err := controller.queueMetadataReview(context.Background(), info, first, "bangumi", "Series")
+	if err != nil {
+		t.Fatalf("queue first review failed: %v", err)
+	}
+	if !firstIsNew {
+		t.Fatal("expected first review to be newly created")
+	}
+	thirdReview, _, thirdIsNew, err := controller.queueMetadataReview(context.Background(), info, third, "bangumi", "Series")
+	if err != nil {
+		t.Fatalf("queue third review failed: %v", err)
+	}
+	if !thirdIsNew {
+		t.Fatal("expected third review to be newly created, not deduplicated against the first")
+	}
+	if thirdReview.ID == firstReview.ID {
+		t.Fatalf("expected distinct source to create a new review, but reused id %d", firstReview.ID)
+	}
+	if thirdReview.SourceUrl != "https://bgm.tv/subject/333" {
+		t.Fatalf("expected third review to keep its own source_url, got %q", thirdReview.SourceUrl)
+	}
+
+	pending, err := store.ListPendingMetadataReviewsBySeries(context.Background(), series.ID)
+	if err != nil {
+		t.Fatalf("ListPendingMetadataReviewsBySeries failed: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("expected two pending reviews for distinct sources, got %d", len(pending))
 	}
 }
 

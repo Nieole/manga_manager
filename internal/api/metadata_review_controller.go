@@ -268,10 +268,20 @@ func metadataParseAuthors(value string) []metadata.SeriesAuthor {
 }
 
 func metadataDefaultConfidence(providerName string) float64 {
-	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	name := strings.ToLower(strings.TrimSpace(providerName))
+	switch name {
 	case "bangumi":
 		return 0.9
 	case "openai", "ollama", "llm", "openai-legacy":
+		return 0.6
+	}
+	// providerName 也可能是 provider.Name() 的显示名（如 "Ollama LLM"、
+	// "OpenAI/Compatible LLM"、"OpenAI Compatible (v1/chat/completions)"），
+	// 这里对显示名做包含匹配兜底，确保各 LLM provider 一视同仁。
+	switch {
+	case strings.Contains(name, "bangumi"):
+		return 0.9
+	case strings.Contains(name, "llm"), strings.Contains(name, "openai"), strings.Contains(name, "ollama"):
 		return 0.6
 	default:
 		return 0.5
@@ -534,19 +544,23 @@ func normalizeMetadataReviewValue(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
 }
 
-func metadataReviewDraftSignature(changes []metadataReviewFieldDraft) map[string]string {
-	signature := make(map[string]string, len(changes))
+func metadataReviewDraftSignature(changes []metadataReviewFieldDraft, sourceID int64) map[string]string {
+	signature := make(map[string]string, len(changes)+1)
 	for _, change := range changes {
 		signature[change.Name] = normalizeMetadataReviewValue(change.Current) + "\x00" + normalizeMetadataReviewValue(change.Proposed)
 	}
+	// 把来源条目 ID 纳入签名：不同来源（如 Bangumi 不同 subject）即使字段 diff 相同
+	// 也应视为不同候选，分别入队，避免复用旧 review 时丢弃用户选中条目的 source_url。
+	signature["\x00source_id"] = strconv.FormatInt(sourceID, 10)
 	return signature
 }
 
-func metadataReviewFieldsSignature(fields []database.MetadataReviewField) map[string]string {
-	signature := make(map[string]string, len(fields))
+func metadataReviewFieldsSignature(fields []database.MetadataReviewField, sourceID int64) map[string]string {
+	signature := make(map[string]string, len(fields)+1)
 	for _, field := range fields {
 		signature[field.FieldName] = normalizeMetadataReviewValue(field.CurrentValue) + "\x00" + normalizeMetadataReviewValue(field.ProposedValue)
 	}
+	signature["\x00source_id"] = strconv.FormatInt(sourceID, 10)
 	return signature
 }
 
@@ -586,7 +600,7 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 		if len(changes) == 0 {
 			return errNoMetadataChanges
 		}
-		nextSignature := metadataReviewDraftSignature(changes)
+		nextSignature := metadataReviewDraftSignature(changes, int64(result.SourceID))
 		pendingReviews, err := q.ListPendingMetadataReviewsBySeries(ctx, series.ID)
 		if err != nil {
 			return err
@@ -596,7 +610,7 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 			if err != nil {
 				return err
 			}
-			if metadataReviewSignaturesEqual(nextSignature, metadataReviewFieldsSignature(fields)) {
+			if metadataReviewSignaturesEqual(nextSignature, metadataReviewFieldsSignature(fields, pendingReview.SourceID)) {
 				createdReview = pendingReview
 				createdFields = fields
 				isNew = false

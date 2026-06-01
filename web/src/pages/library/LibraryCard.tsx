@@ -16,7 +16,7 @@ interface LibraryCardProps {
   onRescan: (event: React.MouseEvent, series: Series) => void;
   onOpenScrapeMenu: (series: Series) => void;
   onCloseScrapeMenu: () => void;
-  onChooseScrapeProvider: (series: Series, provider: 'bangumi' | 'ollama') => void;
+  onChooseScrapeProvider: (series: Series, provider: 'bangumi' | 'llm') => void;
   externalStatus?: ExternalSeriesStatus;
   externalSessionActive: boolean;
   /** 长按 / 右键打开操作面板（暂未实现，预留） */
@@ -292,7 +292,7 @@ export function LibraryCard({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onChooseScrapeProvider(s, 'ollama');
+              onChooseScrapeProvider(s, 'llm');
             }}
             className="block w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-800 cursor-pointer truncate"
           >

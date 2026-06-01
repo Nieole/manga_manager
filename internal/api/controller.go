@@ -33,6 +33,7 @@ import (
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
 )
@@ -2191,7 +2192,103 @@ func (c *Controller) searchBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 搜索索引里的 cover_path 是扫描时写入的，而封面为扫描后异步生成，
+	// 故索引中的封面常为空或过期。命中数 <=20，这里用数据库实时回填，
+	// 让缩略图始终为最新，且无需重建索引即可修复存量数据。
+	c.hydrateSearchCovers(r.Context(), res)
+
+	// bleve 返回的是未归一化的原始相关性得分，其绝对值随查询/字段差异巨大且不可解释。
+	// 这里按本次结果的最高分归一化到 0~1，使前端展示的"匹配度"稳定可比。
+	normalizeSearchScores(res)
+
 	jsonResponse(w, http.StatusOK, res)
+}
+
+// normalizeSearchScores 将命中得分按本次结果的最高分缩放到 [0,1]，最佳匹配为 1.0。
+func normalizeSearchScores(res *bleve.SearchResult) {
+	if res == nil || len(res.Hits) == 0 || res.MaxScore <= 0 {
+		return
+	}
+	for _, hit := range res.Hits {
+		hit.Score = hit.Score / res.MaxScore
+	}
+}
+
+// hydrateSearchCovers 用数据库中的最新封面覆盖搜索命中文档的 cover_path 字段。
+// 文档 ID 形如 "b_<bookID>" / "s_<seriesID>"。
+func (c *Controller) hydrateSearchCovers(ctx context.Context, res *bleve.SearchResult) {
+	if res == nil || len(res.Hits) == 0 {
+		return
+	}
+
+	var bookIDs, seriesIDs []int64
+	for _, hit := range res.Hits {
+		id, kind, ok := parseSearchDocID(hit.ID)
+		if !ok {
+			continue
+		}
+		switch kind {
+		case "b":
+			bookIDs = append(bookIDs, id)
+		case "s":
+			seriesIDs = append(seriesIDs, id)
+		}
+	}
+
+	bookCovers := make(map[int64]string, len(bookIDs))
+	if len(bookIDs) > 0 {
+		if rows, err := c.store.GetBookCoverPathsByIDs(ctx, bookIDs); err == nil {
+			for _, row := range rows {
+				bookCovers[row.ID] = row.CoverPath
+			}
+		} else {
+			slog.Warn("hydrateSearchCovers: book covers lookup failed", "error", err)
+		}
+	}
+
+	seriesCovers := make(map[int64]string, len(seriesIDs))
+	if len(seriesIDs) > 0 {
+		if rows, err := c.store.GetSeriesCoverPathsByIDs(ctx, seriesIDs); err == nil {
+			for _, row := range rows {
+				seriesCovers[row.ID] = row.CoverPath
+			}
+		} else {
+			slog.Warn("hydrateSearchCovers: series covers lookup failed", "error", err)
+		}
+	}
+
+	for _, hit := range res.Hits {
+		id, kind, ok := parseSearchDocID(hit.ID)
+		if !ok {
+			continue
+		}
+		if hit.Fields == nil {
+			hit.Fields = map[string]interface{}{}
+		}
+		switch kind {
+		case "b":
+			if cover, found := bookCovers[id]; found {
+				hit.Fields["cover_path"] = cover
+			}
+		case "s":
+			if cover, found := seriesCovers[id]; found {
+				hit.Fields["cover_path"] = cover
+			}
+		}
+	}
+}
+
+// parseSearchDocID 解析搜索文档 ID（"b_123" / "s_45"），返回数值 ID 与类型前缀。
+func parseSearchDocID(docID string) (int64, string, bool) {
+	idx := strings.IndexByte(docID, '_')
+	if idx <= 0 || idx == len(docID)-1 {
+		return 0, "", false
+	}
+	id, err := strconv.ParseInt(docID[idx+1:], 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	return id, docID[:idx], true
 }
 
 func jsonError(w http.ResponseWriter, status int, message string) {

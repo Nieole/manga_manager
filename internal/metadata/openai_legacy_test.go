@@ -47,6 +47,55 @@ func TestOpenAILegacyGenerateGroupingParsesCollections(t *testing.T) {
 	}
 }
 
+func TestOpenAILegacySearchMetadataReturnsSingleResult(t *testing.T) {
+	provider := NewOpenAILegacyProvider("http://example.test/v1/chat/completions", "test-model", "", 5)
+	provider.client = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body := `{"choices":[{"message":{"role":"assistant","content":"{\"title\":\"海贼王\",\"summary\":\"草帽一伙的冒险\",\"confidence\":0.8}"}}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	results, total, err := provider.SearchMetadata(context.Background(), "海贼王", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchMetadata failed: %v", err)
+	}
+	if total != 1 || len(results) != 1 {
+		t.Fatalf("expected single result, got total=%d len=%d", total, len(results))
+	}
+	if results[0].Title != "海贼王" || results[0].Summary != "草帽一伙的冒险" {
+		t.Fatalf("unexpected metadata: %+v", results[0])
+	}
+}
+
+func TestOpenAILegacySearchMetadataEmptyOnBlank(t *testing.T) {
+	provider := NewOpenAILegacyProvider("http://example.test/v1/chat/completions", "test-model", "", 5)
+	provider.client = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body := `{"choices":[{"message":{"role":"assistant","content":"{\"title\":\"\",\"summary\":\"\"}"}}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	results, total, err := provider.SearchMetadata(context.Background(), "不存在的作品", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchMetadata failed: %v", err)
+	}
+	if total != 0 || len(results) != 0 {
+		t.Fatalf("expected empty result, got total=%d len=%d", total, len(results))
+	}
+}
+
 func TestAIGroupingResultKeepsGroupsFallback(t *testing.T) {
 	var result AIGroupingResult
 	if err := json.Unmarshal([]byte(`{"groups":[{"name":"Classic","series_ids":[7]}]}`), &result); err != nil {

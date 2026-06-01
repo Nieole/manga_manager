@@ -103,7 +103,7 @@ export function SeriesQuickActions({
                 {t('series.header.bangumiRecommended')}
               </button>
               <button
-                onClick={() => onScrape('ollama')}
+                onClick={() => onScrape('llm')}
                 className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-white/5"
               >
                 {t('series.header.ollama')}

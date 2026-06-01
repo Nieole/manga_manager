@@ -411,7 +411,7 @@ export default function SeriesDetailPage() {
         currentOffset={scrape.currentOffset}
         searchTotal={scrape.searchTotal}
         onClose={scrape.closeSearchModal}
-        providerLabel={scrape.searchProvider === 'bangumi' ? 'Bangumi' : scrape.searchProvider}
+        providerLabel={scrape.searchProvider === 'bangumi' ? 'Bangumi' : 'AI/LLM'}
         currentSeries={ctx.series}
         currentTags={ctx.tags}
         lockedFields={edit.lockedFields}

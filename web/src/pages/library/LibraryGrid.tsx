@@ -20,7 +20,7 @@ interface LibraryGridProps {
   onRescan: (event: React.MouseEvent, series: Series) => void;
   onOpenScrapeMenu: (series: Series) => void;
   onCloseScrapeMenu: () => void;
-  onChooseScrapeProvider: (series: Series, provider: 'bangumi' | 'ollama') => void;
+  onChooseScrapeProvider: (series: Series, provider: 'bangumi' | 'llm') => void;
   onLoadMore: () => void;
 }
 
