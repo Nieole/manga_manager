@@ -1061,21 +1061,11 @@ func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tag
             ss.cover_path,
             COALESCE(ss.tag_names_cache, '') as tags_string,
             COALESCE(ss.read_pages, 0) as read_count,
-            lr.last_read_at,
-            lr.last_read_book_id,
-            lr.last_read_page
+            ss.last_read_at,
+            NULLIF(ss.last_read_book_id, 0) AS last_read_book_id,
+            (SELECT b2.last_read_page FROM books b2 WHERE b2.id = ss.last_read_book_id) AS last_read_page
 		FROM series s
 		LEFT JOIN series_stats ss ON ss.series_id = s.id
-		LEFT JOIN (
-			SELECT b.series_id, b.id AS last_read_book_id, b.last_read_at, b.last_read_page
-			FROM books b
-			JOIN (
-				SELECT series_id, MAX(last_read_at) AS max_read_at
-				FROM books
-				WHERE last_read_at IS NOT NULL
-				GROUP BY series_id
-			) m ON m.series_id = b.series_id AND m.max_read_at = b.last_read_at
-		) lr ON lr.series_id = s.id
 	`
 
 	filters := make([]string, 0, 5)
