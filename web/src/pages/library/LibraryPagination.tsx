@@ -34,7 +34,7 @@ export function LibraryPagination({
 
   return (
     <div className="mt-12 mb-8 flex flex-col xl:flex-row items-center justify-between gap-6 border-t border-gray-800 pt-8">
-      <div className="flex items-center gap-4 text-sm">
+      <div className="flex flex-wrap justify-center items-center gap-4 text-sm">
         <span className="text-gray-500">{t('home.pagination.totalSeries', { count: totalSeries })}</span>
         <div className="h-4 w-px bg-gray-800" />
         <div className="flex items-center gap-2 text-gray-400">
@@ -67,7 +67,7 @@ export function LibraryPagination({
       </div>
 
       {paginationMode === 'paged' && (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap justify-center items-center gap-2">
           <button
             onClick={() => onChangePage(1)}
             disabled={page === 1}

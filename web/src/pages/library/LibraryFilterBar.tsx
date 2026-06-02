@@ -206,7 +206,7 @@ export function LibraryFilterBar({
         {activeChips.map((chip) => (
           <span
             key={chip.key}
-            className="inline-flex items-center gap-1 rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-1 text-xs text-komgaPrimary"
+            className="inline-flex items-center gap-1 rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-1 text-xs text-komgaPrimary whitespace-nowrap shrink-0"
           >
             {chip.label}
             <button
@@ -221,7 +221,7 @@ export function LibraryFilterBar({
         {smartFilterChips.map((chip) => (
           <span
             key={`smart-${chip}`}
-            className="rounded-full border border-white/10 bg-gray-950/70 px-2.5 py-1 text-[11px] text-gray-400"
+            className="rounded-full border border-white/10 bg-gray-950/70 px-2.5 py-1 text-[11px] text-gray-400 whitespace-nowrap shrink-0"
           >
             {chip}
           </span>
