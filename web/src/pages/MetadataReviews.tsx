@@ -179,23 +179,23 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
       </div>
       )}
 
-      <form onSubmit={submitSearch} className="mb-6 grid gap-3 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 backdrop-blur md:grid-cols-[1fr_180px_180px_auto]">
+      <form onSubmit={submitSearch} className="mb-6 grid gap-3 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 backdrop-blur-sm md:grid-cols-[1fr_180px_180px_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t('metadataReviews.searchPlaceholder')}
-            className="w-full rounded-xl border border-white/10 bg-gray-950 px-10 py-2.5 text-sm text-white outline-none focus:border-komgaPrimary"
+            className="w-full rounded-xl border border-white/10 bg-gray-950 px-10 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary"
           />
         </div>
-        <select value={libraryId} onChange={(event) => { setLibraryId(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-none focus:border-komgaPrimary">
+        <select value={libraryId} onChange={(event) => { setLibraryId(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="0">{t('metadataReviews.allLibraries')}</option>
           {(libraries || []).map((library) => (
             <option key={library.id} value={library.id}>{library.name}</option>
           ))}
         </select>
-        <select value={provider} onChange={(event) => { setProvider(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-none focus:border-komgaPrimary">
+        <select value={provider} onChange={(event) => { setProvider(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="">{t('metadataReviews.allProviders')}</option>
           {providers.map((item) => (
             <option key={item} value={item}>{item}</option>
@@ -251,9 +251,9 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
                         checked={checked}
                         onClick={(event) => event.stopPropagation()}
                         onChange={() => toggleSelected(item.id)}
-                        className="h-4 w-4 shrink-0 rounded border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
+                        className="h-4 w-4 shrink-0 rounded-sm border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
                       />
-                      <div className="h-12 w-9 shrink-0 overflow-hidden rounded border border-white/10 bg-gray-900">
+                      <div className="h-12 w-9 shrink-0 overflow-hidden rounded-sm border border-white/10 bg-gray-900">
                         {item.cover_book_id > 0 ? (
                           <img src={`/api/covers/${item.cover_book_id}`} alt="" className="h-full w-full object-cover" loading="lazy" />
                         ) : (
@@ -267,9 +267,9 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
                           <span className="shrink-0 text-cyan-300/80">{item.provider}</span>
                         </div>
                         <div className="mt-1 flex items-center gap-1.5 text-[11px]">
-                          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300">{t('metadataReviews.diffChanged', { count: changedFields })}</span>
+                          <span className="rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300">{t('metadataReviews.diffChanged', { count: changedFields })}</span>
                           {item.locked_field_count > 0 && (
-                            <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">
+                            <span className="inline-flex items-center gap-0.5 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-amber-300">
                               <ShieldCheck className="h-3 w-3" />
                               {item.locked_field_count}
                             </span>
@@ -320,7 +320,7 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
                       type="checkbox"
                       checked={selectedSet.has(activeReview.id)}
                       onChange={() => toggleSelected(activeReview.id)}
-                      className="h-4 w-4 rounded border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
+                      className="h-4 w-4 rounded-sm border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
                     />
                     {t('metadataReviews.selectThis')}
                   </label>
@@ -333,8 +333,8 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
                         {field.locked && <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-500">{t('metadataReviews.locked')}</span>}
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2">
-                        <div className="min-w-0 rounded-lg border border-red-500/10 bg-red-500/[0.01] px-3 py-2 text-xs text-gray-400/80 whitespace-pre-wrap break-words">{field.current || t('common.none')}</div>
-                        <div className={`min-w-0 rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap break-words ${field.current !== field.proposed ? 'border-emerald-500/30 bg-emerald-500/[0.04] text-emerald-500 font-medium ring-1 ring-emerald-500/10' : 'border-white/5 bg-white/[0.01] text-gray-300'}`}>{field.proposed || t('common.none')}</div>
+                        <div className="min-w-0 rounded-lg border border-red-500/10 bg-red-500/1 px-3 py-2 text-xs text-gray-400/80 whitespace-pre-wrap wrap-break-word">{field.current || t('common.none')}</div>
+                        <div className={`min-w-0 rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap wrap-break-word ${field.current !== field.proposed ? 'border-emerald-500/30 bg-emerald-500/4 text-emerald-500 font-medium ring-1 ring-emerald-500/10' : 'border-white/5 bg-white/1 text-gray-300'}`}>{field.proposed || t('common.none')}</div>
                       </div>
                     </div>
                   ))}
@@ -366,7 +366,7 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <select value={mode} onChange={(event) => setMode(event.target.value as BulkMode)} className="rounded-xl border border-white/10 bg-black px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-komgaPrimary">
+            <select value={mode} onChange={(event) => setMode(event.target.value as BulkMode)} className="rounded-xl border border-white/10 bg-black px-3 py-1.5 text-xs text-white focus:outline-hidden focus:ring-1 focus:ring-komgaPrimary">
               <option value="fill_empty">{t('metadataReviews.mode.fillEmpty')}</option>
               <option value="all">{t('metadataReviews.mode.all')}</option>
             </select>

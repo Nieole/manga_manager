@@ -93,7 +93,7 @@ function SettingsLayoutInner() {
         <div className="sticky top-8 space-y-4">
           <div className="rounded-2xl border border-gray-800 bg-komgaSurface p-5">
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/3">
                 <SettingsIcon className="h-5 w-5 text-komgaPrimary" />
               </div>
               <div>

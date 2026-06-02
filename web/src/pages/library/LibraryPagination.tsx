@@ -42,7 +42,7 @@ export function LibraryPagination({
           <select
             value={pageSize}
             onChange={(e) => onChangePageSize(Number(e.target.value))}
-            className="bg-transparent border border-gray-700 text-white rounded focus:ring-komgaPrimary focus:border-komgaPrimary px-1 py-0.5 outline-none transition-colors"
+            className="bg-transparent border border-gray-700 text-white rounded-sm focus:ring-komgaPrimary focus:border-komgaPrimary px-1 py-0.5 outline-hidden transition-colors"
           >
             <option value={30}>30</option>
             <option value={50}>50</option>
@@ -125,7 +125,7 @@ export function LibraryPagination({
               type="number"
               min={1}
               max={totalPages}
-              className="w-14 select-text bg-gray-900 border border-gray-800 rounded-lg text-white text-center py-1 focus:border-komgaPrimary outline-none placeholder:text-gray-700"
+              className="w-14 select-text bg-gray-900 border border-gray-800 rounded-lg text-white text-center py-1 focus:border-komgaPrimary outline-hidden placeholder:text-gray-700"
               placeholder={page.toString()}
               onMouseDown={(e) => e.stopPropagation()}
               onKeyDown={(e) => {

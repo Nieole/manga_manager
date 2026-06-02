@@ -33,7 +33,7 @@ export function SeriesQuickActions({
   const { t } = useI18n();
 
   return (
-    <div className="flex items-center border border-white/10 rounded-xl shadow-sm bg-komgaSurface/80 backdrop-blur-md">
+    <div className="flex items-center border border-white/10 rounded-xl shadow-xs bg-komgaSurface/80 backdrop-blur-md">
       <button
         onClick={onEdit}
         className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors rounded-l-xl"

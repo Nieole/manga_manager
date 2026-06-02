@@ -47,11 +47,11 @@ export function SeriesVolumeGrid({
             }}
             className={`group flex flex-col rounded-2xl overflow-hidden bg-gray-950/40 backdrop-blur-md border ${
               selected
-                ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-[0_0_20px_rgba(var(--color-komga-primary),0.3)]'
+                ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-[0_0_20px_rgba(var(--rgb-komga-primary),0.3)]'
                 : 'border-white/5 hover:border-white/20 hover:-translate-y-1.5 hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.7)]'
             } transition-all duration-500 cursor-pointer`}
           >
-            <div className="aspect-[3/4] w-full bg-gray-900/50 border-b border-white/5 flex items-center justify-center relative overflow-hidden">
+            <div className="aspect-3/4 w-full bg-gray-900/50 border-b border-white/5 flex items-center justify-center relative overflow-hidden">
               {isSelectionMode && (
                 <div className="absolute top-2 left-2 z-30">
                   <div
@@ -59,7 +59,7 @@ export function SeriesVolumeGrid({
                       selected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'
                     }`}
                   >
-                    {selected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
+                    {selected && <span className="text-white text-xs font-bold leading-none select-none">&#10003;</span>}
                   </div>
                 </div>
               )}
@@ -72,7 +72,7 @@ export function SeriesVolumeGrid({
                     loading="lazy"
                   />
                   <div className="absolute inset-0 ring-1 ring-inset ring-white/10 pointer-events-none transition-opacity group-hover:opacity-50" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-gray-950/80 via-transparent to-gray-950/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+                  <div className="absolute inset-0 bg-linear-to-t from-gray-950/80 via-transparent to-gray-950/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
                 </>
               ) : (
                 <FolderOpen className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
@@ -85,7 +85,7 @@ export function SeriesVolumeGrid({
                       e.stopPropagation();
                       onQuickToggleVolumeRead(volume, !isFullyRead);
                     }}
-                    className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-colors backdrop-blur"
+                    className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-colors backdrop-blur-sm"
                     title={isFullyRead ? t('series.content.markVolumeUnread') : t('series.content.markVolumeRead')}
                   >
                     <CheckCircle2 className={`w-4 h-4 ${isFullyRead ? 'text-green-400 fill-green-400/20' : ''}`} />

@@ -68,7 +68,7 @@ export function SeriesVolumeAccordion({
                     }`}
                     aria-label={selected ? t('series.selection.unselectVolume') : t('series.selection.selectVolume')}
                   >
-                    {selected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
+                    {selected && <span className="text-white text-xs font-bold leading-none select-none">&#10003;</span>}
                   </button>
                 )}
                 <div className="w-12 h-16 sm:w-16 sm:h-24 rounded-lg sm:rounded-xl overflow-hidden border border-white/10 bg-gray-950/50 shadow-inner shrink-0 flex items-center justify-center relative group-hover:scale-105 transition-transform duration-500">
@@ -102,7 +102,7 @@ export function SeriesVolumeAccordion({
                   {volume.total_pages > 0 && (
                     <div className="mt-2.5 h-1.5 rounded-full bg-gray-950/50 border border-white/5 overflow-hidden shadow-inner">
                       <div
-                        className={`h-full transition-all duration-700 ease-out ${isFullyRead ? 'bg-gradient-to-r from-green-500 to-green-400 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-gradient-to-r from-komgaPrimary to-komgaPrimaryHover shadow-[0_0_10px_rgba(var(--color-komga-primary),0.5)]'}`}
+                        className={`h-full transition-all duration-700 ease-out ${isFullyRead ? 'bg-linear-to-r from-green-500 to-green-400 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-linear-to-r from-komgaPrimary to-komgaPrimaryHover shadow-[0_0_10px_rgba(var(--rgb-komga-primary),0.5)]'}`}
                         style={{ width: `${progressPct}%` }}
                       />
                     </div>

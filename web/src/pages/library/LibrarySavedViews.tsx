@@ -58,7 +58,7 @@ export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDele
               onChange={(e) => setDraftName(e.target.value)}
               placeholder={t('home.smartFilters.namePlaceholder')}
               disabled={!hasAnyFilter}
-              className="flex-1 min-w-[180px] rounded-lg border border-white/10 bg-gray-950/60 px-3 py-1.5 text-sm text-white outline-none placeholder:text-gray-500 focus:border-komgaPrimary disabled:opacity-50"
+              className="flex-1 min-w-[180px] rounded-lg border border-white/10 bg-gray-950/60 px-3 py-1.5 text-sm text-white outline-hidden placeholder:text-gray-500 focus:border-komgaPrimary disabled:opacity-50"
             />
             <button
               onClick={() => {
@@ -89,7 +89,7 @@ export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDele
                   </button>
                   <button
                     onClick={() => onDelete(view.id)}
-                    className="rounded p-1 text-gray-500 hover:bg-red-500/10 hover:text-red-400"
+                    className="rounded-sm p-1 text-gray-500 hover:bg-red-500/10 hover:text-red-400"
                     aria-label={t('home.smartFilters.delete')}
                   >
                     <Trash2 className="h-3.5 w-3.5" />

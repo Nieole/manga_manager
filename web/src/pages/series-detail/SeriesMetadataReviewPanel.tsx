@@ -111,13 +111,13 @@ export function SeriesMetadataReviewPanel({
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="min-w-0">
                         <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('series.metadataReview.current')}</p>
-                        <div className="min-h-10 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-400 whitespace-pre-wrap break-words">
+                        <div className="min-h-10 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-400 whitespace-pre-wrap wrap-break-word">
                           {field.current || t('common.none')}
                         </div>
                       </div>
                       <div className="min-w-0">
                         <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-gray-500">{t('series.metadataReview.proposed')}</p>
-                        <div className="min-h-10 rounded-lg border border-cyan-400/15 bg-cyan-400/5 px-3 py-2 text-sm text-gray-100 whitespace-pre-wrap break-words">
+                        <div className="min-h-10 rounded-lg border border-cyan-400/15 bg-cyan-400/5 px-3 py-2 text-sm text-gray-100 whitespace-pre-wrap wrap-break-word">
                           {field.proposed || t('common.none')}
                         </div>
                       </div>
@@ -131,7 +131,7 @@ export function SeriesMetadataReviewPanel({
       )}
 
       {provenance.length > 0 && (
-        <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+        <div className="mt-5 rounded-2xl border border-white/10 bg-white/3 p-4">
           <h4 className="mb-3 text-sm font-semibold text-gray-100">{t('series.metadataReview.provenanceTitle')}</h4>
           <div className="flex flex-wrap gap-2">
             {provenance.map((row) => (

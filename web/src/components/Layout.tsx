@@ -276,7 +276,7 @@ export default function Layout() {
     };
 
     const modalFallback = (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-95 flex items-center justify-center bg-black/50 backdrop-blur-xs">
             <div className="flex items-center gap-3 rounded-2xl border border-gray-800 bg-gray-900/90 px-5 py-4 text-sm text-gray-300 shadow-xl shadow-black/40">
                 <Loader2 className="h-4 w-4 animate-spin text-komgaPrimary" />
                 <span>{t('common.loading')}</span>
@@ -649,7 +649,7 @@ export default function Layout() {
                             <Search className="w-4 h-4 mr-3 group-hover:text-komgaPrimary transition-colors shrink-0" />
                             <span className="truncate">{t('layout.searchPlaceholder')}</span>
                         </div>
-                        <kbd className="hidden sm:inline-block bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono text-gray-400 shrink-0 ml-3">⌘K</kbd>
+                        <kbd className="hidden sm:inline-block bg-gray-800 border border-gray-700 rounded-sm px-2 py-0.5 text-xs font-mono text-gray-400 shrink-0 ml-3">⌘K</kbd>
                     </button>
                     {/* 移动端搜索图标 */}
                     <button
@@ -686,7 +686,7 @@ export default function Layout() {
                 {/* 移动端侧边栏半透明深色遮罩 */}
                 {isSidebarOpen && (
                     <div
-                        className="fixed inset-0 bg-black/70 z-40 md:hidden backdrop-blur-sm transition-opacity"
+                        className="fixed inset-0 bg-black/70 z-40 md:hidden backdrop-blur-xs transition-opacity"
                         onClick={() => setIsSidebarOpen(false)}
                     />
                 )}
@@ -855,7 +855,7 @@ export default function Layout() {
                                             value={librariesQuery}
                                             onChange={(e) => setLibrariesQuery(e.target.value)}
                                             placeholder={t('layout.sidebar.searchLibraries')}
-                                            className="w-full pl-7 pr-2 py-1.5 text-xs bg-gray-900/60 border border-gray-800 rounded-md text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-komgaPrimary/40 focus:bg-gray-900"
+                                            className="w-full pl-7 pr-2 py-1.5 text-xs bg-gray-900/60 border border-gray-800 rounded-md text-gray-200 placeholder:text-gray-600 focus:outline-hidden focus:border-komgaPrimary/40 focus:bg-gray-900"
                                         />
                                         {librariesQuery && (
                                             <button
@@ -897,7 +897,7 @@ export default function Layout() {
                                         } ${isDesktopSidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}
                                 >
                                     <div className={`flex items-center space-x-3 overflow-hidden min-w-0 ${isDesktopSidebarCollapsed ? 'md:space-x-0 md:overflow-visible' : ''}`}>
-                                        <FolderOpen className="w-5 h-5 flex-shrink-0" />
+                                        <FolderOpen className="w-5 h-5 shrink-0" />
                                         <div className={`min-w-0 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>
                                             <span className="truncate block">{lib.name}</span>
                                             <span className={`text-[10px] ${lib.koreader_sync_enabled ?? true ? 'text-sky-400/80' : 'text-gray-500'}`}>
@@ -920,7 +920,7 @@ export default function Layout() {
                                                     setOpenMenuId(String(lib.id));
                                                 }
                                             }}
-                                            className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700 focus:outline-none"
+                                            className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-sm hover:bg-gray-700 focus:outline-hidden"
                                             title={t('common.details')}
                                         >
                                             <MoreHorizontal className="w-5 h-5" />

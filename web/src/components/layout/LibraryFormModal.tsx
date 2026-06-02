@@ -142,7 +142,7 @@ export function LibraryFormModal({
                 type="checkbox"
                 checked={koreaderSyncEnabled}
                 onChange={(e) => onKOReaderSyncEnabledChange(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-gray-700 bg-gray-800 text-komgaPrimary focus:ring-2 focus:ring-komgaPrimary"
+                className="mt-0.5 h-4 w-4 rounded-sm border-gray-700 bg-gray-800 text-komgaPrimary focus:ring-2 focus:ring-komgaPrimary"
               />
               <div>
                 <p className="text-sm font-medium text-gray-200">{t('libraryForm.koreaderSyncTitle')}</p>

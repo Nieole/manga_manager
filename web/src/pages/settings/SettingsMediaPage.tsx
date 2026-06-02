@@ -58,7 +58,7 @@ export function SettingsMediaPage() {
                 onClick={() => setConfig({ ...config, cache: { ...config.cache, page_disk_cache_enabled: !config.cache.page_disk_cache_enabled } })}
                 className={`relative h-7 w-12 shrink-0 rounded-full border transition ${config.cache.page_disk_cache_enabled ? 'border-komgaPrimary/60 bg-komgaPrimary/80' : 'border-gray-700 bg-gray-900'}`}
               >
-                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${config.cache.page_disk_cache_enabled ? 'left-6' : 'left-1'}`} />
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition ${config.cache.page_disk_cache_enabled ? 'left-6' : 'left-1'}`} />
               </button>
             </div>
           </div>

@@ -88,7 +88,7 @@ export function LibraryCard({
     isSelected
       ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-lg shadow-komgaPrimary/20'
       : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'
-  } transition-all duration-300 cursor-pointer block h-fit ${scrapeMenuOpen ? 'z-[100]' : 'hover:z-40'} ${pressing ? 'scale-[0.98]' : ''}`;
+  } transition-all duration-300 cursor-pointer block h-fit ${scrapeMenuOpen ? 'z-100' : 'hover:z-40'} ${pressing ? 'scale-[0.98]' : ''}`;
 
   const handleClick = (event: React.MouseEvent) => {
     if (isSelectionMode) {
@@ -132,7 +132,7 @@ export function LibraryCard({
     >
       <div className="absolute inset-x-0 top-0 p-3 z-20 flex justify-between items-start pointer-events-none">
         {s.rating?.Valid && s.rating.Float64 > 0 && (
-          <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded backdrop-blur border border-yellow-400/20 shadow-md pointer-events-none">
+          <span className="flex items-center text-xs font-bold text-yellow-400 bg-black/70 px-1.5 py-0.5 rounded-sm backdrop-blur-sm border border-yellow-400/20 shadow-md pointer-events-none">
             ★ {s.rating.Float64.toFixed(1)}
           </span>
         )}
@@ -147,7 +147,7 @@ export function LibraryCard({
                   else onOpenScrapeMenu(s);
                 }}
                 disabled={scrapingActive}
-                className="p-1.5 rounded-full backdrop-blur border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-purple-400 hover:bg-purple-400/20 hover:border-purple-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed"
+                className="p-1.5 rounded-full backdrop-blur-sm border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-purple-400 hover:bg-purple-400/20 hover:border-purple-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed"
                 title={t('series.scrape.action')}
               >
                 <Sparkles className={`w-3.5 h-3.5 ${scrapingActive ? 'animate-pulse text-purple-400' : ''}`} />
@@ -166,14 +166,14 @@ export function LibraryCard({
             <button
               onClick={(e) => onRescan(e, s)}
               disabled={rescanning}
-              className="p-1.5 rounded-full backdrop-blur border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-blue-400 hover:bg-blue-400/20 hover:border-blue-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-full backdrop-blur-sm border shadow-md transition-all bg-black/60 border-white/10 text-white/40 hover:text-blue-400 hover:bg-blue-400/20 hover:border-blue-400/40 opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:cursor-not-allowed"
               title={t('home.seriesRescan')}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${rescanning ? 'animate-spin text-blue-400' : ''}`} />
             </button>
             <button
               onClick={(e) => onToggleFavorite(e, s)}
-              className={`p-1.5 rounded-full backdrop-blur border shadow-md transition-all ${
+              className={`p-1.5 rounded-full backdrop-blur-sm border shadow-md transition-all ${
                 s.is_favorite
                   ? 'bg-red-500/20 border-red-500/40 text-red-500'
                   : 'bg-black/60 border-white/10 text-white/40 hover:text-red-400 hover:bg-red-400/20 hover:border-red-400/40 opacity-0 group-hover:opacity-100'
@@ -209,14 +209,14 @@ export function LibraryCard({
         {showLastReadBadge && (
           <div className="absolute right-2 bottom-12 z-20 pointer-events-none">
             <span
-              className="rounded-md border border-komgaPrimary/40 bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-komgaPrimary shadow-sm backdrop-blur-sm"
+              className="rounded-md border border-komgaPrimary/40 bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-komgaPrimary shadow-xs backdrop-blur-xs"
               title={lastReadBadgeLabel}
             >
               {lastReadBadgeLabel}
             </span>
           </div>
         )}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
+        <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/95 via-black/60 to-transparent p-3 pt-8 z-10 pointer-events-none">
           <div className="flex justify-between text-[11px] font-medium text-gray-300">
             <span>
               {s.volume_count > 0
@@ -270,7 +270,7 @@ export function LibraryCard({
 
       {scrapeMenuOpen && !scrapingActive && (
         <div
-          className="absolute right-3 top-12 z-50 w-44 rounded-lg border border-gray-800 bg-gray-950/95 shadow-2xl backdrop-blur"
+          className="absolute right-3 top-12 z-50 w-44 rounded-lg border border-gray-800 bg-gray-950/95 shadow-2xl backdrop-blur-sm"
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();

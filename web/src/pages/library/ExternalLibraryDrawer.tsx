@@ -57,11 +57,11 @@ export function ExternalLibraryDrawer({
   if (typeof document === 'undefined') return null;
 
   return createPortal(
-    <div className={`fixed inset-0 z-[80] ${open ? '' : 'pointer-events-none'}`} aria-hidden={!open}>
+    <div className={`fixed inset-0 z-80 ${open ? '' : 'pointer-events-none'}`} aria-hidden={!open}>
       <div
         role="presentation"
         onClick={onClose}
-        className={`absolute inset-0 backdrop-blur-sm transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 backdrop-blur-xs transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0'}`}
         style={{
           background:
             'radial-gradient(circle at top, rgb(var(--theme-glow) / 0.16), transparent 35%), linear-gradient(to bottom, rgb(var(--theme-overlay-top) / 0.78), rgb(var(--theme-overlay-bottom) / 0.88))',
@@ -110,7 +110,7 @@ export function ExternalLibraryDrawer({
                 type="checkbox"
                 checked={externalIgnoreExtension}
                 onChange={(event) => onToggleIgnoreExtension(event.target.checked)}
-                className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-komgaPrimary focus:ring-komgaPrimary"
+                className="h-4 w-4 rounded-sm border-gray-600 bg-gray-900 text-komgaPrimary focus:ring-komgaPrimary"
               />
               <span>{t('home.external.ignoreExtension')}</span>
             </label>

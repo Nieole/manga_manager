@@ -82,7 +82,7 @@ export function SettingsAppearancePage() {
         }
       />
 
-      <section className="space-y-4 rounded-3xl border border-white/5 bg-komgaSurface/70 p-6 backdrop-blur-sm">
+      <section className="space-y-4 rounded-3xl border border-white/5 bg-komgaSurface/70 p-6 backdrop-blur-xs">
         <div>
           <h3 className="text-lg font-semibold text-white">{t('settings.appearance.languageTitle')}</h3>
           <p className="mt-1 text-sm leading-6 text-gray-400">{t('settings.appearance.languageDescription')}</p>

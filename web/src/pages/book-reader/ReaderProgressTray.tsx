@@ -58,7 +58,7 @@ export function ReaderProgressTray({
   const rightLabel = isRtl ? t('reader.siblings.prev') : t('reader.siblings.next');
 
   return (
-    <div className="bg-gradient-to-t from-komgaDark/90 via-komgaDark/45 to-transparent pb-8 pt-16 px-4 sm:px-8 flex flex-col items-center pointer-events-none">
+    <div className="bg-linear-to-t from-komgaDark/90 via-komgaDark/45 to-transparent pb-8 pt-16 px-4 sm:px-8 flex flex-col items-center pointer-events-none">
       <div className="w-full max-w-4xl flex items-center justify-center gap-2 sm:gap-4 pointer-events-auto">
         
         {/* Left Book Button */}
@@ -67,7 +67,7 @@ export function ReaderProgressTray({
             <button
               onClick={() => onOpenBook(leftSibl.id)}
               title={`${leftLabel}: ${leftSibl.title}`}
-              className="group flex items-center gap-2 bg-komgaDark/70 hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-all border border-white/10 rounded-full sm:rounded-2xl px-0 sm:px-4 py-3 sm:py-2.5 backdrop-blur shadow-xl text-white w-12 sm:w-auto h-12 sm:h-auto justify-center"
+              className="group flex items-center gap-2 bg-komgaDark/70 hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-all border border-white/10 rounded-full sm:rounded-2xl px-0 sm:px-4 py-3 sm:py-2.5 backdrop-blur-sm shadow-xl text-white w-12 sm:w-auto h-12 sm:h-auto justify-center"
             >
               <SkipBack className="w-5 h-5 shrink-0 text-gray-300 group-hover:text-komgaPrimary transition-colors" />
               <span className="hidden sm:block text-xs font-medium truncate text-gray-200 group-hover:text-white max-w-[120px]">
@@ -82,7 +82,7 @@ export function ReaderProgressTray({
         </div>
 
         {/* Progress Slider */}
-        <div className="flex-1 flex items-center gap-3 sm:gap-4 bg-komgaDark/70 px-4 sm:px-6 py-3 rounded-2xl backdrop-blur border border-white/10 shadow-2xl min-w-[200px]">
+        <div className="flex-1 flex items-center gap-3 sm:gap-4 bg-komgaDark/70 px-4 sm:px-6 py-3 rounded-2xl backdrop-blur-sm border border-white/10 shadow-2xl min-w-[200px]">
           <span className="text-white font-medium text-xs sm:text-sm whitespace-nowrap w-6 sm:w-8 text-right drop-shadow-md">{currentPageIndex + 1}</span>
           <div className="flex-1 relative h-6 flex items-center group/slider">
             {hoverPage !== null && (
@@ -91,7 +91,7 @@ export function ReaderProgressTray({
                 style={{ left: `${hoverX}px` }}
               >
                 {t('reader.pagePreview', { page: hoverPage })}
-                <div className="absolute top-full left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-t-[4px] border-t-komgaPrimary"></div>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 border-x-4 border-x-transparent border-t-4 border-t-komgaPrimary"></div>
               </div>
             )}
             <input
@@ -116,7 +116,7 @@ export function ReaderProgressTray({
             <button
               onClick={() => onOpenBook(rightSibl.id)}
               title={`${rightLabel}: ${rightSibl.title}`}
-              className="group flex items-center gap-2 bg-komgaDark/70 hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-all border border-white/10 rounded-full sm:rounded-2xl px-0 sm:px-4 py-3 sm:py-2.5 backdrop-blur shadow-xl text-white w-12 sm:w-auto h-12 sm:h-auto justify-center"
+              className="group flex items-center gap-2 bg-komgaDark/70 hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-all border border-white/10 rounded-full sm:rounded-2xl px-0 sm:px-4 py-3 sm:py-2.5 backdrop-blur-sm shadow-xl text-white w-12 sm:w-auto h-12 sm:h-auto justify-center"
             >
               <span className="hidden sm:block text-xs font-medium truncate text-gray-200 group-hover:text-white max-w-[120px]">
                 {rightSibl.title}

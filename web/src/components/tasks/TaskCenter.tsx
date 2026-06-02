@@ -142,9 +142,9 @@ function taskBadgeClass(status: string) {
     case 'completed':
       return 'border-sky-500/30 bg-sky-500/10 text-sky-200';
     case 'cancelled':
-      return 'border-white/10 bg-white/[0.04] text-white/45';
+      return 'border-white/10 bg-white/4 text-white/45';
     default:
-      return 'border-white/10 bg-white/[0.04] text-white/60';
+      return 'border-white/10 bg-white/4 text-white/60';
   }
 }
 
@@ -203,13 +203,13 @@ function TaskSummaryStrip({ tasks, backgroundPaused }: { tasks: TaskStatus[]; ba
   return (
     <div className={`grid gap-3 ${backgroundPaused === undefined ? 'md:grid-cols-5' : 'md:grid-cols-3 xl:grid-cols-6'}`}>
       {items.map(([label, value]) => (
-        <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+        <div key={label} className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
           <p className="text-xs uppercase tracking-wide text-white/40">{label}</p>
           <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
         </div>
       ))}
       {backgroundPaused !== undefined && (
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+        <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
           <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.backgroundIO')}</p>
           <p className={`mt-2 text-sm font-semibold ${backgroundPaused ? 'text-amber-500' : 'text-emerald-500'}`}>
             {backgroundPaused ? t('settings.maintenance.backgroundPaused') : t('settings.maintenance.backgroundRunning')}
@@ -380,22 +380,22 @@ function TaskLimitBadges({ task }: { task: TaskStatus }) {
     <>
       {limit && (
         <>
-          <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-white/55">
+          <p className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-white/55">
             {t('settings.maintenance.effectiveWorkers')}<span className="mt-1 block text-white">{limit.scanner_workers_effective || '-'}</span>
           </p>
-          <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-white/55">
+          <p className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-white/55">
             {t('settings.maintenance.archiveOpenConcurrency')}<span className="mt-1 block text-white">{limit.archive_open_concurrency || '-'}</span>
           </p>
-          <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-white/55">
+          <p className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-white/55">
             {t('settings.maintenance.storageProfile')}<span className="mt-1 block text-white">{limit.storage_profile || '-'}</span>
           </p>
-          <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-white/55">
+          <p className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-white/55">
             {t('settings.maintenance.volume')}<span className="mt-1 block text-white">{limit.volume_key || '-'}</span>
           </p>
         </>
       )}
       {provider && (
-        <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-white/55">
+        <p className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-white/55">
           Provider<span className="mt-1 block text-white">{provider}</span>
         </p>
       )}
@@ -409,7 +409,7 @@ function TaskMetricsGrid({ task }: { task: TaskStatus }) {
     <>
       {taskMetricKeys.map((key) => (
         taskMetric(task, key) > 0 && (
-          <p key={key} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-white/55">
+          <p key={key} className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-white/55">
             {t(`settings.maintenance.taskMetric.${key}`)}<span className="mt-1 block text-white">{key.endsWith('_ms') ? `${taskMetric(task, key)} ms` : taskMetric(task, key)}</span>
           </p>
         )
@@ -435,11 +435,11 @@ function TaskDetailDrawer({ task }: { task: TaskStatus }) {
       )}
       {(task.started_at || task.finished_at) && (
         <div className="grid gap-2 text-xs sm:grid-cols-2">
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+          <div className="rounded-lg border border-white/10 bg-white/3 px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.startedAt')}</p>
             <p className="mt-1 text-white/65">{task.started_at ? formatDateTime(task.started_at) : '-'}</p>
           </div>
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+          <div className="rounded-lg border border-white/10 bg-white/3 px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.finishedAt')}</p>
             <p className="mt-1 text-white/65">{task.finished_at ? formatDateTime(task.finished_at) : t('logs.task.runningNow')}</p>
           </div>
@@ -472,7 +472,7 @@ function TaskDetailDrawer({ task }: { task: TaskStatus }) {
       {task.error && (
         <div>
           <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.errorDetails')}</p>
-          <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs whitespace-pre-wrap break-words text-red-400">{task.error}</pre>
+          <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs whitespace-pre-wrap wrap-break-word text-red-400">{task.error}</pre>
         </div>
       )}
     </div>
@@ -581,7 +581,7 @@ function TaskList({
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
 
   if (tasks.length === 0) {
-    return <p className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/50">{t('settings.maintenance.noTasks')}</p>;
+    return <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('settings.maintenance.noTasks')}</p>;
   }
 
   return (

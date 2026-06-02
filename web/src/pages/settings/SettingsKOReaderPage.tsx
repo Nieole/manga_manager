@@ -79,7 +79,7 @@ export function SettingsKOReaderPage() {
                 type="checkbox"
                 checked={koreaderForm.enabled}
                 onChange={(e) => setKOReaderForm({ ...koreaderForm, enabled: e.target.checked })}
-                className="h-5 w-5 rounded border-gray-700 bg-gray-900 text-komgaPrimary"
+                className="h-5 w-5 rounded-sm border-gray-700 bg-gray-900 text-komgaPrimary"
               />
             </label>
           </div>
@@ -140,7 +140,7 @@ export function SettingsKOReaderPage() {
                 checked={koreaderForm.path_ignore_extension}
                 disabled={koreaderForm.match_mode !== 'file_path'}
                 onChange={(e) => setKOReaderForm({ ...koreaderForm, path_ignore_extension: e.target.checked })}
-                className="h-5 w-5 rounded border-gray-700 bg-gray-900 text-komgaPrimary disabled:opacity-50"
+                className="h-5 w-5 rounded-sm border-gray-700 bg-gray-900 text-komgaPrimary disabled:opacity-50"
               />
             </label>
           </div>

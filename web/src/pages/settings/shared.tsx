@@ -2,8 +2,8 @@ import type { ReactNode } from 'react';
 import { Save } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 
-export const sectionClassName = 'bg-komgaSurface border border-gray-800 rounded-2xl p-6 shadow-sm space-y-4';
-export const inputClassName = 'w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40 transition-all';
+export const sectionClassName = 'bg-komgaSurface border border-gray-800 rounded-2xl p-6 shadow-xs space-y-4';
+export const inputClassName = 'w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-komgaPrimary/40 transition-all';
 
 export function FieldErrors({ messages }: { messages: string[] }) {
   if (!messages.length) return null;

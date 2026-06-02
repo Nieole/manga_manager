@@ -141,7 +141,7 @@ export default function Dashboard() {
     if (libraries.length === 0) {
         return (
             <div className="p-4 sm:p-8 max-w-5xl mx-auto">
-                <div className="rounded-[28px] border border-gray-800 bg-gradient-to-br from-komgaSurface to-gray-950 p-8 sm:p-10 shadow-2xl">
+                <div className="rounded-[28px] border border-gray-800 bg-linear-to-br from-komgaSurface to-gray-950 p-8 sm:p-10 shadow-2xl">
                     <div className="max-w-3xl space-y-6">
                         <div className="inline-flex items-center gap-2 rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
                             <Sparkles className="w-4 h-4" />
@@ -236,9 +236,9 @@ export default function Dashboard() {
                                 <div
                                     key={`${item.series_id}-${item.book_id}`}
                                     onClick={() => navigate(`/reader/${item.book_id}`)}
-                                    className="group flex-shrink-0 w-40 snap-start cursor-pointer"
+                                    className="group shrink-0 w-40 snap-start cursor-pointer"
                                 >
-                                    <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-komgaPrimary/50 transition-all duration-300 shadow-lg group-hover:shadow-komgaPrimary/10">
+                                    <div className="relative aspect-2/3 rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-komgaPrimary/50 transition-all duration-300 shadow-lg group-hover:shadow-komgaPrimary/10">
                                         {coverUrl ? (
                                             <img
                                                 src={coverUrl}
@@ -257,7 +257,7 @@ export default function Dashboard() {
                                         </div>
 
                                         {/* 悬停覆盖层 */}
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
+                                        <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
                                             <span className="text-xs text-white font-medium">
                                                 {t('dashboard.continueReading.resumeToPage', { page: item.last_read_page?.Valid ? item.last_read_page.Int64 : 1 })}
                                             </span>
@@ -389,9 +389,9 @@ export default function Dashboard() {
                         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
                             {Array.from({ length: 5 }, (_, i) => (
                                 <div key={i} className="animate-pulse">
-                                    <div className="aspect-[2/3] rounded-xl bg-gray-800" />
-                                    <div className="mt-2 h-3 w-3/4 bg-gray-800 rounded" />
-                                    <div className="mt-1 h-2 w-1/2 bg-gray-800/50 rounded" />
+                                    <div className="aspect-2/3 rounded-xl bg-gray-800" />
+                                    <div className="mt-2 h-3 w-3/4 bg-gray-800 rounded-sm" />
+                                    <div className="mt-1 h-2 w-1/2 bg-gray-800/50 rounded-sm" />
                                 </div>
                             ))}
                         </div>
@@ -405,7 +405,7 @@ export default function Dashboard() {
                                 const coverUrl = item.cover_path ? `/api/thumbnails/${item.cover_path}` : '';
                                 return (
                                     <div key={item.series_id} onClick={() => navigate(`/series/${item.series_id}`)} className="group cursor-pointer flex bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-amber-500/40 transition-all shadow-lg">
-                                        <div className="w-24 shrink-0 aspect-[2/3] relative bg-black">
+                                        <div className="w-24 shrink-0 aspect-2/3 relative bg-black">
                                             {coverUrl ? (
                                                 <img src={coverUrl} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                                             ) : (
@@ -442,13 +442,13 @@ function StatCard({ icon, label, value, subtitle, color, borderColor, iconColor 
     iconColor: string;
 }) {
     return (
-        <div className={`bg-gradient-to-br ${color} border ${borderColor} rounded-2xl p-5 relative overflow-hidden group hover:scale-[1.02] transition-transform duration-300`}>
+        <div className={`bg-linear-to-br ${color} border ${borderColor} rounded-2xl p-5 relative overflow-hidden group hover:scale-[1.02] transition-transform duration-300`}>
             <div className={`${iconColor} mb-3 opacity-80`}>{icon}</div>
             <p className="text-2xl font-bold text-white mb-1">{value}</p>
             <p className="text-sm text-gray-400">{label}</p>
             {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
             {/* 装饰光斑 */}
-            <div className={`absolute -top-8 -right-8 w-24 h-24 rounded-full bg-gradient-to-br ${color} opacity-30 blur-2xl group-hover:opacity-50 transition-opacity`} />
+            <div className={`absolute -top-8 -right-8 w-24 h-24 rounded-full bg-linear-to-br ${color} opacity-30 blur-2xl group-hover:opacity-50 transition-opacity`} />
         </div>
     );
 }
@@ -587,13 +587,13 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
                                     const mappedDow = rowIdx === 6 ? 0 : rowIdx + 1;
                                     const cell = week.find(c => c.dayOfWeek === mappedDow);
                                     if (!cell) {
-                                        return <div key={colIdx} className="w-[13px] h-[13px] rounded-sm" />;
+                                        return <div key={colIdx} className="w-[13px] h-[13px] rounded-xs" />;
                                     }
                                     const level = getLevel(cell.count);
                                     return (
                                         <div
                                             key={colIdx}
-                                            className={`w-[13px] h-[13px] rounded-sm ${levelColors[level]} transition-all duration-200 hover:ring-1 hover:ring-white/30 cursor-pointer`}
+                                            className={`w-[13px] h-[13px] rounded-xs ${levelColors[level]} transition-all duration-200 hover:ring-1 hover:ring-white/30 cursor-pointer`}
                                             onMouseEnter={(e) => {
                                                 const rect = e.currentTarget.getBoundingClientRect();
                                                 setTooltip({
@@ -618,7 +618,7 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
             <div className="flex items-center justify-end gap-1.5 mt-3">
                 <span className="text-[10px] text-gray-500 mr-1">{t('dashboard.activity.legendLess')}</span>
                 {levelColors.map((color, idx) => (
-                    <div key={idx} className={`w-[11px] h-[11px] rounded-sm ${color}`} />
+                    <div key={idx} className={`w-[11px] h-[11px] rounded-xs ${color}`} />
                 ))}
                 <span className="text-[10px] text-gray-500 ml-1">{t('dashboard.activity.legendMore')}</span>
             </div>
@@ -767,7 +767,7 @@ function StoragePieChart({ librarySizes }: { librarySizes: LibrarySize[] }) {
                     {segments.slice(0, 5).map((segment) => (
                         <div key={segment.library_id} className="flex items-center justify-between group">
                             <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: segment.color }} />
+                                <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: segment.color }} />
                                 <span className="text-xs text-gray-300 truncate group-hover:text-white transition-colors">{segment.library_name}</span>
                             </div>
                             <span className="text-xs font-medium text-gray-400 shrink-0 ml-3 group-hover:text-white transition-colors">{formatBytes(segment.total_size)}</span>
@@ -784,7 +784,7 @@ function StoragePieChart({ librarySizes }: { librarySizes: LibrarySize[] }) {
             {/* Tooltip */}
             {tooltip && (
                 <div
-                    className="fixed z-50 px-3 py-2 bg-gray-900/95 border border-gray-700 rounded-lg text-xs text-white shadow-2xl pointer-events-none whitespace-nowrap backdrop-blur-sm"
+                    className="fixed z-50 px-3 py-2 bg-gray-900/95 border border-gray-700 rounded-lg text-xs text-white shadow-2xl pointer-events-none whitespace-nowrap backdrop-blur-xs"
                     style={{ left: tooltip.x, top: tooltip.y, transform: 'translate(-50%, -100%)' }}
                 >
                     {tooltip.text}

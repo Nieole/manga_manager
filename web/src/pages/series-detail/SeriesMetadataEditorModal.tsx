@@ -233,7 +233,7 @@ export function SeriesMetadataEditorModal({
                     }
                   }}
                   placeholder={t('series.editor.tagPlaceholder')}
-                  className="w-full bg-transparent border-none p-1 text-sm outline-none placeholder-gray-500"
+                  className="w-full bg-transparent border-none p-1 text-sm outline-hidden placeholder-gray-500"
                 />
                 {tagInputValue && tagSuggestions.length > 0 && (
                   <div className="absolute left-0 top-10 z-20 max-h-40 w-full overflow-y-auto rounded-xl border border-gray-700 bg-komgaSurface shadow-xl">
@@ -294,12 +294,12 @@ export function SeriesMetadataEditorModal({
                     }
                   }}
                   placeholder={t('series.editor.authorPlaceholder')}
-                  className="flex-1 rounded-lg border border-gray-800 bg-black/20 px-2.5 py-2 text-sm outline-none placeholder-gray-500"
+                  className="flex-1 rounded-lg border border-gray-800 bg-black/20 px-2.5 py-2 text-sm outline-hidden placeholder-gray-500"
                 />
                 <select
                   value={authorInputRole}
                   onChange={(e) => setAuthorInputRole(e.target.value)}
-                  className="rounded-lg border border-gray-800 bg-gray-800 px-2.5 py-2 text-sm text-gray-300 outline-none cursor-pointer"
+                  className="rounded-lg border border-gray-800 bg-gray-800 px-2.5 py-2 text-sm text-gray-300 outline-hidden cursor-pointer"
                 >
                   {authorRoleOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -339,7 +339,7 @@ export function SeriesMetadataEditorModal({
                       onFormChange('linksInput', newLinks);
                     }}
                     placeholder={t('series.editor.linkNamePlaceholder')}
-                    className="flex-1 rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-none transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
+                    className="flex-1 rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-hidden transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
                   />
                   <input
                     type="text"
@@ -350,7 +350,7 @@ export function SeriesMetadataEditorModal({
                       onFormChange('linksInput', newLinks);
                     }}
                     placeholder={t('series.editor.linkUrlPlaceholder')}
-                    className="flex-[2] rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-none transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
+                    className="flex-2 rounded-xl border border-gray-700 bg-gray-950/80 px-3 py-2.5 text-sm text-white outline-hidden transition-all focus:border-komgaPrimary/50 focus:ring-2 focus:ring-komgaPrimary/20"
                   />
                   <button
                     onClick={() => {

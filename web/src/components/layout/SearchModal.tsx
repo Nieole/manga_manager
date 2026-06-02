@@ -57,7 +57,7 @@ export function SearchModal({
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             onKeyDown={onSearchKeyDown}
-            className="flex-1 bg-transparent border-none py-4 px-4 text-white focus:outline-none focus:ring-0 text-lg placeholder-gray-500"
+            className="flex-1 bg-transparent border-none py-4 px-4 text-white focus:outline-hidden focus:ring-0 text-lg placeholder-gray-500"
           />
           {searchQuery && (
             <button onClick={onResetSearch} className="p-1 text-gray-500 hover:text-white rounded-md transition-colors">
@@ -101,7 +101,7 @@ export function SearchModal({
                   onMouseEnter={() => onHighlightIndex(index)}
                   className={`flex items-center gap-4 px-4 py-3 cursor-pointer rounded-lg transition-all ${index === selectedIndex ? 'bg-komgaPrimary/10 border-l-4 border-komgaPrimary shadow-md' : 'hover:bg-gray-800/50 border-l-4 border-transparent'}`}
                 >
-                  <div className="w-12 h-18 sm:w-14 sm:h-20 bg-gray-900 rounded-md overflow-hidden flex-shrink-0 border border-gray-800 shadow-sm relative group-hover:border-komgaPrimary/30 transition-colors">
+                  <div className="w-12 h-18 sm:w-14 sm:h-20 bg-gray-900 rounded-md overflow-hidden shrink-0 border border-gray-800 shadow-xs relative group-hover:border-komgaPrimary/30 transition-colors">
                     {coverPath ? (
                       <img
                         src={`/api/thumbnails/${coverPath}`}
@@ -123,11 +123,11 @@ export function SearchModal({
                   <div className="flex-1 min-w-0 flex flex-col justify-center">
                     <div className="flex items-center space-x-2 mb-1">
                       {isSeries ? (
-                        <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-wider shrink-0 border border-blue-500/30 uppercase">
+                        <span className="px-1.5 py-0.5 rounded-sm bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-wider shrink-0 border border-blue-500/30 uppercase">
                           {t('searchModal.type.series')}
                         </span>
                       ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-wider shrink-0 border border-emerald-500/30 uppercase">
+                        <span className="px-1.5 py-0.5 rounded-sm bg-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-wider shrink-0 border border-emerald-500/30 uppercase">
                           {t('searchModal.type.book')}
                         </span>
                       )}

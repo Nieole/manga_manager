@@ -119,13 +119,13 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && fetchData()}
               placeholder={t('logs.searchPlaceholder')}
-              className="w-full sm:w-64 rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40"
+              className="w-full sm:w-64 rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2 text-sm text-white focus:outline-hidden focus:ring-2 focus:ring-komgaPrimary/40"
             />
           </div>
           <select
             value={filterLevel}
             onChange={(e) => setFilterLevel(e.target.value)}
-            className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary/40"
+            className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white focus:outline-hidden focus:ring-2 focus:ring-komgaPrimary/40"
           >
             <option value="ALL">{t('logs.level.all')}</option>
             <option value="DEBUG">{t('logs.level.debug')}</option>
@@ -159,7 +159,7 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
             <button
               type="button"
               onClick={onClearTaskKey}
-              className="ml-auto rounded border border-amber-500/40 px-2 py-0.5 text-xs hover:bg-amber-500/20"
+              className="ml-auto rounded-sm border border-amber-500/40 px-2 py-0.5 text-xs hover:bg-amber-500/20"
             >
               {t('logs.taskFilter.clear')}
             </button>
@@ -205,9 +205,9 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
                         {copiedIndex === index ? t('logs.copied') : t('logs.copyRaw')}
                       </button>
                     </div>
-                    <p className="mt-2 whitespace-pre-wrap break-words text-white">{log.msg || log.raw}</p>
+                    <p className="mt-2 whitespace-pre-wrap wrap-break-word text-white">{log.msg || log.raw}</p>
                     {log.msg !== log.raw && (
-                      <p className="mt-2 whitespace-pre-wrap break-words text-xs text-gray-500">{log.raw}</p>
+                      <p className="mt-2 whitespace-pre-wrap wrap-break-word text-xs text-gray-500">{log.raw}</p>
                     )}
                   </div>
                 ))}

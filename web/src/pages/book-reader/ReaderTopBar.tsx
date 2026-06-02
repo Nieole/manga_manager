@@ -68,7 +68,7 @@ export function ReaderTopBar({
     <div className="flex items-center justify-between w-full relative">
       <button
         onClick={onBack}
-        className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full px-4 py-2 backdrop-blur border border-white/10 shadow-lg shrink-0 z-10"
+        className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full px-4 py-2 backdrop-blur-sm border border-white/10 shadow-lg shrink-0 z-10"
       >
         <ArrowLeft className="w-5 h-5 mr-2" />
         {t('reader.back')}
@@ -99,14 +99,14 @@ export function ReaderTopBar({
           <>
             <button
               onClick={() => setPopoverOpen((v) => !v)}
-              className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border shadow-lg ${popoverOpen ? 'text-komgaPrimary border-komgaPrimary/50' : 'border-white/10'}`}
+              className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border shadow-lg ${popoverOpen ? 'text-komgaPrimary border-komgaPrimary/50' : 'border-white/10'}`}
               title={t('reader.siblings.volumeChapters')}
               aria-expanded={popoverOpen}
             >
               <ListOrdered className="w-5 h-5" />
             </button>
             {popoverOpen && (
-              <div className="absolute right-0 top-full mt-2 w-[85vw] sm:w-72 max-h-[50vh] sm:max-h-[70vh] overflow-y-auto rounded-2xl border border-white/15 bg-komgaDark/95 backdrop-blur p-2 shadow-2xl z-50">
+              <div className="absolute right-0 top-full mt-2 w-[85vw] sm:w-72 max-h-[50vh] sm:max-h-[70vh] overflow-y-auto rounded-2xl border border-white/15 bg-komgaDark/95 backdrop-blur-sm p-2 shadow-2xl z-50">
                 <ul className="space-y-1">
                   {allInVolume.map((book) => {
                     const active = book.id === currentBookId;
@@ -136,7 +136,7 @@ export function ReaderTopBar({
         )}
         <button
           onClick={onSaveBookmark}
-          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${isBookmarked ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg ${isBookmarked ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
           title={isBookmarked ? t('reader.bookmark.update') : t('reader.bookmark.add')}
           disabled={savingBookmark || loading}
         >
@@ -144,14 +144,14 @@ export function ReaderTopBar({
         </button>
         <button
           onClick={onToggleHelp}
-          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
           title={t('reader.help')}
         >
           <CircleHelp className="w-5 h-5" />
         </button>
         <button
           onClick={onToggleSettings}
-          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
           title={t('reader.settings')}
         >
           <Settings className="w-5 h-5" />

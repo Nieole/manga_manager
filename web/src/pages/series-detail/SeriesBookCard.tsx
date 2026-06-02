@@ -57,11 +57,11 @@ export function SeriesBookCard({
       }}
       className={`group flex flex-col rounded-2xl overflow-hidden bg-gray-950/40 backdrop-blur-md border ${
         isSelected
-          ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-[0_0_20px_rgba(var(--color-komga-primary),0.3)]'
+          ? 'border-komgaPrimary ring-2 ring-komgaPrimary shadow-[0_0_20px_rgba(var(--rgb-komga-primary),0.3)]'
           : 'border-white/5 hover:border-white/20 hover:-translate-y-1.5 hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.7)]'
       } transition-all duration-500 cursor-pointer`}
     >
-      <div className="aspect-[3/4] w-full bg-gray-900/50 border-b border-white/5 flex items-center justify-center relative overflow-hidden">
+      <div className="aspect-3/4 w-full bg-gray-900/50 border-b border-white/5 flex items-center justify-center relative overflow-hidden">
         {isSelectionMode && (
           <div className="absolute top-2 left-2 z-30">
             <div
@@ -69,7 +69,7 @@ export function SeriesBookCard({
                 isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/50 border-gray-400'
               }`}
             >
-              {isSelected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
+              {isSelected && <span className="text-white text-xs font-bold leading-none select-none">&#10003;</span>}
             </div>
           </div>
         )}
@@ -82,7 +82,7 @@ export function SeriesBookCard({
               loading="lazy"
             />
             <div className="absolute inset-0 ring-1 ring-inset ring-white/10 pointer-events-none transition-opacity group-hover:opacity-50" />
-            <div className="absolute inset-0 bg-gradient-to-t from-gray-950/80 via-transparent to-gray-950/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+            <div className="absolute inset-0 bg-linear-to-t from-gray-950/80 via-transparent to-gray-950/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
           </>
         ) : (
           <BookImage className="w-12 h-12 text-gray-700 opacity-50 group-hover:text-komgaPrimary transition-colors relative z-10" />
@@ -96,7 +96,7 @@ export function SeriesBookCard({
                 e.stopPropagation();
                 onQuickToggleRead(book, !isFinished);
               }}
-              className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-colors backdrop-blur"
+              className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-green-400 hover:bg-green-400/20 hover:border-green-400/40 transition-colors backdrop-blur-sm"
               title={isFinished ? t('series.book.markUnread') : t('series.book.quickMarkRead')}
             >
               <CheckCircle2 className={`w-4 h-4 ${isFinished ? 'text-green-400 fill-green-400/20' : ''}`} />
@@ -108,7 +108,7 @@ export function SeriesBookCard({
                   e.stopPropagation();
                   setMenuOpen((v) => !v);
                 }}
-                className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-komgaPrimary hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-colors backdrop-blur"
+                className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-komgaPrimary hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-colors backdrop-blur-sm"
                 title={t('series.book.moreActions')}
               >
                 <MoreHorizontal className="w-4 h-4" />
@@ -149,7 +149,7 @@ export function SeriesBookCard({
           </div>
         )}
 
-        <div className="absolute inset-0 bg-gradient-to-t from-gray-950/90 via-gray-950/10 to-transparent flex items-end p-3 z-10 pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity">
+        <div className="absolute inset-0 bg-linear-to-t from-gray-950/90 via-gray-950/10 to-transparent flex items-end p-3 z-10 pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity">
           <span className="text-[10px] font-bold uppercase tracking-widest text-white px-2 py-1 bg-gray-950/40 border border-white/10 rounded-md backdrop-blur-md drop-shadow-md">
             {book.page_count} Pages
           </span>
@@ -158,14 +158,14 @@ export function SeriesBookCard({
         {showProgress && (
           <div className="absolute inset-x-0 bottom-0 h-1.5 bg-gray-950/60 z-20 shadow-inner">
             <div
-              className={`h-full transition-all duration-700 ease-out ${isFinished ? 'bg-gradient-to-r from-green-500 to-green-400' : 'bg-gradient-to-r from-komgaPrimary to-komgaPrimaryHover'}`}
+              className={`h-full transition-all duration-700 ease-out ${isFinished ? 'bg-linear-to-r from-green-500 to-green-400' : 'bg-linear-to-r from-komgaPrimary to-komgaPrimaryHover'}`}
               style={{ width: `${progressPct}%` }}
             />
           </div>
         )}
       </div>
-      <div className="p-4 flex-1 bg-gradient-to-b from-transparent to-gray-950/20">
-        <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-white transition-colors drop-shadow-sm">
+      <div className="p-4 flex-1 bg-linear-to-b from-transparent to-gray-950/20">
+        <h4 className="text-sm font-bold text-gray-200 line-clamp-2 leading-snug group-hover:text-white transition-colors drop-shadow-xs">
           {book.title?.Valid ? book.title.String : book.name}
         </h4>
       </div>

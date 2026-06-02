@@ -71,7 +71,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
       className="fixed bottom-4 left-4 z-40 w-[300px] sm:w-[340px]"
     >
       {open && (
-        <div className="mb-2 max-h-[60vh] overflow-y-auto rounded-2xl border border-gray-700 bg-gray-950/95 shadow-2xl backdrop-blur">
+        <div className="mb-2 max-h-[60vh] overflow-y-auto rounded-2xl border border-gray-700 bg-gray-950/95 shadow-2xl backdrop-blur-sm">
           <header className="flex items-center justify-between border-b border-gray-800 px-3 py-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-300">
               {t('taskBubble.title')}
@@ -145,7 +145,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="w-full flex items-center gap-3 rounded-2xl border border-gray-700 bg-gray-900/95 px-3 py-2.5 shadow-xl backdrop-blur hover:border-komgaPrimary/40 transition"
+        className="w-full flex items-center gap-3 rounded-2xl border border-gray-700 bg-gray-900/95 px-3 py-2.5 shadow-xl backdrop-blur-sm hover:border-komgaPrimary/40 transition"
       >
         <div className="relative shrink-0">
           {runningCount > 0 ? (

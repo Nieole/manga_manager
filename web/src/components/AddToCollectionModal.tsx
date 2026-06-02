@@ -50,7 +50,7 @@ export default function AddToCollectionModal({ seriesIds, onClose, onSuccess }: 
             description={t('addToCollection.description', { count: seriesIds.length })}
             icon={<FolderHeart className="h-5 w-5" />}
             size="compact"
-            zIndexClassName="z-[100]"
+            zIndexClassName="z-100"
         >
             <div className="space-y-4">
                 {loading ? (

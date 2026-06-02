@@ -180,11 +180,11 @@ export default function SeriesDetailPage() {
         <>
           <div className="fixed inset-0 z-0 bg-gray-950 pointer-events-none" />
           <div
-            className="fixed inset-0 z-0 bg-cover bg-[center_top] bg-no-repeat blur-[80px] opacity-50 transform scale-110 pointer-events-none saturate-150"
+            className="fixed inset-0 z-0 bg-cover bg-position-[center_top] bg-no-repeat blur-[80px] opacity-50 transform scale-110 pointer-events-none saturate-150"
             style={{ backgroundImage: `url("${coverUrl}")` }}
           />
-          <div className="fixed inset-0 z-0 bg-gradient-to-t from-gray-950 via-gray-950/80 to-transparent pointer-events-none" />
-          <div className="fixed inset-0 z-0 bg-gradient-to-b from-gray-950/60 via-transparent to-transparent pointer-events-none" />
+          <div className="fixed inset-0 z-0 bg-linear-to-t from-gray-950 via-gray-950/80 to-transparent pointer-events-none" />
+          <div className="fixed inset-0 z-0 bg-linear-to-b from-gray-950/60 via-transparent to-transparent pointer-events-none" />
         </>
       )}
 
@@ -233,7 +233,7 @@ export default function SeriesDetailPage() {
         />
 
         {ctx.books.length === 0 ? (
-          <div className="rounded-[2rem] border border-white/5 bg-gray-950/40 backdrop-blur-xl p-16 text-center text-gray-400 shadow-2xl">
+          <div className="rounded-4xl border border-white/5 bg-gray-950/40 backdrop-blur-xl p-16 text-center text-gray-400 shadow-2xl">
             <BookImage className="mx-auto w-16 h-16 text-gray-600 mb-6 opacity-60 drop-shadow-md" />
             <h3 className="text-xl font-bold text-gray-200">{t('series.content.empty')}</h3>
           </div>
@@ -248,7 +248,7 @@ export default function SeriesDetailPage() {
                       newParams.delete('volume');
                       setSearchParams(newParams);
                     }}
-                    className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors border border-white/5 shadow-sm"
+                    className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors border border-white/5 shadow-xs"
                   >
                     <ArrowLeft className="w-5 h-5" />
                   </button>
@@ -273,14 +273,14 @@ export default function SeriesDetailPage() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between mb-4 ml-1">
                       <h3 className="text-sm font-extrabold text-white tracking-widest uppercase flex items-center gap-2 drop-shadow-md">
-                        <FolderOpen className="w-5 h-5 text-komgaPrimary drop-shadow-[0_0_8px_rgba(var(--color-komga-primary),0.5)]" />
+                        <FolderOpen className="w-5 h-5 text-komgaPrimary drop-shadow-[0_0_8px_rgba(var(--rgb-komga-primary),0.5)]" />
                         {t('series.content.volumes')}
                       </h3>
                       <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/5 shadow-inner">
                         <button
                           onClick={() => handleVolumeViewModeChange('accordion')}
                           className={`p-1.5 rounded-md transition-all ${
-                            volumeViewMode === 'accordion' ? 'bg-white/10 text-komgaPrimary shadow-sm' : 'text-gray-500 hover:text-gray-300'
+                            volumeViewMode === 'accordion' ? 'bg-white/10 text-komgaPrimary shadow-xs' : 'text-gray-500 hover:text-gray-300'
                           }`}
                         >
                           <List className="w-4 h-4" />
@@ -288,7 +288,7 @@ export default function SeriesDetailPage() {
                         <button
                           onClick={() => handleVolumeViewModeChange('grid')}
                           className={`p-1.5 rounded-md transition-all ${
-                            volumeViewMode === 'grid' ? 'bg-white/10 text-komgaPrimary shadow-sm' : 'text-gray-500 hover:text-gray-300'
+                            volumeViewMode === 'grid' ? 'bg-white/10 text-komgaPrimary shadow-xs' : 'text-gray-500 hover:text-gray-300'
                           }`}
                         >
                           <Grid className="w-4 h-4" />

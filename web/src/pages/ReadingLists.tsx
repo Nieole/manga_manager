@@ -252,7 +252,7 @@ export default function ReadingLists() {
                     value={seriesQuery}
                     onChange={(event) => setSeriesQuery(event.target.value)}
                     placeholder={t('readingLists.searchPlaceholder')}
-                    className="w-full rounded-lg border border-gray-800 bg-gray-950 py-2 pl-9 pr-3 text-sm text-white outline-none focus:border-komgaPrimary/60"
+                    className="w-full rounded-lg border border-gray-800 bg-gray-950 py-2 pl-9 pr-3 text-sm text-white outline-hidden focus:border-komgaPrimary/60"
                   />
                   {seriesResults.length > 0 && (
                     <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-950 shadow-xl">

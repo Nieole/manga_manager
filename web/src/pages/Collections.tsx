@@ -504,7 +504,7 @@ export default function Collections() {
                                 const coverUrl = item.cover_path?.Valid ? `/api/thumbnails/${item.cover_path.String}` : '';
                                 return (
                                     <div key={item.id} className="min-w-0 rounded-xl border border-gray-800 bg-gray-950/40 p-2">
-                                        <div className="aspect-[2/3] overflow-hidden rounded-lg bg-gray-900">
+                                        <div className="aspect-2/3 overflow-hidden rounded-lg bg-gray-900">
                                             {coverUrl ? (
                                                 <img src={coverUrl} alt={item.name} className="h-full w-full object-cover" />
                                             ) : (
@@ -666,7 +666,7 @@ export default function Collections() {
                                         const coverUrl = item.cover_path?.Valid ? `/api/thumbnails/${item.cover_path.String}` : '';
                                         return (
                                             <div key={item.series_id} className="group relative cursor-pointer" onClick={() => navigate(`/series/${item.series_id}`)}>
-                                                <div className="aspect-[2/3] rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-komgaPrimary/40 transition-all shadow-lg">
+                                                <div className="aspect-2/3 rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-komgaPrimary/40 transition-all shadow-lg">
                                                     {coverUrl ? (
                                                         <img src={coverUrl} alt={item.series_name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                                                     ) : (
@@ -731,7 +731,7 @@ function SmartFilterChips({ collection, t }: { collection: Collection; t: (key: 
     if (chips.length === 0) {
         return (
             <div className="mt-1 ml-6 flex flex-wrap items-center gap-1">
-                <span className="rounded-full border border-white/5 bg-white/[0.02] px-2 py-0.5 text-[10px] text-gray-600">{t('collections.smartChip.noFilter')}</span>
+                <span className="rounded-full border border-white/5 bg-white/2 px-2 py-0.5 text-[10px] text-gray-600">{t('collections.smartChip.noFilter')}</span>
             </div>
         );
     }

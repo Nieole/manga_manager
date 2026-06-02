@@ -156,7 +156,7 @@ export function ReaderSettingsDrawer({
         <button
           type="button"
           onClick={() => setMode('global')}
-          className={`min-w-0 rounded-md px-2 py-1.5 text-xs font-semibold transition ${mode === 'global' ? 'bg-komgaPrimary text-white shadow' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+          className={`min-w-0 rounded-md px-2 py-1.5 text-xs font-semibold transition ${mode === 'global' ? 'bg-komgaPrimary text-white shadow-sm' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
           aria-pressed={mode === 'global'}
         >
           <span className="block truncate">{t('reader.settingsMode.global')}</span>
@@ -164,7 +164,7 @@ export function ReaderSettingsDrawer({
         <button
           type="button"
           onClick={() => setMode('book')}
-          className={`min-w-0 rounded-md px-2 py-1.5 text-xs font-semibold transition ${mode === 'book' ? 'bg-komgaPrimary text-white shadow' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+          className={`min-w-0 rounded-md px-2 py-1.5 text-xs font-semibold transition ${mode === 'book' ? 'bg-komgaPrimary text-white shadow-sm' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
           aria-pressed={mode === 'book'}
         >
           <span className="block truncate">{t('reader.settingsMode.book')}</span>
@@ -176,7 +176,7 @@ export function ReaderSettingsDrawer({
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`min-w-0 rounded-md px-1.5 py-1.5 text-[11px] font-medium transition ${activeTab === tab.id ? 'bg-komgaPrimary text-white shadow' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+            className={`min-w-0 rounded-md px-1.5 py-1.5 text-[11px] font-medium transition ${activeTab === tab.id ? 'bg-komgaPrimary text-white shadow-sm' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
           >
             <span className="block truncate">{tab.label}</span>
           </button>
@@ -188,31 +188,31 @@ export function ReaderSettingsDrawer({
           <div className="space-y-4">
             <div>
               <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">Theme</span>
-              <div className="flex bg-gray-900 rounded p-1 mb-3">
-                <button className={`flex-1 py-1.5 rounded transition ${readerTheme === 'base' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReaderTheme('base')}>Base Theme</button>
-                <button className={`flex-1 py-1.5 rounded transition ${readerTheme === 'comimi' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReaderTheme('comimi')}>Comimi Theme</button>
+              <div className="flex bg-gray-900 rounded-sm p-1 mb-3">
+                <button className={`flex-1 py-1.5 rounded-sm transition ${readerTheme === 'base' ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setReaderTheme('base')}>Base Theme</button>
+                <button className={`flex-1 py-1.5 rounded-sm transition ${readerTheme === 'comimi' ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setReaderTheme('comimi')}>Comimi Theme</button>
               </div>
 
               <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block border-b border-gray-800 pb-1">{t('reader.layoutSection')}</span>
-              <div className="flex bg-gray-900 rounded p-1 mb-3">
-                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'webtoon' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('webtoon')}>{t('reader.modeWebtoon')}</button>
-                <button className={`flex-1 py-1.5 rounded transition ${readMode === 'paged' ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('paged')}>{t('reader.modePaged')}</button>
+              <div className="flex bg-gray-900 rounded-sm p-1 mb-3">
+                <button className={`flex-1 py-1.5 rounded-sm transition ${readMode === 'webtoon' ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('webtoon')}>{t('reader.modeWebtoon')}</button>
+                <button className={`flex-1 py-1.5 rounded-sm transition ${readMode === 'paged' ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setReadMode('paged')}>{t('reader.modePaged')}</button>
               </div>
 
               {readMode === 'paged' && (
                 <div className="space-y-3">
                   <div>
                     <span className="text-[10px] text-gray-500 mb-1 block">{t('reader.doublePageTitle')}</span>
-                    <div className="flex bg-gray-900 rounded p-0.5">
-                      <button className={`flex-1 py-1 rounded text-xs transition ${!doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(false)}>{t('reader.singlePage')}</button>
-                      <button className={`flex-1 py-1 rounded text-xs transition ${doublePage ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(true)}>{t('reader.doublePage')}</button>
+                    <div className="flex bg-gray-900 rounded-sm p-0.5">
+                      <button className={`flex-1 py-1 rounded-sm text-xs transition ${!doublePage ? 'bg-gray-700 text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(false)}>{t('reader.singlePage')}</button>
+                      <button className={`flex-1 py-1 rounded-sm text-xs transition ${doublePage ? 'bg-gray-700 text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setDoublePage(true)}>{t('reader.doublePage')}</button>
                     </div>
                   </div>
                   <div>
                     <span className="text-[10px] text-gray-500 mb-1 block">{t('reader.readDirection')}</span>
-                    <div className="flex bg-gray-900 rounded p-0.5">
-                      <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'ltr' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('ltr')}>{t('reader.ltr')}</button>
-                      <button className={`flex-1 py-1 rounded text-xs transition ${readDirection === 'rtl' ? 'bg-gray-700 text-white shadow' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('rtl')}>{t('reader.rtl')}</button>
+                    <div className="flex bg-gray-900 rounded-sm p-0.5">
+                      <button className={`flex-1 py-1 rounded-sm text-xs transition ${readDirection === 'ltr' ? 'bg-gray-700 text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('ltr')}>{t('reader.ltr')}</button>
+                      <button className={`flex-1 py-1 rounded-sm text-xs transition ${readDirection === 'rtl' ? 'bg-gray-700 text-white shadow-sm' : 'hover:bg-gray-800'}`} onClick={() => setReadDirection('rtl')}>{t('reader.rtl')}</button>
                     </div>
                   </div>
                 </div>
@@ -255,11 +255,11 @@ export function ReaderSettingsDrawer({
           <div className="space-y-4">
             <div>
               <span className="text-gray-500 font-semibold uppercase text-xs tracking-wider mb-2 block">{t('reader.imageSection')}</span>
-              <div className="flex bg-gray-900 rounded p-1 mb-3">
+              <div className="flex bg-gray-900 rounded-sm p-1 mb-3">
                 {['original', 'fit-height', 'fit-width', 'fit-screen'].map((sm) => (
                   <button
                     key={sm}
-                    className={`flex-1 py-1 rounded transition text-[10px] ${scaleMode === sm ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`}
+                    className={`flex-1 py-1 rounded-sm transition text-[10px] ${scaleMode === sm ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800 text-gray-400'}`}
                     onClick={() => setScaleMode(sm as ScaleMode)}
                     title={sm === 'original' ? t('reader.scaleOriginal') : sm === 'fit-height' ? t('reader.scaleFitHeight') : sm === 'fit-width' ? t('reader.scaleFitWidth') : t('reader.scaleFitScreen')}
                   >
@@ -271,7 +271,7 @@ export function ReaderSettingsDrawer({
               <select
                 value={imageFilter}
                 onChange={(e) => setImageFilter(e.target.value as ImageFilter)}
-                className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded p-2 outline-none cursor-pointer mb-2"
+                className="w-full bg-gray-900 border border-gray-700 text-gray-300 text-xs rounded-sm p-2 outline-hidden cursor-pointer mb-2"
               >
                 <option value="none">{t('reader.filter.raw')}</option>
                 <option value="nearest">{t('reader.filter.nearest')}</option>
@@ -288,7 +288,7 @@ export function ReaderSettingsDrawer({
               </select>
 
               <button
-                className={`w-full py-2 rounded text-xs transition font-medium border ${autoCrop ? 'bg-komgaPrimary/20 border-komgaPrimary text-komgaPrimary shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                className={`w-full py-2 rounded-sm text-xs transition font-medium border ${autoCrop ? 'bg-komgaPrimary/20 border-komgaPrimary text-komgaPrimary shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'}`}
                 onClick={() => setAutoCrop(!autoCrop)}
               >
                 {autoCrop ? t('reader.autoCropOn') : t('reader.autoCropOff')}
@@ -303,7 +303,7 @@ export function ReaderSettingsDrawer({
               <select
                 value={readerImageFormat}
                 onChange={(e) => setReaderImageFormat(e.target.value as ReaderImageFormat)}
-                className="mb-2 w-full rounded border border-gray-700 bg-gray-950 p-2 text-xs text-gray-300 outline-none"
+                className="mb-2 w-full rounded-sm border border-gray-700 bg-gray-950 p-2 text-xs text-gray-300 outline-hidden"
               >
                 <option value="original">{t('reader.networkOriginal')}</option>
                 <option value="webp">{t('reader.networkWebp')}</option>
@@ -325,15 +325,15 @@ export function ReaderSettingsDrawer({
             </div>
 
             {(imageFilter === 'waifu2x' || imageFilter === 'realcugan') && (
-              <div className="bg-gray-900/50 p-3 rounded border border-komgaPrimary/30 animate-in fade-in slide-in-from-top-2">
+              <div className="bg-gray-900/50 p-3 rounded-sm border border-komgaPrimary/30 animate-in fade-in slide-in-from-top-2">
                 <div className="mb-3">
                   <span className="text-gray-500 font-semibold uppercase text-[10px] tracking-wider mb-2 flex justify-between">
                     <span>{t('reader.engineScale')}</span>
                     <span className="text-komgaPrimary">{w2xScale}x</span>
                   </span>
-                  <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
+                  <div className="flex bg-gray-900 rounded-sm p-1 border border-gray-800">
                     {[1, 2, 4, 8].map((scale) => (
-                      <button key={scale} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xScale === scale ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xScale(scale)}>{scale}x</button>
+                      <button key={scale} className={`flex-1 py-1 rounded-sm transition text-xs font-semibold ${w2xScale === scale ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xScale(scale)}>{scale}x</button>
                     ))}
                   </div>
                 </div>
@@ -342,9 +342,9 @@ export function ReaderSettingsDrawer({
                     <span>{t('reader.noiseLevel')}</span>
                     <span className="text-komgaPrimary">{w2xNoise === -1 ? t('settings.koreader.off') : w2xNoise}</span>
                   </span>
-                  <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
+                  <div className="flex bg-gray-900 rounded-sm p-1 border border-gray-800">
                     {[-1, 0, 1, 2, 3].map((noise) => (
-                      <button key={noise} className={`flex-1 py-1 rounded transition text-xs font-semibold ${w2xNoise === noise ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xNoise(noise)}>{noise === -1 ? t('settings.koreader.off') : noise}</button>
+                      <button key={noise} className={`flex-1 py-1 rounded-sm transition text-xs font-semibold ${w2xNoise === noise ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xNoise(noise)}>{noise === -1 ? t('settings.koreader.off') : noise}</button>
                     ))}
                   </div>
                 </div>
@@ -353,9 +353,9 @@ export function ReaderSettingsDrawer({
                     <span>{t('reader.outputFormat')}</span>
                     <span className="text-komgaPrimary uppercase text-[10px]">{w2xFormat}</span>
                   </span>
-                  <div className="flex bg-gray-900 rounded p-1 border border-gray-800">
+                  <div className="flex bg-gray-900 rounded-sm p-1 border border-gray-800">
                     {['webp', 'png', 'jpg'].map((format) => (
-                      <button key={format} className={`flex-1 py-1 rounded transition text-xs font-semibold uppercase ${w2xFormat === format ? 'bg-komgaPrimary text-white shadow' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xFormat(format)}>{format}</button>
+                      <button key={format} className={`flex-1 py-1 rounded-sm transition text-xs font-semibold uppercase ${w2xFormat === format ? 'bg-komgaPrimary text-white shadow-sm' : 'hover:bg-gray-800 text-gray-400'}`} onClick={() => setW2xFormat(format)}>{format}</button>
                     ))}
                   </div>
                 </div>

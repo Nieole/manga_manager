@@ -94,7 +94,7 @@ export function SeriesHeroBar({
 
   return (
     <div className="mb-8 relative z-10">
-      {/* 顶栏：返回 / 工具组 */}
+      {/* 顶栏：返�?/ 工具�?*/}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6 relative z-20">
         <button
           onClick={onBack}
@@ -139,12 +139,12 @@ export function SeriesHeroBar({
           {/* Cover Art */}
           <div className="relative mx-auto sm:mx-0 shrink-0">
             <div className="relative w-40 sm:w-56 lg:w-64 transition-transform duration-500 hover:scale-[1.02]">
-              <div className="absolute -inset-4 rounded-[2rem] bg-gradient-to-br from-komgaPrimary/30 to-komgaSecondary/30 blur-2xl opacity-70 group-hover:opacity-100 transition-opacity" />
-              <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-gray-900/50 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.8)] ring-1 ring-white/5 aspect-[2/3]">
+              <div className="absolute -inset-4 rounded-4xl bg-linear-to-br from-komgaPrimary/30 to-komgaSecondary/30 blur-2xl opacity-70 group-hover:opacity-100 transition-opacity" />
+              <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-gray-900/50 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.8)] ring-1 ring-white/5 aspect-2/3">
                 {coverUrl ? (
                   <img src={coverUrl} alt={t('common.cover')} className="w-full h-full object-cover" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-gray-900/50 backdrop-blur">
+                  <div className="w-full h-full flex items-center justify-center bg-gray-900/50 backdrop-blur-sm">
                     <BookImage className="w-16 h-16 text-gray-600 opacity-50" />
                   </div>
                 )}
@@ -262,7 +262,7 @@ export function SeriesHeroBar({
               )}
             </div>
 
-            {/* Tags 行 */}
+            {/* Tags �?*/}
             {tags.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 mb-3 justify-center sm:justify-start">
                 {(tagsExpanded ? tags : tags.slice(0, 10)).map((tag) => (
@@ -274,7 +274,7 @@ export function SeriesHeroBar({
                     title={tag.name}
                   >
                     <Tag className="w-3 h-3 shrink-0" />
-                    <span className="truncate max-w-[14rem]">{tag.name}</span>
+                    <span className="truncate max-w-56">{tag.name}</span>
                   </button>
                 ))}
                 {tags.length > 10 && (
@@ -300,7 +300,7 @@ export function SeriesHeroBar({
               </div>
             )}
 
-            {/* 外链行 */}
+            {/* 外链�?*/}
             {links.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 justify-center sm:justify-start">
                 {links.map((link) => (
@@ -313,7 +313,7 @@ export function SeriesHeroBar({
                     title={link.url}
                   >
                     <ExternalLink className="w-3 h-3 shrink-0" />
-                    <span className="truncate max-w-[14rem] underline-offset-4 hover:underline">{link.name || link.url}</span>
+                    <span className="truncate max-w-56 underline-offset-4 hover:underline">{link.name || link.url}</span>
                   </a>
                 ))}
               </div>
@@ -348,7 +348,7 @@ function StatCard({
           <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</span>
         </span>
       ) : (
-        <span className="text-xs font-bold leading-none text-gray-300 truncate max-w-[14rem] tracking-wide whitespace-nowrap">{label}</span>
+        <span className="text-xs font-bold leading-none text-gray-300 truncate max-w-56 tracking-wide whitespace-nowrap">{label}</span>
       )}
     </div>
   );
@@ -358,7 +358,7 @@ function ProgressRing({ pct, finished }: { pct: number; finished: boolean }) {
   const r = 16;
   const circ = 2 * Math.PI * r;
   const dash = (pct / 100) * circ;
-  const color = finished ? '#34d399' : 'rgb(var(--color-komga-primary))';
+  const color = finished ? '#34d399' : 'rgb(var(--rgb-komga-primary))';
   return (
     <div className="relative w-10 h-10 shrink-0">
       <svg viewBox="0 0 40 40" className="w-full h-full -rotate-90">

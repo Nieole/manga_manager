@@ -90,7 +90,7 @@ export function SeriesRelationsPanel({
         <select
           value={relationType}
           onChange={(event) => onRelationTypeChange(event.target.value)}
-          className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-none focus:border-komgaPrimary"
+          className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-hidden focus:border-komgaPrimary"
         >
           {RELATION_TYPES.map((type) => (
             <option key={type} value={type}>
@@ -104,7 +104,7 @@ export function SeriesRelationsPanel({
             value={relationSearch}
             onChange={(event) => onSearchChange(event.target.value)}
             placeholder={t('series.relations.searchPlaceholder')}
-            className="w-full rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-none focus:border-komgaPrimary"
+            className="w-full rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-hidden focus:border-komgaPrimary"
           />
           {selectedTarget && (
             <button

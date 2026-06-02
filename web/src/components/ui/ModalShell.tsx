@@ -84,7 +84,7 @@ export function ModalShell({
   return createPortal(
     <div className={`fixed inset-0 ${zIndexClassName}`}>
       <div
-        className="absolute inset-0 backdrop-blur-sm"
+        className="absolute inset-0 backdrop-blur-xs"
         style={{
           background:
             'radial-gradient(circle at top, rgb(var(--theme-glow) / 0.16), transparent 35%), linear-gradient(to bottom, rgb(var(--theme-overlay-top) / 0.78), rgb(var(--theme-overlay-bottom) / 0.88))',
@@ -107,7 +107,7 @@ export function ModalShell({
         >
           <div
             className="pointer-events-none absolute inset-x-0 top-0 h-28 opacity-80"
-            style={{ background: 'radial-gradient(circle at top, rgb(var(--color-white) / 0.08), transparent 65%)' }}
+            style={{ background: 'radial-gradient(circle at top, rgb(var(--rgb-white) / 0.08), transparent 65%)' }}
           />
 
           {(title || headerActions || headerContent || showCloseButton) && (
@@ -119,7 +119,7 @@ export function ModalShell({
                       {title && (
                         <div className="flex items-center gap-3">
                           {icon ? (
-                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-komgaPrimary shadow-[inset_0_1px_0_rgb(255_255_255/0.08)]">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/3 text-komgaPrimary shadow-[inset_0_1px_0_rgb(255_255_255/0.08)]">
                               {icon}
                             </div>
                           ) : null}

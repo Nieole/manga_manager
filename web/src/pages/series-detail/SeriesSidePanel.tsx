@@ -89,11 +89,11 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
   if (typeof document === 'undefined') return null;
 
   return createPortal(
-    <div className={`fixed inset-0 z-[80] ${props.open ? '' : 'pointer-events-none'}`} aria-hidden={!props.open}>
+    <div className={`fixed inset-0 z-80 ${props.open ? '' : 'pointer-events-none'}`} aria-hidden={!props.open}>
       <div
         role="presentation"
         onClick={props.onClose}
-        className={`absolute inset-0 backdrop-blur-sm transition-opacity duration-300 ${props.open ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 backdrop-blur-xs transition-opacity duration-300 ${props.open ? 'opacity-100' : 'opacity-0'}`}
         style={{
           background:
             'radial-gradient(circle at top, rgb(var(--theme-glow) / 0.16), transparent 35%), linear-gradient(to bottom, rgb(var(--theme-overlay-top) / 0.78), rgb(var(--theme-overlay-bottom) / 0.88))',
@@ -253,7 +253,7 @@ function TabButton({
     >
       <span>{label}</span>
       {count > 0 && (
-        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${danger ? 'bg-red-500/20 text-red-200' : 'bg-komgaPrimary/20 text-komgaPrimary'}`}>
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-sm ${danger ? 'bg-red-500/20 text-red-200' : 'bg-komgaPrimary/20 text-komgaPrimary'}`}>
           {count}
         </span>
       )}

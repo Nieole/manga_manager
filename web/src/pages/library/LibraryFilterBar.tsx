@@ -145,7 +145,7 @@ export function LibraryFilterBar({
                 value={searchValue}
                 onChange={(e) => onSearchChange(e.target.value)}
                 placeholder={t('home.filters.searchInList', { label })}
-                className="w-full rounded-md border border-gray-700 bg-gray-900 px-7 py-1.5 text-xs text-white outline-none placeholder:text-gray-600 transition-colors focus:border-komgaPrimary"
+                className="w-full rounded-md border border-gray-700 bg-gray-900 px-7 py-1.5 text-xs text-white outline-hidden placeholder:text-gray-600 transition-colors focus:border-komgaPrimary"
               />
             </div>
           )}
@@ -154,7 +154,7 @@ export function LibraryFilterBar({
               onClick={() => onChange(null)}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${
                 activeValue === null
-                  ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-sm'
+                  ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
                   : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
               }`}
             >
@@ -166,7 +166,7 @@ export function LibraryFilterBar({
                 onClick={() => onChange(activeValue === item ? null : item)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${
                   activeValue === item
-                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-sm'
+                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
                     : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
                 }`}
               >
@@ -194,7 +194,7 @@ export function LibraryFilterBar({
   };
 
   return (
-    <div className="mb-6 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 shadow-sm backdrop-blur-md">
+    <div className="mb-6 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 shadow-xs backdrop-blur-md">
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => setOpen((p) => !p)}
@@ -291,7 +291,7 @@ export function LibraryFilterBar({
                 onClick={() => onLetterChange(null)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${
                   activeLetter === null
-                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-sm'
+                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
                     : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
                 }`}
               >
@@ -303,7 +303,7 @@ export function LibraryFilterBar({
                   onClick={() => onLetterChange(activeLetter === letter ? null : letter)}
                   className={`w-8 h-8 flex items-center justify-center text-xs font-semibold rounded-lg transition-all border ${
                     activeLetter === letter
-                      ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-sm'
+                      ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
                       : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
                   }`}
                 >

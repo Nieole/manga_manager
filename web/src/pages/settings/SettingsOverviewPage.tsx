@@ -95,7 +95,7 @@ export function SettingsOverviewPage() {
             className="rounded-2xl border border-gray-800 bg-komgaSurface/80 p-5 text-left transition-all hover:border-gray-700 hover:bg-gray-900/70"
           >
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/3">
                 {card.icon}
               </div>
               <div>

@@ -122,7 +122,7 @@ export function SeriesSearchModal({
       description={t('series.searchModal.description', { provider: providerLabel || t('series.searchModal.externalSource') })}
       icon={<Globe className="h-5 w-5" />}
       size="wide"
-      zIndexClassName="z-[60]"
+      zIndexClassName="z-60"
       panelClassName="max-w-7xl"
       bodyClassName="min-h-0 overflow-hidden p-0"
       headerContent={
@@ -210,7 +210,7 @@ export function SeriesSearchModal({
                       onClick={() => onSelectMetadata(result)}
                       className={`group w-full text-left flex gap-5 p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden ${isSelected ? 'border-komgaPrimary bg-komgaPrimary/10 shadow-lg shadow-komgaPrimary/10' : 'bg-gray-900/40 border-gray-800 hover:border-komgaPrimary/40 hover:bg-komgaPrimary/5'}`}
                     >
-                      <div className="w-24 sm:w-28 shrink-0 aspect-[3/4] bg-gray-800 rounded-xl overflow-hidden border border-gray-700 shadow-xl self-start">
+                      <div className="w-24 sm:w-28 shrink-0 aspect-3/4 bg-gray-800 rounded-xl overflow-hidden border border-gray-700 shadow-xl self-start">
                         {result.CoverURL ? (
                           <img src={result.CoverURL} alt={result.Title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         ) : (
@@ -222,7 +222,7 @@ export function SeriesSearchModal({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <h4 className="text-lg font-bold text-white leading-tight break-words">{result.Title}</h4>
+                            <h4 className="text-lg font-bold text-white leading-tight wrap-break-word">{result.Title}</h4>
                             {result.OriginalTitle && result.OriginalTitle !== result.Title && (
                               <p className="text-sm text-gray-500 truncate mt-1 italic">{result.OriginalTitle}</p>
                             )}
@@ -237,31 +237,31 @@ export function SeriesSearchModal({
 
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
                           {result.Publisher && (
-                            <p className="text-purple-400 text-xs font-semibold flex items-center gap-1.5 bg-purple-400/5 px-2 py-1 rounded border border-purple-400/10">
+                            <p className="text-purple-400 text-xs font-semibold flex items-center gap-1.5 bg-purple-400/5 px-2 py-1 rounded-sm border border-purple-400/10">
                               <Building2 className="w-3.5 h-3.5" />
                               {result.Publisher}
                             </p>
                           )}
                           {result.ReleaseDate && (
-                            <p className="text-blue-400 text-xs font-semibold flex items-center gap-1.5 bg-blue-400/5 px-2 py-1 rounded border border-blue-400/10">
+                            <p className="text-blue-400 text-xs font-semibold flex items-center gap-1.5 bg-blue-400/5 px-2 py-1 rounded-sm border border-blue-400/10">
                               <Info className="w-3.5 h-3.5" />
                               {result.ReleaseDate}
                             </p>
                           )}
                           {result.VolumeCount > 0 && (
-                            <p className="text-green-400 text-xs font-semibold flex items-center gap-1.5 bg-green-400/5 px-2 py-1 rounded border border-green-400/10">
+                            <p className="text-green-400 text-xs font-semibold flex items-center gap-1.5 bg-green-400/5 px-2 py-1 rounded-sm border border-green-400/10">
                               <FolderOpen className="w-3.5 h-3.5" />
                               {t('series.searchModal.volumeCount', { count: result.VolumeCount })}
                             </p>
                           )}
                           {result.Rating > 0 && (
-                            <p className="text-yellow-400 text-xs font-semibold flex items-center gap-1.5 bg-yellow-400/5 px-2 py-1 rounded border border-yellow-400/10">
+                            <p className="text-yellow-400 text-xs font-semibold flex items-center gap-1.5 bg-yellow-400/5 px-2 py-1 rounded-sm border border-yellow-400/10">
                               <Star className="w-3.5 h-3.5 fill-current" />
                               {result.Rating.toFixed(1)}
                             </p>
                           )}
                           {(result.Confidence || result.Provider || result.SourceURL) && (
-                            <p className="text-cyan-300 text-xs font-semibold flex items-center gap-1.5 bg-cyan-400/5 px-2 py-1 rounded border border-cyan-400/10">
+                            <p className="text-cyan-300 text-xs font-semibold flex items-center gap-1.5 bg-cyan-400/5 px-2 py-1 rounded-sm border border-cyan-400/10">
                               <Sparkles className="w-3.5 h-3.5" />
                               {result.Provider || providerLabel || t('series.searchModal.externalSource')} · {confidenceLabel(result.Confidence)}
                             </p>
@@ -353,13 +353,13 @@ export function SeriesSearchModal({
                             <div className="grid gap-3 md:grid-cols-2">
                               <div>
                                 <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">{t('series.searchModal.current')}</p>
-                                <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-300 whitespace-pre-wrap break-words">
+                                <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-300 whitespace-pre-wrap wrap-break-word">
                                   {field.currentValue}
                                 </div>
                               </div>
                               <div>
                                 <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500 mb-1">{t('series.searchModal.next')}</p>
-                                <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap break-words">
+                                <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap wrap-break-word">
                                   {field.nextValue}
                                 </div>
                               </div>

@@ -281,14 +281,14 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
       </div>
       )}
 
-      <div className="mb-6 grid gap-3 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 backdrop-blur md:grid-cols-[1fr_180px_auto]">
-        <select value={libraryId} onChange={(event) => { setLibraryId(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-none focus:border-komgaPrimary">
+      <div className="mb-6 grid gap-3 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 backdrop-blur-sm md:grid-cols-[1fr_180px_auto]">
+        <select value={libraryId} onChange={(event) => { setLibraryId(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="0">{t('aiGroupingReviews.allLibraries')}</option>
           {(libraries || []).map((library) => (
             <option key={library.id} value={library.id}>{library.name}</option>
           ))}
         </select>
-        <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-none focus:border-komgaPrimary">
+        <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="pending">{t('aiGroupingReviews.status.pending')}</option>
           <option value="applied">{t('aiGroupingReviews.status.applied')}</option>
           <option value="rejected">{t('aiGroupingReviews.status.rejected')}</option>
@@ -338,8 +338,8 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
                           <span className="shrink-0 text-cyan-300/80">{review.provider || '—'}</span>
                         </div>
                         <div className="mt-1 flex items-center gap-1.5 text-[11px]">
-                          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">{t('aiGroupingReviews.collectionsBadge', { count: review.collection_count })}</span>
-                          <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 text-cyan-300">{t('aiGroupingReviews.candidatesBadge', { count: review.candidate_count })}</span>
+                          <span className="rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-amber-300">{t('aiGroupingReviews.collectionsBadge', { count: review.collection_count })}</span>
+                          <span className="rounded-sm bg-cyan-500/15 px-1.5 py-0.5 text-cyan-300">{t('aiGroupingReviews.candidatesBadge', { count: review.candidate_count })}</span>
                         </div>
                       </div>
                     </button>
@@ -389,13 +389,13 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
                             <div className="flex items-center gap-2">
                               <Layers3 className="h-4 w-4 shrink-0 text-amber-500" />
                               {draft ? (
-                                <input value={draft.name} onChange={(event) => updateDraft(collection.id, { name: event.target.value })} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white outline-none focus:border-komgaPrimary" />
+                                <input value={draft.name} onChange={(event) => updateDraft(collection.id, { name: event.target.value })} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white outline-hidden focus:border-komgaPrimary" />
                               ) : (
                                 <h3 className="truncate text-base font-semibold text-white">{collection.name}</h3>
                               )}
                             </div>
                             {draft ? (
-                              <textarea value={draft.description} onChange={(event) => updateDraft(collection.id, { description: event.target.value })} rows={2} className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200 outline-none focus:border-komgaPrimary" />
+                              <textarea value={draft.description} onChange={(event) => updateDraft(collection.id, { description: event.target.value })} rows={2} className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200 outline-hidden focus:border-komgaPrimary" />
                             ) : (
                               collection.description && <p className="mt-2 text-sm leading-6 text-gray-400">{collection.description}</p>
                             )}

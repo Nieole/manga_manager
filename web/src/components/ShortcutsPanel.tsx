@@ -89,7 +89,7 @@ export function ShortcutsPanel({ open, onClose }: ShortcutsPanelProps) {
   if (!open) return null;
   const node = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-100 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
       onClick={onClose}
     >
       <div
@@ -128,7 +128,7 @@ export function ShortcutsPanel({ open, onClose }: ShortcutsPanelProps) {
                       {entry.keys.map((key, idx) => (
                         <span key={idx} className="flex items-center gap-1">
                           {idx > 0 && <span className="text-[10px] text-gray-600">{t('shortcuts.then')}</span>}
-                          <kbd className="min-w-[1.75rem] rounded border border-gray-700 bg-gray-900 px-1.5 py-0.5 text-center font-mono text-[10px] text-gray-300">
+                          <kbd className="min-w-7 rounded-sm border border-gray-700 bg-gray-900 px-1.5 py-0.5 text-center font-mono text-[10px] text-gray-300">
                             {key}
                           </kbd>
                         </span>

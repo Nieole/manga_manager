@@ -79,7 +79,7 @@ export function ComimiTheme(props: ReaderThemeProps) {
             <div className="absolute inset-0 bg-komgaDark flex items-center justify-center text-red-500">
                 <div className="flex flex-col items-center">
                     <span className="mb-4 text-xl">Error: {loadError}</span>
-                    <button onClick={handleBackToSeries} className="bg-gray-800 px-4 py-2 rounded hover:bg-gray-700 text-white">
+                    <button onClick={handleBackToSeries} className="bg-gray-800 px-4 py-2 rounded-sm hover:bg-gray-700 text-white">
                         {t('reader.backToSeries')}
                     </button>
                 </div>
@@ -113,10 +113,10 @@ export function ComimiTheme(props: ReaderThemeProps) {
             
             
             {/* Custom Back Button overlaid on top-left */}
-            <div className="absolute top-6 left-6 z-[9999] custom-overlay-ui">
+            <div className="absolute top-6 left-6 z-9999 custom-overlay-ui">
                 <button 
                     onClick={handleBackToSeries}
-                    className="backdrop-blur-sm p-3 rounded-2xl transition-all flex items-center justify-center hover:opacity-90"
+                    className="backdrop-blur-xs p-3 rounded-2xl transition-all flex items-center justify-center hover:opacity-90"
                     style={{ background: 'rgba(255, 255, 255, 0.8)', color: '#333', boxShadow: '0 0 8px rgba(0,0,0,0.1)' }}
                     title={t('reader.backToSeries')}
                 >
@@ -125,10 +125,10 @@ export function ComimiTheme(props: ReaderThemeProps) {
             </div>
 
             {/* Custom Settings Button overlaid on top-right */}
-            <div className="absolute top-6 right-6 z-[9999] custom-overlay-ui">
+            <div className="absolute top-6 right-6 z-9999 custom-overlay-ui">
                 <button 
                     onClick={() => setShowSettings(!showSettings)}
-                    className="backdrop-blur-sm p-3 rounded-2xl transition-all flex items-center justify-center hover:opacity-90"
+                    className="backdrop-blur-xs p-3 rounded-2xl transition-all flex items-center justify-center hover:opacity-90"
                     style={{ background: 'rgba(255, 255, 255, 0.8)', color: '#333', boxShadow: '0 0 8px rgba(0,0,0,0.1)' }}
                     title={t('reader.settings')}
                 >
@@ -137,7 +137,7 @@ export function ComimiTheme(props: ReaderThemeProps) {
             </div>
 
             {showSettings && (
-                <div className="absolute top-20 right-6 z-[9999] custom-overlay-ui">
+                <div className="absolute top-20 right-6 z-9999 custom-overlay-ui">
                     <ReaderSettingsDrawer
                         t={t}
                         readerTheme={props.readerTheme}

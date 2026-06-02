@@ -43,7 +43,7 @@ export function DirectoryPicker({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={t('directoryPicker.placeholder')}
-          className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
+          className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
         />
         <button
           type="button"
@@ -79,7 +79,7 @@ export function DirectoryPicker({
               <button
                 type="button"
                 onClick={onChooseCurrent}
-                className="px-2 py-1 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded text-xs transition-colors"
+                className="px-2 py-1 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded-sm text-xs transition-colors"
               >
                 {t('directoryPicker.chooseCurrent')}
               </button>

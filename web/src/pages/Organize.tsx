@@ -268,11 +268,11 @@ export default function Organize() {
           <div className="rounded-2xl border border-gray-800/80 bg-gray-950/50 backdrop-blur-md p-4 space-y-3">
             <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.title') || '健康总览'}</h3>
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+              <div className="rounded-xl border border-white/5 bg-white/2 p-3">
                 <p className="text-[10px] uppercase tracking-wide text-gray-500">{t('organize.metric.totalIssues')}</p>
                 <p className="mt-1 text-2xl font-bold text-white">{formatNumber(totalIssueCount)}</p>
               </div>
-              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+              <div className="rounded-xl border border-white/5 bg-white/2 p-3">
                 <p className="text-[10px] uppercase tracking-wide text-gray-500">{t('organize.metric.visibleIssues')}</p>
                 <p className="mt-1 text-2xl font-bold text-emerald-400">{formatNumber(filteredIssues.length)}</p>
               </div>
@@ -361,15 +361,15 @@ export default function Organize() {
               {t('organize.identity.rebuild')}
             </button>
             <div className="grid gap-2">
-              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.01] px-3 py-2">
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/1 px-3 py-2">
                 <span className="text-[11px] text-gray-500">{t('organize.identity.missingQuickHash')}</span>
                 <span className="text-xs font-semibold text-white">{formatNumber(missingQuickHashCount)}</span>
               </div>
-              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.01] px-3 py-2">
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/1 px-3 py-2">
                 <span className="text-[11px] text-gray-500">{t('organize.identity.duplicateQuickHash')}</span>
                 <span className="text-xs font-semibold text-white">{formatNumber(duplicateQuickHashCount)}</span>
               </div>
-              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.01] px-3 py-2">
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/1 px-3 py-2">
                 <span className="text-[11px] text-gray-500">{t('organize.identity.duplicateFileHash')}</span>
                 <span className="text-xs font-semibold text-white">{formatNumber(duplicateFileHashCount)}</span>
               </div>
@@ -385,7 +385,7 @@ export default function Organize() {
               <select
                 value={libraryId}
                 onChange={(e) => setLibraryId(e.target.value)}
-                className="rounded-xl border border-gray-800 bg-gray-900 px-3 py-2 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-komgaPrimary/40"
+                className="rounded-xl border border-gray-800 bg-gray-900 px-3 py-2 text-xs text-gray-300 focus:outline-hidden focus:ring-1 focus:ring-komgaPrimary/40"
               >
                 <option value="ALL">{t('organize.filters.allLibraries')}</option>
                 {libraries.map((library) => (
@@ -398,7 +398,7 @@ export default function Organize() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={t('organize.filters.search')}
-                  className="w-full rounded-xl border border-gray-800 bg-gray-900 py-2 pl-10 pr-3 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-komgaPrimary/40"
+                  className="w-full rounded-xl border border-gray-800 bg-gray-900 py-2 pl-10 pr-3 text-xs text-gray-300 focus:outline-hidden focus:ring-1 focus:ring-komgaPrimary/40"
                 />
               </div>
             </div>
@@ -419,9 +419,9 @@ export default function Organize() {
                   ? 'rebuild_file_identities'
                   : `${issue.type}-${issue.series_id || issue.library_id || issue.path}`;
                 return (
-                  <div key={`${issue.type}-${issue.book_id || issue.series_id || issue.path}-${index}`} className="p-4 hover:bg-white/[0.01] transition-all group">
+                  <div key={`${issue.type}-${issue.book_id || issue.series_id || issue.path}-${index}`} className="p-4 hover:bg-white/1 transition-all group">
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                      <button onClick={() => openIssue(issue)} className="min-w-0 text-left flex-1 space-y-2 focus:outline-none">
+                      <button onClick={() => openIssue(issue)} className="min-w-0 text-left flex-1 space-y-2 focus:outline-hidden">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${severityClass(issue.severity)}`}>
                             {issueIcon(issue.type)}

@@ -48,7 +48,7 @@ export function LibraryHeader({
           <p className="text-gray-400 text-xs sm:text-sm">{t('home.toolbar.resultCount', { count: totalSeries })}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
-          <div className="relative w-full sm:w-64 order-1 sm:order-none">
+          <div className="relative w-full sm:w-64 order-1 sm:order-0">
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
             <input
               ref={searchInputRef}
@@ -57,9 +57,9 @@ export function LibraryHeader({
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder={t('library.search.placeholder')}
               aria-label={t('library.search.placeholder')}
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-9 py-1.5 text-sm text-white outline-none placeholder:text-gray-500 transition-colors focus:border-komgaPrimary"
+              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-9 py-1.5 text-sm text-white outline-hidden placeholder:text-gray-500 transition-colors focus:border-komgaPrimary"
             />
-            <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 hidden rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 sm:inline">
+            <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 hidden rounded-sm border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 sm:inline">
               /
             </kbd>
           </div>
@@ -78,7 +78,7 @@ export function LibraryHeader({
           {hasSeries && (
             <button
               onClick={onToggleSelectionMode}
-              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border focus:outline-none flex-shrink-0 ${
+              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors border focus:outline-hidden shrink-0 ${
                 isSelectionMode
                   ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-md'
                   : 'bg-transparent border-white/10 text-gray-400 hover:border-white/20 hover:text-white'
@@ -104,7 +104,7 @@ export function LibraryHeader({
           <select
             value={sortByField}
             onChange={(e) => onSortFieldChange(e.target.value)}
-            className="bg-komgaSurface border border-white/10 text-gray-100 text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-none transition-colors cursor-pointer hover:border-white/20 shadow-sm"
+            className="bg-komgaSurface border border-white/10 text-gray-100 text-sm rounded-lg focus:ring-komgaPrimary focus:border-komgaPrimary block p-2 outline-hidden transition-colors cursor-pointer hover:border-white/20 shadow-xs"
           >
             <option value="name">{t('home.toolbar.sort.name')}</option>
             <option value="created">{t('home.toolbar.sort.created')}</option>
@@ -118,7 +118,7 @@ export function LibraryHeader({
           </select>
           <button
             onClick={onToggleSortDir}
-            className="p-2 bg-komgaSurface border border-white/10 hover:border-white/20 rounded-lg text-gray-400 hover:text-komgaPrimary transition-colors flex items-center justify-center shadow-sm"
+            className="p-2 bg-komgaSurface border border-white/10 hover:border-white/20 rounded-lg text-gray-400 hover:text-komgaPrimary transition-colors flex items-center justify-center shadow-xs"
             title={sortDir === 'asc' ? t('home.toolbar.sortAsc') : t('home.toolbar.sortDesc')}
           >
             {sortDir === 'asc' ? <ArrowUp className="w-5 h-5" /> : <ArrowDown className="w-5 h-5" />}

@@ -188,27 +188,27 @@ export function SettingsMaintenancePage() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.cacheVolume')}</p>
             <p className="mt-2 truncate text-lg font-semibold text-white">{storageIO?.cache_volume || '-'}</p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.libraryCount')}</p>
             <p className="mt-2 text-lg font-semibold text-white">{storageIO?.libraries?.length ?? 0}</p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.sameDiskProtected')}</p>
             <p className="mt-2 text-lg font-semibold text-white">{storageIO?.same_disk_caches ?? 0}</p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.scanArchiveRate')}</p>
             <p className="mt-2 text-lg font-semibold text-white">{formatRate(storageIO?.recent_scan_archive_open_rate ?? 0)}</p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.coverArchiveRate')}</p>
             <p className="mt-2 text-lg font-semibold text-white">{formatRate(storageIO?.recent_cover_archive_open_rate ?? 0)}</p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.thumbnailWriteTime')}</p>
             <p className="mt-2 text-lg font-semibold text-white">{storageIO?.recent_thumbnail_write_ms ?? 0} ms</p>
           </div>
@@ -217,7 +217,7 @@ export function SettingsMaintenancePage() {
         {(storageIO?.scheduler?.length ?? 0) > 0 && (
           <div className="grid gap-3 lg:grid-cols-2">
             {storageIO?.scheduler.map((item) => (
-              <div key={item.volume_key} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+              <div key={item.volume_key} className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold text-white">{item.volume_key}</p>
                   <span className={`rounded-full border px-2.5 py-1 text-xs ${item.background_paused ? 'border-amber-500/30 bg-amber-500/10 text-amber-500' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'}`}>
@@ -256,10 +256,10 @@ export function SettingsMaintenancePage() {
                 </span>
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60">
+                <p className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-xs text-white/60">
                   {t('settings.maintenance.volume')}: <span className="text-white">{library.volume_key || '-'}</span>
                 </p>
-                <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60">
+                <p className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-xs text-white/60">
                   {t('settings.maintenance.heavyConcurrency')}: <span className="text-white">{library.heavy_background_concurrency || t('settings.maintenance.unlimited')}</span>
                 </p>
                 <p className={`rounded-lg border px-3 py-2 text-xs font-medium ${library.cache_on_same_volume && library.disable_same_disk_page_cache ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500' : 'border-gray-700 bg-gray-900 text-gray-400'}`}>
@@ -271,7 +271,7 @@ export function SettingsMaintenancePage() {
             </div>
           ))}
           {storageIO && storageIO.libraries.length === 0 && (
-            <p className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/50">{t('settings.maintenance.noStorageIOLibraries')}</p>
+            <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('settings.maintenance.noStorageIOLibraries')}</p>
           )}
         </div>
       </section>
@@ -293,11 +293,11 @@ export function SettingsMaintenancePage() {
           </button>
         </div>
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.pageCacheSize')}</p>
             <p className="mt-2 text-2xl font-semibold text-white">{formatBytes(pageCacheStats?.file_size ?? 0)}</p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.pageCacheFiles')}</p>
             <p className="mt-2 text-2xl font-semibold text-white">{pageCacheStats?.file_count ?? 0}</p>
           </div>
