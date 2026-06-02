@@ -33,20 +33,20 @@ export function useReaderProgressIndicator({
 
   useEffect(() => {
     if (offlineQueuedPage != null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setStatus('offline-queued');
     }
   }, [offlineQueuedPage]);
 
   useEffect(() => {
     if (!isOnline) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setStatus((prev) => (prev === 'syncing' ? 'offline-queued' : prev));
     }
   }, [isOnline]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setStatus('idle');
     inFlightRef.current = 0;
     if (syncedTimerRef.current != null) {

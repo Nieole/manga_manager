@@ -38,7 +38,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
   // 当 series / tags / authors / links 变更时重置表单
   useEffect(() => {
     if (!series) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
     setEditForm({
       title: series.title,

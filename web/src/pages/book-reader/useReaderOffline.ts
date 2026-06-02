@@ -57,7 +57,7 @@ export function useReaderOffline({
   }, [bookId, offlineSupported]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     refreshOfflineStatus();
   }, [refreshOfflineStatus]);
 

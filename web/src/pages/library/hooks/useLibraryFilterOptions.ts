@@ -40,7 +40,7 @@ export function useLibraryFilterOptions({ activeTag, activeAuthor }: UseLibraryF
   }, [filterOptionsLoaded, filterOptionsLoading, activeTag, activeAuthor]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     if (activeTag || activeAuthor) loadFilterOptions();
   }, [activeTag, activeAuthor, loadFilterOptions]);
 

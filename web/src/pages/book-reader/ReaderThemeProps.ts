@@ -1,10 +1,14 @@
-import type { RefObject, Dispatch, SetStateAction } from 'react';
+import type { RefObject, Dispatch, MouseEvent, SetStateAction } from 'react';
 import type { Page, ReadMode, ReadDirection, ScaleMode, ImageFilter, ReaderImageFormat, ReadingBookmark, ReaderTheme } from './types';
 import type { WebtoonReaderHandle } from './WebtoonReader';
 import type { OfflineBookStatus } from './offlineReader';
+import type { UseReaderSiblingsResult } from './useReaderSiblings';
+import type { UseReaderProgressIndicatorResult } from './useReaderProgressIndicator';
+
+type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
 
 export interface ReaderThemeProps {
-  t: any;
+  t: Translate;
   bookId: string | undefined;
   pages: Page[];
   currentPageIndex: number;
@@ -72,10 +76,10 @@ export interface ReaderThemeProps {
 
   containerRef: RefObject<HTMLDivElement | null>;
   isDragging: boolean;
-  handleMouseDown: (e: any) => void;
+  handleMouseDown: (e: MouseEvent<HTMLDivElement>) => void;
   handleMouseLeave: () => void;
   handleMouseUp: () => void;
-  handleMouseMove: (e: any) => void;
+  handleMouseMove: (e: MouseEvent<HTMLDivElement>) => void;
 
   immersive: {
     visible: boolean;
@@ -83,17 +87,13 @@ export interface ReaderThemeProps {
     show: () => void;
   };
 
-  siblings: {
-    prev: any;
-    next: any;
-    allInVolume: any[];
-  };
+  siblings: UseReaderSiblingsResult;
 
   webtoonReaderRef: RefObject<WebtoonReaderHandle | null>;
   handleWebtoonRenderRangeChange: (start: number, end: number) => void;
   handleWebtoonRenderedImageCountChange: (count: number) => void;
 
-  progressIndicator: { status: any };
+  progressIndicator: UseReaderProgressIndicatorResult;
 
   bookmarks: ReadingBookmark[];
   bookmarkNote: string;

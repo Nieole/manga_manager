@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import { BookmarkPanel } from './BookmarkPanel';
 import { OfflineReadingPanel } from './OfflineReadingPanel';
 import type { OfflineBookStatus } from './offlineReader';
-import type { ImageFilter, ReaderImageFormat, ReadDirection, ReadingBookmark, ReadMode, ScaleMode } from './types';
+import type { ImageFilter, ReaderImageFormat, ReaderTheme, ReadDirection, ReadingBookmark, ReadMode, ScaleMode } from './types';
 
 type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
 type ReaderSettingsTab = 'reading' | 'image' | 'cache' | 'bookmarks';
@@ -15,7 +15,7 @@ const BOOK_TABS: ReaderSettingsTab[] = ['cache', 'bookmarks'];
 interface ReaderSettingsDrawerProps {
   t: Translate;
   readerTheme: string;
-  setReaderTheme: Dispatch<SetStateAction<any>>;
+  setReaderTheme: Dispatch<SetStateAction<ReaderTheme>>;
   readMode: ReadMode;
   setReadMode: Dispatch<SetStateAction<ReadMode>>;
   readDirection: ReadDirection;
@@ -130,7 +130,7 @@ export function ReaderSettingsDrawer({
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(SETTINGS_MODE_STORAGE_KEY, mode);
     if (mode === 'global' && !GLOBAL_TABS.includes(activeTab)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setActiveTab('reading');
     } else if (mode === 'book' && !BOOK_TABS.includes(activeTab)) {
       setActiveTab('cache');

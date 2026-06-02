@@ -302,6 +302,7 @@ export default function Layout() {
     };
 
     useEffect(() => {
+        const cleanupTimers = taskBubbleCleanupTimers.current;
         fetchLibraries();
         try {
             const stored = localStorage.getItem('manga_manager_recent_library_paths');
@@ -427,8 +428,8 @@ export default function Layout() {
             window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
             window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
             window.removeEventListener('manga-manager:task-progress-override', handleTaskProgressOverride as EventListener);
-            taskBubbleCleanupTimers.current.forEach((timer) => clearTimeout(timer));
-            taskBubbleCleanupTimers.current.clear();
+            cleanupTimers.forEach((timer) => clearTimeout(timer));
+            cleanupTimers.clear();
             eventSource.close();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps

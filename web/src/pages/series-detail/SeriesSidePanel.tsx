@@ -39,7 +39,6 @@ interface SeriesSidePanelProps {
 
 export function SeriesSidePanel(props: SeriesSidePanelProps) {
   const { t, formatDateTime } = useI18n();
-  if (typeof document === 'undefined') return null;
 
   const counts = {
     relations: props.relations.length,
@@ -48,6 +47,7 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
   };
 
   const [drawerWidth, setDrawerWidth] = useState(() => {
+    if (typeof window === 'undefined') return 576;
     const saved = localStorage.getItem('komga-series-sidepanel-width');
     return saved ? parseInt(saved, 10) : 576;
   });
@@ -85,6 +85,8 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   };
+
+  if (typeof document === 'undefined') return null;
 
   return createPortal(
     <div className={`fixed inset-0 z-[80] ${props.open ? '' : 'pointer-events-none'}`} aria-hidden={!props.open}>

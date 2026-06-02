@@ -38,7 +38,7 @@ export function useReaderImmersive({
   useEffect(() => {
     forcedRef.current = forcedVisible;
     if (forcedVisible) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setVisible(true);
       if (timerRef.current != null) {
         window.clearTimeout(timerRef.current);
@@ -98,7 +98,7 @@ export function useReaderImmersive({
   useEffect(() => {
     if (!enabled) {
       clearTimer();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setVisible(true);
       return undefined;
     }

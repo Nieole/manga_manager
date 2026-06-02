@@ -108,12 +108,12 @@ export function useSmartFilters({
   // 切库或挂载：仅用 localStorage 缓存即时填充，不发任何网络请求
   useEffect(() => {
     if (!libId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setSavedSmartFilters([]);
       loadedLibIdRef.current = null;
       return;
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setSavedSmartFilters(readCachedSmartFilters(libId));
     loadedLibIdRef.current = null;
   }, [libId]);

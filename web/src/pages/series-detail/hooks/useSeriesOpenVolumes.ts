@@ -26,7 +26,7 @@ export function useSeriesOpenVolumes({ seriesId, knownVolumes }: UseSeriesOpenVo
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setOpen(loadStored(seriesId));
     setHydrated(false);
   }, [seriesId]);
@@ -36,7 +36,7 @@ export function useSeriesOpenVolumes({ seriesId, knownVolumes }: UseSeriesOpenVo
     if (hydrated || knownVolumes.length === 0) return;
     const queryVol = params.get('volume');
     if (queryVol && knownVolumes.includes(queryVol)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setOpen((prev) => {
         if (prev.has(queryVol)) return prev;
         const next = new Set(prev);

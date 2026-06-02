@@ -4,6 +4,15 @@ import type { ReaderThemeProps } from '../ReaderThemeProps';
 import { ReaderSettingsDrawer } from '../ReaderSettingsDrawer';
 import { Settings, ArrowLeft } from 'lucide-react';
 
+interface ComimiPageSourceContext {
+    page?: {
+        id?: string;
+        src?: string;
+    };
+    id?: string;
+    src?: string;
+}
+
 export function ComimiTheme(props: ReaderThemeProps) {
     const {
         bookId,
@@ -35,10 +44,12 @@ export function ComimiTheme(props: ReaderThemeProps) {
     }, [pages, bookTitle, bookId]);
 
     // Comimi will call this to resolve the actual image URL
-    const resolvePageSrc = useCallback(async (context: any) => {
+    const resolvePageSrc = useCallback(async (context: ComimiPageSourceContext) => {
         try {
             const pageObj = context.page || context;
-            const pageNum = parseInt(pageObj.id, 10);
+            const pageId = pageObj.id;
+            if (!pageId || !bookId) return pageObj.src || "";
+            const pageNum = parseInt(pageId, 10);
             if (!pageNum || !bookId) return pageObj.src || "";
             // This triggers our cache, preloading, blob fetching, etc.
             const url = await ensurePageImageLoaded(bookId, pageNum);

@@ -10,32 +10,32 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@yui540/comimi": "^0.3.1",
-    "@yui540/comimi-react": "^0.1.2",
-    "axios": "^1.13.5",
-    "date-fns": "^4.1.0",
+    "@yui540/comimi": "^0.3.7",
+    "@yui540/comimi-react": "^0.1.4",
+    "axios": "^1.16.1",
+    "date-fns": "^4.4.0",
     "lucide-react": "^0.575.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-router-dom": "^7.13.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.16.0",
     "react-select": "^5.10.2",
-    "react-virtuoso": "^4.18.1"
+    "react-virtuoso": "^4.18.7"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
-    "@types/node": "^24.10.1",
-    "@types/react": "^19.2.7",
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^24.12.4",
+    "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
-    "autoprefixer": "^10.4.24",
-    "eslint": "^9.39.1",
-    "eslint-plugin-react-hooks": "^7.0.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "autoprefixer": "^10.5.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
-    "postcss": "^8.5.6",
+    "postcss": "^8.5.15",
     "tailwindcss": "^3.4.19",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.48.0",
-    "vite": "^7.3.1"
+    "typescript-eslint": "^8.60.1",
+    "vite": "^7.3.5"
   }
 }

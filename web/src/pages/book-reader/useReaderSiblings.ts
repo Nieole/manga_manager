@@ -79,7 +79,7 @@ export function useReaderSiblings({
   useEffect(() => {
     if (!bookId || loading) return undefined;
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setPrev(null);
     setNext(null);
 
