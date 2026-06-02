@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 )
@@ -16,7 +17,7 @@ func (q *Queries) GetKOReaderSettings(ctx context.Context) (KOReaderSettings, er
 
 	var item KOReaderSettings
 	err := row.Scan(&item.ID, &item.Username, &item.SyncKey, &item.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return KOReaderSettings{}, nil
 	}
 	return item, err

@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -279,7 +280,7 @@ func (s *SqlStore) GetReadingListItemProgress(ctx context.Context, readingListID
 func (s *SqlStore) refreshSeriesStatsForBook(ctx context.Context, bookID int64) error {
 	seriesID, err := s.Queries.GetSeriesIDByBookID(ctx, bookID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
 		return err
@@ -311,7 +312,7 @@ func (s *SqlStore) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPar
 
 func (s *SqlStore) DeleteBook(ctx context.Context, id int64) error {
 	seriesID, err := s.Queries.GetSeriesIDByBookID(ctx, id)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if err := s.Queries.DeleteBook(ctx, id); err != nil {
@@ -325,7 +326,7 @@ func (s *SqlStore) DeleteBook(ctx context.Context, id int64) error {
 
 func (s *SqlStore) DeleteBookByPath(ctx context.Context, path string) error {
 	seriesID, err := s.Queries.GetSeriesIDByBookPath(ctx, path)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if err := s.Queries.DeleteBookByPath(ctx, path); err != nil {
@@ -379,7 +380,7 @@ func (s *SqlStore) ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 	return s.RefreshSeriesStats(ctx, seriesID)
 }
 
-// 供启动时执行迁移
+// Migrate 供启动时执行迁移
 func Migrate(dbPath string) error {
 	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
@@ -735,7 +736,7 @@ func migrateLegacyKOReaderAccounts(db *sql.DB) error {
 		  AND username != ''
 		  AND password_hash != ''
 	`).Scan(&username, &syncKey)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {

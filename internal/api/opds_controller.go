@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -19,7 +20,7 @@ import (
 // [#3] OPDS 1.2 标准分发协议
 // ============================================
 
-// OPDS Atom Feed 结构定义
+// OPDSFeed OPDS Atom Feed 结构定义
 type OPDSFeed struct {
 	XMLName  xml.Name    `xml:"feed"`
 	XMLNS    string      `xml:"xmlns,attr"`
@@ -535,7 +536,7 @@ func (c *Controller) opdsReadingListSeries(w http.ResponseWriter, r *http.Reques
 	}
 	list, err := c.store.GetReadingList(r.Context(), listID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Reading list not found", http.StatusNotFound)
 			return
 		}
@@ -584,7 +585,7 @@ func (c *Controller) opdsStaticCollectionSeries(w http.ResponseWriter, r *http.R
 	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
 	view, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, (page-1)*limit)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Collection not found", http.StatusNotFound)
 			return
 		}
@@ -615,7 +616,7 @@ func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Re
 	}
 	filter, err := c.getSmartFilterByID(r, filterID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Smart collection not found", http.StatusNotFound)
 			return
 		}

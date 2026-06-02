@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 )
 
@@ -128,7 +129,7 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 			Scope:   key.scope,
 			ScopeID: sql.NullInt64{Int64: key.id, Valid: true},
 		})
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {

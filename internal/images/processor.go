@@ -76,7 +76,7 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		return nil, "", fmt.Errorf("decode image err: %w", err)
 	}
 
-	var newImg image.Image = img
+	var newImg = img
 
 	// 自动裁切白边逻辑
 	if opts.AutoCrop {
@@ -124,7 +124,7 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		case "catmullrom":
 			newImg = imaging.Fit(newImg, int(targetWidth), int(targetHeight), imaging.CatmullRom)
 		default:
-			var interp resize.InterpolationFunction = resize.Bilinear
+			var interp = resize.Bilinear
 			switch opts.Filter {
 			case "mitchell":
 				interp = resize.MitchellNetravali
@@ -348,13 +348,6 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 	}
 
 	return processedData, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // autoCropImage 扫描图像边缘，识别并裁切掉与背景色相近的边界白边/黑边

@@ -213,7 +213,7 @@ func (c *Controller) getSmartCollectionSeries(w http.ResponseWriter, r *http.Req
 	}
 	filter, err := c.getSmartFilterByID(r, filterID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Smart collection not found")
 			return
 		}
@@ -265,7 +265,7 @@ func (c *Controller) previewSmartCollectionSnapshot(w http.ResponseWriter, r *ht
 	}
 	filter, err := c.getSmartFilterByID(r, filterID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Smart collection not found")
 			return
 		}
@@ -338,7 +338,7 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 	}
 	filter, err := c.getSmartFilterByID(r, filterID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Smart collection not found")
 			return
 		}

@@ -14,7 +14,7 @@ require (
 	github.com/mozillazg/go-pinyin v0.21.0
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/nwaples/rardecode/v2 v2.2.2
-	golang.org/x/image v0.36.0
+	golang.org/x/image v0.39.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1

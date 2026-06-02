@@ -3,6 +3,7 @@ package koreader
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -194,7 +195,7 @@ func TestAuthenticateRejectsLegacyInvalidStoredKey(t *testing.T) {
 	if _, err := service.Authenticate(context.Background(), Credentials{
 		Username: "reader",
 		Key:      HashKey("secret-key"),
-	}); err != ErrUnauthorized {
+	}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized for mismatched client hash, got %v", err)
 	}
 }

@@ -386,7 +386,7 @@ type coverJob struct {
 	progress  *scanProgressReporter
 }
 
-// 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
+// ScanLibrary 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
 	if !s.beginLibraryScan(libraryID) {
 		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)

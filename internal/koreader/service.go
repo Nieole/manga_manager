@@ -79,7 +79,7 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 
 	account, err := s.store.GetKOReaderAccountByUsername(ctx, creds.Username)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("KOReader authenticate rejected: account not found",
 				"username", creds.Username,
 				"client_key_prefix", keyPreview(creds.Key),
@@ -147,7 +147,7 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	}
 
 	existing, err := s.store.GetKOReaderProgress(ctx, creds.Username, payload.Document)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SyncResult{}, err
 	}
 	nowTS := time.Now().Unix()
@@ -215,7 +215,7 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 
 	record, err := s.store.GetKOReaderProgress(ctx, creds.Username, strings.TrimSpace(document))
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return database.KOReaderProgress{}, ErrProgressNotFound
 		}
 		return database.KOReaderProgress{}, err
@@ -365,7 +365,7 @@ func (s *Service) CreateAccount(ctx context.Context, username string) (database.
 	}
 	if _, err := s.store.GetKOReaderAccountByUsername(ctx, username); err == nil {
 		return database.KOReaderAccount{}, ErrAlreadyConfigured
-	} else if err != nil && err != sql.ErrNoRows {
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return database.KOReaderAccount{}, err
 	}
 	syncKey, err := GenerateSyncKey()
@@ -381,7 +381,7 @@ func (s *Service) CreateAccount(ctx context.Context, username string) (database.
 
 func (s *Service) RotateAccountKey(ctx context.Context, id int64) (database.KOReaderAccount, error) {
 	if _, err := s.store.GetKOReaderAccountByID(ctx, id); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return database.KOReaderAccount{}, ErrAccountNotFound
 		}
 		return database.KOReaderAccount{}, err
@@ -396,7 +396,7 @@ func (s *Service) RotateAccountKey(ctx context.Context, id int64) (database.KORe
 func (s *Service) SetAccountEnabled(ctx context.Context, id int64, enabled bool) (database.KOReaderAccount, error) {
 	account, err := s.store.SetKOReaderAccountEnabled(ctx, id, enabled)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return database.KOReaderAccount{}, ErrAccountNotFound
 		}
 		return database.KOReaderAccount{}, err
@@ -406,7 +406,7 @@ func (s *Service) SetAccountEnabled(ctx context.Context, id int64, enabled bool)
 
 func (s *Service) DeleteAccount(ctx context.Context, id int64) error {
 	if _, err := s.store.GetKOReaderAccountByID(ctx, id); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrAccountNotFound
 		}
 		return err

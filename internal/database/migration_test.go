@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -103,7 +104,7 @@ func testTableExists(t *testing.T, db *sql.DB, table string) bool {
 	t.Helper()
 	var name string
 	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false
 	}
 	if err != nil {
@@ -146,7 +147,7 @@ func testIndexExists(t *testing.T, db *sql.DB, index string) bool {
 	t.Helper()
 	var name string
 	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&name)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false
 	}
 	if err != nil {

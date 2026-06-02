@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,7 +64,7 @@ func FingerprintQuickFile(path string) (string, error) {
 
 	buf := make([]byte, chunkSize)
 	if _, err := io.ReadFull(f, buf); err != nil {
-		if err != io.ErrUnexpectedEOF && err != io.EOF {
+		if !errors.Is(err, io.ErrUnexpectedEOF) && err != io.EOF {
 			return "", err
 		}
 		buf = buf[:maxInt(0, int(info.Size()))]
