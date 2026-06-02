@@ -500,6 +500,10 @@ func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch books")
 		return
 	}
+	// 与普通阅读接口保持一致：SQL 的 ORDER BY volume, sort_number, name 只是字典序，
+	// 无法处理卷号数值排序与从文件名/标题中提取的「第N话/第N卷」序数，需在代码层用
+	// booksort 重排，否则 mihon 客户端里章节顺序会乱（如 10 排在 2 之前）。
+	sortBooksForReading(books)
 	items := make([]MihonBookResponse, 0, len(books))
 	for _, book := range books {
 		items = append(items, mihonBookFromModel(book))

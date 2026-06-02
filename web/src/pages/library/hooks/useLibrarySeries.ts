@@ -107,7 +107,14 @@ export function useLibrarySeries({
           const items = res.data.items || [];
           const total = res.data.total || 0;
           setAllSeries(items);
-          setTotalSeries(total);
+          // 游标分页（cursor 翻页）的后端响应不做 COUNT，total 恒为 0；此时不能用它覆盖
+          // 第 1 页已取得的真实总数，否则 totalSeries 归零会让分页控件（totalSeries > 0）消失。
+          // 仅在非游标请求（带真实 total）时才更新总数。
+          if (cursor) {
+            if (total > 0) setTotalSeries(total);
+          } else {
+            setTotalSeries(total);
+          }
           if (res.data.next_cursor && supportsCursorPagination(sortByField)) {
             setPageCursorMap((prev) => ({ ...prev, [pageNumber + 1]: res.data.next_cursor as string }));
           }

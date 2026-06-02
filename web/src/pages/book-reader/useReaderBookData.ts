@@ -90,28 +90,54 @@ export function useReaderBookData({
       });
   }, [getBookCache]);
 
+  // 主加载 effect 只应在切换书籍（bookId 变化）时执行。但其内部用到的若干回调
+  // （cachedImageUrlsForBook / fetch* 等）会随图像处理参数（imageFilter、waifu2x
+  // 等，经 getImageUrlForBook）变化而重建引用；若把它们放进依赖数组，切换滤镜会让
+  // 加载 effect 重跑并执行 setCurrentPageIndex(0)，导致翻页模式被冲回第一页。
+  // 这里用 ref 固定最新引用，使加载 effect 仅依赖 bookId。
+  const loadDepsRef = useRef({
+    fetchPagesForBook,
+    fetchBookInfoForBook,
+    fetchNextBookIdForBook,
+    cachedImageUrlsForBook,
+    retainBookCaches,
+    setCachedPageImageUrls,
+    setCurrentPageIndex,
+    setSliderValue,
+  });
+  loadDepsRef.current = {
+    fetchPagesForBook,
+    fetchBookInfoForBook,
+    fetchNextBookIdForBook,
+    cachedImageUrlsForBook,
+    retainBookCaches,
+    setCachedPageImageUrls,
+    setCurrentPageIndex,
+    setSliderValue,
+  };
+
   useEffect(() => {
     if (!bookId) return undefined;
     const targetBookId = bookId;
+    const deps = loadDepsRef.current;
     let cancelled = false;
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPagesBookId(null);
     pagesBookIdRef.current = null;
     setPages([]);
-    setCachedPageImageUrls({});
+    deps.setCachedPageImageUrls({});
     setLoading(true);
     setLoadError(null);
-    setCurrentPageIndex(0);
+    deps.setCurrentPageIndex(0);
     setNextBookId(null);
     nextBookIdRef.current = null;
     setBookTitle('');
     setBookVolume('');
-    retainBookCaches([targetBookId]);
+    deps.retainBookCaches([targetBookId]);
 
     Promise.all([
-      fetchPagesForBook(targetBookId),
-      fetchBookInfoForBook(targetBookId),
+      deps.fetchPagesForBook(targetBookId),
+      deps.fetchBookInfoForBook(targetBookId),
     ]).then(([sorted, bookInfo]) => {
       if (cancelled || currentBookIdRef.current !== targetBookId) return;
       if (sorted.length === 0) {
@@ -121,7 +147,7 @@ export function useReaderBookData({
       }
 
       setPages(sorted);
-      setCachedPageImageUrls(cachedImageUrlsForBook(targetBookId, sorted));
+      deps.setCachedPageImageUrls(deps.cachedImageUrlsForBook(targetBookId, sorted));
       setPagesBookId(targetBookId);
       pagesBookIdRef.current = targetBookId;
 
@@ -130,18 +156,18 @@ export function useReaderBookData({
       setBookTitle(bookInfo.title?.Valid ? bookInfo.title.String ?? bookInfo.name : bookInfo.name);
       setBookVolume(bookInfo.volume || '');
 
-      fetchNextBookIdForBook(targetBookId).then((nextId) => {
+      deps.fetchNextBookIdForBook(targetBookId).then((nextId) => {
         if (cancelled || currentBookIdRef.current !== targetBookId) return;
         setNextBookId(nextId);
         nextBookIdRef.current = nextId;
-        retainBookCaches([targetBookId, nextId ? String(nextId) : null]);
+        deps.retainBookCaches([targetBookId, nextId ? String(nextId) : null]);
       });
 
       if (lastPage > 0) {
         const safePage = Math.min(lastPage, sorted.length > 0 ? sorted.length : lastPage);
         const targetIdx = safePage - 1;
-        setSliderValue(safePage);
-        setCurrentPageIndex(Math.max(0, targetIdx));
+        deps.setSliderValue(safePage);
+        deps.setCurrentPageIndex(Math.max(0, targetIdx));
       }
 
       setLoading(false);
@@ -158,19 +184,10 @@ export function useReaderBookData({
     return () => {
       cancelled = true;
     };
-  }, [
-    bookId,
-    cachedImageUrlsForBook,
-    currentBookIdRef,
-    fetchBookInfoForBook,
-    fetchNextBookIdForBook,
-    fetchPagesForBook,
-    retainBookCaches,
-    setCachedPageImageUrls,
-    setCurrentPageIndex,
-    setSliderValue,
-    tRef,
-  ]);
+    // 仅在切换书籍时重新加载；effect 内部用到的回调均通过 loadDepsRef 取最新引用，
+    // 故意不放进依赖数组，避免切换图像滤镜（waifu2x 等）时重跑加载逻辑导致页码被重置。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId]);
 
   return {
     pages,
