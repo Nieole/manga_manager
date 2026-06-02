@@ -454,8 +454,17 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fullPath := filepath.Join(thumbDir, book.CoverPath.String)
-		if _, err := os.Stat(fullPath); err == nil {
+		if info, err := os.Stat(fullPath); err == nil {
+			// 基于封面路径 + 文件修改时间 + 大小生成弱 ETag：缩略图重建覆盖文件时 ETag 必变、
+			// 不会复读旧封面；内容不变则客户端可凭 If-None-Match 命中 304，省去整图重传。
+			// http.ServeFile 仍会提供 Last-Modified 作为兜底条件请求。
+			etag := weakETag(fmt.Sprintf("cover-%s-%d-%d", book.CoverPath.String, info.ModTime().UnixNano(), info.Size()))
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("ETag", etag)
+			if r.Header.Get("If-None-Match") == etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
 			http.ServeFile(w, r, fullPath)
 			return
 		}
