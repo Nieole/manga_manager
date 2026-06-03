@@ -18,7 +18,12 @@ interface SeriesRelationsPanelProps {
   onDeleteRelation: (relation: SeriesRelation) => void;
 }
 
-const RELATION_TYPES = ['sequel', 'prequel', 'spinoff', 'side_story', 'adaptation', 'remake', 'same_universe'];
+const RELATION_TYPES = [
+  'parent_story', 'sequel', 'prequel', 'spinoff', 'side_story', 
+  'adaptation', 'remake', 'same_universe', 
+  'alternative_version', 'alternate_story', 'crossover', 
+  'one_shot', 'anthology', 'doujinshi'
+];
 
 function relationLabelKey(type: string) {
   return `series.relations.type.${type}`;

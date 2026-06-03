@@ -237,15 +237,29 @@ func inverseRelationType(rt string) string {
 	case "prequel":
 		return "sequel"
 	case "spinoff":
-		return "parent"
+		return "parent_story"
 	case "side_story":
-		return "parent"
+		return "parent_story"
 	case "adaptation":
 		return "source"
 	case "remake":
 		return "original"
 	case "same_universe":
 		return "same_universe"
+	case "parent_story":
+		return "spinoff"
+	case "alternative_version":
+		return "alternative_version"
+	case "alternate_story":
+		return "alternate_story"
+	case "crossover":
+		return "crossover"
+	case "one_shot":
+		return "serialization"
+	case "anthology":
+		return "original"
+	case "doujinshi":
+		return "original"
 	default:
 		return rt
 	}

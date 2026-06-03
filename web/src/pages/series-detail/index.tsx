@@ -227,7 +227,7 @@ export default function SeriesDetailPage() {
             <SeriesSidePanelBadge
               pendingMetadata={pendingMetadataCount}
               failedCount={failedTaskCount}
-              onClick={() => openSidePanel(failedTaskCount > 0 ? 'failed' : 'metadata')}
+              onClick={() => openSidePanel(failedTaskCount > 0 ? 'failed' : pendingMetadataCount > 0 ? 'metadata' : 'relations')}
             />
           }
         />

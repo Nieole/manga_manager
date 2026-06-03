@@ -1580,3 +1580,44 @@ FROM koreader_progress kp
 WHERE kp.book_id IS NULL
 ORDER BY kp.updated_at DESC, kp.id DESC
 LIMIT ?;
+
+-- name: GetConnectedSeriesRelations :many
+WITH RECURSIVE
+  connected (id) AS (
+    VALUES (sqlc.arg(start_series_id))
+    UNION
+    SELECT target_series_id FROM series_relations sr JOIN connected c ON sr.source_series_id = c.id
+    UNION
+    SELECT source_series_id FROM series_relations sr JOIN connected c ON sr.target_series_id = c.id
+  )
+SELECT sr.id, sr.source_series_id, sr.target_series_id, sr.relation_type,
+       s1.name AS source_series_name,
+       s2.name AS target_series_name,
+       ss1.cover_path AS source_cover_path,
+       ss2.cover_path AS target_cover_path
+FROM series_relations sr
+JOIN series s1 ON sr.source_series_id = s1.id
+JOIN series s2 ON sr.target_series_id = s2.id
+LEFT JOIN series_stats ss1 ON ss1.series_id = s1.id
+LEFT JOIN series_stats ss2 ON ss2.series_id = s2.id
+WHERE sr.source_series_id IN connected AND sr.target_series_id IN connected;
+
+-- name: GetContinueReadingSequels :many
+SELECT 
+    s2.id AS series_id,
+    s2.name AS series_name,
+    ss2.cover_path AS cover_path,
+    ss2.total_books AS total_books,
+    ss2.read_books AS read_books,
+    sr.relation_type,
+    s1.name AS source_series_name
+FROM series_relations sr
+JOIN series s1 ON sr.source_series_id = s1.id
+JOIN series_stats ss1 ON ss1.series_id = s1.id
+JOIN series s2 ON sr.target_series_id = s2.id
+LEFT JOIN series_stats ss2 ON ss2.series_id = s2.id
+WHERE (sr.relation_type = 'sequel' OR sr.relation_type = 'spinoff' OR sr.relation_type = 'side_story')
+  AND ss1.total_books > 0 
+  AND ss1.read_books >= ss1.total_books
+  AND (ss2.total_books > 0 AND (ss2.read_books IS NULL OR ss2.read_books < ss2.total_books))
+LIMIT 10;

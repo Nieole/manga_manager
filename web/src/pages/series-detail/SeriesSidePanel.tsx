@@ -269,7 +269,20 @@ interface SeriesSidePanelBadgeProps {
 
 export function SeriesSidePanelBadge({ pendingMetadata, failedCount, onClick }: SeriesSidePanelBadgeProps) {
   const { t } = useI18n();
-  if (pendingMetadata === 0 && failedCount === 0) return null;
+  
+  if (pendingMetadata === 0 && failedCount === 0) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-600/30 bg-gray-600/10 text-xs font-medium text-gray-300 hover:bg-gray-600/20 transition-colors"
+      >
+        <GitCompareArrows className="w-3.5 h-3.5" />
+        {t('series.sidePanel.title')}
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
