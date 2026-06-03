@@ -20,6 +20,7 @@ interface UseLibrarySeriesParams {
   serializedFilters: string;
   refreshTrigger: number;
   enabled: boolean;
+  keyword?: string;
 }
 
 interface UseLibrarySeriesResult {
@@ -65,6 +66,7 @@ export function useLibrarySeries({
   serializedFilters,
   refreshTrigger,
   enabled,
+  keyword = '',
 }: UseLibrarySeriesParams): UseLibrarySeriesResult {
   const [allSeries, setAllSeries] = useState<Series[]>([]);
   const [totalSeries, setTotalSeries] = useState(0);
@@ -100,6 +102,7 @@ export function useLibrarySeries({
       if (activeStatus) params.append('status', activeStatus);
       if (activeLetter) params.append('letter', activeLetter);
       if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
+      if (keyword) params.append('q', keyword);
 
       const requestStartedAt = performance.now();
       requestSeriesSearch(params.toString())
@@ -151,6 +154,7 @@ export function useLibrarySeries({
       sortByField,
       sortDir,
       serializedFilters,
+      keyword,
     ],
   );
 
@@ -171,6 +175,7 @@ export function useLibrarySeries({
     sortByField,
     sortDir,
     refreshTrigger,
+    keyword,
   ]);
 
   // 渲染计时埋点：在数据落到 DOM 之后报告

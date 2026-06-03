@@ -72,6 +72,13 @@ export default function LibraryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null!);
 
+  // 防抖：输入停止 300ms 后才更新 keyword 触发后端查询
+  const [debouncedKeyword, setDebouncedKeyword] = useState('');
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedKeyword(searchQuery.trim()), 300);
+    return () => window.clearTimeout(id);
+  }, [searchQuery]);
+
   const showError = useCallback((messageKey: string) => showToast(t(messageKey), 'error'), [showToast, t]);
 
   // ===== series 数据 =====
@@ -88,30 +95,21 @@ export default function LibraryPage() {
     serializedFilters,
     refreshTrigger,
     enabled: settingsReady,
+    keyword: debouncedKeyword,
   });
   const { allSeries, totalSeries, loading, pageCursorMap, resetPagination, refetchCurrentPage, patchSeries } = seriesData;
 
-  // 翻页：filter 变化重置
+  // 翻页：filter 或 keyword 变化时重置到第 1 页
   useEffect(() => {
     if (!settingsReady) return;
     setPage(1);
     resetPagination();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, pageSize]);
-
-  // 文本搜索：本地过滤显示
-  const filteredSeries = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return allSeries;
-    return allSeries.filter((s) => {
-      const title = s.title?.Valid ? s.title.String.toLowerCase() : '';
-      return s.name.toLowerCase().includes(q) || title.includes(q);
-    });
-  }, [allSeries, searchQuery]);
+  }, [activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, pageSize, debouncedKeyword]);
 
   // ===== 选择 =====
   const selection = useLibrarySelection({
-    allSeries: filteredSeries,
+    allSeries: allSeries,
     onChanged: refetchCurrentPage,
     onError: showError,
   });
@@ -233,7 +231,7 @@ export default function LibraryPage() {
 
   const supportsCursor = supportsCursorPagination(sortByField);
   const totalPages = Math.max(1, Math.ceil(totalSeries / pageSize));
-  const hasMore = paginationMode === 'infinite' && filteredSeries.length < totalSeries;
+  const hasMore = paginationMode === 'infinite' && allSeries.length < totalSeries;
 
   return (
     <div className="px-4 sm:px-6 py-6">
@@ -298,7 +296,7 @@ export default function LibraryPage() {
       />
 
       <LibraryGrid
-        series={filteredSeries}
+        series={allSeries}
         loading={loading}
         isSelectionMode={selection.isSelectionMode}
         selectedSeriesIds={selection.selectedSeries}
