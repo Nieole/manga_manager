@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -94,7 +94,7 @@ export function SeriesHeroBar({
 
   return (
     <div className="mb-8 relative z-10">
-      {/* 顶栏：返�?/ 工具�?*/}
+      {/* 顶栏：返�?/ 工具�?*/}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6 relative z-20">
         <button
           onClick={onBack}
@@ -183,9 +183,7 @@ export function SeriesHeroBar({
                 )}
               </div>
 
-              <h1 className="font-black tracking-tight text-white leading-[1.1] text-4xl sm:text-5xl lg:text-7xl drop-shadow-2xl">
-                {title}
-              </h1>
+              <h1 className="font-black tracking-tight text-white leading-[1.1] text-4xl sm:text-5xl lg:text-7xl drop-shadow-2xl">{title}</h1>{series?.name && series.name !== title && (<p className="text-sm font-medium text-white/30 truncate mt-2" title={series.name}>{series.name}</p>)}
             </div>
 
             {/* Description */}
@@ -262,7 +260,7 @@ export function SeriesHeroBar({
               )}
             </div>
 
-            {/* Tags �?*/}
+            {/* Tags �?*/}
             {tags.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 mb-3 justify-center sm:justify-start">
                 {(tagsExpanded ? tags : tags.slice(0, 10)).map((tag) => (
@@ -300,7 +298,7 @@ export function SeriesHeroBar({
               </div>
             )}
 
-            {/* 外链�?*/}
+            {/* 外链�?*/}
             {links.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 justify-center sm:justify-start">
                 {links.map((link) => (
@@ -379,3 +377,4 @@ function ProgressRing({ pct, finished }: { pct: number; finished: boolean }) {
     </div>
   );
 }
+
