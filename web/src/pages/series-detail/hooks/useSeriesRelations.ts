@@ -111,6 +111,21 @@ export function useSeriesRelations({ seriesId, libraryId, relations, setRelation
     [setRelations, showToast, t],
   );
 
+  const updateRelation = useCallback(
+    async (relation: SeriesRelation, newType: string) => {
+      try {
+        await axios.put(`/api/relations/${relation.id}`, { relation_type: newType });
+        setRelations((prev) =>
+          prev.map((item) => (item.id === relation.id ? { ...item, relation_type: newType } : item))
+        );
+        showToast(t('series.toast.relationUpdated') || 'Relation updated', 'success');
+      } catch (err) {
+        showToast(getApiErrorMessage(err, t('series.toast.relationUpdateFailed') || 'Failed to update relation'), 'error');
+      }
+    },
+    [setRelations, showToast, t],
+  );
+
   return {
     relationType,
     setRelationType,
@@ -122,6 +137,7 @@ export function useSeriesRelations({ seriesId, libraryId, relations, setRelation
     onSearchChange,
     onSelectTarget,
     addRelation,
+    updateRelation,
     deleteRelation,
   };
 }

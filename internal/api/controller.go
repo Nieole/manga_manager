@@ -1984,6 +1984,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Put("/libraries/{libraryId}", c.updateLibrary)
+		r.Get("/libraries/{libraryId}/franchise", c.getLibraryFranchiseGraph)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Post("/libraries/{libraryId}/external-libraries/session", c.createExternalLibrarySession)
 		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}", c.getExternalLibrarySession)
@@ -2084,6 +2085,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/koreader/rebuild-hashes", c.rebuildKOReaderHashes)
 		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
+		r.Post("/system/rebuild-franchises", c.rebuildFranchiseCollectionsHandler)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/cleanup-thumbnails", c.cleanupThumbnails)
 		r.Post("/system/rebuild-file-identities", c.rebuildFileIdentities)
@@ -2132,8 +2134,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 
 		// 系列关联
 		r.Get("/series/{seriesId}/relations", c.getSeriesRelations)
+		r.Get("/series/{seriesId}/franchise", c.getSeriesFranchise)
 		r.Post("/series/{seriesId}/relations", c.createSeriesRelation)
 		r.Delete("/relations/{relationId}", c.deleteSeriesRelation)
+		r.Put("/relations/{relationId}", c.updateSeriesRelation)
 
 		// 独立路径，避免与 /books/{seriesId} 通配符冲突
 		r.Get("/book-info/{bookId}", c.getBookInfo)
@@ -4863,10 +4867,66 @@ func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "Failed to get recent reads")
 		return
 	}
-	if items == nil {
-		items = []database.GetRecentReadAllRow{}
+
+	sequels, err := c.store.GetContinueReadingSequels(r.Context())
+	if err != nil {
+		slog.Error("GetContinueReadingSequels failed", "error", err)
+		// Ignore error and continue with items
 	}
-	jsonResponse(w, http.StatusOK, items)
+
+	type DashboardContinueItem struct {
+		SeriesID           int64       `json:"series_id"`
+		SeriesName         string      `json:"series_name"`
+		BookID             int64       `json:"book_id"`
+		BookName           string      `json:"book_name"`
+		BookTitle          interface{} `json:"book_title"`
+		CoverPath          string      `json:"cover_path"`
+		LastReadPage       interface{} `json:"last_read_page"`
+		LastReadAt         interface{} `json:"last_read_at"`
+		PageCount          int64       `json:"page_count"`
+		IsSequelSuggestion bool        `json:"is_sequel_suggestion,omitempty"`
+		RelationType       string      `json:"relation_type,omitempty"`
+		SourceSeriesName   string      `json:"source_series_name,omitempty"`
+	}
+
+	result := make([]DashboardContinueItem, 0, len(items)+len(sequels))
+	for _, item := range items {
+		cover := item.CoverPath
+		result = append(result, DashboardContinueItem{
+			SeriesID:     item.SeriesID,
+			SeriesName:   item.SeriesName,
+			BookID:       item.BookID,
+			BookName:     item.BookName,
+			BookTitle:    item.BookTitle,
+			CoverPath:    cover,
+			LastReadPage: item.LastReadPage,
+			LastReadAt:   item.LastReadAt,
+			PageCount:    int64(item.PageCount),
+		})
+	}
+
+	for _, s := range sequels {
+		cover := ""
+		if s.CoverPath.Valid {
+			cover = s.CoverPath.String
+		}
+		result = append(result, DashboardContinueItem{
+			SeriesID:           s.SeriesID,
+			SeriesName:         s.SeriesName,
+			BookID:             0,
+			BookName:           "",
+			BookTitle:          nil,
+			CoverPath:          cover,
+			LastReadPage:       nil,
+			LastReadAt:         nil,
+			PageCount:          0,
+			IsSequelSuggestion: true,
+			RelationType:       s.RelationType,
+			SourceSeriesName:   s.SourceSeriesName,
+		})
+	}
+
+	jsonResponse(w, http.StatusOK, result)
 }
 
 type AIRecommendationResponse struct {

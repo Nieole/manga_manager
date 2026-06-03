@@ -281,6 +281,112 @@ func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, items)
 }
 
+// getSeriesFranchise 获取系列所在宇宙的整个关联关系连通图
+func (c *Controller) getSeriesFranchise(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	items, err := c.store.GetConnectedSeriesRelations(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get franchise relations")
+		return
+	}
+
+	// 转换为前端可用的格式
+	type FranchiseRelation struct {
+		ID                 int64  `json:"id"`
+		SourceSeriesID     int64  `json:"source_series_id"`
+		TargetSeriesID     int64  `json:"target_series_id"`
+		RelationType       string `json:"relation_type"`
+		SourceSeriesName   string `json:"source_series_name"`
+		TargetSeriesName   string `json:"target_series_name"`
+		SourceCoverPath    string `json:"source_cover_path"`
+		TargetCoverPath    string `json:"target_cover_path"`
+	}
+
+	result := make([]FranchiseRelation, 0, len(items))
+	for _, item := range items {
+		sourceCover := ""
+		if item.SourceCoverPath.Valid {
+			sourceCover = item.SourceCoverPath.String
+		}
+		targetCover := ""
+		if item.TargetCoverPath.Valid {
+			targetCover = item.TargetCoverPath.String
+		}
+
+		result = append(result, FranchiseRelation{
+			ID:               item.ID,
+			SourceSeriesID:   item.SourceSeriesID,
+			TargetSeriesID:   item.TargetSeriesID,
+			RelationType:     item.RelationType,
+			SourceSeriesName: item.SourceSeriesName,
+			TargetSeriesName: item.TargetSeriesName,
+			SourceCoverPath:  sourceCover,
+			TargetCoverPath:  targetCover,
+		})
+	}
+
+	jsonResponse(w, http.StatusOK, result)
+}
+
+// getLibraryFranchiseGraph 获取资源库全景关联关系连通图
+func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+
+	items, err := c.store.GetAllSeriesRelationsForLibrary(r.Context(), database.GetAllSeriesRelationsForLibraryParams{
+		LibraryID:   libraryID,
+		LibraryID_2: libraryID,
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get library franchise relations")
+		return
+	}
+
+	type FranchiseRelation struct {
+		ID                 int64  `json:"id"`
+		SourceSeriesID     int64  `json:"source_series_id"`
+		TargetSeriesID     int64  `json:"target_series_id"`
+		RelationType       string `json:"relation_type"`
+		SourceSeriesName   string `json:"source_series_name"`
+		TargetSeriesName   string `json:"target_series_name"`
+		SourceCoverPath    string `json:"source_cover_path"`
+		TargetCoverPath    string `json:"target_cover_path"`
+	}
+
+	result := make([]FranchiseRelation, 0, len(items))
+	for _, item := range items {
+		sourceCover := ""
+		if item.SourceCoverPath.Valid {
+			sourceCover = item.SourceCoverPath.String
+		}
+		targetCover := ""
+		if item.TargetCoverPath.Valid {
+			targetCover = item.TargetCoverPath.String
+		}
+
+		result = append(result, FranchiseRelation{
+			ID:               item.ID,
+			SourceSeriesID:   item.SourceSeriesID,
+			TargetSeriesID:   item.TargetSeriesID,
+			RelationType:     item.RelationType,
+			SourceSeriesName: item.SourceSeriesName,
+			TargetSeriesName: item.TargetSeriesName,
+			SourceCoverPath:  sourceCover,
+			TargetCoverPath:  targetCover,
+		})
+	}
+
+	jsonResponse(w, http.StatusOK, result)
+}
+
 func (c *Controller) loadSeriesRelations(ctx context.Context, seriesID int64) ([]SeriesRelation, error) {
 	forward, err := c.store.ListForwardSeriesRelations(ctx, seriesID)
 	if err != nil {
@@ -368,6 +474,12 @@ func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusInternalServerError, "Failed to create relation")
 		return
 	}
+
+	// Trigger async franchise rebuild
+	go func() {
+		_ = c.RebuildFranchiseCollections(context.Background())
+	}()
+
 	jsonResponse(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 
@@ -379,7 +491,51 @@ func (c *Controller) deleteSeriesRelation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = c.store.DeleteSeriesRelation(r.Context(), relationID)
+	
+	// Trigger async franchise rebuild
+	go func() {
+		_ = c.RebuildFranchiseCollections(context.Background())
+	}()
+
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+type UpdateRelationRequest struct {
+	RelationType string `json:"relation_type"`
+}
+
+// updateSeriesRelation 更新系列关联
+func (c *Controller) updateSeriesRelation(w http.ResponseWriter, r *http.Request) {
+	relationID, err := parseID(r, "relationId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid relation ID")
+		return
+	}
+	var req UpdateRelationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "relation_type is required")
+		return
+	}
+	req.RelationType = strings.TrimSpace(req.RelationType)
+	if req.RelationType == "" {
+		jsonError(w, http.StatusBadRequest, "relation_type cannot be empty")
+		return
+	}
+
+	if err := c.store.UpdateSeriesRelation(r.Context(), database.UpdateSeriesRelationParams{
+		RelationType: req.RelationType,
+		ID:           relationID,
+	}); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to update relation")
+		return
+	}
+
+	// Trigger async franchise rebuild
+	go func() {
+		_ = c.RebuildFranchiseCollections(context.Background())
+	}()
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 func nullStringFromString(value string) sql.NullString {

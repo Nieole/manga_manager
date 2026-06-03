@@ -23,6 +23,7 @@ interface SeriesSidePanelProps {
   onRelationSearchChange: (value: string) => void;
   onSelectTarget: (id: number) => void;
   onAddRelation: () => void;
+  onUpdateRelation: (relation: SeriesRelation, newType: string) => void;
   onDeleteRelation: (relation: SeriesRelation) => void;
 
   metadataReviews: MetadataReview[];
@@ -161,6 +162,7 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
                 onSearchChange={props.onRelationSearchChange}
                 onSelectTarget={props.onSelectTarget}
                 onAddRelation={props.onAddRelation}
+                onUpdateRelation={props.onUpdateRelation}
                 onDeleteRelation={props.onDeleteRelation}
               />
             )}

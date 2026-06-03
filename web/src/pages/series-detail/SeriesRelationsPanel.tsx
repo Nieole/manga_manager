@@ -15,6 +15,7 @@ interface SeriesRelationsPanelProps {
   onSearchChange: (value: string) => void;
   onSelectTarget: (id: number) => void;
   onAddRelation: () => void;
+  onUpdateRelation: (relation: SeriesRelation, newType: string) => void;
   onDeleteRelation: (relation: SeriesRelation) => void;
 }
 
@@ -41,6 +42,7 @@ export function SeriesRelationsPanel({
   onSearchChange,
   onSelectTarget,
   onAddRelation,
+  onUpdateRelation,
   onDeleteRelation,
 }: SeriesRelationsPanelProps) {
   const { t } = useI18n();
@@ -70,9 +72,18 @@ export function SeriesRelationsPanel({
                 className="inline-flex items-center gap-2 px-3 py-2 text-sm text-gray-100 hover:bg-komgaPrimary/10 hover:text-white"
               >
                 <Link2 className="h-4 w-4 text-komgaPrimary" />
-                <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-gray-300">
-                  {t(relationLabelKey(relation.relation_type))}
-                </span>
+                <select
+                  value={relation.relation_type}
+                  onChange={(e) => onUpdateRelation(relation, e.target.value)}
+                  onClick={(e) => e.preventDefault()}
+                  className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-gray-300 outline-hidden hover:bg-white/10"
+                >
+                  {RELATION_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {t(relationLabelKey(type))}
+                    </option>
+                  ))}
+                </select>
                 <span className="font-medium">{relation.target_series_name}</span>
               </Link>
               <button

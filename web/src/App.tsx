@@ -14,6 +14,7 @@ const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
 const ReadingLists = lazy(() => import('./pages/ReadingLists'));
 const OfflineShelf = lazy(() => import('./pages/OfflineShelf'));
 const SeriesDetail = lazy(() => import('./pages/series-detail'));
+const FranchiseGraphPage = lazy(() => import('./pages/franchise-graph').then(m => ({ default: m.FranchiseGraphPage })));
 const BookReader = lazy(() => import('./pages/BookReader'));
 const Settings = lazy(() => import('./pages/Settings'));
 const SettingsOverviewPage = lazy(() => import('./pages/settings/SettingsOverviewPage').then((module) => ({ default: module.SettingsOverviewPage })));
@@ -86,6 +87,10 @@ function App() {
 
         {/* 阅读器作为需要接管全屏沉浸体验的独立路由，跳过常规 Layout */}
         <Route path="/reader/:bookId" element={withRouteFallback(<BookReader />)} />
+        
+        {/* 系列/库关系图谱 */}
+        <Route path="/series/:id/franchise-graph" element={withRouteFallback(<FranchiseGraphPage />)} />
+        <Route path="/libraries/:libId/franchise-graph" element={withRouteFallback(<FranchiseGraphPage />)} />
 
         {/* 404 Catcher */}
         <Route path="*" element={<Navigate to="/" replace />} />

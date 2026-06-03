@@ -34,11 +34,14 @@ interface RecentReadItem {
     series_name: string;
     book_id: number;
     book_name: string;
-    book_title: { String: string; Valid: boolean };
+    book_title: { String: string; Valid: boolean } | null;
     cover_path: string;
-    last_read_page: { Int64: number; Valid: boolean };
-    last_read_at: { Time: string; Valid: boolean };
+    last_read_page: { Int64: number; Valid: boolean } | null;
+    last_read_at: { Time: string; Valid: boolean } | null;
     page_count: number;
+    is_sequel_suggestion?: boolean;
+    relation_type?: string;
+    source_series_name?: string;
 }
 
 interface RecommendedItem {
@@ -228,17 +231,19 @@ export default function Dashboard() {
                         style={{ scrollbarWidth: 'none' }}
                     >
                         {recentReads.map((item) => {
-                            const progress = item.page_count > 0 && item.last_read_page?.Valid
+                            const isSequel = item.is_sequel_suggestion;
+                            const progress = !isSequel && item.page_count > 0 && item.last_read_page?.Valid
                                 ? Math.round((item.last_read_page.Int64 / item.page_count) * 100) : 0;
                             const coverUrl = item.cover_path ? `/api/thumbnails/${item.cover_path}` : '';
+                            const keyStr = isSequel ? `sequel-${item.series_id}` : `${item.series_id}-${item.book_id}`;
 
                             return (
                                 <div
-                                    key={`${item.series_id}-${item.book_id}`}
-                                    onClick={() => navigate(`/reader/${item.book_id}`)}
+                                    key={keyStr}
+                                    onClick={() => navigate(isSequel ? `/series/${item.series_id}` : `/reader/${item.book_id}`)}
                                     className="group shrink-0 w-40 snap-start cursor-pointer"
                                 >
-                                    <div className="relative aspect-2/3 rounded-xl overflow-hidden bg-gray-900 border border-gray-800 group-hover:border-komgaPrimary/50 transition-all duration-300 shadow-lg group-hover:shadow-komgaPrimary/10">
+                                    <div className={`relative aspect-2/3 rounded-xl overflow-hidden bg-gray-900 border border-gray-800 transition-all duration-300 shadow-lg ${isSequel ? 'group-hover:border-purple-500/50 group-hover:shadow-purple-500/10' : 'group-hover:border-komgaPrimary/50 group-hover:shadow-komgaPrimary/10'}`}>
                                         {coverUrl ? (
                                             <img
                                                 src={coverUrl}
@@ -251,15 +256,24 @@ export default function Dashboard() {
                                             </div>
                                         )}
 
-                                        {/* 进度条覆盖 */}
-                                        <div className="absolute bottom-0 inset-x-0 h-1 bg-gray-900/80">
-                                            <div className="h-full bg-komgaPrimary transition-all" style={{ width: `${progress}%` }} />
-                                        </div>
+                                        {isSequel && (
+                                            <div className="absolute top-2 right-2 bg-purple-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm uppercase tracking-wide">
+                                                {t(`series.relations.type.${item.relation_type}`) || item.relation_type}
+                                            </div>
+                                        )}
 
-                                        {/* 悬停覆盖层 */}
+                                        {!isSequel && (
+                                            <div className="absolute bottom-0 inset-x-0 h-1 bg-gray-900/80">
+                                                <div className="h-full bg-komgaPrimary transition-all" style={{ width: `${progress}%` }} />
+                                            </div>
+                                        )}
+
                                         <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
                                             <span className="text-xs text-white font-medium">
-                                                {t('dashboard.continueReading.resumeToPage', { page: item.last_read_page?.Valid ? item.last_read_page.Int64 : 1 })}
+                                                {isSequel 
+                                                    ? t('series.continue.start', { book: item.series_name })
+                                                    : t('dashboard.continueReading.resumeToPage', { page: item.last_read_page?.Valid ? item.last_read_page.Int64 : 1 })
+                                                }
                                             </span>
                                         </div>
                                     </div>
@@ -267,9 +281,12 @@ export default function Dashboard() {
                                     <div className="mt-2 px-1">
                                         <p className="text-sm font-medium text-gray-200 truncate group-hover:text-komgaPrimary transition-colors">{item.series_name}</p>
                                         <p className="text-xs text-gray-500 truncate mt-0.5">
-                                            {item.book_title?.Valid ? item.book_title.String : item.book_name}
+                                            {isSequel 
+                                                ? (t('series.franchise.description') || `From ${item.source_series_name}`)
+                                                : (item.book_title?.Valid ? item.book_title.String : item.book_name)
+                                            }
                                         </p>
-                                        <p className="text-[10px] text-gray-600 mt-1">{t('dashboard.continueReading.readPercent', { percent: progress })}</p>
+                                        {!isSequel && <p className="text-[10px] text-gray-600 mt-1">{t('dashboard.continueReading.readPercent', { percent: progress })}</p>}
                                     </div>
                                 </div>
                             );

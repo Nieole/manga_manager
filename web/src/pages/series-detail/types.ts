@@ -48,6 +48,17 @@ export interface SeriesRelation {
   relation_type: string;
 }
 
+export interface FranchiseRelation {
+  id: number;
+  source_series_id: number;
+  target_series_id: number;
+  relation_type: string;
+  source_series_name: string;
+  target_series_name: string;
+  source_cover_path: string;
+  target_cover_path: string;
+}
+
 export interface SeriesRelationCandidate {
   id: number;
   name: string;

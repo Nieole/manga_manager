@@ -89,11 +89,11 @@ export function ShortcutsPanel({ open, onClose }: ShortcutsPanelProps) {
   if (!open) return null;
   const node = (
     <div
-      className="fixed inset-0 z-100 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xs sm:p-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl overflow-hidden"
+        className="w-full h-[100dvh] sm:h-auto max-w-3xl sm:max-h-[90vh] flex flex-col sm:rounded-2xl border-0 sm:border border-gray-800 bg-gray-950 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-gray-800 px-5 py-4">

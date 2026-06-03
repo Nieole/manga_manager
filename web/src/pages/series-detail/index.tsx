@@ -27,6 +27,7 @@ import { useSeriesFailedTasks } from './hooks/useSeriesFailedTasks';
 import { useSeriesVolumes } from './hooks/useSeriesVolumes';
 import { useSeriesOpenVolumes } from './hooks/useSeriesOpenVolumes';
 import { buildContinueCta } from './hooks/useSeriesContinue';
+import { SeriesFranchiseView } from './SeriesFranchiseView';
 
 export default function SeriesDetailPage() {
   const { t } = useI18n();
@@ -351,6 +352,9 @@ export default function SeriesDetailPage() {
             )}
           </div>
         )}
+        {seriesId && (
+          <SeriesFranchiseView seriesId={Number(seriesId)} />
+        )}
       </div>
 
       <SeriesSelectionBar
@@ -379,6 +383,7 @@ export default function SeriesDetailPage() {
         onRelationSearchChange={relations.onSearchChange}
         onSelectTarget={relations.onSelectTarget}
         onAddRelation={relations.addRelation}
+        onUpdateRelation={relations.updateRelation}
         onDeleteRelation={relations.deleteRelation}
         metadataReviews={ctx.metadataReviews}
         metadataProvenance={ctx.metadataProvenance}

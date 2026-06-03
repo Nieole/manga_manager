@@ -1,7 +1,9 @@
-import { ArrowDown, ArrowUp, HardDrive, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, HardDrive, Search, GitBranch } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
+import { useNavigate } from 'react-router-dom';
 
 interface LibraryHeaderProps {
+  libraryId: string;
   totalSeries: number;
   hasSeries: boolean;
   isSelectionMode: boolean;
@@ -21,6 +23,7 @@ interface LibraryHeaderProps {
 }
 
 export function LibraryHeader({
+  libraryId,
   totalSeries,
   hasSeries,
   isSelectionMode,
@@ -39,6 +42,7 @@ export function LibraryHeader({
   onOpenExternal,
 }: LibraryHeaderProps) {
   const { t } = useI18n();
+  const navigate = useNavigate();
 
   return (
     <div className="mb-6 flex flex-col gap-4 border-b border-gray-800/30 pb-4">
@@ -75,6 +79,16 @@ export function LibraryHeader({
             <HardDrive className="h-4 w-4" />
             <span className="hidden sm:inline">{t('home.external.title')}</span>
           </button>
+          {hasSeries && (
+            <button
+              onClick={() => navigate(`/libraries/${libraryId}/franchise-graph`)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400 hover:border-white/20 hover:text-white transition-colors bg-transparent shrink-0"
+              title={t('library.franchise.title') || 'Library Relationships Graph'}
+            >
+              <GitBranch className="h-4 w-4" />
+              <span className="hidden sm:inline">{t('library.franchise.title') || 'Graph'}</span>
+            </button>
+          )}
           {hasSeries && (
             <button
               onClick={onToggleSelectionMode}

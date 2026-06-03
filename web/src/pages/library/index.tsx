@@ -238,6 +238,7 @@ export default function LibraryPage() {
   return (
     <div className="px-4 sm:px-6 py-6">
       <LibraryHeader
+        libraryId={libId}
         totalSeries={totalSeries}
         hasSeries={allSeries.length > 0}
         isSelectionMode={selection.isSelectionMode}

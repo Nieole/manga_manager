@@ -799,7 +799,7 @@ func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Ser
 }
 
 const createSeriesRelation = `-- name: CreateSeriesRelation :exec
-INSERT OR IGNORE INTO series_relations (source_series_id, target_series_id, relation_type)
+INSERT INTO series_relations (source_series_id, target_series_id, relation_type)
 VALUES (?, ?, ?)
 `
 
@@ -855,6 +855,15 @@ DELETE FROM collections WHERE id = ?
 
 func (q *Queries) DeleteCollection(ctx context.Context, id int64) error {
 	_, err := q.exec(ctx, q.deleteCollectionStmt, deleteCollection, id)
+	return err
+}
+
+const deleteFranchiseCollections = `-- name: DeleteFranchiseCollections :exec
+DELETE FROM collections WHERE source_type = 'system_franchise'
+`
+
+func (q *Queries) DeleteFranchiseCollections(ctx context.Context) error {
+	_, err := q.exec(ctx, q.deleteFranchiseCollectionsStmt, deleteFranchiseCollections)
 	return err
 }
 
@@ -1043,6 +1052,101 @@ func (q *Queries) GetAllAuthors(ctx context.Context) ([]Author, error) {
 			&i.Name,
 			&i.Role,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllSeriesRelations = `-- name: GetAllSeriesRelations :many
+SELECT id, source_series_id, target_series_id, relation_type, created_at FROM series_relations
+`
+
+func (q *Queries) GetAllSeriesRelations(ctx context.Context) ([]SeriesRelation, error) {
+	rows, err := q.query(ctx, q.getAllSeriesRelationsStmt, getAllSeriesRelations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeriesRelation
+	for rows.Next() {
+		var i SeriesRelation
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceSeriesID,
+			&i.TargetSeriesID,
+			&i.RelationType,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllSeriesRelationsForLibrary = `-- name: GetAllSeriesRelationsForLibrary :many
+SELECT sr.id, sr.source_series_id, sr.target_series_id, sr.relation_type,
+       s1.name AS source_series_name,
+       s2.name AS target_series_name,
+       ss1.cover_path AS source_cover_path,
+       ss2.cover_path AS target_cover_path
+FROM series_relations sr
+JOIN series s1 ON sr.source_series_id = s1.id
+JOIN series s2 ON sr.target_series_id = s2.id
+LEFT JOIN series_stats ss1 ON ss1.series_id = s1.id
+LEFT JOIN series_stats ss2 ON ss2.series_id = s2.id
+WHERE s1.library_id = ? OR s2.library_id = ?
+`
+
+type GetAllSeriesRelationsForLibraryParams struct {
+	LibraryID   int64 `json:"library_id"`
+	LibraryID_2 int64 `json:"library_id_2"`
+}
+
+type GetAllSeriesRelationsForLibraryRow struct {
+	ID               int64          `json:"id"`
+	SourceSeriesID   int64          `json:"source_series_id"`
+	TargetSeriesID   int64          `json:"target_series_id"`
+	RelationType     string         `json:"relation_type"`
+	SourceSeriesName string         `json:"source_series_name"`
+	TargetSeriesName string         `json:"target_series_name"`
+	SourceCoverPath  sql.NullString `json:"source_cover_path"`
+	TargetCoverPath  sql.NullString `json:"target_cover_path"`
+}
+
+func (q *Queries) GetAllSeriesRelationsForLibrary(ctx context.Context, arg GetAllSeriesRelationsForLibraryParams) ([]GetAllSeriesRelationsForLibraryRow, error) {
+	rows, err := q.query(ctx, q.getAllSeriesRelationsForLibraryStmt, getAllSeriesRelationsForLibrary, arg.LibraryID, arg.LibraryID_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllSeriesRelationsForLibraryRow
+	for rows.Next() {
+		var i GetAllSeriesRelationsForLibraryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceSeriesID,
+			&i.TargetSeriesID,
+			&i.RelationType,
+			&i.SourceSeriesName,
+			&i.TargetSeriesName,
+			&i.SourceCoverPath,
+			&i.TargetCoverPath,
 		); err != nil {
 			return nil, err
 		}
@@ -1270,6 +1374,133 @@ func (q *Queries) GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]G
 			&i.Name,
 			&i.Summary,
 			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getConnectedSeriesRelations = `-- name: GetConnectedSeriesRelations :many
+WITH RECURSIVE
+  connected (id) AS (
+    SELECT CAST(?1 AS INTEGER)
+    UNION
+    SELECT target_series_id FROM series_relations sr JOIN connected c ON sr.source_series_id = c.id
+    UNION
+    SELECT source_series_id FROM series_relations sr JOIN connected c ON sr.target_series_id = c.id
+  )
+SELECT sr.id, sr.source_series_id, sr.target_series_id, sr.relation_type,
+       s1.name AS source_series_name,
+       s2.name AS target_series_name,
+       ss1.cover_path AS source_cover_path,
+       ss2.cover_path AS target_cover_path
+FROM series_relations sr
+JOIN series s1 ON sr.source_series_id = s1.id
+JOIN series s2 ON sr.target_series_id = s2.id
+LEFT JOIN series_stats ss1 ON ss1.series_id = s1.id
+LEFT JOIN series_stats ss2 ON ss2.series_id = s2.id
+WHERE sr.source_series_id IN connected AND sr.target_series_id IN connected
+`
+
+type GetConnectedSeriesRelationsRow struct {
+	ID               int64          `json:"id"`
+	SourceSeriesID   int64          `json:"source_series_id"`
+	TargetSeriesID   int64          `json:"target_series_id"`
+	RelationType     string         `json:"relation_type"`
+	SourceSeriesName string         `json:"source_series_name"`
+	TargetSeriesName string         `json:"target_series_name"`
+	SourceCoverPath  sql.NullString `json:"source_cover_path"`
+	TargetCoverPath  sql.NullString `json:"target_cover_path"`
+}
+
+func (q *Queries) GetConnectedSeriesRelations(ctx context.Context, startSeriesID int64) ([]GetConnectedSeriesRelationsRow, error) {
+	rows, err := q.query(ctx, q.getConnectedSeriesRelationsStmt, getConnectedSeriesRelations, startSeriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetConnectedSeriesRelationsRow
+	for rows.Next() {
+		var i GetConnectedSeriesRelationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceSeriesID,
+			&i.TargetSeriesID,
+			&i.RelationType,
+			&i.SourceSeriesName,
+			&i.TargetSeriesName,
+			&i.SourceCoverPath,
+			&i.TargetCoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getContinueReadingSequels = `-- name: GetContinueReadingSequels :many
+SELECT 
+    s2.id AS series_id,
+    s2.name AS series_name,
+    ss2.cover_path AS cover_path,
+    s2.book_count AS total_books,
+    ss2.completed_book_count AS read_books,
+    sr.relation_type,
+    s1.name AS source_series_name
+FROM series_relations sr
+JOIN series s1 ON sr.source_series_id = s1.id
+JOIN series_stats ss1 ON ss1.series_id = s1.id
+JOIN series s2 ON sr.target_series_id = s2.id
+LEFT JOIN series_stats ss2 ON ss2.series_id = s2.id
+WHERE (sr.relation_type = 'sequel' OR sr.relation_type = 'spinoff' OR sr.relation_type = 'side_story')
+  AND s1.book_count > 0 
+  AND ss1.completed_book_count >= s1.book_count
+  AND (s2.book_count > 0 AND (ss2.completed_book_count IS NULL OR ss2.completed_book_count < s2.book_count))
+LIMIT 10
+`
+
+type GetContinueReadingSequelsRow struct {
+	SeriesID         int64          `json:"series_id"`
+	SeriesName       string         `json:"series_name"`
+	CoverPath        sql.NullString `json:"cover_path"`
+	TotalBooks       int64          `json:"total_books"`
+	ReadBooks        sql.NullInt64  `json:"read_books"`
+	RelationType     string         `json:"relation_type"`
+	SourceSeriesName string         `json:"source_series_name"`
+}
+
+func (q *Queries) GetContinueReadingSequels(ctx context.Context) ([]GetContinueReadingSequelsRow, error) {
+	rows, err := q.query(ctx, q.getContinueReadingSequelsStmt, getContinueReadingSequels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetContinueReadingSequelsRow
+	for rows.Next() {
+		var i GetContinueReadingSequelsRow
+		if err := rows.Scan(
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.CoverPath,
+			&i.TotalBooks,
+			&i.ReadBooks,
+			&i.RelationType,
+			&i.SourceSeriesName,
 		); err != nil {
 			return nil, err
 		}
@@ -5331,6 +5562,22 @@ func (q *Queries) UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMeta
 		&i.TotalPages,
 	)
 	return i, err
+}
+
+const updateSeriesRelation = `-- name: UpdateSeriesRelation :exec
+UPDATE series_relations
+SET relation_type = ?
+WHERE id = ?
+`
+
+type UpdateSeriesRelationParams struct {
+	RelationType string `json:"relation_type"`
+	ID           int64  `json:"id"`
+}
+
+func (q *Queries) UpdateSeriesRelation(ctx context.Context, arg UpdateSeriesRelationParams) error {
+	_, err := q.exec(ctx, q.updateSeriesRelationStmt, updateSeriesRelation, arg.RelationType, arg.ID)
+	return err
 }
 
 const updateSeriesStatistics = `-- name: UpdateSeriesStatistics :exec

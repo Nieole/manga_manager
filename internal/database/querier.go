@@ -47,6 +47,7 @@ type Querier interface {
 	DeleteBook(ctx context.Context, id int64) error
 	DeleteBookByPath(ctx context.Context, path string) error
 	DeleteCollection(ctx context.Context, id int64) error
+	DeleteFranchiseCollections(ctx context.Context) error
 	DeleteLibrary(ctx context.Context, id int64) error
 	DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error)
 	DeleteReadingList(ctx context.Context, id int64) error
@@ -58,12 +59,16 @@ type Querier interface {
 	GetAIGroupingReviewCollection(ctx context.Context, id int64) (AiGroupingReviewCollection, error)
 	GetActivityHeatmap(ctx context.Context, offsetClause interface{}) ([]GetActivityHeatmapRow, error)
 	GetAllAuthors(ctx context.Context) ([]Author, error)
+	GetAllSeriesRelations(ctx context.Context) ([]SeriesRelation, error)
+	GetAllSeriesRelationsForLibrary(ctx context.Context, arg GetAllSeriesRelationsForLibraryParams) ([]GetAllSeriesRelationsForLibraryRow, error)
 	GetAllTags(ctx context.Context) ([]Tag, error)
 	GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Author, error)
 	GetBook(ctx context.Context, id int64) (Book, error)
 	GetBookByPath(ctx context.Context, path string) (Book, error)
 	GetBookCoverPathsByIDs(ctx context.Context, ids []int64) ([]GetBookCoverPathsByIDsRow, error)
 	GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error)
+	GetConnectedSeriesRelations(ctx context.Context, startSeriesID int64) ([]GetConnectedSeriesRelationsRow, error)
+	GetContinueReadingSequels(ctx context.Context) ([]GetContinueReadingSequelsRow, error)
 	GetDashboardCoreStats(ctx context.Context) (GetDashboardCoreStatsRow, error)
 	GetLastTaskKeyForScope(ctx context.Context, arg GetLastTaskKeyForScopeParams) (string, error)
 	GetLibrary(ctx context.Context, id int64) (Library, error)
@@ -151,6 +156,7 @@ type Querier interface {
 	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error
 	UpdateSeriesInitial(ctx context.Context, arg UpdateSeriesInitialParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
+	UpdateSeriesRelation(ctx context.Context, arg UpdateSeriesRelationParams) error
 	UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error
 	UpdateSmartFilter(ctx context.Context, arg UpdateSmartFilterParams) (SmartFilter, error)
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
