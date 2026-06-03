@@ -48,6 +48,7 @@ type Store interface {
 	DeleteKOReaderAccount(ctx context.Context, id int64) error
 	GetKOReaderStats(ctx context.Context) (KOReaderStats, error)
 	GetLatestKOReaderFailure(ctx context.Context) (KOReaderSyncEvent, error)
+	BackfillSeriesInitials(ctx context.Context) error
 	ListKOReaderDeviceDiagnostics(ctx context.Context) ([]KOReaderDeviceDiagnostic, error)
 	ListKOReaderDeviceMatchMethods(ctx context.Context) ([]KOReaderDeviceMatchMethod, error)
 	ListKOReaderDeviceConflicts(ctx context.Context, limit int) ([]KOReaderDeviceConflict, error)
@@ -748,6 +749,10 @@ func migrateLegacyKOReaderAccounts(db *sql.DB) error {
 		VALUES (?, ?, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, username, syncKey)
 	return err
+}
+
+func (s *SqlStore) BackfillSeriesInitials(ctx context.Context) error {
+	return backfillSeriesInitials(s.db)
 }
 
 func backfillSeriesInitials(db *sql.DB) error {

@@ -1,4 +1,4 @@
-package api
+﻿package api
 
 import (
 	"context"
@@ -2085,6 +2085,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/koreader/rebuild-hashes", c.rebuildKOReaderHashes)
 		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
+		r.Post("/system/rebuild-initials", c.rebuildInitials)
 		r.Post("/system/rebuild-franchises", c.rebuildFranchiseCollectionsHandler)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/cleanup-thumbnails", c.cleanupThumbnails)
@@ -5147,4 +5148,12 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组审核任务已提交至后台"})
+}
+
+func (c *Controller) rebuildInitials(w http.ResponseWriter, r *http.Request) {
+	if err := c.store.BackfillSeriesInitials(r.Context()); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "首字母索引重建完成"})
 }
