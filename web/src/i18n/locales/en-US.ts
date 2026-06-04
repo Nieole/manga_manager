@@ -1,4 +1,4 @@
-import type { MessageCatalog } from '../core';
+﻿import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
     'app.name': 'Manga Manager',
@@ -1258,6 +1258,7 @@ export const messages: MessageCatalog = {
     'settings.maintenance.rebuildInitialsHint': 'Recalculates library initial letter indices from existing data without scanning files.',
     'settings.maintenance.rebuildInitialsSuccess': 'Rebuilt initial letters successfully',
     'settings.maintenance.rebuildInitialsFailed': 'Failed to rebuild initial letters',
+    'settings.maintenance.rebuildInitialsConfirm': 'This operation will recalculate and update the initial letter indices for all series based on existing name data in the database without scanning files. Are you sure you want to start?',
     'settings.maintenance.batchScrape': 'Batch metadata scrape',
     'settings.maintenance.batchScrapeHint': 'This can keep LLM or external providers busy for a while, so run it during idle periods.',
     'settings.maintenance.batchScrapeConfirm': 'Batch metadata scraping walks series that are missing metadata and keeps requesting the configured LLM or external provider. The task will appear in the background task center, where it can be paused, resumed, or cancelled after it starts. Start now?',
@@ -1650,3 +1651,4 @@ export const messages: MessageCatalog = {
     'library.pagination.switchToPaged': 'Switch to paged mode',
     'library.pagination.switchToInfinite': 'Switch to infinite scroll',
 };
+

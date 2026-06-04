@@ -1,4 +1,4 @@
-import type { MessageCatalog } from '../core';
+﻿import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
     'app.name': 'Manga Manager',
@@ -1258,6 +1258,7 @@ export const messages: MessageCatalog = {
     'settings.maintenance.rebuildInitialsHint': '无需扫描文件，直接使用现有数据重新计算资源库首字母索引。',
     'settings.maintenance.rebuildInitialsSuccess': '首字母索引重建完成',
     'settings.maintenance.rebuildInitialsFailed': '重建首字母索引失败',
+    'settings.maintenance.rebuildInitialsConfirm': '该操作将无需扫描文件，直接根据数据库中现有的名称数据重新计算并更新所有系列的首字母索引。确认开始？',
     'settings.maintenance.batchScrape': '批量元数据刮削',
     'settings.maintenance.batchScrapeHint': '会持续占用 LLM 或外部数据源，请优先在空闲时段运行。',
     'settings.maintenance.batchScrapeConfirm': '批量元数据刮削会遍历缺失元数据的系列，并持续请求已配置的 LLM 或外部数据源。任务会进入后台任务中心，启动后可以暂停、继续或取消。确认开始？',
@@ -1650,3 +1651,4 @@ export const messages: MessageCatalog = {
     'library.pagination.switchToPaged': '切换到分页模式',
     'library.pagination.switchToInfinite': '切换到无限滚动',
 };
+

@@ -5155,5 +5155,6 @@ func (c *Controller) rebuildInitials(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "首字母索引重建完成"})
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "success"})
 }
+

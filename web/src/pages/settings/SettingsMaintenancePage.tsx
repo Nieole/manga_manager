@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { AlertTriangle, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -164,7 +164,7 @@ export function SettingsMaintenancePage() {
             <p className="font-medium">{t('settings.maintenance.rebuildFranchises') || 'Rebuild Franchise Collections'}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildFranchisesHint') || 'Recalculates and rebuilds auto-generated franchise collections'}</p>
           </button>
-          <button onClick={() => handleAction('/api/system/rebuild-initials', t('settings.maintenance.rebuildInitialsSuccess') || 'Rebuilt initial letters successfully', t('settings.maintenance.rebuildInitialsFailed') || 'Failed to rebuild initial letters')} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
+          <button onClick={() => handleRiskyAction('/api/system/rebuild-initials', t('settings.maintenance.rebuildInitialsSuccess') || 'Rebuilt initial letters successfully', t('settings.maintenance.rebuildInitialsFailed') || 'Failed to rebuild initial letters', t('settings.maintenance.rebuildInitialsConfirm') || 'Are you sure you want to rebuild the initial letter indices?')} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
             <p className="font-medium">{t('settings.maintenance.rebuildInitials') || 'Rebuild Initial Letters'}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildInitialsHint') || 'Recalculates library initial letter indices from existing data without scanning files.'}</p>
           </button>
@@ -340,5 +340,6 @@ export function SettingsMaintenancePage() {
     </div>
   );
 }
+
 
 
