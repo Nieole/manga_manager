@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, ExternalLink, Filter, GitCompareArrows, Loader2, Search, ShieldCheck, XCircle } from 'lucide-react';
@@ -12,6 +12,7 @@ interface LibraryOption {
 }
 
 type BulkMode = 'fill_empty' | 'all';
+type ReviewMark = 'apply' | 'reject';
 
 function getApiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error)) {
@@ -55,95 +56,174 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   const [items, setItems] = useState<MetadataReviewInboxItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [acting, setActing] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [markedActions, setMarkedActions] = useState<Record<number, ReviewMark>>({});
   const [activeReviewId, setActiveReviewId] = useState<number | null>(null);
   const [libraryId, setLibraryId] = useState('0');
   const [provider, setProvider] = useState('');
   const [query, setQuery] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
   const [mode, setMode] = useState<BulkMode>('fill_empty');
-  const [page, setPage] = useState(1);
+  const listScrollRef = useRef<HTMLUListElement | null>(null);
+  const loadMoreRef = useRef<HTMLLIElement | null>(null);
+  const itemsLengthRef = useRef(0);
+  const hasMoreRef = useRef(true);
+  const requestBusyRef = useRef(false);
+  const requestSeqRef = useRef(0);
 
   const limit = 30;
-  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const currentPageSelected = items.length > 0 && items.every((item) => selectedSet.has(item.id));
   const providers = useMemo(() => Array.from(new Set(items.map((item) => item.provider).filter(Boolean))).sort(), [items]);
   const activeReview = useMemo(
     () => (activeReviewId == null ? null : items.find((item) => item.id === activeReviewId) || null),
     [activeReviewId, items],
   );
+  const markedEntries = useMemo(() => Object.entries(markedActions).map(([id, action]) => ({ id: Number(id), action })), [markedActions]);
+  const applyIds = useMemo(() => markedEntries.filter((item) => item.action === 'apply').map((item) => item.id), [markedEntries]);
+  const rejectIds = useMemo(() => markedEntries.filter((item) => item.action === 'reject').map((item) => item.id), [markedEntries]);
+  const markedCount = markedEntries.length;
+  const hasMore = items.length < total;
 
+  useEffect(() => {
+    itemsLengthRef.current = items.length;
+    hasMoreRef.current = hasMore;
+  }, [hasMore, items.length]);
 
-  const loadReviews = async () => {
-    setLoading(true);
+  const loadReviews = useCallback(async (reset = false) => {
+    if (!reset && requestBusyRef.current) return [];
+    if (reset) {
+      setLoading(true);
+    } else {
+      if (!hasMoreRef.current) return [];
+      setLoadingMore(true);
+    }
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
+    requestBusyRef.current = true;
     try {
-      const offset = (page - 1) * limit;
+      const offset = reset ? 0 : itemsLengthRef.current;
       const res = await axios.get<MetadataReviewInboxResponse>('/api/metadata/reviews', {
         params: {
           library_id: libraryId,
           provider,
-          q: query.trim(),
+          q: appliedQuery,
           limit,
           offset,
         },
       });
-      setItems(res.data.items || []);
+      const nextItems = res.data.items || [];
+      if (requestSeq !== requestSeqRef.current) return [];
+      setItems((current) => reset ? nextItems : [...current, ...nextItems.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setTotal(res.data.total || 0);
-      setSelectedIds((current) => current.filter((id) => (res.data.items || []).some((item) => item.id === id)));
       setActiveReviewId((current) => {
-        const next = res.data.items || [];
-        if (current != null && next.some((item) => item.id === current)) return current;
-        return next[0]?.id ?? null;
+        if (!reset && current != null) return current;
+        if (current != null && nextItems.some((item) => item.id === current)) return current;
+        return nextItems[0]?.id ?? null;
       });
+      return nextItems;
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('metadataReviews.toast.loadFailed')), 'error');
-      setItems([]);
-      setTotal(0);
+      if (reset) {
+        setItems([]);
+        setTotal(0);
+      }
+      return [];
     } finally {
-      setLoading(false);
+      if (requestSeq === requestSeqRef.current) {
+        requestBusyRef.current = false;
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-  };
+  }, [appliedQuery, libraryId, provider, showToast, t]);
 
   useEffect(() => {
-    void loadReviews();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libraryId, provider, page, refreshTrigger]);
+    setMarkedActions({});
+    void loadReviews(true);
+  }, [libraryId, provider, appliedQuery, refreshTrigger, loadReviews]);
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    const root = listScrollRef.current;
+    if (!node || !root) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadReviews(false);
+      }
+    }, { root, rootMargin: '160px 0px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [items.length, loadReviews, loading]);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
-    setPage(1);
-    void loadReviews();
+    setAppliedQuery(query.trim());
   };
 
-  const toggleSelected = (id: number) => {
-    setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
-  };
-
-  const toggleCurrentPage = () => {
-    if (currentPageSelected) {
-      const pageIds = new Set(items.map((item) => item.id));
-      setSelectedIds((current) => current.filter((id) => !pageIds.has(id)));
+  const focusNextReview = (id: number, nextMarks: Record<number, ReviewMark>) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const nextItem = items.slice(index + 1).find((item) => !nextMarks[item.id]);
+    if (nextItem) {
+      setActiveReviewId(nextItem.id);
       return;
     }
-    setSelectedIds((current) => Array.from(new Set([...current, ...items.map((item) => item.id)])));
+    if (hasMoreRef.current) {
+      void loadReviews(false).then((loadedItems) => {
+        const loadedNext = loadedItems.find((item) => !nextMarks[item.id]);
+        if (loadedNext) {
+          setActiveReviewId(loadedNext.id);
+        }
+      });
+    }
   };
 
-  const runBulkAction = async (action: 'apply' | 'reject') => {
-    if (selectedIds.length === 0) return;
+  const markReview = (id: number, action: ReviewMark) => {
+    const next = { ...markedActions };
+    const isClearing = next[id] === action;
+    if (isClearing) {
+      delete next[id];
+    } else {
+      next[id] = action;
+    }
+    setMarkedActions(next);
+    if (!isClearing) {
+      focusNextReview(id, next);
+    }
+  };
+
+  const clearMarks = () => setMarkedActions({});
+
+  const postMetadataBulk = async (endpoint: string, ids: number[]) => {
+    let done = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (let index = 0; index < ids.length; index += 100) {
+      const batch = ids.slice(index, index + 100);
+      const res = await axios.post(endpoint, { review_ids: batch, mode });
+      done += (res.data.applied?.length || 0) + (res.data.rejected?.length || 0);
+      skipped += res.data.skipped?.length || 0;
+      failed += res.data.failed?.length || 0;
+    }
+    return { done, skipped, failed };
+  };
+
+  const runMarkedActions = async () => {
+    if (markedCount === 0) return;
     setActing(true);
     try {
-      const endpoint = action === 'apply' ? '/api/metadata/reviews/bulk-apply' : '/api/metadata/reviews/bulk-reject';
-      const res = await axios.post(endpoint, { review_ids: selectedIds, mode });
-      const doneCount = action === 'apply' ? (res.data.applied?.length || 0) : (res.data.rejected?.length || 0);
-      const skippedCount = res.data.skipped?.length || 0;
-      const failedCount = res.data.failed?.length || 0;
-      showToast(t(action === 'apply' ? 'metadataReviews.toast.applied' : 'metadataReviews.toast.rejected', {
-        count: doneCount,
+      const applied = applyIds.length > 0 ? await postMetadataBulk('/api/metadata/reviews/bulk-apply', applyIds) : { done: 0, skipped: 0, failed: 0 };
+      const rejected = rejectIds.length > 0 ? await postMetadataBulk('/api/metadata/reviews/bulk-reject', rejectIds) : { done: 0, skipped: 0, failed: 0 };
+      const failedCount = applied.failed + rejected.failed;
+      const skippedCount = applied.skipped + rejected.skipped;
+      showToast(t('reviewInbox.toast.markedApplied', {
+        applied: applied.done,
+        rejected: rejected.done,
         skipped: skippedCount,
         failed: failedCount,
       }), failedCount > 0 ? 'error' : 'success');
-      setSelectedIds([]);
-      await loadReviews();
+      setMarkedActions({});
+      await loadReviews(true);
       onReviewChange?.();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('metadataReviews.toast.actionFailed')), 'error');
@@ -151,8 +231,6 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
       setActing(false);
     }
   };
-
-  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
     <div className={embedded ? '' : 'min-h-screen bg-komgaDark p-6 lg:p-10'}>
@@ -172,8 +250,8 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
             <p className="mt-1 text-2xl font-semibold text-white">{total}</p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-gray-950/60 px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">{t('metadataReviews.metric.selected')}</p>
-            <p className="mt-1 text-2xl font-semibold text-white">{selectedIds.length}</p>
+            <p className="text-xs uppercase tracking-wide text-gray-500">{t('reviewInbox.metric.marked')}</p>
+            <p className="mt-1 text-2xl font-semibold text-white">{markedCount}</p>
           </div>
         </div>
       </div>
@@ -189,13 +267,13 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
             className="w-full rounded-xl border border-white/10 bg-gray-950 px-10 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary"
           />
         </div>
-        <select value={libraryId} onChange={(event) => { setLibraryId(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
+        <select value={libraryId} onChange={(event) => setLibraryId(event.target.value)} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="0">{t('metadataReviews.allLibraries')}</option>
           {(libraries || []).map((library) => (
             <option key={library.id} value={library.id}>{library.name}</option>
           ))}
         </select>
-        <select value={provider} onChange={(event) => { setProvider(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
+        <select value={provider} onChange={(event) => setProvider(event.target.value)} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="">{t('metadataReviews.allProviders')}</option>
           {providers.map((item) => (
             <option key={item} value={item}>{item}</option>
@@ -210,15 +288,18 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
 
       <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-white/10 bg-gray-950/45 p-4 md:flex-row md:items-center md:justify-between select-none">
         <div className="flex flex-wrap items-center gap-3">
-          <button onClick={toggleCurrentPage} disabled={items.length === 0} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-gray-200 hover:bg-white/10 disabled:opacity-40 active:scale-95 transition-all font-medium">
-            {currentPageSelected ? t('metadataReviews.unselectPage') : t('metadataReviews.selectPage')}
-          </button>
-          {selectedIds.length > 0 && (
+          <span className="text-xs text-gray-500">{t('reviewInbox.loadedSummary', { loaded: items.length, total })}</span>
+          {markedCount > 0 && (
             <span className="text-xs text-gray-500">
-              已选定 <span className="text-komgaPrimary font-semibold">{selectedIds.length}</span> 项元数据
+              {t('reviewInbox.markedSummary', { apply: applyIds.length, reject: rejectIds.length })}
             </span>
           )}
         </div>
+        {markedCount > 0 && (
+          <button onClick={clearMarks} className="self-start rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 md:self-auto">
+            {t('reviewInbox.clearMarks')}
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -234,9 +315,9 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
         <div className="grid gap-4 lg:grid-cols-[minmax(300px,30%)_1fr]">
           {/* 左：高密度 inbox 列表 */}
           <div className="rounded-2xl border border-white/10 bg-gray-950/40 overflow-hidden">
-            <ul className="max-h-[70vh] overflow-y-auto divide-y divide-white/5">
+            <ul ref={listScrollRef} className="max-h-[70vh] overflow-y-auto divide-y divide-white/5">
               {items.map((item) => {
-                const checked = selectedSet.has(item.id);
+                const mark = markedActions[item.id];
                 const isActive = activeReviewId === item.id;
                 const changedFields = item.fields.filter((f) => f.current !== f.proposed).length;
                 return (
@@ -244,15 +325,28 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
                     <button
                       type="button"
                       onClick={() => setActiveReviewId(item.id)}
-                      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${isActive ? 'bg-komgaPrimary/15 ring-1 ring-inset ring-komgaPrimary/40' : 'hover:bg-white/5'}`}
+                      className={`flex w-full items-center gap-3 border-l-2 px-3 py-2.5 text-left transition-colors ${mark === 'apply' ? 'border-emerald-400' : mark === 'reject' ? 'border-red-400' : 'border-transparent'} ${isActive ? 'bg-komgaPrimary/15 ring-1 ring-inset ring-komgaPrimary/40' : 'hover:bg-white/5'}`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={() => toggleSelected(item.id)}
-                        className="h-4 w-4 shrink-0 rounded-sm border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
-                      />
+                      <span className="flex shrink-0 flex-col gap-1" onClick={(event) => event.stopPropagation()}>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => markReview(item.id, 'apply')}
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${mark === 'apply' ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-200' : 'border-white/10 bg-white/5 text-gray-500 hover:text-emerald-200'}`}
+                          title={t('reviewInbox.markApply')}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => markReview(item.id, 'reject')}
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${mark === 'reject' ? 'border-red-400/50 bg-red-500/20 text-red-200' : 'border-white/10 bg-white/5 text-gray-500 hover:text-red-200'}`}
+                          title={t('reviewInbox.markReject')}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </span>
+                      </span>
                       <div className="h-12 w-9 shrink-0 overflow-hidden rounded-sm border border-white/10 bg-gray-900">
                         {item.cover_book_id > 0 ? (
                           <img src={`/api/covers/${item.cover_book_id}`} alt="" className="h-full w-full object-cover" loading="lazy" />
@@ -280,6 +374,18 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
                   </li>
                 );
               })}
+              <li ref={loadMoreRef} className="flex min-h-12 items-center justify-center px-3 py-3 text-xs text-gray-500">
+                {loadingMore ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin text-komgaPrimary" />
+                    {t('reviewInbox.loadingMore')}
+                  </>
+                ) : hasMore ? (
+                  t('reviewInbox.scrollForMore')
+                ) : (
+                  t('reviewInbox.allLoaded', { total })
+                )}
+              </li>
             </ul>
           </div>
 
@@ -315,15 +421,22 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
                       </a>
                     )}
                   </div>
-                  <label className="flex shrink-0 items-center gap-2 text-xs text-gray-400">
-                    <input
-                      type="checkbox"
-                      checked={selectedSet.has(activeReview.id)}
-                      onChange={() => toggleSelected(activeReview.id)}
-                      className="h-4 w-4 rounded-sm border-gray-700 bg-gray-950 text-komgaPrimary focus:ring-komgaPrimary"
-                    />
-                    {t('metadataReviews.selectThis')}
-                  </label>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      onClick={() => markReview(activeReview.id, 'reject')}
+                      className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${markedActions[activeReview.id] === 'reject' ? 'border-red-400/50 bg-red-500/20 text-red-100' : 'border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15'}`}
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      {t('reviewInbox.markReject')}
+                    </button>
+                    <button
+                      onClick={() => markReview(activeReview.id, 'apply')}
+                      className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${markedActions[activeReview.id] === 'apply' ? 'bg-emerald-500 text-white' : 'bg-komgaPrimary text-white hover:bg-komgaPrimaryHover'}`}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {t('reviewInbox.markApply')}
+                    </button>
+                  </div>
                 </div>
                 <div className="grid gap-3 xl:grid-cols-2">
                   {activeReview.fields.map((field) => (
@@ -349,20 +462,12 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
         </div>
       )}
 
-      <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-6 sm:flex-row">
-        <p className="text-sm text-gray-500">{t('metadataReviews.pageSummary', { page, total: totalPages })}</p>
-        <div className="flex gap-2">
-          <button onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1} className="rounded-xl border border-white/10 bg-gray-950 px-4 py-2 text-sm text-gray-300 hover:bg-white/5 disabled:opacity-40">{t('home.pagination.prev')}</button>
-          <button onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page >= totalPages} className="rounded-xl border border-white/10 bg-gray-950 px-4 py-2 text-sm text-gray-300 hover:bg-white/5 disabled:opacity-40">{t('home.pagination.next')}</button>
-        </div>
-      </div>
-
       {/* 底部浮动控制 Dock (选定项数 > 0 时呼出) */}
-      {selectedIds.length > 0 && (
+      {markedCount > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900/90 backdrop-blur-xl border border-white/10 rounded-2xl px-6 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col sm:flex-row items-center gap-4 animate-in slide-in-from-bottom duration-300 select-none">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-white">
-              已选定 <span className="text-komgaPrimary font-bold text-base">{selectedIds.length}</span> 项元数据建议
+              {t('reviewInbox.markedSummary', { apply: applyIds.length, reject: rejectIds.length })}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -370,13 +475,12 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
               <option value="fill_empty">{t('metadataReviews.mode.fillEmpty')}</option>
               <option value="all">{t('metadataReviews.mode.all')}</option>
             </select>
-            <button onClick={() => runBulkAction('reject')} disabled={acting} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-950/40 px-4 py-2 text-xs font-semibold text-red-200 hover:bg-red-950 transition-all active:scale-95">
-              {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
-              {t('metadataReviews.bulkReject')}
+            <button onClick={clearMarks} disabled={acting} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-gray-200 hover:bg-white/10 transition-all active:scale-95">
+              {t('reviewInbox.clearMarks')}
             </button>
-            <button onClick={() => runBulkAction('apply')} disabled={acting} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-komgaPrimary px-5 py-2 text-xs font-semibold text-white hover:bg-komgaPrimaryHover shadow-lg shadow-komgaPrimary/20 transition-all active:scale-95">
+            <button onClick={runMarkedActions} disabled={acting} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-komgaPrimary px-5 py-2 text-xs font-semibold text-white hover:bg-komgaPrimaryHover shadow-lg shadow-komgaPrimary/20 transition-all active:scale-95">
               {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              {t('metadataReviews.bulkApply')}
+              {t('reviewInbox.applyMarked')}
             </button>
           </div>
         </div>

@@ -73,6 +73,7 @@ export function useLibrarySeries({
   const [loading, setLoading] = useState(false);
   const [pageCursorMap, setPageCursorMap] = useState<Record<number, string>>({});
   const lastLoadedPageRef = useRef(1);
+  const latestRequestIDRef = useRef(0);
 
   const pendingRenderMetric = useRef<{
     requestStartedAt: number;
@@ -105,8 +106,11 @@ export function useLibrarySeries({
       if (keyword) params.append('q', keyword);
 
       const requestStartedAt = performance.now();
+      const requestID = latestRequestIDRef.current + 1;
+      latestRequestIDRef.current = requestID;
       requestSeriesSearch(params.toString())
         .then((res) => {
+          if (requestID !== latestRequestIDRef.current) return;
           const items = res.data.items || [];
           const total = res.data.total || 0;
           setAllSeries(items);
@@ -137,10 +141,11 @@ export function useLibrarySeries({
           };
         })
         .catch((err) => {
+          if (requestID !== latestRequestIDRef.current) return;
           console.error('Failed to fetch series page', err);
         })
         .finally(() => {
-          if (!silent) setLoading(false);
+          if (requestID === latestRequestIDRef.current) setLoading(false);
         });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,6 +160,7 @@ export function useLibrarySeries({
       sortDir,
       serializedFilters,
       keyword,
+      pageCursorMap,
     ],
   );
 

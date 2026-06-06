@@ -4,6 +4,22 @@
 
 ---
 
+### 📌 增量记录 — 2026-06-07（待办审核批量标记 + 资料库搜索持久化修复）
+
+#### 前端：待办审核交互优化
+- `web/src/pages/MetadataReviews.tsx` 与 `web/src/pages/AIGroupingReviews.tsx`：审核条目支持先标记“同意 / 拒绝”，再通过底部浮动栏统一应用已标记内容；点击标记后自动激活下一条未处理项，连续处理到已加载列表末尾时会主动补充加载下一批。
+- 待处理列表的无限加载触发从页面滚动改为左侧待处理列表自身滚动，避免页面滚到底部误触发补充加载。
+- AI 分组审核沿用既有单条 apply / reject API 做统一提交，元数据审核复用既有 bulk apply / reject API 分批提交。
+
+#### 前端：资料库搜索条件持久化
+- `web/src/pages/library/hooks/useLibraryFilters.ts` / `useLibrarySeries.ts` / `library/index.tsx`：搜索框关键字纳入库级筛选状态、URL query 与本地持久化；进入资料库时等待当前 `libId` 的持久化条件加载完成后再请求系列列表，避免先发空搜索条件请求、再立即发带关键字请求。
+- 系列列表请求增加最新请求保护，降低搜索防抖、筛选切换和分页切换交错时旧响应覆盖新结果的风险。
+
+#### 验证
+- `cd web && npm run build` 通过；Vite 仍提示 vendor chunk 超过 500 kB，属既有构建体积警告。
+
+---
+
 ### 📌 增量记录 — 2026-05-29（数据层 sqlc 全面迁移 + SSE Broker 加固 + Windows 构建加固）
 
 #### 后端：raw-SQL → sqlc 全面迁移

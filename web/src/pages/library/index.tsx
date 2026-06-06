@@ -43,6 +43,7 @@ export default function LibraryPage() {
     activeLetter,
     sortByField,
     sortDir,
+    keyword,
     page,
     pageSize,
     settingsReady,
@@ -53,6 +54,7 @@ export default function LibraryPage() {
     setActiveLetter,
     setSortByField,
     setSortDir,
+    setKeyword,
     setPage,
     setPageSize,
     applySnapshot,
@@ -69,15 +71,14 @@ export default function LibraryPage() {
 
   const [externalDrawerOpen, setExternalDrawerOpen] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null!);
 
   // 防抖：输入停止 300ms 后才更新 keyword 触发后端查询
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   useEffect(() => {
-    const id = window.setTimeout(() => setDebouncedKeyword(searchQuery.trim()), 300);
+    const id = window.setTimeout(() => setDebouncedKeyword(keyword.trim()), 300);
     return () => window.clearTimeout(id);
-  }, [searchQuery]);
+  }, [keyword]);
 
   const showError = useCallback((messageKey: string) => showToast(t(messageKey), 'error'), [showToast, t]);
 
@@ -94,7 +95,7 @@ export default function LibraryPage() {
     sortDir,
     serializedFilters,
     refreshTrigger,
-    enabled: settingsReady,
+    enabled: settingsReady && debouncedKeyword === keyword.trim(),
     keyword: debouncedKeyword,
   });
   const { allSeries, totalSeries, loading, pageCursorMap, resetPagination, refetchCurrentPage, patchSeries } = seriesData;
@@ -129,6 +130,7 @@ export default function LibraryPage() {
         activeAuthor: filter.activeAuthor,
         activeStatus: filter.activeStatus,
         activeLetter: filter.activeLetter,
+        keyword: '',
         sortByField: filter.sortByField,
         sortDir: filter.sortDir,
         pageSize: filter.pageSize,
@@ -139,7 +141,7 @@ export default function LibraryPage() {
     },
   });
 
-  const hasAnyFilter = Boolean(activeTag || activeAuthor || activeStatus || activeLetter);
+  const hasAnyFilter = Boolean(activeTag || activeAuthor || activeStatus || activeLetter || keyword.trim());
 
   const smartFilterChips = useMemo(() => {
     const chips: string[] = [];
@@ -244,10 +246,10 @@ export default function LibraryPage() {
         selectedCount={selection.selectedSeries.length}
         sortByField={sortByField}
         sortDir={sortDir}
-        searchValue={searchQuery}
+        searchValue={keyword}
         searchInputRef={searchInputRef}
         externalSessionActive={Boolean(externalLib.externalSession)}
-        onSearchChange={setSearchQuery}
+        onSearchChange={setKeyword}
         onToggleSelectionMode={selection.toggleSelectionMode}
         onToggleSelectCurrentPage={selection.toggleSelectCurrentPage}
         onSortFieldChange={setSortByField}
