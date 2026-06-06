@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -318,6 +319,62 @@ func TestSearchSeriesCursorSupportsKeysetSorts(t *testing.T) {
 	assertCursorOrder("updated_desc", []string{"Alpha", "Beta", "Gamma", "Delta"})
 	assertCursorOrder("created_asc", []string{"Alpha", "Beta", "Gamma", "Delta"})
 	assertCursorOrder("favorite_desc", []string{"Delta", "Gamma", "Alpha", "Beta"})
+}
+
+func TestSearchSeriesPagedCursorBoundaryUsesStableTieBreaker(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name:                "Main",
+		Path:                filepath.Join(t.TempDir(), "library"),
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library failed: %v", err)
+	}
+
+	createdIDs := make([]int64, 0, 4)
+	for idx := 0; idx < 4; idx++ {
+		series, err := store.CreateSeries(ctx, CreateSeriesParams{
+			LibraryID:   lib.ID,
+			Name:        "Same",
+			Path:        filepath.Join(lib.Path, "same", strconv.Itoa(idx)),
+			NameInitial: SeriesInitial("", "Same"),
+		})
+		if err != nil {
+			t.Fatalf("create series %d failed: %v", idx, err)
+		}
+		createdIDs = append(createdIDs, series.ID)
+	}
+
+	firstPage, total, err := store.SearchSeriesPaged(ctx, lib.ID, "", "", "", nil, nil, 2, 0, "name_desc")
+	if err != nil {
+		t.Fatalf("first page search failed: %v", err)
+	}
+	if total != 4 || len(firstPage) != 2 {
+		t.Fatalf("unexpected first page: total=%d rows=%+v", total, firstPage)
+	}
+
+	cursor := NextSeriesSearchCursor("name_desc", firstPage[len(firstPage)-1])
+	secondPage, _, _, err := store.SearchSeriesCursor(ctx, lib.ID, "", "", "", nil, nil, 2, "name_desc", cursor)
+	if err != nil {
+		t.Fatalf("second page cursor search failed: %v", err)
+	}
+	if len(secondPage) != 2 {
+		t.Fatalf("unexpected second page rows=%+v", secondPage)
+	}
+
+	got := []int64{firstPage[0].ID, firstPage[1].ID, secondPage[0].ID, secondPage[1].ID}
+	want := []int64{createdIDs[3], createdIDs[2], createdIDs[1], createdIDs[0]}
+	for idx := range want {
+		if got[idx] != want[idx] {
+			t.Fatalf("unexpected stable page order: got %v want %v", got, want)
+		}
+	}
 }
 
 func TestSearchTagsAndAuthorsReturnsPopularAndQueryMatches(t *testing.T) {

@@ -1291,13 +1291,13 @@ func seriesSearchSortKey(s seriesSearchSort) string {
 func seriesSearchOffsetOrderClause(s seriesSearchSort) string {
 	switch s.Field {
 	case "rating", "books", "volumes", "pages", "read", "created", "updated":
-		return fmt.Sprintf("%s %s, s.name ASC", s.Expr, s.Dir)
+		return fmt.Sprintf("%s %s, s.name ASC, s.id ASC", s.Expr, s.Dir)
 	case "favorite":
-		return fmt.Sprintf("s.is_favorite %s, s.name ASC", s.Dir)
+		return fmt.Sprintf("s.is_favorite %s, s.name ASC, s.id ASC", s.Dir)
 	case "name":
-		return fmt.Sprintf("s.name %s", s.Dir)
+		return fmt.Sprintf("s.name %s, s.id %s", s.Dir, s.Dir)
 	default:
-		return "s.name ASC"
+		return "s.name ASC, s.id ASC"
 	}
 }
 
