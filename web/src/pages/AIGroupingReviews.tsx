@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, Filter, Layers3, Loader2, Pencil, Save, Sparkles, X, XCircle } from 'lucide-react';
@@ -57,6 +57,8 @@ interface CollectionDraft {
   seriesIds: number[];
 }
 
+type ReviewMark = 'apply' | 'reject';
+
 function getApiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error)) {
     return error.response?.data?.error || error.message || fallback;
@@ -106,24 +108,48 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
   const [total, setTotal] = useState(0);
   const [libraryId, setLibraryId] = useState('0');
   const [status, setStatus] = useState('pending');
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [actingKey, setActingKey] = useState<string | null>(null);
   const [editingDrafts, setEditingDrafts] = useState<Record<number, CollectionDraft>>({});
   const [activeReviewId, setActiveReviewId] = useState<number | null>(null);
+  const [markedActions, setMarkedActions] = useState<Record<number, ReviewMark>>({});
+  const listScrollRef = useRef<HTMLUListElement | null>(null);
+  const loadMoreRef = useRef<HTMLLIElement | null>(null);
+  const itemsLengthRef = useRef(0);
+  const hasMoreRef = useRef(true);
+  const requestBusyRef = useRef(false);
+  const requestSeqRef = useRef(0);
 
   const limit = 20;
-  const pendingCount = useMemo(() => items.filter((item) => item.status === 'pending').length, [items]);
   const activeReview = useMemo(
     () => (activeReviewId == null ? null : items.find((item) => item.id === activeReviewId) || null),
     [activeReviewId, items],
   );
+  const markedEntries = useMemo(() => Object.entries(markedActions).map(([id, action]) => ({ id: Number(id), action })), [markedActions]);
+  const applyIds = useMemo(() => markedEntries.filter((item) => item.action === 'apply').map((item) => item.id), [markedEntries]);
+  const rejectIds = useMemo(() => markedEntries.filter((item) => item.action === 'reject').map((item) => item.id), [markedEntries]);
+  const markedCount = markedEntries.length;
+  const hasMore = items.length < total;
 
+  useEffect(() => {
+    itemsLengthRef.current = items.length;
+    hasMoreRef.current = hasMore;
+  }, [hasMore, items.length]);
 
-  const loadReviews = async () => {
-    setLoading(true);
+  const loadReviews = useCallback(async (reset = false) => {
+    if (!reset && requestBusyRef.current) return [];
+    if (reset) {
+      setLoading(true);
+    } else {
+      if (!hasMoreRef.current) return [];
+      setLoadingMore(true);
+    }
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
+    requestBusyRef.current = true;
     try {
-      const offset = (page - 1) * limit;
+      const offset = reset ? 0 : itemsLengthRef.current;
       const res = await axios.get<AIGroupingReviewsResponse>('/api/ai-grouping/reviews', {
         params: {
           library_id: libraryId,
@@ -132,41 +158,117 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
           offset,
         },
       });
-      setItems(res.data.items || []);
+      const nextItems = res.data.items || [];
+      if (requestSeq !== requestSeqRef.current) return [];
+      setItems((current) => reset ? nextItems : [...current, ...nextItems.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setTotal(res.data.total || 0);
       setActiveReviewId((current) => {
-        const next = res.data.items || [];
-        if (current != null && next.some((item) => item.id === current)) return current;
-        return next[0]?.id ?? null;
+        if (!reset && current != null) return current;
+        if (current != null && nextItems.some((item) => item.id === current)) return current;
+        return nextItems[0]?.id ?? null;
       });
+      return nextItems;
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.loadFailed')), 'error');
-      setItems([]);
-      setTotal(0);
+      if (reset) {
+        setItems([]);
+        setTotal(0);
+      }
+      return [];
     } finally {
-      setLoading(false);
+      if (requestSeq === requestSeqRef.current) {
+        requestBusyRef.current = false;
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
+  }, [libraryId, showToast, status, t]);
+
+  useEffect(() => {
+    setMarkedActions({});
+    void loadReviews(true);
+  }, [libraryId, status, refreshTrigger, loadReviews]);
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    const root = listScrollRef.current;
+    if (!node || !root) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadReviews(false);
+      }
+    }, { root, rootMargin: '160px 0px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [items.length, loadReviews, loading]);
+
+  const focusNextReview = (id: number, nextMarks: Record<number, ReviewMark>) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const nextItem = items.slice(index + 1).find((item) => item.status === 'pending' && !nextMarks[item.id]);
+    if (nextItem) {
+      setActiveReviewId(nextItem.id);
+      return;
+    }
+    if (hasMoreRef.current) {
+      void loadReviews(false).then((loadedItems) => {
+        const loadedNext = loadedItems.find((item) => item.status === 'pending' && !nextMarks[item.id]);
+        if (loadedNext) {
+          setActiveReviewId(loadedNext.id);
+        }
+      });
     }
   };
 
-  useEffect(() => {
-    void loadReviews();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libraryId, status, page, refreshTrigger]);
-
-  const runAction = async (review: AIGroupingReview, action: 'apply' | 'reject') => {
+  const markReview = (review: AIGroupingReview, action: ReviewMark) => {
     if (review.status !== 'pending') return;
-    setActingKey(`review:${review.id}:${action}`);
+    const next = { ...markedActions };
+    const isClearing = next[review.id] === action;
+    if (isClearing) {
+      delete next[review.id];
+    } else {
+      next[review.id] = action;
+    }
+    setMarkedActions(next);
+    if (!isClearing) {
+      focusNextReview(review.id, next);
+    }
+  };
+
+  const clearMarks = () => setMarkedActions({});
+
+  const runMarkedActions = async () => {
+    if (markedCount === 0) return;
+    setActingKey('marked');
+    let applied = 0;
+    let rejected = 0;
+    let failed = 0;
     try {
-      const res = await axios.post(`/api/ai-grouping/reviews/${review.id}/${action}`);
-      if (action === 'apply') {
-        showToast(t('aiGroupingReviews.toast.applied', { count: res.data.collections || 0 }));
-      } else {
-        showToast(t('aiGroupingReviews.toast.rejected'));
+      for (const id of applyIds) {
+        try {
+          await axios.post(`/api/ai-grouping/reviews/${id}/apply`);
+          applied += 1;
+        } catch {
+          failed += 1;
+        }
       }
-      await loadReviews();
+      for (const id of rejectIds) {
+        try {
+          await axios.post(`/api/ai-grouping/reviews/${id}/reject`);
+          rejected += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      showToast(t('reviewInbox.toast.markedApplied', {
+        applied,
+        rejected,
+        skipped: 0,
+        failed,
+      }), failed > 0 ? 'error' : 'success');
+      setMarkedActions({});
+      await loadReviews(true);
       onReviewChange?.();
-    } catch (err: unknown) {
-      showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
     } finally {
       setActingKey(null);
     }
@@ -187,7 +289,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
         delete next[collection.id];
         return next;
       });
-      await loadReviews();
+      await loadReviews(true);
       onReviewChange?.();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
@@ -237,7 +339,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
       });
       showToast(t('aiGroupingReviews.toast.collectionUpdated'));
       cancelEdit(collection.id);
-      await loadReviews();
+      await loadReviews(true);
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
     } finally {
@@ -253,8 +355,6 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
       seriesIds: exists ? draft.seriesIds.filter((id) => id !== seriesID) : [...draft.seriesIds, seriesID],
     });
   };
-
-  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
     <div className={embedded ? '' : 'min-h-screen bg-komgaDark p-6 lg:p-10'}>
@@ -274,30 +374,44 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
             <p className="mt-1 text-2xl font-semibold text-white">{total}</p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-gray-950/60 px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">{t('aiGroupingReviews.metric.pendingPage')}</p>
-            <p className="mt-1 text-2xl font-semibold text-white">{pendingCount}</p>
+            <p className="text-xs uppercase tracking-wide text-gray-500">{t('reviewInbox.metric.marked')}</p>
+            <p className="mt-1 text-2xl font-semibold text-white">{markedCount}</p>
           </div>
         </div>
       </div>
       )}
 
       <div className="mb-6 grid gap-3 rounded-2xl border border-white/10 bg-komgaSurface/70 p-4 backdrop-blur-sm md:grid-cols-[1fr_180px_auto]">
-        <select value={libraryId} onChange={(event) => { setLibraryId(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
+        <select value={libraryId} onChange={(event) => setLibraryId(event.target.value)} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="0">{t('aiGroupingReviews.allLibraries')}</option>
           {(libraries || []).map((library) => (
             <option key={library.id} value={library.id}>{library.name}</option>
           ))}
         </select>
-        <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
+        <select value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2.5 text-sm text-white outline-hidden focus:border-komgaPrimary">
           <option value="pending">{t('aiGroupingReviews.status.pending')}</option>
           <option value="applied">{t('aiGroupingReviews.status.applied')}</option>
           <option value="rejected">{t('aiGroupingReviews.status.rejected')}</option>
           <option value="">{t('aiGroupingReviews.status.all')}</option>
         </select>
-        <button onClick={() => loadReviews()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-komgaPrimary/20 hover:bg-komgaPrimaryHover">
+        <button onClick={() => loadReviews(true)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-komgaPrimary/20 hover:bg-komgaPrimaryHover">
           <Filter className="h-4 w-4" />
           {t('common.search')}
         </button>
+      </div>
+
+      <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-white/10 bg-gray-950/45 p-4 md:flex-row md:items-center md:justify-between select-none">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-gray-500">{t('reviewInbox.loadedSummary', { loaded: items.length, total })}</span>
+          {markedCount > 0 && (
+            <span className="text-xs text-gray-500">{t('reviewInbox.markedSummary', { apply: applyIds.length, reject: rejectIds.length })}</span>
+          )}
+        </div>
+        {markedCount > 0 && (
+          <button onClick={clearMarks} className="self-start rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 md:self-auto">
+            {t('reviewInbox.clearMarks')}
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -313,17 +427,38 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
         <div className="grid gap-4 lg:grid-cols-[minmax(280px,30%)_1fr]">
           {/* 左：高密度 review 列表 */}
           <div className="rounded-2xl border border-white/10 bg-gray-950/40 overflow-hidden">
-            <ul className="max-h-[70vh] overflow-y-auto divide-y divide-white/5">
+            <ul ref={listScrollRef} className="max-h-[70vh] overflow-y-auto divide-y divide-white/5">
               {items.map((review) => {
                 const isActive = activeReviewId === review.id;
+                const mark = markedActions[review.id];
+                const markable = review.status === 'pending';
                 return (
                   <li key={review.id}>
                     <button
                       type="button"
                       onClick={() => setActiveReviewId(review.id)}
-                      className={`flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors ${isActive ? 'bg-komgaPrimary/15 ring-1 ring-inset ring-komgaPrimary/40' : 'hover:bg-white/5'}`}
+                      className={`flex w-full items-start gap-3 border-l-2 px-3 py-2.5 text-left transition-colors ${mark === 'apply' ? 'border-emerald-400' : mark === 'reject' ? 'border-red-400' : 'border-transparent'} ${isActive ? 'bg-komgaPrimary/15 ring-1 ring-inset ring-komgaPrimary/40' : 'hover:bg-white/5'}`}
                     >
-                      <Layers3 className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                      <span className="flex shrink-0 flex-col gap-1" onClick={(event) => event.stopPropagation()}>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => markReview(review, 'apply')}
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${mark === 'apply' ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-200' : markable ? 'border-white/10 bg-white/5 text-gray-500 hover:text-emerald-200' : 'border-white/5 bg-white/3 text-gray-700'}`}
+                          title={t('reviewInbox.markApply')}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => markReview(review, 'reject')}
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${mark === 'reject' ? 'border-red-400/50 bg-red-500/20 text-red-200' : markable ? 'border-white/10 bg-white/5 text-gray-500 hover:text-red-200' : 'border-white/5 bg-white/3 text-gray-700'}`}
+                          title={t('reviewInbox.markReject')}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </span>
+                      </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <p className={`truncate text-sm font-medium ${isActive ? 'text-white' : 'text-gray-200'}`}>
@@ -346,6 +481,18 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
                   </li>
                 );
               })}
+              <li ref={loadMoreRef} className="flex min-h-12 items-center justify-center px-3 py-3 text-xs text-gray-500">
+                {loadingMore ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin text-komgaPrimary" />
+                    {t('reviewInbox.loadingMore')}
+                  </>
+                ) : hasMore ? (
+                  t('reviewInbox.scrollForMore')
+                ) : (
+                  t('reviewInbox.allLoaded', { total })
+                )}
+              </li>
             </ul>
           </div>
 
@@ -366,13 +513,13 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
                   </div>
                   {activeReview.status === 'pending' && (
                     <div className="flex flex-wrap gap-2">
-                      <button onClick={() => runAction(activeReview, 'reject')} disabled={actingKey === `review:${activeReview.id}:reject`} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-500/15 disabled:opacity-40">
-                        {actingKey === `review:${activeReview.id}:reject` ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-                        {t('aiGroupingReviews.reject')}
+                      <button onClick={() => markReview(activeReview, 'reject')} className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium disabled:opacity-40 ${markedActions[activeReview.id] === 'reject' ? 'border-red-400/50 bg-red-500/20 text-red-100' : 'border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15'}`}>
+                        <XCircle className="h-4 w-4" />
+                        {t('reviewInbox.markReject')}
                       </button>
-                      <button onClick={() => runAction(activeReview, 'apply')} disabled={actingKey === `review:${activeReview.id}:apply`} className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-semibold text-white hover:bg-komgaPrimaryHover disabled:opacity-40">
-                        {actingKey === `review:${activeReview.id}:apply` ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                        {t('aiGroupingReviews.apply')}
+                      <button onClick={() => markReview(activeReview, 'apply')} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-40 ${markedActions[activeReview.id] === 'apply' ? 'bg-emerald-500' : 'bg-komgaPrimary hover:bg-komgaPrimaryHover'}`}>
+                        <CheckCircle2 className="h-4 w-4" />
+                        {t('reviewInbox.markApply')}
                       </button>
                     </div>
                   )}
@@ -468,13 +615,24 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
         </div>
       )}
 
-      <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-6 sm:flex-row">
-        <p className="text-sm text-gray-500">{t('aiGroupingReviews.pageSummary', { page, total: totalPages })}</p>
-        <div className="flex gap-2">
-          <button onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1} className="rounded-xl border border-white/10 bg-gray-950 px-4 py-2 text-sm text-gray-300 hover:bg-white/5 disabled:opacity-40">{t('home.pagination.prev')}</button>
-          <button onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page >= totalPages} className="rounded-xl border border-white/10 bg-gray-950 px-4 py-2 text-sm text-gray-300 hover:bg-white/5 disabled:opacity-40">{t('home.pagination.next')}</button>
+      {markedCount > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900/90 backdrop-blur-xl border border-white/10 rounded-2xl px-6 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col sm:flex-row items-center gap-4 animate-in slide-in-from-bottom duration-300 select-none">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-white">
+              {t('reviewInbox.markedSummary', { apply: applyIds.length, reject: rejectIds.length })}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={clearMarks} disabled={actingKey === 'marked'} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-gray-200 hover:bg-white/10 transition-all active:scale-95">
+              {t('reviewInbox.clearMarks')}
+            </button>
+            <button onClick={runMarkedActions} disabled={actingKey === 'marked'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-komgaPrimary px-5 py-2 text-xs font-semibold text-white hover:bg-komgaPrimaryHover shadow-lg shadow-komgaPrimary/20 transition-all active:scale-95">
+              {actingKey === 'marked' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              {t('reviewInbox.applyMarked')}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

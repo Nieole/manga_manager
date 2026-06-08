@@ -9,6 +9,7 @@ export interface SavedLibrarySettings {
   activeLetter?: string | null;
   sortByField?: string;
   sortDir?: string;
+  keyword?: string;
   pageSize?: number;
   page?: number;
 }
@@ -20,6 +21,7 @@ interface UseLibraryFiltersResult {
   activeLetter: string | null;
   sortByField: string;
   sortDir: string;
+  keyword: string;
   page: number;
   pageSize: number;
   settingsReady: boolean;
@@ -30,6 +32,7 @@ interface UseLibraryFiltersResult {
   setActiveLetter: (value: string | null) => void;
   setSortByField: (value: string) => void;
   setSortDir: (value: string) => void;
+  setKeyword: (value: string) => void;
   setPage: (value: number) => void;
   setPageSize: (value: number) => void;
   resetAll: () => void;
@@ -78,18 +81,24 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
   const [activeLetter, setActiveLetter] = useState<string | null>(null);
   const [sortByField, setSortByField] = useState<string>('name');
   const [sortDir, setSortDir] = useState<string>('asc');
+  const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [settingsReadyLibId, setSettingsReadyLibId] = useState<string | null>(null);
   const lastWrittenSettings = useRef<string>('');
+  const currentSettingsReady = settingsReady && settingsReadyLibId === libId;
 
   // 1. 进入或切库时：读 URL 优先，缺省再读服务端 saved settings
   useEffect(() => {
     if (!libId) {
+      setSettingsReadyLibId(null);
       setSettingsReady(true);
       return;
     }
     setSettingsReady(false);
+    setSettingsReadyLibId(null);
+    lastWrittenSettings.current = '';
     const fromUrl = parseFiltersFromSearch(searchParams);
     if (fromUrl) {
       setActiveTag(fromUrl.activeTag);
@@ -98,8 +107,10 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       setActiveLetter(fromUrl.activeLetter);
       setSortByField(fromUrl.sortByField);
       setSortDir(fromUrl.sortDir);
+      setKeyword(fromUrl.keyword);
       setPage(fromUrl.page);
       setPageSize(fromUrl.pageSize);
+      setSettingsReadyLibId(libId);
       setSettingsReady(true);
       return;
     }
@@ -111,21 +122,24 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       setActiveLetter(stored.activeLetter ?? null);
       setSortByField(stored.sortByField || 'name');
       setSortDir(stored.sortDir || 'asc');
+      setKeyword(stored.keyword || '');
       setPage(stored.page || 1);
       setPageSize(stored.pageSize || DEFAULT_PAGE_SIZE);
     }
+    setSettingsReadyLibId(libId);
     setSettingsReady(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libId]);
 
   // 2. 状态变更后写回 URL（非空字段）+ 持久化到 server settings（节流）
   useEffect(() => {
-    if (!libId || !settingsReady) return;
+    if (!libId || !currentSettingsReady) return;
     const next = new URLSearchParams(searchParams);
     setOrDelete(next, 'tag', activeTag);
     setOrDelete(next, 'author', activeAuthor);
     setOrDelete(next, 'status', activeStatus);
     setOrDelete(next, 'letter', activeLetter);
+    setOrDelete(next, 'q', keyword.trim());
     setOrDelete(next, 'sort', sortByField === 'name' ? null : sortByField);
     setOrDelete(next, 'dir', VALID_SORT_DIRS.has(sortDir) && sortDir !== 'asc' ? sortDir : null);
     setOrDelete(next, 'size', pageSize === DEFAULT_PAGE_SIZE ? null : String(pageSize));
@@ -141,6 +155,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       activeLetter,
       sortByField,
       sortDir,
+      keyword: keyword.trim(),
       pageSize,
       page,
     };
@@ -154,11 +169,12 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     libId,
-    settingsReady,
+    currentSettingsReady,
     activeTag,
     activeAuthor,
     activeStatus,
     activeLetter,
+    keyword,
     sortByField,
     sortDir,
     pageSize,
@@ -170,6 +186,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     setActiveAuthor(null);
     setActiveStatus(null);
     setActiveLetter(null);
+    setKeyword('');
     setSortByField('name');
     setSortDir('asc');
     setPageSize(DEFAULT_PAGE_SIZE);
@@ -181,6 +198,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     if ('activeAuthor' in snapshot) setActiveAuthor(snapshot.activeAuthor ?? null);
     if ('activeStatus' in snapshot) setActiveStatus(snapshot.activeStatus ?? null);
     if ('activeLetter' in snapshot) setActiveLetter(snapshot.activeLetter ?? null);
+    if ('keyword' in snapshot) setKeyword(snapshot.keyword ?? '');
     if (snapshot.sortByField) setSortByField(snapshot.sortByField);
     if (snapshot.sortDir) setSortDir(snapshot.sortDir);
     if (snapshot.pageSize) setPageSize(snapshot.pageSize);
@@ -194,10 +212,11 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
         activeAuthor ? `author:${activeAuthor}` : '',
         activeStatus ? `status:${activeStatus}` : '',
         activeLetter ? `letter:${activeLetter}` : '',
+        keyword.trim() ? `q:${keyword.trim()}` : '',
       ]
         .filter(Boolean)
         .join(','),
-    [activeTag, activeAuthor, activeStatus, activeLetter],
+    [activeTag, activeAuthor, activeStatus, activeLetter, keyword],
   );
 
   return useMemo(
@@ -208,9 +227,10 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       activeLetter,
       sortByField,
       sortDir,
+      keyword,
       page,
       pageSize,
-      settingsReady,
+      settingsReady: currentSettingsReady,
       serializedFilters,
       setActiveTag,
       setActiveAuthor,
@@ -218,6 +238,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       setActiveLetter,
       setSortByField,
       setSortDir,
+      setKeyword,
       setPage,
       setPageSize,
       resetAll,
@@ -228,11 +249,14 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       activeAuthor,
       activeStatus,
       activeLetter,
+      keyword,
       sortByField,
       sortDir,
       page,
       pageSize,
-      settingsReady,
+      currentSettingsReady,
+      settingsReadyLibId,
+      libId,
       serializedFilters,
       resetAll,
       applySnapshot,
@@ -255,11 +279,12 @@ function parseFiltersFromSearch(params: URLSearchParams): {
   activeLetter: string | null;
   sortByField: string;
   sortDir: string;
+  keyword: string;
   page: number;
   pageSize: number;
 } | null {
   // 至少有一个 query 参数才认为 URL 携带了完整意图（避免覆盖服务端 settings）
-  const hasAny = ['tag', 'author', 'status', 'letter', 'sort', 'dir', 'size', 'page'].some((k) => params.has(k));
+  const hasAny = ['tag', 'author', 'status', 'letter', 'q', 'sort', 'dir', 'size', 'page'].some((k) => params.has(k));
   if (!hasAny) return null;
   const sizeRaw = parseInt(params.get('size') || '', 10);
   const pageRaw = parseInt(params.get('page') || '', 10);
@@ -268,6 +293,7 @@ function parseFiltersFromSearch(params: URLSearchParams): {
     activeAuthor: params.get('author') || null,
     activeStatus: params.get('status') || null,
     activeLetter: params.get('letter') || null,
+    keyword: params.get('q') || '',
     sortByField: params.get('sort') || 'name',
     sortDir: VALID_SORT_DIRS.has(params.get('dir') || '') ? (params.get('dir') as string) : 'asc',
     pageSize: Number.isFinite(sizeRaw) && sizeRaw > 0 ? sizeRaw : DEFAULT_PAGE_SIZE,

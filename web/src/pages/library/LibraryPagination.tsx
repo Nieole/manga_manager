@@ -16,6 +16,15 @@ interface LibraryPaginationProps {
   onResetCursor: () => void;
 }
 
+function getVisiblePageNumbers(page: number, totalPages: number) {
+  const visibleCount = Math.min(5, totalPages);
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+  let startPage = currentPage - Math.floor(visibleCount / 2);
+  startPage = Math.max(1, Math.min(startPage, totalPages - visibleCount + 1));
+
+  return Array.from({ length: visibleCount }, (_, index) => startPage + index);
+}
+
 export function LibraryPagination({
   paginationMode,
   totalSeries,
@@ -31,6 +40,7 @@ export function LibraryPagination({
 }: LibraryPaginationProps) {
   const { t } = useI18n();
   const totalPages = Math.max(1, Math.ceil(totalSeries / pageSize));
+  const visiblePageNumbers = getVisiblePageNumbers(page, totalPages);
 
   return (
     <div className="mt-12 mb-8 flex flex-col xl:flex-row items-center justify-between gap-6 border-t border-gray-800 pt-8">
@@ -83,15 +93,10 @@ export function LibraryPagination({
             {t('home.pagination.prev')}
           </button>
           <div className="flex items-center gap-1 mx-1 sm:mx-2 overflow-x-auto">
-            {[...Array(Math.min(5, totalPages))].map((_, i) => {
-              let pNum = page;
-              if (page <= 3) pNum = i + 1;
-              else if (page >= totalPages - 2) pNum = Math.max(1, totalPages - 4 + i);
-              else pNum = page - 2 + i;
-              if (pNum <= 0 || pNum > totalPages) return null;
+            {visiblePageNumbers.map((pNum) => {
               return (
                 <button
-                  key={`page-${i}-${pNum}`}
+                  key={`page-${pNum}`}
                   onClick={() => onChangePage(pNum)}
                   className={`w-8 h-8 sm:w-9 sm:h-9 shrink-0 flex items-center justify-center rounded-lg text-sm font-bold transition-all ${
                     page === pNum ? 'bg-komgaPrimary text-white shadow-md' : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'
