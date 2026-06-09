@@ -505,12 +505,10 @@ func Migrate(dbPath string) error {
 			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_ad AFTER DELETE ON series BEGIN
-			INSERT INTO series_search_fts(series_search_fts, rowid, library_id, name, title)
-			VALUES ('delete', OLD.id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
+			DELETE FROM series_search_fts WHERE rowid = OLD.id;
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_au AFTER UPDATE OF library_id, name, title ON series BEGIN
-			INSERT INTO series_search_fts(series_search_fts, rowid, library_id, name, title)
-			VALUES ('delete', OLD.id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
+			DELETE FROM series_search_fts WHERE rowid = OLD.id;
 			INSERT INTO series_search_fts(rowid, library_id, name, title)
 			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
@@ -519,12 +517,10 @@ func Migrate(dbPath string) error {
 			VALUES (NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_ad AFTER DELETE ON books BEGIN
-			INSERT INTO book_search_fts(book_search_fts, rowid, series_id, library_id, name, title)
-			VALUES ('delete', OLD.id, OLD.series_id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
+			DELETE FROM book_search_fts WHERE rowid = OLD.id;
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_au AFTER UPDATE OF series_id, library_id, name, title ON books BEGIN
-			INSERT INTO book_search_fts(book_search_fts, rowid, series_id, library_id, name, title)
-			VALUES ('delete', OLD.id, OLD.series_id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
+			DELETE FROM book_search_fts WHERE rowid = OLD.id;
 			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title)
 			VALUES (NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
@@ -1395,6 +1391,7 @@ func (s *SqlStore) searchProtocolSeriesSubstring(ctx context.Context, keyword st
 }
 
 func (s *SqlStore) searchGlobalBooksFTS(ctx context.Context, keyword string, limit int32) ([]BookSearchHit, error) {
+	match := fts5PhraseQuery(keyword)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
@@ -1414,9 +1411,15 @@ func (s *SqlStore) searchGlobalBooksFTS(ctx context.Context, keyword string, lim
 			SELECT rowid, bm25(book_search_fts, 2.5, 3.0) AS rank
 			FROM book_search_fts
 			WHERE book_search_fts MATCH ?
+			UNION
+			SELECT b2.id AS rowid, 1.5 AS rank
+			FROM series_search_fts sf
+			JOIN books b2 ON b2.series_id = sf.rowid
+			WHERE series_search_fts MATCH ?
 		) m
 		JOIN books b ON b.id = m.rowid
 		JOIN series s ON s.id = b.series_id
+		GROUP BY b.id
 		ORDER BY
 			CASE
 				WHEN lower(b.name) = lower(?) OR lower(COALESCE(b.title, '')) = lower(?) THEN 0
@@ -1425,13 +1428,13 @@ func (s *SqlStore) searchGlobalBooksFTS(ctx context.Context, keyword string, lim
 				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 3
 				ELSE 4
 			END,
-			m.rank ASC,
+			MIN(m.rank) ASC,
 			s.name COLLATE NOCASE ASC,
 			b.volume ASC,
 			b.sort_number ASC,
 			b.name COLLATE NOCASE ASC
 		LIMIT ?
-	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, fts5PhraseQuery(keyword), keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
+	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, match, match, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
 	if err != nil {
 		return nil, err
 	}
