@@ -74,6 +74,8 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	cacheKey := fmt.Sprintf("%d-%d-%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t",
 		bookID, pageNumber, source.FileModifiedAt.UnixNano(), source.Size,
 		widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr, autoCrop)
+	// 图片资源不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，否则浏览器无法命中缓存。
+	w.Header().Del("Vary")
 	etag := weakETag(cacheKey)
 	if r.Header.Get("If-None-Match") == etag {
 		annotatePageImageRequest(ctx, bookID, pageNumber, true, "client", transform)
@@ -464,6 +466,7 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 			// http.ServeFile 仍会提供 Last-Modified 作为兜底条件请求。
 			etag := weakETag(fmt.Sprintf("cover-%s-%d-%d", book.CoverPath.String, info.ModTime().UnixNano(), info.Size()))
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Del("Vary")
 			w.Header().Set("ETag", etag)
 			if r.Header.Get("If-None-Match") == etag {
 				w.WriteHeader(http.StatusNotModified)
