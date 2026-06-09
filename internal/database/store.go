@@ -501,41 +501,38 @@ func Migrate(dbPath string) error {
 		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ai AFTER INSERT ON series_tags BEGIN UPDATE tags SET series_count = series_count + 1 WHERE id = NEW.tag_id; END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ad AFTER DELETE ON series_tags BEGIN UPDATE tags SET series_count = series_count - 1 WHERE id = OLD.tag_id; END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_ai AFTER INSERT ON series BEGIN
-			INSERT INTO series_search_fts(rowid, library_id, name, title, path)
-			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), NEW.path);
+			INSERT INTO series_search_fts(rowid, library_id, name, title)
+			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_ad AFTER DELETE ON series BEGIN
-			DELETE FROM series_search_fts WHERE rowid = OLD.id;
+			INSERT INTO series_search_fts(series_search_fts, rowid, library_id, name, title)
+			VALUES ('delete', OLD.id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
 		END`,
-		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_au AFTER UPDATE OF library_id, name, title, path ON series BEGIN
-			DELETE FROM series_search_fts WHERE rowid = OLD.id;
-			INSERT INTO series_search_fts(rowid, library_id, name, title, path)
-			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), NEW.path);
+		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_au AFTER UPDATE OF library_id, name, title ON series BEGIN
+			INSERT INTO series_search_fts(series_search_fts, rowid, library_id, name, title)
+			VALUES ('delete', OLD.id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
+			INSERT INTO series_search_fts(rowid, library_id, name, title)
+			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_ai AFTER INSERT ON books BEGIN
-			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
-			SELECT NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), s.name, COALESCE(s.title, ''), NEW.path
-			FROM series s
-			WHERE s.id = NEW.series_id;
+			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title)
+			VALUES (NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_ad AFTER DELETE ON books BEGIN
-			DELETE FROM book_search_fts WHERE rowid = OLD.id;
+			INSERT INTO book_search_fts(book_search_fts, rowid, series_id, library_id, name, title)
+			VALUES ('delete', OLD.id, OLD.series_id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
 		END`,
-		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_au AFTER UPDATE OF series_id, library_id, name, title, path ON books BEGIN
-			DELETE FROM book_search_fts WHERE rowid = OLD.id;
-			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
-			SELECT NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), s.name, COALESCE(s.title, ''), NEW.path
-			FROM series s
-			WHERE s.id = NEW.series_id;
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_series_au AFTER UPDATE OF library_id, name, title ON series BEGIN
-			DELETE FROM book_search_fts WHERE series_id = OLD.id;
-			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
-			SELECT b.id, b.series_id, b.library_id, b.name, COALESCE(b.title, ''), NEW.name, COALESCE(NEW.title, ''), b.path
-			FROM books b
-			WHERE b.series_id = NEW.id;
+		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_au AFTER UPDATE OF series_id, library_id, name, title ON books BEGIN
+			INSERT INTO book_search_fts(book_search_fts, rowid, series_id, library_id, name, title)
+			VALUES ('delete', OLD.id, OLD.series_id, OLD.library_id, OLD.name, COALESCE(OLD.title, ''));
+			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title)
+			VALUES (NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
 	}); err != nil {
+		return err
+	}
+
+	if err := migrateFTSTables(db); err != nil {
 		return err
 	}
 
@@ -555,10 +552,6 @@ func Migrate(dbPath string) error {
 		return err
 	}
 	if err := rebuildBookSearchIndex(db); err != nil {
-		return err
-	}
-
-	if err := backfillTagSeriesCount(db); err != nil {
 		return err
 	}
 
@@ -782,6 +775,62 @@ func backfillSeriesMetadataProvenance(db *sql.DB) error {
 	return nil
 }
 
+// migrateFTSTables 检测旧 FTS 表结构，若仍含冗余列则 DROP 重建为 contentless 模式。
+// 旧结构特征：series_search_fts 含 path 列，book_search_fts 含 series_name 列。
+func migrateFTSTables(db *sql.DB) error {
+	needRebuild := false
+
+	// 检测 series_search_fts 是否含旧列（path）
+	rows, err := db.Query(`SELECT * FROM series_search_fts LIMIT 0`)
+	if err == nil {
+		cols, _ := rows.Columns()
+		rows.Close()
+		for _, c := range cols {
+			if c == "path" {
+				needRebuild = true
+				break
+			}
+		}
+	}
+
+	if !needRebuild {
+		// 检测 book_search_fts 是否含旧列（series_name）
+		rows, err = db.Query(`SELECT * FROM book_search_fts LIMIT 0`)
+		if err == nil {
+			cols, _ := rows.Columns()
+			rows.Close()
+			for _, c := range cols {
+				if c == "series_name" {
+					needRebuild = true
+					break
+				}
+			}
+		}
+	}
+
+	if !needRebuild {
+		return nil
+	}
+
+	// DROP 所有旧触发器和旧 FTS 表，让后续 execSchemaStatements + CREATE TRIGGER IF NOT EXISTS 重建
+	for _, stmt := range []string{
+		`DROP TRIGGER IF EXISTS trg_series_search_fts_ai`,
+		`DROP TRIGGER IF EXISTS trg_series_search_fts_ad`,
+		`DROP TRIGGER IF EXISTS trg_series_search_fts_au`,
+		`DROP TRIGGER IF EXISTS trg_book_search_fts_ai`,
+		`DROP TRIGGER IF EXISTS trg_book_search_fts_ad`,
+		`DROP TRIGGER IF EXISTS trg_book_search_fts_au`,
+		`DROP TRIGGER IF EXISTS trg_book_search_fts_series_au`,
+		`DROP TABLE IF EXISTS series_search_fts`,
+		`DROP TABLE IF EXISTS book_search_fts`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func migrateLegacyKOReaderAccounts(db *sql.DB) error {
 	var accountCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM koreader_accounts`).Scan(&accountCount); err != nil {
@@ -841,8 +890,8 @@ func rebuildSeriesSearchIndexContext(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO series_search_fts(rowid, library_id, name, title, path)
-		SELECT id, library_id, name, COALESCE(title, ''), path
+		INSERT INTO series_search_fts(rowid, library_id, name, title)
+		SELECT id, library_id, name, COALESCE(title, '')
 		FROM series
 	`)
 	return err
@@ -853,10 +902,9 @@ func rebuildBookSearchIndexContext(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
-		SELECT b.id, b.series_id, b.library_id, b.name, COALESCE(b.title, ''), s.name, COALESCE(s.title, ''), b.path
-		FROM books b
-		JOIN series s ON s.id = b.series_id
+		INSERT INTO book_search_fts(rowid, series_id, library_id, name, title)
+		SELECT id, series_id, library_id, name, COALESCE(title, '')
+		FROM books
 	`)
 	return err
 }
@@ -1277,7 +1325,7 @@ func (s *SqlStore) searchProtocolSeriesFTS(ctx context.Context, keyword string, 
 			s.created_at,
 			s.updated_at
 		FROM (
-			SELECT rowid, bm25(series_search_fts, 2.0, 3.0, 0.5) AS rank
+			SELECT rowid, bm25(series_search_fts, 2.0, 3.0) AS rank
 			FROM series_search_fts
 			WHERE series_search_fts MATCH ?
 		) m
@@ -1363,7 +1411,7 @@ func (s *SqlStore) searchGlobalBooksFTS(ctx context.Context, keyword string, lim
 				+ (1.0 / (1.0 + ABS(m.rank)))
 			) AS score
 		FROM (
-			SELECT rowid, bm25(book_search_fts, 2.5, 3.0, 1.8, 2.0, 0.5) AS rank
+			SELECT rowid, bm25(book_search_fts, 2.5, 3.0) AS rank
 			FROM book_search_fts
 			WHERE book_search_fts MATCH ?
 		) m
@@ -1449,7 +1497,7 @@ func (s *SqlStore) searchGlobalSeriesFTS(ctx context.Context, keyword string, li
 				+ (1.0 / (1.0 + ABS(m.rank)))
 			) AS score
 		FROM (
-			SELECT rowid, bm25(series_search_fts, 2.0, 3.0, 0.5) AS rank
+			SELECT rowid, bm25(series_search_fts, 2.0, 3.0) AS rank
 			FROM series_search_fts
 			WHERE series_search_fts MATCH ?
 		) m

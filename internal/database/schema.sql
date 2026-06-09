@@ -62,8 +62,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS series_search_fts USING fts5(
     library_id UNINDEXED,
     name,
     title,
-    path,
-    tokenize = 'trigram'
+    tokenize = 'trigram',
+    content = '',
+    contentless_delete = 1
 );
 
 CREATE TABLE IF NOT EXISTS series_stats (
@@ -168,10 +169,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS book_search_fts USING fts5(
     library_id UNINDEXED,
     name,
     title,
-    series_name,
-    series_title,
-    path,
-    tokenize = 'trigram'
+    tokenize = 'trigram',
+    content = '',
+    contentless_delete = 1
 );
 
 CREATE TABLE IF NOT EXISTS series_links (
