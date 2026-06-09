@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端设置页面，负责运行时配置、扫描选项、元数据 Provider、缓存和系统能力的可视化管理。
+ * 它把后端配置模型映射为用户可编辑表单，是系统行为变更的主要入口。
+ * 维护时应关注字段默认值、保存反馈、敏感信息展示、配置刷新和与 config.Manager 的语义一致。
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, PlugZap, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';

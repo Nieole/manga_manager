@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端工具函数层，负责封装性能统计、格式化、请求辅助和跨页面复用逻辑。
+ * 它支撑业务页面保持简洁，并统一处理浏览器端的边界行为。
+ * 维护时应关注副作用范围、异常返回、性能开销和调用方的业务语义。
+ */
+
 import axios, { type InternalAxiosRequestConfig } from 'axios';
 
 const FIRST_SCREEN_CAPTURE_MS = 3500;

@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端漫画系列关系图谱，负责把续作、前传、衍生、改编等关系渲染为可探索的节点网络。
+ * 它依赖后端系列关系数据、封面缩略图和主题变量，帮助用户理解作品之间的方向性关联。
+ * 维护时应关注力导布局稳定性、连线箭头方向、主题背景、节点可读性和大图交互性能。
+ */
+
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -43,6 +49,8 @@ const getVisualNodeCenter = (
   };
 };
 
+// 关系边承载的是“source 系列指向 target 系列”的业务语义，不能只依赖 React Flow 默认锚点。
+// 这里使用节点视觉中心重算路径，并在边的中后段绘制小箭头，让续作、前传、改编等方向在图谱里可读。
 function DirectedEdge({
   id,
   source,
@@ -118,6 +126,8 @@ const seededUnit = (value: string) => {
   return (hash >>> 0) / 4294967295;
 };
 
+// 关系图谱采用轻量力导布局：节点间互斥让画面松散，边的弹簧力维持关联距离，中心拉力避免整体漂移过远。
+// 算法只在数据加载时执行一次，输出稳定坐标，保证刷新后同一批关系不会因为随机数导致用户失去空间记忆。
 const getForceLayoutedElements = (nodes: Node[], edges: Edge[]) => {
   if (nodes.length === 0) return { nodes, edges };
 
@@ -225,6 +235,8 @@ export const FranchiseGraphPage: React.FC = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // 后端返回的是关系边列表，前端先聚合出唯一系列节点，再根据关系类型生成有向边。
+  // 单系列入口会突出当前系列；全库入口则展示库内所有关系，不强制指定中心节点。
   const fetchGraphData = useCallback(async () => {
     setIsLoading(true);
     try {

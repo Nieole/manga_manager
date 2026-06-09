@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端渲染入口，负责挂载 React 应用并装配主题、国际化和全局上下文。
+ * 它决定浏览器首次加载时可用的基础能力，是所有业务页面运行前的初始化层。
+ * 维护时应关注 Provider 顺序、全局样式加载和开发/生产环境差异。
+ */
+
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'

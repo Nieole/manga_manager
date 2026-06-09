@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
+ * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
+ * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 
@@ -35,6 +41,8 @@ export default function LibraryPage() {
   const { t } = useI18n();
   const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
 
+  // 资料库页面的筛选状态需要同时满足三件事：URL 可回放、后端查询可复现、浏览器刷新后用户选择不丢失。
+  // 因此筛选、排序、分页和智能视图都集中在 hook 层管理，页面只负责把它们编排到工具栏、列表和分页控件。
   const filters = useLibraryFilters({ libId });
   const {
     activeTag,
@@ -61,6 +69,7 @@ export default function LibraryPage() {
     resetAll,
   } = filters;
 
+  // 分页模式是纯前端体验偏好，不能影响后端数据契约；后端仍以 page/pageSize/cursor 返回稳定结果。
   const [paginationMode, setPaginationMode] = useState<PaginationMode>(() => {
     const stored = localStorage.getItem(PAGINATION_MODE_KEY);
     return stored === 'infinite' ? 'infinite' : 'paged';
@@ -83,6 +92,7 @@ export default function LibraryPage() {
   const showError = useCallback((messageKey: string) => showToast(t(messageKey), 'error'), [showToast, t]);
 
   // ===== series 数据 =====
+  // 这里是资料库主查询的唯一入口，所有筛选项都要在这里汇聚，避免列表、分页器和批量操作读取到不同版本的数据。
   const seriesData = useLibrarySeries({
     libId,
     page,
@@ -120,6 +130,7 @@ export default function LibraryPage() {
   const externalLib = useExternalLibrary({ libId, refreshTrigger, allSeriesIds, onError: showError });
 
   // ===== 智能筛选 =====
+  // 智能筛选保存的是一组业务视图快照，应用时必须重置关键字，避免“视图条件 + 临时搜索词”叠加后让用户误以为视图失效。
   const smartFilters = useSmartFilters({
     libId,
     onSaved: () => showToast(t('home.smartFilters.saved'), 'success'),

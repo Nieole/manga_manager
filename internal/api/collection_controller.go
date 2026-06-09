@@ -1,3 +1,7 @@
+// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
+// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
+// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
+
 package api
 
 import (
@@ -297,14 +301,14 @@ func (c *Controller) getSeriesFranchise(w http.ResponseWriter, r *http.Request) 
 
 	// 转换为前端可用的格式
 	type FranchiseRelation struct {
-		ID                 int64  `json:"id"`
-		SourceSeriesID     int64  `json:"source_series_id"`
-		TargetSeriesID     int64  `json:"target_series_id"`
-		RelationType       string `json:"relation_type"`
-		SourceSeriesName   string `json:"source_series_name"`
-		TargetSeriesName   string `json:"target_series_name"`
-		SourceCoverPath    string `json:"source_cover_path"`
-		TargetCoverPath    string `json:"target_cover_path"`
+		ID               int64  `json:"id"`
+		SourceSeriesID   int64  `json:"source_series_id"`
+		TargetSeriesID   int64  `json:"target_series_id"`
+		RelationType     string `json:"relation_type"`
+		SourceSeriesName string `json:"source_series_name"`
+		TargetSeriesName string `json:"target_series_name"`
+		SourceCoverPath  string `json:"source_cover_path"`
+		TargetCoverPath  string `json:"target_cover_path"`
 	}
 
 	result := make([]FranchiseRelation, 0, len(items))
@@ -351,14 +355,14 @@ func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Req
 	}
 
 	type FranchiseRelation struct {
-		ID                 int64  `json:"id"`
-		SourceSeriesID     int64  `json:"source_series_id"`
-		TargetSeriesID     int64  `json:"target_series_id"`
-		RelationType       string `json:"relation_type"`
-		SourceSeriesName   string `json:"source_series_name"`
-		TargetSeriesName   string `json:"target_series_name"`
-		SourceCoverPath    string `json:"source_cover_path"`
-		TargetCoverPath    string `json:"target_cover_path"`
+		ID               int64  `json:"id"`
+		SourceSeriesID   int64  `json:"source_series_id"`
+		TargetSeriesID   int64  `json:"target_series_id"`
+		RelationType     string `json:"relation_type"`
+		SourceSeriesName string `json:"source_series_name"`
+		TargetSeriesName string `json:"target_series_name"`
+		SourceCoverPath  string `json:"source_cover_path"`
+		TargetCoverPath  string `json:"target_cover_path"`
 	}
 
 	result := make([]FranchiseRelation, 0, len(items))
@@ -491,7 +495,7 @@ func (c *Controller) deleteSeriesRelation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = c.store.DeleteSeriesRelation(r.Context(), relationID)
-	
+
 	// Trigger async franchise rebuild
 	go func() {
 		_ = c.RebuildFranchiseCollections(context.Background())

@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
+ * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
+ * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
+ */
+
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Save, Trash2 } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';

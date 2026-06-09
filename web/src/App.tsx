@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端应用路由入口，负责组织资料库、阅读器、系列、设置和任务等页面的导航关系。
+ * 它定义用户从一个业务场景进入另一个场景的路径，是前端页面编排的中心。
+ * 维护时应关注路由参数兼容、布局嵌套、错误兜底和页面级状态传递。
+ */
+
 import { Suspense, lazy, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Routes, Route, Navigate } from 'react-router-dom';

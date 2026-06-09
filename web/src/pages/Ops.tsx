@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于项目源码的一部分，负责支撑漫画管理器在资料库、阅读器、扫描、元数据或系统设置中的具体业务能力。
+ * 它与相邻模块共同组成前后端业务链路，修改时需要结合调用方理解数据流和用户可见行为。
+ * 维护时应关注输入输出契约、错误处理、状态同步和与既有业务语义的一致性。
+ */
+
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, Loader2, Terminal } from 'lucide-react';

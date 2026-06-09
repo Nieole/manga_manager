@@ -1,3 +1,7 @@
+// 业务说明：本文件是业务实现，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
+// 它连接 sqlc 生成查询与上层领域服务，是资料库筛选、搜索同步和关系图谱的数据基础。
+// 维护时应保持 schema、查询定义、事务边界和迁移兼容，避免破坏既有用户数据。
+
 package database
 
 import (
@@ -22,6 +26,8 @@ var schemaSQL string
 type Store interface {
 	Querier
 	Close() error
+	// Store 是 sqlc 生成查询之上的领域边界：Controller 和 Scanner 只依赖这里暴露的业务操作。
+	// 新增方法时应优先判断它是“通用 SQL 查询”还是“跨表业务动作”，前者放 query.sql，后者在 Store 中封装事务。
 	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]ExternalLibraryBookRow, error)
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error

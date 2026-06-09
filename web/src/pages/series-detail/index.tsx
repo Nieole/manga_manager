@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端系列详情页面，负责展示系列信息、卷册列表、元数据审核、关系维护和阅读入口。
+ * 它把数据库中的书籍聚合、外部元数据和人工编辑结果组织成单个系列的业务视图。
+ * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
+ */
+
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { BookImage, List, Grid, FolderOpen, ArrowLeft } from 'lucide-react';
@@ -36,6 +42,8 @@ export default function SeriesDetailPage() {
   const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
   const { showToast } = useToast();
 
+  // 系列详情页把多个后端端点折叠为一个上下文：系列主体、书籍、标签、作者、关系、待审核元数据和继续阅读信息。
+  // 页面组件只消费 ctx，避免各个子面板各自请求导致刷新顺序不一致或保存后局部状态过期。
   const ctx = useSeriesContext({ seriesId, refreshTrigger });
   const { volumes, standaloneBooks, allBookIds } = useSeriesVolumes(ctx.books);
   const openVolumes = useSeriesOpenVolumes({ seriesId, knownVolumes: volumes.map((v) => v.name) });
@@ -53,6 +61,7 @@ export default function SeriesDetailPage() {
   }, []);
 
   const totalSelectableCount = volumes.length + standaloneBooks.length + ctx.books.length;
+  // 选择模型同时支持“选卷”和“选单本”，最终提交前统一展开成书籍 ID，保证批量已读、加入合集等操作只面向后端书籍契约。
   const selection = useSeriesSelection({
     totalCount: totalSelectableCount,
     collectAllIds: useCallback(() => allBookIds, [allBookIds]),
@@ -88,6 +97,7 @@ export default function SeriesDetailPage() {
 
   const continueCta = useMemo(() => buildContinueCta(ctx.continueInfo, ctx.books), [ctx.continueInfo, ctx.books]);
 
+  // 背景封面优先使用已有封面路径的书籍，并带 updated_at 版本参数，让封面重建后浏览器可以刷新视觉背景。
   const coverUrl = useMemo(() => {
     const b = ctx.books.find((book) => book.cover_path?.Valid && book.cover_path?.String) || ctx.books[0];
     return b ? `/api/covers/${b.id}${b.updated_at ? `?v=${new Date(b.updated_at).getTime()}` : ''}` : null;
@@ -101,6 +111,7 @@ export default function SeriesDetailPage() {
     }
   }, [navigate, ctx.series]);
 
+  // 批量操作前把卷选择和单本选择去重合并，避免同一本既被卷选中又被单独选中时重复写进度。
   const collectSelectedBookIds = useCallback(() => {
     const volumeBookIds = volumes.filter((v) => selection.selectedVolumes.includes(v.name)).flatMap((v) => v.books.map((b) => b.id));
     return Array.from(new Set([...selection.selectedBooks, ...volumeBookIds]));

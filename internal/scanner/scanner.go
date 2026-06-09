@@ -1,3 +1,7 @@
+// 业务说明：本文件是业务实现，属于漫画库扫描链路，负责发现文件、建立书籍和系列记录、提取封面、同步索引并维护任务进度。
+// 它决定本地文件系统如何变成前端资料库、搜索结果和系列聚合视图。
+// 维护时应重点关注增量扫描、重命名/删除处理、元数据回填、Bleve 索引同步和长任务取消。
+
 package scanner
 
 import (
@@ -383,7 +387,8 @@ type coverJob struct {
 	progress  *scanProgressReporter
 }
 
-// ScanLibrary 递归扫描库目录查找漫画包，支持万级归档的跨三阶段流水线极速并发模式
+// ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
+// 业务上它需要同时保证增量扫描够快、强制修复能重建封面和索引、任务进度能实时反馈给前端。
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
 	if !s.beginLibraryScan(libraryID) {
 		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)
@@ -397,7 +402,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	progress := newScanProgressReporter("library", libraryID, metrics, s.onScanProgress)
 	progress.publish("loading_existing_books", "", true)
 
-	// Step 0: Pre-load cache for increment scanning
+	// 增量扫描先加载已入库文件的修改时间和大小，未变化的归档可以跳过重读，降低大库重复扫描成本。
 	bookCache := make(map[string]bookScanSnapshot)
 
 	if !opts.Force {
@@ -417,8 +422,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 
 	var wg sync.WaitGroup
 
-	// 第 2 阶段：解析工作池 (The Worker Pool)
-	// 在此处限制最大同时榨取的数量，保证文件描述符 FD 不枯竭且避免 CPU 长时间锁顿
+	// 第 2 阶段：解析工作池。
+	// 并发数受全局 worker 配置与存储 IO 策略共同约束，避免网络盘、机械盘或大归档场景下拖慢阅读器。
 	cfg := s.currentConfig()
 	numWorkers := s.scanWorkerCount(cfg, rootPath, opts)
 	for i := 0; i < numWorkers; i++ {
@@ -431,8 +436,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		}()
 	}
 
-	// 第 3 阶段：数据库写入器 (The Database Ingester)
-	// 利用独占协程开启包含 100+ INSERTs 的大事务以化解 SQLite 在并发模式下的 database is locked
+	// 第 3 阶段：数据库写入器。
+	// 解析结果统一进入单个写入协程，减少 SQLite 并发写导致的锁冲突，同时便于批量刷新系列统计和搜索索引。
 	ingestWg := sync.WaitGroup{}
 	ingestWg.Add(1)
 	go func() {
@@ -440,8 +445,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		s.ingestResults(ctx, libraryID, results, metrics, progress)
 	}()
 
-	// 第 1 阶段：发现者 (The Discoverer)
-	// 使用极速的 filepath.WalkDir 替代 filepath.Walk 减少系统软中断
+	// 第 1 阶段：文件发现。
+	// WalkDir 只负责识别候选漫画归档并投递任务，不打开归档内容，确保发现阶段可以快速响应暂停和取消。
 	var walkErr error
 	progress.publish("discovering", rootPath, true)
 	walkErr = filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {

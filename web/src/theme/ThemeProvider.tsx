@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端主题系统，负责集中定义颜色、间距、阴影和明暗模式下的视觉变量。
+ * 它影响资料库、阅读器、关系图谱和设置页的整体观感与主题跟随能力。
+ * 维护时应关注 CSS 变量命名、深浅色对比度、组件覆盖范围和持久化偏好。
+ */
+
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { APP_THEMES, DARK_THEMES, LIGHT_THEMES, THEME_STORAGE_KEY, applyTheme, getStoredThemeId, getThemeById, type AppTheme, type AppThemeId } from './themes';
 

@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是业务实现，属于前端阅读器总装页面，负责把书籍数据、图片缓存、阅读偏好、离线缓存和进度同步串成完整阅读体验。
+ * 它是分页阅读、条漫阅读、下一卷跳转、书签、快捷键和主题外观的编排层，本身尽量不直接承载底层请求细节。
+ * 维护时应关注当前书籍 ID、页面索引、本地缓存 URL 和后端进度写回之间的一致性，避免切书或切模式时串页。
+ */
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { WebtoonReaderHandle } from './book-reader/WebtoonReader';
@@ -23,6 +29,8 @@ export default function BookReader() {
     const { bookId } = useParams();
     const navigate = useNavigate();
 
+    // 阅读器偏好是跨书籍保留的用户配置，后续 hook 都会把这些配置转换为图片 URL 参数、布局模式或交互行为。
+    // 新增偏好时需要同时检查设置面板、缓存 key、离线缓存和进度恢复，避免同一页在不同参数下复用旧图。
     const {
         readerTheme,
         setReaderTheme,
@@ -69,16 +77,19 @@ export default function BookReader() {
         currentBookIdRef.current = bookId ?? null;
     }, [bookId]);
 
-    // UI State
+    // 页面级 UI 状态只描述当前阅读会话，不直接写入后端；真正需要持久化的偏好和阅读进度分别交给专用 hook 处理。
+    // 这样切换书籍时可以精确重置页码和浮层，同时保留用户长期偏好的阅读模式。
     const [showSettings, setShowSettings] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
-    // Paged mode state
+    // 分页模式的页码以数组索引为准，写回后端时再转换为实际页号，避免归档页号不连续时出现进度偏移。
     const [currentPageIndex, setCurrentPageIndex] = useState(0);
     // 底部进度条本地状态，用于解耦拖拽 UI 与核心渲染
     const [sliderValue, setSliderValue] = useState(1);
     const [hoverPage, setHoverPage] = useState<number | null>(null);
     const [hoverX, setHoverX] = useState(0);
     const currentBookIdRef = useRef<string | null>(bookId ?? null);
+    // 图片缓存 hook 负责把同一本书、同一套图像参数下的 Object URL 生命周期管住。
+    // 阅读器只声明“当前窗口需要哪些页”，释放策略由 hook 统一处理，防止长时间阅读后浏览器内存持续增长。
     const {
         cachedPageImageUrls,
         setCachedPageImageUrls,
@@ -102,6 +113,8 @@ export default function BookReader() {
         readerImageQuality,
         currentBookIdRef,
     });
+    // 书籍数据 hook 是后端阅读接口的入口：先拿页清单和书籍信息，再根据当前书籍身份更新系列跳转、下一卷和标题。
+    // currentBookIdRef 用于丢弃过期请求结果，解决快速切书时旧请求覆盖新页面的问题。
     const {
         pages,
         activePages,
@@ -202,6 +215,7 @@ export default function BookReader() {
     const toggleHelp = useCallback(() => {
         setShowHelp((value) => !value);
     }, []);
+    // 条漫模式按可见区间动态保留前后缓冲页，业务目标是在滚动阅读时保持连续，同时及时释放已经远离视口的图片。
     const handleWebtoonRenderRangeChange = useCallback((startIndex: number, endIndex: number) => {
         if (!bookId || readModeRef.current !== 'webtoon') return;
         const keepStart = Math.max(0, startIndex - Math.max(2, preloadCount));

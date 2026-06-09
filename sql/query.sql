@@ -1,3 +1,9 @@
+-- 业务说明：本文件是业务实现，属于数据库 SQL 契约层，负责定义 sqlc 生成查询、迁移 schema 和上层 Store 可调用的数据操作。
+-- 它直接影响资料库、系列关系、阅读进度、任务记录和搜索同步的数据含义。
+-- 维护时应关注查询命名、索引匹配、事务使用、迁移兼容和生成代码同步。
+
+-- 业务分区：Library 查询定义前端资料库的根对象，路径、扫描模式和格式字段会直接影响扫描任务如何发现漫画文件。
+-- 这里的返回列由 sqlc 生成强类型方法，字段调整需要同步 schema、Store 封装和设置页表单。
 -- name: CreateLibrary :one
 INSERT INTO libraries (name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats)
 VALUES (?, ?, ?, ?, ?, ?)

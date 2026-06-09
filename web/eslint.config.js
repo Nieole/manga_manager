@@ -1,3 +1,9 @@
+/**
+ * 业务说明：本文件是前端代码质量配置，负责约束 TypeScript、React Hooks 和 Vite 热更新相关的静态检查。
+ * 它不直接参与运行时业务，但会影响资料库、阅读器、设置页等页面在提交前能否暴露明显的组件和 hook 风险。
+ * 维护时应关注规则开关是否服务于现有代码结构，避免为了通过 lint 放宽真正会导致用户流程异常的检查。
+ */
+
 import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'

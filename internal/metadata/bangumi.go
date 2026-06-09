@@ -1,3 +1,7 @@
+// 业务说明：本文件是业务实现，属于元数据聚合链路，负责从本地规则、外部站点和 AI Provider 获取漫画标题、简介、人物、标签与关系信息。
+// 它支撑系列详情、智能补全、关系图谱和搜索索引的内容质量。
+// 维护时应关注 Provider 契约、失败回退、限流、提示词稳定性和人工审核数据不被覆盖。
+
 package metadata
 
 import (
@@ -263,15 +267,15 @@ func extractPublisherFromInfobox(infobox []interface{}) string {
 // extractAuthorsFromInfobox 从 Bangumi infobox 抽取作者/作画/原作等参与人员
 func extractAuthorsFromInfobox(infobox []interface{}) []SeriesAuthor {
 	roleMap := map[string]string{
-		"作者":  "Writer",
-		"原作":  "Writer",
-		"漫画":  "Penciller",
-		"作画":  "Penciller",
-		"插图":  "Cover",
-		"插画":  "Cover",
-		"出品":  "Editor",
-		"编辑":  "Editor",
-		"编剧":  "Writer",
+		"作者":     "Writer",
+		"原作":     "Writer",
+		"漫画":     "Penciller",
+		"作画":     "Penciller",
+		"插图":     "Cover",
+		"插画":     "Cover",
+		"出品":     "Editor",
+		"编辑":     "Editor",
+		"编剧":     "Writer",
 		"author": "Writer",
 		"writer": "Writer",
 		"artist": "Penciller",

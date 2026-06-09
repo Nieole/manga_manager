@@ -1,3 +1,6 @@
+// 业务说明：本文件是浏览器 Service Worker，负责静态资产缓存和阅读器离线缓存的兜底读取。
+// 它让用户在断网或后端短暂不可用时仍能打开已缓存书籍、书籍信息和阅读页面。
+// 维护时应严格区分阅读相关 GET 请求与普通 API，避免把任务、设置、SSE 等实时接口缓存成过期业务状态。
 // Manga Manager Service Worker - 静态资产与离线阅读缓存
 const CACHE_NAME = 'manga-manager-v2';
 const OFFLINE_BOOK_CACHE = 'manga-manager-offline-books-v1';

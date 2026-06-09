@@ -1,3 +1,7 @@
+// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
+// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
+// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
+
 package api
 
 import (
@@ -53,7 +57,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 图片参数判断
+	// 读取前端声明的图像变体参数：这些参数会改变最终字节内容，因此必须全部进入缓存键和 ETag。
 	qualityStr := r.URL.Query().Get("q")
 	format := r.URL.Query().Get("format") // 支持前端主动请求 webp/jpeg 降低带宽高负载
 	widthStr := r.URL.Query().Get("w")
@@ -61,8 +65,8 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	filter := normalizeServerImageFilter(r.URL.Query().Get("filter"))
 	autoCrop := r.URL.Query().Get("auto_crop") == "true"
 
-	// 构建缓存 Key（包含了全部可能改变画像最终形态的环境音阶，阻断 Waifu2x 翻页复读老图的缓存雪崩击穿）
-	// 同时引入文件修改时间和大小，防止 ID 复用导致的内容错位
+	// 构建缓存 Key：包含所有会改变最终图像字节的处理参数，防止切换滤镜、画质、放大参数后复用旧图。
+	// 同时引入文件修改时间和大小，避免归档被覆盖或 ID 复用时浏览器继续命中旧 ETag。
 	w2xScaleStr := r.URL.Query().Get("w2x_scale")
 	w2xNoiseStr := r.URL.Query().Get("w2x_noise")
 	w2xFormatStr := r.URL.Query().Get("w2x_format")
@@ -79,7 +83,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 如果是请求特定画幅或经过缩放/特定服务端滤镜的，则进行缓存查找以极速缓冲。原始图片则不查内存以防 OOM。
+	// 只有派生图像才进入内存/磁盘缓存；原始页图可能很大，直接缓存会挤占阅读器长会话内存。
 	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear") || autoCrop
 	rawPassthrough := !isThumbnailReq && w2xScaleStr == "" && w2xNoiseStr == "" && w2xFormatStr == ""
 	diskPageCacheEnabled := c.diskPageCacheEnabled(source)
@@ -89,7 +93,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			annotatePageImageDiagnostics(ctx, false, false, false, true)
 			annotatePageImageRequest(ctx, bookID, pageNumber, true, "memory", transform)
 			c.logPageImageServed(bookID, pageNumber, "memory", contentType, len(cachedData), time.Since(started), format, filter, autoCrop)
-			w.Header().Set("Content-Type", contentType) // 告别祖传写死的 jpeg 格式假传导致的前端崩溃
+			w.Header().Set("Content-Type", contentType) // 缓存命中时也以实际字节探测类型为准，避免前端按错误格式解码。
 			w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
 			w.Header().Set("ETag", etag)
@@ -170,7 +174,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		Waifu2xFormat: "webp", // 控制引擎默认采用 webp 挤压体积
 	}
 
-	// 捕获前端客制化的 Waifu2x 特异性参数
+	// 读取前端传入的 Waifu2x 参数；这些值已经进入缓存键，处理结果可以被安全复用。
 	if w2xScaleStr != "" {
 		if v, err := strconv.Atoi(w2xScaleStr); err == nil {
 			opts.Waifu2xScale = v
