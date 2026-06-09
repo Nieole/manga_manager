@@ -80,6 +80,55 @@ func TestServeCoverImage(t *testing.T) {
 	})
 }
 
+func TestServeThumbnailImageETag(t *testing.T) {
+	controller, _, _, rootDir := newTestController(t)
+
+	cacheDir := filepath.Join(rootDir, "thumb-cache")
+	if err := os.MkdirAll(filepath.Join(cacheDir, "ab"), 0o755); err != nil {
+		t.Fatalf("mkdir cache dir failed: %v", err)
+	}
+	cfg := controller.currentConfig()
+	cfg.Cache.Dir = cacheDir
+	controller.config.Replace(&cfg)
+
+	thumbnailData := []byte("thumbnail image bytes")
+	thumbnailName := filepath.ToSlash(filepath.Join("ab", "alpha-cover.webp"))
+	if err := os.WriteFile(filepath.Join(cacheDir, filepath.FromSlash(thumbnailName)), thumbnailData, 0o644); err != nil {
+		t.Fatalf("write thumbnail file failed: %v", err)
+	}
+
+	req := requestWithRouteParam(http.MethodGet, "/api/thumbnails/"+thumbnailName, nil, "*", thumbnailName)
+	rec := httptest.NewRecorder()
+	controller.serveThumbnailImage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Header().Get("Cache-Control") != "public, max-age=31536000" {
+		t.Fatalf("unexpected cache control header: %q", rec.Header().Get("Cache-Control"))
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("expected thumbnail response to include ETag")
+	}
+	if rec.Body.String() != string(thumbnailData) {
+		t.Fatalf("unexpected thumbnail body: %q", rec.Body.String())
+	}
+
+	req = requestWithRouteParam(http.MethodGet, "/api/thumbnails/"+thumbnailName, nil, "*", thumbnailName)
+	req.Header.Set("If-None-Match", etag)
+	rec = httptest.NewRecorder()
+	controller.serveThumbnailImage(rec, req)
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("expected matching etag 304, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("ETag") != etag {
+		t.Fatalf("expected 304 ETag %q, got %q", etag, rec.Header().Get("ETag"))
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected 304 body to be empty, got %q", rec.Body.String())
+	}
+}
+
 func TestDiskPageCacheDisabledForSameDiskExternalHDDPolicy(t *testing.T) {
 	controller, _, _, rootDir := newTestController(t)
 	cfg := controller.currentConfig()

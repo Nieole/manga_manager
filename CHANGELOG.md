@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-06-09（静态资源 ETag 缓存优化）
+
+#### 后端：静态资源条件缓存
+- `internal/api/controller.go`：`/api/thumbnails/*` 缩略图静态下发路径新增弱 ETag，基于缩略图相对路径、文件修改时间和文件大小生成；客户端携带匹配的 `If-None-Match` 时直接返回 `304 Not Modified`，避免来回切换页面时重复传输缩略图内容。
+- `cmd/server/main.go`：前端嵌入静态资源统一通过 `writeStaticContent` 输出，为 `index.html`、`assets/*`、manifest、图标、截图等构建产物生成基于路径与内容的弱 ETag；SPA fallback 到 `index.html` 时也复用同一套条件请求逻辑。
+- 已核对 `/api/pages/*` 页面图片与 `/api/covers/*` 封面已有 ETag；ComicInfo XML/ZIP 属于请求时动态生成下载内容，未按静态资源添加 ETag。
+
+#### 验证
+- `go test ./cmd/server ./internal/api` 通过；PowerShell/fnm 与 Go telemetry 权限提示仍为本机环境噪音，不影响测试结果。
+
+---
+
 ### 📌 增量记录 — 2026-06-07（待办审核批量标记 + 资料库搜索持久化修复）
 
 #### 前端：待办审核交互优化

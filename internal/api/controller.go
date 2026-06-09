@@ -2163,17 +2163,30 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		})
 
 		// 通用静态直接下发，适配首卷封面作为系列代表图（支持二级哈希子目录）
-		r.Get("/thumbnails/*", func(w http.ResponseWriter, r *http.Request) {
-			cfg := c.currentConfig()
-			thumbDir := filepath.Join(".", "data", "thumbnails")
-			if cfg.Cache.Dir != "" {
-				thumbDir = cfg.Cache.Dir
-			}
-			filename := chi.URLParam(r, "*")
-			w.Header().Set("Cache-Control", "public, max-age=31536000")
-			http.ServeFile(w, r, filepath.Join(thumbDir, filename))
-		})
+		r.Get("/thumbnails/*", c.serveThumbnailImage)
 	})
+}
+
+func (c *Controller) serveThumbnailImage(w http.ResponseWriter, r *http.Request) {
+	cfg := c.currentConfig()
+	thumbDir := filepath.Join(".", "data", "thumbnails")
+	if cfg.Cache.Dir != "" {
+		thumbDir = cfg.Cache.Dir
+	}
+	filename := chi.URLParam(r, "*")
+	fullPath := filepath.Join(thumbDir, filename)
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
+
+	if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+		etag := weakETag(fmt.Sprintf("thumbnail-%s-%d-%d", filename, info.ModTime().UnixNano(), info.Size()))
+		w.Header().Set("ETag", etag)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
+	http.ServeFile(w, r, fullPath)
 }
 
 func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
@@ -5305,4 +5318,3 @@ func (c *Controller) rebuildInitials(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "success"})
 }
-

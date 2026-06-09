@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha1"
 	_ "embed"
 	"flag"
 	"fmt"
@@ -135,13 +136,11 @@ func main() {
 				w.Write([]byte("Manga Manager API is running. Web builds are not yet embedded. Please run UI building task."))
 				return
 			}
-			setStaticResponseHeaders(w, "/index.html")
-			w.Write(index)
+			writeStaticContent(w, r, "/index.html", index)
 			return
 		}
 
-		setStaticResponseHeaders(w, path)
-		w.Write(content)
+		writeStaticContent(w, r, path, content)
 	})
 
 	addr := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
@@ -167,6 +166,22 @@ func setStaticResponseHeaders(w http.ResponseWriter, path string) {
 		w.Header().Set("Content-Type", contentType)
 	}
 	w.Header().Set("Cache-Control", staticCacheControl(path))
+}
+
+func writeStaticContent(w http.ResponseWriter, r *http.Request, path string, content []byte) {
+	setStaticResponseHeaders(w, path)
+	etag := staticETag(path, content)
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Write(content)
+}
+
+func staticETag(path string, content []byte) string {
+	sum := sha1.Sum(append([]byte(path+"\x00"), content...))
+	return `W/"` + fmt.Sprintf("%x", sum) + `"`
 }
 
 func staticContentType(path string) string {
