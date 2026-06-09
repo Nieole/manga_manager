@@ -27,6 +27,11 @@ type Store interface {
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
 	SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
 	SearchSeriesCursor(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error)
+	SearchGlobalSeries(ctx context.Context, keyword string, limit int32) ([]SeriesSearchHit, error)
+	SearchGlobalBooks(ctx context.Context, keyword string, limit int32) ([]BookSearchHit, error)
+	SearchProtocolSeries(ctx context.Context, keyword string, limit, offset int32) ([]ProtocolSeriesRow, int, error)
+	RebuildSeriesSearchIndex(ctx context.Context) error
+	RebuildBookSearchIndex(ctx context.Context) error
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetDashboardStructuralStats(ctx context.Context) (*DashboardStructuralStats, error)
 	GetDashboardVolatileStats(ctx context.Context) (*DashboardVolatileStats, error)
@@ -148,6 +153,18 @@ type SearchSeriesPagedRow struct {
 	LastReadAt      sql.NullTime    `json:"last_read_at"`
 	LastReadBookID  sql.NullInt64   `json:"last_read_book_id"`
 	LastReadPage    sql.NullInt64   `json:"last_read_page"`
+}
+
+type SeriesSearchHit struct {
+	SearchSeriesPagedRow
+	Score float64
+}
+
+type BookSearchHit struct {
+	Book
+	SeriesName  string
+	SeriesTitle sql.NullString
+	Score       float64
 }
 
 type seriesSearchSort struct {
@@ -477,6 +494,41 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at)`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ai AFTER INSERT ON series_tags BEGIN UPDATE tags SET series_count = series_count + 1 WHERE id = NEW.tag_id; END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ad AFTER DELETE ON series_tags BEGIN UPDATE tags SET series_count = series_count - 1 WHERE id = OLD.tag_id; END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_ai AFTER INSERT ON series BEGIN
+			INSERT INTO series_search_fts(rowid, library_id, name, title, path)
+			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), NEW.path);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_ad AFTER DELETE ON series BEGIN
+			DELETE FROM series_search_fts WHERE rowid = OLD.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_au AFTER UPDATE OF library_id, name, title, path ON series BEGIN
+			DELETE FROM series_search_fts WHERE rowid = OLD.id;
+			INSERT INTO series_search_fts(rowid, library_id, name, title, path)
+			VALUES (NEW.id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), NEW.path);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_ai AFTER INSERT ON books BEGIN
+			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
+			SELECT NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), s.name, COALESCE(s.title, ''), NEW.path
+			FROM series s
+			WHERE s.id = NEW.series_id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_ad AFTER DELETE ON books BEGIN
+			DELETE FROM book_search_fts WHERE rowid = OLD.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_au AFTER UPDATE OF series_id, library_id, name, title, path ON books BEGIN
+			DELETE FROM book_search_fts WHERE rowid = OLD.id;
+			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
+			SELECT NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''), s.name, COALESCE(s.title, ''), NEW.path
+			FROM series s
+			WHERE s.id = NEW.series_id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_book_search_fts_series_au AFTER UPDATE OF library_id, name, title ON series BEGIN
+			DELETE FROM book_search_fts WHERE series_id = OLD.id;
+			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
+			SELECT b.id, b.series_id, b.library_id, b.name, COALESCE(b.title, ''), NEW.name, COALESCE(NEW.title, ''), b.path
+			FROM books b
+			WHERE b.series_id = NEW.id;
+		END`,
 	}); err != nil {
 		return err
 	}
@@ -490,6 +542,13 @@ func Migrate(dbPath string) error {
 	}
 
 	if err := backfillSeriesStats(db); err != nil {
+		return err
+	}
+
+	if err := rebuildSeriesSearchIndex(db); err != nil {
+		return err
+	}
+	if err := rebuildBookSearchIndex(db); err != nil {
 		return err
 	}
 
@@ -753,6 +812,47 @@ func migrateLegacyKOReaderAccounts(db *sql.DB) error {
 
 func (s *SqlStore) BackfillSeriesInitials(ctx context.Context) error {
 	return backfillSeriesInitials(s.db)
+}
+
+func (s *SqlStore) RebuildSeriesSearchIndex(ctx context.Context) error {
+	return rebuildSeriesSearchIndexContext(ctx, s.db)
+}
+
+func (s *SqlStore) RebuildBookSearchIndex(ctx context.Context) error {
+	return rebuildBookSearchIndexContext(ctx, s.db)
+}
+
+func rebuildSeriesSearchIndex(db *sql.DB) error {
+	return rebuildSeriesSearchIndexContext(context.Background(), db)
+}
+
+func rebuildBookSearchIndex(db *sql.DB) error {
+	return rebuildBookSearchIndexContext(context.Background(), db)
+}
+
+func rebuildSeriesSearchIndexContext(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `DELETE FROM series_search_fts`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO series_search_fts(rowid, library_id, name, title, path)
+		SELECT id, library_id, name, COALESCE(title, ''), path
+		FROM series
+	`)
+	return err
+}
+
+func rebuildBookSearchIndexContext(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `DELETE FROM book_search_fts`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO book_search_fts(rowid, series_id, library_id, name, title, series_name, series_title, path)
+		SELECT b.id, b.series_id, b.library_id, b.name, COALESCE(b.title, ''), s.name, COALESCE(s.title, ''), b.path
+		FROM books b
+		JOIN series s ON s.id = b.series_id
+	`)
+	return err
 }
 
 func backfillSeriesInitials(db *sql.DB) error {
@@ -1094,6 +1194,320 @@ func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, keyw
 	return items, nextCursor, hasMore, nil
 }
 
+func (s *SqlStore) SearchGlobalSeries(ctx context.Context, keyword string, limit int32) ([]SeriesSearchHit, error) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return []SeriesSearchHit{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	if seriesSearchFTSEligible(keyword) {
+		items, err := s.searchGlobalSeriesFTS(ctx, keyword, limit)
+		if err == nil {
+			return items, nil
+		}
+	}
+	return s.searchGlobalSeriesSubstring(ctx, keyword, limit)
+}
+
+func (s *SqlStore) SearchGlobalBooks(ctx context.Context, keyword string, limit int32) ([]BookSearchHit, error) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return []BookSearchHit{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	if seriesSearchFTSEligible(keyword) {
+		items, err := s.searchGlobalBooksFTS(ctx, keyword, limit)
+		if err == nil {
+			return items, nil
+		}
+	}
+	return s.searchGlobalBooksSubstring(ctx, keyword, limit)
+}
+
+func (s *SqlStore) SearchProtocolSeries(ctx context.Context, keyword string, limit, offset int32) ([]ProtocolSeriesRow, int, error) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return []ProtocolSeriesRow{}, 0, nil
+	}
+	if limit <= 0 {
+		limit = 30
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if seriesSearchFTSEligible(keyword) {
+		rows, total, err := s.searchProtocolSeriesFTS(ctx, keyword, limit, offset)
+		if err == nil {
+			return rows, total, nil
+		}
+	}
+	return s.searchProtocolSeriesSubstring(ctx, keyword, limit, offset)
+}
+
+func (s *SqlStore) searchProtocolSeriesFTS(ctx context.Context, keyword string, limit, offset int32) ([]ProtocolSeriesRow, int, error) {
+	match := fts5PhraseQuery(keyword)
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series_search_fts WHERE series_search_fts MATCH ?`, match).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			s.id,
+			s.library_id,
+			s.name,
+			COALESCE(s.title, '') AS title,
+			COALESCE(s.summary, '') AS summary,
+			COALESCE(s.status, '') AS status,
+			s.book_count,
+			s.total_pages,
+			COALESCE(ss.cover_path, '') AS cover_path,
+			COALESCE(ss.cover_book_id, 0) AS cover_book_id,
+			s.created_at,
+			s.updated_at
+		FROM (
+			SELECT rowid, bm25(series_search_fts, 2.0, 3.0, 0.5) AS rank
+			FROM series_search_fts
+			WHERE series_search_fts MATCH ?
+		) m
+		JOIN series s ON s.id = m.rowid
+		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		ORDER BY
+			CASE
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 0
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 1
+				ELSE 2
+			END,
+			m.rank ASC,
+			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+		LIMIT ? OFFSET ?
+	`, match, keyword, keyword, keyword, keyword, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, err := scanProtocolSeriesRows(rows)
+	return items, total, err
+}
+
+func (s *SqlStore) searchProtocolSeriesSubstring(ctx context.Context, keyword string, limit, offset int32) ([]ProtocolSeriesRow, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM series s
+		WHERE instr(lower(s.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
+		   OR instr(lower(s.path), lower(?)) > 0
+	`, keyword, keyword, keyword).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			s.id,
+			s.library_id,
+			s.name,
+			COALESCE(s.title, '') AS title,
+			COALESCE(s.summary, '') AS summary,
+			COALESCE(s.status, '') AS status,
+			s.book_count,
+			s.total_pages,
+			COALESCE(ss.cover_path, '') AS cover_path,
+			COALESCE(ss.cover_book_id, 0) AS cover_book_id,
+			s.created_at,
+			s.updated_at
+		FROM series s
+		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		WHERE instr(lower(s.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
+		   OR instr(lower(s.path), lower(?)) > 0
+		ORDER BY
+			CASE
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 0
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 1
+				ELSE 2
+			END,
+			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+		LIMIT ? OFFSET ?
+	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, err := scanProtocolSeriesRows(rows)
+	return items, total, err
+}
+
+func (s *SqlStore) searchGlobalBooksFTS(ctx context.Context, keyword string, limit int32) ([]BookSearchHit, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
+			s.name AS series_name,
+			s.title AS series_title,
+			(
+				CASE
+					WHEN lower(b.name) = lower(?) OR lower(COALESCE(b.title, '')) = lower(?) THEN 3.5
+					WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 3.0
+					WHEN instr(lower(b.name), lower(?)) > 0 OR instr(lower(COALESCE(b.title, '')), lower(?)) > 0 THEN 2.5
+					WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 2.0
+					ELSE 1.0
+				END
+				+ (1.0 / (1.0 + ABS(m.rank)))
+			) AS score
+		FROM (
+			SELECT rowid, bm25(book_search_fts, 2.5, 3.0, 1.8, 2.0, 0.5) AS rank
+			FROM book_search_fts
+			WHERE book_search_fts MATCH ?
+		) m
+		JOIN books b ON b.id = m.rowid
+		JOIN series s ON s.id = b.series_id
+		ORDER BY
+			CASE
+				WHEN lower(b.name) = lower(?) OR lower(COALESCE(b.title, '')) = lower(?) THEN 0
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 1
+				WHEN instr(lower(b.name), lower(?)) > 0 OR instr(lower(COALESCE(b.title, '')), lower(?)) > 0 THEN 2
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 3
+				ELSE 4
+			END,
+			m.rank ASC,
+			s.name COLLATE NOCASE ASC,
+			b.volume ASC,
+			b.sort_number ASC,
+			b.name COLLATE NOCASE ASC
+		LIMIT ?
+	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, fts5PhraseQuery(keyword), keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanBookSearchHits(rows)
+}
+
+func (s *SqlStore) searchGlobalBooksSubstring(ctx context.Context, keyword string, limit int32) ([]BookSearchHit, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
+			s.name AS series_name,
+			s.title AS series_title,
+			CASE
+				WHEN lower(b.name) = lower(?) OR lower(COALESCE(b.title, '')) = lower(?) THEN 4.0
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 3.5
+				WHEN instr(lower(b.name), lower(?)) > 0 OR instr(lower(COALESCE(b.title, '')), lower(?)) > 0 THEN 3.0
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 2.5
+				ELSE 1.0
+			END AS score
+		FROM books b
+		JOIN series s ON s.id = b.series_id
+		WHERE instr(lower(b.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(b.title, '')), lower(?)) > 0
+		   OR instr(lower(s.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
+		   OR instr(lower(b.path), lower(?)) > 0
+		ORDER BY
+			CASE
+				WHEN lower(b.name) = lower(?) OR lower(COALESCE(b.title, '')) = lower(?) THEN 0
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 1
+				WHEN instr(lower(b.name), lower(?)) > 0 OR instr(lower(COALESCE(b.title, '')), lower(?)) > 0 THEN 2
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 3
+				ELSE 4
+			END,
+			s.name COLLATE NOCASE ASC,
+			b.volume ASC,
+			b.sort_number ASC,
+			b.name COLLATE NOCASE ASC
+		LIMIT ?
+	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanBookSearchHits(rows)
+}
+
+func (s *SqlStore) searchGlobalSeriesFTS(ctx context.Context, keyword string, limit int32) ([]SeriesSearchHit, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
+			ss.cover_path,
+			COALESCE(ss.tag_names_cache, '') as tags_string,
+			COALESCE(ss.read_pages, 0) as read_count,
+			ss.last_read_at,
+			NULLIF(ss.last_read_book_id, 0) AS last_read_book_id,
+			(SELECT b2.last_read_page FROM books b2 WHERE b2.id = ss.last_read_book_id) AS last_read_page,
+			(
+				CASE
+					WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 3.0
+					WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 2.0
+					ELSE 1.0
+				END
+				+ (1.0 / (1.0 + ABS(m.rank)))
+			) AS score
+		FROM (
+			SELECT rowid, bm25(series_search_fts, 2.0, 3.0, 0.5) AS rank
+			FROM series_search_fts
+			WHERE series_search_fts MATCH ?
+		) m
+		JOIN series s ON s.id = m.rowid
+		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		ORDER BY
+			CASE
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 0
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 1
+				ELSE 2
+			END,
+			m.rank ASC,
+			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+		LIMIT ?
+	`, keyword, keyword, keyword, keyword, fts5PhraseQuery(keyword), keyword, keyword, keyword, keyword, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanSeriesSearchHits(rows)
+}
+
+func (s *SqlStore) searchGlobalSeriesSubstring(ctx context.Context, keyword string, limit int32) ([]SeriesSearchHit, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
+			ss.cover_path,
+			COALESCE(ss.tag_names_cache, '') as tags_string,
+			COALESCE(ss.read_pages, 0) as read_count,
+			ss.last_read_at,
+			NULLIF(ss.last_read_book_id, 0) AS last_read_book_id,
+			(SELECT b2.last_read_page FROM books b2 WHERE b2.id = ss.last_read_book_id) AS last_read_page,
+			CASE
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 4.0
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 3.0
+				ELSE 1.0
+			END AS score
+		FROM series s
+		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		WHERE instr(lower(s.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
+		   OR instr(lower(s.path), lower(?)) > 0
+		ORDER BY
+			CASE
+				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 0
+				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 1
+				ELSE 2
+			END,
+			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+		LIMIT ?
+	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanSeriesSearchHits(rows)
+}
+
+func seriesSearchFTSEligible(keyword string) bool {
+	return len([]rune(strings.TrimSpace(keyword))) >= 3
+}
+
+func fts5PhraseQuery(keyword string) string {
+	return `"` + strings.ReplaceAll(strings.TrimSpace(keyword), `"`, `""`) + `"`
+}
+
 func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tags, authors []string) (string, string, []interface{}) {
 	baseQuery := `
 		SELECT
@@ -1217,6 +1631,124 @@ func scanSearchSeriesPagedRows(rows *sql.Rows) ([]SearchSeriesPagedRow, error) {
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func scanSeriesSearchHits(rows *sql.Rows) ([]SeriesSearchHit, error) {
+	defer rows.Close()
+
+	var items []SeriesSearchHit
+	for rows.Next() {
+		var i SeriesSearchHit
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Publisher,
+			&i.Status,
+			&i.Rating,
+			&i.Language,
+			&i.LockedFields,
+			&i.NameInitial,
+			&i.Path,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsFavorite,
+			&i.VolumeCount,
+			&i.BookCount,
+			&i.TotalPages,
+			&i.CoverPath,
+			&i.TagsString,
+			&i.ReadCount,
+			&i.LastReadAt,
+			&i.LastReadBookID,
+			&i.LastReadPage,
+			&i.Score,
+		); err != nil {
+			return nil, err
+		}
+		i.ActualBookCount = int(i.BookCount)
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func scanBookSearchHits(rows *sql.Rows) ([]BookSearchHit, error) {
+	defer rows.Close()
+
+	var items []BookSearchHit
+	for rows.Next() {
+		var i BookSearchHit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SeriesID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Path,
+			&i.Size,
+			&i.FileModifiedAt,
+			&i.Volume,
+			&i.Title,
+			&i.Summary,
+			&i.Number,
+			&i.SortNumber,
+			&i.PageCount,
+			&i.CoverPath,
+			&i.LastReadPage,
+			&i.LastReadAt,
+			&i.FileHash,
+			&i.QuickHash,
+			&i.PathFingerprint,
+			&i.PathFingerprintNoExt,
+			&i.FilenameFingerprint,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SeriesName,
+			&i.SeriesTitle,
+			&i.Score,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func scanProtocolSeriesRows(rows *sql.Rows) ([]ProtocolSeriesRow, error) {
+	defer rows.Close()
+
+	var items []ProtocolSeriesRow
+	for rows.Next() {
+		var item ProtocolSeriesRow
+		if err := rows.Scan(
+			&item.ID,
+			&item.LibraryID,
+			&item.Name,
+			&item.Title,
+			&item.Summary,
+			&item.Status,
+			&item.BookCount,
+			&item.TotalPages,
+			&item.CoverPath,
+			&item.CoverBookID,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

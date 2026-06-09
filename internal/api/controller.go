@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"context"
@@ -29,34 +29,31 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/search"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 
-	"github.com/blevesearch/bleve/v2"
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 type Controller struct {
-	store               database.Store
-	imageCache          *lru.Cache[string, []byte]
-	pageCache           *lru.Cache[string, []parser.PageMetadata]
-	bookPageSourceCache *lru.Cache[int64, cachedBookPageSource]
-	progressWriteCache  *lru.Cache[int64, cachedProgressWrite]
-	dashboardStatsMu    sync.RWMutex
-	volatileStatsCache  *cachedVolatileStats
-	dashboardStatsGen   int64
-	structuralStatsMu   sync.RWMutex
+	store                database.Store
+	imageCache           *lru.Cache[string, []byte]
+	pageCache            *lru.Cache[string, []parser.PageMetadata]
+	bookPageSourceCache  *lru.Cache[int64, cachedBookPageSource]
+	progressWriteCache   *lru.Cache[int64, cachedProgressWrite]
+	dashboardStatsMu     sync.RWMutex
+	volatileStatsCache   *cachedVolatileStats
+	dashboardStatsGen    int64
+	structuralStatsMu    sync.RWMutex
 	structuralStatsCache *cachedStructuralStats
-	structuralStatsGen  int64
-	scanner             *scanner.Scanner
-	engine              *search.Engine
-	config              *config.Manager
-	koreader            *koreader.Service
-	external            *external.Manager
-	configPath          string
-	watcher             *scanner.FileWatcher
+	structuralStatsGen   int64
+	scanner              *scanner.Scanner
+	config               *config.Manager
+	koreader             *koreader.Service
+	external             *external.Manager
+	configPath           string
+	watcher              *scanner.FileWatcher
 
 	// SSE Broker
 	clients        map[chan string]bool
@@ -159,6 +156,18 @@ type SystemConfigResponse struct {
 	Capabilities SystemCapabilitiesResponse `json:"capabilities"`
 }
 
+type SearchResult struct {
+	Hits     []*SearchHit `json:"hits"`
+	Total    uint64       `json:"total_hits"`
+	MaxScore float64      `json:"max_score"`
+}
+
+type SearchHit struct {
+	ID     string                 `json:"id"`
+	Score  float64                `json:"score"`
+	Fields map[string]interface{} `json:"fields,omitempty"`
+}
+
 const maxRetainedTasks = 200
 
 const (
@@ -207,7 +216,7 @@ type cachedVolatileStats struct {
 	expiresAt time.Time
 }
 
-func NewController(store database.Store, scan *scanner.Scanner, engine *search.Engine, cfg *config.Manager, cfgPath string) *Controller {
+func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
 	pageCache, _ := lru.New[string, []parser.PageMetadata](128)
 	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](512)
@@ -219,7 +228,6 @@ func NewController(store database.Store, scan *scanner.Scanner, engine *search.E
 		bookPageSourceCache:      bookPageSourceCache,
 		progressWriteCache:       progressWriteCache,
 		scanner:                  scan,
-		engine:                   engine,
 		config:                   cfg,
 		koreader:                 koreader.NewService(store, cfg),
 		external:                 external.NewManager(store, 30*time.Minute),
@@ -2186,31 +2194,176 @@ func (c *Controller) searchBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if c.engine == nil {
-		jsonError(w, http.StatusServiceUnavailable, "Search engine not initialized")
+	if target == "series" {
+		res, err := c.searchSeriesWithSQLite(r.Context(), query, 20)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "Search failed")
+			return
+		}
+		normalizeSearchScores(res)
+		jsonResponse(w, http.StatusOK, res)
 		return
 	}
 
-	res, err := c.engine.Search(query, target, 20)
+	if target == "book" || target == "all" || target == "title" {
+		res, err := c.searchBooksWithSQLite(r.Context(), query, target, 20)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "Search failed")
+			return
+		}
+		normalizeSearchScores(res)
+		jsonResponse(w, http.StatusOK, res)
+		return
+	}
+
+	jsonError(w, http.StatusBadRequest, "Invalid search target")
+}
+
+func (c *Controller) searchSeriesWithSQLite(ctx context.Context, query string, limit int32) (*SearchResult, error) {
+	res := &SearchResult{}
+	c.mergeSeriesSearchFallback(ctx, res, query, "series", limit)
+	return res, nil
+}
+
+func (c *Controller) searchBooksWithSQLite(ctx context.Context, query, target string, limit int32) (*SearchResult, error) {
+	res := &SearchResult{}
+	if target == "all" {
+		if err := c.mergeBookSearchHits(ctx, res, query, limit); err != nil {
+			return nil, err
+		}
+		c.mergeSeriesSearchFallback(ctx, res, query, "all", limit)
+		return res, nil
+	}
+	if err := c.mergeBookSearchHits(ctx, res, query, limit); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (c *Controller) mergeBookSearchHits(ctx context.Context, res *SearchResult, query string, limit int32) error {
+	if res == nil || strings.TrimSpace(query) == "" {
+		return nil
+	}
+	rows, err := c.store.SearchGlobalBooks(ctx, query, limit)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Search failed")
+		return err
+	}
+	for _, hit := range rows {
+		title := hit.Name
+		if hit.Title.Valid && hit.Title.String != "" {
+			title = hit.Title.String
+		}
+		seriesName := hit.SeriesName
+		if hit.SeriesTitle.Valid && hit.SeriesTitle.String != "" {
+			seriesName = hit.SeriesTitle.String
+		}
+		coverPath := ""
+		if hit.CoverPath.Valid {
+			coverPath = hit.CoverPath.String
+		}
+		score := hit.Score
+		if score <= 0 {
+			score = 1
+		}
+		docID := "b_" + strconv.FormatInt(hit.ID, 10)
+		res.Hits = append(res.Hits, &SearchHit{
+			ID:    docID,
+			Score: score,
+			Fields: map[string]interface{}{
+				"id":          docID,
+				"title":       title,
+				"series_name": seriesName,
+				"type":        "book",
+				"cover_path":  coverPath,
+			},
+		})
+		if score > res.MaxScore {
+			res.MaxScore = score
+		}
+	}
+	if uint64(len(res.Hits)) > res.Total {
+		res.Total = uint64(len(res.Hits))
+	}
+	return nil
+}
+
+// mergeSeriesSearchFallback uses SQLite FTS/trigram series search instead of Bleve.
+// Series metadata lives in SQLite, and the FTS triggers keep name/title/path indexed
+// with substring semantics that match manga titles better than tokenized Bleve fields.
+func (c *Controller) mergeSeriesSearchFallback(ctx context.Context, res *SearchResult, query, target string, limit int32) {
+	if res == nil || strings.TrimSpace(query) == "" || (target != "all" && target != "series") {
 		return
 	}
 
-	// 搜索索引里的 cover_path 是扫描时写入的，而封面为扫描后异步生成，
-	// 故索引中的封面常为空或过期。命中数 <=20，这里用数据库实时回填，
-	// 让缩略图始终为最新，且无需重建索引即可修复存量数据。
-	c.hydrateSearchCovers(r.Context(), res)
+	seen := make(map[string]struct{}, len(res.Hits))
+	for _, hit := range res.Hits {
+		seen[hit.ID] = struct{}{}
+	}
 
-	// bleve 返回的是未归一化的原始相关性得分，其绝对值随查询/字段差异巨大且不可解释。
-	// 这里按本次结果的最高分归一化到 0~1，使前端展示的"匹配度"稳定可比。
-	normalizeSearchScores(res)
+	rows, err := c.store.SearchGlobalSeries(ctx, query, limit)
+	if err != nil {
+		slog.Warn("mergeSeriesSearchFallback: series lookup failed", "error", err)
+		return
+	}
 
-	jsonResponse(w, http.StatusOK, res)
+	added := 0
+	for _, hit := range rows {
+		row := hit.SearchSeriesPagedRow
+		docID := "s_" + strconv.FormatInt(row.ID, 10)
+		if _, ok := seen[docID]; ok {
+			continue
+		}
+		title := row.Name
+		if row.Title.Valid && row.Title.String != "" {
+			title = row.Title.String
+		}
+		coverPath := ""
+		if row.CoverPath.Valid {
+			coverPath = row.CoverPath.String
+		}
+		score := hit.Score
+		if score <= 0 {
+			score = 1
+		}
+		res.Hits = append(res.Hits, &SearchHit{
+			ID:    docID,
+			Score: score,
+			Fields: map[string]interface{}{
+				"id":          docID,
+				"title":       title,
+				"series_name": row.Name,
+				"type":        "series",
+				"cover_path":  coverPath,
+			},
+		})
+		if score > res.MaxScore {
+			res.MaxScore = score
+		}
+		seen[docID] = struct{}{}
+		added++
+		if target == "series" && len(res.Hits) >= int(limit) {
+			break
+		}
+		if target == "all" && added >= int(limit) {
+			break
+		}
+	}
+
+	if uint64(len(res.Hits)) > res.Total {
+		res.Total = uint64(len(res.Hits))
+	}
+	if res.MaxScore <= 0 && len(res.Hits) > 0 {
+		res.MaxScore = 1
+		for _, hit := range res.Hits {
+			if hit.Score <= 0 {
+				hit.Score = 1
+			}
+		}
+	}
 }
 
 // normalizeSearchScores 将命中得分按本次结果的最高分缩放到 [0,1]，最佳匹配为 1.0。
-func normalizeSearchScores(res *bleve.SearchResult) {
+func normalizeSearchScores(res *SearchResult) {
 	if res == nil || len(res.Hits) == 0 || res.MaxScore <= 0 {
 		return
 	}
@@ -2221,7 +2374,7 @@ func normalizeSearchScores(res *bleve.SearchResult) {
 
 // hydrateSearchCovers 用数据库中的最新封面覆盖搜索命中文档的 cover_path 字段。
 // 文档 ID 形如 "b_<bookID>" / "s_<seriesID>"。
-func (c *Controller) hydrateSearchCovers(ctx context.Context, res *bleve.SearchResult) {
+func (c *Controller) hydrateSearchCovers(ctx context.Context, res *SearchResult) {
 	if res == nil || len(res.Hits) == 0 {
 		return
 	}
@@ -4423,18 +4576,17 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 }
 
 func (c *Controller) launchRebuildIndexTask() error {
-	if c.engine == nil {
-		return fmt.Errorf("search engine not initialized")
-	}
 	if !c.startTask("rebuild_index", "rebuild_index", "开始重建搜索索引", 1) {
 		return fmt.Errorf("task already running")
 	}
 	c.setTaskMetadata("rebuild_index", nil, "系统")
 
-	cfg := c.currentConfig()
-	dataPath := filepath.Dir(cfg.Database.Path)
-	if err := c.engine.Rebuild(dataPath); err != nil {
-		c.failTaskWithError("rebuild_index", fmt.Sprintf("搜索索引重建失败: %v", err), err.Error())
+	if err := c.store.RebuildSeriesSearchIndex(context.Background()); err != nil {
+		c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite series search index rebuild failed: %v", err), err.Error())
+		return err
+	}
+	if err := c.store.RebuildBookSearchIndex(context.Background()); err != nil {
+		c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite book search index rebuild failed: %v", err), err.Error())
 		return err
 	}
 
@@ -4447,10 +4599,6 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRebuildIndexTask(); err != nil {
 		if strings.Contains(err.Error(), "already running") {
 			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A search index rebuild is already running"})
-			return
-		}
-		if strings.Contains(err.Error(), "not initialized") {
-			jsonError(w, http.StatusServiceUnavailable, "Search engine not initialized")
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "Failed to rebuild search index")

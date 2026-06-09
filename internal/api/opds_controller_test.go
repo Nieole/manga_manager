@@ -36,10 +36,6 @@ func TestOPDSFeeds(t *testing.T) {
 	if err := controller.store.(*database.SqlStore).RefreshSeriesStats(context.Background(), series.ID); err != nil {
 		t.Fatalf("refresh series stats failed: %v", err)
 	}
-	if err := controller.engine.IndexSeries(series.ID, "Alpha Display", "covers/alpha.jpg"); err != nil {
-		t.Fatalf("index OPDS series failed: %v", err)
-	}
-
 	t.Run("root feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		controller.opdsRoot(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/", nil))
