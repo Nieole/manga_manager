@@ -6,57 +6,212 @@ import {
   MiniMap,
   Controls,
   Background,
+  BaseEdge,
   useNodesState,
   useEdgesState,
-  MarkerType,
   BackgroundVariant,
-  Position
+  getStraightPath,
+  Position,
+  useStore,
 } from '@xyflow/react';
-import type { Node, Edge } from '@xyflow/react';
+import type { Node, Edge, EdgeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import dagre from 'dagre';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { CustomNode } from './CustomNode';
 import type { FranchiseRelation } from '../series-detail/types';
 
+const GRAPH_NODE_WIDTH = 112;
+const GRAPH_NODE_HEIGHT = 138;
+
+const graphNodeSize = (data: any) => {
+  return data?.isCurrent ? 74 : Math.min(70, 52 + (data?.degree ?? 0) * 4);
+};
+
+const getVisualNodeCenter = (
+  node: any,
+  fallback: { x: number; y: number },
+) => {
+  if (!node) return fallback;
+  const position = node.internals?.positionAbsolute ?? node.positionAbsolute ?? node.position;
+  const data = node.internals?.userNode?.data ?? node.data;
+  if (!position) return fallback;
+
+  return {
+    x: position.x + GRAPH_NODE_WIDTH / 2,
+    y: position.y + graphNodeSize(data) / 2,
+  };
+};
+
+function DirectedEdge({
+  id,
+  source,
+  sourceX,
+  sourceY,
+  target,
+  targetX,
+  targetY,
+  label,
+  labelStyle,
+  labelShowBg,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  style,
+  interactionWidth,
+}: EdgeProps) {
+  const sourceNode = useStore((state: any) => state.nodeLookup.get(source));
+  const targetNode = useStore((state: any) => state.nodeLookup.get(target));
+  const sourceCenter = getVisualNodeCenter(sourceNode, { x: sourceX, y: sourceY });
+  const targetCenter = getVisualNodeCenter(targetNode, { x: targetX, y: targetY });
+  const [edgePath, labelX, labelY] = getStraightPath({
+    sourceX: sourceCenter.x,
+    sourceY: sourceCenter.y,
+    targetX: targetCenter.x,
+    targetY: targetCenter.y,
+  });
+  const arrowX = sourceCenter.x + (targetCenter.x - sourceCenter.x) * 0.62;
+  const arrowY = sourceCenter.y + (targetCenter.y - sourceCenter.y) * 0.62;
+  const angle = Math.atan2(targetCenter.y - sourceCenter.y, targetCenter.x - sourceCenter.x) * (180 / Math.PI);
+
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        label={label}
+        labelX={labelX}
+        labelY={labelY}
+        labelStyle={labelStyle}
+        labelShowBg={labelShowBg}
+        labelBgStyle={labelBgStyle}
+        labelBgPadding={labelBgPadding}
+        labelBgBorderRadius={labelBgBorderRadius}
+        style={style}
+        interactionWidth={interactionWidth}
+      />
+      <g
+        className="franchise-graph-edge-arrow"
+        transform={`translate(${arrowX}, ${arrowY}) rotate(${angle})`}
+        pointerEvents="none"
+      >
+        <path d="M -4 -2.8 L 4 0 L -4 2.8 z" />
+      </g>
+    </>
+  );
+}
+
 const nodeTypes = {
   custom: CustomNode,
 };
 
-const dagreGraph = new dagre.graphlib.Graph();
-dagreGraph.setDefaultEdgeLabel(() => ({}));
+const edgeTypes = {
+  directed: DirectedEdge,
+};
 
-const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => {
-  const isHorizontal = direction === 'LR';
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 100, ranksep: 150 });
+const seededUnit = (value: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967295;
+};
 
-  nodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: 144, height: 250 });
-  });
+const getForceLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+  if (nodes.length === 0) return { nodes, edges };
 
+  const degree = new Map<string, number>();
+  nodes.forEach((node) => degree.set(node.id, 0));
   edges.forEach((edge) => {
-    dagreGraph.setEdge(edge.source, edge.target);
+    degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
   });
 
-  dagre.layout(dagreGraph);
+  const radius = Math.max(420, nodes.length * 54);
+  const centerPull = nodes.length > 30 ? 0.005 : 0.007;
+  const linkDistance = Math.min(360, Math.max(190, 120 + nodes.length * 7));
+  const repulsion = Math.min(70000, Math.max(26000, nodes.length * 2600));
+  const positions = new Map<string, { x: number; y: number; vx: number; vy: number }>();
 
-  nodes.forEach((node) => {
-    const nodeWithPosition = dagreGraph.node(node.id);
-    node.targetPosition = isHorizontal ? Position.Left : Position.Top;
-    node.sourcePosition = isHorizontal ? Position.Right : Position.Bottom;
+  nodes.forEach((node, index) => {
+    const angle = (Math.PI * 2 * index) / nodes.length + seededUnit(node.id) * 0.8;
+    const orbit = radius * (0.55 + seededUnit(`${node.id}:orbit`) * 0.45);
+    positions.set(node.id, {
+      x: Math.cos(angle) * orbit,
+      y: Math.sin(angle) * orbit,
+      vx: 0,
+      vy: 0,
+    });
+  });
 
-    // We are shifting the dagre node position (anchor=center center) to the top left
-    // so it matches the React Flow node anchor point (top left).
-    node.position = {
-      x: nodeWithPosition.x - 144 / 2,
-      y: nodeWithPosition.y - 250 / 2,
+  for (let tick = 0; tick < 320; tick += 1) {
+    const cooling = 1 - tick / 360;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const a = positions.get(nodes[i].id);
+      if (!a) continue;
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const b = positions.get(nodes[j].id);
+        if (!b) continue;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const distanceSq = Math.max(dx * dx + dy * dy, 900);
+        const distance = Math.sqrt(distanceSq);
+        const force = (repulsion / distanceSq) * cooling;
+        const fx = (dx / distance) * force;
+        const fy = (dy / distance) * force;
+        a.vx += fx;
+        a.vy += fy;
+        b.vx -= fx;
+        b.vy -= fy;
+      }
+    }
+
+    edges.forEach((edge) => {
+      const source = positions.get(edge.source);
+      const target = positions.get(edge.target);
+      if (!source || !target) return;
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+      const force = (distance - linkDistance) * 0.012 * cooling;
+      const fx = (dx / distance) * force;
+      const fy = (dy / distance) * force;
+      source.vx += fx;
+      source.vy += fy;
+      target.vx -= fx;
+      target.vy -= fy;
+    });
+
+    positions.forEach((point) => {
+      point.vx += -point.x * centerPull * cooling;
+      point.vy += -point.y * centerPull * cooling;
+      point.vx *= 0.82;
+      point.vy *= 0.82;
+      point.x += point.vx;
+      point.y += point.vy;
+    });
+  }
+
+  const layoutedNodes = nodes.map((node) => {
+    const point = positions.get(node.id) ?? { x: 0, y: 0 };
+    const nodeDegree = degree.get(node.id) ?? 0;
+    return {
+      ...node,
+      targetPosition: Position.Top,
+      sourcePosition: Position.Bottom,
+      position: {
+        x: point.x - GRAPH_NODE_WIDTH / 2,
+        y: point.y - GRAPH_NODE_HEIGHT / 2,
+      },
+      data: {
+        ...node.data,
+        degree: nodeDegree,
+      },
     };
-
-    return node;
   });
 
-  return { nodes, edges };
+  return { nodes: layoutedNodes, edges };
 };
 
 export const FranchiseGraphPage: React.FC = () => {
@@ -106,25 +261,22 @@ export const FranchiseGraphPage: React.FC = () => {
         data: { name: s.name, coverPath: s.cover_path, isCurrent: s.isCurrent },
       }));
 
+      const showEdgeLabels = relations.length <= 40;
       const initialEdges: Edge[] = relations.map(rel => ({
         id: `e${rel.source_series_id}-${rel.target_series_id}`,
         source: rel.source_series_id.toString(),
         target: rel.target_series_id.toString(),
-        label: t(`series.relations.type.${rel.relation_type}`) || rel.relation_type,
-        animated: true,
-        style: { stroke: '#a855f7', strokeWidth: 2 },
-        labelStyle: { fill: '#d1d5db', fontWeight: 600, fontSize: 12 },
-        labelBgStyle: { fill: '#1f2937', color: '#fff', fillOpacity: 0.8 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 20,
-          height: 20,
-          color: '#a855f7',
-        },
+        type: 'directed',
+        label: showEdgeLabels ? t(`series.relations.type.${rel.relation_type}`) || rel.relation_type : undefined,
+        style: { stroke: 'rgb(var(--rgb-gray-500) / 0.5)', strokeWidth: 1.4 },
+        labelStyle: { fill: 'rgb(var(--rgb-gray-700))', fontWeight: 600, fontSize: 11 },
+        labelBgStyle: { fill: 'rgb(var(--rgb-komga-surface))', color: 'rgb(var(--rgb-white))', fillOpacity: 0.82 },
+        labelBgPadding: [6, 3],
+        labelBgBorderRadius: 999,
       }));
 
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(initialNodes, initialEdges);
-      
+      const { nodes: layoutedNodes, edges: layoutedEdges } = getForceLayoutedElements(initialNodes, initialEdges);
+
       setNodes([...layoutedNodes]);
       setEdges([...layoutedEdges]);
     } catch (error) {
@@ -143,8 +295,8 @@ export const FranchiseGraphPage: React.FC = () => {
   }, [navigate]);
 
   return (
-    <div className="flex flex-col h-screen w-full bg-gray-950 text-white overflow-hidden">
-      <header className="flex h-16 shrink-0 items-center gap-4 border-b border-white/10 px-6 backdrop-blur-md bg-gray-950/80 z-10 relative">
+    <div className="franchise-graph-page flex h-screen w-full flex-col overflow-hidden text-white">
+      <header className="franchise-graph-header relative z-10 flex h-16 shrink-0 items-center gap-4 border-b px-6 backdrop-blur-md">
         <button
           onClick={() => navigate(-1)}
           className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/10 transition-colors"
@@ -163,6 +315,7 @@ export const FranchiseGraphPage: React.FC = () => {
       </header>
 
       <div className="flex-1 relative w-full h-full">
+        <div className="franchise-graph-aura pointer-events-none absolute inset-0" />
         {isLoading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <RefreshCw className="h-8 w-8 animate-spin text-komgaPrimary" />
@@ -175,18 +328,23 @@ export const FranchiseGraphPage: React.FC = () => {
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             fitView
-            fitViewOptions={{ padding: 0.2 }}
-            minZoom={0.2}
-            maxZoom={2}
+            fitViewOptions={{ padding: 0.32 }}
+            minZoom={0.12}
+            maxZoom={2.2}
             proOptions={{ hideAttribution: true }}
+            className="franchise-graph-flow"
+            defaultEdgeOptions={{
+              focusable: false,
+            }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#374151" />
-            <Controls className="!bg-gray-900 !border-white/10 !fill-gray-400 hover:!fill-white" />
-            <MiniMap 
-              className="!bg-gray-900 !border-white/10"
-              maskColor="rgba(0, 0, 0, 0.7)"
-              nodeColor={(n: any) => n.data.isCurrent ? '#a855f7' : '#4b5563'} 
+            <Background variant={BackgroundVariant.Dots} gap={28} size={1.2} color="rgb(var(--rgb-gray-500) / 0.28)" />
+            <Controls className="franchise-graph-controls" />
+            <MiniMap
+              className="franchise-graph-minimap"
+              maskColor="rgb(var(--rgb-komga-background) / 0.72)"
+              nodeColor={(n: any) => n.data.isCurrent ? 'rgb(var(--rgb-komga-secondary))' : 'rgb(var(--rgb-gray-500))'}
             />
           </ReactFlow>
         )}

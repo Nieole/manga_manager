@@ -537,3 +537,51 @@ body {
 #root {
   width: 100%;
 }
+
+.franchise-graph-page {
+  color: rgb(var(--rgb-white));
+  background:
+    radial-gradient(circle at 50% 45%, rgb(var(--rgb-komga-secondary) / 0.08), transparent 34%),
+    radial-gradient(circle at 18% 82%, rgb(var(--rgb-komga-primary) / 0.07), transparent 30%),
+    linear-gradient(180deg, rgb(var(--rgb-komga-background)), rgb(var(--rgb-gray-950)));
+}
+
+.franchise-graph-header {
+  color: rgb(var(--rgb-white));
+  background-color: rgb(var(--rgb-komga-background) / 0.86);
+  border-color: rgb(var(--rgb-white) / 0.1);
+}
+
+.franchise-graph-aura {
+  background:
+    radial-gradient(circle at 50% 45%, rgb(var(--rgb-komga-secondary) / 0.1), transparent 34%),
+    radial-gradient(circle at 20% 80%, rgb(var(--rgb-komga-primary) / 0.08), transparent 30%);
+}
+
+.franchise-graph-controls,
+.franchise-graph-minimap {
+  color: rgb(var(--rgb-gray-400));
+  background-color: rgb(var(--rgb-komga-surface) / 0.86) !important;
+  border-color: rgb(var(--rgb-white) / 0.12) !important;
+  box-shadow: 0 16px 40px rgb(var(--theme-shadow) / 0.24);
+}
+
+.franchise-graph-controls button {
+  background-color: transparent !important;
+  border-color: rgb(var(--rgb-white) / 0.08) !important;
+  color: rgb(var(--rgb-gray-400)) !important;
+  fill: rgb(var(--rgb-gray-400)) !important;
+}
+
+.franchise-graph-controls button:hover {
+  color: rgb(var(--rgb-white)) !important;
+  fill: rgb(var(--rgb-white)) !important;
+  background-color: rgb(var(--rgb-white) / 0.08) !important;
+}
+
+.franchise-graph-edge-arrow {
+  fill: rgb(var(--rgb-gray-500));
+  stroke: rgb(var(--rgb-gray-500));
+  stroke-width: 1;
+  filter: drop-shadow(0 1px 3px rgb(var(--theme-shadow) / 0.32));
+}
