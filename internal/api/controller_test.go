@@ -22,7 +22,6 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/search"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 
@@ -30,7 +29,7 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
-func newTestController(t testing.TB) (*Controller, database.Store, *search.Engine, string) {
+func newTestController(t testing.TB) (*Controller, database.Store, any, string) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -46,12 +45,6 @@ func newTestController(t testing.TB) (*Controller, database.Store, *search.Engin
 		t.Fatalf("NewStore failed: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-
-	engine, err := search.NewEngine(tempDir)
-	if err != nil {
-		t.Fatalf("NewEngine failed: %v", err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
 
 	cfg := &config.Config{}
 	cfg.Database.Path = dbPath
@@ -74,7 +67,7 @@ func newTestController(t testing.TB) (*Controller, database.Store, *search.Engin
 	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](8)
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](8)
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
-	scan := scanner.NewScanner(store, engine, cfgManager)
+	scan := scanner.NewScanner(store, cfgManager)
 
 	controller := &Controller{
 		store:               store,
@@ -83,7 +76,6 @@ func newTestController(t testing.TB) (*Controller, database.Store, *search.Engin
 		bookPageSourceCache: bookPageSourceCache,
 		progressWriteCache:  progressWriteCache,
 		scanner:             scan,
-		engine:              engine,
 		config:              cfgManager,
 		koreader:            koreader.NewService(store, cfgManager),
 		external:            external.NewManager(store, 30*time.Minute),
@@ -96,7 +88,7 @@ func newTestController(t testing.TB) (*Controller, database.Store, *search.Engin
 	t.Cleanup(parser.ResetArchivePool)
 	t.Cleanup(controller.Close)
 
-	return controller, store, engine, tempDir
+	return controller, store, nil, tempDir
 }
 
 func requestWithRouteParam(method, path string, body []byte, key, value string) *http.Request {
@@ -1024,26 +1016,10 @@ func TestUpdateSystemConfigRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestSearchBooksHandler(t *testing.T) {
-	controller, _, engine, _ := newTestController(t)
+	controller, store, _, rootDir := newTestController(t)
 
-	t.Run("engine missing", func(t *testing.T) {
-		controller.engine = nil
-		req := httptest.NewRequest(http.MethodGet, "/api/search?q=test", nil)
-		rec := httptest.NewRecorder()
-
-		controller.searchBooks(rec, req)
-
-		if rec.Code != http.StatusServiceUnavailable {
-			t.Fatalf("expected 503, got %d", rec.Code)
-		}
-		controller.engine = engine
-	})
-
-	t.Run("returns indexed result", func(t *testing.T) {
-		book := database.Book{ID: 1, Name: "Alpha Volume 01"}
-		if err := controller.engine.IndexBook(book, "Alpha"); err != nil {
-			t.Fatalf("IndexBook failed: %v", err)
-		}
+	t.Run("searches sqlite index", func(t *testing.T) {
+		_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Alpha", "Alpha Volume 01.cbz", 10)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/search?q=Alpha&target=book", nil)
 		rec := httptest.NewRecorder()
@@ -1054,30 +1030,35 @@ func TestSearchBooksHandler(t *testing.T) {
 		}
 
 		var response struct {
-			Hits []any `json:"hits"`
+			Hits []struct {
+				ID string `json:"id"`
+			} `json:"hits"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 			t.Fatalf("decode search response failed: %v", err)
 		}
-		if len(response.Hits) == 0 {
-			t.Fatal("expected at least one search hit")
+		if len(response.Hits) == 0 || response.Hits[0].ID != "b_"+strconv.FormatInt(book.ID, 10) {
+			t.Fatalf("expected sqlite search hit for book %d, got %+v", book.ID, response.Hits)
 		}
 	})
 }
 
 // TestSearchNormalizesScores 验证搜索响应里命中得分被归一化到 (0,1]，最佳匹配为 1.0。
 func TestSearchNormalizesScores(t *testing.T) {
-	controller, _, engine, _ := newTestController(t)
+	controller, store, _, rootDir := newTestController(t)
 
-	// 索引若干书，使不同命中的原始相关性得分存在差异。
-	books := []database.Book{
-		{ID: 1, Name: "Naruto Volume 01"},
-		{ID: 2, Name: "Naruto Gaiden Special Edition"},
-		{ID: 3, Name: "Naruto Shippuden Complete"},
-	}
-	for _, b := range books {
-		if err := engine.IndexBook(b, "Naruto"); err != nil {
-			t.Fatalf("IndexBook failed: %v", err)
+	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Naruto", "Naruto Volume 01.cbz", 10)
+	for _, name := range []string{"Naruto Gaiden Special Edition.cbz", "Naruto Shippuden Complete.cbz"} {
+		if _, err := store.CreateBook(context.Background(), database.CreateBookParams{
+			SeriesID:       series.ID,
+			LibraryID:      lib.ID,
+			Name:           name,
+			Path:           filepath.Join(series.Path, name),
+			Size:           1024,
+			FileModifiedAt: time.Now(),
+			PageCount:      10,
+		}); err != nil {
+			t.Fatalf("CreateBook %s failed: %v", name, err)
 		}
 	}
 
@@ -1118,7 +1099,7 @@ func TestSearchNormalizesScores(t *testing.T) {
 // TestSearchHydratesCoversFromDB 验证：即使搜索索引里 cover_path 为空（封面在扫描后才异步生成），
 // 搜索响应也会用数据库中的最新封面回填 book/series 命中。
 func TestSearchHydratesCoversFromDB(t *testing.T) {
-	controller, store, engine, rootDir := newTestController(t)
+	controller, store, _, rootDir := newTestController(t)
 	ctx := context.Background()
 
 	lib, series, book := seedBookFixture(t, store, rootDir, "Library A", "Beta", "Beta 01.cbz", 10)
@@ -1133,14 +1114,6 @@ func TestSearchHydratesCoversFromDB(t *testing.T) {
 	}
 	if err := store.RefreshSeriesStats(ctx, series.ID); err != nil {
 		t.Fatalf("RefreshSeriesStats failed: %v", err)
-	}
-
-	// 关键：索引时 cover_path 为空，复现 bug 场景。
-	if err := engine.IndexBook(book, series.Name); err != nil {
-		t.Fatalf("IndexBook failed: %v", err)
-	}
-	if err := engine.IndexSeries(series.ID, series.Name, ""); err != nil {
-		t.Fatalf("IndexSeries failed: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=Beta&target=all", nil)
@@ -1255,7 +1228,8 @@ func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 }
 
 func TestRebuildIndexKeepsSearchUsable(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
+	controller, store, _, rootDir := newTestController(t)
+	seedBookFixture(t, store, rootDir, "Library A", "Series After Rebuild", "Reindexed Book.cbz", 10)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/system/rebuild-index", nil)
 	rec := httptest.NewRecorder()
@@ -1263,11 +1237,6 @@ func TestRebuildIndexKeepsSearchUsable(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	book := database.Book{ID: 9, Name: "Reindexed Book"}
-	if err := controller.engine.IndexBook(book, "Series After Rebuild"); err != nil {
-		t.Fatalf("IndexBook after rebuild failed: %v", err)
 	}
 
 	searchReq := httptest.NewRequest(http.MethodGet, "/api/search?q=Reindexed&target=book", nil)
@@ -2525,7 +2494,7 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 }
 
 func TestTasksPersistAcrossControllerInstances(t *testing.T) {
-	controller, store, engine, tempDir := newTestController(t)
+	controller, store, _, tempDir := newTestController(t)
 
 	if !controller.startTask("scan_series_77", "scan_series", "series 77", 1) {
 		t.Fatal("expected task to start")
@@ -2544,8 +2513,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		pageCache:           pageCache,
 		bookPageSourceCache: bookPageSourceCache,
 		progressWriteCache:  progressWriteCache,
-		scanner:             scanner.NewScanner(store, engine, cfg),
-		engine:              engine,
+		scanner:             scanner.NewScanner(store, cfg),
 		config:              cfg,
 		koreader:            koreader.NewService(store, cfg),
 		external:            external.NewManager(store, 30*time.Minute),
@@ -2581,7 +2549,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 }
 
 func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
-	_, store, engine, tempDir := newTestController(t)
+	_, store, _, tempDir := newTestController(t)
 	now := time.Now().Add(-time.Minute)
 	scopeID := int64(55)
 	if err := store.UpsertTask(context.Background(), database.TaskRecord{
@@ -2610,7 +2578,7 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 	cfg.LLM.Model = "qwen2.5"
 	config.NormalizeConfig(cfg)
 	cfgManager := config.NewManager(cfg)
-	controller := NewController(store, scanner.NewScanner(store, engine, cfgManager), engine, cfgManager, filepath.Join(tempDir, "config.yaml"))
+	controller := NewController(store, scanner.NewScanner(store, cfgManager), cfgManager, filepath.Join(tempDir, "config.yaml"))
 	t.Cleanup(controller.Close)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=55", nil)
@@ -4411,10 +4379,10 @@ func TestBulkSyncBookProgressResolvesConflicts(t *testing.T) {
 		Items []BulkSyncProgressItem `json:"items"`
 	}{
 		Items: []BulkSyncProgressItem{
-			{BookID: firstBook.ID, Page: 5, UpdatedAt: &clientNew},     // 首次写入应被接受
-			{BookID: secondBook.ID, Page: 3, UpdatedAt: &clientStale},  // 客户端时间戳更早，应跳过
-			{BookID: 9999, Page: 1, UpdatedAt: &clientNew},             // 不存在
-			{BookID: 0, Page: 1},                                       // 非法
+			{BookID: firstBook.ID, Page: 5, UpdatedAt: &clientNew},    // 首次写入应被接受
+			{BookID: secondBook.ID, Page: 3, UpdatedAt: &clientStale}, // 客户端时间戳更早，应跳过
+			{BookID: 9999, Page: 1, UpdatedAt: &clientNew},            // 不存在
+			{BookID: 0, Page: 1}, // 非法
 		},
 	}
 	payload, err := json.Marshal(body)

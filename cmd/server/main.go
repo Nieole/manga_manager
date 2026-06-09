@@ -24,7 +24,6 @@ import (
 	"manga-manager/internal/logger"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/search"
 	"manga-manager/web"
 
 	"github.com/fsnotify/fsnotify"
@@ -103,17 +102,9 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	dataPath := filepath.Dir(cfg.Database.Path)
-	engine, err := search.NewEngine(dataPath)
-	if err != nil {
-		slog.Warn("Failed to initialize search engine, continuing without search", "error", err)
-	} else {
-		defer engine.Close()
-	}
-
 	// API 端点挂载
-	scan := scanner.NewScanner(store, engine, cfgManager)
-	apiController := api.NewController(store, scan, engine, cfgManager, "config.yaml")
+	scan := scanner.NewScanner(store, cfgManager)
+	apiController := api.NewController(store, scan, cfgManager, "config.yaml")
 
 	// 连接扫描器的完成回调以向 SSE Broker 抛出刷新消息
 	scan.SetBatchCallback(func(action string) {

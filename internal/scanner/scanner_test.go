@@ -30,7 +30,7 @@ var testPNG1x1 = []byte{
 }
 
 func TestScannerPreventsDuplicateLibraryScans(t *testing.T) {
-	s := NewScanner(nil, nil, config.NewManager(&config.Config{}))
+	s := NewScanner(nil, config.NewManager(&config.Config{}))
 
 	if !s.beginLibraryScan(1) {
 		t.Fatal("expected first library scan to start")
@@ -47,7 +47,7 @@ func TestScannerPreventsDuplicateLibraryScans(t *testing.T) {
 }
 
 func TestScannerPreventsDuplicateSeriesScans(t *testing.T) {
-	s := NewScanner(nil, nil, config.NewManager(&config.Config{}))
+	s := NewScanner(nil, config.NewManager(&config.Config{}))
 
 	if !s.beginSeriesScan(42) {
 		t.Fatal("expected first series scan to start")
@@ -68,7 +68,7 @@ func TestScanLibraryReturnsContextCancelled(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Scanner.Workers = 1
 	cfg.Scanner.ScanProfile = config.ScanProfileFast
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -86,7 +86,7 @@ func TestScanWorkerCountUsesExternalHDDPolicy(t *testing.T) {
 	cfg.Library.StorageProfile = config.StorageProfileHDDExternal
 	config.NormalizeConfig(&cfg)
 
-	s := NewScanner(nil, nil, config.NewManager(&cfg))
+	s := NewScanner(nil, config.NewManager(&cfg))
 	workers := s.scanWorkerCount(cfg, `E:\Manga`, ScanOptions{Profile: ScanProfileMetadata})
 
 	if workers != 1 {
@@ -95,7 +95,7 @@ func TestScanWorkerCountUsesExternalHDDPolicy(t *testing.T) {
 }
 
 func TestAcquireStorageTokenSerializesSameVolume(t *testing.T) {
-	s := NewScanner(nil, nil, config.NewManager(&config.Config{}))
+	s := NewScanner(nil, config.NewManager(&config.Config{}))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	policy := config.ResolvedStoragePolicy{
@@ -147,7 +147,7 @@ func TestScanLibraryPauseCheckpointBlocksBeforeOpeningArchive(t *testing.T) {
 	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -241,7 +241,7 @@ func TestScanLibraryRecordsPageCount(t *testing.T) {
 	cfg.Scanner.Workers = 1
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
-	scanner := NewScanner(store, nil, config.NewManager(cfg))
+	scanner := NewScanner(store, config.NewManager(cfg))
 	if err := scanner.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
 		t.Fatalf("scan library failed: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestScanLibrarySkipsUnchangedArchives(t *testing.T) {
 	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 
 	openCount := 0
 	s.openArchive = func(path string) (parser.Archive, error) {
@@ -324,7 +324,7 @@ func TestScanLibraryInvalidatesIncrementalCacheWhenSizeChanges(t *testing.T) {
 	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
 		t.Fatalf("initial scan failed: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestFastScanDoesNotOpenArchive(t *testing.T) {
 	cfg.Scanner.Workers = 1
 	cfg.Scanner.ScanProfile = config.ScanProfileFast
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 	s.openArchive = func(path string) (parser.Archive, error) {
 		t.Fatalf("fast scan should not open archive: %s", path)
 		return nil, nil
@@ -440,7 +440,7 @@ func TestKOReaderEnabledMetadataScanDefersBinaryHash(t *testing.T) {
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	cfg.KOReader.Enabled = true
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 
 	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
 		t.Fatalf("scan failed: %v", err)
@@ -476,7 +476,7 @@ func TestIdentityScanWithExternalHDDPolicyDoesNotSelfDeadlock(t *testing.T) {
 	cfg.KOReader.Enabled = true
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
 	config.NormalizeConfig(cfg)
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -510,7 +510,7 @@ func TestScanLibraryQueuesMissingCoverGeneration(t *testing.T) {
 	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 
 	updated := make(chan struct{}, 1)
 	s.SetBatchCallback(func(action string) {
@@ -553,7 +553,7 @@ func BenchmarkScanLibrary_Incremental_NoChanges(b *testing.B) {
 	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
-	s := NewScanner(store, nil, config.NewManager(cfg))
+	s := NewScanner(store, config.NewManager(cfg))
 	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
 		b.Fatalf("initial scan failed: %v", err)
 	}

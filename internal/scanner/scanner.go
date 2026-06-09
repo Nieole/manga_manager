@@ -20,14 +20,12 @@ import (
 	"manga-manager/internal/images"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/parser"
-	"manga-manager/internal/search"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 )
 
 type Scanner struct {
 	store       database.Store
-	engine      *search.Engine
 	config      *config.Manager
 	openArchive func(string) (parser.Archive, error)
 	coverOnce   sync.Once
@@ -44,10 +42,9 @@ type Scanner struct {
 	onScanProgress  func(ScanProgressReport)
 }
 
-func NewScanner(store database.Store, engine *search.Engine, cfg *config.Manager) *Scanner {
+func NewScanner(store database.Store, cfg *config.Manager) *Scanner {
 	s := &Scanner{
 		store:       store,
-		engine:      engine,
 		config:      cfg,
 		openArchive: parser.OpenArchive,
 	}
@@ -991,11 +988,6 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		}
 		progress.publish("writing_database", "", true)
 
-		type indexTask struct {
-			book       database.Book
-			seriesName string
-		}
-		var tasks []indexTask
 		var coverJobs []coverJob
 		updatedSeriesIDs := make(map[int64]bool)
 
@@ -1149,9 +1141,6 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					})
 				}
 
-				if s.engine != nil {
-					tasks = append(tasks, indexTask{book: actualBook, seriesName: res.seriesName})
-				}
 			}
 			// 强力补丁：在批处理提交后，对该批次涉及的所有系列进行统计重算，确保数据最终一致性。
 			// 虽然这样多了一些 SQL，但在扫描性能层面由于 SQLite WAL + PageCache 与 SSD 极速 IO 相对微乎其微。
@@ -1175,31 +1164,6 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		if err != nil {
 			slog.Error("Batch ingest transaction failed", "error", err)
 		} else {
-			// 在事务外并发建立检索，释放数据库写锁，解救由于更新阅读进度卡死的连接
-			type sInfo struct {
-				name      string
-				coverPath string
-			}
-			if len(tasks) > 0 && s.engine != nil {
-				progress.publish("refreshing_search", "", true)
-			}
-			seriesIdxMap := make(map[int64]sInfo)
-			for _, t := range tasks {
-				_ = s.engine.IndexBook(t.book, t.seriesName)
-				cp := ""
-				if t.book.CoverPath.Valid {
-					cp = t.book.CoverPath.String
-				}
-				// 尝试从缓存中获取更准确的系列封面（如果有的话）
-				if cached, ok := seriesCache[t.book.Path]; ok && cached.CoverPath.Valid {
-					cp = cached.CoverPath.String
-				}
-
-				seriesIdxMap[t.book.SeriesID] = sInfo{name: t.seriesName, coverPath: cp}
-			}
-			for sid, info := range seriesIdxMap {
-				_ = s.engine.IndexSeries(sid, info.name, info.coverPath)
-			}
 			slog.Info("Successfully ingested batch", "book_count", len(batch))
 			if s.onBatchIngested != nil {
 				s.onBatchIngested("batch_inserted")

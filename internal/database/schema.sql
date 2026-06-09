@@ -54,6 +54,14 @@ CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_
 CREATE INDEX IF NOT EXISTS idx_series_library_favorite_name_id ON series(library_id, is_favorite, name, id);
 CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name);
 
+CREATE VIRTUAL TABLE IF NOT EXISTS series_search_fts USING fts5(
+    library_id UNINDEXED,
+    name,
+    title,
+    path,
+    tokenize = 'trigram'
+);
+
 CREATE TABLE IF NOT EXISTS series_stats (
     series_id INTEGER PRIMARY KEY,
     cover_path TEXT NOT NULL DEFAULT '',
@@ -150,6 +158,17 @@ CREATE INDEX IF NOT EXISTS idx_books_series_read ON books(series_id, last_read_p
 CREATE INDEX IF NOT EXISTS idx_books_read_progress_series ON books(last_read_page, series_id) WHERE last_read_page > 0;
 CREATE INDEX IF NOT EXISTS idx_books_cover_pick ON books(series_id, sort_number, name) WHERE cover_path IS NOT NULL AND cover_path != '';
 CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS book_search_fts USING fts5(
+    series_id UNINDEXED,
+    library_id UNINDEXED,
+    name,
+    title,
+    series_name,
+    series_title,
+    path,
+    tokenize = 'trigram'
+);
 
 CREATE TABLE IF NOT EXISTS series_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

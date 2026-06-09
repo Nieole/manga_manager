@@ -36,9 +36,6 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateBookProgress failed: %v", err)
 	}
-	if err := controller.engine.IndexSeries(series.ID, "Display Alpha", ""); err != nil {
-		t.Fatalf("IndexSeries failed: %v", err)
-	}
 	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
 	if err := writeTestCBZ(archivePath, map[string][]byte{
 		"001.png": png1x1,

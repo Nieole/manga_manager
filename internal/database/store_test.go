@@ -111,6 +111,137 @@ func newStoreForTest(t *testing.T) Store {
 	return store
 }
 
+func TestSearchGlobalSeriesUsesFTSAndSubstringFallback(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name:                "Main",
+		Path:                filepath.Join(t.TempDir(), "library"),
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library failed: %v", err)
+	}
+	series, err := store.CreateSeries(ctx, CreateSeriesParams{
+		LibraryID:   lib.ID,
+		Name:        "Puzzle.Series [Special]",
+		Path:        filepath.Join(lib.Path, "Puzzle.Series [Special]"),
+		NameInitial: "P",
+	})
+	if err != nil {
+		t.Fatalf("create series failed: %v", err)
+	}
+
+	hits, err := store.SearchGlobalSeries(ctx, "Series [Special]", 10)
+	if err != nil {
+		t.Fatalf("search punctuation full name failed: %v", err)
+	}
+	if len(hits) != 1 || hits[0].ID != series.ID {
+		t.Fatalf("expected punctuation FTS hit %d, got %+v", series.ID, hits)
+	}
+
+	updated, err := store.UpdateSeriesMetadata(ctx, UpdateSeriesMetadataParams{
+		Title:        sql.NullString{String: "A Certain Scientific Railgun", Valid: true},
+		NameInitial:  "A",
+		LockedFields: sql.NullString{String: "", Valid: true},
+		ID:           series.ID,
+	})
+	if err != nil {
+		t.Fatalf("update series metadata failed: %v", err)
+	}
+	hits, err = store.SearchGlobalSeries(ctx, "Scientific Railgun", 10)
+	if err != nil {
+		t.Fatalf("search title failed: %v", err)
+	}
+	if len(hits) != 1 || hits[0].ID != updated.ID || !hits[0].Title.Valid || hits[0].Title.String != updated.Title.String {
+		t.Fatalf("expected title FTS hit %+v, got %+v", updated, hits)
+	}
+
+	hits, err = store.SearchGlobalSeries(ctx, "Pu", 10)
+	if err != nil {
+		t.Fatalf("short substring search failed: %v", err)
+	}
+	if len(hits) != 1 || hits[0].ID != series.ID {
+		t.Fatalf("expected short substring fallback hit %d, got %+v", series.ID, hits)
+	}
+}
+
+func TestSearchGlobalBooksUsesFTSAndSeriesFields(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name:                "Main",
+		Path:                filepath.Join(t.TempDir(), "library"),
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library failed: %v", err)
+	}
+	series, err := store.CreateSeries(ctx, CreateSeriesParams{
+		LibraryID:   lib.ID,
+		Name:        "Puzzle.Series [Special]",
+		Path:        filepath.Join(lib.Path, "Puzzle.Series [Special]"),
+		NameInitial: "P",
+	})
+	if err != nil {
+		t.Fatalf("create series failed: %v", err)
+	}
+	book, err := store.CreateBook(ctx, CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      lib.ID,
+		Name:           "Volume.01 [Extra].cbz",
+		Path:           filepath.Join(series.Path, "Volume.01 [Extra].cbz"),
+		Size:           1024,
+		FileModifiedAt: time.Now(),
+		Title:          sql.NullString{String: "Railgun Chapter 01", Valid: true},
+		PageCount:      20,
+	})
+	if err != nil {
+		t.Fatalf("create book failed: %v", err)
+	}
+
+	assertBookHit := func(query string) {
+		t.Helper()
+		hits, err := store.SearchGlobalBooks(ctx, query, 10)
+		if err != nil {
+			t.Fatalf("search %q failed: %v", query, err)
+		}
+		if len(hits) != 1 || hits[0].ID != book.ID {
+			t.Fatalf("query %q: expected book hit %d, got %+v", query, book.ID, hits)
+		}
+	}
+	assertBookHit("Volume.01 [Extra]")
+	assertBookHit("Railgun Chapter")
+	assertBookHit("Series [Special]")
+
+	updated, err := store.UpdateSeriesMetadata(ctx, UpdateSeriesMetadataParams{
+		Title:        sql.NullString{String: "A Certain Scientific Railgun", Valid: true},
+		NameInitial:  "A",
+		LockedFields: sql.NullString{String: "", Valid: true},
+		ID:           series.ID,
+	})
+	if err != nil {
+		t.Fatalf("update series metadata failed: %v", err)
+	}
+	hits, err := store.SearchGlobalBooks(ctx, "Scientific Railgun", 10)
+	if err != nil {
+		t.Fatalf("search updated series title failed: %v", err)
+	}
+	if len(hits) != 1 || hits[0].ID != book.ID || !hits[0].SeriesTitle.Valid || hits[0].SeriesTitle.String != updated.Title.String {
+		t.Fatalf("expected book hit through updated series title, got %+v", hits)
+	}
+
+	assertBookHit("Vo")
+}
+
 func TestSeriesStatsRefreshDrivesSearchSeriesPaged(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreForTest(t)
