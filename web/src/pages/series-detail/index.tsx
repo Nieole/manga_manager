@@ -4,6 +4,12 @@
  * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
  */
 
+/**
+ * 业务流程：系列详情把系列主体、卷册、单本、元数据审核、关系编辑和继续阅读入口组织成单系列工作区。
+ * 数据边界：卷选择最终要展开为书籍 ID，元数据候选要经过审核，关系变更要刷新图谱和侧栏状态。
+ * 维护风险：编辑态与展示态如果不同步，会导致用户保存后仍看到旧标签、旧封面或旧关系。
+ */
+
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { BookImage, List, Grid, FolderOpen, ArrowLeft } from 'lucide-react';
@@ -35,6 +41,10 @@ import { useSeriesOpenVolumes } from './hooks/useSeriesOpenVolumes';
 import { buildContinueCta } from './hooks/useSeriesContinue';
 import { SeriesFranchiseView } from './SeriesFranchiseView';
 
+/**
+ * 业务注释：SeriesDetailPage 是前端系列详情链路，负责卷册聚合、元数据审核、关系维护和阅读入口的页面、组件或工具入口，负责把领域状态转换为用户可操作的界面行为。
+ * 调整时应同时检查加载态、空态、错误态、主题适配和调用方传入的业务语义。
+ */
 export default function SeriesDetailPage() {
   const { t } = useI18n();
   const { seriesId } = useParams();
@@ -104,7 +114,9 @@ export default function SeriesDetailPage() {
   }, [ctx.books]);
 
   const handleBack = useCallback(() => {
-    if (ctx.series?.library_id) {
+    if (window.history.state && window.history.state.idx > 0) {
+      navigate(-1);
+    } else if (ctx.series?.library_id) {
       navigate(`/library/${ctx.series.library_id}`);
     } else {
       navigate('/');

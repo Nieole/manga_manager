@@ -4,6 +4,12 @@
  * 维护时应关注组件职责边界、可访问性、主题变量、加载态和不同页面的复用语义。
  */
 
+/**
+ * 业务流程：共享组件承接跨页面交互模式，例如弹窗、选择条、任务入口、目录选择和全局搜索。
+ * 数据边界：组件只应通过 props 表达业务意图，不直接假设当前页面或后端资源路径。
+ * 维护风险：调整共享组件会同时影响资料库、系列详情、设置和阅读器，需要保留加载态、禁用态和可访问性。
+ */
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Loader2, X, XCircle } from 'lucide-react';
@@ -27,18 +33,30 @@ interface TaskBubbleProps {
   onClearFinished: () => void;
 }
 
+/**
+ * 业务注释：statusIcon 是前端共享组件层，负责复用跨页面交互、反馈、布局和选择状态的页面、组件或工具入口，负责把领域状态转换为用户可操作的界面行为。
+ * 调整时应同时检查加载态、空态、错误态、主题适配和调用方传入的业务语义。
+ */
 function statusIcon(status: string) {
   if (status === 'completed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />;
   if (status === 'failed' || status === 'canceled') return <XCircle className="h-3.5 w-3.5 text-red-400" />;
   return <Loader2 className="h-3.5 w-3.5 text-komgaPrimary animate-spin" />;
 }
 
+/**
+ * 业务注释：progressPercent 是前端共享组件层，负责复用跨页面交互、反馈、布局和选择状态的页面、组件或工具入口，负责把领域状态转换为用户可操作的界面行为。
+ * 调整时应同时检查加载态、空态、错误态、主题适配和调用方传入的业务语义。
+ */
 function progressPercent(task: TaskBubbleEntry) {
   if (task.total > 0) return Math.min(100, Math.round((task.current / task.total) * 100));
   if (task.status === 'completed') return 100;
   return 0;
 }
 
+/**
+ * 业务注释：SidebarTaskBubble 是前端共享组件层，负责复用跨页面交互、反馈、布局和选择状态的页面、组件或工具入口，负责把领域状态转换为用户可操作的界面行为。
+ * 调整时应同时检查加载态、空态、错误态、主题适配和调用方传入的业务语义。
+ */
 export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBubbleProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -74,7 +92,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
   return (
     <div
       ref={containerRef}
-      className="fixed bottom-4 left-4 z-40 w-[300px] sm:w-[340px]"
+      className="fixed bottom-4 left-4 z-[60] w-[300px] sm:w-[340px]"
     >
       {open && (
         <div className="mb-2 max-h-[60vh] overflow-y-auto rounded-2xl border border-gray-700 bg-gray-950/95 shadow-2xl backdrop-blur-sm">
