@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（前端修复批次）
+
+#### 修复
+- `web/src/pages/Dashboard.tsx`：仪表盘首屏并发请求为每个接口各自兜底，避免 dashboard 统计接口单点失败 reject 整个 `Promise.all`、导致 libraries 不被设置而误显示“没有资源库”的新手引导页。
+- `web/package.json`：移除零引用的僵尸依赖 `dagre`、`@types/dagre`、`react-select`（系列关系图谱早已从 Dagre 布局改为力导布局）；同步修正 `vite.config.ts` 中仍引用 react-select 的误导性注释。
+
+#### 验证
+- `cd web && npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（扫描与元数据修复批次）
 
 #### 修复

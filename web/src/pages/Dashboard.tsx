@@ -76,13 +76,15 @@ export default function Dashboard() {
     useEffect(() => {
         let active = true;
         Promise.all([
-            axios.get('/api/stats/dashboard'),
+            // 每个请求各自兜底，避免任一失败 reject 整个 Promise.all：
+            // 否则 dashboard 统计接口一失败，libraries 就不会被设置，UI 会误显示“没有资源库”的新手引导页。
+            axios.get('/api/stats/dashboard').catch(() => ({ data: null })),
             axios.get('/api/libraries').catch(() => ({ data: [] })),
             axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
             axios.get('/api/reviews/inbox/summary').catch(() => ({ data: { counts: { total: 0 } } })),
         ]).then(([statsRes, librariesRes, recentRes, reviewSummaryRes]) => {
             if (!active) return;
-            setStats(statsRes.data);
+            if (statsRes.data) setStats(statsRes.data);
             setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
             setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
             setReviewPending(reviewSummaryRes?.data?.counts?.total ?? 0);
