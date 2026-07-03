@@ -817,10 +817,21 @@ func (q *Queries) LinkKOReaderProgressToBook(ctx context.Context, progressID, bo
 	return err
 }
 
+// koreaderSyncEventRetention 是 koreader_sync_events 表保留的最近事件条数上限。
+const koreaderSyncEventRetention = 10000
+
 func (q *Queries) CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error {
-	_, err := q.db.ExecContext(ctx, `
+	if _, err := q.db.ExecContext(ctx, `
 		INSERT INTO koreader_sync_events (direction, username, document, book_id, status, message)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, arg.Direction, arg.Username, arg.Document, arg.BookID, arg.Status, arg.Message)
-	return err
+	`, arg.Direction, arg.Username, arg.Document, arg.BookID, arg.Status, arg.Message); err != nil {
+		return err
+	}
+	// 保留最近 koreaderSyncEventRetention 条：推/拉/认证失败都会写事件（未认证请求也会触发），
+	// 无上限会让该表随访问量无限增长。此处为最佳努力裁剪，失败不影响同步主流程。
+	_, _ = q.db.ExecContext(ctx, `
+		DELETE FROM koreader_sync_events
+		WHERE id <= (SELECT MAX(id) FROM koreader_sync_events) - ?
+	`, koreaderSyncEventRetention)
+	return nil
 }

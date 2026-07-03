@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（协议层修复批次）
+
+#### 修复
+- `internal/api/opds_controller.go`：OPDS 系列书籍 feed 改用 `booksort.CompareBooks` 规范化排序，与全站阅读顺序口径一致，避免 sort_number 缺失时“第 10 话排到第 2 话之前”。
+- `internal/api/opds_controller.go`：OPDS 缩略图链接的 MIME 由硬编码 `image/jpeg` 改为按封面文件扩展名推导（缩略图默认 webp，可配置 avif/jpg），与实际返回字节一致；页面图（`/api/pages`）链接保持不变。
+- `internal/database/koreader_queries.go`：`koreader_sync_events` 事件写入新增保留上限（最近 10000 条），防止推/拉/认证失败事件（未认证请求也会触发）无限增长撑大数据库。
+
+#### 验证
+- `go build ./...`、`go test ./internal/api ./internal/database ./internal/koreader`（OPDS/KOReader/迁移用例）通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（数据库层修复批次）
 
 #### 修复

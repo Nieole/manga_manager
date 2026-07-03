@@ -11,14 +11,34 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// opdsThumbnailMIME 按缩略图文件扩展名推导 MIME。缩略图默认生成 webp（可配置 avif/jpg），
+// 此前 OPDS 链接一律硬编码 image/jpeg，与实际字节不符。
+func opdsThumbnailMIME(coverPath string) string {
+	switch strings.ToLower(filepath.Ext(coverPath)) {
+	case ".webp":
+		return "image/webp"
+	case ".avif":
+		return "image/avif"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	default:
+		return "image/jpeg"
+	}
+}
 
 // ============================================
 // [#3] OPDS 1.2 标准分发协议
@@ -300,7 +320,7 @@ func opdsSeriesEntryFromListItem(item collectionSeriesListItem) OPDSEntry {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
 			Href: fmt.Sprintf("/api/thumbnails/%s", item.CoverPath),
-			Type: "image/jpeg",
+			Type: opdsThumbnailMIME(item.CoverPath),
 		})
 	}
 	return OPDSEntry{
@@ -328,7 +348,7 @@ func opdsSeriesEntryFromSearchRow(row database.SearchSeriesPagedRow) OPDSEntry {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
 			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath.String),
-			Type: "image/jpeg",
+			Type: opdsThumbnailMIME(row.CoverPath.String),
 		})
 	}
 	return OPDSEntry{
@@ -349,7 +369,7 @@ func opdsSeriesEntryFromRecentAddedRow(row database.ListRecentAddedSeriesRow) OP
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
 			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
-			Type: "image/jpeg",
+			Type: opdsThumbnailMIME(row.CoverPath),
 		})
 	}
 	return OPDSEntry{
@@ -370,7 +390,7 @@ func opdsSeriesEntryFromProtocolRow(row database.ProtocolSeriesRow) OPDSEntry {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
 			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
-			Type: "image/jpeg",
+			Type: opdsThumbnailMIME(row.CoverPath),
 		})
 	}
 	return OPDSEntry{
@@ -398,7 +418,7 @@ func opdsSeriesEntryFromReadingListRow(row database.ListReadingListSeriesPageRow
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
 			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
-			Type: "image/jpeg",
+			Type: opdsThumbnailMIME(row.CoverPath),
 		})
 	}
 	return OPDSEntry{
@@ -699,7 +719,7 @@ func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
 					links = append(links, OPDSLink{
 						Rel:  "http://opds-spec.org/image/thumbnail",
 						Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
-						Type: "image/jpeg",
+						Type: opdsThumbnailMIME(row.CoverPath),
 					})
 				}
 				entries = append(entries, OPDSEntry{
@@ -796,7 +816,7 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
 				Href: fmt.Sprintf("/api/thumbnails/%s", s.CoverPath.String),
-				Type: "image/jpeg",
+				Type: opdsThumbnailMIME(s.CoverPath.String),
 			})
 		}
 
@@ -838,6 +858,9 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+	// 与全站阅读顺序口径对齐：SQL 的 ORDER BY volume, sort_number, name 在 sort_number 缺失时
+	// 会退化为按名称的字典序（第 10 话排到第 2 话之前）。用 booksort 规范化处理中文卷话等格式。
+	slices.SortStableFunc(books, booksort.CompareBooks)
 
 	series, _ := c.store.GetSeries(r.Context(), seriesID)
 	seriesTitle := series.Name
@@ -864,7 +887,7 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
 				Href: fmt.Sprintf("/api/thumbnails/%s", b.CoverPath.String),
-				Type: "image/jpeg",
+				Type: opdsThumbnailMIME(b.CoverPath.String),
 			})
 		}
 
@@ -926,7 +949,7 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
 				Href: fmt.Sprintf("/api/thumbnails/%s", item.CoverPath),
-				Type: "image/jpeg",
+				Type: opdsThumbnailMIME(item.CoverPath),
 			})
 		}
 		updated := now
