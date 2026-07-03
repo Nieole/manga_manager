@@ -261,6 +261,9 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 
 	paths := make([]string, 0)
 	err = filepath.WalkDir(externalPath, func(path string, d os.DirEntry, walkErr error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr // 响应取消：中止外部盘遍历
+		}
 		if walkErr != nil {
 			return nil
 		}
@@ -283,6 +286,10 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 	unmatchedFiles := 0
 	total := len(paths)
 	for index, path := range paths {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			m.setFailure(sessionID, ctxErr) // 响应取消：中止匹配循环
+			return SessionSnapshot{}, ctxErr
+		}
 		key, _, keyErr := relativePathKeys(externalPath, path, ignoreExtension)
 		if keyErr != nil {
 			unmatchedFiles++

@@ -1213,7 +1213,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		})
 
 		if err != nil {
-			slog.Error("Batch ingest transaction failed", "error", err)
+			// 整批写事务失败会丢弃最多 batchSize 本书。此前静默丢弃、任务仍报成功；
+			// 现把丢弃数计入 failedArchives，使其在扫描完成日志与指标中可见。
+			slog.Error("Batch ingest transaction failed, dropping batch", "book_count", len(batch), "error", err)
+			metrics.failedArchives.Add(int64(len(batch)))
 		} else {
 			slog.Info("Successfully ingested batch", "book_count", len(batch))
 			if s.onBatchIngested != nil {

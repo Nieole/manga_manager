@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（扫描与元数据修复批次）
+
+#### 修复
+- `internal/scanner/scanner.go`：扫描批量写库事务失败时，此前静默丢弃整批（最多 100 本）且任务仍报成功。现将丢弃数计入 `failed_archives` 指标，使其在扫描完成日志与诊断中可见。
+- `internal/external/manager.go`：外部资料库扫描（`ScanSession`）的目录遍历与匹配循环新增 context 取消检查，取消任务时能及时中止外部盘扫描，而非无视取消跑到底。
+- 删除 `internal/metadata/comicinfo.go`：其中的 `ExtractAndApply` 为从未被调用的空实现存根，`ComicInfo` 结构与 `parser` 包重复且无任何引用，属死代码。
+
+#### 验证
+- `go vet`、`go test ./internal/scanner ./internal/external ./internal/metadata` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（图片处理安全批次）
 
 #### 修复
