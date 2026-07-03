@@ -5,8 +5,10 @@
 package main
 
 import (
+	"context"
 	"crypto/sha1"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -14,9 +16,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -139,8 +144,16 @@ func main() {
 	apiController.SetupKOReaderRoutes(r)
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		// 存活/就绪探测：探测数据库连接，DB 不可达时返回 503，供反向代理/编排器判断实例健康。
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status": "ok"}`))
+		if err := store.PingContext(ctx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status": "unavailable", "database": "down"}`))
+			return
+		}
+		w.Write([]byte(`{"status": "ok", "database": "up"}`))
 	})
 
 	// Serve the embedded static files
@@ -166,11 +179,38 @@ func main() {
 	})
 
 	addr := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
-	slog.Info("Server listening", "address", addr)
-	if err := http.ListenAndServe(addr, r); err != nil {
-		slog.Error("Server stopped", "error", err)
-		os.Exit(1)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
+
+	// 优雅停机：捕获 SIGINT/SIGTERM，先停止接收新连接并排空在途请求，再收尾后台任务与资源。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		slog.Info("Server listening", "address", addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("Server stopped unexpectedly", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	stop() // 恢复默认信号处理：停机过程中再次 Ctrl-C 可强制退出
+	slog.Info("Shutdown signal received, draining in-flight requests...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Graceful HTTP shutdown failed", "error", err)
+	}
+
+	// 收尾后台服务：停配置监听、恢复暂停闸、取消后台任务并等待其退出。
+	apiController.Close()
+	slog.Info("Shutdown complete")
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -270,13 +310,20 @@ func watchConfig(path string, cfgManager *config.Manager) {
 	}
 	defer watcher.Close()
 
-	err = watcher.Add(path)
+	absPath, err := filepath.Abs(path)
 	if err != nil {
-		slog.Error("Failed to add config path to watcher", "path", path, "error", err)
+		absPath = path
+	}
+	// 监听所在目录而非文件本身：编辑器保存与本项目的原子写都会以 rename 替换文件，
+	// 直接 watch 文件在 Linux 上会因 inode 变化而永久失效（收不到后续事件）。监听目录后
+	// 按文件名过滤，即可稳定捕获替换后的新文件。
+	dir := filepath.Dir(absPath)
+	if err := watcher.Add(dir); err != nil {
+		slog.Error("Failed to add config directory to watcher", "dir", dir, "error", err)
 		return
 	}
 
-	slog.Info("Config hot-reload watcher started", "path", path)
+	slog.Info("Config hot-reload watcher started", "path", absPath, "watching_dir", dir)
 
 	for {
 		select {
@@ -284,9 +331,11 @@ func watchConfig(path string, cfgManager *config.Manager) {
 			if !ok {
 				return
 			}
-			// 某些编辑器（如 vim）保存时会触发 Rename 或 Remove 后再 Create，
-			// 所以监听 Write 和 Create 两个事件更稳健。
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+			if filepath.Clean(event.Name) != absPath {
+				continue // 只关心目标 config 文件，忽略同目录下的临时文件/数据文件事件
+			}
+			// 原子替换/编辑器保存表现为 Write、Create 或 Rename-到位，任一都触发重载。
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
 				slog.Info("Config file changed, re-applying settings...", "event", event.Name)
 				newCfg, err := config.LoadConfig(path)
 				if err != nil {

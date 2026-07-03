@@ -27,6 +27,8 @@ var schemaSQL string
 type Store interface {
 	Querier
 	Close() error
+	// PingContext 校验底层数据库连接可用，供健康检查等存活/就绪探测使用。
+	PingContext(ctx context.Context) error
 	// Store 是 sqlc 生成查询之上的领域边界：Controller 和 Scanner 只依赖这里暴露的业务操作。
 	// 新增方法时应优先判断它是“通用 SQL 查询”还是“跨表业务动作”，前者放 query.sql，后者在 Store 中封装事务。
 	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]ExternalLibraryBookRow, error)
@@ -244,6 +246,10 @@ func NewStore(dbPath string) (Store, error) {
 
 func (s *SqlStore) Close() error {
 	return s.db.Close()
+}
+
+func (s *SqlStore) PingContext(ctx context.Context) error {
+	return s.db.PingContext(ctx)
 }
 
 func (s *SqlStore) DeleteKOReaderAccount(ctx context.Context, id int64) error {

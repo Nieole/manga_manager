@@ -12,6 +12,19 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"manga-manager/internal/logger"
+)
+
+// maxLogQueryLimit 限制单次日志查询返回条数上限，避免 ?limit=极大值 时按该值预分配打爆内存。
+const maxLogQueryLimit = 2000
+
+// 日志行解析用的正则预编译为包级变量，避免每行、每次请求重复编译。
+var (
+	logTimeRe    = regexp.MustCompile(`time=([^ ]+)`)
+	logLevelRe   = regexp.MustCompile(`level=([^ ]+)`)
+	logMsgReQ    = regexp.MustCompile(`msg="([^"]+)"`)
+	logMsgReBare = regexp.MustCompile(`msg=([^ ]+)`)
 )
 
 // LogEntry 代表一行日志解析后的结构
@@ -40,6 +53,9 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	if l, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil || l != 1 || limit <= 0 {
 		limit = 100
 	}
+	if limit > maxLogQueryLimit {
+		limit = maxLogQueryLimit
+	}
 
 	filterLevel := r.URL.Query().Get("level")
 	if filterLevel == "" {
@@ -53,8 +69,12 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		taskKeyNeedle = "task_key=" + taskKeyFilter
 	}
 
-	cfg := c.currentConfig()
-	logFilePath := filepath.Join(filepath.Dir(cfg.Database.Path), "manga_manager.log")
+	// 优先使用 logger 实际写入的日志文件路径，避免查看侧与写入侧依据不同来源推导而分叉。
+	// 仅当 logger 未初始化文件日志（如测试环境）时，回退到按数据目录推导。
+	logFilePath := logger.LogFilePath()
+	if logFilePath == "" {
+		logFilePath = filepath.Join(filepath.Dir(c.currentConfig().Database.Path), "manga_manager.log")
+	}
 
 	file, err := os.Open(logFilePath)
 	if err != nil {
@@ -131,28 +151,20 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 func parseLogLine(line string) LogEntry {
 	entry := LogEntry{Raw: line}
 
-	// 尝试提取 time=... level=... msg=...
-	timeRe := regexp.MustCompile(`time=([^ ]+)`)
-	levelRe := regexp.MustCompile(`level=([^ ]+)`)
-	msgRe := regexp.MustCompile(`msg="([^"]+)"`)
-
-	if m := timeRe.FindStringSubmatch(line); len(m) > 1 {
+	if m := logTimeRe.FindStringSubmatch(line); len(m) > 1 {
 		entry.Time = m[1]
 	}
-	if m := levelRe.FindStringSubmatch(line); len(m) > 1 {
+	if m := logLevelRe.FindStringSubmatch(line); len(m) > 1 {
 		entry.Level = m[1]
 	} else {
 		entry.Level = "UNKNOWN"
 	}
 
-	if m := msgRe.FindStringSubmatch(line); len(m) > 1 {
+	if m := logMsgReQ.FindStringSubmatch(line); len(m) > 1 {
 		entry.Msg = m[1]
-	} else {
-		// 如果没用引号，或者不是标准格式
-		msgRe2 := regexp.MustCompile(`msg=([^ ]+)`)
-		if m2 := msgRe2.FindStringSubmatch(line); len(m2) > 1 {
-			entry.Msg = m2[1]
-		}
+	} else if m2 := logMsgReBare.FindStringSubmatch(line); len(m2) > 1 {
+		// 没用引号或非标准格式时的回退
+		entry.Msg = m2[1]
 	}
 
 	return entry

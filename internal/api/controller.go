@@ -475,7 +475,8 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(c.configPath, data, 0644); err != nil {
+	// 原子写：避免保存过程中崩溃留下半截 config.yaml 导致下次启动解析失败。
+	if err := config.AtomicWriteFile(c.configPath, data, 0644); err != nil {
 		return err
 	}
 	c.config.Replace(cfg)

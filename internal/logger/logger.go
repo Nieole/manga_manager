@@ -18,6 +18,15 @@ import (
 
 var levelVar = &slog.LevelVar{}
 
+// logFilePath 记录 Init 时实际使用的日志文件绝对/相对路径，供查看接口读取同一文件，
+// 避免日志写入路径与查看路径依据不同来源推导而分叉。空串表示未启用文件日志。
+var logFilePath string
+
+// LogFilePath 返回当前日志文件的实际路径（Init 时确定）。空串表示只输出到 stdout。
+func LogFilePath() string {
+	return logFilePath
+}
+
 // Init 配置全局结构化日志与双路输出（Stdout + 物理日志文件）
 func Init(logDir, level string) error {
 	// 如果配置了目录，则试图建立文件写入管道
@@ -30,6 +39,7 @@ func Init(logDir, level string) error {
 		}
 
 		logFile := filepath.Join(logDir, "manga_manager.log")
+		logFilePath = logFile
 
 		// 引入 Lumberjack 自动滚动截断记录器
 		fileWriter := &lumberjack.Logger{

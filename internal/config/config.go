@@ -8,10 +8,39 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// AtomicWriteFile 原子写文件：先写入同目录临时文件再 rename 覆盖目标，避免写入过程中崩溃/断电
+// 留下半截配置文件（半截 YAML 会让下次启动解析失败且无自愈路径）。os.Rename 在 Windows 上也会
+// 原子替换已存在文件。
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // rename 成功后临时文件已不存在，这里的 remove 无害
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
 
 type Config struct {
 	Server struct {
@@ -198,7 +227,7 @@ func createDefaultConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := AtomicWriteFile(path, data, 0644); err != nil {
 		return nil, err
 	}
 

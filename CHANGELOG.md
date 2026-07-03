@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（运维与生命周期修复批次）
+
+#### 修复
+- `cmd/server/main.go`：新增优雅停机。用 `http.Server` 替代裸 `ListenAndServe`（并设置 `ReadHeaderTimeout`/`IdleTimeout`），捕获 SIGINT/SIGTERM 后先排空在途请求再调用 `apiController.Close()` 收尾后台任务（此前 `Close` 机制存在却从未接线，信号直接杀进程）。
+- `cmd/server/main.go`：`/api/health` 由静态字符串改为探测数据库连接，DB 不可达返回 503，供反向代理/编排器判断实例健康（新增 `Store.PingContext`）。
+- `internal/config/config.go` / `internal/api/controller.go`：配置保存改为原子写（临时文件 + rename），避免写入过程中崩溃留下半截 `config.yaml` 导致下次启动解析失败。
+- `cmd/server/main.go`：配置热重载监听改为监听所在目录并按文件名过滤，修复 Linux 上原子替换/编辑器保存后 inode 级 watch 永久失效的问题。
+- `internal/api/log_controller.go`：日志查询接口的解析正则提升为包级预编译（不再每行重复编译），并对 `limit` 施加上限（2000）防止超大取值按需预分配打爆内存。
+- `internal/logger/logger.go` / `internal/api/log_controller.go`：日志查看接口改用 logger 实际写入的文件路径（`logger.LogFilePath()`），消除写入目录与查看路径依据不同来源推导而分叉的问题。
+
+#### 验证
+- `go vet`、`go test ./internal/api ./internal/database ./internal/config ./internal/logger ./cmd/server` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（协议层修复批次）
 
 #### 修复
