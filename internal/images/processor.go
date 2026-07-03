@@ -63,21 +63,29 @@ type ProcessOptions struct {
 	AutoCrop      bool   // 是否自动裁切白边
 }
 
+// 图片解码内存保护阈值：超过硬上限视为解码炸弹直接拒绝，超过告警阈值仅记录。
+const (
+	maxDecodePixels      = 100_000_000 // 约 10000x10000，超出视为不可安全处理
+	largeImageWarnPixels = 25_000_000  // 约 5000x5000，记录告警但仍处理
+)
+
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
 	// 如果没有任何处理需求且不需要转码/裁切，直接短路透传原始数据。
 	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" && opts.Format == "" && opts.Quality == 0 && !opts.AutoCrop {
 		return data, contentType, nil
 	}
 
-	// 性能优化：预检图片配置而不完全解码，用于评估内存风险
+	// 预检图片尺寸而不完全解码，据此拦截解码炸弹：小体积压缩文件可声明极大画布，
+	// 完全解码会瞬间耗尽内存。用 int64 计算面积避免超大尺寸相乘时溢出。
 	readerConfig := bytes.NewReader(data)
 	if config, _, err := image.DecodeConfig(readerConfig); err == nil {
-		// 内存保护阈值：如果图片面积超过 2500 万像素 (如 5000x5000)
-		// 在没有大并发处理能力的小型服务器上，完全解压这种位图会瞬间消耗 ~100MB+ 内存
-		area := config.Width * config.Height
-		if area > 25000000 {
-			slog.Warn("Large image detected, using memory-safe processing path", "width", config.Width, "height", config.Height, "area", area)
-			// 未来可在此处实施下采样读取或直接拒绝过大请求以防止 OOM
+		area := int64(config.Width) * int64(config.Height)
+		if area > maxDecodePixels {
+			return nil, "", fmt.Errorf("image too large to process safely: %dx%d (%d pixels)", config.Width, config.Height, area)
+		}
+		if area > largeImageWarnPixels {
+			// 大图（如 5000x5000+）在小型服务器上解码开销较高，记录以便排障，但仍尝试处理。
+			slog.Warn("Large image detected", "width", config.Width, "height", config.Height, "area", area)
 		}
 	}
 

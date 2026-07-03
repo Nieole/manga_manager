@@ -201,6 +201,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	}
 
 	finalData, finalContentType, err := images.ProcessImage(data, targetMediaType, opts)
+	processOK := err == nil
 	if err != nil {
 		// Log and fallback to raw data
 		slog.Warn("Image process error, fallback to raw source", "error", err)
@@ -208,7 +209,9 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		finalContentType = targetMediaType
 	}
 
-	if isThumbnailReq {
+	// 仅在处理成功时写入处理缓存键：否则会把原始回退结果当作已处理产物持久缓存，
+	// 让后续请求（含临时错误恢复后）永远拿到未处理的图，形成缓存污染。
+	if isThumbnailReq && processOK {
 		c.imageCache.Add(cacheKey, finalData)
 		if diskPageCacheEnabled {
 			if err := c.writeDiskImageCache(cacheKey, finalData, finalContentType); err != nil {
