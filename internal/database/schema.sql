@@ -1,6 +1,9 @@
--- 业务说明：本文件是业务实现，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
--- 它连接 sqlc 生成查询与上层领域服务，是资料库筛选、搜索同步和关系图谱的数据基础。
--- 维护时应保持 schema、查询定义、事务边界和迁移兼容，避免破坏既有用户数据。
+-- Business note: this file is the SQLite data-access layer. It persists library, series,
+-- reading-progress, task and metadata state into a stable data model, connecting sqlc-generated
+-- queries with upper domain services (library filtering, search sync, relation graph).
+-- NOTE: keep this file ASCII-only. sqlc's SQLite parser mis-slices statements on multi-byte
+-- (e.g. Chinese) content. Keep schema, query definitions, transaction boundaries and migration
+-- compatibility consistent to avoid corrupting existing user data.
 
 CREATE TABLE IF NOT EXISTS libraries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,7 +279,7 @@ CREATE TABLE IF NOT EXISTS series_metadata_provenance (
 
 CREATE INDEX IF NOT EXISTS idx_series_metadata_provenance_series_id ON series_metadata_provenance(series_id, field_name);
 
--- [#2] 自定义合集 / 智能书架
+-- [#2] Custom collections / smart shelves
 CREATE TABLE IF NOT EXISTS collections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -349,7 +352,7 @@ CREATE TABLE IF NOT EXISTS reading_list_items (
 CREATE INDEX IF NOT EXISTS idx_reading_list_items_list_id ON reading_list_items(reading_list_id);
 CREATE INDEX IF NOT EXISTS idx_reading_list_items_series_id ON reading_list_items(series_id);
 
--- [#5] 系列间关联（前传、续作、衍生等）
+-- [#5] Inter-series relations (prequel, sequel, spin-off, etc.)
 CREATE TABLE IF NOT EXISTS series_relations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_series_id INTEGER NOT NULL,
@@ -361,7 +364,7 @@ CREATE TABLE IF NOT EXISTS series_relations (
     FOREIGN KEY(target_series_id) REFERENCES series(id) ON DELETE CASCADE
 );
 
--- [#6] 逐日阅读活动记录（精确活跃度热力图）
+-- [#6] Per-day reading activity records (precise activity heatmap)
 CREATE TABLE IF NOT EXISTS reading_activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL,

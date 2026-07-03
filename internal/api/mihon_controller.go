@@ -387,7 +387,10 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	sortBy := strings.TrimSpace(r.URL.Query().Get("sort"))
 
-	if query != "" && len(tags) == 0 && len(authors) == 0 && status == "" {
+	// FTS 快路径仅用于「跨库搜索」（libraryID==0）。若叠加了 libraryID 过滤，FTS 返回的是
+	// 跨库分页结果，再按库做内存过滤会丢结果、把 total 算成当前页过滤后的条数，导致分页彻底失效。
+	// 因此库内搜索直接回落到 SearchSeriesPaged —— 它原生支持 libraryID + 关键字 + 正确的 LIMIT/OFFSET。
+	if query != "" && libraryID == 0 && len(tags) == 0 && len(authors) == 0 && status == "" {
 		if rows, searchTotal, usedEngine, err := c.searchProtocolSeries(r.Context(), query, page, limit); usedEngine {
 			if err != nil {
 				jsonError(w, http.StatusInternalServerError, "Failed to search series")
@@ -395,15 +398,9 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 			}
 			items := make([]MihonSeriesResponse, 0, len(rows))
 			for _, row := range rows {
-				if libraryID != 0 && row.LibraryID != libraryID {
-					continue
-				}
 				items = append(items, mihonSeriesFromProtocolRow(row))
 			}
 			total := int64(searchTotal)
-			if libraryID != 0 {
-				total = int64(len(items))
-			}
 			jsonResponse(w, http.StatusOK, MihonSeriesPageResponse{
 				Items:   items,
 				Total:   total,

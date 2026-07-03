@@ -33,7 +33,7 @@ type AddReadingListItemParams struct {
 }
 
 func (q *Queries) AddReadingListItem(ctx context.Context, arg AddReadingListItemParams) (ReadingListItem, error) {
-	row := q.queryRow(ctx, q.addReadingListItemStmt, addReadingListItem, arg.ReadingListID, arg.SeriesID, arg.Note)
+	row := q.db.QueryRowContext(ctx, addReadingListItem, arg.ReadingListID, arg.SeriesID, arg.Note)
 	var i ReadingListItem
 	err := row.Scan(
 		&i.ID,
@@ -58,7 +58,7 @@ type AddSeriesToCollectionParams struct {
 }
 
 func (q *Queries) AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) error {
-	_, err := q.exec(ctx, q.addSeriesToCollectionStmt, addSeriesToCollection, arg.CollectionID, arg.SeriesID)
+	_, err := q.db.ExecContext(ctx, addSeriesToCollection, arg.CollectionID, arg.SeriesID)
 	return err
 }
 
@@ -68,7 +68,7 @@ WHERE cover_path IS NOT NULL AND cover_path != ''
 `
 
 func (q *Queries) ClearAllBookCoverPaths(ctx context.Context) error {
-	_, err := q.exec(ctx, q.clearAllBookCoverPathsStmt, clearAllBookCoverPaths)
+	_, err := q.db.ExecContext(ctx, clearAllBookCoverPaths)
 	return err
 }
 
@@ -77,7 +77,7 @@ UPDATE series_stats SET cover_path = '' WHERE cover_path != ''
 `
 
 func (q *Queries) ClearAllSeriesStatsCoverPaths(ctx context.Context) error {
-	_, err := q.exec(ctx, q.clearAllSeriesStatsCoverPathsStmt, clearAllSeriesStatsCoverPaths)
+	_, err := q.db.ExecContext(ctx, clearAllSeriesStatsCoverPaths)
 	return err
 }
 
@@ -86,7 +86,7 @@ DELETE FROM series_authors WHERE series_id = ?
 `
 
 func (q *Queries) ClearSeriesAuthors(ctx context.Context, seriesID int64) error {
-	_, err := q.exec(ctx, q.clearSeriesAuthorsStmt, clearSeriesAuthors, seriesID)
+	_, err := q.db.ExecContext(ctx, clearSeriesAuthors, seriesID)
 	return err
 }
 
@@ -95,7 +95,7 @@ DELETE FROM series_links WHERE series_id = ?
 `
 
 func (q *Queries) ClearSeriesLinks(ctx context.Context, seriesID int64) error {
-	_, err := q.exec(ctx, q.clearSeriesLinksStmt, clearSeriesLinks, seriesID)
+	_, err := q.db.ExecContext(ctx, clearSeriesLinks, seriesID)
 	return err
 }
 
@@ -104,7 +104,7 @@ DELETE FROM series_tags WHERE series_id = ?
 `
 
 func (q *Queries) ClearSeriesTags(ctx context.Context, seriesID int64) error {
-	_, err := q.exec(ctx, q.clearSeriesTagsStmt, clearSeriesTags, seriesID)
+	_, err := q.db.ExecContext(ctx, clearSeriesTags, seriesID)
 	return err
 }
 
@@ -113,7 +113,7 @@ SELECT 1 FROM collections WHERE name = ? COLLATE NOCASE LIMIT 1
 `
 
 func (q *Queries) CollectionNameExists(ctx context.Context, name string) (int64, error) {
-	row := q.queryRow(ctx, q.collectionNameExistsStmt, collectionNameExists, name)
+	row := q.db.QueryRowContext(ctx, collectionNameExists, name)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -132,7 +132,7 @@ type CountAIGroupingReviewsParams struct {
 }
 
 func (q *Queries) CountAIGroupingReviews(ctx context.Context, arg CountAIGroupingReviewsParams) (int64, error) {
-	row := q.queryRow(ctx, q.countAIGroupingReviewsStmt, countAIGroupingReviews, arg.LibraryID, arg.Status)
+	row := q.db.QueryRowContext(ctx, countAIGroupingReviews, arg.LibraryID, arg.Status)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -146,7 +146,7 @@ WHERE review_id = ?
 `
 
 func (q *Queries) CountAppliedAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error) {
-	row := q.queryRow(ctx, q.countAppliedAIGroupingReviewCollectionsStmt, countAppliedAIGroupingReviewCollections, reviewID)
+	row := q.db.QueryRowContext(ctx, countAppliedAIGroupingReviewCollections, reviewID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -164,7 +164,7 @@ SELECT COALESCE(SUM(cnt), 0) FROM (
 `
 
 func (q *Queries) CountHealthDuplicateFileHash(ctx context.Context, libraryID interface{}) (interface{}, error) {
-	row := q.queryRow(ctx, q.countHealthDuplicateFileHashStmt, countHealthDuplicateFileHash, libraryID)
+	row := q.db.QueryRowContext(ctx, countHealthDuplicateFileHash, libraryID)
 	var coalesce interface{}
 	err := row.Scan(&coalesce)
 	return coalesce, err
@@ -182,7 +182,7 @@ SELECT COALESCE(SUM(cnt), 0) FROM (
 `
 
 func (q *Queries) CountHealthDuplicateQuickHash(ctx context.Context, libraryID interface{}) (interface{}, error) {
-	row := q.queryRow(ctx, q.countHealthDuplicateQuickHashStmt, countHealthDuplicateQuickHash, libraryID)
+	row := q.db.QueryRowContext(ctx, countHealthDuplicateQuickHash, libraryID)
 	var coalesce interface{}
 	err := row.Scan(&coalesce)
 	return coalesce, err
@@ -196,7 +196,7 @@ WHERE (?1 = 0 OR b.library_id = ?1)
 `
 
 func (q *Queries) CountHealthEmptyPages(ctx context.Context, libraryID interface{}) (int64, error) {
-	row := q.queryRow(ctx, q.countHealthEmptyPagesStmt, countHealthEmptyPages, libraryID)
+	row := q.db.QueryRowContext(ctx, countHealthEmptyPages, libraryID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -210,7 +210,7 @@ WHERE (?1 = 0 OR b.library_id = ?1)
 `
 
 func (q *Queries) CountHealthMissingCover(ctx context.Context, libraryID interface{}) (int64, error) {
-	row := q.queryRow(ctx, q.countHealthMissingCoverStmt, countHealthMissingCover, libraryID)
+	row := q.db.QueryRowContext(ctx, countHealthMissingCover, libraryID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -231,7 +231,7 @@ WHERE (?1 = 0 OR s.library_id = ?1)
 `
 
 func (q *Queries) CountHealthMissingMetadata(ctx context.Context, libraryID interface{}) (int64, error) {
-	row := q.queryRow(ctx, q.countHealthMissingMetadataStmt, countHealthMissingMetadata, libraryID)
+	row := q.db.QueryRowContext(ctx, countHealthMissingMetadata, libraryID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -245,7 +245,7 @@ WHERE (?1 = 0 OR b.library_id = ?1)
 `
 
 func (q *Queries) CountHealthMissingQuickHash(ctx context.Context, libraryID interface{}) (int64, error) {
-	row := q.queryRow(ctx, q.countHealthMissingQuickHashStmt, countHealthMissingQuickHash, libraryID)
+	row := q.db.QueryRowContext(ctx, countHealthMissingQuickHash, libraryID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -256,7 +256,7 @@ SELECT COUNT(*) FROM koreader_progress kp WHERE kp.book_id IS NULL
 `
 
 func (q *Queries) CountHealthUnmatchedKOReader(ctx context.Context) (int64, error) {
-	row := q.queryRow(ctx, q.countHealthUnmatchedKOReaderStmt, countHealthUnmatchedKOReader)
+	row := q.db.QueryRowContext(ctx, countHealthUnmatchedKOReader)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -279,7 +279,7 @@ type CountMihonSeriesParams struct {
 }
 
 func (q *Queries) CountMihonSeries(ctx context.Context, arg CountMihonSeriesParams) (int64, error) {
-	row := q.queryRow(ctx, q.countMihonSeriesStmt, countMihonSeries, arg.LibraryID, arg.Query)
+	row := q.db.QueryRowContext(ctx, countMihonSeries, arg.LibraryID, arg.Query)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -293,7 +293,7 @@ WHERE instr(lower(s.name), lower(?1)) > 0
 `
 
 func (q *Queries) CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error) {
-	row := q.queryRow(ctx, q.countOPDSSeriesSearchStmt, countOPDSSeriesSearch, query)
+	row := q.db.QueryRowContext(ctx, countOPDSSeriesSearch, query)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -307,7 +307,7 @@ WHERE review_id = ?
 `
 
 func (q *Queries) CountPendingAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error) {
-	row := q.queryRow(ctx, q.countPendingAIGroupingReviewCollectionsStmt, countPendingAIGroupingReviewCollections, reviewID)
+	row := q.db.QueryRowContext(ctx, countPendingAIGroupingReviewCollections, reviewID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -336,7 +336,7 @@ type CountPendingMetadataReviewInboxParams struct {
 }
 
 func (q *Queries) CountPendingMetadataReviewInbox(ctx context.Context, arg CountPendingMetadataReviewInboxParams) (int64, error) {
-	row := q.queryRow(ctx, q.countPendingMetadataReviewInboxStmt, countPendingMetadataReviewInbox, arg.LibraryID, arg.Provider, arg.Query)
+	row := q.db.QueryRowContext(ctx, countPendingMetadataReviewInbox, arg.LibraryID, arg.Provider, arg.Query)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -349,7 +349,7 @@ WHERE rli.reading_list_id = ?
 `
 
 func (q *Queries) CountReadingListSeries(ctx context.Context, readingListID int64) (int64, error) {
-	row := q.queryRow(ctx, q.countReadingListSeriesStmt, countReadingListSeries, readingListID)
+	row := q.db.QueryRowContext(ctx, countReadingListSeries, readingListID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -363,7 +363,18 @@ WHERE CAST(?1 AS INTEGER) = 0
 `
 
 func (q *Queries) CountRecentAddedSeries(ctx context.Context, libraryID int64) (int64, error) {
-	row := q.queryRow(ctx, q.countRecentAddedSeriesStmt, countRecentAddedSeries, libraryID)
+	row := q.db.QueryRowContext(ctx, countRecentAddedSeries, libraryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countSeriesByLibrary = `-- name: CountSeriesByLibrary :one
+SELECT COUNT(*) FROM series WHERE library_id = ?
+`
+
+func (q *Queries) CountSeriesByLibrary(ctx context.Context, libraryID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSeriesByLibrary, libraryID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -389,7 +400,7 @@ type CreateAIGroupingReviewParams struct {
 }
 
 func (q *Queries) CreateAIGroupingReview(ctx context.Context, arg CreateAIGroupingReviewParams) (AiGroupingReview, error) {
-	row := q.queryRow(ctx, q.createAIGroupingReviewStmt, createAIGroupingReview,
+	row := q.db.QueryRowContext(ctx, createAIGroupingReview,
 		arg.LibraryID,
 		arg.Provider,
 		arg.Status,
@@ -435,7 +446,7 @@ type CreateAIGroupingReviewCollectionParams struct {
 }
 
 func (q *Queries) CreateAIGroupingReviewCollection(ctx context.Context, arg CreateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error) {
-	row := q.queryRow(ctx, q.createAIGroupingReviewCollectionStmt, createAIGroupingReviewCollection,
+	row := q.db.QueryRowContext(ctx, createAIGroupingReviewCollection,
 		arg.ReviewID,
 		arg.Name,
 		arg.Description,
@@ -486,7 +497,7 @@ type CreateBookParams struct {
 }
 
 func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, error) {
-	row := q.queryRow(ctx, q.createBookStmt, createBook,
+	row := q.db.QueryRowContext(ctx, createBook,
 		arg.SeriesID,
 		arg.LibraryID,
 		arg.Name,
@@ -549,7 +560,7 @@ type CreateCollectionParams struct {
 }
 
 func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error) {
-	row := q.queryRow(ctx, q.createCollectionStmt, createCollection,
+	row := q.db.QueryRowContext(ctx, createCollection,
 		arg.Name,
 		arg.Description,
 		arg.SourceType,
@@ -571,6 +582,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 }
 
 const createLibrary = `-- name: CreateLibrary :one
+
 INSERT INTO libraries (name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats)
 VALUES (?, ?, ?, ?, ?, ?)
 RETURNING id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at
@@ -585,8 +597,16 @@ type CreateLibraryParams struct {
 	ScanFormats         string `json:"scan_formats"`
 }
 
+// Business note: this file is the database SQL contract layer. It defines the sqlc-generated
+// queries and the data operations the upper Store exposes. It directly shapes the meaning of
+// library, series-relation, reading-progress, task and search-sync data.
+// NOTE: keep this file ASCII-only. sqlc's SQLite parser mis-slices queries when the file contains
+// multi-byte (e.g. Chinese) characters, truncating query names and failing generation.
+// Section: Library queries define the root library objects; path, scan mode and format fields
+// directly affect how scan tasks discover comic files. Return columns become strongly-typed
+// sqlc methods, so column changes must stay in sync with schema, Store wrappers and the settings UI.
 func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error) {
-	row := q.queryRow(ctx, q.createLibraryStmt, createLibrary,
+	row := q.db.QueryRowContext(ctx, createLibrary,
 		arg.Name,
 		arg.Path,
 		arg.ScanMode,
@@ -630,7 +650,7 @@ type CreateMetadataReviewParams struct {
 }
 
 func (q *Queries) CreateMetadataReview(ctx context.Context, arg CreateMetadataReviewParams) (MetadataReview, error) {
-	row := q.queryRow(ctx, q.createMetadataReviewStmt, createMetadataReview,
+	row := q.db.QueryRowContext(ctx, createMetadataReview,
 		arg.SeriesID,
 		arg.Provider,
 		arg.SourceUrl,
@@ -683,7 +703,7 @@ type CreateMetadataReviewFieldParams struct {
 }
 
 func (q *Queries) CreateMetadataReviewField(ctx context.Context, arg CreateMetadataReviewFieldParams) (MetadataReviewField, error) {
-	row := q.queryRow(ctx, q.createMetadataReviewFieldStmt, createMetadataReviewField,
+	row := q.db.QueryRowContext(ctx, createMetadataReviewField,
 		arg.ReviewID,
 		arg.FieldName,
 		arg.CurrentValue,
@@ -724,7 +744,7 @@ type CreateReadingListParams struct {
 }
 
 func (q *Queries) CreateReadingList(ctx context.Context, arg CreateReadingListParams) (ReadingList, error) {
-	row := q.queryRow(ctx, q.createReadingListStmt, createReadingList, arg.Name, arg.Description)
+	row := q.db.QueryRowContext(ctx, createReadingList, arg.Name, arg.Description)
 	var i ReadingList
 	err := row.Scan(
 		&i.ID,
@@ -761,7 +781,7 @@ type CreateSeriesParams struct {
 }
 
 func (q *Queries) CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error) {
-	row := q.queryRow(ctx, q.createSeriesStmt, createSeries,
+	row := q.db.QueryRowContext(ctx, createSeries,
 		arg.LibraryID,
 		arg.Name,
 		arg.Path,
@@ -810,7 +830,7 @@ type CreateSeriesRelationParams struct {
 }
 
 func (q *Queries) CreateSeriesRelation(ctx context.Context, arg CreateSeriesRelationParams) error {
-	_, err := q.exec(ctx, q.createSeriesRelationStmt, createSeriesRelation, arg.SourceSeriesID, arg.TargetSeriesID, arg.RelationType)
+	_, err := q.db.ExecContext(ctx, createSeriesRelation, arg.SourceSeriesID, arg.TargetSeriesID, arg.RelationType)
 	return err
 }
 
@@ -825,7 +845,7 @@ type CreateSimpleCollectionParams struct {
 }
 
 func (q *Queries) CreateSimpleCollection(ctx context.Context, arg CreateSimpleCollectionParams) (int64, error) {
-	row := q.queryRow(ctx, q.createSimpleCollectionStmt, createSimpleCollection, arg.Name, arg.Description)
+	row := q.db.QueryRowContext(ctx, createSimpleCollection, arg.Name, arg.Description)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -836,7 +856,7 @@ DELETE FROM books WHERE id = ?
 `
 
 func (q *Queries) DeleteBook(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteBookStmt, deleteBook, id)
+	_, err := q.db.ExecContext(ctx, deleteBook, id)
 	return err
 }
 
@@ -845,7 +865,7 @@ DELETE FROM books WHERE path = ?
 `
 
 func (q *Queries) DeleteBookByPath(ctx context.Context, path string) error {
-	_, err := q.exec(ctx, q.deleteBookByPathStmt, deleteBookByPath, path)
+	_, err := q.db.ExecContext(ctx, deleteBookByPath, path)
 	return err
 }
 
@@ -854,7 +874,7 @@ DELETE FROM collections WHERE id = ?
 `
 
 func (q *Queries) DeleteCollection(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteCollectionStmt, deleteCollection, id)
+	_, err := q.db.ExecContext(ctx, deleteCollection, id)
 	return err
 }
 
@@ -863,7 +883,7 @@ DELETE FROM collections WHERE source_type = 'system_franchise'
 `
 
 func (q *Queries) DeleteFranchiseCollections(ctx context.Context) error {
-	_, err := q.exec(ctx, q.deleteFranchiseCollectionsStmt, deleteFranchiseCollections)
+	_, err := q.db.ExecContext(ctx, deleteFranchiseCollections)
 	return err
 }
 
@@ -872,7 +892,7 @@ DELETE FROM libraries WHERE id = ?
 `
 
 func (q *Queries) DeleteLibrary(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteLibraryStmt, deleteLibrary, id)
+	_, err := q.db.ExecContext(ctx, deleteLibrary, id)
 	return err
 }
 
@@ -887,7 +907,7 @@ type DeleteReadingBookmarkParams struct {
 }
 
 func (q *Queries) DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error) {
-	result, err := q.exec(ctx, q.deleteReadingBookmarkStmt, deleteReadingBookmark, arg.ID, arg.BookID)
+	result, err := q.db.ExecContext(ctx, deleteReadingBookmark, arg.ID, arg.BookID)
 	if err != nil {
 		return 0, err
 	}
@@ -899,7 +919,7 @@ DELETE FROM reading_lists WHERE id = ?
 `
 
 func (q *Queries) DeleteReadingList(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteReadingListStmt, deleteReadingList, id)
+	_, err := q.db.ExecContext(ctx, deleteReadingList, id)
 	return err
 }
 
@@ -908,7 +928,7 @@ DELETE FROM series WHERE id = ?
 `
 
 func (q *Queries) DeleteSeries(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteSeriesStmt, deleteSeries, id)
+	_, err := q.db.ExecContext(ctx, deleteSeries, id)
 	return err
 }
 
@@ -917,7 +937,7 @@ DELETE FROM series_relations WHERE id = ?
 `
 
 func (q *Queries) DeleteSeriesRelation(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteSeriesRelationStmt, deleteSeriesRelation, id)
+	_, err := q.db.ExecContext(ctx, deleteSeriesRelation, id)
 	return err
 }
 
@@ -926,7 +946,7 @@ DELETE FROM smart_filters WHERE id = ?
 `
 
 func (q *Queries) DeleteSmartFilter(ctx context.Context, id int64) (int64, error) {
-	result, err := q.exec(ctx, q.deleteSmartFilterStmt, deleteSmartFilter, id)
+	result, err := q.db.ExecContext(ctx, deleteSmartFilter, id)
 	if err != nil {
 		return 0, err
 	}
@@ -946,7 +966,7 @@ type FindExistingSeriesRelationParams struct {
 }
 
 func (q *Queries) FindExistingSeriesRelation(ctx context.Context, arg FindExistingSeriesRelationParams) (int64, error) {
-	row := q.queryRow(ctx, q.findExistingSeriesRelationStmt, findExistingSeriesRelation, arg.LeftID, arg.RightID)
+	row := q.db.QueryRowContext(ctx, findExistingSeriesRelation, arg.LeftID, arg.RightID)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -957,7 +977,7 @@ SELECT id, library_id, provider, status, summary, raw_payload, candidate_count, 
 `
 
 func (q *Queries) GetAIGroupingReview(ctx context.Context, id int64) (AiGroupingReview, error) {
-	row := q.queryRow(ctx, q.getAIGroupingReviewStmt, getAIGroupingReview, id)
+	row := q.db.QueryRowContext(ctx, getAIGroupingReview, id)
 	var i AiGroupingReview
 	err := row.Scan(
 		&i.ID,
@@ -981,7 +1001,7 @@ SELECT id, review_id, name, description, series_ids, series_count, status, creat
 `
 
 func (q *Queries) GetAIGroupingReviewCollection(ctx context.Context, id int64) (AiGroupingReviewCollection, error) {
-	row := q.queryRow(ctx, q.getAIGroupingReviewCollectionStmt, getAIGroupingReviewCollection, id)
+	row := q.db.QueryRowContext(ctx, getAIGroupingReviewCollection, id)
 	var i AiGroupingReviewCollection
 	err := row.Scan(
 		&i.ID,
@@ -1012,7 +1032,7 @@ type GetActivityHeatmapRow struct {
 }
 
 func (q *Queries) GetActivityHeatmap(ctx context.Context, offsetClause interface{}) ([]GetActivityHeatmapRow, error) {
-	rows, err := q.query(ctx, q.getActivityHeatmapStmt, getActivityHeatmap, offsetClause)
+	rows, err := q.db.QueryContext(ctx, getActivityHeatmap, offsetClause)
 	if err != nil {
 		return nil, err
 	}
@@ -1039,7 +1059,7 @@ SELECT id, name, role, created_at FROM authors ORDER BY name
 `
 
 func (q *Queries) GetAllAuthors(ctx context.Context) ([]Author, error) {
-	rows, err := q.query(ctx, q.getAllAuthorsStmt, getAllAuthors)
+	rows, err := q.db.QueryContext(ctx, getAllAuthors)
 	if err != nil {
 		return nil, err
 	}
@@ -1071,7 +1091,7 @@ SELECT id, source_series_id, target_series_id, relation_type, created_at FROM se
 `
 
 func (q *Queries) GetAllSeriesRelations(ctx context.Context) ([]SeriesRelation, error) {
-	rows, err := q.query(ctx, q.getAllSeriesRelationsStmt, getAllSeriesRelations)
+	rows, err := q.db.QueryContext(ctx, getAllSeriesRelations)
 	if err != nil {
 		return nil, err
 	}
@@ -1130,7 +1150,7 @@ type GetAllSeriesRelationsForLibraryRow struct {
 }
 
 func (q *Queries) GetAllSeriesRelationsForLibrary(ctx context.Context, arg GetAllSeriesRelationsForLibraryParams) ([]GetAllSeriesRelationsForLibraryRow, error) {
-	rows, err := q.query(ctx, q.getAllSeriesRelationsForLibraryStmt, getAllSeriesRelationsForLibrary, arg.LibraryID, arg.LibraryID_2)
+	rows, err := q.db.QueryContext(ctx, getAllSeriesRelationsForLibrary, arg.LibraryID, arg.LibraryID_2)
 	if err != nil {
 		return nil, err
 	}
@@ -1166,7 +1186,7 @@ SELECT id, name, created_at, series_count FROM tags ORDER BY name
 `
 
 func (q *Queries) GetAllTags(ctx context.Context) ([]Tag, error) {
-	rows, err := q.query(ctx, q.getAllTagsStmt, getAllTags)
+	rows, err := q.db.QueryContext(ctx, getAllTags)
 	if err != nil {
 		return nil, err
 	}
@@ -1200,7 +1220,7 @@ WHERE sa.series_id = ? ORDER BY a.role, a.name
 `
 
 func (q *Queries) GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Author, error) {
-	rows, err := q.query(ctx, q.getAuthorsForSeriesStmt, getAuthorsForSeries, seriesID)
+	rows, err := q.db.QueryContext(ctx, getAuthorsForSeries, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -1232,7 +1252,7 @@ SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, ti
 `
 
 func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
-	row := q.queryRow(ctx, q.getBookStmt, getBook, id)
+	row := q.db.QueryRowContext(ctx, getBook, id)
 	var i Book
 	err := row.Scan(
 		&i.ID,
@@ -1267,7 +1287,7 @@ SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, ti
 `
 
 func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) {
-	row := q.queryRow(ctx, q.getBookByPathStmt, getBookByPath, path)
+	row := q.db.QueryRowContext(ctx, getBookByPath, path)
 	var i Book
 	err := row.Scan(
 		&i.ID,
@@ -1319,7 +1339,7 @@ func (q *Queries) GetBookCoverPathsByIDs(ctx context.Context, ids []int64) ([]Ge
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
@@ -1360,7 +1380,7 @@ type GetCandidateSeriesForAIRow struct {
 }
 
 func (q *Queries) GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error) {
-	rows, err := q.query(ctx, q.getCandidateSeriesForAIStmt, getCandidateSeriesForAI, limit)
+	rows, err := q.db.QueryContext(ctx, getCandidateSeriesForAI, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1422,7 +1442,7 @@ type GetConnectedSeriesRelationsRow struct {
 }
 
 func (q *Queries) GetConnectedSeriesRelations(ctx context.Context, startSeriesID int64) ([]GetConnectedSeriesRelationsRow, error) {
-	rows, err := q.query(ctx, q.getConnectedSeriesRelationsStmt, getConnectedSeriesRelations, startSeriesID)
+	rows, err := q.db.QueryContext(ctx, getConnectedSeriesRelations, startSeriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -1485,7 +1505,7 @@ type GetContinueReadingSequelsRow struct {
 }
 
 func (q *Queries) GetContinueReadingSequels(ctx context.Context) ([]GetContinueReadingSequelsRow, error) {
-	rows, err := q.query(ctx, q.getContinueReadingSequelsStmt, getContinueReadingSequels)
+	rows, err := q.db.QueryContext(ctx, getContinueReadingSequels)
 	if err != nil {
 		return nil, err
 	}
@@ -1533,7 +1553,7 @@ type GetDashboardCoreStatsRow struct {
 }
 
 func (q *Queries) GetDashboardCoreStats(ctx context.Context) (GetDashboardCoreStatsRow, error) {
-	row := q.queryRow(ctx, q.getDashboardCoreStatsStmt, getDashboardCoreStats)
+	row := q.db.QueryRowContext(ctx, getDashboardCoreStats)
 	var i GetDashboardCoreStatsRow
 	err := row.Scan(
 		&i.TotalSeries,
@@ -1558,7 +1578,7 @@ type GetLastTaskKeyForScopeParams struct {
 }
 
 func (q *Queries) GetLastTaskKeyForScope(ctx context.Context, arg GetLastTaskKeyForScopeParams) (string, error) {
-	row := q.queryRow(ctx, q.getLastTaskKeyForScopeStmt, getLastTaskKeyForScope, arg.Scope, arg.ScopeID)
+	row := q.db.QueryRowContext(ctx, getLastTaskKeyForScope, arg.Scope, arg.ScopeID)
 	var key string
 	err := row.Scan(&key)
 	return key, err
@@ -1569,7 +1589,7 @@ SELECT id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_for
 `
 
 func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
-	row := q.queryRow(ctx, q.getLibraryStmt, getLibrary, id)
+	row := q.db.QueryRowContext(ctx, getLibrary, id)
 	var i Library
 	err := row.Scan(
 		&i.ID,
@@ -1589,7 +1609,7 @@ SELECT id, series_id, name, url, created_at FROM series_links WHERE series_id = 
 `
 
 func (q *Queries) GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error) {
-	rows, err := q.query(ctx, q.getLinksForSeriesStmt, getLinksForSeries, seriesID)
+	rows, err := q.db.QueryContext(ctx, getLinksForSeries, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -1622,7 +1642,7 @@ SELECT id, series_id, provider, source_url, source_id, source_query, summary, co
 `
 
 func (q *Queries) GetMetadataReview(ctx context.Context, id int64) (MetadataReview, error) {
-	row := q.queryRow(ctx, q.getMetadataReviewStmt, getMetadataReview, id)
+	row := q.db.QueryRowContext(ctx, getMetadataReview, id)
 	var i MetadataReview
 	err := row.Scan(
 		&i.ID,
@@ -1680,7 +1700,7 @@ type GetMihonSeriesRow struct {
 }
 
 func (q *Queries) GetMihonSeries(ctx context.Context, id int64) (GetMihonSeriesRow, error) {
-	row := q.queryRow(ctx, q.getMihonSeriesStmt, getMihonSeries, id)
+	row := q.db.QueryRowContext(ctx, getMihonSeries, id)
 	var i GetMihonSeriesRow
 	err := row.Scan(
 		&i.ID,
@@ -1709,7 +1729,7 @@ LIMIT 1
 `
 
 func (q *Queries) GetNextBookInSeries(ctx context.Context, id int64) (Book, error) {
-	row := q.queryRow(ctx, q.getNextBookInSeriesStmt, getNextBookInSeries, id)
+	row := q.db.QueryRowContext(ctx, getNextBookInSeries, id)
 	var i Book
 	err := row.Scan(
 		&i.ID,
@@ -1744,7 +1764,7 @@ SELECT id, name, description, sort_order, created_at, updated_at FROM reading_li
 `
 
 func (q *Queries) GetReadingList(ctx context.Context, id int64) (ReadingList, error) {
-	row := q.queryRow(ctx, q.getReadingListStmt, getReadingList, id)
+	row := q.db.QueryRowContext(ctx, getReadingList, id)
 	var i ReadingList
 	err := row.Scan(
 		&i.ID,
@@ -1777,7 +1797,7 @@ type GetReadingListItemProgressByListRow struct {
 }
 
 func (q *Queries) GetReadingListItemProgressByList(ctx context.Context, readingListID int64) ([]GetReadingListItemProgressByListRow, error) {
-	rows, err := q.query(ctx, q.getReadingListItemProgressByListStmt, getReadingListItemProgressByList, readingListID)
+	rows, err := q.db.QueryContext(ctx, getReadingListItemProgressByList, readingListID)
 	if err != nil {
 		return nil, err
 	}
@@ -1839,7 +1859,7 @@ type GetRecentReadAllRow struct {
 }
 
 func (q *Queries) GetRecentReadAll(ctx context.Context, limit int64) ([]GetRecentReadAllRow, error) {
-	rows, err := q.query(ctx, q.getRecentReadAllStmt, getRecentReadAll, limit)
+	rows, err := q.db.QueryContext(ctx, getRecentReadAll, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1927,7 +1947,7 @@ type GetRecentReadSeriesRow struct {
 }
 
 func (q *Queries) GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error) {
-	rows, err := q.query(ctx, q.getRecentReadSeriesStmt, getRecentReadSeries, arg.LibraryID, arg.LibraryID_2, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, getRecentReadSeries, arg.LibraryID, arg.LibraryID_2, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2009,7 +2029,7 @@ type GetRecommendationsRow struct {
 }
 
 func (q *Queries) GetRecommendations(ctx context.Context, limit int64) ([]GetRecommendationsRow, error) {
-	rows, err := q.query(ctx, q.getRecommendationsStmt, getRecommendations, limit)
+	rows, err := q.db.QueryContext(ctx, getRecommendations, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2043,7 +2063,7 @@ SELECT DISTINCT cover_path FROM books WHERE cover_path IS NOT NULL AND cover_pat
 `
 
 func (q *Queries) GetReferencedBookCoverPaths(ctx context.Context) ([]sql.NullString, error) {
-	rows, err := q.query(ctx, q.getReferencedBookCoverPathsStmt, getReferencedBookCoverPaths)
+	rows, err := q.db.QueryContext(ctx, getReferencedBookCoverPaths)
 	if err != nil {
 		return nil, err
 	}
@@ -2070,7 +2090,7 @@ SELECT DISTINCT cover_path FROM series_stats WHERE cover_path IS NOT NULL AND co
 `
 
 func (q *Queries) GetReferencedSeriesCoverPaths(ctx context.Context) ([]string, error) {
-	rows, err := q.query(ctx, q.getReferencedSeriesCoverPathsStmt, getReferencedSeriesCoverPaths)
+	rows, err := q.db.QueryContext(ctx, getReferencedSeriesCoverPaths)
 	if err != nil {
 		return nil, err
 	}
@@ -2097,7 +2117,7 @@ SELECT id, library_id, name, title, summary, publisher, status, rating, language
 `
 
 func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
-	row := q.queryRow(ctx, q.getSeriesStmt, getSeries, id)
+	row := q.db.QueryRowContext(ctx, getSeries, id)
 	var i Series
 	err := row.Scan(
 		&i.ID,
@@ -2178,7 +2198,7 @@ type GetSeriesByLibraryRow struct {
 }
 
 func (q *Queries) GetSeriesByLibrary(ctx context.Context, libraryID int64) ([]GetSeriesByLibraryRow, error) {
-	rows, err := q.query(ctx, q.getSeriesByLibraryStmt, getSeriesByLibrary, libraryID)
+	rows, err := q.db.QueryContext(ctx, getSeriesByLibrary, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -2245,7 +2265,7 @@ func (q *Queries) GetSeriesCoverPathsByIDs(ctx context.Context, ids []int64) ([]
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
@@ -2272,7 +2292,7 @@ SELECT series_id FROM books WHERE id = ?
 `
 
 func (q *Queries) GetSeriesIDByBookID(ctx context.Context, id int64) (int64, error) {
-	row := q.queryRow(ctx, q.getSeriesIDByBookIDStmt, getSeriesIDByBookID, id)
+	row := q.db.QueryRowContext(ctx, getSeriesIDByBookID, id)
 	var series_id int64
 	err := row.Scan(&series_id)
 	return series_id, err
@@ -2283,7 +2303,7 @@ SELECT series_id FROM books WHERE path = ?
 `
 
 func (q *Queries) GetSeriesIDByBookPath(ctx context.Context, path string) (int64, error) {
-	row := q.queryRow(ctx, q.getSeriesIDByBookPathStmt, getSeriesIDByBookPath, path)
+	row := q.db.QueryRowContext(ctx, getSeriesIDByBookPath, path)
 	var series_id int64
 	err := row.Scan(&series_id)
 	return series_id, err
@@ -2294,7 +2314,7 @@ SELECT series_id, field_name, value, source, source_url, confidence, review_id, 
 `
 
 func (q *Queries) GetSeriesMetadataProvenance(ctx context.Context, seriesID int64) ([]SeriesMetadataProvenance, error) {
-	rows, err := q.query(ctx, q.getSeriesMetadataProvenanceStmt, getSeriesMetadataProvenance, seriesID)
+	rows, err := q.db.QueryContext(ctx, getSeriesMetadataProvenance, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -2349,7 +2369,7 @@ func (q *Queries) GetSeriesNamesByIDs(ctx context.Context, ids []int64) ([]GetSe
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
@@ -2386,7 +2406,7 @@ type GetSeriesWithoutCollectionRow struct {
 }
 
 func (q *Queries) GetSeriesWithoutCollection(ctx context.Context, libraryID int64) ([]GetSeriesWithoutCollectionRow, error) {
-	rows, err := q.query(ctx, q.getSeriesWithoutCollectionStmt, getSeriesWithoutCollection, libraryID)
+	rows, err := q.db.QueryContext(ctx, getSeriesWithoutCollection, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -2423,7 +2443,7 @@ LIMIT 1
 `
 
 func (q *Queries) GetSmartFilterByID(ctx context.Context, id int64) (SmartFilter, error) {
-	row := q.queryRow(ctx, q.getSmartFilterByIDStmt, getSmartFilterByID, id)
+	row := q.db.QueryRowContext(ctx, getSmartFilterByID, id)
 	var i SmartFilter
 	err := row.Scan(
 		&i.ID,
@@ -2481,7 +2501,7 @@ type GetStaticCollectionViewRow struct {
 }
 
 func (q *Queries) GetStaticCollectionView(ctx context.Context, id int64) (GetStaticCollectionViewRow, error) {
-	row := q.queryRow(ctx, q.getStaticCollectionViewStmt, getStaticCollectionView, id)
+	row := q.db.QueryRowContext(ctx, getStaticCollectionView, id)
 	var i GetStaticCollectionViewRow
 	err := row.Scan(
 		&i.ViewID,
@@ -2506,7 +2526,7 @@ WHERE st.series_id = ? ORDER BY t.name
 `
 
 func (q *Queries) GetTagsForSeries(ctx context.Context, seriesID int64) ([]Tag, error) {
-	rows, err := q.query(ctx, q.getTagsForSeriesStmt, getTagsForSeries, seriesID)
+	rows, err := q.db.QueryContext(ctx, getTagsForSeries, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -2550,7 +2570,7 @@ type GetTopReadingTagsRow struct {
 }
 
 func (q *Queries) GetTopReadingTags(ctx context.Context, limit int64) ([]GetTopReadingTagsRow, error) {
-	rows, err := q.query(ctx, q.getTopReadingTagsStmt, getTopReadingTags, limit)
+	rows, err := q.db.QueryContext(ctx, getTopReadingTags, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2582,7 +2602,7 @@ type LinkSeriesAuthorParams struct {
 }
 
 func (q *Queries) LinkSeriesAuthor(ctx context.Context, arg LinkSeriesAuthorParams) error {
-	_, err := q.exec(ctx, q.linkSeriesAuthorStmt, linkSeriesAuthor, arg.SeriesID, arg.AuthorID)
+	_, err := q.db.ExecContext(ctx, linkSeriesAuthor, arg.SeriesID, arg.AuthorID)
 	return err
 }
 
@@ -2598,7 +2618,7 @@ type LinkSeriesLinkParams struct {
 }
 
 func (q *Queries) LinkSeriesLink(ctx context.Context, arg LinkSeriesLinkParams) (SeriesLink, error) {
-	row := q.queryRow(ctx, q.linkSeriesLinkStmt, linkSeriesLink, arg.SeriesID, arg.Name, arg.Url)
+	row := q.db.QueryRowContext(ctx, linkSeriesLink, arg.SeriesID, arg.Name, arg.Url)
 	var i SeriesLink
 	err := row.Scan(
 		&i.ID,
@@ -2620,7 +2640,7 @@ type LinkSeriesTagParams struct {
 }
 
 func (q *Queries) LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error {
-	_, err := q.exec(ctx, q.linkSeriesTagStmt, linkSeriesTag, arg.SeriesID, arg.TagID)
+	_, err := q.db.ExecContext(ctx, linkSeriesTag, arg.SeriesID, arg.TagID)
 	return err
 }
 
@@ -2629,7 +2649,7 @@ SELECT id, review_id, name, description, series_ids, series_count, status, creat
 `
 
 func (q *Queries) ListAIGroupingReviewCollections(ctx context.Context, reviewID int64) ([]AiGroupingReviewCollection, error) {
-	rows, err := q.query(ctx, q.listAIGroupingReviewCollectionsStmt, listAIGroupingReviewCollections, reviewID)
+	rows, err := q.db.QueryContext(ctx, listAIGroupingReviewCollections, reviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -2709,7 +2729,7 @@ type ListAIGroupingReviewsRow struct {
 }
 
 func (q *Queries) ListAIGroupingReviews(ctx context.Context, arg ListAIGroupingReviewsParams) ([]ListAIGroupingReviewsRow, error) {
-	rows, err := q.query(ctx, q.listAIGroupingReviewsStmt, listAIGroupingReviews,
+	rows, err := q.db.QueryContext(ctx, listAIGroupingReviews,
 		arg.LibraryID,
 		arg.Status,
 		arg.Offset,
@@ -2763,7 +2783,7 @@ type ListBooksByLibraryRow struct {
 }
 
 func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error) {
-	rows, err := q.query(ctx, q.listBooksByLibraryStmt, listBooksByLibrary, libraryID)
+	rows, err := q.db.QueryContext(ctx, listBooksByLibrary, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -2796,7 +2816,7 @@ SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, ti
 `
 
 func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error) {
-	rows, err := q.query(ctx, q.listBooksBySeriesStmt, listBooksBySeries, seriesID)
+	rows, err := q.db.QueryContext(ctx, listBooksBySeries, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -2866,7 +2886,7 @@ type ListCollectionSeriesRow struct {
 }
 
 func (q *Queries) ListCollectionSeries(ctx context.Context, collectionID int64) ([]ListCollectionSeriesRow, error) {
-	rows, err := q.query(ctx, q.listCollectionSeriesStmt, listCollectionSeries, collectionID)
+	rows, err := q.db.QueryContext(ctx, listCollectionSeries, collectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -2995,7 +3015,7 @@ type ListCollectionViewsRow struct {
 }
 
 func (q *Queries) ListCollectionViews(ctx context.Context) ([]ListCollectionViewsRow, error) {
-	rows, err := q.query(ctx, q.listCollectionViewsStmt, listCollectionViews)
+	rows, err := q.db.QueryContext(ctx, listCollectionViews)
 	if err != nil {
 		return nil, err
 	}
@@ -3054,7 +3074,7 @@ type ListCollectionsWithSeriesCountRow struct {
 }
 
 func (q *Queries) ListCollectionsWithSeriesCount(ctx context.Context) ([]ListCollectionsWithSeriesCountRow, error) {
-	rows, err := q.query(ctx, q.listCollectionsWithSeriesCountStmt, listCollectionsWithSeriesCount)
+	rows, err := q.db.QueryContext(ctx, listCollectionsWithSeriesCount)
 	if err != nil {
 		return nil, err
 	}
@@ -3103,7 +3123,7 @@ type ListExternalLibraryBooksRow struct {
 }
 
 func (q *Queries) ListExternalLibraryBooks(ctx context.Context, libraryID int64) ([]ListExternalLibraryBooksRow, error) {
-	rows, err := q.query(ctx, q.listExternalLibraryBooksStmt, listExternalLibraryBooks, libraryID)
+	rows, err := q.db.QueryContext(ctx, listExternalLibraryBooks, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -3145,7 +3165,7 @@ type ListForwardSeriesRelationsRow struct {
 }
 
 func (q *Queries) ListForwardSeriesRelations(ctx context.Context, sourceSeriesID int64) ([]ListForwardSeriesRelationsRow, error) {
-	rows, err := q.query(ctx, q.listForwardSeriesRelationsStmt, listForwardSeriesRelations, sourceSeriesID)
+	rows, err := q.db.QueryContext(ctx, listForwardSeriesRelations, sourceSeriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -3211,7 +3231,7 @@ type ListHealthDuplicateFileHashRow struct {
 }
 
 func (q *Queries) ListHealthDuplicateFileHash(ctx context.Context, arg ListHealthDuplicateFileHashParams) ([]ListHealthDuplicateFileHashRow, error) {
-	rows, err := q.query(ctx, q.listHealthDuplicateFileHashStmt, listHealthDuplicateFileHash, arg.LibraryID, arg.LimitCount)
+	rows, err := q.db.QueryContext(ctx, listHealthDuplicateFileHash, arg.LibraryID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -3282,7 +3302,7 @@ type ListHealthDuplicateQuickHashRow struct {
 }
 
 func (q *Queries) ListHealthDuplicateQuickHash(ctx context.Context, arg ListHealthDuplicateQuickHashParams) ([]ListHealthDuplicateQuickHashRow, error) {
-	rows, err := q.query(ctx, q.listHealthDuplicateQuickHashStmt, listHealthDuplicateQuickHash, arg.LibraryID, arg.LimitCount)
+	rows, err := q.db.QueryContext(ctx, listHealthDuplicateQuickHash, arg.LibraryID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -3345,7 +3365,7 @@ type ListHealthEmptyPagesRow struct {
 }
 
 func (q *Queries) ListHealthEmptyPages(ctx context.Context, arg ListHealthEmptyPagesParams) ([]ListHealthEmptyPagesRow, error) {
-	rows, err := q.query(ctx, q.listHealthEmptyPagesStmt, listHealthEmptyPages, arg.LibraryID, arg.LimitCount)
+	rows, err := q.db.QueryContext(ctx, listHealthEmptyPages, arg.LibraryID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -3408,7 +3428,7 @@ type ListHealthMissingCoverRow struct {
 }
 
 func (q *Queries) ListHealthMissingCover(ctx context.Context, arg ListHealthMissingCoverParams) ([]ListHealthMissingCoverRow, error) {
-	rows, err := q.query(ctx, q.listHealthMissingCoverStmt, listHealthMissingCover, arg.LibraryID, arg.LimitCount)
+	rows, err := q.db.QueryContext(ctx, listHealthMissingCover, arg.LibraryID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -3482,7 +3502,7 @@ type ListHealthMissingMetadataRow struct {
 }
 
 func (q *Queries) ListHealthMissingMetadata(ctx context.Context, arg ListHealthMissingMetadataParams) ([]ListHealthMissingMetadataRow, error) {
-	rows, err := q.query(ctx, q.listHealthMissingMetadataStmt, listHealthMissingMetadata, arg.LibraryID, arg.LimitCount)
+	rows, err := q.db.QueryContext(ctx, listHealthMissingMetadata, arg.LibraryID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -3545,7 +3565,7 @@ type ListHealthMissingQuickHashRow struct {
 }
 
 func (q *Queries) ListHealthMissingQuickHash(ctx context.Context, arg ListHealthMissingQuickHashParams) ([]ListHealthMissingQuickHashRow, error) {
-	rows, err := q.query(ctx, q.listHealthMissingQuickHashStmt, listHealthMissingQuickHash, arg.LibraryID, arg.LimitCount)
+	rows, err := q.db.QueryContext(ctx, listHealthMissingQuickHash, arg.LibraryID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -3603,7 +3623,7 @@ type ListHealthUnmatchedKOReaderRow struct {
 }
 
 func (q *Queries) ListHealthUnmatchedKOReader(ctx context.Context, limit int64) ([]ListHealthUnmatchedKOReaderRow, error) {
-	rows, err := q.query(ctx, q.listHealthUnmatchedKOReaderStmt, listHealthUnmatchedKOReader, limit)
+	rows, err := q.db.QueryContext(ctx, listHealthUnmatchedKOReader, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -3640,7 +3660,7 @@ SELECT id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_for
 `
 
 func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
-	rows, err := q.query(ctx, q.listLibrariesStmt, listLibraries)
+	rows, err := q.db.QueryContext(ctx, listLibraries)
 	if err != nil {
 		return nil, err
 	}
@@ -3689,7 +3709,7 @@ type ListLibrarySizesRow struct {
 }
 
 func (q *Queries) ListLibrarySizes(ctx context.Context) ([]ListLibrarySizesRow, error) {
-	rows, err := q.query(ctx, q.listLibrarySizesStmt, listLibrarySizes)
+	rows, err := q.db.QueryContext(ctx, listLibrarySizes)
 	if err != nil {
 		return nil, err
 	}
@@ -3716,7 +3736,7 @@ SELECT id, review_id, field_name, current_value, proposed_value, confidence, sou
 `
 
 func (q *Queries) ListMetadataReviewFields(ctx context.Context, reviewID int64) ([]MetadataReviewField, error) {
-	rows, err := q.query(ctx, q.listMetadataReviewFieldsStmt, listMetadataReviewFields, reviewID)
+	rows, err := q.db.QueryContext(ctx, listMetadataReviewFields, reviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -3756,7 +3776,7 @@ SELECT id, series_id, provider, source_url, source_id, source_query, summary, co
 `
 
 func (q *Queries) ListMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error) {
-	rows, err := q.query(ctx, q.listMetadataReviewsBySeriesStmt, listMetadataReviewsBySeries, seriesID)
+	rows, err := q.db.QueryContext(ctx, listMetadataReviewsBySeries, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -3843,7 +3863,7 @@ type ListMihonSeriesRow struct {
 }
 
 func (q *Queries) ListMihonSeries(ctx context.Context, arg ListMihonSeriesParams) ([]ListMihonSeriesRow, error) {
-	rows, err := q.query(ctx, q.listMihonSeriesStmt, listMihonSeries,
+	rows, err := q.db.QueryContext(ctx, listMihonSeries,
 		arg.LibraryID,
 		arg.Query,
 		arg.Offset,
@@ -3931,7 +3951,7 @@ type ListMihonSeriesByBooksRow struct {
 }
 
 func (q *Queries) ListMihonSeriesByBooks(ctx context.Context, arg ListMihonSeriesByBooksParams) ([]ListMihonSeriesByBooksRow, error) {
-	rows, err := q.query(ctx, q.listMihonSeriesByBooksStmt, listMihonSeriesByBooks,
+	rows, err := q.db.QueryContext(ctx, listMihonSeriesByBooks,
 		arg.LibraryID,
 		arg.Query,
 		arg.Offset,
@@ -4019,7 +4039,7 @@ type ListMihonSeriesByUpdatedRow struct {
 }
 
 func (q *Queries) ListMihonSeriesByUpdated(ctx context.Context, arg ListMihonSeriesByUpdatedParams) ([]ListMihonSeriesByUpdatedRow, error) {
-	rows, err := q.query(ctx, q.listMihonSeriesByUpdatedStmt, listMihonSeriesByUpdated,
+	rows, err := q.db.QueryContext(ctx, listMihonSeriesByUpdated,
 		arg.LibraryID,
 		arg.Query,
 		arg.Offset,
@@ -4043,6 +4063,66 @@ func (q *Queries) ListMihonSeriesByUpdated(ctx context.Context, arg ListMihonSer
 			&i.BookCount,
 			&i.TotalPages,
 			&i.CoverBookID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOPDSLibrarySeriesPaged = `-- name: ListOPDSLibrarySeriesPaged :many
+SELECT
+    s.id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    s.updated_at,
+    CAST(COALESCE(ss.cover_path, '') AS TEXT) as cover_path
+FROM series s
+LEFT JOIN series_stats ss ON ss.series_id = s.id
+WHERE s.library_id = ?1
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+LIMIT ?3 OFFSET ?2
+`
+
+type ListOPDSLibrarySeriesPagedParams struct {
+	LibraryID int64 `json:"library_id"`
+	Offset    int64 `json:"offset"`
+	Limit     int64 `json:"limit"`
+}
+
+type ListOPDSLibrarySeriesPagedRow struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Title     string    `json:"title"`
+	Summary   string    `json:"summary"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CoverPath string    `json:"cover_path"`
+}
+
+func (q *Queries) ListOPDSLibrarySeriesPaged(ctx context.Context, arg ListOPDSLibrarySeriesPagedParams) ([]ListOPDSLibrarySeriesPagedRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOPDSLibrarySeriesPaged, arg.LibraryID, arg.Offset, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOPDSLibrarySeriesPagedRow
+	for rows.Next() {
+		var i ListOPDSLibrarySeriesPagedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.UpdatedAt,
+			&i.CoverPath,
 		); err != nil {
 			return nil, err
 		}
@@ -4135,7 +4215,7 @@ type ListPendingMetadataReviewInboxRow struct {
 }
 
 func (q *Queries) ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error) {
-	rows, err := q.query(ctx, q.listPendingMetadataReviewInboxStmt, listPendingMetadataReviewInbox,
+	rows, err := q.db.QueryContext(ctx, listPendingMetadataReviewInbox,
 		arg.LibraryID,
 		arg.Provider,
 		arg.Query,
@@ -4190,7 +4270,7 @@ SELECT id, series_id, provider, source_url, source_id, source_query, summary, co
 `
 
 func (q *Queries) ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error) {
-	rows, err := q.query(ctx, q.listPendingMetadataReviewsBySeriesStmt, listPendingMetadataReviewsBySeries, seriesID)
+	rows, err := q.db.QueryContext(ctx, listPendingMetadataReviewsBySeries, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -4235,7 +4315,7 @@ ORDER BY page ASC, id ASC
 `
 
 func (q *Queries) ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error) {
-	rows, err := q.query(ctx, q.listReadingBookmarksStmt, listReadingBookmarks, bookID)
+	rows, err := q.db.QueryContext(ctx, listReadingBookmarks, bookID)
 	if err != nil {
 		return nil, err
 	}
@@ -4320,7 +4400,7 @@ type ListReadingListItemsRow struct {
 }
 
 func (q *Queries) ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error) {
-	rows, err := q.query(ctx, q.listReadingListItemsStmt, listReadingListItems, readingListID)
+	rows, err := q.db.QueryContext(ctx, listReadingListItems, readingListID)
 	if err != nil {
 		return nil, err
 	}
@@ -4436,7 +4516,7 @@ type ListReadingListSeriesPageRow struct {
 }
 
 func (q *Queries) ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error) {
-	rows, err := q.query(ctx, q.listReadingListSeriesPageStmt, listReadingListSeriesPage, arg.ReadingListID, arg.Offset, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, listReadingListSeriesPage, arg.ReadingListID, arg.Offset, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -4503,7 +4583,7 @@ type ListReadingListsRow struct {
 }
 
 func (q *Queries) ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error) {
-	rows, err := q.query(ctx, q.listReadingListsStmt, listReadingLists)
+	rows, err := q.db.QueryContext(ctx, listReadingLists)
 	if err != nil {
 		return nil, err
 	}
@@ -4577,7 +4657,7 @@ type ListRecentAddedSeriesRow struct {
 }
 
 func (q *Queries) ListRecentAddedSeries(ctx context.Context, arg ListRecentAddedSeriesParams) ([]ListRecentAddedSeriesRow, error) {
-	rows, err := q.query(ctx, q.listRecentAddedSeriesStmt, listRecentAddedSeries, arg.LibraryID, arg.Offset, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, listRecentAddedSeries, arg.LibraryID, arg.Offset, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -4627,7 +4707,7 @@ type ListReverseSeriesRelationsRow struct {
 }
 
 func (q *Queries) ListReverseSeriesRelations(ctx context.Context, targetSeriesID int64) ([]ListReverseSeriesRelationsRow, error) {
-	rows, err := q.query(ctx, q.listReverseSeriesRelationsStmt, listReverseSeriesRelations, targetSeriesID)
+	rows, err := q.db.QueryContext(ctx, listReverseSeriesRelations, targetSeriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -4707,7 +4787,7 @@ type ListSeriesByLibraryRow struct {
 }
 
 func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error) {
-	rows, err := q.query(ctx, q.listSeriesByLibraryStmt, listSeriesByLibrary, libraryID)
+	rows, err := q.db.QueryContext(ctx, listSeriesByLibrary, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -4761,7 +4841,7 @@ type ListSeriesInitialBackfillCandidatesRow struct {
 }
 
 func (q *Queries) ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error) {
-	rows, err := q.query(ctx, q.listSeriesInitialBackfillCandidatesStmt, listSeriesInitialBackfillCandidates)
+	rows, err := q.db.QueryContext(ctx, listSeriesInitialBackfillCandidates)
 	if err != nil {
 		return nil, err
 	}
@@ -4798,7 +4878,7 @@ ORDER BY updated_at DESC, id DESC
 `
 
 func (q *Queries) ListSmartFiltersByLibrary(ctx context.Context, libraryID int64) ([]SmartFilter, error) {
-	rows, err := q.query(ctx, q.listSmartFiltersByLibraryStmt, listSmartFiltersByLibrary, libraryID)
+	rows, err := q.db.QueryContext(ctx, listSmartFiltersByLibrary, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -4884,7 +4964,7 @@ type ListStaticCollectionSeriesPagedRow struct {
 }
 
 func (q *Queries) ListStaticCollectionSeriesPaged(ctx context.Context, arg ListStaticCollectionSeriesPagedParams) ([]ListStaticCollectionSeriesPagedRow, error) {
-	rows, err := q.query(ctx, q.listStaticCollectionSeriesPagedStmt, listStaticCollectionSeriesPaged, arg.CollectionID, arg.OffsetValue, arg.LimitCount)
+	rows, err := q.db.QueryContext(ctx, listStaticCollectionSeriesPaged, arg.CollectionID, arg.OffsetValue, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -4930,7 +5010,7 @@ type LogReadingActivityParams struct {
 }
 
 func (q *Queries) LogReadingActivity(ctx context.Context, arg LogReadingActivityParams) error {
-	_, err := q.exec(ctx, q.logReadingActivityStmt, logReadingActivity, arg.BookID, arg.PagesRead)
+	_, err := q.db.ExecContext(ctx, logReadingActivity, arg.BookID, arg.PagesRead)
 	return err
 }
 
@@ -4948,7 +5028,7 @@ type MarkAIGroupingReviewCollectionAppliedParams struct {
 }
 
 func (q *Queries) MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) error {
-	_, err := q.exec(ctx, q.markAIGroupingReviewCollectionAppliedStmt, markAIGroupingReviewCollectionApplied, arg.CreatedCollectionID, arg.ID)
+	_, err := q.db.ExecContext(ctx, markAIGroupingReviewCollectionApplied, arg.CreatedCollectionID, arg.ID)
 	return err
 }
 
@@ -4961,7 +5041,7 @@ WHERE id = ?1
 `
 
 func (q *Queries) MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.markAIGroupingReviewCollectionRejectedStmt, markAIGroupingReviewCollectionRejected, id)
+	_, err := q.db.ExecContext(ctx, markAIGroupingReviewCollectionRejected, id)
 	return err
 }
 
@@ -4974,7 +5054,7 @@ WHERE review_id = ?1
 `
 
 func (q *Queries) MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error {
-	_, err := q.exec(ctx, q.markAIGroupingReviewCollectionsRejectedStmt, markAIGroupingReviewCollectionsRejected, reviewID)
+	_, err := q.db.ExecContext(ctx, markAIGroupingReviewCollectionsRejected, reviewID)
 	return err
 }
 
@@ -4994,7 +5074,7 @@ type MarkInterruptedTasksParams struct {
 }
 
 func (q *Queries) MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error) {
-	result, err := q.exec(ctx, q.markInterruptedTasksStmt, markInterruptedTasks, arg.Message, arg.Error)
+	result, err := q.db.ExecContext(ctx, markInterruptedTasks, arg.Message, arg.Error)
 	if err != nil {
 		return 0, err
 	}
@@ -5103,7 +5183,7 @@ ON CONFLICT(series_id) DO UPDATE SET
 `
 
 func (q *Queries) RefreshSeriesStats(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.refreshSeriesStatsStmt, refreshSeriesStats, id)
+	_, err := q.db.ExecContext(ctx, refreshSeriesStats, id)
 	return err
 }
 
@@ -5117,7 +5197,7 @@ type RemoveReadingListItemParams struct {
 }
 
 func (q *Queries) RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error {
-	_, err := q.exec(ctx, q.removeReadingListItemStmt, removeReadingListItem, arg.ReadingListID, arg.ID)
+	_, err := q.db.ExecContext(ctx, removeReadingListItem, arg.ReadingListID, arg.ID)
 	return err
 }
 
@@ -5131,7 +5211,7 @@ type RemoveSeriesFromCollectionParams struct {
 }
 
 func (q *Queries) RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) error {
-	_, err := q.exec(ctx, q.removeSeriesFromCollectionStmt, removeSeriesFromCollection, arg.CollectionID, arg.SeriesID)
+	_, err := q.db.ExecContext(ctx, removeSeriesFromCollection, arg.CollectionID, arg.SeriesID)
 	return err
 }
 
@@ -5167,7 +5247,7 @@ type SearchOPDSSeriesRow struct {
 }
 
 func (q *Queries) SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error) {
-	rows, err := q.query(ctx, q.searchOPDSSeriesStmt, searchOPDSSeries, arg.Query, arg.Offset, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, searchOPDSSeries, arg.Query, arg.Offset, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -5201,7 +5281,7 @@ SELECT id FROM series WHERE id = ?
 `
 
 func (q *Queries) SeriesExistsByID(ctx context.Context, id int64) (int64, error) {
-	row := q.queryRow(ctx, q.seriesExistsByIDStmt, seriesExistsByID, id)
+	row := q.db.QueryRowContext(ctx, seriesExistsByID, id)
 	var id_2 int64
 	err := row.Scan(&id_2)
 	return id_2, err
@@ -5219,7 +5299,7 @@ type SetBookCoverIfMissingParams struct {
 }
 
 func (q *Queries) SetBookCoverIfMissing(ctx context.Context, arg SetBookCoverIfMissingParams) (int64, error) {
-	result, err := q.exec(ctx, q.setBookCoverIfMissingStmt, setBookCoverIfMissing, arg.CoverPath, arg.ID)
+	result, err := q.db.ExecContext(ctx, setBookCoverIfMissing, arg.CoverPath, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -5233,7 +5313,7 @@ WHERE id = ?
 `
 
 func (q *Queries) TouchCollection(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.touchCollectionStmt, touchCollection, id)
+	_, err := q.db.ExecContext(ctx, touchCollection, id)
 	return err
 }
 
@@ -5258,7 +5338,7 @@ type UpdateAIGroupingReviewCollectionParams struct {
 }
 
 func (q *Queries) UpdateAIGroupingReviewCollection(ctx context.Context, arg UpdateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error) {
-	row := q.queryRow(ctx, q.updateAIGroupingReviewCollectionStmt, updateAIGroupingReviewCollection,
+	row := q.db.QueryRowContext(ctx, updateAIGroupingReviewCollection,
 		arg.Name,
 		arg.Description,
 		arg.SeriesIds,
@@ -5297,7 +5377,7 @@ type UpdateAIGroupingReviewStatusParams struct {
 }
 
 func (q *Queries) UpdateAIGroupingReviewStatus(ctx context.Context, arg UpdateAIGroupingReviewStatusParams) (AiGroupingReview, error) {
-	row := q.queryRow(ctx, q.updateAIGroupingReviewStatusStmt, updateAIGroupingReviewStatus, arg.Status, arg.ID)
+	row := q.db.QueryRowContext(ctx, updateAIGroupingReviewStatus, arg.Status, arg.ID)
 	var i AiGroupingReview
 	err := row.Scan(
 		&i.ID,
@@ -5329,7 +5409,7 @@ type UpdateBookProgressParams struct {
 }
 
 func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
-	_, err := q.exec(ctx, q.updateBookProgressStmt, updateBookProgress, arg.LastReadPage, arg.LastReadAt, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateBookProgress, arg.LastReadPage, arg.LastReadAt, arg.ID)
 	return err
 }
 
@@ -5346,7 +5426,7 @@ type UpdateCollectionDetailsParams struct {
 }
 
 func (q *Queries) UpdateCollectionDetails(ctx context.Context, arg UpdateCollectionDetailsParams) error {
-	_, err := q.exec(ctx, q.updateCollectionDetailsStmt, updateCollectionDetails, arg.Name, arg.Description, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateCollectionDetails, arg.Name, arg.Description, arg.ID)
 	return err
 }
 
@@ -5368,7 +5448,7 @@ type UpdateLibraryParams struct {
 }
 
 func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error) {
-	row := q.queryRow(ctx, q.updateLibraryStmt, updateLibrary,
+	row := q.db.QueryRowContext(ctx, updateLibrary,
 		arg.Name,
 		arg.Path,
 		arg.ScanMode,
@@ -5407,7 +5487,7 @@ type UpdateMetadataReviewStatusParams struct {
 }
 
 func (q *Queries) UpdateMetadataReviewStatus(ctx context.Context, arg UpdateMetadataReviewStatusParams) (MetadataReview, error) {
-	row := q.queryRow(ctx, q.updateMetadataReviewStatusStmt, updateMetadataReviewStatus, arg.Status, arg.ID)
+	row := q.db.QueryRowContext(ctx, updateMetadataReviewStatus, arg.Status, arg.ID)
 	var i MetadataReview
 	err := row.Scan(
 		&i.ID,
@@ -5442,7 +5522,7 @@ type UpdateReadingListParams struct {
 }
 
 func (q *Queries) UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error) {
-	row := q.queryRow(ctx, q.updateReadingListStmt, updateReadingList, arg.Name, arg.Description, arg.ID)
+	row := q.db.QueryRowContext(ctx, updateReadingList, arg.Name, arg.Description, arg.ID)
 	var i ReadingList
 	err := row.Scan(
 		&i.ID,
@@ -5468,7 +5548,7 @@ type UpdateReadingListItemSortOrderParams struct {
 }
 
 func (q *Queries) UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) error {
-	_, err := q.exec(ctx, q.updateReadingListItemSortOrderStmt, updateReadingListItemSortOrder, arg.SortOrder, arg.ReadingListID, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateReadingListItemSortOrder, arg.SortOrder, arg.ReadingListID, arg.ID)
 	return err
 }
 
@@ -5482,7 +5562,7 @@ type UpdateSeriesFavoriteParams struct {
 }
 
 func (q *Queries) UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error {
-	_, err := q.exec(ctx, q.updateSeriesFavoriteStmt, updateSeriesFavorite, arg.IsFavorite, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateSeriesFavorite, arg.IsFavorite, arg.ID)
 	return err
 }
 
@@ -5496,7 +5576,7 @@ type UpdateSeriesInitialParams struct {
 }
 
 func (q *Queries) UpdateSeriesInitial(ctx context.Context, arg UpdateSeriesInitialParams) error {
-	_, err := q.exec(ctx, q.updateSeriesInitialStmt, updateSeriesInitial, arg.NameInitial, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateSeriesInitial, arg.NameInitial, arg.ID)
 	return err
 }
 
@@ -5529,7 +5609,7 @@ type UpdateSeriesMetadataParams struct {
 }
 
 func (q *Queries) UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error) {
-	row := q.queryRow(ctx, q.updateSeriesMetadataStmt, updateSeriesMetadata,
+	row := q.db.QueryRowContext(ctx, updateSeriesMetadata,
 		arg.Title,
 		arg.Summary,
 		arg.Publisher,
@@ -5576,7 +5656,7 @@ type UpdateSeriesRelationParams struct {
 }
 
 func (q *Queries) UpdateSeriesRelation(ctx context.Context, arg UpdateSeriesRelationParams) error {
-	_, err := q.exec(ctx, q.updateSeriesRelationStmt, updateSeriesRelation, arg.RelationType, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateSeriesRelation, arg.RelationType, arg.ID)
 	return err
 }
 
@@ -5598,7 +5678,7 @@ type UpdateSeriesStatisticsParams struct {
 }
 
 func (q *Queries) UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error {
-	_, err := q.exec(ctx, q.updateSeriesStatisticsStmt, updateSeriesStatistics,
+	_, err := q.db.ExecContext(ctx, updateSeriesStatistics,
 		arg.SeriesID,
 		arg.SeriesID_2,
 		arg.SeriesID_3,
@@ -5649,7 +5729,7 @@ type UpdateSmartFilterParams struct {
 }
 
 func (q *Queries) UpdateSmartFilter(ctx context.Context, arg UpdateSmartFilterParams) (SmartFilter, error) {
-	row := q.queryRow(ctx, q.updateSmartFilterStmt, updateSmartFilter,
+	row := q.db.QueryRowContext(ctx, updateSmartFilter,
 		arg.Name,
 		arg.ActiveTag,
 		arg.ActiveAuthor,
@@ -5702,7 +5782,7 @@ type UpsertAuthorParams struct {
 }
 
 func (q *Queries) UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error) {
-	row := q.queryRow(ctx, q.upsertAuthorStmt, upsertAuthor, arg.Name, arg.Role)
+	row := q.db.QueryRowContext(ctx, upsertAuthor, arg.Name, arg.Role)
 	var i Author
 	err := row.Scan(
 		&i.ID,
@@ -5754,7 +5834,7 @@ type UpsertBookByPathParams struct {
 }
 
 func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error) {
-	row := q.queryRow(ctx, q.upsertBookByPathStmt, upsertBookByPath,
+	row := q.db.QueryRowContext(ctx, upsertBookByPath,
 		arg.SeriesID,
 		arg.LibraryID,
 		arg.Name,
@@ -5814,7 +5894,7 @@ type UpsertReadingBookmarkParams struct {
 }
 
 func (q *Queries) UpsertReadingBookmark(ctx context.Context, arg UpsertReadingBookmarkParams) (ReadingBookmark, error) {
-	row := q.queryRow(ctx, q.upsertReadingBookmarkStmt, upsertReadingBookmark, arg.BookID, arg.Page, arg.Note)
+	row := q.db.QueryRowContext(ctx, upsertReadingBookmark, arg.BookID, arg.Page, arg.Note)
 	var i ReadingBookmark
 	err := row.Scan(
 		&i.ID,
@@ -5871,7 +5951,7 @@ type UpsertSeriesByPathParams struct {
 }
 
 func (q *Queries) UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error) {
-	row := q.queryRow(ctx, q.upsertSeriesByPathStmt, upsertSeriesByPath,
+	row := q.db.QueryRowContext(ctx, upsertSeriesByPath,
 		arg.LibraryID,
 		arg.Name,
 		arg.Path,
@@ -5939,7 +6019,7 @@ type UpsertSeriesMetadataProvenanceParams struct {
 }
 
 func (q *Queries) UpsertSeriesMetadataProvenance(ctx context.Context, arg UpsertSeriesMetadataProvenanceParams) (SeriesMetadataProvenance, error) {
-	row := q.queryRow(ctx, q.upsertSeriesMetadataProvenanceStmt, upsertSeriesMetadataProvenance,
+	row := q.db.QueryRowContext(ctx, upsertSeriesMetadataProvenance,
 		arg.SeriesID,
 		arg.FieldName,
 		arg.Value,
@@ -6007,7 +6087,7 @@ type UpsertSmartFilterParams struct {
 }
 
 func (q *Queries) UpsertSmartFilter(ctx context.Context, arg UpsertSmartFilterParams) (SmartFilter, error) {
-	row := q.queryRow(ctx, q.upsertSmartFilterStmt, upsertSmartFilter,
+	row := q.db.QueryRowContext(ctx, upsertSmartFilter,
 		arg.LibraryID,
 		arg.Name,
 		arg.ActiveTag,
@@ -6055,7 +6135,7 @@ RETURNING id, name, created_at, series_count
 `
 
 func (q *Queries) UpsertTag(ctx context.Context, name string) (Tag, error) {
-	row := q.queryRow(ctx, q.upsertTagStmt, upsertTag, name)
+	row := q.db.QueryRowContext(ctx, upsertTag, name)
 	var i Tag
 	err := row.Scan(
 		&i.ID,
@@ -6112,7 +6192,7 @@ type UpsertTaskRecordParams struct {
 }
 
 func (q *Queries) UpsertTaskRecord(ctx context.Context, arg UpsertTaskRecordParams) error {
-	_, err := q.exec(ctx, q.upsertTaskRecordStmt, upsertTaskRecord,
+	_, err := q.db.ExecContext(ctx, upsertTaskRecord,
 		arg.Key,
 		arg.Type,
 		arg.Scope,

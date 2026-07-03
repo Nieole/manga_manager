@@ -33,10 +33,19 @@ type Querier interface {
 	CountPendingMetadataReviewInbox(ctx context.Context, arg CountPendingMetadataReviewInboxParams) (int64, error)
 	CountReadingListSeries(ctx context.Context, readingListID int64) (int64, error)
 	CountRecentAddedSeries(ctx context.Context, libraryID int64) (int64, error)
+	CountSeriesByLibrary(ctx context.Context, libraryID int64) (int64, error)
 	CreateAIGroupingReview(ctx context.Context, arg CreateAIGroupingReviewParams) (AiGroupingReview, error)
 	CreateAIGroupingReviewCollection(ctx context.Context, arg CreateAIGroupingReviewCollectionParams) (AiGroupingReviewCollection, error)
 	CreateBook(ctx context.Context, arg CreateBookParams) (Book, error)
 	CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error)
+	// Business note: this file is the database SQL contract layer. It defines the sqlc-generated
+	// queries and the data operations the upper Store exposes. It directly shapes the meaning of
+	// library, series-relation, reading-progress, task and search-sync data.
+	// NOTE: keep this file ASCII-only. sqlc's SQLite parser mis-slices queries when the file contains
+	// multi-byte (e.g. Chinese) characters, truncating query names and failing generation.
+	// Section: Library queries define the root library objects; path, scan mode and format fields
+	// directly affect how scan tasks discover comic files. Return columns become strongly-typed
+	// sqlc methods, so column changes must stay in sync with schema, Store wrappers and the settings UI.
 	CreateLibrary(ctx context.Context, arg CreateLibraryParams) (Library, error)
 	CreateMetadataReview(ctx context.Context, arg CreateMetadataReviewParams) (MetadataReview, error)
 	CreateMetadataReviewField(ctx context.Context, arg CreateMetadataReviewFieldParams) (MetadataReviewField, error)
@@ -121,6 +130,7 @@ type Querier interface {
 	ListMihonSeries(ctx context.Context, arg ListMihonSeriesParams) ([]ListMihonSeriesRow, error)
 	ListMihonSeriesByBooks(ctx context.Context, arg ListMihonSeriesByBooksParams) ([]ListMihonSeriesByBooksRow, error)
 	ListMihonSeriesByUpdated(ctx context.Context, arg ListMihonSeriesByUpdatedParams) ([]ListMihonSeriesByUpdatedRow, error)
+	ListOPDSLibrarySeriesPaged(ctx context.Context, arg ListOPDSLibrarySeriesPagedParams) ([]ListOPDSLibrarySeriesPagedRow, error)
 	ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error)
 	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error)
 	ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error)

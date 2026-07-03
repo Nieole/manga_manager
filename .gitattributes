@@ -1,0 +1,5 @@
+# SQL 源文件强制使用 LF 换行。
+# 原因：sqlc 的 SQLite 解析器在 CRLF + 多字节（中文注释）混合时会发生字节偏移错位，
+# 导致查询名被截断、生成失败。在 core.autocrlf=true 的 Windows 检出上尤其明显。
+# 强制 LF 可让 sqlc generate 在任何环境下稳定工作。
+*.sql text eol=lf

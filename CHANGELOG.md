@@ -4,6 +4,23 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（sqlc 管线修复 + 协议分页批次）
+
+#### 修复：sqlc 生成管线
+- 修复根因：`866c0f9` 给 `sql/query.sql` 与 `internal/database/schema.sql` 添加的**中文注释头**会让 sqlc 的 SQLite 解析器发生字节偏移错位（查询名被逐条累积截断、生成失败）。将这两个文件的注释头改为等义英文（SQL 语句一字未改），恢复 `sqlc generate` 正常工作。
+- 新增 `.gitattributes`：强制 `*.sql` 使用 LF 换行，避免 `core.autocrlf=true` 的 Windows 检出把 SQL 转成 CRLF 再触发 sqlc 解析问题。
+- `AGENTS.md`：记录“sqlc 必须在 PowerShell/cmd 下运行”（Git Bash 经 scoop shim 会返回假的退出码 1）。
+- `sqlc.yaml`：关闭 `emit_prepared_queries`。该选项生成了近千个从未被调用的预编译语句字段与 `Prepare` 机制（项目统一用 `New(db)`），移除后 `internal/database/db.go` 精简约 1600 行死代码。
+
+#### 修复：协议分页
+- `internal/api/opds_controller.go`：OPDS 资源库系列 feed 改为数据库层分页（新增 `CountSeriesByLibrary` + `ListOPDSLibrarySeriesPaged`，走 series_stats 取封面），不再每次翻页都全量加载整库系列再内存切片。
+- `internal/api/mihon_controller.go`：Mihon 系列搜索叠加 `libraryId` 过滤时不再走跨库 FTS 快路径（该路径按库做内存过滤会丢结果、把 total 算成当前页条数、分页失效），改为回落到原生支持库内关键字分页的 `SearchSeriesPaged`。
+
+#### 验证
+- `sqlc generate`（PowerShell）退出码 0、无致命错误；`go vet`、`go test ./internal/api ./internal/database`、`go build ./...` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（前端修复批次）
 
 #### 修复

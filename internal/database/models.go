@@ -70,6 +70,13 @@ type Book struct {
 	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
+type BookSearchFt struct {
+	SeriesID  string `json:"series_id"`
+	LibraryID string `json:"library_id"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
+}
+
 type Collection struct {
 	ID             int64          `json:"id"`
 	Name           string         `json:"name"`
@@ -262,6 +269,12 @@ type SeriesRelation struct {
 	TargetSeriesID int64        `json:"target_series_id"`
 	RelationType   string       `json:"relation_type"`
 	CreatedAt      sql.NullTime `json:"created_at"`
+}
+
+type SeriesSearchFt struct {
+	LibraryID string `json:"library_id"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
 }
 
 type SeriesStat struct {

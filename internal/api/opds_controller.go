@@ -789,47 +789,49 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seriesList, err := c.store.ListSeriesByLibrary(r.Context(), libID)
+	page := opdsPositiveQueryInt(r, "page", 1, 0)
+	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
+
+	// 在数据库层分页（LIMIT/OFFSET + COUNT），不再一次性加载整库系列再内存切片。
+	total, err := c.store.CountSeriesByLibrary(r.Context(), libID)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	rows, err := c.store.ListOPDSLibrarySeriesPaged(r.Context(), database.ListOPDSLibrarySeriesPagedParams{
+		LibraryID: libID,
+		Limit:     int64(limit),
+		Offset:    int64((page - 1) * limit),
+	})
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	now := time.Now().Format(time.RFC3339)
-	total := len(seriesList)
-	page := opdsPositiveQueryInt(r, "page", 1, 0)
-	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
-	start, end := opdsSliceBounds(total, page, limit)
-	seriesList = seriesList[start:end]
-
-	entries := make([]OPDSEntry, 0, len(seriesList))
-	for _, s := range seriesList {
+	entries := make([]OPDSEntry, 0, len(rows))
+	for _, s := range rows {
 		title := s.Name
-		if s.Title.Valid && s.Title.String != "" {
-			title = s.Title.String
+		if s.Title != "" {
+			title = s.Title
 		}
 
 		links := []OPDSLink{
 			{Href: fmt.Sprintf("/opds/v1.2/series/%d", s.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
 		}
-		if s.CoverPath.Valid && s.CoverPath.String != "" {
+		if s.CoverPath != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
-				Href: fmt.Sprintf("/api/thumbnails/%s", s.CoverPath.String),
-				Type: opdsThumbnailMIME(s.CoverPath.String),
+				Href: fmt.Sprintf("/api/thumbnails/%s", s.CoverPath),
+				Type: opdsThumbnailMIME(s.CoverPath),
 			})
-		}
-
-		summary := ""
-		if s.Summary.Valid {
-			summary = s.Summary.String
 		}
 
 		entries = append(entries, OPDSEntry{
 			Title:   title,
 			ID:      fmt.Sprintf("urn:manga-manager:opds:series:%d", s.ID),
 			Updated: s.UpdatedAt.Format(time.RFC3339),
-			Content: summary,
+			Content: s.Summary,
 			Links:   links,
 		})
 	}
@@ -839,7 +841,7 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 		Title:   "系列列表",
 		ID:      fmt.Sprintf("urn:manga-manager:opds:library:%d:series", libID),
 		Updated: now,
-		Links:   opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/libraries/%d", libID), page, limit, total),
+		Links:   opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/libraries/%d", libID), page, limit, int(total)),
 		Entries: entries,
 	}
 	xmlResponse(w, feed)

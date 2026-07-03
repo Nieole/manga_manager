@@ -1,9 +1,12 @@
--- 业务说明：本文件是业务实现，属于数据库 SQL 契约层，负责定义 sqlc 生成查询、迁移 schema 和上层 Store 可调用的数据操作。
--- 它直接影响资料库、系列关系、阅读进度、任务记录和搜索同步的数据含义。
--- 维护时应关注查询命名、索引匹配、事务使用、迁移兼容和生成代码同步。
+-- Business note: this file is the database SQL contract layer. It defines the sqlc-generated
+-- queries and the data operations the upper Store exposes. It directly shapes the meaning of
+-- library, series-relation, reading-progress, task and search-sync data.
+-- NOTE: keep this file ASCII-only. sqlc's SQLite parser mis-slices queries when the file contains
+-- multi-byte (e.g. Chinese) characters, truncating query names and failing generation.
 
--- 业务分区：Library 查询定义前端资料库的根对象，路径、扫描模式和格式字段会直接影响扫描任务如何发现漫画文件。
--- 这里的返回列由 sqlc 生成强类型方法，字段调整需要同步 schema、Store 封装和设置页表单。
+-- Section: Library queries define the root library objects; path, scan mode and format fields
+-- directly affect how scan tasks discover comic files. Return columns become strongly-typed
+-- sqlc methods, so column changes must stay in sync with schema, Store wrappers and the settings UI.
 -- name: CreateLibrary :one
 INSERT INTO libraries (name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -82,6 +85,23 @@ FROM series s
 LEFT JOIN series_stats ss ON ss.series_id = s.id
 WHERE instr(lower(s.name), lower(sqlc.arg(query))) > 0
    OR instr(lower(COALESCE(s.title, '')), lower(sqlc.arg(query))) > 0
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: CountSeriesByLibrary :one
+SELECT COUNT(*) FROM series WHERE library_id = ?;
+
+-- name: ListOPDSLibrarySeriesPaged :many
+SELECT
+    s.id,
+    s.name,
+    COALESCE(s.title, '') as title,
+    COALESCE(s.summary, '') as summary,
+    s.updated_at,
+    CAST(COALESCE(ss.cover_path, '') AS TEXT) as cover_path
+FROM series s
+LEFT JOIN series_stats ss ON ss.series_id = s.id
+WHERE s.library_id = sqlc.arg(library_id)
 ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
