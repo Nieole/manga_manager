@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（数据库层修复批次）
+
+#### 修复
+- `internal/database/store.go`：升级迁移时一次性回填 `tags.series_count`（此前该回填函数从未被调用，触发器只维护增量，老库的标签 facet 计数/排序会一直不准）。schema 版本号提升到 2，确保已升级到 v1 的库也会补算。
+- `internal/database/store.go` / `schema.sql`：为“最近阅读系列”查询新增部分索引 `idx_books_library_last_read ON books(library_id, last_read_at) WHERE last_read_at IS NOT NULL`，避免首页最近阅读随库规模全表扫描。
+- `internal/database/store.go`：全局搜索、图书搜索、协议系列搜索三处 FTS 查询失败时不再静默吞掉错误、静默降级为 `instr` 全表扫描，现记录 `slog.Warn` 使故障可观测。
+
+#### 验证
+- `go test ./internal/database/`（含新增标签计数回填测试 `TestMigrateBackfillsTagSeriesCount`）通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（P1 性能与列表修复）
 
 #### 后端：迁移与查询性能

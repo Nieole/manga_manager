@@ -224,6 +224,54 @@ func TestMigrateSetsSchemaVersionAndSkipsRebackfill(t *testing.T) {
 	}
 }
 
+// TestMigrateBackfillsTagSeriesCount 验证 M23：版本升级时一次性回填 tags.series_count，
+// 修正老库遗留的错误计数（触发器只维护增量、历史数据靠此处补算）。
+func TestMigrateBackfillsTagSeriesCount(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tagcount.db")
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("first migrate failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+	// 关联 1 个标签到 2 个系列（触发器会把 series_count 维护为 2），随后人为改成 0 模拟老库遗留，
+	// 并把 user_version 降回 1 模拟“已升级到 v1、尚未跑 tag 回填”的库。
+	if _, err := db.Exec(`
+		INSERT INTO libraries (name, path) VALUES ('L', '/tmp/l');
+		INSERT INTO series (library_id, name, path) VALUES (1, 'S1', '/tmp/l/s1'), (1, 'S2', '/tmp/l/s2');
+		INSERT INTO tags (name) VALUES ('action');
+		INSERT INTO series_tags (series_id, tag_id) VALUES (1, 1), (2, 1);
+		UPDATE tags SET series_count = 0 WHERE id = 1;
+		PRAGMA user_version = 1;
+	`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db failed: %v", err)
+	}
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("second migrate failed: %v", err)
+	}
+
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopen db failed: %v", err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT series_count FROM tags WHERE id = 1`).Scan(&count); err != nil {
+		t.Fatalf("read series_count failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected backfilled tags.series_count=2, got %d", count)
+	}
+}
+
 func testTableExists(t *testing.T, db *sql.DB, table string) bool {
 	t.Helper()
 	var name string

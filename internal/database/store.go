@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"strconv"
 	"strings"
@@ -406,10 +407,11 @@ func (s *SqlStore) ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 
 // Migrate 供启动时执行迁移
 // currentSchemaVersion 是当前 schema 的迁移版本号，存入 SQLite 的 PRAGMA user_version。
-// 昂贵的一次性全量回填（series_stats、name_initial、provenance、FTS 索引重建）仅在库版本
-// 低于此值时执行一次，之后每次启动跳过——这些操作成本随库规模线性增长，运行期已由触发器与
+// 昂贵的一次性全量回填（series_stats、name_initial、tag_series_count、provenance、FTS 索引重建）
+// 仅在库版本低于此值时执行一次，之后每次启动跳过——这些操作成本随库规模线性增长，运行期已由触发器与
 // RefreshSeriesStats 增量维护。新增需要全量回填的 schema 变更时，把该值 +1。
-const currentSchemaVersion = 1
+// v2：新增 tags.series_count 的一次性回填，确保已升级到 v1 的库也会补算。
+const currentSchemaVersion = 2
 
 func Migrate(dbPath string) error {
 	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
@@ -515,6 +517,7 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_books_read_progress_series ON books(last_read_page, series_id) WHERE last_read_page > 0`,
 		`CREATE INDEX IF NOT EXISTS idx_books_cover_pick ON books(series_id, sort_number, name) WHERE cover_path IS NOT NULL AND cover_path != ''`,
 		`CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_library_last_read ON books(library_id, last_read_at) WHERE last_read_at IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id)`,
@@ -560,6 +563,11 @@ func Migrate(dbPath string) error {
 			return err
 		}
 		if err := backfillSeriesStats(db); err != nil {
+			return err
+		}
+		// tags.series_count 触发器只维护增量，历史数据需在升级时一次性回填，
+		// 否则老库的标签 facet 计数/排序会一直不准。
+		if err := backfillTagSeriesCount(db); err != nil {
 			return err
 		}
 		if err := backfillSeriesMetadataProvenance(db); err != nil {
@@ -1290,6 +1298,7 @@ func (s *SqlStore) SearchGlobalSeries(ctx context.Context, keyword string, limit
 		if err == nil {
 			return items, nil
 		}
+		slog.Warn("Series FTS search failed, falling back to substring scan", "error", err)
 	}
 	return s.searchGlobalSeriesSubstring(ctx, keyword, limit)
 }
@@ -1308,6 +1317,7 @@ func (s *SqlStore) SearchGlobalBooks(ctx context.Context, keyword string, limit 
 		if err == nil {
 			return items, nil
 		}
+		slog.Warn("Book FTS search failed, falling back to substring scan", "error", err)
 	}
 	return s.searchGlobalBooksSubstring(ctx, keyword, limit)
 }
@@ -1328,6 +1338,7 @@ func (s *SqlStore) SearchProtocolSeries(ctx context.Context, keyword string, lim
 		if err == nil {
 			return rows, total, nil
 		}
+		slog.Warn("Protocol series FTS search failed, falling back to substring scan", "error", err)
 	}
 	return s.searchProtocolSeriesSubstring(ctx, keyword, limit, offset)
 }
