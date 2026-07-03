@@ -39,9 +39,9 @@ func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter Smart
 	selectQuery := `
 		SELECT
 			s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
-			bc.cover_path,
+			ss.cover_path,
 			GROUP_CONCAT(DISTINCT t.name) as tags_string,
-			COALESCE(rc.read_count, 0) as read_count
+			COALESCE(ss.read_pages, 0) as read_count
 	` + baseQuery + fmt.Sprintf(` GROUP BY s.id ORDER BY %s LIMIT ? OFFSET ?`, smartCollectionOrderClause(filter))
 	queryArgs := append([]any{}, args...)
 	queryArgs = append(queryArgs, limit, offset)
@@ -89,34 +89,17 @@ func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter Smart
 	return items, total, nil
 }
 
+// smartCollectionProgressExpr 复用 series_stats 缓存计算阅读进度百分比，口径与全站 series 列表一致：
+// 已读页数（clamp 到 page_count 后的 read_pages）占系列总页数（s.total_pages）的比例。
+const smartCollectionProgressExpr = `CASE WHEN s.total_pages > 0 THEN COALESCE(ss.read_pages, 0) * 100.0 / s.total_pages ELSE 0 END`
+
 func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any) {
+	// 改用预计算的 series_stats 缓存（每系列一行、按 series_id 主键关联），并配合 series 表的
+	// 冗余统计列（book_count / total_pages），取代此前对整个 books 表做的三重全表聚合。
+	// 由于不再有绕过 library 过滤的派生表，WHERE s.library_id = ? 能真正把查询限定在本库范围内。
 	query := `
 		FROM series s
-		LEFT JOIN (
-			SELECT series_id, cover_path,
-				ROW_NUMBER() OVER (PARTITION BY series_id ORDER BY sort_number, name) as rn
-			FROM books WHERE cover_path IS NOT NULL AND cover_path != ''
-		) bc ON bc.series_id = s.id AND bc.rn = 1
-		LEFT JOIN (
-			SELECT series_id, COALESCE(SUM(last_read_page), 0) as read_count
-			FROM books
-			WHERE last_read_page > 0
-			GROUP BY series_id
-		) rc ON rc.series_id = s.id
-		LEFT JOIN (
-			SELECT
-				series_id,
-				COUNT(*) as book_count,
-				SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN 1 ELSE 0 END) as read_books,
-				SUM(CASE WHEN page_count > 0 AND last_read_page >= page_count THEN 1 ELSE 0 END) as completed_books,
-				CASE
-					WHEN SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END) > 0
-					THEN SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN MIN(last_read_page, page_count) ELSE 0 END) * 100.0 / SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END)
-					ELSE 0
-				END as progress_percent
-			FROM books
-			GROUP BY series_id
-		) rp ON rp.series_id = s.id
+		LEFT JOIN series_stats ss ON ss.series_id = s.id
 		LEFT JOIN series_tags st ON s.id = st.series_id
 		LEFT JOIN tags t ON st.tag_id = t.id
 		LEFT JOIN series_authors sa ON s.id = sa.series_id
@@ -150,11 +133,11 @@ func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any)
 		args = append(args, *filter.MaxRating)
 	}
 	if filter.MinProgress != nil {
-		query += " AND COALESCE(rp.progress_percent, 0) >= ?"
+		query += " AND (" + smartCollectionProgressExpr + ") >= ?"
 		args = append(args, *filter.MinProgress)
 	}
 	if filter.MaxProgress != nil {
-		query += " AND COALESCE(rp.progress_percent, 0) <= ?"
+		query += " AND (" + smartCollectionProgressExpr + ") <= ?"
 		args = append(args, *filter.MaxProgress)
 	}
 	if filter.AddedWithinDays != nil {
@@ -163,11 +146,11 @@ func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any)
 	}
 	switch strings.TrimSpace(filter.ReadState) {
 	case "unread":
-		query += " AND COALESCE(rp.read_books, 0) = 0"
+		query += " AND COALESCE(ss.read_book_count, 0) = 0"
 	case "reading":
-		query += " AND COALESCE(rp.read_books, 0) > 0 AND COALESCE(rp.completed_books, 0) < COALESCE(rp.book_count, 0)"
+		query += " AND COALESCE(ss.read_book_count, 0) > 0 AND COALESCE(ss.completed_book_count, 0) < s.book_count"
 	case "completed":
-		query += " AND COALESCE(rp.book_count, 0) > 0 AND COALESCE(rp.completed_books, 0) = COALESCE(rp.book_count, 0)"
+		query += " AND s.book_count > 0 AND COALESCE(ss.completed_book_count, 0) = s.book_count"
 	}
 	return query, args
 }

@@ -405,6 +405,12 @@ func (s *SqlStore) ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 }
 
 // Migrate 供启动时执行迁移
+// currentSchemaVersion 是当前 schema 的迁移版本号，存入 SQLite 的 PRAGMA user_version。
+// 昂贵的一次性全量回填（series_stats、name_initial、provenance、FTS 索引重建）仅在库版本
+// 低于此值时执行一次，之后每次启动跳过——这些操作成本随库规模线性增长，运行期已由触发器与
+// RefreshSeriesStats 增量维护。新增需要全量回填的 schema 变更时，把该值 +1。
+const currentSchemaVersion = 1
+
 func Migrate(dbPath string) error {
 	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
@@ -412,12 +418,18 @@ func Migrate(dbPath string) error {
 	}
 	defer db.Close()
 
+	var userVersion int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		return err
+	}
+
 	// 必须在建表/建触发器之前迁移旧版 FTS 结构：migrateFTSTables 会 DROP 掉带冗余列的旧
 	// series_search_fts / book_search_fts 及其触发器，随后的 execSchemaStatements(false)
 	// 以新 schema 重建虚拟表、CREATE TRIGGER IF NOT EXISTS 重建触发器。若放在建表之后，
 	// DROP 完却没有任何语句重建虚拟表，rebuildSeriesSearchIndex 的 DELETE 会因表不存在而
 	// 让整个 Migrate 失败（老库升级首启崩溃）。全新库上该 SELECT 探测直接报错、needRebuild 保持 false，为无操作。
-	if err := migrateFTSTables(db); err != nil {
+	ftsRebuilt, err := migrateFTSTables(db)
+	if err != nil {
 		return err
 	}
 
@@ -541,23 +553,28 @@ func Migrate(dbPath string) error {
 		return err
 	}
 
-	if err := backfillSeriesInitials(db); err != nil {
-		return err
+	// 一次性全量回填只在 schema 版本升级时执行（此前每次启动都无条件全量重算，成本随库规模线性膨胀）。
+	needFullBackfill := userVersion < currentSchemaVersion
+	if needFullBackfill {
+		if err := backfillSeriesInitials(db); err != nil {
+			return err
+		}
+		if err := backfillSeriesStats(db); err != nil {
+			return err
+		}
+		if err := backfillSeriesMetadataProvenance(db); err != nil {
+			return err
+		}
 	}
 
-	if err := backfillSeriesStats(db); err != nil {
-		return err
-	}
-
-	if err := rebuildSeriesSearchIndex(db); err != nil {
-		return err
-	}
-	if err := rebuildBookSearchIndex(db); err != nil {
-		return err
-	}
-
-	if err := backfillSeriesMetadataProvenance(db); err != nil {
-		return err
+	// FTS 索引重建：版本升级、或 migrateFTSTables 刚 DROP 重建了空表时，都必须回填一次。
+	if needFullBackfill || ftsRebuilt {
+		if err := rebuildSeriesSearchIndex(db); err != nil {
+			return err
+		}
+		if err := rebuildBookSearchIndex(db); err != nil {
+			return err
+		}
 	}
 
 	if err := migrateLegacyKOReaderAccounts(db); err != nil {
@@ -567,6 +584,13 @@ func Migrate(dbPath string) error {
 	// 迁移旧的 auto_scan 字段到新的 scan_mode
 	// 尝试执行，忽略错误因为有些数据库可能原本就没有 auto_scan
 	_, _ = db.Exec(`UPDATE libraries SET scan_mode = 'interval' WHERE auto_scan = 1 AND scan_mode = 'none'`)
+
+	// 记录本次已迁移到的 schema 版本，使下次启动跳过昂贵的全量回填。
+	if needFullBackfill {
+		if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -778,7 +802,10 @@ func backfillSeriesMetadataProvenance(db *sql.DB) error {
 
 // migrateFTSTables 检测旧 FTS 表结构，若仍含冗余列则 DROP 重建为 contentless 模式。
 // 旧结构特征：series_search_fts 含 path 列，book_search_fts 含 series_name 列。
-func migrateFTSTables(db *sql.DB) error {
+// migrateFTSTables 检测旧版 FTS 结构并在需要时 DROP 重建为 contentless 模式。
+// 返回值 rebuilt 表示是否 DROP 了旧表——调用方据此得知“FTS 表刚被清空、必须重新回填”，
+// 即使 schema 版本未升级也要强制执行一次 rebuildSearchIndex。
+func migrateFTSTables(db *sql.DB) (rebuilt bool, err error) {
 	needRebuild := false
 
 	// 检测 series_search_fts 是否含旧列（path）
@@ -810,7 +837,7 @@ func migrateFTSTables(db *sql.DB) error {
 	}
 
 	if !needRebuild {
-		return nil
+		return false, nil
 	}
 
 	// DROP 所有旧触发器和旧 FTS 表，让后续 execSchemaStatements + CREATE TRIGGER IF NOT EXISTS 重建
@@ -825,11 +852,11 @@ func migrateFTSTables(db *sql.DB) error {
 		`DROP TABLE IF EXISTS series_search_fts`,
 		`DROP TABLE IF EXISTS book_search_fts`,
 	} {
-		if _, err := db.Exec(stmt); err != nil {
-			return err
+		if _, execErr := db.Exec(stmt); execErr != nil {
+			return false, execErr
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func migrateLegacyKOReaderAccounts(db *sql.DB) error {

@@ -107,6 +107,7 @@ export default function LibraryPage() {
     refreshTrigger,
     enabled: settingsReady && debouncedKeyword === keyword.trim(),
     keyword: debouncedKeyword,
+    appendMode: paginationMode === 'infinite',
   });
   const { allSeries, totalSeries, loading, pageCursorMap, resetPagination, refetchCurrentPage, patchSeries } = seriesData;
 
@@ -117,6 +118,14 @@ export default function LibraryPage() {
     resetPagination();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, pageSize, debouncedKeyword]);
+
+  // 切换分页模式时回到第 1 页：无限滚动应从头开始累积，避免带着分页模式的中间页码进入追加流。
+  useEffect(() => {
+    if (!settingsReady) return;
+    setPage(1);
+    resetPagination();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paginationMode]);
 
   // ===== 选择 =====
   const selection = useLibrarySelection({

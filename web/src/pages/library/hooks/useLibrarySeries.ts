@@ -27,6 +27,9 @@ interface UseLibrarySeriesParams {
   refreshTrigger: number;
   enabled: boolean;
   keyword?: string;
+  // 无限滚动模式：翻到第 2 页及以后时把新数据追加到已有列表（按 id 去重），
+  // 而非整页替换。分页模式（false）保持“每页替换”语义。
+  appendMode?: boolean;
 }
 
 interface UseLibrarySeriesResult {
@@ -73,6 +76,7 @@ export function useLibrarySeries({
   refreshTrigger,
   enabled,
   keyword = '',
+  appendMode = false,
 }: UseLibrarySeriesParams): UseLibrarySeriesResult {
   const [allSeries, setAllSeries] = useState<Series[]>([]);
   const [totalSeries, setTotalSeries] = useState(0);
@@ -119,7 +123,23 @@ export function useLibrarySeries({
           if (requestID !== latestRequestIDRef.current) return;
           const items = res.data.items || [];
           const total = res.data.total || 0;
-          setAllSeries(items);
+          // 无限滚动翻页（page>1）时按 id 合并：更新已存在项的最新数据、追加新增项，
+          // 顺序保持不变。这样滚动加载会累积，而收藏/刮削后对当前页的静默刷新也能生效。
+          // 筛选/排序变化会把 page 重置为 1，届时走替换分支，自然清空累积列表。
+          if (appendMode && pageNumber > 1) {
+            setAllSeries((prev) => {
+              if (prev.length === 0) return items;
+              const incoming = new Map(items.map((item) => [item.id, item]));
+              const merged = prev.map((s) => incoming.get(s.id) ?? s);
+              const seen = new Set(prev.map((s) => s.id));
+              for (const item of items) {
+                if (!seen.has(item.id)) merged.push(item);
+              }
+              return merged;
+            });
+          } else {
+            setAllSeries(items);
+          }
           // 游标分页（cursor 翻页）的后端响应不做 COUNT，total 恒为 0；此时不能用它覆盖
           // 第 1 页已取得的真实总数，否则 totalSeries 归零会让分页控件（totalSeries > 0）消失。
           // 仅在非游标请求（带真实 total）时才更新总数。
@@ -154,7 +174,6 @@ export function useLibrarySeries({
           if (requestID === latestRequestIDRef.current) setLoading(false);
         });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       libId,
       pageSize,
@@ -167,6 +186,7 @@ export function useLibrarySeries({
       serializedFilters,
       keyword,
       pageCursorMap,
+      appendMode,
     ],
   );
 

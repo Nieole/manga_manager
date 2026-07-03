@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（P1 性能与列表修复）
+
+#### 后端：迁移与查询性能
+- `internal/database/store.go`：引入 `PRAGMA user_version` 版本化迁移。此前每次启动都无条件全量重建 FTS 索引并回填 `series_stats`（成本随库规模线性膨胀）；现改为仅在库版本低于 `currentSchemaVersion` 时执行一次，之后每次启动跳过，运行期由触发器与 `RefreshSeriesStats` 增量维护。`migrateFTSTables` 改返回 `rebuilt` 标志，DROP 重建空表时仍强制回填一次（兼容旧版 FTS 结构升级路径）。
+- `internal/database/smart_collection.go`：智能书架/合集视图查询改用预计算的 `series_stats` 缓存 + `series` 冗余统计列，取代此前对整个 `books` 表做的三重全表聚合（封面 ROW_NUMBER、已读页 SUM、完成度聚合）。查询不再触及 books 表，`WHERE s.library_id = ?` 能真正把范围收敛到本库；进度百分比口径统一为 `read_pages / total_pages`，与全站 series 列表一致。
+
+#### 前端：资料库无限滚动
+- `web/src/pages/library/hooks/useLibrarySeries.ts` / `web/src/pages/library/index.tsx`：无限滚动模式修复。此前翻页时整页替换列表，导致列表永远只显示一页、哨兵反复触发翻页；现改为按 id 合并（更新已存在项 + 追加新增项），滚动加载正确累积。分页模式保持整页替换语义；筛选/排序/分页模式切换回到第 1 页，自然清空累积列表。
+
+#### 验证
+- `go vet ./...` 通过；`go test ./...` 全部通过（新增迁移版本门控测试 `TestMigrateSetsSchemaVersionAndSkipsRebackfill`）；`cd web && npm run build` 通过；改动的前端文件 `eslint` 无告警。
+
+---
+
 ### 📌 增量记录 — 2026-07-03（P0 安全与稳定性修复）
 
 #### 安全：管理 API 加固

@@ -169,6 +169,61 @@ func TestMigrateRebuildsLegacyFTSSchema(t *testing.T) {
 	}
 }
 
+// TestMigrateSetsSchemaVersionAndSkipsRebackfill 验证 H3：首次迁移写入 user_version，
+// 二次迁移在版本未升级时跳过昂贵的全量回填（用 series_stats 哨兵值是否被覆写来判定）。
+func TestMigrateSetsSchemaVersionAndSkipsRebackfill(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "versioned.db")
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("first migrate failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		_ = db.Close()
+		t.Fatalf("read user_version failed: %v", err)
+	}
+	if version != currentSchemaVersion {
+		_ = db.Close()
+		t.Fatalf("expected user_version=%d after migrate, got %d", currentSchemaVersion, version)
+	}
+
+	// 写入一条 series 及带哨兵缓存的 series_stats。若二次迁移错误地重跑全量回填，
+	// refreshSeriesStats 的 ON CONFLICT DO UPDATE 会把 tag_names_cache 覆写为空。
+	if _, err := db.Exec(`
+		INSERT INTO libraries (name, path) VALUES ('L', '/tmp/l');
+		INSERT INTO series (library_id, name, path) VALUES (1, 'S', '/tmp/l/s');
+		INSERT INTO series_stats (series_id, tag_names_cache) VALUES (1, 'SENTINEL');
+	`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed sentinel failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db failed: %v", err)
+	}
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("second migrate failed: %v", err)
+	}
+
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopen db failed: %v", err)
+	}
+	defer db.Close()
+	var cache string
+	if err := db.QueryRow(`SELECT tag_names_cache FROM series_stats WHERE series_id = 1`).Scan(&cache); err != nil {
+		t.Fatalf("read series_stats failed: %v", err)
+	}
+	if cache != "SENTINEL" {
+		t.Fatalf("second migrate should skip full backfill and preserve series_stats, got %q", cache)
+	}
+}
+
 func testTableExists(t *testing.T, db *sql.DB, table string) bool {
 	t.Helper()
 	var name string
