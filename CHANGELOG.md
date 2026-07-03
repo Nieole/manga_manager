@@ -4,6 +4,28 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-03（P0 安全与稳定性修复）
+
+#### 安全：管理 API 加固
+- `internal/api/controller.go` / `internal/config/config.go`：`GET/POST /api/system/config` 回显时对 LLM `api_key` 与新增的 `server.auth.token` 脱敏（占位符 `__mm_secret_unchanged__`），保存或测试时若字段仍为占位符则用当前值回填，既不泄露明文也不会误清空密钥。
+- `internal/config/config.go` / `internal/api/controller.go` / `cmd/server/main.go`：新增**可选管理 API 令牌鉴权** `server.auth`（默认关闭，行为完全向后兼容）。启用后管理端点要求携带匹配令牌（`X-API-Token` 头 / `Authorization: Bearer` / `?token=` 查询参数），阅读协议 OPDS/Mihon/KOReader 不受影响、保持各自鉴权模型。
+- `internal/api/controller.go`：`POST /api/system/test-llm` 增加 SSRF 出站目标 scheme 校验，仅允许 `http/https`，拒绝 `file://`、`gopher://` 等；默认仍支持本机 Ollama。
+- `cmd/server/main.go`：CORS 检测到通配 Origin 时强制关闭 `AllowCredentials`（规避“通配 + 凭据”危险组合），并在启动时对无鉴权裸奔 / 鉴权配置不完整发出告警。
+- `internal/images/processor.go`：自定义放大引擎路径加固，仅接受绝对路径且为存在的常规文件，降低“改配置即执行任意本地文件”的滥用面。
+
+#### 前端：可选鉴权支撑
+- `web/src/utils/apiAuth.ts`（新增）/ `web/src/main.tsx` / `web/src/components/Layout.tsx`：设置 `localStorage.mm_token` 后，所有 axios 管理请求自动附带 `X-API-Token`、SSE 连接附带 `token` 查询参数；未设置令牌时为无操作，默认行为不变。
+
+#### 修复：数据与稳定性
+- `internal/database/store.go`：修正 FTS 表迁移顺序——`migrateFTSTables` 提前到建表/建触发器之前，避免从旧版 FTS 结构升级的老库首次启动因 `no such table` 崩溃；新增迁移回归测试覆盖该升级路径。
+- `internal/scanner/scanner.go`：`CleanupLibrary` 入口先探测资料库根目录，存储离线/盘符漂移时直接中止；待删系列占比超过 50% 触发熔断；权限、超时等不确定错误跳过而非删除，防止整库系列连同阅读进度被级联误删。
+- `internal/images/processor.go`：全局 AI 并发信号量改用 `atomic.Pointer` 持有，acquire/release 快照同一 channel 引用，消除配置热更新重建信号量时的数据竞争与 goroutine 永久挂起。
+
+#### 验证
+- `go vet ./...` 通过；`go test ./...` 全部通过（新增 6 个针对脱敏、鉴权、SSRF、迁移的测试）；`cd web && npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-06-09（系列关系图谱展示优化）
 
 #### 前端：Obsidian 风格松散图谱

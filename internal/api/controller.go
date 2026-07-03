@@ -6,12 +6,14 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -384,6 +386,75 @@ func (c *Controller) requireProtocolEnabled(protocol string) func(http.Handler) 
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// requireAuth 是可选的管理 API 令牌鉴权中间件。默认（server.auth.enabled=false 或 token 为空）
+// 为直通，行为与历史无鉴权版本完全一致；启用后，管理端点要求携带匹配 token 的令牌
+// （X-API-Token 头、Authorization: Bearer，或 token 查询参数——后者便于 EventSource/<img> 等
+// 无法自定义请求头的场景）。阅读协议 Mihon（/api/mihon/）不经此中间件，保持自身的协议开关与鉴权模型；
+// OPDS/KOReader 挂载在根路由、本就不在 /api 组内。
+func (c *Controller) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg := c.currentConfig()
+		if !cfg.Server.Auth.Enabled || cfg.Server.Auth.Token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/mihon/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if constantTimeTokenMatch(extractAPIToken(r), cfg.Server.Auth.Token) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="manga-manager"`)
+		jsonError(w, http.StatusUnauthorized, "需要有效的访问令牌")
+	})
+}
+
+// extractAPIToken 依次从 X-API-Token 头、Authorization: Bearer、token 查询参数中取令牌。
+func extractAPIToken(r *http.Request) string {
+	if t := strings.TrimSpace(r.Header.Get("X-API-Token")); t != "" {
+		return t
+	}
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		if after, ok := strings.CutPrefix(auth, "Bearer "); ok {
+			return strings.TrimSpace(after)
+		}
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token"))
+}
+
+// constantTimeTokenMatch 用恒定时间比较避免令牌校验的时序侧信道。
+func constantTimeTokenMatch(provided, expected string) bool {
+	if provided == "" || expected == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+}
+
+// validateOutboundLLMTarget 对 test-llm 的出站目标做 SSRF 加固：仅允许 http/https scheme，
+// 拒绝 file://、gopher:// 等危险协议。由于本服务默认支持本机 Ollama（localhost），此处不封锁
+// 私有网段/回环地址，未鉴权部署时应配合 server.auth 开启，或置于受信内网/反向代理之后。
+func validateOutboundLLMTarget(baseURL, endpoint string) error {
+	target := strings.TrimSpace(baseURL)
+	if target == "" {
+		target = strings.TrimSpace(endpoint)
+	}
+	if target == "" {
+		return nil
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return fmt.Errorf("无效的目标地址: %v", err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("不支持的目标协议 %q，仅允许 http/https", u.Scheme)
 	}
 }
 
@@ -1989,6 +2060,9 @@ func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) SetupRoutes(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
+		// 可选管理 API 鉴权（默认关闭时为直通）。必须在挂载任何子路由之前 Use，
+		// 中间件内部会放行 /api/mihon/ 等阅读协议前缀。
+		r.Use(c.requireAuth)
 		c.setupMihonRoutes(r)
 
 		r.Get("/events", c.sseHandler)
@@ -4463,7 +4537,8 @@ func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.C
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := c.currentConfig()
 	c.enrichConfigWithDatabase(r.Context(), &cfg)
-	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(cfg))
+	// 回显前脱敏：LLM api_key、server.auth.token 等敏感字段以占位符返回，不向客户端泄露明文。
+	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(config.MaskSecrets(cfg)))
 }
 
 func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -4476,6 +4551,8 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid configuration format")
 		return
 	}
+	// 前端保存整份配置时会把未改动的密钥以占位符形式回传，用当前值回填，避免真实密钥被占位符覆盖。
+	config.RestoreMaskedSecrets(&newCfg, c.currentConfig())
 	config.NormalizeConfig(&newCfg)
 
 	validation := config.ValidateConfig(&newCfg)
@@ -4495,7 +4572,7 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"message":    "配置已成功保存。大部分设定会立刻生效。",
-		"config":     newCfg,
+		"config":     config.MaskSecrets(newCfg),
 		"validation": validation,
 	})
 }
@@ -4531,6 +4608,15 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := c.currentConfig()
+	// 前端可能回传脱敏占位符（未改动密钥）：用当前存储的真实密钥替换，避免用占位符去测试。
+	if req.APIKey == config.SecretMask {
+		req.APIKey = cfg.LLM.APIKey
+	}
+	// SSRF 加固：拒绝非 http(s) 的出站目标协议。
+	if err := validateOutboundLLMTarget(req.BaseURL, req.Endpoint); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	provider := metadata.NewAIProvider(req.Provider, req.APIMode, req.BaseURL, req.RequestPath, req.Model, req.APIKey, cfg.LLM.Timeout)
 	response, err := provider.TestLLM(r.Context(), req.Prompt)
 	if err != nil {

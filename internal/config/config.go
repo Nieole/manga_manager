@@ -18,6 +18,13 @@ type Config struct {
 		Host           string   `yaml:"host" json:"host"`
 		Port           int      `yaml:"port" json:"port"`
 		AllowedOrigins []string `yaml:"allowed_origins" json:"allowed_origins"`
+		// Auth 是可选的管理 API 令牌鉴权。默认关闭（Enabled=false），此时行为与历史版本
+		// 完全一致（无鉴权）；启用后，管理端点要求携带匹配 Token 的令牌，阅读协议
+		// （OPDS/Mihon/KOReader）仍走各自的鉴权模型。Token 为敏感字段，回显前端时会被脱敏。
+		Auth struct {
+			Enabled bool   `yaml:"enabled" json:"enabled"`
+			Token   string `yaml:"token" json:"token"`
+		} `yaml:"auth" json:"auth"`
 	} `yaml:"server" json:"server"`
 	Database struct {
 		Path string `yaml:"path" json:"path"`
@@ -85,6 +92,37 @@ const (
 	LogLevelWarn                = "warn"
 	LogLevelError               = "error"
 )
+
+// SecretMask 是回显给前端的敏感字段占位符。前端把它原样存进只写输入框（如 <input type=password>），
+// 保存时若字段仍等于该占位符，后端据此保留原值（见 RestoreMaskedSecrets），从而既不向客户端泄露
+// 明文密钥，又不会因前端回传占位符而把真实密钥覆盖掉。占位符本身不是任何合法密钥。
+const SecretMask = "__mm_secret_unchanged__"
+
+// MaskSecrets 返回 cfg 的副本，将敏感字段（LLM APIKey、Server.Auth.Token）替换为占位符。
+// 仅当字段非空时替换，空值保持为空，便于前端区分“已设置”与“未设置”。
+func MaskSecrets(cfg Config) Config {
+	if cfg.LLM.APIKey != "" {
+		cfg.LLM.APIKey = SecretMask
+	}
+	if cfg.Server.Auth.Token != "" {
+		cfg.Server.Auth.Token = SecretMask
+	}
+	return cfg
+}
+
+// RestoreMaskedSecrets 把 incoming 中仍为占位符的敏感字段用 current 的真实值回填。
+// 前端保存整份配置时会把未改动的密钥以占位符形式回传，此处据此避免真实密钥被占位符覆盖。
+func RestoreMaskedSecrets(incoming *Config, current Config) {
+	if incoming == nil {
+		return
+	}
+	if incoming.LLM.APIKey == SecretMask {
+		incoming.LLM.APIKey = current.LLM.APIKey
+	}
+	if incoming.Server.Auth.Token == SecretMask {
+		incoming.Server.Auth.Token = current.Server.Auth.Token
+	}
+}
 
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)

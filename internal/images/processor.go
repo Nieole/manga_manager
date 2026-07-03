@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/nfnt/resize"
 	golangWebp "golang.org/x/image/webp"
@@ -31,15 +32,20 @@ import (
 	"github.com/gen2brain/avif"
 )
 
-// 全局 AI 并发控制信号量，防止瞬间拉起过多引擎进程撑爆 CPU/GPU/RAM
-var aiSemaphore chan struct{}
+// 全局 AI 并发控制信号量，防止瞬间拉起过多引擎进程撑爆 CPU/GPU/RAM。
+// 用 atomic.Pointer 持有 channel：配置热更新会调用 InitProcessor 重建 channel，
+// 若直接替换裸 channel 变量，正在 acquire/release 的请求 goroutine 会读到不同的
+// channel（获取旧的、释放到新的），导致令牌错配、goroutine 永久阻塞甚至内存泄漏。
+// 调用方必须把 Load() 到的 channel 快照进局部变量，acquire 与 release 用同一引用。
+var aiSemaphore atomic.Pointer[chan struct{}]
 
 // InitProcessor 初始化处理器全局参数
 func InitProcessor(maxAiConcurrency int) {
 	if maxAiConcurrency <= 0 {
 		maxAiConcurrency = 1
 	}
-	aiSemaphore = make(chan struct{}, maxAiConcurrency)
+	ch := make(chan struct{}, maxAiConcurrency)
+	aiSemaphore.Store(&ch)
 }
 
 // ProcessOptions 用于接受前端动态要求的尺寸转换
@@ -205,10 +211,13 @@ func decodeImage(data []byte, contentType string) (image.Image, string, error) {
 // execWaifu2x 封闭处理 Waifu2x 外部二进制引擎挂载调用、零担内存置换及事后清理
 func execWaifu2x(img image.Image, rawData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
 	// 获取信号量锁 (Semaphore Acquire)
-	// 如果由于读页并发过高，此处会阻塞协程直到前序 AI 任务完成
-	if aiSemaphore != nil {
-		aiSemaphore <- struct{}{}
-		defer func() { <-aiSemaphore }() // 放锁 (Semaphore Release)
+	// 如果由于读页并发过高，此处会阻塞协程直到前序 AI 任务完成。
+	// 把 channel 快照进 sem，确保 acquire 与 release 用的是同一个 channel，
+	// 即使中途 InitProcessor 替换了全局引用也不会令牌错配。
+	if semPtr := aiSemaphore.Load(); semPtr != nil {
+		sem := *semPtr
+		sem <- struct{}{}
+		defer func() { <-sem }() // 放锁 (Semaphore Release)
 	}
 
 	var execPath string
@@ -223,11 +232,18 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 		customPath = opts.RealCuganPath
 	}
 
+	// 自定义引擎路径加固：仅接受“绝对路径 + 存在 + 常规文件”。拒绝相对路径（可能随 cwd 解析到意外
+	// 可执行文件）和指向目录的路径，降低“改配置即执行任意本地文件”链的滥用面；不满足则退回全局嗅探。
+	// 该端点的写入侧应配合 server.auth 鉴权（见 controller.requireAuth）。
 	if customPath != "" {
-		if _, err := os.Stat(customPath); os.IsNotExist(err) {
-			slog.Warn("Custom engine path specified but not found on disk", "custom_path", customPath)
-			// 退火等待全局嗅探
-		} else {
+		switch info, err := os.Stat(customPath); {
+		case !filepath.IsAbs(customPath):
+			slog.Warn("Ignoring non-absolute custom engine path (security hardening)", "custom_path", customPath)
+		case err != nil:
+			slog.Warn("Custom engine path specified but not accessible", "custom_path", customPath, "error", err)
+		case info.IsDir():
+			slog.Warn("Ignoring custom engine path pointing to a directory", "custom_path", customPath)
+		default:
 			execPath = customPath
 		}
 	}

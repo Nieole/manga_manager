@@ -629,48 +629,94 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 }
 
 // CleanupLibrary 验证并清理指定资料库中的失效资源记录
+// cleanupDeleteRatioGuard 熔断阈值：当一次清理判定为“缺失”的系列占全库比例超过该值时，
+// 极可能是存储离线、盘符漂移或 UNC 断连造成的整库误判，而非用户真的删了这么多文件。
+// 此时中止清理，保护系列、书籍及其阅读进度不被级联删除。
+const cleanupDeleteRatioGuard = 0.5
+
 func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
+	// 先探测资料库根目录：存储离线时库内所有系列路径都会“看起来不存在”，
+	// 若继续清理会把整库系列连同书籍、阅读进度一并级联删除。任何 Stat 错误
+	// （不存在 / 权限 / 超时 / 网络）或非目录都视为不可达，直接中止。
+	library, err := s.store.GetLibrary(ctx, libraryID)
+	if err != nil {
+		return fmt.Errorf("failed to load library %d: %w", libraryID, err)
+	}
+	if info, statErr := os.Stat(library.Path); statErr != nil || !info.IsDir() {
+		return fmt.Errorf("library root %q unreachable, aborting cleanup to avoid mass deletion: %w", library.Path, statErr)
+	}
+
 	seriesList, err := s.store.ListSeriesByLibrary(ctx, libraryID)
 	if err != nil {
 		return fmt.Errorf("failed to list series: %w", err)
 	}
 
+	// 第一遍：仅收集“确证缺失”（os.IsNotExist）的系列；权限、超时、网络等不确定错误
+	// 一律跳过而非删除，避免瞬时 IO 故障被误判为文件消失。
+	var missingSeries []database.ListSeriesByLibraryRow
 	for _, series := range seriesList {
-		// 检查系列目录是否存在
-		if _, err := os.Stat(series.Path); os.IsNotExist(err) {
-			slog.Info("Removing missing series", "series_id", series.ID, "path", series.Path)
-			if err := s.store.DeleteSeries(ctx, series.ID); err != nil {
-				slog.Error("Failed to delete series", "series_id", series.ID, "error", err)
+		if _, statErr := os.Stat(series.Path); statErr != nil {
+			if os.IsNotExist(statErr) {
+				missingSeries = append(missingSeries, series)
+			} else {
+				slog.Warn("Skipping series with ambiguous stat error during cleanup",
+					"series_id", series.ID, "path", series.Path, "error", statErr)
 			}
+		}
+	}
+
+	// 熔断：待删系列占比过高，极可能是存储异常而非真实删除。
+	if total := len(seriesList); total > 0 && float64(len(missingSeries))/float64(total) > cleanupDeleteRatioGuard {
+		return fmt.Errorf("cleanup aborted: %d/%d series appear missing (> %.0f%%), likely a storage issue rather than real deletions",
+			len(missingSeries), total, cleanupDeleteRatioGuard*100)
+	}
+
+	removedSeries := make(map[int64]bool, len(missingSeries))
+	for _, series := range missingSeries {
+		slog.Info("Removing missing series", "series_id", series.ID, "path", series.Path)
+		if err := s.store.DeleteSeries(ctx, series.ID); err != nil {
+			slog.Error("Failed to delete series", "series_id", series.ID, "error", err)
 			continue
 		}
+		removedSeries[series.ID] = true
+	}
 
-		// 检查卷文件是否存在
+	// 存活的系列再逐卷清理缺失书籍（同样只在确证缺失时删除）。
+	for _, series := range seriesList {
+		if removedSeries[series.ID] {
+			continue
+		}
 		books, err := s.store.ListBooksBySeries(ctx, series.ID)
-		if err == nil {
-			booksChanged := false
-			for _, book := range books {
-				if _, err := os.Stat(book.Path); os.IsNotExist(err) {
+		if err != nil {
+			continue
+		}
+		booksChanged := false
+		for _, book := range books {
+			if _, statErr := os.Stat(book.Path); statErr != nil {
+				if os.IsNotExist(statErr) {
 					slog.Info("Removing missing book", "book_id", book.ID, "path", book.Path)
 					if err := s.store.DeleteBook(ctx, book.ID); err != nil {
 						slog.Error("Failed to delete book", "book_id", book.ID, "error", err)
 					}
 					booksChanged = true
+				} else {
+					slog.Warn("Skipping book with ambiguous stat error during cleanup",
+						"book_id", book.ID, "path", book.Path, "error", statErr)
 				}
 			}
-			// 如果有卷被删除，更新系列的统计信息
-			if booksChanged {
-				_ = s.store.UpdateSeriesStatistics(ctx, database.UpdateSeriesStatisticsParams{
-					SeriesID:   series.ID,
-					SeriesID_2: series.ID,
-					SeriesID_3: series.ID,
-					ID:         series.ID,
-				})
-			}
+		}
+		// 如果有卷被删除，更新系列的统计信息
+		if booksChanged {
+			_ = s.store.UpdateSeriesStatistics(ctx, database.UpdateSeriesStatisticsParams{
+				SeriesID:   series.ID,
+				SeriesID_2: series.ID,
+				SeriesID_3: series.ID,
+				ID:         series.ID,
+			})
 		}
 	}
 
-	slog.Info("Library cleanup completed", "library_id", libraryID)
+	slog.Info("Library cleanup completed", "library_id", libraryID, "removed_series", len(removedSeries))
 	return nil
 }
 

@@ -99,13 +99,31 @@ func main() {
 		"application/xml",
 	))
 
+	// 通配 Origin 与 AllowCredentials=true 是规范禁止且危险的组合：任意站点都能携带凭据跨域读取
+	// 管理接口。存在通配来源时强制关闭凭据；本服务令牌走 X-API-Token/Authorization 头而非 cookie，
+	// 关闭凭据不影响其功能。
+	allowCredentials := !containsWildcardOrigin(cfg.Server.AllowedOrigins)
+	if !allowCredentials {
+		slog.Warn("CORS allowed_origins 含通配符，已禁用 AllowCredentials（通配+凭据为危险组合）。生产环境建议改为精确来源白名单。",
+			"allowed_origins", cfg.Server.AllowedOrigins)
+	}
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.Server.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		AllowCredentials: true,
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-API-Token"},
+		AllowCredentials: allowCredentials,
 		MaxAge:           300,
 	}))
+
+	// 启动期安全姿态告警：提示无鉴权裸奔 / 鉴权配置不完整。
+	switch {
+	case cfg.Server.Auth.Enabled && cfg.Server.Auth.Token == "":
+		slog.Warn("server.auth.enabled=true 但 token 为空，管理 API 鉴权未生效（视为关闭）。请设置 server.auth.token。")
+	case cfg.Server.Auth.Enabled:
+		slog.Info("管理 API 令牌鉴权已启用")
+	case cfg.Server.Host == "0.0.0.0":
+		slog.Warn("管理 API 无鉴权且监听 0.0.0.0，仅应用于受信内网或前置反向代理。可设置 server.auth 开启令牌鉴权。")
+	}
 
 	// API 端点挂载
 	scan := scanner.NewScanner(store, cfgManager)
@@ -163,6 +181,16 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// containsWildcardOrigin 判断 CORS 来源白名单中是否含通配符（如 http://*、*）。
+func containsWildcardOrigin(origins []string) bool {
+	for _, o := range origins {
+		if strings.Contains(o, "*") {
+			return true
+		}
+	}
+	return false
 }
 
 func setStaticResponseHeaders(w http.ResponseWriter, path string) {

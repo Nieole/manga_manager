@@ -412,6 +412,15 @@ func Migrate(dbPath string) error {
 	}
 	defer db.Close()
 
+	// 必须在建表/建触发器之前迁移旧版 FTS 结构：migrateFTSTables 会 DROP 掉带冗余列的旧
+	// series_search_fts / book_search_fts 及其触发器，随后的 execSchemaStatements(false)
+	// 以新 schema 重建虚拟表、CREATE TRIGGER IF NOT EXISTS 重建触发器。若放在建表之后，
+	// DROP 完却没有任何语句重建虚拟表，rebuildSeriesSearchIndex 的 DELETE 会因表不存在而
+	// 让整个 Migrate 失败（老库升级首启崩溃）。全新库上该 SELECT 探测直接报错、needRebuild 保持 false，为无操作。
+	if err := migrateFTSTables(db); err != nil {
+		return err
+	}
+
 	if err = execSchemaStatements(db, false); err != nil {
 		return err
 	}
@@ -525,10 +534,6 @@ func Migrate(dbPath string) error {
 			VALUES (NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
 		END`,
 	}); err != nil {
-		return err
-	}
-
-	if err := migrateFTSTables(db); err != nil {
 		return err
 	}
 

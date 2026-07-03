@@ -104,6 +104,71 @@ func TestMigrateAddsIdentityColumnsBeforeDependentIndexes(t *testing.T) {
 	}
 }
 
+// TestMigrateRebuildsLegacyFTSSchema 覆盖“旧版 FTS 表结构升级”这条真实路径：
+// 老库的 series_search_fts 含冗余 path 列、book_search_fts 含 series_name 列。
+// 修复前 migrateFTSTables 在建表之后执行，DROP 掉旧表却无人重建，
+// rebuildSeriesSearchIndex 的 DELETE 会因“no such table”让 Migrate 失败、服务器首启崩溃。
+func TestMigrateRebuildsLegacyFTSSchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy_fts.db")
+
+	// 1. 先正常迁移一次，得到完整的当前 schema（含新版 FTS 表与全部基础表）。
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("initial migrate failed: %v", err)
+	}
+
+	// 2. 把 FTS 表回退成旧结构（带冗余列），并塞入一条待重建的系列数据。
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+	_, err = db.Exec(`
+		DROP TRIGGER IF EXISTS trg_series_search_fts_ai;
+		DROP TRIGGER IF EXISTS trg_series_search_fts_ad;
+		DROP TRIGGER IF EXISTS trg_series_search_fts_au;
+		DROP TRIGGER IF EXISTS trg_book_search_fts_ai;
+		DROP TRIGGER IF EXISTS trg_book_search_fts_ad;
+		DROP TRIGGER IF EXISTS trg_book_search_fts_au;
+		DROP TABLE IF EXISTS series_search_fts;
+		DROP TABLE IF EXISTS book_search_fts;
+		CREATE VIRTUAL TABLE series_search_fts USING fts5(library_id UNINDEXED, name, title, path, tokenize = 'trigram');
+		CREATE VIRTUAL TABLE book_search_fts USING fts5(series_id UNINDEXED, library_id UNINDEXED, name, title, series_name, tokenize = 'trigram');
+		INSERT INTO libraries (name, path) VALUES ('L', '/tmp/l');
+		INSERT INTO series (library_id, name, path) VALUES (1, 'Berserk', '/tmp/l/berserk');
+	`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("downgrade FTS schema failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db failed: %v", err)
+	}
+
+	// 3. 二次迁移：修复前此处返回 "no such table: series_search_fts"。
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("migrate over legacy FTS schema failed: %v", err)
+	}
+
+	// 4. 断言 FTS 已重建为新结构（无冗余 path 列）且搜索可用。
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopen db failed: %v", err)
+	}
+	defer db.Close()
+
+	if testColumnExists(t, db, "series_search_fts", "path") {
+		t.Fatal("expected legacy series_search_fts.path column to be dropped after migrate")
+	}
+
+	var rowid int64
+	err = db.QueryRow(`SELECT rowid FROM series_search_fts WHERE series_search_fts MATCH ?`, "Berserk").Scan(&rowid)
+	if err != nil {
+		t.Fatalf("search over rebuilt FTS failed: %v", err)
+	}
+	if rowid != 1 {
+		t.Fatalf("expected rebuilt FTS to return series rowid 1, got %d", rowid)
+	}
+}
+
 func testTableExists(t *testing.T, db *sql.DB, table string) bool {
 	t.Helper()
 	var name string
