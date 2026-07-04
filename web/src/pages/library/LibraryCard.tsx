@@ -204,7 +204,9 @@ export function LibraryCard({
         )}
         {s.cover_path?.Valid && s.cover_path?.String ? (
           <img
-            src={`/api/thumbnails/${s.cover_path.String}${s.updated_at ? `?v=${new Date(s.updated_at).getTime()}` : ''}`}
+            /* cover_path 内容寻址（基于 bookHash），封面内容变化时路径即变化，天然就是稳定的缓存键。
+               此前追加 ?v=updated_at 会让任何元数据变更/扫描（updated_at 变但封面未变）都失效整库封面缓存并重新下载。 */
+            src={`/api/thumbnails/${s.cover_path.String}`}
             alt={t('common.cover')}
             loading="lazy"
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"

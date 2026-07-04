@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（封面缓存键去抖动）
+
+#### 性能
+- `web/src/pages/library/LibraryCard.tsx`:移除封面 URL 上的 `?v=updated_at` cache-buster。封面 `cover_path` 是内容寻址(基于 bookHash),封面内容变化时路径本身即变化,天然是稳定缓存键;而 `updated_at` 会随任意元数据变更/扫描改变,导致未变封面在整库范围被反复失效、重新下载。现直接用 `/api/thumbnails/${cover_path}`。
+
+#### 验证
+- `npm run build`、`npm run lint`(0 problems)、`npm run test` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（OPDS feed 后端 i18n · M65 第一步）
 
 #### 修复
