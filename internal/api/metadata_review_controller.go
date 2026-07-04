@@ -823,13 +823,24 @@ func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Requ
 		Limit:  limit,
 		Offset: offset,
 	}
-	for _, row := range rows {
-		fields, err := c.store.ListMetadataReviewFields(r.Context(), row.ID)
+	// 一次性批量取所有 review 的字段，避免逐条查询造成 N+1（此前每行 review 单独发一次 SQL）。
+	fieldsByReview := make(map[int64][]database.MetadataReviewField, len(rows))
+	if len(rows) > 0 {
+		reviewIDs := make([]int64, 0, len(rows))
+		for _, row := range rows {
+			reviewIDs = append(reviewIDs, row.ID)
+		}
+		allFields, err := c.store.ListMetadataReviewFieldsByReviews(r.Context(), reviewIDs)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to load metadata review fields")
 			return
 		}
-		payload.Items = append(payload.Items, metadataReviewInboxRowToView(row, fields))
+		for _, f := range allFields {
+			fieldsByReview[f.ReviewID] = append(fieldsByReview[f.ReviewID], f)
+		}
+	}
+	for _, row := range rows {
+		payload.Items = append(payload.Items, metadataReviewInboxRowToView(row, fieldsByReview[row.ID]))
 	}
 
 	jsonResponse(w, http.StatusOK, payload)

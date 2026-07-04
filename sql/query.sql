@@ -260,6 +260,9 @@ RETURNING *;
 -- name: GetBook :one
 SELECT * FROM books WHERE id = ? LIMIT 1;
 
+-- name: GetBookCoverPath :one
+SELECT COALESCE(cover_path, '') AS cover_path FROM books WHERE id = ? LIMIT 1;
+
 -- name: GetBookByPath :one
 SELECT * FROM books WHERE path = ? LIMIT 1;
 
@@ -438,6 +441,11 @@ RETURNING *;
 
 -- name: ListMetadataReviewFields :many
 SELECT * FROM metadata_review_fields WHERE review_id = ? ORDER BY id ASC;
+
+-- name: ListMetadataReviewFieldsByReviews :many
+SELECT * FROM metadata_review_fields
+WHERE review_id IN (sqlc.slice(review_ids))
+ORDER BY review_id ASC, id ASC;
 
 -- name: UpsertSeriesMetadataProvenance :one
 INSERT INTO series_metadata_provenance (

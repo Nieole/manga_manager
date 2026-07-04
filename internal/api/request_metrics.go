@@ -143,16 +143,24 @@ type RequestPerformanceInfo struct {
 
 type requestPerformanceInfoKey struct{}
 
+// requestDiagnosticsBuffer 是固定容量的环形缓冲。此前用切片 + 每次满时 copy 左移淘汰，
+// 稳态下每个请求都要在写锁内做 O(n) 的元素搬移（约 300×200B）；改为写指针取模的真环形缓冲后
+// record 为 O(1)，snapshot 仍返回 oldest-first 顺序（消费方依赖该顺序取最新/尾部）。
 type requestDiagnosticsBuffer struct {
-	mu     sync.RWMutex
-	limit  int
-	events []RequestDiagnosticEvent
+	mu    sync.RWMutex
+	limit int
+	buf   []RequestDiagnosticEvent // 固定长度 == limit
+	next  int                      // 下一个写入下标（mod limit）
+	count int                      // 有效元素数，<= limit
 }
 
 func newRequestDiagnosticsBuffer(limit int) *requestDiagnosticsBuffer {
+	if limit < 1 {
+		limit = 1
+	}
 	return &requestDiagnosticsBuffer{
-		limit:  limit,
-		events: make([]RequestDiagnosticEvent, 0, limit),
+		limit: limit,
+		buf:   make([]RequestDiagnosticEvent, limit),
 	}
 }
 
@@ -162,12 +170,11 @@ func (b *requestDiagnosticsBuffer) record(event RequestDiagnosticEvent) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.events) == b.limit {
-		copy(b.events, b.events[1:])
-		b.events[len(b.events)-1] = event
-		return
+	b.buf[b.next] = event
+	b.next = (b.next + 1) % b.limit
+	if b.count < b.limit {
+		b.count++
 	}
-	b.events = append(b.events, event)
 }
 
 func (b *requestDiagnosticsBuffer) snapshot() []RequestDiagnosticEvent {
@@ -176,8 +183,13 @@ func (b *requestDiagnosticsBuffer) snapshot() []RequestDiagnosticEvent {
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	items := make([]RequestDiagnosticEvent, len(b.events))
-	copy(items, b.events)
+	if b.count == 0 {
+		return nil
+	}
+	items := make([]RequestDiagnosticEvent, b.count)
+	start := (b.next - b.count + b.limit) % b.limit // 最旧元素下标
+	n := copy(items, b.buf[start:])
+	copy(items[n:], b.buf[:b.count-n]) // 回绕部分
 	return items
 }
 
@@ -187,7 +199,10 @@ func (b *requestDiagnosticsBuffer) reset() {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.events = b.events[:0]
+	b.next, b.count = 0, 0
+	for i := range b.buf {
+		b.buf[i] = RequestDiagnosticEvent{} // 清空引用便于 GC
+	}
 }
 
 func (c *Controller) getSystemPerformance(w http.ResponseWriter, r *http.Request) {

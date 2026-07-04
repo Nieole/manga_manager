@@ -461,25 +461,26 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	book, err := c.store.GetBook(ctx, bookID)
+	// 只取 cover_path 一列（ETag/304 仅依赖它），避免每次封面请求都 Scan 整行 books（20+ 无用列）。
+	coverPath, err := c.store.GetBookCoverPath(ctx, bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book entity not found")
 		return
 	}
 
-	if book.CoverPath.Valid && book.CoverPath.String != "" {
+	if coverPath != "" {
 		thumbDir := filepath.Join(".", "data", "thumbnails")
 		cfg := c.currentConfig()
 		if cfg.Cache.Dir != "" {
 			thumbDir = cfg.Cache.Dir
 		}
 
-		fullPath := filepath.Join(thumbDir, book.CoverPath.String)
+		fullPath := filepath.Join(thumbDir, coverPath)
 		if info, err := os.Stat(fullPath); err == nil {
 			// 基于封面路径 + 文件修改时间 + 大小生成弱 ETag：缩略图重建覆盖文件时 ETag 必变、
 			// 不会复读旧封面；内容不变则客户端可凭 If-None-Match 命中 304，省去整图重传。
 			// http.ServeFile 仍会提供 Last-Modified 作为兜底条件请求。
-			etag := weakETag(fmt.Sprintf("cover-%s-%d-%d", book.CoverPath.String, info.ModTime().UnixNano(), info.Size()))
+			etag := weakETag(fmt.Sprintf("cover-%s-%d-%d", coverPath, info.ModTime().UnixNano(), info.Size()))
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
 			w.Header().Del("Vary")
 			w.Header().Set("ETag", etag)

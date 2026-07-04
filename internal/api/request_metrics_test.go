@@ -14,6 +14,35 @@ import (
 	"time"
 )
 
+// TestRequestDiagnosticsRingBuffer 验证环形缓冲的回绕淘汰与 oldest-first 顺序（L94）。
+func TestRequestDiagnosticsRingBuffer(t *testing.T) {
+	b := newRequestDiagnosticsBuffer(3)
+	for i := 1; i <= 5; i++ {
+		b.record(RequestDiagnosticEvent{Path: "/api/x", Route: "r", Bytes: i})
+	}
+	got := b.snapshot()
+	if len(got) != 3 {
+		t.Fatalf("expected snapshot len 3 (limit), got %d", len(got))
+	}
+	// 保留最后 3 个（Bytes 3,4,5），且 oldest-first
+	for idx, want := range []int{3, 4, 5} {
+		if got[idx].Bytes != want {
+			t.Fatalf("expected oldest-first [3 4 5], got index %d = %d", idx, got[idx].Bytes)
+		}
+	}
+	b.reset()
+	if s := b.snapshot(); s != nil {
+		t.Fatalf("expected nil snapshot after reset, got %d items", len(s))
+	}
+	// 未满时也应按序返回
+	b.record(RequestDiagnosticEvent{Path: "/api/y", Bytes: 10})
+	b.record(RequestDiagnosticEvent{Path: "/api/y", Bytes: 11})
+	got = b.snapshot()
+	if len(got) != 2 || got[0].Bytes != 10 || got[1].Bytes != 11 {
+		t.Fatalf("expected [10 11] after partial fill, got %+v", got)
+	}
+}
+
 type captureLogHandler struct {
 	records []slog.Record
 }

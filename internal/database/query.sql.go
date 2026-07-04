@@ -1317,6 +1317,17 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 	return i, err
 }
 
+const getBookCoverPath = `-- name: GetBookCoverPath :one
+SELECT COALESCE(cover_path, '') AS cover_path FROM books WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) GetBookCoverPath(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRowContext(ctx, getBookCoverPath, id)
+	var cover_path string
+	err := row.Scan(&cover_path)
+	return cover_path, err
+}
+
 const getBookCoverPathsByIDs = `-- name: GetBookCoverPathsByIDs :many
 SELECT id, COALESCE(cover_path, '') AS cover_path
 FROM books
@@ -3737,6 +3748,58 @@ SELECT id, review_id, field_name, current_value, proposed_value, confidence, sou
 
 func (q *Queries) ListMetadataReviewFields(ctx context.Context, reviewID int64) ([]MetadataReviewField, error) {
 	rows, err := q.db.QueryContext(ctx, listMetadataReviewFields, reviewID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetadataReviewField
+	for rows.Next() {
+		var i MetadataReviewField
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReviewID,
+			&i.FieldName,
+			&i.CurrentValue,
+			&i.ProposedValue,
+			&i.Confidence,
+			&i.Source,
+			&i.SourceUrl,
+			&i.Locked,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMetadataReviewFieldsByReviews = `-- name: ListMetadataReviewFieldsByReviews :many
+SELECT id, review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status, created_at, updated_at FROM metadata_review_fields
+WHERE review_id IN (/*SLICE:review_ids*/?)
+ORDER BY review_id ASC, id ASC
+`
+
+func (q *Queries) ListMetadataReviewFieldsByReviews(ctx context.Context, reviewIds []int64) ([]MetadataReviewField, error) {
+	query := listMetadataReviewFieldsByReviews
+	var queryParams []interface{}
+	if len(reviewIds) > 0 {
+		for _, v := range reviewIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:review_ids*/?", strings.Repeat(",?", len(reviewIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:review_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

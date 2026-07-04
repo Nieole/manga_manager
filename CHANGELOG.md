@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（后端读路径性能批次）
+
+#### 修复
+- `internal/api/metadata_review_controller.go`：元数据审阅收件箱改为一次性批量取字段（新增 `ListMetadataReviewFieldsByReviews`），消除此前每条 review 单独查字段的 N+1（查询数由 2+N 降到 3）。
+- `internal/api/image_controller.go`：封面服务改用只取 `cover_path` 一列的窄查询（新增 `GetBookCoverPath`），不再每次封面请求（含 304 命中）都 `SELECT *` 整行 books、Scan 20+ 无用列；ETag/304 语义不变。
+- `internal/api/request_metrics.go`：请求诊断缓冲由“切片 + 满时 copy 左移”改为真正的环形缓冲（写指针取模），`record` 从 O(n) 锁内搬移降为 O(1)；`snapshot` 仍保持 oldest-first 顺序。
+
+#### 验证
+- `sqlc generate`（PowerShell）exit 0；`go vet`、`go test ./internal/api ./internal/database`（含新增环形缓冲回归测试）通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（图片/存储资源上限批次）
 
 #### 修复
