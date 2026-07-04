@@ -272,7 +272,7 @@ SELECT * FROM books WHERE series_id = ? ORDER BY volume, sort_number, name;
 
 
 -- name: ListBooksByLibrary :many
-SELECT id, path, file_modified_at, size, cover_path FROM books WHERE library_id = ?;
+SELECT id, path, file_modified_at, size, page_count, cover_path FROM books WHERE library_id = ?;
 
 -- name: DeleteBookByPath :exec
 DELETE FROM books WHERE path = ?;

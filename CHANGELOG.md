@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（fast_scan 保留页数/封面）
+
+#### 修复
+- `internal/scanner/scanner.go`（配合 `sql/query.sql` 的 `ListBooksByLibrary` 增列）：fast_scan 档位不再清零已入库书籍的 `page_count`、置空 `cover_path`。此前 fast 档位不开归档，upsert 会把变动书籍的页数写 0、封面写 NULL 且不再重建（封面被永久抹掉直到跑一次 metadata_scan）。现增量扫描把旧快照的 `page_count`/`cover_path` 传入 worker，fast 档位下缺失时保留旧值。
+
+#### 验证
+- `sqlc generate`（PowerShell）exit 0；`go vet`、`go test ./...` 全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（磁盘页缓存容量上限）
 
 #### 修复

@@ -2782,7 +2782,7 @@ func (q *Queries) ListAIGroupingReviews(ctx context.Context, arg ListAIGroupingR
 }
 
 const listBooksByLibrary = `-- name: ListBooksByLibrary :many
-SELECT id, path, file_modified_at, size, cover_path FROM books WHERE library_id = ?
+SELECT id, path, file_modified_at, size, page_count, cover_path FROM books WHERE library_id = ?
 `
 
 type ListBooksByLibraryRow struct {
@@ -2790,6 +2790,7 @@ type ListBooksByLibraryRow struct {
 	Path           string         `json:"path"`
 	FileModifiedAt time.Time      `json:"file_modified_at"`
 	Size           int64          `json:"size"`
+	PageCount      int64          `json:"page_count"`
 	CoverPath      sql.NullString `json:"cover_path"`
 }
 
@@ -2807,6 +2808,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]Li
 			&i.Path,
 			&i.FileModifiedAt,
 			&i.Size,
+			&i.PageCount,
 			&i.CoverPath,
 		); err != nil {
 			return nil, err

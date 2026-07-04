@@ -119,8 +119,9 @@ func (s *Scanner) endSeriesScan(seriesID int64) {
 }
 
 type scanJob struct {
-	path string
-	info os.FileInfo
+	path     string
+	info     os.FileInfo
+	existing *bookScanSnapshot // 已入库快照（增量扫描时非 nil），用于 fast 档位保留旧的 page_count/cover_path
 }
 
 type scanMetrics struct {
@@ -259,8 +260,10 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 }
 
 type bookScanSnapshot struct {
-	modTime time.Time
-	size    int64
+	modTime   time.Time
+	size      int64
+	pageCount int64
+	coverPath sql.NullString
 }
 
 type ScanProfile string
@@ -413,7 +416,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		}
 
 		for _, b := range existingBooks {
-			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size}
+			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 		}
 	}
 
@@ -486,8 +489,12 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 				}
 			}
 
+			var existing *bookScanSnapshot
+			if snap, ok := bookCache[path]; ok {
+				existing = &snap
+			}
 			select {
-			case jobs <- scanJob{path: path, info: info}:
+			case jobs <- scanJob{path: path, info: info, existing: existing}:
 				metrics.processedArchives.Add(1)
 				progress.publish("reading_metadata", path, false)
 			case <-ctx.Done():
@@ -539,7 +546,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID)
 		if err == nil {
 			for _, b := range existingBooks {
-				bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size}
+				bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 			}
 		}
 	}
@@ -603,8 +610,12 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 				}
 			}
 
+			var existing *bookScanSnapshot
+			if snap, ok := bookCache[path]; ok {
+				existing = &snap
+			}
 			select {
-			case jobs <- scanJob{path: path, info: info}:
+			case jobs <- scanJob{path: path, info: info, existing: existing}:
 				metrics.processedArchives.Add(1)
 				progress.publish("reading_metadata", path, false)
 			case <-ctx.Done():
@@ -932,6 +943,16 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		PageCount:      int64(len(pages)),
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
 		CoverPath:      coverPath,
+	}
+	// fast 档位不开归档，pages 与 coverPath 恒空；增量扫描（有旧快照）时保留已入库的
+	// page_count/cover_path，避免 upsert 把变动书籍的页数/封面清零、封面被永久抹掉。
+	if !opts.Profile.opensArchive() && job.existing != nil {
+		if book.PageCount == 0 && job.existing.pageCount > 0 {
+			book.PageCount = job.existing.pageCount
+		}
+		if (!book.CoverPath.Valid || book.CoverPath.String == "") && job.existing.coverPath.Valid && job.existing.coverPath.String != "" {
+			book.CoverPath = job.existing.coverPath
+		}
 	}
 	var fileHash string
 	if opts.Profile.computesFullHash(cfg) {
