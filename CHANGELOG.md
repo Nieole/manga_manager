@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（vite 分包 · 首屏瘦身 · M50）
+
+#### 性能
+- `web/vite.config.ts`：把仅被特定懒加载路由使用的重型库从首屏 `vendor` 拆成独立 chunk，随对应路由按需加载：
+  - `@xyflow/react` → `reactflow`（仅系列关系图谱页，122KB / gzip 40KB + 16KB CSS）
+  - `@yui540/comimi*` → `comimi`（仅阅读器 Comimi 主题，137KB / gzip 32KB）
+  - `react-virtuoso` → `virtuoso`（仅阅读器 Webtoon 虚拟滚动，55KB / gzip 19KB）
+- 首屏 `vendor` 从 **491KB（gzip 154KB）降至 177KB（gzip 63KB）**，首次加载少下载约 91KB（gzip）。三库改为访问对应页面时才拉取。
+- 三库均调用 `forwardRef/createContext`，被隔离到各自 chunk 并单向依赖 `react-core`（不放进 react-core），避免历史上的白屏问题。已用 `vite preview` + 浏览器实测首页、图谱页、阅读器路由：均正常渲染、控制台无 `forwardRef`/undefined 错误、无循环依赖告警。
+
+#### 验证
+- `npm run build`（无循环依赖告警）、`npm run lint`（0 problems）通过；浏览器运行时验证通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（前端 lint 清零 + 纳入 CI）
 
 #### 修复

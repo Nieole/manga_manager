@@ -26,6 +26,18 @@ export default defineConfig({
           if (/\/node_modules\/(react|react-dom|scheduler)\//.test(id)) {
             return 'react-core'
           }
+          // 仅被特定懒加载路由使用的重型库单独成 chunk，随对应路由按需加载，从而缩小首屏 vendor。
+          // 它们都调用 forwardRef/createContext，但被隔离到各自 chunk 并单向依赖 react-core，
+          // 不放进 react-core，故不会触发白屏问题。
+          if (id.includes('/node_modules/@xyflow/')) {
+            return 'reactflow' // 仅系列关系图谱页（franchise-graph）
+          }
+          if (id.includes('/node_modules/@yui540/')) {
+            return 'comimi' // 仅阅读器的 Comimi 主题（BookReader）
+          }
+          if (id.includes('/node_modules/react-virtuoso/')) {
+            return 'virtuoso' // 仅阅读器的 Webtoon 虚拟滚动（BookReader）
+          }
           return 'vendor'
         },
       },
