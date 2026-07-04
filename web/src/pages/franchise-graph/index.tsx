@@ -20,27 +20,36 @@ import {
   Position,
   useStore,
 } from '@xyflow/react';
-import type { Node, Edge, EdgeProps } from '@xyflow/react';
+import type { Node, Edge, EdgeProps, InternalNode, ReactFlowState } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { CustomNode } from './CustomNode';
 import type { FranchiseRelation } from '../series-detail/types';
 
+// 图谱节点承载的业务数据形状（与 CustomNode 的 data 契约一致）。
+type FranchiseNodeData = {
+  name: string;
+  coverPath: string;
+  isCurrent: boolean;
+  degree?: number;
+};
+
 const GRAPH_NODE_WIDTH = 112;
 const GRAPH_NODE_HEIGHT = 138;
 
-const graphNodeSize = (data: any) => {
+const graphNodeSize = (data: FranchiseNodeData | undefined) => {
   return data?.isCurrent ? 74 : Math.min(70, 52 + (data?.degree ?? 0) * 4);
 };
 
 const getVisualNodeCenter = (
-  node: any,
+  node: InternalNode | undefined,
   fallback: { x: number; y: number },
 ) => {
   if (!node) return fallback;
-  const position = node.internals?.positionAbsolute ?? node.positionAbsolute ?? node.position;
-  const data = node.internals?.userNode?.data ?? node.data;
+  const position = node.internals?.positionAbsolute ?? node.position;
+  // React Flow 的内部 store 无类型（data 为 Record<string, unknown>），在此边界处收窄为业务类型。
+  const data = (node.internals?.userNode?.data ?? node.data) as FranchiseNodeData | undefined;
   if (!position) return fallback;
 
   return {
@@ -68,8 +77,8 @@ function DirectedEdge({
   style,
   interactionWidth,
 }: EdgeProps) {
-  const sourceNode = useStore((state: any) => state.nodeLookup.get(source));
-  const targetNode = useStore((state: any) => state.nodeLookup.get(target));
+  const sourceNode = useStore((state: ReactFlowState) => state.nodeLookup.get(source));
+  const targetNode = useStore((state: ReactFlowState) => state.nodeLookup.get(target));
   const sourceCenter = getVisualNodeCenter(sourceNode, { x: sourceX, y: sourceY });
   const targetCenter = getVisualNodeCenter(targetNode, { x: targetX, y: targetY });
   const [edgePath, labelX, labelY] = getStraightPath({
@@ -302,7 +311,7 @@ export const FranchiseGraphPage: React.FC = () => {
     fetchGraphData();
   }, [fetchGraphData]);
 
-  const onNodeClick = useCallback((_: any, node: Node) => {
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     navigate(`/series/${node.id}`);
   }, [navigate]);
 
@@ -356,7 +365,7 @@ export const FranchiseGraphPage: React.FC = () => {
             <MiniMap
               className="franchise-graph-minimap"
               maskColor="rgb(var(--rgb-komga-background) / 0.72)"
-              nodeColor={(n: any) => n.data.isCurrent ? 'rgb(var(--rgb-komga-secondary))' : 'rgb(var(--rgb-gray-500))'}
+              nodeColor={(n: Node) => (n.data as FranchiseNodeData).isCurrent ? 'rgb(var(--rgb-komga-secondary))' : 'rgb(var(--rgb-gray-500))'}
             />
           </ReactFlow>
         )}

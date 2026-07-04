@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（前端 lint 清零 + 纳入 CI）
+
+#### 修复
+- `web/src/pages/franchise-graph/index.tsx`：消除 6 处 `@typescript-eslint/no-explicit-any` 错误。用 React Flow 的真实类型（`InternalNode`、`ReactFlowState`、`Node`、`React.MouseEvent`）替换 `any`，并为图谱节点 data 定义 `FranchiseNodeData` 类型；在无类型的 React Flow store 边界处收窄一次 `as`。顺带移除失效的 v11 遗留 `positionAbsolute` 兜底分支。
+- `web/src/pages/library/hooks/useLibraryFilters.ts`：移除返回 `useMemo` 的多余依赖 `libId`/`settingsReadyLibId`（其效果已被派生的 `currentSettingsReady` 覆盖），消除 `react-hooks/exhaustive-deps` 告警。
+- `.github/workflows/ci.yml`：前端 lint 现已清零（0 错误 0 告警），将 `npm run lint` 纳入 CI 阻塞步骤，防止 lint 债回潮。
+
+#### 验证
+- `npm run build`、`npm run lint`（0 problems）通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（移除只写死代码遥测 · M52）
 
 #### 重构

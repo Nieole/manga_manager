@@ -244,9 +244,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       sortDir,
       page,
       pageSize,
-      currentSettingsReady,
-      settingsReadyLibId,
-      libId,
+      currentSettingsReady, // 已含 settingsReady/settingsReadyLibId/libId 的派生结果，无需再单列后两者
       resetAll,
       applySnapshot,
     ],
