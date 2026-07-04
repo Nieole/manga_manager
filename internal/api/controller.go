@@ -108,13 +108,18 @@ type Controller struct {
 }
 
 type TaskStatus struct {
-	Key            string            `json:"key"`
-	Type           string            `json:"type"`
-	Scope          string            `json:"scope"`
-	ScopeID        *int64            `json:"scope_id,omitempty"`
-	ScopeName      string            `json:"scope_name,omitempty"`
-	Status         string            `json:"status"`
-	Message        string            `json:"message"`
+	Key       string `json:"key"`
+	Type      string `json:"type"`
+	Scope     string `json:"scope"`
+	ScopeID   *int64 `json:"scope_id,omitempty"`
+	ScopeName string `json:"scope_name,omitempty"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	// MessageCode/MessageParams 承载可本地化的任务消息：后端只发稳定 i18n 键 + 占位参数，由前端按当前语言
+	// 渲染文案，避免在 Go 中散落面向用户的中文字面量。设置了 MessageCode 时 Message 置空；未迁移 i18n 的
+	// 旧调用点仍直接用 Message，前端按 message_code 优先、Message 兜底渲染，两者可共存以支持增量迁移。
+	MessageCode    string            `json:"message_code,omitempty"`
+	MessageParams  map[string]string `json:"message_params,omitempty"`
 	Error          string            `json:"error,omitempty"`
 	Current        int               `json:"current"`
 	Total          int               `json:"total"`

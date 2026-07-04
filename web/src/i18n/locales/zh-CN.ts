@@ -1641,6 +1641,17 @@ export const messages: MessageCatalog = {
     'task.hint.transfer_external_library': '建议检查外部目录写权限、目标磁盘空间，以及源文件是否仍可访问。',
     'task.hint.default': '建议先查看任务错误详情，再决定是否重试。',
 
+    // 任务动态消息（后端只发稳定码 + 占位参数，前端本地化渲染）——M65 分批迁移中
+    'task.msg.scan_library.cancelled': '资源库扫描已取消: {{name}}',
+    'task.msg.scan_library.failed': '资源库扫描失败',
+    'task.msg.scan_library.complete': '资源库扫描完成: {{name}}',
+    'task.msg.scan_series.cancelled': '系列扫描已取消 #{{id}}',
+    'task.msg.scan_series.failed': '系列扫描失败',
+    'task.msg.scan_series.complete': '系列扫描完成 #{{id}}',
+    'task.msg.cleanup_library.scanning_records': '开始清理资源库 #{{id}}',
+    'task.msg.cleanup_library.failed': '资源库清理失败',
+    'task.msg.cleanup_library.complete': '资源库清理完成 #{{id}}',
+
     'server.error.invalidLibraryId': '无效的资源库 ID',
     'server.error.invalidSeriesId': '无效的系列 ID',
     'server.error.invalidBookId': '无效的书籍 ID',

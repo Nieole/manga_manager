@@ -498,7 +498,32 @@ func (c *Controller) newTaskContext(key string) (context.Context, func()) {
 	return taskCtx, cleanup
 }
 
+// applyTaskMessage 在任务上设置显示消息，保证 Message 与 MessageCode 互斥（后设者胜）：
+// 传入 code 时走 i18n（记录 code+params、清空 Message），否则退回直接设置 Message（未迁移 i18n 的调用点）。
+func applyTaskMessage(task *TaskStatus, message, code string, params map[string]string) {
+	if code != "" {
+		task.MessageCode = code
+		task.MessageParams = params
+		task.Message = ""
+		return
+	}
+	if message != "" {
+		task.Message = message
+		task.MessageCode = ""
+		task.MessageParams = nil
+	}
+}
+
 func (c *Controller) updateTask(key string, current, total int, message string) {
+	c.updateTaskCore(key, current, total, message, "", nil)
+}
+
+// updateTaskMsg 是 updateTask 的 i18n 版：只发稳定消息码 + 占位参数，由前端本地化渲染。
+func (c *Controller) updateTaskMsg(key string, current, total int, code string, params map[string]string) {
+	c.updateTaskCore(key, current, total, "", code, params)
+}
+
+func (c *Controller) updateTaskCore(key string, current, total int, message, code string, params map[string]string) {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -510,9 +535,7 @@ func (c *Controller) updateTask(key string, current, total int, message string) 
 	if total >= 0 {
 		task.Total = total
 	}
-	if message != "" {
-		task.Message = message
-	}
+	applyTaskMessage(&task, message, code, params)
 	task.UpdatedAt = time.Now()
 	c.taskSeq++
 	task.Sequence = c.taskSeq
@@ -523,6 +546,16 @@ func (c *Controller) updateTask(key string, current, total int, message string) 
 }
 
 func (c *Controller) updateTaskDetails(key string, current, total int, message, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
+	c.updateTaskDetailsCore(key, current, total, message, "", nil, phase, currentItem, metrics, labels)
+}
+
+// updateTaskDetailsMsg 是 updateTaskDetails 的 i18n 版：消息改为稳定码 + 占位参数，其余（phase/currentItem/
+// metrics/labels）语义不变。
+func (c *Controller) updateTaskDetailsMsg(key string, current, total int, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
+	c.updateTaskDetailsCore(key, current, total, "", code, params, phase, currentItem, metrics, labels)
+}
+
+func (c *Controller) updateTaskDetailsCore(key string, current, total int, message, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -537,9 +570,7 @@ func (c *Controller) updateTaskDetails(key string, current, total int, message, 
 	if total >= 0 {
 		task.Total = total
 	}
-	if message != "" {
-		task.Message = message
-	}
+	applyTaskMessage(&task, message, code, params)
 	if phase != "" {
 		task.Phase = phase
 	}
@@ -764,14 +795,33 @@ func (c *Controller) setTaskEffectiveLimit(key string, limit TaskLimits) {
 }
 
 func (c *Controller) finishTask(key, message string) {
-	c.completeTask(key, "completed", message)
+	c.completeTaskCore(key, "completed", message, "", nil)
+}
+
+// finishTaskMsg 是 finishTask 的 i18n 版：只发稳定消息码 + 占位参数。
+func (c *Controller) finishTaskMsg(key, code string, params map[string]string) {
+	c.completeTaskCore(key, "completed", "", code, params)
 }
 
 func (c *Controller) failTask(key, message string) {
-	c.failTaskWithError(key, message, message)
+	c.failTaskCore(key, message, "", nil, message)
+}
+
+// failTaskMsg 是 failTask 的 i18n 版：显示消息用码；无独立技术错误串。
+func (c *Controller) failTaskMsg(key, code string, params map[string]string) {
+	c.failTaskCore(key, "", code, params, "")
 }
 
 func (c *Controller) completeTask(key, status, message string) {
+	c.completeTaskCore(key, status, message, "", nil)
+}
+
+// completeTaskMsg 是 completeTask 的 i18n 版（多用于取消态等终态）。
+func (c *Controller) completeTaskMsg(key, status, code string, params map[string]string) {
+	c.completeTaskCore(key, status, "", code, params)
+}
+
+func (c *Controller) completeTaskCore(key, status, message, code string, params map[string]string) {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -781,7 +831,7 @@ func (c *Controller) completeTask(key, status, message string) {
 	}
 	now := time.Now()
 	task.Status = status
-	task.Message = message
+	applyTaskMessage(&task, message, code, params)
 	if status != "failed" {
 		task.Error = ""
 	}
@@ -804,6 +854,15 @@ func (c *Controller) completeTask(key, status, message string) {
 }
 
 func (c *Controller) failTaskWithError(key, message, taskError string) {
+	c.failTaskCore(key, message, "", nil, taskError)
+}
+
+// failTaskErrMsg 是 failTaskWithError 的 i18n 版：显示消息用稳定码，taskError 保留原始技术错误串（诊断用，不翻译）。
+func (c *Controller) failTaskErrMsg(key, code string, params map[string]string, taskError string) {
+	c.failTaskCore(key, "", code, params, taskError)
+}
+
+func (c *Controller) failTaskCore(key, message, code string, params map[string]string, taskError string) {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -813,7 +872,7 @@ func (c *Controller) failTaskWithError(key, message, taskError string) {
 	}
 	now := time.Now()
 	task.Status = "failed"
-	task.Message = message
+	applyTaskMessage(&task, message, code, params)
 	task.Error = taskError
 	task.CanCancel = false
 	task.CanPause = false

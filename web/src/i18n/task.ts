@@ -11,6 +11,24 @@ export interface TaskWithParams {
   params?: Record<string, string>;
 }
 
+export interface TaskMessageSource {
+  message?: string;
+  message_code?: string;
+  message_params?: Record<string, string>;
+  type?: string;
+}
+
+/**
+ * getTaskMessage 渲染任务的显示消息：后端迁移到 i18n 的任务会带稳定的 message_code + message_params，
+ * 按当前语言渲染；尚未迁移的任务仍回退到后端直接下发的 message（再退到任务类型）。
+ */
+export function getTaskMessage(task: TaskMessageSource, t: Translator): string {
+  if (task.message_code) {
+    return t(task.message_code, task.message_params, task.message || task.type || '');
+  }
+  return task.message || task.type || '';
+}
+
 export function formatKOReaderIndexLabel(params: Record<string, string> | undefined, t: Translator) {
   if (params?.match_mode === 'file_path') {
     return params.path_ignore_extension === 'true'

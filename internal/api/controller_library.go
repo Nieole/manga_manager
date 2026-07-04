@@ -258,15 +258,15 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) boo
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
 			c.invalidateDashboardStatsCache("scan_library_cancelled")
-			c.completeTask(taskKey, "cancelled", fmt.Sprintf("资源库扫描已取消: %s", lib.Name))
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_library.cancelled", map[string]string{"name": lib.Name})
 			return
 		}
 		if err != nil {
 			c.invalidateDashboardStatsCache("scan_library_failed")
-			c.failTaskWithError(taskKey, fmt.Sprintf("资源库扫描失败: %v", err), err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.scan_library.failed", nil, err.Error())
 			return
 		}
-		c.finishTask(taskKey, fmt.Sprintf("资源库扫描完成: %s", lib.Name))
+		c.finishTaskMsg(taskKey, "task.msg.scan_library.complete", map[string]string{"name": lib.Name})
 		c.warmDashboardStatsCacheAsync("scan_library_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_library")
 	})
@@ -334,16 +334,16 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
 			c.invalidateDashboardStatsCache("scan_series_cancelled")
-			c.completeTask(taskKey, "cancelled", fmt.Sprintf("系列扫描已取消 #%d", seriesID))
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_series.cancelled", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
 			return
 		}
 		if err != nil {
 			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
 			c.invalidateDashboardStatsCache("scan_series_failed")
-			c.failTaskWithError(taskKey, fmt.Sprintf("系列扫描失败: %v", err), err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.scan_series.failed", nil, err.Error())
 			return
 		}
-		c.finishTask(taskKey, fmt.Sprintf("系列扫描完成 #%d", seriesID))
+		c.finishTaskMsg(taskKey, "task.msg.scan_series.complete", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
 		c.warmDashboardStatsCacheAsync("scan_series_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_series")
 	})
@@ -401,14 +401,14 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	c.setTaskMetadata(taskKey, nil, scopeName)
 
 	c.runBackground(func() {
-		c.updateTaskDetails(taskKey, 0, 1, fmt.Sprintf("开始清理资源库 #%d", libraryID), "scanning_records", "", nil, nil)
+		c.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.cleanup_library.scanning_records", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, "scanning_records", "", nil, nil)
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
 		if err != nil {
 			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
-			c.failTaskWithError(taskKey, fmt.Sprintf("资源库清理失败: %v", err), err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.cleanup_library.failed", nil, err.Error())
 			return
 		}
-		c.finishTask(taskKey, fmt.Sprintf("资源库清理完成 #%d", libraryID))
+		c.finishTaskMsg(taskKey, "task.msg.cleanup_library.complete", map[string]string{"id": strconv.FormatInt(libraryID, 10)})
 	})
 
 	return true

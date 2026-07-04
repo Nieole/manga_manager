@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（任务消息 i18n 基础设施 + 扫描/清理批次 · M65 第三步 batch 1）
+
+#### 国际化（前后端一起改）
+- 引入任务消息码机制,让后端不再散落面向用户的中文字面量。`TaskStatus` 新增 `message_code` + `message_params`:迁移后的任务只发稳定 i18n 键 + 占位参数,由前端按当前语言渲染;未迁移的调用点仍用 `message`,前端 `message_code` 优先、`message` 兜底,支持增量迁移。
+- 后端:`applyTaskMessage` 保证 `Message` 与 `MessageCode` 互斥(后设者胜);新增 code 版方法 `finishTaskMsg`/`failTaskMsg`/`failTaskErrMsg`/`completeTaskMsg`/`updateTaskMsg`/`updateTaskDetailsMsg`(原方法委托到共享 core,签名不变、增量安全)。
+- 首批迁移 `controller_library.go` 的扫描/清理任务(scan_library / scan_series / cleanup_library)9 处 final+progress 消息。
+- 前端:`getTaskMessage(task, t)` helper,接入侧边任务气泡(`SidebarTaskBubble`)与任务中心(`TaskCenter`)三处渲染点;`TaskStatus`/`TaskBubbleEntry`/进度覆盖事件类型补 `message_code`/`message_params`;`zh-CN`/`en-US` 各加 9 条 `task.msg.*` 文案。
+
+#### 验证
+- 后端 `go vet` + `go test ./internal/api`(新增 `TestTaskMessageCodeEmission`:code 版设 code/params 清 Message、legacy 版设 Message 清 code 的互斥);前端 `npm run lint` + `npm run build` 通过。
+- 说明:任务消息共编目 115 处(final 63 / progress 30 / start 22),本批完成 controller_library.go;其余 6 文件(maintenance/recommendations/scan_events/external/koreader/scrape)分后续批次迁移,基础设施与前端渲染已一次到位。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（刮削响应结构化 outcome 码 · M65 第二步 · 前后端 lockstep）
 
 #### 重构/健壮性（前后端一起改）

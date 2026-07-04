@@ -4653,3 +4653,38 @@ func TestIsRetryableTaskTypeDerivedFromRegistry(t *testing.T) {
 		t.Fatal("unregistered type should not be retryable")
 	}
 }
+
+func TestTaskMessageCodeEmission(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	// i18n 路径：finishTaskMsg 设置 message_code + message_params，并清空 Message。
+	if !controller.startTask("scan_library_9", "scan_library", "start", 1) {
+		t.Fatal("expected task to start")
+	}
+	controller.finishTaskMsg("scan_library_9", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
+	controller.taskMutex.Lock()
+	coded := controller.tasks["scan_library_9"]
+	controller.taskMutex.Unlock()
+	if coded.MessageCode != "task.msg.scan_library.complete" {
+		t.Fatalf("expected message_code set, got %q", coded.MessageCode)
+	}
+	if coded.MessageParams["name"] != "Lib A" {
+		t.Fatalf("expected message_params name=Lib A, got %v", coded.MessageParams)
+	}
+	if coded.Message != "" {
+		t.Fatalf("expected Message cleared for coded task, got %q", coded.Message)
+	}
+	if coded.Status != "completed" {
+		t.Fatalf("expected status completed, got %q", coded.Status)
+	}
+
+	// 兼容路径：未迁移的 finishTask 仍直接设 Message，并清空 code（互斥）。
+	controller.startTask("scan_library_10", "scan_library", "start", 1)
+	controller.finishTask("scan_library_10", "直接文案")
+	controller.taskMutex.Lock()
+	legacy := controller.tasks["scan_library_10"]
+	controller.taskMutex.Unlock()
+	if legacy.Message != "直接文案" || legacy.MessageCode != "" {
+		t.Fatalf("legacy finishTask: want Message set & code empty, got msg=%q code=%q", legacy.Message, legacy.MessageCode)
+	}
+}

@@ -1641,6 +1641,17 @@ export const messages: MessageCatalog = {
     'task.hint.transfer_external_library': 'Check external directory write permissions, target disk space, and whether source files are still accessible.',
     'task.hint.default': 'Inspect the task error details first, then decide whether to retry.',
 
+    // Dynamic task messages (backend emits stable codes + params; localized on the client) — M65 incremental migration
+    'task.msg.scan_library.cancelled': 'Library scan cancelled: {{name}}',
+    'task.msg.scan_library.failed': 'Library scan failed',
+    'task.msg.scan_library.complete': 'Library scan complete: {{name}}',
+    'task.msg.scan_series.cancelled': 'Series scan cancelled #{{id}}',
+    'task.msg.scan_series.failed': 'Series scan failed',
+    'task.msg.scan_series.complete': 'Series scan complete #{{id}}',
+    'task.msg.cleanup_library.scanning_records': 'Cleaning up library #{{id}}',
+    'task.msg.cleanup_library.failed': 'Library cleanup failed',
+    'task.msg.cleanup_library.complete': 'Library cleanup complete #{{id}}',
+
     'server.error.invalidLibraryId': 'Invalid library ID',
     'server.error.invalidSeriesId': 'Invalid series ID',
     'server.error.invalidBookId': 'Invalid book ID',

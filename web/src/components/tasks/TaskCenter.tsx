@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react';
 import { Activity, ChevronDown, ExternalLink, FileText, Pause, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { getTaskActionHint, getTaskTypeLabel } from '../../i18n/task';
+import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
 
 export interface TaskLimits {
   scan_profile?: string;
@@ -32,6 +32,8 @@ export interface TaskStatus {
   scope_name?: string;
   status: string;
   message: string;
+  message_code?: string;
+  message_params?: Record<string, string>;
   error?: string;
   current: number;
   total: number;
@@ -524,7 +526,7 @@ function TaskCard({
             <p className="text-sm font-semibold text-white">{getTaskTypeLabel(task, t)}</p>
             <span className="text-xs text-white/40">{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
           </div>
-          <p className="mt-2 truncate text-sm text-white/70" title={task.current_item || task.message}>{task.message}</p>
+          <p className="mt-2 truncate text-sm text-white/70" title={task.current_item || getTaskMessage(task, t)}>{getTaskMessage(task, t)}</p>
           <p className="mt-1 truncate text-xs text-white/35" title={task.current_item || undefined}>
             {task.phase ? t(`settings.maintenance.taskPhase.${task.phase}`) : '-'}{task.current_item ? ` - ${task.current_item}` : ''}
           </p>

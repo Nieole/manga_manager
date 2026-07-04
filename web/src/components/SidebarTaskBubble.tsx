@@ -14,12 +14,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Loader2, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
+import { getTaskMessage } from '../i18n/task';
 
 export interface TaskBubbleEntry {
   key: string;
   type: string;
   status: string;
   message: string;
+  message_code?: string;
+  message_params?: Record<string, string>;
   error?: string;
   current: number;
   total: number;
@@ -123,7 +126,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
                       className="flex min-w-0 items-center gap-2 text-xs text-gray-200 hover:text-komgaPrimary transition"
                     >
                       {statusIcon(task.status)}
-                      <span className="truncate font-medium">{task.message || task.type}</span>
+                      <span className="truncate font-medium">{getTaskMessage(task, t)}</span>
                     </Link>
                     {finished && (
                       <button
@@ -190,7 +193,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
               : t('taskBubble.allDone')}
           </p>
           {primary && (
-            <p className="text-[10px] text-gray-500 truncate">{primary.message || primary.type}</p>
+            <p className="text-[10px] text-gray-500 truncate">{getTaskMessage(primary, t)}</p>
           )}
         </div>
         <ChevronDown className={`h-3.5 w-3.5 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} />

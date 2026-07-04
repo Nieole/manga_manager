@@ -350,6 +350,8 @@ export default function Layout() {
                 key?: string;
                 status?: string;
                 message?: string;
+                message_code?: string;
+                message_params?: Record<string, string>;
                 error?: string;
                 current?: number;
                 total?: number;
@@ -367,6 +369,10 @@ export default function Layout() {
                         ...existing,
                         status: detail.status || existing.status,
                         message: detail.message || existing.message,
+                        // message 与 message_code 互斥：带了新的 legacy message 的覆盖清掉 code 以显示该消息，
+                        // 否则沿用/更新 code（后端已迁移 i18n 的任务）。
+                        message_code: detail.message ? undefined : (detail.message_code ?? existing.message_code),
+                        message_params: detail.message ? undefined : (detail.message_params ?? existing.message_params),
                         error: detail.error ?? existing.error,
                         current: detail.current ?? existing.current,
                         total: detail.total ?? existing.total,
@@ -399,6 +405,8 @@ export default function Layout() {
                             type: progress.type || '',
                             status: progress.status || 'running',
                             message: progress.message || '',
+                            message_code: progress.message_code,
+                            message_params: progress.message_params,
                             error: progress.error,
                             current: progress.current ?? 0,
                             total: progress.total ?? 0,
