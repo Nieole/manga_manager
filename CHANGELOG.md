@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（Outlet context 稳定化，消除扫描期全树重渲染根因）
+
+#### 性能
+- `web/src/components/Layout.tsx`:用 `useMemo` 稳定 `<Outlet context={{ refreshTrigger, libraries }} />` 的 context 对象。此前每次 Layout 渲染都新建该对象,而扫描期间 SSE 任务进度状态会让 Layout 以约 4 次/秒高频重渲染 → 所有 `useOutletContext()` 消费方(库页等,含大量卡片)因每次拿到新引用被迫重渲染。现仅当 `refreshTrigger`/`libraries` 真正变化时才换引用,切断了这条级联重渲染的根因。
+- (后续可选加固:给 `LibraryCard` 加 `React.memo` 并 memoize 库页传入的少量内联回调,进一步防御 index 因真实原因重渲染时的卡片重算。)
+
+#### 验证
+- `npm run build`、`npm run lint`(0 problems)、`npm run test` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（axios 收口与 lint 约束 · M46 收尾）
 
 #### 重构

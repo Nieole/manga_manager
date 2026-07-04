@@ -5,7 +5,7 @@
  */
 
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, useRef, lazy, Suspense, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useMemo, lazy, Suspense, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle } from 'lucide-react';
@@ -155,6 +155,10 @@ export default function Layout() {
 
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+    // 稳定化 Outlet context 对象：Layout 在扫描期间会因 SSE 任务进度状态高频重渲染，若每次渲染都新建
+    // { refreshTrigger, libraries } 会让所有子路由（含库页大量卡片）跟着重渲染。仅当二者真正变化时才换引用。
+    const outletContext = useMemo(() => ({ refreshTrigger, libraries }), [refreshTrigger, libraries]);
 
     // 全局任务进度状态
     const [taskBubbleEntries, setTaskBubbleEntries] = useState<Record<string, TaskBubbleEntry>>({});
@@ -1082,7 +1086,7 @@ export default function Layout() {
                 </aside>
 
                 <div className="flex-1 overflow-y-auto bg-komgaDark relative h-[calc(100vh-73px)]">
-                    <Outlet context={{ refreshTrigger, libraries }} />
+                    <Outlet context={outletContext} />
                 </div>
 
                 <SidebarTaskBubble
