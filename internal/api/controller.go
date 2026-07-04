@@ -712,6 +712,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/bulk-progress/sync", c.bulkSyncBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
 			r.Get("/{bookId}/comicinfo.xml", c.exportBookComicInfo)
+			r.Get("/{bookId}/file", c.serveBookFile)
 			r.Get("/{bookId}/bookmarks", c.listReadingBookmarks)
 			r.Post("/{bookId}/bookmarks", c.upsertReadingBookmark)
 			r.Delete("/{bookId}/bookmarks/{bookmarkId}", c.deleteReadingBookmark)

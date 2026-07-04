@@ -288,8 +288,12 @@ func opdsPaginationLinks(base string, page, limit, total int) []OPDSLink {
 	return links
 }
 
-func opdsBookAcquisitionLinks(bookID, pageCount int64, lastReadPage sql.NullInt64) []OPDSLink {
+func opdsBookAcquisitionLinks(bookID, pageCount int64, lastReadPage sql.NullInt64, bookPath string) []OPDSLink {
 	links := []OPDSLink{
+		// 整卷下载：非 PSE 的桌面/传统 OPDS 客户端据此拉取原始 CBZ/CBR/PDF 整包；type 反映真实归档
+		// MIME（下载路由本身再以权威 Content-Type 下发）。放在首位，令整卷下载成为主获取项。
+		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf("/api/books/%d/file", bookID), Type: bookDownloadContentType(bookPath)},
+		// 首页 JPEG：作为封面/预览补充，保留历史行为，兼容只取第一页的旧客户端。
 		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf("/api/pages/%d/1", bookID), Type: "image/jpeg"},
 	}
 	if pageCount <= 0 {
@@ -884,7 +888,7 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 			title = b.Title.String
 		}
 
-		links := opdsBookAcquisitionLinks(b.ID, b.PageCount, b.LastReadPage)
+		links := opdsBookAcquisitionLinks(b.ID, b.PageCount, b.LastReadPage, b.Path)
 		if b.CoverPath.Valid && b.CoverPath.String != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
@@ -946,7 +950,7 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 		if item.LastReadPage.Valid && item.PageCount > 0 {
 			content = fmt.Sprintf("%s · 第 %d / %d 页", item.SeriesName, item.LastReadPage.Int64, item.PageCount)
 		}
-		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage)
+		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage, "")
 		if item.CoverPath != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",

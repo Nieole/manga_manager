@@ -202,8 +202,15 @@ func TestOPDSFeeds(t *testing.T) {
 		if entry.Title != "Alpha Book Display" {
 			t.Fatalf("unexpected book title: %+v", entry)
 		}
-		if len(entry.Links) != 3 {
-			t.Fatalf("expected acquisition + stream + thumbnail links, got %+v", entry.Links)
+		if len(entry.Links) != 4 {
+			t.Fatalf("expected download + first-page + stream + thumbnail links, got %+v", entry.Links)
+		}
+		download := findOPDSLink(entry.Links, "http://opds-spec.org/acquisition")
+		if download == nil || download.Href != "/api/books/"+strconv.FormatInt(book.ID, 10)+"/file" {
+			t.Fatalf("expected whole-book download acquisition link, got %+v", entry.Links)
+		}
+		if download.Type != "application/vnd.comicbook+zip" {
+			t.Fatalf("unexpected download MIME for .cbz book: %+v", download)
 		}
 		stream := findOPDSLink(entry.Links, opdsPSEStreamRel)
 		if stream == nil {

@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（OPDS 整卷下载 · M38）
+
+#### 新增
+- 新增 `GET /api/books/{bookId}/file`（`serveBookFile`）:按归档扩展名以正确 MIME（cbz/zip→`application/vnd.comicbook+zip`、cbr/rar→`application/vnd.comicbook-rar`、cb7/7z→`application/x-cb7`、pdf→`application/pdf`）下发整卷原始归档,带 RFC 5987 附件文件名,经 `http.ServeContent` 支持 Range 断点续传。路由挂在 `/api/books` 组下,与既有页图链接同享 `requireAuth` 鉴权。
+- `opdsBookAcquisitionLinks` 现在把整卷下载链接置于首位作为主获取项,保留首页 JPEG 作封面/预览补充与 PSE 流。此前非 PSE 的桌面/传统 OPDS 客户端只能拿到第一页 JPEG,无法整卷下载。
+
+#### 验证
+- `go vet`、`go test ./internal/api`(含新增 `TestServeBookFileWholeArchiveDownload` 与更新的 OPDS feed 断言)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（vite 分包 · 首屏瘦身 · M50）
 
 #### 性能

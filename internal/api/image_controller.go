@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -588,4 +589,68 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonError(w, http.StatusNotFound, "Cover cache missing or invalid")
+}
+
+// bookDownloadContentType 按归档扩展名推导整卷下载的 MIME。非 PSE 的 OPDS 客户端需要凭正确的
+// MIME 识别 CBZ/CBR/PDF 整卷文件；未知扩展名回退 application/octet-stream。
+func bookDownloadContentType(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".cbz", ".zip":
+		return "application/vnd.comicbook+zip"
+	case ".cbr", ".rar":
+		return "application/vnd.comicbook-rar"
+	case ".cb7", ".7z":
+		return "application/x-cb7"
+	case ".pdf":
+		return "application/pdf"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// serveBookFile 下发整卷归档原始文件，供非 PSE 的 OPDS 阅读器整卷下载。
+// PSE 页面流只逐页取 JPEG；桌面/传统 OPDS 客户端需要带正确 MIME 的整包 CBZ/CBR/PDF。
+// 通过 http.ServeContent 下发以支持 Range 断点续传；鉴权与既有 /api 图片链接一致（server.auth
+// 开启时同样需要令牌）。文件路径取自可信的 books 行，而非用户输入。
+func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+
+	book, err := c.store.GetBook(r.Context(), bookID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Book entity not found")
+		return
+	}
+
+	file, err := os.Open(book.Path)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Book file missing")
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		jsonError(w, http.StatusNotFound, "Book file missing")
+		return
+	}
+
+	displayName := filepath.Base(book.Path)
+	if strings.TrimSpace(displayName) == "" || displayName == "." || displayName == string(filepath.Separator) {
+		displayName = book.Name
+	}
+	// filename= 提供纯 ASCII 兜底（book ID + 扩展名，永远可解析），filename*= 用 UTF-8 百分号编码
+	// 携带真实（可能含中文）卷名，兼容不识别 RFC 5987 的老客户端。
+	asciiName := strconv.FormatInt(bookID, 10) + strings.ToLower(filepath.Ext(book.Path))
+	w.Header().Set("Content-Type", bookDownloadContentType(book.Path))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", asciiName, url.PathEscape(displayName)))
+	// 原始归档不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，便于客户端缓存与断点续传。
+	w.Header().Del("Vary")
+
+	// http.ServeContent 处理 Range、If-Modified-Since、Content-Length 并设置 Accept-Ranges，
+	// 且在 Content-Type 已预设时保留我们给出的归档 MIME（不做字节嗅探）。
+	http.ServeContent(w, r, displayName, info.ModTime(), file)
 }
