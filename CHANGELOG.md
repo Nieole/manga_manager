@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（同格式图片透传短路）
+
+#### 修复
+- `internal/images/processor.go`：`ProcessImage` 在无缩放/滤镜/质量/裁切需求、且目标格式与源格式一致时直接透传原始字节（L82 的一部分）。此前只有 `format` 完全为空才短路，前端传 `format=webp` 而源本就是 webp 时仍会白白解码 + 重编码一次（且可能损质）。页图转码的 single-flight 去重与软件编码并发上限作为后续项。
+
+#### 验证
+- `go build ./...`、`go test ./internal/images ./internal/api` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（fast_scan 保留页数/封面）
 
 #### 修复

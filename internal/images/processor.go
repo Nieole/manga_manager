@@ -69,10 +69,22 @@ const (
 	largeImageWarnPixels = 25_000_000  // 约 5000x5000，记录告警但仍处理
 )
 
+// formatMatchesContentType 判断目标输出格式是否与源 Content-Type 一致（jpg 归一化为 jpeg）。
+func formatMatchesContentType(format, contentType string) bool {
+	f := strings.ToLower(strings.TrimSpace(format))
+	if f == "jpg" {
+		f = "jpeg"
+	}
+	return f != "" && strings.Contains(strings.ToLower(contentType), f)
+}
+
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
-	// 如果没有任何处理需求且不需要转码/裁切，直接短路透传原始数据。
-	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" && opts.Format == "" && opts.Quality == 0 && !opts.AutoCrop {
-		return data, contentType, nil
+	// 如果没有任何缩放/滤镜/质量/裁切需求，且目标格式未指定或与源格式一致，直接透传原始字节，
+	// 避免「源已是目标格式（如 format=webp 而源就是 webp）」仍白白解码 + 重编码一次（且可能损质）。
+	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" && opts.Quality == 0 && !opts.AutoCrop {
+		if opts.Format == "" || formatMatchesContentType(opts.Format, contentType) {
+			return data, contentType, nil
+		}
 	}
 
 	// 预检图片尺寸而不完全解码，据此拦截解码炸弹：小体积压缩文件可声明极大画布，
