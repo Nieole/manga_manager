@@ -40,6 +40,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/singleflight"
 )
 
 type Controller struct {
@@ -71,6 +72,8 @@ type Controller struct {
 	recommendationsCache     map[string][]AIRecommendationResponse
 	recommendationsCacheTime map[string]time.Time
 	recommendationsMutex     sync.RWMutex
+	// recommendationsGroup 合并同一 locale 的并发冷缓存/刷新请求，避免各自触发一次 LLM 推理。
+	recommendationsGroup singleflight.Group
 
 	taskMutex    sync.Mutex
 	tasks        map[string]TaskStatus
@@ -5229,21 +5232,45 @@ type AIRecommendationResponse struct {
 // getRecommendations 基于本地阅读历史的综合 LLM 推荐
 func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
-	ctx := metadata.WithLocale(r.Context(), locale)
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
 
-	if !forceRefresh {
-		c.recommendationsMutex.RLock()
-		cache := c.recommendationsCache[locale]
-		cacheTime := c.recommendationsCacheTime[locale]
-		if time.Since(cacheTime) < 24*time.Hour && len(cache) > 0 {
-			c.recommendationsMutex.RUnlock()
-			jsonResponse(w, http.StatusOK, cache)
-			return
-		}
-		c.recommendationsMutex.RUnlock()
+	if !forceRefresh && c.cachedRecommendations(locale) != nil {
+		jsonResponse(w, http.StatusOK, c.cachedRecommendations(locale))
+		return
 	}
 
+	// 合并同一 locale 的并发冷缓存/刷新请求，只触发一次 LLM 推理。用 context.WithoutCancel 解绑
+	// leader 的请求取消，避免 leader 客户端断开波及所有搭车的 follower（超时仍由 LLM Timeout 控制）。
+	flightCtx := metadata.WithLocale(context.WithoutCancel(r.Context()), locale)
+	v, err, _ := c.recommendationsGroup.Do(locale, func() (any, error) {
+		if !forceRefresh {
+			if cached := c.cachedRecommendations(locale); cached != nil {
+				return cached, nil // 等待期间已被其他 leader 填充
+			}
+		}
+		return c.computeRecommendations(flightCtx, locale)
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "AI inference failed: "+err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, v.([]AIRecommendationResponse))
+}
+
+// cachedRecommendations 返回未过期的缓存推荐（无有效缓存时返回 nil）。
+func (c *Controller) cachedRecommendations(locale string) []AIRecommendationResponse {
+	c.recommendationsMutex.RLock()
+	defer c.recommendationsMutex.RUnlock()
+	cache := c.recommendationsCache[locale]
+	if time.Since(c.recommendationsCacheTime[locale]) < 24*time.Hour && len(cache) > 0 {
+		return cache
+	}
+	return nil
+}
+
+// computeRecommendations 拉候选、调 LLM 生成推荐并回填缓存。由 getRecommendations 经 singleflight 调用，
+// 保证同一 locale 的并发请求只执行一次。
+func (c *Controller) computeRecommendations(ctx context.Context, locale string) ([]AIRecommendationResponse, error) {
 	// 1. 获取用户最常看的 10 个标签
 	tagRows, err := c.store.GetTopReadingTags(ctx, 10)
 	var userTags []string
@@ -5256,8 +5283,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	// 2. 随机获取 20 本可能有兴趣的候选漫画
 	candidateRows, err := c.store.GetCandidateSeriesForAI(ctx, 20)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch candidates from database")
-		return
+		return nil, fmt.Errorf("failed to fetch candidates from database: %w", err)
 	}
 
 	var candidates []metadata.CandidateSeries
@@ -5277,8 +5303,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(candidates) == 0 {
-		jsonResponse(w, http.StatusOK, []AIRecommendationResponse{}) // 没有候选则不推荐
-		return
+		return []AIRecommendationResponse{}, nil // 没有候选则不推荐，空结果不缓存
 	}
 
 	// 3. 构建 Provider
@@ -5289,8 +5314,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	recList, err := provider.GenerateRecommendations(ctx, userTags, candidates, 3)
 	if err != nil {
 		slog.Error("LLM failed to generate recommendations", "error", err)
-		jsonError(w, http.StatusInternalServerError, "AI inference failed: "+err.Error())
-		return
+		return nil, err
 	}
 
 	// 5. 组合最终回包数据
@@ -5322,7 +5346,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	c.recommendationsCacheTime[locale] = time.Now()
 	c.recommendationsMutex.Unlock()
 
-	jsonResponse(w, http.StatusOK, finalRecs)
+	return finalRecs, nil
 }
 
 // aiGroupingLibrary 扫描资料库中没有集合的系列，利用 LLM 进行智能分组

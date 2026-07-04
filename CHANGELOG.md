@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（AI 推荐并发去重）
+
+#### 修复
+- `internal/api/controller.go`：`getRecommendations` 引入 single-flight（`golang.org/x/sync/singleflight`，`go mod tidy` 提为直接依赖）。此前冷缓存/刷新时并发请求会各自同步触发一次 LLM 推理（成本×N、易触发上游限流）；现同一 locale 的并发请求合并为一次推理，其余请求搭车复用结果。抽出 `computeRecommendations`，并用 `context.WithoutCancel` 解绑 leader 的请求取消，避免其客户端断开波及所有搭车者。
+
+#### 验证
+- `go build ./...`、`go test ./internal/api`（含 `TestGetRecommendationsReturnsCachedEntries`）通过；`go.sum` 无改动。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（元数据审阅 apply 事务原子化）
 
 #### 修复
