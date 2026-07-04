@@ -524,7 +524,7 @@ function TaskCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full border px-2.5 py-1 text-xs ${taskBadgeClass(task.status)}`}>{statusLabel}</span>
             <p className="text-sm font-semibold text-white">{getTaskTypeLabel(task, t)}</p>
-            <span className="text-xs text-white/40">{task.scope_name || task.scope}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
+            <span className="text-xs text-white/40">{task.scope_name || t(`task.scope.${task.scope}`, undefined, task.scope)}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
           </div>
           <p className="mt-2 truncate text-sm text-white/70" title={task.current_item || getTaskMessage(task, t)}>{getTaskMessage(task, t)}</p>
           <p className="mt-1 truncate text-xs text-white/35" title={task.current_item || undefined}>

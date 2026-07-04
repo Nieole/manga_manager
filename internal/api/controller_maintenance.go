@@ -76,7 +76,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 	if !c.startTaskMsg("rebuild_index", "rebuild_index", "task.msg.rebuild_index.start", nil, 1) {
 		return errTaskAlreadyRunning
 	}
-	c.setTaskMetadata("rebuild_index", nil, "系统")
+	c.setTaskMetadata("rebuild_index", nil, "")
 
 	if err := c.store.RebuildSeriesSearchIndex(context.Background()); err != nil {
 		c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite series search index rebuild failed: %v", err), err.Error())
@@ -114,7 +114,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		"volume_key":        policy.VolumeKey,
 		"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
 		"execution_mode":    "low_impact",
-	}, "系统")
+	}, "")
 	c.setTaskEffectiveLimit("rebuild_thumbnails", c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.newTaskContext("rebuild_thumbnails")
 
@@ -187,7 +187,7 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 		return errTaskAlreadyRunning
 	}
 	taskCtx, cleanupCancel := c.newTaskContext("cleanup_thumbnails")
-	c.setTaskMetadata("cleanup_thumbnails", nil, "系统")
+	c.setTaskMetadata("cleanup_thumbnails", nil, "")
 
 	go c.runBackground(func() {
 		defer cleanupCancel()
@@ -223,7 +223,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 	if !c.startPausableCancelableTaskMsg("rebuild_file_identities", "rebuild_file_identities", "task.msg.rebuild_file_identities.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
-	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "系统")
+	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "")
 	c.setTaskEffectiveLimit("rebuild_file_identities", c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.newTaskContext("rebuild_file_identities")
 
@@ -342,7 +342,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 		"match_mode": config.KOReaderMatchModeBinaryHash,
 		"profile":    "full_hash_low_priority",
 		"reason":     reason,
-	}, "系统")
+	}, "")
 	c.setTaskEffectiveLimit(lowPriorityBookHashTaskKey, c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.newTaskContext(lowPriorityBookHashTaskKey)
 

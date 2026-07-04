@@ -1744,6 +1744,9 @@ export const messages: MessageCatalog = {
     'task.msg.rebuild_thumbnails.libraries_completed': '已完成 {{done}}/{{total}} 资源库',
     'task.msg.rebuild_thumbnails.rebuilding_library': '正在重建缩略图: {{lib}}',
     'task.msg.rebuild_thumbnails.waiting_cover_queue': '正在等待封面队列收尾',
+    'task.scope.system': '系统',
+    'task.scope.library': '资源库',
+    'task.scope.series': '系列',
 
     'server.error.invalidLibraryId': '无效的资源库 ID',
     'server.error.invalidSeriesId': '无效的系列 ID',

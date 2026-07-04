@@ -642,7 +642,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 	c.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
-	}, "系统")
+	}, "")
 	c.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.newTaskContext(key)
 
@@ -675,7 +675,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	c.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
-	}, "系统")
+	}, "")
 	taskCtx, cleanupCancel := c.newTaskContext(key)
 
 	c.runBackground(func() {
@@ -707,7 +707,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	c.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
-	}, "系统")
+	}, "")
 	c.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.newTaskContext(key)
 

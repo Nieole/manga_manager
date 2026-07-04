@@ -1744,6 +1744,9 @@ export const messages: MessageCatalog = {
     'task.msg.rebuild_thumbnails.libraries_completed': '{{done}}/{{total}} libraries completed',
     'task.msg.rebuild_thumbnails.rebuilding_library': 'Rebuilding thumbnails: {{lib}}',
     'task.msg.rebuild_thumbnails.waiting_cover_queue': 'Waiting for the cover queue to finish',
+    'task.scope.system': 'System',
+    'task.scope.library': 'Library',
+    'task.scope.series': 'Series',
 
     'server.error.invalidLibraryId': 'Invalid library ID',
     'server.error.invalidSeriesId': 'Invalid series ID',
