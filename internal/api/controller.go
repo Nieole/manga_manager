@@ -89,6 +89,12 @@ type Controller struct {
 	done          chan struct{}
 	closed        bool
 	backgroundWG  sync.WaitGroup
+
+	// franchise 合集重建的合并式调度状态：把一串系列关联编辑合并成至多再跑一轮重建，
+	// 避免每次增删改都启一个全图重建 goroutine 争抢 SQLite 写锁。
+	franchiseRebuildMu      sync.Mutex
+	franchiseRebuildRunning bool
+	franchiseRebuildPending bool
 }
 
 type TaskStatus struct {

@@ -479,10 +479,8 @@ func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Trigger async franchise rebuild
-	go func() {
-		_ = c.RebuildFranchiseCollections(context.Background())
-	}()
+	// 合并式调度 franchise 重建（去抖 + 登记到 backgroundWG）
+	c.scheduleFranchiseRebuild()
 
 	jsonResponse(w, http.StatusCreated, map[string]string{"status": "created"})
 }
@@ -496,10 +494,8 @@ func (c *Controller) deleteSeriesRelation(w http.ResponseWriter, r *http.Request
 	}
 	_ = c.store.DeleteSeriesRelation(r.Context(), relationID)
 
-	// Trigger async franchise rebuild
-	go func() {
-		_ = c.RebuildFranchiseCollections(context.Background())
-	}()
+	// 合并式调度 franchise 重建（去抖 + 登记到 backgroundWG）
+	c.scheduleFranchiseRebuild()
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -534,10 +530,8 @@ func (c *Controller) updateSeriesRelation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Trigger async franchise rebuild
-	go func() {
-		_ = c.RebuildFranchiseCollections(context.Background())
-	}()
+	// 合并式调度 franchise 重建（去抖 + 登记到 backgroundWG）
+	c.scheduleFranchiseRebuild()
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "updated"})
 }

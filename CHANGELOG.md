@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（franchise 合集重建修复批次）
+
+#### 修复
+- `internal/api/franchise_service.go`：`RebuildFranchiseCollections` 重写。删旧合集 + 逐分量建新合集整体包进 `ExecTx`，先删后建原子化（此前非事务、中途失败或并发交错会留下“已删光/半重建”的不一致状态，且吞掉 create/add 错误）；用一次 `GetSeriesNamesByIDs` 批量取代表系列名，消除逐分量 `GetSeries` 的 N+1。
+- `internal/api/franchise_service.go` / `controller.go` / `collection_controller.go`：系列关联增删改触发的 franchise 重建改为合并式调度 `scheduleFranchiseRebuild`——已有重建在跑时只置 pending，把一串关联编辑合并成至多再跑一轮，并经 `runBackground` 登记到 `backgroundWG`（此前是脱离生命周期、用 `context.Background()` 的 fire-and-forget goroutine，批量编辑时会瞬间并发多个全图重建争抢 SQLite 写锁）。
+
+#### 验证
+- `go vet`、`go test ./internal/api` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（批量标记已读事务收敛批次）
 
 #### 修复
