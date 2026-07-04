@@ -88,7 +88,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 	}
 
 	go c.triggerGlobalScan(context.Background())
-	c.finishTask("rebuild_index", "搜索索引已重建，正在后台重建索引数据")
+	c.finishTaskMsg("rebuild_index", "task.msg.rebuild_index.complete", nil)
 	return nil
 }
 
@@ -128,46 +128,46 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		defer cleanupCancel()
 		defer c.releaseRebuildThumbAggregator()
 		c.initRebuildThumbAggregator(0)
-		c.updateTaskDetails("rebuild_thumbnails", 0, 0, "正在清理缩略图缓存", "clearing_cache", thumbDir, nil, nil)
+		c.updateTaskDetailsMsg("rebuild_thumbnails", 0, 0, "task.msg.rebuild_thumbnails.clearing_cache", nil, "clearing_cache", thumbDir, nil, nil)
 		if err := os.RemoveAll(thumbDir); err != nil {
-			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("清理缩略图缓存失败: %v", err), err.Error())
+			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cache_failed", nil, err.Error())
 			return
 		}
 		if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
-			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
+			c.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
 			return
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
-			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("创建缩略图缓存目录失败: %v", err), err.Error())
+			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.mkdir_failed", nil, err.Error())
 			return
 		}
-		c.updateTaskDetails("rebuild_thumbnails", 0, -1, "正在清空封面索引", "clearing_cache", "", nil, nil)
+		c.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.clearing_cover_index", nil, "clearing_cache", "", nil, nil)
 		if err := c.clearAllCoverPaths(taskCtx); err != nil {
-			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("清空封面索引失败: %v", err), err.Error())
+			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cover_index_failed", nil, err.Error())
 			return
 		}
-		c.updateTaskDetails("rebuild_thumbnails", 0, -1, "缩略图缓存已清空，正在按低冲击策略重建", "reading_metadata", "", nil, nil)
+		c.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil, "reading_metadata", "", nil, nil)
 		err := c.runGlobalScan(taskCtx, true, func(current, total int, lib database.Library) {
 			c.trackRebuildThumbLibraryProgress(current, total, lib)
 			c.refreshRebuildThumbTaskFromAggregator(lib)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
+			c.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("缩略图重建失败: %v", err), err.Error())
+			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.failed", nil, err.Error())
 			return
 		}
 		c.refreshRebuildThumbTaskMessage("正在等待封面队列收尾", "queueing_covers")
 		if err := c.scanner.WaitForCoverQueue(taskCtx); errors.Is(err, context.Canceled) {
-			c.completeTask("rebuild_thumbnails", "cancelled", "缩略图重建已取消")
+			c.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
 			return
 		} else if err != nil {
-			c.failTaskWithError("rebuild_thumbnails", fmt.Sprintf("等待缩略图队列失败: %v", err), err.Error())
+			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.wait_queue_failed", nil, err.Error())
 			return
 		}
-		c.finishTask("rebuild_thumbnails", "缩略图缓存已按低冲击策略重建完成")
+		c.finishTaskMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.complete", nil)
 		c.warmDashboardStatsCacheAsync("rebuild_thumbnails_completed")
 	})
 	c.PublishEvent("refresh_thumbnails")
@@ -192,21 +192,21 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 	go c.runBackground(func() {
 		defer cleanupCancel()
 
-		c.updateTaskDetails("cleanup_thumbnails", 0, -1, "正在扫描未使用的缩略图...", "cleanup", "", nil, nil)
+		c.updateTaskDetailsMsg("cleanup_thumbnails", 0, -1, "task.msg.cleanup_thumbnails.scanning", nil, "cleanup", "", nil, nil)
 
 		err := c.scanner.CleanupThumbnails(taskCtx, func(deleted, scanned int, msg string) {
 			c.updateTaskDetails("cleanup_thumbnails", deleted, scanned, msg, "cleanup", "", nil, nil)
 		})
 
 		if errors.Is(err, context.Canceled) {
-			c.completeTask("cleanup_thumbnails", "cancelled", "清理缩略图已取消")
+			c.completeTaskMsg("cleanup_thumbnails", "cancelled", "task.msg.cleanup_thumbnails.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError("cleanup_thumbnails", fmt.Sprintf("清理缩略图失败: %v", err), err.Error())
+			c.failTaskErrMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.failed", nil, err.Error())
 			return
 		}
-		c.finishTask("cleanup_thumbnails", "缩略图清理完成")
+		c.finishTaskMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.complete", nil)
 	})
 	return nil
 }
@@ -241,14 +241,14 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 			c.mergeTaskParams("rebuild_file_identities", taskIOMetricsParams(metrics))
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTask("rebuild_file_identities", "cancelled", "文件身份索引重建已取消")
+			c.completeTaskMsg("rebuild_file_identities", "cancelled", "task.msg.rebuild_file_identities.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError("rebuild_file_identities", fmt.Sprintf("文件身份索引重建失败: %v", err), err.Error())
+			c.failTaskErrMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.failed", nil, err.Error())
 			return
 		}
-		c.finishTask("rebuild_file_identities", fmt.Sprintf("文件身份索引重建完成，已更新 %d / %d 本书籍", updated, total))
+		c.finishTaskMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return nil
 }
@@ -359,14 +359,14 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 		})
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(lowPriorityBookHashTaskKey, "cancelled", "后台 KOReader 二进制哈希补算已取消")
+			c.completeTaskMsg(lowPriorityBookHashTaskKey, "cancelled", "task.msg.book_hash_backfill.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError(lowPriorityBookHashTaskKey, fmt.Sprintf("后台 KOReader 二进制哈希补算失败: %v", err), err.Error())
+			c.failTaskErrMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.failed", nil, err.Error())
 			return
 		}
-		c.finishTask(lowPriorityBookHashTaskKey, fmt.Sprintf("后台 KOReader 二进制哈希补算完成，已更新 %d / %d 本书籍", updated, total))
+		c.finishTaskMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return true
 }
