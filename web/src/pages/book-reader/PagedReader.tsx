@@ -4,9 +4,10 @@
  * 维护时应关注页面预加载、错误恢复、移动端布局、进度写回频率和快捷操作一致性。
  */
 
-import { useRef, type CSSProperties, type MouseEvent, type RefObject } from 'react';
+import { useCallback, type CSSProperties, type MouseEvent, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { getFilterStyle, getPagedImages, getScaleClasses } from './helpers';
+import { useReaderZoom } from './useReaderZoom';
 import type { ImageFilter, Page, ReadDirection, ScaleMode } from './types';
 
 interface PagedReaderProps {
@@ -48,31 +49,23 @@ export function PagedReader({
   onMouseUp,
   onMouseMove,
 }: PagedReaderProps) {
-  const tapStateRef = useRef<{ x: number; y: number; t: number } | null>(null);
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!onCenterTap) return;
-    tapStateRef.current = { x: event.clientX, y: event.clientY, t: performance.now() };
-  };
-
-  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!onCenterTap || !tapStateRef.current) return;
-    const start = tapStateRef.current;
-    tapStateRef.current = null;
-    const dx = Math.abs(event.clientX - start.x);
-    const dy = Math.abs(event.clientY - start.y);
-    if (dx < 8 && dy < 8 && performance.now() - start.t < 400) {
+  // 单击（经缩放 hook 的单/双击消歧后）落到屏幕左/右三分之一翻页、中央切换 UI；方向随 LTR/RTL 反转。
+  const handleSingleTap = useCallback(
+    (clientX: number) => {
       const screenWidth = window.innerWidth;
-      const x = event.clientX;
-      if (x < screenWidth * 0.3) {
+      if (clientX < screenWidth * 0.3) {
         if (readDirection === 'ltr') onPrev(); else onNext();
-      } else if (x > screenWidth * 0.7) {
+      } else if (clientX > screenWidth * 0.7) {
         if (readDirection === 'ltr') onNext(); else onPrev();
       } else {
-        onCenterTap();
+        onCenterTap?.();
       }
-    }
-  };
+    },
+    [readDirection, onPrev, onNext, onCenterTap],
+  );
+
+  // 自由缩放（捏合 / 双击 / Ctrl+滚轮 / 拖拽）；resetKey 随翻页/双页切换复位到 1x；单击交还 handleSingleTap。
+  const zoom = useReaderZoom(containerRef, `${currentPageIndex}:${doublePage}`, handleSingleTap);
 
   return (
     <div className="flex items-center justify-center w-full h-full bg-komgaDark relative overflow-hidden group">
@@ -86,14 +79,15 @@ export function PagedReader({
 
       <div
         ref={containerRef}
-        className={`flex flex-col sm:flex-row items-center justify-center h-full max-w-full overflow-auto touch-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0 w-full' : 'px-8 sm:px-20'} select-none gap-0 ${doublePage ? 'drop-shadow-[0_20px_50px_rgba(0,0,0,0.9)]' : ''}`}
+        className={`flex items-center justify-center h-full w-full max-w-full ${zoom.isZoomed ? 'overflow-hidden' : 'overflow-auto'} touch-none ${isDragging || zoom.isZoomed ? 'cursor-grabbing' : 'cursor-grab'} ${(scaleMode === 'fit-width' || scaleMode === 'fit-screen') ? 'px-0' : 'px-8 sm:px-20'} select-none`}
         onPointerDown={(e) => {
-          handlePointerDown(e);
-          onMouseDown(e);
+          if (!zoom.onPointerDown(e)) onMouseDown(e);
         }}
-        onPointerMove={onMouseMove}
+        onPointerMove={(e) => {
+          if (!zoom.onPointerMove(e)) onMouseMove(e);
+        }}
         onPointerUp={(e) => {
-          handlePointerUp(e);
+          zoom.onPointerUp(e);
           onMouseUp();
         }}
         onPointerLeave={() => {
@@ -101,36 +95,41 @@ export function PagedReader({
           onMouseUp();
         }}
       >
-        {getPagedImages(pages, currentPageIndex, doublePage, readDirection).map((page, index, spread) => {
-          const isSpread = doublePage && spread.length > 1;
-          const overlapStyle: CSSProperties = isSpread ? {
-            marginLeft: index === 1 ? '-0.5px' : '0',
-            marginRight: index === 0 ? '-0.5px' : '0',
-            zIndex: index === 0 ? 1 : 0,
-          } : {};
+        <div
+          className={`flex flex-col sm:flex-row items-center justify-center h-full w-full gap-0 ${doublePage ? 'drop-shadow-[0_20px_50px_rgba(0,0,0,0.9)]' : ''}`}
+          style={zoom.wrapperStyle}
+        >
+          {getPagedImages(pages, currentPageIndex, doublePage, readDirection).map((page, index, spread) => {
+            const isSpread = doublePage && spread.length > 1;
+            const overlapStyle: CSSProperties = isSpread ? {
+              marginLeft: index === 1 ? '-0.5px' : '0',
+              marginRight: index === 0 ? '-0.5px' : '0',
+              zIndex: index === 0 ? 1 : 0,
+            } : {};
 
-          return (
-            <div
-              key={page.number}
-              className={`relative flex items-center justify-center ${doublePage ? 'max-w-none w-[50vw] sm:w-auto' : 'w-full flex-1 shrink-0'} ${scaleMode === 'fit-screen' || scaleMode === 'fit-height' ? 'h-full' : ''}`}
-              style={overlapStyle}
-            >
-              {isPagedImageReady(page.number) ? (
-                <img
-                  src={cachedPageImageUrls[page.number]}
-                  className={getScaleClasses(scaleMode, doublePage, !doublePage ? 'drop-shadow-2xl' : 'max-w-none')}
-                  style={getFilterStyle(imageFilter)}
-                  alt={`Page ${page.number}`}
-                  draggable={false}
-                />
-              ) : (
-                <div className="flex min-h-[40vh] min-w-[240px] items-center justify-center rounded-2xl border border-white/10 bg-black/30 px-10 py-16">
-                  <Loader2 className="h-8 w-8 animate-spin text-komgaPrimary" />
-                </div>
-              )}
-            </div>
-          );
-        })}
+            return (
+              <div
+                key={page.number}
+                className={`relative flex items-center justify-center ${doublePage ? 'max-w-none w-[50vw] sm:w-auto' : 'w-full flex-1 shrink-0'} ${scaleMode === 'fit-screen' || scaleMode === 'fit-height' ? 'h-full' : ''}`}
+                style={overlapStyle}
+              >
+                {isPagedImageReady(page.number) ? (
+                  <img
+                    src={cachedPageImageUrls[page.number]}
+                    className={getScaleClasses(scaleMode, doublePage, !doublePage ? 'drop-shadow-2xl' : 'max-w-none')}
+                    style={getFilterStyle(imageFilter)}
+                    alt={`Page ${page.number}`}
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="flex min-h-[40vh] min-w-[240px] items-center justify-center rounded-2xl border border-white/10 bg-black/30 px-10 py-16">
+                    <Loader2 className="h-8 w-8 animate-spin text-komgaPrimary" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
