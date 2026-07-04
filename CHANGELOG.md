@@ -16,7 +16,10 @@
   - `controller_system_config.go`：系统配置读写（含敏感字段脱敏）、能力查询、LLM 连通性测试、目录浏览。
 - 阶段三继续拆出：
   - `controller_library.go`：资料库增删改查、校验、扫描/系列扫描/清理任务触发接口。
-- `controller.go` 从 5489 行降至 2516 行（约 −54%）。已拆出 6 个领域文件（search/scan_events/tasks/series/system_config/library）。后续阶段可继续拆分 book/progress/sse/recommendations 等子域。
+- 阶段四继续拆出：
+  - `controller_maintenance.go`：全库扫描、索引/缩略图重建与清理、文件指纹重建、低优先级全量哈希回填等运维任务编排与接口。
+  - `controller_progress.go`：上一本/下一本导航、单本与批量进度更新、KOReader 风格批量同步、阅读书签增删查。
+- `controller.go` 从 5489 行降至 1684 行（约 −69%）。已拆出 8 个领域文件（search/scan_events/tasks/series/system_config/library/maintenance/progress），`controller.go` 现仅保留核心结构、生命周期、鉴权中间件、SSE broker、SetupRoutes 与少量共享 handler。
 
 #### 验证
 - `go vet ./...`、`go test ./...`（全绿）；`goimports` 自动整理各文件 import。
