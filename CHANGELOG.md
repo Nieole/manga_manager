@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（前后端契约类型生成管线 · M47 完整）
+
+#### 重构 / 基础设施
+- 引入 Go→TS 契约类型生成管线,以后端响应结构体为单一事实源,根治此前前端手写类型与后端各自漂移(M47 局部已修 `paused_at`、`Null*` 收敛等具体点,本次落地机制):
+  - 新增 `cmd/tsgen`:反射生成器,对 `targets` 列表中的结构体(首批 `api.TaskLimits`、`api.TaskStatus`)生成 TS 接口到 `web/src/api/generated.ts`。按 json tag 命名、pointer / `omitempty` → 可选、`time.Time` → `string`、`sql.Null*` → 复用 `contracts.ts` 的单一定义(生成文件 `import` 之);遇未纳入的具名结构体显式失败,不静默产出 `unknown`。
+  - 前端 `TaskCenter.tsx` 删除手写的 `TaskStatus` / `TaskLimits`,改为从 `api/generated.ts` 再导出,消费方 import 路径不变(`TaskCenter` / `BackgroundTasks` / `Layout` 等)。
+  - CI 新增 drift 校验(`.github/workflows/ci.yml`,ubuntu):`go run ./cmd/tsgen` 后 `git diff --exit-code -- web/src/api/generated.ts`——改了源结构体却没重新生成即报错。`AGENTS.md` 同步说明。
+- 扩展方式:后续把更多响应结构体(如 `database.Series`)纳入受管,只需加入 `cmd/tsgen` 的 `targets`。
+
+#### 验证
+- `go vet ./cmd/tsgen`、`go build ./...`;前端 `npm run build`(tsc 严格:生成类型无缝替换手写版、消费方零破裂)、`npm run lint`(0)、`npm run test`(24)通过;`go run ./cmd/tsgen` 幂等(再次生成无 diff)。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（系列详情主数据错误态 + 重试 · M48 续批）
 
 #### 修复(用户可见)

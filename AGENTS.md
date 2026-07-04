@@ -16,7 +16,7 @@ Use `./build.sh` for a full release-style build; it installs frontend dependenci
 Go code should stay `gofmt`-clean and package-oriented; keep handlers thin and push logic into `internal/*` services. React/TypeScript uses the existing Vite + ESLint setup, 2-space indentation, PascalCase for components (`SeriesHeader.tsx`), and `useX` for hooks (`useReaderPreferences.ts`). Prefer small, behavior-preserving refactors over broad rewrites.
 
 ## Testing Guidelines
-Add or update `_test.go` files in the touched backend package, following the existing table-driven style in `internal/api/*_test.go` and `internal/scanner/*_test.go`. Frontend changes should at minimum pass `npm run build`. If you change SQL in `sql/query.sql` or `schema.sql`, regenerate the Go bindings with `sqlc generate` before testing.
+Add or update `_test.go` files in the touched backend package, following the existing table-driven style in `internal/api/*_test.go` and `internal/scanner/*_test.go`. Frontend changes should at minimum pass `npm run build`. If you change SQL in `sql/query.sql` or `schema.sql`, regenerate the Go bindings with `sqlc generate` before testing. If you change a Go response struct that is a generated frontend contract (see `cmd/tsgen`'s `targets`, e.g. `api.TaskStatus`), regenerate `web/src/api/generated.ts` with `go run ./cmd/tsgen` (CI checks it for drift).
 
 > **sqlc 必须在 PowerShell（或 cmd）里运行，不要用 Git Bash / MSYS。** `sqlc generate` 会向 stderr 打印一批 `mismatched input ...` 诊断——这些是非致命噪音，sqlc 会自行恢复并正常生成。在 PowerShell 下命令退出码为 0、产物与仓库一致；但在 Git Bash 下经 scoop shim 调用会返回**假的退出码 1**，看起来像“管线坏了”，其实文件没问题。判断 sqlc 是否成功以 PowerShell 的退出码和 `git status`（有无产物 diff）为准。
 
