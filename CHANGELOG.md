@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（文件监听处理删除/重命名）
+
+#### 修复
+- `internal/scanner/watcher.go`：文件监听器现在处理 Remove/Rename 事件。此前只响应 Create/Write，删除/重命名既不清理 `watched` 集合（Linux 下内核 watch 已回收但 map key 永久残留=无界泄漏；重建同名目录因残留 key 跳过重挂=永久失监），也不清除库中的幽灵记录（删除的文件/系列在库视图与搜索中残留，因热重载只走增量 ScanLibrary 不删缺失）。现新增 `handleRemoval`：按前缀清理 `watched` 并移除对应 fsnotify watch（修复泄漏与重建失监），并为所属库排期一次去抖后的 `CleanupLibrary`（自带根目录探测与占比熔断，存储离线不误删）清除幽灵记录。Rename 天然产出 Remove(旧)+Create(新)，二者互补。
+
+#### 验证
+- `go vet`、`go test ./internal/scanner`、`go build ./...` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（同格式图片透传短路）
 
 #### 修复

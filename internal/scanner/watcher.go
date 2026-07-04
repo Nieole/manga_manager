@@ -27,8 +27,10 @@ type FileWatcher struct {
 	pending map[int64]time.Time
 	libs    map[string]int64 // path -> libraryID
 	watched map[string]struct{}
-	stopCh  chan struct{}
-	formats []string
+	// pendingCleanup: 检测到删除/重命名后按库排期，去抖后触发 CleanupLibrary 清除幽灵记录
+	pendingCleanup map[int64]time.Time
+	stopCh         chan struct{}
+	formats        []string
 }
 
 func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
@@ -37,12 +39,13 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 		return nil, err
 	}
 	return &FileWatcher{
-		scanner: s,
-		watcher: w,
-		pending: make(map[int64]time.Time),
-		libs:    make(map[string]int64),
-		watched: make(map[string]struct{}),
-		stopCh:  make(chan struct{}),
+		scanner:        s,
+		watcher:        w,
+		pending:        make(map[int64]time.Time),
+		libs:           make(map[string]int64),
+		watched:        make(map[string]struct{}),
+		pendingCleanup: make(map[int64]time.Time),
+		stopCh:         make(chan struct{}),
 		formats: func() []string {
 			formats := make([]string, 0, len(config.SupportedScanFormats))
 			for _, item := range config.SupportedScanFormats {
@@ -86,6 +89,31 @@ func (fw *FileWatcher) UnwatchLibrary(path string) {
 	}
 }
 
+// handleRemoval 处理文件/目录的删除或重命名（旧名）：清理 watched 集合中该路径及其子项、
+// 移除对应的 fsnotify watch（防 watched map 泄漏，并让重建的同名目录能被重新挂载而非因残留 key 跳过），
+// 同时为所属库排期一次 CleanupLibrary 去除幽灵记录（删除的文件/系列在库视图与搜索中残留）。
+func (fw *FileWatcher) handleRemoval(name string) {
+	fw.mu.Lock()
+	var toRemove []string
+	for watchedPath := range fw.watched {
+		if watchedPath == name || strings.HasPrefix(watchedPath, name+string(filepath.Separator)) {
+			toRemove = append(toRemove, watchedPath)
+			delete(fw.watched, watchedPath)
+		}
+	}
+	for libPath, libID := range fw.libs {
+		if strings.HasPrefix(name, libPath) {
+			fw.pendingCleanup[libID] = time.Now()
+			break
+		}
+	}
+	fw.mu.Unlock()
+
+	for _, watchedPath := range toRemove {
+		_ = fw.watcher.Remove(watchedPath) // 忽略错误：Linux 删目录已自动回收内核 watch
+	}
+}
+
 // Start 启动文件监控事件循环
 func (fw *FileWatcher) Start(publishEvent func(string)) {
 	go func() {
@@ -108,7 +136,11 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 						}
 					}
 				}
-				// 只关注 Create 和 Write
+				// 删除/重命名（旧名）：清理监听集合并排期库清理，去除幽灵记录、修复重建目录失监。
+				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+					fw.handleRemoval(event.Name)
+				}
+				// 只关注 Create 和 Write（用于触发增量扫描发现新增/变动文件）
 				if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
 					continue
 				}
@@ -168,6 +200,18 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 								}
 							}(libID, libPath)
 						}
+					}
+				}
+				// 去抖后触发库清理，清除删除/重命名遗留的幽灵记录。CleanupLibrary 自带根目录探测与
+				// 占比熔断，存储离线时不会误删。
+				for libID, lastChange := range fw.pendingCleanup {
+					if now.Sub(lastChange) >= 5*time.Second {
+						delete(fw.pendingCleanup, libID)
+						go func(id int64) {
+							if err := fw.scanner.CleanupLibrary(context.Background(), id); err != nil {
+								slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
+							}
+						}(libID)
 					}
 				}
 				fw.mu.Unlock()
