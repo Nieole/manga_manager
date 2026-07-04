@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（前端引入 Vitest 单元测试 · M16）
+
+#### 新增
+- 前端从零引入 Vitest 单元测试框架(此前 `web/` 无任何测试)。为保持最小依赖与稳定性,首批只装 `vitest`、用 node 测试环境覆盖纯逻辑函数,组件级测试(jsdom/testing-library)留待后续按需引入。
+- 配置:新增 `web/vitest.config.ts`(node 环境,`src/**/*.{test,spec}.{ts,tsx}`);`package.json` 加 `test`/`test:watch` 脚本;`tsconfig.app.json` 排除测试文件,使生产构建与测试解耦。
+- 首批测试(11 例):`i18n/status.ts` 的 `normalizeSeriesStatus`(英文别名/大小写/中文别名/未知兜底)、`series-detail/hooks/useSeriesContinue.ts` 的 `buildContinueCta`/`isFullyRead`(续读 CTA 解析、跨书页码归零、标题回退、全读判定)。
+- CI:`.github/workflows/ci.yml` 新增 `npm run test` 阻塞步骤。
+
+#### 验证
+- `npm run test`(2 文件 11 例全过)、`npm run build`、`npm run lint`(0 problems)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（KOReader 进度 last-write-wins · M37）
 
 #### 修复
