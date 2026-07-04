@@ -438,7 +438,7 @@ func (c *Controller) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		w.Header().Set("WWW-Authenticate", `Bearer realm="manga-manager"`)
-		jsonError(w, http.StatusUnauthorized, "需要有效的访问令牌")
+		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.token_required"))
 	})
 }
 

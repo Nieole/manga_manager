@@ -47,29 +47,31 @@ type CreateLibraryRequest struct {
 	ScanFormats         string `json:"scan_formats"`
 }
 
-func (c *Controller) validateLibraryRequest(ctx context.Context, libraryID *int64, req CreateLibraryRequest) []config.ValidationIssue {
+// validateLibraryRequest 的校验消息随 HTTP 响应结构直接下发、前端只能原样展示，故按 locale
+// 在后端本地化（见 apiText）。locale 由各 handler 用 requestLocale(r) 传入。
+func (c *Controller) validateLibraryRequest(ctx context.Context, locale string, libraryID *int64, req CreateLibraryRequest) []config.ValidationIssue {
 	issues := make([]config.ValidationIssue, 0)
 	if strings.TrimSpace(req.Name) == "" {
-		issues = append(issues, config.ValidationIssue{Field: "name", Message: "名称不能为空。", Severity: "error"})
+		issues = append(issues, config.ValidationIssue{Field: "name", Message: apiText(locale, "library.validation.name_required"), Severity: "error"})
 	}
 	if strings.TrimSpace(req.Path) == "" {
-		issues = append(issues, config.ValidationIssue{Field: "path", Message: "路径不能为空。", Severity: "error"})
+		issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_required"), Severity: "error"})
 	} else {
 		info, err := os.Stat(req.Path)
 		if err != nil {
-			issues = append(issues, config.ValidationIssue{Field: "path", Message: "路径不存在或不可访问。", Severity: "error"})
+			issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_missing"), Severity: "error"})
 		} else if !info.IsDir() {
-			issues = append(issues, config.ValidationIssue{Field: "path", Message: "这里只能选择目录。", Severity: "error"})
+			issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_not_dir"), Severity: "error"})
 		}
 	}
 
 	if req.ScanInterval <= 0 {
-		issues = append(issues, config.ValidationIssue{Field: "scan_interval", Message: "扫描间隔至少为 1 分钟。", Severity: "error"})
+		issues = append(issues, config.ValidationIssue{Field: "scan_interval", Message: apiText(locale, "library.validation.interval_min"), Severity: "error"})
 	}
 
 	normalizedFormats := config.ParseScanFormats(req.ScanFormats)
 	if len(normalizedFormats) == 0 {
-		issues = append(issues, config.ValidationIssue{Field: "scan_formats", Message: "至少保留一个受支持的扫描格式。", Severity: "error"})
+		issues = append(issues, config.ValidationIssue{Field: "scan_formats", Message: apiText(locale, "library.validation.formats_empty"), Severity: "error"})
 	}
 
 	libs, err := c.store.ListLibraries(ctx)
@@ -80,7 +82,7 @@ func (c *Controller) validateLibraryRequest(ctx context.Context, libraryID *int6
 				continue
 			}
 			if filepath.Clean(lib.Path) == cleanTarget {
-				issues = append(issues, config.ValidationIssue{Field: "path", Message: "这个目录已经被其他资源库使用。", Severity: "error"})
+				issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_in_use"), Severity: "error"})
 				break
 			}
 		}
@@ -106,7 +108,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
 
 	ctx := r.Context()
-	if issues := c.validateLibraryRequest(ctx, nil, req); len(issues) > 0 {
+	if issues := c.validateLibraryRequest(ctx, requestLocale(r), nil, req); len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
 			"error":      "Library validation failed",
 			"validation": config.ValidationResult{Valid: false, Issues: issues},
@@ -199,7 +201,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		ScanInterval:        req.ScanInterval,
 		ScanFormats:         req.ScanFormats,
 	}
-	if issues := c.validateLibraryRequest(ctx, &libraryID, validateReq); len(issues) > 0 {
+	if issues := c.validateLibraryRequest(ctx, requestLocale(r), &libraryID, validateReq); len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
 			"error":      "Library validation failed",
 			"validation": config.ValidationResult{Valid: false, Issues: issues},

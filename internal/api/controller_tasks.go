@@ -1212,7 +1212,7 @@ func (c *Controller) pauseTask(w http.ResponseWriter, r *http.Request) {
 	task.CanResume = true
 	task.PausedAt = &now
 	task.PauseReason = "manual_pause"
-	task.Message = "任务已暂停，等待继续执行"
+	applyTaskMessage(&task, "", "task.msg.control.paused", nil)
 	task.UpdatedAt = now
 	c.taskSeq++
 	task.Sequence = c.taskSeq
@@ -1256,7 +1256,7 @@ func (c *Controller) resumeTask(w http.ResponseWriter, r *http.Request) {
 	task.CanResume = false
 	task.PausedAt = nil
 	task.PauseReason = ""
-	task.Message = "任务已继续执行"
+	applyTaskMessage(&task, "", "task.msg.control.resumed", nil)
 	task.UpdatedAt = time.Now()
 	c.taskSeq++
 	task.Sequence = c.taskSeq
@@ -1308,7 +1308,7 @@ func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
 	task.CanPause = false
 	task.CanResume = false
 	task.Status = "cancelling"
-	task.Message = "正在取消任务..."
+	applyTaskMessage(&task, "", "task.msg.control.cancelling", nil)
 	task.UpdatedAt = time.Now()
 	c.taskSeq++
 	task.Sequence = c.taskSeq

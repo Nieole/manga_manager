@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（HTTP 响应 i18n 补切:任务控制消息 + 鉴权/资料库校验 · M65 残留）
+
+#### 国际化（前后端一起改）
+- 任务控制消息迁移为消息码:`pauseTask`/`resumeTask`/`cancelTask` 三处此前直接 `task.Message = 中文`,改用现成的 `applyTaskMessage(&task, "", code, nil)` 发 `task.msg.control.paused`/`resumed`/`cancelling`,与已完成的任务消息 i18n 体系一致(前端 `getTaskMessage` 按码渲染)。`zh-CN`/`en-US` 各补 3 条,全库 `task.msg.*` 码 102→105,Go/zh/en 三方一致(105=105=105)。
+- 新增后端 HTTP 响应文案本地化机制 `apiText(locale, key)` + `apiMessages` 中/英表(`internal/api/messages.go`),与 OPDS 的 `opdsText` 同思路:这类文案随响应结构或 `error` 字段直接下发、前端只能原样展示,故必须后端按 `requestLocale(r)`(X-App-Locale / Accept-Language)选择。首批迁移 8 条高频文案:鉴权 401(`需要有效的访问令牌`)与资料库新增/编辑校验的 7 条 `ValidationIssue.Message`(名称/路径/间隔/格式/目录占用);`validateLibraryRequest` 增 `locale` 形参,由 `createLibrary`/`updateLibrary` 用 `requestLocale(r)` 传入。
+- 说明:`koreader_controller.go`(~29 条建议/校验/成功文案)、`controller_maintenance.go`/`controller_system_config.go` 的运维成功 toast 等仍为中文,属 M65 后续批次;另发现 `web/src/i18n/locales` 的 `server.error.*` 一批 key **后端从未发出、前端从未消费**(死键),留作后续清理。
+
+#### 验证
+- `go vet`、`go test ./...`(新增 `TestAPITextLocalization` 表一致性+回退、`TestValidateLibraryRequestLocalized` 校验消息中/英切换且英文无中文标点;更新 `TestCancelTaskRequestsRunningCancellation` 断言改为消息码)全绿;前端 `npm run lint` + `npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（config.yaml 取消跟踪 + 提供模板 · M15）
 
 #### 修复(仓库卫生 / 安全)

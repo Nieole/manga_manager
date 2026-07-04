@@ -2736,8 +2736,11 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	if task.Status != "cancelling" {
 		t.Fatalf("expected cancelling status, got %+v", task)
 	}
-	if task.Message != "正在取消任务..." {
-		t.Fatalf("expected cancelling message, got %q", task.Message)
+	if task.MessageCode != "task.msg.control.cancelling" {
+		t.Fatalf("expected cancelling message code, got code=%q message=%q", task.MessageCode, task.Message)
+	}
+	if task.Message != "" {
+		t.Fatalf("expected message cleared when code set, got %q", task.Message)
 	}
 }
 
