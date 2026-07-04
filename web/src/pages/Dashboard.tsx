@@ -266,7 +266,7 @@ export default function Dashboard() {
 
                                         {isSequel && (
                                             <div className="absolute top-2 right-2 bg-purple-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm uppercase tracking-wide">
-                                                {t(`series.relations.type.${item.relation_type}`) || item.relation_type}
+                                                {t(`series.relations.type.${item.relation_type}`, undefined, item.relation_type)}
                                             </div>
                                         )}
 
@@ -290,7 +290,7 @@ export default function Dashboard() {
                                         <p className="text-sm font-medium text-gray-200 truncate group-hover:text-komgaPrimary transition-colors">{item.series_name}</p>
                                         <p className="text-xs text-gray-500 truncate mt-0.5">
                                             {isSequel 
-                                                ? (t('series.franchise.description') || `From ${item.source_series_name}`)
+                                                ? t('series.franchise.description')
                                                 : (item.book_title?.Valid ? item.book_title.String : item.book_name)
                                             }
                                         </p>

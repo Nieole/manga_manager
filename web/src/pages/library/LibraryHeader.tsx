@@ -89,10 +89,10 @@ export function LibraryHeader({
             <button
               onClick={() => navigate(`/libraries/${libraryId}/franchise-graph`)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400 hover:border-white/20 hover:text-white transition-colors bg-transparent shrink-0"
-              title={t('library.franchise.title') || 'Library Relationships Graph'}
+              title={t('library.franchise.title')}
             >
               <GitBranch className="h-4 w-4" />
-              <span className="hidden sm:inline">{t('library.franchise.title') || 'Graph'}</span>
+              <span className="hidden sm:inline">{t('library.franchise.title')}</span>
             </button>
           )}
           {hasSeries && (

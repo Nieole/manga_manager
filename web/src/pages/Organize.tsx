@@ -252,7 +252,7 @@ export default function Organize() {
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-300">
             <ListChecks className="h-4 w-4" />
-            {t('organize.badge') || '整理维护'}
+            {t('organize.badge')}
           </div>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-white">{t('organize.title')}</h1>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-400">{t('organize.description')}</p>
@@ -272,7 +272,7 @@ export default function Organize() {
         <div className="space-y-6">
           {/* 指标总览 */}
           <div className="rounded-2xl border border-gray-800/80 bg-gray-950/50 backdrop-blur-md p-4 space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.title') || '健康总览'}</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.title')}</h3>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-white/5 bg-white/2 p-3">
                 <p className="text-[10px] uppercase tracking-wide text-gray-500">{t('organize.metric.totalIssues')}</p>
@@ -287,7 +287,7 @@ export default function Organize() {
 
           {/* 7 大健康过滤卡片 */}
           <div className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.diagnostics') || '问题分类'}</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 px-1">{t('organize.metric.diagnostics')}</h3>
             <div className="rounded-xl border border-gray-800 bg-gray-950/50 px-2 py-2 grid grid-cols-3 gap-1 text-center">
               {(['error', 'warn', 'info'] as const).map((sev) => (
                 <div key={sev} className={`rounded-lg px-2 py-1.5 ${severityClass(sev)}`}>
@@ -300,7 +300,7 @@ export default function Organize() {
               onClick={() => setIssueType('ALL')}
               className={`w-full flex items-center justify-between rounded-xl border p-3 text-left transition-all ${issueType === 'ALL' ? 'border-komgaPrimary/40 bg-komgaPrimary/10 text-white font-medium shadow-[0_0_15px_rgba(147,51,234,0.05)]' : 'border-gray-800/60 bg-gray-900/40 hover:bg-gray-800/50 text-gray-400'}`}
             >
-              <span className="text-xs font-semibold">{t('organize.filters.allIssues') || '所有发现的问题'}</span>
+              <span className="text-xs font-semibold">{t('organize.filters.allIssues')}</span>
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${issueType === 'ALL' ? 'bg-komgaPrimary/20 text-white' : 'bg-gray-700 text-white'}`}>{formatNumber(totalIssueCount)}</span>
             </button>
 

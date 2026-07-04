@@ -23,7 +23,7 @@ interface I18nContextValue {
   locale: AppLocale;
   locales: readonly AppLocale[];
   setLocale: (locale: AppLocale | string) => void;
-  t: (key: string, params?: TranslationParams) => string;
+  t: (key: string, params?: TranslationParams, defaultValue?: string) => string;
   formatDateTime: (value: string | number | Date | null | undefined, options?: Intl.DateTimeFormatOptions) => string;
   formatNumber: (value: number | null | undefined, options?: Intl.NumberFormatOptions) => string;
   formatRelativeTime: (value: string | number | Date | null | undefined) => string;
@@ -167,8 +167,10 @@ export function LocaleProvider({
   }, [locale]);
 
   const value = useMemo<I18nContextValue>(() => {
-    const t = (key: string, params?: TranslationParams) => {
-      const template = currentMessages[key] ?? defaultMessages[key] ?? key;
+    const t = (key: string, params?: TranslationParams, defaultValue?: string) => {
+      // 缺 key 时优先用显式 defaultValue（供动态 key 或尚未落词条的场景兜底），
+      // 再退回 key 本身，避免把原始 key 直接暴露给用户。
+      const template = currentMessages[key] ?? defaultMessages[key] ?? defaultValue ?? key;
       return fillTemplate(template, params);
     };
 

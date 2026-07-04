@@ -308,7 +308,7 @@ export function SeriesSearchModal({
                     className="xl:hidden flex items-center gap-2 text-sm text-gray-400 hover:text-white mb-2 transition-colors"
                   >
                     <ArrowLeft className="w-4 h-4" />
-                    {t('common.back') || 'Back'}
+                    {t('common.back')}
                   </button>
                   <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-4 sm:p-5">
                     <div className="flex items-start justify-between gap-4">

@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（清理 t()||兜底死代码 + t 支持 defaultValue · L96）
+
+#### 修复
+- 消除 `t('key') || '硬编码兜底'` 死代码模式(约 29 处、10 文件)。`t()` 缺 key 时返回 key 本身(真值),故 `|| 兜底` 永不触发——已核对涉及的全部 23 个静态 key 在 zh-CN 与 en-US 目录中均存在,确认为死代码后直接删除兜底。部分兜底文案已与目录漂移(如 '整理维护' vs 实际词条),正是从未执行的实证。
+- `LocaleProvider` 的 `t` 新增可选第三参 `defaultValue`:缺 key 时优先返回它、再退回 key 本身,避免把原始 key 暴露给用户。用于动态 key 场景(如 `t(\`series.relations.type.${x}\`, undefined, x)`),使这些原本"死兜底"变为真正生效的回退。同步更新 `I18nContextValue` 与 `i18n/task.ts` 的 `Translator` 类型。
+
+#### 备注(超出本项范围,留作后续)
+- `Dashboard.tsx` 续作副标题处 `t('series.franchise.description')` 遮蔽了原意为 `From <源系列>` 的兜底(该 key 恒存在),当前按既有行为保留显示词条值;若要显示"来自 X"需新增带参词条,属产品文案决策,不在死代码清理范围内。
+
+#### 验证
+- `npm run build`、`npm run test`(11 例)、`npm run lint`(0 problems)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（前端引入 Vitest 单元测试 · M16）
 
 #### 新增

@@ -124,9 +124,9 @@ export function useSeriesRelations({ seriesId, libraryId, relations, setRelation
         setRelations((prev) =>
           prev.map((item) => (item.id === relation.id ? { ...item, relation_type: newType } : item))
         );
-        showToast(t('series.toast.relationUpdated') || 'Relation updated', 'success');
+        showToast(t('series.toast.relationUpdated'), 'success');
       } catch (err) {
-        showToast(getApiErrorMessage(err, t('series.toast.relationUpdateFailed') || 'Failed to update relation'), 'error');
+        showToast(getApiErrorMessage(err, t('series.toast.relationUpdateFailed')), 'error');
       }
     },
     [setRelations, showToast, t],

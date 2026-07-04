@@ -701,7 +701,7 @@ export default function Layout() {
                 <aside className={`fixed inset-y-0 left-0 top-[73px] z-50 bg-komgaSurface border-r border-gray-800 flex flex-col pt-4 transform transition-all duration-300 ease-in-out md:relative md:top-0 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:h-[calc(100vh-73px)] ${isDesktopSidebarCollapsed ? 'w-64 md:w-[72px]' : 'w-64'}`}>
                     {/* 折叠按钮与顶栏控制 */}
                     <div className={`mb-4 flex items-center text-xs font-semibold uppercase tracking-wider shrink-0 ${isDesktopSidebarCollapsed ? 'md:px-0 md:justify-center' : 'px-6 justify-between'}`}>
-                        <span className={`transition-opacity duration-300 text-gray-500 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.menu') || '控制台'}</span>
+                        <span className={`transition-opacity duration-300 text-gray-500 ${isDesktopSidebarCollapsed ? 'md:hidden' : 'block'}`}>{t('layout.sidebar.menu')}</span>
                         <button
                             onClick={toggleDesktopSidebar}
                             className="text-gray-400 hover:text-white transition-colors hidden md:block p-1 hover:bg-gray-800 rounded-md"

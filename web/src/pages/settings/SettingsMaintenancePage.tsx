@@ -166,13 +166,13 @@ export function SettingsMaintenancePage() {
             <p className="font-medium">{t('settings.maintenance.batchScrape')}</p>
             <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.batchScrapeHint')}</p>
           </button>
-          <button onClick={() => handleAction('/api/system/rebuild-franchises', t('settings.maintenance.rebuildFranchisesSuccess') || 'Rebuilt franchise collections successfully', t('settings.maintenance.rebuildFranchisesFailed') || 'Failed to rebuild franchise collections')} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
-            <p className="font-medium">{t('settings.maintenance.rebuildFranchises') || 'Rebuild Franchise Collections'}</p>
-            <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildFranchisesHint') || 'Recalculates and rebuilds auto-generated franchise collections'}</p>
+          <button onClick={() => handleAction('/api/system/rebuild-franchises', t('settings.maintenance.rebuildFranchisesSuccess'), t('settings.maintenance.rebuildFranchisesFailed'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
+            <p className="font-medium">{t('settings.maintenance.rebuildFranchises')}</p>
+            <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildFranchisesHint')}</p>
           </button>
-          <button onClick={() => handleRiskyAction('/api/system/rebuild-initials', t('settings.maintenance.rebuildInitialsSuccess') || 'Rebuilt initial letters successfully', t('settings.maintenance.rebuildInitialsFailed') || 'Failed to rebuild initial letters', t('settings.maintenance.rebuildInitialsConfirm') || 'Are you sure you want to rebuild the initial letter indices?')} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
-            <p className="font-medium">{t('settings.maintenance.rebuildInitials') || 'Rebuild Initial Letters'}</p>
-            <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildInitialsHint') || 'Recalculates library initial letter indices from existing data without scanning files.'}</p>
+          <button onClick={() => handleRiskyAction('/api/system/rebuild-initials', t('settings.maintenance.rebuildInitialsSuccess'), t('settings.maintenance.rebuildInitialsFailed'), t('settings.maintenance.rebuildInitialsConfirm'))} className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-left text-red-200 hover:bg-red-500/15">
+            <p className="font-medium">{t('settings.maintenance.rebuildInitials')}</p>
+            <p className="mt-1 text-xs text-red-200/80">{t('settings.maintenance.rebuildInitialsHint')}</p>
           </button>
         </div>
       </section>
@@ -332,7 +332,7 @@ export function SettingsMaintenancePage() {
 
       <ConfirmDialog
         open={confirmDialogState !== null && confirmDialogState.open}
-        title={t('modal.confirm') || '确认操作'}
+        title={t('modal.confirm')}
         description={confirmDialogState?.message}
         onClose={() => setConfirmDialogState(null)}
         onConfirm={() => {

@@ -166,7 +166,7 @@ export const SeriesFranchiseView: React.FC<SeriesFranchiseViewProps> = ({ series
                   </span>
                 ) : (
                   <span className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-                    {s.relationLabel ? (t(`series.relations.type.${s.relationLabel}`) || s.relationLabel) : (t('series.relations.type.related') || 'Related')}
+                    {s.relationLabel ? t(`series.relations.type.${s.relationLabel}`, undefined, s.relationLabel) : t('series.relations.type.related')}
                   </span>
                 )}
               </div>

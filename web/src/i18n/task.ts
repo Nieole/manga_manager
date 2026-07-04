@@ -4,7 +4,7 @@
  * 维护时应保证 key 稳定、占位符一致、业务术语统一，并避免修改造成页面缺文案。
  */
 
-type Translator = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
+type Translator = (key: string, params?: Record<string, string | number | boolean | null | undefined>, defaultValue?: string) => string;
 
 export interface TaskWithParams {
   type: string;

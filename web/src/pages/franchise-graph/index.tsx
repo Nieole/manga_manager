@@ -288,7 +288,7 @@ export const FranchiseGraphPage: React.FC = () => {
         source: rel.source_series_id.toString(),
         target: rel.target_series_id.toString(),
         type: 'directed',
-        label: showEdgeLabels ? t(`series.relations.type.${rel.relation_type}`) || rel.relation_type : undefined,
+        label: showEdgeLabels ? t(`series.relations.type.${rel.relation_type}`, undefined, rel.relation_type) : undefined,
         style: { stroke: 'rgb(var(--rgb-gray-500) / 0.5)', strokeWidth: 1.4 },
         labelStyle: { fill: 'rgb(var(--rgb-gray-700))', fontWeight: 600, fontSize: 11 },
         labelBgStyle: { fill: 'rgb(var(--rgb-komga-surface))', color: 'rgb(var(--rgb-white))', fillOpacity: 0.82 },
@@ -321,16 +321,16 @@ export const FranchiseGraphPage: React.FC = () => {
         <button
           onClick={() => navigate(-1)}
           className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/10 transition-colors"
-          title={t('common.back') || 'Back'}
+          title={t('common.back')}
         >
           <ArrowLeft className="h-5 w-5 text-gray-400 hover:text-white" />
         </button>
         <div>
           <h1 className="text-lg font-bold">
-            {libraryId ? (t('library.franchise.title') || 'Library Relationships Graph') : (t('series.franchise.title') || 'Franchise Universe')}
+            {libraryId ? (t('library.franchise.title')) : (t('series.franchise.title'))}
           </h1>
           <p className="text-xs text-gray-400">
-            {libraryId ? (t('library.franchise.description') || 'Visual graph of all connected series in this library') : (t('series.franchise.description') || 'Visual relationship graph')}
+            {libraryId ? (t('library.franchise.description')) : (t('series.franchise.description'))}
           </p>
         </div>
       </header>
