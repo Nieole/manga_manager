@@ -61,7 +61,7 @@ func (q *Queries) ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, 
 				FROM koreader_sync_events e
 				WHERE e.username = a.username
 				  AND e.direction != 'system'
-				  AND e.status != 'ok'
+				  AND e.status NOT IN ('ok', 'progress_regressed')
 				ORDER BY e.created_at DESC, e.id DESC
 				LIMIT 1
 			), '') as latest_error
@@ -238,7 +238,7 @@ func (q *Queries) GetLatestKOReaderFailure(ctx context.Context) (KOReaderSyncEve
 		SELECT id, direction, username, document, book_id, status, message, created_at
 		FROM koreader_sync_events
 		WHERE direction != 'system'
-		  AND status != 'ok'
+		  AND status NOT IN ('ok', 'progress_regressed')
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1
 	`)
@@ -806,6 +806,32 @@ func (q *Queries) ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterI
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (q *Queries) DeleteKOReaderProgress(ctx context.Context, id int64) (KOReaderProgress, error) {
+	row := q.db.QueryRowContext(ctx, `
+		DELETE FROM koreader_progress
+		WHERE id = ?
+		RETURNING id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload
+	`, id)
+
+	var item KOReaderProgress
+	err := row.Scan(
+		&item.ID,
+		&item.Username,
+		&item.Document,
+		&item.Progress,
+		&item.Percentage,
+		&item.Device,
+		&item.DeviceID,
+		&item.BookID,
+		&item.MatchedBy,
+		&item.Timestamp,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+		&item.RawPayload,
+	)
+	return item, err
 }
 
 func (q *Queries) LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error {

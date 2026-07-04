@@ -231,3 +231,67 @@ func TestCreateAccountAuthenticatesWithClientHashedHeader(t *testing.T) {
 		t.Fatalf("Authenticate failed with client-hashed key: %v", err)
 	}
 }
+
+func TestSaveProgressLastWriteWinsAllowsRollback(t *testing.T) {
+	service, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+	ctx := context.Background()
+
+	if _, err := store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
+		Username: "reader",
+		SyncKey:  "secret-key",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateKOReaderAccount failed: %v", err)
+	}
+
+	creds := Credentials{Username: "reader", Key: HashKey("secret-key")}
+
+	if _, err := service.SaveProgress(ctx, creds, ProgressPayload{
+		Document:   "doc-1",
+		Progress:   "/body/DocFragment[3]",
+		Percentage: 0.80,
+		Device:     "Kobo",
+		DeviceID:   "device-a",
+	}); err != nil {
+		t.Fatalf("first SaveProgress failed: %v", err)
+	}
+
+	// A lower-percentage push must now win (rollback / re-read).
+	result, err := service.SaveProgress(ctx, creds, ProgressPayload{
+		Document:   "doc-1",
+		Progress:   "/body/DocFragment[1]",
+		Percentage: 0.10,
+		Device:     "Kobo",
+		DeviceID:   "device-a",
+	})
+	if err != nil {
+		t.Fatalf("second SaveProgress failed: %v", err)
+	}
+	if result.Record.Percentage != 0.10 {
+		t.Fatalf("expected rollback to win, stored percentage = %v, want 0.10", result.Record.Percentage)
+	}
+
+	stored, err := service.GetProgress(ctx, creds, "doc-1")
+	if err != nil {
+		t.Fatalf("GetProgress failed: %v", err)
+	}
+	if stored.Percentage != 0.10 || stored.Progress != "/body/DocFragment[1]" {
+		t.Fatalf("GetProgress returned %+v, want percentage 0.10 progress /body/DocFragment[1]", stored)
+	}
+
+	// The regressed push must be recorded as a diagnostic sync_event.
+	sqlStore, ok := store.(*database.SqlStore)
+	if !ok {
+		t.Fatal("store is not SqlStore")
+	}
+	var count int
+	if err := sqlStore.DB().QueryRow(`
+		SELECT COUNT(*) FROM koreader_sync_events
+		WHERE direction = 'push' AND status = 'progress_regressed' AND document = 'doc-1'
+	`).Scan(&count); err != nil {
+		t.Fatalf("count regression events failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 progress_regressed event, got %d", count)
+	}
+}

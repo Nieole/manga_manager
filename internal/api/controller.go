@@ -758,6 +758,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/koreader/apply-matching", c.applyKOReaderMatching)
 		r.Post("/system/koreader/rebuild-hashes", c.rebuildKOReaderHashes)
 		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
+		r.Delete("/system/koreader/progress/{progressId}", c.resetKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-initials", c.rebuildInitials)
 		r.Post("/system/rebuild-franchises", c.rebuildFranchiseCollectionsHandler)

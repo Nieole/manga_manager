@@ -172,14 +172,13 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	}
 	nowTS := time.Now().Unix()
 
-	// Do not regress canonical progress.
-	if err == nil && existing.Percentage > payload.Percentage {
-		return SyncResult{
-			Record:  existing,
-			Matched: existing.BookID.Valid,
-			BookID:  nullableInt64Ptr(existing.BookID),
-		}, nil
-	}
+	// kosync semantics are last-write-wins: the most recent push always wins,
+	// even when its percentage is lower than the stored value (rollback / re-read).
+	// The kosync payload carries no client timestamp, so the server receive time
+	// (nowTS) is authoritative and every fresh push supersedes the stored record.
+	// We still flag pushes that move progress backward so the diagnostics view can
+	// distinguish intentional rollbacks from unexpected regressions.
+	regressed := err == nil && existing.Percentage > payload.Percentage
 
 	var (
 		bookID    sql.NullInt64
@@ -212,13 +211,19 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 		return SyncResult{}, err
 	}
 
+	status := "ok"
+	message := matchedBy
+	if regressed {
+		status = "progress_regressed"
+		message = fmt.Sprintf("last-write-wins applied lower percentage %.4f (was %.4f) from device %q", payload.Percentage, existing.Percentage, payload.Device)
+	}
 	_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
 		Direction: "push",
 		Username:  creds.Username,
 		Document:  payload.Document,
 		BookID:    record.BookID,
-		Status:    "ok",
-		Message:   matchedBy,
+		Status:    status,
+		Message:   message,
 	})
 
 	return SyncResult{
@@ -263,6 +268,29 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 		Message:   record.MatchedBy,
 	})
 
+	return record, nil
+}
+
+// ResetProgress deletes a single koreader_progress row by id so an operator can
+// clear a stale or wrong canonical record from the admin UI. It returns the
+// deleted record (for the diagnostic event) and ErrProgressNotFound when the id
+// does not exist.
+func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReaderProgress, error) {
+	record, err := s.store.DeleteKOReaderProgress(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return database.KOReaderProgress{}, ErrProgressNotFound
+		}
+		return database.KOReaderProgress{}, err
+	}
+	_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
+		Direction: "system",
+		Username:  record.Username,
+		Document:  record.Document,
+		BookID:    record.BookID,
+		Status:    "progress_reset",
+		Message:   "KOReader 进度记录已被管理员重置",
+	})
 	return record, nil
 }
 

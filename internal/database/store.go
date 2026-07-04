@@ -71,6 +71,7 @@ type Store interface {
 	FindBookByDocumentFingerprint(ctx context.Context, documentKey, matchMode string, pathIgnoreExtension bool) (KOReaderBookMatch, error)
 	UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReaderProgressParams) (KOReaderProgress, error)
 	GetKOReaderProgress(ctx context.Context, username, document string) (KOReaderProgress, error)
+	DeleteKOReaderProgress(ctx context.Context, id int64) (KOReaderProgress, error)
 	ListBooksMissingIdentityBatch(ctx context.Context, matchMode string, afterID int64, limit int) ([]BookIdentityCandidate, error)
 	CountBooksMissingQuickHash(ctx context.Context) (int64, error)
 	ListBooksMissingQuickHashBatch(ctx context.Context, afterID int64, limit int) ([]BookIdentityCandidate, error)

@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（KOReader 进度 last-write-wins · M37）
+
+#### 修复
+- KOReader 进度同步从「百分比只进不退」改为 kosync 的 last-write-wins。此前 `SaveProgress` 会直接拒绝百分比低于已存值的推送(service.go),用户无法回退/重读;kosync 载荷不含客户端时间戳,故以服务端接收时间为准、每次新推送无条件覆盖(含回退)。
+- 被旧规则会拒绝的「倒退推送」现照常应用,但额外记一条 `progress_regressed` 诊断事件(带原/新百分比与设备),便于区分有意回退与异常倒退。
+- 新增管理端点 `DELETE /api/system/koreader/progress/{progressId}`(`resetKOReaderProgress` + 手写查询 `DeleteKOReaderProgress`),供管理员重置单条进度记录(记 `progress_reset` 事件)。
+- 修正误报:`progress_regressed` 是 LWW 的预期行为而非失败,已将其从「账号最近错误」与「最近同步失败横幅」两处错误显示中排除(设备冲突诊断列表仍保留,作为跨设备进度倒退信号)。`system` 方向的 reset/account_created 事件本就被既有 `direction != 'system'` 过滤排除。
+
+#### 验证
+- `go vet`、`go test ./...`(含新增 `TestSaveProgressLastWriteWinsAllowsRollback`:低百分比推送胜出 + 生成 1 条 `progress_regressed` 事件)全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（KOReader 设备自助注册 · M36）
 
 #### 修复

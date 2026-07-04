@@ -536,6 +536,30 @@ func (c *Controller) deleteKOReaderAccount(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "KOReader 账号已删除"})
 }
 
+func (c *Controller) resetKOReaderProgress(w http.ResponseWriter, r *http.Request) {
+	progressID, err := strconv.ParseInt(chi.URLParam(r, "progressId"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid KOReader progress ID")
+		return
+	}
+	record, err := c.koreader.ResetProgress(r.Context(), progressID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ksvc.ErrProgressNotFound):
+			jsonError(w, http.StatusNotFound, "KOReader progress record not found")
+		default:
+			jsonError(w, http.StatusInternalServerError, "Failed to reset KOReader progress")
+		}
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"message":  "KOReader 进度记录已重置",
+		"id":       record.ID,
+		"username": record.Username,
+		"document": record.Document,
+	})
+}
+
 func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Request) {
 	var req UpdateKOReaderSettingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
