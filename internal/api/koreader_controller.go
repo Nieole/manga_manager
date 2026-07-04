@@ -422,7 +422,7 @@ func (c *Controller) createKOReaderAccount(w http.ResponseWriter, r *http.Reques
 			"validation": config.ValidationResult{
 				Valid: false,
 				Issues: []config.ValidationIssue{
-					{Field: "koreader.accounts.username", Message: "用户名不能为空。", Severity: "error"},
+					{Field: "koreader.accounts.username", Message: apiText(requestLocale(r), "koreader.validation.username_required"), Severity: "error"},
 				},
 			},
 		})
@@ -432,14 +432,14 @@ func (c *Controller) createKOReaderAccount(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		switch {
 		case errors.Is(err, ksvc.ErrAlreadyConfigured):
-			jsonResponse(w, http.StatusConflict, map[string]string{"error": "KOReader 用户名已存在"})
+			jsonResponse(w, http.StatusConflict, map[string]string{"error": apiText(requestLocale(r), "koreader.account.username_taken")})
 		case errors.Is(err, ksvc.ErrUnauthorized):
 			jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
 				"error": "KOReader account validation failed",
 				"validation": config.ValidationResult{
 					Valid: false,
 					Issues: []config.ValidationIssue{
-						{Field: "koreader.accounts.username", Message: "用户名不能为空。", Severity: "error"},
+						{Field: "koreader.accounts.username", Message: apiText(requestLocale(r), "koreader.validation.username_required"), Severity: "error"},
 					},
 				},
 			})
@@ -533,7 +533,7 @@ func (c *Controller) deleteKOReaderAccount(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "KOReader 账号已删除"})
+	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "koreader.account.deleted")})
 }
 
 func (c *Controller) resetKOReaderProgress(w http.ResponseWriter, r *http.Request) {
@@ -553,7 +553,7 @@ func (c *Controller) resetKOReaderProgress(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"message":  "KOReader 进度记录已重置",
+		"message":  apiText(requestLocale(r), "koreader.progress.reset"),
 		"id":       record.ID,
 		"username": record.Username,
 		"document": record.Document,
@@ -573,7 +573,7 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 		req.BasePath = "/koreader"
 	}
 	if !strings.HasPrefix(req.BasePath, "/") {
-		issues = append(issues, config.ValidationIssue{Field: "koreader.base_path", Message: "同步路径必须以 / 开头。", Severity: "error"})
+		issues = append(issues, config.ValidationIssue{Field: "koreader.base_path", Message: apiText(requestLocale(r), "koreader.validation.base_path_slash"), Severity: "error"})
 	}
 	req.MatchMode = strings.TrimSpace(strings.ToLower(req.MatchMode))
 	if req.MatchMode == "" {
@@ -582,7 +582,7 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 	switch req.MatchMode {
 	case config.KOReaderMatchModeBinaryHash, config.KOReaderMatchModeFilePath:
 	default:
-		issues = append(issues, config.ValidationIssue{Field: "koreader.match_mode", Message: "匹配模式必须是 binary_hash 或 file_path。", Severity: "error"})
+		issues = append(issues, config.ValidationIssue{Field: "koreader.match_mode", Message: apiText(requestLocale(r), "koreader.validation.match_mode"), Severity: "error"})
 	}
 	if len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
@@ -614,7 +614,7 @@ func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusConflict, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "KOReader 索引重建已启动"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.index_rebuild_started")})
 }
 
 func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Request) {
@@ -622,7 +622,7 @@ func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusConflict, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "KOReader 匹配规则应用任务已启动"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.match_apply_started")})
 }
 
 func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Request) {
@@ -630,7 +630,7 @@ func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Re
 		jsonError(w, http.StatusConflict, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "未匹配同步记录重关联已启动"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.reconcile_started")})
 }
 
 func (c *Controller) launchRebuildBookHashesTask() error {

@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（KOReader 静态响应文案 i18n · M65 续批）
+
+#### 国际化
+- 沿用 `apiText` 机制,迁移 `koreader_controller.go` 的 9 处静态 HTTP 响应中文文案:账号用户名校验(用户名不能为空)、用户名已存在、账号已删除、进度记录已重置、设置校验(同步路径须以 / 开头 / 匹配模式须为 binary_hash 或 file_path)、以及索引重建 / 匹配应用 / 重关联三处任务启动 toast。均改由 `apiText(requestLocale(r), key)` 按语言选择,`apiMessages` 中/英各加 9 条。
+- 暂缓(需另做,列入 M65 后续切片):①KOReader 设备/冲突/未匹配的**建议文案**(`koreaderDeviceSuggestion`/`koreaderConflictSuggestion`/未匹配 suggestion)——含 `%d` 参数、须 locale-aware 格式串;②写入 `koreader_sync_events` 的诊断 `Message`(账号创建/轮换/启停用等)——持久化文案,须"写码 + 读时渲染",属架构改动。
+
+#### 验证
+- `go vet`、`go test ./internal/api`(`TestAPITextLocalization` 的中/英表 key 一致性覆盖新增 9 键)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（清理 server.error.* 死键）
 
 #### 清理

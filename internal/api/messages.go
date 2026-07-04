@@ -17,6 +17,16 @@ var apiMessages = map[string]map[string]string{
 		"library.validation.interval_min":  "扫描间隔至少为 1 分钟。",
 		"library.validation.formats_empty": "至少保留一个受支持的扫描格式。",
 		"library.validation.path_in_use":   "这个目录已经被其他资源库使用。",
+
+		"koreader.validation.username_required": "用户名不能为空。",
+		"koreader.validation.base_path_slash":   "同步路径必须以 / 开头。",
+		"koreader.validation.match_mode":        "匹配模式必须是 binary_hash 或 file_path。",
+		"koreader.account.username_taken":       "KOReader 用户名已存在",
+		"koreader.account.deleted":              "KOReader 账号已删除",
+		"koreader.progress.reset":               "KOReader 进度记录已重置",
+		"koreader.task.index_rebuild_started":   "KOReader 索引重建已启动",
+		"koreader.task.match_apply_started":     "KOReader 匹配规则应用任务已启动",
+		"koreader.task.reconcile_started":       "未匹配同步记录重关联已启动",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -27,6 +37,16 @@ var apiMessages = map[string]map[string]string{
 		"library.validation.interval_min":  "Scan interval must be at least 1 minute.",
 		"library.validation.formats_empty": "Keep at least one supported scan format.",
 		"library.validation.path_in_use":   "This directory is already used by another library.",
+
+		"koreader.validation.username_required": "Username cannot be empty.",
+		"koreader.validation.base_path_slash":   "The sync path must start with /.",
+		"koreader.validation.match_mode":        "Match mode must be binary_hash or file_path.",
+		"koreader.account.username_taken":       "KOReader username already exists",
+		"koreader.account.deleted":              "KOReader account deleted",
+		"koreader.progress.reset":               "KOReader progress record reset",
+		"koreader.task.index_rebuild_started":   "KOReader index rebuild started",
+		"koreader.task.match_apply_started":     "KOReader match-rule apply task started",
+		"koreader.task.reconcile_started":       "Reconcile of unmatched sync records started",
 	},
 }
 
