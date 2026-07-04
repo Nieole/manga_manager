@@ -6,6 +6,7 @@ package parser
 
 import (
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 )
@@ -14,6 +15,16 @@ type poolItem struct {
 	archive  Archive
 	lastUsed time.Time
 	path     string
+	modTime  time.Time // 缓存时文件的修改时间，用于检测文件更新后使缓存失效
+	size     int64     // 缓存时文件大小
+}
+
+// fileSignature 返回文件的修改时间与大小，用作缓存失效判据；出错时返回零值。
+func fileSignature(path string) (time.Time, int64) {
+	if info, err := os.Stat(path); err == nil {
+		return info.ModTime(), info.Size()
+	}
+	return time.Time{}, 0
 }
 
 // ArchivePool 实现一个简单的句柄 LRU 缓存池
@@ -127,9 +138,16 @@ func GetArchiveFromPool(path string) (Archive, error) {
 
 	globalPool.mu.Lock()
 	if item, ok := globalPool.items[path]; ok {
-		item.lastUsed = time.Now()
-		globalPool.mu.Unlock()
-		return item.archive, nil
+		// 校验文件是否在缓存后被更新：mtime/size 变化则关闭陈旧句柄并移出池，走下方重建路径，
+		// 避免文件更新后最长 10 分钟仍返回旧内容。
+		mt, sz := fileSignature(path)
+		if mt.Equal(item.modTime) && sz == item.size {
+			item.lastUsed = time.Now()
+			globalPool.mu.Unlock()
+			return item.archive, nil
+		}
+		item.archive.Close()
+		delete(globalPool.items, path)
 	}
 	globalPool.mu.Unlock()
 
@@ -166,10 +184,13 @@ func GetArchiveFromPool(path string) (Archive, error) {
 		}
 	}
 
+	mt, sz := fileSignature(path)
 	globalPool.items[path] = &poolItem{
 		archive:  arc,
 		lastUsed: time.Now(),
 		path:     path,
+		modTime:  mt,
+		size:     sz,
 	}
 
 	return arc, nil

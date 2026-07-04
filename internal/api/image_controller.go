@@ -31,6 +31,18 @@ type pageCacheStatsResponse struct {
 	FileCount int64  `json:"file_count"`
 }
 
+// maxCacheableImageBytes 是单张图片进入内存 LRU 的大小上限。AI 放大（waifu2x/realcugan）后的
+// 整页可达数 MB，而 imageCache 只按条数（256）限制；无大小上限时可能被大图占满、内存膨胀到 GB 级。
+// 超过上限的图不进内存缓存，按需重算即可。
+const maxCacheableImageBytes = 4 << 20 // 4 MiB
+
+// cacheImageMemory 仅在图片不超过 maxCacheableImageBytes 时写入内存缓存。
+func (c *Controller) cacheImageMemory(key string, data []byte) {
+	if len(data) <= maxCacheableImageBytes {
+		c.imageCache.Add(key, data)
+	}
+}
+
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
@@ -104,7 +116,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		}
 		if diskPageCacheEnabled {
 			if cachedData, cachedContentType, ok := c.readDiskImageCache(cacheKey); ok {
-				c.imageCache.Add(cacheKey, cachedData)
+				c.cacheImageMemory(cacheKey, cachedData)
 				annotatePageImageDiagnostics(ctx, false, false, false, true)
 				annotatePageImageRequest(ctx, bookID, pageNumber, true, "disk", transform)
 				c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
@@ -212,7 +224,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	// 仅在处理成功时写入处理缓存键：否则会把原始回退结果当作已处理产物持久缓存，
 	// 让后续请求（含临时错误恢复后）永远拿到未处理的图，形成缓存污染。
 	if isThumbnailReq && processOK {
-		c.imageCache.Add(cacheKey, finalData)
+		c.cacheImageMemory(cacheKey, finalData)
 		if diskPageCacheEnabled {
 			if err := c.writeDiskImageCache(cacheKey, finalData, finalContentType); err != nil {
 				slog.Warn("Failed to write processed page disk cache", "error", err)

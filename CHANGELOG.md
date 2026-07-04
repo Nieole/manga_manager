@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（图片/存储资源上限批次）
+
+#### 修复
+- `internal/api/image_controller.go`：内存图片缓存新增单张大小上限（4 MiB）。此前 LRU 只按条数（256）限制，AI 放大（waifu2x/realcugan）后的整页可达数 MB，缓存可膨胀到 GB 级；超过上限的图不再进内存缓存，按需重算。
+- `internal/parser/pool.go`：归档句柄池按文件 mtime/size 校验失效。此前仅按路径缓存、无失效机制，文件更新后最长 10 分钟仍会读到旧内容；现取用时若签名变化即关闭陈旧句柄并重建。
+
+#### 验证
+- `go build ./...`、`go test ./internal/parser ./internal/api` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（sqlc 管线修复 + 协议分页批次）
 
 #### 修复：sqlc 生成管线
