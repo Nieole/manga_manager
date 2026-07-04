@@ -2408,9 +2408,9 @@ func (c *Controller) mergeBookSearchHits(ctx context.Context, res *SearchResult,
 	return nil
 }
 
-// mergeSeriesSearchFallback uses SQLite FTS/trigram series search instead of Bleve.
-// Series metadata lives in SQLite, and the FTS triggers keep name/title/path indexed
-// with substring semantics that match manga titles better than tokenized Bleve fields.
+// mergeSeriesSearchFallback uses SQLite FTS5 (trigram) series search. Series metadata lives
+// in SQLite, and the FTS triggers keep name/title indexed with substring semantics that match
+// manga titles well (this replaced the former Bleve-based full-text engine).
 func (c *Controller) mergeSeriesSearchFallback(ctx context.Context, res *SearchResult, query, target string, limit int32) {
 	if res == nil || strings.TrimSpace(query) == "" || (target != "all" && target != "series") {
 		return

@@ -55,7 +55,7 @@ Manga Manager 是一款自托管的本地漫画 / 画集管理与阅读服务器
 - 提供可配置的 IO 策略(扫描 / 解压 / 封面 / 哈希并发度、阅读时降载、同盘缓存控制),便于在不同磁盘与机械硬盘场景下调优。
 
 ### 🔍 全文搜索
-- 内置 `bleve` 全文索引,跨系列与卷册按标题、作者、标签等检索。
+- 内置 SQLite FTS5(trigram)全文索引,跨系列与卷册按标题、作者、标签等检索。
 - 搜索结果实时回填封面与相关度评分(归一化到 0~1),并提供 OpenSearch 描述端点。
 
 ### 🤖 元数据刮削:Bangumi 与 LLM
@@ -149,7 +149,7 @@ Windows 下可使用 `build.ps1`。
 | 层 | 技术 |
 | --- | --- |
 | 后端 | Go 1.25、chi 路由、`sqlc` 预编译查询、`modernc.org/sqlite`(CGO-free) |
-| 搜索 | bleve 全文索引 |
+| 搜索 | SQLite FTS5(trigram)全文索引 |
 | 图像 | `chai2010/webp`、`gen2brain/avif`、`disintegration/imaging`;可选 waifu2x / Real-CUGAN |
 | 解析 | zip / cbz、rar / cbr、ComicInfo.xml |
 | 前端 | React + Vite + TailwindCSS,i18n(中 / 英),响应式阅读器 |
