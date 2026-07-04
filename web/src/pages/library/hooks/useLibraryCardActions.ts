@@ -6,7 +6,7 @@
 
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 
 import type { Series } from '../types';
@@ -50,7 +50,7 @@ export function useLibraryCardActions({
       event.preventDefault();
       event.stopPropagation();
       try {
-        await axios.post('/api/series/bulk-update', { series_ids: [series.id], is_favorite: !series.is_favorite });
+        await apiClient.post('/api/series/bulk-update', { series_ids: [series.id], is_favorite: !series.is_favorite });
         patchSeries(series.id, { is_favorite: !series.is_favorite });
       } catch (err) {
         console.error('Toggle favorite failed', err);
@@ -66,7 +66,7 @@ export function useLibraryCardActions({
       event.stopPropagation();
       setRescanningId(series.id);
       try {
-        await axios.post(`/api/series/${series.id}/rescan?force=true`);
+        await apiClient.post(`/api/series/${series.id}/rescan?force=true`);
         showToast(t('home.seriesRescanQueued'), 'success');
         window.setTimeout(refetchCurrentPage, 3000);
       } catch (err) {

@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 
 import type { NamedOption } from '../types';
 
@@ -29,8 +29,8 @@ export function useLibraryFilterOptions({ activeTag, activeAuthor }: UseLibraryF
     if (filterOptionsLoaded || filterOptionsLoading) return;
     setFilterOptionsLoading(true);
     Promise.all([
-      axios.get<NamedOption[]>('/api/tags/search?limit=30').catch(() => ({ data: [] as NamedOption[] })),
-      axios.get<NamedOption[]>('/api/authors/search?limit=30').catch(() => ({ data: [] as NamedOption[] })),
+      apiClient.get<NamedOption[]>('/api/tags/search?limit=30').catch(() => ({ data: [] as NamedOption[] })),
+      apiClient.get<NamedOption[]>('/api/authors/search?limit=30').catch(() => ({ data: [] as NamedOption[] })),
     ])
       .then(([tRes, aRes]) => {
         const tNames = Array.isArray(tRes.data) ? tRes.data : [];
@@ -55,7 +55,7 @@ export function useLibraryFilterOptions({ activeTag, activeAuthor }: UseLibraryF
       const params = new URLSearchParams();
       params.set('limit', query ? '50' : '30');
       if (query) params.set('q', query);
-      axios
+      apiClient
         .get<NamedOption[]>(`/api/tags/search?${params.toString()}`)
         .then((res) => {
           const items = Array.isArray(res.data) ? res.data : [];
@@ -71,7 +71,7 @@ export function useLibraryFilterOptions({ activeTag, activeAuthor }: UseLibraryF
       const params = new URLSearchParams();
       params.set('limit', query ? '50' : '30');
       if (query) params.set('q', query);
-      axios
+      apiClient
         .get<NamedOption[]>(`/api/authors/search?${params.toString()}`)
         .then((res) => {
           const items = Array.isArray(res.data) ? res.data : [];

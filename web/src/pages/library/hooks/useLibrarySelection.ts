@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import type { Series } from '../types';
 
 interface UseLibrarySelectionParams {
@@ -83,7 +83,7 @@ export function useLibrarySelection({
     async (isFav: boolean) => {
       if (selectedSeries.length === 0) return;
       try {
-        await axios.post('/api/series/bulk-update', {
+        await apiClient.post('/api/series/bulk-update', {
           series_ids: selectedSeries,
           is_favorite: isFav,
         });
@@ -102,7 +102,7 @@ export function useLibrarySelection({
       if (selectedSeries.length === 0) return;
       setBulkProgressUpdating(isRead ? 'read' : 'unread');
       try {
-        await axios.post('/api/series/bulk-progress', {
+        await apiClient.post('/api/series/bulk-progress', {
           series_ids: selectedSeries,
           is_read: isRead,
         });

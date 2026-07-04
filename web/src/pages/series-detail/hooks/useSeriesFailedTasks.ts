@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 import type { SeriesFailedTask } from '../types';
 
@@ -24,10 +24,10 @@ export function useSeriesFailedTasks({ seriesId, setFailedTasks, showToast, t }:
     async (taskKey: string) => {
       setRetryingTaskKey(taskKey);
       try {
-        await axios.post(`/api/system/tasks/${encodeURIComponent(taskKey)}/retry`);
+        await apiClient.post(`/api/system/tasks/${encodeURIComponent(taskKey)}/retry`);
         showToast(t('series.toast.retryTaskQueued'), 'success');
         if (seriesId) {
-          const res = await axios.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`);
+          const res = await apiClient.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`);
           setFailedTasks(Array.isArray(res.data) ? res.data : []);
         }
       } catch (err) {

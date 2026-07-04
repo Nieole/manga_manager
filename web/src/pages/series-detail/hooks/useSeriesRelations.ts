@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 import type { SeriesRelation, SeriesRelationCandidate } from '../types';
 
@@ -35,7 +35,7 @@ export function useSeriesRelations({ seriesId, libraryId, relations, setRelation
     let active = true;
     const timer = window.setTimeout(() => {
       setIsLoadingCandidates(true);
-      axios
+      apiClient
         .get<{ items?: SeriesRelationCandidate[] }>(`/api/series/search`, {
           params: { libraryId, q: relationSearch.trim(), limit: 20, page: 1, sortBy: 'name_asc' },
         })
@@ -84,11 +84,11 @@ export function useSeriesRelations({ seriesId, libraryId, relations, setRelation
     if (!seriesId || !selectedTargetId) return;
     setIsAdding(true);
     try {
-      await axios.post(`/api/series/${seriesId}/relations`, {
+      await apiClient.post(`/api/series/${seriesId}/relations`, {
         target_series_id: selectedTargetId,
         relation_type: relationType,
       });
-      const res = await axios.get<SeriesRelation[]>(`/api/series/${seriesId}/relations`);
+      const res = await apiClient.get<SeriesRelation[]>(`/api/series/${seriesId}/relations`);
       setRelations(Array.isArray(res.data) ? res.data : []);
       setSelectedTargetId(null);
       setRelationSearch('');
@@ -103,7 +103,7 @@ export function useSeriesRelations({ seriesId, libraryId, relations, setRelation
   const deleteRelation = useCallback(
     async (relation: SeriesRelation) => {
       try {
-        await axios.delete(`/api/relations/${relation.id}`);
+        await apiClient.delete(`/api/relations/${relation.id}`);
         setRelations((prev) => prev.filter((item) => item.id !== relation.id));
         showToast(t('series.toast.relationDeleted'), 'success');
       } catch (err) {
@@ -116,7 +116,7 @@ export function useSeriesRelations({ seriesId, libraryId, relations, setRelation
   const updateRelation = useCallback(
     async (relation: SeriesRelation, newType: string) => {
       try {
-        await axios.put(`/api/relations/${relation.id}`, { relation_type: newType });
+        await apiClient.put(`/api/relations/${relation.id}`, { relation_type: newType });
         setRelations((prev) =>
           prev.map((item) => (item.id === relation.id ? { ...item, relation_type: newType } : item))
         );

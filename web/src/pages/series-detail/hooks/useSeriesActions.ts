@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 
 
@@ -23,7 +23,7 @@ export function useSeriesActions({ seriesId, showToast, t }: UseSeriesActionsPar
     if (!seriesId) return;
     setIsRescanning(true);
     try {
-      await axios.post(`/api/series/${seriesId}/rescan`);
+      await apiClient.post(`/api/series/${seriesId}/rescan`);
       showToast(t('series.toast.rescanQueued'), 'success');
     } catch (err) {
       showToast(`${t('series.toast.rescanFailed')}: ${getApiErrorMessage(err, t('series.toast.rescanFailed'))}`, 'error');
@@ -36,7 +36,7 @@ export function useSeriesActions({ seriesId, showToast, t }: UseSeriesActionsPar
     if (!seriesId) return;
     setIsOpeningDirectory(true);
     try {
-      await axios.post(`/api/series/${seriesId}/open-dir`);
+      await apiClient.post(`/api/series/${seriesId}/open-dir`);
       showToast(t('series.toast.openDirSuccess'), 'success');
     } catch (err) {
       showToast(`${t('series.toast.openDirFailed')}: ${getApiErrorMessage(err, t('series.toast.openDirFailed'))}`, 'error');

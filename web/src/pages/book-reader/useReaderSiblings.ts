@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
+import { apiClient } from '../../api/client';
 import type { ReaderBookInfo } from './types';
 
 export interface SiblingBook {
@@ -89,7 +90,7 @@ export function useReaderSiblings({
     setPrev(null);
     setNext(null);
 
-    axios.get<ReaderBookInfo>(`/api/book-prev/${bookId}`)
+    apiClient.get<ReaderBookInfo>(`/api/book-prev/${bookId}`)
       .then((res) => {
         if (!cancelled) setPrev(toSibling(res.data));
       })
@@ -101,7 +102,7 @@ export function useReaderSiblings({
         setPrev(null);
       });
 
-    axios.get<ReaderBookInfo>(`/api/book-next/${bookId}`)
+    apiClient.get<ReaderBookInfo>(`/api/book-next/${bookId}`)
       .then((res) => {
         if (!cancelled) setNext(toSibling(res.data));
       })
@@ -123,7 +124,7 @@ export function useReaderSiblings({
     lastSeriesFetchRef.current = seriesId;
     let cancelled = false;
 
-    axios.get<SeriesContextLite>(`/api/series/${seriesId}/context`)
+    apiClient.get<SeriesContextLite>(`/api/series/${seriesId}/context`)
       .then((res) => {
         if (cancelled) return;
         const books = Array.isArray(res.data?.books) ? res.data.books : [];

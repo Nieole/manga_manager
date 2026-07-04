@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import type {
   Author,
   Book,
@@ -59,7 +59,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
 
   const reload = useCallback(async () => {
     if (!seriesId) return;
-    const res = await axios.get<SeriesContextResponse>(`/api/series/${seriesId}/context`);
+    const res = await apiClient.get<SeriesContextResponse>(`/api/series/${seriesId}/context`);
     const data = res.data;
     setSeries(data.series);
     setBooks(Array.isArray(data.books) ? data.books : []);

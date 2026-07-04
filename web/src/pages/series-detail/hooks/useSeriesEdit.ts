@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 import type { Author, MetaTag, Series, SeriesLink } from '../types';
 
@@ -59,8 +59,8 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
   useEffect(() => {
     if (!isEditing) return;
     Promise.all([
-      axios.get<MetaTag[]>('/api/tags/all').catch(() => ({ data: [] as MetaTag[] })),
-      axios.get<Author[]>('/api/authors/all').catch(() => ({ data: [] as Author[] })),
+      apiClient.get<MetaTag[]>('/api/tags/all').catch(() => ({ data: [] as MetaTag[] })),
+      apiClient.get<Author[]>('/api/authors/all').catch(() => ({ data: [] as Author[] })),
     ]).then(([tagsRes, authorsRes]) => {
       setAllTags(Array.isArray(tagsRes.data) ? tagsRes.data : []);
       setAllAuthors(Array.isArray(authorsRes.data) ? authorsRes.data : []);
@@ -106,7 +106,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
   const save = useCallback(async () => {
     if (!series || !seriesId) return;
     try {
-      await axios.put(`/api/series/info/${seriesId}`, {
+      await apiClient.put(`/api/series/info/${seriesId}`, {
         title: editForm.title?.String || '',
         summary: editForm.summary?.String || '',
         publisher: editForm.publisher?.String || '',

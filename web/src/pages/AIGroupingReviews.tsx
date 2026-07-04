@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { getApiErrorMessage } from '../api/client';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, Filter, Layers3, Loader2, Pencil, Save, Sparkles, X, XCircle } from 'lucide-react';
@@ -150,7 +150,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     requestBusyRef.current = true;
     try {
       const offset = reset ? 0 : itemsLengthRef.current;
-      const res = await axios.get<AIGroupingReviewsResponse>('/api/ai-grouping/reviews', {
+      const res = await apiClient.get<AIGroupingReviewsResponse>('/api/ai-grouping/reviews', {
         params: {
           library_id: libraryId,
           status,
@@ -246,7 +246,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     try {
       for (const id of applyIds) {
         try {
-          await axios.post(`/api/ai-grouping/reviews/${id}/apply`);
+          await apiClient.post(`/api/ai-grouping/reviews/${id}/apply`);
           applied += 1;
         } catch {
           failed += 1;
@@ -254,7 +254,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
       }
       for (const id of rejectIds) {
         try {
-          await axios.post(`/api/ai-grouping/reviews/${id}/reject`);
+          await apiClient.post(`/api/ai-grouping/reviews/${id}/reject`);
           rejected += 1;
         } catch {
           failed += 1;
@@ -278,7 +278,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     if (review.status !== 'pending' || collection.status !== 'pending') return;
     setActingKey(`collection:${collection.id}:${action}`);
     try {
-      const res = await axios.post(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}/${action}`);
+      const res = await apiClient.post(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}/${action}`);
       if (action === 'apply') {
         showToast(t('aiGroupingReviews.toast.collectionApplied', { id: res.data.created_collection_id || '' }));
       } else {
@@ -332,7 +332,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     if (!draft || !draft.name.trim() || draft.seriesIds.length === 0) return;
     setActingKey(`collection:${collection.id}:save`);
     try {
-      await axios.put(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}`, {
+      await apiClient.put(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}`, {
         name: draft.name,
         description: draft.description,
         series_ids: draft.seriesIds,

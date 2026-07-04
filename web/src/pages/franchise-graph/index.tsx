@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiClient } from '../../api/client';
 import {
   ReactFlow,
   MiniMap,
@@ -252,7 +252,7 @@ export const FranchiseGraphPage: React.FC = () => {
       const endpoint = libraryId 
         ? `/api/libraries/${libraryId}/franchise` 
         : `/api/series/${seriesId}/franchise`;
-      const res = await axios.get<FranchiseRelation[]>(endpoint);
+      const res = await apiClient.get<FranchiseRelation[]>(endpoint);
       const relations = res.data || [];
 
       const seriesMap = new Map<number, { id: number; name: string; cover_path: string; isCurrent: boolean }>();

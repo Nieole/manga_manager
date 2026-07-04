@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { FolderHeart, Plus, Trash2, ChevronRight, BookOpen, Search, X, Pencil, SlidersHorizontal, Camera, AlertTriangle } from 'lucide-react';
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -110,7 +110,7 @@ export default function Collections() {
     const navigate = useNavigate();
 
     const fetchCollections = () => {
-        axios.get('/api/collection-views').then(res => {
+        apiClient.get('/api/collection-views').then(res => {
             setCollections((res.data || []).map((item: Collection) => ({
                 ...item,
                 id: item.numeric_id,
@@ -124,8 +124,8 @@ export default function Collections() {
     const selectCollection = (c: Collection) => {
         setSelected(c);
         const request = c.kind === 'smart'
-            ? axios.get<SmartCollectionSeriesResponse>(`/api/collection-views/smart/${c.numeric_id}/series`)
-            : axios.get(`/api/collections/${c.numeric_id}/series`);
+            ? apiClient.get<SmartCollectionSeriesResponse>(`/api/collection-views/smart/${c.numeric_id}/series`)
+            : apiClient.get(`/api/collections/${c.numeric_id}/series`);
         request.then(res => {
             if (c.kind === 'smart') {
                 const payload = res.data as SmartCollectionSeriesResponse;
@@ -168,7 +168,7 @@ export default function Collections() {
 
     const submitSmartEdit = () => {
         if (!selected || selected.kind !== 'smart' || !smartName.trim()) return;
-        axios.put(`/api/smart-filters/${selected.numeric_id}`, {
+        apiClient.put(`/api/smart-filters/${selected.numeric_id}`, {
             name: smartName,
             activeTag: smartTag || null,
             activeAuthor: smartAuthor || null,
@@ -199,7 +199,7 @@ export default function Collections() {
     };
 
     const deleteSmart = (item: Collection) => {
-        axios.delete(`/api/smart-filters/${item.numeric_id}`).then(() => {
+        apiClient.delete(`/api/smart-filters/${item.numeric_id}`).then(() => {
             if (selected?.view_id === item.view_id) {
                 setSelected(null);
                 setSeriesItems([]);
@@ -220,7 +220,7 @@ export default function Collections() {
         if (!showSnapshot || !selected || selected.kind !== 'smart') return;
         const timer = window.setTimeout(() => {
             setSnapshotPreviewLoading(true);
-            axios.get<SmartCollectionSnapshotPreview>(`/api/collection-views/smart/${selected.numeric_id}/snapshot-preview`, {
+            apiClient.get<SmartCollectionSnapshotPreview>(`/api/collection-views/smart/${selected.numeric_id}/snapshot-preview`, {
                 params: {
                     name: snapshotName,
                     description: snapshotDesc,
@@ -238,7 +238,7 @@ export default function Collections() {
     const submitSnapshot = () => {
         if (!selected || selected.kind !== 'smart' || !snapshotName.trim()) return;
         if (snapshotPreview && snapshotPreview.snapshot_count <= 0) return;
-        axios.post(`/api/collection-views/smart/${selected.numeric_id}/snapshot`, {
+        apiClient.post(`/api/collection-views/smart/${selected.numeric_id}/snapshot`, {
             name: snapshotName,
             description: snapshotDesc,
         }).then(() => {
@@ -249,7 +249,7 @@ export default function Collections() {
 
     const handleCreate = () => {
         if (!newName.trim()) return;
-        axios.post('/api/collections/', { name: newName, description: newDesc }).then(() => {
+        apiClient.post('/api/collections/', { name: newName, description: newDesc }).then(() => {
             setNewName('');
             setNewDesc('');
             setShowCreate(false);
@@ -260,7 +260,7 @@ export default function Collections() {
     const handleEditSubmit = () => {
         if (!selected || !editName.trim()) return;
         if (selected.kind !== 'collection') return;
-        axios.put(`/api/collections/${selected.numeric_id}`, { name: editName, description: editDesc }).then(() => {
+        apiClient.put(`/api/collections/${selected.numeric_id}`, { name: editName, description: editDesc }).then(() => {
             setShowEdit(false);
             // Update selected locally
             setSelected({ ...selected, name: editName, description: editDesc });
@@ -269,7 +269,7 @@ export default function Collections() {
     };
 
     const handleDelete = (id: number) => {
-        axios.delete(`/api/collections/${id}`).then(() => {
+        apiClient.delete(`/api/collections/${id}`).then(() => {
             if (selected?.id === id) {
                 setSelected(null);
                 setSeriesItems([]);
@@ -280,7 +280,7 @@ export default function Collections() {
 
     const handleRemoveSeries = (seriesId: number) => {
         if (!selected || selected.kind !== 'collection') return;
-        axios.delete(`/api/collections/${selected.numeric_id}/series/${seriesId}`).then(() => {
+        apiClient.delete(`/api/collections/${selected.numeric_id}/series/${seriesId}`).then(() => {
             setSeriesItems(prev => prev.filter(s => s.series_id !== seriesId));
             fetchCollections();
         });

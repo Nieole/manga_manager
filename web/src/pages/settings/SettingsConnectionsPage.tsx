@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../api/client';
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, PlugZap, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
@@ -72,7 +72,7 @@ export function SettingsConnectionsPage() {
   const loadConnections = async () => {
     setLoading(true);
     try {
-      const res = await axios.get<ClientConnectionsResponse>('/api/system/client-connections');
+      const res = await apiClient.get<ClientConnectionsResponse>('/api/system/client-connections');
       setData(res.data);
     } catch (error) {
       console.error(error);
@@ -166,7 +166,7 @@ export function SettingsConnectionsPage() {
     nextConfig.protocols[protocol] = { enabled };
     setSavingProtocol(protocol);
     try {
-      const res = await axios.post('/api/system/config', nextConfig);
+      const res = await apiClient.post('/api/system/config', nextConfig);
       setConfig(res.data?.config || nextConfig);
       showToast(
         t(enabled ? 'settings.connections.protocolEnabledToast' : 'settings.connections.protocolDisabledToast', {

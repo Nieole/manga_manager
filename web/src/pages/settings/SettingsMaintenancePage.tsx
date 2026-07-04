@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../api/client';
 import { AlertTriangle, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -79,7 +79,7 @@ export function SettingsMaintenancePage() {
   const fetchPageCacheStats = useCallback(async () => {
     setLoadingPageCache(true);
     try {
-      const res = await axios.get<PageCacheStats>('/api/system/page-cache');
+      const res = await apiClient.get<PageCacheStats>('/api/system/page-cache');
       setPageCacheStats(res.data);
     } catch (error) {
       console.error(error);
@@ -92,7 +92,7 @@ export function SettingsMaintenancePage() {
   const fetchStorageIO = useCallback(async () => {
     setLoadingStorageIO(true);
     try {
-      const res = await axios.get<StorageIODiagnostics>('/api/system/storage-io');
+      const res = await apiClient.get<StorageIODiagnostics>('/api/system/storage-io');
       setStorageIO(res.data);
     } catch (error) {
       console.error(error);
@@ -110,7 +110,7 @@ export function SettingsMaintenancePage() {
   const handleClearPageCache = useCallback(async () => {
     setClearingPageCache(true);
     try {
-      await axios.delete('/api/system/page-cache');
+      await apiClient.delete('/api/system/page-cache');
       showToast(t('settings.maintenance.pageCacheClearSuccess'), 'success');
       await fetchPageCacheStats();
     } catch (error) {
@@ -123,7 +123,7 @@ export function SettingsMaintenancePage() {
 
   const setStorageIOPaused = useCallback(async (paused: boolean) => {
     try {
-      await axios.post(`/api/system/storage-io/${paused ? 'pause' : 'resume'}`);
+      await apiClient.post(`/api/system/storage-io/${paused ? 'pause' : 'resume'}`);
       showToast(t(paused ? 'settings.maintenance.storageIOPaused' : 'settings.maintenance.storageIOResumed'), 'success');
       await fetchStorageIO();
     } catch (error) {

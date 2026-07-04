@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { apiClient } from '../../api/client';
 import axios from 'axios';
 import type { SearchHit } from './types';
 
@@ -24,7 +25,7 @@ export function useGlobalSearch() {
 
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      axios
+      apiClient
         .get(`/api/search?q=${encodeURIComponent(query)}&target=${searchTarget}`, {
           signal: controller.signal,
         })

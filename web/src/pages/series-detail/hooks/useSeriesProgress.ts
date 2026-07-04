@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 
 interface UseSeriesProgressParams {
   reload: () => Promise<void>;
@@ -21,7 +21,7 @@ export function useSeriesProgress({ reload, showToast, t }: UseSeriesProgressPar
       if (bookIds.length === 0) return;
       setBusy(true);
       try {
-        await axios.post('/api/books/bulk-progress', {
+        await apiClient.post('/api/books/bulk-progress', {
           book_ids: bookIds,
           is_read: isRead,
         });
@@ -40,7 +40,7 @@ export function useSeriesProgress({ reload, showToast, t }: UseSeriesProgressPar
   const quickToggleBook = useCallback(
     async (bookId: number, makeRead: boolean) => {
       try {
-        await axios.post('/api/books/bulk-progress', {
+        await apiClient.post('/api/books/bulk-progress', {
           book_ids: [bookId],
           is_read: makeRead,
         });

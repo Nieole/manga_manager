@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { apiClient } from '../../api/client';
 import type { ReaderBookCache } from './usePageImageCache';
 import type { Page, ReaderBookInfo } from './types';
 
@@ -57,7 +58,7 @@ export function useReaderBookData({
       return Promise.resolve(cache.pages);
     }
 
-    return axios.get<Page[]>(`/api/pages/${targetBookId}`).then((res) => {
+    return apiClient.get<Page[]>(`/api/pages/${targetBookId}`).then((res) => {
       const sorted = [...res.data].sort((a, b) => a.number - b.number);
       cache.pages = sorted;
       return sorted;
@@ -70,7 +71,7 @@ export function useReaderBookData({
       return Promise.resolve(cache.bookInfo);
     }
 
-    return axios.get<ReaderBookInfo>(`/api/book-info/${targetBookId}`).then((res) => {
+    return apiClient.get<ReaderBookInfo>(`/api/book-info/${targetBookId}`).then((res) => {
       cache.bookInfo = res.data;
       return res.data;
     });
@@ -82,7 +83,7 @@ export function useReaderBookData({
       return Promise.resolve(cache.nextBookId);
     }
 
-    return axios.get<ReaderBookInfo>(`/api/book-next/${targetBookId}`)
+    return apiClient.get<ReaderBookInfo>(`/api/book-next/${targetBookId}`)
       .then((res) => {
         cache.nextBookId = res.data.id ?? null;
         return cache.nextBookId;

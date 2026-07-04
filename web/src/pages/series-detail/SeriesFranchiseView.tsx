@@ -9,7 +9,7 @@ import { useI18n } from '../../i18n/LocaleProvider';
 import { Link } from 'react-router-dom';
 import type { FranchiseRelation } from './types';
 import { Share2 } from 'lucide-react';
-import axios from 'axios';
+import { apiClient } from '../../api/client';
 
 interface SeriesFranchiseViewProps {
   seriesId: number;
@@ -23,7 +23,7 @@ export const SeriesFranchiseView: React.FC<SeriesFranchiseViewProps> = ({ series
   useEffect(() => {
     let active = true;
     setIsLoading(true);
-    axios.get(`/api/series/${seriesId}/franchise`)
+    apiClient.get(`/api/series/${seriesId}/franchise`)
       .then(res => {
         if (active) setFranchiseRelations(res.data || []);
       })

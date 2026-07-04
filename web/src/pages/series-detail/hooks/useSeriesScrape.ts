@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 import type { SearchResult, Series } from '../types';
 
@@ -44,7 +44,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       if (providerKey === 'bangumi') {
         setIsScraping(true);
         try {
-          const res = await axios.get(`/api/series/${seriesId}/scrape-search?provider=${providerKey}`);
+          const res = await apiClient.get(`/api/series/${seriesId}/scrape-search?provider=${providerKey}`);
           setSearchProvider(providerKey);
           setModalSearchQuery(series?.title?.Valid && series.title.String ? series.title.String : series?.name || '');
           setShowSearchModal(true);
@@ -67,7 +67,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
 
       setIsScraping(true);
       try {
-        const res = await axios.post(`/api/series/${seriesId}/scrape`, { provider: providerKey });
+        const res = await apiClient.post(`/api/series/${seriesId}/scrape`, { provider: providerKey });
         if (res.data.scraped) {
           showToast(`[${res.data.provider}] ${res.data.message}`, 'success');
           await reload();
@@ -90,7 +90,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       setShowSearchModal(false);
       setIsScraping(true);
       try {
-        const res = await axios.post(`/api/series/${seriesId}/scrape-apply?provider=${searchProvider}`, metadata);
+        const res = await apiClient.post(`/api/series/${seriesId}/scrape-apply?provider=${searchProvider}`, metadata);
         if (res.data.success) {
           showToast(
             res.data.queued
@@ -117,7 +117,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       setIsScraping(true);
       setCurrentOffset(offset);
       try {
-        const res = await axios.get(
+        const res = await apiClient.get(
           `/api/series/${seriesId}/scrape-search?provider=${searchProvider}&q=${encodeURIComponent(modalSearchQuery)}&offset=${offset}`,
         );
         if (res.data.results && res.data.results.length > 0) {

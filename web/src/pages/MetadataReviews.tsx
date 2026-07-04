@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { getApiErrorMessage } from '../api/client';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, ExternalLink, Filter, GitCompareArrows, Loader2, Search, ShieldCheck, XCircle } from 'lucide-react';
@@ -102,7 +102,7 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
     requestBusyRef.current = true;
     try {
       const offset = reset ? 0 : itemsLengthRef.current;
-      const res = await axios.get<MetadataReviewInboxResponse>('/api/metadata/reviews', {
+      const res = await apiClient.get<MetadataReviewInboxResponse>('/api/metadata/reviews', {
         params: {
           library_id: libraryId,
           provider,
@@ -200,7 +200,7 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
     let failed = 0;
     for (let index = 0; index < ids.length; index += 100) {
       const batch = ids.slice(index, index + 100);
-      const res = await axios.post(endpoint, { review_ids: batch, mode });
+      const res = await apiClient.post(endpoint, { review_ids: batch, mode });
       done += (res.data.applied?.length || 0) + (res.data.rejected?.length || 0);
       skipped += res.data.skipped?.length || 0;
       failed += res.data.failed?.length || 0;

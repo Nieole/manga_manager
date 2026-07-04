@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { FolderHeart, Loader2 } from 'lucide-react';
 import { ModalShell } from './ui/ModalShell';
 import { modalPrimaryButtonClass, modalSectionClass } from './ui/modalStyles';
@@ -31,7 +31,7 @@ export default function AddToCollectionModal({ seriesIds, onClose, onSuccess }: 
     const [addingTo, setAddingTo] = useState<number | null>(null);
 
     useEffect(() => {
-        axios.get('/api/collections/')
+        apiClient.get('/api/collections/')
             .then(res => setCollections(res.data || []))
             .catch(err => console.error(err))
             .finally(() => setLoading(false));
@@ -39,7 +39,7 @@ export default function AddToCollectionModal({ seriesIds, onClose, onSuccess }: 
 
     const handleAddToCollection = (collectionId: number) => {
         setAddingTo(collectionId);
-        axios.post(`/api/collections/${collectionId}/series`, { series_ids: seriesIds })
+        apiClient.post(`/api/collections/${collectionId}/series`, { series_ids: seriesIds })
             .then(() => {
                 onSuccess();
                 setTimeout(() => onClose(), 500); // 稍微延迟关闭以显示反馈

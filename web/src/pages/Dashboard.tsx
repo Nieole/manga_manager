@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon, ClipboardCheck, ArrowRight } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 
@@ -78,10 +78,10 @@ export default function Dashboard() {
         Promise.all([
             // 每个请求各自兜底，避免任一失败 reject 整个 Promise.all：
             // 否则 dashboard 统计接口一失败，libraries 就不会被设置，UI 会误显示“没有资源库”的新手引导页。
-            axios.get('/api/stats/dashboard').catch(() => ({ data: null })),
-            axios.get('/api/libraries').catch(() => ({ data: [] })),
-            axios.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
-            axios.get('/api/reviews/inbox/summary').catch(() => ({ data: { counts: { total: 0 } } })),
+            apiClient.get('/api/stats/dashboard').catch(() => ({ data: null })),
+            apiClient.get('/api/libraries').catch(() => ({ data: [] })),
+            apiClient.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
+            apiClient.get('/api/reviews/inbox/summary').catch(() => ({ data: { counts: { total: 0 } } })),
         ]).then(([statsRes, librariesRes, recentRes, reviewSummaryRes]) => {
             if (!active) return;
             if (statsRes.data) setStats(statsRes.data);
@@ -98,7 +98,7 @@ export default function Dashboard() {
 
     useEffect(() => {
         let active = true;
-        axios.get(`/api/stats/activity-heatmap?weeks=${heatmapWeeks}`)
+        apiClient.get(`/api/stats/activity-heatmap?weeks=${heatmapWeeks}`)
             .then(res => {
                 if (!active) return;
                 setHeatmapData(Array.isArray(res.data) ? res.data : []);
@@ -114,7 +114,7 @@ export default function Dashboard() {
         setRecommendationsRequested(true);
         setRecsLoading(true);
         const url = forceRefresh ? '/api/stats/recommendations?limit=10&refresh=true' : '/api/stats/recommendations?limit=10';
-        axios.get(url)
+        apiClient.get(url)
             .then(res => setRecommendations(Array.isArray(res.data) ? res.data : []))
             .catch(console.error)
             .finally(() => setRecsLoading(false));

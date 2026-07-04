@@ -5,7 +5,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import axios, { type AxiosResponse } from 'axios';
+import { apiClient } from '../../../api/client';
+import { type AxiosResponse } from 'axios';
 import {
   type Series,
   type SeriesSearchResponse,
@@ -45,7 +46,7 @@ const inflightSeriesSearchRequests = new Map<string, Promise<AxiosResponse<Serie
 function requestSeriesSearch(query: string) {
   const existing = inflightSeriesSearchRequests.get(query);
   if (existing) return existing;
-  const request = axios
+  const request = apiClient
     .get<SeriesSearchResponse>(`/api/series/search?${query}`)
     .finally(() => {
       window.setTimeout(() => {

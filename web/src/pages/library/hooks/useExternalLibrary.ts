@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import type { BrowseDirEntry, BrowseDrive } from '../../../components/layout/types';
 import {
   type ExternalSession,
@@ -123,7 +123,7 @@ export function useExternalLibrary({
     async (sessionId: string | undefined): Promise<ExternalSession | null> => {
       if (!libId || !sessionId) return null;
       try {
-        const res = await axios.get<ExternalSession>(
+        const res = await apiClient.get<ExternalSession>(
           `/api/libraries/${libId}/external-libraries/session/${sessionId}`,
           { params: { _ts: Date.now() } },
         );
@@ -147,7 +147,7 @@ export function useExternalLibrary({
         return;
       }
       try {
-        const res = await axios.get<ExternalSeriesStatus[]>(
+        const res = await apiClient.get<ExternalSeriesStatus[]>(
           `/api/libraries/${libId}/external-libraries/session/${sid}/series`,
           { params: { ids: ids.join(','), _ts: Date.now() } },
         );
@@ -171,7 +171,7 @@ export function useExternalLibrary({
     }
     setStartingExternalScan(true);
     try {
-      const res = await axios.post<ExternalSessionCreateResponse>(
+      const res = await apiClient.post<ExternalSessionCreateResponse>(
         `/api/libraries/${libId}/external-libraries/session`,
         {
           external_path: externalPath.trim(),
@@ -196,7 +196,7 @@ export function useExternalLibrary({
       return;
     }
     try {
-      await axios.delete(
+      await apiClient.delete(
         `/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}`,
       );
     } catch (err) {
@@ -210,7 +210,7 @@ export function useExternalLibrary({
 
   const openExternalDirectoryBrowser = useCallback(() => {
     setExternalBrowsing(true);
-    axios
+    apiClient
       .get('/api/browse-dirs')
       .then((res) => {
         setExternalBrowseDirs(res.data.dirs || []);
@@ -222,7 +222,7 @@ export function useExternalLibrary({
   }, []);
 
   const navigateExternalDirectoryBrowser = useCallback((path: string) => {
-    axios
+    apiClient
       .get(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
       .then((res) => {
         setExternalBrowseDirs(res.data.dirs || []);
@@ -251,7 +251,7 @@ export function useExternalLibrary({
       }
       setStartingTransfer(true);
       try {
-        const res = await axios.post<{ task_key: string }>(
+        const res = await apiClient.post<{ task_key: string }>(
           `/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}/transfer`,
           { series_ids: seriesIds },
         );

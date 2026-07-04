@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（统一 axios 客户端迁移 · M46 完整版）
+
+#### 重构
+- `web/src/api/client.ts` 导出统一实例 `apiClient = axios.create()`(不设 baseURL,沿用现有 `/api/...` 绝对路径,行为等价),并在其上挂载与全局 `installApiAuth` 一致的 `X-API-Token` 请求拦截器(独立实例不继承全局拦截器)。
+- 把散落在 32 个文件的 **130 处裸 `axios.get/post/put/delete/patch` 调用**全部迁移到 `apiClient`。仅保留 `axios` 导入于确需静态方法(`isAxiosError`/`isCancel`/`create`/`interceptors`)的少数文件。
+- **回归修复**:`LocaleProvider` 原在**全局 `axios.defaults`** 上设 `X-App-Locale`/`Accept-Language` 头;迁移后请求走 `apiClient`(不继承 `axios.defaults`)会导致这些 locale 头不再发送,破坏后端 locale 行为(LLM 提示词、OPDS i18n 等)。已改为设在 `apiClient.defaults` 上。
+
+#### 验证
+- `npm run build`(tsc 严格 + vite)、`npm run lint`(0 problems)、`npm run test`(11 例)通过;`vite preview` + 浏览器实测:应用完整渲染、apiClient 正常发起请求(无后端时返回预期新手引导页)、无导入/白屏错误。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（封面缓存键去抖动）
 
 #### 性能

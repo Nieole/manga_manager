@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { DEFAULT_PAGE_SIZE, type SavedSmartFilter } from '../types';
 
 interface UseSmartFiltersParams {
@@ -137,7 +137,7 @@ export function useSmartFilters({
         if (!migrated && legacyItems.length > 0) {
           await Promise.all(
             legacyItems.map((item) =>
-              axios.post(`/api/libraries/${libId}/smart-filters/`, {
+              apiClient.post(`/api/libraries/${libId}/smart-filters/`, {
                 name: item.name,
                 activeTag: item.activeTag,
                 activeAuthor: item.activeAuthor,
@@ -152,7 +152,7 @@ export function useSmartFilters({
           localStorage.setItem(smartFilterMigrationKey(libId), 'true');
         }
 
-        const res = await axios.get<SavedSmartFilter[]>(`/api/libraries/${libId}/smart-filters/`);
+        const res = await apiClient.get<SavedSmartFilter[]>(`/api/libraries/${libId}/smart-filters/`);
         const normalized = (res.data || []).map(normalizeRemoteSmartFilter);
         setSavedSmartFilters(normalized);
         writeCachedSmartFilters(libId, normalized);
@@ -184,7 +184,7 @@ export function useSmartFilters({
         [filter, ...prev.filter((item) => item.name !== name)].slice(0, 20),
       );
       try {
-        const res = await axios.post<SavedSmartFilter>(`/api/libraries/${libId}/smart-filters/`, {
+        const res = await apiClient.post<SavedSmartFilter>(`/api/libraries/${libId}/smart-filters/`, {
           name: filter.name,
           activeTag: filter.activeTag,
           activeAuthor: filter.activeAuthor,
@@ -220,7 +220,7 @@ export function useSmartFilters({
         return next;
       });
       try {
-        await axios.delete(`/api/smart-filters/${id}`);
+        await apiClient.delete(`/api/smart-filters/${id}`);
       } catch (err) {
         console.error('Failed to delete smart filter', err);
         setSavedSmartFilters(previous);

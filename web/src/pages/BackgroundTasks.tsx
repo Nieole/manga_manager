@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
 import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskStatus } from '../components/tasks/TaskCenter';
 import { useI18n } from '../i18n/LocaleProvider';
@@ -73,7 +73,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
 
   const fetchStorageIO = useCallback(async () => {
     try {
-      const res = await axios.get<StorageIODiagnostics>('/api/system/storage-io');
+      const res = await apiClient.get<StorageIODiagnostics>('/api/system/storage-io');
       setStorageIO(res.data);
     } catch (error) {
       console.error(error);
@@ -83,7 +83,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const fetchTasks = useCallback(async () => {
     setLoadingTasks(true);
     try {
-      const res = await axios.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`);
+      const res = await apiClient.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`);
       const items = Array.isArray(res.data) ? res.data : [];
       const seen = new Set<string>();
       setTasks(items.filter((task) => {
@@ -148,7 +148,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const runTaskAction = async (task: TaskStatus, action: TaskAction) => {
     setTaskActionKey(`${task.key}:${action}`);
     try {
-      await axios.post(`/api/system/tasks/${encodeURIComponent(task.key)}/${action}`);
+      await apiClient.post(`/api/system/tasks/${encodeURIComponent(task.key)}/${action}`);
       showToast(t(`settings.maintenance.taskAction.${action}Success`));
       await fetchTasks();
       if (action === 'pause' || action === 'resume') {
@@ -185,7 +185,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
         if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
         if (taskScopeIdFilter.trim()) params.set('scope_id', taskScopeIdFilter.trim());
       }
-      await axios.delete(`/api/system/tasks?${params.toString()}`);
+      await apiClient.delete(`/api/system/tasks?${params.toString()}`);
       await fetchTasks();
     } catch (error) {
       console.error(error);

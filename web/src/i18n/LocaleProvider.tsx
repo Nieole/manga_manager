@@ -5,7 +5,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { formatDistanceToNow } from 'date-fns';
 import { enUS, zhCN } from 'date-fns/locale';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, type AppLocale, type MessageCatalog } from './core';
@@ -137,8 +137,9 @@ export function LocaleProvider({
     if (typeof document !== 'undefined') {
       document.documentElement.lang = locale;
     }
-    axios.defaults.headers.common['X-App-Locale'] = locale;
-    axios.defaults.headers.common['Accept-Language'] = locale;
+    // 统一走 apiClient 实例后，locale 头必须设在 apiClient 上；全局 axios.defaults 不会被 apiClient 继承。
+    apiClient.defaults.headers.common['X-App-Locale'] = locale;
+    apiClient.defaults.headers.common['Accept-Language'] = locale;
   }, [locale]);
 
   useEffect(() => {

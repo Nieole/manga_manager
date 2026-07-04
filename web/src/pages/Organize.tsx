@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiClient } from '../api/client';
 import { BookOpen, ChevronDown, ChevronRight, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
@@ -101,8 +101,8 @@ export default function Organize() {
       const params = new URLSearchParams({ limit: '80' });
       if (libraryId !== 'ALL') params.set('library_id', libraryId);
       const [librariesRes, reportRes] = await Promise.all([
-        axios.get<LibraryOption[]>('/api/libraries').catch(() => ({ data: [] as LibraryOption[] })),
-        axios.get<HealthReport>(`/api/health/report?${params.toString()}`),
+        apiClient.get<LibraryOption[]>('/api/libraries').catch(() => ({ data: [] as LibraryOption[] })),
+        apiClient.get<HealthReport>(`/api/health/report?${params.toString()}`),
       ]);
       setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
       setReport(reportRes.data);
@@ -204,16 +204,16 @@ export default function Organize() {
     setActionKey(key);
     try {
       if (issue.type === 'missing_metadata' && issue.series_id) {
-        await axios.post(`/api/series/${issue.series_id}/scrape`);
+        await apiClient.post(`/api/series/${issue.series_id}/scrape`);
         showToast(t('organize.toast.scrapeQueued'));
       } else if ((issue.type === 'empty_pages' || issue.type === 'missing_cover') && issue.series_id) {
-        await axios.post(`/api/series/${issue.series_id}/rescan?force=true`);
+        await apiClient.post(`/api/series/${issue.series_id}/rescan?force=true`);
         showToast(t('organize.toast.rescanQueued'));
       } else if (issue.type === 'missing_quick_hash') {
-        await axios.post('/api/system/rebuild-file-identities');
+        await apiClient.post('/api/system/rebuild-file-identities');
         showToast(t('organize.toast.identityQueued'));
       } else if (issue.type === 'unmatched_koreader') {
-        await axios.post('/api/system/koreader/reconcile');
+        await apiClient.post('/api/system/koreader/reconcile');
         showToast(t('organize.toast.koreaderQueued'));
       }
       await fetchReport();
@@ -235,7 +235,7 @@ export default function Organize() {
   const rebuildFileIdentities = async () => {
     setActionKey('rebuild_file_identities');
     try {
-      await axios.post('/api/system/rebuild-file-identities');
+      await apiClient.post('/api/system/rebuild-file-identities');
       showToast(t('organize.toast.identityQueued'));
     } catch (error) {
       console.error(error);

@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { apiClient } from '../../api/client';
 
 export type ProgressSyncStatus = 'idle' | 'syncing' | 'synced' | 'offline-queued';
 
@@ -81,7 +82,7 @@ export function useReaderProgressIndicator({
     inFlightRef.current += 1;
     setStatus('syncing');
 
-    axios.post(`/api/books/${bookId}/progress`, { page: pageNumber })
+    apiClient.post(`/api/books/${bookId}/progress`, { page: pageNumber })
       .then(() => {
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
         if (inFlightRef.current === 0) {

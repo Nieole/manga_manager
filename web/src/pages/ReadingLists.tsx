@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { apiClient } from '../api/client';
 import { ArrowDown, ArrowUp, BookOpen, ListOrdered, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -54,7 +55,7 @@ export default function ReadingLists() {
 
   const loadLists = () => {
     setLoading(true);
-    axios.get<ReadingList[]>('/api/reading-lists/')
+    apiClient.get<ReadingList[]>('/api/reading-lists/')
       .then((res) => {
         const next = res.data || [];
         setLists(next);
@@ -72,7 +73,7 @@ export default function ReadingLists() {
       queueMicrotask(() => setItems([]));
       return;
     }
-    axios.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`)
+    apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`)
       .then((res) => {
         const next = res.data || [];
         setItems(next);
@@ -95,7 +96,7 @@ export default function ReadingLists() {
       return;
     }
     const controller = new AbortController();
-    axios.get<{ hits: SearchHit[] }>('/api/search', {
+    apiClient.get<{ hits: SearchHit[] }>('/api/search', {
       params: { q: query, target: 'series' },
       signal: controller.signal,
     }).then((res) => setSeriesResults(res.data.hits || []))
@@ -120,7 +121,7 @@ export default function ReadingLists() {
 
   const saveCreate = () => {
     if (!name.trim()) return;
-    axios.post<ReadingList>('/api/reading-lists/', { name, description }).then((res) => {
+    apiClient.post<ReadingList>('/api/reading-lists/', { name, description }).then((res) => {
       setShowCreate(false);
       setSelected(res.data);
       loadLists();
@@ -129,7 +130,7 @@ export default function ReadingLists() {
 
   const saveEdit = () => {
     if (!selected || !name.trim()) return;
-    axios.put<ReadingList>(`/api/reading-lists/${selected.id}`, { name, description }).then((res) => {
+    apiClient.put<ReadingList>(`/api/reading-lists/${selected.id}`, { name, description }).then((res) => {
       setShowEdit(false);
       setSelected(res.data);
       loadLists();
@@ -138,7 +139,7 @@ export default function ReadingLists() {
 
   const deleteList = () => {
     if (!pendingDelete) return;
-    axios.delete(`/api/reading-lists/${pendingDelete.id}`).then(() => {
+    apiClient.delete(`/api/reading-lists/${pendingDelete.id}`).then(() => {
       if (selected?.id === pendingDelete.id) setSelected(null);
       setPendingDelete(null);
       loadLists();
@@ -149,10 +150,10 @@ export default function ReadingLists() {
     if (!selected) return;
     const id = Number((hit.id || hit.fields?.id || '').replace('s_', ''));
     if (!id) return;
-    axios.post(`/api/reading-lists/${selected.id}/items`, { series_id: id }).then(() => {
+    apiClient.post(`/api/reading-lists/${selected.id}/items`, { series_id: id }).then(() => {
       setSeriesQuery('');
       setSeriesResults([]);
-      return axios.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`);
+      return apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`);
     }).then((res) => {
       setItems(res.data || []);
       loadLists();
@@ -161,7 +162,7 @@ export default function ReadingLists() {
 
   const removeItem = (item: ReadingListItem) => {
     if (!selected) return;
-    axios.delete(`/api/reading-lists/${selected.id}/items/${item.id}`).then(() => {
+    apiClient.delete(`/api/reading-lists/${selected.id}/items/${item.id}`).then(() => {
       setItems((prev) => prev.filter((entry) => entry.id !== item.id));
       loadLists();
     });
@@ -174,7 +175,7 @@ export default function ReadingLists() {
     const next = [...items];
     [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
     setItems(next);
-    axios.post(`/api/reading-lists/${selected.id}/items/reorder`, { item_ids: next.map((item) => item.id) });
+    apiClient.post(`/api/reading-lists/${selected.id}/items/reorder`, { item_ids: next.map((item) => item.id) });
   };
 
   if (loading) {

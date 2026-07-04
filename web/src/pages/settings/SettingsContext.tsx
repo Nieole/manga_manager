@@ -6,6 +6,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import axios from 'axios';
+import { apiClient } from '../../api/client';
 import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
 import { useToast } from '../../components/ToastProvider';
 
@@ -363,7 +364,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [koreaderStatus]);
 
   const fetchConfig = useCallback(async () => {
-    const res = await axios.get<ConfigEnvelope>('/api/system/config');
+    const res = await apiClient.get<ConfigEnvelope>('/api/system/config');
     setConfig(res.data.config);
     setInitialConfig(res.data.config);
     setValidation(res.data.validation);
@@ -372,7 +373,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchKOReader = useCallback(async () => {
-    const res = await axios.get<KOReaderStatus>('/api/system/koreader');
+    const res = await apiClient.get<KOReaderStatus>('/api/system/koreader');
     setKOReaderStatus(res.data);
     setKOReaderForm((current) => {
       const nextForm = buildKOReaderForm(configRef.current?.koreader, res.data, current);
@@ -383,17 +384,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchKOReaderAccounts = useCallback(async () => {
-    const res = await axios.get<KOReaderAccount[]>('/api/system/koreader/accounts');
+    const res = await apiClient.get<KOReaderAccount[]>('/api/system/koreader/accounts');
     setKOReaderAccounts(Array.isArray(res.data) ? res.data : []);
   }, []);
 
   const fetchKOReaderUnmatched = useCallback(async () => {
-    const res = await axios.get<KOReaderUnmatchedItem[]>('/api/system/koreader/unmatched?limit=12');
+    const res = await apiClient.get<KOReaderUnmatchedItem[]>('/api/system/koreader/unmatched?limit=12');
     setUnmatchedItems(Array.isArray(res.data) ? res.data : []);
   }, []);
 
   const fetchKOReaderDevices = useCallback(async () => {
-    const res = await axios.get<KOReaderDeviceDiagnostics>('/api/system/koreader/devices?limit=20');
+    const res = await apiClient.get<KOReaderDeviceDiagnostics>('/api/system/koreader/devices?limit=20');
     setKOReaderDevices(res.data);
   }, []);
 
@@ -435,7 +436,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       if (!config) return;
       setSaving(true);
       try {
-        const res = await axios.post('/api/system/config', config);
+        const res = await apiClient.post('/api/system/config', config);
         setValidation(res.data.validation);
         showToast(res.data.message || successMessage, 'success');
         await fetchConfig();
@@ -460,7 +461,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setTestingLLM(true);
     setLlmTestResult(null);
     try {
-      const res = await axios.post('/api/system/test-llm', {
+      const res = await apiClient.post('/api/system/test-llm', {
         ...config.llm,
         prompt: llmTestPrompt,
       });
@@ -479,7 +480,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const handleAction = useCallback(async (path: string, successMessage: string, errorMessage?: string) => {
     try {
-      const res = await axios.post(path);
+      const res = await apiClient.post(path);
       showToast(res.data.message || successMessage, 'success');
     } catch (error) {
       console.error(error);
@@ -491,7 +492,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (!koreaderForm) return;
     setSavingKOReader(true);
     try {
-      const res = await axios.post<KOReaderStatus>('/api/system/koreader', koreaderForm);
+      const res = await apiClient.post<KOReaderStatus>('/api/system/koreader', koreaderForm);
       const requiresMaintenance = Boolean(
         koreaderStatus &&
           (koreaderStatus.match_mode !== koreaderForm.match_mode ||
@@ -522,7 +523,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const handleApplyMatchingChanges = useCallback(async () => {
     setApplyingMatching(true);
     try {
-      const res = await axios.post('/api/system/koreader/apply-matching');
+      const res = await apiClient.post('/api/system/koreader/apply-matching');
       showToast(res.data?.message || t('settings.toast.koreaderApplyMatchingStarted'), 'success');
       setNeedsMatchingMaintenance(false);
       await fetchKOReader();
@@ -538,7 +539,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (!koreaderAccountForm.username.trim()) return;
     setCreatingAccount(true);
     try {
-      const res = await axios.post<KOReaderAccount>('/api/system/koreader/accounts', {
+      const res = await apiClient.post<KOReaderAccount>('/api/system/koreader/accounts', {
         username: koreaderAccountForm.username.trim(),
       });
       showToast(t('settings.toast.koreaderAccountCreated', { username: res.data.username }), 'success');
@@ -569,7 +570,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const handleRotateKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
     try {
-      await axios.post(`/api/system/koreader/accounts/${account.id}/rotate-key`);
+      await apiClient.post(`/api/system/koreader/accounts/${account.id}/rotate-key`);
       showToast(t('settings.toast.koreaderSyncKeyRotated', { username: account.username }), 'success');
       await Promise.all([fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {
@@ -583,7 +584,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const handleToggleKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
     try {
-      await axios.post(`/api/system/koreader/accounts/${account.id}/toggle`, {
+      await apiClient.post(`/api/system/koreader/accounts/${account.id}/toggle`, {
         enabled: !account.enabled,
       });
       showToast(
@@ -605,7 +606,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const handleDeleteKOReaderAccount = useCallback(async (account: KOReaderAccount) => {
     setAccountActionId(account.id);
     try {
-      await axios.delete(`/api/system/koreader/accounts/${account.id}`);
+      await apiClient.delete(`/api/system/koreader/accounts/${account.id}`);
       showToast(t('settings.toast.koreaderAccountDeleted', { username: account.username }), 'success');
       await Promise.all([fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {

@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 
 
@@ -22,7 +22,7 @@ export function useSeriesMetadataReview({ reload, showToast, t }: UseSeriesMetad
     async (reviewId: number) => {
       setBusyMetadataReviewId(reviewId);
       try {
-        await axios.post(`/api/metadata/reviews/${reviewId}/apply`);
+        await apiClient.post(`/api/metadata/reviews/${reviewId}/apply`);
         await reload();
         showToast(t('series.toast.metadataReviewApplied'), 'success');
       } catch (err) {
@@ -38,7 +38,7 @@ export function useSeriesMetadataReview({ reload, showToast, t }: UseSeriesMetad
     async (reviewId: number) => {
       setBusyMetadataReviewId(reviewId);
       try {
-        await axios.post(`/api/metadata/reviews/${reviewId}/reject`);
+        await apiClient.post(`/api/metadata/reviews/${reviewId}/reject`);
         await reload();
         showToast(t('series.toast.metadataReviewRejected'), 'success');
       } catch (err) {

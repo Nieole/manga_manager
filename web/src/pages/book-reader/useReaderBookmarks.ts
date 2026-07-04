@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../api/client';
 import type { ReadingBookmark } from './types';
 
 interface UseReaderBookmarksOptions {
@@ -35,7 +35,7 @@ export function useReaderBookmarks({
   const loadBookmarks = useCallback(() => {
     if (!bookId) return Promise.resolve();
 
-    return axios.get<ReadingBookmark[]>(`/api/books/${bookId}/bookmarks`)
+    return apiClient.get<ReadingBookmark[]>(`/api/books/${bookId}/bookmarks`)
       .then((res) => {
         if (bookId === currentBookIdRef.current) {
           setBookmarks(res.data || []);
@@ -70,7 +70,7 @@ export function useReaderBookmarks({
 
     const targetBookId = bookId;
     setSavingBookmark(true);
-    axios.post<ReadingBookmark>(`/api/books/${targetBookId}/bookmarks`, {
+    apiClient.post<ReadingBookmark>(`/api/books/${targetBookId}/bookmarks`, {
       page: currentPageNumber,
       note: bookmarkNote,
     }).then((res) => {
@@ -92,7 +92,7 @@ export function useReaderBookmarks({
     if (!bookId) return;
 
     const targetBookId = bookId;
-    axios.delete(`/api/books/${targetBookId}/bookmarks/${bookmark.id}`)
+    apiClient.delete(`/api/books/${targetBookId}/bookmarks/${bookmark.id}`)
       .then(() => {
         if (targetBookId === currentBookIdRef.current) {
           setBookmarks((prev) => prev.filter((item) => item.id !== bookmark.id));

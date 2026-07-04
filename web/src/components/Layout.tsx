@@ -8,6 +8,7 @@ import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-
 import { useState, useEffect, useRef, lazy, Suspense, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
+import { apiClient } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
@@ -233,7 +234,7 @@ export default function Layout() {
 
     const openDirectoryBrowser = () => {
         setBrowsing(true);
-        axios.get('/api/browse-dirs')
+        apiClient.get('/api/browse-dirs')
             .then(res => {
                 setBrowseDirs(res.data.dirs || []);
                 setBrowseCurrent(res.data.current);
@@ -244,7 +245,7 @@ export default function Layout() {
     };
 
     const navigateDirectoryBrowser = (path: string) => {
-        axios.get(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
+        apiClient.get(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
             .then(res => {
                 setBrowseDirs(res.data.dirs || []);
                 setBrowseCurrent(res.data.current);
@@ -293,7 +294,7 @@ export default function Layout() {
 
     const fetchLibraries = () => {
         setLoading(true);
-        axios.get('/api/libraries')
+        apiClient.get('/api/libraries')
             .then(res => {
                 setLibraries(res.data);
                 if (res.data.length > 0 && !libId && location.pathname === '/') {
@@ -322,7 +323,7 @@ export default function Layout() {
         } catch {
             // ignore invalid local storage
         }
-        axios.get('/api/system/capabilities')
+        apiClient.get('/api/system/capabilities')
             .then((res) => {
                 if (res.data?.default_scan_formats) {
                     setSupportedScanFormats(res.data.default_scan_formats);
@@ -527,7 +528,7 @@ export default function Layout() {
         e.preventDefault();
         setAdding(true);
         try {
-            await axios.post('/api/libraries', {
+            await apiClient.post('/api/libraries', {
                 name: newLibName,
                 path: newLibPath,
                 scan_mode: newLibScanMode,
@@ -557,7 +558,7 @@ export default function Layout() {
         e.preventDefault();
         setEditing(true);
         try {
-            await axios.put(`/api/libraries/${editLibId}`, {
+            await apiClient.put(`/api/libraries/${editLibId}`, {
                 name: editLibName,
                 path: editLibPath,
                 scan_mode: editLibScanMode,
@@ -578,7 +579,7 @@ export default function Layout() {
 
     const handleScanLibrary = async (id: string, force: boolean = false) => {
         try {
-            await axios.post(`/api/libraries/${id}/scan?force=${force}`);
+            await apiClient.post(`/api/libraries/${id}/scan?force=${force}`);
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
             showToast(force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued'), 'success');
         } catch (error) {
@@ -589,7 +590,7 @@ export default function Layout() {
 
     const handleScrapeLibrary = async (id: string) => {
         try {
-            await axios.post(`/api/libraries/${id}/scrape`, { provider: 'bangumi' });
+            await apiClient.post(`/api/libraries/${id}/scrape`, { provider: 'bangumi' });
             showToast(t('layout.toast.scrapeQueued'), 'success');
         } catch (error) {
             console.error("Trigger scrape failed", error);
@@ -599,7 +600,7 @@ export default function Layout() {
 
     const handleCleanupLibrary = async (id: string) => {
         try {
-            await axios.post(`/api/libraries/${id}/cleanup`);
+            await apiClient.post(`/api/libraries/${id}/cleanup`);
             showToast(t('layout.toast.cleanupQueued'), 'success');
         } catch (error) {
             console.error("Trigger cleanup failed", error);
@@ -609,7 +610,7 @@ export default function Layout() {
 
     const handleAIGrouping = async (id: string) => {
         try {
-            await axios.post(`/api/libraries/${id}/ai-grouping`);
+            await apiClient.post(`/api/libraries/${id}/ai-grouping`);
             showToast(t('layout.toast.aiGroupingQueued'), 'success');
         } catch (error) {
             console.error("Trigger AI grouping failed", error);
@@ -619,7 +620,7 @@ export default function Layout() {
 
     const handleDeleteLibrary = async (library: Library) => {
         try {
-            await axios.delete(`/api/libraries/${library.id}`);
+            await apiClient.delete(`/api/libraries/${library.id}`);
             showToast(t('layout.toast.libraryDeleted', { name: library.name }), 'success');
             fetchLibraries();
             navigate('/');

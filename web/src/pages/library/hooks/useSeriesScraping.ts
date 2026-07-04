@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../../api/client';
 import type { MetaTag, SearchResult, Series as DetailSeries } from '../../series-detail/types';
 import type { Series } from '../types';
 
@@ -69,9 +69,9 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
       setIsScraping(true);
       try {
         const [seriesRes, tagsRes, searchRes] = await Promise.all([
-          axios.get<DetailSeries>(`/api/series/${series.id}`),
-          axios.get<MetaTag[]>(`/api/series/${series.id}/tags`).catch(() => ({ data: [] as MetaTag[] })),
-          axios.get<{ results?: SearchResult[]; total?: number }>(
+          apiClient.get<DetailSeries>(`/api/series/${series.id}`),
+          apiClient.get<MetaTag[]>(`/api/series/${series.id}/tags`).catch(() => ({ data: [] as MetaTag[] })),
+          apiClient.get<{ results?: SearchResult[]; total?: number }>(
             `/api/series/${series.id}/scrape-search?provider=${providerKey}&q=${encodeURIComponent(series.title?.Valid ? series.title.String : series.name)}&offset=0`,
           ),
         ]);
@@ -101,7 +101,7 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
       if (!scrapingSeries) return;
       setIsScraping(true);
       try {
-        const res = await axios.get<{ results?: SearchResult[]; total?: number }>(
+        const res = await apiClient.get<{ results?: SearchResult[]; total?: number }>(
           `/api/series/${scrapingSeries.id}/scrape-search?provider=${scrapeProvider}&q=${encodeURIComponent(scrapeModalSearchQuery)}&offset=${offset}`,
         );
         setScrapeSearchResults(res.data?.results || []);
@@ -122,7 +122,7 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
       if (!scrapingSeries) return;
       setIsScraping(true);
       try {
-        const res = await axios.post<{ queued?: boolean; message?: string }>(
+        const res = await apiClient.post<{ queued?: boolean; message?: string }>(
           `/api/series/${scrapingSeries.id}/scrape-apply?provider=${scrapeProvider}`,
           metadata,
         );
