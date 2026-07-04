@@ -6,6 +6,7 @@ package api
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -13,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -646,4 +649,75 @@ func writeTestCBZ(path string, files map[string][]byte) error {
 		}
 	}
 	return zw.Close()
+}
+
+func TestServePageImageSingleFlightConcurrentSamePage(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 3)
+	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
+	pages := map[string][]byte{"001.png": png1x1, "002.png": png1x1, "003.png": png1x1}
+	if err := writeTestCBZ(archivePath, pages); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		t.Fatalf("stat archive failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(
+		`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+		archivePath, info.Size(), info.ModTime(), 3, book.ID,
+	); err != nil {
+		t.Fatalf("update book archive metadata failed: %v", err)
+	}
+
+	const n = 40
+	type outcome struct {
+		code int
+		body []byte
+		ct   string
+	}
+	results := make([]outcome, n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start // 尽量同时进入，制造并发命中同一 cacheKey
+			// format=jpeg 触发转码路径（isThumbnailReq），走 single-flight
+			req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=jpeg", nil, "bookId", strconv.FormatInt(book.ID, 10))
+			req = withRouteParam(req, "pageNumber", "1")
+			rec := httptest.NewRecorder()
+			controller.servePageImage(rec, req)
+			results[idx] = outcome{code: rec.Code, body: append([]byte(nil), rec.Body.Bytes()...), ct: rec.Header().Get("Content-Type")}
+		}(i)
+	}
+	close(start)
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("concurrent servePageImage did not complete (possible single-flight deadlock)")
+	}
+
+	first := results[0]
+	if first.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", first.code)
+	}
+	if len(first.body) == 0 {
+		t.Fatal("expected non-empty transcoded body")
+	}
+	for i, r := range results {
+		if r.code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d", i, r.code)
+		}
+		if !bytes.Equal(r.body, first.body) {
+			t.Fatalf("request %d body differs from first (single-flight should yield identical bytes)", i)
+		}
+		if r.ct != first.ct {
+			t.Fatalf("request %d content-type %q differs from first %q", i, r.ct, first.ct)
+		}
+	}
 }

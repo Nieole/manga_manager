@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha1"
 	"database/sql"
 	"errors"
@@ -132,107 +133,119 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	storagePolicy := config.ResolveStoragePolicy(c.currentConfig(), source.Path)
-	readerLease, err := storageio.Default.Acquire(ctx, storageio.Request{
-		VolumeKey:        storagePolicy.VolumeKey,
-		Limit:            storagePolicy.IOPolicy.ArchiveOpenConcurrency,
-		Kind:             storageio.WorkKindReader,
-		PauseWhenReading: storagePolicy.IOPolicy.PauseBackgroundWhenReading,
-	})
-	if err != nil {
-		jsonError(w, http.StatusServiceUnavailable, "Storage is busy")
-		return
+	// 冷缓存下用 single-flight 合并同一 cacheKey 的并发转码：只有 leader 真正取存储令牌、读页、转码、
+	// 写缓存，其余等待者复用同一结果，避免重复 CPU 转码与归档读取。HTTP 错误编码进结果结构体，闭包本身
+	// 恒返回 nil error（不让 singleflight 把某次错误缓存给其他 key）。
+	type pageServeResult struct {
+		data        []byte
+		contentType string
+		status      int // 0 表示成功，否则为要返回的 HTTP 错误码
+		message     string
 	}
-	annotatePageImageStorage(ctx, storagePolicy.StorageProfile, storagePolicy.VolumeKey, readerLease.Wait)
-	defer readerLease.Release()
-
-	pageInfo, manifestCacheHit, err := c.getBookArchiveSourcePageWithStats(ctx, source, pageNumber)
-	annotatePageImageDiagnostics(ctx, false, manifestCacheHit, false, false)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Page not found")
-			return
-		}
-		if pageNumber > source.PageCount && source.PageCount > 0 {
-			jsonError(w, http.StatusNotFound, "Page not found")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
-		return
-	}
-
-	targetPage := pageInfo.Name
-	targetMediaType := pageInfo.MediaType
-
-	archiver, err := parser.GetArchiveFromPool(source.Path)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to read internal archive")
-		return
-	}
-	annotatePageImageDiagnostics(ctx, true, false, false, false)
-
-	data, err := archiver.ReadPage(targetPage)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to read physical page data")
-		return
-	}
-	readerLease.Release()
-
-	// 准备处理并发送响应头
-	opts := images.ProcessOptions{
-		Format:        format,
-		Filter:        filter,
-		AutoCrop:      autoCrop,
-		Waifu2xPath:   c.currentConfig().Scanner.Waifu2xPath,
-		RealCuganPath: c.currentConfig().Scanner.RealCuganPath,
-		Waifu2xScale:  2,      // 缺省使用引擎默认2倍
-		Waifu2xNoise:  0,      // 缺省使用引擎默认0阶降噪
-		Waifu2xFormat: "webp", // 控制引擎默认采用 webp 挤压体积
-	}
-
-	// 读取前端传入的 Waifu2x 参数；这些值已经进入缓存键，处理结果可以被安全复用。
-	if w2xScaleStr != "" {
-		if v, err := strconv.Atoi(w2xScaleStr); err == nil {
-			opts.Waifu2xScale = v
-		}
-	}
-	if w2xNoiseStr != "" {
-		if v, err := strconv.Atoi(w2xNoiseStr); err == nil {
-			opts.Waifu2xNoise = v
-		}
-	}
-	if w2xFormatStr != "" {
-		opts.Waifu2xFormat = w2xFormatStr
-	}
-	if q, err := strconv.Atoi(qualityStr); err == nil {
-		opts.Quality = q
-	}
-	if w, err := strconv.Atoi(widthStr); err == nil {
-		opts.Width = w
-	}
-	if h, err := strconv.Atoi(heightStr); err == nil {
-		opts.Height = h
-	}
-
-	finalData, finalContentType, err := images.ProcessImage(data, targetMediaType, opts)
-	processOK := err == nil
-	if err != nil {
-		// Log and fallback to raw data
-		slog.Warn("Image process error, fallback to raw source", "error", err)
-		finalData = data
-		finalContentType = targetMediaType
-	}
-
-	// 仅在处理成功时写入处理缓存键：否则会把原始回退结果当作已处理产物持久缓存，
-	// 让后续请求（含临时错误恢复后）永远拿到未处理的图，形成缓存污染。
-	if isThumbnailReq && processOK {
-		c.cacheImageMemory(cacheKey, finalData)
-		if diskPageCacheEnabled {
-			if err := c.writeDiskImageCache(cacheKey, finalData, finalContentType); err != nil {
-				slog.Warn("Failed to write processed page disk cache", "error", err)
+	resAny, _, _ := c.pageTranscodeGroup.Do(cacheKey, func() (any, error) {
+		// 二次检查内存缓存：可能有另一个 leader 刚把它填好。
+		if isThumbnailReq {
+			if cached, ok := c.imageCache.Get(cacheKey); ok {
+				return &pageServeResult{data: cached, contentType: detectImageContentType(cached)}, nil
 			}
 		}
+		// 与发起请求的客户端取消解耦：single-flight 下某个客户端断开不应让所有等待者的转码失败。
+		// WithoutCancel 保留 ctx 上的诊断/存储 value，仅去除取消信号。
+		workCtx := context.WithoutCancel(ctx)
+
+		storagePolicy := config.ResolveStoragePolicy(c.currentConfig(), source.Path)
+		readerLease, err := storageio.Default.Acquire(workCtx, storageio.Request{
+			VolumeKey:        storagePolicy.VolumeKey,
+			Limit:            storagePolicy.IOPolicy.ArchiveOpenConcurrency,
+			Kind:             storageio.WorkKindReader,
+			PauseWhenReading: storagePolicy.IOPolicy.PauseBackgroundWhenReading,
+		})
+		if err != nil {
+			return &pageServeResult{status: http.StatusServiceUnavailable, message: "Storage is busy"}, nil
+		}
+		annotatePageImageStorage(workCtx, storagePolicy.StorageProfile, storagePolicy.VolumeKey, readerLease.Wait)
+		defer readerLease.Release()
+
+		pageInfo, manifestCacheHit, err := c.getBookArchiveSourcePageWithStats(workCtx, source, pageNumber)
+		annotatePageImageDiagnostics(workCtx, false, manifestCacheHit, false, false)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) || (pageNumber > source.PageCount && source.PageCount > 0) {
+				return &pageServeResult{status: http.StatusNotFound, message: "Page not found"}, nil
+			}
+			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read pages"}, nil
+		}
+
+		archiver, err := parser.GetArchiveFromPool(source.Path)
+		if err != nil {
+			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read internal archive"}, nil
+		}
+		annotatePageImageDiagnostics(workCtx, true, false, false, false)
+
+		data, err := archiver.ReadPage(pageInfo.Name)
+		if err != nil {
+			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read physical page data"}, nil
+		}
+		readerLease.Release()
+
+		opts := images.ProcessOptions{
+			Format:        format,
+			Filter:        filter,
+			AutoCrop:      autoCrop,
+			Waifu2xPath:   c.currentConfig().Scanner.Waifu2xPath,
+			RealCuganPath: c.currentConfig().Scanner.RealCuganPath,
+			Waifu2xScale:  2,      // 缺省使用引擎默认2倍
+			Waifu2xNoise:  0,      // 缺省使用引擎默认0阶降噪
+			Waifu2xFormat: "webp", // 控制引擎默认采用 webp 挤压体积
+		}
+		// 读取前端传入的 Waifu2x 参数；这些值已经进入缓存键，处理结果可以被安全复用。
+		if w2xScaleStr != "" {
+			if v, err := strconv.Atoi(w2xScaleStr); err == nil {
+				opts.Waifu2xScale = v
+			}
+		}
+		if w2xNoiseStr != "" {
+			if v, err := strconv.Atoi(w2xNoiseStr); err == nil {
+				opts.Waifu2xNoise = v
+			}
+		}
+		if w2xFormatStr != "" {
+			opts.Waifu2xFormat = w2xFormatStr
+		}
+		if q, err := strconv.Atoi(qualityStr); err == nil {
+			opts.Quality = q
+		}
+		if wv, err := strconv.Atoi(widthStr); err == nil {
+			opts.Width = wv
+		}
+		if hv, err := strconv.Atoi(heightStr); err == nil {
+			opts.Height = hv
+		}
+
+		finalData, finalContentType, err := images.ProcessImage(data, pageInfo.MediaType, opts)
+		if err != nil {
+			// 处理失败时回退原始字节，且不写缓存：否则会把未处理的回退结果当已处理产物持久缓存，
+			// 让后续请求（含临时错误恢复后）永远拿到未处理的图，形成缓存污染。
+			slog.Warn("Image process error, fallback to raw source", "error", err)
+			finalData = data
+			finalContentType = pageInfo.MediaType
+		} else if isThumbnailReq {
+			c.cacheImageMemory(cacheKey, finalData)
+			if diskPageCacheEnabled {
+				if werr := c.writeDiskImageCache(cacheKey, finalData, finalContentType); werr != nil {
+					slog.Warn("Failed to write processed page disk cache", "error", werr)
+				}
+			}
+		}
+		return &pageServeResult{data: finalData, contentType: finalContentType}, nil
+	})
+
+	res := resAny.(*pageServeResult)
+	if res.status != 0 {
+		jsonError(w, res.status, res.message)
+		return
 	}
+	finalData := res.data
+	finalContentType := res.contentType
 
 	w.Header().Set("Content-Type", finalContentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(finalData)))

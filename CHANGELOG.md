@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（页图转码 single-flight 去重 · L82 之三，L82 收尾）
+
+#### 性能
+- `internal/api/image_controller.go`:页图服务的转码段用 `singleflight.Group`(新增 `Controller.pageTranscodeGroup`)按 `cacheKey` 合并并发。冷缓存时多客户端/预取请求同一页(同参数)只由一个 leader 取存储令牌、读归档、解码+编码、写缓存,其余等待者复用同一结果,避免重复 CPU 转码与重复归档读取。
+- 关键处理:①闭包入口二次检查内存缓存(可能刚被填好);②用 `context.WithoutCancel(ctx)` 与发起请求的客户端取消解耦——single-flight 下某个客户端断开不应让所有等待者的转码失败,同时保留 ctx 上的诊断/存储 value;③HTTP 错误编码进结果结构体、闭包恒返回 nil error;④仅处理成功才写缓存,失败回退原始字节不缓存(避免缓存污染),与既有语义一致。
+
+至此 L82 三部分全部完成:同格式透传短路、软件转码并发上限、页图转码 single-flight。
+
+#### 验证
+- `go vet`、`go test ./internal/api`(含新增 `TestServePageImageSingleFlightConcurrentSamePage`:40 并发同页请求全部 200、返回字节完全一致、不死锁),全量 `go test -race ./internal/api` 通过(无数据竞争)。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（软件转码并发上限 · L82 之二）
 
 #### 性能/稳定性

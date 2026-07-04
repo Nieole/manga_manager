@@ -70,6 +70,9 @@ type Controller struct {
 	recommendationsMutex     sync.RWMutex
 	// recommendationsGroup 合并同一 locale 的并发冷缓存/刷新请求，避免各自触发一次 LLM 推理。
 	recommendationsGroup singleflight.Group
+	// pageTranscodeGroup 合并同一 cacheKey 的并发页图转码：冷缓存时多客户端/预取请求同一页只解码+编码一次，
+	// 其余等待者复用同一结果，避免重复 CPU 转码与重复归档读取。
+	pageTranscodeGroup singleflight.Group
 
 	taskMutex    sync.Mutex
 	tasks        map[string]TaskStatus
