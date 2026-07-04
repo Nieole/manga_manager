@@ -11,7 +11,10 @@
   - `controller_search.go`：全库/系列/图书 FTS 搜索、结果合并、评分归一化、封面回填。
   - `controller_scan_events.go`：扫描器批次/指标/进度回调处理与缩略图重建聚合进度。
   - `controller_tasks.go`：任务引擎——状态模型、进度/指标聚合、持久化、生命周期（启动/更新/暂停/恢复/取消/完成）与任务列表接口。
-- `controller.go` 从 5489 行降至 3786 行（约 −31%）。后续阶段继续拆分 library/series/book/progress/system-config/sse 等子域。
+- 阶段二继续拆出：
+  - `controller_series.go`：系列分页搜索、系列信息与上下文、标签与作者查询/搜索接口。
+  - `controller_system_config.go`：系统配置读写（含敏感字段脱敏）、能力查询、LLM 连通性测试、目录浏览。
+- `controller.go` 从 5489 行降至 2927 行（约 −47%）。后续阶段继续拆分 library/book/progress/sse 等子域。
 
 #### 验证
 - `go vet ./...`、`go test ./...`（全绿）；`goimports` 自动整理各文件 import。
