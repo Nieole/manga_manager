@@ -151,7 +151,8 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	if lib, err := c.store.GetLibrary(context.Background(), libID); err == nil {
 		scopeName = lib.Name
 	}
-	c.setTaskMetadata(taskKey, nil, scopeName)
+	// 持久化 locale 到任务参数，使重试能恢复原始语言（此前 locale 从未落库、重试只能硬编码 zh-CN）。
+	c.setTaskMetadata(taskKey, map[string]string{"locale": locale}, scopeName)
 	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
 
 	c.runBackground(func() {

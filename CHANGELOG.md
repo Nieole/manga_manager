@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（任务重试注册化 + 错误语义/locale 修复 · M17 核心）
+
+#### 重构/可维护性
+- 任务重试分发改为注册式:新增 `Controller.taskRelaunchers`(`map[taskType]taskRelauncher`,`buildTaskRelaunchers` 在 `NewController` 中构建),取代 `retryTask` 里的中央 `switch`。`isRetryableTaskType` 改由注册表派生(`_, ok := c.taskRelaunchers[type]`),消除此前与 switch 各自维护、易失步的**两份硬编码任务类型清单**——现只有注册表一处事实来源。
+
+#### 修复(用户可见)
+- **重试错误语义**:`retryTask` 现区分 `errTaskAlreadyRunning`(→409)与其它内部错误(→500),未注册类型 →400。此前所有重试失败(含"缺少 scope id"、`GetLibrary` 失败等内部错误)一律误报 409。配套把 maintenance/koreader/scrape 中 9 处 `fmt.Errorf("task already running")` 统一为哨兵 `errTaskAlreadyRunning`(其 `.Error()` 仍为 "task already running",相关 HTTP handler 的 `strings.Contains(..., "already running")` 检查不受影响,不回归)。
+- **AI 分组重试语言**:`launchAIGroupingTask` 现把 `locale` 持久化进任务参数;重试时按"持久化 locale → 本次重试请求语言(`requestContextWithLocale(r)` 注入 ctx)→ `zh-CN`"顺序恢复,修复此前无条件硬编码 `zh-CN` 导致非中文用户重试 AI 分组回落中文的问题。
+
+#### 验证
+- `go vet`、`go test ./...`(13 包)、`go test -race ./internal/api` 全绿。新增 `TestRetryTaskErrorSemantics`(404/409/**500 内部错误**)、`TestIsRetryableTaskTypeDerivedFromRegistry`;`newTestController` 补 `taskRelaunchers` 初始化。3 路对抗性验证(注册表完整性 / 错误语义+向后兼容 / locale+初始化并发)零 findings。
+- 注:任务状态机的整体跨包外迁(独立 `internal/task` 包)为更大重构,审计已注明用户可见缺陷无需依赖它,故本次未做,仅落地注册化与语义修复。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（任务进度异步落盘 · M42）
 
 #### 性能/并发

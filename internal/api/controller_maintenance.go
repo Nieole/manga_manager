@@ -74,7 +74,7 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 
 func (c *Controller) launchRebuildIndexTask() error {
 	if !c.startTask("rebuild_index", "rebuild_index", "开始重建搜索索引", 1) {
-		return fmt.Errorf("task already running")
+		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata("rebuild_index", nil, "系统")
 
@@ -106,7 +106,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchRebuildThumbnailsTask() error {
 	if !c.startPausableCancelableTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 0) {
-		return fmt.Errorf("task already running")
+		return errTaskAlreadyRunning
 	}
 	policy := config.ResolveStoragePolicy(c.currentConfig(), "")
 	c.setTaskMetadata("rebuild_thumbnails", map[string]string{
@@ -184,7 +184,7 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchCleanupThumbnailsTask() error {
 	if !c.startPausableCancelableTask("cleanup_thumbnails", "cleanup_thumbnails", "开始清理未使用的缩略图", 0) {
-		return fmt.Errorf("task already running")
+		return errTaskAlreadyRunning
 	}
 	taskCtx, cleanupCancel := c.newTaskContext("cleanup_thumbnails")
 	c.setTaskMetadata("cleanup_thumbnails", nil, "系统")
@@ -221,7 +221,7 @@ func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
 	if !c.startPausableCancelableTask("rebuild_file_identities", "rebuild_file_identities", "开始重建文件身份索引", 0) {
-		return fmt.Errorf("task already running")
+		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "系统")
 	c.setTaskEffectiveLimit("rebuild_file_identities", c.taskLimitsForPath("", true))

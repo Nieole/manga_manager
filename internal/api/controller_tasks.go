@@ -5,10 +5,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/metadata"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
@@ -44,15 +46,109 @@ func inferTaskScope(taskType, key string) (string, *int64) {
 	return scope, &id
 }
 
-func isRetryableTaskType(taskType string) bool {
-	switch taskType {
-	case "scan_library", "scan_series", "cleanup_library", "rebuild_index", "rebuild_thumbnails", "scrape", "ai_grouping", "rebuild_book_hashes", "rebuild_file_identities", "reconcile_koreader_progress":
-		return true
-	case "refresh_koreader_matching":
-		return true
-	default:
-		return false
+// taskRelauncher 用原任务的 scope/params 重新发起一个同类型任务。返回 errTaskAlreadyRunning 表示
+// 同类任务已在运行（映射为 409），返回其它错误视为内部错误（映射为 500）。
+type taskRelauncher func(ctx context.Context, task TaskStatus) error
+
+// errTaskAlreadyRunning 是重试时"同类任务已在运行"的哨兵错误。
+var errTaskAlreadyRunning = errors.New("task already running")
+
+// buildTaskRelaunchers 注册各任务类型 -> 重启函数，是重试分发与"可重试类型"的唯一事实来源，
+// 取代此前分散在 retryTask 的 switch 与 isRetryableTaskType 两份需同步维护的硬编码清单。
+func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
+	libraryID := func(task TaskStatus) (int64, error) {
+		if task.ScopeID == nil {
+			return 0, fmt.Errorf("task %q missing library id", task.Key)
+		}
+		return *task.ScopeID, nil
 	}
+	forceParam := func(task TaskStatus) bool {
+		return task.Params != nil && task.Params["force"] == "true"
+	}
+	return map[string]taskRelauncher{
+		"scan_library": func(ctx context.Context, task TaskStatus) error {
+			id, err := libraryID(task)
+			if err != nil {
+				return err
+			}
+			lib, err := c.store.GetLibrary(ctx, id)
+			if err != nil {
+				return err
+			}
+			if !c.launchLibraryScanTask(lib, forceParam(task)) {
+				return errTaskAlreadyRunning
+			}
+			return nil
+		},
+		"scan_series": func(ctx context.Context, task TaskStatus) error {
+			if task.ScopeID == nil {
+				return fmt.Errorf("task %q missing series id", task.Key)
+			}
+			if !c.launchSeriesScanTask(*task.ScopeID, forceParam(task)) {
+				return errTaskAlreadyRunning
+			}
+			return nil
+		},
+		"cleanup_library": func(ctx context.Context, task TaskStatus) error {
+			id, err := libraryID(task)
+			if err != nil {
+				return err
+			}
+			if !c.launchCleanupLibraryTask(id) {
+				return errTaskAlreadyRunning
+			}
+			return nil
+		},
+		"rebuild_index": func(ctx context.Context, _ TaskStatus) error {
+			return c.launchRebuildIndexTask()
+		},
+		"rebuild_thumbnails": func(ctx context.Context, _ TaskStatus) error {
+			return c.launchRebuildThumbnailsTask()
+		},
+		"scrape": func(ctx context.Context, task TaskStatus) error {
+			return c.retryScrapeTask(task)
+		},
+		"ai_grouping": func(ctx context.Context, task TaskStatus) error {
+			id, err := libraryID(task)
+			if err != nil {
+				return err
+			}
+			// locale 优先取任务持久化的原始值，其次取本次重试请求的语言（ctx 注入），最后回退 zh-CN，
+			// 修复此前无条件硬编码 zh-CN 导致非中文用户重试 AI 分组回落中文的问题。
+			locale := ""
+			if task.Params != nil {
+				locale = task.Params["locale"]
+			}
+			if locale == "" {
+				locale = metadata.LocaleFromContext(ctx)
+			}
+			if locale == "" {
+				locale = "zh-CN"
+			}
+			if !c.launchAIGroupingTask(id, locale) {
+				return errTaskAlreadyRunning
+			}
+			return nil
+		},
+		"rebuild_book_hashes": func(ctx context.Context, _ TaskStatus) error {
+			return c.launchRebuildBookHashesTask()
+		},
+		"rebuild_file_identities": func(ctx context.Context, _ TaskStatus) error {
+			return c.launchRebuildFileIdentitiesTask()
+		},
+		"reconcile_koreader_progress": func(ctx context.Context, _ TaskStatus) error {
+			return c.launchReconcileKOReaderProgressTask()
+		},
+		"refresh_koreader_matching": func(ctx context.Context, _ TaskStatus) error {
+			return c.launchRefreshKOReaderMatchingTask()
+		},
+	}
+}
+
+// isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试，消除第二份硬编码清单。
+func (c *Controller) isRetryableTaskType(taskType string) bool {
+	_, ok := c.taskRelaunchers[taskType]
+	return ok
 }
 
 func taskStatusFromRecord(record database.TaskRecord) TaskStatus {
@@ -360,7 +456,7 @@ func (c *Controller) startTaskWithOptions(key, taskType, message string, total i
 		Total:     total,
 		CanCancel: canCancel,
 		CanPause:  canPause,
-		Retryable: isRetryableTaskType(taskType),
+		Retryable: c.isRetryableTaskType(taskType),
 		StartedAt: now,
 		UpdatedAt: now,
 		Sequence:  c.taskSeq,
@@ -970,67 +1066,23 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var err error
-	switch task.Type {
-	case "scan_library":
-		if task.ScopeID == nil {
-			err = fmt.Errorf("missing library id")
-			break
-		}
-		lib, getErr := c.store.GetLibrary(r.Context(), *task.ScopeID)
-		if getErr != nil {
-			err = getErr
-			break
-		}
-		force := task.Params != nil && task.Params["force"] == "true"
-		if !c.launchLibraryScanTask(lib, force) {
-			err = fmt.Errorf("task already running")
-		}
-	case "scan_series":
-		if task.ScopeID == nil {
-			err = fmt.Errorf("missing series id")
-			break
-		}
-		force := task.Params != nil && task.Params["force"] == "true"
-		if !c.launchSeriesScanTask(*task.ScopeID, force) {
-			err = fmt.Errorf("task already running")
-		}
-	case "cleanup_library":
-		if task.ScopeID == nil {
-			err = fmt.Errorf("missing library id")
-			break
-		}
-		if !c.launchCleanupLibraryTask(*task.ScopeID) {
-			err = fmt.Errorf("task already running")
-		}
-	case "rebuild_index":
-		err = c.launchRebuildIndexTask()
-	case "rebuild_thumbnails":
-		err = c.launchRebuildThumbnailsTask()
-	case "scrape":
-		err = c.retryScrapeTask(task)
-	case "ai_grouping":
-		if task.ScopeID == nil {
-			err = fmt.Errorf("missing library id")
-			break
-		}
-		if !c.launchAIGroupingTask(*task.ScopeID, "zh-CN") {
-			err = fmt.Errorf("task already running")
-		}
-	case "rebuild_book_hashes":
-		err = c.launchRebuildBookHashesTask()
-	case "rebuild_file_identities":
-		err = c.launchRebuildFileIdentitiesTask()
-	case "reconcile_koreader_progress":
-		err = c.launchReconcileKOReaderProgressTask()
-	case "refresh_koreader_matching":
-		err = c.launchRefreshKOReaderMatchingTask()
-	default:
-		err = fmt.Errorf("unsupported retry type")
+	relaunch, ok := c.taskRelaunchers[task.Type]
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "Unsupported retry type")
+		return
 	}
 
-	if err != nil {
-		jsonError(w, http.StatusConflict, fmt.Sprintf("Retry failed: %v", err))
+	// 用本次重试请求自身的 Accept-Language 构造 ctx，供 relauncher（如 AI 分组）在无持久化 locale 时
+	// 恢复语言，修复此前无条件硬编码 zh-CN。
+	if err := relaunch(requestContextWithLocale(r), task); err != nil {
+		if errors.Is(err, errTaskAlreadyRunning) {
+			jsonError(w, http.StatusConflict, "Task is already running")
+			return
+		}
+		// 区分错误语义：仅"已在运行"是 409，其它（缺少 scope、GetLibrary 失败等内部错误）返回 500，
+		// 修复此前把所有重试失败一律误报为 409 的问题。
+		slog.Error("Task retry failed", "task_key", taskKey, "task_type", task.Type, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to retry task")
 		return
 	}
 

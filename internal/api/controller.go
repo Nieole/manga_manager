@@ -83,6 +83,9 @@ type Controller struct {
 	// API 与系列详情页。taskPersistWake 在终态时唤醒该 goroutine 立即刷，缩短终态落库延迟（缓冲 1）。
 	taskPersistPending map[string]TaskStatus
 	taskPersistWake    chan struct{}
+	// taskRelaunchers 是任务重试的注册表（taskType -> 重启函数），也是"可重试类型"的唯一事实来源，
+	// 在 NewController 中构建，取代 retryTask 的中央 switch 与 isRetryableTaskType 两份硬编码清单。
+	taskRelaunchers map[string]taskRelauncher
 
 	rebuildThumbAggMu sync.Mutex
 	rebuildThumbAgg   *rebuildThumbAggregator
@@ -268,6 +271,9 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 		scan.SetScanMetricsCallback(c.handleScannerMetricsEvent)
 		scan.SetScanProgressCallback(c.handleScannerProgressEvent)
 	}
+
+	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptions 会经 isRetryableTaskType 查表）之前完成。
+	c.taskRelaunchers = c.buildTaskRelaunchers()
 
 	c.recoverInterruptedTasks()
 

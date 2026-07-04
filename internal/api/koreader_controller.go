@@ -638,7 +638,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 	cfg := c.currentConfig()
 	indexLabel := koreaderIndexLabel(cfg)
 	if !c.startPausableCancelableTask(key, "rebuild_book_hashes", fmt.Sprintf("开始重建 KOReader %s", indexLabel), 0) {
-		return fmt.Errorf("task already running")
+		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
@@ -670,7 +670,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	key := "reconcile_koreader_progress"
 	if !c.startPausableCancelableTask(key, "reconcile_koreader_progress", "开始重关联 KOReader 未匹配进度", 0) {
-		return fmt.Errorf("task already running")
+		return errTaskAlreadyRunning
 	}
 	cfg := c.currentConfig()
 	c.setTaskMetadata(key, map[string]string{
@@ -702,7 +702,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	key := "refresh_koreader_matching"
 	if !c.startPausableCancelableTask(key, "refresh_koreader_matching", "开始应用 KOReader 匹配规则变更", 2) {
-		return fmt.Errorf("task already running")
+		return errTaskAlreadyRunning
 	}
 	cfg := c.currentConfig()
 	c.setTaskMetadata(key, map[string]string{

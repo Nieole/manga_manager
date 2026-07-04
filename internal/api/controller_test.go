@@ -88,6 +88,8 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 		taskRuntimes:        make(map[string]*TaskRuntime),
 		messages:            make(chan string, 32),
 	}
+	// 与 NewController 一致：构建任务重试注册表，否则新建任务的 Retryable 恒为 false。
+	controller.taskRelaunchers = controller.buildTaskRelaunchers()
 
 	t.Cleanup(parser.ResetArchivePool)
 	t.Cleanup(controller.Close)
@@ -4602,5 +4604,52 @@ func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
 	}
 	if !persisted {
 		t.Fatal("expected task persisted to DB after flush")
+	}
+}
+
+func TestRetryTaskErrorSemantics(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	// 不存在的任务 -> 404
+	rec := httptest.NewRecorder()
+	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "does_not_exist_1"))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("nonexistent task: expected 404, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 运行中的任务 -> 409
+	if !controller.startTask("scan_series_5", "scan_series", "running", 1) {
+		t.Fatal("expected task to start")
+	}
+	rec = httptest.NewRecorder()
+	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_series_5"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("running task: expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500；此前所有重试失败一律误报 409。
+	if !controller.startTask("scan_library_77777", "scan_library", "failed", 1) {
+		t.Fatal("expected task to start")
+	}
+	controller.failTask("scan_library_77777", "failed")
+	rec = httptest.NewRecorder()
+	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_library_77777"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("internal error retry: expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestIsRetryableTaskTypeDerivedFromRegistry(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	if len(controller.taskRelaunchers) == 0 {
+		t.Fatal("expected registered relaunchers")
+	}
+	for taskType := range controller.taskRelaunchers {
+		if !controller.isRetryableTaskType(taskType) {
+			t.Fatalf("registered type %q should be retryable", taskType)
+		}
+	}
+	if controller.isRetryableTaskType("nonexistent_type") {
+		t.Fatal("unregistered type should not be retryable")
 	}
 }
