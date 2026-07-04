@@ -14,6 +14,7 @@ interface SeriesBookGridProps {
   onCardClick: (book: Book) => void;
   onQuickToggleRead: (book: Book, makeRead: boolean) => void;
   onExportComicInfo: (book: Book) => void;
+  onWriteComicInfo: (book: Book) => void;
   onCopyPath: (book: Book) => void;
 }
 
@@ -24,6 +25,7 @@ export function SeriesBookGrid({
   onCardClick,
   onQuickToggleRead,
   onExportComicInfo,
+  onWriteComicInfo,
   onCopyPath,
 }: SeriesBookGridProps) {
   if (books.length === 0) return null;
@@ -38,6 +40,7 @@ export function SeriesBookGrid({
           onCardClick={onCardClick}
           onQuickToggleRead={onQuickToggleRead}
           onExportComicInfo={onExportComicInfo}
+          onWriteComicInfo={onWriteComicInfo}
           onCopyPath={onCopyPath}
         />
       ))}

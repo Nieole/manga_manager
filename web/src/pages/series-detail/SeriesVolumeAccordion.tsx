@@ -22,6 +22,7 @@ interface SeriesVolumeAccordionProps {
   onQuickToggleVolumeRead: (volume: VolumeItem, makeRead: boolean) => void;
   onQuickToggleBookRead: (book: Book, makeRead: boolean) => void;
   onExportComicInfo: (book: Book) => void;
+  onWriteComicInfo: (book: Book) => void;
   onCopyPath: (book: Book) => void;
   seriesUpdatedAt?: string;
 }
@@ -38,6 +39,7 @@ export function SeriesVolumeAccordion({
   onQuickToggleVolumeRead,
   onQuickToggleBookRead,
   onExportComicInfo,
+  onWriteComicInfo,
   onCopyPath,
   seriesUpdatedAt,
 }: SeriesVolumeAccordionProps) {
@@ -135,6 +137,7 @@ export function SeriesVolumeAccordion({
                     onCardClick={onCardClick}
                     onQuickToggleRead={onQuickToggleBookRead}
                     onExportComicInfo={onExportComicInfo}
+                    onWriteComicInfo={onWriteComicInfo}
                     onCopyPath={onCopyPath}
                   />
                 </div>

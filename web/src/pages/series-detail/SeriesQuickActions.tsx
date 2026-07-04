@@ -4,13 +4,14 @@
  * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
  */
 
-import { Download, Edit, FileDown, FolderHeart, FolderOpen, RefreshCw } from 'lucide-react';
+import { Download, Edit, FileDown, FolderHeart, FolderOpen, RefreshCw, Save } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 
 interface SeriesQuickActionsProps {
   onEdit: () => void;
   onAddToCollection: () => void;
   onExportComicInfo: () => void;
+  onWriteComicInfo: () => void;
   onOpenDirectory: () => void;
   onRescan: () => void;
   onScrape: (provider: string) => void;
@@ -26,6 +27,7 @@ export function SeriesQuickActions({
   onEdit,
   onAddToCollection,
   onExportComicInfo,
+  onWriteComicInfo,
   onOpenDirectory,
   onRescan,
   onScrape,
@@ -62,6 +64,14 @@ export function SeriesQuickActions({
         title={t('series.header.exportComicInfo')}
       >
         <FileDown className="w-4 h-4 m-0.5" />
+      </button>
+      <div className="w-px h-5 bg-white/10 mx-1" />
+      <button
+        onClick={onWriteComicInfo}
+        className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors"
+        title={t('series.header.writeComicInfo')}
+      >
+        <Save className="w-4 h-4 m-0.5" />
       </button>
       <div className="w-px h-5 bg-white/10 mx-1" />
       <button

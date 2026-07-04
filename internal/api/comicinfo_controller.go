@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -132,6 +133,132 @@ func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-ComicInfo.xml"`, filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// writeBookComicInfo 把单本书的 ComicInfo.xml 写回其 cbz/zip 归档（原子替换、不备份）。
+// rar/cbr 无法写入，返回 415；这是修改用户原始文件的敏感操作，由前端二次确认后触发。
+func (c *Controller) writeBookComicInfo(w http.ResponseWriter, r *http.Request) {
+	bookID, err := strconv.ParseInt(chi.URLParam(r, "bookId"), 10, 64)
+	if err != nil || bookID <= 0 {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+
+	book, err := c.store.GetBook(r.Context(), bookID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Book not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to get book")
+		return
+	}
+
+	info, err := c.buildBookComicInfo(r, book)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to build ComicInfo")
+		return
+	}
+	data, err := parser.MarshalComicInfo(info)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to build ComicInfo")
+		return
+	}
+
+	if err := parser.WriteComicInfoIntoArchive(book.Path, data); err != nil {
+		if errors.Is(err, parser.ErrArchiveNotWritable) {
+			jsonError(w, http.StatusUnsupportedMediaType, apiText(requestLocale(r), "comicinfo.write.unsupported"))
+			return
+		}
+		slog.Error("write ComicInfo into archive failed", "book_id", bookID, "path", book.Path, "error", err)
+		jsonError(w, http.StatusInternalServerError, apiText(requestLocale(r), "comicinfo.write.failed"))
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+}
+
+// writeSeriesComicInfo 把整个系列所有可写归档（cbz/zip）的 ComicInfo.xml 写回，返回写入/跳过计数。
+// rar/cbr 条目按“跳过”处理，不视为失败。
+func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := strconv.ParseInt(chi.URLParam(r, "seriesId"), 10, 64)
+	if err != nil || seriesID <= 0 {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+
+	series, err := c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Series not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to get series")
+		return
+	}
+
+	books, err := c.store.ListBooksBySeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to list series books")
+		return
+	}
+	tags, err := c.store.GetTagsForSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get series tags")
+		return
+	}
+	authors, err := c.store.GetAuthorsForSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get series authors")
+		return
+	}
+
+	written, skipped, failed := 0, 0, 0
+	for _, book := range books {
+		info := buildComicInfoForBook(book, series, books, tags, authors)
+		data, marshalErr := parser.MarshalComicInfo(info)
+		if marshalErr != nil {
+			failed++
+			continue
+		}
+		if err := parser.WriteComicInfoIntoArchive(book.Path, data); err != nil {
+			if errors.Is(err, parser.ErrArchiveNotWritable) {
+				skipped++
+				continue
+			}
+			slog.Error("write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", err)
+			failed++
+			continue
+		}
+		written++
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"written": written,
+		"skipped": skipped,
+		"failed":  failed,
+	})
+}
+
+// buildBookComicInfo 复用导出路径的构造逻辑，从数据库聚合出单本书的 ComicInfo。
+func (c *Controller) buildBookComicInfo(r *http.Request, book database.Book) (parser.ComicInfo, error) {
+	series, err := c.store.GetSeries(r.Context(), book.SeriesID)
+	if err != nil {
+		return parser.ComicInfo{}, err
+	}
+	books, err := c.store.ListBooksBySeries(r.Context(), book.SeriesID)
+	if err != nil {
+		return parser.ComicInfo{}, err
+	}
+	tags, err := c.store.GetTagsForSeries(r.Context(), book.SeriesID)
+	if err != nil {
+		return parser.ComicInfo{}, err
+	}
+	authors, err := c.store.GetAuthorsForSeries(r.Context(), book.SeriesID)
+	if err != nil {
+		return parser.ComicInfo{}, err
+	}
+	return buildComicInfoForBook(book, series, books, tags, authors), nil
 }
 
 func buildSeriesComicInfoArchive(series database.Series, books []database.Book, tags []database.Tag, authors []database.Author) ([]byte, error) {

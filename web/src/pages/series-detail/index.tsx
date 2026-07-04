@@ -16,6 +16,7 @@ import { BookImage, List, Grid, FolderOpen, ArrowLeft } from 'lucide-react';
 import AddToCollectionModal from '../../components/AddToCollectionModal';
 import { useToast } from '../../components/ToastProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
+import { apiClient, getApiErrorMessage } from '../../api/client';
 
 import { SeriesHeroBar } from './SeriesHeroBar';
 import { SeriesQuickActions } from './SeriesQuickActions';
@@ -158,6 +159,41 @@ export default function SeriesDetailPage() {
     window.location.href = `/api/books/${book.id}/comicinfo.xml`;
   }, []);
 
+  // 写回 ComicInfo：修改用户原始归档（仅 cbz/zip，原子替换、不备份），二次确认后触发。
+  const handleWriteBookComicInfo = useCallback(
+    async (book: Book) => {
+      if (!window.confirm(t('series.book.writeComicInfoConfirm'))) return;
+      try {
+        await apiClient.post(`/api/books/${book.id}/comicinfo`);
+        showToast(t('series.book.writeComicInfoDone'), 'success');
+      } catch (err) {
+        showToast(getApiErrorMessage(err, t('series.book.writeComicInfoFailed')), 'error');
+      }
+    },
+    [showToast, t],
+  );
+
+  // 整系列写回：对所有可写归档（cbz/zip）写入 ComicInfo，rar/cbr 跳过。二次确认后触发。
+  const handleWriteSeriesComicInfo = useCallback(async () => {
+    if (!seriesId) return;
+    if (!window.confirm(t('series.header.writeComicInfoConfirm'))) return;
+    try {
+      const res = await apiClient.post<{ written: number; skipped: number; failed: number }>(
+        `/api/series/${seriesId}/comicinfo`,
+      );
+      showToast(
+        t('series.header.writeComicInfoDone', {
+          written: res.data.written,
+          skipped: res.data.skipped,
+          failed: res.data.failed,
+        }),
+        res.data.failed > 0 ? 'error' : 'success',
+      );
+    } catch (err) {
+      showToast(getApiErrorMessage(err, t('series.book.writeComicInfoFailed')), 'error');
+    }
+  }, [seriesId, showToast, t]);
+
   const handleCopyBookPath = useCallback(
     async (book: Book) => {
       try {
@@ -255,6 +291,7 @@ export default function SeriesDetailPage() {
               onExportComicInfo={() => {
                 if (seriesId) window.location.href = `/api/series/${seriesId}/comicinfo.zip`;
               }}
+              onWriteComicInfo={handleWriteSeriesComicInfo}
               onOpenDirectory={actions.openDirectory}
               onRescan={actions.rescan}
               onScrape={scrape.handleScrape}
@@ -307,6 +344,7 @@ export default function SeriesDetailPage() {
                   onCardClick={(b) => selection.toggleBook(b.id)}
                   onQuickToggleRead={handleQuickToggleBookRead}
                   onExportComicInfo={handleExportBookComicInfo}
+                  onWriteComicInfo={handleWriteBookComicInfo}
                   onCopyPath={handleCopyBookPath}
                 />
               </div>
@@ -352,6 +390,7 @@ export default function SeriesDetailPage() {
                         onQuickToggleVolumeRead={handleQuickToggleVolumeRead}
                         onQuickToggleBookRead={handleQuickToggleBookRead}
                         onExportComicInfo={handleExportBookComicInfo}
+                        onWriteComicInfo={handleWriteBookComicInfo}
                         onCopyPath={handleCopyBookPath}
                         seriesUpdatedAt={ctx.series?.updated_at}
                       />
@@ -386,6 +425,7 @@ export default function SeriesDetailPage() {
                       onCardClick={(b) => selection.toggleBook(b.id)}
                       onQuickToggleRead={handleQuickToggleBookRead}
                       onExportComicInfo={handleExportBookComicInfo}
+                      onWriteComicInfo={handleWriteBookComicInfo}
                       onCopyPath={handleCopyBookPath}
                     />
                   </div>

@@ -715,6 +715,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{seriesId}/context", c.getSeriesContext)
 			r.Get("/{seriesId}/continue", c.getSeriesContinueEndpoint)
 			r.Get("/{seriesId}/comicinfo.zip", c.exportSeriesComicInfoArchive)
+			r.Post("/{seriesId}/comicinfo", c.writeSeriesComicInfo)
 		})
 
 		r.Route("/books", func(r chi.Router) {
@@ -722,6 +723,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/bulk-progress/sync", c.bulkSyncBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
 			r.Get("/{bookId}/comicinfo.xml", c.exportBookComicInfo)
+			r.Post("/{bookId}/comicinfo", c.writeBookComicInfo)
 			r.Get("/{bookId}/file", c.serveBookFile)
 			r.Get("/{bookId}/bookmarks", c.listReadingBookmarks)
 			r.Post("/{bookId}/bookmarks", c.upsertReadingBookmark)

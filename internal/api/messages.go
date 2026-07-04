@@ -34,6 +34,9 @@ var apiMessages = map[string]map[string]string{
 		"maintenance.file_identity_rebuild_started": "文件身份索引重建已启动",
 		"config.saved":                          "配置已成功保存。大部分设定会立刻生效。",
 		"recommendations.ai_grouping_submitted": "AI 分组审核任务已提交至后台",
+
+		"comicinfo.write.unsupported": "该格式不支持写入元数据（仅 cbz/zip 可写，rar/cbr 会跳过）。",
+		"comicinfo.write.failed":      "写入 ComicInfo 到归档失败。",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -61,6 +64,9 @@ var apiMessages = map[string]map[string]string{
 		"maintenance.file_identity_rebuild_started": "File identity index rebuild started",
 		"config.saved":                          "Configuration saved. Most settings take effect immediately.",
 		"recommendations.ai_grouping_submitted": "AI grouping review task submitted to the background",
+
+		"comicinfo.write.unsupported": "This format cannot embed metadata (only cbz/zip are writable; rar/cbr are skipped).",
+		"comicinfo.write.failed":      "Failed to write ComicInfo into the archive.",
 	},
 }
 

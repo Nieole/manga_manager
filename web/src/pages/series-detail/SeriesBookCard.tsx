@@ -18,6 +18,7 @@ interface SeriesBookCardProps {
   onCardClick: (book: Book) => void;
   onQuickToggleRead: (book: Book, makeRead: boolean) => void;
   onExportComicInfo: (book: Book) => void;
+  onWriteComicInfo: (book: Book) => void;
   onCopyPath: (book: Book) => void;
 }
 
@@ -28,6 +29,7 @@ export function SeriesBookCard({
   onCardClick,
   onQuickToggleRead,
   onExportComicInfo,
+  onWriteComicInfo,
   onCopyPath,
 }: SeriesBookCardProps) {
   const { t } = useI18n();
@@ -132,6 +134,17 @@ export function SeriesBookCard({
                     className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white"
                   >
                     {t('series.book.exportComicInfo')}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      onWriteComicInfo(book);
+                    }}
+                    className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
+                  >
+                    {t('series.book.writeComicInfo')}
                   </button>
                   <button
                     onClick={(e) => {

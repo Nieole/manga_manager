@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（ComicInfo 写回归档 · 收藏者体验⑥）
+
+#### 新增
+- 支持把库内元数据**写回归档内的 ComicInfo.xml**，让收藏者精心刮削/修订的元数据能烧进自己的文件、换软件也带得走：
+  - 系列书卡「⋯」菜单新增「写入 ComicInfo 到文件」（单本）；系列详情工具条新增「写入 ComicInfo 到所有归档」（整系列，返回 写入/跳过/失败 计数）。
+  - 均**二次确认**后触发（修改用户原始文件）。
+- 后端新增 `parser.WriteComicInfoIntoArchive`：**仅 cbz/zip 可写**（rar/cbr 返回 `ErrArchiveNotWritable` 并跳过，Go 无 rar 写库）；采用「同目录临时文件 + 原子 rename 覆盖」，中途失败不损坏原文件，**不备份**（按确认策略）；替换已存在的 ComicInfo.xml，保留其余页条目原头部。Windows 下 rename 前先关闭源句柄。
+- 端点 `POST /api/books/{id}/comicinfo`（单本）与 `POST /api/series/{id}/comicinfo`（整系列），复用导出路径的 `buildComicInfoForBook` 构造。错误文案经 `apiText` 本地化（`comicinfo.write.unsupported` / `comicinfo.write.failed`）。
+
+#### 验证
+- 新增 `TestWriteComicInfoIntoArchiveAddsAndReplaces`（新增/替换不重复、保留页条目、可正常重开）、`TestWriteComicInfoIntoArchiveRejectsRar`；`go build`、`go vet`、`go test ./internal/parser ./internal/api` 全绿；前端 `npm run lint`（0）、`npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（资源库筛选补充：阅读状态/评分/进度/加入时间 · 收藏者体验③）
 
 #### 新增
