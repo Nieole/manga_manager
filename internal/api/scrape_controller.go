@@ -24,6 +24,29 @@ import (
 
 const scrapeRateLimitDelay = 500 * time.Millisecond
 
+// 以下 helper 用常量格式串按 locale 生成带占位的刮削响应文案（默认中文，en-US 输出英文），
+// 满足 go vet 的常量格式检查（若把 %s/%v 格式串入表再 Sprintf，vet 会报 non-constant format string）。
+func scrapeNotFoundMsg(locale, providerName string) string {
+	if locale == "en-US" {
+		return fmt.Sprintf("No matching entry found on %s", providerName)
+	}
+	return fmt.Sprintf("未在 %s 上找到匹配的条目", providerName)
+}
+
+func scrapeSearchFailedMsg(locale, providerName string, err error) string {
+	if locale == "en-US" {
+		return fmt.Sprintf("%s search failed: %v", providerName, err)
+	}
+	return fmt.Sprintf("%s 搜索失败: %v", providerName, err)
+}
+
+func scrapeFailedMsg(locale, providerName string, err error) string {
+	if locale == "en-US" {
+		return fmt.Sprintf("%s scrape failed: %v", providerName, err)
+	}
+	return fmt.Sprintf("%s 刮削失败: %v", providerName, err)
+}
+
 // getProvider 根据名称返回对应的 Provider 实例
 func (c *Controller) getProvider(name string) metadata.Provider {
 	if c.providerFactory != nil {
@@ -62,12 +85,12 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 
 	result, err := provider.FetchSeriesMetadata(requestContextWithLocale(r), query)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s search failed: %v", provider.Name(), err))
+		jsonError(w, http.StatusInternalServerError, scrapeSearchFailedMsg(requestLocale(r), provider.Name(), err))
 		return
 	}
 
 	if result == nil {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"found": false, "message": fmt.Sprintf("未在 %s 上找到匹配的条目", provider.Name())})
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"found": false, "message": scrapeNotFoundMsg(requestLocale(r), provider.Name())})
 		return
 	}
 
@@ -124,7 +147,7 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 
 	results, total, err := provider.SearchMetadata(requestContextWithLocale(r), searchTitle, limit, offset)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 搜索失败: %v", provider.Name(), err))
+		jsonError(w, http.StatusInternalServerError, scrapeSearchFailedMsg(requestLocale(r), provider.Name(), err))
 		return
 	}
 
@@ -398,7 +421,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 
 	result, err := provider.FetchSeriesMetadata(requestContextWithLocale(r), searchTitle)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("%s 刮削失败: %v", provider.Name(), err))
+		jsonError(w, http.StatusInternalServerError, scrapeFailedMsg(requestLocale(r), provider.Name(), err))
 		return
 	}
 

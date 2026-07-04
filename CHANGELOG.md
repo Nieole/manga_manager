@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（刮削响应参数化文案 i18n · M65 续批）
+
+#### 国际化
+- `scrape_controller.go`:新增 3 个 locale-aware 格式 helper(`scrapeNotFoundMsg` / `scrapeSearchFailedMsg` / `scrapeFailedMsg`,常量格式串按 locale 选中/英,满足 go vet 非常量格式检查),替换 4 处 `fmt.Sprintf` 响应文案(`未在 %s 找到`、`%s 搜索失败`×2、`%s 刮削失败`)。顺带统一此前一处已英文、另一处为中文的"搜索失败"不一致。默认(无 Accept-Language)仍中文,`en-US` 输出英文。
+- 至此后端**同步 HTTP 响应**的用户可见中文基本收口(校验 / toast / 错误)。剩余仅:①koreader 设备/冲突/未匹配**建议 helper**(带 `%d`,需同法加 locale 格式串);②写入 `koreader_sync_events` 的**持久化诊断文案**(须写码 + 读时渲染,属架构改动)。二者列为 M65 收尾切片。
+
+#### 验证
+- `go vet`、`go test ./internal/api` 通过(无测试断言这些字面量)。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（维护/系统配置/推荐 静态响应 i18n · M65 续批）
 
 #### 国际化
