@@ -6,8 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import { apiClient } from '../api/client';
+import { apiClient, isCancel } from '../api/client';
 import { ArrowDown, ArrowUp, BookOpen, ListOrdered, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -101,7 +100,7 @@ export default function ReadingLists() {
       signal: controller.signal,
     }).then((res) => setSeriesResults(res.data.hits || []))
       .catch((error) => {
-        if (!axios.isCancel(error)) setSeriesResults([]);
+        if (!isCancel(error)) setSeriesResults([]);
       });
     return () => controller.abort();
   }, [seriesQuery]);

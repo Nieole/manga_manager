@@ -5,8 +5,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import axios from 'axios';
-import { apiClient } from '../../api/client';
+import { apiClient, isAxiosError } from '../../api/client';
 
 export type ProgressSyncStatus = 'idle' | 'syncing' | 'synced' | 'offline-queued';
 
@@ -98,7 +97,7 @@ export function useReaderProgressIndicator({
       })
       .catch((err) => {
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
-        if (!axios.isAxiosError(err) || !err.response) {
+        if (!isAxiosError(err) || !err.response) {
           queueOfflineReaderProgress(pageNumber);
           setStatus('offline-queued');
         } else if (inFlightRef.current === 0) {

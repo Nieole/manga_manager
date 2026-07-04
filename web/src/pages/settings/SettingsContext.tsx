@@ -5,8 +5,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import axios from 'axios';
-import { apiClient } from '../../api/client';
+import { apiClient, isAxiosError } from '../../api/client';
 import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
 import { useToast } from '../../components/ToastProvider';
 
@@ -442,7 +441,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         await fetchConfig();
       } catch (error) {
         console.error(error);
-        if (axios.isAxiosError(error) && error.response?.status === 422) {
+        if (isAxiosError(error) && error.response?.status === 422) {
           const nextValidation = error.response.data?.validation;
           if (nextValidation) setValidation(nextValidation);
           showToast(t('settings.toast.configInvalid'), 'error');
@@ -468,7 +467,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setLlmTestResult(res.data.response);
       showToast(t('settings.toast.llmTestSucceeded'), 'success');
     } catch (error: unknown) {
-      const message = axios.isAxiosError(error)
+      const message = isAxiosError(error)
         ? error.response?.data?.error || error.message || t('settings.toast.llmTestFallback')
         : t('settings.toast.llmTestFallback');
       setLlmTestResult(`${t('common.errorPrefix')}: ${message}`);
@@ -508,7 +507,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       await Promise.all([fetchConfig(), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
-      if (axios.isAxiosError(error) && error.response?.status === 422) {
+      if (isAxiosError(error) && error.response?.status === 422) {
         const nextValidation = error.response.data?.validation;
         if (nextValidation) setKOReaderValidation(nextValidation);
         showToast(t('settings.toast.koreaderInvalid'), 'error');
@@ -547,7 +546,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       await Promise.all([fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
-      if (axios.isAxiosError(error) && error.response?.status === 422) {
+      if (isAxiosError(error) && error.response?.status === 422) {
         const nextValidation = error.response.data?.validation;
         if (nextValidation) setKOReaderValidation(nextValidation);
       }

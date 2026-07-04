@@ -5,8 +5,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import axios from 'axios';
-import { apiClient } from '../../api/client';
+import { apiClient, isAxiosError } from '../../api/client';
 import type { ReaderBookInfo } from './types';
 
 export interface SiblingBook {
@@ -96,7 +95,7 @@ export function useReaderSiblings({
       })
       .catch((err) => {
         if (cancelled) return;
-        if (!axios.isAxiosError(err) || err.response?.status !== 404) {
+        if (!isAxiosError(err) || err.response?.status !== 404) {
           console.error('Failed to load previous book', err);
         }
         setPrev(null);
@@ -108,7 +107,7 @@ export function useReaderSiblings({
       })
       .catch((err) => {
         if (cancelled) return;
-        if (!axios.isAxiosError(err) || err.response?.status !== 404) {
+        if (!isAxiosError(err) || err.response?.status !== 404) {
           console.error('Failed to load next book', err);
         }
         setNext(null);

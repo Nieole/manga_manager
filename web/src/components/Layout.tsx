@@ -7,8 +7,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, lazy, Suspense, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import axios from 'axios';
-import { apiClient } from '../api/client';
+import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
@@ -222,7 +221,7 @@ export default function Layout() {
     };
 
     const extractErrorMessage = (error: unknown, fallback: string) => {
-        if (axios.isAxiosError(error)) {
+        if (isAxiosError(error)) {
             const validationIssues = error.response?.data?.validation?.issues;
             if (Array.isArray(validationIssues) && validationIssues.length > 0) {
                 return validationIssues.map((issue: { field: string; message: string }) => `${issue.field}: ${issue.message}`).join('\n');

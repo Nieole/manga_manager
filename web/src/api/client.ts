@@ -22,6 +22,11 @@ apiClient.interceptors.request.use((config) => {
   return config
 })
 
+// 从 client 统一再导出 axios 的静态类型守卫，供各处判断错误/取消，避免消费方直接 import axios
+// （可用 ESLint no-restricted-imports 收口，只允许 client.ts / apiAuth.ts 直接依赖 axios）。
+export const isAxiosError = axios.isAxiosError
+export const isCancel = axios.isCancel
+
 // getApiErrorMessage 从各类错误中提取用户可读消息：优先后端 { error } 字段，其次 axios/Error 的 message，
 // 最后回退到调用方给定的 fallback。此前该逻辑在 9 个文件中各有一份完全等价的副本，现统一至此。
 export function getApiErrorMessage(error: unknown, fallback: string): string {

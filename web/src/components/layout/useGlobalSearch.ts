@@ -5,8 +5,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { apiClient } from '../../api/client';
-import axios from 'axios';
+import { apiClient, isCancel } from '../../api/client';
 import type { SearchHit } from './types';
 
 export function useGlobalSearch() {
@@ -38,7 +37,7 @@ export function useGlobalSearch() {
           setSelectedIndex(0);
         })
         .catch((err) => {
-          if (!axios.isCancel(err)) {
+          if (!isCancel(err)) {
             console.error('Search failed:', err);
           }
         });

@@ -5,8 +5,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import axios from 'axios';
-import { apiClient } from '../../api/client';
+import { apiClient, isAxiosError } from '../../api/client';
 import type { ReaderBookCache } from './usePageImageCache';
 import type { Page, ReaderBookInfo } from './types';
 
@@ -89,7 +88,7 @@ export function useReaderBookData({
         return cache.nextBookId;
       })
       .catch((err) => {
-        if (!axios.isAxiosError(err) || err.response?.status !== 404) {
+        if (!isAxiosError(err) || err.response?.status !== 404) {
           console.error('Failed to load next book', err);
         }
         cache.nextBookId = null;
@@ -181,7 +180,7 @@ export function useReaderBookData({
     }).catch((err) => {
       if (cancelled || currentBookIdRef.current !== targetBookId) return;
       console.error('Failed to load book data', err);
-      const message = axios.isAxiosError(err)
+      const message = isAxiosError(err)
         ? err.response?.data?.error || err.message || tRef.current('reader.error.loadFailed')
         : tRef.current('reader.error.loadFailed');
       setLoadError(message);

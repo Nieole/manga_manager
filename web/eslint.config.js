@@ -26,6 +26,17 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
+      // 统一走 src/api/client 的 apiClient 实例（含鉴权 X-API-Token 与 locale 头拦截器）。
+      // 直接 import axios 的值会绕过这些横切逻辑，故禁止；type 导入（如 AxiosResponse）无运行时、放行。
+      // 基础设施文件在下方 override 中豁免。用 typescript-eslint 版本以支持 allowTypeImports。
+      'no-restricted-imports': 'off',
+      '@typescript-eslint/no-restricted-imports': ['error', {
+        paths: [{
+          name: 'axios',
+          allowTypeImports: true,
+          message: '请从 src/api/client 导入 apiClient / isAxiosError / isCancel，不要直接 import axios 的值（否则绕过统一实例的鉴权与 locale 拦截器）。',
+        }],
+      }],
       'react-hooks/config': 'off',
       'react-hooks/error-boundaries': 'off',
       'react-hooks/gating': 'off',
@@ -46,6 +57,13 @@ export default defineConfig([
     files: ['src/**/*Provider.tsx', 'src/**/*Context.tsx'],
     rules: {
       'react-refresh/only-export-components': 'off',
+    },
+  },
+  {
+    // 基础设施文件：client 需 axios.create/isAxiosError，apiAuth 需 axios.interceptors；豁免 axios 禁令。
+    files: ['src/api/client.ts', 'src/utils/apiAuth.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': 'off',
     },
   },
 ])

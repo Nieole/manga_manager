@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（axios 收口与 lint 约束 · M46 收尾）
+
+#### 重构
+- `client.ts` 再导出 `isAxiosError`/`isCancel`;把 7 个消费文件里的 `axios.isAxiosError`/`axios.isCancel` 改为从 client 导入。至此**仅 `client.ts` 与 `apiAuth.ts`(基础设施)直接 import axios**。
+- `eslint.config.js` 新增 `@typescript-eslint/no-restricted-imports` 禁止直接 import axios 的**值**(强制走 apiClient),但放行 `type` 导入(如 `AxiosResponse`,无运行时);`client.ts`/`apiAuth.ts` 经 override 豁免。防止后续代码绕过统一实例的鉴权/locale 拦截器。
+
+#### 验证
+- `npm run lint`(0 problems;实测:值导入被拦、type 导入放行)、`npm run build`、`npm run test` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（统一 axios 客户端迁移 · M46 完整版）
 
 #### 重构
