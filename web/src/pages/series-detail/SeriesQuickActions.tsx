@@ -6,6 +6,7 @@
 
 import { Download, Edit, FileDown, FolderHeart, FolderOpen, RefreshCw, Save } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
+import type { ScrapeProvider } from '../../hooks/useScrapeProviders';
 
 interface SeriesQuickActionsProps {
   onEdit: () => void;
@@ -15,6 +16,7 @@ interface SeriesQuickActionsProps {
   onOpenDirectory: () => void;
   onRescan: () => void;
   onScrape: (provider: string) => void;
+  providers: ScrapeProvider[];
   scrapeMenuOpen: boolean;
   onToggleScrapeMenu: () => void;
   onCloseScrapeMenu: () => void;
@@ -31,6 +33,7 @@ export function SeriesQuickActions({
   onOpenDirectory,
   onRescan,
   onScrape,
+  providers,
   scrapeMenuOpen,
   onToggleScrapeMenu,
   onCloseScrapeMenu,
@@ -108,22 +111,26 @@ export function SeriesQuickActions({
         {scrapeMenuOpen && !isScraping && (
           <>
             <div className="fixed inset-0 z-40" onClick={onCloseScrapeMenu} />
-            <div className="absolute right-0 top-full mt-2 w-48 bg-komgaSurface border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="absolute right-0 top-full mt-2 w-52 bg-komgaSurface border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200">
               <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-white/5 bg-komgaSurface/50">
                 {t('series.header.pickSource')}
               </div>
-              <button
-                onClick={() => onScrape('bangumi')}
-                className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors"
-              >
-                {t('series.header.bangumiRecommended')}
-              </button>
-              <button
-                onClick={() => onScrape('llm')}
-                className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-white/5"
-              >
-                {t('series.header.ollama')}
-              </button>
+              {(providers.length > 0
+                ? providers
+                : [
+                    { id: 'bangumi', name: 'Bangumi', description: '' },
+                    { id: 'llm', name: t('series.header.ollama'), description: '' },
+                  ]
+              ).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onScrape(p.id)}
+                  title={p.description}
+                  className="w-full text-left px-4 py-3 text-sm font-medium text-gray-100 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-white/5 first:border-t-0"
+                >
+                  {p.name}
+                </button>
+              ))}
             </div>
           </>
         )}

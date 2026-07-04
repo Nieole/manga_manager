@@ -22,6 +22,7 @@ import { LibraryScrapeModal } from './LibraryScrapeModal';
 import { TransferConfirmModal } from './TransferConfirmModal';
 import { type PaginationMode, type Series, type ViewMode } from './types';
 import { useLibraryFilters, supportsCursorPagination, hasAdvancedFilters } from './hooks/useLibraryFilters';
+import { useScrapeProviders } from '../../hooks/useScrapeProviders';
 import { useLibrarySeries } from './hooks/useLibrarySeries';
 import { useLibrarySelection } from './hooks/useLibrarySelection';
 import { useLibraryKeyboard } from './hooks/useLibraryKeyboard';
@@ -45,6 +46,7 @@ export default function LibraryPage() {
   // 资料库页面的筛选状态需要同时满足三件事：URL 可回放、后端查询可复现、浏览器刷新后用户选择不丢失。
   // 因此筛选、排序、分页和智能视图都集中在 hook 层管理，页面只负责把它们编排到工具栏、列表和分页控件。
   const filters = useLibraryFilters({ libId });
+  const scrapeProviders = useScrapeProviders();
   const {
     activeTag,
     activeAuthor,
@@ -214,7 +216,7 @@ export default function LibraryPage() {
   const { setScrapeMenuOpenId, startScrape } = scraping;
   const handleOpenScrapeMenu = useCallback((s: Series) => setScrapeMenuOpenId(s.id), [setScrapeMenuOpenId]);
   const handleCloseScrapeMenu = useCallback(() => setScrapeMenuOpenId(null), [setScrapeMenuOpenId]);
-  const handleChooseScrapeProvider = useCallback((s: Series, provider: 'bangumi' | 'llm') => startScrape(s, provider), [startScrape]);
+  const handleChooseScrapeProvider = useCallback((s: Series, provider: string) => startScrape(s, provider), [startScrape]);
 
   // ===== 转移 =====
   const transfer = useLibraryTransfer({
@@ -375,6 +377,7 @@ export default function LibraryPage() {
         onOpenScrapeMenu={handleOpenScrapeMenu}
         onCloseScrapeMenu={handleCloseScrapeMenu}
         onChooseScrapeProvider={handleChooseScrapeProvider}
+        scrapeProviders={scrapeProviders}
         onLoadMore={() => {
           if (paginationMode === 'infinite' && page < totalPages) setPage(page + 1);
         }}

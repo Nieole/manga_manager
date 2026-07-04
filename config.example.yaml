@@ -50,6 +50,11 @@ llm:
     model: qwen2.5
     api_key: ""        # 切勿把真实密钥提交到版本库 / never commit a real API key
     timeout: 120
+scrapers:
+    # AniList / MangaDex 免密钥，无需配置。
+    # MyAnimeList 需要 Client ID，Comic Vine 需要 API Key；留空则对应刮削源不可用。
+    mal_client_id: ""       # 切勿把真实凭据提交到版本库 / never commit a real credential
+    comicvine_api_key: ""   # 切勿把真实密钥提交到版本库 / never commit a real API key
 protocols:
     opds:
         enabled: false

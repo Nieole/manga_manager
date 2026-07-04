@@ -8,6 +8,7 @@ import { useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { LibraryCard } from './LibraryCard';
 import type { ExternalSeriesStatus, Series, ViewMode } from './types';
+import type { ScrapeProvider } from '../../hooks/useScrapeProviders';
 
 interface LibraryGridProps {
   series: Series[];
@@ -27,7 +28,8 @@ interface LibraryGridProps {
   onRescan: (event: React.MouseEvent, series: Series) => void;
   onOpenScrapeMenu: (series: Series) => void;
   onCloseScrapeMenu: () => void;
-  onChooseScrapeProvider: (series: Series, provider: 'bangumi' | 'llm') => void;
+  onChooseScrapeProvider: (series: Series, provider: string) => void;
+  scrapeProviders: ScrapeProvider[];
   onLoadMore: () => void;
 }
 
@@ -50,6 +52,7 @@ export function LibraryGrid({
   onOpenScrapeMenu,
   onCloseScrapeMenu,
   onChooseScrapeProvider,
+  scrapeProviders,
   onLoadMore,
 }: LibraryGridProps) {
   const { t } = useI18n();
@@ -116,6 +119,7 @@ export function LibraryGrid({
             onOpenScrapeMenu={onOpenScrapeMenu}
             onCloseScrapeMenu={onCloseScrapeMenu}
             onChooseScrapeProvider={onChooseScrapeProvider}
+            scrapeProviders={scrapeProviders}
           />
         ))}
       </div>

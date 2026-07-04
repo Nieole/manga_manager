@@ -1463,8 +1463,21 @@ func TestMetadataLookupValidationHandlers(t *testing.T) {
 	if err := json.NewDecoder(providersRec.Body).Decode(&providers); err != nil {
 		t.Fatalf("decode providers failed: %v", err)
 	}
-	if len(providers) != 2 || providers[0]["id"] != "bangumi" {
-		t.Fatalf("unexpected providers payload: %+v", providers)
+	if providers[0]["id"] != "bangumi" {
+		t.Fatalf("expected first provider to be bangumi: %+v", providers)
+	}
+	providerIDs := map[string]bool{}
+	for _, p := range providers {
+		providerIDs[p["id"]] = true
+	}
+	for _, want := range []string{"bangumi", "anilist", "mangadex", "llm"} {
+		if !providerIDs[want] {
+			t.Fatalf("expected provider %q present, got %+v", want, providers)
+		}
+	}
+	// 未配置密钥时 MyAnimeList / Comic Vine 不应出现。
+	if providerIDs["myanimelist"] || providerIDs["comicvine"] {
+		t.Fatalf("key-gated providers should be absent without config: %+v", providers)
 	}
 
 	searchRec := httptest.NewRecorder()

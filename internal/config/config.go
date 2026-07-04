@@ -97,6 +97,12 @@ type Config struct {
 		APIKey      string `yaml:"api_key" json:"api_key"`           // Optional API Key for OpenAI/DeepSeek
 		Timeout     int    `yaml:"timeout" json:"timeout"`           // 请求超时时间（秒），默认 120
 	} `yaml:"llm" json:"llm"`
+	// Scrapers 存放需要凭据的外部元数据源密钥。AniList / MangaDex 免密钥，无需在此配置；
+	// MyAnimeList 需要 Client ID，Comic Vine 需要 API Key，未填则对应源在 listProviders 中不出现。
+	Scrapers struct {
+		MALClientID     string `yaml:"mal_client_id" json:"mal_client_id"`
+		ComicVineAPIKey string `yaml:"comicvine_api_key" json:"comicvine_api_key"`
+	} `yaml:"scrapers" json:"scrapers"`
 	Protocols struct {
 		OPDS struct {
 			Enabled bool `yaml:"enabled" json:"enabled"`
@@ -140,6 +146,12 @@ func MaskSecrets(cfg Config) Config {
 	if cfg.Server.Auth.Token != "" {
 		cfg.Server.Auth.Token = SecretMask
 	}
+	if cfg.Scrapers.ComicVineAPIKey != "" {
+		cfg.Scrapers.ComicVineAPIKey = SecretMask
+	}
+	if cfg.Scrapers.MALClientID != "" {
+		cfg.Scrapers.MALClientID = SecretMask
+	}
 	return cfg
 }
 
@@ -154,6 +166,12 @@ func RestoreMaskedSecrets(incoming *Config, current Config) {
 	}
 	if incoming.Server.Auth.Token == SecretMask {
 		incoming.Server.Auth.Token = current.Server.Auth.Token
+	}
+	if incoming.Scrapers.ComicVineAPIKey == SecretMask {
+		incoming.Scrapers.ComicVineAPIKey = current.Scrapers.ComicVineAPIKey
+	}
+	if incoming.Scrapers.MALClientID == SecretMask {
+		incoming.Scrapers.MALClientID = current.Scrapers.MALClientID
 	}
 }
 

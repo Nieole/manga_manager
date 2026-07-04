@@ -4,6 +4,27 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（新增刮削源：AniList / MangaDex / MyAnimeList / Comic Vine · P0 第 2 项）
+
+#### 新增
+- 元数据刮削从「仅 Bangumi + LLM」扩展到 **6 个来源**，覆盖中日与欧美/多语言库：
+  - **AniList**（`internal/metadata/anilist.go`，GraphQL，免密钥）：英文/罗马音/原名、简介（去 HTML）、封面、评分（0–100→0–10）、genres+高 rank 标签、staff 作者角色、卷数、状态、siteUrl。
+  - **MangaDex**（`mangadex.go`，REST，免密钥）：多语言标题、简介、封面（uploads CDN）、标签、author/artist 去重、状态（原生小写直用）。
+  - **MyAnimeList**（`myanimelist.go`，需 `scrapers.mal_client_id`）：标题、简介、封面、mean 评分、genres、作者、卷数、状态映射。
+  - **Comic Vine**（`comicvine.go`，需 `scrapers.comicvine_api_key`）：欧美 comics 卷元数据、出版社、封面、期数、site_detail_url。
+  - 四者均实现现有 `Provider` 接口（`SearchMetadata`/`FetchSeriesMetadata`），复用 429/5xx 指数退避重试；结果照旧进**元数据审核队列**，不直接改库。
+- `getProvider` 注册四源；`listProviders` 动态返回：AniList/MangaDex 恒有，**MyAnimeList/Comic Vine 仅在配置了对应密钥时出现**（否则不可选）。`metadataDefaultConfidence` 为新源补默认置信度。
+- 配置：`config.yaml` 新增 `scrapers.{mal_client_id, comicvine_api_key}`，两者经 `MaskSecrets`/`RestoreMaskedSecrets` 脱敏回填，绝不回显明文；`config.example.yaml` 同步。
+- 前端：新增 `useScrapeProviders`（拉 `/api/metadata/providers`，全局缓存）；系列页工具条与资料库卡片的刮削菜单**改为按后端声明动态渲染**（不再硬编码 bangumi/llm）。系列页刮削判定由 `=== 'bangumi'` 改为 `!== 'llm'`，使所有外部源统一走「搜索候选→人工挑选」弹窗（后端 scrape-search/apply 本就与 provider 无关）。
+
+#### 说明
+- 侧栏「整库批量刮削」仍默认 Bangumi（批量作业不走候选挑选流程）；MAL/Comic Vine 需用户在设置里填入各自凭据后方可用。
+
+#### 验证
+- `go build`、`go vet`、`go test ./internal/api ./internal/config ./internal/metadata` 全绿（更新 `TestMetadataLookupValidationHandlers` 断言新的动态 provider 列表 + 密钥门控）；前端 `npm run lint`（0）、`npm run build` 通过。4 个 provider 文件由并行子代理生成，经 gofmt/vet 校验。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（ComicInfo 写回归档 · 收藏者体验⑥）
 
 #### 新增

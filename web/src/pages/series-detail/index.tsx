@@ -17,6 +17,7 @@ import AddToCollectionModal from '../../components/AddToCollectionModal';
 import { useToast } from '../../components/ToastProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { apiClient, getApiErrorMessage } from '../../api/client';
+import { useScrapeProviders } from '../../hooks/useScrapeProviders';
 
 import { SeriesHeroBar } from './SeriesHeroBar';
 import { SeriesQuickActions } from './SeriesQuickActions';
@@ -52,6 +53,7 @@ export default function SeriesDetailPage() {
   const navigate = useNavigate();
   const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
   const { showToast } = useToast();
+  const scrapeProviders = useScrapeProviders();
 
   // 系列详情页把多个后端端点折叠为一个上下文：系列主体、书籍、标签、作者、关系、待审核元数据和继续阅读信息。
   // 页面组件只消费 ctx，避免各个子面板各自请求导致刷新顺序不一致或保存后局部状态过期。
@@ -295,6 +297,7 @@ export default function SeriesDetailPage() {
               onOpenDirectory={actions.openDirectory}
               onRescan={actions.rescan}
               onScrape={scrape.handleScrape}
+              providers={scrapeProviders}
               scrapeMenuOpen={scrape.scrapeMenuOpen}
               onToggleScrapeMenu={() => scrape.setScrapeMenuOpen((v) => !v)}
               onCloseScrapeMenu={() => scrape.setScrapeMenuOpen(false)}

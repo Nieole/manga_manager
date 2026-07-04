@@ -41,7 +41,9 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       if (!seriesId) return;
       setScrapeMenuOpen(false);
 
-      if (providerKey === 'bangumi') {
+      // 除 LLM 直接推理落库外，所有外部数据源（Bangumi/AniList/MangaDex/MyAnimeList/Comic Vine）
+      // 都走“搜索候选 → 人工挑选”弹窗流程，后端 scrape-search/apply 与 provider 无关。
+      if (providerKey !== 'llm') {
         setIsScraping(true);
         try {
           const res = await apiClient.get(`/api/series/${seriesId}/scrape-search?provider=${providerKey}`);

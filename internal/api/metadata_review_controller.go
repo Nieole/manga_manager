@@ -275,6 +275,12 @@ func metadataDefaultConfidence(providerName string) float64 {
 	switch name {
 	case "bangumi":
 		return 0.9
+	case "anilist", "myanimelist", "mal":
+		return 0.85
+	case "mangadex":
+		return 0.8
+	case "comicvine", "comic vine", "comic-vine":
+		return 0.75
 	case "openai", "ollama", "llm", "openai-legacy":
 		return 0.6
 	}

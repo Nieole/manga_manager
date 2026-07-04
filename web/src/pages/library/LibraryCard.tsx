@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { Heart, ImageIcon, RefreshCw, Sparkles } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import type { ExternalSeriesStatus, Series, ViewMode } from './types';
+import type { ScrapeProvider } from '../../hooks/useScrapeProviders';
 
 interface LibraryCardProps {
   series: Series;
@@ -24,7 +25,8 @@ interface LibraryCardProps {
   onRescan: (event: React.MouseEvent, series: Series) => void;
   onOpenScrapeMenu: (series: Series) => void;
   onCloseScrapeMenu: () => void;
-  onChooseScrapeProvider: (series: Series, provider: 'bangumi' | 'llm') => void;
+  onChooseScrapeProvider: (series: Series, provider: string) => void;
+  scrapeProviders?: ScrapeProvider[];
   externalStatus?: ExternalSeriesStatus;
   externalSessionActive: boolean;
   /** 长按 / 右键打开操作面板（暂未实现，预留） */
@@ -49,11 +51,20 @@ export const LibraryCard = memo(function LibraryCard({
   onOpenScrapeMenu,
   onCloseScrapeMenu,
   onChooseScrapeProvider,
+  scrapeProviders,
   externalStatus,
   externalSessionActive,
   onLongPress,
 }: LibraryCardProps) {
   const { t, formatNumber } = useI18n();
+  // 刮削菜单项：后端声明的可用源；未拿到时回退 Bangumi + LLM，保证菜单永不空。
+  const scrapeMenuProviders =
+    scrapeProviders && scrapeProviders.length > 0
+      ? scrapeProviders
+      : [
+          { id: 'bangumi', name: t('series.header.bangumiRecommended'), description: '' },
+          { id: 'llm', name: t('series.header.ollama'), description: '' },
+        ];
   const [pressing, setPressing] = useState(false);
   const longPressTimer = useRef<number | null>(null);
 
@@ -245,28 +256,21 @@ export const LibraryCard = memo(function LibraryCard({
                     e.stopPropagation();
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onChooseScrapeProvider(s, 'bangumi');
-                    }}
-                    className="block w-full truncate px-2 py-3 text-center text-[13px] font-semibold text-gray-200 transition-colors hover:bg-komgaPrimary hover:text-white"
-                  >
-                    {t('series.header.bangumiRecommended')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onChooseScrapeProvider(s, 'llm');
-                    }}
-                    className="block w-full truncate border-t border-gray-800 px-2 py-3 text-center text-[13px] font-semibold text-gray-200 transition-colors hover:bg-komgaPrimary hover:text-white"
-                  >
-                    {t('series.header.ollama')}
-                  </button>
+                  {scrapeMenuProviders.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      title={p.description}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onChooseScrapeProvider(s, p.id);
+                      }}
+                      className="block w-full truncate border-t border-gray-800 px-2 py-3 text-center text-[13px] font-semibold text-gray-200 transition-colors first:border-t-0 hover:bg-komgaPrimary hover:text-white"
+                    >
+                      {p.name}
+                    </button>
+                  ))}
                 </div>
               </>
             )}
@@ -439,28 +443,21 @@ export const LibraryCard = memo(function LibraryCard({
             e.stopPropagation();
           }}
         >
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onChooseScrapeProvider(s, 'bangumi');
-            }}
-            className="block w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors cursor-pointer truncate"
-          >
-            {t('series.header.bangumiRecommended')}
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onChooseScrapeProvider(s, 'llm');
-            }}
-            className="block w-full text-center px-2 py-3 text-[13px] font-semibold text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors border-t border-gray-800 cursor-pointer truncate"
-          >
-            {t('series.header.ollama')}
-          </button>
+          {scrapeMenuProviders.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              title={p.description}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onChooseScrapeProvider(s, p.id);
+              }}
+              className="block w-full cursor-pointer truncate border-t border-gray-800 px-2 py-3 text-center text-[13px] font-semibold text-gray-200 transition-colors first:border-t-0 hover:bg-komgaPrimary hover:text-white"
+            >
+              {p.name}
+            </button>
+          ))}
         </div>
       )}
     </Link>
