@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -469,6 +470,64 @@ func (c *Controller) collectPageCacheStats() (pageCacheStatsResponse, error) {
 		return stats, nil
 	}
 	return stats, err
+}
+
+// enforcePageCacheBudget 在磁盘页缓存超过配置上限时，按最旧优先（FIFO by mtime）淘汰到低水位。
+// 由单个后台清道夫 goroutine 串行调用，无锁竞争、零请求路径开销。上限 <=0 表示不限，直接返回。
+func (c *Controller) enforcePageCacheBudget() {
+	cfg := c.currentConfig()
+	if !cfg.Cache.PageDiskCacheEnabled || cfg.Cache.PageDiskCacheMaxBytes <= 0 {
+		return
+	}
+	maxBytes := cfg.Cache.PageDiskCacheMaxBytes
+	dir := filepath.Clean(c.processedImageCacheDir())
+	if dir == "." || dir == string(filepath.Separator) || strings.TrimSpace(dir) == "" {
+		return // 根目录白名单，防误删
+	}
+
+	type cacheEntry struct {
+		path string
+		size int64
+		mod  time.Time
+	}
+	var entries []cacheEntry
+	var total int64
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil // 最佳努力，忽略不可达项
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		entries = append(entries, cacheEntry{path: path, size: info.Size(), mod: info.ModTime()})
+		total += info.Size()
+		return nil
+	})
+	if total <= maxBytes {
+		return
+	}
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
+	lowWater := maxBytes * 9 / 10 // 降到 90% 低水位，滞回避免每轮抖动
+	removed, freed := 0, int64(0)
+	for _, e := range entries {
+		if total <= lowWater {
+			break
+		}
+		if err := os.Remove(e.path); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				slog.Warn("Failed to evict page cache file", "path", e.path, "error", err)
+			}
+			continue
+		}
+		total -= e.size
+		removed++
+		freed += e.size
+	}
+	if removed > 0 {
+		slog.Info("Page cache budget enforced", "removed_files", removed, "freed_bytes", freed, "remaining_bytes", total)
+	}
 }
 
 func removeDirectoryContents(dir string) error {

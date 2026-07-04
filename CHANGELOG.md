@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（磁盘页缓存容量上限）
+
+#### 修复
+- `internal/config/config.go` / `internal/api/image_controller.go` / `controller.go`：磁盘页缓存新增容量上限与自动淘汰。新增配置项 `cache.page_disk_cache_max_bytes`（默认 2 GiB，0 归一化为默认，负数表示不限），并新增后台清道夫 goroutine（`startPageCacheJanitor`，每 5 分钟 + 启动兜底），超限时按最旧优先（mtime FIFO）淘汰到 90% 低水位。此前磁盘页缓存只增不减、只能手动清空，开启后会随阅读量无上限膨胀。
+
+#### 验证
+- `go vet`、`go test ./internal/config ./internal/api`、`go build ./...` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（卷话号解析抗噪）
 
 #### 修复

@@ -267,6 +267,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 
 	c.runBackground(c.startBroker)
 	c.runBackground(c.startDaemon)
+	c.runBackground(c.startPageCacheJanitor)
 
 	// 初始化文件系统监控
 	fw, err := scanner.NewFileWatcher(scan)
@@ -803,6 +804,22 @@ func (c *Controller) startBroker() {
 					close(s)
 				}
 			}
+		}
+	}
+}
+
+// startPageCacheJanitor 周期性地把磁盘页缓存修剪到配置的容量上限（单 goroutine 串行，经
+// runBackground 登记 backgroundWG，关闭时会退出）。
+func (c *Controller) startPageCacheJanitor() {
+	c.enforcePageCacheBudget() // 启动兜底
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.lifecycleDone():
+			return
+		case <-ticker.C:
+			c.enforcePageCacheBudget()
 		}
 	}
 }

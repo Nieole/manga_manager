@@ -67,6 +67,8 @@ type Config struct {
 	Cache struct {
 		Dir                  string `yaml:"dir" json:"dir"`
 		PageDiskCacheEnabled bool   `yaml:"page_disk_cache_enabled" json:"page_disk_cache_enabled"`
+		// PageDiskCacheMaxBytes 是磁盘页缓存的容量上限（字节）。0 归一化为默认值 2GiB，负数表示不限。
+		PageDiskCacheMaxBytes int64 `yaml:"page_disk_cache_max_bytes" json:"page_disk_cache_max_bytes"`
 	} `yaml:"cache" json:"cache"`
 	Logging struct {
 		Level string `yaml:"level" json:"level"`
@@ -115,11 +117,13 @@ type Config struct {
 const (
 	KOReaderMatchModeBinaryHash = "binary_hash"
 	KOReaderMatchModeFilePath   = "file_path"
-	KOReaderPathMatchDepth      = 2
-	LogLevelDebug               = "debug"
-	LogLevelInfo                = "info"
-	LogLevelWarn                = "warn"
-	LogLevelError               = "error"
+	// DefaultPageDiskCacheMaxBytes 磁盘页缓存默认容量上限（2 GiB）。
+	DefaultPageDiskCacheMaxBytes = 2 << 30
+	KOReaderPathMatchDepth       = 2
+	LogLevelDebug                = "debug"
+	LogLevelInfo                 = "info"
+	LogLevelWarn                 = "warn"
+	LogLevelError                = "error"
 )
 
 // SecretMask 是回显给前端的敏感字段占位符。前端把它原样存进只写输入框（如 <input type=password>），
@@ -194,6 +198,7 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Library.StorageProfile = StorageProfileAuto
 	cfg.Cache.Dir = "./data/cache"
 	cfg.Cache.PageDiskCacheEnabled = false
+	cfg.Cache.PageDiskCacheMaxBytes = DefaultPageDiskCacheMaxBytes
 	cfg.Logging.Level = LogLevelInfo
 	cfg.Scanner.Workers = 0 // 0 表示自动使用 runtime.NumCPU() * 2
 	cfg.Scanner.ScanProfile = ScanProfileMetadata
@@ -301,6 +306,10 @@ func NormalizeConfig(cfg *Config) {
 	NormalizeLibraryStorageConfig(cfg)
 	if cfg.Cache.Dir == "" {
 		cfg.Cache.Dir = "./data/cache"
+	}
+	// 0（未设置）归一化为默认上限，使既有配置也获得容量保护；负数表示显式不限。
+	if cfg.Cache.PageDiskCacheMaxBytes == 0 {
+		cfg.Cache.PageDiskCacheMaxBytes = DefaultPageDiskCacheMaxBytes
 	}
 	level := strings.ToLower(strings.TrimSpace(cfg.Logging.Level))
 	switch level {
