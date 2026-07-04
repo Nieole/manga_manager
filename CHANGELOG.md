@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（批量标记已读事务收敛批次）
+
+#### 修复
+- `internal/api/controller.go`：整系列/批量标记已读（`bulkUpdateSeriesProgress`、`bulkUpdateBookProgress`）改为按系列分组、每系列一个事务写入并只刷新一次 `series_stats`。此前每本书经 `SqlStore.UpdateBookProgress` 包装器隐式触发一次全系列统计重算 + 逐条自动提交，含 N 本书的系列约 3N 次提交、N 次 O(全书) 聚合，整体 O(N²)；现收敛为「一个事务 + 一次刷新」（用事务绑定的原始 `q.UpdateBookProgress` 绕开逐书刷新）。语义变化：整系列写入现为原子（任一本失败则整系列回滚、不计入 updated）。
+
+#### 验证
+- `go vet`、`go test ./internal/api`（含既有 `TestBulkUpdateSeriesProgressMarksAllBooksReadAndUnread` 等进度用例）通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（后端读路径性能批次）
 
 #### 修复

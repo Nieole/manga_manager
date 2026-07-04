@@ -3741,18 +3741,29 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 	}
 
 	ctx := r.Context()
-	updated := 0
+	// 按系列分组：每系列一个事务，内部逐书写入后只刷新一次 series_stats，
+	// 避免走 store 包装器时每本书都隐式触发一次全系列统计重算（O(N^2) 聚合 + 逐条 autocommit）。
+	booksBySeries := make(map[int64][]database.Book)
+	orderedSeries := make([]int64, 0)
 	for _, id := range req.BookIDs {
 		book, err := c.store.GetBook(ctx, id)
 		if err != nil {
 			slog.Error("Failed to load book for bulk progress update", "book_id", id, "error", err)
 			continue
 		}
-		if err := c.updateBookReadState(ctx, book, req.IsRead); err != nil {
-			slog.Error("Failed to bulk update book progress", "book_id", id, "error", err)
+		if _, seen := booksBySeries[book.SeriesID]; !seen {
+			orderedSeries = append(orderedSeries, book.SeriesID)
+		}
+		booksBySeries[book.SeriesID] = append(booksBySeries[book.SeriesID], book)
+	}
+	updated := 0
+	for _, seriesID := range orderedSeries {
+		books := booksBySeries[seriesID]
+		if err := c.applySeriesBooksReadStateTx(ctx, seriesID, books, req.IsRead); err != nil {
+			slog.Error("Failed to bulk update book progress", "series_id", seriesID, "error", err)
 			continue
 		}
-		updated++
+		updated += len(books)
 	}
 	if updated > 0 {
 		c.invalidateVolatileStatsCache("bulk_book_progress")
@@ -3780,13 +3791,14 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 			slog.Error("Failed to load books for bulk series progress update", "series_id", seriesID, "error", err)
 			continue
 		}
-		for _, book := range books {
-			if err := c.updateBookReadState(ctx, book, req.IsRead); err != nil {
-				slog.Error("Failed to bulk update series book progress", "series_id", seriesID, "book_id", book.ID, "error", err)
-				continue
-			}
-			updated++
+		if len(books) == 0 {
+			continue
 		}
+		if err := c.applySeriesBooksReadStateTx(ctx, seriesID, books, req.IsRead); err != nil {
+			slog.Error("Failed to bulk update series progress", "series_id", seriesID, "error", err)
+			continue
+		}
+		updated += len(books)
 	}
 	if updated > 0 {
 		c.invalidateVolatileStatsCache("bulk_series_progress")
@@ -3795,7 +3807,23 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk series progress update completed", "updated": updated})
 }
 
-func (c *Controller) updateBookReadState(ctx context.Context, book database.Book, isRead bool) error {
+// applySeriesBooksReadStateTx 在单个事务内更新一个系列下若干书的阅读状态，并在写完后只刷新一次
+// series_stats。用 tx 绑定的原始 q.UpdateBookProgress（绕开 SqlStore 包装器的逐书隐式全量刷新），
+// 把整系列标记已读/未读从「每本书 3 次 autocommit + 一次全量聚合」收敛为「一个事务 + 一次刷新」。
+func (c *Controller) applySeriesBooksReadStateTx(ctx context.Context, seriesID int64, books []database.Book, isRead bool) error {
+	return c.store.ExecTx(ctx, func(q *database.Queries) error {
+		for _, book := range books {
+			if err := applyBookReadStateTx(ctx, q, book, isRead); err != nil {
+				return err
+			}
+		}
+		return q.RefreshSeriesStats(ctx, seriesID)
+	})
+}
+
+// applyBookReadStateTx 在事务内更新单本书的阅读状态，语义与旧的 updateBookReadState 一致
+// （已读=最大页码并记阅读活动，未读=清空进度），但使用事务绑定的原始 q 方法、不做逐书统计刷新。
+func applyBookReadStateTx(ctx context.Context, q *database.Queries, book database.Book, isRead bool) error {
 	page := int64(1)
 	validPage := false
 	readAt := sql.NullTime{Valid: false}
@@ -3810,7 +3838,7 @@ func (c *Controller) updateBookReadState(ctx context.Context, book database.Book
 		readAt = sql.NullTime{Time: time.Now(), Valid: true}
 	}
 
-	if err := c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+	if err := q.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: page, Valid: validPage},
 		LastReadAt:   readAt,
 		ID:           book.ID,
@@ -3819,7 +3847,7 @@ func (c *Controller) updateBookReadState(ctx context.Context, book database.Book
 	}
 
 	if isRead && validPage {
-		if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page}); err != nil {
+		if err := q.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page}); err != nil {
 			slog.Error("Failed to log reading activity", "book_id", book.ID, "error", err)
 		}
 	}
