@@ -4484,3 +4484,74 @@ func TestBulkSyncBookProgressEmptyBody(t *testing.T) {
 		t.Fatalf("expected updated=0, got %d", resp.Updated)
 	}
 }
+
+func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	// 开启同步并允许设备自助注册
+	settingsBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": true,
+		"match_mode": "binary_hash",
+		"path_ignore_extension": false
+	}`)
+	settingsRec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(settingsRec, httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(settingsBody)))
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d body=%s", settingsRec.Code, settingsRec.Body.String())
+	}
+
+	// KOReader 客户端提交的 password 是用户密钥的 md5，与后续 x-auth-key 同值
+	password := koreader.HashKey("device-secret")
+	createBody := []byte(`{"username":"kobo","password":"` + password + `"}`)
+
+	createRec := httptest.NewRecorder()
+	controller.koreaderRegister(createRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader(createBody)))
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected create 201, got %d body=%s", createRec.Code, createRec.Body.String())
+	}
+	var created map[string]string
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create body failed: %v", err)
+	}
+	if created["username"] != "kobo" {
+		t.Fatalf("expected username kobo in response, got %+v", created)
+	}
+
+	// 用同一个 md5 作为 x-auth-key 应能通过认证
+	authReq := httptest.NewRequest(http.MethodGet, "/koreader/users/auth", nil)
+	authReq.Header.Set("x-auth-user", "kobo")
+	authReq.Header.Set("x-auth-key", password)
+	authRec := httptest.NewRecorder()
+	controller.koreaderAuth(authRec, authReq)
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
+	}
+
+	// 重复注册返回 402
+	dupRec := httptest.NewRecorder()
+	controller.koreaderRegister(dupRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader(createBody)))
+	if dupRec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected duplicate create 402, got %d body=%s", dupRec.Code, dupRec.Body.String())
+	}
+
+	// 关闭自助注册后应返回 403
+	closedBody := []byte(`{
+		"enabled": true,
+		"base_path": "/koreader",
+		"allow_registration": false,
+		"match_mode": "binary_hash",
+		"path_ignore_extension": false
+	}`)
+	closedSettingsRec := httptest.NewRecorder()
+	controller.updateKOReaderSettings(closedSettingsRec, httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(closedBody)))
+	if closedSettingsRec.Code != http.StatusOK {
+		t.Fatalf("expected settings save 200, got %d", closedSettingsRec.Code)
+	}
+	closedRec := httptest.NewRecorder()
+	controller.koreaderRegister(closedRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader([]byte(`{"username":"other","password":"`+password+`"}`))))
+	if closedRec.Code != http.StatusForbidden {
+		t.Fatalf("expected registration-disabled 403, got %d body=%s", closedRec.Code, closedRec.Body.String())
+	}
+}

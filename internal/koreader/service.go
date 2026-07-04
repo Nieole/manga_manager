@@ -22,12 +22,11 @@ import (
 )
 
 var (
-	ErrUnauthorized       = errors.New("unauthorized")
-	ErrForbidden          = errors.New("forbidden")
-	ErrRegistrationClosed = errors.New("registration closed")
-	ErrAlreadyConfigured  = errors.New("account already configured")
-	ErrAccountNotFound    = errors.New("account not found")
-	ErrProgressNotFound   = errors.New("progress not found")
+	ErrUnauthorized      = errors.New("unauthorized")
+	ErrForbidden         = errors.New("forbidden")
+	ErrAlreadyConfigured = errors.New("account already configured")
+	ErrAccountNotFound   = errors.New("account not found")
+	ErrProgressNotFound  = errors.New("progress not found")
 )
 
 type Service struct {
@@ -58,12 +57,26 @@ func NewService(store database.Store, cfg *config.Manager) *Service {
 	return &Service{store: store, cfg: cfg}
 }
 
-func (s *Service) Register(ctx context.Context, username, key string, allowRegistration bool) (database.KOReaderSettings, error) {
-	_ = ctx
-	_ = username
-	_ = key
-	_ = allowRegistration
-	return database.KOReaderSettings{}, ErrRegistrationClosed
+// RegisterDevice 实现 kosync /users/create 设备自助注册。KOReader 客户端提交的 password
+// 已经是用户密钥的 MD5 十六进制串（与后续请求头 x-auth-key 完全同值），服务端拿不到原始
+// 密钥，因此这里直接把该 MD5 作为 sync_key 存储；Authenticate 对这类“已是客户端哈希”的
+// sync_key 会做等值比对，从而让新注册设备立即可认证。用户名已存在时返回 ErrAlreadyConfigured。
+func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash string) (database.KOReaderAccount, error) {
+	username = strings.TrimSpace(username)
+	passwordHash = NormalizeSyncKey(passwordHash)
+	if username == "" || passwordHash == "" {
+		return database.KOReaderAccount{}, ErrUnauthorized
+	}
+	if _, err := s.store.GetKOReaderAccountByUsername(ctx, username); err == nil {
+		return database.KOReaderAccount{}, ErrAlreadyConfigured
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return database.KOReaderAccount{}, err
+	}
+	return s.store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
+		Username: username,
+		SyncKey:  passwordHash,
+		Enabled:  true,
+	})
 }
 
 func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database.KOReaderAccount, error) {
@@ -110,8 +123,11 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 		)
 		return database.KOReaderAccount{}, ErrForbidden
 	}
+	// 管理端创建的账号：sync_key 存的是原始密钥，客户端发送 md5(sync_key)，比对 HashKey(sync_key)。
+	// 设备自助注册的账号：sync_key 存的就是客户端提交的 md5（与 x-auth-key 同值），再做等值比对。
 	expectedKey := HashKey(account.SyncKey)
-	if expectedKey != creds.Key {
+	storedKey := NormalizeSyncKey(account.SyncKey)
+	if expectedKey != creds.Key && storedKey != creds.Key {
 		slog.Warn("KOReader authenticate rejected: client key mismatch",
 			"username", creds.Username,
 			"account_id", account.ID,

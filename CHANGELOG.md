@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（KOReader 设备自助注册 · M36）
+
+#### 修复
+- KOReader kosync `/users/create` 不再是死开关。此前无条件 403,`config.koreader.allow_registration` 与其 UI 开关完全无效。现按 kosync 协议实现设备自助注册:`Enabled=false→503`;`AllowRegistration=false→403`;非法体→400;新用户→`201 {"username"}`;用户名已存在→`402 {"code":402,"message":"Username is already registered."}`。
+- 存储/认证协调(免 schema 迁移):kosync 注册时客户端只发送 `md5(userKey)`(与后续 `x-auth-key` 同值),服务端拿不到原始密钥,故直接把该 md5 存为 `sync_key`;`Authenticate` 增加一条等值比对分支(`NormalizeSyncKey(sync_key)==x-auth-key`),与既有"管理端原始密钥 + `HashKey` 比对"路径并存且互不影响(原始密钥永不等于自身 md5)。移除随之失效的 `ErrRegistrationClosed`。
+
+#### 验证
+- `go vet`、`go test ./internal/koreader ./internal/api`(含新增 `TestKOReaderSelfRegistrationCreatesAuthenticatableAccount`:注册→用同一 md5 认证通过→重复注册 402→关闭后 403)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（OPDS 整卷下载 · M38）
 
 #### 新增

@@ -51,6 +51,12 @@ type ToggleKOReaderAccountRequest struct {
 	Enabled bool `json:"enabled"`
 }
 
+// KOReaderRegisterRequest 是 kosync POST /users/create 的请求体；password 为用户密钥的 md5 十六进制串。
+type KOReaderRegisterRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type KOReaderAccountResponse struct {
 	ID          int64   `json:"id"`
 	Username    string  `json:"username"`
@@ -727,13 +733,64 @@ func (c *Controller) koreaderRobots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
-	if !c.currentConfig().KOReader.Enabled {
+	cfg := c.currentConfig()
+	if !cfg.KOReader.Enabled {
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
 		return
 	}
-	writeKOReaderJSON(w, r, http.StatusForbidden, map[string]string{
-		"message": "Device self-registration is disabled. Create KOReader accounts from the admin UI.",
+	if !cfg.KOReader.AllowRegistration {
+		writeKOReaderJSON(w, r, http.StatusForbidden, map[string]interface{}{
+			"code":    http.StatusForbidden,
+			"message": "Registration is disabled. Create KOReader accounts from the admin UI.",
+		})
+		return
+	}
+
+	var req KOReaderRegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeKOReaderJSON(w, r, http.StatusBadRequest, map[string]interface{}{
+			"code":    http.StatusBadRequest,
+			"message": "Invalid request",
+		})
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	req.Password = strings.TrimSpace(req.Password)
+
+	account, err := c.koreader.RegisterDevice(r.Context(), req.Username, req.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, ksvc.ErrAlreadyConfigured):
+			writeKOReaderJSON(w, r, http.StatusPaymentRequired, map[string]interface{}{
+				"code":    http.StatusPaymentRequired,
+				"message": "Username is already registered.",
+			})
+		case errors.Is(err, ksvc.ErrUnauthorized):
+			writeKOReaderJSON(w, r, http.StatusBadRequest, map[string]interface{}{
+				"code":    http.StatusBadRequest,
+				"message": "Invalid request",
+			})
+		default:
+			slog.Error("KOReader self-registration failed", "username", req.Username, "error", err)
+			writeKOReaderJSON(w, r, http.StatusInternalServerError, map[string]interface{}{
+				"code":    http.StatusInternalServerError,
+				"message": "Unknown server error",
+			})
+		}
+		return
+	}
+
+	_ = c.store.CreateKOReaderSyncEvent(r.Context(), database.CreateKOReaderSyncEventParams{
+		Direction: "system",
+		Username:  account.Username,
+		Status:    "account_created",
+		Message:   "KOReader 设备自助注册创建账号",
 	})
+	slog.Info("KOReader self-registration succeeded",
+		"username", account.Username,
+		"client_ip", requestClientIP(r),
+	)
+	writeKOReaderJSON(w, r, http.StatusCreated, map[string]string{"username": account.Username})
 }
 
 func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
