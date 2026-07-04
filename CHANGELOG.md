@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（阅读器纯逻辑补单测）
+
+#### 测试
+- 新增 `web/src/pages/book-reader/helpers.test.ts`(13 例):覆盖 `getPagedImages`(双页配对含 LTR/RTL 顺序、单页模式、末页无配对)、`getScaleClasses`(各缩放模式 × 单/双页的 class 组合)、`getFilterStyle`(各插值滤镜→`imageRendering`)。这些是阅读器主流程的纯逻辑,此前无回归保护。前端测试总数 11→24。
+
+#### 验证
+- `npm run test`(3 文件 24 例)、`npm run lint`(0 problems)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（LibraryCard React.memo 加固 · M49 收尾）
 
 #### 性能
