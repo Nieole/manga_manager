@@ -5,19 +5,23 @@
  */
 
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, useRef, useMemo, lazy, Suspense, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
-import type { BrowseDirEntry, BrowseDrive, Library, SearchHit } from './layout/types';
+import type { Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
 import { withApiToken } from '../utils/apiAuth';
 import { useToast } from './ToastProvider';
 import { ShortcutsPanel } from './ShortcutsPanel';
-import { SidebarTaskBubble, type TaskBubbleEntry } from './SidebarTaskBubble';
+import { SidebarTaskBubble } from './SidebarTaskBubble';
+import { SidebarGroup, SidebarLink } from './layout/SidebarNav';
+import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
+import { useTaskBubbles } from './layout/useTaskBubbles';
+import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -29,66 +33,6 @@ interface ConfirmDialogState {
     confirmLabel?: string;
     tone?: 'primary' | 'warning' | 'danger';
     onConfirm: (() => Promise<void> | void) | null;
-}
-
-interface SidebarGroupProps {
-    label: string;
-    collapsed: boolean;
-    expanded: boolean;
-    onToggle: () => void;
-    collapsedIcon: ReactNode;
-    children: ReactNode;
-}
-
-function SidebarGroup({ label, collapsed, expanded, onToggle, collapsedIcon, children }: SidebarGroupProps) {
-    return (
-        <div className="space-y-1">
-            {!collapsed ? (
-                <button
-                    onClick={onToggle}
-                    className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-semibold tracking-wider text-gray-500 uppercase rounded-md hover:bg-gray-800/40 hover:text-gray-300 transition-colors"
-                >
-                    <span>{label}</span>
-                    <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-0' : '-rotate-90'}`} />
-                </button>
-            ) : (
-                <div className="w-full flex justify-center py-2 text-gray-600">
-                    {collapsedIcon}
-                </div>
-            )}
-            {(expanded || collapsed) && <div className="space-y-0.5">{children}</div>}
-        </div>
-    );
-}
-
-interface SidebarLinkProps {
-    to: string;
-    icon: ReactNode;
-    label: string;
-    collapsed: boolean;
-    pathname: string;
-    matcher?: (pathname: string) => boolean;
-    exact?: boolean;
-    onClick?: () => void;
-}
-
-function SidebarLink({ to, icon, label, collapsed, pathname, matcher, exact, onClick }: SidebarLinkProps) {
-    const active = matcher ? matcher(pathname) : exact ? pathname === to : pathname === to;
-    return (
-        <Link
-            to={to}
-            onClick={onClick}
-            title={label}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-sm border-l-2 ${
-                active
-                    ? 'bg-komgaPrimary/10 text-komgaPrimary font-medium border-komgaPrimary'
-                    : 'text-gray-400 border-transparent hover:bg-gray-800/40 hover:text-white'
-            } ${collapsed ? 'md:justify-center md:px-0 md:border-l-0' : ''}`}
-        >
-            {icon}
-            <span className={collapsed ? 'md:hidden' : 'block'}>{label}</span>
-        </Link>
-    );
 }
 
 export default function Layout() {
@@ -163,16 +107,11 @@ export default function Layout() {
     // { refreshTrigger, libraries } 会让所有子路由（含库页大量卡片）跟着重渲染。仅当二者真正变化时才换引用。
     const outletContext = useMemo(() => ({ refreshTrigger, libraries }), [refreshTrigger, libraries]);
 
-    // 全局任务进度状态
-    const [taskBubbleEntries, setTaskBubbleEntries] = useState<Record<string, TaskBubbleEntry>>({});
-    const taskBubbleCleanupTimers = useRef<Map<string, number>>(new Map());
+    // 全局任务进度气泡：状态、终态延时清理定时器与进度覆盖事件监听均封装在 useTaskBubbles 内。
+    const { entries: taskBubbleEntries, ingestProgress: ingestTaskProgress, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
 
-    // 文件夹浏览器状态
-    const [browsing, setBrowsing] = useState(false);
-    const [browseDirs, setBrowseDirs] = useState<BrowseDirEntry[]>([]);
-    const [browseCurrent, setBrowseCurrent] = useState('');
-    const [browseParent, setBrowseParent] = useState('');
-    const [browseDrives, setBrowseDrives] = useState<BrowseDrive[]>([]);
+    // 文件夹浏览器状态与请求逻辑封装在 useDirectoryBrowser 内。
+    const { browsing, setBrowsing, browseDirs, browseCurrent, browseParent, browseDrives, openDirectoryBrowser, navigateDirectoryBrowser } = useDirectoryBrowser();
     const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
         open: false,
         title: '',
@@ -238,28 +177,6 @@ export default function Layout() {
         return fallback;
     };
 
-    const openDirectoryBrowser = () => {
-        setBrowsing(true);
-        apiClient.get('/api/browse-dirs')
-            .then(res => {
-                setBrowseDirs(res.data.dirs || []);
-                setBrowseCurrent(res.data.current);
-                setBrowseParent(res.data.parent);
-                setBrowseDrives(res.data.drives || []);
-            })
-            .catch(() => { });
-    };
-
-    const navigateDirectoryBrowser = (path: string) => {
-        apiClient.get(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
-            .then(res => {
-                setBrowseDirs(res.data.dirs || []);
-                setBrowseCurrent(res.data.current);
-                setBrowseParent(res.data.parent);
-                setBrowseDrives(res.data.drives || []);
-            });
-    };
-
     const handleSelectResult = (hit: SearchHit) => {
         setIsSearchModalOpen(false);
         resetSearch();
@@ -318,7 +235,6 @@ export default function Layout() {
     };
 
     useEffect(() => {
-        const cleanupTimers = taskBubbleCleanupTimers.current;
         fetchLibraries();
         try {
             const stored = localStorage.getItem('manga_manager_recent_library_paths');
@@ -350,44 +266,6 @@ export default function Layout() {
         };
         window.addEventListener('manga-manager:open-add-library', openAddLibrary);
         window.addEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
-        const handleTaskProgressOverride = (event: Event) => {
-            const customEvent = event as CustomEvent<{
-                key?: string;
-                status?: string;
-                message?: string;
-                message_code?: string;
-                message_params?: Record<string, string>;
-                error?: string;
-                current?: number;
-                total?: number;
-                type?: string;
-            }>;
-            const detail = customEvent.detail;
-            if (!detail?.key) return;
-
-            setTaskBubbleEntries((prev) => {
-                const existing = prev[detail.key!];
-                if (!existing) return prev;
-                return {
-                    ...prev,
-                    [detail.key!]: {
-                        ...existing,
-                        status: detail.status || existing.status,
-                        message: detail.message || existing.message,
-                        // message 与 message_code 互斥：带了新的 legacy message 的覆盖清掉 code 以显示该消息，
-                        // 否则沿用/更新 code（后端已迁移 i18n 的任务）。
-                        message_code: detail.message ? undefined : (detail.message_code ?? existing.message_code),
-                        message_params: detail.message ? undefined : (detail.message_params ?? existing.message_params),
-                        error: detail.error ?? existing.error,
-                        current: detail.current ?? existing.current,
-                        total: detail.total ?? existing.total,
-                        type: detail.type || existing.type,
-                        updatedAt: Date.now(),
-                    },
-                };
-            });
-        };
-        window.addEventListener('manga-manager:task-progress-override', handleTaskProgressOverride as EventListener);
 
         // 挂载 Server-Sent Events 流监听器（启用鉴权时通过 token 查询参数携带令牌）
         const eventSource = new EventSource(withApiToken('/api/events'));
@@ -404,39 +282,7 @@ export default function Layout() {
                 try {
                     const progress = JSON.parse(data.slice('task_progress:'.length));
                     window.dispatchEvent(new CustomEvent('manga-manager:task-progress', { detail: progress }));
-                    if (progress.key) {
-                        const entry: TaskBubbleEntry = {
-                            key: progress.key,
-                            type: progress.type || '',
-                            status: progress.status || 'running',
-                            message: progress.message || '',
-                            message_code: progress.message_code,
-                            message_params: progress.message_params,
-                            error: progress.error,
-                            current: progress.current ?? 0,
-                            total: progress.total ?? 0,
-                            scope_name: progress.scope_name,
-                            updatedAt: Date.now(),
-                        };
-                        setTaskBubbleEntries((prev) => ({ ...prev, [progress.key]: entry }));
-                        const existingTimer = taskBubbleCleanupTimers.current.get(progress.key);
-                        if (existingTimer) {
-                            clearTimeout(existingTimer);
-                            taskBubbleCleanupTimers.current.delete(progress.key);
-                        }
-                        if (entry.status === 'completed' || entry.status === 'failed' || entry.status === 'canceled') {
-                            const timer = window.setTimeout(() => {
-                                setTaskBubbleEntries((prev) => {
-                                    if (!prev[progress.key]) return prev;
-                                    const next = { ...prev };
-                                    delete next[progress.key];
-                                    return next;
-                                });
-                                taskBubbleCleanupTimers.current.delete(progress.key);
-                            }, entry.status === 'completed' ? 8000 : 20000);
-                            taskBubbleCleanupTimers.current.set(progress.key, timer);
-                        }
-                    }
+                    ingestTaskProgress(progress);
                 } catch (e) {
                     console.warn('Failed to parse task progress SSE:', e);
                 }
@@ -451,94 +297,18 @@ export default function Layout() {
         return () => {
             window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
             window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
-            window.removeEventListener('manga-manager:task-progress-override', handleTaskProgressOverride as EventListener);
-            cleanupTimers.forEach((timer) => clearTimeout(timer));
-            cleanupTimers.clear();
             eventSource.close();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    useEffect(() => {
-        let pendingPrefix: string | null = null;
-        let pendingTimer: number | null = null;
-        const isEditable = (target: EventTarget | null) => {
-            if (!(target instanceof HTMLElement)) return false;
-            const tag = target.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-            if (target.isContentEditable) return true;
-            return false;
-        };
-        const clearPrefix = () => {
-            pendingPrefix = null;
-            if (pendingTimer) {
-                window.clearTimeout(pendingTimer);
-                pendingTimer = null;
-            }
-        };
-        const handler = (e: KeyboardEvent) => {
-            if (e.metaKey || e.ctrlKey || e.altKey) {
-                if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-                    e.preventDefault();
-                    setIsSearchModalOpen(true);
-                }
-                return;
-            }
-            if (isEditable(e.target)) return;
-            if (e.key === '?' || (e.shiftKey && e.key === '/')) {
-                e.preventDefault();
-                setShortcutsOpen((prev) => !prev);
-                clearPrefix();
-                return;
-            }
-            if (e.key === '/') {
-                e.preventDefault();
-                setIsSearchModalOpen(true);
-                clearPrefix();
-                return;
-            }
-            if (e.key === 'Escape') {
-                setShortcutsOpen(false);
-                clearPrefix();
-                return;
-            }
-            if (e.key === '[') {
-                e.preventDefault();
-                toggleDesktopSidebar();
-                clearPrefix();
-                return;
-            }
-            if (pendingPrefix === 'g') {
-                const key = e.key.toLowerCase();
-                const map: Record<string, string> = {
-                    h: '/',
-                    r: '/reviews',
-                    o: '/ops',
-                    c: '/collections',
-                    l: '/reading-lists',
-                    s: '/settings',
-                    f: '/offline',
-                };
-                if (map[key]) {
-                    e.preventDefault();
-                    navigate(map[key]);
-                }
-                clearPrefix();
-                return;
-            }
-            if (e.key === 'g') {
-                pendingPrefix = 'g';
-                if (pendingTimer) window.clearTimeout(pendingTimer);
-                pendingTimer = window.setTimeout(clearPrefix, 1200);
-            }
-        };
-        window.addEventListener('keydown', handler);
-        return () => {
-            window.removeEventListener('keydown', handler);
-            if (pendingTimer) window.clearTimeout(pendingTimer);
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [navigate]);
+    useLayoutShortcuts({
+        onOpenSearch: () => setIsSearchModalOpen(true),
+        onToggleShortcuts: () => setShortcutsOpen((prev) => !prev),
+        onCloseShortcuts: () => setShortcutsOpen(false),
+        onToggleSidebar: toggleDesktopSidebar,
+        onNavigate: navigate,
+    });
 
     const handleAddLibrary = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1115,36 +885,8 @@ export default function Layout() {
 
                 <SidebarTaskBubble
                     tasks={Object.values(taskBubbleEntries)}
-                    onDismiss={(key) => {
-                        setTaskBubbleEntries((prev) => {
-                            if (!prev[key]) return prev;
-                            const next = { ...prev };
-                            delete next[key];
-                            return next;
-                        });
-                        const timer = taskBubbleCleanupTimers.current.get(key);
-                        if (timer) {
-                            clearTimeout(timer);
-                            taskBubbleCleanupTimers.current.delete(key);
-                        }
-                    }}
-                    onClearFinished={() => {
-                        setTaskBubbleEntries((prev) => {
-                            const next: Record<string, TaskBubbleEntry> = {};
-                            for (const [key, entry] of Object.entries(prev)) {
-                                if (entry.status !== 'completed' && entry.status !== 'failed' && entry.status !== 'canceled') {
-                                    next[key] = entry;
-                                } else {
-                                    const timer = taskBubbleCleanupTimers.current.get(key);
-                                    if (timer) {
-                                        clearTimeout(timer);
-                                        taskBubbleCleanupTimers.current.delete(key);
-                                    }
-                                }
-                            }
-                            return next;
-                        });
-                    }}
+                    onDismiss={dismissTaskBubble}
+                    onClearFinished={clearFinishedTaskBubbles}
                 />
             </main>
 

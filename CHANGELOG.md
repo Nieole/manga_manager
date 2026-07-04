@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（Layout.tsx god-component 抽离 hooks/组件 · M49）
+
+#### 重构（行为保持）
+- 从 1252 行的 `components/Layout.tsx` 抽出 4 个自包含单元到 `components/layout/`(该目录已有 constants/types/useGlobalSearch/LibraryFormModal/SearchModal):
+  - `SidebarNav.tsx`:`SidebarGroup` + `SidebarLink` 两个侧栏基础展示组件。
+  - `useDirectoryBrowser.ts`:目录选择器的 `browse*` 状态与打开/导航请求逻辑。
+  - `useTaskBubbles.ts`:后台任务气泡的状态、终态延时清理定时器、进度覆盖事件监听,以及 SSE 进度接入(`ingestProgress`)、手动关闭(`dismiss`)与清理已完成(`clearFinished`)。
+  - `useLayoutShortcuts.ts`:全局键盘快捷键(⌘K / `/` / `?` / `[` / g 前缀跳转),用 ref 持最新回调、监听器只装一次。
+- Layout 通过解构复用这些 hook 的返回值,render 引用名不变;SSE mount effect 仅保留 `refresh` 分发 + `ingestTaskProgress(progress)`,气泡定时器与覆盖监听移入 hook。`Layout.tsx` 由 1252 → 1010 行,逻辑更内聚。**行为完全不变**。
+
+#### 验证
+- 前端 `npm run lint`(0 problems)、`npm run build`(tsc 严格:全部 hook 返回值/回调类型通过)、`npm run test`(24)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（Collections.tsx god-component 拆分 · L98）
 
 #### 重构（行为保持）
