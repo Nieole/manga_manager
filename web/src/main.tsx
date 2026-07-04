@@ -12,14 +12,12 @@ import { ThemeProvider } from './theme/ThemeProvider.tsx'
 import { initializeTheme } from './theme/themes.ts'
 import { DEFAULT_LOCALE, type AppLocale } from './i18n/core.ts'
 import { LocaleProvider, getClientLocale, loadLocaleMessages } from './i18n/LocaleProvider.tsx'
-import { initializeFrontendPerformance } from './utils/frontendPerformance.ts'
 import { installApiAuth } from './utils/apiAuth.ts'
 import { ToastProvider } from './components/ToastProvider.tsx'
 import './index.css'
 
 // Cache buster: 1
 initializeTheme()
-initializeFrontendPerformance()
 // 安装可选管理 API 令牌鉴权拦截器（未设置令牌时无操作）。
 installApiAuth()
 

@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（移除只写死代码遥测 · M52）
+
+#### 重构
+- 删除 `web/src/utils/frontendPerformance.ts`（253 行）及其全部调用点（`main.tsx`、`useLibrarySeries.ts`）。该模块在**每个 API 请求**上装了全局 axios 拦截器、patch `history.pushState/replaceState`、把首屏与列表渲染指标写入 `localStorage` 并派发自定义事件——但全代码库**无任何消费方**（无监听、无读取、无调用 `getFrontendPerformanceSnapshot`）。属纯只写死代码，白白增加每次请求开销与包体。
+- 连带移除因此变为冗余的 `serializedFilters`（原仅用于该遥测的埋点，刷新实由个别筛选值驱动）：跨 `useLibraryFilters.ts` / `useLibrarySeries.ts` / `library/index.tsx` 三处清理，行为不变。
+
+#### 验证
+- `npm run build`（tsc + vite）通过；`npm run lint` 回到既有基线，无本次引入的新告警。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（controller.go 上帝文件拆分 · 阶段一）
 
 #### 重构（H7，行为保持）

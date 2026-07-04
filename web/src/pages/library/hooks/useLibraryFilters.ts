@@ -31,7 +31,6 @@ interface UseLibraryFiltersResult {
   page: number;
   pageSize: number;
   settingsReady: boolean;
-  serializedFilters: string;
   setActiveTag: (value: string | null) => void;
   setActiveAuthor: (value: string | null) => void;
   setActiveStatus: (value: string | null) => void;
@@ -211,20 +210,6 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     setPage(1);
   }, []);
 
-  const serializedFilters = useMemo(
-    () =>
-      [
-        activeTag ? `tag:${activeTag}` : '',
-        activeAuthor ? `author:${activeAuthor}` : '',
-        activeStatus ? `status:${activeStatus}` : '',
-        activeLetter ? `letter:${activeLetter}` : '',
-        keyword.trim() ? `q:${keyword.trim()}` : '',
-      ]
-        .filter(Boolean)
-        .join(','),
-    [activeTag, activeAuthor, activeStatus, activeLetter, keyword],
-  );
-
   return useMemo(
     () => ({
       activeTag,
@@ -237,7 +222,6 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       page,
       pageSize,
       settingsReady: currentSettingsReady,
-      serializedFilters,
       setActiveTag,
       setActiveAuthor,
       setActiveStatus,
@@ -263,7 +247,6 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       currentSettingsReady,
       settingsReadyLibId,
       libId,
-      serializedFilters,
       resetAll,
       applySnapshot,
     ],

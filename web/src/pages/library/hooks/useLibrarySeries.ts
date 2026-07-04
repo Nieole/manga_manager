@@ -6,7 +6,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import axios, { type AxiosResponse } from 'axios';
-import { recordSeriesListRenderMetric } from '../../../utils/frontendPerformance';
 import {
   type Series,
   type SeriesSearchResponse,
@@ -23,7 +22,6 @@ interface UseLibrarySeriesParams {
   activeLetter: string | null;
   sortByField: string;
   sortDir: string;
-  serializedFilters: string;
   refreshTrigger: number;
   enabled: boolean;
   keyword?: string;
@@ -72,7 +70,6 @@ export function useLibrarySeries({
   activeLetter,
   sortByField,
   sortDir,
-  serializedFilters,
   refreshTrigger,
   enabled,
   keyword = '',
@@ -84,19 +81,6 @@ export function useLibrarySeries({
   const [pageCursorMap, setPageCursorMap] = useState<Record<number, string>>({});
   const lastLoadedPageRef = useRef(1);
   const latestRequestIDRef = useRef(0);
-
-  const pendingRenderMetric = useRef<{
-    requestStartedAt: number;
-    responseReceivedAt: number;
-    libraryId: string;
-    pageNumber: number;
-    currentPageSize: number;
-    currentSortBy: string;
-    currentSortDir: string;
-    filters: string;
-    itemCount: number;
-    totalCount: number;
-  } | null>(null);
 
   const fetchPage = useCallback(
     (pageNumber: number, silent = false) => {
@@ -115,7 +99,6 @@ export function useLibrarySeries({
       if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
       if (keyword) params.append('q', keyword);
 
-      const requestStartedAt = performance.now();
       const requestID = latestRequestIDRef.current + 1;
       latestRequestIDRef.current = requestID;
       requestSeriesSearch(params.toString())
@@ -152,19 +135,6 @@ export function useLibrarySeries({
             setPageCursorMap((prev) => ({ ...prev, [pageNumber + 1]: res.data.next_cursor as string }));
           }
           lastLoadedPageRef.current = pageNumber;
-
-          pendingRenderMetric.current = {
-            requestStartedAt,
-            responseReceivedAt: performance.now(),
-            libraryId: libId,
-            pageNumber,
-            currentPageSize: pageSize,
-            currentSortBy: sortByField,
-            currentSortDir: sortDir,
-            filters: serializedFilters,
-            itemCount: items.length,
-            totalCount: total,
-          };
         })
         .catch((err) => {
           if (requestID !== latestRequestIDRef.current) return;
@@ -183,7 +153,6 @@ export function useLibrarySeries({
       activeLetter,
       sortByField,
       sortDir,
-      serializedFilters,
       keyword,
       pageCursorMap,
       appendMode,
@@ -209,36 +178,6 @@ export function useLibrarySeries({
     refreshTrigger,
     keyword,
   ]);
-
-  // 渲染计时埋点：在数据落到 DOM 之后报告
-  useEffect(() => {
-    if (!pendingRenderMetric.current) return;
-    const metric = pendingRenderMetric.current;
-    pendingRenderMetric.current = null;
-    const finalize = () => {
-      const renderedAt = performance.now();
-      recordSeriesListRenderMetric({
-        path: typeof window !== 'undefined' ? window.location.pathname : '',
-        library_id: metric.libraryId,
-        page: metric.pageNumber,
-        page_size: metric.currentPageSize,
-        sort: `${metric.currentSortBy}_${metric.currentSortDir}`,
-        filters: metric.filters || 'none',
-        item_count: metric.itemCount,
-        total_count: metric.totalCount,
-        request_ms: Math.max(0, Math.round(metric.responseReceivedAt - metric.requestStartedAt)),
-        render_ms: Math.max(0, Math.round(renderedAt - metric.responseReceivedAt)),
-        total_ms: Math.max(0, Math.round(renderedAt - metric.requestStartedAt)),
-        measured_at: new Date().toISOString(),
-      });
-    };
-    if (typeof window === 'undefined' || typeof requestAnimationFrame !== 'function') {
-      finalize();
-      return;
-    }
-    const frame = requestAnimationFrame(finalize);
-    return () => cancelAnimationFrame(frame);
-  }, [allSeries]);
 
   const resetPagination = useCallback(() => {
     setPageCursorMap({});
