@@ -487,20 +487,20 @@ func (m scrapeMetrics) toMap() map[string]int64 {
 // 审阅队列、按速率限制推进，并持续上报进度与指标。cancelMsg/donePrefix/logMsg 承载两个入口的
 // 文案差异。bgCtx 必须已注入 locale；调用方负责 start/setTaskMetadata/cleanup 与 goroutine 调度。
 // 此前两个函数各有一份约 150 行的近乎逐行拷贝（且日志已发生漂移），此处统一到带完整日志的版本。
-func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, providerName, cancelMsg, donePrefix, logMsg string, provider metadata.Provider, entries []scrapeSeriesEntry) {
+func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, providerName, cancelCode, doneCode, logMsg string, provider metadata.Provider, entries []scrapeSeriesEntry) {
 	m := scrapeMetrics{total: len(entries)}
-	c.updateTaskDetails(taskKey, 0, m.total, "正在收集待刮削系列", "collecting_series", "", m.toMap(), nil)
+	c.updateTaskDetailsMsg(taskKey, 0, m.total, "task.msg.scrape.collecting_series", nil, "collecting_series", "", m.toMap(), nil)
 
 	for i, entry := range entries {
 		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", cancelMsg)
+			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 		slog.Info(logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
 
 		m.providerRequests++
 		m.processed = i
-		c.updateTaskDetails(taskKey, i, m.total, fmt.Sprintf("刮削: %s", entry.Name), "requesting_provider", entry.Name, m.toMap(), map[string]string{
+		c.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.requesting_provider", map[string]string{"name": entry.Name}, "requesting_provider", entry.Name, m.toMap(), map[string]string{
 			"provider":            providerKey,
 			"provider_name":       providerName,
 			"current_series_id":   strconv.FormatInt(entry.ID, 10),
@@ -525,9 +525,9 @@ func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, 
 			continue
 		}
 
-		c.updateTaskDetails(taskKey, i, m.total, fmt.Sprintf("写入审阅队列: %s", entry.Name), "queueing_review", entry.Name, m.toMap(), nil)
+		c.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.queueing_review", map[string]string{"name": entry.Name}, "queueing_review", entry.Name, m.toMap(), nil)
 		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", cancelMsg)
+			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 		if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
@@ -541,24 +541,24 @@ func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, 
 			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 		}
 		m.processed = i + 1
-		c.updateTaskDetails(taskKey, i+1, m.total, fmt.Sprintf("刮削: %s", entry.Name), "rate_limited_wait", entry.Name, m.toMap(), nil)
+		c.updateTaskDetailsMsg(taskKey, i+1, m.total, "task.msg.scrape.rate_limited_wait", map[string]string{"name": entry.Name}, "rate_limited_wait", entry.Name, m.toMap(), nil)
 
 		// 速率限制
 		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", cancelMsg)
+			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 		select {
 		case <-time.After(scrapeRateLimitDelay):
 			m.rateLimitedWait += scrapeRateLimitDelay
 		case <-bgCtx.Done():
-			c.completeTask(taskKey, "cancelled", cancelMsg)
+			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 	}
 
 	slog.Info("Scrape task completed", "provider", providerName, "task_key", taskKey, "success_count", m.success, "total_count", m.total)
-	c.finishTask(taskKey, fmt.Sprintf("%s，成功 %d/%d", donePrefix, m.success, m.total))
+	c.finishTaskMsg(taskKey, doneCode, map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)})
 	c.PublishEvent("refresh")
 }
 
@@ -602,7 +602,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	c.runBackground(func() {
 		defer cleanup()
 		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
-			"批量刮削已取消", "刮削完成", "Scraping series metadata", provider, allSeries)
+			"task.msg.scrape.cancelled_all", "task.msg.scrape.complete_all", "Scraping series metadata", provider, allSeries)
 	})
 
 	return nil
@@ -677,7 +677,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 	c.runBackground(func() {
 		defer cleanup()
 		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
-			"资源库批量刮削已取消", "刮削资源库完成", "Scraping library series metadata", provider, allSeries)
+			"task.msg.scrape.cancelled_library", "task.msg.scrape.complete_library", "Scraping library series metadata", provider, allSeries)
 	})
 
 	return nil

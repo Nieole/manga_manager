@@ -655,14 +655,14 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 			}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(key, "cancelled", fmt.Sprintf("KOReader %s重建已取消", indexLabel))
+			c.completeTaskMsg(key, "cancelled", "task.msg.koreader_rebuild_hashes.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError(key, fmt.Sprintf("KOReader %s重建失败: %v", indexLabel, err), err.Error())
+			c.failTaskErrMsg(key, "task.msg.koreader_rebuild_hashes.failed", nil, err.Error())
 			return
 		}
-		c.finishTask(key, fmt.Sprintf("KOReader %s重建完成，已更新 %d / %d 本书籍", indexLabel, updated, total))
+		c.finishTaskMsg(key, "task.msg.koreader_rebuild_hashes.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return nil
 }
@@ -687,14 +687,14 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 			}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(key, "cancelled", "KOReader 进度重关联已取消")
+			c.completeTaskMsg(key, "cancelled", "task.msg.reconcile_koreader_progress.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError(key, fmt.Sprintf("KOReader 进度重关联失败: %v", err), err.Error())
+			c.failTaskErrMsg(key, "task.msg.reconcile_koreader_progress.failed", nil, err.Error())
 			return
 		}
-		c.finishTask(key, fmt.Sprintf("KOReader 进度重关联完成，已更新 %d / %d 条记录", updated, total))
+		c.finishTaskMsg(key, "task.msg.reconcile_koreader_progress.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return nil
 }
@@ -714,34 +714,33 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 
 	c.runBackground(func() {
 		defer cleanupCancel()
-		indexLabel := koreaderIndexLabel(cfg)
-		c.updateTaskDetails(key, 0, 2, fmt.Sprintf("开始重建 KOReader %s", indexLabel), "hashing", "", nil, nil)
+		c.updateTaskDetailsMsg(key, 0, 2, "task.msg.refresh_koreader_matching.rebuild_start", nil, "hashing", "", nil, nil)
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, message string) {
 			c.updateTaskDetails(key, 0, 2, message, "hashing", "", map[string]int64{"processed_books": int64(current)}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(key, "cancelled", "KOReader 匹配规则应用已取消")
+			c.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError(key, fmt.Sprintf("KOReader %s重建失败: %v", indexLabel, err), err.Error())
+			c.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.rebuild_failed", nil, err.Error())
 			return
 		}
 
-		c.updateTaskDetails(key, 1, 2, fmt.Sprintf("%s已更新 %d / %d，本阶段开始重关联未匹配记录", indexLabel, updatedBooks, totalBooks), "reconciling_progress", "", nil, nil)
+		c.updateTaskDetailsMsg(key, 1, 2, "task.msg.refresh_koreader_matching.reconcile_start", map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)}, "reconciling_progress", "", nil, nil)
 		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, message string) {
 			c.updateTaskDetails(key, 1, 2, message, "reconciling_progress", "", map[string]int64{"processed_progress": int64(current)}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(key, "cancelled", "KOReader 匹配规则应用已取消")
+			c.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError(key, fmt.Sprintf("KOReader 进度重关联失败: %v", err), err.Error())
+			c.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.reconcile_failed", nil, err.Error())
 			return
 		}
 
-		c.finishTask(key, fmt.Sprintf("KOReader 匹配规则已应用，%s更新 %d / %d，重关联 %d / %d", indexLabel, updatedBooks, totalBooks, updatedProgress, totalProgress))
+		c.finishTaskMsg(key, "task.msg.refresh_koreader_matching.complete", map[string]string{"updatedBooks": strconv.Itoa(updatedBooks), "totalBooks": strconv.Itoa(totalBooks), "updatedProgress": strconv.Itoa(updatedProgress), "totalProgress": strconv.Itoa(totalProgress)})
 	})
 	return nil
 }
