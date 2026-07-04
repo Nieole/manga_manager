@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（前后端契约类型局部收敛 · M47 局部）
+
+#### 修复/重构（前端类型）
+- 修 `TaskStatus` 缺字段:前端手写的 `TaskStatus`(`components/tasks/TaskCenter.tsx`,被 `BackgroundTasks` 复用)缺 Go `TaskStatus.PausedAt`(`json:"paused_at"`)对应的 `paused_at?`,补齐,消除该字段的静默漂移。
+- `Null*` 契约原语单一来源化:`NullString/NullInt64/NullTime/NullFloat64`(镜像 Go `sql.Null*` 的 JSON 形状)此前在 `library/types.ts` 与 `series-detail/types.ts` 各自重复声明、易与后端各自漂移。抽到 `web/src/api/contracts.ts` 单一来源,两处 `types.ts` 改为再导出(re-export),既有 import 路径与消费方零改动。
+- 澄清两个同名 `Series` 的分歧:核对确认 `library/types.ts` 的 `Series`(列表/卡片聚合视图,基于 series_stats)与 `series-detail/types.ts` 的 `Series`(`GET /api/series/{id}` 直接返回的 `database.Series` 行)是**不同接口的不同 DTO**,共享字段类型一致、无运行时错位;为二者加区分注释,防止误当同一类型或误导入。
+- 说明:引入 Go→TS 类型生成管线(tygo/openapi)以根治手写漂移属 M47 完整版,面较大,留作后续单独立项。
+
+#### 验证
+- 前端 `npm run lint`(0 problems)、`npm run build`、`npm run test`(24 例)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（HTTP 响应 i18n 补切:任务控制消息 + 鉴权/资料库校验 · M65 残留）
 
 #### 国际化（前后端一起改）

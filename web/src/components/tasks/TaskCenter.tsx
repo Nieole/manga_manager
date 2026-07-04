@@ -44,6 +44,7 @@ export interface TaskStatus {
   can_pause?: boolean;
   can_resume?: boolean;
   retryable: boolean;
+  paused_at?: string;
   pause_reason?: string;
   phase?: string;
   current_item?: string;

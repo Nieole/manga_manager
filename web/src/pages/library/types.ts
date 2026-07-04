@@ -4,25 +4,9 @@
  * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
  */
 
-export interface NullString {
-  String: string;
-  Valid: boolean;
-}
-
-export interface NullInt64 {
-  Int64: number;
-  Valid: boolean;
-}
-
-export interface NullTime {
-  Time: string;
-  Valid: boolean;
-}
-
-export interface NullFloat64 {
-  Float64: number;
-  Valid: boolean;
-}
+// Null* 契约原语统一收敛到 api/contracts.ts（单一来源），此处再导出以保持既有 import 路径不变。
+export type { NullString, NullInt64, NullTime, NullFloat64 } from '../../api/contracts';
+import type { NullString, NullInt64, NullTime, NullFloat64 } from '../../api/contracts';
 
 export interface AIRecommendation {
   series_id: number;
@@ -31,6 +15,13 @@ export interface AIRecommendation {
   cover_path: string;
 }
 
+/**
+ * 资料库列表/卡片视图的系列形状：来自系列分页/搜索接口（基于 series_stats 聚合），
+ * 携带封面、卷数、已读数、收藏、外部同步等展示与统计字段。
+ * 注意：这与 series-detail/types.ts 的 `Series`（单系列详情行，含 library_id/path/
+ * publisher/status/language/locked_fields）是**不同接口的不同 DTO**，只是恰好同名，
+ * 不可互换使用。
+ */
 export interface Series {
   id: number;
   name: string;

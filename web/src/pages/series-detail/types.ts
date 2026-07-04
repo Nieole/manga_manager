@@ -4,16 +4,18 @@
  * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
  */
 
-export interface NullString {
-  String: string;
-  Valid: boolean;
-}
+// Null* 契约原语统一收敛到 api/contracts.ts（单一来源），此处再导出以保持既有 import 路径不变。
+export type { NullString, NullFloat64 } from '../../api/contracts';
+import type { NullString, NullFloat64 } from '../../api/contracts';
 
-export interface NullFloat64 {
-  Float64: number;
-  Valid: boolean;
-}
-
+/**
+ * 单系列详情视图的系列形状：由 GET /api/series/{id}（getSeriesInfo）直接返回后端
+ * `database.Series` 行，字段与该表列一致（library_id/path/publisher/status/language/
+ * locked_fields/book_count 等）。
+ * 注意：这与 library/types.ts 的 `Series`（列表/卡片聚合视图，含 volume_count/
+ * read_count/is_favorite/external_* 等统计字段）是**不同接口的不同 DTO**，只是恰好同名，
+ * 不可互换使用。
+ */
 export interface Series {
   id: number;
   name: string;
