@@ -39,6 +39,11 @@ import (
 // 调用方必须把 Load() 到的 channel 快照进局部变量，acquire 与 release 用同一引用。
 var aiSemaphore atomic.Pointer[chan struct{}]
 
+// softwareSemaphore 封顶纯软件（Go 内解码/缩放/编码）的并发。与 aiSemaphore 用同样的 atomic.Pointer
+// 快照约定，避免热更新重建 channel 时令牌错配。上限取 CPU 核数：软件转码是 CPU 密集，超过核数的并发
+// 只会引发上下文切换抖动而不提速。
+var softwareSemaphore atomic.Pointer[chan struct{}]
+
 // InitProcessor 初始化处理器全局参数
 func InitProcessor(maxAiConcurrency int) {
 	if maxAiConcurrency <= 0 {
@@ -46,6 +51,13 @@ func InitProcessor(maxAiConcurrency int) {
 	}
 	ch := make(chan struct{}, maxAiConcurrency)
 	aiSemaphore.Store(&ch)
+
+	softwareLimit := runtime.NumCPU()
+	if softwareLimit < 1 {
+		softwareLimit = 1
+	}
+	swCh := make(chan struct{}, softwareLimit)
+	softwareSemaphore.Store(&swCh)
 }
 
 // ProcessOptions 用于接受前端动态要求的尺寸转换
@@ -145,6 +157,16 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		// 如果 waifu2x 执行失败，退回到下面原生的 Lanczos 软算逻辑
 		slog.Warn("Waifu2x execution failed. Falling back to Lanczos3.", "error", err)
 		opts.Filter = "lanczos3"
+	}
+
+	// 软件缩放 + 编码是纯 CPU 工作，用信号量把并发封顶到核数，避免阅读器预取/多用户并发时 CPU 过载抖动。
+	// AI 路径（execWaifu2x）已在上方用 aiSemaphore 门控并在成功时提前返回，不会走到这里；AI 回退时
+	// execWaifu2x 已释放 aiSemaphore 再进入此处，故不存在与 aiSemaphore 的双占。channel 快照进局部
+	// 变量，acquire 与 release 用同一引用，避免热更新替换全局指针导致令牌错配。
+	if swPtr := softwareSemaphore.Load(); swPtr != nil {
+		sw := *swPtr
+		sw <- struct{}{}
+		defer func() { <-sw }()
 	}
 
 	if targetWidth > 0 || targetHeight > 0 {

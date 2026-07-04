@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（软件转码并发上限 · L82 之二）
+
+#### 性能/稳定性
+- `internal/images/processor.go`:为纯软件转码(Go 内解码/缩放/编码)新增并发信号量 `softwareSemaphore`,上限取 `runtime.NumCPU()`,在 `InitProcessor` 中随 AI 信号量一并初始化(热更新同样重建)。此前仅 AI 超分路径(`aiSemaphore`)限流,软件路径无上限——阅读器预取多页或多用户并发时会同时软解码/编码大量图片,导致 CPU 过载抖动、整体变慢。
+- 信号量仅门控软件独占的 `resize`+`encode` 段:AI 路径(`execWaifu2x`)成功时在其之前提前返回、AI 回退时已释放 `aiSemaphore` 才进入此段,故与 `aiSemaphore` 无双占;channel 快照进局部变量,acquire/release 用同一引用,避免热更新替换指针导致令牌错配。未初始化(如未调 `InitProcessor` 的测试)时 `Load()` 为 nil、跳过门控,安全。
+
+#### 验证
+- `go vet`、`go test ./internal/images ./internal/api`(含新增 `TestInitProcessorInitializesSoftwareSemaphore` 与 48 并发不死锁的 `TestProcessImageConcurrentSoftwareEncodesComplete`,`-race` 通过)。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（阅读器纯逻辑补单测）
 
 #### 测试
