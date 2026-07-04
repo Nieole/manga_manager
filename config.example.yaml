@@ -1,3 +1,12 @@
+# Manga Manager 配置模板 / configuration template
+#
+# 用法：复制为 config.yaml 后按需修改（config.yaml 已被 .gitignore 忽略，不会入库）。
+#   cp config.example.yaml config.yaml
+# Usage: copy to config.yaml and edit as needed (config.yaml is gitignored).
+#
+# 首次启动时若 config.yaml 不存在，程序也会自动在工作目录生成一份默认配置。
+# 本文件仅作为字段结构与默认值的参考，请勿在此填入真实密钥。
+
 server:
     host: 0.0.0.0
     port: 8080
@@ -39,7 +48,7 @@ llm:
     request_path: ""
     endpoint: http://localhost:11434
     model: qwen2.5
-    api_key: ""
+    api_key: ""        # 切勿把真实密钥提交到版本库 / never commit a real API key
     timeout: 120
 protocols:
     opds:

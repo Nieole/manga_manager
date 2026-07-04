@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（config.yaml 取消跟踪 + 提供模板 · M15）
+
+#### 修复(仓库卫生 / 安全)
+- `config.yaml` 此前**既被 git 跟踪又在 `.gitignore` 中**——由于已被跟踪,`.gitignore` 对其失效,用户以为被忽略、实则任何本地改动(含填入 `llm.api_key` 等真实密钥)仍会被提交,是虚假的安全感。现 `git rm --cached config.yaml` 取消跟踪(磁盘文件保留、运行不受影响),`.gitignore` 的忽略规则从此真正生效。当前提交历史中的 `config.yaml` 的 `api_key` 为空,无既有密钥泄露。
+- 新增跟踪的模板 `config.example.yaml`(含字段结构、默认值与"勿填真实密钥"注释):`cp config.example.yaml config.yaml` 即可起步;首次启动缺 `config.yaml` 时程序仍会自动生成默认配置。
+- `AGENTS.md`:更新配置说明,指明 `config.yaml` 为 gitignored、`config.example.yaml` 为模板。
+
+#### 验证
+- `git check-ignore config.yaml` 命中(确认现被忽略)、磁盘文件仍在;`git status` 显示 `config.yaml` 为删除跟踪(D)、`config.example.yaml` 为新增。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（任务消息 i18n 收尾:start + 全部 progress + 持久化 · M65 第三步 batch5）
 
 #### 国际化（前后端一起改，收尾）

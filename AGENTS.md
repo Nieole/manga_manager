@@ -24,4 +24,4 @@ Add or update `_test.go` files in the touched backend package, following the exi
 Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short imperative summaries. Keep commits scoped to one change set. For user-visible changes, update `CHANGELOG.md` in the same batch. Pull requests should describe the behavior change, list verification commands run, and include screenshots for UI work.
 
 ## Configuration & Runtime Notes
-Runtime config lives in `config.yaml`. Generated runtime data belongs in `data/` and should not be committed. When editing runtime config flows, remember `config.Manager` is the source of truth rather than mutating copied snapshots inline.
+Runtime config lives in `config.yaml`, which is gitignored and never committed (it may hold secrets such as `llm.api_key`). `config.example.yaml` is the tracked template — copy it to `config.yaml` to get started, or let the server generate a default on first run. Generated runtime data belongs in `data/` and should not be committed. When editing runtime config flows, remember `config.Manager` is the source of truth rather than mutating copied snapshots inline.
