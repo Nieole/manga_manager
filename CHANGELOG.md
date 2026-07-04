@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（config/日志路径可配置、与 cwd 解耦 · L110）
+
+#### 修复/增强(部署)
+- 服务器的配置文件路径与日志目录此前硬编码相对 cwd(`config.LoadConfig("config.yaml")`、`logger.Init("data", …)`、`watchConfig`/`NewController` 均传字面量 `"config.yaml"`),从别的工作目录启动会找不到配置(转而在当前目录生成一份默认配置)、日志写到当前目录 `./data`。现:
+  - 新增 `-config` 命令行参数(环境变量 `MANGA_MANAGER_CONFIG`,默认 `config.yaml`)覆盖配置文件路径,统一用于 `LoadConfig` / 热重载监听 / `NewController` 持久化。
+  - 新增 `-data-dir` 命令行参数(环境变量 `MANGA_MANAGER_DATA_DIR`,默认 `data`)覆盖日志目录。
+  - 二者启动时经 `filepath.Abs` 解析为绝对路径并记入启动日志,使配置/日志位置与进程 cwd 解耦(flag 优先于 env、env 优先于默认)。
+- 数据库与缓存目录本就可经 config 的 `database.path` / `cache.dir` 指定绝对路径,故本项聚焦此前完全不可配的两处;`AGENTS.md` 同步说明。
+
+#### 验证
+- `go vet`、`go build ./...`、`go test ./cmd/server`(新增 `TestEnvOrDefault`、`TestAbsOrSelf`)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（KOReader 静态响应文案 i18n · M65 续批）
 
 #### 国际化

@@ -7,6 +7,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 )
 
@@ -82,5 +83,30 @@ func TestStaticETagIncludesPath(t *testing.T) {
 	content := []byte("same bytes")
 	if staticETag("/index.html", content) == staticETag("/assets/index.js", content) {
 		t.Fatal("expected static ETag to include the requested path")
+	}
+}
+
+// TestEnvOrDefault 验证 config/data-dir 参数的默认值可被环境变量覆盖：
+// 空(或纯空白)env 用默认值，非空 env（去空白后）优先。
+func TestEnvOrDefault(t *testing.T) {
+	const key = "MANGA_MANAGER_TEST_ENVOR"
+	t.Setenv(key, "")
+	if got := envOrDefault(key, "fallback"); got != "fallback" {
+		t.Fatalf("empty env should use default, got %q", got)
+	}
+	t.Setenv(key, "  from-env  ")
+	if got := envOrDefault(key, "fallback"); got != "from-env" {
+		t.Fatalf("non-empty env should win (trimmed), got %q", got)
+	}
+}
+
+// TestAbsOrSelf 验证相对路径被解析为绝对路径（与 cwd 解耦），且绝对路径保持稳定。
+func TestAbsOrSelf(t *testing.T) {
+	got := absOrSelf("data")
+	if !filepath.IsAbs(got) {
+		t.Fatalf("expected absolute path, got %q", got)
+	}
+	if again := absOrSelf(got); again != got {
+		t.Fatalf("absolute path should be stable, got %q want %q", again, got)
 	}
 }

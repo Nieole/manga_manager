@@ -46,6 +46,8 @@ var (
 )
 
 func main() {
+	configPath := flag.String("config", envOrDefault("MANGA_MANAGER_CONFIG", "config.yaml"), "path to the config file (env MANGA_MANAGER_CONFIG)")
+	dataDir := flag.String("data-dir", envOrDefault("MANGA_MANAGER_DATA_DIR", "data"), "directory for log files (env MANGA_MANAGER_DATA_DIR)")
 	showVersion := flag.Bool("version", false, "print build version and exit")
 	flag.Parse()
 
@@ -54,18 +56,25 @@ func main() {
 		return
 	}
 
-	cfg, err := config.LoadConfig("config.yaml")
+	// 把配置文件与日志目录解析为绝对路径，使其位置与进程工作目录(cwd)解耦：二者均可经
+	// -config/-data-dir 命令行参数或 MANGA_MANAGER_CONFIG/MANGA_MANAGER_DATA_DIR 环境变量覆盖。
+	// 数据库与缓存目录本就可经 config 的 database.path / cache.dir 指定绝对路径。
+	resolvedConfigPath := absOrSelf(*configPath)
+	resolvedDataDir := absOrSelf(*dataDir)
+
+	cfg, err := config.LoadConfig(resolvedConfigPath)
 	if err != nil {
 		fmt.Printf("Fatal: Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 在最前面初始化记录系统：这里先输出到命令行与 data 文件夹
-	if err := logger.Init("data", cfg.Logging.Level); err != nil {
+	// 在最前面初始化记录系统：这里先输出到命令行与日志目录（默认 ./data，可经 -data-dir 覆盖）
+	if err := logger.Init(resolvedDataDir, cfg.Logging.Level); err != nil {
 		fmt.Printf("Fatal: Logger init failed: %v\n", err)
 		os.Exit(1)
 	}
-	slog.Info("Starting Manga Manager...", "version", Version, "commit", Commit, "build_time", BuildTime)
+	slog.Info("Starting Manga Manager...", "version", Version, "commit", Commit, "build_time", BuildTime,
+		"config", resolvedConfigPath, "data_dir", resolvedDataDir)
 
 	// 初始化归档句柄重用池与 AI 并发控制参数
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
@@ -73,7 +82,7 @@ func main() {
 	cfgManager := config.NewManager(cfg)
 
 	// 启动配置热重载监听
-	go watchConfig("config.yaml", cfgManager)
+	go watchConfig(resolvedConfigPath, cfgManager)
 
 	if err := database.Migrate(cfg.Database.Path); err != nil {
 		slog.Error("Failed to migrate database schema", "error", err)
@@ -132,7 +141,7 @@ func main() {
 
 	// API 端点挂载
 	scan := scanner.NewScanner(store, cfgManager)
-	apiController := api.NewController(store, scan, cfgManager, "config.yaml")
+	apiController := api.NewController(store, scan, cfgManager, resolvedConfigPath)
 
 	// 连接扫描器的完成回调以向 SSE Broker 抛出刷新消息
 	scan.SetBatchCallback(func(action string) {
@@ -300,6 +309,23 @@ func staticCacheControl(path string) string {
 	}
 
 	return "no-cache"
+}
+
+// envOrDefault 返回环境变量 key 的非空(去空白后)值，否则返回 def。
+// 用于让命令行参数的默认值可被对应环境变量覆盖（flag 显式指定时仍优先于 env）。
+func envOrDefault(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
+// absOrSelf 把路径解析为绝对路径；解析失败时原样返回，保证不因此中断启动。
+func absOrSelf(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 func watchConfig(path string, cfgManager *config.Manager) {
