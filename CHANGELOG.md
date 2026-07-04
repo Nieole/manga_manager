@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（PauseGate 并发原语补测试 · L107）
+
+#### 测试
+- 新增 `internal/taskcontrol/pause_gate_test.go`(7 个用例,`-race` 通过):此前扫描/重建等长任务依赖的暂停/恢复/等待唤醒原语无任何测试。覆盖:未暂停立即返回、暂停时阻塞并在 Resume 后释放、暂停时响应 context 取消、并发多等待者全部释放、重复 Pause/Resume 与无 Pause 的 Resume 幂等(不 double-close)、nil 接收者安全、`WithPauseGate`/`FromContext` 往返与包级 `Wait` 从 ctx 取 gate。
+
+#### 验证
+- `go test -race ./internal/taskcontrol` 全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（刮削任务去重 · M43）
 
 #### 重构
