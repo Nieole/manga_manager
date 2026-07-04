@@ -47,8 +47,25 @@ jobs:
         working-directory: web
         run: npm run build
 
+      - name: Run go vet
+        run: go vet ./...
+
       - name: Run Go tests
         run: go test ./...
+
+      - name: Run Go tests with race detector
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true # 目前 internal/scanner 存在已知的预存并发竞态，先以非阻塞方式暴露；修复后可改为阻塞
+        run: go test -race ./...
+
+      - name: Verify sqlc generated code is up to date
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          sqlc generate
+          git diff --exit-code -- internal/database
+        # sqlc 在 stderr 输出的 "mismatched input" 为非致命诊断，Linux 下退出码 0；
+        # 若生成产物与仓库不一致（drift）则 git diff 失败，CI 报错。
 
       - name: Verify server build
         run: go build -o build/manga-manager-ci ./cmd/server
