@@ -7,14 +7,10 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { getApiErrorMessage } from '../../../api/client';
 
 import type { Series } from '../types';
 
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) return error.response?.data?.error || error.message || fallback;
-  if (error instanceof Error) return error.message;
-  return fallback;
-}
 
 interface UseLibraryCardActionsParams {
   isSelectionMode: boolean;

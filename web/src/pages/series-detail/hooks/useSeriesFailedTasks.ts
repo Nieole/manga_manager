@@ -6,13 +6,9 @@
 
 import { useCallback, useState } from 'react';
 import axios from 'axios';
+import { getApiErrorMessage } from '../../../api/client';
 import type { SeriesFailedTask } from '../types';
 
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) return error.response?.data?.error || error.message || fallback;
-  if (error instanceof Error) return error.message;
-  return fallback;
-}
 
 interface UseSeriesFailedTasksParams {
   seriesId: string | undefined;

@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（统一 API 错误提取 · M46 第一步）
+
+#### 重构
+- 新增 `web/src/api/client.ts`,导出单一 `getApiErrorMessage`,取代此前在 9 个页面/hook 中逐字复制的同名实现(行为完全一致但难维护、易漂移):`AIGroupingReviews`、`MetadataReviews`、`useLibraryCardActions`、以及 series-detail 下 6 个 hook 全部改为从此处导入。
+- 该文件预留为后续统一 axios 实例与响应拦截器的落点(M46 完整版:`axios.create({ baseURL: '/api' })` + 迁移 130 处裸 axios 调用 + ESLint no-restricted-imports,作为后续增量)。
+
+#### 验证
+- `npm run build`、`npm run test`(11 例)、`npm run lint`(0 problems)通过;9 文件仍各自使用 axios 发请求,无未用导入。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（清理 t()||兜底死代码 + t 支持 defaultValue · L96）
 
 #### 修复

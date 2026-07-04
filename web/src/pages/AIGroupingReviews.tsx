@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
+import { getApiErrorMessage } from '../api/client';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, Filter, Layers3, Loader2, Pencil, Save, Sparkles, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
@@ -65,13 +66,6 @@ interface CollectionDraft {
 
 type ReviewMark = 'apply' | 'reject';
 
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    return error.response?.data?.error || error.message || fallback;
-  }
-  if (error instanceof Error) return error.message;
-  return fallback;
-}
 
 function statusClass(status: string) {
   switch (status) {

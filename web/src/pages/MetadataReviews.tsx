@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
+import { getApiErrorMessage } from '../api/client';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, ExternalLink, Filter, GitCompareArrows, Loader2, Search, ShieldCheck, XCircle } from 'lucide-react';
 import type { MetadataReviewInboxItem, MetadataReviewInboxResponse } from './series-detail/types';
@@ -20,13 +21,6 @@ interface LibraryOption {
 type BulkMode = 'fill_empty' | 'all';
 type ReviewMark = 'apply' | 'reject';
 
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    return error.response?.data?.error || error.message || fallback;
-  }
-  if (error instanceof Error) return error.message;
-  return fallback;
-}
 
 function percent(value: number) {
   if (!Number.isFinite(value) || value <= 0) return '0%';

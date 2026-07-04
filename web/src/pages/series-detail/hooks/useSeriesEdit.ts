@@ -6,13 +6,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
+import { getApiErrorMessage } from '../../../api/client';
 import type { Author, MetaTag, Series, SeriesLink } from '../types';
 
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) return error.response?.data?.error || error.message || fallback;
-  if (error instanceof Error) return error.message;
-  return fallback;
-}
 
 export type SeriesEditForm = Partial<Series> & {
   tagsInput?: string[];
