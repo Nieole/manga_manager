@@ -68,12 +68,18 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       setIsScraping(true);
       try {
         const res = await apiClient.post(`/api/series/${seriesId}/scrape`, { provider: providerKey });
-        if (res.data.scraped) {
-          showToast(`[${res.data.provider}] ${res.data.message}`, 'success');
+        // 依据后端稳定的 outcome 结果码决定提示级别并本地化文案，不再解析中文 message 内容。
+        const outcome = res.data.outcome as string | undefined;
+        if (res.data.scraped || outcome === 'queued') {
+          showToast(t('series.toast.metadataReviewQueued', { count: res.data.field_count ?? 0 }), 'success');
           await reload();
+        } else if (outcome === 'no_changes') {
+          showToast(t('series.toast.noMetadataReviewChanges'), 'success');
+        } else if (outcome === 'duplicate_ignored') {
+          showToast(t('series.toast.scrapeDuplicate'), 'success');
         } else {
-          // If it found a duplicate, it's not strictly an error, but we'll show it as a notification.
-          showToast(res.data.message || t('series.toast.metadataNotFound'), res.data.message?.includes('完全一致') || res.data.message?.includes('已为您忽略') ? 'success' : 'error');
+          // outcome === 'not_found'，或老后端未返回 outcome 时兜底显示后端 message。
+          showToast(res.data.message || t('series.toast.metadataNotFound'), 'error');
         }
       } catch (err) {
         showToast(`${t('series.toast.scrapeFailed')}: ${getApiErrorMessage(err, t('series.toast.scrapeFailed'))}`, 'error');
@@ -92,12 +98,18 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       try {
         const res = await apiClient.post(`/api/series/${seriesId}/scrape-apply?provider=${searchProvider}`, metadata);
         if (res.data.success) {
-          showToast(
-            res.data.queued
-              ? t('series.toast.metadataReviewQueued', { count: res.data.field_count || 0 })
-              : (res.data.message || t('series.toast.noMetadataReviewChanges')),
-            'success',
-          );
+          const outcome = res.data.outcome as string | undefined;
+          let msg: string;
+          if (res.data.queued || outcome === 'queued') {
+            msg = t('series.toast.metadataReviewQueued', { count: res.data.field_count || 0 });
+          } else if (outcome === 'duplicate_ignored') {
+            msg = t('series.toast.scrapeDuplicate');
+          } else if (outcome === 'no_changes') {
+            msg = t('series.toast.noMetadataReviewChanges');
+          } else {
+            msg = res.data.message || t('series.toast.noMetadataReviewChanges');
+          }
+          showToast(msg, 'success');
           await reload();
         }
       } catch (err) {

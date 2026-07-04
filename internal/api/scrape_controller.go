@@ -165,6 +165,7 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"success": true,
 				"queued":  false,
+				"outcome": "no_changes",
 				"message": "所有数据与当前信息完全一致，无需更新",
 			})
 			return
@@ -177,6 +178,7 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"queued":  false,
+			"outcome": "duplicate_ignored",
 			"message": "待审核队列中已存在完全相同的记录，已为您忽略",
 		})
 		return
@@ -185,6 +187,7 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success":     true,
 		"queued":      true,
+		"outcome":     "queued",
 		"review_id":   review.ID,
 		"field_count": len(fields),
 		"series":      series,
@@ -400,8 +403,11 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 	}
 
 	if result == nil {
+		// outcome 是与前端约定的稳定结果码：前端据此决定提示级别并本地化文案，不再靠解析中文 message。
+		// message 仍返回作为老客户端/未映射时的兜底文本。
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"scraped": false,
+			"outcome": "not_found",
 			"message": fmt.Sprintf("在 %s 上未找到与『%s』匹配的条目", provider.Name(), searchTitle),
 		})
 		return
@@ -412,6 +418,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		if errors.Is(err, errNoMetadataChanges) {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"scraped": false,
+				"outcome": "no_changes",
 				"message": fmt.Sprintf("从 %s 找到条目，但所有数据与当前信息完全一致，无需加入待审核队列", provider.Name()),
 			})
 			return
@@ -423,6 +430,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 	if !isNew {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"scraped": false,
+			"outcome": "duplicate_ignored",
 			"message": fmt.Sprintf("从 %s 找到条目，但待审核队列中已存在完全相同的记录，已为您忽略", provider.Name()),
 		})
 		return
@@ -430,6 +438,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"scraped":     true,
+		"outcome":     "queued",
 		"provider":    provider.Name(),
 		"message":     fmt.Sprintf("已将 %s 的『%s』加入审阅队列", provider.Name(), result.Title),
 		"series":      series,

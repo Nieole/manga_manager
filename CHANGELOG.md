@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（刮削响应结构化 outcome 码 · M65 第二步 · 前后端 lockstep）
+
+#### 重构/健壮性（前后端一起改）
+- 消除前端解析后端中文 message 决定提示级别的脆弱耦合。此前 `useSeriesScrape.ts` 靠 `res.data.message.includes('完全一致') || includes('已为您忽略')` 判断刮削 toast 是 success 还是 error——后端一改文案或英文用户就会误判。
+- 后端 `scrapeSeriesMetadata`(`/scrape`)与 `applyScrapedMetadata`(`/scrape-apply`)的 7 处响应新增稳定结果码 `outcome`:`queued`(已入审核队列)/`no_changes`(数据完全一致)/`duplicate_ignored`(队列已有相同记录)/`not_found`(未匹配)。原 `message` 仍返回作为老客户端/未映射时兜底。
+- 前端改为按 `outcome` 决定 toast 级别并渲染本地化文案(复用已有 `series.toast.metadataReviewQueued/noMetadataReviewChanges/scrapeDuplicate/metadataNotFound` 键),不再解析中文;顺带让这些提示对英文用户也本地化(此前直接显示后端中文)。
+
+#### 验证
+- 后端 `go vet`、`go test ./internal/api`(新增 `TestApplyScrapedMetadataOutcomeCodes`:首次入队 outcome=queued、重复提交 outcome=duplicate_ignored,经真实 handler 断言);前端 `npm run lint` + `npm run build` 通过。
+- 注:后端面向用户的中文字面量整体 i18n（约 208 处）与 OPDS 按 Accept-Language 选文案表，属 M65 更大剩余工作，本次仅落地刮削响应的结构化码这一具体脆弱耦合修复。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（任务重试注册化 + 错误语义/locale 修复 · M17 核心）
 
 #### 重构/可维护性
