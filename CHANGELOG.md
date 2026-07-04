@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（KOReader 建议文案 i18n + 删死码 · M65 续批）
+
+#### 国际化 / 清理
+- `koreader_controller.go`:设备诊断 / 冲突 / 未匹配列表的建议文案(`koreaderDeviceSuggestion` / `koreaderConflictSuggestion` / 新抽的 `koreaderUnmatchedSuggestion`)全部改为按 locale 生成中/英(含 `%d` 参数分支用常量格式串,满足 go vet);调用点由 `getKOReaderDeviceDiagnostics` / `listKOReaderUnmatched` 传入 `requestLocale(r)`。默认中文,`en-US` 输出英文。
+- 顺带删除死代码 `koreaderIndexLabel`(M65 第三步移除调用后已无任何引用;索引标签实由前端 `formatKOReaderIndexLabel` 按 `match_mode` / `path_ignore_extension` 参数渲染)。
+- 至此 KOReader **同步响应**的用户可见文案已全部本地化。M65 仅余写入 `koreader_sync_events` 的持久化诊断 `Message`(账号创建/轮换/启停用、进度回退等),须"写码 + 读时渲染"(涉及读路径改动),列为独立架构切片。
+
+#### 验证
+- `go vet`、`go test ./internal/api` 通过(无测试断言这些字面量)。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（刮削响应参数化文案 i18n · M65 续批）
 
 #### 国际化

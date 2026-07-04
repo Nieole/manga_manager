@@ -136,16 +136,6 @@ type KOReaderDeviceConflictItem struct {
 	Suggestion    string  `json:"suggestion"`
 }
 
-func koreaderIndexLabel(cfg config.Config) string {
-	if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
-		if cfg.KOReader.PathIgnoreExtension {
-			return "路径索引（忽略扩展名）"
-		}
-		return "路径索引"
-	}
-	return "二进制哈希索引"
-}
-
 func (c *Controller) SetupKOReaderRoutes(r chi.Router) {
 	basePath := c.currentConfig().KOReader.BasePath
 	if strings.TrimSpace(basePath) == "" {
@@ -205,17 +195,10 @@ func (c *Controller) listKOReaderUnmatched(w http.ResponseWriter, r *http.Reques
 	}
 
 	cfg := c.currentConfig()
+	locale := requestLocale(r)
 	result := make([]KOReaderUnmatchedItem, 0, len(items))
 	for _, item := range items {
-		suggestion := "建议先重建 KOReader 匹配索引，再重关联未匹配记录。"
-		if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
-			suggestion = fmt.Sprintf("请确认 KOReader 上报路径在文件名及向上 %d 层路径范围内可对应本地书籍。", config.KOReaderPathMatchDepth)
-			if cfg.KOReader.PathIgnoreExtension {
-				suggestion += " 当前已忽略扩展名。"
-			}
-		} else {
-			suggestion = "请确认 KOReader 当前使用的是二进制哈希匹配，并先重建匹配索引。"
-		}
+		suggestion := koreaderUnmatchedSuggestion(locale, cfg)
 		result = append(result, KOReaderUnmatchedItem{
 			ID:            item.ID,
 			Document:      item.Document,
@@ -307,7 +290,7 @@ func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http
 			LatestMatchedBy:  device.LatestMatchedBy,
 			LatestError:      strings.TrimSpace(device.LatestError),
 			MatchMethods:     methodsByDevice[key],
-			Suggestion:       koreaderDeviceSuggestion(health, cfg, device.UnmatchedRecords),
+			Suggestion:       koreaderDeviceSuggestion(requestLocale(r), health, cfg, device.UnmatchedRecords),
 		})
 	}
 	response.Summary.DeviceCount = len(response.Devices)
@@ -327,7 +310,7 @@ func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http
 			Message:       conflict.Message,
 			Percentage:    conflict.Percentage,
 			UpdatedAt:     conflict.UpdatedAt.Format(time.RFC3339),
-			Suggestion:    koreaderConflictSuggestion(conflict, cfg),
+			Suggestion:    koreaderConflictSuggestion(requestLocale(r), conflict, cfg),
 		}
 		if conflict.BookID.Valid {
 			bookID := conflict.BookID.Int64
@@ -347,31 +330,82 @@ func koreaderDeviceKey(username, device, deviceID string) string {
 	return strings.TrimSpace(username) + "|" + strings.TrimSpace(device) + "|" + strings.TrimSpace(deviceID)
 }
 
-func koreaderDeviceSuggestion(health string, cfg config.Config, unmatched int64) string {
+// 以下 KOReader 建议文案 helper 按 locale 生成中/英文本（含 %d 参数的分支用常量格式串按 locale
+// 选择，满足 go vet 非常量格式检查）。这些建议随设备诊断/未匹配列表响应直接下发、前端只能原样展示。
+func koreaderDeviceSuggestion(locale, health string, cfg config.Config, unmatched int64) string {
+	en := locale == "en-US"
 	switch health {
 	case "error":
+		if en {
+			return "Recent sync or authentication errors were detected. Check the account Sync Key and the device server address first."
+		}
 		return "最近存在同步或认证错误，请先检查账号 Sync Key 和设备端服务器地址。"
 	case "needs_reconcile":
 		if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
+			if en {
+				return fmt.Sprintf("This device still has %d unmatched records. Ensure the path KOReader reports matches the local file name within %d parent path levels.", unmatched, config.KOReaderPathMatchDepth)
+			}
 			return fmt.Sprintf("该设备还有 %d 条未匹配记录，请确认 KOReader 上报路径与本地文件名及向上 %d 层路径一致。", unmatched, config.KOReaderPathMatchDepth)
+		}
+		if en {
+			return fmt.Sprintf("This device still has %d unmatched records. Rebuild the binary hash index and reconcile again.", unmatched)
 		}
 		return fmt.Sprintf("该设备还有 %d 条未匹配记录，请先重建二进制哈希索引再重关联。", unmatched)
 	default:
+		if en {
+			return "All recent sync records for this device are mapped to local books."
+		}
 		return "该设备最近同步记录均已映射到本地书籍。"
 	}
 }
 
-func koreaderConflictSuggestion(conflict database.KOReaderDeviceConflict, cfg config.Config) string {
+func koreaderConflictSuggestion(locale string, conflict database.KOReaderDeviceConflict, cfg config.Config) string {
+	en := locale == "en-US"
 	if strings.HasPrefix(conflict.Status, "auth_failed") {
+		if en {
+			return "Authentication failures usually come from a mismatched username or Sync Key. Re-copy the account's original Sync Key to the device."
+		}
 		return "认证失败通常由用户名或 Sync Key 不一致导致，请重新复制账号的原始 Sync Key 到设备。"
 	}
 	if conflict.Type == "unmatched_progress" {
 		if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
+			if en {
+				return fmt.Sprintf("Path matching is in use. Compare the normalized key with the local file name within %d parent path levels.", config.KOReaderPathMatchDepth)
+			}
 			return fmt.Sprintf("当前使用路径匹配，请比较归一化键与本地文件名及向上 %d 层路径。", config.KOReaderPathMatchDepth)
+		}
+		if en {
+			return "Binary hash matching is in use. Make sure the KOReader index has been rebuilt for local books."
 		}
 		return "当前使用二进制哈希匹配，请确认已为本地书籍重建 KOReader 索引。"
 	}
+	if en {
+		return "Review the status code and message, then retry the sync. If it recurs, confirm in the connection center that requests hit the correct path."
+	}
 	return "查看状态码和消息后重试同步；如果反复出现，可先在连接中心确认请求是否命中正确路径。"
+}
+
+// koreaderUnmatchedSuggestion 生成未匹配记录列表项的建议文案（按 locale 选中/英）。
+func koreaderUnmatchedSuggestion(locale string, cfg config.Config) string {
+	en := locale == "en-US"
+	if cfg.KOReader.MatchMode == config.KOReaderMatchModeFilePath {
+		if en {
+			s := fmt.Sprintf("Ensure the path KOReader reports can map to a local book within the file name and %d parent path levels.", config.KOReaderPathMatchDepth)
+			if cfg.KOReader.PathIgnoreExtension {
+				s += " The extension is currently ignored."
+			}
+			return s
+		}
+		s := fmt.Sprintf("请确认 KOReader 上报路径在文件名及向上 %d 层路径范围内可对应本地书籍。", config.KOReaderPathMatchDepth)
+		if cfg.KOReader.PathIgnoreExtension {
+			s += " 当前已忽略扩展名。"
+		}
+		return s
+	}
+	if en {
+		return "Confirm KOReader is currently using binary hash matching, and rebuild the match index first."
+	}
+	return "请确认 KOReader 当前使用的是二进制哈希匹配，并先重建匹配索引。"
 }
 
 func mapKOReaderAccountResponse(account database.KOReaderAccount) KOReaderAccountResponse {
