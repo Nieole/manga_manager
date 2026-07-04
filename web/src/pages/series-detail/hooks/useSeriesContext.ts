@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiClient } from '../../../api/client';
+import { apiClient, getApiErrorMessage } from '../../../api/client';
 import type {
   Author,
   Book,
@@ -27,6 +27,10 @@ interface UseSeriesContextParams {
 
 export interface SeriesContextState {
   loading: boolean;
+  // error 为最近一次加载系列上下文失败的可读消息（成功后清空）；供详情页在主数据缺失时
+  // 渲染错误 + 重试，替代此前 catch 只 console.error、失败后把 null series 传给整页导致破损。
+  error: string | null;
+  retry: () => void;
   series: Series | null;
   books: Book[];
   tags: MetaTag[];
@@ -56,6 +60,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
   const [metadataProvenance, setMetadataProvenance] = useState<MetadataProvenance[]>([]);
   const [failedTasks, setFailedTasks] = useState<SeriesFailedTask[]>([]);
   const [continueInfo, setContinueInfo] = useState<SeriesContinue | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!seriesId) return;
@@ -76,14 +81,27 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
   useEffect(() => {
     if (!seriesId) return;
     setLoading(!series && books.length === 0);
+    setError(null);
     reload()
-      .catch((err) => console.error('Failed to load series context', err))
+      .catch((err) => { console.error('Failed to load series context', err); setError(getApiErrorMessage(err, '')); })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesId, refreshTrigger]);
 
+  // retry：主数据加载失败后的重试入口，非静默重取（显示 loading、清除错误）。
+  const retry = useCallback(() => {
+    if (!seriesId) return;
+    setLoading(true);
+    setError(null);
+    reload()
+      .catch((err) => { console.error('Failed to load series context', err); setError(getApiErrorMessage(err, '')); })
+      .finally(() => setLoading(false));
+  }, [reload, seriesId]);
+
   return {
     loading,
+    error,
+    retry,
     series,
     books,
     tags,

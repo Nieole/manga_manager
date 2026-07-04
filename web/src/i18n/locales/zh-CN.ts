@@ -814,6 +814,7 @@ export const messages: MessageCatalog = {
     'errorBoundary.description': '这可能是由于数据损坏或系统异常导致的。',
     'errorBoundary.backHome': '返回主页',
     'series.content.loading': '正在提取书籍关系元数据...',
+    'series.content.loadFailed': '加载系列信息失败',
     'series.content.volumes': '卷列表',
     'series.content.markVolumeUnread': '将全卷标记为未读',
     'series.content.markVolumeRead': '将全卷标记为已读',

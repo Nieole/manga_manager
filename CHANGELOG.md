@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（系列详情主数据错误态 + 重试 · M48 续批）
+
+#### 修复(用户可见)
+- `useSeriesContext`(系列详情页主数据 `/api/series/{id}/context`)此前加载失败只 `console.error`、`series` 保持 null 后被传给整页 → 页面破损、无提示、无法重试。现新增 `error` 状态(成功清空、失败经 `getApiErrorMessage` 取可读消息)与 `retry`;`series-detail/index.tsx` 在"非加载中且无 series"时渲染错误 + 「重试」按钮,而非把 null 传给 Hero 等子组件。复用 `common.retry`,新增 `series.content.loadFailed` 中/英文案。
+- 说明:M48 其余静默 catch 经核对多为**可接受**——`SeriesFranchiseView` / `franchise-graph` 的失败态与"无关联"同为空(可选内容)、`BackgroundTasks` 的 storageIO 为辅助诊断面板(主任务列表另有加载态处理),故不强加错误 UI。
+
+#### 验证
+- 前端 `npm run lint`(0 problems)、`npm run build`、`npm run test`(24)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（Layout.tsx god-component 抽离 hooks/组件 · M49）
 
 #### 重构（行为保持）

@@ -814,6 +814,7 @@ export const messages: MessageCatalog = {
     'errorBoundary.description': 'This may be caused by corrupted data or a system issue.',
     'errorBoundary.backHome': 'Back to home',
     'series.content.loading': 'Extracting book relationship metadata...',
+    'series.content.loadFailed': 'Failed to load series information',
     'series.content.volumes': 'Volumes',
     'series.content.markVolumeUnread': 'Mark the whole volume as unread',
     'series.content.markVolumeRead': 'Mark the whole volume as read',

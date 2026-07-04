@@ -198,6 +198,25 @@ export default function SeriesDetailPage() {
     );
   }
 
+  // 主数据加载失败（非加载中且无 series）：给出错误 + 重试，而非把 null series 传给整页导致破损。
+  if (!ctx.series) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-sm text-red-400">
+          {t('series.content.loadFailed')}
+          {ctx.error ? `：${ctx.error}` : ''}
+        </p>
+        <button
+          type="button"
+          onClick={ctx.retry}
+          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/20"
+        >
+          {t('common.retry')}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="relative min-h-screen">
       {coverUrl && (
