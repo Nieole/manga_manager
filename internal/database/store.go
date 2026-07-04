@@ -34,8 +34,8 @@ type Store interface {
 	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]ExternalLibraryBookRow, error)
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)
 	ExecTx(ctx context.Context, fn func(*Queries) error) error
-	SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
-	SearchSeriesCursor(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error)
+	SearchSeriesPaged(ctx context.Context, libraryID int64, f SeriesListFilters, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error)
+	SearchSeriesCursor(ctx context.Context, libraryID int64, f SeriesListFilters, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error)
 	SearchGlobalSeries(ctx context.Context, keyword string, limit int32) ([]SeriesSearchHit, error)
 	SearchGlobalBooks(ctx context.Context, keyword string, limit int32) ([]BookSearchHit, error)
 	SearchProtocolSeries(ctx context.Context, keyword string, limit, offset int32) ([]ProtocolSeriesRow, int, error)
@@ -1196,11 +1196,11 @@ func scanTaskRecord(row taskScanner) (TaskRecord, error) {
 
 // SearchSeriesPaged 供主页根据标签和作者查询并分页。
 // 默认列表只走 series + series_stats，只有标签/作者筛选时才进入关联表。
-func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
-	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, keyword, letter, status, tags, authors)
+func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, f SeriesListFilters, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
+	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, f)
 
 	var total int
-	if keyword == "" && status == "" && letter == "" && len(tags) == 0 && len(authors) == 0 {
+	if !f.hasAny() {
 		if libraryID == 0 {
 			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series`).Scan(&total); err != nil {
 				return nil, 0, err
@@ -1209,7 +1209,8 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 			return nil, 0, err
 		}
 	} else {
-		countQuery := `SELECT COUNT(*) FROM series s` + whereClause
+		// 计数需与主查询同样 LEFT JOIN series_stats，因阅读状态/进度筛选引用 ss.* 列。
+		countQuery := `SELECT COUNT(*) FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id` + whereClause
 		if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 			return nil, 0, err
 		}
@@ -1233,7 +1234,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, keywo
 	return items, total, nil
 }
 
-func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, keyword, letter, status string, tags, authors []string, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error) {
+func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, f SeriesListFilters, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error) {
 	sortSpec := parseSeriesSearchSort(sortBy)
 	if !sortSpec.supportsCursor() {
 		return nil, "", false, fmt.Errorf("sort %q does not support cursor pagination", sortBy)
@@ -1242,7 +1243,7 @@ func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, keyw
 		limit = 50
 	}
 
-	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, keyword, letter, status, tags, authors)
+	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, f)
 	filters := strings.TrimPrefix(whereClause, " WHERE ")
 	queryArgs := append([]interface{}{}, args...)
 
@@ -1615,7 +1616,35 @@ func fts5PhraseQuery(keyword string) string {
 	return `"` + strings.ReplaceAll(strings.TrimSpace(keyword), `"`, `""`) + `"`
 }
 
-func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tags, authors []string) (string, string, []interface{}) {
+// SeriesListFilters 收敛资料库/系列列表查询的全部可选筛选条件，避免多参数签名膨胀。
+// 阅读状态 / 评分区间 / 进度区间 / 加入天数为 2026-07 新增（对齐智能合集筛选维度）；
+// 零值字段（空串 / nil 指针 / 0）表示“不筛选该维度”。
+type SeriesListFilters struct {
+	Keyword string
+	Letter  string
+	Status  string
+	Tags    []string
+	Authors []string
+	// ReadState: "" | "unread"（未读）| "reading"（在读）| "completed"（已读完）。
+	ReadState string
+	// 评分区间（series.rating，NULL 评分不满足任一边界，天然被排除）。
+	MinRating *float64
+	MaxRating *float64
+	// 进度区间百分比 0–100（read_pages / total_pages）。
+	MinProgress *float64
+	MaxProgress *float64
+	// 仅保留最近 N 天内加入的系列；0 表示不限。
+	AddedWithinDays int
+}
+
+// hasAny 报告是否存在任一筛选条件，用于决定计数是否走无筛选快路径。
+func (f SeriesListFilters) hasAny() bool {
+	return f.Keyword != "" || f.Letter != "" || f.Status != "" || len(f.Tags) > 0 || len(f.Authors) > 0 ||
+		f.ReadState != "" || f.MinRating != nil || f.MaxRating != nil || f.MinProgress != nil || f.MaxProgress != nil ||
+		f.AddedWithinDays > 0
+}
+
+func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (string, string, []interface{}) {
 	baseQuery := `
 		SELECT
             s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
@@ -1629,25 +1658,25 @@ func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tag
 		LEFT JOIN series_stats ss ON ss.series_id = s.id
 	`
 
-	filters := make([]string, 0, 5)
-	args := make([]interface{}, 0, 8)
+	filters := make([]string, 0, 8)
+	args := make([]interface{}, 0, 12)
 	if libraryID != 0 {
 		filters = append(filters, `s.library_id = ?`)
 		args = append(args, libraryID)
 	}
 
-	if keyword != "" {
+	if f.Keyword != "" {
 		filters = append(filters, `(instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`)
-		args = append(args, keyword, keyword)
+		args = append(args, f.Keyword, f.Keyword)
 	}
 
-	if status != "" {
+	if f.Status != "" {
 		filters = append(filters, `s.status = ?`)
-		args = append(args, status)
+		args = append(args, f.Status)
 	}
 
-	if letter != "" {
-		normalizedLetter := strings.ToUpper(strings.TrimSpace(letter))
+	if f.Letter != "" {
+		normalizedLetter := strings.ToUpper(strings.TrimSpace(f.Letter))
 		if normalizedLetter != "" {
 			if normalizedLetter == "#" {
 				filters = append(filters, `s.name_initial = '#'`)
@@ -1658,13 +1687,13 @@ func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tag
 		}
 	}
 
-	if len(tags) > 0 {
+	if len(f.Tags) > 0 {
 		filter := `EXISTS (
 			SELECT 1
 			FROM series_tags st
 			JOIN tags t ON st.tag_id = t.id
 			WHERE st.series_id = s.id AND t.name IN (`
-		for i, tag := range tags {
+		for i, tag := range f.Tags {
 			if i > 0 {
 				filter += `, `
 			}
@@ -1675,13 +1704,13 @@ func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tag
 		filters = append(filters, filter)
 	}
 
-	if len(authors) > 0 {
+	if len(f.Authors) > 0 {
 		filter := `EXISTS (
 			SELECT 1
 			FROM series_authors sa
 			JOIN authors a ON sa.author_id = a.id
 			WHERE sa.series_id = s.id AND a.name IN (`
-		for i, author := range authors {
+		for i, author := range f.Authors {
 			if i > 0 {
 				filter += `, `
 			}
@@ -1690,6 +1719,42 @@ func buildSeriesSearchQuery(libraryID int64, keyword, letter, status string, tag
 		}
 		filter += `))`
 		filters = append(filters, filter)
+	}
+
+	// 阅读状态：基于 series_stats 的已读/读完卷册数与 series.book_count。
+	switch f.ReadState {
+	case "unread":
+		filters = append(filters, `COALESCE(ss.read_book_count, 0) = 0`)
+	case "reading":
+		filters = append(filters, `COALESCE(ss.read_book_count, 0) > 0 AND COALESCE(ss.completed_book_count, 0) < s.book_count`)
+	case "completed":
+		filters = append(filters, `s.book_count > 0 AND COALESCE(ss.completed_book_count, 0) >= s.book_count`)
+	}
+
+	if f.MinRating != nil {
+		filters = append(filters, `s.rating >= ?`)
+		args = append(args, *f.MinRating)
+	}
+	if f.MaxRating != nil {
+		filters = append(filters, `s.rating <= ?`)
+		args = append(args, *f.MaxRating)
+	}
+
+	// 进度百分比 = read_pages / total_pages * 100；总页数为 0 时视作 0%。
+	progressExpr := `COALESCE(CAST(COALESCE(ss.read_pages, 0) AS REAL) / NULLIF(s.total_pages, 0) * 100, 0)`
+	if f.MinProgress != nil {
+		filters = append(filters, progressExpr+` >= ?`)
+		args = append(args, *f.MinProgress)
+	}
+	if f.MaxProgress != nil {
+		filters = append(filters, progressExpr+` <= ?`)
+		args = append(args, *f.MaxProgress)
+	}
+
+	if f.AddedWithinDays > 0 {
+		cutoff := time.Now().UTC().AddDate(0, 0, -f.AddedWithinDays).Format("2006-01-02 15:04:05")
+		filters = append(filters, `s.created_at >= ?`)
+		args = append(args, cutoff)
 	}
 
 	whereClause := ""

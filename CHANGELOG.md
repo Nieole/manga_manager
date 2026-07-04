@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（资源库筛选补充：阅读状态/评分/进度/加入时间 · 收藏者体验③）
+
+#### 新增
+- 资源库筛选条补齐此前只有智能合集才有的维度，让"我库里还有哪些没读的"能在库页一键筛：
+  - **阅读状态**：未读 / 在读 / 已读完（基于 series_stats 的已读、读完卷册数与 series.book_count）。
+  - **评分区间**（0–10）、**阅读进度区间**（0–100%，read_pages / total_pages）、**加入时间**（最近 7/30/90 天）。
+  - 均以激活芯片展示、可单独移除，纳入"清空所有筛选"，并**同步到 URL query**（`read/rmin/rmax/pmin/pmax/days`）与本地持久化，刷新/分享可恢复。
+- 后端 `SearchSeriesPaged` / `SearchSeriesCursor` 改用 `SeriesListFilters` 结构承载全部筛选（收敛多参数签名），新增阅读状态 / 评分 / 进度 / 加入天数的 WHERE 构造；筛选计数查询同步 `LEFT JOIN series_stats`。控制器 `/api/series/search` 解析新参数。
+- 前端：`useLibraryFilters` 新增 `advanced` 高级筛选对象（URL 同步 + 持久化 + 重置），`useLibrarySeries` 透传查询参数，`LibraryFilterBar` 新增四组筛选控件与芯片。
+
+#### 验证
+- 新增 `TestSearchSeriesPagedAdvancedFilters`（覆盖 unread/reading/completed、评分下限、进度上/下限、加入天数）；`go build`、`go vet`、`go test ./internal/database ./internal/api` 全绿；前端 `npm run lint`（0）、`npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（翻页阅读器自由缩放 · 收藏者体验④）
 
 #### 新增

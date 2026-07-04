@@ -8,6 +8,37 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DEFAULT_PAGE_SIZE } from '../types';
 
+// AdvancedFilters 对齐智能合集的筛选维度：阅读状态 / 评分区间 / 进度区间 / 加入天数。
+// null 表示该维度不筛选。收成单一对象以减少 hook 的 state 数量与穿透面。
+export interface AdvancedFilters {
+  readState: string | null; // 'unread' | 'reading' | 'completed' | null
+  minRating: number | null; // 0–10
+  maxRating: number | null;
+  minProgress: number | null; // 0–100
+  maxProgress: number | null;
+  addedWithinDays: number | null;
+}
+
+export const EMPTY_ADVANCED_FILTERS: AdvancedFilters = {
+  readState: null,
+  minRating: null,
+  maxRating: null,
+  minProgress: null,
+  maxProgress: null,
+  addedWithinDays: null,
+};
+
+export function hasAdvancedFilters(a: AdvancedFilters): boolean {
+  return (
+    a.readState !== null ||
+    a.minRating !== null ||
+    a.maxRating !== null ||
+    a.minProgress !== null ||
+    a.maxProgress !== null ||
+    a.addedWithinDays !== null
+  );
+}
+
 export interface SavedLibrarySettings {
   activeTag?: string | null;
   activeAuthor?: string | null;
@@ -18,6 +49,7 @@ export interface SavedLibrarySettings {
   keyword?: string;
   pageSize?: number;
   page?: number;
+  advanced?: AdvancedFilters;
 }
 
 interface UseLibraryFiltersResult {
@@ -28,6 +60,7 @@ interface UseLibraryFiltersResult {
   sortByField: string;
   sortDir: string;
   keyword: string;
+  advanced: AdvancedFilters;
   page: number;
   pageSize: number;
   settingsReady: boolean;
@@ -38,6 +71,7 @@ interface UseLibraryFiltersResult {
   setSortByField: (value: string) => void;
   setSortDir: (value: string) => void;
   setKeyword: (value: string) => void;
+  setAdvancedFilters: (patch: Partial<AdvancedFilters>) => void;
   setPage: (value: number) => void;
   setPageSize: (value: number) => void;
   resetAll: () => void;
@@ -87,6 +121,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
   const [sortByField, setSortByField] = useState<string>('name');
   const [sortDir, setSortDir] = useState<string>('asc');
   const [keyword, setKeyword] = useState('');
+  const [advanced, setAdvanced] = useState<AdvancedFilters>(EMPTY_ADVANCED_FILTERS);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -113,6 +148,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       setSortByField(fromUrl.sortByField);
       setSortDir(fromUrl.sortDir);
       setKeyword(fromUrl.keyword);
+      setAdvanced(fromUrl.advanced);
       setPage(fromUrl.page);
       setPageSize(fromUrl.pageSize);
       setSettingsReadyLibId(libId);
@@ -128,6 +164,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       setSortByField(stored.sortByField || 'name');
       setSortDir(stored.sortDir || 'asc');
       setKeyword(stored.keyword || '');
+      setAdvanced({ ...EMPTY_ADVANCED_FILTERS, ...(stored.advanced ?? {}) });
       setPage(stored.page || 1);
       setPageSize(stored.pageSize || DEFAULT_PAGE_SIZE);
     }
@@ -149,6 +186,12 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     setOrDelete(next, 'dir', VALID_SORT_DIRS.has(sortDir) && sortDir !== 'asc' ? sortDir : null);
     setOrDelete(next, 'size', pageSize === DEFAULT_PAGE_SIZE ? null : String(pageSize));
     setOrDelete(next, 'page', page === 1 ? null : String(page));
+    setOrDelete(next, 'read', advanced.readState);
+    setOrDelete(next, 'rmin', advanced.minRating !== null ? String(advanced.minRating) : null);
+    setOrDelete(next, 'rmax', advanced.maxRating !== null ? String(advanced.maxRating) : null);
+    setOrDelete(next, 'pmin', advanced.minProgress !== null ? String(advanced.minProgress) : null);
+    setOrDelete(next, 'pmax', advanced.maxProgress !== null ? String(advanced.maxProgress) : null);
+    setOrDelete(next, 'days', advanced.addedWithinDays !== null ? String(advanced.addedWithinDays) : null);
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
@@ -163,6 +206,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       keyword: keyword.trim(),
       pageSize,
       page,
+      advanced,
     };
     const signature = JSON.stringify(payload);
     if (signature === lastWrittenSettings.current) return;
@@ -180,11 +224,17 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     activeStatus,
     activeLetter,
     keyword,
+    advanced,
     sortByField,
     sortDir,
     pageSize,
     page,
   ]);
+
+  const setAdvancedFilters = useCallback((patch: Partial<AdvancedFilters>) => {
+    setAdvanced((prev) => ({ ...prev, ...patch }));
+    setPage(1);
+  }, []);
 
   const resetAll = useCallback(() => {
     setActiveTag(null);
@@ -192,6 +242,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     setActiveStatus(null);
     setActiveLetter(null);
     setKeyword('');
+    setAdvanced(EMPTY_ADVANCED_FILTERS);
     setSortByField('name');
     setSortDir('asc');
     setPageSize(DEFAULT_PAGE_SIZE);
@@ -219,6 +270,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       sortByField,
       sortDir,
       keyword,
+      advanced,
       page,
       pageSize,
       settingsReady: currentSettingsReady,
@@ -229,6 +281,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       setSortByField,
       setSortDir,
       setKeyword,
+      setAdvancedFilters,
       setPage,
       setPageSize,
       resetAll,
@@ -240,11 +293,13 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       activeStatus,
       activeLetter,
       keyword,
+      advanced,
       sortByField,
       sortDir,
       page,
       pageSize,
       currentSettingsReady, // 已含 settingsReady/settingsReadyLibId/libId 的派生结果，无需再单列后两者
+      setAdvancedFilters,
       resetAll,
       applySnapshot,
     ],
@@ -267,11 +322,14 @@ function parseFiltersFromSearch(params: URLSearchParams): {
   sortByField: string;
   sortDir: string;
   keyword: string;
+  advanced: AdvancedFilters;
   page: number;
   pageSize: number;
 } | null {
   // 至少有一个 query 参数才认为 URL 携带了完整意图（避免覆盖服务端 settings）
-  const hasAny = ['tag', 'author', 'status', 'letter', 'q', 'sort', 'dir', 'size', 'page'].some((k) => params.has(k));
+  const hasAny = ['tag', 'author', 'status', 'letter', 'q', 'sort', 'dir', 'size', 'page', 'read', 'rmin', 'rmax', 'pmin', 'pmax', 'days'].some((k) =>
+    params.has(k),
+  );
   if (!hasAny) return null;
   const sizeRaw = parseInt(params.get('size') || '', 10);
   const pageRaw = parseInt(params.get('page') || '', 10);
@@ -281,9 +339,27 @@ function parseFiltersFromSearch(params: URLSearchParams): {
     activeStatus: params.get('status') || null,
     activeLetter: params.get('letter') || null,
     keyword: params.get('q') || '',
+    advanced: {
+      readState: parseReadStateParam(params.get('read')),
+      minRating: parseNumberParam(params.get('rmin')),
+      maxRating: parseNumberParam(params.get('rmax')),
+      minProgress: parseNumberParam(params.get('pmin')),
+      maxProgress: parseNumberParam(params.get('pmax')),
+      addedWithinDays: parseNumberParam(params.get('days')),
+    },
     sortByField: params.get('sort') || 'name',
     sortDir: VALID_SORT_DIRS.has(params.get('dir') || '') ? (params.get('dir') as string) : 'asc',
     pageSize: Number.isFinite(sizeRaw) && sizeRaw > 0 ? sizeRaw : DEFAULT_PAGE_SIZE,
     page: Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1,
   };
+}
+
+function parseReadStateParam(v: string | null): string | null {
+  return v === 'unread' || v === 'reading' || v === 'completed' ? v : null;
+}
+
+function parseNumberParam(v: string | null): number | null {
+  if (v === null || v.trim() === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }

@@ -37,7 +37,7 @@ func BenchmarkSearchSeriesPaged(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				rows, total, err := store.SearchSeriesPaged(ctx, 1, tc.keyword, tc.letter, tc.status, nil, nil, 50, 0, tc.sortBy)
+				rows, total, err := store.SearchSeriesPaged(ctx, 1, SeriesListFilters{Keyword: tc.keyword, Letter: tc.letter, Status: tc.status}, 50, 0, tc.sortBy)
 				if err != nil {
 					b.Fatalf("search series failed: %v", err)
 				}
@@ -57,7 +57,7 @@ func BenchmarkSearchSeriesPaged_10k(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rows, total, err := store.SearchSeriesPaged(ctx, 1, "", "", "", nil, nil, 50, 0, "updated_desc")
+		rows, total, err := store.SearchSeriesPaged(ctx, 1, SeriesListFilters{}, 50, 0, "updated_desc")
 		if err != nil {
 			b.Fatalf("search series failed: %v", err)
 		}

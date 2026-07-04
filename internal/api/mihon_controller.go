@@ -427,11 +427,12 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	rows, total, err := c.store.SearchSeriesPaged(
 		r.Context(),
 		libraryID,
-		query,  // keyword
-		"",     // letter
-		status, // status
-		tags,
-		authors,
+		database.SeriesListFilters{
+			Keyword: query,
+			Status:  status,
+			Tags:    tags,
+			Authors: authors,
+		},
 		int32(limit),
 		int32(offset),
 		searchSortBy,

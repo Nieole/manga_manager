@@ -9,6 +9,10 @@ import { ChevronDown, ChevronUp, Filter, FilterX, Search, X } from 'lucide-react
 import { useI18n } from '../../i18n/LocaleProvider';
 import { normalizeSeriesStatus } from '../../i18n/status';
 import type { NamedOption } from './types';
+import type { AdvancedFilters } from './hooks/useLibraryFilters';
+
+const READ_STATES = ['unread', 'reading', 'completed'] as const;
+const ADDED_WITHIN_PRESETS = [7, 30, 90] as const;
 
 interface LibraryFilterBarProps {
   allStatuses: string[];
@@ -18,6 +22,7 @@ interface LibraryFilterBarProps {
   activeTag: string | null;
   activeAuthor: string | null;
   activeLetter: string | null;
+  advanced: AdvancedFilters;
   filterOptionsLoading?: boolean;
   smartFilterChips: string[];
   hasAnyFilter: boolean;
@@ -25,6 +30,7 @@ interface LibraryFilterBarProps {
   onTagChange: (value: string | null) => void;
   onAuthorChange: (value: string | null) => void;
   onLetterChange: (value: string | null) => void;
+  onAdvancedChange: (patch: Partial<AdvancedFilters>) => void;
   onResetFilters: () => void;
   onFiltersOpen?: () => void;
   onTagSearch?: (query: string) => void;
@@ -42,6 +48,7 @@ export function LibraryFilterBar({
   activeTag,
   activeAuthor,
   activeLetter,
+  advanced,
   filterOptionsLoading = false,
   smartFilterChips,
   hasAnyFilter,
@@ -49,6 +56,7 @@ export function LibraryFilterBar({
   onTagChange,
   onAuthorChange,
   onLetterChange,
+  onAdvancedChange,
   onResetFilters,
   onFiltersOpen,
   onTagSearch,
@@ -116,8 +124,38 @@ export function LibraryFilterBar({
         label: t('home.smartFilters.chipLetter', { value: activeLetter }),
         onClear: () => onLetterChange(null),
       });
+    if (advanced.readState)
+      chips.push({
+        key: `read-${advanced.readState}`,
+        label: t(`library.filters.readState.${advanced.readState}`),
+        onClear: () => onAdvancedChange({ readState: null }),
+      });
+    if (advanced.minRating !== null || advanced.maxRating !== null)
+      chips.push({
+        key: 'rating-range',
+        label: t('library.filters.ratingChip', {
+          min: advanced.minRating ?? 0,
+          max: advanced.maxRating ?? 10,
+        }),
+        onClear: () => onAdvancedChange({ minRating: null, maxRating: null }),
+      });
+    if (advanced.minProgress !== null || advanced.maxProgress !== null)
+      chips.push({
+        key: 'progress-range',
+        label: t('library.filters.progressChip', {
+          min: advanced.minProgress ?? 0,
+          max: advanced.maxProgress ?? 100,
+        }),
+        onClear: () => onAdvancedChange({ minProgress: null, maxProgress: null }),
+      });
+    if (advanced.addedWithinDays !== null)
+      chips.push({
+        key: `added-${advanced.addedWithinDays}`,
+        label: t('library.filters.addedWithinChip', { days: advanced.addedWithinDays }),
+        onClear: () => onAdvancedChange({ addedWithinDays: null }),
+      });
     return chips;
-  }, [activeStatus, activeTag, activeAuthor, activeLetter, onAuthorChange, onLetterChange, onStatusChange, onTagChange, t]);
+  }, [activeStatus, activeTag, activeAuthor, activeLetter, advanced, onAdvancedChange, onAuthorChange, onLetterChange, onStatusChange, onTagChange, t]);
 
   const renderRow = (
     label: string,
@@ -314,6 +352,135 @@ export function LibraryFilterBar({
                   }`}
                 >
                   {letter}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 阅读状态 */}
+          <div className="flex flex-col lg:flex-row gap-3 py-5 border-t border-gray-800/30">
+            <div className="flex items-center lg:w-32 shrink-0 h-9">
+              <span className="text-gray-400 font-medium text-sm">{t('library.filters.readStateLabel')}</span>
+            </div>
+            <div className="flex-1 flex flex-wrap gap-1.5 items-center">
+              <button
+                onClick={() => onAdvancedChange({ readState: null })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${
+                  advanced.readState === null
+                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
+                    : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                {t('home.filters.all')}
+              </button>
+              {READ_STATES.map((state) => (
+                <button
+                  key={state}
+                  onClick={() => onAdvancedChange({ readState: advanced.readState === state ? null : state })}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${
+                    advanced.readState === state
+                      ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
+                      : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  {t(`library.filters.readState.${state}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 评分区间 0–10 */}
+          <div className="flex flex-col lg:flex-row gap-3 py-5 border-t border-gray-800/30">
+            <div className="flex items-center lg:w-32 shrink-0 h-9">
+              <span className="text-gray-400 font-medium text-sm">{t('library.filters.ratingLabel')}</span>
+            </div>
+            <div className="flex-1 flex flex-wrap gap-2 items-center text-xs text-gray-400">
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.5}
+                value={advanced.minRating ?? ''}
+                onChange={(e) => onAdvancedChange({ minRating: e.target.value === '' ? null : Number(e.target.value) })}
+                placeholder={t('library.filters.min')}
+                aria-label={t('library.filters.minRating')}
+                className="w-20 rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-white outline-hidden focus:border-komgaPrimary"
+              />
+              <span>—</span>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.5}
+                value={advanced.maxRating ?? ''}
+                onChange={(e) => onAdvancedChange({ maxRating: e.target.value === '' ? null : Number(e.target.value) })}
+                placeholder={t('library.filters.max')}
+                aria-label={t('library.filters.maxRating')}
+                className="w-20 rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-white outline-hidden focus:border-komgaPrimary"
+              />
+            </div>
+          </div>
+
+          {/* 阅读进度区间 0–100% */}
+          <div className="flex flex-col lg:flex-row gap-3 py-5 border-t border-gray-800/30">
+            <div className="flex items-center lg:w-32 shrink-0 h-9">
+              <span className="text-gray-400 font-medium text-sm">{t('library.filters.progressLabel')}</span>
+            </div>
+            <div className="flex-1 flex flex-wrap gap-2 items-center text-xs text-gray-400">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={advanced.minProgress ?? ''}
+                onChange={(e) => onAdvancedChange({ minProgress: e.target.value === '' ? null : Number(e.target.value) })}
+                placeholder={t('library.filters.min')}
+                aria-label={t('library.filters.minProgress')}
+                className="w-20 rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-white outline-hidden focus:border-komgaPrimary"
+              />
+              <span>—</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={advanced.maxProgress ?? ''}
+                onChange={(e) => onAdvancedChange({ maxProgress: e.target.value === '' ? null : Number(e.target.value) })}
+                placeholder={t('library.filters.max')}
+                aria-label={t('library.filters.maxProgress')}
+                className="w-20 rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-white outline-hidden focus:border-komgaPrimary"
+              />
+              <span className="text-gray-500">%</span>
+            </div>
+          </div>
+
+          {/* 加入时间 */}
+          <div className="flex flex-col lg:flex-row gap-3 py-5 border-t border-gray-800/30">
+            <div className="flex items-center lg:w-32 shrink-0 h-9">
+              <span className="text-gray-400 font-medium text-sm">{t('library.filters.addedWithinLabel')}</span>
+            </div>
+            <div className="flex-1 flex flex-wrap gap-1.5 items-center">
+              <button
+                onClick={() => onAdvancedChange({ addedWithinDays: null })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${
+                  advanced.addedWithinDays === null
+                    ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
+                    : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                {t('home.filters.all')}
+              </button>
+              {ADDED_WITHIN_PRESETS.map((days) => (
+                <button
+                  key={days}
+                  onClick={() => onAdvancedChange({ addedWithinDays: advanced.addedWithinDays === days ? null : days })}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border ${
+                    advanced.addedWithinDays === days
+                      ? 'bg-komgaPrimary border-komgaPrimary text-white shadow-xs'
+                      : 'bg-transparent border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  {t('library.filters.addedWithinPreset', { days })}
                 </button>
               ))}
             </div>

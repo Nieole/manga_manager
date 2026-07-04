@@ -11,7 +11,7 @@ import {
   type Series,
   type SeriesSearchResponse,
 } from '../types';
-import { supportsCursorPagination } from './useLibraryFilters';
+import { supportsCursorPagination, type AdvancedFilters } from './useLibraryFilters';
 
 interface UseLibrarySeriesParams {
   libId: string | undefined;
@@ -21,6 +21,7 @@ interface UseLibrarySeriesParams {
   activeAuthor: string | null;
   activeStatus: string | null;
   activeLetter: string | null;
+  advanced: AdvancedFilters;
   sortByField: string;
   sortDir: string;
   refreshTrigger: number;
@@ -73,6 +74,7 @@ export function useLibrarySeries({
   activeAuthor,
   activeStatus,
   activeLetter,
+  advanced,
   sortByField,
   sortDir,
   refreshTrigger,
@@ -103,6 +105,12 @@ export function useLibrarySeries({
       if (activeAuthor) params.append('authors', activeAuthor);
       if (activeStatus) params.append('status', activeStatus);
       if (activeLetter) params.append('letter', activeLetter);
+      if (advanced.readState) params.append('readState', advanced.readState);
+      if (advanced.minRating !== null) params.append('minRating', String(advanced.minRating));
+      if (advanced.maxRating !== null) params.append('maxRating', String(advanced.maxRating));
+      if (advanced.minProgress !== null) params.append('minProgress', String(advanced.minProgress));
+      if (advanced.maxProgress !== null) params.append('maxProgress', String(advanced.maxProgress));
+      if (advanced.addedWithinDays !== null) params.append('addedWithinDays', String(advanced.addedWithinDays));
       if (sortByField && sortDir) params.append('sortBy', `${sortByField}_${sortDir}`);
       if (keyword) params.append('q', keyword);
 
@@ -159,6 +167,7 @@ export function useLibrarySeries({
       activeAuthor,
       activeStatus,
       activeLetter,
+      advanced,
       sortByField,
       sortDir,
       keyword,
@@ -181,6 +190,7 @@ export function useLibrarySeries({
     activeAuthor,
     activeStatus,
     activeLetter,
+    advanced,
     sortByField,
     sortDir,
     refreshTrigger,

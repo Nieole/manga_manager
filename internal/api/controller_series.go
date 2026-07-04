@@ -16,6 +16,42 @@ import (
 	"time"
 )
 
+// parseReadState 归一化阅读状态查询参数，未识别值按“不筛选”处理。
+func parseReadState(v string) string {
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case "unread", "reading", "completed":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return ""
+	}
+}
+
+// parseOptionalFloat 把可选的浮点查询参数解析为 *float64；空串或非法值返回 nil（不筛选）。
+func parseOptionalFloat(v string) *float64 {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return nil
+	}
+	return &f
+}
+
+// parseNonNegativeInt 解析非负整数查询参数；空串或非法/负值返回 0（不筛选）。
+func parseNonNegativeInt(v string) int {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libIDStr := r.URL.Query().Get("libraryId")
@@ -48,14 +84,26 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		authors = strings.Split(authorsParam, ",")
 	}
 
-	status := r.URL.Query().Get("status")
-	letter := r.URL.Query().Get("letter")
 	sortBy := r.URL.Query().Get("sortBy")
-	keyword := r.URL.Query().Get("q")
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 
+	query := r.URL.Query()
+	filters := database.SeriesListFilters{
+		Keyword:         query.Get("q"),
+		Letter:          query.Get("letter"),
+		Status:          query.Get("status"),
+		Tags:            tags,
+		Authors:         authors,
+		ReadState:       parseReadState(query.Get("readState")),
+		MinRating:       parseOptionalFloat(query.Get("minRating")),
+		MaxRating:       parseOptionalFloat(query.Get("maxRating")),
+		MinProgress:     parseOptionalFloat(query.Get("minProgress")),
+		MaxProgress:     parseOptionalFloat(query.Get("maxProgress")),
+		AddedWithinDays: parseNonNegativeInt(query.Get("addedWithinDays")),
+	}
+
 	if cursor != "" {
-		series, nextCursor, hasMore, err := c.store.SearchSeriesCursor(ctx, libID, keyword, letter, status, tags, authors, int32(limit), sortBy, cursor)
+		series, nextCursor, hasMore, err := c.store.SearchSeriesCursor(ctx, libID, filters, int32(limit), sortBy, cursor)
 		if err != nil {
 			slog.Error("SearchSeriesCursor Failed", "error", err)
 			jsonError(w, http.StatusBadRequest, "Invalid cursor")
@@ -75,7 +123,7 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	series, total, err := c.store.SearchSeriesPaged(ctx, libID, keyword, letter, status, tags, authors, int32(limit), int32(offset), sortBy)
+	series, total, err := c.store.SearchSeriesPaged(ctx, libID, filters, int32(limit), int32(offset), sortBy)
 	if err != nil {
 		slog.Error("SearchSeriesPaged Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")

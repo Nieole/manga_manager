@@ -306,7 +306,7 @@ func TestSeriesStatsRefreshDrivesSearchSeriesPaged(t *testing.T) {
 		t.Fatalf("update progress failed: %v", err)
 	}
 
-	rows, total, err := store.SearchSeriesPaged(ctx, lib.ID, "", "", "", []string{"Action"}, []string{"Writer A"}, 10, 0, "read_desc")
+	rows, total, err := store.SearchSeriesPaged(ctx, lib.ID, SeriesListFilters{Tags: []string{"Action"}, Authors: []string{"Writer A"}}, 10, 0, "read_desc")
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestSearchSeriesPagedReturnsNullLastReadForUnreadSeries(t *testing.T) {
 		t.Fatalf("create book: %v", err)
 	}
 
-	rows, _, err := store.SearchSeriesPaged(ctx, lib.ID, "", "", "", nil, nil, 10, 0, "name_asc")
+	rows, _, err := store.SearchSeriesPaged(ctx, lib.ID, SeriesListFilters{}, 10, 0, "name_asc")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -379,6 +379,112 @@ func TestSearchSeriesPagedReturnsNullLastReadForUnreadSeries(t *testing.T) {
 	}
 	if rows[0].LastReadAt.Valid || rows[0].LastReadBookID.Valid || rows[0].LastReadPage.Valid {
 		t.Fatalf("expected all last_read_* fields to be NULL, got %+v", rows[0])
+	}
+}
+
+// TestSearchSeriesPagedAdvancedFilters 覆盖 2026-07 新增的阅读状态 / 评分区间 / 进度区间 / 加入天数筛选。
+func TestSearchSeriesPagedAdvancedFilters(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name:         "Main",
+		Path:         filepath.Join(t.TempDir(), "library"),
+		ScanMode:     "none",
+		ScanInterval: 60,
+		ScanFormats:  "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library: %v", err)
+	}
+
+	// Alpha：读到 7/20（在读，35%），评分 8。
+	alpha, err := store.CreateSeries(ctx, CreateSeriesParams{LibraryID: lib.ID, Name: "Alpha", Path: filepath.Join(lib.Path, "Alpha"), NameInitial: "A"})
+	if err != nil {
+		t.Fatalf("create alpha: %v", err)
+	}
+	alphaBook, err := store.CreateBook(ctx, CreateBookParams{
+		SeriesID: alpha.ID, LibraryID: lib.ID, Name: "a01.cbz", Path: filepath.Join(alpha.Path, "a01.cbz"),
+		Size: 1, FileModifiedAt: time.Now(), PageCount: 20,
+	})
+	if err != nil {
+		t.Fatalf("create alpha book: %v", err)
+	}
+	if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+		LastReadPage: sql.NullInt64{Int64: 7, Valid: true},
+		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
+		ID:           alphaBook.ID,
+	}); err != nil {
+		t.Fatalf("update alpha progress: %v", err)
+	}
+
+	// Beta：未读（0%），评分 3。
+	beta, err := store.CreateSeries(ctx, CreateSeriesParams{LibraryID: lib.ID, Name: "Beta", Path: filepath.Join(lib.Path, "Beta"), NameInitial: "B"})
+	if err != nil {
+		t.Fatalf("create beta: %v", err)
+	}
+	if _, err := store.CreateBook(ctx, CreateBookParams{
+		SeriesID: beta.ID, LibraryID: lib.ID, Name: "b01.cbz", Path: filepath.Join(beta.Path, "b01.cbz"),
+		Size: 1, FileModifiedAt: time.Now(), PageCount: 10,
+	}); err != nil {
+		t.Fatalf("create beta book: %v", err)
+	}
+	if err := store.RefreshSeriesStats(ctx, beta.ID); err != nil {
+		t.Fatalf("refresh beta stats: %v", err)
+	}
+
+	// book_count / total_pages 由扫描器维护（进度与阅读状态筛选依赖它们），测试里显式设置以模拟生产状态。
+	sqlStore := store.(*SqlStore)
+	if _, err := sqlStore.db.ExecContext(ctx, `UPDATE series SET rating = ?, book_count = ?, total_pages = ? WHERE id = ?`, 8.0, 1, 20, alpha.ID); err != nil {
+		t.Fatalf("set alpha fields: %v", err)
+	}
+	if _, err := sqlStore.db.ExecContext(ctx, `UPDATE series SET rating = ?, book_count = ?, total_pages = ? WHERE id = ?`, 3.0, 1, 10, beta.ID); err != nil {
+		t.Fatalf("set beta fields: %v", err)
+	}
+
+	idsFor := func(f SeriesListFilters) []int64 {
+		t.Helper()
+		rows, _, err := store.SearchSeriesPaged(ctx, lib.ID, f, 50, 0, "name_asc")
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		ids := make([]int64, len(rows))
+		for i, r := range rows {
+			ids[i] = r.ID
+		}
+		return ids
+	}
+	minRating := func(v float64) *float64 { return &v }
+
+	cases := []struct {
+		name   string
+		filter SeriesListFilters
+		want   []int64
+	}{
+		{"unread", SeriesListFilters{ReadState: "unread"}, []int64{beta.ID}},
+		{"reading", SeriesListFilters{ReadState: "reading"}, []int64{alpha.ID}},
+		{"completed", SeriesListFilters{ReadState: "completed"}, []int64{}},
+		{"minRating>=5", SeriesListFilters{MinRating: minRating(5)}, []int64{alpha.ID}},
+		{"maxProgress<=10", SeriesListFilters{MaxProgress: minRating(10)}, []int64{beta.ID}},
+		{"minProgress>=20", SeriesListFilters{MinProgress: minRating(20)}, []int64{alpha.ID}},
+		{"addedWithin1d", SeriesListFilters{AddedWithinDays: 1}, []int64{alpha.ID, beta.ID}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := idsFor(tc.filter)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			want := make(map[int64]bool, len(tc.want))
+			for _, id := range tc.want {
+				want[id] = true
+			}
+			for _, id := range got {
+				if !want[id] {
+					t.Fatalf("unexpected id %d in %v (want %v)", id, got, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -430,7 +536,7 @@ func TestSearchSeriesCursorSupportsKeysetSorts(t *testing.T) {
 		var got []string
 		cursor := ""
 		for {
-			rows, nextCursor, hasMore, err := store.SearchSeriesCursor(ctx, lib.ID, "", "", "", nil, nil, 2, sortBy, cursor)
+			rows, nextCursor, hasMore, err := store.SearchSeriesCursor(ctx, lib.ID, SeriesListFilters{}, 2, sortBy, cursor)
 			if err != nil {
 				t.Fatalf("cursor search %s failed: %v", sortBy, err)
 			}
@@ -486,7 +592,7 @@ func TestSearchSeriesPagedCursorBoundaryUsesStableTieBreaker(t *testing.T) {
 		createdIDs = append(createdIDs, series.ID)
 	}
 
-	firstPage, total, err := store.SearchSeriesPaged(ctx, lib.ID, "", "", "", nil, nil, 2, 0, "name_desc")
+	firstPage, total, err := store.SearchSeriesPaged(ctx, lib.ID, SeriesListFilters{}, 2, 0, "name_desc")
 	if err != nil {
 		t.Fatalf("first page search failed: %v", err)
 	}
@@ -495,7 +601,7 @@ func TestSearchSeriesPagedCursorBoundaryUsesStableTieBreaker(t *testing.T) {
 	}
 
 	cursor := NextSeriesSearchCursor("name_desc", firstPage[len(firstPage)-1])
-	secondPage, _, _, err := store.SearchSeriesCursor(ctx, lib.ID, "", "", "", nil, nil, 2, "name_desc", cursor)
+	secondPage, _, _, err := store.SearchSeriesCursor(ctx, lib.ID, SeriesListFilters{}, 2, "name_desc", cursor)
 	if err != nil {
 		t.Fatalf("second page cursor search failed: %v", err)
 	}

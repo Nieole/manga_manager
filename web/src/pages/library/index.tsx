@@ -21,7 +21,7 @@ import { ExternalLibraryDrawer } from './ExternalLibraryDrawer';
 import { LibraryScrapeModal } from './LibraryScrapeModal';
 import { TransferConfirmModal } from './TransferConfirmModal';
 import { type PaginationMode, type Series, type ViewMode } from './types';
-import { useLibraryFilters, supportsCursorPagination } from './hooks/useLibraryFilters';
+import { useLibraryFilters, supportsCursorPagination, hasAdvancedFilters } from './hooks/useLibraryFilters';
 import { useLibrarySeries } from './hooks/useLibrarySeries';
 import { useLibrarySelection } from './hooks/useLibrarySelection';
 import { useLibraryKeyboard } from './hooks/useLibraryKeyboard';
@@ -50,6 +50,7 @@ export default function LibraryPage() {
     activeAuthor,
     activeStatus,
     activeLetter,
+    advanced,
     sortByField,
     sortDir,
     keyword,
@@ -60,6 +61,7 @@ export default function LibraryPage() {
     setActiveAuthor,
     setActiveStatus,
     setActiveLetter,
+    setAdvancedFilters,
     setSortByField,
     setSortDir,
     setKeyword,
@@ -110,6 +112,7 @@ export default function LibraryPage() {
     activeAuthor,
     activeStatus,
     activeLetter,
+    advanced,
     sortByField,
     sortDir,
     refreshTrigger,
@@ -125,7 +128,7 @@ export default function LibraryPage() {
     setPage(1);
     resetPagination();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTag, activeAuthor, activeStatus, activeLetter, sortByField, sortDir, pageSize, debouncedKeyword]);
+  }, [activeTag, activeAuthor, activeStatus, activeLetter, advanced, sortByField, sortDir, pageSize, debouncedKeyword]);
 
   // 切换分页模式时回到第 1 页：无限滚动应从头开始累积，避免带着分页模式的中间页码进入追加流。
   useEffect(() => {
@@ -169,7 +172,7 @@ export default function LibraryPage() {
     },
   });
 
-  const hasAnyFilter = Boolean(activeTag || activeAuthor || activeStatus || activeLetter || keyword.trim());
+  const hasAnyFilter = Boolean(activeTag || activeAuthor || activeStatus || activeLetter || keyword.trim()) || hasAdvancedFilters(advanced);
 
   const smartFilterChips = useMemo(() => {
     const chips: string[] = [];
@@ -322,6 +325,7 @@ export default function LibraryPage() {
         activeTag={activeTag}
         activeAuthor={activeAuthor}
         activeLetter={activeLetter}
+        advanced={advanced}
         filterOptionsLoading={filterOptionsLoading}
         smartFilterChips={smartFilterChips}
         hasAnyFilter={hasAnyFilter}
@@ -329,6 +333,7 @@ export default function LibraryPage() {
         onTagChange={setActiveTag}
         onAuthorChange={setActiveAuthor}
         onLetterChange={setActiveLetter}
+        onAdvancedChange={setAdvancedFilters}
         onResetFilters={resetAll}
         onFiltersOpen={loadFilterOptions}
         onTagSearch={searchTagOptions}
