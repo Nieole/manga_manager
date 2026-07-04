@@ -440,6 +440,119 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 }
 
 // 批量刮削所有系列的元数据
+// scrapeSeriesEntry 是刮削任务的最小工作单元（系列 id + 用于检索的名称）。
+type scrapeSeriesEntry struct {
+	ID   int64
+	Name string
+}
+
+// scrapeMetrics 聚合刮削任务的实时计数；toMap 生成任务进度指标，消除此前在两个刮削函数里各自
+// 重复 4 次的 9 键 map 字面量。
+type scrapeMetrics struct {
+	total            int
+	processed        int
+	success          int
+	notFound         int
+	failed           int
+	queuedReview     int
+	providerRequests int
+	providerErrors   int
+	rateLimitedWait  time.Duration
+}
+
+func (m scrapeMetrics) toMap() map[string]int64 {
+	return map[string]int64{
+		"total_series":         int64(m.total),
+		"processed_series":     int64(m.processed),
+		"success_count":        int64(m.success),
+		"not_found_count":      int64(m.notFound),
+		"failed_count":         int64(m.failed),
+		"queued_review_count":  int64(m.queuedReview),
+		"provider_requests":    int64(m.providerRequests),
+		"provider_errors":      int64(m.providerErrors),
+		"rate_limited_wait_ms": m.rateLimitedWait.Milliseconds(),
+	}
+}
+
+// runScrapeTask 是全库/单库两种批量刮削的共享执行体：对 entries 逐个请求 provider、写入元数据
+// 审阅队列、按速率限制推进，并持续上报进度与指标。cancelMsg/donePrefix/logMsg 承载两个入口的
+// 文案差异。bgCtx 必须已注入 locale；调用方负责 start/setTaskMetadata/cleanup 与 goroutine 调度。
+// 此前两个函数各有一份约 150 行的近乎逐行拷贝（且日志已发生漂移），此处统一到带完整日志的版本。
+func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, providerName, cancelMsg, donePrefix, logMsg string, provider metadata.Provider, entries []scrapeSeriesEntry) {
+	m := scrapeMetrics{total: len(entries)}
+	c.updateTaskDetails(taskKey, 0, m.total, "正在收集待刮削系列", "collecting_series", "", m.toMap(), nil)
+
+	for i, entry := range entries {
+		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", cancelMsg)
+			return
+		}
+		slog.Info(logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
+
+		m.providerRequests++
+		m.processed = i
+		c.updateTaskDetails(taskKey, i, m.total, fmt.Sprintf("刮削: %s", entry.Name), "requesting_provider", entry.Name, m.toMap(), map[string]string{
+			"provider":            providerKey,
+			"provider_name":       providerName,
+			"current_series_id":   strconv.FormatInt(entry.ID, 10),
+			"current_series_name": entry.Name,
+		})
+
+		result, err := provider.FetchSeriesMetadata(bgCtx, entry.Name)
+		if err != nil {
+			m.failed++
+			m.providerErrors++
+			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
+			continue
+		}
+		if result == nil {
+			m.notFound++
+			slog.Info("Entry not found by provider", "provider", providerName, "series_name", entry.Name)
+			continue
+		}
+
+		series, err := c.store.GetSeries(bgCtx, entry.ID)
+		if err != nil {
+			continue
+		}
+
+		c.updateTaskDetails(taskKey, i, m.total, fmt.Sprintf("写入审阅队列: %s", entry.Name), "queueing_review", entry.Name, m.toMap(), nil)
+		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", cancelMsg)
+			return
+		}
+		if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
+			m.success++
+			if isNew {
+				m.queuedReview++
+				slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
+			}
+		} else if !errors.Is(err, errNoMetadataChanges) {
+			m.failed++
+			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
+		}
+		m.processed = i + 1
+		c.updateTaskDetails(taskKey, i+1, m.total, fmt.Sprintf("刮削: %s", entry.Name), "rate_limited_wait", entry.Name, m.toMap(), nil)
+
+		// 速率限制
+		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
+			c.completeTask(taskKey, "cancelled", cancelMsg)
+			return
+		}
+		select {
+		case <-time.After(scrapeRateLimitDelay):
+			m.rateLimitedWait += scrapeRateLimitDelay
+		case <-bgCtx.Done():
+			c.completeTask(taskKey, "cancelled", cancelMsg)
+			return
+		}
+	}
+
+	slog.Info("Scrape task completed", "provider", providerName, "task_key", taskKey, "success_count", m.success, "total_count", m.total)
+	c.finishTask(taskKey, fmt.Sprintf("%s，成功 %d/%d", donePrefix, m.success, m.total))
+	c.PublishEvent("refresh")
+}
+
 func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, providerKey string) error {
 	provider := c.getProvider(providerKey)
 	locale := metadata.LocaleFromContext(ctx)
@@ -448,11 +561,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		return err
 	}
 
-	type seriesEntry struct {
-		ID   int64
-		Name string
-	}
-	var allSeries []seriesEntry
+	var allSeries []scrapeSeriesEntry
 
 	for _, lib := range libs {
 		seriesList, err := c.store.ListSeriesByLibrary(ctx, lib.ID)
@@ -464,7 +573,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 			if s.Title.Valid && s.Title.String != "" {
 				name = s.Title.String
 			}
-			allSeries = append(allSeries, seriesEntry{ID: s.ID, Name: name})
+			allSeries = append(allSeries, scrapeSeriesEntry{ID: s.ID, Name: name})
 		}
 	}
 
@@ -483,123 +592,8 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 
 	c.runBackground(func() {
 		defer cleanup()
-		successCount := 0
-		notFoundCount := 0
-		failedCount := 0
-		queuedReviewCount := 0
-		providerRequests := 0
-		providerErrors := 0
-		rateLimitedWait := time.Duration(0)
-		bgCtx := metadata.WithLocale(taskCtx, locale)
-		c.updateTaskDetails(taskKey, 0, totalCount, "正在收集待刮削系列", "collecting_series", "", map[string]int64{
-			"total_series":         int64(totalCount),
-			"processed_series":     0,
-			"success_count":        0,
-			"not_found_count":      0,
-			"failed_count":         0,
-			"queued_review_count":  0,
-			"provider_requests":    0,
-			"provider_errors":      0,
-			"rate_limited_wait_ms": 0,
-		}, nil)
-
-		for i, entry := range allSeries {
-			if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-				c.completeTask(taskKey, "cancelled", "批量刮削已取消")
-				return
-			}
-			slog.Info("Scraping series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
-
-			providerRequests++
-			c.updateTaskDetails(taskKey, i, totalCount, fmt.Sprintf("刮削: %s", entry.Name), "requesting_provider", entry.Name, map[string]int64{
-				"total_series":         int64(totalCount),
-				"processed_series":     int64(i),
-				"success_count":        int64(successCount),
-				"not_found_count":      int64(notFoundCount),
-				"failed_count":         int64(failedCount),
-				"queued_review_count":  int64(queuedReviewCount),
-				"provider_requests":    int64(providerRequests),
-				"provider_errors":      int64(providerErrors),
-				"rate_limited_wait_ms": rateLimitedWait.Milliseconds(),
-			}, map[string]string{
-				"provider":            providerKey,
-				"provider_name":       providerName,
-				"current_series_id":   strconv.FormatInt(entry.ID, 10),
-				"current_series_name": entry.Name,
-			})
-
-			result, err := provider.FetchSeriesMetadata(bgCtx, entry.Name)
-			if err != nil {
-				failedCount++
-				providerErrors++
-				slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
-				continue
-			}
-			if result == nil {
-				notFoundCount++
-				slog.Info("Entry not found by provider", "provider", providerName, "series_name", entry.Name)
-				continue
-			}
-
-			series, err := c.store.GetSeries(bgCtx, entry.ID)
-			if err != nil {
-				continue
-			}
-
-			c.updateTaskDetails(taskKey, i, totalCount, fmt.Sprintf("写入审阅队列: %s", entry.Name), "queueing_review", entry.Name, map[string]int64{
-				"total_series":         int64(totalCount),
-				"processed_series":     int64(i),
-				"success_count":        int64(successCount),
-				"not_found_count":      int64(notFoundCount),
-				"failed_count":         int64(failedCount),
-				"queued_review_count":  int64(queuedReviewCount),
-				"provider_requests":    int64(providerRequests),
-				"provider_errors":      int64(providerErrors),
-				"rate_limited_wait_ms": rateLimitedWait.Milliseconds(),
-			}, nil)
-			if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-				c.completeTask(taskKey, "cancelled", "批量刮削已取消")
-				return
-			}
-			if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
-				successCount++
-				if isNew {
-					queuedReviewCount++
-					slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
-				}
-			} else if !errors.Is(err, errNoMetadataChanges) {
-				failedCount++
-				slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
-			}
-			c.updateTaskDetails(taskKey, i+1, totalCount, fmt.Sprintf("刮削: %s", entry.Name), "rate_limited_wait", entry.Name, map[string]int64{
-				"total_series":         int64(totalCount),
-				"processed_series":     int64(i + 1),
-				"success_count":        int64(successCount),
-				"not_found_count":      int64(notFoundCount),
-				"failed_count":         int64(failedCount),
-				"queued_review_count":  int64(queuedReviewCount),
-				"provider_requests":    int64(providerRequests),
-				"provider_errors":      int64(providerErrors),
-				"rate_limited_wait_ms": rateLimitedWait.Milliseconds(),
-			}, nil)
-
-			// 速率限制
-			if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-				c.completeTask(taskKey, "cancelled", "批量刮削已取消")
-				return
-			}
-			select {
-			case <-time.After(scrapeRateLimitDelay):
-				rateLimitedWait += scrapeRateLimitDelay
-			case <-bgCtx.Done():
-				c.completeTask(taskKey, "cancelled", "批量刮削已取消")
-				return
-			}
-		}
-
-		slog.Info("Batch scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
-		c.finishTask(taskKey, fmt.Sprintf("刮削完成，成功 %d/%d", successCount, totalCount))
-		c.PublishEvent("refresh")
+		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
+			"批量刮削已取消", "刮削完成", "Scraping series metadata", provider, allSeries)
 	})
 
 	return nil
@@ -640,11 +634,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		return err
 	}
 
-	type seriesEntry struct {
-		ID   int64
-		Name string
-	}
-	var allSeries []seriesEntry
+	var allSeries []scrapeSeriesEntry
 
 	for _, s := range seriesList {
 		// 跳过已经存在基础元数据的系列，只刮取缺失的
@@ -655,7 +645,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		if s.Title.Valid && s.Title.String != "" {
 			name = s.Title.String
 		}
-		allSeries = append(allSeries, seriesEntry{ID: s.ID, Name: name})
+		allSeries = append(allSeries, scrapeSeriesEntry{ID: s.ID, Name: name})
 	}
 
 	if len(allSeries) == 0 {
@@ -677,117 +667,8 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 
 	c.runBackground(func() {
 		defer cleanup()
-		successCount := 0
-		notFoundCount := 0
-		failedCount := 0
-		queuedReviewCount := 0
-		providerRequests := 0
-		providerErrors := 0
-		rateLimitedWait := time.Duration(0)
-		bgCtx := metadata.WithLocale(taskCtx, locale)
-		c.updateTaskDetails(taskKey, 0, totalCount, "正在收集待刮削系列", "collecting_series", "", map[string]int64{
-			"total_series":         int64(totalCount),
-			"processed_series":     0,
-			"success_count":        0,
-			"not_found_count":      0,
-			"failed_count":         0,
-			"queued_review_count":  0,
-			"provider_requests":    0,
-			"provider_errors":      0,
-			"rate_limited_wait_ms": 0,
-		}, nil)
-		for i, entry := range allSeries {
-			if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-				c.completeTask(taskKey, "cancelled", "资源库批量刮削已取消")
-				return
-			}
-			slog.Info("Scraping library series metadata", "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, totalCount), "series_name", entry.Name)
-
-			providerRequests++
-			c.updateTaskDetails(taskKey, i, totalCount, fmt.Sprintf("刮削: %s", entry.Name), "requesting_provider", entry.Name, map[string]int64{
-				"total_series":         int64(totalCount),
-				"processed_series":     int64(i),
-				"success_count":        int64(successCount),
-				"not_found_count":      int64(notFoundCount),
-				"failed_count":         int64(failedCount),
-				"queued_review_count":  int64(queuedReviewCount),
-				"provider_requests":    int64(providerRequests),
-				"provider_errors":      int64(providerErrors),
-				"rate_limited_wait_ms": rateLimitedWait.Milliseconds(),
-			}, map[string]string{
-				"provider":            providerKey,
-				"provider_name":       providerName,
-				"current_series_id":   strconv.FormatInt(entry.ID, 10),
-				"current_series_name": entry.Name,
-			})
-
-			result, err := provider.FetchSeriesMetadata(bgCtx, entry.Name)
-			if err != nil {
-				failedCount++
-				providerErrors++
-				continue
-			}
-			if result == nil {
-				notFoundCount++
-				continue
-			}
-
-			series, err := c.store.GetSeries(bgCtx, entry.ID)
-			if err != nil {
-				continue
-			}
-
-			c.updateTaskDetails(taskKey, i, totalCount, fmt.Sprintf("写入审阅队列: %s", entry.Name), "queueing_review", entry.Name, map[string]int64{
-				"total_series":         int64(totalCount),
-				"processed_series":     int64(i),
-				"success_count":        int64(successCount),
-				"not_found_count":      int64(notFoundCount),
-				"failed_count":         int64(failedCount),
-				"queued_review_count":  int64(queuedReviewCount),
-				"provider_requests":    int64(providerRequests),
-				"provider_errors":      int64(providerErrors),
-				"rate_limited_wait_ms": rateLimitedWait.Milliseconds(),
-			}, nil)
-			if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-				c.completeTask(taskKey, "cancelled", "资源库批量刮削已取消")
-				return
-			}
-			if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
-				successCount++
-				if isNew {
-					queuedReviewCount++
-				}
-			} else if !errors.Is(err, errNoMetadataChanges) {
-				failedCount++
-			}
-			c.updateTaskDetails(taskKey, i+1, totalCount, fmt.Sprintf("刮削: %s", entry.Name), "rate_limited_wait", entry.Name, map[string]int64{
-				"total_series":         int64(totalCount),
-				"processed_series":     int64(i + 1),
-				"success_count":        int64(successCount),
-				"not_found_count":      int64(notFoundCount),
-				"failed_count":         int64(failedCount),
-				"queued_review_count":  int64(queuedReviewCount),
-				"provider_requests":    int64(providerRequests),
-				"provider_errors":      int64(providerErrors),
-				"rate_limited_wait_ms": rateLimitedWait.Milliseconds(),
-			}, nil)
-			// 速率限制
-			if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-				c.completeTask(taskKey, "cancelled", "资源库批量刮削已取消")
-				return
-			}
-			select {
-			case <-time.After(scrapeRateLimitDelay):
-				rateLimitedWait += scrapeRateLimitDelay
-			case <-bgCtx.Done():
-				c.completeTask(taskKey, "cancelled", "资源库批量刮削已取消")
-				return
-			}
-		}
-
-		slog.Info("Library scrape completed", "provider", providerName, "success_count", successCount, "total_count", totalCount)
-		c.finishTask(taskKey, fmt.Sprintf("刮削资源库完成，成功 %d/%d", successCount, totalCount))
-		c.PublishEvent("refresh")
+		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
+			"资源库批量刮削已取消", "刮削资源库完成", "Scraping library series metadata", provider, allSeries)
 	})
 
 	return nil

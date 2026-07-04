@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（刮削任务去重 · M43）
+
+#### 重构
+- `internal/api/scrape_controller.go`:全库刮削(`launchBatchScrapeAllSeriesTask`)与单库刮削(`launchLibraryScrapeTask`)此前各有一份约 150 行、近乎逐行复制的 `runBackground` 闭包(且日志已发生漂移:单库版缺少 batch 版的 per-series 失败/未找到/入队日志)。现抽取共享执行体 `runScrapeTask`,两入口只负责收集 entries、命名任务与传入取消/完成/日志文案差异;并统一到带完整日志的版本,修复漂移。
+- 9 键进度指标 map 此前在每个函数里各重复构造 4 次,改为 `scrapeMetrics` struct + `toMap()`,消除 8 份 map 字面量;本地 `seriesEntry` 类型提升为包级 `scrapeSeriesEntry`。文件 840→721 行。
+
+#### 验证
+- `go vet`(含非常量格式检查,完成文案用常量格式串)、`go test ./...` 全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（统一 API 错误提取 · M46 第一步）
 
 #### 重构
