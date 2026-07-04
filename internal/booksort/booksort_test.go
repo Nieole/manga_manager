@@ -37,6 +37,33 @@ func TestExtractSortNumberSupportsChineseOrdinalChapters(t *testing.T) {
 	}
 }
 
+// TestExtractSortNumberIgnoresYearAndBracketNoise 覆盖 M27：年份标签/会场号/组名不再污染卷号。
+func TestExtractSortNumberIgnoresYearAndBracketNoise(t *testing.T) {
+	tests := []struct {
+		name string
+		want float64
+	}{
+		{"[2020] Some Manga Vol 3.cbz", 3},
+		{"(C99) Circle - Title 01.cbz", 1},
+		{"Circle99 Vol 3.cbz", 3},
+		{"[2019-2021] c010.cbz", 10},
+		{"Title (2018) 004.cbz", 4},
+		{"Volume 03.cbz", 3},
+		{"Chapter 12.cbz", 12},
+		{"Ch.7.cbz", 7},
+		{"#5.cbz", 5},
+		{"v05.cbz", 5},
+		{"01.cbz", 1},
+		{"2018.cbz", 2018}, // 纯年份仍可排序
+	}
+	for _, tt := range tests {
+		got, ok := ExtractSortNumber(tt.name)
+		if !ok || got != tt.want {
+			t.Fatalf("ExtractSortNumber(%q) = %v, %v; want %v, true", tt.name, got, ok, tt.want)
+		}
+	}
+}
+
 func TestCompareBooksUsesParsedChapterNumberBeforeLegacyZeroSortNumber(t *testing.T) {
 	books := []database.Book{
 		{ID: 10, Name: "第十话.cbz", SortNumber: sql.NullFloat64{Float64: 0, Valid: true}},

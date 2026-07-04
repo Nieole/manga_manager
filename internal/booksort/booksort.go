@@ -17,6 +17,13 @@ var (
 	arabicOrdinalRegexp = regexp.MustCompile(`第?\s*(\d+(\.\d+)?)\s*(话|話|回|章|卷|集|册|冊|期|部)`)
 	arabicNumberRegexp  = regexp.MustCompile(`\d+(\.\d+)?`)
 	chineseNumberRegexp = regexp.MustCompile(`第?\s*([零〇一二两三四五六七八九十百千万萬壹贰貳叁參肆伍陆陸柒捌玖拾佰仟]+)\s*(话|話|回|章|卷|集|册|冊|期|部)`)
+	// 带西文前缀的卷话号（Vol/Volume/Chapter/Chap/Ch/Episode/Ep/#）。故意不含裸 v/c 单字母，
+	// 避免误命中 (C99) 之类会场号。
+	latinPrefixRegexp = regexp.MustCompile(`(?i)(?:#|\b(?:volume|vol|chapter|chap|ch|episode|ep))\s*\.?\s*#?\s*(\d+(\.\d+)?)`)
+	// 括号段（含中英文括号），用于在裸数字兜底前剔除 [2020] 年份标签、(C99) 会场号等噪音。
+	bracketRegexp = regexp.MustCompile(`[\(\[\{（【][^\)\]\}）】]*[\)\]\}）】]`)
+	// 四位年份 token（19xx/20xx），兜底时优先跳过，避免年份被当卷号。
+	yearRegexp = regexp.MustCompile(`^(?:19|20)\d{2}$`)
 )
 
 // ExtractSortNumber returns the first chapter-like number in a book or volume label.
@@ -36,8 +43,29 @@ func ExtractSortNumber(label string) (float64, bool) {
 			return float64(value), true
 		}
 	}
-	if match := arabicNumberRegexp.FindString(label); match != "" {
-		if value, err := strconv.ParseFloat(match, 64); err == nil {
+	// 带西文前缀的卷话号优先于裸数字兜底。
+	if match := latinPrefixRegexp.FindStringSubmatch(label); len(match) >= 2 {
+		if value, err := strconv.ParseFloat(match[1], 64); err == nil {
+			return value, true
+		}
+	}
+	// 谨慎兜底：先剔除括号段（排除年份标签/会场号），再取第一个非年份数字 token；
+	// 若全为年份则回退首个年份，保证纯年份文件名仍可排序。
+	cleaned := bracketRegexp.ReplaceAllString(label, " ")
+	var firstYear string
+	for _, tok := range arabicNumberRegexp.FindAllString(cleaned, -1) {
+		if yearRegexp.MatchString(tok) {
+			if firstYear == "" {
+				firstYear = tok
+			}
+			continue
+		}
+		if value, err := strconv.ParseFloat(tok, 64); err == nil {
+			return value, true
+		}
+	}
+	if firstYear != "" {
+		if value, err := strconv.ParseFloat(firstYear, 64); err == nil {
 			return value, true
 		}
 	}
