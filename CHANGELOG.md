@@ -4,6 +4,16 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（元数据审阅 apply 事务原子化）
+
+#### 修复
+- `internal/api/scrape_controller.go` / `metadata_review_controller.go`：元数据审阅 apply 的「写入元数据」与「标记 review 已应用」并入同一事务。此前二者是两段独立自动提交，元数据写成功但状态更新失败时 review 会停留 pending、可被重复 apply。现新增 `applyMetadataToSeriesWithHook`，把 `UpdateMetadataReviewStatus` 作为提交前钩子在同事务内执行；单条与批量 apply 均移除原先事务外的独立状态更新（失败则整体回滚、状态保持 pending，重试安全）。
+
+#### 验证
+- `go vet`、`go test ./internal/api` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（franchise 合集重建修复批次）
 
 #### 修复

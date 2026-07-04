@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -708,13 +707,17 @@ func (c *Controller) applyReviewedMetadata(ctx context.Context, series database.
 		}
 	}
 
-	return c.applyMetadataToSeries(ctx, series, metadataResult, metadataApplyOptions{
+	return c.applyMetadataToSeriesWithHook(ctx, series, metadataResult, metadataApplyOptions{
 		ProviderName: review.Provider,
 		SourceURL:    review.SourceUrl,
 		SourceID:     review.SourceID,
 		Confidence:   review.Confidence,
 		SourceQuery:  review.SourceQuery,
 		ReviewID:     &review.ID,
+	}, func(q *database.Queries) error {
+		// 同一事务内标记 review 已应用：元数据写入与状态更新原子，避免元数据已写但状态仍 pending 被重复 apply。
+		_, err := q.UpdateMetadataReviewStatus(ctx, database.UpdateMetadataReviewStatusParams{Status: "applied", ID: review.ID})
+		return err
 	})
 }
 
@@ -876,15 +879,9 @@ func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := c.applyReviewedMetadata(r.Context(), series, review, fields); err != nil {
+		// applyReviewedMetadata 在同一事务内写元数据并标记 review 为 applied，任一失败整体回滚、状态保持 pending。
 		jsonError(w, http.StatusInternalServerError, "Failed to apply metadata review")
 		return
-	}
-
-	if _, err := c.store.UpdateMetadataReviewStatus(r.Context(), database.UpdateMetadataReviewStatusParams{
-		Status: "applied",
-		ID:     review.ID,
-	}); err != nil {
-		slog.Warn("Failed to mark metadata review applied", "review_id", review.ID, "error", err)
 	}
 
 	updated, _ := c.store.GetSeries(r.Context(), review.SeriesID)
@@ -931,13 +928,7 @@ func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Req
 			continue
 		}
 		if err := c.applyReviewedMetadata(r.Context(), series, review, fields); err != nil {
-			result.Failed = append(result.Failed, id)
-			continue
-		}
-		if _, err := c.store.UpdateMetadataReviewStatus(r.Context(), database.UpdateMetadataReviewStatusParams{
-			Status: "applied",
-			ID:     review.ID,
-		}); err != nil {
+			// applyReviewedMetadata 已在同一事务内标记 review 为 applied，失败则整体回滚、状态保持 pending。
 			result.Failed = append(result.Failed, id)
 			continue
 		}

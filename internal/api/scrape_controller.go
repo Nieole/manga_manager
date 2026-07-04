@@ -192,6 +192,13 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 }
 
 func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions) error {
+	return c.applyMetadataToSeriesWithHook(ctx, series, result, opts, nil)
+}
+
+// applyMetadataToSeriesWithHook 在同一事务内应用系列元数据，并可选在提交前执行 afterInTx（同事务）。
+// 元数据审阅 apply 借此把「写元数据」与「标记 review 已处理」并入同一事务，避免元数据已写但状态仍
+// pending 导致同一 review 被重复 apply。
+func (c *Controller) applyMetadataToSeriesWithHook(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions, afterInTx func(*database.Queries) error) error {
 	// 解析已锁定字段
 	lockedSet := metadataLockedFieldSet(series)
 	providerName := strings.TrimSpace(opts.ProviderName)
@@ -349,7 +356,13 @@ func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.
 			}
 		}
 
-		return q.RefreshSeriesStats(ctx, series.ID)
+		if err := q.RefreshSeriesStats(ctx, series.ID); err != nil {
+			return err
+		}
+		if afterInTx != nil {
+			return afterInTx(q)
+		}
+		return nil
 	})
 }
 
