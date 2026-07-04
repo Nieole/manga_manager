@@ -67,6 +67,10 @@ jobs:
 
       - name: Verify sqlc generated code is up to date
         if: matrix.os == 'ubuntu-latest'
+        # sqlc v1.31.1 需 Go >= 1.26 才能构建，而本作业固定用 Go 1.25 且 setup-go 设了 GOTOOLCHAIN=local。
+        # 仅在本步放开为 auto，让 go install 自动拉取构建 sqlc 所需的更新工具链（不影响其余步骤的 1.25 构建）。
+        env:
+          GOTOOLCHAIN: auto
         run: |
           go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
           sqlc generate
