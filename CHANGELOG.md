@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（controller.go 上帝文件拆分 · 阶段一）
+
+#### 重构（H7，行为保持）
+- 开始拆分 5489 行的 `internal/api/controller.go` 上帝文件。按领域把内聚代码块移入同包新文件（纯文件重组，无逻辑变更，编译器与全量测试验证）：
+  - `controller_search.go`：全库/系列/图书 FTS 搜索、结果合并、评分归一化、封面回填。
+  - `controller_scan_events.go`：扫描器批次/指标/进度回调处理与缩略图重建聚合进度。
+  - `controller_tasks.go`：任务引擎——状态模型、进度/指标聚合、持久化、生命周期（启动/更新/暂停/恢复/取消/完成）与任务列表接口。
+- `controller.go` 从 5489 行降至 3786 行（约 −31%）。后续阶段继续拆分 library/series/book/progress/system-config/sse 等子域。
+
+#### 验证
+- `go vet ./...`、`go test ./...`（全绿）；`goimports` 自动整理各文件 import。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（CI 加固 + 文档修正）
 
 #### 修复
