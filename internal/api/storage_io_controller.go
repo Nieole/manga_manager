@@ -100,12 +100,12 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 }
 
 func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
 	var latestScan *TaskStatus
 	var latestCover *TaskStatus
-	for _, task := range c.tasks {
+	for _, task := range c.taskEngine.tasks {
 		switch task.Type {
 		case "scan_library", "scan_series":
 			if latestScan == nil || task.UpdatedAt.After(latestScan.UpdatedAt) {

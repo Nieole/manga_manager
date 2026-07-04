@@ -19,10 +19,38 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// taskEngine 收敛后台任务引擎的全部内存状态：任务表、运行时句柄、序号、异步落盘的待写集合与唤醒信号，
+// 以及任务重试注册表。把这些状态归一到一个结构体，使任务引擎的状态边界清晰、便于整体推理；任务方法仍挂在
+// Controller 上，统一经 c.taskEngine 访问这些状态。除 relaunchers（启动后只读）外，其余字段由 mutex 保护。
+type taskEngine struct {
+	mutex    sync.Mutex
+	tasks    map[string]TaskStatus
+	runtimes map[string]*TaskRuntime
+	seq      int64
+	// persistPending 是待异步落盘的最新任务快照（按 key 合并），由 mutex 保护。进度更新只写内存 + 入此集合，
+	// 专用 goroutine（startTaskPersister）节流批量写 SQLite，避免在临界区内同步写库阻塞任务 API 与系列详情页。
+	// persistWake 在终态时唤醒该 goroutine 立即刷，缩短终态落库延迟（缓冲 1）。
+	persistPending map[string]TaskStatus
+	persistWake    chan struct{}
+	// relaunchers 是任务重试的注册表（taskType -> 重启函数），也是"可重试类型"的唯一事实来源，在 NewController
+	// 中构建，取代 retryTask 的中央 switch 与 isRetryableTaskType 两份硬编码清单。
+	relaunchers map[string]taskRelauncher
+}
+
+func newTaskEngine() *taskEngine {
+	return &taskEngine{
+		tasks:          make(map[string]TaskStatus),
+		runtimes:       make(map[string]*TaskRuntime),
+		persistPending: make(map[string]TaskStatus),
+		persistWake:    make(chan struct{}, 1),
+	}
+}
 
 func inferTaskScope(taskType, key string) (string, *int64) {
 	scope := "system"
@@ -147,7 +175,7 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 
 // isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试，消除第二份硬编码清单。
 func (c *Controller) isRetryableTaskType(taskType string) bool {
-	_, ok := c.taskRelaunchers[taskType]
+	_, ok := c.taskEngine.relaunchers[taskType]
 	return ok
 }
 
@@ -375,10 +403,10 @@ func (c *Controller) persistTaskStatus(task TaskStatus) {
 	if c.store == nil {
 		return
 	}
-	if c.taskPersistPending == nil {
-		c.taskPersistPending = make(map[string]TaskStatus)
+	if c.taskEngine.persistPending == nil {
+		c.taskEngine.persistPending = make(map[string]TaskStatus)
 	}
-	c.taskPersistPending[task.Key] = task
+	c.taskEngine.persistPending[task.Key] = task
 }
 
 // persistTaskStatusFinal 用于任务终态（完成/失败/取消）：仍走同一异步队列（保持单一写入方、不与
@@ -386,7 +414,7 @@ func (c *Controller) persistTaskStatus(task TaskStatus) {
 func (c *Controller) persistTaskStatusFinal(task TaskStatus) {
 	c.persistTaskStatus(task)
 	select {
-	case c.taskPersistWake <- struct{}{}:
+	case c.taskEngine.persistWake <- struct{}{}:
 	default:
 	}
 }
@@ -401,7 +429,7 @@ func (c *Controller) startTaskPersister() {
 		case <-c.lifecycleDone():
 			c.flushTaskPersist()
 			return
-		case <-c.taskPersistWake:
+		case <-c.taskEngine.persistWake:
 			c.flushTaskPersist()
 		case <-ticker.C:
 			c.flushTaskPersist()
@@ -414,14 +442,14 @@ func (c *Controller) flushTaskPersist() {
 	if c.store == nil {
 		return
 	}
-	c.taskMutex.Lock()
-	if len(c.taskPersistPending) == 0 {
-		c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	if len(c.taskEngine.persistPending) == 0 {
+		c.taskEngine.mutex.Unlock()
 		return
 	}
-	pending := c.taskPersistPending
-	c.taskPersistPending = make(map[string]TaskStatus)
-	c.taskMutex.Unlock()
+	pending := c.taskEngine.persistPending
+	c.taskEngine.persistPending = make(map[string]TaskStatus)
+	c.taskEngine.mutex.Unlock()
 
 	for _, task := range pending {
 		if err := c.store.UpsertTask(context.Background(), taskRecordFromStatus(task)); err != nil {
@@ -456,19 +484,19 @@ func (c *Controller) startTaskWithOptions(key, taskType, message string, total i
 }
 
 func (c *Controller) startTaskWithOptionsCore(key, taskType, message, code string, params map[string]string, total int, canCancel bool, canPause bool) bool {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	if c.tasks == nil {
-		c.tasks = make(map[string]TaskStatus)
+	if c.taskEngine.tasks == nil {
+		c.taskEngine.tasks = make(map[string]TaskStatus)
 	}
 
-	if existing, ok := c.tasks[key]; ok && taskIsActive(existing.Status) {
+	if existing, ok := c.taskEngine.tasks[key]; ok && taskIsActive(existing.Status) {
 		return false
 	}
 
 	now := time.Now()
-	c.taskSeq++
+	c.taskEngine.seq++
 	scope, scopeID := inferTaskScope(taskType, key)
 	task := TaskStatus{
 		Key:           key,
@@ -486,9 +514,9 @@ func (c *Controller) startTaskWithOptionsCore(key, taskType, message, code strin
 		Retryable:     c.isRetryableTaskType(taskType),
 		StartedAt:     now,
 		UpdatedAt:     now,
-		Sequence:      c.taskSeq,
+		Sequence:      c.taskEngine.seq,
 	}
-	c.tasks[key] = task
+	c.taskEngine.tasks[key] = task
 	c.pruneTasksLocked()
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
@@ -504,22 +532,22 @@ func (c *Controller) newTaskContext(key string) (context.Context, func()) {
 	gate := taskcontrol.NewPauseGate()
 	taskCtx := taskcontrol.WithPauseGate(ctx, gate)
 
-	c.taskMutex.Lock()
-	if c.taskRuntimes == nil {
-		c.taskRuntimes = make(map[string]*TaskRuntime)
+	c.taskEngine.mutex.Lock()
+	if c.taskEngine.runtimes == nil {
+		c.taskEngine.runtimes = make(map[string]*TaskRuntime)
 	}
-	c.taskRuntimes[key] = &TaskRuntime{
+	c.taskEngine.runtimes[key] = &TaskRuntime{
 		Context:   taskCtx,
 		Cancel:    cancel,
 		PauseGate: gate,
 		StartedAt: time.Now(),
 	}
-	c.taskMutex.Unlock()
+	c.taskEngine.mutex.Unlock()
 
 	cleanup := func() {
-		c.taskMutex.Lock()
-		delete(c.taskRuntimes, key)
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Lock()
+		delete(c.taskEngine.runtimes, key)
+		c.taskEngine.mutex.Unlock()
 	}
 
 	return taskCtx, cleanup
@@ -551,10 +579,10 @@ func (c *Controller) updateTaskMsg(key string, current, total int, code string, 
 }
 
 func (c *Controller) updateTaskCore(key string, current, total int, message, code string, params map[string]string) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok {
 		return
 	}
@@ -564,10 +592,10 @@ func (c *Controller) updateTaskCore(key string, current, total int, message, cod
 	}
 	applyTaskMessage(&task, message, code, params)
 	task.UpdatedAt = time.Now()
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	enrichTaskProgress(&task)
-	c.tasks[key] = task
+	c.taskEngine.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -583,10 +611,10 @@ func (c *Controller) updateTaskDetailsMsg(key string, current, total int, code s
 }
 
 func (c *Controller) updateTaskDetailsCore(key string, current, total int, message, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok {
 		return
 	}
@@ -621,19 +649,19 @@ func (c *Controller) updateTaskDetailsCore(key string, current, total int, messa
 		}
 	}
 	task.UpdatedAt = time.Now()
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	enrichTaskProgress(&task)
-	c.tasks[key] = task
+	c.taskEngine.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
 
 func (c *Controller) setTaskMetadata(key string, params map[string]string, scopeName string) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok {
 		return
 	}
@@ -641,10 +669,10 @@ func (c *Controller) setTaskMetadata(key string, params map[string]string, scope
 	if strings.TrimSpace(scopeName) != "" {
 		task.ScopeName = scopeName
 	}
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	hydrateTaskStatusDerivedFields(&task)
-	c.tasks[key] = task
+	c.taskEngine.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -653,10 +681,10 @@ func (c *Controller) mergeTaskParams(key string, params map[string]string) {
 	if len(params) == 0 {
 		return
 	}
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok {
 		return
 	}
@@ -667,19 +695,19 @@ func (c *Controller) mergeTaskParams(key string, params map[string]string) {
 		task.Params[k] = v
 	}
 	task.UpdatedAt = time.Now()
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	hydrateTaskStatusDerivedFields(&task)
-	c.tasks[key] = task
+	c.taskEngine.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
 
 func (c *Controller) mergeRunningTaskMetricSums(key string, increments map[string]int64, params map[string]string) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok || task.Status != "running" {
 		return
 	}
@@ -703,10 +731,10 @@ func (c *Controller) mergeRunningTaskMetricSums(key string, increments map[strin
 		task.Metrics[k] += inc
 	}
 	task.UpdatedAt = time.Now()
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	hydrateTaskStatusDerivedFields(&task)
-	c.tasks[key] = task
+	c.taskEngine.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -804,19 +832,19 @@ func (c *Controller) taskLimitsForPath(path string, force bool) TaskLimits {
 }
 
 func (c *Controller) setTaskEffectiveLimit(key string, limit TaskLimits) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok {
 		return
 	}
 	task.EffectiveLimit = &limit
 	task.UpdatedAt = time.Now()
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	hydrateTaskStatusDerivedFields(&task)
-	c.tasks[key] = task
+	c.taskEngine.tasks[key] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -849,10 +877,10 @@ func (c *Controller) completeTaskMsg(key, status, code string, params map[string
 }
 
 func (c *Controller) completeTaskCore(key, status, message, code string, params map[string]string) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok {
 		return
 	}
@@ -872,10 +900,10 @@ func (c *Controller) completeTaskCore(key, status, message, code string, params 
 	}
 	task.UpdatedAt = now
 	task.FinishedAt = &now
-	c.taskSeq++
-	task.Sequence = c.taskSeq
-	c.tasks[key] = task
-	delete(c.taskRuntimes, key)
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
+	c.taskEngine.tasks[key] = task
+	delete(c.taskEngine.runtimes, key)
 	c.persistTaskStatusFinal(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -890,10 +918,10 @@ func (c *Controller) failTaskErrMsg(key, code string, params map[string]string, 
 }
 
 func (c *Controller) failTaskCore(key, message, code string, params map[string]string, taskError string) {
-	c.taskMutex.Lock()
-	defer c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	defer c.taskEngine.mutex.Unlock()
 
-	task, ok := c.tasks[key]
+	task, ok := c.taskEngine.tasks[key]
 	if !ok {
 		return
 	}
@@ -907,10 +935,10 @@ func (c *Controller) failTaskCore(key, message, code string, params map[string]s
 	task.PausedAt = nil
 	task.UpdatedAt = now
 	task.FinishedAt = &now
-	c.taskSeq++
-	task.Sequence = c.taskSeq
-	c.tasks[key] = task
-	delete(c.taskRuntimes, key)
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
+	c.taskEngine.tasks[key] = task
+	delete(c.taskEngine.runtimes, key)
 	c.persistTaskStatusFinal(task)
 	c.publishTaskStatusLocked(task)
 }
@@ -932,12 +960,12 @@ func (c *Controller) publishTaskStatusLocked(task TaskStatus) {
 }
 
 func (c *Controller) pruneTasksLocked() {
-	if len(c.tasks) <= maxRetainedTasks {
+	if len(c.taskEngine.tasks) <= maxRetainedTasks {
 		return
 	}
 
-	items := make([]TaskStatus, 0, len(c.tasks))
-	for _, task := range c.tasks {
+	items := make([]TaskStatus, 0, len(c.taskEngine.tasks))
+	for _, task := range c.taskEngine.tasks {
 		items = append(items, task)
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -960,7 +988,7 @@ func (c *Controller) pruneTasksLocked() {
 		}
 		next[task.Key] = task
 	}
-	c.tasks = next
+	c.taskEngine.tasks = next
 }
 
 func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
@@ -1002,23 +1030,23 @@ func (c *Controller) listTaskStatuses(ctx context.Context, filters database.Task
 	if err != nil {
 		return nil, err
 	}
-	c.taskMutex.Lock()
-	if c.tasks == nil {
-		c.tasks = make(map[string]TaskStatus)
+	c.taskEngine.mutex.Lock()
+	if c.taskEngine.tasks == nil {
+		c.taskEngine.tasks = make(map[string]TaskStatus)
 	}
-	items := make([]TaskStatus, 0, len(records)+len(c.tasks))
+	items := make([]TaskStatus, 0, len(records)+len(c.taskEngine.tasks))
 	seen := make(map[string]bool, len(records))
 	for _, record := range records {
 		task := taskStatusFromRecord(record)
 		// 进度改为异步落盘后，活动任务的内存快照比 DB 记录更新（DB 可能滞后最多一个落盘周期）。
 		// 同时存在于内存与 DB 时用内存版本，避免 API 返回被滞后的 DB 进度覆盖。
-		if memTask, ok := c.tasks[task.Key]; ok {
+		if memTask, ok := c.taskEngine.tasks[task.Key]; ok {
 			task = memTask
 		}
 		items = append(items, task)
 		seen[task.Key] = true
 	}
-	for _, task := range c.tasks {
+	for _, task := range c.taskEngine.tasks {
 		if seen[task.Key] {
 			continue
 		}
@@ -1042,7 +1070,7 @@ func (c *Controller) listTaskStatuses(ctx context.Context, filters database.Task
 		}
 		items = append(items, task)
 	}
-	c.taskMutex.Unlock()
+	c.taskEngine.mutex.Unlock()
 
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Sequence == items[j].Sequence {
@@ -1084,11 +1112,11 @@ func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.taskMutex.Lock()
-	if c.tasks == nil {
-		c.tasks = make(map[string]TaskStatus)
+	c.taskEngine.mutex.Lock()
+	if c.taskEngine.tasks == nil {
+		c.taskEngine.tasks = make(map[string]TaskStatus)
 	}
-	for key, task := range c.tasks {
+	for key, task := range c.taskEngine.tasks {
 		if statusFilter != "" && task.Status != statusFilter {
 			continue
 		}
@@ -1104,11 +1132,11 @@ func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
 		if task.Status == "running" {
 			continue
 		}
-		delete(c.tasks, key)
+		delete(c.taskEngine.tasks, key)
 		// 同步清掉待落盘快照：否则异步落盘 goroutine 会把刚被 DeleteTasks 删掉的任务重新 UpsertTask 复活。
-		delete(c.taskPersistPending, key)
+		delete(c.taskEngine.persistPending, key)
 	}
-	c.taskMutex.Unlock()
+	c.taskEngine.mutex.Unlock()
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"removed": removed,
@@ -1122,9 +1150,9 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.taskMutex.Lock()
-	task, ok := c.tasks[taskKey]
-	c.taskMutex.Unlock()
+	c.taskEngine.mutex.Lock()
+	task, ok := c.taskEngine.tasks[taskKey]
+	c.taskEngine.mutex.Unlock()
 	if !ok {
 		records, err := c.store.ListTasks(r.Context(), database.TaskFilters{Query: taskKey, Limit: 20})
 		if err != nil {
@@ -1152,7 +1180,7 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	relaunch, ok := c.taskRelaunchers[task.Type]
+	relaunch, ok := c.taskEngine.relaunchers[task.Type]
 	if !ok {
 		jsonError(w, http.StatusBadRequest, "Unsupported retry type")
 		return
@@ -1182,26 +1210,26 @@ func (c *Controller) pauseTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.taskMutex.Lock()
-	task, ok := c.tasks[taskKey]
+	c.taskEngine.mutex.Lock()
+	task, ok := c.taskEngine.tasks[taskKey]
 	if !ok {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusNotFound, "Task not found")
 		return
 	}
 	if task.Status != "running" {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task is not running")
 		return
 	}
 	if !task.CanPause {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task cannot be paused")
 		return
 	}
-	runtime := c.taskRuntimes[taskKey]
+	runtime := c.taskEngine.runtimes[taskKey]
 	if runtime == nil || runtime.PauseGate == nil {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task pause gate is not available")
 		return
 	}
@@ -1214,13 +1242,13 @@ func (c *Controller) pauseTask(w http.ResponseWriter, r *http.Request) {
 	task.PauseReason = "manual_pause"
 	applyTaskMessage(&task, "", "task.msg.control.paused", nil)
 	task.UpdatedAt = now
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	enrichTaskProgress(&task)
-	c.tasks[taskKey] = task
+	c.taskEngine.tasks[taskKey] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
-	c.taskMutex.Unlock()
+	c.taskEngine.mutex.Unlock()
 
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task pause requested"})
 }
@@ -1232,21 +1260,21 @@ func (c *Controller) resumeTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.taskMutex.Lock()
-	task, ok := c.tasks[taskKey]
+	c.taskEngine.mutex.Lock()
+	task, ok := c.taskEngine.tasks[taskKey]
 	if !ok {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusNotFound, "Task not found")
 		return
 	}
 	if task.Status != "paused" {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task is not paused")
 		return
 	}
-	runtime := c.taskRuntimes[taskKey]
+	runtime := c.taskEngine.runtimes[taskKey]
 	if runtime == nil || runtime.PauseGate == nil {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task pause gate is not available")
 		return
 	}
@@ -1258,13 +1286,13 @@ func (c *Controller) resumeTask(w http.ResponseWriter, r *http.Request) {
 	task.PauseReason = ""
 	applyTaskMessage(&task, "", "task.msg.control.resumed", nil)
 	task.UpdatedAt = time.Now()
-	c.taskSeq++
-	task.Sequence = c.taskSeq
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
 	enrichTaskProgress(&task)
-	c.tasks[taskKey] = task
+	c.taskEngine.tasks[taskKey] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
-	c.taskMutex.Unlock()
+	c.taskEngine.mutex.Unlock()
 
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task resumed"})
 }
@@ -1276,26 +1304,26 @@ func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.taskMutex.Lock()
-	task, ok := c.tasks[taskKey]
+	c.taskEngine.mutex.Lock()
+	task, ok := c.taskEngine.tasks[taskKey]
 	if !ok {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusNotFound, "Task not found")
 		return
 	}
 	if task.Status != "running" && task.Status != "paused" {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task is not running")
 		return
 	}
 	if !task.CanCancel {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task cannot be cancelled")
 		return
 	}
-	runtime := c.taskRuntimes[taskKey]
+	runtime := c.taskEngine.runtimes[taskKey]
 	if runtime == nil || runtime.Cancel == nil {
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		jsonError(w, http.StatusConflict, "Task cancellation is not available")
 		return
 	}
@@ -1310,12 +1338,12 @@ func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
 	task.Status = "cancelling"
 	applyTaskMessage(&task, "", "task.msg.control.cancelling", nil)
 	task.UpdatedAt = time.Now()
-	c.taskSeq++
-	task.Sequence = c.taskSeq
-	c.tasks[taskKey] = task
+	c.taskEngine.seq++
+	task.Sequence = c.taskEngine.seq
+	c.taskEngine.tasks[taskKey] = task
 	c.persistTaskStatus(task)
 	c.publishTaskStatusLocked(task)
-	c.taskMutex.Unlock()
+	c.taskEngine.mutex.Unlock()
 
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Task cancellation requested"})
 }

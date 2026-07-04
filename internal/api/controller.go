@@ -74,18 +74,9 @@ type Controller struct {
 	// 其余等待者复用同一结果，避免重复 CPU 转码与重复归档读取。
 	pageTranscodeGroup singleflight.Group
 
-	taskMutex    sync.Mutex
-	tasks        map[string]TaskStatus
-	taskRuntimes map[string]*TaskRuntime
-	taskSeq      int64
-	// taskPersistPending 是待异步落盘的最新任务快照（按 key 合并），由 taskMutex 保护。进度更新只写内存+
-	// 入此集合，专用 goroutine（startTaskPersister）节流批量写 SQLite，避免在临界区内同步写库阻塞任务
-	// API 与系列详情页。taskPersistWake 在终态时唤醒该 goroutine 立即刷，缩短终态落库延迟（缓冲 1）。
-	taskPersistPending map[string]TaskStatus
-	taskPersistWake    chan struct{}
-	// taskRelaunchers 是任务重试的注册表（taskType -> 重启函数），也是"可重试类型"的唯一事实来源，
-	// 在 NewController 中构建，取代 retryTask 的中央 switch 与 isRetryableTaskType 两份硬编码清单。
-	taskRelaunchers map[string]taskRelauncher
+	// taskEngine 收敛后台任务引擎的全部内存状态（任务表、运行时、序号、异步落盘集合与唤醒信号、重试注册表）。
+	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 访问这些状态（定义见 controller_tasks.go）。
+	taskEngine *taskEngine
 
 	rebuildThumbAggMu sync.Mutex
 	rebuildThumbAgg   *rebuildThumbAggregator
@@ -263,10 +254,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 		newClients:               make(chan chan string),
 		defunctClients:           make(chan chan string),
 		messages:                 make(chan string, 64),
-		tasks:                    make(map[string]TaskStatus),
-		taskRuntimes:             make(map[string]*TaskRuntime),
-		taskPersistPending:       make(map[string]TaskStatus),
-		taskPersistWake:          make(chan struct{}, 1),
+		taskEngine:               newTaskEngine(),
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
 		openPath:                 openPathInDefaultFileManager,
@@ -278,7 +266,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	}
 
 	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptions 会经 isRetryableTaskType 查表）之前完成。
-	c.taskRelaunchers = c.buildTaskRelaunchers()
+	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
 	c.recoverInterruptedTasks()
 
@@ -344,10 +332,10 @@ func (c *Controller) Close() {
 		if c.watcher != nil {
 			c.watcher.Stop()
 		}
-		c.taskMutex.Lock()
-		cancels := make([]context.CancelFunc, 0, len(c.taskRuntimes))
-		pauses := make([]*taskcontrol.PauseGate, 0, len(c.taskRuntimes))
-		for _, runtime := range c.taskRuntimes {
+		c.taskEngine.mutex.Lock()
+		cancels := make([]context.CancelFunc, 0, len(c.taskEngine.runtimes))
+		pauses := make([]*taskcontrol.PauseGate, 0, len(c.taskEngine.runtimes))
+		for _, runtime := range c.taskEngine.runtimes {
 			if runtime == nil {
 				continue
 			}
@@ -358,7 +346,7 @@ func (c *Controller) Close() {
 				cancels = append(cancels, runtime.Cancel)
 			}
 		}
-		c.taskMutex.Unlock()
+		c.taskEngine.mutex.Unlock()
 		for _, gate := range pauses {
 			gate.Resume()
 		}

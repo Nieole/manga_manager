@@ -84,12 +84,11 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 		koreader:            koreader.NewService(store, cfgManager),
 		external:            external.NewManager(store, 30*time.Minute),
 		configPath:          configPath,
-		tasks:               make(map[string]TaskStatus),
-		taskRuntimes:        make(map[string]*TaskRuntime),
+		taskEngine:          newTaskEngine(),
 		messages:            make(chan string, 32),
 	}
 	// 与 NewController 一致：构建任务重试注册表，否则新建任务的 Retryable 恒为 false。
-	controller.taskRelaunchers = controller.buildTaskRelaunchers()
+	controller.taskEngine.relaunchers = controller.buildTaskRelaunchers()
 
 	t.Cleanup(parser.ResetArchivePool)
 	t.Cleanup(controller.Close)
@@ -934,9 +933,9 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 		DurationMillis:         456,
 	})
 
-	controller.taskMutex.Lock()
-	task := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	task := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	if task.Params["opened_archives"] != "5" || task.Params["hashed_files"] != "2" || task.Params["io_wait_ms"] != "123" {
 		t.Fatalf("expected scanner metrics params, got %+v", task.Params)
 	}
@@ -974,9 +973,9 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		DurationMillis:       30000,
 	})
 
-	controller.taskMutex.Lock()
-	task := controller.tasks["rebuild_thumbnails"]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	task := controller.taskEngine.tasks["rebuild_thumbnails"]
+	controller.taskEngine.mutex.Unlock()
 	if task.Params["opened_archives"] != "5" || task.Params["io_wait_ms"] != "150" || task.Params["paused_ms"] != "100" || task.Params["thumbnail_write_ms"] != "50" {
 		t.Fatalf("expected aggregated thumbnail metrics, got %+v", task.Params)
 	}
@@ -2526,7 +2525,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		koreader:            koreader.NewService(store, cfg),
 		external:            external.NewManager(store, 30*time.Minute),
 		configPath:          filepath.Join(tempDir, "config.yaml"),
-		tasks:               make(map[string]TaskStatus),
+		taskEngine:          newTaskEngine(),
 		messages:            make(chan string, 32),
 	}
 
@@ -2632,10 +2631,10 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	controller.taskMutex.Lock()
-	_, completedExists := controller.tasks["completed_one"]
-	_, failedExists := controller.tasks["failed_one"]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	_, completedExists := controller.taskEngine.tasks["completed_one"]
+	_, failedExists := controller.taskEngine.tasks["failed_one"]
+	controller.taskEngine.mutex.Unlock()
 	if completedExists {
 		t.Fatal("expected completed task to be removed")
 	}
@@ -2727,9 +2726,9 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 		t.Fatal("expected task context to be cancelled")
 	}
 
-	controller.taskMutex.Lock()
-	task := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	task := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	if task.CanCancel {
 		t.Fatalf("expected task to be marked non-cancellable after cancel request: %+v", task)
 	}
@@ -2761,9 +2760,9 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	controller.taskMutex.Lock()
-	paused := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	paused := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	if paused.Status != "paused" || !paused.CanResume || paused.CanPause {
 		t.Fatalf("expected paused resumable task, got %+v", paused)
 	}
@@ -2793,9 +2792,9 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 		t.Fatal("expected checkpoint to unblock after resume")
 	}
 
-	controller.taskMutex.Lock()
-	resumed := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	resumed := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	if resumed.Status != "running" || resumed.CanResume || !resumed.CanPause {
 		t.Fatalf("expected running pausable task, got %+v", resumed)
 	}
@@ -2923,9 +2922,9 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 		"current_series_name": "Foo",
 	})
 
-	controller.taskMutex.Lock()
-	task := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	task := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	if task.Phase != "queueing_review" || task.CurrentItem != "Foo" {
 		t.Fatalf("expected scrape phase/current item, got %+v", task)
 	}
@@ -2997,9 +2996,9 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 	provider.release <- struct{}{}
 	assertNoProviderRequest(t, provider.requests, 150*time.Millisecond)
 
-	controller.taskMutex.Lock()
-	paused := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	paused := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	if paused.Status != "paused" || paused.Metrics["provider_requests"] != 1 {
 		t.Fatalf("expected paused scrape after first request, got %+v", paused)
 	}
@@ -3018,9 +3017,9 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 	provider.release <- struct{}{}
 	waitForTaskStatus(t, controller, taskKey, "completed")
 
-	controller.taskMutex.Lock()
-	done := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	done := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	if done.Metrics["provider_requests"] != 2 || done.Metrics["processed_series"] != 2 {
 		t.Fatalf("expected completed scrape metrics, got %+v", done.Metrics)
 	}
@@ -3050,17 +3049,17 @@ func waitForTaskStatus(t testing.TB, controller *Controller, taskKey, status str
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		controller.taskMutex.Lock()
-		task := controller.tasks[taskKey]
-		controller.taskMutex.Unlock()
+		controller.taskEngine.mutex.Lock()
+		task := controller.taskEngine.tasks[taskKey]
+		controller.taskEngine.mutex.Unlock()
 		if task.Status == status {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	controller.taskMutex.Lock()
-	task := controller.tasks[taskKey]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	task := controller.taskEngine.tasks[taskKey]
+	controller.taskEngine.mutex.Unlock()
 	t.Fatalf("timed out waiting for task %s status %s, got %+v", taskKey, status, task)
 }
 
@@ -3152,9 +3151,9 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var task TaskStatus
 	for time.Now().Before(deadline) {
-		controller.taskMutex.Lock()
-		task = controller.tasks["rebuild_thumbnails"]
-		controller.taskMutex.Unlock()
+		controller.taskEngine.mutex.Lock()
+		task = controller.taskEngine.tasks["rebuild_thumbnails"]
+		controller.taskEngine.mutex.Unlock()
 		if task.Status != "running" {
 			break
 		}
@@ -3185,9 +3184,9 @@ func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	}
 
 	time.Sleep(20 * time.Millisecond)
-	controller.taskMutex.Lock()
-	task := controller.tasks["scan_series_999"]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	task := controller.taskEngine.tasks["scan_series_999"]
+	controller.taskEngine.mutex.Unlock()
 	if task.Status == "running" {
 		t.Fatalf("expected retried task to finish quickly, got %+v", task)
 	}
@@ -4644,10 +4643,10 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 
 func TestIsRetryableTaskTypeDerivedFromRegistry(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	if len(controller.taskRelaunchers) == 0 {
+	if len(controller.taskEngine.relaunchers) == 0 {
 		t.Fatal("expected registered relaunchers")
 	}
-	for taskType := range controller.taskRelaunchers {
+	for taskType := range controller.taskEngine.relaunchers {
 		if !controller.isRetryableTaskType(taskType) {
 			t.Fatalf("registered type %q should be retryable", taskType)
 		}
@@ -4665,9 +4664,9 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 		t.Fatal("expected task to start")
 	}
 	controller.finishTaskMsg("scan_library_9", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
-	controller.taskMutex.Lock()
-	coded := controller.tasks["scan_library_9"]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	coded := controller.taskEngine.tasks["scan_library_9"]
+	controller.taskEngine.mutex.Unlock()
 	if coded.MessageCode != "task.msg.scan_library.complete" {
 		t.Fatalf("expected message_code set, got %q", coded.MessageCode)
 	}
@@ -4684,9 +4683,9 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 	// 兼容路径：未迁移的 finishTask 仍直接设 Message，并清空 code（互斥）。
 	controller.startTask("scan_library_10", "scan_library", "start", 1)
 	controller.finishTask("scan_library_10", "直接文案")
-	controller.taskMutex.Lock()
-	legacy := controller.tasks["scan_library_10"]
-	controller.taskMutex.Unlock()
+	controller.taskEngine.mutex.Lock()
+	legacy := controller.taskEngine.tasks["scan_library_10"]
+	controller.taskEngine.mutex.Unlock()
 	if legacy.Message != "直接文案" || legacy.MessageCode != "" {
 		t.Fatalf("legacy finishTask: want Message set & code empty, got msg=%q code=%q", legacy.Message, legacy.MessageCode)
 	}

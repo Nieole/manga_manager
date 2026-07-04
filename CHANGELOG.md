@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（任务引擎状态收敛为 taskEngine · M17 保守版）
+
+#### 重构（行为保持）
+- 把散在 Controller 上的 7 个后台任务引擎状态字段(`taskMutex` / `tasks` / `taskRuntimes` / `taskSeq` / `taskPersistPending` / `taskPersistWake` / `taskRelaunchers`)收敛进一个内聚的 `taskEngine` 结构体(`controller_tasks.go`),Controller 改持 `taskEngine *taskEngine`(经 `newTaskEngine()` 构造)。任务引擎的内存状态边界从此清晰、集中一处。
+- 任务方法仍是 Controller 方法、**155 个外部调用点**(scrape/koreader/maintenance/library/scan/recommendations 等)一律不动——仅把内部字段访问从 `c.taskX` 改为 `c.taskEngine.<字段>`(174 处,机械重命名)。锁语义、异步落盘 goroutine、生命周期、重试注册表逻辑一字未改,行为完全等价。
+- 说明:审计 M17 原意是抽为独立 `internal/task` 包;但该引擎与 Controller 深度耦合(重试注册表回调、存储令牌、SSE 广播、生命周期),且 `TaskStatus` 类型被 api 响应与 M47 tsgen 广泛引用,全量跨包迁移 churn 极大、风险高且零用户收益。本次采用**同包状态收敛**,拿到"引擎状态内聚"的主要可维护性收益,风险可控;跨包全量迁移留作后续单独立项。
+
+#### 验证
+- `go vet`、`go build ./...`、`go test ./...`、`go test -race ./internal/api`(70s,无数据竞争)全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（前后端契约类型生成管线 · M47 完整）
 
 #### 重构 / 基础设施
