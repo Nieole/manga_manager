@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（OPDS feed 后端 i18n · M65 第一步）
+
+#### 修复
+- OPDS feed 的用户可见文案改为按 `Accept-Language`(或 `X-App-Locale`)选择中/英。OPDS 是给电子阅读器的 XML,前端无法翻译,故必须后端本地化(审计 M65 明确的两步方案之一)。此前 `opds_controller.go` 内 22 处标题/描述硬编码中文,英文用户看到的目录/系列/搜索/合集/阅读清单/继续阅读等全部为中文。
+- 新增 `opdsMessages` 中/英文案表 + `opdsText(locale, key)`(未知 locale/key 回退 zh-CN),覆盖 12 条简单文案;3 条带占位的格式串(`搜索：%s`、`%d 个系列`、进度 `%s · 第 %d / %d 页`)因 `go vet` 非常量格式检查改由 `opdsSearchTitle`/`opdsSeriesCountText`/`opdsContinueProgress` 用常量格式串按 locale 生成。8 个 OPDS handler 均本地 `requestLocale(r)` 取语言,无需改签名。默认(无 header)仍回退中文,既有行为不变。
+- 说明:任务/刮削响应等可被前端翻译的文案改为消息码由前端渲染是 M65 的第二步,属另一独立切片。
+
+#### 验证
+- `go vet`、`go test ./internal/api`(含新增 `TestOPDSRootFeedLocalization`:默认中文、`Accept-Language: en-US` 输出英文)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（PauseGate 并发原语补测试 · L107）
 
 #### 测试

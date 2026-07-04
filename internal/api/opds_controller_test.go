@@ -545,3 +545,48 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 
 	_ = lib
 }
+
+func TestOPDSRootFeedLocalization(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	hasEntryTitle := func(feed OPDSFeed, title string) bool {
+		for _, e := range feed.Entries {
+			if e.Title == title {
+				return true
+			}
+		}
+		return false
+	}
+	decodeRoot := func(t *testing.T, acceptLang string) OPDSFeed {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/opds/v1.2/", nil)
+		if acceptLang != "" {
+			req.Header.Set("Accept-Language", acceptLang)
+		}
+		rec := httptest.NewRecorder()
+		controller.opdsRoot(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var feed OPDSFeed
+		if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+			t.Fatalf("decode root feed failed: %v", err)
+		}
+		return feed
+	}
+
+	// 默认（无 Accept-Language）回退中文，保持既有行为。
+	zh := decodeRoot(t, "")
+	if !hasEntryTitle(zh, "最近添加") {
+		t.Fatalf("expected Chinese '最近添加' in default feed, got %+v", zh.Entries)
+	}
+
+	// Accept-Language: en-US 时应输出英文文案。
+	en := decodeRoot(t, "en-US")
+	if !hasEntryTitle(en, "Recently Added") {
+		t.Fatalf("expected English 'Recently Added' with en-US locale, got %+v", en.Entries)
+	}
+	if hasEntryTitle(en, "最近添加") {
+		t.Fatal("did not expect Chinese entry title with en-US locale")
+	}
+}

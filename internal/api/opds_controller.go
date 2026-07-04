@@ -162,7 +162,78 @@ func openSearchResponse(w http.ResponseWriter, data interface{}) {
 }
 
 // opdsRoot 根目录导航
+// opdsMessages 按 locale 提供 OPDS feed 的用户可见文案。OPDS 输出是给电子阅读器的 XML，
+// 前端无法翻译，故按 Accept-Language 在后端选择中/英文案。含 %d/%s 占位的格式串因 go vet 的
+// 非常量格式检查不入表，改由各 handler 内联的 locale 分支处理。
+var opdsMessages = map[string]map[string]string{
+	"zh-CN": {
+		"catalog.libraries.title":      "所有资源库",
+		"catalog.libraries.content":    "浏览所有资源库中的漫画系列",
+		"catalog.recent.title":         "最近添加",
+		"catalog.recent.content":       "按入库时间浏览最近添加的系列",
+		"catalog.continue.title":       "继续阅读",
+		"catalog.continue.content":     "从最近阅读的卷册继续",
+		"catalog.collections.title":    "合集",
+		"catalog.collections.content":  "浏览手工合集、AI 分组合集、智能快照和动态规则合集",
+		"catalog.readingLists.title":   "阅读清单",
+		"catalog.readingLists.content": "浏览有序阅读清单",
+		"feed.libraries.title":         "资源库",
+		"feed.seriesList.title":        "系列列表",
+	},
+	"en-US": {
+		"catalog.libraries.title":      "All Libraries",
+		"catalog.libraries.content":    "Browse manga series across all libraries",
+		"catalog.recent.title":         "Recently Added",
+		"catalog.recent.content":       "Browse recently added series by import time",
+		"catalog.continue.title":       "Continue Reading",
+		"catalog.continue.content":     "Resume from your recently read volumes",
+		"catalog.collections.title":    "Collections",
+		"catalog.collections.content":  "Browse manual, AI-grouped, smart-snapshot and dynamic-rule collections",
+		"catalog.readingLists.title":   "Reading Lists",
+		"catalog.readingLists.content": "Browse ordered reading lists",
+		"feed.libraries.title":         "Libraries",
+		"feed.seriesList.title":        "Series",
+	},
+}
+
+// opdsText 返回给定 locale 的 OPDS 文案；未知 locale/key 回退到 zh-CN，再回退到 key 本身。
+func opdsText(locale, key string) string {
+	if m, ok := opdsMessages[locale]; ok {
+		if s, ok := m[key]; ok {
+			return s
+		}
+	}
+	if s, ok := opdsMessages["zh-CN"][key]; ok {
+		return s
+	}
+	return key
+}
+
+// 以下三个 helper 用常量格式串按 locale 生成带占位的 OPDS 文案，满足 go vet 的常量格式要求
+// （若把格式串放进 opdsMessages 表再传给 fmt.Sprintf，vet 会报 non-constant format string）。
+func opdsSearchTitle(locale, query string) string {
+	if locale == "en-US" {
+		return fmt.Sprintf("Search: %s", query)
+	}
+	return fmt.Sprintf("搜索：%s", query)
+}
+
+func opdsSeriesCountText(locale string, n int64) string {
+	if locale == "en-US" {
+		return fmt.Sprintf("%d series", n)
+	}
+	return fmt.Sprintf("%d 个系列", n)
+}
+
+func opdsContinueProgress(locale, seriesName string, page, total int64) string {
+	if locale == "en-US" {
+		return fmt.Sprintf("%s · Page %d / %d", seriesName, page, total)
+	}
+	return fmt.Sprintf("%s · 第 %d / %d 页", seriesName, page, total)
+}
+
 func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	now := time.Now().Format(time.RFC3339)
 	feed := OPDSFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
@@ -177,46 +248,46 @@ func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
 		},
 		Entries: []OPDSEntry{
 			{
-				Title:   "所有资源库",
+				Title:   opdsText(locale, "catalog.libraries.title"),
 				ID:      "urn:manga-manager:opds:libraries",
 				Updated: now,
-				Content: "浏览所有资源库中的漫画系列",
+				Content: opdsText(locale, "catalog.libraries.content"),
 				Links: []OPDSLink{
 					{Href: "/opds/v1.2/libraries", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 				},
 			},
 			{
-				Title:   "最近添加",
+				Title:   opdsText(locale, "catalog.recent.title"),
 				ID:      "urn:manga-manager:opds:recent",
 				Updated: now,
-				Content: "按入库时间浏览最近添加的系列",
+				Content: opdsText(locale, "catalog.recent.content"),
 				Links: []OPDSLink{
 					{Href: "/opds/v1.2/recent", Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
 				},
 			},
 			{
-				Title:   "继续阅读",
+				Title:   opdsText(locale, "catalog.continue.title"),
 				ID:      "urn:manga-manager:opds:continue",
 				Updated: now,
-				Content: "从最近阅读的卷册继续",
+				Content: opdsText(locale, "catalog.continue.content"),
 				Links: []OPDSLink{
 					{Href: "/opds/v1.2/continue", Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
 				},
 			},
 			{
-				Title:   "合集",
+				Title:   opdsText(locale, "catalog.collections.title"),
 				ID:      "urn:manga-manager:opds:collections",
 				Updated: now,
-				Content: "浏览手工合集、AI 分组合集、智能快照和动态规则合集",
+				Content: opdsText(locale, "catalog.collections.content"),
 				Links: []OPDSLink{
 					{Href: "/opds/v1.2/collections", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 				},
 			},
 			{
-				Title:   "阅读清单",
+				Title:   opdsText(locale, "catalog.readingLists.title"),
 				ID:      "urn:manga-manager:opds:reading-lists",
 				Updated: now,
-				Content: "浏览有序阅读清单",
+				Content: opdsText(locale, "catalog.readingLists.content"),
 				Links: []OPDSLink{
 					{Href: "/opds/v1.2/reading-lists", Type: "application/atom+xml;profile=opds-catalog;kind=navigation"},
 				},
@@ -435,6 +506,7 @@ func opdsSeriesEntryFromReadingListRow(row database.ListReadingListSeriesPageRow
 }
 
 func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", 30, 100)
 	libraryID := int64(opdsPositiveQueryInt(r, "libraryId", 0, 0))
@@ -465,7 +537,7 @@ func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
 	}
 	feed := OPDSFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   "最近添加",
+		Title:   opdsText(locale, "catalog.recent.title"),
 		ID:      "urn:manga-manager:opds:recent",
 		Updated: now,
 		Links:   opdsPaginationLinks(base, page, limit, int(total)),
@@ -475,6 +547,7 @@ func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	views, err := c.loadCollectionViews(r.Context())
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -490,7 +563,7 @@ func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 			href = fmt.Sprintf("/opds/v1.2/smart-collections/%d", view.NumericID)
 			urnKind = "smart-collection"
 		}
-		contentParts := []string{view.SourceType, fmt.Sprintf("%d 个系列", view.SeriesCount)}
+		contentParts := []string{view.SourceType, opdsSeriesCountText(locale, int64(view.SeriesCount))}
 		if view.LibraryName != "" {
 			contentParts = append(contentParts, view.LibraryName)
 		}
@@ -510,7 +583,7 @@ func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 
 	feed := OPDSFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   "合集",
+		Title:   opdsText(locale, "catalog.collections.title"),
 		ID:      "urn:manga-manager:opds:collections",
 		Updated: now,
 		Links: []OPDSLink{
@@ -523,6 +596,7 @@ func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	lists, err := c.store.ListReadingLists(r.Context())
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -536,7 +610,7 @@ func (c *Controller) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
 			Title:   list.Name,
 			ID:      fmt.Sprintf("urn:manga-manager:opds:reading-list:%d", list.ID),
 			Updated: list.UpdatedAt.Format(time.RFC3339),
-			Content: fmt.Sprintf("%d 个系列", list.ItemCount),
+			Content: opdsSeriesCountText(locale, list.ItemCount),
 			Links: []OPDSLink{
 				{Href: fmt.Sprintf("/opds/v1.2/reading-lists/%d", list.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
 			},
@@ -544,7 +618,7 @@ func (c *Controller) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
 	}
 	feed := OPDSFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   "阅读清单",
+		Title:   opdsText(locale, "catalog.readingLists.title"),
 		ID:      "urn:manga-manager:opds:reading-lists",
 		Updated: now,
 		Links: []OPDSLink{
@@ -676,6 +750,7 @@ func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Re
 
 // opdsSearch 搜索系列，供 OPDS 客户端通过 OpenSearch 调用。
 func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", 30, 100)
@@ -740,7 +815,7 @@ func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
 	base := "/opds/v1.2/search?q=" + url.QueryEscape(query)
 	feed := OPDSFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   fmt.Sprintf("搜索：%s", query),
+		Title:   opdsSearchTitle(locale, query),
 		ID:      "urn:manga-manager:opds:search:" + query,
 		Updated: now,
 		Links:   opdsPaginationLinks(base, page, limit, total),
@@ -751,6 +826,7 @@ func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
 
 // opdsLibraries 资源库列表
 func (c *Controller) opdsLibraries(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	libs, err := c.store.ListLibraries(r.Context())
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -773,7 +849,7 @@ func (c *Controller) opdsLibraries(w http.ResponseWriter, r *http.Request) {
 
 	feed := OPDSFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   "资源库",
+		Title:   opdsText(locale, "feed.libraries.title"),
 		ID:      "urn:manga-manager:opds:libraries",
 		Updated: now,
 		Links: []OPDSLink{
@@ -787,6 +863,7 @@ func (c *Controller) opdsLibraries(w http.ResponseWriter, r *http.Request) {
 
 // opdsLibrarySeries 某资源库下的系列列表
 func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	libID, err := strconv.ParseInt(chi.URLParam(r, "libraryId"), 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid library ID", http.StatusBadRequest)
@@ -842,7 +919,7 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 
 	feed := OPDSFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
-		Title:   "系列列表",
+		Title:   opdsText(locale, "feed.seriesList.title"),
 		ID:      fmt.Sprintf("urn:manga-manager:opds:library:%d:series", libID),
 		Updated: now,
 		Links:   opdsPaginationLinks(fmt.Sprintf("/opds/v1.2/libraries/%d", libID), page, limit, int(total)),
@@ -932,6 +1009,7 @@ func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request)
 }
 
 func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
+	locale := requestLocale(r)
 	limit := int64(opdsPositiveQueryInt(r, "limit", 30, 100))
 	items, err := c.store.GetRecentReadAll(r.Context(), limit)
 	if err != nil {
@@ -948,7 +1026,7 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 		}
 		content := item.SeriesName
 		if item.LastReadPage.Valid && item.PageCount > 0 {
-			content = fmt.Sprintf("%s · 第 %d / %d 页", item.SeriesName, item.LastReadPage.Int64, item.PageCount)
+			content = opdsContinueProgress(locale, item.SeriesName, item.LastReadPage.Int64, item.PageCount)
 		}
 		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage, "")
 		if item.CoverPath != "" {
@@ -974,7 +1052,7 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 	feed := OPDSFeed{
 		XMLNS:    "http://www.w3.org/2005/Atom",
 		XMLNSPSE: opdsPSEXMLNS,
-		Title:    "继续阅读",
+		Title:    opdsText(locale, "catalog.continue.title"),
 		ID:       "urn:manga-manager:opds:continue",
 		Updated:  now,
 		Links: []OPDSLink{
