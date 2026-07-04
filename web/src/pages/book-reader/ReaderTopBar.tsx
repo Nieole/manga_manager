@@ -5,9 +5,10 @@
  */
 
 import { useState } from 'react';
-import { ArrowLeft, Bookmark, CircleHelp, ListOrdered, Loader2, Settings } from 'lucide-react';
+import { ArrowLeft, Bookmark, CircleHelp, Download, ListOrdered, Loader2, Settings } from 'lucide-react';
 import type { ProgressSyncStatus } from './useReaderProgressIndicator';
 import type { VolumeBookEntry } from './useReaderSiblings';
+import { downloadBookFile } from '../../utils/download';
 
 type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
 
@@ -139,6 +140,15 @@ export function ReaderTopBar({
               </div>
             )}
           </>
+        )}
+        {currentBookId !== null && (
+          <button
+            onClick={() => downloadBookFile(currentBookId)}
+            className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg"
+            title={t('reader.download')}
+          >
+            <Download className="w-5 h-5" />
+          </button>
         )}
         <button
           onClick={onSaveBookmark}

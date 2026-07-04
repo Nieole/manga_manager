@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { BookImage, CheckCircle2, MoreHorizontal } from 'lucide-react';
 import type { Book } from './types';
 import { useI18n } from '../../i18n/LocaleProvider';
+import { downloadBookFile } from '../../utils/download';
 
 interface SeriesBookCardProps {
   book: Book;
@@ -131,6 +132,17 @@ export function SeriesBookCard({
                     className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white"
                   >
                     {t('series.book.exportComicInfo')}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      downloadBookFile(book.id);
+                    }}
+                    className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
+                  >
+                    {t('series.book.download')}
                   </button>
                   <button
                     onClick={(e) => {

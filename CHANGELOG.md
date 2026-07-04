@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（原始归档下载入口 · 收藏者体验①）
+
+#### 新增
+- 在 Web 端露出「下载原文件」入口：后端整卷下载端点 `GET /api/books/{bookId}/file`（`serveBookFile`，带 `Content-Disposition: attachment`、正确归档 MIME 与 Range 断点续传）此前只被 OPDS 消费，前端无入口；现在
+  - 系列详情的书卡「⋯」菜单新增「下载原文件」，位于「导出 ComicInfo」与「复制识别码」之间；
+  - 阅读器顶栏新增下载按钮（位于书签左侧，仅当前书 ID 有效时显示）。
+- 新增前端助手 `web/src/utils/download.ts`（`downloadBookFile`）：经 `withApiToken` 在启用可选管理令牌时把 token 附到 URL；不设 `download` 属性，保留服务器给出的（含中文卷名的）文件名。下载动作自包含、无需穿透父级 props。
+- i18n 补 `series.book.download` / `reader.download`（中/英）。
+
+#### 验证
+- 前端 `npm run lint`（0）、`npm run build`（tsc 严格 + Vite 打包）通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（任务引擎状态收敛为 taskEngine · M17 保守版）
 
 #### 重构（行为保持）
