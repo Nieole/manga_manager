@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（任务进度异步落盘 · M42）
+
+#### 性能/并发
+- 任务进度持久化移出 `taskMutex` 临界区。此前每次进度更新(扫描期约 4 次/秒·每个 reporter,多库并行叠加)都在锁内同步 `UpsertTask` 写 SQLite,与扫描批量事务(含 FTS、每系列统计重算、checkpoint)争锁时可阻塞任务 API 与系列详情页最长 `busy_timeout`(15s)。现锁内只更新内存 + 记入 `taskPersistPending`(按 key 合并快照),由唯一的落盘 goroutine `startTaskPersister`(500ms 节流)在锁外批量写。
+- 单一写入方 + 按 key 合并,进度写与终态写不会乱序覆盖。终态(完成/失败/取消)经 `persistTaskStatusFinal` 额外唤醒 goroutine 立即刷,缩短落库延迟;`lifecycleDone`(优雅关闭)前再刷一次,保证终态落库。
+- 配套修正:①`listTaskStatuses` 对同时存在于内存与 DB 的任务改用**内存版本**(进度更新),避免 API 返回被滞后的 DB 进度覆盖;②`clearTasks` 删任务时同步清 `taskPersistPending`,防止异步落盘把刚删的任务 UpsertTask 复活。
+
+#### 验证
+- `go vet`、`go test ./...`、`go test -race ./internal/api` 全绿。新增 `TestTaskProgressAsyncPersistMemoryWins`(更新后立即经 listTaskStatuses 读到内存最新进度、flush 后 DB 亦有);既有跨实例持久化/清理测试改为显式 `flushTaskPersist()` 以适配异步语义。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（页图转码 single-flight 去重 · L82 之三，L82 收尾）
 
 #### 性能

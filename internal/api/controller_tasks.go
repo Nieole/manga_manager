@@ -259,12 +259,66 @@ func enrichTaskProgress(task *TaskStatus) {
 	}
 }
 
+// persistTaskStatus 记录一个待异步落盘的任务快照。调用方必须持有 taskMutex：这里只写内存里的
+// taskPersistPending（按 key 合并，最新快照胜），真正的 UpsertTask 由 startTaskPersister 在锁外
+// 节流批量执行，避免在临界区内同步写 SQLite（扫描批量事务期间可阻塞任务 API 与系列详情页最长
+// busy_timeout）。单一写入方 + 按 key 合并，避免进度写与终态写乱序覆盖。
 func (c *Controller) persistTaskStatus(task TaskStatus) {
 	if c.store == nil {
 		return
 	}
-	if err := c.store.UpsertTask(context.Background(), taskRecordFromStatus(task)); err != nil {
-		slog.Warn("Failed to persist task status", "task_key", task.Key, "error", err)
+	if c.taskPersistPending == nil {
+		c.taskPersistPending = make(map[string]TaskStatus)
+	}
+	c.taskPersistPending[task.Key] = task
+}
+
+// persistTaskStatusFinal 用于任务终态（完成/失败/取消）：仍走同一异步队列（保持单一写入方、不与
+// 进度写乱序），但额外唤醒落盘 goroutine 立即刷，缩短终态落库延迟。调用方持有 taskMutex。
+func (c *Controller) persistTaskStatusFinal(task TaskStatus) {
+	c.persistTaskStatus(task)
+	select {
+	case c.taskPersistWake <- struct{}{}:
+	default:
+	}
+}
+
+// startTaskPersister 是任务快照的唯一落盘 goroutine：500ms 节流一次，终态唤醒时立即刷，关闭前再刷
+// 一次，保证优雅关闭时最新进度/终态落库。经 runBackground 登记 backgroundWG，Close() 会等待其退出。
+func (c *Controller) startTaskPersister() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.lifecycleDone():
+			c.flushTaskPersist()
+			return
+		case <-c.taskPersistWake:
+			c.flushTaskPersist()
+		case <-ticker.C:
+			c.flushTaskPersist()
+		}
+	}
+}
+
+// flushTaskPersist 在锁内取出并清空待落盘集合，再在锁外逐个 UpsertTask（避免持锁写库）。
+func (c *Controller) flushTaskPersist() {
+	if c.store == nil {
+		return
+	}
+	c.taskMutex.Lock()
+	if len(c.taskPersistPending) == 0 {
+		c.taskMutex.Unlock()
+		return
+	}
+	pending := c.taskPersistPending
+	c.taskPersistPending = make(map[string]TaskStatus)
+	c.taskMutex.Unlock()
+
+	for _, task := range pending {
+		if err := c.store.UpsertTask(context.Background(), taskRecordFromStatus(task)); err != nil {
+			slog.Warn("Failed to persist task status", "task_key", task.Key, "error", err)
+		}
 	}
 }
 
@@ -649,7 +703,7 @@ func (c *Controller) completeTask(key, status, message string) {
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
 	delete(c.taskRuntimes, key)
-	c.persistTaskStatus(task)
+	c.persistTaskStatusFinal(task)
 	c.publishTaskStatusLocked(task)
 }
 
@@ -675,7 +729,7 @@ func (c *Controller) failTaskWithError(key, message, taskError string) {
 	task.Sequence = c.taskSeq
 	c.tasks[key] = task
 	delete(c.taskRuntimes, key)
-	c.persistTaskStatus(task)
+	c.persistTaskStatusFinal(task)
 	c.publishTaskStatusLocked(task)
 }
 
@@ -766,17 +820,21 @@ func (c *Controller) listTaskStatuses(ctx context.Context, filters database.Task
 	if err != nil {
 		return nil, err
 	}
-	items := make([]TaskStatus, 0, len(records))
-	seen := make(map[string]bool, len(records))
-	for _, record := range records {
-		task := taskStatusFromRecord(record)
-		items = append(items, task)
-		seen[task.Key] = true
-	}
-
 	c.taskMutex.Lock()
 	if c.tasks == nil {
 		c.tasks = make(map[string]TaskStatus)
+	}
+	items := make([]TaskStatus, 0, len(records)+len(c.tasks))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		task := taskStatusFromRecord(record)
+		// 进度改为异步落盘后，活动任务的内存快照比 DB 记录更新（DB 可能滞后最多一个落盘周期）。
+		// 同时存在于内存与 DB 时用内存版本，避免 API 返回被滞后的 DB 进度覆盖。
+		if memTask, ok := c.tasks[task.Key]; ok {
+			task = memTask
+		}
+		items = append(items, task)
+		seen[task.Key] = true
 	}
 	for _, task := range c.tasks {
 		if seen[task.Key] {
@@ -865,6 +923,8 @@ func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		delete(c.tasks, key)
+		// 同步清掉待落盘快照：否则异步落盘 goroutine 会把刚被 DeleteTasks 删掉的任务重新 UpsertTask 复活。
+		delete(c.taskPersistPending, key)
 	}
 	c.taskMutex.Unlock()
 

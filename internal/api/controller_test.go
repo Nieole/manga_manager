@@ -2505,6 +2505,8 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	}
 	controller.setTaskMetadata("scan_series_77", map[string]string{"force": "true"}, "Series 77")
 	controller.failTaskWithError("scan_series_77", "failed series scan", "archive error")
+	// 进度/终态改为异步落盘（M42）：显式刷一次，模拟服务生命周期内的落盘/优雅关闭，再由新实例读回。
+	controller.flushTaskPersist()
 
 	cfg := controller.config
 	imageCache, _ := lru.New[string, []byte](8)
@@ -2657,6 +2659,8 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 		t.Fatal("expected third task to start")
 	}
 	controller.finishTask("scan_library_11", "done")
+	// 终态改为异步落盘（M42）：清理走 DeleteTasks 删 DB 记录，需先刷盘让已完成任务进入 DB 再清。
+	controller.flushTaskPersist()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
 	rec := httptest.NewRecorder()
@@ -4553,5 +4557,50 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 	controller.koreaderRegister(closedRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader([]byte(`{"username":"other","password":"`+password+`"}`))))
 	if closedRec.Code != http.StatusForbidden {
 		t.Fatalf("expected registration-disabled 403, got %d body=%s", closedRec.Code, closedRec.Body.String())
+	}
+}
+
+func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+
+	if !controller.startTask("scan_library_5", "scan_library", "lib 5", 100) {
+		t.Fatal("expected task to start")
+	}
+	controller.updateTask("scan_library_5", 42, 100, "processing")
+
+	// 进度改为异步落盘（M42）：listTaskStatuses 应立即反映内存里的最新进度，
+	// 而不是尚未刷盘（此时为空/滞后）的 DB 记录。
+	tasks, err := controller.listTaskStatuses(context.Background(), database.TaskFilters{})
+	if err != nil {
+		t.Fatalf("listTaskStatuses failed: %v", err)
+	}
+	var mem *TaskStatus
+	for i := range tasks {
+		if tasks[i].Key == "scan_library_5" {
+			mem = &tasks[i]
+		}
+	}
+	if mem == nil || mem.Current != 42 {
+		t.Fatalf("expected in-memory current 42 before flush, got %+v", mem)
+	}
+
+	// 刷盘后 DB 记录也应带上该进度。
+	controller.flushTaskPersist()
+	records, err := store.ListTasks(context.Background(), database.TaskFilters{})
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+	persisted := false
+	for _, r := range records {
+		ts := taskStatusFromRecord(r)
+		if ts.Key == "scan_library_5" {
+			persisted = true
+			if ts.Current != 42 {
+				t.Fatalf("expected persisted current 42, got %d", ts.Current)
+			}
+		}
+	}
+	if !persisted {
+		t.Fatal("expected task persisted to DB after flush")
 	}
 }

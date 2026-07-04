@@ -78,6 +78,11 @@ type Controller struct {
 	tasks        map[string]TaskStatus
 	taskRuntimes map[string]*TaskRuntime
 	taskSeq      int64
+	// taskPersistPending 是待异步落盘的最新任务快照（按 key 合并），由 taskMutex 保护。进度更新只写内存+
+	// 入此集合，专用 goroutine（startTaskPersister）节流批量写 SQLite，避免在临界区内同步写库阻塞任务
+	// API 与系列详情页。taskPersistWake 在终态时唤醒该 goroutine 立即刷，缩短终态落库延迟（缓冲 1）。
+	taskPersistPending map[string]TaskStatus
+	taskPersistWake    chan struct{}
 
 	rebuildThumbAggMu sync.Mutex
 	rebuildThumbAgg   *rebuildThumbAggregator
@@ -252,6 +257,8 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 		messages:                 make(chan string, 64),
 		tasks:                    make(map[string]TaskStatus),
 		taskRuntimes:             make(map[string]*TaskRuntime),
+		taskPersistPending:       make(map[string]TaskStatus),
+		taskPersistWake:          make(chan struct{}, 1),
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
 		openPath:                 openPathInDefaultFileManager,
@@ -267,6 +274,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	c.runBackground(c.startBroker)
 	c.runBackground(c.startDaemon)
 	c.runBackground(c.startPageCacheJanitor)
+	c.runBackground(c.startTaskPersister)
 
 	// 初始化文件系统监控
 	fw, err := scanner.NewFileWatcher(scan)
