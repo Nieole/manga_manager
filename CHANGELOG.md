@@ -7,14 +7,12 @@
 ### 📌 增量记录 — 2026-07-04（CI 加固 + 文档修正）
 
 #### 修复
-- `.github/workflows/ci.yml`：CI 新增 `go vet ./...`（M54）；ubuntu 上新增 sqlc 生成产物 drift 校验（`sqlc generate` 后 `git diff --exit-code -- internal/database`，M55），防止 SQL 源与已提交生成代码失同步；新增竞态检测 `go test -race ./...`（暂设 `continue-on-error`，因发现 `internal/scanner` 存在预存并发竞态，先非阻塞暴露，待修复后改阻塞）。
+- `.github/workflows/ci.yml`：CI 新增 `go vet ./...`（M54）；ubuntu 上新增 sqlc 生成产物 drift 校验（`sqlc generate` 后 `git diff --exit-code -- internal/database`，M55），防止 SQL 源与已提交生成代码失同步；新增阻塞式竞态检测 `go test -race ./...`。
+- `internal/scanner/scanner_test.go`：修复竞态检测暴露的测试插桩数据竞争——测试注入的 `s.openArchive` 闭包从 cover-worker goroutine 非同步自增 `openCount` 计数器、与测试体读竞争（生产扫描代码本身无此竞态）。计数器改用 `atomic.Int64`。
 - 文档修正（M14/L111）：`AGENTS.md` 移除已删除的 `search/` 包引用、把硬编码 mac 路径改为 `$(pwd)` 相对路径；`README.md` 与代码注释中的 `bleve` 全文索引更正为 SQLite FTS5（trigram）。
 
-#### 已知新发现（待修）
-- `go test -race` 在 `internal/scanner` 的扫描测试中检出数据竞争（预存并发缺陷，非本轮改动引入）。建议后续单独修复扫描器并发后，把 CI 的竞态步骤改为阻塞。
-
 #### 验证
-- `go vet`、`go test ./...` 通过；`sqlc generate` 无 drift。
+- `go vet`、`go test ./...`、`go test -race ./...`（全部通过、无数据竞争）；`sqlc generate` 无 drift。
 
 ---
 

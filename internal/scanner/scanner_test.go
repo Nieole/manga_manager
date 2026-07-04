@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -159,9 +160,9 @@ func TestScanLibraryPauseCheckpointBlocksBeforeOpeningArchive(t *testing.T) {
 	ctx = taskcontrol.WithPauseGate(ctx, gate)
 	gate.Pause()
 
-	openCount := 0
+	var openCount atomic.Int64
 	s.openArchive = func(path string) (parser.Archive, error) {
-		openCount++
+		openCount.Add(1)
 		return parser.OpenArchive(path)
 	}
 
@@ -175,8 +176,8 @@ func TestScanLibraryPauseCheckpointBlocksBeforeOpeningArchive(t *testing.T) {
 		t.Fatalf("expected scan to block while paused, got %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
-	if openCount != 0 {
-		t.Fatalf("expected paused scan to block before opening archive, opened %d archives", openCount)
+	if openCount.Load() != 0 {
+		t.Fatalf("expected paused scan to block before opening archive, opened %d archives", openCount.Load())
 	}
 
 	gate.Resume()
@@ -188,7 +189,7 @@ func TestScanLibraryPauseCheckpointBlocksBeforeOpeningArchive(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("expected scan to finish after resume")
 	}
-	if openCount == 0 {
+	if openCount.Load() == 0 {
 		t.Fatal("expected resumed scan to open archive")
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -288,16 +289,16 @@ func TestScanLibrarySkipsUnchangedArchives(t *testing.T) {
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	s := NewScanner(store, config.NewManager(cfg))
 
-	openCount := 0
+	var openCount atomic.Int64
 	s.openArchive = func(path string) (parser.Archive, error) {
-		openCount++
+		openCount.Add(1)
 		return parser.OpenArchive(path)
 	}
 
 	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
 		t.Fatalf("initial scan failed: %v", err)
 	}
-	if openCount == 0 {
+	if openCount.Load() == 0 {
 		t.Fatal("expected initial scan to open archive")
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -306,12 +307,12 @@ func TestScanLibrarySkipsUnchangedArchives(t *testing.T) {
 	}
 	waitForScannerBookCover(t, s, store, books[0].ID)
 
-	openCount = 0
+	openCount.Store(0)
 	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false); err != nil {
 		t.Fatalf("incremental scan failed: %v", err)
 	}
-	if openCount != 0 {
-		t.Fatalf("expected unchanged archive to be skipped, opened %d times", openCount)
+	if openCount.Load() != 0 {
+		t.Fatalf("expected unchanged archive to be skipped, opened %d times", openCount.Load())
 	}
 }
 
@@ -349,15 +350,15 @@ func TestScanLibraryInvalidatesIncrementalCacheWhenSizeChanges(t *testing.T) {
 		t.Fatalf("restore archive mtime failed: %v", err)
 	}
 
-	openCount := 0
+	var openCount atomic.Int64
 	s.openArchive = func(path string) (parser.Archive, error) {
-		openCount++
+		openCount.Add(1)
 		return parser.OpenArchive(path)
 	}
 	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false); err != nil {
 		t.Fatalf("incremental scan failed: %v", err)
 	}
-	if openCount == 0 {
+	if openCount.Load() == 0 {
 		t.Fatal("expected size-only change to trigger archive open")
 	}
 	updatedBooks, err := store.ListBooksByLibrary(context.Background(), lib.ID)

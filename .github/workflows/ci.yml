@@ -55,7 +55,6 @@ jobs:
 
       - name: Run Go tests with race detector
         if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true # 目前 internal/scanner 存在已知的预存并发竞态，先以非阻塞方式暴露；修复后可改为阻塞
         run: go test -race ./...
 
       - name: Verify sqlc generated code is up to date
