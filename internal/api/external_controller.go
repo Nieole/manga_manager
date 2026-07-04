@@ -245,18 +245,18 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 			}
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", "外部资源库扫描已取消")
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_external_library.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError(taskKey, "外部资源库扫描失败", err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.scan_external_library.failed", nil, err.Error())
 			return
 		}
 		if snapshot.ScannedFiles > 0 {
-			c.updateTask(taskKey, snapshot.ScannedFiles, snapshot.ScannedFiles, fmt.Sprintf("已扫描 %d 个外部资源文件", snapshot.ScannedFiles))
-			c.finishTask(taskKey, "外部资源库扫描完成")
+			c.updateTaskMsg(taskKey, snapshot.ScannedFiles, snapshot.ScannedFiles, "task.msg.scan_external_library.progress", map[string]string{"count": strconv.Itoa(snapshot.ScannedFiles)})
+			c.finishTaskMsg(taskKey, "task.msg.scan_external_library.complete", nil)
 		} else {
-			c.completeTask(taskKey, "completed", "外部资源库扫描完成（未发现可处理资源）")
+			c.completeTaskMsg(taskKey, "completed", "task.msg.scan_external_library.complete_empty", nil)
 		}
 		c.PublishEvent("refresh")
 	})
@@ -282,15 +282,15 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		defer cleanupCancel()
 		plan, err := c.external.PrepareTransfer(taskCtx, libraryID, sessionID, seriesIDs)
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", "外部资源库传输已取消")
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskWithError(taskKey, "外部资源库传输失败", err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.transfer_external_library.failed", nil, err.Error())
 			return
 		}
 		if len(plan.Operations) == 0 {
-			c.finishTask(taskKey, "所选系列已全部存在于外部资源库")
+			c.finishTaskMsg(taskKey, "task.msg.transfer_external_library.all_exist", nil)
 			c.PublishEvent("refresh")
 			return
 		}
@@ -301,12 +301,12 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		var lastUpdate time.Time
 		for index, op := range plan.Operations {
 			if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
-				c.completeTask(taskKey, "cancelled", "外部资源库传输已取消")
+				c.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
 				return
 			}
 			now := time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTaskDetails(taskKey, index, len(plan.Operations), fmt.Sprintf("正在传输 %s", op.RelativePath), "transferring_files", op.RelativePath, map[string]int64{
+				c.updateTaskDetailsMsg(taskKey, index, len(plan.Operations), "task.msg.transfer_external_library.transferring", map[string]string{"path": op.RelativePath}, "transferring_files", op.RelativePath, map[string]int64{
 					"transferred_files": int64(index),
 				}, nil)
 				lastUpdate = now
@@ -325,7 +325,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			}
 			now = time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTaskDetails(taskKey, index+1, len(plan.Operations), fmt.Sprintf("已传输 %d / %d 本资源", index+1, len(plan.Operations)), "transferring_files", op.RelativePath, map[string]int64{
+				c.updateTaskDetailsMsg(taskKey, index+1, len(plan.Operations), "task.msg.transfer_external_library.progress", map[string]string{"done": strconv.Itoa(index + 1), "total": strconv.Itoa(len(plan.Operations))}, "transferring_files", op.RelativePath, map[string]int64{
 					"transferred_files": int64(index + 1),
 				}, nil)
 				lastUpdate = now
@@ -333,14 +333,15 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		}
 
 		if len(failures) > 0 {
-			c.failTaskWithError(taskKey,
-				fmt.Sprintf("外部资源库传输完成，成功 %d，失败 %d", len(plan.Operations)-len(failures), len(failures)),
+			c.failTaskErrMsg(taskKey,
+				"task.msg.transfer_external_library.complete_with_failures",
+				map[string]string{"success": strconv.Itoa(len(plan.Operations) - len(failures)), "failed": strconv.Itoa(len(failures))},
 				strings.Join(failures, "\n"))
 			c.PublishEvent("refresh")
 			return
 		}
 
-		c.finishTask(taskKey, fmt.Sprintf("外部资源库传输完成，新增 %d，本已存在 %d", len(plan.Operations), plan.ExistingBooks+skipped))
+		c.finishTaskMsg(taskKey, "task.msg.transfer_external_library.complete", map[string]string{"added": strconv.Itoa(len(plan.Operations)), "existing": strconv.Itoa(plan.ExistingBooks + skipped)})
 		c.PublishEvent("refresh")
 	})
 	return taskKey, true

@@ -11,6 +11,7 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/taskcontrol"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -160,26 +161,26 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 		libraryID, taskLocale := libID, locale
 		ctx := metadata.WithLocale(taskCtx, taskLocale)
 
-		c.updateTaskDetails(taskKey, 0, 1, "正在读取待分组系列", "collecting_series", "", nil, nil)
+		c.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.ai_grouping.collecting_series", nil, "collecting_series", "", nil, nil)
 		seriesRows, err := c.store.GetSeriesWithoutCollection(ctx, libraryID)
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 		if err != nil {
 			slog.Error("Failed to fetch series for grouping", "error", err)
-			c.failTaskWithError(taskKey, "AI 分组失败 (数据库获取异常)", err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_db_fetch", nil, err.Error())
 			return
 		}
 
 		slog.Info("AI grouping: fetched candidate series", "library_id", libraryID, "count", len(seriesRows))
 
 		if len(seriesRows) == 0 {
-			c.finishTask(taskKey, "此库中所有作品已分组完成")
+			c.finishTaskMsg(taskKey, "task.msg.ai_grouping.all_already_grouped", nil)
 			return
 		}
 		if err := taskcontrol.Wait(ctx); errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 
@@ -203,39 +204,39 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 
 		cfg := c.currentConfig()
 		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
-		c.updateTaskDetails(taskKey, 0, 1, "正在请求 AI 分组", "requesting_provider", "", map[string]int64{
+		c.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.ai_grouping.requesting_provider", nil, "requesting_provider", "", map[string]int64{
 			"candidate_series": int64(len(candidates)),
 		}, map[string]string{
 			"provider": provider.Name(),
 		})
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)
-			c.failTaskWithError(taskKey, fmt.Sprintf("AI 分组失败: %s", err.Error()), err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_generate", nil, err.Error())
 			return
 		}
 
-		c.updateTaskDetails(taskKey, 1, 1, "正在写入 AI 分组审阅", "queueing_review", "", nil, nil)
+		c.updateTaskDetailsMsg(taskKey, 1, 1, "task.msg.ai_grouping.queueing_review", nil, "queueing_review", "", nil, nil)
 		review, reviewCollections, err := c.createAIGroupingReview(ctx, libraryID, provider.Name(), candidates, collections)
 		if errors.Is(err, context.Canceled) {
-			c.completeTask(taskKey, "cancelled", "AI 智能分组已取消")
+			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 		if err != nil {
 			slog.Error("Failed to create AI grouping review", "library_id", libraryID, "error", err)
-			c.failTaskWithError(taskKey, "AI 分组审核生成失败", err.Error())
+			c.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_create_review", nil, err.Error())
 			return
 		}
 		if reviewCollections == 0 {
-			c.finishTask(taskKey, "AI 智能分组未生成可审核的合集")
+			c.finishTaskMsg(taskKey, "task.msg.ai_grouping.no_review_collections", nil)
 			return
 		}
 
-		c.finishTask(taskKey, fmt.Sprintf("AI 智能分组审核已生成 (审核单 #%d，%d 个候选合集)", review.ID, reviewCollections))
+		c.finishTaskMsg(taskKey, "task.msg.ai_grouping.review_generated", map[string]string{"reviewId": strconv.FormatInt(review.ID, 10), "count": strconv.Itoa(reviewCollections)})
 		c.PublishEvent("refresh")
 	})
 
