@@ -20,7 +20,7 @@ import { LibrarySelectionBar } from './LibrarySelectionBar';
 import { ExternalLibraryDrawer } from './ExternalLibraryDrawer';
 import { LibraryScrapeModal } from './LibraryScrapeModal';
 import { TransferConfirmModal } from './TransferConfirmModal';
-import { type PaginationMode, type Series } from './types';
+import { type PaginationMode, type Series, type ViewMode } from './types';
 import { useLibraryFilters, supportsCursorPagination } from './hooks/useLibraryFilters';
 import { useLibrarySeries } from './hooks/useLibrarySeries';
 import { useLibrarySelection } from './hooks/useLibrarySelection';
@@ -34,6 +34,7 @@ import { useLibraryTransfer } from './hooks/useLibraryTransfer';
 
 const ALL_STATUSES = ['completed', 'ongoing', 'cancelled', 'hiatus'];
 const PAGINATION_MODE_KEY = 'manga_manager_pagination_mode';
+const VIEW_MODE_KEY = 'manga_manager_library_view_mode';
 
 export default function LibraryPage() {
   const { libId } = useParams<{ libId: string }>();
@@ -76,6 +77,15 @@ export default function LibraryPage() {
   useEffect(() => {
     localStorage.setItem(PAGINATION_MODE_KEY, paginationMode);
   }, [paginationMode]);
+
+  // 视图密度也是纯前端体验偏好，与分页模式同样只影响渲染布局，不改后端契约。
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const stored = localStorage.getItem(VIEW_MODE_KEY);
+    return stored === 'compact' || stored === 'list' ? stored : 'grid';
+  });
+  useEffect(() => {
+    localStorage.setItem(VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
 
   const [externalDrawerOpen, setExternalDrawerOpen] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
@@ -275,12 +285,14 @@ export default function LibraryPage() {
         searchValue={keyword}
         searchInputRef={searchInputRef}
         externalSessionActive={Boolean(externalLib.externalSession)}
+        viewMode={viewMode}
         onSearchChange={setKeyword}
         onToggleSelectionMode={selection.toggleSelectionMode}
         onToggleSelectCurrentPage={selection.toggleSelectCurrentPage}
         onSortFieldChange={setSortByField}
         onToggleSortDir={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
         onOpenExternal={() => setExternalDrawerOpen(true)}
+        onViewModeChange={setViewMode}
       />
 
       <LibrarySavedViews
@@ -351,6 +363,7 @@ export default function LibraryPage() {
         externalSessionActive={Boolean(externalLib.externalSession)}
         hasMore={hasMore}
         paginationMode={paginationMode}
+        viewMode={viewMode}
         onCardClick={handleCardClick}
         onToggleFavorite={handleToggleFavorite}
         onRescan={handleRescanSeries}

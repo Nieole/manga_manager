@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（资源库三档视图切换 · 收藏者体验⑤）
+
+#### 新增
+- 资源库页新增视图密度切换（大图 / 紧凑 / 列表），偏好持久化到 `localStorage`（`manga_manager_library_view_mode`），刷新保留：
+  - **大图**：现有大封面网格（`minmax(180px)`），显示简介，默认值。
+  - **紧凑**：更密网格（`minmax(130px)`）、更多列、隐藏简介，适合中大库扫读。
+  - **列表**：横向信息行 —— 封面缩略 + 标题 + 卷/册计数 + 总页数 + 评分 + 进度条 + 「上次读到」，大库高密度浏览最快。列表行保留收藏 / 重扫 / 刮削操作与多选。
+- `LibraryHeader` 右侧新增分段切换控件（图标 `LayoutGrid` / `Grid3x3` / `LayoutList`），仅在有系列时显示。
+- 新增 `ViewMode` 类型（`library/types.ts`）；`LibraryCard` 按 `viewMode` 渲染纵向卡 / 紧凑卡 / 列表行；i18n 补 `library.view.grid|compact|list`（中/英）。
+
+#### 验证
+- 前端 `npm run lint`（0）、`npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（原始归档下载入口 · 收藏者体验①）
 
 #### 新增

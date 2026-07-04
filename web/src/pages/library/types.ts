@@ -102,3 +102,7 @@ export interface ExternalSessionCreateResponse {
 export const DEFAULT_PAGE_SIZE = 30;
 export const PAGINATION_MODE_KEY_PREFIX = 'lib_pagination_mode_';
 export type PaginationMode = 'paged' | 'infinite';
+
+// 资料库网格的视图密度：大图（舒适）/ 紧凑（更多列、隐藏简介）/ 列表（横向信息行）。
+// 纯前端展示偏好，不影响后端数据契约。
+export type ViewMode = 'grid' | 'compact' | 'list';

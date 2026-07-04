@@ -4,9 +4,10 @@
  * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
  */
 
-import { ArrowDown, ArrowUp, HardDrive, Search, GitBranch } from 'lucide-react';
+import { ArrowDown, ArrowUp, Grid3x3, HardDrive, LayoutGrid, LayoutList, Search, GitBranch } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useNavigate } from 'react-router-dom';
+import type { ViewMode } from './types';
 
 interface LibraryHeaderProps {
   libraryId: string;
@@ -20,12 +21,14 @@ interface LibraryHeaderProps {
   searchValue: string;
   searchInputRef: React.RefObject<HTMLInputElement>;
   externalSessionActive: boolean;
+  viewMode: ViewMode;
   onSearchChange: (value: string) => void;
   onToggleSelectionMode: () => void;
   onToggleSelectCurrentPage: () => void;
   onSortFieldChange: (value: string) => void;
   onToggleSortDir: () => void;
   onOpenExternal: () => void;
+  onViewModeChange: (mode: ViewMode) => void;
 }
 
 export function LibraryHeader({
@@ -40,15 +43,23 @@ export function LibraryHeader({
   searchValue,
   searchInputRef,
   externalSessionActive,
+  viewMode,
   onSearchChange,
   onToggleSelectionMode,
   onToggleSelectCurrentPage,
   onSortFieldChange,
   onToggleSortDir,
   onOpenExternal,
+  onViewModeChange,
 }: LibraryHeaderProps) {
   const { t } = useI18n();
   const navigate = useNavigate();
+
+  const viewModes: { mode: ViewMode; icon: typeof LayoutGrid; label: string }[] = [
+    { mode: 'grid', icon: LayoutGrid, label: t('library.view.grid') },
+    { mode: 'compact', icon: Grid3x3, label: t('library.view.compact') },
+    { mode: 'list', icon: LayoutList, label: t('library.view.list') },
+  ];
 
   return (
     <div className="mb-6 flex flex-col gap-4 border-b border-gray-800/30 pb-4">
@@ -120,7 +131,27 @@ export function LibraryHeader({
               {t('home.toolbar.selectedCount', { count: selectedCount })}
             </span>
           )}
-          <span className="text-xs sm:text-sm text-gray-400 font-medium ml-auto sm:ml-0">{t('home.toolbar.sortBy')}</span>
+          {hasSeries && (
+            <div className="inline-flex items-center rounded-lg border border-white/10 bg-komgaSurface p-0.5 shadow-xs ml-auto sm:ml-0">
+              {viewModes.map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode}
+                  onClick={() => onViewModeChange(mode)}
+                  className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
+                    viewMode === mode
+                      ? 'bg-komgaPrimary text-white shadow-xs'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                  title={label}
+                  aria-label={label}
+                  aria-pressed={viewMode === mode}
+                >
+                  <Icon className="h-4 w-4" />
+                </button>
+              ))}
+            </div>
+          )}
+          <span className="text-xs sm:text-sm text-gray-400 font-medium sm:ml-0">{t('home.toolbar.sortBy')}</span>
           <select
             value={sortByField}
             onChange={(e) => onSortFieldChange(e.target.value)}

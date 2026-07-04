@@ -8,7 +8,7 @@ import { memo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Heart, ImageIcon, RefreshCw, Sparkles } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import type { ExternalSeriesStatus, Series } from './types';
+import type { ExternalSeriesStatus, Series, ViewMode } from './types';
 
 interface LibraryCardProps {
   series: Series;
@@ -17,6 +17,8 @@ interface LibraryCardProps {
   rescanning: boolean;
   scrapingActive: boolean;
   scrapeMenuOpen: boolean;
+  /** 视图密度：grid（大图，默认）/ compact（紧凑，隐藏简介）/ list（横向信息行） */
+  viewMode?: ViewMode;
   onCardClick: (series: Series) => void; // 多选 / 默认导航
   onToggleFavorite: (event: React.MouseEvent, series: Series) => void;
   onRescan: (event: React.MouseEvent, series: Series) => void;
@@ -40,6 +42,7 @@ export const LibraryCard = memo(function LibraryCard({
   rescanning,
   scrapingActive,
   scrapeMenuOpen,
+  viewMode = 'grid',
   onCardClick,
   onToggleFavorite,
   onRescan,
@@ -122,6 +125,156 @@ export const LibraryCard = memo(function LibraryCard({
       longPressTimer.current = null;
     }
   };
+
+  // 列表视图：横向信息行，封面缩略 + 标题 + 计数 / 评分 / 进度，适合大库高密度扫读。
+  if (viewMode === 'list') {
+    return (
+      <Link
+        to={`/series/${s.id}`}
+        onClick={handleClick}
+        onPointerDown={startLongPress}
+        onPointerUp={cancelLongPress}
+        onPointerLeave={cancelLongPress}
+        onPointerCancel={cancelLongPress}
+        onContextMenu={(event) => {
+          if (!onLongPress) return;
+          event.preventDefault();
+          onLongPress(s);
+        }}
+        className={`group relative flex items-center gap-3 rounded-xl bg-komgaSurface border px-3 py-2 transition-colors ${
+          isSelected
+            ? 'border-komgaPrimary ring-1 ring-komgaPrimary'
+            : 'border-gray-800 hover:border-komgaPrimary/50'
+        } ${pressing ? 'scale-[0.99]' : ''} ${scrapeMenuOpen ? 'z-100' : ''}`}
+      >
+        {isSelectionMode && (
+          <div
+            className={`w-5 h-5 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
+              isSelected ? 'bg-komgaPrimary border-komgaPrimary' : 'bg-black/40 border-gray-500'
+            }`}
+          >
+            {isSelected && <span className="text-white text-xs font-bold leading-none select-none">✓</span>}
+          </div>
+        )}
+        <div className="relative h-16 w-11 shrink-0 overflow-hidden rounded-md bg-gray-900">
+          {s.cover_path?.Valid && s.cover_path?.String ? (
+            <img
+              src={`/api/thumbnails/${s.cover_path.String}`}
+              alt={t('common.cover')}
+              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : (
+            <ImageIcon className="absolute inset-0 m-auto h-5 w-5 text-gray-700" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h4 className="truncate text-sm font-semibold text-gray-200 group-hover:text-komgaPrimary transition-colors">
+              {s.title?.Valid ? s.title.String : s.name}
+            </h4>
+            {s.rating?.Valid && s.rating.Float64 > 0 && (
+              <span className="shrink-0 text-xs font-bold text-yellow-400">★ {s.rating.Float64.toFixed(1)}</span>
+            )}
+          </div>
+          <div className="mt-0.5 flex items-center gap-3 text-[11px] text-gray-500">
+            <span>
+              {s.volume_count > 0
+                ? t('home.seriesCountsWithVolumes', { volumes: s.volume_count, books: s.actual_book_count })
+                : t('home.seriesCountsBooksOnly', { books: s.actual_book_count })}
+            </span>
+            <span>{formatNumber(totalPagesRaw)} P</span>
+            {showLastReadBadge && <span className="truncate text-komgaPrimary">{lastReadBadgeLabel}</span>}
+          </div>
+          {showProgress && (
+            <div className="mt-1 h-1 w-full max-w-xs overflow-hidden rounded-full bg-gray-700/60">
+              <div
+                className={`h-full ${fullyRead ? 'bg-green-500' : 'bg-komgaPrimary'}`}
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          )}
+        </div>
+        {!isSelectionMode && (
+          <div className="relative flex shrink-0 items-center gap-1.5">
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (scrapeMenuOpen) onCloseScrapeMenu();
+                else onOpenScrapeMenu(s);
+              }}
+              disabled={scrapingActive}
+              className="rounded-full border border-white/10 bg-black/40 p-1.5 text-white/40 transition-colors hover:border-purple-400/40 hover:bg-purple-400/20 hover:text-purple-400 disabled:cursor-not-allowed"
+              title={t('series.scrape.action')}
+            >
+              <Sparkles className={`h-3.5 w-3.5 ${scrapingActive ? 'animate-pulse text-purple-400' : ''}`} />
+            </button>
+            <button
+              onClick={(e) => onRescan(e, s)}
+              disabled={rescanning}
+              className="rounded-full border border-white/10 bg-black/40 p-1.5 text-white/40 transition-colors hover:border-blue-400/40 hover:bg-blue-400/20 hover:text-blue-400 disabled:cursor-not-allowed"
+              title={t('home.seriesRescan')}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${rescanning ? 'animate-spin text-blue-400' : ''}`} />
+            </button>
+            <button
+              onClick={(e) => onToggleFavorite(e, s)}
+              className={`rounded-full border p-1.5 transition-colors ${
+                s.is_favorite
+                  ? 'border-red-500/40 bg-red-500/20 text-red-500'
+                  : 'border-white/10 bg-black/40 text-white/40 hover:border-red-400/40 hover:bg-red-400/20 hover:text-red-400'
+              }`}
+            >
+              <Heart className={`h-3.5 w-3.5 ${s.is_favorite ? 'fill-current' : ''}`} />
+            </button>
+            {scrapeMenuOpen && !scrapingActive && (
+              <>
+                <div
+                  className="fixed inset-0 z-40 cursor-default"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onCloseScrapeMenu();
+                  }}
+                />
+                <div
+                  className="absolute right-0 top-full z-50 mt-1 w-44 rounded-lg border border-gray-800 bg-gray-950/95 shadow-2xl backdrop-blur-sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onChooseScrapeProvider(s, 'bangumi');
+                    }}
+                    className="block w-full truncate px-2 py-3 text-center text-[13px] font-semibold text-gray-200 transition-colors hover:bg-komgaPrimary hover:text-white"
+                  >
+                    {t('series.header.bangumiRecommended')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onChooseScrapeProvider(s, 'llm');
+                    }}
+                    className="block w-full truncate border-t border-gray-800 px-2 py-3 text-center text-[13px] font-semibold text-gray-200 transition-colors hover:bg-komgaPrimary hover:text-white"
+                  >
+                    {t('series.header.ollama')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Link>
+    );
+  }
 
   return (
     <Link
@@ -250,7 +403,7 @@ export const LibraryCard = memo(function LibraryCard({
           <h4 className="text-sm font-bold text-gray-200 line-clamp-1 leading-tight group-hover:text-komgaPrimary transition-colors mb-1.5">
             {s.title?.Valid ? s.title.String : s.name}
           </h4>
-          {s.summary?.Valid && (
+          {viewMode !== 'compact' && s.summary?.Valid && (
             <p className="text-[11px] text-gray-500 line-clamp-2 leading-tight opacity-70">{s.summary.String}</p>
           )}
         </div>

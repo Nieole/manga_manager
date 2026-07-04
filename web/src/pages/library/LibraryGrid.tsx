@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { LibraryCard } from './LibraryCard';
-import type { ExternalSeriesStatus, Series } from './types';
+import type { ExternalSeriesStatus, Series, ViewMode } from './types';
 
 interface LibraryGridProps {
   series: Series[];
@@ -21,6 +21,7 @@ interface LibraryGridProps {
   externalSessionActive: boolean;
   hasMore: boolean;
   paginationMode: 'paged' | 'infinite';
+  viewMode: ViewMode;
   onCardClick: (series: Series) => void;
   onToggleFavorite: (event: React.MouseEvent, series: Series) => void;
   onRescan: (event: React.MouseEvent, series: Series) => void;
@@ -42,6 +43,7 @@ export function LibraryGrid({
   externalSessionActive,
   hasMore,
   paginationMode,
+  viewMode,
   onCardClick,
   onToggleFavorite,
   onRescan,
@@ -85,9 +87,17 @@ export function LibraryGrid({
     return <div className="text-center py-20 text-gray-500">{t('home.noMatches')}</div>;
   }
 
+  // 网格：大图 minmax(180px)；紧凑 minmax(120px) 更多列；列表：单列纵向信息行。
+  const containerClass =
+    viewMode === 'list'
+      ? 'flex flex-col gap-2 min-h-[600px]'
+      : viewMode === 'compact'
+        ? 'grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-3 sm:gap-4 min-h-[600px] items-start'
+        : 'grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 sm:gap-6 min-h-[600px] items-start';
+
   return (
     <div className={`relative transition-opacity duration-300 ${loading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 sm:gap-6 min-h-[600px] items-start">
+      <div className={containerClass}>
         {series.map((s) => (
           <LibraryCard
             key={s.id}
@@ -97,6 +107,7 @@ export function LibraryGrid({
             rescanning={rescanningId === s.id}
             scrapingActive={scrapingSeriesId === s.id}
             scrapeMenuOpen={scrapeMenuOpenId === s.id}
+            viewMode={viewMode}
             externalStatus={externalSeriesMap[s.id]}
             externalSessionActive={externalSessionActive}
             onCardClick={onCardClick}
