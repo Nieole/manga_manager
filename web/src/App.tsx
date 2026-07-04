@@ -13,7 +13,7 @@ import { useI18n } from './i18n/LocaleProvider';
 
 const Home = lazy(() => import('./pages/library'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Collections = lazy(() => import('./pages/Collections'));
+const Collections = lazy(() => import('./pages/collections'));
 const Organize = lazy(() => import('./pages/Organize'));
 const Ops = lazy(() => import('./pages/Ops'));
 const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));

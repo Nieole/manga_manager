@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（Collections.tsx god-component 拆分 · L98）
+
+#### 重构（行为保持）
+- 把 753 行单文件 `pages/Collections.tsx` 拆为 `pages/collections/` 目录(与 `library/`、`series-detail/` 的文件夹约定一致):
+  - `index.tsx`(orchestrator,396 行):保留全部 state 与数据加载/增删改/智能编辑/快照 handler,组合各子组件。
+  - `types.ts`:5 个契约类型 + 共享 `TFunc`。
+  - 展示子组件:`CollectionListPanel`(左栏 tabs+列表)、`CollectionDetailPanel`(右栏详情+系列网格)、`SmartFilterChips`、`CreateCollectionModal`/`EditCollectionModal`(`CollectionFormModals`)、`SmartEditModal`、`SnapshotModal`,均为 props 驱动的纯展示组件。
+  - state 仍集中在 orchestrator、handler/接口调用一字未改——**行为完全不变**。`App.tsx` 的懒加载 import 由 `./pages/Collections` 改为 `./pages/collections`。各文件均 ≤ 120 行(orchestrator 除外)。
+
+#### 验证
+- 前端 `npm run lint`(0 problems)、`npm run build`(tsc 严格:全部 props/类型接线通过)、`npm run test`(24)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（KOReader 建议文案 i18n + 删死码 · M65 续批）
 
 #### 国际化 / 清理
