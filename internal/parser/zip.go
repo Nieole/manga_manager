@@ -16,6 +16,31 @@ import (
 	"sync"
 )
 
+// maxPageUncompressedBytes 是单条归档项解压后的字节硬上限，防止解压炸弹与恶意声明的超大项导致 OOM。
+// 远高于任何真实漫画页（即便 10000x10000 无损 PNG 通常也 <150MB），又能拦住 GB 级炸弹。
+const maxPageUncompressedBytes = 256 << 20 // 256 MiB
+
+// readEntryLimited 从解压流读取单条归档项，封堵两条 OOM 向量：
+// (1) 按归档头声明的解压大小预分配——声明超限直接拒绝，不做超大预分配；
+// (2) 解压炸弹——用 io.LimitReader 夹住实际拷贝字节，超限报错。
+func readEntryLimited(rc io.Reader, declared int64, name string) ([]byte, error) {
+	if declared > maxPageUncompressedBytes {
+		return nil, fmt.Errorf("parser: entry %q declared size %d exceeds limit %d", name, declared, maxPageUncompressedBytes)
+	}
+	capHint := declared
+	if capHint < 0 || capHint > maxPageUncompressedBytes {
+		capHint = 0
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, capHint))
+	if _, err := io.Copy(buf, io.LimitReader(rc, maxPageUncompressedBytes+1)); err != nil {
+		return nil, err
+	}
+	if int64(buf.Len()) > maxPageUncompressedBytes {
+		return nil, fmt.Errorf("parser: entry %q decompressed size exceeds limit %d (possible decompression bomb)", name, maxPageUncompressedBytes)
+	}
+	return buf.Bytes(), nil
+}
+
 // Archive 支持的文件能力抽象接口
 type Archive interface {
 	io.Closer
@@ -97,11 +122,7 @@ func (z *ZipArchive) ReadPage(name string) ([]byte, error) {
 			}
 			defer rc.Close()
 
-			buf := bytes.NewBuffer(make([]byte, 0, f.FileInfo().Size()))
-			if _, err := io.Copy(buf, rc); err != nil {
-				return nil, err
-			}
-			return buf.Bytes(), nil
+			return readEntryLimited(rc, f.FileInfo().Size(), name)
 		}
 	}
 	return nil, errors.New("page not found")

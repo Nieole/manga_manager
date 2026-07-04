@@ -6,12 +6,29 @@ package parser
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestReadEntryLimited 覆盖归档单页读取的字节上限保护（L90）。
+func TestReadEntryLimited(t *testing.T) {
+	// 正常小项：原样返回。
+	if got, err := readEntryLimited(bytes.NewReader([]byte("hello")), 5, "ok.jpg"); err != nil || string(got) != "hello" {
+		t.Fatalf("normal read failed: got=%q err=%v", got, err)
+	}
+	// 声明尺寸超限：应在任何拷贝/预分配前直接拒绝。
+	if _, err := readEntryLimited(bytes.NewReader([]byte("x")), maxPageUncompressedBytes+1, "bomb.jpg"); err == nil {
+		t.Fatal("expected error for oversized declared size, got nil")
+	}
+	// declared 为负（未知）时仍能正常读小项。
+	if got, err := readEntryLimited(bytes.NewReader([]byte("hi")), -1, "unknown.jpg"); err != nil || string(got) != "hi" {
+		t.Fatalf("negative-declared read failed: got=%q err=%v", got, err)
+	}
+}
 
 func TestNaturalCompare(t *testing.T) {
 	tests := []struct {

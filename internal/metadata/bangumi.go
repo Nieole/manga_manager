@@ -12,9 +12,61 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// Bangumi 抓取的有限次指数退避重试参数：仅针对 429 与 5xx，尊重 Retry-After。
+const (
+	bangumiMaxRetries     = 3
+	bangumiRetryBaseDelay = 1 * time.Second
+	bangumiRetryMaxDelay  = 30 * time.Second
+)
+
+// backoffDelay 返回第 attempt 次重试的退避时长（1s/2s/4s…），封顶 bangumiRetryMaxDelay。
+func backoffDelay(attempt int) time.Duration {
+	d := bangumiRetryBaseDelay << attempt
+	if d > bangumiRetryMaxDelay || d <= 0 {
+		return bangumiRetryMaxDelay
+	}
+	return d
+}
+
+// parseRetryAfter 解析 Retry-After 头（秒数或 HTTP-date），无法解析或为负时返回 0。
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// sleepWithContext 可被 context 取消打断的睡眠，用于退避期间响应任务取消/超时。
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
 
 // ============================================================
 // Bangumi API v0 数据实体
@@ -137,28 +189,56 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 
 	slog.Info("Bangumi search request (POST)", "url", apiUrl, "keyword", title, "limit", limit, "offset", offset)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiUrl, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, 0, fmt.Errorf("bangumi: failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "MangaManager/1.0 (https://github.com/manga-manager)")
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("bangumi: request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		slog.Error("Bangumi API error", "status", resp.Status, "body", string(respBody), "url", apiUrl)
-		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
+	// 有限次指数退避重试：仅对 429 与 5xx 重试，尊重 Retry-After；退避可被 context 取消打断。
+	// body 为 bytes.Reader，每次重试都必须重建 request。
 	var result bangumiSearchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, 0, fmt.Errorf("bangumi: failed to decode response: %w", err)
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiUrl, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, 0, fmt.Errorf("bangumi: failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "MangaManager/1.0 (https://github.com/manga-manager)")
+
+		resp, err := b.httpClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, 0, ctx.Err()
+			}
+			return nil, 0, fmt.Errorf("bangumi: request failed: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			decErr := json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close()
+			if decErr != nil {
+				return nil, 0, fmt.Errorf("bangumi: failed to decode response: %w", decErr)
+			}
+			break
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+		status := resp.StatusCode
+		resp.Body.Close()
+
+		if (status == http.StatusTooManyRequests || status >= 500) && attempt < bangumiMaxRetries {
+			wait := retryAfter
+			if wait <= 0 {
+				wait = backoffDelay(attempt)
+			}
+			if wait > bangumiRetryMaxDelay {
+				wait = bangumiRetryMaxDelay
+			}
+			slog.Warn("Bangumi API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String(), "url", apiUrl)
+			if werr := sleepWithContext(ctx, wait); werr != nil {
+				return nil, 0, werr
+			}
+			continue
+		}
+
+		slog.Error("Bangumi API error", "status", status, "body", string(respBody), "url", apiUrl)
+		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, string(respBody))
 	}
 
 	if len(result.Data) == 0 {

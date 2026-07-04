@@ -103,7 +103,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	diskPageCacheEnabled := c.diskPageCacheEnabled(source)
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
-			contentType := http.DetectContentType(cachedData)
+			contentType := detectImageContentType(cachedData) // AVIF 感知，避免命中缓存时退化为 octet-stream
 			annotatePageImageDiagnostics(ctx, false, false, false, true)
 			annotatePageImageRequest(ctx, bookID, pageNumber, true, "memory", transform)
 			c.logPageImageServed(bookID, pageNumber, "memory", contentType, len(cachedData), time.Since(started), format, filter, autoCrop)
@@ -344,6 +344,35 @@ func extensionFromContentType(contentType string) string {
 	}
 }
 
+// contentTypeFromExtension 是 extensionFromContentType 的逆：由缓存文件扩展名精确复原写入时的 MIME。
+func contentTypeFromExtension(ext string) string {
+	switch ext {
+	case ".webp":
+		return "image/webp"
+	case ".png":
+		return "image/png"
+	case ".avif":
+		return "image/avif"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	default:
+		return ""
+	}
+}
+
+// detectImageContentType 探测图片字节 MIME。标准库 http.DetectContentType 无 AVIF 签名，会把
+// AVIF 误判为 application/octet-stream；此处补一条 AVIF ftyp 探测，保证缓存命中与首次响应一致。
+func detectImageContentType(data []byte) string {
+	ct := http.DetectContentType(data)
+	if ct == "application/octet-stream" && len(data) >= 12 && string(data[4:8]) == "ftyp" {
+		switch string(data[8:12]) {
+		case "avif", "avis":
+			return "image/avif"
+		}
+	}
+	return ct
+}
+
 func (c *Controller) readDiskImageCache(cacheKey string) ([]byte, string, bool) {
 	sum := fmt.Sprintf("%x", sha1.Sum([]byte(cacheKey)))
 	dir := c.processedImageCacheDir()
@@ -351,7 +380,13 @@ func (c *Controller) readDiskImageCache(cacheKey string) ([]byte, string, bool) 
 		path := filepath.Join(dir, sum[:2], sum+ext)
 		data, err := os.ReadFile(path)
 		if err == nil && len(data) > 0 {
-			return data, http.DetectContentType(data), true
+			// 优先按扩展名精确复原 MIME（写入时扩展名即由权威 finalContentType 推导），
+			// 仅 .bin 未知格式才回退字节探测。
+			ct := contentTypeFromExtension(ext)
+			if ct == "" {
+				ct = detectImageContentType(data)
+			}
+			return data, ct, true
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, os.ErrPermission) {
 			slog.Warn("Failed to read processed page disk cache", "path", path, "error", err)

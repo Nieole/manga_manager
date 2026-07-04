@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（归档/图片/抓取安全批次）
+
+#### 修复
+- `internal/parser/zip.go` / `rar.go`：归档单页读取新增解压字节硬上限（256 MiB，`readEntryLimited`）。此前按归档头声明的解压大小预分配缓冲 + 无上限 `io.Copy`，恶意声明的超大项会在拷贝前就 OOM、高压缩比的解压炸弹会撑爆内存；现声明超限直接拒绝、实际拷贝用 `io.LimitReader` 夹紧。与图片解码像素上限（`maxDecodePixels`）在字节层互补。
+- `internal/api/image_controller.go`：AVIF 变体缓存命中时 Content-Type 不再退化为 `application/octet-stream`。标准库 `http.DetectContentType` 无 AVIF 签名，改为磁盘命中按扩展名精确复原 MIME、内存命中用 AVIF 感知的 `detectImageContentType`，与首次响应一致。
+- `internal/metadata/bangumi.go`：Bangumi 抓取新增有限次指数退避重试（仅 429/5xx，尊重 `Retry-After`，退避可被 context 取消打断）。此前遇限流即整段系列逐个记为失败、无自愈。
+
+#### 验证
+- `go build ./...`、`go vet`、`go test ./internal/parser ./internal/api ./internal/metadata`（含新增 `TestReadEntryLimited`）通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（AI 推荐并发去重）
 
 #### 修复

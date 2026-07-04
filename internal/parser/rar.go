@@ -5,7 +5,6 @@
 package parser
 
 import (
-	"bytes"
 	"errors"
 	"io"
 	"path/filepath"
@@ -89,11 +88,7 @@ func (r *RarArchive) ReadPage(name string) ([]byte, error) {
 		}
 
 		if header.Name == name {
-			buf := bytes.NewBuffer(make([]byte, 0, header.UnPackedSize))
-			if _, err := io.Copy(buf, rr); err != nil {
-				return nil, err
-			}
-			return buf.Bytes(), nil
+			return readEntryLimited(rr, header.UnPackedSize, name)
 		}
 	}
 
