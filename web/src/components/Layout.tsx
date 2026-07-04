@@ -97,6 +97,9 @@ export default function Layout() {
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
     const [loading, setLoading] = useState(true);
+    // 侧栏资源库列表加载失败标记：替代此前 catch 只 console.error、失败后侧栏空白无提示的静默失败，
+    // 供渲染一个「加载失败 · 重试」入口。
+    const [librariesError, setLibrariesError] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(() => {
@@ -297,6 +300,7 @@ export default function Layout() {
 
     const fetchLibraries = () => {
         setLoading(true);
+        setLibrariesError(false);
         apiClient.get('/api/libraries')
             .then(res => {
                 setLibraries(res.data);
@@ -308,6 +312,7 @@ export default function Layout() {
             })
             .catch(err => {
                 console.error("Failed to load libraries", err);
+                setLibrariesError(true);
                 setLoading(false);
             });
     };
@@ -894,6 +899,17 @@ export default function Layout() {
                             <nav className="space-y-1 overflow-y-auto max-h-[25vh]">
                         {loading ? (
                             <div className="animate-pulse px-3 py-2 bg-gray-800 rounded-md h-10 w-full mb-2" />
+                        ) : librariesError && libraries.length === 0 ? (
+                            <div className="px-3 py-2 text-sm text-red-400">
+                                <span className="block">{t('layout.sidebar.loadFailed')}</span>
+                                <button
+                                    type="button"
+                                    onClick={fetchLibraries}
+                                    className="mt-1 inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/20"
+                                >
+                                    {t('common.retry')}
+                                </button>
+                            </div>
                         ) : libraries.length === 0 ? (
                             <div className="text-gray-500 px-3 text-sm">{t('layout.sidebar.noLibraries')}</div>
                         ) : (() => {

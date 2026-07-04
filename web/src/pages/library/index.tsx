@@ -107,7 +107,7 @@ export default function LibraryPage() {
     keyword: debouncedKeyword,
     appendMode: paginationMode === 'infinite',
   });
-  const { allSeries, totalSeries, loading, pageCursorMap, resetPagination, refetchCurrentPage, patchSeries } = seriesData;
+  const { allSeries, totalSeries, loading, error: seriesError, pageCursorMap, resetPagination, refetchCurrentPage, retry: retrySeries, patchSeries } = seriesData;
 
   // 翻页：filter 或 keyword 变化时重置到第 1 页
   useEffect(() => {
@@ -322,6 +322,22 @@ export default function LibraryPage() {
         onTagSearch={searchTagOptions}
         onAuthorSearch={searchAuthorOptions}
       />
+
+      {seriesError !== null && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-500">
+          <span>
+            {t('library.loadSeriesFailed')}
+            {seriesError ? `：${seriesError}` : ''}
+          </span>
+          <button
+            type="button"
+            onClick={retrySeries}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-red-500 transition-colors hover:bg-red-500/20"
+          >
+            {t('common.retry')}
+          </button>
+        </div>
+      )}
 
       <LibraryGrid
         series={allSeries}

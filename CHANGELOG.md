@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（主读路径错误态 + 重试 · M48 局部）
+
+#### 修复(用户可见)
+- 消除两条主数据读取路径的静默失败(此前 `catch` 只 `console.error`,请求失败后用户只见空白、无从得知也无法重试):
+  - 资料库主系列列表(`useLibrarySeries`):新增 `error` 状态(成功清空、失败经 `getApiErrorMessage` 取可读消息)与 `retry`,`library/index.tsx` 在列表上方渲染错误条 + 「重试」按钮(非静默重取当前页)。
+  - 侧栏资源库列表(`Layout.tsx` `fetchLibraries`):新增 `librariesError` 标记,加载失败且列表为空时侧栏渲染「加载资源库失败 · 重试」入口(点击重新拉取),替代原先失败后侧栏空白。
+- 复用既有 `common.retry`;新增 `library.loadSeriesFailed`、`layout.sidebar.loadFailed` 中/英文案。
+- 说明:M48 全量(前端约 58 处 swallow-only catch)多为有意的静默回退(Promise.all 兜底默认值、阅读器预取/预热、best-effort 进度同步等);本批聚焦"主读路径失败即空白"的高影响项,其余按需后续处理。基础设施(ToastProvider / ErrorBoundary / getApiErrorMessage)此前已就位。
+
+#### 验证
+- 前端 `npm run lint`(0 problems)、`npm run build`、`npm run test`(24 例)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（前后端契约类型局部收敛 · M47 局部）
 
 #### 修复/重构（前端类型）

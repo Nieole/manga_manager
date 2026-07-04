@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiClient } from '../../../api/client';
+import { apiClient, getApiErrorMessage } from '../../../api/client';
 import { type AxiosResponse } from 'axios';
 import {
   type Series,
@@ -35,9 +35,13 @@ interface UseLibrarySeriesResult {
   allSeries: Series[];
   totalSeries: number;
   loading: boolean;
+  // error 为最近一次取列表失败的可读消息（成功后清空）；供页面渲染错误条 + 重试入口，
+  // 替代此前 catch 只 console.error、用户只见空白列表的静默失败。
+  error: string | null;
   pageCursorMap: Record<number, string>;
   resetPagination: () => void;
   refetchCurrentPage: () => void;
+  retry: () => void;
   patchSeries: (id: number, partial: Partial<Series>) => void;
 }
 
@@ -79,6 +83,7 @@ export function useLibrarySeries({
   const [allSeries, setAllSeries] = useState<Series[]>([]);
   const [totalSeries, setTotalSeries] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [pageCursorMap, setPageCursorMap] = useState<Record<number, string>>({});
   const lastLoadedPageRef = useRef(1);
   const latestRequestIDRef = useRef(0);
@@ -87,6 +92,7 @@ export function useLibrarySeries({
     (pageNumber: number, silent = false) => {
       if (!libId) return;
       if (!silent) setLoading(true);
+      setError(null);
       const params = new URLSearchParams();
       params.append('libraryId', libId);
       params.append('limit', pageSize.toString());
@@ -140,6 +146,7 @@ export function useLibrarySeries({
         .catch((err) => {
           if (requestID !== latestRequestIDRef.current) return;
           console.error('Failed to fetch series page', err);
+          setError(getApiErrorMessage(err, ''));
         })
         .finally(() => {
           if (requestID === latestRequestIDRef.current) setLoading(false);
@@ -189,6 +196,11 @@ export function useLibrarySeries({
     if (libId) fetchPage(page, true);
   }, [libId, page, fetchPage]);
 
+  // retry：错误条的重试入口，非静默重取当前页（显示 loading 并清除错误）。
+  const retry = useCallback(() => {
+    if (libId) fetchPage(page);
+  }, [libId, page, fetchPage]);
+
   const patchSeries = useCallback((id: number, partial: Partial<Series>) => {
     setAllSeries((prev) => prev.map((s) => (s.id === id ? { ...s, ...partial } : s)));
   }, []);
@@ -197,9 +209,11 @@ export function useLibrarySeries({
     allSeries,
     totalSeries,
     loading,
+    error,
     pageCursorMap,
     resetPagination,
     refetchCurrentPage,
+    retry,
     patchSeries,
   };
 }

@@ -126,6 +126,7 @@ export const messages: MessageCatalog = {
     'layout.sidebar.collapse': 'Collapse sidebar',
     'layout.sidebar.addLibrary': 'Add library',
     'layout.sidebar.noLibraries': 'No libraries yet',
+    'layout.sidebar.loadFailed': 'Failed to load libraries',
     'layout.sidebar.searchLibraries': 'Search libraries...',
     'layout.sidebar.searchEmpty': 'No matching libraries',
     'layout.sidebar.koreaderOn': 'KOReader Sync enabled',
@@ -1767,6 +1768,7 @@ export const messages: MessageCatalog = {
     'server.error.updateProgressFailed': 'Failed to update reading progress',
 
     'library.search.placeholder': 'Search series, authors, tags ( / )',
+    'library.loadSeriesFailed': 'Failed to load the series list',
     'library.franchise.title': 'Library Franchise Graph',
     'library.franchise.description': 'Visual graph of all connected series in this library',
     'library.filters.open': 'Show filters',

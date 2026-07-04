@@ -126,6 +126,7 @@ export const messages: MessageCatalog = {
     'layout.sidebar.collapse': '折叠侧边栏',
     'layout.sidebar.addLibrary': '添加新资源库',
     'layout.sidebar.noLibraries': '还没有资源库',
+    'layout.sidebar.loadFailed': '加载资源库失败',
     'layout.sidebar.searchLibraries': '搜索资源库...',
     'layout.sidebar.searchEmpty': '没有匹配的资源库',
     'layout.sidebar.koreaderOn': 'KOReader Sync 开启',
@@ -1767,6 +1768,7 @@ export const messages: MessageCatalog = {
     'server.error.updateProgressFailed': '更新阅读进度失败',
 
     'library.search.placeholder': '搜索系列名 / 作者 / 标签 ( / )',
+    'library.loadSeriesFailed': '加载系列列表失败',
     'library.franchise.title': '资源库全景图谱',
     'library.franchise.description': '概览本库中所有拥有关联作品的故事线',
     'library.filters.open': '展开筛选',
