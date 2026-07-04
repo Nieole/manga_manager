@@ -145,7 +145,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string) 
 // aiGroupingLibrary 扫描资料库中没有集合的系列，利用 LLM 进行智能分组
 func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	taskKey := fmt.Sprintf("ai_grouping_library_%d", libID)
-	if !c.startPausableCancelableTask(taskKey, "ai_grouping", "AI 智能分组开始...", 1) {
+	if !c.startPausableCancelableTaskMsg(taskKey, "ai_grouping", "task.msg.ai_grouping.start", nil, 1) {
 		return false
 	}
 	scopeName := ""

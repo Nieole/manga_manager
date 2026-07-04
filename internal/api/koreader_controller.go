@@ -636,8 +636,7 @@ func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Re
 func (c *Controller) launchRebuildBookHashesTask() error {
 	key := "rebuild_book_hashes"
 	cfg := c.currentConfig()
-	indexLabel := koreaderIndexLabel(cfg)
-	if !c.startPausableCancelableTask(key, "rebuild_book_hashes", fmt.Sprintf("开始重建 KOReader %s", indexLabel), 0) {
+	if !c.startPausableCancelableTaskMsg(key, "rebuild_book_hashes", "task.msg.koreader_rebuild_hashes.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata(key, map[string]string{
@@ -649,8 +648,8 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 
 	c.runBackground(func() {
 		defer cleanupCancel()
-		updated, total, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, message string) {
-			c.updateTaskDetails(key, current, total, message, "hashing", "", map[string]int64{
+		updated, total, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {
+			c.updateTaskDetailsMsg(key, current, total, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
 				"processed_books": int64(current),
 			}, nil)
 		})
@@ -669,7 +668,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 
 func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	key := "reconcile_koreader_progress"
-	if !c.startPausableCancelableTask(key, "reconcile_koreader_progress", "开始重关联 KOReader 未匹配进度", 0) {
+	if !c.startPausableCancelableTaskMsg(key, "reconcile_koreader_progress", "task.msg.reconcile_koreader_progress.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
 	cfg := c.currentConfig()
@@ -681,8 +680,8 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 
 	c.runBackground(func() {
 		defer cleanupCancel()
-		updated, total, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, message string) {
-			c.updateTaskDetails(key, current, total, message, "reconciling_progress", "", map[string]int64{
+		updated, total, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, _ string) {
+			c.updateTaskDetailsMsg(key, current, total, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{
 				"processed_progress": int64(current),
 			}, nil)
 		})
@@ -701,7 +700,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 
 func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	key := "refresh_koreader_matching"
-	if !c.startPausableCancelableTask(key, "refresh_koreader_matching", "开始应用 KOReader 匹配规则变更", 2) {
+	if !c.startPausableCancelableTaskMsg(key, "refresh_koreader_matching", "task.msg.refresh_koreader_matching.start", nil, 2) {
 		return errTaskAlreadyRunning
 	}
 	cfg := c.currentConfig()
@@ -715,8 +714,8 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	c.runBackground(func() {
 		defer cleanupCancel()
 		c.updateTaskDetailsMsg(key, 0, 2, "task.msg.refresh_koreader_matching.rebuild_start", nil, "hashing", "", nil, nil)
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, message string) {
-			c.updateTaskDetails(key, 0, 2, message, "hashing", "", map[string]int64{"processed_books": int64(current)}, nil)
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {
+			c.updateTaskDetailsMsg(key, 0, 2, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{"processed_books": int64(current)}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
 			c.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
@@ -728,8 +727,8 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		}
 
 		c.updateTaskDetailsMsg(key, 1, 2, "task.msg.refresh_koreader_matching.reconcile_start", map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)}, "reconciling_progress", "", nil, nil)
-		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, message string) {
-			c.updateTaskDetails(key, 1, 2, message, "reconciling_progress", "", map[string]int64{"processed_progress": int64(current)}, nil)
+		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, _ string) {
+			c.updateTaskDetailsMsg(key, 1, 2, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{"processed_progress": int64(current)}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
 			c.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)

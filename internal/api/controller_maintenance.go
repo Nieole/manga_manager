@@ -73,7 +73,7 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 }
 
 func (c *Controller) launchRebuildIndexTask() error {
-	if !c.startTask("rebuild_index", "rebuild_index", "开始重建搜索索引", 1) {
+	if !c.startTaskMsg("rebuild_index", "rebuild_index", "task.msg.rebuild_index.start", nil, 1) {
 		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata("rebuild_index", nil, "系统")
@@ -105,7 +105,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchRebuildThumbnailsTask() error {
-	if !c.startPausableCancelableTask("rebuild_thumbnails", "rebuild_thumbnails", "开始重建缩略图", 0) {
+	if !c.startPausableCancelableTaskMsg("rebuild_thumbnails", "rebuild_thumbnails", "task.msg.rebuild_thumbnails.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
 	policy := config.ResolveStoragePolicy(c.currentConfig(), "")
@@ -159,7 +159,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.failed", nil, err.Error())
 			return
 		}
-		c.refreshRebuildThumbTaskMessage("正在等待封面队列收尾", "queueing_covers")
+		c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
 		if err := c.scanner.WaitForCoverQueue(taskCtx); errors.Is(err, context.Canceled) {
 			c.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
 			return
@@ -183,7 +183,7 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchCleanupThumbnailsTask() error {
-	if !c.startPausableCancelableTask("cleanup_thumbnails", "cleanup_thumbnails", "开始清理未使用的缩略图", 0) {
+	if !c.startPausableCancelableTaskMsg("cleanup_thumbnails", "cleanup_thumbnails", "task.msg.cleanup_thumbnails.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
 	taskCtx, cleanupCancel := c.newTaskContext("cleanup_thumbnails")
@@ -220,7 +220,7 @@ func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
-	if !c.startPausableCancelableTask("rebuild_file_identities", "rebuild_file_identities", "开始重建文件身份索引", 0) {
+	if !c.startPausableCancelableTaskMsg("rebuild_file_identities", "rebuild_file_identities", "task.msg.rebuild_file_identities.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "系统")
@@ -229,8 +229,8 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 
 	c.runBackground(func() {
 		defer cleanupCancel()
-		updated, total, err := c.runRebuildFileIdentities(taskCtx, 500, func(current, total int, message string, metrics taskIOMetrics) {
-			c.updateTaskDetails("rebuild_file_identities", current, total, message, "hashing", "", map[string]int64{
+		updated, total, err := c.runRebuildFileIdentities(taskCtx, 500, func(current, total int, _ string, metrics taskIOMetrics) {
+			c.updateTaskDetailsMsg("rebuild_file_identities", current, total, "task.msg.rebuild_file_identities.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
 				"hashed_files": metrics.HashedFiles,
 				"io_wait_ms":   metrics.IOWaitMillis,
 				"paused_ms":    metrics.PausedMillis,
@@ -312,7 +312,8 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 			updated++
 			afterID = book.ID
 			if progress != nil {
-				progress(updated, total, fmt.Sprintf("已重建 %d / %d 本书籍的 quick_hash", updated, total), metrics)
+				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值与指标。
+				progress(updated, total, "", metrics)
 			}
 		}
 	}
@@ -334,7 +335,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 		return false
 	}
 
-	if !c.startPausableCancelableTask(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "开始后台低优先级补算 KOReader 二进制哈希", int(missingCount)) {
+	if !c.startPausableCancelableTaskMsg(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "task.msg.book_hash_backfill.start", nil, int(missingCount)) {
 		return false
 	}
 	c.setTaskMetadata(lowPriorityBookHashTaskKey, map[string]string{
@@ -346,8 +347,8 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 	taskCtx, cleanupCancel := c.newTaskContext(lowPriorityBookHashTaskKey)
 
 	c.runBackground(func() {
-		updated, total, err := c.runBackfillFullHashesLowPriority(taskCtx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, message string, metrics taskIOMetrics) {
-			c.updateTaskDetails(lowPriorityBookHashTaskKey, current, total, message, "hashing", "", map[string]int64{
+		updated, total, err := c.runBackfillFullHashesLowPriority(taskCtx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, _ string, metrics taskIOMetrics) {
+			c.updateTaskDetailsMsg(lowPriorityBookHashTaskKey, current, total, "task.msg.book_hash_backfill.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
 				"hashed_files": metrics.HashedFiles,
 				"io_wait_ms":   metrics.IOWaitMillis,
 				"paused_ms":    metrics.PausedMillis,
@@ -430,7 +431,8 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 			updated++
 			afterID = book.ID
 			if progress != nil {
-				progress(updated, total, fmt.Sprintf("后台低优先级补算 %d / %d 本书籍的 full hash", updated, total), metrics)
+				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值与指标。
+				progress(updated, total, "", metrics)
 			}
 		}
 

@@ -206,6 +206,7 @@ func hydrateTaskStatusDerivedFields(task *TaskStatus) {
 	task.Phase = firstNonEmptyTaskValue(task.Phase, task.Params["phase"])
 	task.CurrentItem = firstNonEmptyTaskValue(task.CurrentItem, task.Params["current_item"])
 	task.PauseReason = firstNonEmptyTaskValue(task.PauseReason, task.Params["pause_reason"])
+	task.MessageCode = firstNonEmptyTaskValue(task.MessageCode, task.Params["message_code"])
 	if raw := strings.TrimSpace(task.Params["can_pause"]); raw != "" {
 		task.CanPause, _ = strconv.ParseBool(raw)
 	}
@@ -232,6 +233,11 @@ func hydrateTaskStatusDerivedFields(task *TaskStatus) {
 				task.Labels = make(map[string]string)
 			}
 			task.Labels[strings.TrimPrefix(key, "label.")] = value
+		case strings.HasPrefix(key, "msgparam."):
+			if task.MessageParams == nil {
+				task.MessageParams = make(map[string]string)
+			}
+			task.MessageParams[strings.TrimPrefix(key, "msgparam.")] = value
 		case strings.HasPrefix(key, "limit."):
 			applyTaskLimitParam(task, strings.TrimPrefix(key, "limit."), value)
 		}
@@ -292,6 +298,12 @@ func taskParamsWithDerivedFields(task TaskStatus) map[string]string {
 	put("phase", task.Phase)
 	put("current_item", task.CurrentItem)
 	put("pause_reason", task.PauseReason)
+	// 把可本地化消息码/参数一并落进 params，使已完成任务从 DB 读回后仍能本地化渲染
+	// （Message 对编码任务为空，若不持久化 code，读回后只会剩任务类型名）。
+	put("message_code", task.MessageCode)
+	for key, value := range task.MessageParams {
+		put("msgparam."+key, value)
+	}
 	params["can_pause"] = strconv.FormatBool(task.CanPause)
 	params["can_resume"] = strconv.FormatBool(task.CanResume)
 	if task.PausedAt != nil {
@@ -419,18 +431,31 @@ func (c *Controller) flushTaskPersist() {
 }
 
 func (c *Controller) startTask(key, taskType, message string, total int) bool {
-	return c.startTaskWithOptions(key, taskType, message, total, false, false)
+	return c.startTaskWithOptionsCore(key, taskType, message, "", nil, total, false, false)
 }
 
 func (c *Controller) startCancelableTask(key, taskType, message string, total int) bool {
-	return c.startTaskWithOptions(key, taskType, message, total, true, false)
+	return c.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, false)
 }
 
 func (c *Controller) startPausableCancelableTask(key, taskType, message string, total int) bool {
-	return c.startTaskWithOptions(key, taskType, message, total, true, true)
+	return c.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, true)
+}
+
+// startTaskMsg 等是启动方法的 i18n 版：初始消息用稳定码 + 占位参数。
+func (c *Controller) startTaskMsg(key, taskType, code string, params map[string]string, total int) bool {
+	return c.startTaskWithOptionsCore(key, taskType, "", code, params, total, false, false)
+}
+
+func (c *Controller) startPausableCancelableTaskMsg(key, taskType, code string, params map[string]string, total int) bool {
+	return c.startTaskWithOptionsCore(key, taskType, "", code, params, total, true, true)
 }
 
 func (c *Controller) startTaskWithOptions(key, taskType, message string, total int, canCancel bool, canPause bool) bool {
+	return c.startTaskWithOptionsCore(key, taskType, message, "", nil, total, canCancel, canPause)
+}
+
+func (c *Controller) startTaskWithOptionsCore(key, taskType, message, code string, params map[string]string, total int, canCancel bool, canPause bool) bool {
 	c.taskMutex.Lock()
 	defer c.taskMutex.Unlock()
 
@@ -446,20 +471,22 @@ func (c *Controller) startTaskWithOptions(key, taskType, message string, total i
 	c.taskSeq++
 	scope, scopeID := inferTaskScope(taskType, key)
 	task := TaskStatus{
-		Key:       key,
-		Type:      taskType,
-		Scope:     scope,
-		ScopeID:   scopeID,
-		Status:    "running",
-		Message:   message,
-		Current:   0,
-		Total:     total,
-		CanCancel: canCancel,
-		CanPause:  canPause,
-		Retryable: c.isRetryableTaskType(taskType),
-		StartedAt: now,
-		UpdatedAt: now,
-		Sequence:  c.taskSeq,
+		Key:           key,
+		Type:          taskType,
+		Scope:         scope,
+		ScopeID:       scopeID,
+		Status:        "running",
+		Message:       message,
+		MessageCode:   code,
+		MessageParams: params,
+		Current:       0,
+		Total:         total,
+		CanCancel:     canCancel,
+		CanPause:      canPause,
+		Retryable:     c.isRetryableTaskType(taskType),
+		StartedAt:     now,
+		UpdatedAt:     now,
+		Sequence:      c.taskSeq,
 	}
 	c.tasks[key] = task
 	c.pruneTasksLocked()

@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（任务消息 i18n 收尾:start + 全部 progress + 持久化 · M65 第三步 batch5）
+
+#### 国际化（前后端一起改，收尾）
+- 迁移所有 START 初始消息(16 处 `start*Task`):新增 `startTaskMsg`/`startPausableCancelableTaskMsg` 与 `startTaskWithOptionsCore`,启动即带 message code。
+- 迁移所有 PROGRESS 消息:①服务回调驱动的进度(KOReader 重建/重关联、文件身份重建、后台哈希补算)——控制器侧闭包忽略服务下发的中文 `message`、改由 `current/total` 直接发码,`internal/koreader`、`controller_maintenance` 中已无用的中文 `fmt.Sprintf` 一并清除,**无需改服务回调签名**;②`controller_scan_events.go` 的扫描进度与缩略图重建聚合器进度(含 5 分支消息、fixate、refresh、`refreshRebuildThumbTaskMessage` 改传 code+params)。
+- **持久化修复**:`taskParamsWithDerivedFields`/`hydrateTaskStatusDerivedFields` 把 `message_code` 与 `msgparam.*` 一并落进已持久化的 `Params`,使已完成任务从 DB 读回后仍能本地化渲染(否则 Message 对编码任务为空、code 未落库,读回只剩任务类型名)。
+- 至此后端任务消息(start/progress/final)**全部**改为 message code。全库 `task.msg.*` 码 **102 个**,Go 引用与 `zh-CN`/`en-US` 三方完全一致(102 = 102 = 102,零缺失、零冗余)。
+
+#### 验证
+- `go vet`、`go test ./...`(13 包,新增 `TestTaskMessageCodePersistRoundTrip` 验证 code/params 经 DB 记录往返不丢)、`go test -race ./internal/api ./internal/koreader`、前端 `npm run lint` + `npm run build` 全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（任务消息 i18n 基础设施 + 扫描/清理批次 · M65 第三步 batch 1）
 
 #### 国际化（前后端一起改）

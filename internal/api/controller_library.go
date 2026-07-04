@@ -236,7 +236,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) bool {
 	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
-	if !c.startPausableCancelableTask(taskKey, "scan_library", fmt.Sprintf("开始扫描资源库: %s", lib.Name), 0) {
+	if !c.startPausableCancelableTaskMsg(taskKey, "scan_library", "task.msg.scan_library.start", map[string]string{"name": lib.Name}, 0) {
 		return false
 	}
 	limits := c.taskLimitsForPath(lib.Path, force)
@@ -300,7 +300,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
-	if !c.startPausableCancelableTask(taskKey, "scan_series", fmt.Sprintf("开始扫描系列 #%d", seriesID), 0) {
+	if !c.startPausableCancelableTaskMsg(taskKey, "scan_series", "task.msg.scan_series.start", map[string]string{"id": strconv.FormatInt(seriesID, 10)}, 0) {
 		return false
 	}
 	scopeName := ""
@@ -391,7 +391,7 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 // 清理失效资源记录
 func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	taskKey := fmt.Sprintf("cleanup_library_%d", libraryID)
-	if !c.startTask(taskKey, "cleanup_library", fmt.Sprintf("开始清理资源库 #%d", libraryID), 1) {
+	if !c.startTaskMsg(taskKey, "cleanup_library", "task.msg.cleanup_library.start", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, 1) {
 		return false
 	}
 	scopeName := ""

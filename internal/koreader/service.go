@@ -344,7 +344,8 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 			updated++
 			afterID = book.ID
 			if progress != nil {
-				progress(updated, total, fmt.Sprintf("已重建 %d / %d 本书籍的 KOReader %s索引", updated, total, readableMatchMode(matchConfig)))
+				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值。
+				progress(updated, total, "")
 			}
 		}
 	}
@@ -395,7 +396,8 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 			processed++
 			afterID = item.ID
 			if progress != nil {
-				progress(processed, total, fmt.Sprintf("已处理 %d / %d 条 KOReader 同步记录", processed, total))
+				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值。
+				progress(processed, total, "")
 			}
 		}
 	}

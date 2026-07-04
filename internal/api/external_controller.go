@@ -222,7 +222,7 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 
 func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) (string, bool) {
 	taskKey := externalLibraryScanTaskKey(libraryID, sessionID)
-	if !c.startPausableCancelableTask(taskKey, "scan_external_library", "正在扫描外部资源库", 0) {
+	if !c.startPausableCancelableTaskMsg(taskKey, "scan_external_library", "task.msg.scan_external_library.start", nil, 0) {
 		return taskKey, false
 	}
 
@@ -265,7 +265,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 
 func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, seriesIDs []int64) (string, bool) {
 	taskKey := externalLibraryTransferTaskKey(libraryID, sessionID)
-	if !c.startPausableCancelableTask(taskKey, "transfer_external_library", "正在传输到外部资源库", 0) {
+	if !c.startPausableCancelableTaskMsg(taskKey, "transfer_external_library", "task.msg.transfer_external_library.start", nil, 0) {
 		return taskKey, false
 	}
 

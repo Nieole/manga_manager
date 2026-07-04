@@ -593,7 +593,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	totalCount := len(allSeries)
 	providerName := provider.Name()
 	taskKey := "scrape_all_series"
-	if !c.startPausableCancelableTask(taskKey, "scrape", fmt.Sprintf("批量刮削开始 (%s)", providerName), totalCount) {
+	if !c.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.all_series.start", map[string]string{"provider": providerName}, totalCount) {
 		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, "全库")
@@ -664,7 +664,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 	totalCount := len(allSeries)
 	providerName := provider.Name()
 	taskKey := fmt.Sprintf("scrape_library_%d", libraryID)
-	if !c.startPausableCancelableTask(taskKey, "scrape", fmt.Sprintf("资源库批量刮削开始 (%s)", providerName), totalCount) {
+	if !c.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.library.start", map[string]string{"provider": providerName}, totalCount) {
 		return errTaskAlreadyRunning
 	}
 	scopeName := ""

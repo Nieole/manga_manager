@@ -4688,3 +4688,22 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 		t.Fatalf("legacy finishTask: want Message set & code empty, got msg=%q code=%q", legacy.Message, legacy.MessageCode)
 	}
 }
+
+func TestTaskMessageCodePersistRoundTrip(t *testing.T) {
+	// 编码任务的 message_code/params 需经 Params 往返 DB 记录，否则已完成任务读回后丢失文案。
+	task := TaskStatus{
+		Key:           "scan_library_3",
+		Type:          "scan_library",
+		Status:        "completed",
+		MessageCode:   "task.msg.scan_library.complete",
+		MessageParams: map[string]string{"name": "Alpha"},
+	}
+	record := taskRecordFromStatus(task)
+	restored := taskStatusFromRecord(record)
+	if restored.MessageCode != "task.msg.scan_library.complete" {
+		t.Fatalf("message_code lost across persistence, got %q", restored.MessageCode)
+	}
+	if restored.MessageParams["name"] != "Alpha" {
+		t.Fatalf("message_params lost across persistence, got %v", restored.MessageParams)
+	}
+}

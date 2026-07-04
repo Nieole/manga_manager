@@ -81,11 +81,13 @@ func (c *Controller) handleScannerProgressEvent(report scanner.ScanProgressRepor
 	}
 	current := int(report.Current)
 	total := int(report.Total)
-	message := "扫描中"
+	code := "task.msg.scan.scanning"
+	var msgParams map[string]string
 	if report.CurrentItem != "" {
-		message = fmt.Sprintf("扫描: %s", filepath.Base(report.CurrentItem))
+		code = "task.msg.scan.scanning_item"
+		msgParams = map[string]string{"item": filepath.Base(report.CurrentItem)}
 	}
-	c.updateTaskDetails(taskKey, current, total, message, report.Phase, report.CurrentItem, metrics, nil)
+	c.updateTaskDetailsMsg(taskKey, current, total, code, msgParams, report.Phase, report.CurrentItem, metrics, nil)
 
 	// 若正在执行缩略图重建，按全局视角同步 rebuild_thumbnails 任务进度
 	c.applyScannerProgressToRebuildThumbnails(report)
@@ -145,18 +147,23 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 	}
 	currentItem := report.CurrentItem
 	displayName := filepath.Base(report.CurrentItem)
-	var message string
+	var code string
+	var msgParams map[string]string
 	switch {
 	case phase == "queueing_covers" && displayName != "":
-		message = fmt.Sprintf("生成缩略图: %s (已生成 %d)", displayName, merged["generated_covers"])
+		code = "task.msg.rebuild_thumbnails.generating_cover"
+		msgParams = map[string]string{"item": displayName, "generated": strconv.FormatInt(merged["generated_covers"], 10)}
 	case currentItem == "" && currentLibName != "":
-		message = fmt.Sprintf("正在重建缩略图: %s (%d/%d 资源库)", currentLibName, doneLibs+1, totalLibs)
+		code = "task.msg.rebuild_thumbnails.rebuilding_library_progress"
+		msgParams = map[string]string{"lib": currentLibName, "done": strconv.Itoa(doneLibs + 1), "total": strconv.Itoa(totalLibs)}
 	case displayName != "" && currentLibName != "":
-		message = fmt.Sprintf("[%s %d/%d] 重建: %s", currentLibName, doneLibs+1, totalLibs, displayName)
+		code = "task.msg.rebuild_thumbnails.rebuilding_item_in_library"
+		msgParams = map[string]string{"lib": currentLibName, "done": strconv.Itoa(doneLibs + 1), "total": strconv.Itoa(totalLibs), "item": displayName}
 	case displayName != "":
-		message = fmt.Sprintf("重建缩略图: %s", displayName)
+		code = "task.msg.rebuild_thumbnails.rebuilding_item"
+		msgParams = map[string]string{"item": displayName}
 	default:
-		message = "正在重建缩略图"
+		code = "task.msg.rebuild_thumbnails.rebuilding"
 	}
 	if currentItem == "" {
 		currentItem = currentLibPath
@@ -164,7 +171,7 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 	labels := map[string]string{
 		"current_library": currentLibName,
 	}
-	c.updateTaskDetails("rebuild_thumbnails", current, total, message, phase, currentItem, merged, labels)
+	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, phase, currentItem, merged, labels)
 }
 
 func (c *Controller) initRebuildThumbAggregator(totalLibraries int) {
@@ -257,11 +264,13 @@ func (c *Controller) fixateRebuildThumbBaseline(report scanner.ScanMetricsReport
 	c.rebuildThumbAggMu.Unlock()
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
-	message := "正在重建缩略图"
+	code := "task.msg.rebuild_thumbnails.rebuilding"
+	var msgParams map[string]string
 	if totalLibs > 0 {
-		message = fmt.Sprintf("已完成 %d/%d 资源库", doneLibs, totalLibs)
+		code = "task.msg.rebuild_thumbnails.libraries_completed"
+		msgParams = map[string]string{"done": strconv.Itoa(doneLibs), "total": strconv.Itoa(totalLibs)}
 	}
-	c.updateTaskDetails("rebuild_thumbnails", current, total, message, "queueing_covers", "", merged, nil)
+	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "queueing_covers", "", merged, nil)
 }
 
 // refreshRebuildThumbTaskFromAggregator 用聚合器中已记录的 metrics 立即刷新一次任务，
@@ -287,19 +296,19 @@ func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library)
 	c.rebuildThumbAggMu.Unlock()
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
-	var message string
+	code := "task.msg.rebuild_thumbnails.rebuilding_library"
+	msgParams := map[string]string{"lib": lib.Name}
 	if totalLibs > 0 {
-		message = fmt.Sprintf("正在重建缩略图: %s (%d/%d 资源库)", lib.Name, doneLibs+1, totalLibs)
-	} else {
-		message = fmt.Sprintf("正在重建缩略图: %s", lib.Name)
+		code = "task.msg.rebuild_thumbnails.rebuilding_library_progress"
+		msgParams = map[string]string{"lib": lib.Name, "done": strconv.Itoa(doneLibs + 1), "total": strconv.Itoa(totalLibs)}
 	}
 	labels := map[string]string{"current_library": lib.Name}
-	c.updateTaskDetails("rebuild_thumbnails", current, total, message, "reading_metadata", lib.Path, merged, labels)
+	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "reading_metadata", lib.Path, merged, labels)
 }
 
 // refreshRebuildThumbTaskMessage 在阶段切换（如等待封面队列收尾）时刷新任务消息和阶段，
 // 但保留聚合器累计的 current/total（避免被旧的占位 total 重置成 100%）。
-func (c *Controller) refreshRebuildThumbTaskMessage(message, phase string) {
+func (c *Controller) refreshRebuildThumbTaskMessage(code string, params map[string]string, phase string) {
 	c.rebuildThumbAggMu.Lock()
 	agg := c.rebuildThumbAgg
 	if agg == nil {
@@ -318,7 +327,7 @@ func (c *Controller) refreshRebuildThumbTaskMessage(message, phase string) {
 	c.rebuildThumbAggMu.Unlock()
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
-	c.updateTaskDetails("rebuild_thumbnails", current, total, message, phase, "", merged, nil)
+	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, params, phase, "", merged, nil)
 }
 
 // rebuildThumbProgressFromMetrics 把"重建缩略图"任务的进度展开成两阶段：
