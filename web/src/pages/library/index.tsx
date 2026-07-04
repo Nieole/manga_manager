@@ -20,7 +20,7 @@ import { LibrarySelectionBar } from './LibrarySelectionBar';
 import { ExternalLibraryDrawer } from './ExternalLibraryDrawer';
 import { LibraryScrapeModal } from './LibraryScrapeModal';
 import { TransferConfirmModal } from './TransferConfirmModal';
-import { type PaginationMode } from './types';
+import { type PaginationMode, type Series } from './types';
 import { useLibraryFilters, supportsCursorPagination } from './hooks/useLibraryFilters';
 import { useLibrarySeries } from './hooks/useLibrarySeries';
 import { useLibrarySelection } from './hooks/useLibrarySelection';
@@ -195,6 +195,14 @@ export default function LibraryPage() {
     onError: showError,
   });
 
+  // 稳定化传给 LibraryCard 的刮削菜单回调，配合 LibraryCard 的 React.memo，避免库页（扫描/刷新期）
+  // 重渲染时大量卡片跟着重算。先解构出稳定的函数（useState setter / useCallback）作为局部依赖，
+  // 既满足 exhaustive-deps，又不会因依赖整个每渲染新建的 scraping 对象而失去 memoization。
+  const { setScrapeMenuOpenId, startScrape } = scraping;
+  const handleOpenScrapeMenu = useCallback((s: Series) => setScrapeMenuOpenId(s.id), [setScrapeMenuOpenId]);
+  const handleCloseScrapeMenu = useCallback(() => setScrapeMenuOpenId(null), [setScrapeMenuOpenId]);
+  const handleChooseScrapeProvider = useCallback((s: Series, provider: 'bangumi' | 'llm') => startScrape(s, provider), [startScrape]);
+
   // ===== 转移 =====
   const transfer = useLibraryTransfer({
     externalSession: externalLib.externalSession,
@@ -330,9 +338,9 @@ export default function LibraryPage() {
         onCardClick={handleCardClick}
         onToggleFavorite={handleToggleFavorite}
         onRescan={handleRescanSeries}
-        onOpenScrapeMenu={(s) => scraping.setScrapeMenuOpenId(s.id)}
-        onCloseScrapeMenu={() => scraping.setScrapeMenuOpenId(null)}
-        onChooseScrapeProvider={(s, provider) => scraping.startScrape(s, provider)}
+        onOpenScrapeMenu={handleOpenScrapeMenu}
+        onCloseScrapeMenu={handleCloseScrapeMenu}
+        onChooseScrapeProvider={handleChooseScrapeProvider}
         onLoadMore={() => {
           if (paginationMode === 'infinite' && page < totalPages) setPage(page + 1);
         }}

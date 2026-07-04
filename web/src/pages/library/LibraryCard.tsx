@@ -4,7 +4,7 @@
  * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
  */
 
-import { useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Heart, ImageIcon, RefreshCw, Sparkles } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -31,7 +31,9 @@ interface LibraryCardProps {
 
 const LONG_PRESS_MS = 450;
 
-export function LibraryCard({
+// React.memo：库页在扫描/刷新期重渲染时，props 未变的卡片直接跳过重算（回调已在 index.tsx memoize，
+// series/externalStatus/布尔项均为稳定引用或原始值）。
+export const LibraryCard = memo(function LibraryCard({
   series: s,
   isSelectionMode,
   isSelected,
@@ -310,4 +312,4 @@ export function LibraryCard({
       )}
     </Link>
   );
-}
+});

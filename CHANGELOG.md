@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-04（LibraryCard React.memo 加固 · M49 收尾）
+
+#### 性能
+- `LibraryCard` 用 `React.memo` 包裹:库页在扫描/刷新期重渲染时,props 未变的卡片(最多 ~100 张)直接跳过重算。
+- `library/index.tsx`:把原先内联传给 `LibraryGrid`→`LibraryCard` 的 3 个刮削菜单回调(`onOpenScrapeMenu`/`onCloseScrapeMenu`/`onChooseScrapeProvider`)改为 `useCallback` 稳定化——先解构出稳定的 `setScrapeMenuOpenId`(useState setter)/`startScrape`(useCallback)作为局部依赖,既满足 `exhaustive-deps` 又不因依赖每渲染新建的 `scraping` 对象而失去 memoization。至此 `LibraryCard` 的全部 props(series/布尔项/外部状态/回调)均为稳定引用或原始值,`React.memo` 真正生效。与前一条 Outlet context 稳定化共同消除扫描期库页的重渲染开销。
+
+#### 验证
+- `npm run build`、`npm run lint`(0 problems)、`npm run test` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-04（Outlet context 稳定化，消除扫描期全树重渲染根因）
 
 #### 性能
