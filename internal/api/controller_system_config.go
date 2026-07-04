@@ -145,7 +145,7 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 	c.enrichConfigWithDatabase(r.Context(), &newCfg)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"message":    "配置已成功保存。大部分设定会立刻生效。",
+		"message":    apiText(requestLocale(r), "config.saved"),
 		"config":     config.MaskSecrets(newCfg),
 		"validation": validation,
 	})

@@ -4,6 +4,17 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（维护/系统配置/推荐 静态响应 i18n · M65 续批）
+
+#### 国际化
+- 沿用 `apiText`,迁移 6 处静态 HTTP 响应中文:`controller_maintenance.go` 的搜索索引重建 / 缩略图重制 / 无效封面清理 / 文件身份重建 4 处 toast、`controller_system_config.go` 的"配置已保存"、`controller_recommendations.go` 的"AI 分组审核已提交"。中/英各加 6 条。
+- 现状核对:`controller.go` 已无用户可见中文响应串。剩余待后续切片的均为**参数化/持久化**类:①`scrape_controller.go` 的 `未在 %s 找到 / %s 搜索失败 / %s 刮削失败`(带 provider 名与 err,须 locale-aware 格式串)——另"数据完全一致 / 已忽略重复"两条是 M65 第二步 `outcome` 码的**有意兜底**(前端已按码本地化,不动);②koreader 建议 helper(带参)与 `koreader_sync_events` 持久化诊断文案(须写码 / 读时渲染)。
+
+#### 验证
+- `go vet`、`go test ./internal/api`(`TestAPITextLocalization` 的中/英表 key 一致性覆盖新增键)通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（config/日志路径可配置、与 cwd 解耦 · L110）
 
 #### 修复/增强(部署)

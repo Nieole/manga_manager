@@ -254,7 +254,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "AI 分组审核任务已提交至后台"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "recommendations.ai_grouping_submitted")})
 }
 
 func (c *Controller) rebuildInitials(w http.ResponseWriter, r *http.Request) {

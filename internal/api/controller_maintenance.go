@@ -101,7 +101,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "Failed to rebuild search index")
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "搜索索引已在线重建，并已触发全库重新建立索引。"})
+	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.search_index_rebuilt")})
 }
 
 func (c *Controller) launchRebuildThumbnailsTask() error {
@@ -179,7 +179,7 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail rebuild is already running"})
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。"})
+	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.thumbnails_rebuilding")})
 }
 
 func (c *Controller) launchCleanupThumbnailsTask() error {
@@ -216,7 +216,7 @@ func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail cleanup is already running"})
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"message": "已在后台启动无效封面资源清理任务。"})
+	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.cover_cleanup_started")})
 }
 
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
@@ -459,5 +459,5 @@ func (c *Controller) rebuildFileIdentities(w http.ResponseWriter, r *http.Reques
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A file identity rebuild is already running"})
 		return
 	}
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "文件身份索引重建已启动"})
+	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "maintenance.file_identity_rebuild_started")})
 }

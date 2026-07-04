@@ -27,6 +27,13 @@ var apiMessages = map[string]map[string]string{
 		"koreader.task.index_rebuild_started":   "KOReader 索引重建已启动",
 		"koreader.task.match_apply_started":     "KOReader 匹配规则应用任务已启动",
 		"koreader.task.reconcile_started":       "未匹配同步记录重关联已启动",
+
+		"maintenance.search_index_rebuilt":          "搜索索引已在线重建，并已触发全库重新建立索引。",
+		"maintenance.thumbnails_rebuilding":         "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。",
+		"maintenance.cover_cleanup_started":         "已在后台启动无效封面资源清理任务。",
+		"maintenance.file_identity_rebuild_started": "文件身份索引重建已启动",
+		"config.saved":                          "配置已成功保存。大部分设定会立刻生效。",
+		"recommendations.ai_grouping_submitted": "AI 分组审核任务已提交至后台",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -47,6 +54,13 @@ var apiMessages = map[string]map[string]string{
 		"koreader.task.index_rebuild_started":   "KOReader index rebuild started",
 		"koreader.task.match_apply_started":     "KOReader match-rule apply task started",
 		"koreader.task.reconcile_started":       "Reconcile of unmatched sync records started",
+
+		"maintenance.search_index_rebuilt":          "Search index rebuilt online; a full re-index has been triggered.",
+		"maintenance.thumbnails_rebuilding":         "All thumbnail caches were cleared; a full background sweep is regenerating covers.",
+		"maintenance.cover_cleanup_started":         "Started a background task to clean up orphaned cover assets.",
+		"maintenance.file_identity_rebuild_started": "File identity index rebuild started",
+		"config.saved":                          "Configuration saved. Most settings take effect immediately.",
+		"recommendations.ai_grouping_submitted": "AI grouping review task submitted to the background",
 	},
 }
 
