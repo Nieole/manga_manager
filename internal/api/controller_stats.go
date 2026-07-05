@@ -146,13 +146,20 @@ func (c *Controller) loadDashboardStats(ctx context.Context) (*database.Dashboar
 	return cloneDashboardStats(stats), nil
 }
 
-// getDashboardStats 返回全局统计看板数据
+// getDashboardStats 返回统计看板数据。结构性统计（系列/书/页总数）与近 7 日活跃天数为全局缓存；
+// 已读书本数（read_books）按当前用户改写（每用户进度）。活动热力图本阶段仍为全局。
 func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := c.loadDashboardStats(r.Context())
+	ctx := r.Context()
+	stats, err := c.loadDashboardStats(ctx)
 	if err != nil {
 		slog.Error("GetDashboardStats failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get dashboard stats")
 		return
+	}
+	if uid := c.currentUserID(r); uid > 0 {
+		if n, e := c.store.GetUserReadBooksCount(ctx, uid); e == nil {
+			stats.ReadBooks = int(n)
+		}
 	}
 	jsonResponse(w, http.StatusOK, stats)
 }
@@ -193,13 +200,22 @@ func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items, err := c.store.GetRecentReadAll(r.Context(), limit)
+	var (
+		items []database.GetRecentReadAllRow
+		err   error
+	)
+	if uid := c.currentUserID(r); uid > 0 {
+		items, err = c.store.GetUserRecentReadAll(r.Context(), uid, limit)
+	} else {
+		items, err = c.store.GetRecentReadAll(r.Context(), limit)
+	}
 	if err != nil {
 		slog.Error("GetRecentReadAll failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get recent reads")
 		return
 	}
 
+	// 续读建议基于全局系列完成度（本阶段不做每用户拆分）。
 	sequels, err := c.store.GetContinueReadingSequels(r.Context())
 	if err != nil {
 		slog.Error("GetContinueReadingSequels failed", "error", err)

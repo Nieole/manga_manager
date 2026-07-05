@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -49,6 +50,16 @@ func userFromContext(ctx context.Context) (database.User, bool) {
 func sessionFromContext(ctx context.Context) (database.Session, bool) {
 	s, ok := ctx.Value(sessionCtxKey).(database.Session)
 	return s, ok
+}
+
+// currentUserID 返回当前登录用户 id；无用户时（首启尚无账户 / 直接调用处理器的单元测试 / 未接入会话的
+// 阅读协议）返回 0。0 表示走旧的全局进度路径（books.last_read_page + series_stats），>0 走每用户进度。
+// authGate 保证：一旦站点存在账户，未登录请求会被 401 拦下，故已登录处理器里 currentUserID 恒 > 0。
+func (c *Controller) currentUserID(r *http.Request) int64 {
+	if u, ok := userFromContext(r.Context()); ok {
+		return u.ID
+	}
+	return 0
 }
 
 // ---- 令牌 / 口令 / Cookie 基础工具 ----
@@ -331,6 +342,10 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.usersPresent.Store(true)
+	// 把旧的全局阅读进度迁移到首个管理员名下（幂等）。失败不阻断建号，仅记录。
+	if err := c.store.MigrateGlobalProgressToUser(ctx, user.ID); err != nil {
+		slog.Warn("migrate global progress to first admin failed", "user_id", user.ID, "error", err)
+	}
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "failed to start session")

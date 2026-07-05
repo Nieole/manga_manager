@@ -727,7 +727,7 @@ func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Re
 	}
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", filter.PageSize, 200)
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, (page-1)*limit)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, (page-1)*limit, 0)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return

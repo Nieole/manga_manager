@@ -129,7 +129,7 @@ func (c *Controller) listReadingListItems(w http.ResponseWriter, r *http.Request
 	if items == nil {
 		items = []database.ListReadingListItemsRow{}
 	}
-	progress, err := c.store.GetReadingListItemProgress(r.Context(), listID)
+	progress, err := c.store.GetReadingListItemProgress(r.Context(), listID, c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load reading list progress")
 		return

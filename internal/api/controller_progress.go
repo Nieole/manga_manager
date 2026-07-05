@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -85,6 +86,7 @@ type UpdateProgressRequest struct {
 const progressWriteThrottleWindow = 2 * time.Second
 
 type cachedProgressWrite struct {
+	userID    int64
 	page      int64
 	updatedAt time.Time
 }
@@ -106,8 +108,10 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		req.Page = 1
 	}
 
+	uid := c.currentUserID(r)
+
 	if c.progressWriteCache != nil {
-		if cached, ok := c.progressWriteCache.Get(bookID); ok && cached.page == req.Page && time.Since(cached.updatedAt) < progressWriteThrottleWindow {
+		if cached, ok := c.progressWriteCache.Get(bookID); ok && cached.userID == uid && cached.page == req.Page && time.Since(cached.updatedAt) < progressWriteThrottleWindow {
 			jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
 			return
 		}
@@ -128,45 +132,105 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		validPage = 1
 	}
 
-	previousPage := int64(0)
-	if book.LastReadPage.Valid {
-		previousPage = book.LastReadPage.Int64
-	}
-	if book.LastReadPage.Valid && previousPage == validPage && book.LastReadAt.Valid && time.Since(book.LastReadAt.Time) < progressWriteThrottleWindow {
+	// 取当前用户对本书的既有进度（uid==0 时退回全局 books 列，保持旧行为与既有测试）。
+	previousPage, previousAt := c.bookProgressFor(ctx, uid, book)
+	if previousAt.Valid && previousPage == validPage && time.Since(previousAt.Time) < progressWriteThrottleWindow {
 		if c.progressWriteCache != nil {
-			c.progressWriteCache.Add(bookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
+			c.progressWriteCache.Add(bookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: time.Now()})
 		}
 		jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
 		return
 	}
 
-	params := database.UpdateBookProgressParams{
-		LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
-		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
-		ID:           bookID,
-	}
-
-	if err := c.store.UpdateBookProgress(ctx, params); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to update progress")
-		return
+	now := time.Now()
+	if uid > 0 {
+		if err := c.store.SetUserBookProgress(ctx, uid, bookID, validPage, now); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
+			return
+		}
+	} else {
+		if err := c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+			LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
+			LastReadAt:   sql.NullTime{Time: now, Valid: true},
+			ID:           bookID,
+		}); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
+			return
+		}
 	}
 	c.invalidateVolatileStatsCache("book_progress")
 	if c.progressWriteCache != nil {
-		c.progressWriteCache.Add(bookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
+		c.progressWriteCache.Add(bookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: now})
 	}
 
-	// 阅读活动只记录前进页，避免 Webtoon 滚动和重复上报刷高活动写入。
-	if validPage > previousPage {
-		if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: validPage}); err != nil {
-			slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
-		}
-	} else if !book.LastReadPage.Valid {
+	// 阅读活动只记录前进页，避免 Webtoon 滚动和重复上报刷高活动写入。（活动热力图本阶段仍为全局。）
+	if validPage > previousPage || previousPage == 0 {
 		if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: validPage}); err != nil {
 			slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
 		}
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})
+}
+
+// overlayUserProgress 用当前用户的每用户进度覆盖一组书的 LastReadPage/LastReadAt。
+// uid==0（旧全局路径 / 首启 / 单元测试）时不改动，保留 books 自带的全局列；uid>0 时按用户隔离：
+// 有每用户记录则覆盖，无记录则清零，避免看到他人或全局遗留的进度。
+func (c *Controller) overlayUserProgress(ctx context.Context, uid int64, books []database.Book) {
+	if uid == 0 || len(books) == 0 {
+		return
+	}
+	ids := make([]int64, len(books))
+	for i := range books {
+		ids[i] = books[i].ID
+	}
+	m, err := c.store.GetUserBookProgressMap(ctx, uid, ids)
+	if err != nil {
+		slog.Error("overlay user progress failed", "user_id", uid, "error", err)
+		return
+	}
+	for i := range books {
+		if p, ok := m[books[i].ID]; ok {
+			books[i].LastReadPage = p.LastReadPage
+			books[i].LastReadAt = p.LastReadAt
+		} else {
+			books[i].LastReadPage = sql.NullInt64{}
+			books[i].LastReadAt = sql.NullTime{}
+		}
+	}
+}
+
+// overlayUserProgressOne 覆盖单本书的每用户进度（语义同 overlayUserProgress）。
+func (c *Controller) overlayUserProgressOne(ctx context.Context, uid int64, book *database.Book) {
+	if uid == 0 || book == nil {
+		return
+	}
+	p, found, err := c.store.GetUserBookProgress(ctx, uid, book.ID)
+	if err != nil {
+		slog.Error("overlay user progress failed", "user_id", uid, "book_id", book.ID, "error", err)
+		return
+	}
+	if found {
+		book.LastReadPage = p.LastReadPage
+		book.LastReadAt = p.LastReadAt
+	} else {
+		book.LastReadPage = sql.NullInt64{}
+		book.LastReadAt = sql.NullTime{}
+	}
+}
+
+// bookProgressFor 返回某用户对某书的既有进度页与时间戳；uid==0 时退回该书的全局 books 列（旧行为）。
+func (c *Controller) bookProgressFor(ctx context.Context, uid int64, book database.Book) (int64, sql.NullTime) {
+	if uid > 0 {
+		if p, found, err := c.store.GetUserBookProgress(ctx, uid, book.ID); err == nil && found {
+			return p.LastReadPage.Int64, p.LastReadAt
+		}
+		return 0, sql.NullTime{}
+	}
+	if book.LastReadPage.Valid {
+		return book.LastReadPage.Int64, book.LastReadAt
+	}
+	return 0, book.LastReadAt
 }
 
 type BulkSyncProgressItem struct {
@@ -204,6 +268,7 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	uid := c.currentUserID(r)
 	results := make([]BulkSyncProgressResultItem, 0, len(req.Items))
 	updatedCount := 0
 
@@ -235,23 +300,20 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 		}
 
 		// updated_at 冲突解决：若客户端时间戳 < 数据库 last_read_at，认为本地数据已陈旧，跳过。
-		// 没有 updated_at 时按顺序覆盖（与单本 updateBookProgress 行为一致）。
-		if item.UpdatedAt != nil && book.LastReadAt.Valid && item.UpdatedAt.Before(book.LastReadAt.Time) {
+		// 没有 updated_at 时按顺序覆盖（与单本 updateBookProgress 行为一致）。取当前用户的既有进度做冲突解决。
+		previousPage, previousAt := c.bookProgressFor(ctx, uid, book)
+		if item.UpdatedAt != nil && previousAt.Valid && item.UpdatedAt.Before(previousAt.Time) {
 			results = append(results, BulkSyncProgressResultItem{
 				BookID:  item.BookID,
 				Status:  "skipped_stale",
-				Page:    book.LastReadPage.Int64,
+				Page:    previousPage,
 				Message: "server has newer progress",
 			})
 			continue
 		}
 
 		// 与单本端点对齐的相同页节流。
-		previousPage := int64(0)
-		if book.LastReadPage.Valid {
-			previousPage = book.LastReadPage.Int64
-		}
-		if book.LastReadPage.Valid && previousPage == validPage {
+		if previousAt.Valid && previousPage == validPage {
 			results = append(results, BulkSyncProgressResultItem{
 				BookID: item.BookID,
 				Status: "skipped_unchanged",
@@ -264,13 +326,18 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 		if item.UpdatedAt != nil {
 			readAt = *item.UpdatedAt
 		}
-		params := database.UpdateBookProgressParams{
-			LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
-			LastReadAt:   sql.NullTime{Time: readAt, Valid: true},
-			ID:           item.BookID,
+		var writeErr error
+		if uid > 0 {
+			writeErr = c.store.SetUserBookProgress(ctx, uid, item.BookID, validPage, readAt)
+		} else {
+			writeErr = c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+				LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
+				LastReadAt:   sql.NullTime{Time: readAt, Valid: true},
+				ID:           item.BookID,
+			})
 		}
-		if err := c.store.UpdateBookProgress(ctx, params); err != nil {
-			slog.Error("bulk sync progress update failed", "book_id", item.BookID, "error", err)
+		if writeErr != nil {
+			slog.Error("bulk sync progress update failed", "book_id", item.BookID, "error", writeErr)
 			results = append(results, BulkSyncProgressResultItem{
 				BookID:  item.BookID,
 				Status:  "invalid",
@@ -281,15 +348,11 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 		updatedCount++
 
 		if c.progressWriteCache != nil {
-			c.progressWriteCache.Add(item.BookID, cachedProgressWrite{page: validPage, updatedAt: time.Now()})
+			c.progressWriteCache.Add(item.BookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: time.Now()})
 		}
 
-		// 仅前进的页码记录活动，与单本接口策略一致。
-		if validPage > previousPage {
-			if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: item.BookID, PagesRead: validPage}); err != nil {
-				slog.Error("Failed to log reading activity", "book_id", item.BookID, "error", err)
-			}
-		} else if !book.LastReadPage.Valid {
+		// 仅前进的页码记录活动，与单本接口策略一致。（活动热力图本阶段仍为全局。）
+		if validPage > previousPage || previousPage == 0 {
 			if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: item.BookID, PagesRead: validPage}); err != nil {
 				slog.Error("Failed to log reading activity", "book_id", item.BookID, "error", err)
 			}

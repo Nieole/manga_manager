@@ -88,7 +88,7 @@ type Store interface {
 	ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterID int64, limit int) ([]KOReaderProgress, error)
 	LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error
 	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
-	GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error)
+	GetReadingListItemProgress(ctx context.Context, readingListID, userID int64) (map[int64]ReadingListSeriesProgress, error)
 	SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error)
 	// 站点账户体系（多用户）——用户与会话存储，见 users.go。
 	CountUsers(ctx context.Context) (int64, error)
@@ -107,6 +107,16 @@ type Store interface {
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionsForUser(ctx context.Context, userID int64) error
 	DeleteExpiredSessions(ctx context.Context, now time.Time) error
+	// 每用户阅读进度（多用户阶段2）——见 user_progress.go。
+	SetUserBookProgress(ctx context.Context, userID, bookID, page int64, at time.Time) error
+	ClearUserBookProgress(ctx context.Context, userID, bookID int64) error
+	SetUserBooksReadState(ctx context.Context, userID int64, bookIDs []int64, isRead bool, at time.Time) error
+	GetUserBookProgress(ctx context.Context, userID, bookID int64) (UserBookProgress, bool, error)
+	GetUserBookProgressMap(ctx context.Context, userID int64, bookIDs []int64) (map[int64]UserBookProgress, error)
+	GetUserRecentReadAll(ctx context.Context, userID, limit int64) ([]GetRecentReadAllRow, error)
+	GetUserRecentReadSeries(ctx context.Context, userID, libraryID, limit int64) ([]GetRecentReadSeriesRow, error)
+	GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error)
+	MigrateGlobalProgressToUser(ctx context.Context, userID int64) error
 }
 
 type ReadingListSeriesProgress struct {
@@ -589,12 +599,37 @@ func (s *SqlStore) BulkEditSeries(ctx context.Context, seriesIDs []int64, edit B
 	return nil
 }
 
-func (s *SqlStore) GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error) {
+// GetReadingListItemProgress 返回某阅读清单各系列的进度。userID>0 时取该用户的 user_series_progress，
+// 否则用全局 series_stats（旧行为 / 首启 / 单元测试）。
+func (s *SqlStore) GetReadingListItemProgress(ctx context.Context, readingListID, userID int64) (map[int64]ReadingListSeriesProgress, error) {
+	out := make(map[int64]ReadingListSeriesProgress)
+	if userID > 0 {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT rli.series_id,
+			       COALESCE(usp.read_book_count, 0),
+			       COALESCE(usp.completed_book_count, 0),
+			       COALESCE(s.book_count, 0)
+			FROM reading_list_items rli
+			JOIN series s ON s.id = rli.series_id
+			LEFT JOIN user_series_progress usp ON usp.series_id = rli.series_id AND usp.user_id = ?
+			WHERE rli.reading_list_id = ?`, userID, readingListID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p ReadingListSeriesProgress
+			if err := rows.Scan(&p.SeriesID, &p.ReadBooks, &p.CompletedBooks, &p.TotalBooks); err != nil {
+				return nil, err
+			}
+			out[p.SeriesID] = p
+		}
+		return out, rows.Err()
+	}
 	rows, err := s.Queries.GetReadingListItemProgressByList(ctx, readingListID)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[int64]ReadingListSeriesProgress, len(rows))
 	for _, r := range rows {
 		out[r.SeriesID] = ReadingListSeriesProgress{
 			SeriesID:       r.SeriesID,
@@ -1494,7 +1529,7 @@ func scanTaskRecord(row taskScanner) (TaskRecord, error) {
 // SearchSeriesPaged 供主页根据标签和作者查询并分页。
 // 默认列表只走 series + series_stats，只有标签/作者筛选时才进入关联表。
 func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, f SeriesListFilters, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
-	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, f)
+	baseQuery, progressJoin, whereClause, leadingArgs, args := buildSeriesSearchQuery(libraryID, f)
 
 	var total int
 	if !f.hasAny() {
@@ -1506,9 +1541,15 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, f Ser
 			return nil, 0, err
 		}
 	} else {
-		// 计数需与主查询同样 LEFT JOIN series_stats，因阅读状态/进度筛选引用 ss.* 列。
-		countQuery := `SELECT COUNT(*) FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id` + whereClause
-		if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		// 计数需与主查询同样 JOIN 进度来源（ss），因阅读状态/进度筛选引用 ss.* 列。
+		// 进度来源 JOIN 若含 user_id 占位符，需先补其实参（f.UserID>0 时），再接 WHERE 实参。
+		countArgs := make([]interface{}, 0, len(args)+1)
+		if f.UserID > 0 {
+			countArgs = append(countArgs, f.UserID)
+		}
+		countArgs = append(countArgs, args...)
+		countQuery := `SELECT COUNT(*) FROM series s ` + progressJoin + whereClause
+		if err := s.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -1516,7 +1557,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, f Ser
 	sortSpec := parseSeriesSearchSort(sortBy)
 	orderClause := seriesSearchOffsetOrderClause(sortSpec)
 
-	queryArgs := append([]interface{}{}, args...)
+	queryArgs := append(append([]interface{}{}, leadingArgs...), args...)
 	baseQuery += whereClause + fmt.Sprintf(` ORDER BY %s LIMIT ? OFFSET ?`, orderClause)
 	queryArgs = append(queryArgs, limit, offset)
 
@@ -1540,9 +1581,9 @@ func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, f Se
 		limit = 50
 	}
 
-	baseQuery, whereClause, args := buildSeriesSearchQuery(libraryID, f)
+	baseQuery, _, whereClause, leadingArgs, args := buildSeriesSearchQuery(libraryID, f)
 	filters := strings.TrimPrefix(whereClause, " WHERE ")
-	queryArgs := append([]interface{}{}, args...)
+	queryArgs := append(append([]interface{}{}, leadingArgs...), args...)
 
 	if cursor != "" {
 		payload, err := decodeSeriesCursor(cursor)
@@ -1932,6 +1973,9 @@ type SeriesListFilters struct {
 	MaxProgress *float64
 	// 仅保留最近 N 天内加入的系列；0 表示不限。
 	AddedWithinDays int
+	// UserID>0 时进度来源为该用户的 user_series_progress（多用户）；0 表示旧的全局 series_stats。
+	// 不计入 hasAny()——它只切换进度来源，不构成过滤条件。
+	UserID int64
 }
 
 // hasAny 报告是否存在任一筛选条件，用于决定计数是否走无筛选快路径。
@@ -1941,18 +1985,36 @@ func (f SeriesListFilters) hasAny() bool {
 		f.AddedWithinDays > 0
 }
 
-func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (string, string, []interface{}) {
-	baseQuery := `
+// buildSeriesSearchQuery 组装系列列表/搜索查询。别名约定：sc = series_stats（全局封面/标签缓存），
+// ss = 进度来源（f.UserID>0 时为该用户的 user_series_progress，否则为全局 series_stats）。
+// 返回：baseQuery（含 SELECT + FROM/JOIN）、progressJoin（ss 的 JOIN 子句，供计数查询复用）、
+// whereClause、leadingArgs（baseQuery 中 WHERE 之前出现的占位符实参，按文本顺序）、whereArgs（过滤实参）。
+func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (baseQuery, progressJoin, whereClause string, leadingArgs, whereArgs []interface{}) {
+	// last_read_page 取「最近阅读那本书」的进度：多用户从 user_book_progress，否则从全局 books。
+	var lastReadPageExpr string
+	leadingArgs = make([]interface{}, 0, 2)
+	if f.UserID > 0 {
+		lastReadPageExpr = `(SELECT ubp.last_read_page FROM user_book_progress ubp WHERE ubp.book_id = ss.last_read_book_id AND ubp.user_id = ?)`
+		leadingArgs = append(leadingArgs, f.UserID) // SELECT 子查询里的 user_id
+		progressJoin = `LEFT JOIN user_series_progress ss ON ss.series_id = s.id AND ss.user_id = ?`
+		leadingArgs = append(leadingArgs, f.UserID) // progressJoin 里的 user_id
+	} else {
+		lastReadPageExpr = `(SELECT b2.last_read_page FROM books b2 WHERE b2.id = ss.last_read_book_id)`
+		progressJoin = `LEFT JOIN series_stats ss ON ss.series_id = s.id`
+	}
+
+	baseQuery = `
 		SELECT
             s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
-            ss.cover_path,
-            COALESCE(ss.tag_names_cache, '') as tags_string,
+            sc.cover_path,
+            COALESCE(sc.tag_names_cache, '') as tags_string,
             COALESCE(ss.read_pages, 0) as read_count,
             ss.last_read_at,
             NULLIF(ss.last_read_book_id, 0) AS last_read_book_id,
-            (SELECT b2.last_read_page FROM books b2 WHERE b2.id = ss.last_read_book_id) AS last_read_page
+            ` + lastReadPageExpr + ` AS last_read_page
 		FROM series s
-		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		LEFT JOIN series_stats sc ON sc.series_id = s.id
+		` + progressJoin + `
 	`
 
 	filters := make([]string, 0, 8)
@@ -2054,11 +2116,11 @@ func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (string, strin
 		args = append(args, cutoff)
 	}
 
-	whereClause := ""
+	whereClause = ""
 	if len(filters) > 0 {
 		whereClause = " WHERE " + strings.Join(filters, " AND ")
 	}
-	return baseQuery, whereClause, args
+	return baseQuery, progressJoin, whereClause, leadingArgs, args
 }
 
 func scanSearchSeriesPagedRows(rows *sql.Rows) ([]SearchSeriesPagedRow, error) {

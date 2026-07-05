@@ -4,6 +4,25 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（完整多用户 · P0 第 3 项 · 阶段2：每用户阅读进度）
+
+> 承接阶段1（用户+会话鉴权）。本阶段把阅读进度从全局拆成按用户，并把旧全局进度迁移到第一个管理员。
+
+#### 新增
+- **每用户进度存储**：新表 `user_book_progress(user_id, book_id, last_read_page, last_read_at)` 取代全局 `books.last_read_page/last_read_at`；派生 `user_series_progress(user_id, series_id, read_pages, read_book_count, completed_book_count, last_read_at, last_read_book_id)`——等价旧 `series_stats` 的进度列但按用户拆分，`series_stats` 仅保留全局封面/标签缓存。手写 store（`user_progress.go`）：`SetUserBookProgress`/`ClearUserBookProgress`/`SetUserBooksReadState`（写进度并按 (user,series) 增量刷新）、`GetUserBookProgress(Map)`、`GetUserRecentReadAll/Series`、`GetUserReadBooksCount`、`MigrateGlobalProgressToUser`。
+- **迁移**：首个管理员在 setup 时把旧全局进度幂等迁入其名下并回填系列聚合。
+- **双路径设计**：`currentUserID(r)` 已登录返回用户 id（>0 走每用户路径），无用户返回 0（首启/单元测试/未接入会话的协议走旧全局路径，行为与既有测试完全一致）。
+- **改写路径**：单本进度、KOReader 式批量同步、批量标记已读/未读全部按当前用户写入 `user_book_progress`（节流缓存按用户键控）。
+- **读取路径**：书目响应（书详情/系列卷册/继续阅读）按当前用户叠加进度；库页列表/搜索（`buildSeriesSearchQuery` 引入 `sc`=封面缓存 / `ss`=进度来源 的别名拆分）、智能合集、看板「继续阅读」与已读书本数、阅读清单进度均按当前用户取数。
+
+#### 说明
+- 活动热力图（`reading_activity`）、书签（`reading_bookmarks`）、续读建议、全局搜索下拉的进度本阶段仍为全局，留待后续/第 6 项。KOReader/OPDS/Mihon 仍读全局进度，阶段3 接入按用户鉴权后转为每用户。
+
+#### 验证
+- 新增 `TestUserBookProgressIsolationAndAggregation`（两用户进度隔离、系列聚合、阅读状态按用户筛选、清除重算）、`TestMigrateGlobalProgressToUser`；`go build`、`go vet`、`go test ./internal/...` 全绿（既有全局路径测试不变，验证向后兼容）。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（完整多用户 · P0 第 3 项 · 阶段1：用户 + 会话鉴权）
 
 > 第 3 项「完整多用户」分三阶段推进：**阶段1 用户体系与鉴权（本次）** → 阶段2 每用户阅读进度迁移 → 阶段3 KOReader 并入 + OPDS/Mihon 按用户鉴权。

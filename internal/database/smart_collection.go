@@ -25,6 +25,8 @@ type SmartCollectionFilter struct {
 	ReadState       string
 	SortByField     string
 	SortDir         string
+	// UserID>0 时进度来源为该用户的 user_series_progress（多用户）；0 表示全局 series_stats。
+	UserID int64
 }
 
 func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error) {
@@ -39,7 +41,7 @@ func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter Smart
 	selectQuery := `
 		SELECT
 			s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
-			ss.cover_path,
+			sc.cover_path,
 			GROUP_CONCAT(DISTINCT t.name) as tags_string,
 			COALESCE(ss.read_pages, 0) as read_count
 	` + baseQuery + fmt.Sprintf(` GROUP BY s.id ORDER BY %s LIMIT ? OFFSET ?`, smartCollectionOrderClause(filter))
@@ -97,16 +99,25 @@ func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any)
 	// 改用预计算的 series_stats 缓存（每系列一行、按 series_id 主键关联），并配合 series 表的
 	// 冗余统计列（book_count / total_pages），取代此前对整个 books 表做的三重全表聚合。
 	// 由于不再有绕过 library 过滤的派生表，WHERE s.library_id = ? 能真正把查询限定在本库范围内。
+	// sc = 全局封面/标签缓存；ss = 进度来源（UserID>0 时按用户拆分）。progressJoin 的 user_id 占位符
+	// 位于 WHERE 之前，故其实参须先于 filter.LibraryID。
+	args := []any{}
+	progressJoin := "LEFT JOIN series_stats ss ON ss.series_id = s.id"
+	if filter.UserID > 0 {
+		progressJoin = "LEFT JOIN user_series_progress ss ON ss.series_id = s.id AND ss.user_id = ?"
+		args = append(args, filter.UserID)
+	}
 	query := `
 		FROM series s
-		LEFT JOIN series_stats ss ON ss.series_id = s.id
+		LEFT JOIN series_stats sc ON sc.series_id = s.id
+		` + progressJoin + `
 		LEFT JOIN series_tags st ON s.id = st.series_id
 		LEFT JOIN tags t ON st.tag_id = t.id
 		LEFT JOIN series_authors sa ON s.id = sa.series_id
 		LEFT JOIN authors a ON sa.author_id = a.id
 		WHERE s.library_id = ?
 	`
-	args := []any{filter.LibraryID}
+	args = append(args, filter.LibraryID)
 
 	if value := strings.TrimSpace(filter.ActiveLetter); value != "" {
 		query += " AND s.name_initial = ?"

@@ -912,6 +912,7 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 	if books == nil {
 		books = []database.Book{}
 	}
+	c.overlayUserProgress(ctx, c.currentUserID(r), books)
 	sortBooksForReading(books)
 	jsonResponse(w, http.StatusOK, books)
 }
@@ -930,6 +931,7 @@ func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	c.overlayUserProgressOne(ctx, c.currentUserID(r), &book)
 	jsonResponse(w, http.StatusOK, book)
 }
 
@@ -1023,8 +1025,19 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 	}
 
 	ctx := r.Context()
-	// 按系列分组：每系列一个事务，内部逐书写入后只刷新一次 series_stats，
-	// 避免走 store 包装器时每本书都隐式触发一次全系列统计重算（O(N^2) 聚合 + 逐条 autocommit）。
+	// 已登录用户走每用户进度：一次事务内标记全部书并按系列刷新 user_series_progress。
+	if uid := c.currentUserID(r); uid > 0 {
+		if err := c.store.SetUserBooksReadState(ctx, uid, req.BookIDs, req.IsRead, time.Now()); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
+			return
+		}
+		c.invalidateVolatileStatsCache("bulk_book_progress")
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk progress update completed", "updated": len(req.BookIDs)})
+		return
+	}
+
+	// 旧全局路径（首启尚无账户 / 单元测试）。按系列分组：每系列一个事务，内部逐书写入后只刷新一次
+	// series_stats，避免走 store 包装器时每本书都隐式触发一次全系列统计重算（O(N^2) 聚合 + 逐条 autocommit）。
 	booksBySeries := make(map[int64][]database.Book)
 	orderedSeries := make([]int64, 0)
 	for _, id := range req.BookIDs {
@@ -1066,7 +1079,33 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 	}
 
 	ctx := r.Context()
+	uid := c.currentUserID(r)
 	updated := 0
+	// 已登录用户：汇集所有系列的书，一次性走每用户读态写入。
+	if uid > 0 {
+		var bookIDs []int64
+		for _, seriesID := range req.SeriesIDs {
+			books, err := c.store.ListBooksBySeries(ctx, seriesID)
+			if err != nil {
+				slog.Error("Failed to load books for bulk series progress update", "series_id", seriesID, "error", err)
+				continue
+			}
+			for _, b := range books {
+				bookIDs = append(bookIDs, b.ID)
+			}
+		}
+		if err := c.store.SetUserBooksReadState(ctx, uid, bookIDs, req.IsRead, time.Now()); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
+			return
+		}
+		if len(bookIDs) > 0 {
+			c.invalidateVolatileStatsCache("bulk_series_progress")
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk series progress update completed", "updated": len(bookIDs)})
+		return
+	}
+
+	// 旧全局路径。
 	for _, seriesID := range req.SeriesIDs {
 		books, err := c.store.ListBooksBySeries(ctx, seriesID)
 		if err != nil {

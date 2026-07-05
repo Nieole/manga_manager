@@ -185,7 +185,7 @@ func (c *Controller) loadStaticCollectionSeries(ctx context.Context, collectionI
 	return view, items, view.SeriesCount, nil
 }
 
-func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter SmartFilter, limit, offset int) ([]database.SearchSeriesPagedRow, int, error) {
+func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter SmartFilter, limit, offset int, userID int64) ([]database.SearchSeriesPagedRow, int, error) {
 	if limit <= 0 {
 		limit = filter.PageSize
 	}
@@ -193,6 +193,7 @@ func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter Smart
 		offset = 0
 	}
 	return c.store.SearchSmartCollectionSeries(ctx, database.SmartCollectionFilter{
+		UserID:          userID,
 		LibraryID:       filter.LibraryID,
 		ActiveLetter:    stringValue(filter.ActiveLetter),
 		ActiveStatus:    stringValue(filter.ActiveStatus),
@@ -241,7 +242,7 @@ func (c *Controller) getSmartCollectionSeries(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, offset)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, offset, c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load smart collection series")
 		return
@@ -301,7 +302,7 @@ func (c *Controller) previewSmartCollectionSnapshot(w http.ResponseWriter, r *ht
 		}
 	}
 
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, previewLimit, 0)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, previewLimit, 0, c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to preview smart collection members")
 		return
@@ -365,7 +366,7 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 	limit := req.Limit
 	limit = normalizeSmartSnapshotLimit(limit)
 
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, 0)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, 0, c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load smart collection members")
 		return

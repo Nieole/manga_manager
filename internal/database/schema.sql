@@ -512,3 +512,44 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+-- ============================================================================
+-- 每用户阅读进度（多用户阶段2）
+-- ============================================================================
+-- user_book_progress：每个用户对每本书的阅读进度（取代旧的全局 books.last_read_page/last_read_at）。
+-- 旧全局进度在首个管理员创建时迁移到该表（见 MigrateGlobalProgressToUser）。写入路径统一走此表，
+-- 读取时按当前用户叠加到书目响应上。books.last_read_page/last_read_at 保留为迁移来源，Web 端不再据其读写。
+CREATE TABLE IF NOT EXISTS user_book_progress (
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    last_read_page INTEGER,
+    last_read_at DATETIME,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, book_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_book_progress_book ON user_book_progress(book_id);
+CREATE INDEX IF NOT EXISTS idx_user_book_progress_user_read ON user_book_progress(user_id, last_read_page) WHERE last_read_page > 0;
+CREATE INDEX IF NOT EXISTS idx_user_book_progress_user_time ON user_book_progress(user_id, last_read_at) WHERE last_read_at IS NOT NULL;
+
+-- user_series_progress：从 user_book_progress 派生的每用户 × 每系列聚合（进度条 / 已读·完成计数 /
+-- 最近阅读）。等价于旧 series_stats 的进度列，但按用户拆分；series_stats 仅保留全局的封面 / 标签缓存。
+-- 列表/搜索/智能合集/看板按当前用户 LEFT JOIN 此表取进度，写入进度后按 (user, series) 增量刷新。
+CREATE TABLE IF NOT EXISTS user_series_progress (
+    user_id INTEGER NOT NULL,
+    series_id INTEGER NOT NULL,
+    read_pages INTEGER NOT NULL DEFAULT 0,
+    read_book_count INTEGER NOT NULL DEFAULT 0,
+    completed_book_count INTEGER NOT NULL DEFAULT 0,
+    last_read_at DATETIME,
+    last_read_book_id INTEGER NOT NULL DEFAULT 0,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, series_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_series_progress_last_read ON user_series_progress(user_id, last_read_at);
+CREATE INDEX IF NOT EXISTS idx_user_series_progress_series ON user_series_progress(series_id);

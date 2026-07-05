@@ -100,6 +100,7 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		MinProgress:     parseOptionalFloat(query.Get("minProgress")),
 		MaxProgress:     parseOptionalFloat(query.Get("maxProgress")),
 		AddedWithinDays: parseNonNegativeInt(query.Get("addedWithinDays")),
+		UserID:          c.currentUserID(r),
 	}
 
 	if cursor != "" {
@@ -171,13 +172,16 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 	}
 
 	ctx := r.Context()
-	arg := database.GetRecentReadSeriesParams{
-		LibraryID:   libID,
-		LibraryID_2: libID,
-		Limit:       limit,
+	var items []database.GetRecentReadSeriesRow
+	if uid := c.currentUserID(r); uid > 0 {
+		items, err = c.store.GetUserRecentReadSeries(ctx, uid, libID, limit)
+	} else {
+		items, err = c.store.GetRecentReadSeries(ctx, database.GetRecentReadSeriesParams{
+			LibraryID:   libID,
+			LibraryID_2: libID,
+			Limit:       limit,
+		})
 	}
-
-	items, err := c.store.GetRecentReadSeries(ctx, arg)
 	if err != nil {
 		slog.Error("GetRecentReadSeries Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent read series")
@@ -472,6 +476,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		books = []database.Book{}
 	}
 	sortBooksForReading(books)
+	c.overlayUserProgress(ctx, c.currentUserID(r), books)
 
 	// 3. 标签
 	tags, err := c.store.GetTagsForSeries(ctx, seriesID)
@@ -562,6 +567,7 @@ func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 	sortBooksForReading(books)
+	c.overlayUserProgress(ctx, c.currentUserID(r), books)
 	jsonResponse(w, http.StatusOK, buildSeriesContinue(books))
 }
 
