@@ -67,11 +67,13 @@ func FingerprintQuickFile(path string) (string, error) {
 	}
 
 	buf := make([]byte, chunkSize)
-	if _, err := io.ReadFull(f, buf); err != nil {
+	if n, err := io.ReadFull(f, buf); err != nil {
 		if !errors.Is(err, io.ErrUnexpectedEOF) && err != io.EOF {
 			return "", err
 		}
-		buf = buf[:maxInt(0, int(info.Size()))]
+		// 短读时按「实际读到的字节数 n」重切，绝不越界。此前用 info.Size() 重切，若文件在 Stat 之后被截短
+		// （info.Size() 比缓冲区容量还大），buf[:info.Size()] 会触发 slice 越界 panic。
+		buf = buf[:n]
 	}
 	if len(buf) > 0 {
 		if _, err := h.Write(buf); err != nil {

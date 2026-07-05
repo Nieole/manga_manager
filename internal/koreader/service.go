@@ -593,7 +593,14 @@ func (s *Service) applyBookProgress(ctx context.Context, match database.KOReader
 	}); err != nil {
 		return err
 	}
-	return s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page})
+	// 全局活动始终记；已关联站点用户时同时记每用户活动，使 KOReader 阅读也计入连续天数/热力图/年度回顾。
+	if err := s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page}); err != nil {
+		return err
+	}
+	if userID > 0 {
+		return s.store.LogUserReadingActivity(ctx, userID, match.BookID, page)
+	}
+	return nil
 }
 
 func nullableInt64Ptr(v sql.NullInt64) *int64 {

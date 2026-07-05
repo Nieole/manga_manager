@@ -161,7 +161,9 @@ func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any)
 	case "reading":
 		query += " AND COALESCE(ss.read_book_count, 0) > 0 AND COALESCE(ss.completed_book_count, 0) < s.book_count"
 	case "completed":
-		query += " AND s.book_count > 0 AND COALESCE(ss.completed_book_count, 0) = s.book_count"
+		// 用 >= 与常规库列表(buildSeriesSearchQuery)、续读续集查询保持一致——completed_book_count 可能因
+		// 统计口径短暂 > book_count，用 = 会漏掉这些其实已读完的系列。
+		query += " AND s.book_count > 0 AND COALESCE(ss.completed_book_count, 0) >= s.book_count"
 	}
 	return query, args
 }

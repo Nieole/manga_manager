@@ -299,11 +299,7 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
     return { synced: 0, failed: 0, remaining: 0 };
   }
 
-  const payload = entries.map(([, item]) => ({
-    book_id: Number(item.bookId),
-    page: item.page,
-    updated_at: item.updatedAt,
-  })).filter((row) => Number.isFinite(row.book_id) && row.book_id > 0);
+  const payload = buildBulkSyncItems(entries.map(([, item]) => item));
 
   let synced = 0;
   let failed = 0;
@@ -316,23 +312,25 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
       body: JSON.stringify({ items: payload }),
     });
     if (response.ok) {
-      bulkOk = true;
       const data = await response.json().catch(() => null) as { results?: Array<{ book_id: number; status: string }> } | null;
       const results = data?.results ?? [];
-      const successStatuses = new Set(['updated', 'skipped_stale', 'skipped_unchanged']);
-      const successIds = new Set<number>();
-      for (const row of results) {
-        if (successStatuses.has(row.status)) {
-          successIds.add(Number(row.book_id));
+      // 仅当确实拿到逐条结果时才据此增删队列。结果为空（响应解析失败/异常返回）不能证明服务端已处理，
+      // 此时不删队列、bulkOk 保持 false，改走逐本回退——避免把未落库的离线进度误当已同步而丢弃。
+      if (results.length > 0) {
+        bulkOk = true;
+        const successIds = new Set<number>();
+        for (const row of results) {
+          if (SYNC_SUCCESS_STATUSES.has(row.status)) {
+            successIds.add(Number(row.book_id));
+          }
         }
-      }
-      for (const [bookId, item] of entries) {
-        const id = Number(item.bookId);
-        if (results.length === 0 || successIds.has(id)) {
-          delete progress[bookId];
-          synced += 1;
-        } else {
-          failed += 1;
+        for (const [bookId, item] of entries) {
+          if (successIds.has(Number(item.bookId))) {
+            delete progress[bookId];
+            synced += 1;
+          } else {
+            failed += 1;
+          }
         }
       }
     }
@@ -348,7 +346,9 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
         const response = await fetch(`/api/books/${bookId}/progress`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ page: item.page }),
+          // 带上 updated_at，让单本端点也能做「服务端已有更新进度则跳过」的陈旧判定，
+          // 否则 bulk 端点不可用时逐本回退会把服务端较新的跨设备进度覆盖回退。
+          body: JSON.stringify(buildFallbackProgressBody(item)),
         });
         if (response.ok) {
           delete progress[bookId];
@@ -364,4 +364,19 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
 
   writeQueuedProgress(progress);
   return { synced, failed, remaining: Object.keys(progress).length };
+}
+
+// 冲突解决中视为「已同步、可从队列移除」的服务端状态。
+export const SYNC_SUCCESS_STATUSES = new Set(['updated', 'skipped_stale', 'skipped_unchanged']);
+
+// buildBulkSyncItems 把队列项映射为 bulk 同步请求体（过滤非法 book_id），携带 updated_at 供服务端做陈旧判定。
+export function buildBulkSyncItems(items: QueuedProgress[]) {
+  return items
+    .map((item) => ({ book_id: Number(item.bookId), page: item.page, updated_at: item.updatedAt }))
+    .filter((row) => Number.isFinite(row.book_id) && row.book_id > 0);
+}
+
+// buildFallbackProgressBody 逐本回退请求体——必须带 updated_at，否则单本端点无从判定陈旧、会覆盖较新进度。
+export function buildFallbackProgressBody(item: QueuedProgress) {
+  return { page: item.page, updated_at: item.updatedAt };
 }

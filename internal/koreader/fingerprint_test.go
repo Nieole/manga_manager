@@ -34,3 +34,33 @@ func TestFingerprintQuickFileChangesWithTailContent(t *testing.T) {
 		t.Fatal("expected different quick fingerprints for different file content")
 	}
 }
+
+// TestFingerprintQuickFileSmallFiles 覆盖短读重切路径（文件小于块大小）：空/极小文件必须不 panic 且结果稳定。
+// 回归保护：短读曾用 buf[:info.Size()] 重切，文件被截短时会 slice 越界 panic；现按实际读到的字节数重切。
+func TestFingerprintQuickFileSmallFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"empty", []byte{}},
+		{"one", []byte("x")},
+		{"tiny", []byte("abcdef")},
+	} {
+		p := filepath.Join(dir, tc.name+".bin")
+		if err := os.WriteFile(p, tc.data, 0o644); err != nil {
+			t.Fatalf("%s write: %v", tc.name, err)
+		}
+		h1, err := FingerprintQuickFile(p)
+		if err != nil {
+			t.Fatalf("%s fingerprint: %v", tc.name, err)
+		}
+		h2, err := FingerprintQuickFile(p)
+		if err != nil {
+			t.Fatalf("%s fingerprint retry: %v", tc.name, err)
+		}
+		if h1 == "" || h1 != h2 {
+			t.Fatalf("%s: expected stable non-empty hash, got %q / %q", tc.name, h1, h2)
+		}
+	}
+}

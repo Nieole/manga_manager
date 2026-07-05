@@ -81,6 +81,9 @@ func sortBooksForReading(books []database.Book) {
 
 type UpdateProgressRequest struct {
 	Page int64 `json:"page"`
+	// UpdatedAt 可选：离线队列逐本回退时携带本地记录时间，服务端据此做「已有更新进度则跳过」的陈旧判定，
+	// 与 bulk 同步端点口径一致，避免回退覆盖较新的跨设备进度。不带时按顺序覆盖（历史行为不变）。
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 const progressWriteThrottleWindow = 2 * time.Second
@@ -134,6 +137,11 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 
 	// 取当前用户对本书的既有进度（uid==0 时退回全局 books 列，保持旧行为与既有测试）。
 	previousPage, previousAt := c.bookProgressFor(ctx, uid, book)
+	// 陈旧判定：客户端带了 updated_at 且早于服务端已记录时间，说明本地进度更旧，跳过（与 bulk 同步一致）。
+	if req.UpdatedAt != nil && previousAt.Valid && req.UpdatedAt.Before(previousAt.Time) {
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
+		return
+	}
 	if previousAt.Valid && previousPage == validPage && time.Since(previousAt.Time) < progressWriteThrottleWindow {
 		if c.progressWriteCache != nil {
 			c.progressWriteCache.Add(bookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: time.Now()})
