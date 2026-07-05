@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（标签管理：重命名 / 合并 / 删除 · P1 第 5 项之二）
+
+#### 新增
+- 设置新增「标签管理」页(`/settings/tags`)：跨全库列出标签(带系列计数)、搜索，并支持**重命名 / 合并 / 删除**——都是影响多个系列的操作，删除走二次确认。
+- 后端手写 store 方法:`RenameTag`(重名触发 UNIQUE 冲突→前端提示改用合并)、`MergeTags`(迁移 `series_tags` 关联后删源标签)、`DeleteTag`(级联清理 `series_tags`);三者均在操作后刷新受影响系列的派生统计(`tag_names_cache` 等)。端点 `PATCH /api/tags/{id}`、`POST /api/tags/{id}/merge`、`DELETE /api/tags/{id}`;重名冲突文案经 `apiText` 本地化(`tag.rename.conflict`)。
+- 前端 `SettingsTagsPage`(内联改名、合并目标 datalist、`ConfirmDialog` 删除);`Settings`/`SettingsContext`/`App` 的 section 类型与路由同步新增 `tags`。
+
+#### 验证
+- 新增 `TestTagManagement`(改名生效、合并后仅剩目标且源被删、删除后系列无标签);`go build`、`go test ./internal/api ./internal/database` 全绿;前端 `npm run lint`(0)、`npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（批量编辑多个系列 · P1 第 5 项之一）
 
 #### 新增

@@ -539,6 +539,61 @@ func TestBulkEditSeries(t *testing.T) {
 	}
 }
 
+// TestTagManagement 覆盖标签重命名 / 合并 / 删除。
+func TestTagManagement(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{Name: "Main", Path: filepath.Join(t.TempDir(), "lib"), ScanMode: "none", ScanInterval: 60, ScanFormats: "cbz"})
+	if err != nil {
+		t.Fatalf("create lib: %v", err)
+	}
+	sr, err := store.CreateSeries(ctx, CreateSeriesParams{LibraryID: lib.ID, Name: "Alpha", Path: filepath.Join(lib.Path, "Alpha"), NameInitial: "A"})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	tagA, _ := store.UpsertTag(ctx, "Actn")
+	tagB, _ := store.UpsertTag(ctx, "Comedy")
+	_ = store.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: sr.ID, TagID: tagA.ID})
+	_ = store.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: sr.ID, TagID: tagB.ID})
+
+	// 重命名 Actn → Action。
+	if err := store.RenameTag(ctx, tagA.ID, "Action"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	tags, _ := store.GetTagsForSeries(ctx, sr.ID)
+	names := map[string]bool{}
+	for _, tg := range tags {
+		names[tg.Name] = true
+	}
+	if !names["Action"] || names["Actn"] {
+		t.Fatalf("rename not applied: %+v", tags)
+	}
+
+	// 合并 Comedy → Action，系列应只剩 Action。
+	if err := store.MergeTags(ctx, tagB.ID, tagA.ID); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	tags, _ = store.GetTagsForSeries(ctx, sr.ID)
+	if len(tags) != 1 || tags[0].Name != "Action" {
+		t.Fatalf("merge result unexpected: %+v", tags)
+	}
+	all, _ := store.GetAllTags(ctx)
+	for _, tg := range all {
+		if tg.ID == tagB.ID {
+			t.Fatalf("merged source tag should be deleted, still present: %+v", tg)
+		}
+	}
+
+	// 删除 Action，系列应无标签。
+	if err := store.DeleteTag(ctx, tagA.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	tags, _ = store.GetTagsForSeries(ctx, sr.ID)
+	if len(tags) != 0 {
+		t.Fatalf("expected no tags after delete, got %+v", tags)
+	}
+}
+
 func TestSearchSeriesCursorSupportsKeysetSorts(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreForTest(t)

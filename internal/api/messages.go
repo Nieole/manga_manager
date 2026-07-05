@@ -37,6 +37,8 @@ var apiMessages = map[string]map[string]string{
 
 		"comicinfo.write.unsupported": "该格式不支持写入元数据（仅 cbz/zip 可写，rar/cbr 会跳过）。",
 		"comicinfo.write.failed":      "写入 ComicInfo 到归档失败。",
+
+		"tag.rename.conflict": "已存在同名标签，请改用「合并」。",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -67,6 +69,8 @@ var apiMessages = map[string]map[string]string{
 
 		"comicinfo.write.unsupported": "This format cannot embed metadata (only cbz/zip are writable; rar/cbr are skipped).",
 		"comicinfo.write.failed":      "Failed to write ComicInfo into the archive.",
+
+		"tag.rename.conflict": "A tag with that name already exists — use Merge instead.",
 	},
 }
 

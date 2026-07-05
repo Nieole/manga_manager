@@ -203,7 +203,7 @@ export interface KOReaderDeviceConflictItem {
   suggestion: string;
 }
 
-type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'maintenance';
+type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'maintenance';
 
 interface SettingsContextValue {
   config: Config | null;
@@ -268,7 +268,7 @@ function buildKOReaderForm(
   };
 }
 
-function pickSectionSnapshot(config: Config, section: Exclude<SettingsSectionKey, 'overview' | 'appearance' | 'koreader' | 'connections' | 'maintenance'>) {
+function pickSectionSnapshot(config: Config, section: Exclude<SettingsSectionKey, 'overview' | 'appearance' | 'koreader' | 'connections' | 'tags' | 'maintenance'>) {
   switch (section) {
     case 'library':
       return {
@@ -618,7 +618,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const hasSectionChanges = useCallback(
     (section: SettingsSectionKey) => {
-      if (section === 'overview' || section === 'appearance' || section === 'connections' || section === 'maintenance') return false;
+      if (section === 'overview' || section === 'appearance' || section === 'connections' || section === 'tags' || section === 'maintenance') return false;
       if (section === 'koreader') {
         return JSON.stringify(koreaderForm) !== JSON.stringify(initialKOReaderForm);
       }

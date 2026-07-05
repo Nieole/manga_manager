@@ -48,6 +48,9 @@ type Store interface {
 	SearchTags(ctx context.Context, query string, limit int) ([]Tag, error)
 	SearchAuthors(ctx context.Context, query string, limit int) ([]Author, error)
 	BulkEditSeries(ctx context.Context, seriesIDs []int64, edit BulkSeriesEdit) error
+	RenameTag(ctx context.Context, tagID int64, newName string) error
+	MergeTags(ctx context.Context, sourceID, targetID int64) error
+	DeleteTag(ctx context.Context, tagID int64) error
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
@@ -291,6 +294,92 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error {
 	_, err := s.db.ExecContext(ctx, refreshSeriesStatsStatement("s.id = ?"), seriesID)
 	return err
+}
+
+// seriesIDsForTag 返回关联了指定标签的所有系列 ID，用于在标签改名/合并/删除后刷新派生统计。
+func (s *SqlStore) seriesIDsForTag(ctx context.Context, tagID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT series_id FROM series_tags WHERE tag_id = ?`, tagID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *SqlStore) refreshSeriesStatsBatch(ctx context.Context, seriesIDs []int64) {
+	for _, sid := range seriesIDs {
+		if err := s.RefreshSeriesStats(ctx, sid); err != nil {
+			slog.Warn("refresh series stats failed", "series_id", sid, "error", err)
+		}
+	}
+}
+
+// RenameTag 重命名标签。若新名与已有标签重名会因 UNIQUE 约束返回错误——调用方应转而合并。
+func (s *SqlStore) RenameTag(ctx context.Context, tagID int64, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return fmt.Errorf("tag name cannot be empty")
+	}
+	affected, err := s.seriesIDsForTag(ctx, tagID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE tags SET name = ? WHERE id = ?`, newName, tagID); err != nil {
+		return err
+	}
+	s.refreshSeriesStatsBatch(ctx, affected)
+	return nil
+}
+
+// MergeTags 把 sourceID 标签的所有系列关联迁移到 targetID，然后删除 source 标签。
+func (s *SqlStore) MergeTags(ctx context.Context, sourceID, targetID int64) error {
+	if sourceID == targetID {
+		return nil
+	}
+	affected, err := s.seriesIDsForTag(ctx, sourceID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO series_tags (series_id, tag_id) SELECT series_id, ? FROM series_tags WHERE tag_id = ?`, targetID, sourceID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM series_tags WHERE tag_id = ?`, sourceID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE id = ?`, sourceID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.refreshSeriesStatsBatch(ctx, affected)
+	return nil
+}
+
+// DeleteTag 删除标签（series_tags 经 ON DELETE CASCADE 一并清理），并刷新受影响系列统计。
+func (s *SqlStore) DeleteTag(ctx context.Context, tagID int64) error {
+	affected, err := s.seriesIDsForTag(ctx, tagID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM tags WHERE id = ?`, tagID); err != nil {
+		return err
+	}
+	s.refreshSeriesStatsBatch(ctx, affected)
+	return nil
 }
 
 // BulkSeriesEdit 描述对一批系列的增量元数据编辑；nil / 空表示该维度不改。

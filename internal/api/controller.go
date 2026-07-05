@@ -735,6 +735,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Route("/tags", func(r chi.Router) {
 			r.Get("/all", c.getAllTags)
 			r.Get("/search", c.searchTags)
+			r.Patch("/{tagId}", c.renameTag)
+			r.Post("/{tagId}/merge", c.mergeTag)
+			r.Delete("/{tagId}", c.deleteTag)
 		})
 
 		r.Route("/authors", func(r chi.Router) {

@@ -6,12 +6,12 @@
 
 import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Outlet, UNSAFE_NavigationContext, useLocation, useNavigate } from 'react-router-dom';
-import { AlertTriangle, FolderOpen, HardDrive, LayoutDashboard, Link2, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Wrench } from 'lucide-react';
+import { AlertTriangle, FolderOpen, HardDrive, LayoutDashboard, Link2, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Tags, Wrench } from 'lucide-react';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
 import { SettingsProvider, useSettings } from './settings/SettingsContext';
 
-type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'maintenance';
+type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'maintenance';
 
 function getSectionKey(pathname: string): SettingsSectionKey {
   if (pathname.startsWith('/settings/appearance')) return 'appearance';
@@ -20,6 +20,7 @@ function getSectionKey(pathname: string): SettingsSectionKey {
   if (pathname.startsWith('/settings/ai')) return 'ai';
   if (pathname.startsWith('/settings/koreader')) return 'koreader';
   if (pathname.startsWith('/settings/connections')) return 'connections';
+  if (pathname.startsWith('/settings/tags')) return 'tags';
   if (pathname.startsWith('/settings/maintenance')) return 'maintenance';
   return 'overview';
 }
@@ -76,6 +77,7 @@ function SettingsLayoutInner() {
     { key: 'ai', label: t('settings.nav.ai'), path: '/settings/ai', icon: <Sparkles className="h-4 w-4" /> },
     { key: 'koreader', label: 'KOReader', path: '/settings/koreader', icon: <TabletSmartphone className="h-4 w-4" /> },
     { key: 'connections', label: t('settings.nav.connections'), path: '/settings/connections', icon: <Link2 className="h-4 w-4" /> },
+    { key: 'tags', label: t('settings.nav.tags'), path: '/settings/tags', icon: <Tags className="h-4 w-4" /> },
     { key: 'maintenance', label: t('settings.nav.maintenance'), path: '/settings/maintenance', icon: <Wrench className="h-4 w-4" /> },
   ], [t]);
 
