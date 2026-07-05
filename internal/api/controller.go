@@ -698,6 +698,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/metadata/reviews/{reviewId}/reject", c.rejectMetadataReview)
 		r.Route("/series", func(r chi.Router) {
 			r.Post("/bulk-update", c.bulkUpdateSeries)
+			r.Post("/bulk-edit", c.bulkEditSeries)
 			r.Post("/bulk-progress", c.bulkUpdateSeriesProgress)
 			r.Get("/search", c.searchSeriesPaged)
 			r.Get("/recent-read", c.getRecentReadSeries)
@@ -967,6 +968,42 @@ func (c *Controller) bulkUpdateSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "Bulk update completed"})
+}
+
+// BulkEditSeriesRequest 批量增量编辑多个系列的元数据；未提供的字段（nil/空）不改。
+type BulkEditSeriesRequest struct {
+	SeriesIDs  []int64  `json:"series_ids"`
+	AddTags    []string `json:"add_tags"`
+	RemoveTags []string `json:"remove_tags"`
+	Status     *string  `json:"status"`
+	Publisher  *string  `json:"publisher"`
+}
+
+func (c *Controller) bulkEditSeries(w http.ResponseWriter, r *http.Request) {
+	var req BulkEditSeriesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if len(req.SeriesIDs) == 0 {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"updated": 0})
+		return
+	}
+
+	err := c.store.BulkEditSeries(r.Context(), req.SeriesIDs, database.BulkSeriesEdit{
+		AddTags:    req.AddTags,
+		RemoveTags: req.RemoveTags,
+		Status:     req.Status,
+		Publisher:  req.Publisher,
+	})
+	if err != nil {
+		slog.Error("Failed to bulk edit series", "count", len(req.SeriesIDs), "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to bulk edit series")
+		return
+	}
+
+	c.invalidateDashboardStatsCache("bulk_edit")
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"updated": len(req.SeriesIDs)})
 }
 
 type BulkUpdateBookProgressRequest struct {

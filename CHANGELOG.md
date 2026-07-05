@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（批量编辑多个系列 · P1 第 5 项之一）
+
+#### 新增
+- 资料库多选后新增「批量编辑」：一次对多个系列**增量**改元数据 —— 添加标签 / 移除标签 / 设置状态 / 设置出版社（留空即不改）。与单系列编辑的"全量替换"不同，标签是增量增删。
+- 后端新增手写事务方法 `BulkEditSeries`（`store.go`）：单事务内更新 status/publisher、UpsertTag+Link 增标签、按名解绑删标签，再逐个 `RefreshSeriesStats` 刷新派生统计（tag_names_cache 等）；`tags.series_count` 由既有触发器维护。端点 `POST /api/series/bulk-edit`（`BulkEditSeriesRequest`，字段用指针/空表达"不改"）。
+- 前端新增 `BulkEditSeriesModal`（标签 chip 输入 + `/api/tags/all` 补全 datalist、状态下拉、出版社），接入 `LibrarySelectionBar` 的「批量编辑」动作，成功后刷新当前页。
+
+#### 验证
+- 新增 `TestBulkEditSeries`（加/删标签、改状态、多系列一致）；`go build`、`go test ./internal/api ./internal/database` 全绿；前端 `npm run lint`（0）、`npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（新增刮削源：AniList / MangaDex / MyAnimeList / Comic Vine · P0 第 2 项）
 
 #### 新增

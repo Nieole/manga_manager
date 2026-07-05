@@ -47,6 +47,7 @@ type Store interface {
 	ListProtocolSeriesByIDs(ctx context.Context, ids []int64) ([]ProtocolSeriesRow, error)
 	SearchTags(ctx context.Context, query string, limit int) ([]Tag, error)
 	SearchAuthors(ctx context.Context, query string, limit int) ([]Author, error)
+	BulkEditSeries(ctx context.Context, seriesIDs []int64, edit BulkSeriesEdit) error
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
@@ -290,6 +291,94 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error {
 	_, err := s.db.ExecContext(ctx, refreshSeriesStatsStatement("s.id = ?"), seriesID)
 	return err
+}
+
+// BulkSeriesEdit 描述对一批系列的增量元数据编辑；nil / 空表示该维度不改。
+// 与 updateSeriesInfo 的“全量替换”不同，这里 AddTags/RemoveTags 是增量语义，适合多选批量。
+type BulkSeriesEdit struct {
+	AddTags    []string
+	RemoveTags []string
+	Status     *string
+	Publisher  *string
+}
+
+func sqlInClause(ids []int64) (string, []interface{}) {
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+// BulkEditSeries 在单个事务内对选中系列做增量元数据编辑，随后刷新受影响系列的派生统计。
+func (s *SqlStore) BulkEditSeries(ctx context.Context, seriesIDs []int64, edit BulkSeriesEdit) error {
+	if len(seriesIDs) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // Commit 之后的 Rollback 返回 ErrTxDone，无害
+
+	q := s.Queries.WithTx(tx)
+	inPlaceholders, inArgs := sqlInClause(seriesIDs)
+
+	if edit.Status != nil {
+		args := append([]interface{}{*edit.Status}, inArgs...)
+		if _, err := tx.ExecContext(ctx, `UPDATE series SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+inPlaceholders+`)`, args...); err != nil {
+			return err
+		}
+	}
+	if edit.Publisher != nil {
+		args := append([]interface{}{*edit.Publisher}, inArgs...)
+		if _, err := tx.ExecContext(ctx, `UPDATE series SET publisher = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+inPlaceholders+`)`, args...); err != nil {
+			return err
+		}
+	}
+
+	for _, name := range edit.AddTags {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		tag, err := q.UpsertTag(ctx, name)
+		if err != nil {
+			return err
+		}
+		for _, sid := range seriesIDs {
+			if err := q.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: sid, TagID: tag.ID}); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, name := range edit.RemoveTags {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		args := append(append([]interface{}{}, inArgs...), name)
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM series_tags WHERE series_id IN (`+inPlaceholders+`) AND tag_id IN (SELECT id FROM tags WHERE name = ?)`,
+			args...); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// 刷新派生统计（tag_names_cache / author_names_cache 等）；单个失败不影响整体。
+	for _, sid := range seriesIDs {
+		if err := s.RefreshSeriesStats(ctx, sid); err != nil {
+			slog.Warn("refresh series stats after bulk edit failed", "series_id", sid, "error", err)
+		}
+	}
+	return nil
 }
 
 func (s *SqlStore) GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error) {

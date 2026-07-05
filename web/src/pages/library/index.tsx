@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 
 import AddToCollectionModal from '../../components/AddToCollectionModal';
+import BulkEditSeriesModal from '../../components/BulkEditSeriesModal';
 import { useToast } from '../../components/ToastProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
 
@@ -93,6 +94,7 @@ export default function LibraryPage() {
 
   const [externalDrawerOpen, setExternalDrawerOpen] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null!);
 
   // 防抖：输入停止 300ms 后才更新 keyword 触发后端查询
@@ -422,6 +424,7 @@ export default function LibraryPage() {
         onMarkFavorite={() => selection.bulkFavorite(true)}
         onUnmarkFavorite={() => selection.bulkFavorite(false)}
         onAddToCollection={() => setShowCollectionModal(true)}
+        onBulkEdit={() => setShowBulkEditModal(true)}
         onMarkRead={() => selection.bulkProgress(true)}
         onMarkUnread={() => selection.bulkProgress(false)}
         onTransfer={transfer.requestTransfer}
@@ -458,6 +461,19 @@ export default function LibraryPage() {
           onSuccess={() => {
             showToast(t('home.selection.addToCollectionSuccess', { count: selection.selectedSeries.length }), 'success');
             selection.clearSelection();
+          }}
+        />
+      )}
+
+      {showBulkEditModal && selection.selectedSeries.length > 0 && (
+        <BulkEditSeriesModal
+          seriesIds={selection.selectedSeries}
+          onClose={() => setShowBulkEditModal(false)}
+          onError={(msg) => showToast(msg, 'error')}
+          onSuccess={(updated) => {
+            showToast(t('bulkEdit.success', { count: updated }), 'success');
+            selection.clearSelection();
+            refetchCurrentPage();
           }}
         />
       )}

@@ -4,7 +4,7 @@
  * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
  */
 
-import { CheckCircle2, FolderHeart, Heart, Loader2, RefreshCw, Send } from 'lucide-react';
+import { CheckCircle2, FolderHeart, Heart, Loader2, RefreshCw, Send, Tags } from 'lucide-react';
 import { SelectionBar, type SelectionBarAction } from '../../components/ui/SelectionBar';
 import { useI18n } from '../../i18n/LocaleProvider';
 
@@ -18,6 +18,7 @@ interface LibrarySelectionBarProps {
   onMarkFavorite: () => void;
   onUnmarkFavorite: () => void;
   onAddToCollection: () => void;
+  onBulkEdit: () => void;
   onMarkRead: () => void;
   onMarkUnread: () => void;
   onTransfer: () => void;
@@ -33,6 +34,7 @@ export function LibrarySelectionBar({
   onMarkFavorite,
   onUnmarkFavorite,
   onAddToCollection,
+  onBulkEdit,
   onMarkRead,
   onMarkUnread,
   onTransfer,
@@ -67,6 +69,13 @@ export function LibrarySelectionBar({
       icon: <FolderHeart className="w-4 h-4" />,
       label: t('home.selection.addToCollection'),
       onClick: onAddToCollection,
+    },
+    {
+      key: 'bulk-edit',
+      variant: 'primary',
+      icon: <Tags className="w-4 h-4" />,
+      label: t('home.selection.bulkEdit'),
+      onClick: onBulkEdit,
     },
     {
       key: 'read',

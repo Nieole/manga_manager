@@ -488,6 +488,57 @@ func TestSearchSeriesPagedAdvancedFilters(t *testing.T) {
 	}
 }
 
+// TestBulkEditSeries 覆盖批量增量编辑：加/删标签、改状态、多系列一致生效。
+func TestBulkEditSeries(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{Name: "Main", Path: filepath.Join(t.TempDir(), "lib"), ScanMode: "none", ScanInterval: 60, ScanFormats: "cbz"})
+	if err != nil {
+		t.Fatalf("create lib: %v", err)
+	}
+	s1, err := store.CreateSeries(ctx, CreateSeriesParams{LibraryID: lib.ID, Name: "Alpha", Path: filepath.Join(lib.Path, "Alpha"), NameInitial: "A"})
+	if err != nil {
+		t.Fatalf("create s1: %v", err)
+	}
+	s2, err := store.CreateSeries(ctx, CreateSeriesParams{LibraryID: lib.ID, Name: "Beta", Path: filepath.Join(lib.Path, "Beta"), NameInitial: "B"})
+	if err != nil {
+		t.Fatalf("create s2: %v", err)
+	}
+
+	status := "completed"
+	if err := store.BulkEditSeries(ctx, []int64{s1.ID, s2.ID}, BulkSeriesEdit{AddTags: []string{"Action", "Drama"}, Status: &status}); err != nil {
+		t.Fatalf("bulk add: %v", err)
+	}
+	for _, id := range []int64{s1.ID, s2.ID} {
+		tags, err := store.GetTagsForSeries(ctx, id)
+		if err != nil {
+			t.Fatalf("get tags: %v", err)
+		}
+		if len(tags) != 2 {
+			t.Fatalf("series %d expected 2 tags, got %d", id, len(tags))
+		}
+		got, err := store.GetSeries(ctx, id)
+		if err != nil {
+			t.Fatalf("get series: %v", err)
+		}
+		if got.Status.String != "completed" {
+			t.Fatalf("series %d expected status completed, got %q", id, got.Status.String)
+		}
+	}
+
+	// 移除一个标签，只剩一个。
+	if err := store.BulkEditSeries(ctx, []int64{s1.ID, s2.ID}, BulkSeriesEdit{RemoveTags: []string{"Action"}}); err != nil {
+		t.Fatalf("bulk remove: %v", err)
+	}
+	tags, err := store.GetTagsForSeries(ctx, s1.ID)
+	if err != nil {
+		t.Fatalf("get tags after remove: %v", err)
+	}
+	if len(tags) != 1 || tags[0].Name != "Drama" {
+		t.Fatalf("expected only Drama tag, got %+v", tags)
+	}
+}
+
 func TestSearchSeriesCursorSupportsKeysetSorts(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreForTest(t)
