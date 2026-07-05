@@ -26,6 +26,18 @@ describe('getPagedImages', () => {
   it('double-page on the last page returns only the current page (no partner)', () => {
     expect(getPagedImages(pages, 3, true, 'ltr')).toEqual([page(4)])
   })
+
+  it('double-page rtl on the last page still returns only the current page', () => {
+    expect(getPagedImages(pages, 3, true, 'rtl')).toEqual([page(4)])
+  })
+
+  it('double-page rtl in the middle swaps the pair order', () => {
+    expect(getPagedImages(pages, 2, true, 'rtl')).toEqual([page(4), page(3)])
+  })
+
+  it('single-page mode returns the last page unchanged', () => {
+    expect(getPagedImages(pages, 3, false, 'rtl')).toEqual([page(4)])
+  })
 })
 
 describe('getScaleClasses', () => {
@@ -48,6 +60,24 @@ describe('getScaleClasses', () => {
     expect(getScaleClasses('fit-height', true, '')).toContain('max-w-[50vw]')
     expect(getScaleClasses('fit-screen', true, '')).toContain('max-w-[50vw]')
   })
+
+  it('single-page fit-screen fills the viewport without the half-width cap', () => {
+    const out = getScaleClasses('fit-screen', false, '')
+    expect(out).toContain('w-full h-full object-contain')
+    expect(out).not.toContain('max-w-[50vw]')
+  })
+
+  it('single-page fit-height lets width run free (no half-width cap)', () => {
+    const out = getScaleClasses('fit-height', false, '')
+    expect(out).toContain('h-full w-auto object-contain max-w-none')
+    expect(out).not.toContain('max-w-[50vw]')
+  })
+
+  it('original mode ignores double-page and never caps size', () => {
+    const out = getScaleClasses('original', true, '')
+    expect(out).toContain('w-auto h-auto max-w-none max-h-none')
+    expect(out).not.toContain('max-w-[50vw]')
+  })
 })
 
 describe('getFilterStyle', () => {
@@ -61,7 +91,9 @@ describe('getFilterStyle', () => {
   })
 
   it('high-quality resamplers map to high-quality rendering', () => {
-    const filters: ImageFilter[] = ['bicubic', 'lanczos3', 'waifu2x', 'realcugan', 'mitchell', 'lanczos2']
+    const filters: ImageFilter[] = [
+      'bicubic', 'lanczos3', 'waifu2x', 'realcugan', 'mitchell', 'lanczos2', 'bspline', 'catmullrom',
+    ]
     for (const f of filters) {
       expect(getFilterStyle(f)).toEqual({ imageRendering: 'high-quality' })
     }
@@ -69,5 +101,7 @@ describe('getFilterStyle', () => {
 
   it('none/unknown yields an empty style object', () => {
     expect(getFilterStyle('none')).toEqual({})
+    // 未知/越界的滤镜值走 default 分支，返回空样式。
+    expect(getFilterStyle('mystery' as ImageFilter)).toEqual({})
   })
 })

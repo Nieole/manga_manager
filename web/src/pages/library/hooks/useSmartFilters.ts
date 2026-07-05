@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../../api/client';
 import { DEFAULT_PAGE_SIZE, type SavedSmartFilter } from '../types';
+import { normalizeRemoteSmartFilter } from './smartFilterNormalize';
 
 interface UseSmartFiltersParams {
   libId: string | undefined;
@@ -85,21 +86,6 @@ function writeCachedSmartFilters(libraryId: string, items: SavedSmartFilter[]) {
   } catch {
     // 配额或隐私模式下写入失败不影响 UI
   }
-}
-
-function normalizeRemoteSmartFilter(item: SavedSmartFilter): SavedSmartFilter {
-  return {
-    ...item,
-    id: String(item.id),
-    activeTag: item.activeTag ?? null,
-    activeAuthor: item.activeAuthor ?? null,
-    activeStatus: item.activeStatus ?? null,
-    activeLetter: item.activeLetter ?? null,
-    sortByField: item.sortByField || 'name',
-    sortDir: item.sortDir || 'asc',
-    pageSize: item.pageSize || DEFAULT_PAGE_SIZE,
-    createdAt: item.createdAt || new Date().toISOString(),
-  };
 }
 
 export function useSmartFilters({

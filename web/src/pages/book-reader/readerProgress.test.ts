@@ -26,4 +26,32 @@ describe('reportedProgressPage', () => {
   it('returns null when the index has no page', () => {
     expect(reportedProgressPage(pages, 99, true, true)).toBeNull();
   });
+
+  it('returns null for a negative index or an empty page list', () => {
+    expect(reportedProgressPage(pages, -1, true, true)).toBeNull();
+    expect(reportedProgressPage([], 0, true, true)).toBeNull();
+  });
+
+  // 双页首跨页：应上报右页(第2页)，而非当前左页(第1页)。
+  it('reports the rightmost page of the first spread in paged double-page mode', () => {
+    expect(reportedProgressPage(pages, 0, true, true)).toBe(2);
+  });
+
+  // 上报的是页「号」而非索引：页号非连续时不能用 index+1 代替。
+  it('reports the page number, not the index, for non-contiguous page numbers', () => {
+    const custom = [{ number: 5 }, { number: 6 }, { number: 7 }];
+    expect(reportedProgressPage(custom, 0, true, true)).toBe(6); // right page of spread
+    expect(reportedProgressPage(custom, 1, true, false)).toBe(6); // single page -> current
+  });
+
+  // 双页但只剩一页(奇数末页在索引处)：右页钳制回当前页，不越界。
+  it('clamps the spread partner to the current page when there is no partner', () => {
+    expect(reportedProgressPage(pages, 9, true, true)).toBe(10); // last index, partner clamps to itself
+    const single = [{ number: 1 }];
+    expect(reportedProgressPage(single, 0, true, true)).toBe(1);
+  });
+
+  it('reports the current page in webtoon single-page mode', () => {
+    expect(reportedProgressPage(pages, 3, false, false)).toBe(4);
+  });
 });

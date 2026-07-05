@@ -7,10 +7,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { clampZoom, toggleDoubleTapZoom, zoomFromPinch, zoomFromWheel } from './readerZoomMath';
 
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
-const DOUBLE_TAP_ZOOM = 2.5;
 const TAP_MOVE_TOLERANCE = 8; // px：位移小于此值才算“点按”
 const TAP_MAX_DURATION = 400; // ms
 const DOUBLE_TAP_WINDOW = 250; // ms：两次点按间隔小于此值算双击
@@ -52,7 +50,7 @@ export function useReaderZoom(
   onSingleTapRef.current = onSingleTap;
 
   const applyZoom = useCallback((next: number) => {
-    const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    const clamped = clampZoom(next);
     setZoom(clamped);
     if (clamped <= 1) setOffset({ x: 0, y: 0 });
   }, []);
@@ -88,7 +86,7 @@ export function useReaderZoom(
     const handler = (event: WheelEvent) => {
       if (!event.ctrlKey) return;
       event.preventDefault();
-      applyZoomRef.current(zoomRef.current - event.deltaY * 0.0025 * zoomRef.current);
+      applyZoomRef.current(zoomFromWheel(zoomRef.current, event.deltaY));
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
@@ -119,8 +117,7 @@ export function useReaderZoom(
     const pts = [...pointersRef.current.values()];
     if (pts.length === 2 && pinchRef.current) {
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const ratio = dist / (pinchRef.current.dist || 1);
-      applyZoom(pinchRef.current.zoom * ratio);
+      applyZoom(zoomFromPinch(pinchRef.current.zoom, pinchRef.current.dist, dist));
       movedRef.current = true;
       return true;
     }
@@ -162,7 +159,7 @@ export function useReaderZoom(
       if (isDouble) {
         clearSingleTapTimer();
         lastTapRef.current = null;
-        applyZoom(zoomRef.current > 1 ? 1 : DOUBLE_TAP_ZOOM); // 双击缩放切换
+        applyZoom(toggleDoubleTapZoom(zoomRef.current)); // 双击缩放切换
         return true;
       }
       lastTapRef.current = { x: event.clientX, t: now };

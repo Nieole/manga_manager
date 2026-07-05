@@ -7,6 +7,7 @@
 import { Infinity as InfinityIcon, ListOrdered } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import type { PaginationMode } from './types';
+import { getVisiblePageNumbers } from './paginationRange';
 
 interface LibraryPaginationProps {
   paginationMode: PaginationMode;
@@ -20,15 +21,6 @@ interface LibraryPaginationProps {
   onChangePage: (page: number) => void;
   onTogglePaginationMode: () => void;
   onResetCursor: () => void;
-}
-
-function getVisiblePageNumbers(page: number, totalPages: number) {
-  const visibleCount = Math.min(5, totalPages);
-  const currentPage = Math.max(1, Math.min(page, totalPages));
-  let startPage = currentPage - Math.floor(visibleCount / 2);
-  startPage = Math.max(1, Math.min(startPage, totalPages - visibleCount + 1));
-
-  return Array.from({ length: visibleCount }, (_, index) => startPage + index);
 }
 
 export function LibraryPagination({

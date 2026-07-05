@@ -7,37 +7,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DEFAULT_PAGE_SIZE } from '../types';
+import {
+  EMPTY_ADVANCED_FILTERS,
+  VALID_SORT_DIRS,
+  parseFiltersFromSearch,
+  setOrDelete,
+  type AdvancedFilters,
+} from './libraryFilterParams';
 
-// AdvancedFilters 对齐智能合集的筛选维度：阅读状态 / 评分区间 / 进度区间 / 加入天数。
-// null 表示该维度不筛选。收成单一对象以减少 hook 的 state 数量与穿透面。
-export interface AdvancedFilters {
-  readState: string | null; // 'unread' | 'reading' | 'completed' | null
-  minRating: number | null; // 0–10
-  maxRating: number | null;
-  minProgress: number | null; // 0–100
-  maxProgress: number | null;
-  addedWithinDays: number | null;
-}
-
-export const EMPTY_ADVANCED_FILTERS: AdvancedFilters = {
-  readState: null,
-  minRating: null,
-  maxRating: null,
-  minProgress: null,
-  maxProgress: null,
-  addedWithinDays: null,
-};
-
-export function hasAdvancedFilters(a: AdvancedFilters): boolean {
-  return (
-    a.readState !== null ||
-    a.minRating !== null ||
-    a.maxRating !== null ||
-    a.minProgress !== null ||
-    a.maxProgress !== null ||
-    a.addedWithinDays !== null
-  );
-}
+// 纯筛选参数逻辑（AdvancedFilters/EMPTY_ADVANCED_FILTERS/hasAdvancedFilters/supportsCursorPagination）
+// 已抽到 ./libraryFilterParams 便于单元测试；此处再导出以保持既有 import 路径不变。
+export {
+  EMPTY_ADVANCED_FILTERS,
+  hasAdvancedFilters,
+  supportsCursorPagination,
+  type AdvancedFilters,
+} from './libraryFilterParams';
 
 export interface SavedLibrarySettings {
   activeTag?: string | null;
@@ -78,9 +63,6 @@ interface UseLibraryFiltersResult {
   applySnapshot: (snapshot: Partial<SavedLibrarySettings>) => void;
 }
 
-const VALID_SORT_DIRS = new Set(['asc', 'desc']);
-const SUPPORTS_CURSOR_FIELDS = new Set(['name', 'updated', 'created', 'favorite']);
-
 const settingsStorageKey = (libId: string) => `library:${libId}:settings`;
 
 function readStoredSettings(libId: string): SavedLibrarySettings | null {
@@ -102,10 +84,6 @@ function writeStoredSettings(libId: string, payload: SavedLibrarySettings) {
   } catch {
     // 配额或隐私模式下写入失败不影响 UI
   }
-}
-
-export function supportsCursorPagination(field: string) {
-  return SUPPORTS_CURSOR_FIELDS.has(field);
 }
 
 /**
@@ -307,62 +285,4 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       applySnapshot,
     ],
   );
-}
-
-function setOrDelete(params: URLSearchParams, key: string, value: string | null) {
-  if (value && value !== '') {
-    params.set(key, value);
-  } else {
-    params.delete(key);
-  }
-}
-
-function parseFiltersFromSearch(params: URLSearchParams): {
-  activeTag: string | null;
-  activeAuthor: string | null;
-  activeStatus: string | null;
-  activeLetter: string | null;
-  sortByField: string;
-  sortDir: string;
-  keyword: string;
-  advanced: AdvancedFilters;
-  page: number;
-  pageSize: number;
-} | null {
-  // 至少有一个 query 参数才认为 URL 携带了完整意图（避免覆盖服务端 settings）
-  const hasAny = ['tag', 'author', 'status', 'letter', 'q', 'sort', 'dir', 'size', 'page', 'read', 'rmin', 'rmax', 'pmin', 'pmax', 'days'].some((k) =>
-    params.has(k),
-  );
-  if (!hasAny) return null;
-  const sizeRaw = parseInt(params.get('size') || '', 10);
-  const pageRaw = parseInt(params.get('page') || '', 10);
-  return {
-    activeTag: params.get('tag') || null,
-    activeAuthor: params.get('author') || null,
-    activeStatus: params.get('status') || null,
-    activeLetter: params.get('letter') || null,
-    keyword: params.get('q') || '',
-    advanced: {
-      readState: parseReadStateParam(params.get('read')),
-      minRating: parseNumberParam(params.get('rmin')),
-      maxRating: parseNumberParam(params.get('rmax')),
-      minProgress: parseNumberParam(params.get('pmin')),
-      maxProgress: parseNumberParam(params.get('pmax')),
-      addedWithinDays: parseNumberParam(params.get('days')),
-    },
-    sortByField: params.get('sort') || 'name',
-    sortDir: VALID_SORT_DIRS.has(params.get('dir') || '') ? (params.get('dir') as string) : 'asc',
-    pageSize: Number.isFinite(sizeRaw) && sizeRaw > 0 ? sizeRaw : DEFAULT_PAGE_SIZE,
-    page: Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1,
-  };
-}
-
-function parseReadStateParam(v: string | null): string | null {
-  return v === 'unread' || v === 'reading' || v === 'completed' ? v : null;
-}
-
-function parseNumberParam(v: string | null): number | null {
-  if (v === null || v.trim() === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
 }

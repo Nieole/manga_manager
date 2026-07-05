@@ -66,6 +66,33 @@ describe('buildContinueCta', () => {
   })
 })
 
+describe('buildContinueCta edge cases', () => {
+  it('resolves a bookId even when the book is not in the list, with safe defaults', () => {
+    // 书列表尚未加载但已知 next_unread_book_id：仍返回可跳转的 CTA，页码/总页数/标签取安全默认。
+    const cta = buildContinueCta(makeContinue({ next_unread_book_id: 9, last_read_page: 4 }), []);
+    expect(cta).not.toBeNull();
+    expect(cta?.bookId).toBe(9);
+    expect(cta?.page).toBe(0); // last_read_page 属于未知的 last_read_book，不套用
+    expect(cta?.totalPages).toBe(0);
+    expect(cta?.volumeLabel).toBeUndefined();
+    expect(cta?.bookLabel).toBe('');
+  });
+
+  it('drops a whitespace-only volume label to undefined and trims a real one', () => {
+    const blank = buildContinueCta(makeContinue({ last_read_book_id: 3 }), [makeBook({ id: 3, volume: '   ' })]);
+    expect(blank?.volumeLabel).toBeUndefined();
+
+    const trimmed = buildContinueCta(makeContinue({ last_read_book_id: 4 }), [makeBook({ id: 4, volume: '  v3  ' })]);
+    expect(trimmed?.volumeLabel).toBe('v3');
+  });
+
+  it('prefers next_unread over last_read when both are present', () => {
+    const info = makeContinue({ next_unread_book_id: 8, last_read_book_id: 2 });
+    const cta = buildContinueCta(info, [makeBook({ id: 8, volume: 'v8' }), makeBook({ id: 2, volume: 'v2' })]);
+    expect(cta?.bookId).toBe(8);
+  });
+});
+
 describe('isFullyRead', () => {
   it('is false without continue info', () => {
     expect(isFullyRead(null)).toBe(false)
