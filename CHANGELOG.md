@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（重复文件去重工作流 · P1 第 7 项）
+
+#### 新增
+- 整理页(`/organize`)新增「重复文件」面板：按 `file_hash` 分组列出内容完全相同的书籍，勾选后**安全移除**——只从库中删除记录，可选把源文件**移入回收站目录**，**绝不硬删源文件**，移除前二次确认。
+- 后端手写 `FindDuplicateBooks`（`file_hash` 非空且出现多次，带系列名/路径/大小/页数）；端点 `GET /api/books/duplicates` 分组返回、`POST /api/books/remove`（body `{book_ids, move_to_trash}`）。移除复用既有 `DeleteBook`（删记录 + 刷新系列统计）；`move_to_trash` 把文件移到 `<数据库目录>/trash`（`rename` 失败跨盘时回退复制+删除），**移动失败即不删记录**避免孤儿。
+- 前端 `DuplicatesPanel`（分组勾选、移入回收站开关、`ConfirmDialog` 二次确认）。
+
+#### 说明
+- 依赖 identity_scan / repair_scan 计算的 `file_hash`；未计算指纹的书不参与。默认不勾选任何书，避免误删。
+
+#### 验证
+- `go build`、`go vet`、`go test ./internal/api ./internal/database` 全绿；前端 `npm run lint`（0）、`npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（系列自定义字段 · P1 第 5 项之四，完成第 5 项）
 
 #### 新增

@@ -722,6 +722,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		})
 
 		r.Route("/books", func(r chi.Router) {
+			r.Get("/duplicates", c.getDuplicateBooks)
+			r.Post("/remove", c.removeBooks)
 			r.Post("/bulk-progress", c.bulkUpdateBookProgress)
 			r.Post("/bulk-progress/sync", c.bulkSyncBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)

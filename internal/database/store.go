@@ -54,6 +54,7 @@ type Store interface {
 	SetBookCover(ctx context.Context, bookID int64, coverPath string) error
 	ListSeriesCustomFields(ctx context.Context, seriesID int64) ([]SeriesCustomField, error)
 	ReplaceSeriesCustomFields(ctx context.Context, seriesID int64, fields []SeriesCustomField) error
+	FindDuplicateBooks(ctx context.Context) ([]DuplicateBookRow, error)
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
@@ -297,6 +298,47 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error {
 	_, err := s.db.ExecContext(ctx, refreshSeriesStatsStatement("s.id = ?"), seriesID)
 	return err
+}
+
+// DuplicateBookRow 是重复文件检测返回的单本书信息（按 file_hash 分组，同哈希即内容相同）。
+type DuplicateBookRow struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	PageCount  int64  `json:"page_count"`
+	FileHash   string `json:"file_hash"`
+	SeriesID   int64  `json:"series_id"`
+	SeriesName string `json:"series_name"`
+}
+
+// FindDuplicateBooks 返回所有 file_hash 相同且出现多次的书籍（按哈希、ID 排序），供去重工作流分组展示。
+// 依赖 identity_scan / repair_scan 计算出的 file_hash；未算哈希的书不参与。
+func (s *SqlStore) FindDuplicateBooks(ctx context.Context) ([]DuplicateBookRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT b.id, b.name, b.path, b.size, b.page_count, b.file_hash, b.series_id, COALESCE(NULLIF(s.title, ''), s.name) AS series_name
+		FROM books b
+		JOIN series s ON s.id = b.series_id
+		WHERE b.file_hash IS NOT NULL AND b.file_hash != ''
+		  AND b.file_hash IN (
+		      SELECT file_hash FROM books
+		      WHERE file_hash IS NOT NULL AND file_hash != ''
+		      GROUP BY file_hash HAVING COUNT(*) > 1
+		  )
+		ORDER BY b.file_hash, b.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DuplicateBookRow
+	for rows.Next() {
+		var r DuplicateBookRow
+		if err := rows.Scan(&r.ID, &r.Name, &r.Path, &r.Size, &r.PageCount, &r.FileHash, &r.SeriesID, &r.SeriesName); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // SeriesCustomField 是系列级用户自定义 key-value 元数据条目。

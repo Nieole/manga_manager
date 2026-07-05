@@ -10,6 +10,7 @@ import { apiClient } from '../api/client';
 import { BookOpen, ChevronDown, ChevronRight, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
+import { DuplicatesPanel } from '../components/DuplicatesPanel';
 
 interface LibraryOption {
   id: number;
@@ -490,6 +491,8 @@ export default function Organize() {
           </section>
         </div>
       </div>
+
+      <DuplicatesPanel />
     </div>
   );
 }
