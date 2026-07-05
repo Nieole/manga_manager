@@ -52,6 +52,8 @@ type Store interface {
 	MergeTags(ctx context.Context, sourceID, targetID int64) error
 	DeleteTag(ctx context.Context, tagID int64) error
 	SetBookCover(ctx context.Context, bookID int64, coverPath string) error
+	ListSeriesCustomFields(ctx context.Context, seriesID int64) ([]SeriesCustomField, error)
+	ReplaceSeriesCustomFields(ctx context.Context, seriesID int64, fields []SeriesCustomField) error
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
@@ -295,6 +297,57 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error {
 	_, err := s.db.ExecContext(ctx, refreshSeriesStatsStatement("s.id = ?"), seriesID)
 	return err
+}
+
+// SeriesCustomField 是系列级用户自定义 key-value 元数据条目。
+type SeriesCustomField struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// ListSeriesCustomFields 返回某系列的全部自定义字段（按 key 排序）。
+func (s *SqlStore) ListSeriesCustomFields(ctx context.Context, seriesID int64) ([]SeriesCustomField, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT field_key, field_value FROM series_custom_fields WHERE series_id = ? ORDER BY field_key`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var fields []SeriesCustomField
+	for rows.Next() {
+		var f SeriesCustomField
+		if err := rows.Scan(&f.Key, &f.Value); err != nil {
+			return nil, err
+		}
+		fields = append(fields, f)
+	}
+	return fields, rows.Err()
+}
+
+// ReplaceSeriesCustomFields 整体替换某系列的自定义字段（先清空再写入非空 key），事务保证一致。
+func (s *SqlStore) ReplaceSeriesCustomFields(ctx context.Context, seriesID int64, fields []SeriesCustomField) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM series_custom_fields WHERE series_id = ?`, seriesID); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, f := range fields {
+		key := strings.TrimSpace(f.Key)
+		if key == "" {
+			continue
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO series_custom_fields (series_id, field_key, field_value) VALUES (?, ?, ?)`, seriesID, key, f.Value); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // SetBookCover 无条件更新书籍封面路径（与只在缺失时写入的 SetBookCoverIfMissing 不同），供“设为封面 / 上传封面”使用。

@@ -711,6 +711,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{seriesId}/scrape-search", c.scrapeSearchMetadata)
 			r.Post("/{seriesId}/scrape-apply", c.applyScrapedMetadata)
 			r.Get("/{seriesId}/tags", c.getSeriesTags)
+			r.Get("/{seriesId}/custom-fields", c.getSeriesCustomFields)
+			r.Put("/{seriesId}/custom-fields", c.replaceSeriesCustomFields)
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 			r.Get("/{seriesId}/links", c.getSeriesLinks)
 			r.Get("/{seriesId}/context", c.getSeriesContext)

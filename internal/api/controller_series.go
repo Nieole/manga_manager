@@ -684,6 +684,45 @@ func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, tags)
 }
 
+// getSeriesCustomFields 返回某系列的自定义字段列表。
+func (c *Controller) getSeriesCustomFields(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+	fields, err := c.store.ListSeriesCustomFields(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch custom fields")
+		return
+	}
+	if fields == nil {
+		fields = []database.SeriesCustomField{}
+	}
+	jsonResponse(w, http.StatusOK, fields)
+}
+
+// replaceSeriesCustomFields 整体替换某系列的自定义字段。
+func (c *Controller) replaceSeriesCustomFields(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := parseID(r, "seriesId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+	var req struct {
+		Fields []database.SeriesCustomField `json:"fields"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if err := c.store.ReplaceSeriesCustomFields(r.Context(), seriesID, req.Fields); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to save custom fields")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // renameTag 重命名标签；与已有标签重名会因 UNIQUE 约束失败，前端据此提示改用合并。
 func (c *Controller) renameTag(w http.ResponseWriter, r *http.Request) {
 	tagID, err := parseID(r, "tagId")

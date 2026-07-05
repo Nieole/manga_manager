@@ -7,6 +7,7 @@
 import { Lock, Sparkles, Unlock, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Author, MetaTag, Series } from './types';
+import { SeriesCustomFieldsEditor } from './SeriesCustomFieldsEditor';
 import { ModalShell } from '../../components/ui/ModalShell';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { normalizeSeriesStatus } from '../../i18n/status';
@@ -379,6 +380,7 @@ export function SeriesMetadataEditorModal({
                 {t('series.editor.addLink')}
               </button>
             </div>
+            <SeriesCustomFieldsEditor seriesId={editForm.id} />
           </div>
         </div>
     </ModalShell>

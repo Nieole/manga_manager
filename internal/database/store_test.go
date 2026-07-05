@@ -539,6 +539,44 @@ func TestBulkEditSeries(t *testing.T) {
 	}
 }
 
+// TestSeriesCustomFields 覆盖自定义字段的整体替换与列出（含空 key 跳过、更新值）。
+func TestSeriesCustomFields(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{Name: "Main", Path: filepath.Join(t.TempDir(), "lib"), ScanMode: "none", ScanInterval: 60, ScanFormats: "cbz"})
+	if err != nil {
+		t.Fatalf("create lib: %v", err)
+	}
+	sr, err := store.CreateSeries(ctx, CreateSeriesParams{LibraryID: lib.ID, Name: "Alpha", Path: filepath.Join(lib.Path, "Alpha"), NameInitial: "A"})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+
+	if err := store.ReplaceSeriesCustomFields(ctx, sr.ID, []SeriesCustomField{
+		{Key: "ISBN", Value: "123"},
+		{Key: "Location", Value: "Shelf A"},
+		{Key: "  ", Value: "ignored"},
+	}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	fields, err := store.ListSeriesCustomFields(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(fields) != 2 || fields[0].Key != "ISBN" || fields[1].Key != "Location" {
+		t.Fatalf("unexpected fields: %+v", fields)
+	}
+
+	// 整体替换：ISBN 更新、Location 被删。
+	if err := store.ReplaceSeriesCustomFields(ctx, sr.ID, []SeriesCustomField{{Key: "ISBN", Value: "456"}}); err != nil {
+		t.Fatalf("replace2: %v", err)
+	}
+	fields, _ = store.ListSeriesCustomFields(ctx, sr.ID)
+	if len(fields) != 1 || fields[0].Key != "ISBN" || fields[0].Value != "456" {
+		t.Fatalf("unexpected after replace: %+v", fields)
+	}
+}
+
 // TestTagManagement 覆盖标签重命名 / 合并 / 删除。
 func TestTagManagement(t *testing.T) {
 	ctx := context.Background()

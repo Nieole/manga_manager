@@ -279,6 +279,15 @@ CREATE TABLE IF NOT EXISTS series_metadata_provenance (
 
 CREATE INDEX IF NOT EXISTS idx_series_metadata_provenance_series_id ON series_metadata_provenance(series_id, field_name);
 
+-- 用户自定义字段：系列级 key-value 元数据（区别于受限字段的溯源表 series_metadata_provenance）。
+CREATE TABLE IF NOT EXISTS series_custom_fields (
+    series_id INTEGER NOT NULL,
+    field_key TEXT NOT NULL,
+    field_value TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (series_id, field_key),
+    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+
 -- [#2] Custom collections / smart shelves
 CREATE TABLE IF NOT EXISTS collections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

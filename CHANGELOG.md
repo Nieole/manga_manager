@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（系列自定义字段 · P1 第 5 项之四，完成第 5 项）
+
+#### 新增
+- 系列元数据编辑弹窗新增「自定义字段」区：任意 key-value 元数据（如 ISBN、收藏位置、装帧版本），加/删行、独立保存。
+- 新表 `series_custom_fields(series_id, field_key, field_value, PK(series_id,field_key), FK→series ON DELETE CASCADE)`（`schema.sql`，`Migrate()` 幂等建表，无需 sqlc）。手写 store：`ListSeriesCustomFields`、`ReplaceSeriesCustomFields`（整体替换、空 key 跳过、事务）。端点 `GET/PUT /api/series/{id}/custom-fields`。
+- 前端 `SeriesCustomFieldsEditor`（自包含 GET/PUT，与主元数据保存解耦）内嵌编辑弹窗。
+
+#### 验证
+- 新增 `TestSeriesCustomFields`（替换/列出/空 key 跳过/更新值）；`go build`、`go test ./internal/api ./internal/database` 全绿；前端 `npm run lint`（0）、`npm run build` 通过。**至此第 5 项(元数据编辑：批量编辑 + 标签管理 + 自定义封面 + 自定义字段)全部完成。**
+
+---
+
 ### 📌 增量记录 — 2026-07-05（自定义封面：设为封面 / 上传封面 · P1 第 5 项之三）
 
 #### 新增
