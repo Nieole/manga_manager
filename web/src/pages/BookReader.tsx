@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import type { WebtoonReaderHandle } from './book-reader/WebtoonReader';
 import { BaseTheme } from './book-reader/themes/BaseTheme';
 import { ComimiTheme } from './book-reader/themes/ComimiTheme';
@@ -22,6 +22,7 @@ import { useReaderPreferences } from './book-reader/useReaderPreferences';
 import { useReaderProgressPipeline } from './book-reader/useReaderProgressPipeline';
 import { useReaderProgressIndicator } from './book-reader/useReaderProgressIndicator';
 import { useReaderReadingTime } from './book-reader/useReaderReadingTime';
+import { computeReaderBack } from './book-reader/readerNavigation';
 import { useReaderSiblings } from './book-reader/useReaderSiblings';
 import { useI18n } from '../i18n/LocaleProvider';
 
@@ -29,6 +30,10 @@ export default function BookReader() {
     const { t } = useI18n();
     const { bookId } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
+    // 进入阅读器时历史栈里是否还有站内来源页。location.key === 'default' 表示这是会话首个路由（深链/新标签直达）。
+    // 用 ref 在首次挂载时定格——阅读器内「自动翻到下一本」用的是 replace（会换 location.key），不应改变此判断。
+    const hadInAppHistoryRef = useRef(location.key !== 'default');
 
     // 阅读器偏好是跨书籍保留的用户配置，后续 hook 都会把这些配置转换为图片 URL 参数、布局模式或交互行为。
     // 新增偏好时需要同时检查设置面板、缓存 key、离线缓存和进度恢复，避免同一页在不同参数下复用旧图。
@@ -200,15 +205,20 @@ export default function BookReader() {
     } = useReaderPointerDrag();
 
     const handleBackToSeries = useCallback(() => {
-        if (seriesIdRef.current) {
-            if (bookVolume) {
-                navigate(`/series/${seriesIdRef.current}?volume=${encodeURIComponent(bookVolume)}`);
-            } else {
-                navigate(`/series/${seriesIdRef.current}`);
-            }
-            return;
+        const action = computeReaderBack({
+            seriesId: seriesIdRef.current,
+            bookVolume,
+            hasInAppHistory: hadInAppHistoryRef.current,
+        });
+        if (action.kind === 'history') {
+            navigate(-1); // 浏览器回退，弹出阅读器这一条历史（修复「再返回又回到阅读器」）
+        } else if (action.kind === 'series') {
+            // 无站内历史（深链/刷新页）：用 replace 覆盖阅读器这一条，确保系列页后面不再残留阅读器，
+            // 否则刷新后再返回又会退回阅读器。
+            navigate(action.url, { replace: true });
+        } else {
+            navigate('/', { replace: true });
         }
-        navigate('/');
     // seriesIdRef.current 在加载书本信息时被命令式赋值，无需进入依赖数组
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bookVolume, navigate]);
