@@ -120,6 +120,18 @@ type Store interface {
 	GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error)
 	SetKOReaderAccountUser(ctx context.Context, accountID, userID int64) error
 	AssignOrphanKOReaderAccountsToUser(ctx context.Context, userID int64) error
+	// 深度统计（第 6 项）——见 user_stats.go。
+	LogUserReadingActivity(ctx context.Context, userID, bookID, pages int64) error
+	GetUserActivityHeatmap(ctx context.Context, userID int64, offsetClause string) ([]ActivityDay, error)
+	GetUserReadingStreak(ctx context.Context, userID int64) (current, longest int, err error)
+	AddUserBookReadingTime(ctx context.Context, userID, bookID, seconds int64) error
+	GetUserTotalReadingTime(ctx context.Context, userID int64) (int64, error)
+	GetUserBookReadingTimeTop(ctx context.Context, userID int64, limit int) ([]BookReadingTimeRow, error)
+	GetUserPeriodStats(ctx context.Context, userID int64, year, month int) (UserPeriodStats, error)
+	UpsertUserSeriesReview(ctx context.Context, userID, seriesID int64, rating *float64, review string) error
+	GetUserSeriesReview(ctx context.Context, userID, seriesID int64) (UserSeriesReview, bool, error)
+	DeleteUserSeriesReview(ctx context.Context, userID, seriesID int64) error
+	MigrateGlobalActivityToUser(ctx context.Context, userID int64) error
 }
 
 type ReadingListSeriesProgress struct {

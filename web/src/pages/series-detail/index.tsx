@@ -25,7 +25,7 @@ import { SeriesVolumeAccordion } from './SeriesVolumeAccordion';
 import { SeriesVolumeGrid } from './SeriesVolumeGrid';
 import { SeriesBookGrid } from './SeriesBookGrid';
 import { SeriesSelectionBar } from './SeriesSelectionBar';
-import { SeriesSidePanel, SeriesSidePanelBadge } from './SeriesSidePanel';
+import { SeriesSidePanel, SeriesSidePanelBadge, type SeriesSidePanelTab } from './SeriesSidePanel';
 import { SeriesMetadataEditorModal } from './SeriesMetadataEditorModal';
 import { SeriesSearchModal } from './SeriesSearchModal';
 import type { Book } from './types';
@@ -106,7 +106,7 @@ export default function SeriesDetailPage() {
 
   const [showCollectionModal, setShowCollectionModal] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
-  const [sidePanelTab, setSidePanelTab] = useState<'relations' | 'metadata' | 'failed'>('relations');
+  const [sidePanelTab, setSidePanelTab] = useState<SeriesSidePanelTab>('relations');
 
   const continueCta = useMemo(() => buildContinueCta(ctx.continueInfo, ctx.books), [ctx.continueInfo, ctx.books]);
 
@@ -222,7 +222,7 @@ export default function SeriesDetailPage() {
     [t],
   );
 
-  const openSidePanel = useCallback((tab: 'relations' | 'metadata' | 'failed') => {
+  const openSidePanel = useCallback((tab: SeriesSidePanelTab) => {
     setSidePanelTab(tab);
     setSidePanelOpen(true);
   }, []);
@@ -455,6 +455,7 @@ export default function SeriesDetailPage() {
       <SeriesSidePanel
         open={sidePanelOpen}
         onClose={() => setSidePanelOpen(false)}
+        seriesId={Number(seriesId)}
         activeTab={sidePanelTab}
         onTabChange={setSidePanelTab}
         relations={ctx.relations}

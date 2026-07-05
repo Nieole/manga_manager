@@ -4,6 +4,27 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（深度阅读统计 · P1 第 6 项，全部按用户）
+
+> 建立在完整多用户之上，全部按当前用户统计。**至此 10 项改进全部完成。**
+
+#### 新增
+- **每用户活动 / 连续天数 / 回顾**：新表 `user_reading_activity(user_id, book_id, date, pages_read, read_seconds)`（取代全局热力图数据；旧全局活动在首个管理员创建时迁入）。进度写入路径全局表 + 每用户表双写。新增 store：`GetUserReadingStreak`（当前/最长连续阅读天数，Go 侧计算）、`GetUserActivityHeatmap`、`GetUserPeriodStats`（年度/月度回顾：页数/时长/活跃天数/涉及本数/读完本数/最多阅读系列）。热力图端点改为按用户双路径。新端点 `/api/stats/streak`、`/api/stats/period`。
+- **每本阅读时长**：新表 `user_book_reading_time(user_id, book_id, total_seconds)`（增量累加）。前端 `useReaderReadingTime` hook——按"活跃阅读"计秒（可见 + 近期有操作才计，切后台/长空闲暂停），心跳 + 切书/卸载/隐藏时经 `navigator.sendBeacon` 上报到 `POST /api/books/{id}/reading-time`（该端点 CSRF 豁免，因 beacon 无法带头，仍要求会话）。端点 `/api/stats/reading-time`（累计 + 每本排行）。
+- **个人系列短评**：新表 `user_series_review(user_id, series_id, rating, review)`（与全局刮削评分区分）。端点 `GET/PUT/DELETE /api/series/{id}/review`。前端系列详情侧栏新增「短评」页（星级 + 短文本）。
+- **独立「统计」页**：`web/src/pages/Stats.tsx` + 侧栏入口——连续天数、累计时长、年度/月度回顾（切年/月）、每本时长排行。
+
+#### 质量
+- 用 4 维并行 + 逐条对抗式验证的复核 workflow 审查本项改动，确认并修复 5 个真实缺陷：① `books_completed` 恒为 0（`last_read_at` 由 Go `t.String()` 落库、SQLite 日期函数解析不了 → 改用 `substr` 取年月前缀）；② 阅读时长 hook 上报失败重加会跨书错记/丢包重复计数（改为失败即丢弃）；③ reading-time 端点未校验书存在致 FK 500 日志噪声（补存在性检查、缺失即静默接受）；④ 短评面板切系列时残留旧值可致跨系列串写（加载前先清空）；⑤ `formatDuration` 会显示 "1h 60m"（先算总分钟再拆）。
+
+#### 说明
+- `books_completed` 以 `last_read_at`（服务器本地时区）落期，其余按 UTC `date`，跨零点边界有极小口径差；为软统计可接受。活动双写为两张独立表，无重复计数。
+
+#### 验证
+- 新增 `TestUserReadingStreak`、`TestUserBookReadingTime`（含 books_completed）、`TestUserSeriesReviewIsolation`；`go build`、`go vet`、`go test ./internal/...` 全绿。前端 `npm run lint`（0）、`npm run build` 通过，i18n 两语言 key 对齐。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（完整多用户 · P0 第 3 项 · 阶段3：KOReader 并入 + OPDS/Mihon 按用户鉴权）
 
 > 承接阶段2。本阶段让三个阅读协议（OPDS/Mihon/KOReader）按站点用户鉴权，进度随之转为每用户。**至此第 3 项「完整多用户」三阶段全部完成。**

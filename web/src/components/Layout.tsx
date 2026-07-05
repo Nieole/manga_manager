@@ -8,7 +8,7 @@ import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { apiClient, isAxiosError } from '../api/client';
-import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle } from 'lucide-react';
+import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle, BarChart3 } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
@@ -514,6 +514,14 @@ export default function Layout() {
                                 exact
                                 icon={<LayoutDashboard className="w-4 h-4 shrink-0" />}
                                 label={t('layout.sidebar.overview')}
+                                collapsed={isDesktopSidebarCollapsed}
+                                pathname={location.pathname}
+                                onClick={() => setIsSidebarOpen(false)}
+                            />
+                            <SidebarLink
+                                to="/stats"
+                                icon={<BarChart3 className="w-4 h-4 shrink-0" />}
+                                label={t('layout.sidebar.stats')}
                                 collapsed={isDesktopSidebarCollapsed}
                                 pathname={location.pathname}
                                 onClick={() => setIsSidebarOpen(false)}

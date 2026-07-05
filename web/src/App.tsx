@@ -14,6 +14,7 @@ import { useI18n } from './i18n/LocaleProvider';
 
 const Home = lazy(() => import('./pages/library'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Stats = lazy(() => import('./pages/Stats'));
 const Collections = lazy(() => import('./pages/collections'));
 const Organize = lazy(() => import('./pages/Organize'));
 const Ops = lazy(() => import('./pages/Ops'));
@@ -64,6 +65,8 @@ function App() {
           <Route path="library/:libId" element={withRouteFallback(<Home />)} />
           {/* 点击特定系列后展示其中的电子书/卷册 */}
           <Route path="series/:seriesId" element={withRouteFallback(<SeriesDetail />)} />
+          {/* 深度统计 */}
+          <Route path="stats" element={withRouteFallback(<Stats />)} />
           {/* 合集管理 */}
           <Route path="collections" element={withRouteFallback(<Collections />)} />
           {/* 整理工作台 */}

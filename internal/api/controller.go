@@ -703,6 +703,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/{seriesId}/tags", c.getSeriesTags)
 			r.Get("/{seriesId}/custom-fields", c.getSeriesCustomFields)
 			r.Put("/{seriesId}/custom-fields", c.replaceSeriesCustomFields)
+			r.Get("/{seriesId}/review", c.getSeriesReview)
+			r.Put("/{seriesId}/review", c.putSeriesReview)
+			r.Delete("/{seriesId}/review", c.deleteSeriesReview)
 			r.Get("/{seriesId}/authors", c.getSeriesAuthors)
 			r.Get("/{seriesId}/links", c.getSeriesLinks)
 			r.Get("/{seriesId}/context", c.getSeriesContext)
@@ -717,6 +720,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/bulk-progress", c.bulkUpdateBookProgress)
 			r.Post("/bulk-progress/sync", c.bulkSyncBookProgress)
 			r.Post("/{bookId}/progress", c.updateBookProgress)
+			r.Post("/{bookId}/reading-time", c.addBookReadingTime)
 			r.Get("/{bookId}/comicinfo.xml", c.exportBookComicInfo)
 			r.Post("/{bookId}/comicinfo", c.writeBookComicInfo)
 			r.Post("/{bookId}/cover", c.setBookCoverFromPage)
@@ -785,6 +789,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/stats/activity-heatmap", c.getActivityHeatmap)
 		r.Get("/stats/recent-read", c.getRecentReadAll)
 		r.Get("/stats/recommendations", c.getRecommendations)
+		// 深度统计（第 6 项，每用户）
+		r.Get("/stats/streak", c.getReadingStreak)
+		r.Get("/stats/reading-time", c.getReadingTimeStats)
+		r.Get("/stats/period", c.getPeriodStats)
 
 		// 合集管理
 		r.Route("/collections", func(r chi.Router) {

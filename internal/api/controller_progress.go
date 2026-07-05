@@ -163,14 +163,67 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		c.progressWriteCache.Add(bookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: now})
 	}
 
-	// 阅读活动只记录前进页，避免 Webtoon 滚动和重复上报刷高活动写入。（活动热力图本阶段仍为全局。）
+	// 阅读活动只记录前进页，避免 Webtoon 滚动和重复上报刷高活动写入。全局表 + 每用户表双写。
 	if validPage > previousPage || previousPage == 0 {
-		if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: validPage}); err != nil {
-			slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
-		}
+		c.logReadingActivity(ctx, uid, bookID, validPage)
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})
+}
+
+// ReadingTimeRequest 是阅读时长增量上报体（活跃阅读秒数）。
+type ReadingTimeRequest struct {
+	Seconds int64 `json:"seconds"`
+}
+
+// maxReadingTimeReportSeconds 单次上报封顶（防异常/伪造把时长刷爆）。心跳间隔约 30-60s，正常远小于此。
+const maxReadingTimeReportSeconds = 3600
+
+// addBookReadingTime 累加当前用户在某书的活跃阅读秒数。经 navigator.sendBeacon 上报（CSRF 豁免，见 isCsrfExempt），
+// 仍要求有效会话；未登录（首启/单用户）静默接受不落库。
+func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) {
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid book ID")
+		return
+	}
+	uid := c.currentUserID(r)
+	var req ReadingTimeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if uid == 0 || req.Seconds <= 0 {
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	if req.Seconds > maxReadingTimeReportSeconds {
+		req.Seconds = maxReadingTimeReportSeconds
+	}
+	// 书可能在阅读期间被删除（管理员删/重扫）——此时 FK 会让写入失败。存在性缺失即静默接受（尽力而为的统计，
+	// 且前端为 sendBeacon/心跳的 fire-and-forget），避免每次心跳刷 500 与错误日志。
+	if _, err := c.store.GetBook(r.Context(), bookID); err != nil {
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	if err := c.store.AddUserBookReadingTime(r.Context(), uid, bookID, req.Seconds); err != nil {
+		slog.Error("Failed to record reading time", "user_id", uid, "book_id", bookID, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to record reading time")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// logReadingActivity 记录当日阅读活动：全局表始终写（向后兼容 / uid==0），uid>0 时同时写每用户表（供热力图/连续天数/回顾）。
+func (c *Controller) logReadingActivity(ctx context.Context, uid, bookID, pages int64) {
+	if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: pages}); err != nil {
+		slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
+	}
+	if uid > 0 {
+		if err := c.store.LogUserReadingActivity(ctx, uid, bookID, pages); err != nil {
+			slog.Error("Failed to log per-user reading activity", "user_id", uid, "book_id", bookID, "error", err)
+		}
+	}
 }
 
 // overlayUserProgress 用当前用户的每用户进度覆盖一组书的 LastReadPage/LastReadAt。
@@ -351,11 +404,9 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 			c.progressWriteCache.Add(item.BookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: time.Now()})
 		}
 
-		// 仅前进的页码记录活动，与单本接口策略一致。（活动热力图本阶段仍为全局。）
+		// 仅前进的页码记录活动，与单本接口策略一致。全局 + 每用户双写。
 		if validPage > previousPage || previousPage == 0 {
-			if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: item.BookID, PagesRead: validPage}); err != nil {
-				slog.Error("Failed to log reading activity", "book_id", item.BookID, "error", err)
-			}
+			c.logReadingActivity(ctx, uid, item.BookID, validPage)
 		}
 
 		results = append(results, BulkSyncProgressResultItem{

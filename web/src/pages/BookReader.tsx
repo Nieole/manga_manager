@@ -21,6 +21,7 @@ import { useReaderPointerDrag } from './book-reader/useReaderPointerDrag';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';
 import { useReaderProgressPipeline } from './book-reader/useReaderProgressPipeline';
 import { useReaderProgressIndicator } from './book-reader/useReaderProgressIndicator';
+import { useReaderReadingTime } from './book-reader/useReaderReadingTime';
 import { useReaderSiblings } from './book-reader/useReaderSiblings';
 import { useI18n } from '../i18n/LocaleProvider';
 
@@ -187,6 +188,8 @@ export default function BookReader() {
         offlineQueuedPage,
         queueOfflineReaderProgress,
     });
+    // 统计每本书的活跃阅读时长（第 6 项）。仅登录用户会真正落库（后端按 currentUserID 判定）。
+    useReaderReadingTime({ bookId });
     const {
         containerRef,
         isDragging,

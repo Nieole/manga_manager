@@ -173,6 +173,21 @@ func (c *Controller) getActivityHeatmap(w http.ResponseWriter, r *http.Request) 
 	}
 
 	offset := fmt.Sprintf("-%d days", weeks*7)
+	// 已登录用户走每用户活动表；否则退回全局（首启 / 单用户 / 测试）。
+	if uid := c.currentUserID(r); uid > 0 {
+		data, err := c.store.GetUserActivityHeatmap(r.Context(), uid, offset)
+		if err != nil {
+			slog.Error("GetUserActivityHeatmap failed", "user_id", uid, "error", err)
+			jsonError(w, http.StatusInternalServerError, "Failed to get activity heatmap")
+			return
+		}
+		if data == nil {
+			data = []database.ActivityDay{}
+		}
+		jsonResponse(w, http.StatusOK, data)
+		return
+	}
+
 	rows, err := c.store.GetActivityHeatmap(r.Context(), offset)
 	if err != nil {
 		slog.Error("GetActivityHeatmap failed", "error", err)
@@ -188,6 +203,78 @@ func (c *Controller) getActivityHeatmap(w http.ResponseWriter, r *http.Request) 
 		data = append(data, database.ActivityDay{Date: row.Date, PageCount: count})
 	}
 	jsonResponse(w, http.StatusOK, data)
+}
+
+// getReadingStreak 返回当前用户的连续阅读天数（当前 / 最长）。
+func (c *Controller) getReadingStreak(w http.ResponseWriter, r *http.Request) {
+	uid := c.currentUserID(r)
+	if uid == 0 {
+		jsonResponse(w, http.StatusOK, map[string]int{"current": 0, "longest": 0})
+		return
+	}
+	current, longest, err := c.store.GetUserReadingStreak(r.Context(), uid)
+	if err != nil {
+		slog.Error("GetUserReadingStreak failed", "user_id", uid, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get streak")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]int{"current": current, "longest": longest})
+}
+
+// getReadingTimeStats 返回当前用户的累计阅读时长与「每本时长」排行。
+func (c *Controller) getReadingTimeStats(w http.ResponseWriter, r *http.Request) {
+	uid := c.currentUserID(r)
+	if uid == 0 {
+		jsonResponse(w, http.StatusOK, map[string]any{"total_seconds": 0, "top": []database.BookReadingTimeRow{}})
+		return
+	}
+	total, err := c.store.GetUserTotalReadingTime(r.Context(), uid)
+	if err != nil {
+		slog.Error("GetUserTotalReadingTime failed", "user_id", uid, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get reading time")
+		return
+	}
+	limit := 10
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 100 {
+		limit = v
+	}
+	top, err := c.store.GetUserBookReadingTimeTop(r.Context(), uid, limit)
+	if err != nil {
+		slog.Error("GetUserBookReadingTimeTop failed", "user_id", uid, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get reading time")
+		return
+	}
+	if top == nil {
+		top = []database.BookReadingTimeRow{}
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"total_seconds": total, "top": top})
+}
+
+// getPeriodStats 返回当前用户在某年（无 month 或 month=0）或某年月的阅读回顾。
+func (c *Controller) getPeriodStats(w http.ResponseWriter, r *http.Request) {
+	uid := c.currentUserID(r)
+	year, _ := strconv.Atoi(r.URL.Query().Get("year"))
+	month, _ := strconv.Atoi(r.URL.Query().Get("month"))
+	if year <= 0 {
+		year = time.Now().UTC().Year()
+	}
+	if month < 0 || month > 12 {
+		month = 0
+	}
+	if uid == 0 {
+		jsonResponse(w, http.StatusOK, database.UserPeriodStats{TopSeries: []database.PeriodTopSeries{}})
+		return
+	}
+	stats, err := c.store.GetUserPeriodStats(r.Context(), uid, year, month)
+	if err != nil {
+		slog.Error("GetUserPeriodStats failed", "user_id", uid, "year", year, "month", month, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to get period stats")
+		return
+	}
+	if stats.TopSeries == nil {
+		stats.TopSeries = []database.PeriodTopSeries{}
+	}
+	jsonResponse(w, http.StatusOK, stats)
 }
 
 // getRecentReadAll 返回跨库的最近阅读记录（用于 Dashboard 首页）

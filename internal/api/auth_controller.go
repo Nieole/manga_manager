@@ -198,7 +198,7 @@ func isPublicAuthPath(p string) bool {
 }
 
 // isRegularWritablePath 判断某改写类请求是否属于「普通用户也可执行」的个人操作：
-// 自身账户（登出/改密）与本人阅读状态（进度、书签）。其余改写一律要求管理员。
+// 自身账户（登出/改密）与本人阅读状态（进度、书签、阅读时长、系列短评）。其余改写一律要求管理员。
 func isRegularWritablePath(p string) bool {
 	switch p {
 	case "/api/auth/logout", "/api/auth/change-password":
@@ -207,11 +207,20 @@ func isRegularWritablePath(p string) bool {
 		return true
 	}
 	if strings.HasPrefix(p, "/api/books/") {
-		if strings.HasSuffix(p, "/progress") || strings.Contains(p, "/bookmarks") {
+		if strings.HasSuffix(p, "/progress") || strings.HasSuffix(p, "/reading-time") || strings.Contains(p, "/bookmarks") {
 			return true
 		}
 	}
+	if strings.HasPrefix(p, "/api/series/") && strings.HasSuffix(p, "/review") {
+		return true
+	}
 	return false
+}
+
+// isCsrfExempt 免除个别端点的 CSRF 校验：阅读时长上报经 navigator.sendBeacon 发送，无法附带 X-CSRF-Token 头。
+// 该端点仅为本人某书累加阅读秒数（仍要求有效会话 Cookie），被伪造的风险与影响极低。
+func isCsrfExempt(p string) bool {
+	return strings.HasSuffix(p, "/reading-time")
 }
 
 // usersExist 报告站点是否已存在账户；一旦为真即缓存，避免每请求 COUNT。
@@ -277,7 +286,7 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 			jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 			return
 		}
-		if isMutating(r.Method) {
+		if isMutating(r.Method) && !isCsrfExempt(p) {
 			if !constantTimeTokenMatch(r.Header.Get("X-CSRF-Token"), sess.CSRFToken) {
 				jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.csrf_invalid"))
 				return
@@ -406,6 +415,10 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	// 现有 KOReader 账户并入首个管理员。
 	if err := c.store.AssignOrphanKOReaderAccountsToUser(ctx, user.ID); err != nil {
 		slog.Warn("assign KOReader accounts to first admin failed", "user_id", user.ID, "error", err)
+	}
+	// 旧的全局阅读活动（热力图数据）迁入首个管理员。
+	if err := c.store.MigrateGlobalActivityToUser(ctx, user.ID); err != nil {
+		slog.Warn("migrate global reading activity to first admin failed", "user_id", user.ID, "error", err)
 	}
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {

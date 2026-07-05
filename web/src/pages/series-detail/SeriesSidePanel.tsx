@@ -11,12 +11,16 @@ import type { MetadataProvenance, MetadataReview, SeriesFailedTask, SeriesRelati
 import { useI18n } from '../../i18n/LocaleProvider';
 import { SeriesRelationsPanel } from './SeriesRelationsPanel';
 import { SeriesMetadataReviewPanel } from './SeriesMetadataReviewPanel';
+import { SeriesReviewPanel } from './SeriesReviewPanel';
+
+export type SeriesSidePanelTab = 'relations' | 'metadata' | 'failed' | 'review';
 
 interface SeriesSidePanelProps {
   open: boolean;
   onClose: () => void;
-  activeTab: 'relations' | 'metadata' | 'failed';
-  onTabChange: (tab: 'relations' | 'metadata' | 'failed') => void;
+  seriesId: number;
+  activeTab: SeriesSidePanelTab;
+  onTabChange: (tab: SeriesSidePanelTab) => void;
 
   relations: SeriesRelation[];
   relationCandidates: SeriesRelationCandidate[];
@@ -146,6 +150,12 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
               count={counts.metadata}
             />
             <TabButton
+              active={props.activeTab === 'review'}
+              onClick={() => props.onTabChange('review')}
+              label={t('seriesReview.tab')}
+              count={0}
+            />
+            <TabButton
               active={props.activeTab === 'failed'}
               onClick={() => props.onTabChange('failed')}
               label={t('series.sidePanel.tabs.failed')}
@@ -186,6 +196,9 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
                   onReject={props.onRejectMetadataReview}
                 />
               )
+            )}
+            {props.activeTab === 'review' && (
+              <SeriesReviewPanel seriesId={props.seriesId} />
             )}
             {props.activeTab === 'failed' && (
               <div className="space-y-3">

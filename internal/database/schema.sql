@@ -556,3 +556,50 @@ CREATE TABLE IF NOT EXISTS user_series_progress (
 
 CREATE INDEX IF NOT EXISTS idx_user_series_progress_last_read ON user_series_progress(user_id, last_read_at);
 CREATE INDEX IF NOT EXISTS idx_user_series_progress_series ON user_series_progress(series_id);
+
+-- ============================================================================
+-- 深度统计（第 6 项）：每用户活动 / 阅读时长 / 系列短评
+-- ============================================================================
+-- user_reading_activity：每用户每日阅读页数，取代全局 reading_activity 供热力图 / 连续阅读天数 /
+-- 年度月度回顾使用。旧全局 reading_activity 在首个管理员创建时迁入该用户；此后写入双写（全局+每用户）。
+CREATE TABLE IF NOT EXISTS user_reading_activity (
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    pages_read INTEGER NOT NULL DEFAULT 0,
+    read_seconds INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, book_id, date),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_reading_activity_user_date ON user_reading_activity(user_id, date);
+
+-- user_book_reading_time：每用户每本书累计的「活跃阅读」秒数（客户端计秒、增量上报累加）。
+CREATE TABLE IF NOT EXISTS user_book_reading_time (
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    total_seconds INTEGER NOT NULL DEFAULT 0,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, book_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_book_reading_time_user ON user_book_reading_time(user_id);
+
+-- user_series_review：每用户对每个系列的个人评分（1-5）+ 短评文本（与全局 series.rating 区分）。
+CREATE TABLE IF NOT EXISTS user_series_review (
+    user_id INTEGER NOT NULL,
+    series_id INTEGER NOT NULL,
+    rating REAL,
+    review TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, series_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_series_review_series ON user_series_review(series_id);

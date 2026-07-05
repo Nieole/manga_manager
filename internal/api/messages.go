@@ -57,6 +57,8 @@ var apiMessages = map[string]map[string]string{
 		"auth.last_admin":            "不能删除或降级最后一个管理员。",
 		"auth.user_not_found":        "账户不存在。",
 		"auth.cannot_delete_self":    "不能删除当前登录的账户。",
+
+		"review.rating_range": "评分需在 0 到 5 之间。",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -107,6 +109,8 @@ var apiMessages = map[string]map[string]string{
 		"auth.last_admin":          "Cannot delete or demote the last administrator.",
 		"auth.user_not_found":      "User not found.",
 		"auth.cannot_delete_self":  "You cannot delete the account you are signed in with.",
+
+		"review.rating_range": "Rating must be between 0 and 5.",
 	},
 }
 
