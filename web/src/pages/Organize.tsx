@@ -453,7 +453,7 @@ export default function Organize() {
                       <div className="flex shrink-0 flex-wrap gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                         {issue.last_task_key && (
                           <button
-                            onClick={() => navigate(`/ops?tab=tasks&task=${encodeURIComponent(issue.last_task_key!)}`)}
+                            onClick={() => navigate(`/ops?tab=logs&task_key=${encodeURIComponent(issue.last_task_key!)}`)}
                             className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-1.5 text-xs text-cyan-200/90 hover:bg-cyan-500/15 transition-colors"
                             title={issue.last_task_key}
                           >

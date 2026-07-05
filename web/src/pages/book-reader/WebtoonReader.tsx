@@ -109,6 +109,13 @@ export const WebtoonReader = forwardRef<WebtoonReaderHandle, WebtoonReaderProps>
             onRenderedImageCountChange(rootRef.current?.querySelectorAll('img[data-page-number]').length ?? 0);
           });
         }}
+        atBottomStateChange={(atBottom) => {
+          // 滚到底时把当前页定为最后一页——否则 rangeChanged 只报渲染范围的起始索引(受 overscan 影响，
+          // 永远到不了末页)，长条漫会永远不算「读完」(last_read_page 达不到 page_count)。
+          if (atBottom && pages.length > 0) {
+            onVisiblePageChange(pages.length - 1);
+          }
+        }}
         itemContent={(index) => {
           const page = pages[index];
           if (!page) {

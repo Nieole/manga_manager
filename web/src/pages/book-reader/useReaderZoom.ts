@@ -15,8 +15,10 @@ const TAP_MOVE_TOLERANCE = 8; // px：位移小于此值才算“点按”
 const TAP_MAX_DURATION = 400; // ms
 const DOUBLE_TAP_WINDOW = 250; // ms：两次点按间隔小于此值算双击
 const DOUBLE_TAP_DISTANCE = 40; // px
-// 单击延迟执行以等待可能的第二次点按；必须 ≥ DOUBLE_TAP_WINDOW，否则单击会先于双击判定触发。
-const SINGLE_TAP_DELAY = 280; // ms
+// 单击延迟执行以等待可能的第二次点按；取 = DOUBLE_TAP_WINDOW（最小安全值）。
+// 若大于它，会出现 [DOUBLE_TAP_WINDOW, SINGLE_TAP_DELAY) 的空档：该区间内的第二次点按既不算双击、
+// 又会取消前一次尚未触发的单击，导致丢失一次翻页（两次单击只翻一页）。取相等即消除该空档。
+const SINGLE_TAP_DELAY = DOUBLE_TAP_WINDOW; // ms
 
 interface PointerPos {
   x: number;
