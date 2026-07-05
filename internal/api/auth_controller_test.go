@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+
+	"manga-manager/internal/database"
 )
 
 // authTestServer 起一个真实路由的测试服务器。
@@ -187,3 +190,54 @@ func TestAuthUserManagementGuards(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// TestProtocolBasicAuth 验证阅读协议（Mihon）的 HTTP Basic 鉴权：首启直通 → 建账户后要求凭据；
+// 无/错凭据 401，正确凭据 200。
+func TestProtocolBasicAuth(t *testing.T) {
+	c, store, _, _ := newTestController(t)
+	ctx := context.Background()
+
+	cfg := c.currentConfig()
+	cfg.Protocols.Mihon.Enabled = true
+	c.config.Replace(&cfg)
+
+	r := chi.NewRouter()
+	c.SetupRoutes(r)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+	url := srv.URL + "/api/mihon/v1/libraries"
+
+	get := func(setCreds func(*http.Request)) int {
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		if setCreds != nil {
+			setCreds(req)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// 首启（无账户）：直通。
+	if code := get(nil); code != http.StatusOK {
+		t.Fatalf("setup-mode protocol GET should pass, got %d", code)
+	}
+
+	// 建账户后锁定。
+	hash, _ := hashPassword("password1")
+	if _, err := store.CreateUser(ctx, database.CreateUserParams{Username: "reader", PasswordHash: hash, Role: database.RoleRegular}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	if code := get(nil); code != http.StatusUnauthorized {
+		t.Fatalf("no creds should 401, got %d", code)
+	}
+	if code := get(func(req *http.Request) { req.SetBasicAuth("reader", "wrong") }); code != http.StatusUnauthorized {
+		t.Fatalf("wrong password should 401, got %d", code)
+	}
+	if code := get(func(req *http.Request) { req.SetBasicAuth("reader", "password1") }); code != http.StatusOK {
+		t.Fatalf("valid basic creds should 200, got %d", code)
+	}
+}

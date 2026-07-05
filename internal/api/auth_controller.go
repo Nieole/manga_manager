@@ -121,6 +121,63 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---- 阅读协议 HTTP Basic 鉴权（OPDS / Mihon）----
+
+const basicAuthCacheTTL = 5 * time.Minute
+
+type basicAuthEntry struct {
+	userID    int64
+	expiresAt time.Time
+}
+
+func basicAuthCacheKey(username, password string) string {
+	sum := sha256.Sum256([]byte(username + "\x00" + password))
+	return hex.EncodeToString(sum[:])
+}
+
+// resolveBasicAuthUser 校验 Basic 凭据并返回站点用户 id；带 TTL 内存缓存以免每个协议请求都跑 bcrypt。
+func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, password string) (int64, bool) {
+	if username == "" || password == "" {
+		return 0, false
+	}
+	key := basicAuthCacheKey(username, password)
+	now := time.Now()
+	if v, ok := c.basicAuthCache.Load(key); ok {
+		if e, ok := v.(basicAuthEntry); ok && e.expiresAt.After(now) {
+			return e.userID, true
+		}
+		c.basicAuthCache.Delete(key)
+	}
+	user, err := c.store.GetUserByUsername(ctx, username)
+	if err != nil || !verifyPassword(user.PasswordHash, password) {
+		return 0, false
+	}
+	c.basicAuthCache.Store(key, basicAuthEntry{userID: user.ID, expiresAt: now.Add(basicAuthCacheTTL)})
+	return user.ID, true
+}
+
+// requireBasicAuth 是阅读协议（OPDS/Mihon）的 HTTP Basic 鉴权中间件：校验站点用户名+密码，
+// 成功则把用户写入请求上下文（供 currentUserID 与每用户进度取用），失败返回 401 + WWW-Authenticate。
+// 站点尚无账户时（首启）直通，避免锁死初始化前的协议访问。
+func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !c.usersExist(r.Context()) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if username, password, ok := r.BasicAuth(); ok {
+			if uid, valid := c.resolveBasicAuthUser(r.Context(), username, password); valid {
+				if user, err := c.store.GetUserByID(r.Context(), uid); err == nil {
+					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, user)))
+					return
+				}
+			}
+		}
+		w.Header().Set("WWW-Authenticate", `Basic realm="manga-manager"`)
+		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
+	})
+}
+
 // ---- 中间件 ----
 
 func isMutating(method string) bool {
@@ -345,6 +402,10 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	// 把旧的全局阅读进度迁移到首个管理员名下（幂等）。失败不阻断建号，仅记录。
 	if err := c.store.MigrateGlobalProgressToUser(ctx, user.ID); err != nil {
 		slog.Warn("migrate global progress to first admin failed", "user_id", user.ID, "error", err)
+	}
+	// 现有 KOReader 账户并入首个管理员。
+	if err := c.store.AssignOrphanKOReaderAccountsToUser(ctx, user.ID); err != nil {
+		slog.Warn("assign KOReader accounts to first admin failed", "user_id", user.ID, "error", err)
 	}
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {

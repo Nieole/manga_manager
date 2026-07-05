@@ -4,6 +4,24 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（完整多用户 · P0 第 3 项 · 阶段3：KOReader 并入 + OPDS/Mihon 按用户鉴权）
+
+> 承接阶段2。本阶段让三个阅读协议（OPDS/Mihon/KOReader）按站点用户鉴权，进度随之转为每用户。**至此第 3 项「完整多用户」三阶段全部完成。**
+
+#### 新增
+- **OPDS / Mihon HTTP Basic 鉴权**：新中间件 `requireBasicAuth`——用站点用户名+密码校验（bcrypt），成功则把用户写入请求上下文（`currentUserID` 取用），失败 401 + `WWW-Authenticate: Basic`。带 TTL 内存缓存已验证凭据（`basicAuthCache`），避免每个协议请求都跑 bcrypt。站点尚无账户时（首启）直通。挂到 `/opds/v1.2` 与 `/api/mihon/v1` 路由组（Mihon 仍被 authGate 放行，Basic 是其唯一鉴权）。
+- **Mihon 进度按用户**：进度写入端点复用 `updateBookProgress`，经上下文用户自动写入本人 `user_book_progress`；继续阅读、系列书目响应改按当前用户取数/叠加。
+- **OPDS 进度按用户**：继续阅读、系列书目 feed 的 last-read 按当前用户显示。
+- **KOReader 账户并入站点用户**：`koreader_accounts` 新增 `user_id` 列（0=未关联）。现有账户在首个管理员创建时并入该管理员（`AssignOrphanKOReaderAccountsToUser`）；管理员创建的账户归创建者，设备自助注册的账户归首个管理员。KOReader 同步进度（push / pull / reconcile 三条路径）经账户 `user_id` 写入对应用户的每用户进度（未关联则回落全局），「不回退」保护按对应用户既有进度比较。为避免改动 `KOReaderAccount` 结构与其众多扫描点，账户→用户映射走独立单列查询（`GetKOReaderAccountUserID`/`SetKOReaderAccountUser`）。
+
+#### 说明
+- 首启阶段与未登录协议请求仍走旧全局路径（双路径），保持向后兼容与既有测试。活动热力图/书签等仍全局（见阶段2 说明）。
+
+#### 验证
+- 新增 `TestProtocolBasicAuth`（首启直通 → 建账户后无/错/正确凭据分别 401/401/200）；`go build`、`go vet`、`go test ./internal/...` 全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（完整多用户 · P0 第 3 项 · 阶段2：每用户阅读进度）
 
 > 承接阶段1（用户+会话鉴权）。本阶段把阅读进度从全局拆成按用户，并把旧全局进度迁移到第一个管理员。

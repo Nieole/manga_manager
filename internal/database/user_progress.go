@@ -213,6 +213,32 @@ func (s *SqlStore) GetUserBookProgressMap(ctx context.Context, userID int64, boo
 	return out, rows.Err()
 }
 
+// GetKOReaderAccountUserID 返回某 KOReader 账户绑定的站点用户 id；0 表示未关联（进度回落到全局）。
+// 用单列查询避免改动 KOReaderAccount 结构与其众多扫描点。
+func (s *SqlStore) GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error) {
+	var uid int64
+	err := s.db.QueryRowContext(ctx, `SELECT user_id FROM koreader_accounts WHERE username = ?`, username).Scan(&uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return uid, err
+}
+
+// SetKOReaderAccountUser 把某 KOReader 账户绑定到站点用户（创建账户时归属创建者）。
+func (s *SqlStore) SetKOReaderAccountUser(ctx context.Context, accountID, userID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE koreader_accounts SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, userID, accountID)
+	return err
+}
+
+// AssignOrphanKOReaderAccountsToUser 把所有未关联（user_id=0）的 KOReader 账户归属某用户。
+// 首个管理员创建时调用，实现「现有 KOReader 账户并入第一个管理员」。
+func (s *SqlStore) AssignOrphanKOReaderAccountsToUser(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE koreader_accounts SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = 0`, userID)
+	return err
+}
+
 // GetUserRecentReadAll 是 GetRecentReadAll 的每用户版本：从 user_series_progress + user_book_progress 取
 // 该用户最近阅读的书目（跨库，用于看板「继续阅读」）。返回行结构与全局版一致。
 func (s *SqlStore) GetUserRecentReadAll(ctx context.Context, userID, limit int64) ([]GetRecentReadAllRow, error) {

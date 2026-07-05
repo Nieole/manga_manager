@@ -101,6 +101,9 @@ type MihonPageResponse struct {
 func (c *Controller) setupMihonRoutes(r chi.Router) {
 	r.Route("/mihon/v1", func(r chi.Router) {
 		r.Use(c.requireProtocolEnabled("mihon"))
+		// 阅读协议按站点用户 HTTP Basic 鉴权（多用户）；进度读写随之按当前用户。
+		// authGate 已放行 /api/mihon/ 前缀，故此处的 Basic 鉴权是 Mihon 的唯一鉴权。
+		r.Use(c.requireBasicAuth)
 		r.Get("/libraries", c.mihonLibraries)
 		r.Get("/recently-added", c.mihonRecentlyAdded)
 		r.Get("/continue", c.mihonContinueReading)
@@ -167,7 +170,15 @@ func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) 
 
 func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request) {
 	limit := int64(positiveQueryInt(r, "limit", 30, 100))
-	rows, err := c.store.GetRecentReadAll(r.Context(), limit)
+	var (
+		rows []database.GetRecentReadAllRow
+		err  error
+	)
+	if uid := c.currentUserID(r); uid > 0 {
+		rows, err = c.store.GetUserRecentReadAll(r.Context(), uid, limit)
+	} else {
+		rows, err = c.store.GetRecentReadAll(r.Context(), limit)
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch continue reading")
 		return
@@ -506,6 +517,7 @@ func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	// 无法处理卷号数值排序与从文件名/标题中提取的「第N话/第N卷」序数，需在代码层用
 	// booksort 重排，否则 mihon 客户端里章节顺序会乱（如 10 排在 2 之前）。
 	sortBooksForReading(books)
+	c.overlayUserProgress(r.Context(), c.currentUserID(r), books)
 	items := make([]MihonBookResponse, 0, len(books))
 	for _, book := range books {
 		items = append(items, mihonBookFromModel(book))

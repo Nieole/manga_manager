@@ -117,6 +117,9 @@ type Store interface {
 	GetUserRecentReadSeries(ctx context.Context, userID, libraryID, limit int64) ([]GetRecentReadSeriesRow, error)
 	GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error)
 	MigrateGlobalProgressToUser(ctx context.Context, userID int64) error
+	GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error)
+	SetKOReaderAccountUser(ctx context.Context, accountID, userID int64) error
+	AssignOrphanKOReaderAccountsToUser(ctx context.Context, userID int64) error
 }
 
 type ReadingListSeriesProgress struct {
@@ -818,6 +821,7 @@ func Migrate(dbPath string) error {
 		{table: "smart_filters", name: "max_progress", definition: "REAL"},
 		{table: "smart_filters", name: "added_within_days", definition: "INTEGER"},
 		{table: "tags", name: "series_count", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{table: "koreader_accounts", name: "user_id", definition: "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
 			return err

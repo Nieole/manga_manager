@@ -90,6 +90,10 @@ type Controller struct {
 	// 账户体系保证至少留一个管理员，故该标志一旦置真不再回退。
 	usersPresent atomic.Bool
 
+	// basicAuthCache 缓存阅读协议（OPDS/Mihon）已通过校验的 Basic 凭据（key=用户名+口令哈希 → 用户 id + 过期），
+	// 避免每个协议请求都跑一次 bcrypt（bcrypt 故意很慢）。零值即可用，条目带 TTL。
+	basicAuthCache sync.Map
+
 	lifecycleOnce sync.Once
 	shutdownOnce  sync.Once
 	lifecycleMu   sync.Mutex

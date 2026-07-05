@@ -72,11 +72,21 @@ func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash str
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return database.KOReaderAccount{}, err
 	}
-	return s.store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
+	account, err := s.store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
 		Username: username,
 		SyncKey:  passwordHash,
 		Enabled:  true,
 	})
+	if err != nil {
+		return database.KOReaderAccount{}, err
+	}
+	// 设备自助注册的账户无站点用户上下文——归属首个管理员（与「现有账户并入第一个管理员」口径一致）。
+	if adminID, e := s.store.FirstAdminUserID(ctx); e == nil {
+		if e := s.store.SetKOReaderAccountUser(ctx, account.ID, adminID); e != nil {
+			slog.Warn("Failed to assign self-registered KOReader account to admin", "account_id", account.ID, "error", e)
+		}
+	}
+	return account, nil
 }
 
 func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database.KOReaderAccount, error) {
@@ -151,6 +161,8 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 		return SyncResult{}, err
 	}
 	_ = account
+	// KOReader 账户绑定的站点用户（多用户）；>0 时同步进度写入该用户，0 回落全局。
+	syncUserID, _ := s.store.GetKOReaderAccountUserID(ctx, creds.Username)
 
 	payload.Document = strings.TrimSpace(payload.Document)
 	payload.Progress = strings.TrimSpace(payload.Progress)
@@ -189,7 +201,7 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
 		bookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 		matchedBy = match.MatchedBy
-		if applyErr := s.applyBookProgress(ctx, match, payload.Percentage); applyErr != nil {
+		if applyErr := s.applyBookProgress(ctx, match, payload.Percentage, syncUserID); applyErr != nil {
 			slog.Warn("Failed to project KOReader progress onto book", "book_id", match.BookID, "error", applyErr)
 		}
 	}
@@ -253,7 +265,8 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 			_ = s.store.LinkKOReaderProgressToBook(ctx, record.ID, match.BookID, match.MatchedBy)
 			record.BookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 			record.MatchedBy = match.MatchedBy
-			if applyErr := s.applyBookProgress(ctx, match, record.Percentage); applyErr != nil {
+			pullUserID, _ := s.store.GetKOReaderAccountUserID(ctx, record.Username)
+			if applyErr := s.applyBookProgress(ctx, match, record.Percentage, pullUserID); applyErr != nil {
 				slog.Warn("Failed to project KOReader pull progress onto book", "book_id", match.BookID, "error", applyErr)
 			}
 		}
@@ -388,7 +401,8 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 				if err := s.store.LinkKOReaderProgressToBook(ctx, item.ID, match.BookID, match.MatchedBy); err != nil {
 					return updated, total, err
 				}
-				if applyErr := s.applyBookProgress(ctx, match, item.Percentage); applyErr != nil {
+				reconcileUserID, _ := s.store.GetKOReaderAccountUserID(ctx, item.Username)
+				if applyErr := s.applyBookProgress(ctx, match, item.Percentage, reconcileUserID); applyErr != nil {
 					slog.Warn("Failed to project reconciled progress onto book", "book_id", match.BookID, "error", applyErr)
 				}
 				updated++
@@ -541,7 +555,9 @@ func readableMatchMode(cfg MatchConfig) string {
 	return "二进制哈希"
 }
 
-func (s *Service) applyBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64) error {
+// applyBookProgress 把 KOReader 同步的百分比投影为书页进度。userID>0 时写入该站点用户的每用户进度，
+// 否则回落到旧的全局进度（未关联账户 / 首启）。「不回退」保护按对应用户（或全局）的既有进度比较。
+func (s *Service) applyBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64, userID int64) error {
 	if match.PageCount <= 0 {
 		return nil
 	}
@@ -552,13 +568,28 @@ func (s *Service) applyBookProgress(ctx context.Context, match database.KOReader
 	if page > match.PageCount {
 		page = match.PageCount
 	}
-	if match.LastReadPage != nil && page < *match.LastReadPage {
+
+	prev := int64(0)
+	if userID > 0 {
+		if p, ok, err := s.store.GetUserBookProgress(ctx, userID, match.BookID); err == nil && ok && p.LastReadPage.Valid {
+			prev = p.LastReadPage.Int64
+		}
+	} else if match.LastReadPage != nil {
+		prev = *match.LastReadPage
+	}
+	if prev > 0 && page < prev {
 		return nil
 	}
-	if err := s.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+
+	now := time.Now()
+	if userID > 0 {
+		if err := s.store.SetUserBookProgress(ctx, userID, match.BookID, page, now); err != nil {
+			return err
+		}
+	} else if err := s.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
 		ID:           match.BookID,
 		LastReadPage: sql.NullInt64{Int64: page, Valid: true},
-		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
+		LastReadAt:   sql.NullTime{Time: now, Valid: true},
 	}); err != nil {
 		return err
 	}

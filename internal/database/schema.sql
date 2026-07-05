@@ -435,6 +435,9 @@ CREATE TABLE IF NOT EXISTS koreader_accounts (
     username TEXT NOT NULL UNIQUE,
     sync_key TEXT NOT NULL DEFAULT '',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    -- user_id：KOReader 账户所属的站点用户（多用户）。0=未关联，同步进度回落到全局。
+    -- 现有账户在首个管理员创建时归属该管理员；此后账户归创建者所有。
+    user_id INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

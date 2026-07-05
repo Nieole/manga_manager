@@ -126,6 +126,8 @@ const (
 func (c *Controller) SetupOPDSRoutes(r chi.Router) {
 	r.Route("/opds/v1.2", func(r chi.Router) {
 		r.Use(c.requireProtocolEnabled("opds"))
+		// 阅读协议按站点用户 HTTP Basic 鉴权（多用户）；进度显示随之按当前用户。
+		r.Use(c.requireBasicAuth)
 		r.Get("/", c.opdsRoot)
 		r.Get("/continue", c.opdsContinueReading)
 		r.Get("/recent", c.opdsRecentAdded)
@@ -944,6 +946,7 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	// 与全站阅读顺序口径对齐：SQL 的 ORDER BY volume, sort_number, name 在 sort_number 缺失时
 	// 会退化为按名称的字典序（第 10 话排到第 2 话之前）。用 booksort 规范化处理中文卷话等格式。
 	slices.SortStableFunc(books, booksort.CompareBooks)
+	c.overlayUserProgress(r.Context(), c.currentUserID(r), books)
 
 	series, _ := c.store.GetSeries(r.Context(), seriesID)
 	seriesTitle := series.Name
@@ -1011,7 +1014,15 @@ func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request)
 func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	limit := int64(opdsPositiveQueryInt(r, "limit", 30, 100))
-	items, err := c.store.GetRecentReadAll(r.Context(), limit)
+	var (
+		items []database.GetRecentReadAllRow
+		err   error
+	)
+	if uid := c.currentUserID(r); uid > 0 {
+		items, err = c.store.GetUserRecentReadAll(r.Context(), uid, limit)
+	} else {
+		items, err = c.store.GetRecentReadAll(r.Context(), limit)
+	}
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return

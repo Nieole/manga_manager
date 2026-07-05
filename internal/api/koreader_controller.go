@@ -482,6 +482,12 @@ func (c *Controller) createKOReaderAccount(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
+	// 管理员创建的账户归属该管理员（多用户：谁创建谁拥有，其同步进度记到该用户名下）。
+	if uid := c.currentUserID(r); uid > 0 {
+		if err := c.store.SetKOReaderAccountUser(r.Context(), account.ID, uid); err != nil {
+			slog.Warn("Failed to assign KOReader account to creator", "account_id", account.ID, "user_id", uid, "error", err)
+		}
+	}
 	_ = c.store.CreateKOReaderSyncEvent(r.Context(), database.CreateKOReaderSyncEventParams{
 		Direction: "system",
 		Username:  account.Username,
