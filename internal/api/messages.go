@@ -39,6 +39,9 @@ var apiMessages = map[string]map[string]string{
 		"comicinfo.write.failed":      "写入 ComicInfo 到归档失败。",
 
 		"tag.rename.conflict": "已存在同名标签，请改用「合并」。",
+
+		"cover.upload.not_image": "上传的文件不是图片。",
+		"cover.upload.too_large": "封面图片过大（上限 16 MiB）。",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -71,6 +74,9 @@ var apiMessages = map[string]map[string]string{
 		"comicinfo.write.failed":      "Failed to write ComicInfo into the archive.",
 
 		"tag.rename.conflict": "A tag with that name already exists — use Merge instead.",
+
+		"cover.upload.not_image": "The uploaded file is not an image.",
+		"cover.upload.too_large": "Cover image is too large (16 MiB max).",
 	},
 }
 

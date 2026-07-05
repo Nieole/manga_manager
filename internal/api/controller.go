@@ -725,6 +725,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/{bookId}/progress", c.updateBookProgress)
 			r.Get("/{bookId}/comicinfo.xml", c.exportBookComicInfo)
 			r.Post("/{bookId}/comicinfo", c.writeBookComicInfo)
+			r.Post("/{bookId}/cover", c.setBookCoverFromPage)
+			r.Post("/{bookId}/cover/upload", c.uploadBookCover)
 			r.Get("/{bookId}/file", c.serveBookFile)
 			r.Get("/{bookId}/bookmarks", c.listReadingBookmarks)
 			r.Post("/{bookId}/bookmarks", c.upsertReadingBookmark)

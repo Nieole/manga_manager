@@ -109,6 +109,7 @@ export function BaseTheme(props: ReaderThemeProps) {
                                 progressStatus={progressIndicator.status}
                                 allInVolume={siblings.allInVolume}
                                 currentBookId={bookId ? Number(bookId) : null}
+                                currentPageNumber={currentPageNumber}
                                 onOpenBook={handleOpenBook}
                                 onBack={handleBackToSeries}
                                 onSaveBookmark={handleSaveBookmark}

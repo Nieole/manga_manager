@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（自定义封面：设为封面 / 上传封面 · P1 第 5 项之三）
+
+#### 新增
+- 收藏者可自定义书封面：
+  - **阅读器**顶栏新增「设当前页为封面」（`ImagePlus`）——把正在看的这一页设成该书封面。
+  - **系列书卡「⋯」菜单**新增「上传封面」——选一张本地图片作为封面（前端就地缓存刷新即时可见）。
+- 后端在扫描器封面管线上新增 `Scanner.SetBookCoverFromPage`（按页取图）与 `SetBookCoverFromImage`（上传字节），复用 `images.ProcessImage`（400px 缩略图）+ 内容 SHA1 寻址落盘（同扫描封面的目录方案，天然去重/刷新缓存）；`store.SetBookCover` **无条件**更新 `books.cover_path`（区别于只在缺失时写的 `SetBookCoverIfMissing`），随后 `RefreshSeriesStats`。
+- 端点 `POST /api/books/{id}/cover`（body `{page}`）与 `POST /api/books/{id}/cover/upload`（**首个 multipart 处理器**，16 MiB 上限 + `image/*` 类型校验，错误经 `apiText` 本地化）。
+
+#### 验证
+- `go build`、`go vet`、`go test ./internal/api ./internal/scanner ./internal/database` 全绿；前端 `npm run lint`（0）、`npm run build` 通过。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（标签管理：重命名 / 合并 / 删除 · P1 第 5 项之二）
 
 #### 新增

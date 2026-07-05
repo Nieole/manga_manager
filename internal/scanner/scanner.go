@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1512,6 +1513,82 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 		)
 	}
 	return sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}, nil
+}
+
+// SetBookCoverFromPage 用书内指定页(1-based)重建封面并无条件更新 cover_path，随后刷新系列统计。
+// GetPages() 已按自然阅读顺序排序，故第 N 页即 pages[N-1]。返回新的相对封面路径。
+func (s *Scanner) SetBookCoverFromPage(ctx context.Context, book database.Book, pageNumber int) (string, error) {
+	arc, err := s.openArchive(book.Path)
+	if err != nil {
+		return "", err
+	}
+	defer arc.Close()
+	pages, err := arc.GetPages()
+	if err != nil {
+		return "", err
+	}
+	if pageNumber < 1 || pageNumber > len(pages) {
+		return "", fmt.Errorf("page %d out of range (1..%d)", pageNumber, len(pages))
+	}
+	page := pages[pageNumber-1]
+	data, err := arc.ReadPage(page.Name)
+	if err != nil {
+		return "", err
+	}
+	return s.applyCustomCover(ctx, book, data, page.MediaType)
+}
+
+// SetBookCoverFromImage 用外部上传的图片字节重建封面（上传封面）。
+func (s *Scanner) SetBookCoverFromImage(ctx context.Context, book database.Book, imageData []byte, mediaType string) (string, error) {
+	return s.applyCustomCover(ctx, book, imageData, mediaType)
+}
+
+// applyCustomCover 把给定图片处理成内容寻址的缩略图写盘，无条件更新 cover_path 并刷新系列统计。
+func (s *Scanner) applyCustomCover(ctx context.Context, book database.Book, imageData []byte, mediaType string) (string, error) {
+	cfg := s.currentConfig()
+	relPath, err := s.writeCoverThumbnail(cfg, imageData, mediaType)
+	if err != nil {
+		return "", err
+	}
+	if err := s.store.SetBookCover(ctx, book.ID, relPath); err != nil {
+		removeGeneratedThumbnail(cfg, relPath)
+		return "", err
+	}
+	if err := s.store.RefreshSeriesStats(ctx, book.SeriesID); err != nil {
+		slog.Warn("refresh series stats after custom cover failed", "series_id", book.SeriesID, "error", err)
+	}
+	return relPath, nil
+}
+
+// writeCoverThumbnail 把原始图片处理成 400px 缩略图，用内容 SHA1 命名（与扫描封面同一目录方案），
+// 内容寻址天然去重且能刷新浏览器缓存。返回相对路径（<2字符子目录>/<hash>.<ext>）。
+func (s *Scanner) writeCoverThumbnail(cfg config.Config, imageData []byte, mediaType string) (string, error) {
+	targetFormat := cfg.Scanner.ThumbnailFormat
+	if targetFormat == "" {
+		targetFormat = "webp"
+	}
+	processed, contentType, err := images.ProcessImage(imageData, mediaType, images.ProcessOptions{Width: 400, Quality: 82, Format: targetFormat})
+	if err != nil || len(processed) == 0 {
+		processed, contentType, err = images.ProcessImage(imageData, mediaType, images.ProcessOptions{Width: 400, Quality: 82, Format: "jpeg"})
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(processed) == 0 {
+		return "", fmt.Errorf("no processed cover data generated")
+	}
+	sum := sha1.Sum(processed)
+	hash := hex.EncodeToString(sum[:])
+	subDir := thumbnailSubDir(hash)
+	thumbDir := filepath.Join(thumbnailBaseDir(cfg), subDir)
+	if err := os.MkdirAll(thumbDir, 0o755); err != nil {
+		return "", err
+	}
+	fileName := hash + extensionFromContentType(contentType, targetFormat)
+	if err := os.WriteFile(filepath.Join(thumbDir, fileName), processed, 0o644); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Join(subDir, fileName)), nil
 }
 
 func removeGeneratedThumbnail(cfg config.Config, relativePath string) {

@@ -51,6 +51,7 @@ type Store interface {
 	RenameTag(ctx context.Context, tagID int64, newName string) error
 	MergeTags(ctx context.Context, sourceID, targetID int64) error
 	DeleteTag(ctx context.Context, tagID int64) error
+	SetBookCover(ctx context.Context, bookID int64, coverPath string) error
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
@@ -293,6 +294,12 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 
 func (s *SqlStore) RefreshSeriesStats(ctx context.Context, seriesID int64) error {
 	_, err := s.db.ExecContext(ctx, refreshSeriesStatsStatement("s.id = ?"), seriesID)
+	return err
+}
+
+// SetBookCover 无条件更新书籍封面路径（与只在缺失时写入的 SetBookCoverIfMissing 不同），供“设为封面 / 上传封面”使用。
+func (s *SqlStore) SetBookCover(ctx context.Context, bookID int64, coverPath string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE books SET cover_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, coverPath, bookID)
 	return err
 }
 

@@ -10,6 +10,9 @@ import { BookImage, CheckCircle2, MoreHorizontal } from 'lucide-react';
 import type { Book } from './types';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { downloadBookFile } from '../../utils/download';
+import { uploadBookCover } from '../../utils/cover';
+import { getApiErrorMessage } from '../../api/client';
+import { useToast } from '../../components/ToastProvider';
 
 interface SeriesBookCardProps {
   book: Book;
@@ -33,8 +36,22 @@ export function SeriesBookCard({
   onCopyPath,
 }: SeriesBookCardProps) {
   const { t } = useI18n();
+  const { showToast } = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [coverBust, setCoverBust] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCoverUpload = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      await uploadBookCover(book.id, file);
+      setCoverBust(Date.now());
+      showToast(t('series.book.coverUploaded'), 'success');
+    } catch (err) {
+      showToast(getApiErrorMessage(err, t('series.book.coverUploadFailed')), 'error');
+    }
+  };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -51,8 +68,9 @@ export function SeriesBookCard({
   const showProgress = book.page_count > 0 && readPage > 0;
   const showResumeBadge = readPage > 0 && !isFinished && book.page_count > 0;
 
-  const coverSrc = book.cover_path?.Valid
-    ? `/api/covers/${book.id}${book.updated_at ? `?v=${new Date(book.updated_at).getTime()}` : ''}`
+  const coverVersion = coverBust > 0 ? coverBust : book.updated_at ? new Date(book.updated_at).getTime() : 0;
+  const coverSrc = book.cover_path?.Valid || coverBust > 0
+    ? `/api/covers/${book.id}${coverVersion ? `?v=${coverVersion}` : ''}`
     : null;
 
   return (
@@ -151,6 +169,17 @@ export function SeriesBookCard({
                       e.preventDefault();
                       e.stopPropagation();
                       setMenuOpen(false);
+                      coverInputRef.current?.click();
+                    }}
+                    className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
+                  >
+                    {t('series.book.uploadCover')}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMenuOpen(false);
                       downloadBookFile(book.id);
                     }}
                     className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
@@ -174,6 +203,18 @@ export function SeriesBookCard({
           </div>
         )}
 
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            void handleCoverUpload(file);
+          }}
+        />
         {showResumeBadge && (
           <div className="absolute right-2 bottom-2 z-20 px-2 py-0.5 rounded-md bg-gray-950/70 border border-white/10 text-[11px] font-semibold text-amber-200">
             {readPage}/{book.page_count}

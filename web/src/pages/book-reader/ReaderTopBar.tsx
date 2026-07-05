@@ -5,10 +5,13 @@
  */
 
 import { useState } from 'react';
-import { ArrowLeft, Bookmark, CircleHelp, Download, ListOrdered, Loader2, Settings } from 'lucide-react';
+import { ArrowLeft, Bookmark, CircleHelp, Download, ImagePlus, ListOrdered, Loader2, Settings } from 'lucide-react';
 import type { ProgressSyncStatus } from './useReaderProgressIndicator';
 import type { VolumeBookEntry } from './useReaderSiblings';
 import { downloadBookFile } from '../../utils/download';
+import { setBookCoverFromPage } from '../../utils/cover';
+import { getApiErrorMessage } from '../../api/client';
+import { useToast } from '../../components/ToastProvider';
 
 type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
 
@@ -28,6 +31,7 @@ interface ReaderTopBarProps {
   onToggleSettings: () => void;
   allInVolume: VolumeBookEntry[];
   currentBookId: number | null;
+  currentPageNumber: number;
   onOpenBook: (bookId: number) => void;
 }
 
@@ -67,9 +71,25 @@ export function ReaderTopBar({
   onToggleSettings,
   allInVolume,
   currentBookId,
+  currentPageNumber,
   onOpenBook,
 }: ReaderTopBarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [settingCover, setSettingCover] = useState(false);
+  const { showToast } = useToast();
+
+  const handleSetCover = async () => {
+    if (currentBookId === null) return;
+    setSettingCover(true);
+    try {
+      await setBookCoverFromPage(currentBookId, currentPageNumber);
+      showToast(t('reader.coverSet'), 'success');
+    } catch (err) {
+      showToast(getApiErrorMessage(err, t('reader.coverSetFailed')), 'error');
+    } finally {
+      setSettingCover(false);
+    }
+  };
 
   return (
     <div className="flex items-center justify-between w-full relative">
@@ -140,6 +160,16 @@ export function ReaderTopBar({
               </div>
             )}
           </>
+        )}
+        {currentBookId !== null && (
+          <button
+            onClick={handleSetCover}
+            disabled={settingCover}
+            className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg disabled:opacity-60"
+            title={t('reader.setCover')}
+          >
+            {settingCover ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImagePlus className="w-5 h-5" />}
+          </button>
         )}
         {currentBookId !== null && (
           <button
