@@ -19,6 +19,7 @@ import { useToast } from './ToastProvider';
 import { ShortcutsPanel } from './ShortcutsPanel';
 import { SidebarTaskBubble } from './SidebarTaskBubble';
 import { SidebarGroup, SidebarLink } from './layout/SidebarNav';
+import { UserMenu } from './layout/UserMenu';
 import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
 import { useTaskBubbles } from './layout/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
@@ -473,6 +474,7 @@ export default function Layout() {
                     >
                         <SettingsIcon className="w-6 h-6" />
                     </Link>
+                    <UserMenu />
                 </div>
             </header>
 

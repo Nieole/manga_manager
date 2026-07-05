@@ -13,12 +13,13 @@ import { initializeTheme } from './theme/themes.ts'
 import { DEFAULT_LOCALE, type AppLocale } from './i18n/core.ts'
 import { LocaleProvider, getClientLocale, loadLocaleMessages } from './i18n/LocaleProvider.tsx'
 import { installApiAuth } from './utils/apiAuth.ts'
+import { AuthProvider } from './auth/AuthProvider.tsx'
 import { ToastProvider } from './components/ToastProvider.tsx'
 import './index.css'
 
 // Cache buster: 1
 initializeTheme()
-// 安装可选管理 API 令牌鉴权拦截器（未设置令牌时无操作）。
+// 安装多用户会话鉴权拦截器（携带 Cookie + 为改写类请求附加 X-CSRF-Token）。
 installApiAuth()
 
 async function bootstrap() {
@@ -40,7 +41,9 @@ async function bootstrap() {
         <ThemeProvider>
           <ToastProvider>
             <BrowserRouter>
-              <App />
+              <AuthProvider>
+                <App />
+              </AuthProvider>
             </BrowserRouter>
           </ToastProvider>
         </ThemeProvider>

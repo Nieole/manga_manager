@@ -1,40 +1,43 @@
 /**
- * 业务说明：本文件是可选管理 API 令牌鉴权（后端 server.auth）的前端支撑层。
- * 未设置令牌时全部为无操作，默认行为与历史版本完全一致；启用后端鉴权后，
- * 只需存入令牌即可让所有 axios 管理请求与 SSE 连接自动携带令牌。
- * 维护时应保持“无令牌即无操作”的语义，避免影响未启用鉴权的部署。
+ * 业务说明：本文件是多用户 Cookie 会话鉴权的前端支撑层。会话令牌由后端以 HttpOnly Cookie 下发，
+ * 前端不可读；改写类请求（POST/PUT/PATCH/DELETE）需在 X-CSRF-Token 头回传登录时拿到的 CSRF 令牌。
+ * 所有 axios 请求统一 withCredentials 以携带会话 Cookie。CSRF 令牌仅存内存，由 AuthProvider 更新。
+ * 维护要点：Cookie 同源自动携带，withApiToken 已退化为无操作，仅为兼容既有 EventSource/下载调用点保留。
  */
 
-import axios from 'axios';
+import axios, { type InternalAxiosRequestConfig } from 'axios';
 
-const TOKEN_KEY = 'mm_token';
+// csrfToken 仅存内存：随登录 / 状态查询更新，页面刷新后由 AuthProvider 重新拉取。
+let csrfToken = '';
 
-// getApiToken 读取本地存储的管理令牌；存储不可用或未设置时返回空串。
-export function getApiToken(): string {
-  try {
-    return localStorage.getItem(TOKEN_KEY)?.trim() ?? '';
-  } catch {
-    return '';
+export function setCsrfToken(token: string | undefined | null): void {
+  csrfToken = token?.trim() ?? '';
+}
+
+export function getCsrfToken(): string {
+  return csrfToken;
+}
+
+const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
+// attachAuth 为请求挂上会话 Cookie（withCredentials）与改写类方法的 CSRF 头。
+export function attachAuth(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
+  config.withCredentials = true;
+  const method = (config.method ?? 'get').toLowerCase();
+  if (csrfToken && MUTATING_METHODS.has(method) && config.headers) {
+    config.headers.set('X-CSRF-Token', csrfToken);
   }
+  return config;
 }
 
-// installApiAuth 安装全局 axios 请求拦截器：存在令牌时附加 X-API-Token 头。
-// 应用启动时调用一次即可。未设置令牌时不改动任何请求。
+// installApiAuth 在全局 axios 上安装鉴权拦截器并默认携带凭据；应用启动时调用一次。
 export function installApiAuth(): void {
-  axios.interceptors.request.use((config) => {
-    const token = getApiToken();
-    if (token && config.headers) {
-      config.headers.set('X-API-Token', token);
-    }
-    return config;
-  });
+  axios.defaults.withCredentials = true;
+  axios.interceptors.request.use(attachAuth);
 }
 
-// withApiToken 给无法自定义请求头的场景（EventSource、<img> 等）在 URL 上附加 token 查询参数。
-// 未设置令牌时原样返回。
+// withApiToken 历史用于给无法自定义请求头的场景（EventSource、<img>）附加令牌查询参数；
+// 迁移到 Cookie 会话后同源请求自动携带凭据，无需再改写 URL，保留为无操作以兼容既有调用点。
 export function withApiToken(url: string): string {
-  const token = getApiToken();
-  if (!token) return url;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}token=${encodeURIComponent(token)}`;
+  return url;
 }

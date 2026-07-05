@@ -6,21 +6,15 @@
  */
 
 import axios from 'axios'
-import { getApiToken } from '../utils/apiAuth'
+import { attachAuth } from '../utils/apiAuth'
 
 // apiClient 是全站统一的 axios 实例。不设 baseURL：沿用调用方现有的 /api/... 绝对路径，行为与
-// 直接使用全局 axios 完全一致，仅把横切逻辑收拢到此实例上。
-export const apiClient = axios.create()
+// 直接使用全局 axios 完全一致，仅把横切逻辑收拢到此实例上。withCredentials 携带会话 Cookie。
+export const apiClient = axios.create({ withCredentials: true })
 
-// 与 installApiAuth 对全局 axios 的处理一致：存在管理令牌时为请求附加 X-API-Token 头（无令牌为无操作）。
-// apiClient 是独立实例，不会继承全局 axios 的拦截器，因此需在此单独挂载。
-apiClient.interceptors.request.use((config) => {
-  const token = getApiToken()
-  if (token && config.headers) {
-    config.headers.set('X-API-Token', token)
-  }
-  return config
-})
+// apiClient 是独立实例，不会继承全局 axios 的拦截器，因此需在此单独挂载会话鉴权拦截器
+// （携带 Cookie + 为改写类方法附加 X-CSRF-Token）。
+apiClient.interceptors.request.use(attachAuth)
 
 // 从 client 统一再导出 axios 的静态类型守卫，供各处判断错误/取消，避免消费方直接 import axios
 // （可用 ESLint no-restricted-imports 收口，只允许 client.ts / apiAuth.ts 直接依赖 axios）。

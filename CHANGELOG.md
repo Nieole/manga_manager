@@ -4,6 +4,27 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-05（完整多用户 · P0 第 3 项 · 阶段1：用户 + 会话鉴权）
+
+> 第 3 项「完整多用户」分三阶段推进：**阶段1 用户体系与鉴权（本次）** → 阶段2 每用户阅读进度迁移 → 阶段3 KOReader 并入 + OPDS/Mihon 按用户鉴权。
+
+#### 新增
+- **站点账户体系**：新表 `users`（用户名 / bcrypt 口令 / 角色 admin·regular / 显示名 / must_change_password）与 `sessions`（服务端会话，cookie 存随机令牌、DB 存其 SHA-256，含 csrf_token 与滑动过期），均在 `schema.sql` 由 `Migrate()` 幂等建表。手写 store 方法（`users.go`）：用户增删查改、计数、首个管理员定位、会话 CRUD 与过期清理，全部登记进 `Store` 接口。
+- **Cookie session + CSRF 鉴权**：新中间件 `authGate` 统一守卫 `/api` 组，取代已退役的可选共享令牌（`requireAuth`/`extractAPIToken` 删除，`Server.Auth` 配置字段仅保留兼容）。改写类请求（POST/PUT/PATCH/DELETE）需在 `X-CSRF-Token` 头回传会话绑定的 CSRF 令牌。
+- **强制登录 + 首次建管理员**：站点尚无账户时 `authGate` 直通（首启无数据可护），前端进入「创建首个管理员」引导页；建成后全站强制登录。端点 `GET /api/auth/status`、`POST /api/auth/setup|login|logout`、`GET /api/auth/me`、`POST /api/auth/change-password`。
+- **角色权限**：管理员全权；普通用户只读浏览 + 记录本人阅读状态（进度/书签/短评），不能改共享库元数据或访问 `/api/system`、`/api/users`。集中在 `authGate.authorize` 实施。
+- **账户管理（仅管理员）**：端点 `GET/POST /api/users`、`PATCH /api/users/{id}`、`POST /api/users/{id}/password`、`DELETE /api/users/{id}`；守卫「不能删自己 / 删或降级最后一个管理员」。管理员代建账户置 `must_change_password`，用户首登强制改密。
+- **前端**：axios 切到 Cookie 模式（`withCredentials` + 改写请求附 `X-CSRF-Token`，旧 `mm_token`/`X-API-Token` 退役，`withApiToken` 退化为无操作）。新增 `AuthProvider`（启动探测状态、登录/登出/改密、401 兜底回登录页）与 `AuthGate`（加载→建管理员→登录→强制改密→放行）；登录页 / 首启引导页 / 强制改密页；顶栏账户菜单（改密 + 登出）；设置页「用户管理」（仅管理员，建/删账户、改角色、重置密码）。i18n zh-CN/en-US 同步。
+
+#### 说明
+- 生产环境 SPA 与 API 同源，Cookie 自动携带；dev 经 vite 代理亦同源。会话采用服务端存储（非 JWT），改密即失效全部旧会话。
+- 阅读进度本阶段仍为全局，阶段2 再拆为每用户并迁移到第一个管理员。
+
+#### 验证
+- 新增后端测试 `TestSetupRoutesEnforcesSession`、`TestAuthGateRoles`、`TestAuthSetupFlow`、`TestAuthLoginAndChangePassword`、`TestAuthUserManagementGuards`；`go build`、`go vet`、`go test ./internal/...` 全绿。前端 `npm run lint`（0）、`npm run build` 通过，i18n 两语言 key 对齐（1885/1885）。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（重复文件去重工作流 · P1 第 7 项）
 
 #### 新增

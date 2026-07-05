@@ -90,6 +90,23 @@ type Store interface {
 	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
 	GetReadingListItemProgress(ctx context.Context, readingListID int64) (map[int64]ReadingListSeriesProgress, error)
 	SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error)
+	// 站点账户体系（多用户）——用户与会话存储，见 users.go。
+	CountUsers(ctx context.Context) (int64, error)
+	CountAdmins(ctx context.Context) (int64, error)
+	FirstAdminUserID(ctx context.Context) (int64, error)
+	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	GetUserByID(ctx context.Context, id int64) (User, error)
+	GetUserByUsername(ctx context.Context, username string) (User, error)
+	ListUsers(ctx context.Context) ([]User, error)
+	UpdateUserPassword(ctx context.Context, id int64, passwordHash string, mustChange bool) error
+	UpdateUserProfile(ctx context.Context, id int64, displayName, role string) error
+	DeleteUser(ctx context.Context, id int64) error
+	CreateSession(ctx context.Context, sess Session) error
+	GetSessionWithUser(ctx context.Context, id string, now time.Time) (Session, User, error)
+	TouchSession(ctx context.Context, id string, lastSeen, expiresAt time.Time) error
+	DeleteSession(ctx context.Context, id string) error
+	DeleteSessionsForUser(ctx context.Context, userID int64) error
+	DeleteExpiredSessions(ctx context.Context, now time.Time) error
 }
 
 type ReadingListSeriesProgress struct {

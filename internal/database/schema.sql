@@ -475,3 +475,40 @@ CREATE TABLE IF NOT EXISTS koreader_sync_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_created_at ON koreader_sync_events(created_at);
+
+-- ============================================================================
+-- 站点账户体系（多用户）
+-- ============================================================================
+-- users：站点登录账户。role 取 'admin'（全权：配置/用户/媒体库/扫描/元数据/去重）
+-- 或 'regular'（只读浏览 + 记录本人阅读进度/书签/短评，不能改共享库元数据）。
+-- password_hash 存 bcrypt 摘要，绝不存明文。must_change_password 在管理员代建账户时置 TRUE，
+-- 引导用户首次登录改密。第一个 admin 承接旧的全局阅读进度与 KOReader 账户（见迁移逻辑）。
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'regular',
+    display_name TEXT NOT NULL DEFAULT '',
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+-- sessions：服务端会话。id 存 cookie 令牌的 SHA-256（cookie 里是原始随机令牌，DB 不落明文）。
+-- csrf_token 随会话下发给前端，改写类请求（POST/PUT/PATCH/DELETE）需在 X-CSRF-Token 头回传校验。
+-- expires_at 到期即失效；用户改密或登出时按 user_id 批量清理会话。
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    csrf_token TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);

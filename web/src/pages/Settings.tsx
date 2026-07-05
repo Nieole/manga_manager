@@ -6,12 +6,13 @@
 
 import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Outlet, UNSAFE_NavigationContext, useLocation, useNavigate } from 'react-router-dom';
-import { AlertTriangle, FolderOpen, HardDrive, LayoutDashboard, Link2, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Tags, Wrench } from 'lucide-react';
+import { AlertTriangle, FolderOpen, HardDrive, LayoutDashboard, Link2, Palette, Settings as SettingsIcon, Sparkles, TabletSmartphone, Tags, Users, Wrench } from 'lucide-react';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
+import { useAuth } from '../auth/AuthProvider';
 import { SettingsProvider, useSettings } from './settings/SettingsContext';
 
-type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'maintenance';
+type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance';
 
 function getSectionKey(pathname: string): SettingsSectionKey {
   if (pathname.startsWith('/settings/appearance')) return 'appearance';
@@ -21,6 +22,7 @@ function getSectionKey(pathname: string): SettingsSectionKey {
   if (pathname.startsWith('/settings/koreader')) return 'koreader';
   if (pathname.startsWith('/settings/connections')) return 'connections';
   if (pathname.startsWith('/settings/tags')) return 'tags';
+  if (pathname.startsWith('/settings/users')) return 'users';
   if (pathname.startsWith('/settings/maintenance')) return 'maintenance';
   return 'overview';
 }
@@ -30,6 +32,7 @@ function SettingsLayoutInner() {
   const location = useLocation();
   const navigate = useNavigate();
   const { loading, config, validation, hasSectionChanges } = useSettings();
+  const { isAdmin } = useAuth();
   const navigationContext = useContext(UNSAFE_NavigationContext);
   const navigator = navigationContext.navigator as { block?: (cb: (tx: { retry: () => void }) => void) => () => void };
   const [pendingTransition, setPendingTransition] = useState<null | { retry: () => void }>(null);
@@ -69,17 +72,24 @@ function SettingsLayoutInner() {
     navigate(path);
   };
 
-  const navItems: Array<{ key: SettingsSectionKey; label: string; path: string; icon: ReactNode }> = useMemo(() => [
-    { key: 'overview', label: t('settings.nav.overview'), path: '/settings', icon: <LayoutDashboard className="h-4 w-4" /> },
-    { key: 'appearance', label: t('settings.nav.appearance'), path: '/settings/appearance', icon: <Palette className="h-4 w-4" /> },
-    { key: 'library', label: t('settings.nav.library'), path: '/settings/library', icon: <FolderOpen className="h-4 w-4" /> },
-    { key: 'media', label: t('settings.nav.media'), path: '/settings/media', icon: <HardDrive className="h-4 w-4" /> },
-    { key: 'ai', label: t('settings.nav.ai'), path: '/settings/ai', icon: <Sparkles className="h-4 w-4" /> },
-    { key: 'koreader', label: 'KOReader', path: '/settings/koreader', icon: <TabletSmartphone className="h-4 w-4" /> },
-    { key: 'connections', label: t('settings.nav.connections'), path: '/settings/connections', icon: <Link2 className="h-4 w-4" /> },
-    { key: 'tags', label: t('settings.nav.tags'), path: '/settings/tags', icon: <Tags className="h-4 w-4" /> },
-    { key: 'maintenance', label: t('settings.nav.maintenance'), path: '/settings/maintenance', icon: <Wrench className="h-4 w-4" /> },
-  ], [t]);
+  const navItems: Array<{ key: SettingsSectionKey; label: string; path: string; icon: ReactNode }> = useMemo(() => {
+    const items: Array<{ key: SettingsSectionKey; label: string; path: string; icon: ReactNode }> = [
+      { key: 'overview', label: t('settings.nav.overview'), path: '/settings', icon: <LayoutDashboard className="h-4 w-4" /> },
+      { key: 'appearance', label: t('settings.nav.appearance'), path: '/settings/appearance', icon: <Palette className="h-4 w-4" /> },
+      { key: 'library', label: t('settings.nav.library'), path: '/settings/library', icon: <FolderOpen className="h-4 w-4" /> },
+      { key: 'media', label: t('settings.nav.media'), path: '/settings/media', icon: <HardDrive className="h-4 w-4" /> },
+      { key: 'ai', label: t('settings.nav.ai'), path: '/settings/ai', icon: <Sparkles className="h-4 w-4" /> },
+      { key: 'koreader', label: 'KOReader', path: '/settings/koreader', icon: <TabletSmartphone className="h-4 w-4" /> },
+      { key: 'connections', label: t('settings.nav.connections'), path: '/settings/connections', icon: <Link2 className="h-4 w-4" /> },
+      { key: 'tags', label: t('settings.nav.tags'), path: '/settings/tags', icon: <Tags className="h-4 w-4" /> },
+    ];
+    // 用户管理仅管理员可见。
+    if (isAdmin) {
+      items.push({ key: 'users', label: t('settings.nav.users'), path: '/settings/users', icon: <Users className="h-4 w-4" /> });
+    }
+    items.push({ key: 'maintenance', label: t('settings.nav.maintenance'), path: '/settings/maintenance', icon: <Wrench className="h-4 w-4" /> });
+    return items;
+  }, [t, isAdmin]);
 
   const currentNavLabel = useMemo(() => navItems.find((item) => item.key === currentSection)?.label || t('settings.nav.title'), [currentSection, navItems, t]);
 

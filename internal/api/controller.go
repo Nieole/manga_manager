@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -83,6 +84,11 @@ type Controller struct {
 
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
+
+	// usersPresent 缓存「站点已存在账户」这一事实：一旦创建了首个管理员即恒为 true，
+	// authGate 据此判断是否处于「首启/尚无账户」的直通模式，避免每个请求都 COUNT(users)。
+	// 账户体系保证至少留一个管理员，故该标志一旦置真不再回退。
+	usersPresent atomic.Bool
 
 	lifecycleOnce sync.Once
 	shutdownOnce  sync.Once
@@ -405,45 +411,11 @@ func (c *Controller) requireProtocolEnabled(protocol string) func(http.Handler) 
 	}
 }
 
-// requireAuth 是可选的管理 API 令牌鉴权中间件。默认（server.auth.enabled=false 或 token 为空）
-// 为直通，行为与历史无鉴权版本完全一致；启用后，管理端点要求携带匹配 token 的令牌
-// （X-API-Token 头、Authorization: Bearer，或 token 查询参数——后者便于 EventSource/<img> 等
-// 无法自定义请求头的场景）。阅读协议 Mihon（/api/mihon/）不经此中间件，保持自身的协议开关与鉴权模型；
-// OPDS/KOReader 挂载在根路由、本就不在 /api 组内。
-func (c *Controller) requireAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg := c.currentConfig()
-		if !cfg.Server.Auth.Enabled || cfg.Server.Auth.Token == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/api/mihon/") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if constantTimeTokenMatch(extractAPIToken(r), cfg.Server.Auth.Token) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		w.Header().Set("WWW-Authenticate", `Bearer realm="manga-manager"`)
-		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.token_required"))
-	})
-}
+// 说明：历史上的可选共享令牌鉴权（requireAuth / extractAPIToken）已随多用户改造退役——
+// /api 组现由 authGate（Cookie session + CSRF + 角色，见 auth_controller.go）统一守卫。
+// Server.Auth 配置字段保留以兼容既有配置文件解析与脱敏，但不再用于 Web UI 鉴权。
 
-// extractAPIToken 依次从 X-API-Token 头、Authorization: Bearer、token 查询参数中取令牌。
-func extractAPIToken(r *http.Request) string {
-	if t := strings.TrimSpace(r.Header.Get("X-API-Token")); t != "" {
-		return t
-	}
-	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
-		if after, ok := strings.CutPrefix(auth, "Bearer "); ok {
-			return strings.TrimSpace(after)
-		}
-	}
-	return strings.TrimSpace(r.URL.Query().Get("token"))
-}
-
-// constantTimeTokenMatch 用恒定时间比较避免令牌校验的时序侧信道。
+// constantTimeTokenMatch 用恒定时间比较避免令牌校验的时序侧信道（现用于 CSRF 令牌比对）。
 func constantTimeTokenMatch(provided, expected string) bool {
 	if provided == "" || expected == "" {
 		return false
@@ -657,10 +629,24 @@ func eventPrefix(event string) string {
 
 func (c *Controller) SetupRoutes(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
-		// 可选管理 API 鉴权（默认关闭时为直通）。必须在挂载任何子路由之前 Use，
-		// 中间件内部会放行 /api/mihon/ 等阅读协议前缀。
-		r.Use(c.requireAuth)
+		// 多用户会话鉴权（Cookie session + CSRF + 角色）。必须在挂载任何子路由之前 Use，
+		// 中间件内部会放行公开鉴权端点（/api/auth/status|setup|login）与阅读协议前缀 /api/mihon/，
+		// 且在「尚无账户」的首启阶段直通（首次建管理员前站点无数据需保护）。
+		r.Use(c.authGate)
 		c.setupMihonRoutes(r)
+
+		// 鉴权与账户管理
+		r.Get("/auth/status", c.authStatus)
+		r.Post("/auth/setup", c.setupAdmin)
+		r.Post("/auth/login", c.login)
+		r.Post("/auth/logout", c.logout)
+		r.Get("/auth/me", c.authMe)
+		r.Post("/auth/change-password", c.changePassword)
+		r.Get("/users", c.listUsers)
+		r.Post("/users", c.createUser)
+		r.Patch("/users/{userId}", c.updateUser)
+		r.Post("/users/{userId}/password", c.resetUserPassword)
+		r.Delete("/users/{userId}", c.deleteUser)
 
 		r.Get("/events", c.sseHandler)
 		r.Get("/search", c.searchBooks)

@@ -42,6 +42,21 @@ var apiMessages = map[string]map[string]string{
 
 		"cover.upload.not_image": "上传的文件不是图片。",
 		"cover.upload.too_large": "封面图片过大（上限 16 MiB）。",
+
+		"auth.login_required":        "请先登录。",
+		"auth.invalid_credentials":   "用户名或密码不正确。",
+		"auth.csrf_invalid":          "会话校验失败，请刷新页面后重试。",
+		"auth.forbidden":             "没有权限执行此操作。",
+		"auth.admin_required":        "仅管理员可执行此操作。",
+		"auth.setup_done":            "站点已完成初始化，无法再次创建首个管理员。",
+		"auth.username_required":     "用户名不能为空。",
+		"auth.username_taken":        "该用户名已被占用。",
+		"auth.password_too_short":    "密码至少需要 8 个字符。",
+		"auth.password_incorrect":    "当前密码不正确。",
+		"auth.role_invalid":          "角色无效。",
+		"auth.last_admin":            "不能删除或降级最后一个管理员。",
+		"auth.user_not_found":        "账户不存在。",
+		"auth.cannot_delete_self":    "不能删除当前登录的账户。",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -77,6 +92,21 @@ var apiMessages = map[string]map[string]string{
 
 		"cover.upload.not_image": "The uploaded file is not an image.",
 		"cover.upload.too_large": "Cover image is too large (16 MiB max).",
+
+		"auth.login_required":      "Please sign in first.",
+		"auth.invalid_credentials": "Incorrect username or password.",
+		"auth.csrf_invalid":        "Session validation failed — please refresh and try again.",
+		"auth.forbidden":           "You do not have permission to perform this action.",
+		"auth.admin_required":      "Only an administrator can perform this action.",
+		"auth.setup_done":          "The site is already initialized; the first admin cannot be created again.",
+		"auth.username_required":   "Username cannot be empty.",
+		"auth.username_taken":      "That username is already taken.",
+		"auth.password_too_short":  "Password must be at least 8 characters.",
+		"auth.password_incorrect":  "Current password is incorrect.",
+		"auth.role_invalid":        "Invalid role.",
+		"auth.last_admin":          "Cannot delete or demote the last administrator.",
+		"auth.user_not_found":      "User not found.",
+		"auth.cannot_delete_self":  "You cannot delete the account you are signed in with.",
 	},
 }
 
