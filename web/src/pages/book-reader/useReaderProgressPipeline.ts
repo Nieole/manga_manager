@@ -7,6 +7,7 @@
 import { useEffect } from 'react';
 import type { ReaderBookCache } from './usePageImageCache';
 import type { Page, ReaderBookInfo, ReadMode } from './types';
+import { reportedProgressPage } from './readerProgress';
 
 function isIgnoredImageLoadError(err: unknown) {
   return err instanceof DOMException && err.name === 'AbortError';
@@ -168,12 +169,16 @@ export function useReaderProgressPipeline({
 
   useEffect(() => {
     if (!loading && pagesBelongToCurrentBook && pages.length > 0 && pages[currentPageIndex]) {
-      const timer = setTimeout(() => {
-        updateProgress(pages[currentPageIndex].number);
-      }, 1000);
-      return () => clearTimeout(timer);
+      // 双页翻页模式上报跨页里更靠后那页，确保末页能达到 page_count（否则书永不算读完）。
+      const pageNumber = reportedProgressPage(pages, currentPageIndex, readMode === 'paged', doublePage);
+      if (pageNumber != null) {
+        const timer = setTimeout(() => {
+          updateProgress(pageNumber);
+        }, 1000);
+        return () => clearTimeout(timer);
+      }
     }
 
     return undefined;
-  }, [currentPageIndex, loading, pages, pagesBelongToCurrentBook, updateProgress]);
+  }, [currentPageIndex, loading, pages, pagesBelongToCurrentBook, readMode, doublePage, updateProgress]);
 }

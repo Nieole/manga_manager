@@ -78,6 +78,7 @@ export default function SeriesDetailPage() {
   const selection = useSeriesSelection({
     totalCount: totalSelectableCount,
     collectAllIds: useCallback(() => allBookIds, [allBookIds]),
+    resetKey: seriesId, // 跳到别的系列时清空选择，避免批量操作写到上一个系列的书
   });
 
   const progress = useSeriesProgress({ reload: ctx.reload, showToast, t });
@@ -329,7 +330,8 @@ export default function SeriesDetailPage() {
                     onClick={() => {
                       const newParams = new URLSearchParams(searchParams);
                       newParams.delete('volume');
-                      setSearchParams(newParams);
+                      // 退出卷视图同样用 replace（卷视图是页内状态），保持历史里系列页只占一条。
+                      setSearchParams(newParams, { replace: true });
                     }}
                     className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors border border-white/5 shadow-xs"
                   >
@@ -406,7 +408,9 @@ export default function SeriesDetailPage() {
                         onCardClick={(vName) => {
                           const newParams = new URLSearchParams(searchParams);
                           newParams.set('volume', vName);
-                          setSearchParams(newParams);
+                          // 卷子视图是系列页内的状态而非独立页面，用 replace 不压历史——否则「进卷→退卷→返回」
+                          // 会因多压了历史项而退回到卷视图（与已修复的阅读器返回 bug 同类）。
+                          setSearchParams(newParams, { replace: true });
                         }}
                         onQuickToggleVolumeRead={handleQuickToggleVolumeRead}
                         seriesUpdatedAt={ctx.series?.updated_at}
