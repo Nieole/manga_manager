@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon, ClipboardCheck, ArrowRight } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
+import { monthIndexFromDateStr, formatHeatmapMonthLabel } from '../utils/heatmap';
 
 interface LibraryOverview {
     id: number;
@@ -548,11 +549,11 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
     weekColumns.forEach((week, colIdx) => {
         const firstDay = week[0];
         if (firstDay) {
-            const monthDate = new Date(firstDay.date);
-            const month = monthDate.getMonth();
+            // 直接按日期串字面取月份/格式化，避免 new Date(dateStr) 的 UTC 解析在负时区把月份读偏一列。
+            const month = monthIndexFromDateStr(firstDay.date);
             if (month !== lastMonth) {
                 monthLabels.push({
-                    label: new Intl.DateTimeFormat(locale, { month: 'short' }).format(monthDate),
+                    label: formatHeatmapMonthLabel(firstDay.date, locale),
                     colIndex: colIdx,
                 });
                 lastMonth = month;

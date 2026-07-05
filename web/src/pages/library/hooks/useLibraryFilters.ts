@@ -255,6 +255,9 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
     if ('activeStatus' in snapshot) setActiveStatus(snapshot.activeStatus ?? null);
     if ('activeLetter' in snapshot) setActiveLetter(snapshot.activeLetter ?? null);
     if ('keyword' in snapshot) setKeyword(snapshot.keyword ?? '');
+    // 应用视图是一次完整重置：高级筛选(评分/进度/阅读状态/加入天数)也要按快照重置，
+    // 否则之前手动设的 minRating 等会残留，让应用后的视图多出一个不可见的隐藏过滤条件。
+    setAdvanced(snapshot.advanced ?? EMPTY_ADVANCED_FILTERS);
     if (snapshot.sortByField) setSortByField(snapshot.sortByField);
     if (snapshot.sortDir) setSortDir(snapshot.sortDir);
     if (snapshot.pageSize) setPageSize(snapshot.pageSize);

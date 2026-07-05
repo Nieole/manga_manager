@@ -5,6 +5,7 @@
  */
 
 import type { Collection, TFunc } from './types';
+import { buildBoundedRangeLabel } from './rangeLabel';
 
 export function SmartFilterChips({ collection, t }: { collection: Collection; t: TFunc }) {
   const chips: { key: string; label: string }[] = [];
@@ -14,14 +15,10 @@ export function SmartFilterChips({ collection, t }: { collection: Collection; t:
   if (collection.activeLetter) chips.push({ key: 'letter', label: collection.activeLetter });
   if (collection.readState) chips.push({ key: 'readState', label: t(`collections.smartChip.read.${collection.readState}`) });
   if (collection.minRating != null || collection.maxRating != null) {
-    const lo = collection.minRating != null ? collection.minRating : '';
-    const hi = collection.maxRating != null ? collection.maxRating : '';
-    chips.push({ key: 'rating', label: `★ ${lo}${lo !== '' || hi !== '' ? '–' : ''}${hi}` });
+    chips.push({ key: 'rating', label: `★ ${buildBoundedRangeLabel(collection.minRating, collection.maxRating)}` });
   }
   if (collection.minProgress != null || collection.maxProgress != null) {
-    const lo = collection.minProgress != null ? `${collection.minProgress}%` : '';
-    const hi = collection.maxProgress != null ? `${collection.maxProgress}%` : '';
-    chips.push({ key: 'progress', label: `${t('collections.smartChip.progress')} ${lo}${lo !== '' || hi !== '' ? '–' : ''}${hi}` });
+    chips.push({ key: 'progress', label: `${t('collections.smartChip.progress')} ${buildBoundedRangeLabel(collection.minProgress, collection.maxProgress, '%')}` });
   }
   if (collection.addedWithinDays != null) {
     chips.push({ key: 'addedDays', label: t('collections.smartChip.addedWithinDays', { days: collection.addedWithinDays }) });

@@ -6,7 +6,8 @@
 
 import type { Book } from '../types';
 
-const chineseOrdinalPattern = /第?\s*([零〇一二两三四五六七八九十百千万萬壹贰貳叁參肆伍陆陸柒捌玖拾佰仟]+)\s*(话|話|回|章|卷|集|册|冊|期|部)/;
+// 单位含日文卷字「巻」(U+5DFB) 与中文「卷」(U+5377)——否则「2019年 第1巻」会漏配序数正则、退化到抓首个数字(年份)。
+const chineseOrdinalPattern = /第?\s*([零〇一二两三四五六七八九十百千万萬壹贰貳叁參肆伍陆陸柒捌玖拾佰仟]+)\s*(话|話|回|章|卷|巻|集|册|冊|期|部)/;
 
 function parseChineseOrdinalNumber(value: string): number | null {
   const match = value.match(chineseOrdinalPattern);
@@ -48,7 +49,7 @@ function parseChineseOrdinalNumber(value: string): number | null {
 }
 
 function extractOrdinalNumber(value: string): number | null {
-  const arabicOrdinal = value.match(/第?\s*(\d+(\.\d+)?)\s*(话|話|回|章|卷|集|册|冊|期|部)/);
+  const arabicOrdinal = value.match(/第?\s*(\d+(\.\d+)?)\s*(话|話|回|章|卷|巻|集|册|冊|期|部)/);
   if (arabicOrdinal) return Number(arabicOrdinal[1]);
   const chineseOrdinal = parseChineseOrdinalNumber(value);
   if (chineseOrdinal !== null) return chineseOrdinal;
