@@ -4,6 +4,52 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-06（资源库全景大数据量专项性能优化 · 第二批 Phase 2b · 逐项推进）
+
+> 承接第一批。对 Phase 2b 的 9 项逐项推进：实现 5 项（均带测试），另 4 项经实证/风险评估暂缓（附理由，非盲目实现风险改动）。
+
+#### 优化（已实现）
+- **① 库内关键字走 series_search_fts**：`buildSeriesSearchQuery` 的关键字筛选，>=3 rune 时改用 `s.id IN (SELECT rowid FROM series_search_fts WHERE MATCH ?)`（trigram 子串、大小写不敏感、覆盖 name+title，与 instr 等价），取代对 100k 系列逐行 lower()+instr 的双重全表扫；<3 rune（CJK 常态）保留 instr 回退。
+- **② 游标分页扩到 books/volumes/pages**：`supportsCursor` 及游标 encode/seek 增加这三个 NOT NULL 整数列（方向匹配的 *_desc 索引 + (name,id) tie-break 保证 keyset 稳定），前滚可跳过 COUNT 与深 OFFSET；rating 可空、read 每用户派生，故不纳入。前端 `SUPPORTS_CURSOR_FIELDS` 同步。
+- **⑤ 扫描器读模型刷新节流**：扫描 flush 不再每批对每个 touched 系列全量 `UpdateSeriesStatistics + RefreshSeriesStats`（跨多批的大系列被重扫成 O(K²/batch)）；改为累积到 `dirtySeries`，由 10s ticker 与扫描末尾兜底节流刷新，使任一系列两次刷新至少间隔一个 tick，同时保留扫描中每 ~10s 的增量 UX。
+- **⑦ 库级关系图谱（"资源库全景图谱"）上限**：后端 `getLibraryFranchiseGraph` 关系边硬上限 4000（+日志），防止巨型 payload；前端图谱按节点度数保留 top-200、过滤悬挂边、显示截断提示（双语 i18n），把 O(N²)×320 tick 力导向布局的 N 限死（取代把无界图挪 Web Worker——>几百节点的图本就不可读）。
+- **⑨ 前端选择态 Set**：`useLibrarySelection` 内部改 `Set<number>` 并导出 `selectedSet`，`LibraryGrid` 逐卡判断从 `number[].includes`（大选择集 O(n²) 渲染）改为 `Set.has` O(1)。
+
+#### 说明（经评估暂缓，附理由）
+- **③ per-user 读排序改写**：EXPLAIN 实证 per-user readState 浏览与全局路径同为 `series` 驱动 + `ss` 主键点查 + 残差筛选，**非 per-user 独有退化**；真正修复需物化离散 `read_state` 列 + 反规范化 `read_pages`/`library_id`，写路径成本大且 `unread`（行不存在）无法索引，ROI 不足。
+- **④ 进度写增量 delta**：与其共享的扫描期 O(K²) 放大已由 ⑤ 修复；阅读期单次翻页 O(K) 全系列聚合对现实 K（数百~数千）是亚毫秒级；增量 delta 需精确复刻 clamp/sentinel 语义 + reconcile 兜底，热阅读路径数据损坏风险远大于边际收益。
+- **⑥ 前端网格虚拟化**：react-virtuoso 已可用，但 VirtuosoGrid 集成主 UI 有 scrape 弹层裁剪 / 响应式列测量 / window-scroll + 无限加载 / 滚动恢复等风险，项目 node 环境测试无法覆盖交互；且默认分页模式已把 DOM 限在 ≤100 卡。留待可浏览器 QA 的专门周期。
+- **⑧ 系列详情 /context 分页**：契约被 franchise view、selection(allBookIds)、续读、批量操作复用（均假设整本书列表在客户端），服务端分页会破坏这些消费方，需先做兼容层，高风险。
+
+#### 验证
+- 新增 `TestSeriesListKeywordFTS`（关键字 FTS 命中 + <3 回退 + EXPLAIN）、`TestSearchSeriesCursorNumericSortsMatchOffset`（游标 vs OFFSET 全序列对拍，含平局/升降序）、`TestScanLibraryDeferredRefreshPopulatesStats`（扫描末尾节流刷新后 book_count/total_pages 最终一致）；前端 `libraryFilterParams.test.ts` 游标字段断言同步。
+- `go vet ./...`、`go test ./...`（含 database/api/scanner）全绿；前端 `tsc`、`eslint`、`vitest`（205）全绿，i18n 两语言 key 对齐；`cmd/tsgen` 无契约漂移。
+
+---
+
+### 📌 增量记录 — 2026-07-06（资源库全景大数据量专项性能优化 · 第一批）
+
+> 先以 9 路并行深读 + 综合排序的分析 workflow 绘制「资源库全景」性能地图（浏览/搜索/筛选/分页/聚合/关系图谱在 ~100k 系列 / 1M 图书下的瓶颈），确认默认无筛选/全局路径已达标，瓶颈集中在三条未拉齐到默认路径的支线。本批落实其中零/低风险、可实证的结构性快赢，均带 EXPLAIN / 基准 / 单测守护。
+
+#### 优化
+- **修复默认降序排序整库 filesort（本批最大发现，cmd/queryplan 简化查询漏掉的问题）**：真实 `buildSeriesSearchQuery` 的列表 ORDER BY 是**混合方向**（`<col> DESC, s.name ASC, s.id ASC`），全 ASC 的复合索引无法满足，`updated_desc`/`created_desc`/`rating_desc`/`books_desc`/`pages_desc`/`favorite_desc` 均对整库 filesort（TEMP B-TREE）。新增 7 个**方向匹配**的 `series(library_id, <col> DESC, name, id)` 复合索引，使每页从 O(N log N) 全库排序降为索引区间扫描（EXPLAIN 确认 TEMP B-TREE 消除）。
+- **`/api/series/search` 的 `limit` 加硬上限 200**：此前只有下限校验，`limit=1000000` 即可让端点物化并 JSON 编码整库（~24 列含长文本 summary）→ 单请求 OOM/超时。UI 最大页 100，200 留足余量。
+- **智能合集去 tags×authors 交叉 JOIN + GROUP BY**：`buildSmartCollectionBaseQuery` 无条件四路 LEFT JOIN 标签/作者再 `GROUP BY s.id`，把 `series_stats` 本要消灭的行爆炸加了回来（每系列产出 tags×authors 行、GROUP BY 使排序索引失效）。改为标签串读 `sc.tag_names_cache`、`ActiveTag`/`ActiveAuthor` 用 `EXISTS` 子查询、`COUNT(DISTINCT)`→`COUNT(*)`，与主列表口径一致，单行/系列、走排序索引。
+- **关系图谱加 `idx_series_relations_target`**：`series_relations` 只有 `UNIQUE(source,target)` 前缀索引，递归 CTE 的反向边（`JOIN ... ON sr.target_series_id = c.id`）与反向关系查询（`WHERE target_series_id = ?`）此前每步全表扫；加索引后走 seek。
+- **筛选列表计数省不必要的进度 JOIN**：`SearchSeriesPaged` 的 `COUNT(*)` 仅在 WHERE 引用进度来源 `ss.*`（阅读状态/进度筛选）时才 JOIN 进度表；否则省掉（`ss` 主键点查每系列至多一行、LEFT JOIN 不放大行数，结果不变）。
+- **年度/月度回顾统计改 sargable 区间**：`user_stats.go` 的 `strftime()/substr()` 包裹列改为左闭右开日期区间（`date >= ? AND date < ?`、`last_read_at >= ? AND last_read_at < ?`），语义等价但让 `(user_id, date)` / `(user_id, last_read_at)` 索引 range-scan，老账号多年活动的回顾页从 O(账号总活动) 降到 O(该期活动)。
+- **迁移末尾 `PRAGMA optimize`（`analysis_limit=400`）**：给面对约 20+ 个 `library_id` 前缀重叠索引的规划器提供选择性统计（sqlite_stat1），免版本 bump、成本受限。
+
+#### 说明（经实证否决 / 归入后续）
+- 分析曾建议给 `user_series_progress` 补 `(user_id, read_pages/completed_book_count)` 索引以救 UserID>0 的读状态/排序。**EXPLAIN 实证否决**：该路径由按 `library_id` 过滤的 `series` 驱动、`ss` 是按主键点查的 LEFT JOIN 右表，读状态是 join 后残差筛选，加索引规划器不会选用——故**未加**，避免无谓写放大。真正的 per-user 读排序需查询改写（物化离散 read_state 列），归入后续批次。
+- 未纳入本批（体量大/涉用户可见行为，待评估）：库内关键字改走 `series_search_fts`（当前 instr 全表扫，基准证实为最慢路径）、游标分页扩到 rating/books 等以跳过 COUNT、读模型进度写增量化 delta、扫描器读模型刷新合并、前端资源库网格/系列详情虚拟化、库级关系图谱端点节点上限 + 力导向布局挪出主线程。
+
+#### 验证
+- 新增 `store_queryplan_test.go`（EXPLAIN 断言：关系图谱 target 索引命中、7 种降序排序均无 filesort、per-user 进度按主键点查不 SCAN）、智能合集 `TestSmartCollectionTagAuthorFilters`（标签/作者 EXISTS 改写命中正确、多标签不重复、tags_string 来自缓存）、`TestSearchSeriesPagedCapsLimit`（limit 压顶）、`GetUserPeriodStats` 跨期隔离断言。
+- `cmd/queryplan` 期望索引同步为 `*_desc` 变体并新增反向关系用例。`go vet ./...`、`go test ./...` 全绿；`cmd/tsgen` 无契约漂移。schema 仅新增 `CREATE INDEX`（未动任何 CREATE TABLE / `sql/query.sql`），不产生 sqlc 生成漂移。
+
+---
+
 ### 📌 增量记录 — 2026-07-05（修复：阅读器返回导致历史栈错乱）
 
 #### 修复

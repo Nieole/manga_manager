@@ -32,7 +32,7 @@ type SmartCollectionFilter struct {
 func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error) {
 	baseQuery, args := buildSmartCollectionBaseQuery(filter)
 
-	countQuery := "SELECT COUNT(DISTINCT s.id) " + baseQuery
+	countQuery := "SELECT COUNT(*) " + baseQuery
 	var total int
 	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -42,9 +42,9 @@ func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter Smart
 		SELECT
 			s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
 			sc.cover_path,
-			GROUP_CONCAT(DISTINCT t.name) as tags_string,
+			COALESCE(sc.tag_names_cache, '') as tags_string,
 			COALESCE(ss.read_pages, 0) as read_count
-	` + baseQuery + fmt.Sprintf(` GROUP BY s.id ORDER BY %s LIMIT ? OFFSET ?`, smartCollectionOrderClause(filter))
+	` + baseQuery + fmt.Sprintf(` ORDER BY %s LIMIT ? OFFSET ?`, smartCollectionOrderClause(filter))
 	queryArgs := append([]any{}, args...)
 	queryArgs = append(queryArgs, limit, offset)
 
@@ -107,14 +107,14 @@ func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any)
 		progressJoin = "LEFT JOIN user_series_progress ss ON ss.series_id = s.id AND ss.user_id = ?"
 		args = append(args, filter.UserID)
 	}
+	// 标签/作者不再用四路 LEFT JOIN + GROUP BY 收敛（那会让每系列产出 tags×authors 行的中间集、
+	// 需物化去重 filesort，且 GROUP BY 使所有 series 复合排序索引失效）。改用与主列表 buildSeriesSearchQuery
+	// 一致的口径：标签串直接读预计算的 sc.tag_names_cache，ActiveTag/ActiveAuthor 用 EXISTS 子查询表达，
+	// 使每系列恒为单行、走排序索引、计数从 COUNT(DISTINCT) 爆炸集退回 COUNT(*)。
 	query := `
 		FROM series s
 		LEFT JOIN series_stats sc ON sc.series_id = s.id
 		` + progressJoin + `
-		LEFT JOIN series_tags st ON s.id = st.series_id
-		LEFT JOIN tags t ON st.tag_id = t.id
-		LEFT JOIN series_authors sa ON s.id = sa.series_id
-		LEFT JOIN authors a ON sa.author_id = a.id
 		WHERE s.library_id = ?
 	`
 	args = append(args, filter.LibraryID)
@@ -128,11 +128,11 @@ func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any)
 		args = append(args, value)
 	}
 	if value := strings.TrimSpace(filter.ActiveTag); value != "" {
-		query += " AND t.name = ?"
+		query += " AND EXISTS (SELECT 1 FROM series_tags st JOIN tags t ON st.tag_id = t.id WHERE st.series_id = s.id AND t.name = ?)"
 		args = append(args, value)
 	}
 	if value := strings.TrimSpace(filter.ActiveAuthor); value != "" {
-		query += " AND a.name = ?"
+		query += " AND EXISTS (SELECT 1 FROM series_authors sa JOIN authors a ON sa.author_id = a.id WHERE sa.series_id = s.id AND a.name = ?)"
 		args = append(args, value)
 	}
 	if filter.MinRating != nil {

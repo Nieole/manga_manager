@@ -543,6 +543,61 @@ func TestScanLibraryQueuesMissingCoverGeneration(t *testing.T) {
 	}
 }
 
+// TestScanLibraryDeferredRefreshPopulatesStats 守护读模型刷新节流化：扫描把每批全量重算改为扫描末尾/10s
+// 兜底刷新后，扫描结束时 series.book_count / total_pages 仍必须正确（refreshDirtySeries 的 UpdateSeriesStatistics
+// 在扫描结束 !ok 分支运行）。两个系列各两本、每本两页。
+func TestScanLibraryDeferredRefreshPopulatesStats(t *testing.T) {
+	rootDir, store, lib, libraryPath := newScannerTestLibrary(t)
+	for _, sp := range []struct {
+		series string
+		books  []string
+	}{
+		{"Series Alpha", []string{"Alpha 01.cbz", "Alpha 02.cbz"}},
+		{"Series Beta", []string{"Beta 01.cbz", "Beta 02.cbz"}},
+	} {
+		seriesPath := filepath.Join(libraryPath, sp.series)
+		if err := os.MkdirAll(seriesPath, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", sp.series, err)
+		}
+		for _, b := range sp.books {
+			if err := writeScannerTestCBZ(filepath.Join(seriesPath, b), map[string][]byte{
+				"001.png": testPNG1x1, "002.png": testPNG1x1,
+			}); err != nil {
+				t.Fatalf("write cbz %s: %v", b, err)
+			}
+		}
+	}
+
+	cfg := &config.Config{}
+	cfg.Scanner.Workers = 1
+	cfg.Scanner.ThumbnailFormat = "webp"
+	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
+	scanner := NewScanner(store, config.NewManager(cfg))
+	if err := scanner.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	// 排空异步封面队列，避免其在 t.Cleanup 关闭 store / 删除临时目录时仍运行导致清理竞态。
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelDrain()
+	_ = scanner.waitForCoverQueue(drainCtx)
+
+	rows, total, err := store.SearchSeriesPaged(context.Background(), lib.ID, database.SeriesListFilters{}, 50, 0, "name_asc")
+	if err != nil {
+		t.Fatalf("search series: %v", err)
+	}
+	if total != 2 || len(rows) != 2 {
+		t.Fatalf("expected 2 series after scan, got total=%d rows=%d", total, len(rows))
+	}
+	for _, r := range rows {
+		if r.BookCount != 2 {
+			t.Fatalf("series %q book_count=%d, want 2 (deferred refresh must populate series stats)", r.Name, r.BookCount)
+		}
+		if !r.TotalPages.Valid || r.TotalPages.Float64 != 4 {
+			t.Fatalf("series %q total_pages=%v, want 4 (2 books x 2 pages)", r.Name, r.TotalPages)
+		}
+	}
+}
+
 func BenchmarkScanLibrary_Incremental_NoChanges(b *testing.B) {
 	rootDir, store, lib, libraryPath := newScannerTestLibrary(b)
 	seriesPath := filepath.Join(libraryPath, "Series Alpha")

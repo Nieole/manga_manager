@@ -1052,6 +1052,11 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 	var batch []scanResult
 	const batchSize = 100 // 每蓄满 100 卷漫画就开启一次写事务
 
+	// dirtySeries 累积整个扫描过程中被触及、待刷新读模型的系列。刷新改为节流（10s ticker）+ 扫描末尾兜底，
+	// 取代此前每批都对每个 touched 系列全量 UpdateSeriesStatistics + RefreshSeriesStats——跨多批的大系列由
+	// O(K²/batch)（每批重扫该系列已入库的全部书）降为按时间节流的有界次数，同时保留扫描中每 ~10s 的增量 UX。
+	dirtySeries := make(map[int64]bool)
+
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -1215,22 +1220,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 
 			}
-			// 强力补丁：在批处理提交后，对该批次涉及的所有系列进行统计重算，确保数据最终一致性。
-			// 虽然这样多了一些 SQL，但在扫描性能层面由于 SQLite WAL + PageCache 与 SSD 极速 IO 相对微乎其微。
-			for sid := range updatedSeriesIDs {
-				if err := q.UpdateSeriesStatistics(ctx, database.UpdateSeriesStatisticsParams{
-					SeriesID:   sid,
-					SeriesID_2: sid,
-					SeriesID_3: sid,
-					ID:         sid,
-				}); err != nil {
-					slog.Warn("Failed to update series statistics", "series_id", sid, "err", err)
-				}
-				if err := q.RefreshSeriesStats(ctx, sid); err != nil {
-					slog.Warn("Failed to refresh series stats", "series_id", sid, "err", err)
-				}
-			}
-
+			// 读模型刷新不再在批事务内逐系列全量重算（避免大系列被每批重扫成 O(K²)）；改为把 touched 系列
+			// 累积到 dirtySeries，交由 refreshDirtySeries 在 10s ticker 与扫描末尾节流刷新（见批成功分支与主循环）。
 			return nil
 		})
 
@@ -1241,6 +1232,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			metrics.failedArchives.Add(int64(len(batch)))
 		} else {
 			slog.Info("Successfully ingested batch", "book_count", len(batch))
+			// 累积本批 touched 系列，待 refreshDirtySeries 节流刷新（不在批事务内逐系列全量重算）。
+			for sid := range updatedSeriesIDs {
+				dirtySeries[sid] = true
+			}
 			if s.onBatchIngested != nil {
 				s.onBatchIngested("batch_inserted")
 			}
@@ -1251,6 +1246,26 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		batch = batch[:0]
 	}
 
+	// refreshDirtySeries 节流刷新累积的 touched 系列读模型：每个系列一次 UpdateSeriesStatistics（series 冗余
+	// 统计列 book_count/volume_count/total_pages）+ RefreshSeriesStats（series_stats 读模型），各自独立事务。
+	// 由 10s ticker 与扫描末尾调用，使任一系列在两次刷新间至少间隔一个 tick，取代每批一次的全量重算。
+	refreshDirtySeries := func() {
+		if len(dirtySeries) == 0 {
+			return
+		}
+		for sid := range dirtySeries {
+			if err := s.store.UpdateSeriesStatistics(ctx, database.UpdateSeriesStatisticsParams{
+				SeriesID: sid, SeriesID_2: sid, SeriesID_3: sid, ID: sid,
+			}); err != nil {
+				slog.Warn("Failed to update series statistics", "series_id", sid, "err", err)
+			}
+			if err := s.store.RefreshSeriesStats(ctx, sid); err != nil {
+				slog.Warn("Failed to refresh series stats", "series_id", sid, "err", err)
+			}
+			delete(dirtySeries, sid)
+		}
+	}
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -1258,7 +1273,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		select {
 		case res, ok := <-results:
 			if !ok {
-				flush() // 通道被收尾，最后一次刷盘
+				flush()              // 通道被收尾，最后一次刷盘
+				refreshDirtySeries() // 扫描结束：兜底刷新所有剩余 touched 系列读模型，保证最终一致
 				if s.onBatchIngested != nil {
 					s.onBatchIngested("scan_completed")
 				}
@@ -1269,7 +1285,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				flush()
 			}
 		case <-ticker.C:
-			flush() // 按时间自然聚合，避免低频挂起锁
+			flush()              // 按时间自然聚合，避免低频挂起锁
+			refreshDirtySeries() // 每 ~10s 节流刷新一次 touched 系列（取代每批全量重算）
 		}
 	}
 }

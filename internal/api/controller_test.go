@@ -1981,6 +1981,40 @@ func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
 	}
 }
 
+// TestSearchSeriesPagedCapsLimit 验证超大 limit 被压到硬上限（maxSeriesPageLimit=200），
+// 防止单请求 limit=1000000 物化并 JSON 编码整库导致 OOM/超时。
+func TestSearchSeriesPagedCapsLimit(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 10)
+	for _, name := range []string{"Series Beta", "Series Gamma"} {
+		if _, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{
+			LibraryID: lib.ID, Name: name, Path: filepath.Join(rootDir, "Library A", name), NameInitial: database.SeriesInitial("", name),
+		}); err != nil {
+			t.Fatalf("CreateSeries %s failed: %v", name, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=1000000&page=1&sortBy=name_asc", nil)
+	rec := httptest.NewRecorder()
+	controller.searchSeriesPaged(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Items []database.SearchSeriesPagedRow `json:"items"`
+		Limit int                             `json:"limit"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if resp.Limit != 200 {
+		t.Fatalf("expected limit capped to 200, got %d", resp.Limit)
+	}
+	if len(resp.Items) > 200 {
+		t.Fatalf("expected at most 200 items, got %d", len(resp.Items))
+	}
+}
+
 func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	_, series, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)

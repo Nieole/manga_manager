@@ -116,6 +116,26 @@ func TestUserBookReadingTime(t *testing.T) {
 	if yearStats.BooksCompleted != 1 {
 		t.Fatalf("year books_completed want 1 got %d", yearStats.BooksCompleted)
 	}
+
+	// 跨期隔离：本年读完的书不得漏入上一年，也不得漏入非当月（守护 last_read_at 区间改写的上下界）。
+	prevYear, err := store.GetUserPeriodStats(ctx, u, now.Year()-1, 0)
+	if err != nil {
+		t.Fatalf("prev year period: %v", err)
+	}
+	if prevYear.BooksCompleted != 0 {
+		t.Fatalf("prev-year books_completed want 0 got %d", prevYear.BooksCompleted)
+	}
+	otherMonth := 1
+	if int(now.Month()) == otherMonth {
+		otherMonth = 2
+	}
+	otherMonthStats, err := store.GetUserPeriodStats(ctx, u, now.Year(), otherMonth)
+	if err != nil {
+		t.Fatalf("other month period: %v", err)
+	}
+	if otherMonthStats.BooksCompleted != 0 {
+		t.Fatalf("other-month books_completed want 0 got %d", otherMonthStats.BooksCompleted)
+	}
 }
 
 func TestUserSeriesReviewIsolation(t *testing.T) {

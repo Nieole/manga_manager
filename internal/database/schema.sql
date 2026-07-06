@@ -60,6 +60,17 @@ CREATE INDEX IF NOT EXISTS idx_series_library_pages ON series(library_id, total_
 CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_favorite, name);
 CREATE INDEX IF NOT EXISTS idx_series_library_favorite_name_id ON series(library_id, is_favorite, name, id);
 CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name);
+-- Direction-matched composite indexes for the descending browse sorts. The list ORDER BY is mixed-direction
+-- (`<col> DESC, name ASC, id ASC`), which an all-ASC index cannot satisfy, so the default recency/rating/size
+-- sorts would otherwise filesort the whole library on every page. Declaring the lead column DESC (name/id stay
+-- ASC) makes the composite index provide the exact order, turning O(N log N) per page into an indexed range scan.
+CREATE INDEX IF NOT EXISTS idx_series_library_updated_desc ON series(library_id, updated_at DESC, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_created_desc ON series(library_id, created_at DESC, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_rating_desc ON series(library_id, rating DESC, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_books_desc ON series(library_id, book_count DESC, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_volumes_desc ON series(library_id, volume_count DESC, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_pages_desc ON series(library_id, total_pages DESC, name, id);
+CREATE INDEX IF NOT EXISTS idx_series_library_favorite_desc ON series(library_id, is_favorite DESC, name, id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS series_search_fts USING fts5(
     library_id UNINDEXED,
@@ -365,6 +376,12 @@ CREATE TABLE IF NOT EXISTS series_relations (
     FOREIGN KEY(source_series_id) REFERENCES series(id) ON DELETE CASCADE,
     FOREIGN KEY(target_series_id) REFERENCES series(id) ON DELETE CASCADE
 );
+
+-- The UNIQUE(source, target) index only serves lookups anchored on source_series_id. The franchise
+-- recursive CTE walks a backward edge (JOIN connected c ON sr.target_series_id = c.id), and the reverse
+-- relation query filters by target_series_id alone. Both full-scan series_relations without this index.
+-- NOTE keep schema comments free of the statement-terminator character, Migrate splits on it naively.
+CREATE INDEX IF NOT EXISTS idx_series_relations_target ON series_relations(target_series_id);
 
 -- [#6] Per-day reading activity records (precise activity heatmap)
 CREATE TABLE IF NOT EXISTS reading_activity (

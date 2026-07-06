@@ -52,6 +52,9 @@ func parseNonNegativeInt(v string) int {
 	return n
 }
 
+// maxSeriesPageLimit 是 /api/series/search 单页返回的硬上限，防止超大 limit 拉全库导致 OOM/超时。
+const maxSeriesPageLimit = 200
+
 func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libIDStr := r.URL.Query().Get("libraryId")
@@ -65,6 +68,11 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 {
 		limit = 50
+	}
+	// 上限保护：limit 只有下限校验时，一个 limit=1000000 就能让本端点物化并 JSON 编码整库
+	// (~24 列含 summary 长文本) 的全部系列，等同单请求 OOM/超时。UI 最大页大小为 100，200 留足余量。
+	if limit > maxSeriesPageLimit {
+		limit = maxSeriesPageLimit
 	}
 
 	pageStr := r.URL.Query().Get("page")

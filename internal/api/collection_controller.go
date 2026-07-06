@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -352,6 +353,15 @@ func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get library franchise relations")
 		return
+	}
+
+	// 硬性上限：库级图谱此前无界返回全库关系，超大库会产生巨型 payload 且前端 O(N^2) 力导向布局冻结主线程。
+	// 截断到安全边界（前端另有更小的节点级上限做可读性截断，见 franchise-graph 页）。非静默：记录被丢弃的数量。
+	const maxLibraryFranchiseRelations = 4000
+	if len(items) > maxLibraryFranchiseRelations {
+		slog.Warn("library franchise graph truncated",
+			"library_id", libraryID, "total_relations", len(items), "cap", maxLibraryFranchiseRelations)
+		items = items[:maxLibraryFranchiseRelations]
 	}
 
 	type FranchiseRelation struct {

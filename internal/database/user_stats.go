@@ -206,40 +206,37 @@ func (s *SqlStore) GetUserBookReadingTimeTop(ctx context.Context, userID int64, 
 // GetUserPeriodStats 聚合某用户在指定年（month=0）或年月的阅读回顾。
 func (s *SqlStore) GetUserPeriodStats(ctx context.Context, userID int64, year, month int) (UserPeriodStats, error) {
 	var stats UserPeriodStats
-	// 期间匹配：按年用 strftime('%Y')，按月用 strftime('%Y-%m')。
-	var periodExpr, periodValue string
+	// 期间匹配改用左闭右开的日期区间 [lowerBound, upperBound)，取代 strftime()/substr() 包裹列。
+	// date 列是零填充的 'YYYY-MM-DD'（字典序即时间序）；last_read_at 由 Go time.Time 经 modernc 驱动以
+	// t.String() 落库（"2026-07-05 22:31:16... +0800 CST"，strftime/date 无法解析），但其前缀恒为
+	// "YYYY-MM-DD"，故对二者做字符串区间比较等价于原先的前缀相等，且能让 (user_id, date) /
+	// (user_id, last_read_at) 复合索引做 range-scan，而非 seek 到 user_id 后全历史逐行求值函数。
+	lower := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+	upper := lower.AddDate(1, 0, 0)
 	if month > 0 {
-		periodExpr = `strftime('%Y-%m', date)`
-		periodValue = time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC).Format("2006-01")
-	} else {
-		periodExpr = `strftime('%Y', date)`
-		periodValue = time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC).Format("2006")
+		lower = time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+		upper = lower.AddDate(0, 1, 0)
 	}
+	lowerBound := lower.Format("2006-01-02")
+	upperBound := upper.Format("2006-01-02")
 
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(pages_read),0), COALESCE(SUM(read_seconds),0),
 		        COUNT(DISTINCT date), COUNT(DISTINCT book_id)
 		 FROM user_reading_activity
-		 WHERE user_id = ? AND `+periodExpr+` = ?`,
-		userID, periodValue).Scan(&stats.Pages, &stats.ReadSeconds, &stats.ActiveDays, &stats.BooksTouched)
+		 WHERE user_id = ? AND date >= ? AND date < ?`,
+		userID, lowerBound, upperBound).Scan(&stats.Pages, &stats.ReadSeconds, &stats.ActiveDays, &stats.BooksTouched)
 	if err != nil {
 		return UserPeriodStats{}, err
 	}
 
-	// 期间读完的书：以 last_read_at 落在该期、且进度到达页数为准。
-	// 注意：last_read_at 由 Go time.Time 经 modernc 驱动以 t.String() 形式落库（"2026-07-05 22:31:16... +0800 CST"），
-	// SQLite 的 strftime/date 函数无法解析该格式（会返回 NULL）。但其前缀恒为 "YYYY-MM-DD"，故用 substr 取年月前缀比较。
-	var completedExpr string
-	if month > 0 {
-		completedExpr = `substr(ubp.last_read_at, 1, 7)`
-	} else {
-		completedExpr = `substr(ubp.last_read_at, 1, 4)`
-	}
+	// 期间读完的书：以 last_read_at 落在该期、且进度到达页数为准。区间比较利用其 'YYYY-MM-DD' 前缀，
+	// 与上面 date 同口径（本地墙钟日期），可走 idx_user_book_progress_user_time(user_id, last_read_at)。
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
 		 WHERE ubp.user_id = ? AND b.page_count > 0 AND ubp.last_read_page >= b.page_count
-		   AND ubp.last_read_at IS NOT NULL AND `+completedExpr+` = ?`,
-		userID, periodValue).Scan(&stats.BooksCompleted); err != nil {
+		   AND ubp.last_read_at IS NOT NULL AND ubp.last_read_at >= ? AND ubp.last_read_at < ?`,
+		userID, lowerBound, upperBound).Scan(&stats.BooksCompleted); err != nil {
 		return UserPeriodStats{}, err
 	}
 
@@ -249,9 +246,9 @@ func (s *SqlStore) GetUserPeriodStats(ctx context.Context, userID int64, year, m
 		 FROM user_reading_activity ura
 		 JOIN books b ON b.id = ura.book_id
 		 JOIN series s ON s.id = b.series_id
-		 WHERE ura.user_id = ? AND `+periodExpr+` = ?
+		 WHERE ura.user_id = ? AND ura.date >= ? AND ura.date < ?
 		 GROUP BY b.series_id ORDER BY pages DESC LIMIT 5`,
-		userID, periodValue)
+		userID, lowerBound, upperBound)
 	if err != nil {
 		return UserPeriodStats{}, err
 	}

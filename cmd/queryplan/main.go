@@ -59,34 +59,53 @@ func main() {
 			expected: []string{"idx_series_library_status_books", "idx_series_library_status"},
 		},
 		{
+			// 混合方向 ORDER BY(col DESC, name ASC)：应命中方向匹配的 *_desc 复合索引，而非全 ASC 索引 + filesort。
 			name:     "series/library/updated",
 			query:    `SELECT id, name FROM series WHERE library_id = ? ORDER BY updated_at DESC, name ASC LIMIT 50`,
 			args:     []any{*libraryID},
-			expected: []string{"idx_series_library_updated_name", "idx_series_library_updated"},
+			expected: []string{"idx_series_library_updated_desc"},
 		},
 		{
 			name:     "series/library/rating",
 			query:    `SELECT id, name FROM series WHERE library_id = ? ORDER BY rating DESC, name ASC LIMIT 50`,
 			args:     []any{*libraryID},
-			expected: []string{"idx_series_library_rating"},
+			expected: []string{"idx_series_library_rating_desc"},
 		},
 		{
 			name:     "series/library/pages",
 			query:    `SELECT id, name FROM series WHERE library_id = ? ORDER BY total_pages DESC, name ASC LIMIT 50`,
 			args:     []any{*libraryID},
-			expected: []string{"idx_series_library_pages"},
+			expected: []string{"idx_series_library_pages_desc"},
 		},
 		{
 			name:     "series/library/favorite",
 			query:    `SELECT id, name FROM series WHERE library_id = ? ORDER BY is_favorite DESC, name ASC LIMIT 50`,
 			args:     []any{*libraryID},
-			expected: []string{"idx_series_library_favorite"},
+			expected: []string{"idx_series_library_favorite_desc"},
+		},
+		{
+			name:     "series/library/books-desc",
+			query:    `SELECT id, name FROM series WHERE library_id = ? ORDER BY book_count DESC, name ASC LIMIT 50`,
+			args:     []any{*libraryID},
+			expected: []string{"idx_series_library_books_desc"},
+		},
+		{
+			name:     "series/library/created-desc",
+			query:    `SELECT id, name FROM series WHERE library_id = ? ORDER BY created_at DESC, name ASC LIMIT 50`,
+			args:     []any{*libraryID},
+			expected: []string{"idx_series_library_created_desc"},
+		},
+		{
+			name:     "franchise/reverse-relation",
+			query:    `SELECT id, source_series_id FROM series_relations WHERE target_series_id = ?`,
+			args:     []any{*seriesID},
+			expected: []string{"idx_series_relations_target"},
 		},
 		{
 			name:     "home/default-updated",
 			query:    `SELECT s.id, s.name, ss.cover_path, ss.tag_names_cache, ss.read_pages FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id WHERE s.library_id = ? ORDER BY s.updated_at DESC, s.name ASC LIMIT 50`,
 			args:     []any{*libraryID},
-			expected: []string{"idx_series_library_updated_name", "idx_series_library_updated"},
+			expected: []string{"idx_series_library_updated_desc"},
 		},
 		{
 			name:     "home/name",
@@ -98,7 +117,7 @@ func main() {
 			name:     "home/created",
 			query:    `SELECT s.id, s.name, ss.cover_path, ss.tag_names_cache, ss.read_pages FROM series s LEFT JOIN series_stats ss ON ss.series_id = s.id WHERE s.library_id = ? ORDER BY s.created_at DESC, s.name ASC LIMIT 50 OFFSET 0`,
 			args:     []any{*libraryID},
-			expected: []string{"idx_series_library_created_name", "idx_series_library_created"},
+			expected: []string{"idx_series_library_created_desc"},
 		},
 		{
 			name:     "home/favorite",

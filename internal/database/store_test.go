@@ -762,6 +762,88 @@ func TestSearchSeriesPagedCursorBoundaryUsesStableTieBreaker(t *testing.T) {
 	}
 }
 
+// TestSearchSeriesCursorNumericSortsMatchOffset 验证新纳入游标的数值排序(books/volumes/pages)在有平局时，
+// 逐页游标前滚得到的序列与一次性 OFFSET 全量取数完全一致——无重复、无跳过、无边界漏行。这是 keyset 分页
+// 正确性的金标准对拍。
+func TestSearchSeriesCursorNumericSortsMatchOffset(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreForTest(t)
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name: "Main", Path: filepath.Join(t.TempDir(), "library"), ScanMode: "none", ScanInterval: 60, ScanFormats: "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library failed: %v", err)
+	}
+	db := store.(*SqlStore).db
+	specs := []struct {
+		name                string
+		books, vols, pages  int
+	}{
+		{"Alpha", 5, 2, 100},
+		{"Bravo", 5, 2, 100}, // 与 Alpha 在三个维度全平局 → 靠 (name,id) tie-break
+		{"Charlie", 3, 1, 50},
+		{"Delta", 3, 5, 50},
+		{"Echo", 3, 1, 50},
+		{"Foxtrot", 1, 9, 10},
+		{"Golf", 8, 3, 300},
+	}
+	for _, s := range specs {
+		ser, err := store.CreateSeries(ctx, CreateSeriesParams{
+			LibraryID: lib.ID, Name: s.name, Path: filepath.Join(lib.Path, s.name), NameInitial: SeriesInitial("", s.name),
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", s.name, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE series SET book_count=?, volume_count=?, total_pages=? WHERE id=?`,
+			s.books, s.vols, s.pages, ser.ID); err != nil {
+			t.Fatalf("set counts %s: %v", s.name, err)
+		}
+	}
+
+	for _, sortBy := range []string{"books_desc", "books_asc", "volumes_desc", "pages_desc", "pages_asc"} {
+		offsetRows, total, err := store.SearchSeriesPaged(ctx, lib.ID, SeriesListFilters{}, 100, 0, sortBy)
+		if err != nil {
+			t.Fatalf("offset %s: %v", sortBy, err)
+		}
+		offsetIDs := make([]int64, len(offsetRows))
+		for i, r := range offsetRows {
+			offsetIDs[i] = r.ID
+		}
+
+		var cursorIDs []int64
+		cursor := ""
+		for pages := 0; pages < 100; pages++ {
+			rows, next, hasMore, err := store.SearchSeriesCursor(ctx, lib.ID, SeriesListFilters{}, 2, sortBy, cursor)
+			if err != nil {
+				t.Fatalf("cursor %s page %d: %v", sortBy, pages, err)
+			}
+			for _, r := range rows {
+				cursorIDs = append(cursorIDs, r.ID)
+			}
+			if !hasMore || next == "" {
+				break
+			}
+			cursor = next
+		}
+
+		if total != len(specs) || len(cursorIDs) != len(specs) {
+			t.Fatalf("sort %s: total=%d cursor walked %d, want %d", sortBy, total, len(cursorIDs), len(specs))
+		}
+		for i := range offsetIDs {
+			if cursorIDs[i] != offsetIDs[i] {
+				t.Fatalf("sort %s: cursor sequence %v != offset sequence %v", sortBy, cursorIDs, offsetIDs)
+			}
+		}
+		seen := map[int64]bool{}
+		for _, id := range cursorIDs {
+			if seen[id] {
+				t.Fatalf("sort %s: duplicate id %d in cursor walk %v", sortBy, id, cursorIDs)
+			}
+			seen[id] = true
+		}
+	}
+}
+
 func TestSearchTagsAndAuthorsReturnsPopularAndQueryMatches(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreForTest(t)

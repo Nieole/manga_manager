@@ -197,6 +197,103 @@ func TestSmartCollectionAddedWithinDays(t *testing.T) {
 	}
 }
 
+// TestSmartCollectionTagAuthorFilters 覆盖 ActiveTag / ActiveAuthor（改写为 EXISTS 子查询、去掉
+// tags×authors 交叉 JOIN + GROUP BY 之后）：命中正确、多标签系列不因筛选而重复计数，且 tags_string
+// 来自预计算的 series_stats.tag_names_cache。
+func TestSmartCollectionTagAuthorFilters(t *testing.T) {
+	store := newStoreForTest(t)
+	ctx := context.Background()
+	fx := newSmartFixture(t, ctx, store)
+
+	linkTag := func(seriesID int64, name string) {
+		tag, err := store.UpsertTag(ctx, name)
+		if err != nil {
+			t.Fatalf("upsert tag %s: %v", name, err)
+		}
+		if err := store.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: seriesID, TagID: tag.ID}); err != nil {
+			t.Fatalf("link tag %s: %v", name, err)
+		}
+	}
+	linkAuthor := func(seriesID int64, name string) {
+		a, err := store.UpsertAuthor(ctx, UpsertAuthorParams{Name: name, Role: "writer"})
+		if err != nil {
+			t.Fatalf("upsert author %s: %v", name, err)
+		}
+		if err := store.LinkSeriesAuthor(ctx, LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: a.ID}); err != nil {
+			t.Fatalf("link author %s: %v", name, err)
+		}
+	}
+
+	// SA: 两个标签 Action+Adventure（验证多标签不导致重复行）+ 作者 Writer X
+	// SB: 标签 Action
+	// SC: 标签 Drama + 作者 Writer Y
+	linkTag(fx.saID, "Action")
+	linkTag(fx.saID, "Adventure")
+	linkAuthor(fx.saID, "Writer X")
+	linkTag(fx.sbID, "Action")
+	linkTag(fx.scID, "Drama")
+	linkAuthor(fx.scID, "Writer Y")
+	for _, id := range []int64{fx.saID, fx.sbID, fx.scID} {
+		if err := store.RefreshSeriesStats(ctx, id); err != nil {
+			t.Fatalf("refresh stats %d: %v", id, err)
+		}
+	}
+
+	base := func(mut func(*SmartCollectionFilter)) SmartCollectionFilter {
+		f := SmartCollectionFilter{LibraryID: fx.libID}
+		mut(&f)
+		return f
+	}
+	cases := []struct {
+		name string
+		f    SmartCollectionFilter
+		want []int64
+	}{
+		{"tag Action", base(func(c *SmartCollectionFilter) { c.ActiveTag = "Action" }), []int64{fx.saID, fx.sbID}},
+		{"tag Drama", base(func(c *SmartCollectionFilter) { c.ActiveTag = "Drama" }), []int64{fx.scID}},
+		{"tag Adventure (SA only, no dup)", base(func(c *SmartCollectionFilter) { c.ActiveTag = "Adventure" }), []int64{fx.saID}},
+		{"author Writer Y", base(func(c *SmartCollectionFilter) { c.ActiveAuthor = "Writer Y" }), []int64{fx.scID}},
+		{"tag Action + author Writer X", base(func(c *SmartCollectionFilter) { c.ActiveTag = "Action"; c.ActiveAuthor = "Writer X" }), []int64{fx.saID}},
+		{"tag Action + author Writer Y (disjoint)", base(func(c *SmartCollectionFilter) { c.ActiveTag = "Action"; c.ActiveAuthor = "Writer Y" }), []int64{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := smartIDs(t, ctx, store, tc.f)
+			if !hasExactly(got, tc.want...) {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+
+	// tags_string 应来自 series_stats.tag_names_cache（含 SA 的两个标签），而非 GROUP_CONCAT。
+	rows, _, err := store.SearchSmartCollectionSeries(ctx, SmartCollectionFilter{LibraryID: fx.libID, ActiveTag: "Adventure"}, 50, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(rows) != 1 || rows[0].TagsString == nil {
+		t.Fatalf("expected 1 row with non-nil tags_string, got %+v", rows)
+	}
+	if ts := *rows[0].TagsString; !containsAll(ts, "Action", "Adventure") {
+		t.Fatalf("tags_string %q should contain Action and Adventure", ts)
+	}
+}
+
+func containsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		found := false
+		for i := 0; i+len(sub) <= len(s); i++ {
+			if s[i:i+len(sub)] == sub {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // TestSmartCollectionUserProgressSource 验证 UserID>0 时智能合集读状态改用 user_series_progress，
 // 与全局隔离：给用户 u 在 SA 记进度 -> u 的 reading={SA}；空用户 unread=全部、reading=空。
 func TestSmartCollectionUserProgressSource(t *testing.T) {

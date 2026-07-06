@@ -876,6 +876,13 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_series_library_favorite ON series(library_id, is_favorite, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_favorite_name_id ON series(library_id, is_favorite, name, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_status_books ON series(library_id, status, book_count, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_updated_desc ON series(library_id, updated_at DESC, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_created_desc ON series(library_id, created_at DESC, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_rating_desc ON series(library_id, rating DESC, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_books_desc ON series(library_id, book_count DESC, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_volumes_desc ON series(library_id, volume_count DESC, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_pages_desc ON series(library_id, total_pages DESC, name, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_library_favorite_desc ON series(library_id, is_favorite DESC, name, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_series_sort ON books(series_id, volume, sort_number, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_series_read ON books(series_id, last_read_page)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_read_progress_series ON books(last_read_page, series_id) WHERE last_read_page > 0`,
@@ -886,6 +893,7 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_series_relations_target ON series_relations(target_series_id)`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ai AFTER INSERT ON series_tags BEGIN UPDATE tags SET series_count = series_count + 1 WHERE id = NEW.tag_id; END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ad AFTER DELETE ON series_tags BEGIN UPDATE tags SET series_count = series_count - 1 WHERE id = OLD.tag_id; END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_search_fts_ai AFTER INSERT ON series BEGIN
@@ -963,6 +971,12 @@ func Migrate(dbPath string) error {
 			return err
 		}
 	}
+
+	// 给查询规划器提供选择性统计（sqlite_stat1）。series 上有约 20 个 library_id 前缀重叠的复合索引，
+	// 有统计信息时规划器更能在等价候选中挑对索引。analysis_limit=400 限制每个索引的采样行数，
+	// 即便百万级表也能秒级完成；PRAGMA optimize 只会分析确有变化的表，且失败无害（忽略错误）。
+	_, _ = db.Exec(`PRAGMA analysis_limit=400`)
+	_, _ = db.Exec(`PRAGMA optimize`)
 
 	return nil
 }
@@ -1554,7 +1568,7 @@ func scanTaskRecord(row taskScanner) (TaskRecord, error) {
 // SearchSeriesPaged 供主页根据标签和作者查询并分页。
 // 默认列表只走 series + series_stats，只有标签/作者筛选时才进入关联表。
 func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, f SeriesListFilters, limit, offset int32, sortBy string) ([]SearchSeriesPagedRow, int, error) {
-	baseQuery, progressJoin, whereClause, leadingArgs, args := buildSeriesSearchQuery(libraryID, f)
+	baseQuery, progressJoin, whereClause, leadingArgs, args, whereUsesProgress := buildSeriesSearchQuery(libraryID, f)
 
 	var total int
 	if !f.hasAny() {
@@ -1566,14 +1580,19 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, f Ser
 			return nil, 0, err
 		}
 	} else {
-		// 计数需与主查询同样 JOIN 进度来源（ss），因阅读状态/进度筛选引用 ss.* 列。
-		// 进度来源 JOIN 若含 user_id 占位符，需先补其实参（f.UserID>0 时），再接 WHERE 实参。
+		// 计数仅在 WHERE 引用 ss.*（阅读状态/进度筛选）时才 JOIN 进度来源；否则省掉该 LEFT JOIN
+		// （ss 主键点查每系列至多一行、不放大行数，结果一致）。JOIN 若含 user_id 占位符，
+		// 需先补其实参（f.UserID>0 时），再接 WHERE 实参。
 		countArgs := make([]interface{}, 0, len(args)+1)
-		if f.UserID > 0 {
-			countArgs = append(countArgs, f.UserID)
+		countJoin := ""
+		if whereUsesProgress {
+			countJoin = progressJoin
+			if f.UserID > 0 {
+				countArgs = append(countArgs, f.UserID)
+			}
 		}
 		countArgs = append(countArgs, args...)
-		countQuery := `SELECT COUNT(*) FROM series s ` + progressJoin + whereClause
+		countQuery := `SELECT COUNT(*) FROM series s ` + countJoin + whereClause
 		if err := s.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 			return nil, 0, err
 		}
@@ -1606,7 +1625,7 @@ func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, f Se
 		limit = 50
 	}
 
-	baseQuery, _, whereClause, leadingArgs, args := buildSeriesSearchQuery(libraryID, f)
+	baseQuery, _, whereClause, leadingArgs, args, _ := buildSeriesSearchQuery(libraryID, f)
 	filters := strings.TrimPrefix(whereClause, " WHERE ")
 	queryArgs := append(append([]interface{}{}, leadingArgs...), args...)
 
@@ -2014,7 +2033,7 @@ func (f SeriesListFilters) hasAny() bool {
 // ss = 进度来源（f.UserID>0 时为该用户的 user_series_progress，否则为全局 series_stats）。
 // 返回：baseQuery（含 SELECT + FROM/JOIN）、progressJoin（ss 的 JOIN 子句，供计数查询复用）、
 // whereClause、leadingArgs（baseQuery 中 WHERE 之前出现的占位符实参，按文本顺序）、whereArgs（过滤实参）。
-func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (baseQuery, progressJoin, whereClause string, leadingArgs, whereArgs []interface{}) {
+func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (baseQuery, progressJoin, whereClause string, leadingArgs, whereArgs []interface{}, whereUsesProgress bool) {
 	// last_read_page 取「最近阅读那本书」的进度：多用户从 user_book_progress，否则从全局 books。
 	var lastReadPageExpr string
 	leadingArgs = make([]interface{}, 0, 2)
@@ -2050,8 +2069,16 @@ func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (baseQuery, pr
 	}
 
 	if f.Keyword != "" {
-		filters = append(filters, `(instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`)
-		args = append(args, f.Keyword, f.Keyword)
+		// 关键字 >=3 rune 时走 series_search_fts(trigram)：MATCH 取匹配 rowid 集，语义与 instr 子串匹配
+		// 等价(trigram 子串、大小写不敏感、覆盖 name+title)，但用索引一次求出匹配集，取代对 100k 系列逐行
+		// lower()+instr 的双重全表扫(行查询 + 计数各一次)。<3 rune(CJK 常态)保留 instr 回退。
+		if seriesSearchFTSEligible(f.Keyword) {
+			filters = append(filters, `s.id IN (SELECT rowid FROM series_search_fts WHERE series_search_fts MATCH ?)`)
+			args = append(args, fts5PhraseQuery(f.Keyword))
+		} else {
+			filters = append(filters, `(instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0)`)
+			args = append(args, f.Keyword, f.Keyword)
+		}
 	}
 
 	if f.Status != "" {
@@ -2145,7 +2172,11 @@ func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (baseQuery, pr
 	if len(filters) > 0 {
 		whereClause = " WHERE " + strings.Join(filters, " AND ")
 	}
-	return baseQuery, progressJoin, whereClause, leadingArgs, args
+	// whereUsesProgress 标记 WHERE 是否引用进度来源 ss.*（阅读状态 / 进度区间筛选）。计数查询据此决定
+	// 是否 JOIN 进度来源：ss 经主键点查每系列至多一行、LEFT JOIN 不放大行数，故 WHERE 不引用 ss 时
+	// 可从 COUNT(*) 省掉该 JOIN（结果不变，少一次 join）。
+	whereUsesProgress = f.ReadState == "unread" || f.ReadState == "reading" || f.ReadState == "completed" || f.MinProgress != nil || f.MaxProgress != nil
+	return baseQuery, progressJoin, whereClause, leadingArgs, args, whereUsesProgress
 }
 
 func scanSearchSeriesPagedRows(rows *sql.Rows) ([]SearchSeriesPagedRow, error) {
@@ -2353,7 +2384,9 @@ func parseSeriesSearchSort(sortBy string) seriesSearchSort {
 
 func (s seriesSearchSort) supportsCursor() bool {
 	switch s.Field {
-	case "name", "updated", "created", "favorite":
+	// books/volumes/pages 均为 NOT NULL 整数列，方向匹配的 *_desc 复合索引已具备，(name,id) 保证 tie-break
+	// 唯一稳定，故可 keyset 前滚跳过 COUNT 与深 OFFSET。rating 可空（NULL 在 keyset 边界谓词里会漏行）故不纳入。
+	case "name", "updated", "created", "favorite", "books", "volumes", "pages":
 		return true
 	default:
 		return false
@@ -2415,7 +2448,7 @@ func seriesSearchSeekClause(s seriesSearchSort, cursor seriesCursorPayload) (str
 		if parsed, err := time.Parse(time.RFC3339Nano, cursor.Value); err == nil {
 			value = parsed
 		}
-	case "favorite":
+	case "favorite", "books", "volumes", "pages":
 		if parsed, err := strconv.Atoi(cursor.Value); err == nil {
 			value = parsed
 		}
@@ -2438,6 +2471,16 @@ func encodeSeriesCursor(s seriesSearchSort, row SearchSeriesPagedRow) string {
 	case "favorite":
 		if row.IsFavorite {
 			payload.Value = "1"
+		} else {
+			payload.Value = "0"
+		}
+	case "books":
+		payload.Value = strconv.FormatInt(row.BookCount, 10)
+	case "volumes":
+		payload.Value = strconv.Itoa(row.VolumeCount)
+	case "pages":
+		if row.TotalPages.Valid {
+			payload.Value = strconv.FormatInt(int64(row.TotalPages.Float64), 10)
 		} else {
 			payload.Value = "0"
 		}
