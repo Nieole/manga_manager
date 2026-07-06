@@ -279,14 +279,7 @@ CREATE TABLE IF NOT EXISTS series_metadata_provenance (
 
 CREATE INDEX IF NOT EXISTS idx_series_metadata_provenance_series_id ON series_metadata_provenance(series_id, field_name);
 
--- 用户自定义字段：系列级 key-value 元数据（区别于受限字段的溯源表 series_metadata_provenance）。
-CREATE TABLE IF NOT EXISTS series_custom_fields (
-    series_id INTEGER NOT NULL,
-    field_key TEXT NOT NULL,
-    field_value TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (series_id, field_key),
-    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
-);
+-- series_custom_fields moved to schema_handwritten.sql (hand-written SQL only, kept out of sqlc's view).
 
 -- [#2] Custom collections / smart shelves
 CREATE TABLE IF NOT EXISTS collections (
@@ -435,9 +428,8 @@ CREATE TABLE IF NOT EXISTS koreader_accounts (
     username TEXT NOT NULL UNIQUE,
     sync_key TEXT NOT NULL DEFAULT '',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    -- user_id：KOReader 账户所属的站点用户（多用户）。0=未关联，同步进度回落到全局。
-    -- 现有账户在首个管理员创建时归属该管理员；此后账户归创建者所有。
-    user_id INTEGER NOT NULL DEFAULT 0,
+    -- user_id (site user owning this KOReader account, multi-user) is added via ensureColumn, not here:
+    -- putting it in CREATE would make sqlc's KoreaderAccount model gain the field and drift models.go (CI fails).
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -479,127 +471,4 @@ CREATE TABLE IF NOT EXISTS koreader_sync_events (
 
 CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_created_at ON koreader_sync_events(created_at);
 
--- ============================================================================
--- 站点账户体系（多用户）
--- ============================================================================
--- users：站点登录账户。role 取 'admin'（全权：配置/用户/媒体库/扫描/元数据/去重）
--- 或 'regular'（只读浏览 + 记录本人阅读进度/书签/短评，不能改共享库元数据）。
--- password_hash 存 bcrypt 摘要，绝不存明文。must_change_password 在管理员代建账户时置 TRUE，
--- 引导用户首次登录改密。第一个 admin 承接旧的全局阅读进度与 KOReader 账户（见迁移逻辑）。
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL DEFAULT '',
-    role TEXT NOT NULL DEFAULT 'regular',
-    display_name TEXT NOT NULL DEFAULT '',
-    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
-
--- sessions：服务端会话。id 存 cookie 令牌的 SHA-256（cookie 里是原始随机令牌，DB 不落明文）。
--- csrf_token 随会话下发给前端，改写类请求（POST/PUT/PATCH/DELETE）需在 X-CSRF-Token 头回传校验。
--- expires_at 到期即失效；用户改密或登出时按 user_id 批量清理会话。
-CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    csrf_token TEXT NOT NULL DEFAULT '',
-    user_agent TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at DATETIME NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
-
--- ============================================================================
--- 每用户阅读进度（多用户阶段2）
--- ============================================================================
--- user_book_progress：每个用户对每本书的阅读进度（取代旧的全局 books.last_read_page/last_read_at）。
--- 旧全局进度在首个管理员创建时迁移到该表（见 MigrateGlobalProgressToUser）。写入路径统一走此表，
--- 读取时按当前用户叠加到书目响应上。books.last_read_page/last_read_at 保留为迁移来源，Web 端不再据其读写。
-CREATE TABLE IF NOT EXISTS user_book_progress (
-    user_id INTEGER NOT NULL,
-    book_id INTEGER NOT NULL,
-    last_read_page INTEGER,
-    last_read_at DATETIME,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, book_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_book_progress_book ON user_book_progress(book_id);
-CREATE INDEX IF NOT EXISTS idx_user_book_progress_user_read ON user_book_progress(user_id, last_read_page) WHERE last_read_page > 0;
-CREATE INDEX IF NOT EXISTS idx_user_book_progress_user_time ON user_book_progress(user_id, last_read_at) WHERE last_read_at IS NOT NULL;
-
--- user_series_progress：从 user_book_progress 派生的每用户 × 每系列聚合（进度条 / 已读·完成计数 /
--- 最近阅读）。等价于旧 series_stats 的进度列，但按用户拆分；series_stats 仅保留全局的封面 / 标签缓存。
--- 列表/搜索/智能合集/看板按当前用户 LEFT JOIN 此表取进度，写入进度后按 (user, series) 增量刷新。
-CREATE TABLE IF NOT EXISTS user_series_progress (
-    user_id INTEGER NOT NULL,
-    series_id INTEGER NOT NULL,
-    read_pages INTEGER NOT NULL DEFAULT 0,
-    read_book_count INTEGER NOT NULL DEFAULT 0,
-    completed_book_count INTEGER NOT NULL DEFAULT 0,
-    last_read_at DATETIME,
-    last_read_book_id INTEGER NOT NULL DEFAULT 0,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, series_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_series_progress_last_read ON user_series_progress(user_id, last_read_at);
-CREATE INDEX IF NOT EXISTS idx_user_series_progress_series ON user_series_progress(series_id);
-
--- ============================================================================
--- 深度统计（第 6 项）：每用户活动 / 阅读时长 / 系列短评
--- ============================================================================
--- user_reading_activity：每用户每日阅读页数，取代全局 reading_activity 供热力图 / 连续阅读天数 /
--- 年度月度回顾使用。旧全局 reading_activity 在首个管理员创建时迁入该用户；此后写入双写（全局+每用户）。
-CREATE TABLE IF NOT EXISTS user_reading_activity (
-    user_id INTEGER NOT NULL,
-    book_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    pages_read INTEGER NOT NULL DEFAULT 0,
-    read_seconds INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, book_id, date),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_reading_activity_user_date ON user_reading_activity(user_id, date);
-
--- user_book_reading_time：每用户每本书累计的「活跃阅读」秒数（客户端计秒、增量上报累加）。
-CREATE TABLE IF NOT EXISTS user_book_reading_time (
-    user_id INTEGER NOT NULL,
-    book_id INTEGER NOT NULL,
-    total_seconds INTEGER NOT NULL DEFAULT 0,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, book_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_book_reading_time_user ON user_book_reading_time(user_id);
-
--- user_series_review：每用户对每个系列的个人评分（1-5）+ 短评文本（与全局 series.rating 区分）。
-CREATE TABLE IF NOT EXISTS user_series_review (
-    user_id INTEGER NOT NULL,
-    series_id INTEGER NOT NULL,
-    rating REAL,
-    review TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, series_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_series_review_series ON user_series_review(series_id);
+-- Multi-user / per-user progress / deep-stats tables live in schema_multiuser.sql (run by Migrate, kept out of sqlc's view to avoid generated-model name clashes with hand-written structs).
