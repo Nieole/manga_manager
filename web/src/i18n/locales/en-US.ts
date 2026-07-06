@@ -1085,6 +1085,7 @@ export const messages: MessageCatalog = {
     'series.franchise.description': 'Related series in the same universe',
     'series.franchise.current': 'Current',
     'series.franchise.viewGraph': 'View Relationship Graph',
+    'franchise.graph.truncated': 'Too many relations — showing the most connected series ({{count}} omitted)',
     'series.editor.title': 'Edit series metadata',
     'series.editor.description': 'Prioritize fields you have confirmed, then use locks to control whether later scraping may overwrite them.',
     'series.editor.save': 'Save changes',

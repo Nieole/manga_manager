@@ -1085,6 +1085,7 @@ export const messages: MessageCatalog = {
     'series.franchise.description': '同世界观下的其他系列',
     'series.franchise.current': '当前',
     'series.franchise.viewGraph': '查看关系图谱',
+    'franchise.graph.truncated': '关系过多，已按关联度展示最相关的部分（省略 {{count}} 个系列）',
     'series.editor.title': '编辑系列元数据',
     'series.editor.description': '优先处理你确认过的字段，再通过锁定控制后续抓取是否允许覆盖。',
     'series.editor.save': '保存更改',

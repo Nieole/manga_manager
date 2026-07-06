@@ -14,7 +14,7 @@ interface LibraryGridProps {
   series: Series[];
   loading: boolean;
   isSelectionMode: boolean;
-  selectedSeriesIds: number[];
+  selectedSeriesIds: Set<number>;
   rescanningId: number | null;
   scrapingSeriesId: number | null;
   scrapeMenuOpenId: number | null;
@@ -106,7 +106,7 @@ export function LibraryGrid({
             key={s.id}
             series={s}
             isSelectionMode={isSelectionMode}
-            isSelected={selectedSeriesIds.includes(s.id)}
+            isSelected={selectedSeriesIds.has(s.id)}
             rescanning={rescanningId === s.id}
             scrapingActive={scrapingSeriesId === s.id}
             scrapeMenuOpen={scrapeMenuOpenId === s.id}

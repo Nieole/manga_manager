@@ -82,16 +82,19 @@ describe('setOrDelete', () => {
 });
 
 describe('supportsCursorPagination', () => {
-  it('is true only for cursor-capable sort fields', () => {
+  it('is true for cursor-capable sort fields (must match backend supportsCursor)', () => {
     expect(supportsCursorPagination('name')).toBe(true);
     expect(supportsCursorPagination('updated')).toBe(true);
     expect(supportsCursorPagination('created')).toBe(true);
     expect(supportsCursorPagination('favorite')).toBe(true);
+    expect(supportsCursorPagination('books')).toBe(true);
+    expect(supportsCursorPagination('volumes')).toBe(true);
+    expect(supportsCursorPagination('pages')).toBe(true);
   });
 
-  it('is false for offset-only sort fields', () => {
+  it('is false for offset-only sort fields (rating nullable, read per-user derived)', () => {
     expect(supportsCursorPagination('rating')).toBe(false);
-    expect(supportsCursorPagination('books')).toBe(false);
+    expect(supportsCursorPagination('read')).toBe(false);
     expect(supportsCursorPagination('')).toBe(false);
   });
 });

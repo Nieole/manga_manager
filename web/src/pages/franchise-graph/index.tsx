@@ -243,6 +243,8 @@ export const FranchiseGraphPage: React.FC = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // 图谱按节点级上限截断时，省略的系列数（>0 显示提示条）。
+  const [truncatedCount, setTruncatedCount] = useState(0);
 
   // 后端返回的是关系边列表，前端先聚合出唯一系列节点，再根据关系类型生成有向边。
   // 单系列入口会突出当前系列；全库入口则展示库内所有关系，不强制指定中心节点。
@@ -255,7 +257,12 @@ export const FranchiseGraphPage: React.FC = () => {
       const res = await apiClient.get<FranchiseRelation[]>(endpoint);
       const relations = res.data || [];
 
+      // 节点级上限：>N 个节点的力导向图既不可读，其 O(N^2)×320 tick 布局又会冻结主线程。
+      // 超限时按度数（连接数）保留最相关的 top-N 系列（单系列入口的当前系列始终保留），并提示已省略数量。
+      const MAX_GRAPH_NODES = 200;
+
       const seriesMap = new Map<number, { id: number; name: string; cover_path: string; isCurrent: boolean }>();
+      const degreeCount = new Map<number, number>();
       relations.forEach(rel => {
         if (!seriesMap.has(rel.source_series_id)) {
           seriesMap.set(rel.source_series_id, {
@@ -273,17 +280,37 @@ export const FranchiseGraphPage: React.FC = () => {
             isCurrent: seriesId > 0 && rel.target_series_id === seriesId
           });
         }
+        degreeCount.set(rel.source_series_id, (degreeCount.get(rel.source_series_id) ?? 0) + 1);
+        degreeCount.set(rel.target_series_id, (degreeCount.get(rel.target_series_id) ?? 0) + 1);
       });
 
-      const initialNodes: Node[] = Array.from(seriesMap.values()).map(s => ({
-        id: s.id.toString(),
-        type: 'custom',
-        position: { x: 0, y: 0 },
-        data: { name: s.name, coverPath: s.cover_path, isCurrent: s.isCurrent },
-      }));
+      let keptIds: Set<number> | null = null;
+      if (seriesMap.size > MAX_GRAPH_NODES) {
+        const ranked = Array.from(seriesMap.keys()).sort((a, b) => {
+          const da = seriesId > 0 && a === seriesId ? Infinity : (degreeCount.get(a) ?? 0);
+          const db = seriesId > 0 && b === seriesId ? Infinity : (degreeCount.get(b) ?? 0);
+          return db - da;
+        });
+        keptIds = new Set(ranked.slice(0, MAX_GRAPH_NODES));
+      }
+      setTruncatedCount(keptIds ? seriesMap.size - keptIds.size : 0);
 
-      const showEdgeLabels = relations.length <= 40;
-      const initialEdges: Edge[] = relations.map(rel => ({
+      const initialNodes: Node[] = Array.from(seriesMap.values())
+        .filter(s => !keptIds || keptIds.has(s.id))
+        .map(s => ({
+          id: s.id.toString(),
+          type: 'custom',
+          position: { x: 0, y: 0 },
+          data: { name: s.name, coverPath: s.cover_path, isCurrent: s.isCurrent },
+        }));
+
+      // 只保留两端节点都在图中的关系边，避免悬挂边。
+      const visibleRelations = keptIds
+        ? relations.filter(rel => keptIds.has(rel.source_series_id) && keptIds.has(rel.target_series_id))
+        : relations;
+
+      const showEdgeLabels = visibleRelations.length <= 40;
+      const initialEdges: Edge[] = visibleRelations.map(rel => ({
         id: `e${rel.source_series_id}-${rel.target_series_id}`,
         source: rel.source_series_id.toString(),
         target: rel.target_series_id.toString(),
@@ -305,7 +332,7 @@ export const FranchiseGraphPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [seriesId, libraryId, t, setNodes, setEdges]);
+  }, [seriesId, libraryId, t, setNodes, setEdges, setTruncatedCount]);
 
   useEffect(() => {
     fetchGraphData();
@@ -337,6 +364,11 @@ export const FranchiseGraphPage: React.FC = () => {
 
       <div className="flex-1 relative w-full h-full">
         <div className="franchise-graph-aura pointer-events-none absolute inset-0" />
+        {!isLoading && truncatedCount > 0 && (
+          <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full border border-amber-400/30 bg-amber-500/15 px-4 py-1.5 text-xs font-medium text-amber-200 backdrop-blur">
+            {t('franchise.graph.truncated', { count: truncatedCount })}
+          </div>
+        )}
         {isLoading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <RefreshCw className="h-8 w-8 animate-spin text-komgaPrimary" />

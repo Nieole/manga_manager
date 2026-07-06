@@ -18,7 +18,10 @@ interface UseLibrarySelectionParams {
 
 interface UseLibrarySelectionResult {
   isSelectionMode: boolean;
+  /** 有序数组，供批量 API 请求体与计数展示。 */
   selectedSeries: number[];
+  /** O(1) 成员判定，供 LibraryGrid 逐卡判断是否选中（取代 number[].includes 的 O(n²) 渲染）。 */
+  selectedSet: Set<number>;
   bulkProgressUpdating: 'read' | 'unread' | null;
   currentPageSelectedCount: number;
   allCurrentPageSelected: boolean;
@@ -40,42 +43,51 @@ export function useLibrarySelection({
   onError,
 }: UseLibrarySelectionParams): UseLibrarySelectionResult {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [selectedSeries, setSelectedSeries] = useState<number[]>([]);
+  // 内部以 Set 承载选择态：成员判定 O(1)，大选择集下逐卡判断不再是 O(n²)。selectedSeries 数组按需派生。
+  const [selectedSet, setSelectedSet] = useState<Set<number>>(() => new Set());
   const [bulkProgressUpdating, setBulkProgressUpdating] = useState<'read' | 'unread' | null>(null);
 
+  const selectedSeries = useMemo(() => Array.from(selectedSet), [selectedSet]);
   const currentPageSeriesIds = useMemo(() => allSeries.map((s) => s.id), [allSeries]);
   const currentPageSelectedCount = useMemo(
-    () => currentPageSeriesIds.filter((id) => selectedSeries.includes(id)).length,
-    [currentPageSeriesIds, selectedSeries],
+    () => currentPageSeriesIds.reduce((n, id) => (selectedSet.has(id) ? n + 1 : n), 0),
+    [currentPageSeriesIds, selectedSet],
   );
   const allCurrentPageSelected =
     currentPageSeriesIds.length > 0 && currentPageSelectedCount === currentPageSeriesIds.length;
 
   const toggleSelectionMode = useCallback(() => {
     setIsSelectionMode((prev) => {
-      if (prev) setSelectedSeries([]);
+      if (prev) setSelectedSet(new Set());
       return !prev;
     });
   }, []);
 
   const toggleSelectSeries = useCallback((id: number) => {
-    setSelectedSeries((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSelectedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }, []);
 
   const toggleSelectCurrentPage = useCallback(() => {
-    setSelectedSeries((prev) => {
+    setSelectedSet((prev) => {
       const allSelected =
-        currentPageSeriesIds.length > 0 &&
-        currentPageSeriesIds.every((id) => prev.includes(id));
+        currentPageSeriesIds.length > 0 && currentPageSeriesIds.every((id) => prev.has(id));
+      const next = new Set(prev);
       if (allSelected) {
-        return prev.filter((id) => !currentPageSeriesIds.includes(id));
+        currentPageSeriesIds.forEach((id) => next.delete(id));
+      } else {
+        currentPageSeriesIds.forEach((id) => next.add(id));
       }
-      return Array.from(new Set([...prev, ...currentPageSeriesIds]));
+      return next;
     });
   }, [currentPageSeriesIds]);
 
   const clearSelection = useCallback(() => {
-    setSelectedSeries([]);
+    setSelectedSet(new Set());
     setIsSelectionMode(false);
   }, []);
 
@@ -121,6 +133,7 @@ export function useLibrarySelection({
   return {
     isSelectionMode,
     selectedSeries,
+    selectedSet,
     bulkProgressUpdating,
     currentPageSelectedCount,
     allCurrentPageSelected,

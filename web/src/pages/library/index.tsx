@@ -370,7 +370,7 @@ export default function LibraryPage() {
         series={allSeries}
         loading={loading}
         isSelectionMode={selection.isSelectionMode}
-        selectedSeriesIds={selection.selectedSeries}
+        selectedSeriesIds={selection.selectedSet}
         rescanningId={rescanningId}
         scrapingSeriesId={scraping.scrapingSeries?.id ?? null}
         scrapeMenuOpenId={scraping.scrapeMenuOpenId}

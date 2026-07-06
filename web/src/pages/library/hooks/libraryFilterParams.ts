@@ -39,7 +39,9 @@ export function hasAdvancedFilters(a: AdvancedFilters): boolean {
 }
 
 export const VALID_SORT_DIRS = new Set(['asc', 'desc']);
-const SUPPORTS_CURSOR_FIELDS = new Set(['name', 'updated', 'created', 'favorite']);
+// 需与后端 seriesSearchSort.supportsCursor() 保持一致。books/volumes/pages 为 NOT NULL 整数列，
+// 方向匹配的 *_desc 索引 + (name,id) tie-break 使 keyset 前滚稳定；rating 可空、read 为每用户派生值，故不纳入。
+const SUPPORTS_CURSOR_FIELDS = new Set(['name', 'updated', 'created', 'favorite', 'books', 'volumes', 'pages']);
 
 export function supportsCursorPagination(field: string) {
   return SUPPORTS_CURSOR_FIELDS.has(field);
