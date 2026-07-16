@@ -58,12 +58,8 @@ type Controller struct {
 	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
 	sse *sseBroker
 
-	// AI Recommendations Cache
-	recommendationsCache     map[string][]AIRecommendationResponse
-	recommendationsCacheTime map[string]time.Time
-	recommendationsMutex     sync.RWMutex
-	// recommendationsGroup 合并同一 locale 的并发冷缓存/刷新请求，避免各自触发一次 LLM 推理。
-	recommendationsGroup singleflight.Group
+	// AI 阅读推荐缓存已抽成独立组件（recommendation_cache.go，按 locale + TTL + singleflight）；Controller 仅持引用。
+	recommendations *recommendationCache
 	// pageTranscodeGroup 合并同一 cacheKey 的并发页图转码：冷缓存时多客户端/预取请求同一页只解码+编码一次，
 	// 其余等待者复用同一结果，避免重复 CPU 转码与重复归档读取。
 	pageTranscodeGroup singleflight.Group
@@ -233,22 +229,21 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](512)
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](2048)
 	c := &Controller{
-		store:                    store,
-		stats:                    newStatsCache(),
-		imageCache:               cache,
-		pageCache:                pageCache,
-		bookPageSourceCache:      bookPageSourceCache,
-		progressWriteCache:       progressWriteCache,
-		scanner:                  scan,
-		config:                   cfg,
-		koreader:                 koreader.NewService(store, cfg),
-		external:                 external.NewManager(store, 30*time.Minute),
-		configPath:               cfgPath,
-		sse:                      newSSEBroker(),
-		taskEngine:               newTaskEngine(),
-		recommendationsCache:     make(map[string][]AIRecommendationResponse),
-		recommendationsCacheTime: make(map[string]time.Time),
-		openPath:                 openPathInDefaultFileManager,
+		store:               store,
+		stats:               newStatsCache(),
+		imageCache:          cache,
+		pageCache:           pageCache,
+		bookPageSourceCache: bookPageSourceCache,
+		progressWriteCache:  progressWriteCache,
+		scanner:             scan,
+		config:              cfg,
+		koreader:            koreader.NewService(store, cfg),
+		external:            external.NewManager(store, 30*time.Minute),
+		configPath:          cfgPath,
+		sse:                 newSSEBroker(),
+		taskEngine:          newTaskEngine(),
+		recommendations:     newRecommendationCache(24 * time.Hour),
+		openPath:            openPathInDefaultFileManager,
 		// 登录：15 分钟窗口内累计 5 次失败即锁定，基础 1 分钟、指数退避、封顶 15 分钟。
 		loginLimiter: newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
 		// 协议 Basic：更宽松些（客户端每次请求都带凭据），5 分钟窗口内 10 次失败锁定，封顶 10 分钟。

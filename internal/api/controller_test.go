@@ -87,6 +87,7 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 		configPath:          configPath,
 		taskEngine:          newTaskEngine(),
 		sse:                 newSSEBroker(),
+		recommendations:     newRecommendationCache(24 * time.Hour),
 		// 与 NewController 一致：鉴权限流器不可为 nil（否则 login / Basic 路径解引用会 panic）。
 		loginLimiter:     newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
 		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
@@ -2580,6 +2581,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		configPath:          filepath.Join(tempDir, "config.yaml"),
 		taskEngine:          newTaskEngine(),
 		sse:                 newSSEBroker(),
+		recommendations:     newRecommendationCache(24 * time.Hour),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)
@@ -4120,21 +4122,12 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 
 func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	controller.recommendationsMutex.Lock()
-	if controller.recommendationsCache == nil {
-		controller.recommendationsCache = make(map[string][]AIRecommendationResponse)
-	}
-	if controller.recommendationsCacheTime == nil {
-		controller.recommendationsCacheTime = make(map[string]time.Time)
-	}
-	controller.recommendationsCache["zh-CN"] = []AIRecommendationResponse{{
+	controller.recommendations.store("zh-CN", []AIRecommendationResponse{{
 		SeriesID:  99,
 		Reason:    "Cached reason",
 		Title:     "Cached title",
 		CoverPath: "cached.webp",
-	}}
-	controller.recommendationsCacheTime["zh-CN"] = time.Now()
-	controller.recommendationsMutex.Unlock()
+	}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/recommendations", nil)
 	rec := httptest.NewRecorder()

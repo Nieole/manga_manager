@@ -12,7 +12,6 @@ import (
 	"manga-manager/internal/taskcontrol"
 	"net/http"
 	"strconv"
-	"time"
 )
 
 type AIRecommendationResponse struct {
@@ -35,7 +34,7 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	// 合并同一 locale 的并发冷缓存/刷新请求，只触发一次 LLM 推理。用 context.WithoutCancel 解绑
 	// leader 的请求取消，避免 leader 客户端断开波及所有搭车的 follower（超时仍由 LLM Timeout 控制）。
 	flightCtx := metadata.WithLocale(context.WithoutCancel(r.Context()), locale)
-	v, err, _ := c.recommendationsGroup.Do(locale, func() (any, error) {
+	v, err := c.recommendations.do(locale, func() (any, error) {
 		if !forceRefresh {
 			if cached := c.cachedRecommendations(locale); cached != nil {
 				return cached, nil // 等待期间已被其他 leader 填充
@@ -50,15 +49,9 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, v.([]AIRecommendationResponse))
 }
 
-// cachedRecommendations 返回未过期的缓存推荐（无有效缓存时返回 nil）。
+// cachedRecommendations 返回未过期的缓存推荐（无有效缓存时返回 nil）；委托给 recommendationCache。
 func (c *Controller) cachedRecommendations(locale string) []AIRecommendationResponse {
-	c.recommendationsMutex.RLock()
-	defer c.recommendationsMutex.RUnlock()
-	cache := c.recommendationsCache[locale]
-	if time.Since(c.recommendationsCacheTime[locale]) < 24*time.Hour && len(cache) > 0 {
-		return cache
-	}
-	return nil
+	return c.recommendations.cached(locale)
 }
 
 // computeRecommendations 拉候选、调 LLM 生成推荐并回填缓存。由 getRecommendations 经 singleflight 调用，
@@ -133,11 +126,8 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string) 
 		})
 	}
 
-	// Update cache
-	c.recommendationsMutex.Lock()
-	c.recommendationsCache[locale] = finalRecs
-	c.recommendationsCacheTime[locale] = time.Now()
-	c.recommendationsMutex.Unlock()
+	// 回填缓存
+	c.recommendations.store(locale, finalRecs)
 
 	return finalRecs, nil
 }

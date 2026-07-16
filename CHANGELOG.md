@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（重构：AI 推荐缓存抽离出 Controller 上帝对象）
+
+> 承接 SSE broker / statsCache / franchiseRebuilder 抽离，继续解耦上帝对象。行为保持。
+
+#### 重构
+- 把 AI 阅读推荐缓存从 `Controller` 抽成独立组件 `recommendationCache`（`internal/api/recommendation_cache.go`）：按 locale 缓存 + 24h TTL + singleflight 合并同一 locale 的并发冷缓存/刷新请求（只触发一次 LLM 推理）。`Controller` 从持有 4 个裸字段（cache map / time map / mutex / singleflight group）改为仅持一个 `*recommendationCache` 引用；`cachedRecommendations` 薄委托、`getRecommendations` 走 `do()`、`computeRecommendations` 回填走 `store()`。白盒 seed 测试改用 `store()`。
+
+#### 验证
+- recommendations 相关测试 `-race` 通过；`go build`、`vet`、`gofmt`、`golangci-lint`（0）全绿；全量 `go test ./...` 全部 14 包 `ok`。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（前端契约：tsgen 覆盖 ValidationResult / Capabilities）
 
 > 承接前端架构分析（tsgen 仅覆盖 2 个类型，488 行手写契约类型可与后端各自漂移）。本次先纳入零漂移风险的后端契约类型，建立守护并示范模式。
