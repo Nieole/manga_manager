@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（前端契约：tsgen 覆盖 ValidationResult / Capabilities）
+
+> 承接前端架构分析（tsgen 仅覆盖 2 个类型，488 行手写契约类型可与后端各自漂移）。本次先纳入零漂移风险的后端契约类型，建立守护并示范模式。
+
+#### 改动
+- `cmd/tsgen` 新增受管契约类型：`config.ValidationIssue` / `config.ValidationResult` / `api.SystemCapabilitiesResponse`（全为字符串 / 数字 / 布尔 / 数组，与手写 TS 逐字段一致、无 int64-ID-as-string 类漂移）。
+- `SettingsContext` 移除对应的手写 `ValidationResult` / `ValidationIssue` / `Capabilities` 接口，改为从生成的 `generated.ts` 重导出（`Capabilities` 别名到后端 `SystemCapabilitiesResponse`）。CI 的 tsgen 漂移门禁自此守护这三类契约不与后端漂移。
+- 说明：更大的手写契约（`Config`、`Series` / `SeriesDetail`、`Collections` 等）存在实际漂移（如 `Library.id` 手写为 `string` 而后端为 `int64`→`number`），需逐类型核对并连带修前端，留作后续。
+
+#### 验证
+- `go run ./cmd/tsgen` 幂等（再生成无 diff → CI drift 门禁绿）；`go build`；前端 `tsc`、`eslint`（0）、`vitest`（205）全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（重构：franchise 重建调度器抽离出 Controller 上帝对象）
 
 > 承接 SSE broker / statsCache 抽离，继续解耦上帝对象——抽出 franchise 合集重建的合并式调度器。行为保持。

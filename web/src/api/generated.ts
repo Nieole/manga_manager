@@ -52,3 +52,25 @@ export interface TaskStatus {
   finished_at?: string;
 }
 
+export interface ValidationIssue {
+  field: string;
+  message: string;
+  severity: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  issues: ValidationIssue[];
+}
+
+export interface SystemCapabilitiesResponse {
+  supported_scan_formats: string[];
+  supported_scan_profiles: string[];
+  supported_log_levels: string[];
+  supported_storage_profiles: string[];
+  default_scan_formats: string;
+  default_scan_interval: number;
+  supported_llm_providers: string[];
+  supported_llm_api_modes: string[];
+}
+

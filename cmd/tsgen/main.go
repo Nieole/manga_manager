@@ -12,12 +12,17 @@ import (
 	"strings"
 
 	"manga-manager/internal/api"
+	"manga-manager/internal/config"
 )
 
-// targets 是纳入生成的契约结构体（顺序即输出顺序）。被引用的具名结构体也必须在此列出。
+// targets 是纳入生成的契约结构体（顺序即输出顺序）。被引用的具名结构体也必须在此列出
+// （如 ValidationResult 引用 ValidationIssue，故两者都要在此）。
 var targets = []reflect.Type{
 	reflect.TypeOf(api.TaskLimits{}),
 	reflect.TypeOf(api.TaskStatus{}),
+	reflect.TypeOf(config.ValidationIssue{}),
+	reflect.TypeOf(config.ValidationResult{}),
+	reflect.TypeOf(api.SystemCapabilitiesResponse{}),
 }
 
 // nullTypes 记录 sql.Null* 到 contracts.ts 导出名的映射；用到哪些就 import 哪些。

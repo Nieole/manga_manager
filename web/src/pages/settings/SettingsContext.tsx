@@ -8,6 +8,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { apiClient, isAxiosError } from '../../api/client';
 import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
 import { useToast } from '../../components/ToastProvider';
+import type { ValidationResult, SystemCapabilitiesResponse } from '../../api/generated';
 
 export interface Config {
   server: { host: string; port: number; allowed_origins: string[] };
@@ -52,27 +53,10 @@ export interface Config {
   };
 }
 
-interface ValidationIssue {
-  field: string;
-  message: string;
-  severity: string;
-}
-
-export interface ValidationResult {
-  valid: boolean;
-  issues: ValidationIssue[];
-}
-
-export interface Capabilities {
-  supported_scan_formats: string[];
-  supported_scan_profiles: string[];
-  supported_log_levels: string[];
-  supported_storage_profiles: string[];
-  default_scan_formats: string;
-  default_scan_interval: number;
-  supported_llm_providers: string[];
-  supported_llm_api_modes: string[];
-}
+// ValidationResult / Capabilities 已改由 cmd/tsgen 从 Go 结构体生成（web/src/api/generated.ts），此处按原名
+// 重导出以维持既有用法；Capabilities 是后端 SystemCapabilitiesResponse 的别名。CI 的 tsgen 漂移门禁保证不与后端漂移。
+export type { ValidationResult };
+export type Capabilities = SystemCapabilitiesResponse;
 
 export interface StorageIOPolicy {
   scan_concurrency: number;
