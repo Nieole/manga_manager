@@ -93,6 +93,8 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 	}
 	// 与 NewController 一致：构建任务重试注册表，否则新建任务的 Retryable 恒为 false。
 	controller.taskEngine.relaunchers = controller.buildTaskRelaunchers()
+	// 与 NewController 一致：注入 franchiseRebuilder，否则触发 scheduleFranchiseRebuild 会 nil panic。
+	controller.franchiseRebuilder = newFranchiseRebuilder(controller.RebuildFranchiseCollections, controller.runBackground)
 
 	t.Cleanup(parser.ResetArchivePool)
 	t.Cleanup(controller.Close)

@@ -4,6 +4,18 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（重构：franchise 重建调度器抽离出 Controller 上帝对象）
+
+> 承接 SSE broker / statsCache 抽离，继续解耦上帝对象——抽出 franchise 合集重建的合并式调度器。行为保持。
+
+#### 重构
+- 把 franchise 合集重建的**合并式调度**从 `Controller` 抽成独立组件 `franchiseRebuilder`（`internal/api/franchise_rebuilder.go`）：只管调度状态（`running`/`pending`，由 `mu` 保护），通过注入的 `rebuild` / `runBackground` 回调与领域逻辑（`RebuildFranchiseCollections`）和生命周期（`backgroundWG`）解耦。`Controller` 从持有 3 个裸调度字段改为仅持一个 `*franchiseRebuilder` 引用；`scheduleFranchiseRebuild` 保留为薄委托（3 个调用点不变）。领域重建逻辑 `RebuildFranchiseCollections` 仍留在 Controller（供 handler 直接调用并注入到 rebuilder）。
+
+#### 验证
+- franchise / collection 相关测试 `-race` 通过；`go build`、`vet`、`gofmt`、`golangci-lint`（0）全绿；全量 `go test ./...` 全部 14 包 `ok`。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（前端：拆分 Settings mega-context）
 
 > 承接前端架构分析（`SettingsContext` 是 ~40 字段的 mega-context，任一 KOReader 状态变化都重渲全部消费者）。

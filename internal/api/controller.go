@@ -100,11 +100,8 @@ type Controller struct {
 	closed        bool
 	backgroundWG  sync.WaitGroup
 
-	// franchise 合集重建的合并式调度状态：把一串系列关联编辑合并成至多再跑一轮重建，
-	// 避免每次增删改都启一个全图重建 goroutine 争抢 SQLite 写锁。
-	franchiseRebuildMu      sync.Mutex
-	franchiseRebuildRunning bool
-	franchiseRebuildPending bool
+	// franchise 合集重建的合并式调度已抽成独立组件（franchise_rebuilder.go）；Controller 仅持引用。
+	franchiseRebuilder *franchiseRebuilder
 }
 
 type TaskStatus struct {
@@ -262,6 +259,9 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 		scan.SetScanMetricsCallback(c.handleScannerMetricsEvent)
 		scan.SetScanProgressCallback(c.handleScannerProgressEvent)
 	}
+
+	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
+	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
 	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptions 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()

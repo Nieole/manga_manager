@@ -13,35 +13,9 @@ import (
 	"net/http"
 )
 
-// scheduleFranchiseRebuild 合并并发的 franchise 重建请求：已有重建在跑时只置 pending，
-// 否则起一个后台任务循环重建直到无待处理请求。经 runBackground 登记到 backgroundWG，
-// 关闭流程会等待其结束（此前是脱离生命周期、用 context.Background() 的 fire-and-forget goroutine）。
+// scheduleFranchiseRebuild 委托给 franchiseRebuilder（合并式调度已抽入 franchise_rebuilder.go）。
 func (c *Controller) scheduleFranchiseRebuild() {
-	c.franchiseRebuildMu.Lock()
-	if c.franchiseRebuildRunning {
-		c.franchiseRebuildPending = true
-		c.franchiseRebuildMu.Unlock()
-		return
-	}
-	c.franchiseRebuildRunning = true
-	c.franchiseRebuildMu.Unlock()
-
-	c.runBackground(func() {
-		for {
-			if err := c.RebuildFranchiseCollections(context.Background()); err != nil {
-				slog.Error("Franchise rebuild failed", "error", err)
-			}
-			c.franchiseRebuildMu.Lock()
-			if c.franchiseRebuildPending {
-				c.franchiseRebuildPending = false
-				c.franchiseRebuildMu.Unlock()
-				continue
-			}
-			c.franchiseRebuildRunning = false
-			c.franchiseRebuildMu.Unlock()
-			return
-		}
-	})
+	c.franchiseRebuilder.schedule()
 }
 
 // RebuildFranchiseCollections reads all series relations, computes connected components,
