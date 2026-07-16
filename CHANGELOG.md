@@ -4,6 +4,23 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（配置双路径统一）
+
+> 修复「配置生效副作用不一致」这一 P1 隐性 bug：文件热重载会重建 parser 池 / images 处理器并设日志级别，但经 API/UI 保存配置只 `Replace + SetLevel`、漏了重建池——经 UI 改 `archive_pool_size` / `max_ai_concurrency` 会静默不生效（只能依赖文件监听回环补上，监听器失效时彻底失效）。
+
+#### 修复
+- **抽出统一的 `internal/runtimecfg.Apply(cfg)`**，作为「所有配置派生运行时资源」的唯一事实来源：重建归档句柄池（`parser.InitPool`）、AI 放大子进程并发（`images.InitProcessor`）、日志级别（`logger.SetLevel`）。三条生效路径——启动初始化、文件热重载（`main.watchConfig`）、API 保存（`Controller.persistConfig`）——统一调用它。此前 `persistConfig` 只做 `Replace + SetLevel`，现在与热重载路径完全一致，UI 改并发 / 池大小立即生效、不再依赖文件监听回环。
+- 顺带把 main 启动初始化里手工的 `InitPool + InitProcessor` 也并入 `runtimecfg.Apply`，去掉散落三处的手工清单；今后新增「配置派生资源」只需在 `Apply` 一处登记。
+
+#### 内部
+- 为运行时诊断与回归测试新增只读访问器 `parser.PoolMaxSize()`、`images.AIConcurrency()`。
+
+#### 验证
+- 新增 `TestApplyRebuildsRuntimeResources`（Apply 按配置重建三类资源，且再次以不同值调用会重建，证明是幂等重建而非只首次生效）与 `TestPersistConfigRebuildsDerivedResources`（守卫真实修复：`persistConfig` 现在会把 parser 池与 AI 并发重建到 UI 提交的新值）。
+- `go build ./...`、`go vet ./...`、`gofmt`、`golangci-lint run`（0 issues）、`govulncheck ./...`（0 vulnerabilities）全绿；全量 `go test ./...` 全部 14 包 `ok`。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（CI 与供应链加固 · 第 4 批）
 
 > 补齐面向「自托管、可公网暴露」服务的 CI / 供应链短板（testing-dx-ci 维度把「无 Go linter / 无 govulncheck / 无 dependabot」列为 high）。以 govulncheck 实跑发现并修复真实 CVE，并把安全 / 质量门禁纳入 CI。

@@ -60,6 +60,14 @@ func InitProcessor(maxAiConcurrency int) {
 	softwareSemaphore.Store(&swCh)
 }
 
+// AIConcurrency 返回当前 AI 放大子进程的并发上限（未初始化时为 0）。供运行时诊断与配置生效的回归测试观测。
+func AIConcurrency() int {
+	if ch := aiSemaphore.Load(); ch != nil {
+		return cap(*ch)
+	}
+	return 0
+}
+
 // ProcessOptions 用于接受前端动态要求的尺寸转换
 type ProcessOptions struct {
 	Width         int

@@ -30,9 +30,8 @@ import (
 	"manga-manager/internal/api"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
-	"manga-manager/internal/images"
 	"manga-manager/internal/logger"
-	"manga-manager/internal/parser"
+	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/web"
 
@@ -76,9 +75,11 @@ func main() {
 	slog.Info("Starting Manga Manager...", "version", Version, "commit", Commit, "build_time", BuildTime,
 		"config", resolvedConfigPath, "data_dir", resolvedDataDir)
 
-	// 初始化归档句柄重用池与 AI 并发控制参数
-	parser.InitPool(cfg.Scanner.ArchivePoolSize)
-	images.InitProcessor(cfg.Scanner.MaxAiConcurrency)
+	// 初始化配置派生的运行时资源（归档句柄池、AI 并发、日志级别）。与热重载 / API 保存走同一 runtimecfg.Apply，
+	// 保证三条生效路径的副作用一致。日志级别此前已由 logger.Init 设过，这里再设一次是幂等的。
+	if err := runtimecfg.Apply(cfg); err != nil {
+		slog.Warn("Failed to apply runtime config at startup", "error", err)
+	}
 	cfgManager := config.NewManager(cfg)
 
 	// 启动配置热重载监听
@@ -375,11 +376,9 @@ func watchConfig(path string, cfgManager *config.Manager) {
 				cfgManager.Replace(newCfg)
 				currentCfg := cfgManager.Snapshot()
 
-				// 2. 刷新具有受限状态的底层资源池
-				parser.InitPool(currentCfg.Scanner.ArchivePoolSize)
-				images.InitProcessor(currentCfg.Scanner.MaxAiConcurrency)
-				if err := logger.SetLevel(currentCfg.Logging.Level); err != nil {
-					slog.Error("Failed to apply logger level during hot-swap", "level", currentCfg.Logging.Level, "error", err)
+				// 2. 重建配置派生资源——与 API 保存路径共用同一 runtimecfg.Apply，避免两条路径副作用不一致。
+				if err := runtimecfg.Apply(&currentCfg); err != nil {
+					slog.Error("Failed to apply runtime config during hot-swap", "error", err)
 				}
 
 				slog.Info("Config hot-reload applied successfully",

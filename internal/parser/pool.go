@@ -127,6 +127,14 @@ func (p *ArchivePool) max() int {
 	return p.maxSize
 }
 
+// PoolMaxSize 返回当前全局归档池的容量上限（未初始化时为 0）。供运行时诊断与配置生效的回归测试观测。
+func PoolMaxSize() int {
+	if globalPool == nil {
+		return 0
+	}
+	return globalPool.max()
+}
+
 // GetArchiveFromPool 尝试从池中获取已打开的文件，如果不存在则延迟创建
 func GetArchiveFromPool(path string) (Archive, error) {
 	if globalPool == nil {

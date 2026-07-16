@@ -29,9 +29,9 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
-	"manga-manager/internal/logger"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/taskcontrol"
 
@@ -482,7 +482,9 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 		return err
 	}
 	c.config.Replace(cfg)
-	if err := logger.SetLevel(cfg.Logging.Level); err != nil {
+	// 与文件热重载走同一条 runtimecfg.Apply：重建 parser 池 / images 处理器并设置日志级别，使经 UI 保存的
+	// archive_pool_size / max_ai_concurrency 立即生效，而不再依赖文件监听回环（监听器失效时也能生效）。
+	if err := runtimecfg.Apply(cfg); err != nil {
 		return err
 	}
 	return nil
