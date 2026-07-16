@@ -16,8 +16,9 @@ import (
 )
 
 // TestSetupRoutesEnforcesSession 通过真实的 SetupRoutes 路由树验证多用户 authGate 接入了 /api 组：
-// 首启（尚无账户）直通 → 建首个管理员后锁定 → 未登录 401 → 登录拿 cookie/csrf 后放行 →
-// 改写方法缺 CSRF 403、带 CSRF 通过；Mihon 前缀始终不被会话鉴权 401 拦截。
+// 首启（尚无账户）时非公开端点即已 401（不再直通，收敛 setup 窗口攻击面）→ 建首个管理员后锁定
+// → 未登录 401 → 登录拿 cookie/csrf 后放行 → 改写方法缺 CSRF 403、带 CSRF 通过；Mihon 前缀始终
+// 不被会话鉴权 401 拦截。
 func TestSetupRoutesEnforcesSession(t *testing.T) {
 	c, store, _, _ := newTestController(t)
 	ctx := context.Background()
@@ -47,9 +48,16 @@ func TestSetupRoutesEnforcesSession(t *testing.T) {
 		return resp
 	}
 
-	// 首启（尚无账户）：管理端点直通。
-	if resp := do(http.MethodGet, "/api/system/config", "", nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("setup-mode GET should pass, got %d", resp.StatusCode)
+	// 首启（尚无账户）：非公开端点不得直通，应直接 401（收敛 setup 窗口攻击面）。
+	if resp := do(http.MethodGet, "/api/system/config", "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("setup-mode non-public GET should 401, got %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	// 公开鉴权端点在 setup 窗口内仍可达（状态探测供前端决定进入 setup 流程）。
+	if resp := do(http.MethodGet, "/api/auth/status", "", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup-mode /api/auth/status should 200, got %d", resp.StatusCode)
 	} else {
 		resp.Body.Close()
 	}

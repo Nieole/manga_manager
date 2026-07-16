@@ -982,8 +982,15 @@ func Migrate(dbPath string) error {
 }
 
 func sqliteDSN(dbPath string) string {
+	// _txlock=immediate 让每个 BeginTx 发出 BEGIN IMMEDIATE，开始即取写锁。
+	// 连接池有多条可写连接（MaxOpenConns>=8），若用默认 deferred 事务，两条连接各自
+	// BEGIN→读→升级为写会撞上 SQLITE_BUSY_SNAPSHOT 死锁，busy_timeout 对这种“快照升级”
+	// 冲突无法重试，会立刻抛 database is locked。改为 immediate 后 busy_timeout 能干净地
+	// 串行化写者。store 内 BeginTx 仅用于写事务（ExecTx 等），只读查询走 sqlc 直查 +
+	// WAL 并发，不受影响。
 	return dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)" +
-		"&_pragma=mmap_size=268435456&_pragma=cache_size=-128000&_pragma=busy_timeout=15000&_pragma=temp_store=2"
+		"&_pragma=mmap_size=268435456&_pragma=cache_size=-128000&_pragma=busy_timeout=15000&_pragma=temp_store=2" +
+		"&_txlock=immediate"
 }
 
 func execSchemaStatements(db *sql.DB, indexStatements bool) error {

@@ -94,6 +94,12 @@ type Controller struct {
 	// 避免每个协议请求都跑一次 bcrypt（bcrypt 故意很慢）。零值即可用，条目带 TTL。
 	basicAuthCache sync.Map
 
+	// loginLimiter 对 /api/auth/login 做失败暴破防护（按 IP + 用户名双键，指数退避锁定）。
+	// basicAuthLimiter 对 OPDS/Mihon 的 Basic 鉴权做按 IP 的失败限流，锁定期内直接 429 而不再跑 bcrypt，
+	// 兼作 bcrypt CPU-DoS 防护。
+	loginLimiter     *attemptLimiter
+	basicAuthLimiter *attemptLimiter
+
 	lifecycleOnce sync.Once
 	shutdownOnce  sync.Once
 	lifecycleMu   sync.Mutex
@@ -268,6 +274,10 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
 		openPath:                 openPathInDefaultFileManager,
+		// 登录：15 分钟窗口内累计 5 次失败即锁定，基础 1 分钟、指数退避、封顶 15 分钟。
+		loginLimiter: newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
+		// 协议 Basic：更宽松些（客户端每次请求都带凭据），5 分钟窗口内 10 次失败锁定，封顶 10 分钟。
+		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
 	}
 	if scan != nil {
 		scan.SetBatchCallback(c.handleScannerBatchEvent)

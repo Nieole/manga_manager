@@ -165,14 +165,22 @@ func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// 按 IP 的失败限流：锁定期内直接 429，避免攻击者用错误凭据反复触发昂贵的 bcrypt（CPU-DoS）。
+		ipKey := "basic:" + clientIP(r)
+		if d, locked := c.basicAuthLimiter.retryAfter(ipKey); locked {
+			respondTooManyAttempts(w, r, d)
+			return
+		}
 		if username, password, ok := r.BasicAuth(); ok {
 			if uid, valid := c.resolveBasicAuthUser(r.Context(), username, password); valid {
 				if user, err := c.store.GetUserByID(r.Context(), uid); err == nil {
+					c.basicAuthLimiter.recordSuccess(ipKey)
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, user)))
 					return
 				}
 			}
 		}
+		c.basicAuthLimiter.recordFailure(ipKey)
 		w.Header().Set("WWW-Authenticate", `Basic realm="manga-manager"`)
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 	})
@@ -269,9 +277,12 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// 首启阶段（尚无任何账户）：站点无数据可保护，直通以便完成初始化与既有测试。
+		// 首启阶段（尚无任何账户）：仅放行公开鉴权端点（status/setup/login，已在上方 isPublicAuthPath
+		// 提前返回）与 Mihon 协议前缀（更靠上处理）。其余端点一律不得在建立首个管理员之前直通——
+		// 否则默认 0.0.0.0 监听下，任何网络客户端都能在 setup 窗口内枚举文件系统、读配置、触发扫描/
+		// SSRF，甚至抢先 setup 成为永久管理员。这里直接 401，把 setup 前的攻击面收敛到只剩公开端点。
 		if !c.usersExist(r.Context()) {
-			next.ServeHTTP(w, r)
+			jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 			return
 		}
 		cookie, err := r.Cookie(sessionCookieName)
@@ -428,9 +439,14 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, authSessionResponse{User: user, CSRFToken: csrf})
 }
 
-// login 校验用户名口令，成功则建会话下发 cookie。
+// login 校验用户名口令，成功则建会话下发 cookie。带按 IP + 用户名的失败暴破限流。
 func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	ipKey := "ip:" + clientIP(r)
+	if d, locked := c.loginLimiter.retryAfter(ipKey); locked {
+		respondTooManyAttempts(w, r, d)
+		return
+	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -438,11 +454,22 @@ func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	user, err := c.store.GetUserByUsername(ctx, strings.TrimSpace(req.Username))
+	username := strings.TrimSpace(req.Username)
+	userKey := "user:" + strings.ToLower(username)
+	if d, locked := c.loginLimiter.retryAfter(userKey); locked {
+		respondTooManyAttempts(w, r, d)
+		return
+	}
+	user, err := c.store.GetUserByUsername(ctx, username)
 	if err != nil || !verifyPassword(user.PasswordHash, req.Password) {
+		// 同时对来源 IP 与目标用户名计失败：前者挡单机横扫多账户，后者挡分布式打单账户。
+		c.loginLimiter.recordFailure(ipKey)
+		c.loginLimiter.recordFailure(userKey)
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.invalid_credentials"))
 		return
 	}
+	c.loginLimiter.recordSuccess(ipKey)
+	c.loginLimiter.recordSuccess(userKey)
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "failed to start session")

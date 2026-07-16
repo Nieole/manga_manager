@@ -86,6 +86,9 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 		configPath:          configPath,
 		taskEngine:          newTaskEngine(),
 		messages:            make(chan string, 32),
+		// 与 NewController 一致：鉴权限流器不可为 nil（否则 login / Basic 路径解引用会 panic）。
+		loginLimiter:     newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
+		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
 	}
 	// 与 NewController 一致：构建任务重试注册表，否则新建任务的 Retryable 恒为 false。
 	controller.taskEngine.relaunchers = controller.buildTaskRelaunchers()

@@ -17,9 +17,20 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // 注册 Service Worker
+      // 注册 Service Worker，并在「新版本 SW 接管当前页」时自动刷新一次，避免部署后仍运行旧壳——
+      // 旧的 hash 化 chunk 可能已随新版本删除，继续跑旧壳会在路由懒加载时 404 白屏。
+      // 仅当页面「一开始就已被某个 SW 控制」时才在 controllerchange 后重载：首次安装（此前无 controller）
+      // 不重载以免初次加载被打断；refreshing 标志防止重载循环。sw.js 内已 skipWaiting + clients.claim，
+      // 故新版本会立即接管并触发 controllerchange。
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
+          const controlledAtStart = !!navigator.serviceWorker.controller;
+          let refreshing = false;
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!controlledAtStart || refreshing) return;
+            refreshing = true;
+            window.location.reload();
+          });
           navigator.serviceWorker.register('/sw.js').catch(() => {});
         });
       }

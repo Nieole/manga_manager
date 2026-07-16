@@ -605,17 +605,16 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 }
 
 // bookDownloadContentType 按归档扩展名推导整卷下载的 MIME。非 PSE 的 OPDS 客户端需要凭正确的
-// MIME 识别 CBZ/CBR/PDF 整卷文件；未知扩展名回退 application/octet-stream。
+// MIME 识别 CBZ/CBR 整卷文件；未知扩展名回退 application/octet-stream。
+// 只声明扫描器真正会摄入并能分页的格式（config.SupportedScanFormats = zip/cbz/rar/cbr）——
+// 不要为 cb7/7z/pdf 返回专属 MIME：这些格式既不会入库、解析层也无法分页，向 OPDS 宣告它们
+// 会让客户端拿到无法阅读的“伪支持”下载链接。
 func bookDownloadContentType(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".cbz", ".zip":
 		return "application/vnd.comicbook+zip"
 	case ".cbr", ".rar":
 		return "application/vnd.comicbook-rar"
-	case ".cb7", ".7z":
-		return "application/x-cb7"
-	case ".pdf":
-		return "application/pdf"
 	default:
 		return "application/octet-stream"
 	}

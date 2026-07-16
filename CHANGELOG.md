@@ -4,6 +4,27 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（P0 安全与可靠性速修 · 第 1 批）
+
+> 以一个 9 维度并行深读代码库的分析 workflow（架构/数据层/性能/安全/前端/阅读器·PWA/协议·竞品/测试·CI/产品）绘制优化地图后，落实其中「几行级、可实证、影响多用户/公网/离线可靠性」的一批 P0 速修，均带验证。
+
+#### 安全
+- **收敛「未初始化直通」窗口**：此前 `authGate` 在「站点尚无任何账户」时对**全部** `/api` 端点直通，默认 `0.0.0.0` 监听下，任何网络客户端可在首个管理员创建前枚举文件系统、读配置、触发扫描 / SSRF，甚至抢先 `POST /api/auth/setup` 成为永久管理员。改为该窗口仅放行公开鉴权端点（`/api/auth/status|setup|login`，及自带鉴权的 `/api/mihon/` 前缀），其余端点直接 `401`，把 setup 前的攻击面收敛到只剩公开端点。
+- **登录与协议 Basic 鉴权限流**：新增自包含、零依赖、并发安全的失败尝试限流器 `internal/api/login_rate_limiter.go`（按 key 统计失败、指数退避锁定、内存有界）。`/api/auth/login` 按「来源 IP + 目标用户名」双键限流（15 分钟窗口 5 次失败→锁定，基础 1 分钟、指数退避、封顶 15 分钟），挡单机横扫多账户与分布式打单账户；OPDS/Mihon 的 HTTP Basic 按 IP 限流（5 分钟 10 次失败→锁定，封顶 10 分钟），**锁定期内直接 `429 + Retry-After` 而不再跑 bcrypt**，兼作 bcrypt CPU-DoS 防护。新增本地化文案 `auth.too_many_attempts`（中/英）。
+
+#### 修复
+- **写事务防死锁**：SQLite DSN 追加 `_txlock=immediate`（modernc.org/sqlite v1.51 支持），让 `ExecTx` 等写事务以 `BEGIN IMMEDIATE` 开始即取写锁。此前连接池有 `NumCPU*2`(≥8) 条可写连接却用默认 deferred 事务，两条连接各自 `BEGIN`→读→升级为写会撞上 `SQLITE_BUSY_SNAPSHOT`——`busy_timeout` 对这种快照升级冲突**无法重试**、会立刻抛 `database is locked`（扫描 + KOReader 同步 + 多用户进度并发写时间歇触发）。immediate 后 `busy_timeout` 可干净地串行化写者；已确认 store 内 `BeginTx` 仅用于写路径，只读查询走 sqlc 直查 + WAL 并发不受影响。
+- **扫描完成回调不再被覆盖**：`main.go` 移除对 `SetBatchCallback` 的二次注册。此前它用一个只发 `"refresh"` 的闭包覆盖了 `NewController` 内注册的富回调 `handleScannerBatchEvent`（`SetBatchCallback` 为单字段覆盖语义），导致手动 / watch 扫描完成后 dashboard 统计缓存不再失效 / 预热（前端读到陈旧统计）、SSE 事件名恒为 `refresh` 丢失语义。
+- **整卷下载 MIME 不再谎报支持**：`bookDownloadContentType` 删除 `cb7/7z`、`pdf` 分支。扫描器只摄入 `zip/cbz/rar/cbr`（`config.SupportedScanFormats`），这些分支是死代码，只会让 OPDS acquisition 链接向客户端宣告库里不可能存在、解析层也无法分页的「伪支持」下载类型；未知扩展名统一回退 `application/octet-stream`。
+- **离线读图与画质参数解耦**：Service Worker `offlineFallback` 对 `/api/pages/` 请求增加 `cache.match(request, { ignoreSearch: true })` 回退。此前离线缓存按下载那一刻的画质 / 格式参数存页 URL，离线阅读用「当前偏好」重建的 URL（含不同 query）按完整 URL 匹配 Cache Storage，用户下载后改过画质即 miss → 翻页转圈 / 条漫图裂且无提示。页图路径已含页号、内容寻址，忽略 query 即可按页命中已缓存字节。
+- **Service Worker 更新策略**：`index.html` 注册后监听 `controllerchange`，在「页面一开始就被某个 SW 控制」且新版本接管时自动 `location.reload()` 一次（首次安装不重载、`refreshing` 标志防循环）；配合 sw.js 既有的 `skipWaiting + clients.claim`，部署新版本后自动拿到新壳，避免继续跑引用已删 hash chunk 的旧壳导致懒加载白屏。`CACHE_NAME` v2→v3，`activate` 顺带清理累积的旧静态缓存。
+
+#### 验证
+- 新增 `TestAttemptLimiterLockoutAndReset`（限流器达阈锁定 / 成功清零 / 窗口外重置 / 指数退避递增，注入时钟）、`TestLoginRateLimiting`（真实路由：连续失败达阈后 `429 + Retry-After`，锁定期内正确密码仍被拦截）；更新 `TestSetupRoutesEnforcesSession` 断言「setup 窗口非公开端点即 401、公开端点仍可达」的新行为。
+- `go build ./...`、`go vet ./...`、`gofmt` 全绿；全量 `go test ./...`（含 api/database/scanner 等）全部包 `ok`。前端 `eslint`（0）、`npm run build`（dist 重建，改动已进入 `dist/sw.js` + `dist/index.html`）、`vitest`（205）全绿；i18n 两语言 key 对齐。未改 SQL/schema 与 tsgen 目标结构体，无 sqlc / tsgen 生成漂移。
+
+---
+
 ### 📌 增量记录 — 2026-07-06（资源库全景大数据量专项性能优化 · 第二批 Phase 2b · 逐项推进）
 
 > 承接第一批。对 Phase 2b 的 9 项逐项推进：实现 5 项（均带测试），另 4 项经实证/风险评估暂缓（附理由，非盲目实现风险改动）。

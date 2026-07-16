@@ -143,10 +143,9 @@ func main() {
 	scan := scanner.NewScanner(store, cfgManager)
 	apiController := api.NewController(store, scan, cfgManager, resolvedConfigPath)
 
-	// 连接扫描器的完成回调以向 SSE Broker 抛出刷新消息
-	scan.SetBatchCallback(func(action string) {
-		apiController.PublishEvent("refresh")
-	})
+	// 注意：扫描完成回调由 NewController 内部注册（handleScannerBatchEvent），它会失效并预热
+	// dashboard 统计缓存、并以真实 action 名发 SSE。此处不要再 SetBatchCallback，否则单字段覆盖
+	// 语义会把富回调替换成只发 "refresh" 的闭包，导致手动/watch 扫描后统计缓存不刷新且事件名丢失语义。
 
 	apiController.SetupRoutes(r)
 	apiController.SetupOPDSRoutes(r)
