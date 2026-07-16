@@ -205,7 +205,10 @@ export interface KOReaderDeviceConflictItem {
 
 type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance';
 
-interface SettingsContextValue {
+// mega-context 已拆成两个独立 context（由同一个 SettingsProvider 分别 memo 后嵌套提供）：
+// ConfigContextValue 承载核心配置域 + 共享助手；KOReaderContextValue 承载易变的 KOReader 状态
+// （账户/设备/匹配/表单）。如此 KOReader 账户/设备等高频变化不再重渲仅消费配置的页面。
+interface ConfigContextValue {
   config: Config | null;
   setConfig: React.Dispatch<React.SetStateAction<Config | null>>;
   validation: ValidationResult;
@@ -220,6 +223,11 @@ interface SettingsContextValue {
   fieldErrors: (field: string) => string[];
   saveConfig: (successMessage?: string) => Promise<void>;
   handleTestLLM: () => Promise<void>;
+  handleAction: (path: string, successMessage: string, errorMessage?: string) => Promise<void>;
+  hasSectionChanges: (section: SettingsSectionKey) => boolean;
+}
+
+interface KOReaderContextValue {
   koreaderStatus: KOReaderStatus | null;
   koreaderForm: KOReaderForm | null;
   setKOReaderForm: React.Dispatch<React.SetStateAction<KOReaderForm | null>>;
@@ -245,13 +253,12 @@ interface SettingsContextValue {
   handleRotateKOReaderAccount: (account: KOReaderAccount) => Promise<void>;
   handleToggleKOReaderAccount: (account: KOReaderAccount) => Promise<void>;
   handleDeleteKOReaderAccount: (account: KOReaderAccount) => Promise<void>;
-  handleAction: (path: string, successMessage: string, errorMessage?: string) => Promise<void>;
-  hasSectionChanges: (section: SettingsSectionKey) => boolean;
   formatKOReaderLatestSync: (value?: { Time: string; Valid: boolean } | null) => string;
   formatKOReaderIndexLabel: (matchMode: string, pathIgnoreExtension: boolean) => string;
 }
 
-const SettingsContext = createContext<SettingsContextValue | null>(null);
+const ConfigContext = createContext<ConfigContextValue | null>(null);
+const KOReaderContext = createContext<KOReaderContextValue | null>(null);
 
 function buildKOReaderForm(
   configState?: Config['koreader'] | null,
@@ -628,7 +635,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [config, initialConfig, initialKOReaderForm, koreaderForm],
   );
 
-  const value = useMemo<SettingsContextValue>(
+  const configValue = useMemo<ConfigContextValue>(
     () => ({
       config,
       setConfig,
@@ -644,6 +651,29 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       fieldErrors,
       saveConfig,
       handleTestLLM,
+      handleAction,
+      hasSectionChanges,
+    }),
+    [
+      capabilities,
+      config,
+      fieldErrors,
+      handleAction,
+      handleTestLLM,
+      hasSectionChanges,
+      llmTestPrompt,
+      llmTestResult,
+      loading,
+      saveConfig,
+      saving,
+      showToast,
+      testingLLM,
+      validation,
+    ],
+  );
+
+  const koreaderValue = useMemo<KOReaderContextValue>(
+    () => ({
       koreaderStatus,
       koreaderForm,
       setKOReaderForm,
@@ -669,29 +699,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       handleRotateKOReaderAccount,
       handleToggleKOReaderAccount,
       handleDeleteKOReaderAccount,
-      handleAction,
-      hasSectionChanges,
       formatKOReaderLatestSync,
       formatKOReaderIndexLabel,
     }),
     [
       accountActionId,
       applyingMatching,
-      capabilities,
-      config,
       creatingAccount,
-      fieldErrors,
-      fetchKOReaderUnmatched,
       fetchKOReaderDevices,
-      handleAction,
+      fetchKOReaderUnmatched,
       handleApplyMatchingChanges,
       handleCopySyncKey,
       handleCreateKOReaderAccount,
       handleDeleteKOReaderAccount,
       handleRotateKOReaderAccount,
-      handleTestLLM,
       handleToggleKOReaderAccount,
-      hasSectionChanges,
       koreaderAccountForm,
       koreaderAccounts,
       koreaderDevices,
@@ -699,28 +721,34 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       koreaderForm,
       koreaderStatus,
       koreaderValidation,
-      llmTestPrompt,
-      llmTestResult,
-      loading,
       needsMatchingMaintenance,
-      saveConfig,
       saveKOReader,
-      saving,
       savingKOReader,
-      showToast,
-      testingLLM,
       unmatchedItems,
-      validation,
     ],
   );
 
-  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
+  return (
+    <ConfigContext.Provider value={configValue}>
+      <KOReaderContext.Provider value={koreaderValue}>{children}</KOReaderContext.Provider>
+    </ConfigContext.Provider>
+  );
 }
 
+// useSettings 返回配置域 context（保留原名，配置类页面无需改动，且不再随 KOReader 状态 churn 重渲）。
 export function useSettings() {
-  const context = useContext(SettingsContext);
+  const context = useContext(ConfigContext);
   if (!context) {
     throw new Error('useSettings must be used within SettingsProvider');
+  }
+  return context;
+}
+
+// useKOReader 返回 KOReader 域 context（账户/设备/匹配/表单等易变状态）。
+export function useKOReader() {
+  const context = useContext(KOReaderContext);
+  if (!context) {
+    throw new Error('useKOReader must be used within SettingsProvider');
   }
   return context;
 }

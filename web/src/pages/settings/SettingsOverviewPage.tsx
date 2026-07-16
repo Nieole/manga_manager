@@ -8,12 +8,13 @@ import { AlertTriangle, CheckCircle2, FolderOpen, HardDrive, Link2, Palette, Set
 import { useOutletContext } from 'react-router-dom';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings } from './SettingsContext';
+import { useSettings, useKOReader } from './SettingsContext';
 import { SettingsPageIntro } from './shared';
 
 export function SettingsOverviewPage() {
   const { t } = useI18n();
-  const { validation, config, koreaderStatus, capabilities } = useSettings();
+  const { validation, config, capabilities } = useSettings();
+  const { koreaderStatus } = useKOReader();
   const { resolvedTheme } = useTheme();
   const { navigateSettingsSection } = useOutletContext<{ navigateSettingsSection: (path: string) => void }>();
 

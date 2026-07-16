@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（前端：拆分 Settings mega-context）
+
+> 承接前端架构分析（`SettingsContext` 是 ~40 字段的 mega-context，任一 KOReader 状态变化都重渲全部消费者）。
+
+#### 重构
+- 把 `SettingsContext` 的单一 context value（~44 字段、~35 依赖的 useMemo）拆成两个独立 context：`ConfigContext`（核心配置域 + 共享助手：config / validation / capabilities / loading / LLM 测试 / saveConfig / fieldErrors / handleAction / hasSectionChanges）与 `KOReaderContext`（易变的 KOReader 状态：账户 / 设备 / 未匹配 / 匹配维护 / 表单）。两者由同一个 `SettingsProvider` 分别 memo 后嵌套提供——**不移动任何 state、不解耦既有依赖**（koreaderForm 仍派生自 config、共享 loading 与初始 Promise.all 全部保留），仅把 context 分发拆开，风险最小。
+- `useSettings()` 保留原名但现返回 `ConfigContext`；新增 `useKOReader()`。效果：6 个纯配置页面（Library / Media / AI / Maintenance / Connections / 壳）继续用 `useSettings()`，**不再因 KOReader 账户 / 设备 / 匹配等高频状态变化而重渲**；仅 KOReader 页与 Overview 页（用 `koreaderStatus`）改用 `useKOReader()`。
+
+#### 验证
+- `tsc -b`（全量类型检查，会捕捉所有消费者字段来源错配）、`eslint`（0）、`npm run build`、`vitest`（205）全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（CI：启用 errcheck 门禁）
 
 > 承接第 4 批的 golangci-lint 门禁，补齐此前暂缓的 errcheck。
