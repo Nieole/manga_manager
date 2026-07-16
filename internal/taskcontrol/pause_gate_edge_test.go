@@ -51,7 +51,7 @@ func TestPauseGateWaitNilContextBlocksUntilResume(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		// nil ctx 走 <-resumeCh 分支（无取消能力），应阻塞至 Resume。
-		_ = g.Wait(nil)
+		_ = g.Wait(nil) //nolint:staticcheck // intentionally passing nil to exercise the no-cancellation resumeCh branch
 		close(done)
 	}()
 

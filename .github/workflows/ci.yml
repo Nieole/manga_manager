@@ -21,6 +21,7 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
+          - macos-14 # darwin/arm64 is a released target — exercise it on PRs (CGO + WebP + path handling)
 
     steps:
       - name: Checkout
@@ -58,6 +59,21 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
+      - name: Lint Go (golangci-lint)
+        if: matrix.os == 'ubuntu-latest'
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.12.2
+
+      - name: Scan Go dependencies for vulnerabilities (govulncheck)
+        if: matrix.os == 'ubuntu-latest'
+        # Fails the build on any known CVE reachable from our code (x/image decode paths etc.).
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       - name: Run Go tests
         run: go test ./...
 
@@ -87,4 +103,8 @@ jobs:
           git diff --exit-code -- web/src/api/generated.ts
 
       - name: Verify server build
+        # WebP encoding (chai2010/webp) requires CGO; make it explicit rather than relying on the
+        # runner image default so a WebP-less binary can never be produced unnoticed.
+        env:
+          CGO_ENABLED: "1"
         run: go build -o build/manga-manager-ci ./cmd/server

@@ -994,8 +994,7 @@ func writeKOReaderAuthError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Credentials, document string, err error) {
-	status := "auth_failed"
-	message := "Unauthorized"
+	var status, message string
 	switch {
 	case errors.Is(err, ksvc.ErrForbidden):
 		status = "auth_failed_forbidden"

@@ -96,15 +96,6 @@ func (c *Controller) listBookArchiveSourcePagesWithStats(ctx context.Context, so
 	return pages, false, nil
 }
 
-func (c *Controller) getBookArchivePage(ctx context.Context, book database.Book, pageNumber int64) (parser.PageMetadata, error) {
-	return c.getBookArchiveSourcePage(ctx, bookPageSourceFromBook(book), pageNumber)
-}
-
-func (c *Controller) getBookArchiveSourcePage(ctx context.Context, source bookPageSource, pageNumber int64) (parser.PageMetadata, error) {
-	page, _, err := c.getBookArchiveSourcePageWithStats(ctx, source, pageNumber)
-	return page, err
-}
-
 func (c *Controller) getBookArchiveSourcePageWithStats(ctx context.Context, source bookPageSource, pageNumber int64) (parser.PageMetadata, bool, error) {
 	if pageNumber < 1 {
 		return parser.PageMetadata{}, false, sql.ErrNoRows

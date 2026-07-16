@@ -446,29 +446,9 @@ func (c *Controller) getSmartFilterByID(r *http.Request, filterID int64) (SmartF
 	return smartFilterFromDB(row), nil
 }
 
-func smartFilterSortBy(filter SmartFilter) string {
-	field := strings.TrimSpace(filter.SortByField)
-	if field == "" {
-		field = "name"
-	}
-	dir := strings.TrimSpace(filter.SortDir)
-	if dir == "" {
-		dir = "asc"
-	}
-	return field + "_" + dir
-}
-
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
 	}
 	return strings.TrimSpace(*value)
-}
-
-func stringList(value *string) []string {
-	text := stringValue(value)
-	if text == "" {
-		return nil
-	}
-	return []string{text}
 }

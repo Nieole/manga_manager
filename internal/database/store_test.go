@@ -776,8 +776,8 @@ func TestSearchSeriesCursorNumericSortsMatchOffset(t *testing.T) {
 	}
 	db := store.(*SqlStore).db
 	specs := []struct {
-		name                string
-		books, vols, pages  int
+		name               string
+		books, vols, pages int
 	}{
 		{"Alpha", 5, 2, 100},
 		{"Bravo", 5, 2, 100}, // 与 Alpha 在三个维度全平局 → 靠 (name,id) tie-break

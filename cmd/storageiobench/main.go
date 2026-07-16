@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"flag"
 	"fmt"
@@ -445,7 +446,7 @@ func measureReaderContention(name string, files []archiveFile, cfg benchConfig, 
 				index++
 				release := func() {}
 				if lowImpact && volumeKey != "" {
-					lease, err := scheduler.Acquire(nil, storageio.Request{
+					lease, err := scheduler.Acquire(context.TODO(), storageio.Request{
 						VolumeKey:          volumeKey,
 						Limit:              1,
 						Kind:               storageio.WorkKindMetadataScan,
@@ -477,7 +478,7 @@ func measureReaderContention(name string, files []archiveFile, cfg benchConfig, 
 		release := func() {}
 		startProbe := time.Now()
 		if lowImpact && volumeKey != "" {
-			lease, err := scheduler.Acquire(nil, storageio.Request{
+			lease, err := scheduler.Acquire(context.TODO(), storageio.Request{
 				VolumeKey: volumeKey,
 				Limit:     1,
 				Kind:      storageio.WorkKindReader,

@@ -1,0 +1,40 @@
+# golangci-lint v2 configuration.
+# Scope: high-signal linters that catch real bugs / dead code / deprecations, kept green so CI can
+# gate on them. errcheck is intentionally deferred (the codebase has ~50 deliberate best-effort
+# `_ = ...` calls; enabling it is a separate, larger cleanup). Pure-style staticcheck subchecks are
+# disabled to avoid churn; the SA* (correctness/security) subchecks stay on.
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  disable:
+    - errcheck
+  settings:
+    staticcheck:
+      # Keep SA* (bug/security/deprecation) checks; replicate golangci-lint's default ST-check
+      # exclusions (naming/package-comment conventions would force large renames like
+      # SqlStore->SQLStore) and additionally silence a few pure-style S/QF nits.
+      checks:
+        - all
+        - -ST1000 # package comment
+        - -ST1003 # naming conventions (would force Url->URL, SqlStore->SQLStore, ...)
+        - -ST1016 # receiver name consistency
+        - -ST1020 # comment on exported method
+        - -ST1021 # comment on exported type
+        - -ST1022 # comment on exported var
+        - -ST1005 # error strings should not be capitalized (opinionated)
+        - -QF1008 # remove embedded field from selector (style)
+        - -QF1012 # Fprintf instead of WriteString(Sprintf) (style)
+        - -S1016 # convert struct instead of using a literal (style)
+        - -S1030 # use Body.String() instead of string(Body.Bytes()) (style)
+  exclusions:
+    generated: lax
+    paths:
+      - web/node_modules
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - web/node_modules

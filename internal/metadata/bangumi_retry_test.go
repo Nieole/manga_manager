@@ -217,7 +217,7 @@ func TestNormalizeLocaleAndContext(t *testing.T) {
 	}
 
 	// LocaleFromContext：nil ctx → 默认 zh-CN。
-	if got := LocaleFromContext(nil); got != "zh-CN" {
+	if got := LocaleFromContext(nil); got != "zh-CN" { //nolint:staticcheck // intentionally passing nil to verify the default-locale fallback
 		t.Errorf("LocaleFromContext(nil) = %q, want zh-CN", got)
 	}
 	// 未注入 → zh-CN。

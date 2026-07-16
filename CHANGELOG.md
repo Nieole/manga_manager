@@ -4,6 +4,30 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（CI 与供应链加固 · 第 4 批）
+
+> 补齐面向「自托管、可公网暴露」服务的 CI / 供应链短板（testing-dx-ci 维度把「无 Go linter / 无 govulncheck / 无 dependabot」列为 high）。以 govulncheck 实跑发现并修复真实 CVE，并把安全 / 质量门禁纳入 CI。
+
+#### 安全
+- **修复 4 个真实 CVE**：govulncheck 扫描发现 `golang.org/x/image@v0.41.0` 有 4 个漏洞，均可经解码不可信漫画图片触发 panic（DoS）：WEBP VP8 alpha 通道尺寸不匹配 panic（GO-2026-5061）、32 位平台解码大 WEBP panic（GO-2026-4961，正好影响 ARM / NAS）、TIFF tile 尺寸无限制（GO-2026-5062）等。升级到 `golang.org/x/image v0.43.0` 全部清零；`x/crypto` 顺带由 indirect 正确归为 direct（bcrypt 直接依赖）。
+- **移除易受 IP 欺骗的 `middleware.RealIP`**（chi 已弃用，staticcheck SA1019）：它无条件用 `X-Forwarded-For` 改写 `RemoteAddr`。移除后 `RemoteAddr` 回归真实 TCP 对端；限流按 IP 分桶的 `clientIP()`（第 1 批）本就独立解析 XFF，不受影响。
+
+#### CI / 供应链
+- **govulncheck 纳入 CI**：Linux 作业每次扫描已知 CVE，可达即失败——把本次手动发现的那类漏洞变成持续门禁。
+- **golangci-lint 门禁 + `.golangci.yml`**：启用 govet / ineffassign / staticcheck / unused 高信号集（errcheck 因约 50 处刻意的 `_ =` 尽力而为调用暂缓、已在配置注明为后续项）；staticcheck 保留 SA*（缺陷 / 安全 / 弃用）子项、关闭命名与包注释类及少量纯风格子项；排除 `web/node_modules`；并启用 gofmt 格式门禁。
+- **dependabot**：gomod + npm（`web/`）+ github-actions 三个生态每周检查、分组 PR。
+- **macOS 纳入 CI 测试矩阵**（`macos-14` / darwin-arm64）：此前 release 发布 darwin 却从不在 CI 测试，现在 CGO + WebP / 路径处理 / KOReader 指纹在 macOS 首次被 PR 覆盖。
+- **显式 `CGO_ENABLED=1`**（CI 构建 + release 各原生 runner 构建）：WebP 编码依赖 CGO，不再依赖 runner 镜像默认值，杜绝静默产出无 WebP 的二进制。
+- **release 产物 `SHA256SUMS.txt`**：自托管者可在运行前校验二进制完整性 / 来源。
+
+#### 质量（golangci-lint 揪出并清理）
+- 删除 10 个死函数（含任务引擎的未用重载 `startTaskWithOptions` / `failTaskMsg` / `completeTask`、`hydrateSearchCovers` / `parseSearchDocID`、`getBookArchivePage` 等）；修 3 处 ineffassign；`reflect.Ptr`→`reflect.Pointer`（Go 1.18 改名）；nil-context 传参改 `context.TODO()`（刻意测试 nil 的用例加 `//nolint` 并注明意图）；弃用的 `strings.Title` 以本地 ASCII 首字母大写 helper 替代；补齐一处既有的 gofmt 未对齐。
+
+#### 验证
+- `go build ./...`、`go vet ./...`、`gofmt`（全库 0 不洁净）、`golangci-lint run`（0 issues）、`govulncheck ./...`（0 vulnerabilities）全绿；全量 `go test ./...` 全部 13 包 `ok`；四个 YAML 配置经 `yaml.safe_load` 校验有效。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（可伸缩性速修 · 第 3 批）
 
 > 承接第 1 批，落实分析地图中面向「大库 / 低功耗 NAS / 慢盘阅读」的可伸缩性快赢。4 项实现（均带验证），1 项经风险评估暂缓（附理由）。

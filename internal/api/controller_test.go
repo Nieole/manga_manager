@@ -413,8 +413,7 @@ func TestRotateAndToggleKOReaderAccount(t *testing.T) {
 
 	account := createTestKOReaderAccount(t, controller, "reader")
 
-	toggleReq := httptest.NewRequest(http.MethodPost, "/api/system/koreader/accounts/1/toggle", bytes.NewReader([]byte(`{"enabled":false}`)))
-	toggleReq = requestWithRouteParam(http.MethodPost, "/api/system/koreader/accounts/1/toggle", []byte(`{"enabled":false}`), "accountId", strconv.FormatInt(account.ID, 10))
+	toggleReq := requestWithRouteParam(http.MethodPost, "/api/system/koreader/accounts/1/toggle", []byte(`{"enabled":false}`), "accountId", strconv.FormatInt(account.ID, 10))
 	toggleRec := httptest.NewRecorder()
 	controller.toggleKOReaderAccount(toggleRec, toggleReq)
 	if toggleRec.Code != http.StatusOK {

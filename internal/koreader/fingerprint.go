@@ -150,10 +150,3 @@ func hashMD5(value string) string {
 	sum := md5.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

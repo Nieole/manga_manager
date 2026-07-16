@@ -137,8 +137,21 @@ func metadataFieldLabel(name string) string {
 	case "source_link":
 		return "Source link"
 	default:
-		return strings.Title(strings.ReplaceAll(name, "_", " "))
+		return titleFieldLabel(strings.ReplaceAll(name, "_", " "))
 	}
+}
+
+// titleFieldLabel upper-cases the first letter of each space-separated word (ASCII field keys such
+// as "release date"), replacing the deprecated strings.Title for the metadata-field-label use case.
+func titleFieldLabel(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		if w == "" {
+			continue
+		}
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	return strings.Join(words, " ")
 }
 
 func metadataLockedFieldSet(series database.Series) map[string]bool {

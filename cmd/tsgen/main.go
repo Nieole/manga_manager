@@ -86,7 +86,7 @@ func emitInterface(t reflect.Type, known map[string]bool, usedNulls map[string]b
 				omitempty = true
 			}
 		}
-		optional := omitempty || f.Type.Kind() == reflect.Ptr
+		optional := omitempty || f.Type.Kind() == reflect.Pointer
 		tsT := tsType(f.Type, known, usedNulls)
 		opt := ""
 		if optional {
@@ -99,7 +99,7 @@ func emitInterface(t reflect.Type, known map[string]bool, usedNulls map[string]b
 
 func tsType(t reflect.Type, known map[string]bool, usedNulls map[string]bool) string {
 	switch t.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return tsType(t.Elem(), known, usedNulls)
 	case reflect.String:
 		return "string"

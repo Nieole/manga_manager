@@ -479,10 +479,6 @@ func (c *Controller) startPausableCancelableTaskMsg(key, taskType, code string, 
 	return c.startTaskWithOptionsCore(key, taskType, "", code, params, total, true, true)
 }
 
-func (c *Controller) startTaskWithOptions(key, taskType, message string, total int, canCancel bool, canPause bool) bool {
-	return c.startTaskWithOptionsCore(key, taskType, message, "", nil, total, canCancel, canPause)
-}
-
 func (c *Controller) startTaskWithOptionsCore(key, taskType, message, code string, params map[string]string, total int, canCancel bool, canPause bool) bool {
 	c.taskEngine.mutex.Lock()
 	defer c.taskEngine.mutex.Unlock()
@@ -860,15 +856,6 @@ func (c *Controller) finishTaskMsg(key, code string, params map[string]string) {
 
 func (c *Controller) failTask(key, message string) {
 	c.failTaskCore(key, message, "", nil, message)
-}
-
-// failTaskMsg 是 failTask 的 i18n 版：显示消息用码；无独立技术错误串。
-func (c *Controller) failTaskMsg(key, code string, params map[string]string) {
-	c.failTaskCore(key, "", code, params, "")
-}
-
-func (c *Controller) completeTask(key, status, message string) {
-	c.completeTaskCore(key, status, message, "", nil)
 }
 
 // completeTaskMsg 是 completeTask 的 i18n 版（多用于取消态等终态）。
