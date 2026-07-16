@@ -28,7 +28,6 @@ type Querier interface {
 	CountHealthMissingQuickHash(ctx context.Context, libraryID interface{}) (int64, error)
 	CountHealthUnmatchedKOReader(ctx context.Context) (int64, error)
 	CountMihonSeries(ctx context.Context, arg CountMihonSeriesParams) (int64, error)
-	CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error)
 	CountPendingAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error)
 	CountPendingMetadataReviewInbox(ctx context.Context, arg CountPendingMetadataReviewInboxParams) (int64, error)
 	CountReadingListSeries(ctx context.Context, readingListID int64) (int64, error)
@@ -142,6 +141,12 @@ type Querier interface {
 	ListRecentAddedSeries(ctx context.Context, arg ListRecentAddedSeriesParams) ([]ListRecentAddedSeriesRow, error)
 	ListReverseSeriesRelations(ctx context.Context, targetSeriesID int64) ([]ListReverseSeriesRelationsRow, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
+	// Same series columns as ListSeriesByLibrary but WITHOUT the per-row correlated cover subquery,
+	// and without the ORDER BY that these callers do not need. Used by scanner reconciliation and bulk
+	// scraping, which read the series' own columns (not the cover) and do not care about ordering. On
+	// 100k+ series libraries this avoids one correlated books probe per row plus a full-library sort;
+	// the cover-bearing ListSeriesByLibrary is kept for the UI series list.
+	ListSeriesByLibraryLite(ctx context.Context, libraryID int64) ([]Series, error)
 	ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error)
 	ListSmartFiltersByLibrary(ctx context.Context, libraryID int64) ([]SmartFilter, error)
 	ListStaticCollectionSeriesPaged(ctx context.Context, arg ListStaticCollectionSeriesPagedParams) ([]ListStaticCollectionSeriesPagedRow, error)
@@ -153,7 +158,6 @@ type Querier interface {
 	RefreshSeriesStats(ctx context.Context, id int64) error
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
 	RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) error
-	SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error)
 	SeriesExistsByID(ctx context.Context, id int64) (int64, error)
 	SetBookCoverIfMissing(ctx context.Context, arg SetBookCoverIfMissingParams) (int64, error)
 	TouchCollection(ctx context.Context, id int64) error

@@ -285,20 +285,6 @@ func (q *Queries) CountMihonSeries(ctx context.Context, arg CountMihonSeriesPara
 	return count, err
 }
 
-const countOPDSSeriesSearch = `-- name: CountOPDSSeriesSearch :one
-SELECT COUNT(*)
-FROM series s
-WHERE instr(lower(s.name), lower(?1)) > 0
-   OR instr(lower(COALESCE(s.title, '')), lower(?1)) > 0
-`
-
-func (q *Queries) CountOPDSSeriesSearch(ctx context.Context, query string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countOPDSSeriesSearch, query)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countPendingAIGroupingReviewCollections = `-- name: CountPendingAIGroupingReviewCollections :one
 SELECT COUNT(*)
 FROM ai_grouping_review_collections
@@ -4824,8 +4810,8 @@ SELECT
         WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
         ORDER BY b.sort_number, b.name 
         LIMIT 1) as cover_path 
-FROM series s 
-WHERE s.library_id = ? 
+FROM series s
+WHERE s.library_id = ?
 ORDER BY s.name
 `
 
@@ -4880,6 +4866,77 @@ func (q *Queries) ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]L
 			&i.BookCount,
 			&i.TotalPages,
 			&i.CoverPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSeriesByLibraryLite = `-- name: ListSeriesByLibraryLite :many
+SELECT
+       s.id,
+       s.library_id,
+       s.name,
+       s.title,
+       s.summary,
+       s.publisher,
+       s.status,
+       s.rating,
+       s.language,
+       s.locked_fields,
+       s.name_initial,
+       s.path,
+       s.created_at,
+       s.updated_at,
+       s.is_favorite,
+       s.volume_count,
+       s.book_count,
+       s.total_pages
+FROM series s
+WHERE s.library_id = ?
+`
+
+// Same series columns as ListSeriesByLibrary but WITHOUT the per-row correlated cover subquery,
+// and without the ORDER BY that these callers do not need. Used by scanner reconciliation and bulk
+// scraping, which read the series' own columns (not the cover) and do not care about ordering. On
+// 100k+ series libraries this avoids one correlated books probe per row plus a full-library sort;
+// the cover-bearing ListSeriesByLibrary is kept for the UI series list.
+func (q *Queries) ListSeriesByLibraryLite(ctx context.Context, libraryID int64) ([]Series, error) {
+	rows, err := q.db.QueryContext(ctx, listSeriesByLibraryLite, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Series
+	for rows.Next() {
+		var i Series
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.Title,
+			&i.Summary,
+			&i.Publisher,
+			&i.Status,
+			&i.Rating,
+			&i.Language,
+			&i.LockedFields,
+			&i.NameInitial,
+			&i.Path,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsFavorite,
+			&i.VolumeCount,
+			&i.BookCount,
+			&i.TotalPages,
 		); err != nil {
 			return nil, err
 		}
@@ -5278,67 +5335,6 @@ type RemoveSeriesFromCollectionParams struct {
 func (q *Queries) RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) error {
 	_, err := q.db.ExecContext(ctx, removeSeriesFromCollection, arg.CollectionID, arg.SeriesID)
 	return err
-}
-
-const searchOPDSSeries = `-- name: SearchOPDSSeries :many
-SELECT
-    s.id,
-    s.name,
-    COALESCE(s.title, '') as title,
-    COALESCE(s.summary, '') as summary,
-    s.updated_at,
-    CAST(COALESCE(ss.cover_path, '') AS TEXT) as cover_path
-FROM series s
-LEFT JOIN series_stats ss ON ss.series_id = s.id
-WHERE instr(lower(s.name), lower(?1)) > 0
-   OR instr(lower(COALESCE(s.title, '')), lower(?1)) > 0
-ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
-LIMIT ?3 OFFSET ?2
-`
-
-type SearchOPDSSeriesParams struct {
-	Query  string `json:"query"`
-	Offset int64  `json:"offset"`
-	Limit  int64  `json:"limit"`
-}
-
-type SearchOPDSSeriesRow struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Title     string    `json:"title"`
-	Summary   string    `json:"summary"`
-	UpdatedAt time.Time `json:"updated_at"`
-	CoverPath string    `json:"cover_path"`
-}
-
-func (q *Queries) SearchOPDSSeries(ctx context.Context, arg SearchOPDSSeriesParams) ([]SearchOPDSSeriesRow, error) {
-	rows, err := q.db.QueryContext(ctx, searchOPDSSeries, arg.Query, arg.Offset, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SearchOPDSSeriesRow
-	for rows.Next() {
-		var i SearchOPDSSeriesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Title,
-			&i.Summary,
-			&i.UpdatedAt,
-			&i.CoverPath,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const seriesExistsByID = `-- name: SeriesExistsByID :one

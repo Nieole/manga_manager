@@ -850,6 +850,14 @@ func Migrate(dbPath string) error {
 	}
 
 	if err := execMigrationStatements(db, []string{
+		// 移除 series 上的嵌套前缀冗余索引：(library_id, updated_at) 与 (library_id, updated_at, name)
+		// 都是 (library_id, updated_at, name, id) 的严格前缀，created_* 同理。按 B-tree 前缀性质，保留的
+		// 超集覆盖索引可服务前者的全部查询（无计划回归，cmd/queryplan --strict 守护），而每次系列写入
+		// 少维护这 4 个索引，降低大库扫描的写放大。DROP IF EXISTS 幂等：既有库首启即清理，新库为无操作。
+		`DROP INDEX IF EXISTS idx_series_library_updated`,
+		`DROP INDEX IF EXISTS idx_series_library_created`,
+		`DROP INDEX IF EXISTS idx_series_library_updated_name`,
+		`DROP INDEX IF EXISTS idx_series_library_created_name`,
 		`CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_quick_hash ON books(quick_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_path_fingerprint ON books(path_fingerprint)`,
@@ -859,13 +867,9 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_series_name_initial ON series(name_initial)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_initial ON series(library_id, name_initial)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_status ON series(library_id, status)`,
-		`CREATE INDEX IF NOT EXISTS idx_series_library_updated ON series(library_id, updated_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_series_library_created ON series(library_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_name ON series(library_id, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_initial_name ON series(library_id, name_initial, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_status_name ON series(library_id, status, name)`,
-		`CREATE INDEX IF NOT EXISTS idx_series_library_updated_name ON series(library_id, updated_at, name)`,
-		`CREATE INDEX IF NOT EXISTS idx_series_library_created_name ON series(library_id, created_at, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_updated_name_id ON series(library_id, updated_at, name, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_created_name_id ON series(library_id, created_at, name, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_library_name_id ON series(library_id, name, id)`,

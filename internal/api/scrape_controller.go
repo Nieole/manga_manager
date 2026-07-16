@@ -614,7 +614,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	var allSeries []scrapeSeriesEntry
 
 	for _, lib := range libs {
-		seriesList, err := c.store.ListSeriesByLibrary(ctx, lib.ID)
+		seriesList, err := c.store.ListSeriesByLibraryLite(ctx, lib.ID)
 		if err != nil {
 			continue
 		}
@@ -679,7 +679,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 	provider := c.getProvider(providerKey)
 	locale := metadata.LocaleFromContext(ctx)
 
-	seriesList, err := c.store.ListSeriesByLibrary(ctx, libraryID)
+	seriesList, err := c.store.ListSeriesByLibraryLite(ctx, libraryID)
 	if err != nil {
 		return err
 	}

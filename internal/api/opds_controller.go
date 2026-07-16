@@ -761,56 +761,17 @@ func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
 	total := 0
 	entries := []OPDSEntry{}
 	if query != "" {
-		if rows, searchTotal, usedEngine, err := c.searchProtocolSeries(r.Context(), query, page, limit); usedEngine {
-			if err != nil {
-				http.Error(w, "Internal error", http.StatusInternalServerError)
-				return
-			}
-			total = searchTotal
-			for _, row := range rows {
-				entries = append(entries, opdsSeriesEntryFromProtocolRow(row))
-			}
-		} else {
-			searchTotal, err := c.store.CountOPDSSeriesSearch(r.Context(), query)
-			if err != nil {
-				http.Error(w, "Internal error", http.StatusInternalServerError)
-				return
-			}
-			total = int(searchTotal)
-
-			rows, err := c.store.SearchOPDSSeries(r.Context(), database.SearchOPDSSeriesParams{
-				Query:  query,
-				Limit:  int64(limit),
-				Offset: int64((page - 1) * limit),
-			})
-			if err != nil {
-				http.Error(w, "Internal error", http.StatusInternalServerError)
-				return
-			}
-
-			for _, row := range rows {
-				title := row.Title
-				if title == "" {
-					title = row.Name
-				}
-				links := []OPDSLink{
-					{Href: fmt.Sprintf("/opds/v1.2/series/%d", row.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
-				}
-				if row.CoverPath != "" {
-					links = append(links, OPDSLink{
-						Rel:  "http://opds-spec.org/image/thumbnail",
-						Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
-						Type: opdsThumbnailMIME(row.CoverPath),
-					})
-				}
-				entries = append(entries, OPDSEntry{
-					Title:   title,
-					ID:      fmt.Sprintf("urn:manga-manager:opds:search:series:%d", row.ID),
-					Updated: row.UpdatedAt.Format(time.RFC3339),
-					Content: row.Summary,
-					Links:   links,
-				})
-			}
+		// query 已在上方 TrimSpace，故 searchProtocolSeries 的 usedEngine 恒为 true：搜索统一走
+		// SearchProtocolSeries（>=3 rune 命中 series_search_fts、<3 rune CJK 回退子串），与 Web/Mihon
+		// 一致，避免对系列表逐行 lower()+instr 的双重全表扫。
+		rows, searchTotal, _, err := c.searchProtocolSeries(r.Context(), query, page, limit)
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		total = searchTotal
+		for _, row := range rows {
+			entries = append(entries, opdsSeriesEntryFromProtocolRow(row))
 		}
 	}
 

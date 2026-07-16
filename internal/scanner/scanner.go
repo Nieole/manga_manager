@@ -658,14 +658,14 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 		return fmt.Errorf("library root %q unreachable, aborting cleanup to avoid mass deletion: %w", library.Path, statErr)
 	}
 
-	seriesList, err := s.store.ListSeriesByLibrary(ctx, libraryID)
+	seriesList, err := s.store.ListSeriesByLibraryLite(ctx, libraryID)
 	if err != nil {
 		return fmt.Errorf("failed to list series: %w", err)
 	}
 
 	// 第一遍：仅收集“确证缺失”（os.IsNotExist）的系列；权限、超时、网络等不确定错误
 	// 一律跳过而非删除，避免瞬时 IO 故障被误判为文件消失。
-	var missingSeries []database.ListSeriesByLibraryRow
+	var missingSeries []database.Series
 	for _, series := range seriesList {
 		if _, statErr := os.Stat(series.Path); statErr != nil {
 			if os.IsNotExist(statErr) {
@@ -1031,12 +1031,12 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 
 func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics, progress *scanProgressReporter) {
 	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
-	seriesCache := make(map[string]database.ListSeriesByLibraryRow)
+	seriesCache := make(map[string]database.Series)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
 	lockedFieldsCache := make(map[int64]map[string]bool)
 
 	// 预加载已有的 Series
-	existingSeries, _ := s.store.ListSeriesByLibrary(ctx, libIDInt)
+	existingSeries, _ := s.store.ListSeriesByLibraryLite(ctx, libIDInt)
 	for _, series := range existingSeries {
 		seriesCache[series.Path] = series
 
@@ -1114,7 +1114,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					}
 					seriesID = createdSeries.ID
 					// 为了保持下文逻辑，我们塞一个临时的进去
-					seriesCache[res.seriesPath] = database.ListSeriesByLibraryRow{ID: seriesID, Path: res.seriesPath}
+					seriesCache[res.seriesPath] = database.Series{ID: seriesID, Path: res.seriesPath}
 				} else {
 					// 已存在的系列，利用 UpsertSeriesByPath 去更新其累积统计和元数据（仅当有新元数据时增补）
 					if res.comicInfo != nil {

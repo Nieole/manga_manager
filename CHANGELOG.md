@@ -4,6 +4,26 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（可伸缩性速修 · 第 3 批）
+
+> 承接第 1 批，落实分析地图中面向「大库 / 低功耗 NAS / 慢盘阅读」的可伸缩性快赢。4 项实现（均带验证），1 项经风险评估暂缓（附理由）。
+
+#### 优化（已实现）
+- **storageio 调度器改事件驱动（消除 20ms 忙轮询延迟）**：`Acquire` 的等待此前用 20ms ticker 轮询，`release` 只减计数、不通知等待者——被限流阻塞的读页请求最多要等一个 tick（≤20ms）才发现空出的并发额度，且等待者越多周期性锁争用越重。改用「广播 channel」：`release` / `ResumeBackground` 关闭并替换广播 channel 一次性唤醒所有等待者立即重判条件，读页请求在槽位释放的瞬间被唤醒。仅对时间型的 `reader_idle_window` 阻塞另设一个「距窗口到期」的精确定时器（取代固定轮询）。HDD / 网络盘（并发=1）下取页延迟更稳、更低。
+- **裁剪 series 上的嵌套前缀冗余索引（降低大库扫描写放大）**：`(library_id, updated_at)` 与 `(library_id, updated_at, name)` 都是 `(library_id, updated_at, name, id)` 的严格前缀，`created_*` 同理——按 B-tree 前缀性质，保留的超集覆盖索引可服务前者的全部查询（无计划回归）。移除这 4 个冗余索引（`idx_series_library_updated` / `_created` / `_updated_name` / `_created_name`），并加 `DROP INDEX IF EXISTS` 幂等迁移（既有库首启即清理），使每次系列 upsert 少维护 4 个索引。`cmd/queryplan --strict` 与 `store_queryplan_test.go` 确认热路径计划未回归。
+- **扫描对账 / 批量刮削改用去封面的投影查询**：新增 sqlc 查询 `ListSeriesByLibraryLite`——与 `ListSeriesByLibrary` 同列但去掉对每行做一次相关子查询取封面、也去掉调用方不需要的 `ORDER BY`（投影恰为 series 表全列，sqlc 复用 `Series` 模型）。`cleanupLibrary` / `ingestResults` 预加载与两处批量刮削切到该查询，在 100k+ 系列大库上避免整库范围的 N 次 books 相关子查询探测与一次整库排序；封面仅 UI 系列列表需要，仍走完整版。
+- **OPDS 搜索死代码清理**：OPDS 搜索早已经 `searchProtocolSeries` 走 `series_search_fts`（>=3 rune FTS、<3 rune CJK 子串回退，与 Web / Mihon 一致），因 `q` 在入口已 `TrimSpace`，其 `usedEngine` 分支恒真——回退到 `instr` 双重全表扫的 `else` 分支及 `CountOPDSSeriesSearch` / `SearchOPDSSeries` 两个 sqlc 查询实为死代码。一并移除，消除「OPDS 绕过 FTS」的误导性表面。
+
+#### 说明（经评估暂缓，附理由）
+- **RAR/CBR 每次翻页 O(N) 重扫（整卷 O(N²)）**：`rar.go` 的 `ReadPage` 每次 `rardecode.OpenReader` 从头顺序找目标、`Close()` 为 no-op，归档池对 RAR 无收益。正确修复是带游标的会话缓存（顺序前滚填充有界字节缓存、仅反向 seek 时重开），但它是对阅读器热路径的有状态 + 并发改写；而 **Go 无 RAR 写入器、本机与 CI 均无 `rar`/`7z` 工具**，无法为多页 RAR 造夹具做行为回归（顺序 / 随机 / 重开 / 并发）。在无回归守护下盲改核心阅读路径风险过高，留待可产出真实 RAR 夹具的环境专门实现。
+
+#### 验证
+- 新增 `TestListSeriesByLibraryLiteMatchesFullMinusCover`（Lite 与完整版返回同一批系列的相同自身列，且 `Series` 模型无 CoverPath 字段——从类型层面即保证不带封面）。`storageio` 既有并发行为用例（序列化 / 空闲窗口 / PausedWait / 读者优先）`-race` × 5 全绿，保证事件驱动改写语义等价。
+- `cmd/queryplan --strict` 逐条计划核对（`series/library/status/books` 的 `[warn]` 为**既有现象**：原始 schema 亦如此，规划器对 `status + book_count DESC` 选方向匹配的 `idx_series_library_books_desc`，与本批裁剪无关）；`store_queryplan_test.go` 自动化门禁通过。
+- `go build ./...`、`go vet ./...`、`gofmt` 全绿；全量 `go test ./...` 全部包 `ok`。**sqlc 重新生成无漂移**——查询以英文注释书写（此前中文注释会让 darwin 下 sqlc 把多字节字符误判为致命 `mismatched input` 而拒绝生成），`sqlc generate` 退出 0 且幂等。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（P0 安全与可靠性速修 · 第 1 批）
 
 > 以一个 9 维度并行深读代码库的分析 workflow（架构/数据层/性能/安全/前端/阅读器·PWA/协议·竞品/测试·CI/产品）绘制优化地图后，落实其中「几行级、可实证、影响多用户/公网/离线可靠性」的一批 P0 速修，均带验证。

@@ -63,30 +63,37 @@ SELECT
         WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
         ORDER BY b.sort_number, b.name 
         LIMIT 1) as cover_path 
-FROM series s 
-WHERE s.library_id = ? 
+FROM series s
+WHERE s.library_id = ?
 ORDER BY s.name;
 
--- name: CountOPDSSeriesSearch :one
-SELECT COUNT(*)
-FROM series s
-WHERE instr(lower(s.name), lower(sqlc.arg(query))) > 0
-   OR instr(lower(COALESCE(s.title, '')), lower(sqlc.arg(query))) > 0;
-
--- name: SearchOPDSSeries :many
+-- name: ListSeriesByLibraryLite :many
+-- Same series columns as ListSeriesByLibrary but WITHOUT the per-row correlated cover subquery,
+-- and without the ORDER BY that these callers do not need. Used by scanner reconciliation and bulk
+-- scraping, which read the series' own columns (not the cover) and do not care about ordering. On
+-- 100k+ series libraries this avoids one correlated books probe per row plus a full-library sort;
+-- the cover-bearing ListSeriesByLibrary is kept for the UI series list.
 SELECT
-    s.id,
-    s.name,
-    COALESCE(s.title, '') as title,
-    COALESCE(s.summary, '') as summary,
-    s.updated_at,
-    CAST(COALESCE(ss.cover_path, '') AS TEXT) as cover_path
+       s.id,
+       s.library_id,
+       s.name,
+       s.title,
+       s.summary,
+       s.publisher,
+       s.status,
+       s.rating,
+       s.language,
+       s.locked_fields,
+       s.name_initial,
+       s.path,
+       s.created_at,
+       s.updated_at,
+       s.is_favorite,
+       s.volume_count,
+       s.book_count,
+       s.total_pages
 FROM series s
-LEFT JOIN series_stats ss ON ss.series_id = s.id
-WHERE instr(lower(s.name), lower(sqlc.arg(query))) > 0
-   OR instr(lower(COALESCE(s.title, '')), lower(sqlc.arg(query))) > 0
-ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
-LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+WHERE s.library_id = ?;
 
 -- name: CountSeriesByLibrary :one
 SELECT COUNT(*) FROM series WHERE library_id = ?;

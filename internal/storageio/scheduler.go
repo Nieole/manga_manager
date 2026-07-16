@@ -53,6 +53,10 @@ type Scheduler struct {
 	backgroundWaits  map[string]int
 	pauseableActive  map[string]int
 	backgroundPaused bool
+	// broadcast 是「广播 channel」：等待者在阻塞时捕获它并 select 于其上；释放槽位 / 恢复后台 等会关闭它
+	// 再换一个新 channel，从而一次性唤醒所有等待者立即重判条件。取代此前每 20ms 忙轮询——让被限流阻塞的
+	// 读页请求在槽位释放的瞬间被唤醒（消除最高 20ms 的额外取页延迟与周期性锁风暴）。
+	broadcast chan struct{}
 }
 
 type limiter struct {
@@ -85,8 +89,25 @@ func NewScheduler() *Scheduler {
 		readers:         make(map[string]*readerState),
 		backgroundWaits: make(map[string]int),
 		pauseableActive: make(map[string]int),
+		broadcast:       make(chan struct{}),
 	}
 	return s
+}
+
+// notifyLocked 唤醒所有阻塞中的等待者：关闭当前广播 channel 再换新的。调用方须持有 s.mu。
+func (s *Scheduler) notifyLocked() {
+	close(s.broadcast)
+	s.broadcast = make(chan struct{})
+}
+
+// idleWindowRemainingLocked 返回某卷「读者空闲窗口」距到期还剩多久（供被 reader_idle_window 阻塞的
+// 后台任务设置精确定时器，在窗口到期而非每 20ms 轮询时被唤醒）。调用方须持有 s.mu。
+func (s *Scheduler) idleWindowRemainingLocked(volumeKey string, idleDuration time.Duration) time.Duration {
+	state := s.readers[volumeKey]
+	if state == nil || state.lastEnd.IsZero() {
+		return 0
+	}
+	return idleDuration - time.Since(state.lastEnd)
 }
 
 func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
@@ -106,8 +127,6 @@ func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
 	lastChecked := started
 	lastBlockedByPause := false
 	var pausedWait time.Duration
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
 
 	s.mu.Lock()
 	if req.Kind == WorkKindReader {
@@ -154,10 +173,27 @@ func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
 			}, nil
 		}
 
+		// 阻塞：捕获当前广播 channel，等待「槽位释放 / 后台恢复」等事件将其关闭而被唤醒。仅当阻塞原因是
+		// 时间型的 reader_idle_window 时才另设一个精确定时器，在窗口到期（而非固定 20ms）时再判一次。
+		waitCh := s.broadcast
+		var timerC <-chan time.Time
+		var timer *time.Timer
+		if pauseReason == "reader_idle_window" {
+			remaining := s.idleWindowRemainingLocked(req.VolumeKey, idleDuration)
+			if remaining <= 0 {
+				remaining = time.Millisecond
+			}
+			timer = time.NewTimer(remaining)
+			timerC = timer.C
+		}
 		s.mu.Unlock()
 		select {
-		case <-ticker.C:
+		case <-waitCh:
+		case <-timerC:
 		case <-ctx.Done():
+		}
+		if timer != nil {
+			timer.Stop()
 		}
 		s.mu.Lock()
 	}
@@ -172,6 +208,7 @@ func (s *Scheduler) PauseBackground() {
 func (s *Scheduler) ResumeBackground() {
 	s.mu.Lock()
 	s.backgroundPaused = false
+	s.notifyLocked()
 	s.mu.Unlock()
 }
 
@@ -258,6 +295,8 @@ func (s *Scheduler) release(req Request, key string) {
 			s.pauseableActive[req.VolumeKey]--
 		}
 	}
+	// 释放槽位 / 结束读者：唤醒等待者立即抢占空出的并发额度（读者优先仍由 reader.waiting 守卫保证）。
+	s.notifyLocked()
 }
 
 func (s *Scheduler) readerMayBypassBackgroundLocked(req Request, l *limiter) bool {
