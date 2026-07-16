@@ -85,7 +85,7 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 		external:            external.NewManager(store, 30*time.Minute),
 		configPath:          configPath,
 		taskEngine:          newTaskEngine(),
-		messages:            make(chan string, 32),
+		sse:                 newSSEBroker(),
 		// 与 NewController 一致：鉴权限流器不可为 nil（否则 login / Basic 路径解引用会 panic）。
 		loginLimiter:     newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
 		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
@@ -2575,7 +2575,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		external:            external.NewManager(store, 30*time.Minute),
 		configPath:          filepath.Join(tempDir, "config.yaml"),
 		taskEngine:          newTaskEngine(),
-		messages:            make(chan string, 32),
+		sse:                 newSSEBroker(),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)

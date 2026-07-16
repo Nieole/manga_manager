@@ -931,19 +931,13 @@ func (c *Controller) failTaskCore(key, message, code string, params map[string]s
 }
 
 func (c *Controller) publishTaskStatusLocked(task TaskStatus) {
-	if c.messages == nil {
-		return
-	}
 	payload, err := json.Marshal(task)
 	if err != nil {
 		slog.Warn("Failed to marshal task status", "task_key", task.Key, "error", err)
 		return
 	}
-	select {
-	case c.messages <- "task_progress:" + string(payload):
-	default:
-		slog.Warn("SSE message channel full, dropping task progress", "task_key", task.Key)
-	}
+	// 统一经 sseBroker 投递（非阻塞、buffer 满则丢弃并告警）。
+	c.sse.publish("task_progress:" + string(payload))
 }
 
 func (c *Controller) pruneTasksLocked() {

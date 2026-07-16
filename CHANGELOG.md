@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（重构：SSE 推送抽离出 Controller 上帝对象）
+
+> 承接架构分析（`Controller` 是横跨所有子系统的上帝对象）的建议，从边界最清晰的 SSE broker 起步做增量解耦，为后续 service 层铺路。行为完全保持。
+
+#### 重构
+- 把服务端事件推送（SSE）从 `Controller` 抽成独立组件 `sseBroker`（`internal/api/sse_broker.go`）：actor 模式的单 goroutine 事件循环（`run`，唯一读写订阅者集合故无需加锁）+ 非阻塞投递（`publish`）+ 单连接流式处理（`serveHTTP`）。`Controller` 从持有 4 个裸 SSE 字段（`clients` / `newClients` / `defunctClients` / `messages`）改为仅持一个 `*sseBroker` 引用。
+- 统一所有事件发布经 broker：`PublishEvent`（供 Scanner / FileWatcher）与任务进度推送 `publishTaskStatusLocked` 都改为委托 `sseBroker.publish`，消除任务引擎此前直接读写 SSE channel 的第二条路径；`/api/events` 路由直接指向 `sseBroker.serveHTTP`。
+
+#### 验证
+- 新增 `TestSSEBrokerDeliversPublishedEventToClient`（注册 → 发布 → 收到 → 注销后关闭，`-race` ×5 稳定）。
+- `go build`、`vet`、`gofmt`、`golangci-lint`（0 issues）、`govulncheck`（0）全绿；api 包 `-race` 通过；全量 `go test ./...` 全部 14 包 `ok`。行为保持：SSE 响应头、心跳（25s）、重连提示（`retry: 5000`）、背压主动断开、非阻塞投递语义均不变。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（配置双路径统一）
 
 > 修复「配置生效副作用不一致」这一 P1 隐性 bug：文件热重载会重建 parser 池 / images 处理器并设日志级别，但经 API/UI 保存配置只 `Replace + SetLevel`、漏了重建池——经 UI 改 `archive_pool_size` / `max_ai_concurrency` 会静默不生效（只能依赖文件监听回环补上，监听器失效时彻底失效）。

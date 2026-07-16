@@ -59,11 +59,8 @@ type Controller struct {
 	configPath           string
 	watcher              *scanner.FileWatcher
 
-	// SSE Broker
-	clients        map[chan string]bool
-	newClients     chan chan string
-	defunctClients chan chan string
-	messages       chan string
+	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
+	sse *sseBroker
 
 	// AI Recommendations Cache
 	recommendationsCache     map[string][]AIRecommendationResponse
@@ -266,10 +263,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 		koreader:                 koreader.NewService(store, cfg),
 		external:                 external.NewManager(store, 30*time.Minute),
 		configPath:               cfgPath,
-		clients:                  make(map[chan string]bool),
-		newClients:               make(chan chan string),
-		defunctClients:           make(chan chan string),
-		messages:                 make(chan string, 64),
+		sse:                      newSSEBroker(),
 		taskEngine:               newTaskEngine(),
 		recommendationsCache:     make(map[string][]AIRecommendationResponse),
 		recommendationsCacheTime: make(map[string]time.Time),
@@ -290,7 +284,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 
 	c.recoverInterruptedTasks()
 
-	c.runBackground(c.startBroker)
+	c.runBackground(func() { c.sse.run(c.lifecycleDone()) })
 	c.runBackground(c.startDaemon)
 	c.runBackground(c.startPageCacheJanitor)
 	c.runBackground(c.startTaskPersister)
@@ -527,35 +521,6 @@ func openPathInDefaultFileManager(path string) error {
 	return cmd.Start()
 }
 
-func (c *Controller) startBroker() {
-	for {
-		select {
-		case <-c.lifecycleDone():
-			return
-		case s := <-c.newClients:
-			c.clients[s] = true
-		case s := <-c.defunctClients:
-			if _, ok := c.clients[s]; ok {
-				delete(c.clients, s)
-				close(s)
-			}
-		case msg := <-c.messages:
-			for s := range c.clients {
-				select {
-				case s <- msg:
-				default:
-					// 客户端 buffer 已满（默认 64 条），说明该消费者卡死或网络背压。
-					// 主动断开它的 channel，sseHandler 会在下一轮 select 收到关闭信号并退出，
-					// 浏览器端 EventSource 会按 retry 间隔自动重连。
-					slog.Warn("SSE client backpressure, dropping client connection")
-					delete(c.clients, s)
-					close(s)
-				}
-			}
-		}
-	}
-}
-
 // startPageCacheJanitor 周期性地把磁盘页缓存修剪到配置的容量上限（单 goroutine 串行，经
 // runBackground 登记 backgroundWG，关闭时会退出）。
 func (c *Controller) startPageCacheJanitor() {
@@ -620,16 +585,9 @@ func (c *Controller) startDaemon() {
 	}
 }
 
-// PublishEvent 供 Scanner 外部等调用投递事件消息
+// PublishEvent 供 Scanner / FileWatcher 等外部投递事件消息；委托给 sseBroker（保留此方法以维持外部 API）。
 func (c *Controller) PublishEvent(event string) {
-	if c.messages == nil {
-		return
-	}
-	select {
-	case c.messages <- event:
-	default:
-		slog.Warn("SSE broker channel full, dropping event", "event_prefix", eventPrefix(event))
-	}
+	c.sse.publish(event)
 }
 
 // eventPrefix 截取事件前缀用于日志，避免输出整段 JSON
@@ -664,7 +622,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/users/{userId}/password", c.resetUserPassword)
 		r.Delete("/users/{userId}", c.deleteUser)
 
-		r.Get("/events", c.sseHandler)
+		r.Get("/events", c.sse.serveHTTP)
 		r.Get("/search", c.searchBooks)
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
@@ -1197,65 +1155,6 @@ func applyBookReadStateTx(ctx context.Context, q *database.Queries, book databas
 		}
 	}
 	return nil
-}
-
-func (c *Controller) sseHandler(w http.ResponseWriter, r *http.Request) {
-	// 设置 SSE 需要响应头
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	// 允许跨域及凭证支持长链接
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, _ := w.(http.Flusher)
-
-	// 提示客户端断线重连间隔（毫秒），并立刻刷一次响应头
-	if _, err := w.Write([]byte("retry: 5000\n\n")); err != nil {
-		return
-	}
-	if flusher != nil {
-		flusher.Flush()
-	}
-
-	// 注册客户端通道
-	messageChan := make(chan string, 64)
-	c.newClients <- messageChan
-
-	// 监听从客户端意外断开链接
-	notify := r.Context().Done()
-	go func() {
-		<-notify
-		c.defunctClients <- messageChan
-	}()
-
-	// 心跳：每 25 秒发送一次 SSE 注释行，避免反向代理（nginx/cloudflare 等）
-	// 在长时间空闲时切断空连接。注释行以 `:` 开头，浏览器会忽略。
-	heartbeat := time.NewTicker(25 * time.Second)
-	defer heartbeat.Stop()
-
-	for {
-		select {
-		case msg, open := <-messageChan:
-			if !open {
-				return // 连接已从服务端侧切断（例如 broker 检测到客户端积压）
-			}
-			if _, err := w.Write([]byte("data: " + msg + "\n\n")); err != nil {
-				return
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-		case <-heartbeat.C:
-			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
-				return
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-		case <-notify:
-			return
-		}
-	}
 }
 
 func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
