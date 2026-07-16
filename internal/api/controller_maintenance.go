@@ -27,7 +27,9 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 		for _, lib := range libs {
 			go func(lib database.Library) {
 				defer c.purgeReadingPathCaches()
-				c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true)
+				if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true); err != nil {
+					slog.Error("Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
+				}
 			}(lib)
 		}
 	}

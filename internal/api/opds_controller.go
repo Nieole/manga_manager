@@ -151,7 +151,7 @@ func xmlResponse(w http.ResponseWriter, data interface{}) {
 	w.Write([]byte(xml.Header))
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
-	enc.Encode(data)
+	_ = enc.Encode(data)
 }
 
 func openSearchResponse(w http.ResponseWriter, data interface{}) {
@@ -160,7 +160,7 @@ func openSearchResponse(w http.ResponseWriter, data interface{}) {
 	w.Write([]byte(xml.Header))
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
-	enc.Encode(data)
+	_ = enc.Encode(data)
 }
 
 // opdsRoot 根目录导航

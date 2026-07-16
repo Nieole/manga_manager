@@ -1,15 +1,23 @@
 # golangci-lint v2 configuration.
 # Scope: high-signal linters that catch real bugs / dead code / deprecations, kept green so CI can
-# gate on them. errcheck is intentionally deferred (the codebase has ~50 deliberate best-effort
-# `_ = ...` calls; enabling it is a separate, larger cleanup). Pure-style staticcheck subchecks are
-# disabled to avoid churn; the SA* (correctness/security) subchecks stay on.
+# gate on them. errcheck is enabled but excludes well-known cleanup functions (Close/Remove/Rollback/
+# response writes) whose errors are idiomatically ignored — so it catches FUTURE unchecked errors on
+# business operations without churning ~48 intentional cleanup sites. Pure-style staticcheck subchecks
+# are disabled to avoid churn; the SA* (correctness/security) subchecks stay on.
 version: "2"
 
 linters:
   default: standard # errcheck, govet, ineffassign, staticcheck, unused
-  disable:
-    - errcheck
   settings:
+    errcheck:
+      # Cleanup/teardown functions whose returned error is idiomatically ignored.
+      exclude-functions:
+        - (io.Closer).Close # rows/body/files/db/archives/stmts/watcher .Close()
+        - (database/sql.Result).Close
+        - (*database/sql.Tx).Rollback # deferred rollback after commit is a no-op error
+        - (net/http.ResponseWriter).Write # headers already flushed; nothing to do
+        - os.Remove
+        - os.RemoveAll
     staticcheck:
       # Keep SA* (bug/security/deprecation) checks; replicate golangci-lint's default ST-check
       # exclusions (naming/package-comment conventions would force large renames like
@@ -31,6 +39,12 @@ linters:
     generated: lax
     paths:
       - web/node_modules
+    rules:
+      # Errors from idiomatic teardown (.Close() on concrete types like *os.File / *sql.Rows /
+      # *sql.Stmt / rardecode / fsnotify — errcheck matches by concrete type, so the interface
+      # exclude-function above misses them) are intentionally ignored across the codebase.
+      - linters: [errcheck]
+        source: '\.Close\(\)'
 
 formatters:
   enable:

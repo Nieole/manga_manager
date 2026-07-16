@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（CI：启用 errcheck 门禁）
+
+> 承接第 4 批的 golangci-lint 门禁，补齐此前暂缓的 errcheck。
+
+#### 修复
+- 补上两处真实的未检查错误：`triggerGlobalScan` 丢弃了 `scanner.ScanLibrary` 的返回错误（全局扫描失败此前静默无日志）→ 改为记录 error；`jsonResponse` / OPDS `xmlResponse` / `openSearchResponse` 的响应编码错误显式忽略并注明（响应头已发出，编码/写出失败多为客户端断开、不可挽救）；`scrape_controller` 两处 `fmt.Sscanf` 带默认值的最佳努力解析显式忽略返回值。
+
+#### CI
+- **启用 errcheck 门禁**：`.golangci.yml` 不再 disable errcheck。以 `exclude-functions` 排除惯用的清理/teardown 函数（`os.Remove(All)`、`(*sql.Tx).Rollback`、`(net/http.ResponseWriter).Write`、`(io.Closer).Close`），并以 source 规则排除具体类型上的 `.Close()`（errcheck 按静态类型匹配、接口排除项覆盖不到 `*os.File`/`*sql.Rows`/`*sql.Stmt`/rardecode/fsnotify 等）。如此门禁只捕捉未来在业务操作上真正漏检的错误，而不 churn 约 48 处有意忽略的清理点。
+
+#### 验证
+- `golangci-lint run`（含 errcheck）0 issues；`go build`、`vet`、`gofmt`、`govulncheck`（0）全绿；全量 `go test ./...` 全部 14 包 `ok`。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（重构：仪表盘统计缓存抽离出 Controller 上帝对象）
 
 > 承接 SSE broker 抽离，继续按架构分析建议解耦上帝对象——把仪表盘统计缓存抽成独立 `statsCache`。行为保持。

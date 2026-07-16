@@ -155,12 +155,12 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 	limitStr := r.URL.Query().Get("limit")
 	limit := 20
 	if limitStr != "" {
-		fmt.Sscanf(limitStr, "%d", &limit)
+		_, _ = fmt.Sscanf(limitStr, "%d", &limit)
 	}
 	offsetStr := r.URL.Query().Get("offset")
 	offset := 0
 	if offsetStr != "" {
-		fmt.Sscanf(offsetStr, "%d", &offset)
+		_, _ = fmt.Sscanf(offsetStr, "%d", &offset)
 	}
 
 	results, total, err := provider.SearchMetadata(requestContextWithLocale(r), searchTitle, limit, offset)
