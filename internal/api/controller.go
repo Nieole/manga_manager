@@ -41,23 +41,19 @@ import (
 )
 
 type Controller struct {
-	store                database.Store
-	imageCache           *lru.Cache[string, []byte]
-	pageCache            *lru.Cache[string, []parser.PageMetadata]
-	bookPageSourceCache  *lru.Cache[int64, cachedBookPageSource]
-	progressWriteCache   *lru.Cache[int64, cachedProgressWrite]
-	dashboardStatsMu     sync.RWMutex
-	volatileStatsCache   *cachedVolatileStats
-	dashboardStatsGen    int64
-	structuralStatsMu    sync.RWMutex
-	structuralStatsCache *cachedStructuralStats
-	structuralStatsGen   int64
-	scanner              *scanner.Scanner
-	config               *config.Manager
-	koreader             *koreader.Service
-	external             *external.Manager
-	configPath           string
-	watcher              *scanner.FileWatcher
+	store               database.Store
+	imageCache          *lru.Cache[string, []byte]
+	pageCache           *lru.Cache[string, []parser.PageMetadata]
+	bookPageSourceCache *lru.Cache[int64, cachedBookPageSource]
+	progressWriteCache  *lru.Cache[int64, cachedProgressWrite]
+	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
+	stats      *statsCache
+	scanner    *scanner.Scanner
+	config     *config.Manager
+	koreader   *koreader.Service
+	external   *external.Manager
+	configPath string
+	watcher    *scanner.FileWatcher
 
 	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
 	sse *sseBroker
@@ -234,19 +230,6 @@ type rebuildThumbAggregator struct {
 	currentLibPath     string
 }
 
-// cachedStructuralStats 缓存结构性统计（含 books 全表扫描），仅在扫描/库结构变化时失效。
-// 阅读进度变化不会失效它，从而避免高频阅读触发 70w 行全表 COUNT/SUM。
-type cachedStructuralStats struct {
-	stats     database.DashboardStructuralStats
-	expiresAt time.Time
-}
-
-// cachedVolatileStats 缓存随阅读进度高频变化的统计（走索引，代价低）。
-type cachedVolatileStats struct {
-	stats     database.DashboardVolatileStats
-	expiresAt time.Time
-}
-
 func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
 	cache, _ := lru.New[string, []byte](256)
 	pageCache, _ := lru.New[string, []parser.PageMetadata](128)
@@ -254,6 +237,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](2048)
 	c := &Controller{
 		store:                    store,
+		stats:                    newStatsCache(),
 		imageCache:               cache,
 		pageCache:                pageCache,
 		bookPageSourceCache:      bookPageSourceCache,

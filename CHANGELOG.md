@@ -4,6 +4,21 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（重构：仪表盘统计缓存抽离出 Controller 上帝对象）
+
+> 承接 SSE broker 抽离，继续按架构分析建议解耦上帝对象——把仪表盘统计缓存抽成独立 `statsCache`。行为保持。
+
+#### 重构
+- 把仪表盘统计缓存从 `Controller` 抽成独立组件 `statsCache`（`internal/api/stats_cache.go`）：维护「结构性统计」（系列/书/页总数，含 books 全表扫描，仅扫描/库结构变化失效）与「易变统计」（近 7 日活跃/已读，走索引、随进度高频变化）两套独立的 (RWMutex + 缓存 + generation) 三元组。`Controller` 从持有 6 个裸缓存字段（两组 mu/cache/gen）改为仅持一个 `*statsCache` 引用。
+- `statsCache` 设计为纯缓存层、**不持有 store**：加载时由调用方传入当前 `c.store`。这样 `Controller` 是运行时 store 的唯一持有者，消除「换掉 store 但缓存仍查旧 store」的双引用隐患（也让白盒测试替换 store 正确生效）。
+- 失效入口 `invalidateDashboardStatsCache` / `invalidateVolatileStatsCache` 保留为 Controller 上的薄委托（24 个调用点不变），异步预热 `warmDashboardStatsCacheAsync` 因依赖生命周期仍在 Controller。
+
+#### 验证
+- 既有 `TestDashboardStatsCacheAvoidsRepeatedStoreQueriesAndInvalidates`（重复读只查一次、扫描事件失效结构缓存、进度更新仅失效易变缓存）适配新签名后通过；stats 相关 `-race` 通过。
+- `go build`、`vet`、`gofmt`、`golangci-lint`（0 issues）、`govulncheck`（0）全绿；全量 `go test ./...` 全部 14 包 `ok`。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（重构：SSE 推送抽离出 Controller 上帝对象）
 
 > 承接架构分析（`Controller` 是横跨所有子系统的上帝对象）的建议，从边界最清晰的 SSE broker 起步做增量解耦，为后续 service 层铺路。行为完全保持。

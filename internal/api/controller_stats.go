@@ -4,7 +4,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"manga-manager/internal/database"
@@ -24,133 +23,32 @@ func cloneDashboardStats(stats *database.DashboardStats) *database.DashboardStat
 	return &cloned
 }
 
-// invalidateDashboardStatsCache 失效全部统计缓存（结构性 + 阅读类）。
-// 用于扫描/库结构变化等会改变 total_books/total_pages 的场景。
+// invalidateDashboardStatsCache / invalidateVolatileStatsCache 是 statsCache 的薄委托（保留方法名以维持
+// 各处失效调用点不变）。缓存的状态与加载逻辑已抽入 stats_cache.go。
 func (c *Controller) invalidateDashboardStatsCache(reason string) {
-	c.structuralStatsMu.Lock()
-	c.structuralStatsGen++
-	c.structuralStatsCache = nil
-	c.structuralStatsMu.Unlock()
-
-	c.dashboardStatsMu.Lock()
-	c.dashboardStatsGen++
-	c.volatileStatsCache = nil
-	c.dashboardStatsMu.Unlock()
-	if reason != "" {
-		slog.Debug("Invalidated dashboard stats cache", "reason", reason)
-	}
+	c.stats.invalidateAll(reason)
 }
 
-// invalidateVolatileStatsCache 仅失效阅读类统计缓存（read_books/active_days）。
-// 用于阅读进度更新等高频场景——这些操作不改变结构性统计，避免触发 books 全表扫描。
 func (c *Controller) invalidateVolatileStatsCache(reason string) {
-	c.dashboardStatsMu.Lock()
-	c.dashboardStatsGen++
-	c.volatileStatsCache = nil
-	c.dashboardStatsMu.Unlock()
-	if reason != "" {
-		slog.Debug("Invalidated volatile dashboard stats cache", "reason", reason)
-	}
+	c.stats.invalidateVolatile(reason)
 }
 
+// warmDashboardStatsCacheAsync 经受生命周期管理的后台 goroutine 预热仪表盘缓存（故留在 Controller）。
 func (c *Controller) warmDashboardStatsCacheAsync(reason string) {
 	c.runBackground(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := c.loadDashboardStats(ctx); err != nil {
+		if _, err := c.stats.loadDashboard(ctx, c.store); err != nil {
 			slog.Debug("Failed to warm dashboard stats cache", "reason", reason, "error", err)
 		}
 	})
-}
-
-func (c *Controller) loadStructuralStats(ctx context.Context) (*database.DashboardStructuralStats, error) {
-	now := time.Now()
-	c.structuralStatsMu.RLock()
-	if c.structuralStatsCache != nil && now.Before(c.structuralStatsCache.expiresAt) {
-		stats := c.structuralStatsCache.stats
-		c.structuralStatsMu.RUnlock()
-		return &stats, nil
-	}
-	generation := c.structuralStatsGen
-	c.structuralStatsMu.RUnlock()
-
-	stats, err := c.store.GetDashboardStructuralStats(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if stats == nil {
-		stats = &database.DashboardStructuralStats{}
-	}
-	c.structuralStatsMu.Lock()
-	if generation == c.structuralStatsGen {
-		c.structuralStatsCache = &cachedStructuralStats{
-			stats:     *stats,
-			expiresAt: now.Add(dashboardStatsCacheTTL),
-		}
-	}
-	c.structuralStatsMu.Unlock()
-	return stats, nil
-}
-
-func (c *Controller) loadVolatileStats(ctx context.Context) (*database.DashboardVolatileStats, error) {
-	now := time.Now()
-	c.dashboardStatsMu.RLock()
-	if c.volatileStatsCache != nil && now.Before(c.volatileStatsCache.expiresAt) {
-		stats := c.volatileStatsCache.stats
-		c.dashboardStatsMu.RUnlock()
-		return &stats, nil
-	}
-	generation := c.dashboardStatsGen
-	c.dashboardStatsMu.RUnlock()
-
-	stats, err := c.store.GetDashboardVolatileStats(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if stats == nil {
-		stats = &database.DashboardVolatileStats{}
-	}
-	c.dashboardStatsMu.Lock()
-	if generation == c.dashboardStatsGen {
-		c.volatileStatsCache = &cachedVolatileStats{
-			stats:     *stats,
-			expiresAt: now.Add(dashboardStatsCacheTTL),
-		}
-	}
-	c.dashboardStatsMu.Unlock()
-	return stats, nil
-}
-
-func (c *Controller) loadDashboardStats(ctx context.Context) (*database.DashboardStats, error) {
-	if c.store == nil {
-		return nil, errors.New("store is not configured")
-	}
-
-	structural, err := c.loadStructuralStats(ctx)
-	if err != nil {
-		return nil, err
-	}
-	volatile, err := c.loadVolatileStats(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	stats := &database.DashboardStats{
-		TotalSeries:  structural.TotalSeries,
-		TotalBooks:   structural.TotalBooks,
-		TotalPages:   structural.TotalPages,
-		LibrarySizes: structural.LibrarySizes,
-		ReadBooks:    volatile.ReadBooks,
-		ActiveDays7:  volatile.ActiveDays7,
-	}
-	return cloneDashboardStats(stats), nil
 }
 
 // getDashboardStats 返回统计看板数据。结构性统计（系列/书/页总数）与近 7 日活跃天数为全局缓存；
 // 已读书本数（read_books）按当前用户改写（每用户进度）。活动热力图本阶段仍为全局。
 func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	stats, err := c.loadDashboardStats(ctx)
+	stats, err := c.stats.loadDashboard(ctx, c.store)
 	if err != nil {
 		slog.Error("GetDashboardStats failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get dashboard stats")

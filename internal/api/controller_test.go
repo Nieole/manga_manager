@@ -75,6 +75,7 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 
 	controller := &Controller{
 		store:               store,
+		stats:               newStatsCache(),
 		imageCache:          imageCache,
 		pageCache:           pageCache,
 		bookPageSourceCache: bookPageSourceCache,
@@ -2565,6 +2566,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](8)
 	reloaded := &Controller{
 		store:               store,
+		stats:               newStatsCache(),
 		imageCache:          imageCache,
 		pageCache:           pageCache,
 		bookPageSourceCache: bookPageSourceCache,
