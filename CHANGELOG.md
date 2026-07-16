@@ -4,6 +4,20 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-16（性能：修复 RAR/CBR 整卷阅读 O(N²)）
+
+> 落实第 3 批曾因「本环境无法生成多页 RAR 夹具」而暂缓的 RAR O(N²) 项。现已提交由 `rar` 生成的二进制夹具（CI 用纯 Go 的 rardecode 只读、无需任何 rar 工具），实现会话缓存并配套回归测试与基准。
+
+#### 优化
+- **RAR/CBR 会话缓存**：`rar.go` 的 `RarArchive` 引入随读取前滚的持久游标 + 有界 FIFO 字节缓存。此前每次 `ReadPage` 都重开归档并从头 `rr.Next()` 顺序查找目标页（RAR 是前向只读流、无法 seek），整卷阅读退化为 **O(N²)**，且 `Close()` 是 no-op 使归档池对 RAR 毫无收益。现在途经页的字节被缓存、后续翻页命中即 O(1)；只有反向跳读到已被淘汰的页才重开——整卷顺序阅读降到 **O(N)**。游标 / 缓存由互斥保护，池内共享的同一归档可安全并发读取（同档读取串行化，与 RAR 顺序解码本就一致）。`Close()` 现在真正关闭游标并释放缓存。
+- 缓存按字节上限（默认 64 MiB/档）FIFO 淘汰，覆盖顺序阅读的滑动窗口；单页超限时兜底最多超出一页。
+
+#### 验证
+- 新增 `internal/parser/testdata/{vol,bench}.cbr` 二进制 RAR 夹具（`rar -m0` 一次性生成；CI 只读、无需 rar 工具）。新增测试：过滤 / 自然排序、精确读页 / 元数据、**顺序 / 反向 / 随机 / 重复读一致性**、**并发读安全**（`-race`）、**淘汰后正确性**（收紧缓存强制重开路径）、40 页顺序读；基准 `BenchmarkRarSequentialReadAllPages`。
+- parser / scanner / api `-race` 通过；`go build`、`vet`、`gofmt`、`golangci-lint`（0）全绿；全量 `go test ./...` 全部 14 包 `ok`。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（重构：AI 推荐缓存抽离出 Controller 上帝对象）
 
 > 承接 SSE broker / statsCache / franchiseRebuilder 抽离，继续解耦上帝对象。行为保持。
