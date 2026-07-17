@@ -61,7 +61,8 @@ jobs:
 
       - name: Lint Go (golangci-lint)
         if: matrix.os == 'ubuntu-latest'
-        uses: golangci/golangci-lint-action@v6
+        # golangci-lint v2 requires golangci-lint-action v7 (v6 only supports v1).
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
 
