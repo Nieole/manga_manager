@@ -4,6 +4,19 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-17（CI / 构建修复 · v1.3.2）
+
+> 修复 v1.3.1 引入的构建流水线问题，让 lint 门禁与发布二进制都用打了补丁的工具链——已发布产物随之干净。功能与 v1.3.1 一致。
+
+#### CI / 构建
+- **golangci-lint-action 升到 `@v7`**：`@v6` 只支持 golangci-lint v1，此前用它跑 v2.12.2 会让 ubuntu 的 Lint 步骤失败（`golangci-lint v2 is not supported by golangci-lint-action v6`）。
+- **CI 与 release 的 Go 工具链 `1.25.0` → `1.25.x`（当前 1.25.12）**：新增的 govulncheck 门禁揭示 Go 1.25.0 标准库有 **10 个 CVE**（`crypto/tls`、`crypto/x509`、`net/textproto`、`net`、`net/http`、`os`、`net/url`），经本应用的 HTTP/TLS 使用可达，且连带影响**发布的二进制**。升级后全部清除，并自动跟进未来 1.25 线的安全补丁。`go.mod` 语言版本仍为 `1.25.0`。
+
+#### 验证
+- CI 三平台矩阵（ubuntu / windows / macOS）全绿；`govulncheck` 0 漏洞。
+
+---
+
 ### 📌 增量记录 — 2026-07-16（性能：修复 RAR/CBR 整卷阅读 O(N²)）
 
 > 落实第 3 批曾因「本环境无法生成多页 RAR 夹具」而暂缓的 RAR O(N²) 项。现已提交由 `rar` 生成的二进制夹具（CI 用纯 Go 的 rardecode 只读、无需任何 rar 工具），实现会话缓存并配套回归测试与基准。
