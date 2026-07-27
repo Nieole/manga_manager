@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -127,7 +128,7 @@ func (m *MangaDexProvider) SearchMetadata(ctx context.Context, title string, lim
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("mangadex: request failed: %w", err)
+			return nil, 0, fmt.Errorf("mangadex: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -160,7 +161,7 @@ func (m *MangaDexProvider) SearchMetadata(ctx context.Context, title string, lim
 		}
 
 		slog.Error("MangaDex API error", "status", status, "body", string(respBody), "url", apiURL)
-		return nil, 0, fmt.Errorf("mangadex: API returned status %d: %s", status, string(respBody))
+		return nil, 0, fmt.Errorf("mangadex: API returned status %d: %s", status, truncateUpstreamBody(respBody))
 	}
 
 	if len(result.Data) == 0 {
@@ -277,8 +278,20 @@ func firstLocalizedTitle(m map[string]string, preferred ...string) string {
 			return v
 		}
 	}
-	for _, v := range m {
-		if s := strings.TrimSpace(v); s != "" {
+	// 首选语言都没命中时的兜底必须是确定性的：Go 的 map 迭代顺序随机，直接 range 会让
+	// 同一条目每次搜索返回不同的标题/简介，用户看到的结果凭空变来变去。按 key 排序后取首个。
+	return firstValueBySortedKey(m)
+}
+
+// firstValueBySortedKey 按 key 字典序返回首个非空值，保证同一份 map 每次得到同一结果。
+func firstValueBySortedKey(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if s := strings.TrimSpace(m[k]); s != "" {
 			return s
 		}
 	}
@@ -299,11 +312,10 @@ func altTitleByLang(altTitles []map[string]string, langs ...string) string {
 
 // firstAltTitle 返回别名列表中首个非空标题，用作主标题的兜底。
 func firstAltTitle(altTitles []map[string]string) string {
+	// 同样按 key 排序取值：别名 map 的迭代顺序随机会让兜底标题在多次搜索间跳变。
 	for _, alt := range altTitles {
-		for _, v := range alt {
-			if s := strings.TrimSpace(v); s != "" {
-				return s
-			}
+		if s := firstValueBySortedKey(alt); s != "" {
+			return s
 		}
 	}
 	return ""

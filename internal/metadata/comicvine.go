@@ -22,6 +22,10 @@ import (
 const (
 	comicvineMaxRetries = 3
 	comicvineBaseURL    = "https://comicvine.gamespot.com/api/search/"
+	// comicvineRetryMaxDelay 是单次退避的上限。缺了它，上游一个 Retry-After: 3600
+	// 就能让整个批量刮削任务在这里干等一小时——bangumi 侧本来有这层钳制，
+	// 这里在抄那段重试循环时漏掉了。
+	comicvineRetryMaxDelay = 30 * time.Second
 )
 
 // comicvineTagRegexp 用于剥离 description 字段中的 HTML 标签。
@@ -65,6 +69,17 @@ type comicvinePublisher struct {
 type ComicVineProvider struct {
 	apiKey     string
 	httpClient *http.Client
+	// baseURL 允许测试把请求指向本地 httptest 服务；为空时用官方端点。
+	// 这是让「密钥不外泄」「Key 失效要报错」这类性质可被端到端验证的最小接缝。
+	baseURL string
+}
+
+// endpoint 返回实际请求地址。
+func (c *ComicVineProvider) endpoint() string {
+	if c.baseURL != "" {
+		return c.baseURL
+	}
+	return comicvineBaseURL
 }
 
 func NewComicVineProvider(apiKey string) *ComicVineProvider {
@@ -111,7 +126,7 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 	query.Set("offset", fmt.Sprintf("%d", offset))
 	query.Set("field_list", "id,name,deck,description,image,count_of_issues,start_year,site_detail_url,publisher")
 
-	apiURL := comicvineBaseURL + "?" + query.Encode()
+	apiURL := c.endpoint() + "?" + query.Encode()
 
 	slog.Info("Comic Vine search request", "query", title, "limit", limit, "offset", offset)
 
@@ -131,7 +146,7 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("comicvine: request failed: %w", err)
+			return nil, 0, fmt.Errorf("comicvine: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -153,6 +168,9 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			if wait <= 0 {
 				wait = backoffDelay(attempt)
 			}
+			if wait > comicvineRetryMaxDelay {
+				wait = comicvineRetryMaxDelay
+			}
 			slog.Warn("Comic Vine API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String())
 			if werr := sleepWithContext(ctx, wait); werr != nil {
 				return nil, 0, werr
@@ -160,8 +178,15 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			continue
 		}
 
-		slog.Error("Comic Vine API error", "status", status, "body", string(respBody))
-		return nil, 0, fmt.Errorf("comicvine: API returned status %d: %s", status, string(respBody))
+		slog.Error("Comic Vine API error", "status", status, "body", truncateUpstreamBody(respBody))
+		return nil, 0, fmt.Errorf("comicvine: API returned status %d: %s", status, truncateUpstreamBody(respBody))
+	}
+
+	// Comic Vine 对「Key 失效 / 配额耗尽 / 参数非法」一律回 HTTP 200，把真正的失败写在
+	// 响应体的 error 字段里（成功时为 "OK"）。此前这个字段声明了却从不读取，于是这些
+	// 故障全被当成「未找到匹配条目」——用户看到的是刮不到结果，而不是「该换 Key 了」。
+	if e := strings.TrimSpace(result.Error); e != "" && !strings.EqualFold(e, "OK") {
+		return nil, 0, fmt.Errorf("comicvine: API error: %s", e)
 	}
 
 	if len(result.Results) == 0 {

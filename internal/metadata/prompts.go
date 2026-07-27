@@ -198,10 +198,9 @@ func buildCandidatesText(ctx context.Context, candidates []CandidateSeries) stri
 				title = fmt.Sprintf("未知标题 (ID: %d)", c.ID)
 			}
 		}
-		summary := c.Summary
-		if len(summary) > 100 {
-			summary = summary[:100] + "..." // 截断防止 token 爆炸
-		}
+		// 按 rune 截断而非按字节：中文简介一个字占 3 字节，切在字符中间会产出非法 UTF-8
+		// （模型侧看到的是乱码），而且 100 字节实际只保留约 33 个汉字，上下文严重不足。
+		summary := truncateRunes(c.Summary, 100)
 		if locale == "en-US" {
 			builder.WriteString(fmt.Sprintf("- ID: %d, Title: %s, Summary: %s\n", c.ID, title, summary))
 		} else {
@@ -209,4 +208,17 @@ func buildCandidatesText(ctx context.Context, candidates []CandidateSeries) stri
 		}
 	}
 	return builder.String()
+}
+
+// truncateRunes 按字符数截断字符串，超长时补省略号。
+// 与按字节截断的区别在多字节语言上很关键：不会切出非法 UTF-8，且"长度"符合直觉。
+func truncateRunes(value string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max]) + "..."
 }

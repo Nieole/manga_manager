@@ -148,7 +148,7 @@ func (m *MyAnimeListProvider) SearchMetadata(ctx context.Context, title string, 
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("myanimelist: request failed: %w", err)
+			return nil, 0, fmt.Errorf("myanimelist: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -180,8 +180,8 @@ func (m *MyAnimeListProvider) SearchMetadata(ctx context.Context, title string, 
 			continue
 		}
 
-		slog.Error("MyAnimeList API error", "status", status, "body", string(respBody))
-		return nil, 0, fmt.Errorf("myanimelist: API returned status %d: %s", status, string(respBody))
+		slog.Error("MyAnimeList API error", "status", status, "body", truncateUpstreamBody(respBody))
+		return nil, 0, fmt.Errorf("myanimelist: API returned status %d: %s", status, truncateUpstreamBody(respBody))
 	}
 
 	if len(result.Data) == 0 {

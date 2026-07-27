@@ -59,12 +59,29 @@ var statusAliases = map[string]string{
 }
 
 func NormalizeStatusCode(value string) string {
+	code, _ := NormalizeStatusCodeOptional(value)
+	if code == "" {
+		return "unknown"
+	}
+	return code
+}
+
+// NormalizeStatusCodeOptional 与 NormalizeStatusCode 同义，但把「数据源根本没给状态」
+// 与「给了但我们不认识」都如实报成 ok=false，而不是一律折成 "unknown"。
+//
+// 这个区分是必要的：入队待审字段时，把空值折成 "unknown" 会让不提供状态的数据源
+// （Comic Vine 恒不返回、AniList/MAL 部分条目、LLM 未识别）每次刮削都生成一条
+// 「status → unknown」的提案，去覆盖系列上已有的正确状态；用户还得手动逐条驳回。
+func NormalizeStatusCodeOptional(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", false
+	}
 	if normalized, ok := statusAliases[strings.ToLower(trimmed)]; ok {
-		return normalized
+		return normalized, true
 	}
 	if normalized, ok := statusAliases[trimmed]; ok {
-		return normalized
+		return normalized, true
 	}
-	return "unknown"
+	return "", false
 }

@@ -205,7 +205,7 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("bangumi: request failed: %w", err)
+			return nil, 0, fmt.Errorf("bangumi: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -238,7 +238,7 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 		}
 
 		slog.Error("Bangumi API error", "status", status, "body", string(respBody), "url", apiUrl)
-		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, string(respBody))
+		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, truncateUpstreamBody(respBody))
 	}
 
 	if len(result.Data) == 0 {

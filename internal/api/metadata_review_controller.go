@@ -363,7 +363,9 @@ func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, autho
 			Name:       "status",
 			Label:      metadataFieldLabel("status"),
 			Current:    seriesText(series.Status),
-			Proposed:   metadata.NormalizeStatusCode(result.Status),
+			// 用 Optional 版：数据源没给状态时提案留空，由下游的「空提案不入队」逻辑丢弃。
+			// 折成 "unknown" 会让不提供状态的数据源每次刮削都提议把已有的正确状态改成 unknown。
+			Proposed:   metadataOptionalStatus(result.Status),
 			Confidence: confidence,
 			Locked:     locked["status"],
 		},
@@ -418,6 +420,16 @@ func seriesNumber(value sql.NullFloat64) string {
 		return ""
 	}
 	return strconv.FormatFloat(value.Float64, 'f', 1, 64)
+}
+
+// metadataOptionalStatus 返回可入队的状态提案；数据源未提供或无法识别时返回空串，
+// 由「空提案不入队」的既有逻辑自然丢弃。
+func metadataOptionalStatus(value string) string {
+	code, ok := metadata.NormalizeStatusCodeOptional(value)
+	if !ok {
+		return ""
+	}
+	return code
 }
 
 func metadataNumber(value float64) string {

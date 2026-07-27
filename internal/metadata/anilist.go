@@ -190,7 +190,7 @@ func (a *AniListProvider) SearchMetadata(ctx context.Context, title string, limi
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("anilist: request failed: %w", err)
+			return nil, 0, fmt.Errorf("anilist: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -223,7 +223,7 @@ func (a *AniListProvider) SearchMetadata(ctx context.Context, title string, limi
 		}
 
 		slog.Error("AniList API error", "status", status, "body", string(respBody), "url", a.Endpoint)
-		return nil, 0, fmt.Errorf("anilist: API returned status %d: %s", status, string(respBody))
+		return nil, 0, fmt.Errorf("anilist: API returned status %d: %s", status, truncateUpstreamBody(respBody))
 	}
 
 	if len(result.Errors) > 0 {

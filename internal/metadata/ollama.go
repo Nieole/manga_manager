@@ -84,13 +84,13 @@ func (o *OllamaProvider) sendRequest(ctx context.Context, prompt string, require
 
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ollama: request failed (is Ollama running at %s?): %w", o.Endpoint, err)
+		return "", fmt.Errorf("ollama: request failed (is Ollama running at %s?): %w", o.Endpoint, sanitizeTransportError(err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("ollama: API returned status %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("ollama: API returned status %d: %s", resp.StatusCode, truncateUpstreamBody(respBody))
 	}
 
 	var ollamaResp ollamaResponse
