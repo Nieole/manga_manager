@@ -98,7 +98,7 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 				return err
 			}
 			for _, seriesID := range comp {
-				if err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
+				if _, err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
 					CollectionID: created.ID,
 					SeriesID:     seriesID,
 				}); err != nil {

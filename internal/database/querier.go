@@ -11,7 +11,7 @@ import (
 
 type Querier interface {
 	AddReadingListItem(ctx context.Context, arg AddReadingListItemParams) (ReadingListItem, error)
-	AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) error
+	AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) (int64, error)
 	ClearAllBookCoverPaths(ctx context.Context) error
 	ClearAllSeriesStatsCoverPaths(ctx context.Context) error
 	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
@@ -54,13 +54,13 @@ type Querier interface {
 	CreateSimpleCollection(ctx context.Context, arg CreateSimpleCollectionParams) (int64, error)
 	DeleteBook(ctx context.Context, id int64) error
 	DeleteBookByPath(ctx context.Context, path string) error
-	DeleteCollection(ctx context.Context, id int64) error
+	DeleteCollection(ctx context.Context, id int64) (int64, error)
 	DeleteFranchiseCollections(ctx context.Context) error
 	DeleteLibrary(ctx context.Context, id int64) error
 	DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error)
-	DeleteReadingList(ctx context.Context, id int64) error
+	DeleteReadingList(ctx context.Context, id int64) (int64, error)
 	DeleteSeries(ctx context.Context, id int64) error
-	DeleteSeriesRelation(ctx context.Context, id int64) error
+	DeleteSeriesRelation(ctx context.Context, id int64) (int64, error)
 	DeleteSmartFilter(ctx context.Context, id int64) (int64, error)
 	FindExistingSeriesRelation(ctx context.Context, arg FindExistingSeriesRelationParams) (int64, error)
 	GetAIGroupingReview(ctx context.Context, id int64) (AiGroupingReview, error)
@@ -157,7 +157,7 @@ type Querier interface {
 	MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error)
 	RefreshSeriesStats(ctx context.Context, id int64) error
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
-	RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) error
+	RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) (int64, error)
 	SeriesExistsByID(ctx context.Context, id int64) (int64, error)
 	SetBookCoverIfMissing(ctx context.Context, arg SetBookCoverIfMissingParams) (int64, error)
 	TouchCollection(ctx context.Context, id int64) error

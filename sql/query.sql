@@ -854,7 +854,7 @@ VALUES (
 )
 RETURNING *;
 
--- name: AddSeriesToCollection :exec
+-- name: AddSeriesToCollection :execrows
 INSERT OR IGNORE INTO collection_series (collection_id, series_id)
 VALUES (?, ?);
 
@@ -891,7 +891,7 @@ SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 
--- name: DeleteReadingList :exec
+-- name: DeleteReadingList :execrows
 DELETE FROM reading_lists WHERE id = ?;
 
 -- name: ListReadingListItems :many
@@ -1040,7 +1040,7 @@ ORDER BY c.sort_order, c.name;
 INSERT INTO collections (name, description) VALUES (?, ?)
 RETURNING id;
 
--- name: DeleteCollection :exec
+-- name: DeleteCollection :execrows
 DELETE FROM collections WHERE id = ?;
 
 -- name: UpdateCollectionDetails :exec
@@ -1062,7 +1062,7 @@ JOIN series s ON s.id = cs.series_id
 WHERE cs.collection_id = ?
 ORDER BY cs.sort_order, s.name;
 
--- name: RemoveSeriesFromCollection :exec
+-- name: RemoveSeriesFromCollection :execrows
 DELETE FROM collection_series WHERE collection_id = ? AND series_id = ?;
 
 -- name: CollectionNameExists :one
@@ -1222,7 +1222,7 @@ UPDATE series_relations
 SET relation_type = ?
 WHERE id = ?;
 
--- name: DeleteSeriesRelation :exec
+-- name: DeleteSeriesRelation :execrows
 DELETE FROM series_relations WHERE id = ?;
 
 -- name: ListSmartFiltersByLibrary :many

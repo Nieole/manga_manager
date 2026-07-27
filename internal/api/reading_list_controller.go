@@ -100,8 +100,13 @@ func (c *Controller) deleteReadingList(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
 		return
 	}
-	if err := c.store.DeleteReadingList(r.Context(), listID); err != nil {
+	affected, err := c.store.DeleteReadingList(r.Context(), listID)
+	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete reading list")
+		return
+	}
+	if affected == 0 {
+		jsonError(w, http.StatusNotFound, "Reading list not found")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -224,6 +229,20 @@ func (c *Controller) reorderReadingListItems(w http.ResponseWriter, r *http.Requ
 	var req ReorderReadingListItemsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.ItemIDs) == 0 {
 		jsonError(w, http.StatusBadRequest, "item_ids is required")
+		return
+	}
+	if len(req.ItemIDs) > maxCollectionBatchSize {
+		jsonError(w, http.StatusBadRequest, "Too many items in one request")
+		return
+	}
+	// 先确认清单存在：不校验时对着一个不存在的 listId 重排会静默返回 200，
+	// 前端以为排序已保存，刷新后发现毫无变化。
+	if _, err := c.store.GetReadingList(r.Context(), listID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Reading list not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to load reading list")
 		return
 	}
 	if err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {

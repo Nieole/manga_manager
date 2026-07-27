@@ -47,7 +47,7 @@ func (q *Queries) AddReadingListItem(ctx context.Context, arg AddReadingListItem
 	return i, err
 }
 
-const addSeriesToCollection = `-- name: AddSeriesToCollection :exec
+const addSeriesToCollection = `-- name: AddSeriesToCollection :execrows
 INSERT OR IGNORE INTO collection_series (collection_id, series_id)
 VALUES (?, ?)
 `
@@ -57,9 +57,12 @@ type AddSeriesToCollectionParams struct {
 	SeriesID     int64 `json:"series_id"`
 }
 
-func (q *Queries) AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) error {
-	_, err := q.db.ExecContext(ctx, addSeriesToCollection, arg.CollectionID, arg.SeriesID)
-	return err
+func (q *Queries) AddSeriesToCollection(ctx context.Context, arg AddSeriesToCollectionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, addSeriesToCollection, arg.CollectionID, arg.SeriesID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const clearAllBookCoverPaths = `-- name: ClearAllBookCoverPaths :exec
@@ -855,13 +858,16 @@ func (q *Queries) DeleteBookByPath(ctx context.Context, path string) error {
 	return err
 }
 
-const deleteCollection = `-- name: DeleteCollection :exec
+const deleteCollection = `-- name: DeleteCollection :execrows
 DELETE FROM collections WHERE id = ?
 `
 
-func (q *Queries) DeleteCollection(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteCollection, id)
-	return err
+func (q *Queries) DeleteCollection(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteCollection, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteFranchiseCollections = `-- name: DeleteFranchiseCollections :exec
@@ -901,13 +907,16 @@ func (q *Queries) DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBo
 	return result.RowsAffected()
 }
 
-const deleteReadingList = `-- name: DeleteReadingList :exec
+const deleteReadingList = `-- name: DeleteReadingList :execrows
 DELETE FROM reading_lists WHERE id = ?
 `
 
-func (q *Queries) DeleteReadingList(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteReadingList, id)
-	return err
+func (q *Queries) DeleteReadingList(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteReadingList, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteSeries = `-- name: DeleteSeries :exec
@@ -919,13 +928,16 @@ func (q *Queries) DeleteSeries(ctx context.Context, id int64) error {
 	return err
 }
 
-const deleteSeriesRelation = `-- name: DeleteSeriesRelation :exec
+const deleteSeriesRelation = `-- name: DeleteSeriesRelation :execrows
 DELETE FROM series_relations WHERE id = ?
 `
 
-func (q *Queries) DeleteSeriesRelation(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteSeriesRelation, id)
-	return err
+func (q *Queries) DeleteSeriesRelation(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSeriesRelation, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteSmartFilter = `-- name: DeleteSmartFilter :execrows
@@ -5333,7 +5345,7 @@ func (q *Queries) RemoveReadingListItem(ctx context.Context, arg RemoveReadingLi
 	return err
 }
 
-const removeSeriesFromCollection = `-- name: RemoveSeriesFromCollection :exec
+const removeSeriesFromCollection = `-- name: RemoveSeriesFromCollection :execrows
 DELETE FROM collection_series WHERE collection_id = ? AND series_id = ?
 `
 
@@ -5342,9 +5354,12 @@ type RemoveSeriesFromCollectionParams struct {
 	SeriesID     int64 `json:"series_id"`
 }
 
-func (q *Queries) RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) error {
-	_, err := q.db.ExecContext(ctx, removeSeriesFromCollection, arg.CollectionID, arg.SeriesID)
-	return err
+func (q *Queries) RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, removeSeriesFromCollection, arg.CollectionID, arg.SeriesID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const seriesExistsByID = `-- name: SeriesExistsByID :one

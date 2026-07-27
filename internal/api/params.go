@@ -29,6 +29,10 @@ const (
 	// 上限比站内列表更严：既是保护自己的配额，也是不去踩对方的限流。
 	maxScrapeSearchLimit  = 50
 	maxScrapeSearchOffset = 1000
+
+	// maxCollectionBatchSize 是「一次批量操作最多涉及多少个条目」的上限，
+	// 用于合集批量添加、阅读清单重排这类接受 ID 数组的端点。
+	maxCollectionBatchSize = 1000
 )
 
 // clampLimit 解析 limit 型参数并钳到 [1, max]。
@@ -136,4 +140,16 @@ func RequestBodyLimit(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isUniqueConstraintError 判断错误是否为 SQLite 的唯一约束冲突。
+//
+// 这类冲突是「用户输入撞车」而非服务端故障：改名撞到同名合集/智能筛选时回 500，
+// 前端只能显示「服务器错误」，用户不知道改个名字就能过。用文本匹配是因为 modernc/sqlite
+// 的错误类型不导出稳定的错误码常量，而这条消息在 SQLite 各版本间是稳定的。
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToUpper(err.Error()), "UNIQUE CONSTRAINT FAILED")
 }

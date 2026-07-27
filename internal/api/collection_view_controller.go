@@ -376,6 +376,16 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// 重名校验：preview 端点会算出 name_conflict 并提示用户，但真正写入时此前不拦，
+	// 于是用户明知冲突仍能确认，最终得到两个同名合集、在列表里根本分不清哪个是哪个。
+	if conflict, err := c.collectionNameExists(r.Context(), name); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to check collection name")
+		return
+	} else if conflict {
+		jsonError(w, http.StatusConflict, "A collection with this name already exists")
+		return
+	}
+
 	var createdID int64
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
 		created, err := q.CreateCollection(r.Context(), database.CreateCollectionParams{
@@ -388,7 +398,7 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 		for _, row := range rows {
-			if err := q.AddSeriesToCollection(r.Context(), database.AddSeriesToCollectionParams{
+			if _, err := q.AddSeriesToCollection(r.Context(), database.AddSeriesToCollectionParams{
 				CollectionID: created.ID,
 				SeriesID:     row.ID,
 			}); err != nil {

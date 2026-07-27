@@ -279,8 +279,12 @@ func TestCollectionValidationHandlers(t *testing.T) {
 		if err := json.NewDecoder(rec.Body).Decode(&added); err != nil {
 			t.Fatalf("decode add series response failed: %v", err)
 		}
-		if int(added["added"].(float64)) != 2 {
-			t.Fatalf("expected added count to reflect attempted inserts, got %+v", added)
+		// added 报告的是「真正入库的条数」，不是「尝试了几次」。
+		// 底层是 INSERT OR IGNORE：同一系列在一次请求里出现两次，第二次是空操作。
+		// 旧断言要求 2，等于把「重复添加也算成功」这个虚高计数固化了下来——
+		// 用户会看到「已添加 2 个系列」而合集里只多了 1 个。
+		if int(added["added"].(float64)) != 1 {
+			t.Fatalf("added count must reflect rows actually inserted, got %+v", added)
 		}
 
 		rec = httptest.NewRecorder()
@@ -338,4 +342,84 @@ func withRouteParam(req *http.Request, key, value string) *http.Request {
 	}
 	routeCtx.URLParams.Add(key, value)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+}
+
+// TestDeleteEndpointsReport404ForMissingResources 锁住删除类端点的错误语义。
+// 对不存在的资源返回 200 会让前端把「这东西早就没了」当成删除成功，
+// 列表刷新后它却还在（因为压根不是同一个 id），用户只会觉得功能时灵时不灵。
+func TestDeleteEndpointsReport404ForMissingResources(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	cases := []struct {
+		name    string
+		handler func(http.ResponseWriter, *http.Request)
+		req     *http.Request
+	}{
+		{
+			"delete collection",
+			controller.deleteCollection,
+			requestWithRouteParam(http.MethodDelete, "/x", nil, "collectionId", "999999"),
+		},
+		{
+			"delete reading list",
+			controller.deleteReadingList,
+			requestWithRouteParam(http.MethodDelete, "/x", nil, "listId", "999999"),
+		},
+		{
+			"delete series relation",
+			controller.deleteSeriesRelation,
+			requestWithRouteParam(http.MethodDelete, "/x", nil, "relationId", "999999"),
+		},
+		{
+			"remove series from collection",
+			controller.removeSeriesFromCollection,
+			requestWithRouteParams(http.MethodDelete, "/x", nil, map[string]string{
+				"collectionId": "999999",
+				"seriesId":     "888888",
+			}),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tc.handler(rec, tc.req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("%s on a missing resource should 404, got %d: %s", tc.name, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestUpdateCollectionRejectsEmptyNameAndDuplicates 锁住合集更新的输入校验。
+func TestUpdateCollectionRejectsEmptyNameAndDuplicates(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	ctx := context.Background()
+
+	first, err := store.CreateCollection(ctx, database.CreateCollectionParams{Name: "Alpha"})
+	if err != nil {
+		t.Fatalf("create collection failed: %v", err)
+	}
+	second, err := store.CreateCollection(ctx, database.CreateCollectionParams{Name: "Beta"})
+	if err != nil {
+		t.Fatalf("create second collection failed: %v", err)
+	}
+
+	// 只想改描述时前端很自然会发一个不含 name 的 PUT——不校验就会把名字清空。
+	rec := httptest.NewRecorder()
+	controller.updateCollection(rec, requestWithRouteParam(
+		http.MethodPut, "/x", []byte(`{"description":"only a description"}`),
+		"collectionId", strconv.FormatInt(second.ID, 10)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a payload without name should 400, got %d", rec.Code)
+	}
+
+	// 改名撞车是用户输入冲突，应回 409 让前端能提示「换个名字」，而不是笼统的 500。
+	rec = httptest.NewRecorder()
+	controller.updateCollection(rec, requestWithRouteParam(
+		http.MethodPut, "/x", []byte(`{"name":"Alpha"}`),
+		"collectionId", strconv.FormatInt(second.ID, 10)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("renaming onto an existing name should 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	_ = first
 }
