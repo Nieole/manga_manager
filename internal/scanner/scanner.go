@@ -9,6 +9,7 @@ import (
 	"crypto/sha1"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -391,12 +392,22 @@ type coverJob struct {
 	progress  *scanProgressReporter
 }
 
+// ErrScanAlreadyRunning 表示同一资料库/系列上已有扫描在跑，本次调用被跳过。
+//
+// 此前这两处冲突时返回 nil，调用方无从区分「扫完了」和「压根没扫」：
+//   - 任务面板会在零点几秒内谎报「扫描完成」；
+//   - 更糟的是重建缩略图任务已经 RemoveAll 了整个缩略图目录并清空了 cover_path，
+//     却把被跳过的库当作成功——而增量扫描只比对 mtime+size、不检查封面是否缺失，
+//     那批封面从此不会自愈，必须人工再跑一次 force 扫描。
+// 调用方应显式判定此错误：等待重试、或让任务以失败收尾并提示「该库正被其它扫描占用」。
+var ErrScanAlreadyRunning = errors.New("scanner: a scan is already running for this target")
+
 // ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
 // 业务上它需要同时保证增量扫描够快、强制修复能重建封面和索引、任务进度能实时反馈给前端。
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
 	if !s.beginLibraryScan(libraryID) {
 		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)
-		return nil
+		return ErrScanAlreadyRunning
 	}
 	defer s.endLibraryScan(libraryID)
 
@@ -523,7 +534,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) error {
 	if !s.beginSeriesScan(seriesID) {
 		slog.Info("Series scan skipped because another scan is already running", "series_id", seriesID)
-		return nil
+		return ErrScanAlreadyRunning
 	}
 	defer s.endSeriesScan(seriesID)
 

@@ -201,6 +201,11 @@ func main() {
 		IdleTimeout: 60 * time.Second,
 	}
 
+	// SSE 是长连接，Shutdown 的「排空在途请求」对它永远不会自然完成——不先切断的话，
+	// 只要有一个浏览器标签开着，每次停机都必然跑满 20 秒超时。RegisterOnShutdown 的
+	// 回调会在 Shutdown 一开始被同步调用，正好用于此。
+	srv.RegisterOnShutdown(apiController.ShutdownNotify)
+
 	// 优雅停机：捕获 SIGINT/SIGTERM，先停止接收新连接并排空在途请求，再收尾后台任务与资源。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

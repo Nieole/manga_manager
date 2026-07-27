@@ -823,3 +823,37 @@ func TestCleanupLibraryRemovesSeriesWhenFilesAreGone(t *testing.T) {
 		t.Fatalf("expected 2 surviving series, got %d", len(seriesList))
 	}
 }
+
+// TestScanLibraryReportsConflictInsteadOfSilentSuccess 锁住并发扫描守卫的错误语义。
+//
+// 旧实现冲突时返回 nil，调用方无从区分「扫完了」和「压根没扫」：任务面板会在零点几秒内
+// 谎报「扫描完成」；更糟的是重建缩略图任务已经 RemoveAll 了缩略图目录并清空 cover_path，
+// 却把被跳过的库当作成功——而增量扫描只比对 mtime+size、不检查封面缺失，那批封面从此
+// 不会自愈，必须人工再跑一次 force 扫描。
+func TestScanLibraryReportsConflictInsteadOfSilentSuccess(t *testing.T) {
+	s := NewScanner(nil, config.NewManager(&config.Config{}))
+
+	if !s.beginLibraryScan(7) {
+		t.Fatal("expected to acquire the library scan guard")
+	}
+	defer s.endLibraryScan(7)
+
+	err := s.ScanLibrary(context.Background(), 7, t.TempDir(), false)
+	if !errors.Is(err, ErrScanAlreadyRunning) {
+		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
+	}
+}
+
+func TestScanSeriesReportsConflictInsteadOfSilentSuccess(t *testing.T) {
+	s := NewScanner(nil, config.NewManager(&config.Config{}))
+
+	if !s.beginSeriesScan(42) {
+		t.Fatal("expected to acquire the series scan guard")
+	}
+	defer s.endSeriesScan(42)
+
+	err := s.ScanSeries(context.Background(), 42, false)
+	if !errors.Is(err, ErrScanAlreadyRunning) {
+		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
+	}
+}

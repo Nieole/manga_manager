@@ -17,22 +17,34 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// 触发扫描全库，作为通用的挂载工具
+// triggerGlobalScan 对所有资料库做一次强制全量扫描，返回前等待全部完成。
+//
+// 旧实现给每个库起一个裸 goroutine 就直接返回：这些 goroutine 不在 backgroundWG 里，
+// 优雅停机不会等它们，进程退出时 sql.DB 已关而扫描还在写库。改为受调用方 ctx 约束、
+// 同步等待——调用方本就跑在 runBackground 里，等待不会阻塞任何请求。
 func (c *Controller) triggerGlobalScan(ctx context.Context) {
 	libs, err := c.store.ListLibraries(ctx)
-	if err == nil {
-		for _, lib := range libs {
-			go func(lib database.Library) {
-				defer c.purgeReadingPathCaches()
-				if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true); err != nil {
-					slog.Error("Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
-				}
-			}(lib)
-		}
+	if err != nil {
+		slog.Error("Global scan aborted: failed to list libraries", "error", err)
+		return
 	}
+
+	var wg sync.WaitGroup
+	for _, lib := range libs {
+		wg.Add(1)
+		go func(lib database.Library) {
+			defer wg.Done()
+			defer c.purgeReadingPathCaches()
+			if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true); err != nil {
+				slog.Error("Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
+			}
+		}(lib)
+	}
+	wg.Wait()
 }
 
 // clearAllCoverPaths 把数据库中 books 与 series_stats 的 cover_path 字段清空，
@@ -74,23 +86,39 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 	return nil
 }
 
+// launchRebuildIndexTask 异步重建 FTS 索引并随后做一次全量扫描。
+//
+// 此前这三步全在 HTTP 请求 goroutine 里同步跑：FTS 是 DELETE + INSERT...SELECT 全表重灌，
+// 大库上会把请求挂到结束（反代通常先 504），期间任务显示 running、进度恒为 0 且不可取消；
+// 随后的 `go c.triggerGlobalScan(context.Background())` 又派生出一批完全脱离
+// backgroundWG 的扫描 goroutine，Close() 不会等它们，main 返回后 store.Close() 关掉
+// sql.DB 而扫描仍在写库，产生 "sql: database is closed" 与半截写入。
 func (c *Controller) launchRebuildIndexTask() error {
 	if !c.startTaskMsg("rebuild_index", "rebuild_index", "task.msg.rebuild_index.start", nil, 1) {
 		return errTaskAlreadyRunning
 	}
 	c.setTaskMetadata("rebuild_index", nil, "")
 
-	if err := c.store.RebuildSeriesSearchIndex(context.Background()); err != nil {
-		c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite series search index rebuild failed: %v", err), err.Error())
-		return err
-	}
-	if err := c.store.RebuildBookSearchIndex(context.Background()); err != nil {
-		c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite book search index rebuild failed: %v", err), err.Error())
-		return err
-	}
+	taskCtx, release := c.newTaskContext("rebuild_index")
+	c.runBackground(func() {
+		defer release()
 
-	go c.triggerGlobalScan(context.Background())
-	c.finishTaskMsg("rebuild_index", "task.msg.rebuild_index.complete", nil)
+		if err := c.store.RebuildSeriesSearchIndex(taskCtx); err != nil {
+			c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite series search index rebuild failed: %v", err), err.Error())
+			return
+		}
+		if err := c.store.RebuildBookSearchIndex(taskCtx); err != nil {
+			c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite book search index rebuild failed: %v", err), err.Error())
+			return
+		}
+		if err := taskCtx.Err(); err != nil {
+			c.failTaskWithError("rebuild_index", "Search index rebuild cancelled", err.Error())
+			return
+		}
+
+		c.triggerGlobalScan(taskCtx)
+		c.finishTaskMsg("rebuild_index", "task.msg.rebuild_index.complete", nil)
+	})
 	return nil
 }
 
@@ -191,7 +219,10 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 	taskCtx, cleanupCancel := c.newTaskContext("cleanup_thumbnails")
 	c.setTaskMetadata("cleanup_thumbnails", nil, "")
 
-	go c.runBackground(func() {
+	// 这里曾写成 `go c.runBackground(...)`：多套一层 goroutine 会让 runBackground 的
+	// closed 检查与 backgroundWG.Add 都发生在另一个调度点上，停机竞态下任务会被静默丢弃，
+	// 而 newTaskContext 已登记的 runtime 记录留在内存里泄漏。与其余 34 个调用点保持一致。
+	c.runBackground(func() {
 		defer cleanupCancel()
 
 		c.updateTaskDetailsMsg("cleanup_thumbnails", 0, -1, "task.msg.cleanup_thumbnails.scanning", nil, "cleanup", "", nil, nil)

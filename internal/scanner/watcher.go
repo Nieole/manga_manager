@@ -6,6 +6,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -195,7 +196,13 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 								publishEvent("hot_reload:")
 							}
 							go func(id int64, path string) {
-								if err := fw.scanner.ScanLibrary(context.Background(), id, path, false); err != nil {
+								err := fw.scanner.ScanLibrary(context.Background(), id, path, false)
+								switch {
+								case errors.Is(err, ErrScanAlreadyRunning):
+									// 文件变更去抖后触发的扫描与在跑的扫描撞车属正常情况：
+									// 正在跑的那次本就会看到这批新文件，无需重试也不必报错。
+									slog.Info("Hot reload scan skipped, another scan is in progress", "library_id", id)
+								case err != nil:
 									slog.Error("Hot reload scan failed", "library_id", id, "error", err)
 								}
 							}(libID, libPath)

@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -562,6 +563,12 @@ func (c *Controller) startDaemon() {
 					id, path := lib.ID, lib.Path
 					defer c.purgeReadingPathCaches()
 					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
+					// 「已有扫描在跑」不是故障：定时守护与手动扫描本就可能撞车，
+					// 下一个 tick 会再试，不必按错误刷屏。
+					if errors.Is(err, scanner.ErrScanAlreadyRunning) {
+						slog.Info("Auto-scan skipped, another scan is in progress", "library_id", id)
+						return
+					}
 					if err != nil {
 						slog.Error("Auto-scan failed", "library_id", id, "error", err)
 						c.invalidateDashboardStatsCache("auto_scan_failed")
@@ -1181,4 +1188,16 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, pages)
+}
+
+// ShutdownNotify 让 Controller 在 HTTP 停机开始时先切断 SSE 长连接。
+//
+// 供 main 注册到 http.Server.RegisterOnShutdown：Shutdown 会在开始时同步调用它，
+// 之后才去排空在途请求。没有这一步，任何开着页面的浏览器标签都会让 Shutdown
+// 一直等到 20 秒超时——SSE 是长连接，「在途请求排空」对它永远不会自然完成。
+func (c *Controller) ShutdownNotify() {
+	if c == nil {
+		return
+	}
+	c.sse.closeClients()
 }

@@ -16,6 +16,10 @@ type sseBroker struct {
 	newClients     chan chan string
 	defunctClients chan chan string
 	messages       chan string
+	// shutdown 在服务开始停机时关闭，让在途的 serveHTTP 立刻返回。
+	// 没有它，任何开着页面的浏览器标签都会让 srv.Shutdown 一直等到 20 秒超时——
+	// SSE 是长连接，Shutdown 的「排空在途请求」对它永远不会自然完成。
+	shutdown chan struct{}
 }
 
 func newSSEBroker() *sseBroker {
@@ -24,6 +28,21 @@ func newSSEBroker() *sseBroker {
 		newClients:     make(chan chan string),
 		defunctClients: make(chan chan string),
 		messages:       make(chan string, 64),
+		shutdown:       make(chan struct{}),
+	}
+}
+
+// closeClients 通知所有在途 SSE 连接立即结束。幂等，可安全重复调用。
+// 由 http.Server.RegisterOnShutdown 在停机开始时调用——必须早于 Shutdown 排空在途请求。
+func (b *sseBroker) closeClients() {
+	if b == nil {
+		return
+	}
+	select {
+	case <-b.shutdown:
+		// 已经关过
+	default:
+		close(b.shutdown)
 	}
 }
 
@@ -90,15 +109,28 @@ func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	// 注册客户端通道
+	// 注册客户端通道。newClients 是无缓冲的，若 broker 的 run 循环已经退出，
+	// 裸写会永久阻塞住这个请求 goroutine，因此必须同时监听停机信号。
 	messageChan := make(chan string, 64)
-	b.newClients <- messageChan
+	select {
+	case b.newClients <- messageChan:
+	case <-b.shutdown:
+		return
+	}
 
-	// 监听从客户端意外断开链接
+	// 监听从客户端意外断开链接。注销同样要能被停机打断：defunctClients 也是无缓冲的，
+	// broker 退出后这个 goroutine 会永久挂住（每个断开过的连接泄漏一个）。
 	notify := r.Context().Done()
 	go func() {
-		<-notify
-		b.defunctClients <- messageChan
+		select {
+		case <-notify:
+		case <-b.shutdown:
+			return
+		}
+		select {
+		case b.defunctClients <- messageChan:
+		case <-b.shutdown:
+		}
 	}()
 
 	// 心跳：每 25 秒发送一次 SSE 注释行，避免反向代理（nginx/cloudflare 等）
@@ -126,6 +158,9 @@ func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 		case <-notify:
+			return
+		case <-b.shutdown:
+			// 停机：立即结束长连接，让 srv.Shutdown 能真正排空而不是干等 20 秒超时。
 			return
 		}
 	}
