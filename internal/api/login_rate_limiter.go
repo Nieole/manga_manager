@@ -9,10 +9,8 @@
 package api
 
 import (
-	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -106,23 +104,6 @@ func (l *attemptLimiter) pruneLocked(now time.Time) {
 			delete(l.entries, k)
 		}
 	}
-}
-
-// clientIP 提取用于限流的客户端 IP：优先 X-Forwarded-For 首跳，其次 RemoteAddr 的主机部分。
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			xff = xff[:i]
-		}
-		if ip := strings.TrimSpace(xff); ip != "" {
-			return ip
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // respondTooManyAttempts 写 429 + Retry-After（秒，向上取整、至少 1）并返回本地化提示。

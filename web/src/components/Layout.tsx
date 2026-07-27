@@ -14,7 +14,6 @@ import type { Library, SearchHit } from './layout/types';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
-import { withApiToken } from '../utils/apiAuth';
 import { useToast } from './ToastProvider';
 import { ShortcutsPanel } from './ShortcutsPanel';
 import { SidebarTaskBubble } from './SidebarTaskBubble';
@@ -269,7 +268,7 @@ export default function Layout() {
         window.addEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
 
         // 挂载 Server-Sent Events 流监听器（启用鉴权时通过 token 查询参数携带令牌）
-        const eventSource = new EventSource(withApiToken('/api/events'));
+        const eventSource = new EventSource('/api/events');
 
         eventSource.onmessage = (event) => {
             const data = event.data as string;

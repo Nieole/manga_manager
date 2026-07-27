@@ -13,6 +13,13 @@ server:
     allowed_origins:
         - http://*
         - https://*
+    # 可信反向代理的 CIDR 列表。只有直连对端落在这些网段内时，才采信
+    # X-Forwarded-For / X-Real-IP 里的客户端 IP。留空 = 一律不信任转发头。
+    # 限流（登录暴破、OPDS/Mihon 的 bcrypt CPU-DoS 防护）以客户端 IP 为分桶键，
+    # 无条件采信转发头等于让攻击者换个头就换一个新桶。直连部署保持留空即可；
+    # 套了 Nginx/Caddy/Traefik 的部署填上代理所在网段，例如：
+    #   trusted_proxies: ["127.0.0.1/32", "::1/128", "172.17.0.0/16"]
+    trusted_proxies: []
 database:
     path: ./data/manga.db
 library:

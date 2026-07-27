@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InternalAxiosRequestConfig } from 'axios';
-import { attachAuth, getCsrfToken, setCsrfToken, withApiToken } from './apiAuth';
+import { attachAuth, getCsrfToken, setCsrfToken } from './apiAuth';
 
 // fakeConfig builds a minimal InternalAxiosRequestConfig whose headers.set is a spy,
 // so we can assert exactly when/whether the CSRF header is written.
@@ -99,14 +99,6 @@ describe('apiAuth', () => {
       const { config, set } = fakeConfig('delete');
       attachAuth(config);
       expect(set).toHaveBeenCalledWith('X-CSRF-Token', 'trimmed-tok');
-    });
-  });
-
-  describe('withApiToken', () => {
-    it('returns the URL unchanged (cookie-session no-op passthrough)', () => {
-      expect(withApiToken('/api/books/1/file')).toBe('/api/books/1/file');
-      expect(withApiToken('/api/x?y=1&z=2')).toBe('/api/x?y=1&z=2');
-      expect(withApiToken('')).toBe('');
     });
   });
 });

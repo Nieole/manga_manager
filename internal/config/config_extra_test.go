@@ -9,18 +9,16 @@ import (
 	"testing"
 )
 
-// TestMaskAndRestoreAllSecrets 覆盖全部四类敏感字段（LLM Key / Auth Token / ComicVine / MAL）的脱敏与回填。
+// TestMaskAndRestoreAllSecrets 覆盖全部敏感字段（LLM Key / ComicVine / MAL）的脱敏与回填。
 func TestMaskAndRestoreAllSecrets(t *testing.T) {
 	var cfg Config
 	cfg.LLM.APIKey = "llm-real"
-	cfg.Server.Auth.Token = "auth-real"
 	cfg.Scrapers.ComicVineAPIKey = "cv-real"
 	cfg.Scrapers.MALClientID = "mal-real"
 
 	masked := MaskSecrets(cfg)
 	for name, got := range map[string]string{
 		"llm":       masked.LLM.APIKey,
-		"auth":      masked.Server.Auth.Token,
 		"comicvine": masked.Scrapers.ComicVineAPIKey,
 		"mal":       masked.Scrapers.MALClientID,
 	} {

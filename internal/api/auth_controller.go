@@ -156,6 +156,20 @@ func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, passwor
 	return user.ID, true
 }
 
+// invalidateBasicAuthCacheForUser 清掉某用户在 Basic 鉴权缓存里的全部条目。
+//
+// 缓存键是 (用户名+口令) 的哈希，改密后旧口令对应的条目仍然有效，最长 5 分钟内
+// 旧密码在 OPDS/Mihon 上照样能登录——对「改密以踢掉泄露的凭据」这个动机来说是致命的。
+// 条目数很少（每个活跃客户端一条），Range 全表清理的开销可忽略。
+func (c *Controller) invalidateBasicAuthCacheForUser(userID int64) {
+	c.basicAuthCache.Range(func(key, value any) bool {
+		if e, ok := value.(basicAuthEntry); ok && e.userID == userID {
+			c.basicAuthCache.Delete(key)
+		}
+		return true
+	})
+}
+
 // requireBasicAuth 是阅读协议（OPDS/Mihon）的 HTTP Basic 鉴权中间件：校验站点用户名+密码，
 // 成功则把用户写入请求上下文（供 currentUserID 与每用户进度取用），失败返回 401 + WWW-Authenticate。
 // 站点尚无账户时（首启）直通，避免锁死初始化前的协议访问。
@@ -166,7 +180,7 @@ func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 			return
 		}
 		// 按 IP 的失败限流：锁定期内直接 429，避免攻击者用错误凭据反复触发昂贵的 bcrypt（CPU-DoS）。
-		ipKey := "basic:" + clientIP(r)
+		ipKey := "basic:" + c.clientIP(r)
 		if d, locked := c.basicAuthLimiter.retryAfter(ipKey); locked {
 			respondTooManyAttempts(w, r, d)
 			return
@@ -225,6 +239,15 @@ func isRegularWritablePath(p string) bool {
 	return false
 }
 
+// isPasswordChangeAllowedPath 是「必须先改密」状态下仍可访问的端点白名单。
+func isPasswordChangeAllowedPath(p string) bool {
+	switch p {
+	case "/api/auth/me", "/api/auth/logout", "/api/auth/change-password", "/api/auth/status":
+		return true
+	}
+	return false
+}
+
 // isCsrfExempt 免除个别端点的 CSRF 校验：阅读时长上报经 navigator.sendBeacon 发送，无法附带 X-CSRF-Token 头。
 // 该端点仅为本人某书累加阅读秒数（仍要求有效会话 Cookie），被伪造的风险与影响极低。
 func isCsrfExempt(p string) bool {
@@ -248,11 +271,26 @@ func (c *Controller) usersExist(ctx context.Context) bool {
 	return false
 }
 
+// isAdminOnlyPath 列出「连读取都必须是管理员」的路径。
+//
+// 除了 /api/system/ 与 /api/users 这两个前缀，还必须显式包含 /api/browse-dirs：
+// 它是 GET，落到 authorize 的「读方法一律放行」分支里，于是任意已登录的普通账号
+// （设计上只该浏览漫画与记录本人进度）都能从 ?path=/ 起逐级枚举宿主机的完整目录结构。
+func isAdminOnlyPath(p string) bool {
+	if strings.HasPrefix(p, "/api/system/") {
+		return true
+	}
+	if p == "/api/users" || strings.HasPrefix(p, "/api/users/") {
+		return true
+	}
+	return p == "/api/browse-dirs"
+}
+
 // authorize 依角色与路径判定权限：/system 与 /users 为管理专属（含只读）；读方法对已登录用户开放；
 // 改写方法仅管理员放行，普通用户限个人写操作（见 isRegularWritablePath）。
 func (c *Controller) authorize(user database.User, r *http.Request) bool {
 	p := r.URL.Path
-	if strings.HasPrefix(p, "/api/system/") || p == "/api/users" || strings.HasPrefix(p, "/api/users/") {
+	if isAdminOnlyPath(p) {
 		return user.IsAdmin()
 	}
 	if !isMutating(r.Method) {
@@ -305,6 +343,13 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 		}
 		if !c.authorize(user, r) {
 			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.admin_required"))
+			return
+		}
+		// must_change_password 此前只由前端 AuthGate 拦截，服务端从不校验：任何非浏览器
+		// 客户端（curl / 阅读协议以外的脚本）都能拿着管理员分配的初始密码无限期使用。
+		// 这里在服务端强制收敛到「只能看自己、登出、改密」几个端点。
+		if user.MustChangePassword && !isPasswordChangeAllowedPath(p) {
+			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.password_change_required"))
 			return
 		}
 		if now.Sub(sess.LastSeenAt) > sessionTouchAfter {
@@ -442,7 +487,7 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 // login 校验用户名口令，成功则建会话下发 cookie。带按 IP + 用户名的失败暴破限流。
 func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	ipKey := "ip:" + clientIP(r)
+	ipKey := "ip:" + c.clientIP(r)
 	if d, locked := c.loginLimiter.retryAfter(ipKey); locked {
 		respondTooManyAttempts(w, r, d)
 		return
@@ -530,6 +575,8 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "failed to update password")
 		return
 	}
+	// 旧口令必须立刻从 Basic 鉴权缓存里踢掉，否则它在 OPDS/Mihon 上最长还能再用 5 分钟。
+	c.invalidateBasicAuthCacheForUser(user.ID)
 	// 改密即失效全部旧会话（含其他设备），再为当前设备建立新会话。
 	_ = c.store.DeleteSessionsForUser(ctx, user.ID)
 	csrf, err := c.startSession(ctx, w, r, user.ID)
@@ -678,6 +725,8 @@ func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "failed to reset password")
 		return
 	}
+	// 管理员重置他人密码同理：被重置的账号的旧口令要立刻失效。
+	c.invalidateBasicAuthCacheForUser(id)
 	_ = c.store.DeleteSessionsForUser(ctx, id)
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -733,4 +782,35 @@ func decodeAuthJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	return true
+}
+
+// startSessionJanitor 周期性清理过期会话。
+//
+// store.DeleteExpiredSessions 早就实现了、也有 DB 层单测，但生产代码里一个调用点都没有：
+// sessions 表只增不减，一个长期运行的实例会无限积累已过期的行。
+// 随 Controller 生命周期退出（经 runBackground 登记，Close 会等待）。
+func (c *Controller) startSessionJanitor() {
+	const interval = time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	prune := func() {
+		if c.store == nil {
+			return
+		}
+		if err := c.store.DeleteExpiredSessions(context.Background(), time.Now()); err != nil {
+			slog.Warn("Failed to prune expired sessions", "error", err)
+		}
+	}
+	// 启动时先清一次，避免实例频繁重启时永远等不到第一个 tick。
+	prune()
+
+	for {
+		select {
+		case <-c.lifecycleDone():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }

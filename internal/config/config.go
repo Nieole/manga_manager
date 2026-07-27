@@ -47,13 +47,13 @@ type Config struct {
 		Host           string   `yaml:"host" json:"host"`
 		Port           int      `yaml:"port" json:"port"`
 		AllowedOrigins []string `yaml:"allowed_origins" json:"allowed_origins"`
-		// Auth 是可选的管理 API 令牌鉴权。默认关闭（Enabled=false），此时行为与历史版本
-		// 完全一致（无鉴权）；启用后，管理端点要求携带匹配 Token 的令牌，阅读协议
-		// （OPDS/Mihon/KOReader）仍走各自的鉴权模型。Token 为敏感字段，回显前端时会被脱敏。
-		Auth struct {
-			Enabled bool   `yaml:"enabled" json:"enabled"`
-			Token   string `yaml:"token" json:"token"`
-		} `yaml:"auth" json:"auth"`
+		// TrustedProxies 是可信反向代理的 CIDR 列表（如 ["127.0.0.1/32", "10.0.0.0/8"]）。
+		// 只有当直连对端落在这些网段内时，才采信 X-Forwarded-For / X-Real-IP 里的客户端 IP。
+		//
+		// 默认为空 = 一律不信任转发头。这一点很关键：限流（登录暴破、OPDS/Mihon 的 bcrypt
+		// CPU-DoS 防护）都以客户端 IP 为键，无条件采信 XFF 意味着攻击者每个请求换一个伪造
+		// IP 就能把限流完全绕过。直连部署本就不该有转发头；套了反代的部署显式配上网段即可。
+		TrustedProxies []string `yaml:"trusted_proxies" json:"trusted_proxies"`
 	} `yaml:"server" json:"server"`
 	Database struct {
 		Path string `yaml:"path" json:"path"`
@@ -137,14 +137,11 @@ const (
 // 明文密钥，又不会因前端回传占位符而把真实密钥覆盖掉。占位符本身不是任何合法密钥。
 const SecretMask = "__mm_secret_unchanged__"
 
-// MaskSecrets 返回 cfg 的副本，将敏感字段（LLM APIKey、Server.Auth.Token）替换为占位符。
+// MaskSecrets 返回 cfg 的副本，将敏感字段（LLM APIKey、刮削器凭据）替换为占位符。
 // 仅当字段非空时替换，空值保持为空，便于前端区分“已设置”与“未设置”。
 func MaskSecrets(cfg Config) Config {
 	if cfg.LLM.APIKey != "" {
 		cfg.LLM.APIKey = SecretMask
-	}
-	if cfg.Server.Auth.Token != "" {
-		cfg.Server.Auth.Token = SecretMask
 	}
 	if cfg.Scrapers.ComicVineAPIKey != "" {
 		cfg.Scrapers.ComicVineAPIKey = SecretMask
@@ -163,9 +160,6 @@ func RestoreMaskedSecrets(incoming *Config, current Config) {
 	}
 	if incoming.LLM.APIKey == SecretMask {
 		incoming.LLM.APIKey = current.LLM.APIKey
-	}
-	if incoming.Server.Auth.Token == SecretMask {
-		incoming.Server.Auth.Token = current.Server.Auth.Token
 	}
 	if incoming.Scrapers.ComicVineAPIKey == SecretMask {
 		incoming.Scrapers.ComicVineAPIKey = current.Scrapers.ComicVineAPIKey

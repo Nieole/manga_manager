@@ -132,14 +132,14 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// 启动期安全姿态告警：提示无鉴权裸奔 / 鉴权配置不完整。
-	switch {
-	case cfg.Server.Auth.Enabled && cfg.Server.Auth.Token == "":
-		slog.Warn("server.auth.enabled=true 但 token 为空，管理 API 鉴权未生效（视为关闭）。请设置 server.auth.token。")
-	case cfg.Server.Auth.Enabled:
-		slog.Info("管理 API 令牌鉴权已启用")
-	case cfg.Server.Host == "0.0.0.0":
-		slog.Warn("管理 API 无鉴权且监听 0.0.0.0，仅应用于受信内网或前置反向代理。可设置 server.auth 开启令牌鉴权。")
+	// 启动期安全姿态告警：提示无鉴权裸奔。
+	// 注意这里不再有「令牌鉴权已启用」这一档——历史上的共享令牌鉴权已随多用户改造退役
+	// （见 internal/api/controller.go 的说明），配置项也已删除。此前 main 仍会在
+	// server.auth.enabled=true 时打印「管理 API 令牌鉴权已启用」，而实际上没有任何代码
+	// 校验该令牌，管理员会误以为已经加固。
+	if cfg.Server.Host == "0.0.0.0" {
+		slog.Info("管理 API 监听 0.0.0.0，鉴权由站点账户体系（会话 Cookie + CSRF）提供；" +
+			"若前置反向代理，请配置 server.trusted_proxies 以便限流拿到真实客户端 IP。")
 	}
 
 	// API 端点挂载

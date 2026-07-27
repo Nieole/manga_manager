@@ -850,7 +850,7 @@ func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
 	})
 	slog.Info("KOReader self-registration succeeded",
 		"username", account.Username,
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 	)
 	writeKOReaderJSON(w, r, http.StatusCreated, map[string]string{"username": account.Username})
 }
@@ -859,7 +859,7 @@ func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
 		slog.Warn("KOReader auth request rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
-			"client_ip", requestClientIP(r),
+			"client_ip", c.clientIP(r),
 			"user_agent", r.UserAgent(),
 		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
@@ -869,7 +869,7 @@ func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	slog.Info("KOReader auth request received",
 		"username", creds.Username,
 		"client_key_prefix", authKeyPreview(creds.Key),
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 		"user_agent", r.UserAgent(),
 		"accept", r.Header.Get("Accept"),
 	)
@@ -886,7 +886,7 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 	if !c.currentConfig().KOReader.Enabled {
 		slog.Warn("KOReader progress push rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
-			"client_ip", requestClientIP(r),
+			"client_ip", c.clientIP(r),
 			"user_agent", r.UserAgent(),
 		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
@@ -905,7 +905,7 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 		"document", strings.TrimSpace(payload.Document),
 		"device", strings.TrimSpace(payload.Device),
 		"device_id", strings.TrimSpace(payload.DeviceID),
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 	)
 	result, err := c.koreader.SaveProgress(r.Context(), creds, payload)
 	if err != nil {
@@ -925,7 +925,7 @@ func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request)
 		slog.Warn("KOReader progress pull rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
 			"document", chi.URLParam(r, "document"),
-			"client_ip", requestClientIP(r),
+			"client_ip", c.clientIP(r),
 			"user_agent", r.UserAgent(),
 		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
@@ -937,7 +937,7 @@ func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request)
 		"username", creds.Username,
 		"client_key_prefix", authKeyPreview(creds.Key),
 		"document", document,
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 		"user_agent", r.UserAgent(),
 	)
 	record, err := c.koreader.GetProgress(r.Context(), creds, document)
@@ -1019,24 +1019,6 @@ func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Cred
 		"message", message,
 		"client_key_prefix", authKeyPreview(creds.Key),
 	)
-}
-
-func requestClientIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
-		value := strings.TrimSpace(r.Header.Get(header))
-		if value == "" {
-			continue
-		}
-		if header == "X-Forwarded-For" && strings.Contains(value, ",") {
-			parts := strings.Split(value, ",")
-			return strings.TrimSpace(parts[0])
-		}
-		return value
-	}
-	return r.RemoteAddr
 }
 
 func authKeyPreview(value string) string {

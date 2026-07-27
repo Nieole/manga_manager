@@ -76,8 +76,9 @@ func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	// 允许跨域及凭证支持长链接
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// 这里不设 Access-Control-Allow-Origin：CORS 由 main.go 的 cors 中间件按
+	// server.allowed_origins 统一决定。此前硬写 "*" 会覆盖那份白名单，等于给这个
+	// 端点单独开了个全放通的口子；而同源的 EventSource 本就不需要 ACAO 头。
 
 	flusher, _ := w.(http.Flusher)
 

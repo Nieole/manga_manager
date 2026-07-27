@@ -268,6 +268,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	c.runBackground(c.startDaemon)
 	c.runBackground(c.startPageCacheJanitor)
 	c.runBackground(c.startTaskPersister)
+	c.runBackground(c.startSessionJanitor)
 
 	// 初始化文件系统监控
 	fw, err := scanner.NewFileWatcher(scan)
@@ -408,7 +409,8 @@ func (c *Controller) requireProtocolEnabled(protocol string) func(http.Handler) 
 
 // 说明：历史上的可选共享令牌鉴权（requireAuth / extractAPIToken）已随多用户改造退役——
 // /api 组现由 authGate（Cookie session + CSRF + 角色，见 auth_controller.go）统一守卫。
-// Server.Auth 配置字段保留以兼容既有配置文件解析与脱敏，但不再用于 Web UI 鉴权。
+// 对应的 Server.Auth 配置字段也已删除——保留一个没有任何代码校验的鉴权开关，只会让
+// 管理员在启动日志看到「令牌鉴权已启用」而误以为站点已加固。
 
 // constantTimeTokenMatch 用恒定时间比较避免令牌校验的时序侧信道（现用于 CSRF 令牌比对）。
 func constantTimeTokenMatch(provided, expected string) bool {
