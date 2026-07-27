@@ -130,5 +130,12 @@ func moveFileToTrash(srcPath, trashDir string, bookID int64) error {
 		return err
 	}
 	in.Close()
-	return os.Remove(srcPath)
+	if err := os.Remove(srcPath); err != nil {
+		// 删源失败（只读挂载、权限、被占用）时必须回滚副本：否则回收站里留下一份拷贝、
+		// 原位置文件还在，用户看到的是「删除失败」但磁盘上凭空多了一份，且调用方因为
+		// 收到错误不会删记录，下次重试又会再复制一次。
+		_ = os.Remove(dest)
+		return err
+	}
+	return nil
 }
