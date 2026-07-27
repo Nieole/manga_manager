@@ -5,7 +5,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -152,4 +154,20 @@ func isUniqueConstraintError(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToUpper(err.Error()), "UNIQUE CONSTRAINT FAILED")
+}
+
+// contentDispositionAttachment 生成同时兼容新旧客户端的下载文件名头。
+//
+// filename= 只允许 ASCII，直接塞中文卷名会让浏览器保存出乱码文件名；RFC 5987 的
+// filename*= 才能携带 UTF-8。两者并存：老客户端读前者、新客户端优先后者。
+// serveBookFile 早就这么写了，ComicInfo 的两个导出端点却只发 ASCII 版，
+// 于是中文标题导出后文件名全是乱码——这里抽出来供三处共用。
+func contentDispositionAttachment(asciiFallback, utf8Name string) string {
+	if strings.TrimSpace(asciiFallback) == "" {
+		asciiFallback = "download"
+	}
+	if strings.TrimSpace(utf8Name) == "" {
+		utf8Name = asciiFallback
+	}
+	return fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", asciiFallback, url.PathEscape(utf8Name))
 }

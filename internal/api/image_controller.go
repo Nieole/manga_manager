@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,6 +44,16 @@ func (c *Controller) cacheImageMemory(key string, data []byte) {
 		c.imageCache.Add(key, data)
 	}
 }
+
+// pageImageCacheControl 是所有需要鉴权的图片端点（页图/封面/缩略图）的缓存策略。
+//
+// 此前一律下发 "public, max-age=31536000"：
+//   - public 允许共享缓存（企业代理、CDN）存下需要鉴权才能看的书页，
+//     换个用户走同一代理就可能直接命中；
+//   - 一年不回源意味着换封面、重建缩略图后旧图还会顶一年，而这些 URL 里
+//     没有内容版本令牌，没法靠改 URL 绕开。
+// 改为 private + 必须回源验证：ETag 仍在，条件请求命中时返回 304，省下的带宽一样多。
+const pageImageCacheControl = "private, max-age=0, must-revalidate"
 
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
@@ -109,7 +118,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	if r.Header.Get("If-None-Match") == etag {
 		annotatePageImageRequest(ctx, bookID, pageNumber, true, "client", transform)
 		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.Header().Set("Cache-Control", pageImageCacheControl)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -126,7 +135,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			c.logPageImageServed(bookID, pageNumber, "memory", contentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 			w.Header().Set("Content-Type", contentType) // 缓存命中时也以实际字节探测类型为准，避免前端按错误格式解码。
 			w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
-			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("Cache-Control", pageImageCacheControl)
 			w.Header().Set("ETag", etag)
 			w.Write(cachedData)
 			return
@@ -139,7 +148,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 				c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 				w.Header().Set("Content-Type", cachedContentType)
 				w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
-				w.Header().Set("Cache-Control", "public, max-age=31536000")
+				w.Header().Set("Cache-Control", pageImageCacheControl)
 				w.Header().Set("ETag", etag)
 				w.Write(cachedData)
 				return
@@ -265,7 +274,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 
 	// Cache control for performant client-side static assets
 	// In production read this from config or context
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("Cache-Control", pageImageCacheControl)
 	w.Header().Set("ETag", etag)
 
 	cacheSource := "raw"
@@ -451,7 +460,36 @@ func (c *Controller) writeDiskImageCache(cacheKey string, data []byte, contentTy
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, fileName), data, 0o644)
+	// 原子写：直接 WriteFile 时，磁盘写满（ENOSPC）或进程被杀会留下半截文件，
+	// 而读取侧只检查「存在且非空」，于是这个截断的字节流会被当成有效缓存长期下发——
+	// 用户看到的是某一页永远显示不出来，清缓存才好。先写临时文件再 rename 即可避免。
+	target := filepath.Join(dir, fileName)
+	tmp, err := os.CreateTemp(dir, "."+fileName+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (c *Controller) getPageCacheStats(w http.ResponseWriter, r *http.Request) {
@@ -620,7 +658,7 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 			// 不会复读旧封面；内容不变则客户端可凭 If-None-Match 命中 304，省去整图重传。
 			// http.ServeFile 仍会提供 Last-Modified 作为兜底条件请求。
 			etag := weakETag(fmt.Sprintf("cover-%s-%d-%d", coverPath, info.ModTime().UnixNano(), info.Size()))
-			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("Cache-Control", pageImageCacheControl)
 			w.Header().Del("Vary")
 			w.Header().Set("ETag", etag)
 			if r.Header.Get("If-None-Match") == etag {
@@ -689,7 +727,7 @@ func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 	// 携带真实（可能含中文）卷名，兼容不识别 RFC 5987 的老客户端。
 	asciiName := strconv.FormatInt(bookID, 10) + strings.ToLower(filepath.Ext(book.Path))
 	w.Header().Set("Content-Type", bookDownloadContentType(book.Path))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", asciiName, url.PathEscape(displayName)))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(asciiName, displayName))
 	// 原始归档不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，便于客户端缓存与断点续传。
 	w.Header().Del("Vary")
 

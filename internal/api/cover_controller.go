@@ -56,6 +56,10 @@ func (c *Controller) uploadBookCover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "Book not found")
 		return
 	}
+	// 必须在 ParseMultipartForm 之前套 MaxBytesReader：ParseMultipartForm 的参数只是
+	// 「内存里放多少」，超出部分它会写到临时文件，也就是说 16MiB 的上限在此之前形同虚设——
+	// 整个请求体会先完整落盘，之后才被 header.Size 检查拒掉。
+	r.Body = http.MaxBytesReader(w, r.Body, maxCoverUploadBytes+1)
 	if err := r.ParseMultipartForm(maxCoverUploadBytes); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid upload")
 		return

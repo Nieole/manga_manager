@@ -828,7 +828,7 @@ func (c *Controller) serveThumbnailImage(w http.ResponseWriter, r *http.Request)
 	}
 	filename := chi.URLParam(r, "*")
 	fullPath := filepath.Join(thumbDir, filename)
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("Cache-Control", pageImageCacheControl)
 	// 图片资源不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，
 	// 否则浏览器以 (URL+Origin) 为缓存 key，同源 <img> 请求无法命中缓存。
 	w.Header().Del("Vary")

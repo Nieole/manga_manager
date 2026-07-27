@@ -12,6 +12,7 @@ import (
 	"encoding/xml"
 	"io"
 	"net/http"
+	"net/url"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
@@ -61,8 +62,14 @@ func TestExportSeriesComicInfoArchive(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if contentDisposition := rec.Header().Get("Content-Disposition"); !strings.Contains(contentDisposition, "Display Series-ComicInfo.zip") {
-		t.Fatalf("expected series archive filename, got %q", contentDisposition)
+	// 文件名同时给 ASCII 兜底与 RFC 5987 的 UTF-8 版本：中文标题此前只发 ASCII 版，
+	// 浏览器保存下来是乱码。UTF-8 版是百分号编码的，故按编码后的形式断言。
+	contentDisposition := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(contentDisposition, `filename="series-`) {
+		t.Fatalf("expected an ASCII filename fallback, got %q", contentDisposition)
+	}
+	if !strings.Contains(contentDisposition, "filename*=UTF-8''"+url.PathEscape("Display Series-ComicInfo.zip")) {
+		t.Fatalf("expected an RFC 5987 UTF-8 filename, got %q", contentDisposition)
 	}
 
 	reader, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))

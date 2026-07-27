@@ -47,6 +47,33 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 	wg.Wait()
 }
 
+// clearThumbnailDir 清空缩略图目录，但保留页图磁盘缓存子目录。
+//
+// 缩略图目录就是 cache.dir 本身，而页图磁盘缓存在 <cache.dir>/pages/ 下。
+// 此前直接 os.RemoveAll(cache.dir)，于是「重建缩略图」会把整个页图缓存一并抹掉——
+// 用户只想修封面，代价却是之后每一页都要重新解码转码一遍。
+func (c *Controller) clearThumbnailDir(thumbDir string) error {
+	pageCacheDir := filepath.Clean(c.processedImageCacheDir())
+
+	entries, err := os.ReadDir(thumbDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		full := filepath.Join(thumbDir, entry.Name())
+		if entry.IsDir() && filepath.Clean(full) == pageCacheDir {
+			continue // 页图缓存与缩略图无关，别误伤
+		}
+		if err := os.RemoveAll(full); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // clearAllCoverPaths 把数据库中 books 与 series_stats 的 cover_path 字段清空，
 // 用于"重建缩略图缓存"任务在删盘后强制让 scanner 重新生成所有缩略图。
 func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
@@ -159,7 +186,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		defer c.releaseRebuildThumbAggregator()
 		c.initRebuildThumbAggregator(0)
 		c.updateTaskDetailsMsg("rebuild_thumbnails", 0, 0, "task.msg.rebuild_thumbnails.clearing_cache", nil, "clearing_cache", thumbDir, nil, nil)
-		if err := os.RemoveAll(thumbDir); err != nil {
+		if err := c.clearThumbnailDir(thumbDir); err != nil {
 			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cache_failed", nil, err.Error())
 			return
 		}

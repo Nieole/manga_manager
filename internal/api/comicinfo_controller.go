@@ -67,12 +67,11 @@ func (c *Controller) exportSeriesComicInfoArchive(w http.ResponseWriter, r *http
 		return
 	}
 
-	filename := sanitizeDownloadFilename(firstNonEmpty(nullString(series.Title), series.Name))
-	if filename == "" {
-		filename = fmt.Sprintf("series-%d", series.ID)
-	}
+	// 真实（可能含中文）标题走 filename*=；ASCII 兜底用 series id，永远可解析。
+	displayName := sanitizeDownloadFilename(firstNonEmpty(nullString(series.Title), series.Name)) + "-ComicInfo.zip"
+	asciiName := fmt.Sprintf("series-%d-ComicInfo.zip", series.ID)
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-ComicInfo.zip"`, filename))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(asciiName, displayName))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -125,12 +124,10 @@ func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	filename := sanitizeDownloadFilename(strings.TrimSuffix(book.Name, filepath.Ext(book.Name)))
-	if filename == "" {
-		filename = fmt.Sprintf("book-%d", book.ID)
-	}
+	displayName := sanitizeDownloadFilename(strings.TrimSuffix(book.Name, filepath.Ext(book.Name))) + "-ComicInfo.xml"
+	asciiName := fmt.Sprintf("book-%d-ComicInfo.xml", book.ID)
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-ComicInfo.xml"`, filename))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(asciiName, displayName))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
