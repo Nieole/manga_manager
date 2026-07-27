@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, Search, Terminal } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
+import { apiClient, getApiErrorMessage } from '../api/client';
 
 interface LogEntry {
   time: string;
@@ -70,25 +71,21 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
       const params = new URLSearchParams({ limit: '300', level: filterLevel });
       if (query) params.set('q', query);
       if (taskKey) params.set('task_key', taskKey);
+      // 走 apiClient 而非裸 fetch：后者绕过 401 全局登出与 locale 头。
       const [logsResp, perfResp] = await Promise.all([
-        fetch(`/api/system/logs?${params.toString()}`),
-        fetch('/api/system/performance').catch(() => null),
+        apiClient.get<LogsResponse>(`/api/system/logs?${params.toString()}`),
+        apiClient.get('/api/system/performance').catch(() => null),
       ]);
 
-      if (!logsResp.ok) {
-        throw new Error(t('logs.error.load'));
-      }
-
-      const logsData: LogsResponse = await logsResp.json();
+      const logsData = logsResp.data;
       setLogs(logsData.items || []);
       setSummary(logsData.summary || { total: 0, by_level: { DEBUG: 0, ERROR: 0, WARN: 0, INFO: 0 } });
 
-      if (perfResp && perfResp.ok) {
-        const perfData = await perfResp.json().catch(() => null);
-        setPerformance(perfData);
+      if (perfResp) {
+        setPerformance(perfResp.data);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('logs.error.unknown'));
+      setError(getApiErrorMessage(err, t('logs.error.unknown')));
     } finally {
       setLoading(false);
     }

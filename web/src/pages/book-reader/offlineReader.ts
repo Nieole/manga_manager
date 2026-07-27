@@ -5,6 +5,22 @@
  */
 
 import type { Page } from './types';
+import { getCsrfToken } from '../../utils/apiAuth';
+
+// syncRequestHeaders 构造离线进度回传所需的请求头。
+//
+// 这两个端点是 POST，服务端的 authGate 对改写类方法强制校验 X-CSRF-Token。
+// 此前这里用裸 fetch 且只发 Content-Type，于是所有排队的离线进度必然 403——
+// 离线读完再联网，进度永远同步不回服务端，而队列里的条目也因此永远删不掉。
+// 同源 fetch 默认就带 Cookie（credentials 默认 same-origin），这里显式写出以免日后被改错。
+function syncRequestHeaders(): HeadersInit {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const csrf = getCsrfToken();
+  if (csrf) {
+    headers['X-CSRF-Token'] = csrf;
+  }
+  return headers;
+}
 
 const OFFLINE_BOOK_CACHE = 'manga-manager-offline-books-v1';
 const OFFLINE_BOOKS_KEY = 'manga-manager:offline-books';
@@ -308,7 +324,8 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
   try {
     const response = await fetch('/api/books/bulk-progress/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      headers: syncRequestHeaders(),
       body: JSON.stringify({ items: payload }),
     });
     if (response.ok) {
@@ -345,7 +362,8 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
       try {
         const response = await fetch(`/api/books/${bookId}/progress`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          headers: syncRequestHeaders(),
           // 带上 updated_at，让单本端点也能做「服务端已有更新进度则跳过」的陈旧判定，
           // 否则 bulk 端点不可用时逐本回退会把服务端较新的跨设备进度覆盖回退。
           body: JSON.stringify(buildFallbackProgressBody(item)),

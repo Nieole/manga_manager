@@ -22,6 +22,7 @@ import { UserMenu } from './layout/UserMenu';
 import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
 import { useTaskBubbles } from './layout/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
+import { useServerEvents } from './layout/useServerEvents';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -221,10 +222,9 @@ export default function Layout() {
         apiClient.get('/api/libraries')
             .then(res => {
                 setLibraries(res.data);
-                if (res.data.length > 0 && !libId && location.pathname === '/') {
-                    // 仅在首页时默认跳转到第一个资源库，避免覆盖 /series/xxx 等子路由
-                    navigate(`/library/${res.data[0].id}`, { replace: true });
-                }
+                // 这里曾在首页强制跳转到第一个资源库。那是 Dashboard 成为 index 路由之前的
+                // 遗留逻辑：现在 "/" 本身就是仪表盘，强制跳转会让它在刷新、书签、直接输入
+                // 地址这三种场景下全都不可达（进去就被弹走）。
                 setLoading(false);
             })
             .catch(err => {
@@ -267,17 +267,23 @@ export default function Layout() {
         window.addEventListener('manga-manager:open-add-library', openAddLibrary);
         window.addEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
 
-        // 挂载 Server-Sent Events 流监听器（启用鉴权时通过 token 查询参数携带令牌）
-        const eventSource = new EventSource('/api/events');
+        return () => {
+            window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
+            window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-        eventSource.onmessage = (event) => {
-            const data = event.data as string;
-            if (data === "refresh") {
-                console.log("Receive SSE refresh signal, triggering child refresh...");
-                // 仅递增刷新信号通知当前活跃的子页面重新拉取数据
-                // 不再调用 fetchLibraries()：避免闭包捕获过期路由状态导致页面跳转，
-                // 同时侧边栏资源库列表无需因扫描而刷新
-                setRefreshTrigger(prev => prev + 1);
+    // 全站实时刷新：SSE 断线由 useServerEvents 指数退避重连。
+    // EventSource 只在网络层断开时自愈；服务端返回非 2xx（会话过期的 401、反代 502）会让它
+    // 进入 CLOSED 并永久停止重试，此前那种情况下刷新与任务气泡会静默死亡直到用户手动刷页。
+    useServerEvents('/api/events', {
+        onMessage: (data) => {
+            if (data === 'refresh') {
+                // 仅递增刷新信号通知当前活跃的子页面重新拉取数据。
+                // 不调用 fetchLibraries()：避免闭包捕获过期路由状态导致页面跳转，
+                // 且侧边栏资源库列表无需因扫描而刷新。
+                setRefreshTrigger((prev) => prev + 1);
             } else if (data.startsWith('task_progress:')) {
                 try {
                     const progress = JSON.parse(data.slice('task_progress:'.length));
@@ -287,20 +293,8 @@ export default function Layout() {
                     console.warn('Failed to parse task progress SSE:', e);
                 }
             }
-        };
-
-        eventSource.onerror = (error) => {
-            console.error("SSE connection error:", error);
-            // EventSource 默认会自己处理重连
-        };
-
-        return () => {
-            window.removeEventListener('manga-manager:open-add-library', openAddLibrary);
-            window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
-            eventSource.close();
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        },
+    });
 
     useLayoutShortcuts({
         onOpenSearch: () => setIsSearchModalOpen(true),

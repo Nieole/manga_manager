@@ -8,6 +8,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiClient, getApiErrorMessage, isAxiosError } from '../api/client';
+import { clearQueuedOfflineProgress } from '../pages/book-reader/offlineReader';
 import { setCsrfToken } from '../utils/apiAuth';
 
 export type UserRole = 'admin' | 'regular';
@@ -129,6 +130,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setCsrfToken('');
     setUser(null);
+    // 清掉本地的离线阅读残留：共享设备上换个账号登录后，上一个用户的离线书目仍会显示，
+    // 而待同步队列里的进度会在下次同步时被写进新账号名下。
+    // 只清「待同步队列」而不删已下载的书页：删掉别人下载的整本书对误操作代价太大，
+    // 且书页本身在服务端也需要鉴权才能重新拉取，泄露面有限。
+    try {
+      clearQueuedOfflineProgress();
+    } catch {
+      // localStorage 不可用（隐私模式/配额）时忽略：登出本身不应因此失败。
+    }
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {

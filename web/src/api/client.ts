@@ -10,7 +10,12 @@ import { attachAuth } from '../utils/apiAuth'
 
 // apiClient 是全站统一的 axios 实例。不设 baseURL：沿用调用方现有的 /api/... 绝对路径，行为与
 // 直接使用全局 axios 完全一致，仅把横切逻辑收拢到此实例上。withCredentials 携带会话 Cookie。
-export const apiClient = axios.create({ withCredentials: true })
+// DEFAULT_TIMEOUT_MS 给所有请求兜底。没有超时的话，后端 handler 一旦阻塞（大库 FTS 重建、
+// 卡住的外部元数据源、网络存储不可达），请求就永久挂起，UI 停在 loading 且无任何反馈。
+// 30s 远高于正常接口耗时；确实耗时长的端点（触发扫描、批量操作）在调用处单独放宽。
+const DEFAULT_TIMEOUT_MS = 30_000
+
+export const apiClient = axios.create({ withCredentials: true, timeout: DEFAULT_TIMEOUT_MS })
 
 // apiClient 是独立实例，不会继承全局 axios 的拦截器，因此需在此单独挂载会话鉴权拦截器
 // （携带 Cookie + 为改写类方法附加 X-CSRF-Token）。
