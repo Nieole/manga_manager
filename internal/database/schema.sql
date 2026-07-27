@@ -392,18 +392,22 @@ CREATE TABLE IF NOT EXISTS reading_activity (
 
 CREATE INDEX IF NOT EXISTS idx_reading_activity_date ON reading_activity(date);
 
+-- 书签按用户隔离：user_id=0 保留给「尚未启用多用户」的历史数据与单用户部署。
+-- 唯一约束必须含 user_id，否则两个用户无法各自给同一本书的同一页加书签。
 CREATE TABLE IF NOT EXISTS reading_bookmarks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL DEFAULT 0,
     book_id INTEGER NOT NULL,
     page INTEGER NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(book_id, page),
+    UNIQUE(user_id, book_id, page),
     FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id);
+CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_user_book ON reading_bookmarks(user_id, book_id, page);
 
 CREATE TABLE IF NOT EXISTS tasks (
     key TEXT PRIMARY KEY,

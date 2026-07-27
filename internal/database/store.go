@@ -124,6 +124,12 @@ type Store interface {
 	GetUserBookProgressMap(ctx context.Context, userID int64, bookIDs []int64) (map[int64]UserBookProgress, error)
 	GetUserRecentReadAll(ctx context.Context, userID, limit int64) ([]GetRecentReadAllRow, error)
 	GetUserRecentReadSeries(ctx context.Context, userID, libraryID, limit int64) ([]GetRecentReadSeriesRow, error)
+	ListUserReadingListItems(ctx context.Context, userID, readingListID int64) ([]ListReadingListItemsRow, error)
+	RefreshUserSeriesProgressForAllUsers(ctx context.Context, seriesID int64) error
+	GetUserTopReadingTags(ctx context.Context, userID, limit int64) ([]GetTopReadingTagsRow, error)
+	// RefreshSeriesDerivedData 重算系列的全部派生数据（冗余统计 + series_stats + 每用户聚合），
+	// 供「系列组成发生变化」的调用方（删书、批量移除）统一收口。
+	RefreshSeriesDerivedData(ctx context.Context, seriesID int64) error
 	GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error)
 	MigrateGlobalProgressToUser(ctx context.Context, userID int64) error
 	GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error)
@@ -802,6 +808,12 @@ func Migrate(dbPath string) error {
 		return err
 	}
 
+	// 书签表加 user_id 必须重建整表：SQLite 无法修改已存在的 UNIQUE 约束，
+	// 而旧表上的 UNIQUE(book_id, page) 会让两个用户无法各自给同一页加书签。
+	if err := migrateReadingBookmarksUserScope(db); err != nil {
+		return err
+	}
+
 	for _, column := range []struct {
 		table      string
 		name       string
@@ -1376,6 +1388,73 @@ func backfillSeriesInitials(db *sql.DB) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// migrateReadingBookmarksUserScope 把书签表从「全局共享」迁到「按用户隔离」。
+//
+// 单纯 ALTER TABLE ADD COLUMN user_id 不够：旧表带 UNIQUE(book_id, page)，
+// 而 SQLite 不支持修改已存在的约束，那个隐式唯一索引会一直生效，导致第二个用户
+// 给同一本书的同一页加书签时报约束冲突。因此必须走「建新表 → 拷数据 → 换名」。
+//
+// 存量书签一律归到 user_id=0（历史全局数据），与 user_book_progress 的迁移口径一致：
+// 单用户部署下 currentUserID 返回 0，行为完全不变；多用户部署下老书签对所有人可见，
+// 但新写入按用户隔离——这比把老数据武断塞给某一个账号更安全。
+// 全新库上 schema.sql 已建出正确结构，本函数探测到 user_id 存在即为无操作。
+func migrateReadingBookmarksUserScope(db *sql.DB) error {
+	hasUserID, err := tableHasColumn(db, "reading_bookmarks", "user_id")
+	if err != nil {
+		return err
+	}
+	if hasUserID {
+		return nil
+	}
+
+	return execMigrationStatements(db, []string{
+		`CREATE TABLE reading_bookmarks_migrated (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL DEFAULT 0,
+			book_id INTEGER NOT NULL,
+			page INTEGER NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, book_id, page),
+			FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO reading_bookmarks_migrated (id, user_id, book_id, page, note, created_at, updated_at)
+			SELECT id, 0, book_id, page, note, created_at, updated_at FROM reading_bookmarks`,
+		`DROP TABLE reading_bookmarks`,
+		`ALTER TABLE reading_bookmarks_migrated RENAME TO reading_bookmarks`,
+		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_user_book ON reading_bookmarks(user_id, book_id, page)`,
+	})
+}
+
+// tableHasColumn 报告某表是否已有指定列；表不存在时返回 false。
+func tableHasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func ensureColumn(db *sql.DB, table, column, definition string) error {

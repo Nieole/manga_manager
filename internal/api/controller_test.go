@@ -3772,7 +3772,11 @@ func TestReadingBookmarksLifecycle(t *testing.T) {
 		t.Fatalf("expected bookmark delete 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
 
-	remaining, err := store.ListReadingBookmarks(context.Background(), book.ID)
+	// 无会话上下文时 currentUserID 返回 0（单用户/历史数据口径），与 handler 写入侧一致。
+	remaining, err := store.ListReadingBookmarks(context.Background(), database.ListReadingBookmarksParams{
+		UserID: 0,
+		BookID: book.ID,
+	})
 	if err != nil {
 		t.Fatalf("ListReadingBookmarks failed: %v", err)
 	}
@@ -4122,7 +4126,8 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 
 func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	controller.recommendations.store("zh-CN", []AIRecommendationResponse{{
+	// 缓存按 (locale, user) 分区；无会话上下文时 currentUserID 为 0。
+	controller.recommendations.store(recommendationCacheKey("zh-CN", 0), []AIRecommendationResponse{{
 		SeriesID:  99,
 		Reason:    "Cached reason",
 		Title:     "Cached title",

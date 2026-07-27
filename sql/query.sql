@@ -1359,22 +1359,22 @@ ON CONFLICT(book_id, date) DO UPDATE SET
     pages_read = MAX(reading_activity.pages_read, excluded.pages_read);
 
 -- name: ListReadingBookmarks :many
-SELECT id, book_id, page, note, created_at, updated_at
+SELECT id, user_id, book_id, page, note, created_at, updated_at
 FROM reading_bookmarks
-WHERE book_id = ?
+WHERE user_id = ? AND book_id = ?
 ORDER BY page ASC, id ASC;
 
 -- name: UpsertReadingBookmark :one
-INSERT INTO reading_bookmarks (book_id, page, note)
-VALUES (?, ?, ?)
-ON CONFLICT(book_id, page) DO UPDATE SET
+INSERT INTO reading_bookmarks (user_id, book_id, page, note)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(user_id, book_id, page) DO UPDATE SET
     note = excluded.note,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, book_id, page, note, created_at, updated_at;
+RETURNING id, user_id, book_id, page, note, created_at, updated_at;
 
 -- name: DeleteReadingBookmark :execrows
 DELETE FROM reading_bookmarks
-WHERE id = ? AND book_id = ?;
+WHERE id = ? AND user_id = ? AND book_id = ?;
 
 -- name: GetRecentReadAll :many
 SELECT

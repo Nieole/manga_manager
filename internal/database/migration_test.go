@@ -327,3 +327,111 @@ func testIndexExists(t *testing.T, db *sql.DB, index string) bool {
 	}
 	return true
 }
+
+// TestMigrateReadingBookmarksAddsUserScope 验证书签表从「全局共享」到「按用户隔离」的迁移。
+//
+// 这条迁移不能靠 ALTER TABLE ADD COLUMN 了事：旧表带 UNIQUE(book_id, page)，
+// 而 SQLite 不支持修改已存在的约束，那个隐式唯一索引会一直生效，导致第二个用户
+// 给同一本书的同一页加书签时报约束冲突。故必须重建整表。
+func TestMigrateReadingBookmarksAddsUserScope(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+
+	// 先造一个「旧版」库：书签表是加 user_id 之前的形态。
+	legacy, err := sql.Open("sqlite", sqliteDSN(dbPath))
+	if err != nil {
+		t.Fatalf("open legacy db failed: %v", err)
+	}
+	if _, err := legacy.Exec(`
+		CREATE TABLE libraries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			path TEXT NOT NULL UNIQUE,
+			scan_interval INTEGER NOT NULL DEFAULT 60,
+			scan_formats TEXT NOT NULL DEFAULT 'zip,cbz,rar,cbr',
+			auto_scan BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE series (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			library_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			path TEXT NOT NULL UNIQUE,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
+		);
+		CREATE TABLE books (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			series_id INTEGER NOT NULL,
+			library_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			path TEXT NOT NULL UNIQUE,
+			size INTEGER NOT NULL,
+			file_modified_at DATETIME NOT NULL,
+			volume TEXT NOT NULL DEFAULT '',
+			page_count INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE,
+			FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
+		);
+		INSERT INTO libraries (id, name, path) VALUES (1, 'Lib', '/lib');
+		INSERT INTO series (id, library_id, name, path) VALUES (1, 1, 'S', '/lib/S');
+		INSERT INTO books (id, series_id, library_id, name, path, size, file_modified_at)
+			VALUES (1, 1, 1, 'b.cbz', '/lib/S/b.cbz', 1, CURRENT_TIMESTAMP);
+		CREATE TABLE reading_bookmarks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			book_id INTEGER NOT NULL,
+			page INTEGER NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(book_id, page),
+			FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+		);
+		INSERT INTO reading_bookmarks (book_id, page, note) VALUES (1, 7, 'legacy note');
+	`); err != nil {
+		t.Fatalf("seed legacy schema failed: %v", err)
+	}
+	_ = legacy.Close()
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
+	if err != nil {
+		t.Fatalf("reopen db failed: %v", err)
+	}
+	defer db.Close()
+
+	// 存量书签保留下来，归到 user_id=0。
+	var note string
+	var userID int64
+	if err := db.QueryRow(`SELECT user_id, note FROM reading_bookmarks WHERE book_id = 1 AND page = 7`).
+		Scan(&userID, &note); err != nil {
+		t.Fatalf("legacy bookmark lost after migration: %v", err)
+	}
+	if userID != 0 || note != "legacy note" {
+		t.Fatalf("unexpected migrated bookmark: user_id=%d note=%q", userID, note)
+	}
+
+	// 关键断言：两个不同用户可以给同一本书的同一页各存一条。
+	// 旧的 UNIQUE(book_id, page) 若残留，第二条插入会报约束冲突。
+	if _, err := db.Exec(`INSERT INTO reading_bookmarks (user_id, book_id, page, note) VALUES (1, 1, 7, 'alice')`); err != nil {
+		t.Fatalf("insert for user 1 failed: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO reading_bookmarks (user_id, book_id, page, note) VALUES (2, 1, 7, 'bob')`); err != nil {
+		t.Fatalf("per-user unique constraint not applied, second user rejected: %v", err)
+	}
+
+	// 同一用户重复同一页仍应冲突（唯一性没被削弱）。
+	if _, err := db.Exec(`INSERT INTO reading_bookmarks (user_id, book_id, page, note) VALUES (1, 1, 7, 'dup')`); err == nil {
+		t.Fatal("expected duplicate (user_id, book_id, page) to be rejected")
+	}
+
+	// 迁移可重复执行（幂等）。
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("second migrate failed: %v", err)
+	}
+}

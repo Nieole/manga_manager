@@ -334,7 +334,7 @@ func (c *Controller) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.R
 	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", filter.PageSize, 100)
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), 0)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch smart collection series")
 		return

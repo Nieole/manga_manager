@@ -311,3 +311,35 @@ func (s *SqlStore) MigrateGlobalActivityToUser(ctx context.Context, userID int64
 		 SELECT ?, book_id, date, pages_read FROM reading_activity`, userID)
 	return err
 }
+
+// GetUserTopReadingTags 是 GetTopReadingTags 的每用户版本。
+//
+// sqlc 版基于全局 reading_activity 聚合，多用户下所有人拿到同一份「常看标签」，
+// AI 推荐因此完全没有个人化，还会把彼此的阅读偏好互相泄露。
+// user_reading_activity 位于 schema_handwritten.sql（避开 sqlc），故手写于此。
+func (s *SqlStore) GetUserTopReadingTags(ctx context.Context, userID, limit int64) ([]GetTopReadingTagsRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.name, COUNT(*) AS tag_count
+		FROM tags t
+		JOIN series_tags st ON t.id = st.tag_id
+		JOIN books b ON st.series_id = b.series_id
+		JOIN user_reading_activity ura ON b.id = ura.book_id
+		WHERE ura.user_id = ?
+		GROUP BY t.id
+		ORDER BY tag_count DESC
+		LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []GetTopReadingTagsRow
+	for rows.Next() {
+		var i GetTopReadingTagsRow
+		if err := rows.Scan(&i.Name, &i.TagCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}

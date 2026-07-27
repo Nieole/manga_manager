@@ -884,16 +884,17 @@ func (q *Queries) DeleteLibrary(ctx context.Context, id int64) error {
 
 const deleteReadingBookmark = `-- name: DeleteReadingBookmark :execrows
 DELETE FROM reading_bookmarks
-WHERE id = ? AND book_id = ?
+WHERE id = ? AND user_id = ? AND book_id = ?
 `
 
 type DeleteReadingBookmarkParams struct {
 	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
 	BookID int64 `json:"book_id"`
 }
 
 func (q *Queries) DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteReadingBookmark, arg.ID, arg.BookID)
+	result, err := q.db.ExecContext(ctx, deleteReadingBookmark, arg.ID, arg.UserID, arg.BookID)
 	if err != nil {
 		return 0, err
 	}
@@ -4359,14 +4360,19 @@ func (q *Queries) ListPendingMetadataReviewsBySeries(ctx context.Context, series
 }
 
 const listReadingBookmarks = `-- name: ListReadingBookmarks :many
-SELECT id, book_id, page, note, created_at, updated_at
+SELECT id, user_id, book_id, page, note, created_at, updated_at
 FROM reading_bookmarks
-WHERE book_id = ?
+WHERE user_id = ? AND book_id = ?
 ORDER BY page ASC, id ASC
 `
 
-func (q *Queries) ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error) {
-	rows, err := q.db.QueryContext(ctx, listReadingBookmarks, bookID)
+type ListReadingBookmarksParams struct {
+	UserID int64 `json:"user_id"`
+	BookID int64 `json:"book_id"`
+}
+
+func (q *Queries) ListReadingBookmarks(ctx context.Context, arg ListReadingBookmarksParams) ([]ReadingBookmark, error) {
+	rows, err := q.db.QueryContext(ctx, listReadingBookmarks, arg.UserID, arg.BookID)
 	if err != nil {
 		return nil, err
 	}
@@ -4376,6 +4382,7 @@ func (q *Queries) ListReadingBookmarks(ctx context.Context, bookID int64) ([]Rea
 		var i ReadingBookmark
 		if err := rows.Scan(
 			&i.ID,
+			&i.UserID,
 			&i.BookID,
 			&i.Page,
 			&i.Note,
@@ -5940,25 +5947,32 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 }
 
 const upsertReadingBookmark = `-- name: UpsertReadingBookmark :one
-INSERT INTO reading_bookmarks (book_id, page, note)
-VALUES (?, ?, ?)
-ON CONFLICT(book_id, page) DO UPDATE SET
+INSERT INTO reading_bookmarks (user_id, book_id, page, note)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(user_id, book_id, page) DO UPDATE SET
     note = excluded.note,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, book_id, page, note, created_at, updated_at
+RETURNING id, user_id, book_id, page, note, created_at, updated_at
 `
 
 type UpsertReadingBookmarkParams struct {
+	UserID int64  `json:"user_id"`
 	BookID int64  `json:"book_id"`
 	Page   int64  `json:"page"`
 	Note   string `json:"note"`
 }
 
 func (q *Queries) UpsertReadingBookmark(ctx context.Context, arg UpsertReadingBookmarkParams) (ReadingBookmark, error) {
-	row := q.db.QueryRowContext(ctx, upsertReadingBookmark, arg.BookID, arg.Page, arg.Note)
+	row := q.db.QueryRowContext(ctx, upsertReadingBookmark,
+		arg.UserID,
+		arg.BookID,
+		arg.Page,
+		arg.Note,
+	)
 	var i ReadingBookmark
 	err := row.Scan(
 		&i.ID,
+		&i.UserID,
 		&i.BookID,
 		&i.Page,
 		&i.Note,

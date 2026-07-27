@@ -121,7 +121,14 @@ func (c *Controller) listReadingListItems(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusInternalServerError, "Failed to load reading list")
 		return
 	}
-	items, err := c.store.ListReadingListItems(r.Context(), listID)
+	// next_book_id（「继续阅读」落点）必须按当前用户算：sqlc 版读的是全局
+	// books.last_read_page，而多用户改造后该列已停写，导致按钮永远指回第一卷。
+	var items []database.ListReadingListItemsRow
+	if uid := c.currentUserID(r); uid > 0 {
+		items, err = c.store.ListUserReadingListItems(r.Context(), uid, listID)
+	} else {
+		items, err = c.store.ListReadingListItems(r.Context(), listID)
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list reading list items")
 		return

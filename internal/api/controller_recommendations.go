@@ -24,23 +24,27 @@ type AIRecommendationResponse struct {
 // getRecommendations 基于本地阅读历史的综合 LLM 推荐
 func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
+	userID := c.currentUserID(r)
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
+	// 缓存与 singleflight 都必须按 (locale, user) 分区：推荐是基于该用户的阅读历史算出来的，
+	// 只按 locale 分区会让所有人共用同一份结果——既没有个人化，也把彼此的阅读偏好互相泄露。
+	cacheKey := recommendationCacheKey(locale, userID)
 
-	if !forceRefresh && c.cachedRecommendations(locale) != nil {
-		jsonResponse(w, http.StatusOK, c.cachedRecommendations(locale))
+	if !forceRefresh && c.cachedRecommendations(cacheKey) != nil {
+		jsonResponse(w, http.StatusOK, c.cachedRecommendations(cacheKey))
 		return
 	}
 
-	// 合并同一 locale 的并发冷缓存/刷新请求，只触发一次 LLM 推理。用 context.WithoutCancel 解绑
-	// leader 的请求取消，避免 leader 客户端断开波及所有搭车的 follower（超时仍由 LLM Timeout 控制）。
+	// 合并同一 (locale, user) 的并发冷缓存/刷新请求，只触发一次 LLM 推理。用 context.WithoutCancel
+	// 解绑 leader 的请求取消，避免 leader 客户端断开波及所有搭车的 follower（超时仍由 LLM Timeout 控制）。
 	flightCtx := metadata.WithLocale(context.WithoutCancel(r.Context()), locale)
-	v, err := c.recommendations.do(locale, func() (any, error) {
+	v, err := c.recommendations.do(cacheKey, func() (any, error) {
 		if !forceRefresh {
-			if cached := c.cachedRecommendations(locale); cached != nil {
+			if cached := c.cachedRecommendations(cacheKey); cached != nil {
 				return cached, nil // 等待期间已被其他 leader 填充
 			}
 		}
-		return c.computeRecommendations(flightCtx, locale)
+		return c.computeRecommendations(flightCtx, locale, userID)
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "AI inference failed: "+err.Error())
@@ -49,16 +53,31 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, v.([]AIRecommendationResponse))
 }
 
+// recommendationCacheKey 把 locale 与用户 id 组合成缓存分区键。
+// 未登录/单用户部署下 userID 为 0，键退化为纯 locale 语义，行为与改造前一致。
+func recommendationCacheKey(locale string, userID int64) string {
+	return locale + "|" + strconv.FormatInt(userID, 10)
+}
+
 // cachedRecommendations 返回未过期的缓存推荐（无有效缓存时返回 nil）；委托给 recommendationCache。
-func (c *Controller) cachedRecommendations(locale string) []AIRecommendationResponse {
-	return c.recommendations.cached(locale)
+func (c *Controller) cachedRecommendations(key string) []AIRecommendationResponse {
+	return c.recommendations.cached(key)
 }
 
 // computeRecommendations 拉候选、调 LLM 生成推荐并回填缓存。由 getRecommendations 经 singleflight 调用，
 // 保证同一 locale 的并发请求只执行一次。
-func (c *Controller) computeRecommendations(ctx context.Context, locale string) ([]AIRecommendationResponse, error) {
-	// 1. 获取用户最常看的 10 个标签
-	tagRows, err := c.store.GetTopReadingTags(ctx, 10)
+func (c *Controller) computeRecommendations(ctx context.Context, locale string, userID int64) ([]AIRecommendationResponse, error) {
+	// 1. 获取该用户最常看的 10 个标签。多用户下必须走 user_reading_activity，
+	//    否则每个人拿到的都是全站合并出来的偏好。
+	var (
+		tagRows []database.GetTopReadingTagsRow
+		err     error
+	)
+	if userID > 0 {
+		tagRows, err = c.store.GetUserTopReadingTags(ctx, userID, 10)
+	} else {
+		tagRows, err = c.store.GetTopReadingTags(ctx, 10)
+	}
 	var userTags []string
 	if err == nil {
 		for _, tr := range tagRows {
@@ -126,8 +145,9 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string) 
 		})
 	}
 
-	// 回填缓存
-	c.recommendations.store(locale, finalRecs)
+	// 回填缓存。键必须与 getRecommendations 读取时用的完全一致，否则写进去的分区
+	// 永远读不到，每次首页请求都会重新调一次 LLM。
+	c.recommendations.store(recommendationCacheKey(locale, userID), finalRecs)
 
 	return finalRecs, nil
 }

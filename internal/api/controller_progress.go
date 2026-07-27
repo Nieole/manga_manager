@@ -450,7 +450,11 @@ func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	items, err := c.store.ListReadingBookmarks(r.Context(), bookID)
+	// 书签按用户隔离：此前表里没有 user_id，多用户之间可互读、覆盖、删除对方的书签与私人笔记。
+	items, err := c.store.ListReadingBookmarks(r.Context(), database.ListReadingBookmarksParams{
+		UserID: c.currentUserID(r),
+		BookID: bookID,
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load reading bookmarks")
 		return
@@ -488,6 +492,7 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 	}
 
 	item, err := c.store.UpsertReadingBookmark(r.Context(), database.UpsertReadingBookmarkParams{
+		UserID: c.currentUserID(r),
 		BookID: bookID,
 		Page:   page,
 		Note:   strings.TrimSpace(req.Note),
@@ -512,6 +517,7 @@ func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Reques
 	}
 	affected, err := c.store.DeleteReadingBookmark(r.Context(), database.DeleteReadingBookmarkParams{
 		ID:     bookmarkID,
+		UserID: c.currentUserID(r),
 		BookID: bookID,
 	})
 	if err != nil {

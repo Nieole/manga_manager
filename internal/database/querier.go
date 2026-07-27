@@ -134,7 +134,7 @@ type Querier interface {
 	ListOPDSLibrarySeriesPaged(ctx context.Context, arg ListOPDSLibrarySeriesPagedParams) ([]ListOPDSLibrarySeriesPagedRow, error)
 	ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error)
 	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error)
-	ListReadingBookmarks(ctx context.Context, bookID int64) ([]ReadingBookmark, error)
+	ListReadingBookmarks(ctx context.Context, arg ListReadingBookmarksParams) ([]ReadingBookmark, error)
 	ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error)
 	ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error)
 	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)

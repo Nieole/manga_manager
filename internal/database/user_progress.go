@@ -326,3 +326,130 @@ func (s *SqlStore) MigrateGlobalProgressToUser(ctx context.Context, userID int64
 		return err
 	})
 }
+
+// ListUserReadingListItems 是 ListReadingListItems 的每用户版本。
+//
+// sqlc 生成的那版把 next_book_id（「继续阅读」按钮的落点）算在全局 books.last_read_page 上，
+// 而多用户改造后该列已停写——于是不论读到哪一卷，按钮永远指回第一卷。
+// user_book_progress 位于 schema_handwritten.sql（刻意避开 sqlc 以防模型重名），
+// 无法在 sql/query.sql 里 JOIN，故这条查询手写在此。
+//
+// userID<=0 时不应调用本方法（走 sqlc 版即可）；即便调用，LEFT JOIN 无匹配行会让
+// COALESCE 回落到全局列，行为与旧版一致。
+func (s *SqlStore) ListUserReadingListItems(ctx context.Context, userID, readingListID int64) ([]ListReadingListItemsRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			rli.id,
+			rli.reading_list_id,
+			rli.series_id,
+			rli.sort_order,
+			rli.note,
+			rli.created_at,
+			rli.updated_at,
+			s.name AS series_name,
+			COALESCE(s.title, '') AS series_title,
+			s.book_count,
+			CAST(COALESCE((
+				SELECT b.cover_path
+				FROM books b
+				WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+				ORDER BY b.sort_number, b.name
+				LIMIT 1
+			), '') AS TEXT) AS cover_path,
+			CAST(COALESCE((
+				SELECT b.id
+				FROM books b
+				LEFT JOIN user_book_progress ubp ON ubp.book_id = b.id AND ubp.user_id = ?
+				WHERE b.series_id = s.id
+				ORDER BY
+					CASE
+						WHEN b.page_count = 0 THEN 0
+						WHEN COALESCE(ubp.last_read_page, b.last_read_page) IS NULL THEN 0
+						WHEN COALESCE(ubp.last_read_page, b.last_read_page) < b.page_count THEN 0
+						ELSE 1
+					END,
+					b.sort_number,
+					b.name
+				LIMIT 1
+			), 0) AS INTEGER) AS next_book_id
+		FROM reading_list_items rli
+		JOIN series s ON s.id = rli.series_id
+		WHERE rli.reading_list_id = ?
+		ORDER BY rli.sort_order, s.name`, userID, readingListID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []ListReadingListItemsRow
+	for rows.Next() {
+		var i ListReadingListItemsRow
+		if err := rows.Scan(
+			&i.ID, &i.ReadingListID, &i.SeriesID, &i.SortOrder, &i.Note,
+			&i.CreatedAt, &i.UpdatedAt, &i.SeriesName, &i.SeriesTitle,
+			&i.BookCount, &i.CoverPath, &i.NextBookID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
+// RefreshUserSeriesProgressForAllUsers 重算某系列在所有用户下的派生进度聚合。
+//
+// 用于「书被删除」这类会改变系列组成的场景：删除 books 行会经 CASCADE 带走
+// user_book_progress，但 user_series_progress 是派生快照，不会自动跟着变——
+// 于是已读页数/完成卷数会长期停留在删除前的值。
+// 只遍历确实在该系列留有进度的用户，无进度的用户不需要（也不应）建行。
+func (s *SqlStore) RefreshUserSeriesProgressForAllUsers(ctx context.Context, seriesID int64) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT user_id FROM user_series_progress WHERE series_id = ?`, seriesID)
+	if err != nil {
+		return err
+	}
+	var userIDs []int64
+	for rows.Next() {
+		var uid int64
+		if err := rows.Scan(&uid); err != nil {
+			rows.Close()
+			return err
+		}
+		userIDs = append(userIDs, uid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, uid := range userIDs {
+		if _, err := s.db.ExecContext(ctx, refreshUserSeriesProgressForSeriesStmt,
+			uid, seriesID, uid, seriesID, uid, seriesID, uid, seriesID, uid, seriesID, uid, seriesID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RefreshSeriesDerivedData 重算某系列的全部派生数据：series 行上的冗余统计、
+// series_stats 缓存表，以及所有用户的 user_series_progress 聚合。
+//
+// 存在的意义是让「系列组成变了」的调用方只需要记住一件事。此前 removeBooks 只刷了
+// series_stats，漏掉 series.book_count/total_pages 与每用户聚合，导致进度条与完成态长期偏差。
+func (s *SqlStore) RefreshSeriesDerivedData(ctx context.Context, seriesID int64) error {
+	if seriesID <= 0 {
+		return nil
+	}
+	if err := s.Queries.UpdateSeriesStatistics(ctx, UpdateSeriesStatisticsParams{
+		SeriesID:   seriesID,
+		SeriesID_2: seriesID,
+		SeriesID_3: seriesID,
+		ID:         seriesID,
+	}); err != nil {
+		return err
+	}
+	if err := s.RefreshSeriesStats(ctx, seriesID); err != nil {
+		return err
+	}
+	return s.RefreshUserSeriesProgressForAllUsers(ctx, seriesID)
+}
