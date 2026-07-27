@@ -41,6 +41,13 @@ func WriteComicInfoIntoArchive(archivePath string, xmlData []byte) error {
 	}
 	defer closeReader()
 
+	// 先记下原文件权限：os.CreateTemp 建出来的是 0600，直接 rename 覆盖会把归档变成
+	// 仅属主可读，其他账号（媒体服务器、家庭共享）从此打不开这本书。
+	var originalMode os.FileMode = 0o644
+	if info, statErr := os.Stat(archivePath); statErr == nil {
+		originalMode = info.Mode().Perm()
+	}
+
 	dir := filepath.Dir(archivePath)
 	tmp, err := os.CreateTemp(dir, ".comicinfo-*.tmp")
 	if err != nil {
@@ -91,17 +98,36 @@ func WriteComicInfoIntoArchive(archivePath string, xmlData []byte) error {
 		return err
 	}
 
+	if err := os.Chmod(tmpName, originalMode); err != nil {
+		return err
+	}
+
 	// Windows 下无法 rename 覆盖仍被打开的目标文件，必须先关闭源归档句柄。
 	closeReader()
+	// 归档池里可能缓存着同一路径的共享句柄（阅读器刚翻过这本书就会有）。
+	// Windows 上那个句柄未持有 FILE_SHARE_DELETE，会让 os.Rename 直接失败——
+	// 也就是说「阅读过的书写不回元数据」，而失败原因对用户完全不可见。
+	EvictArchiveFromPool(archivePath)
 	if err := os.Rename(tmpName, archivePath); err != nil {
 		return err
 	}
+	// rename 期间可能又有请求把旧路径重新打开进池，此时池里那个句柄指向的是已被替换掉的
+	// 旧 inode，再驱逐一次让后续请求重新打开新文件。
+	EvictArchiveFromPool(archivePath)
 	committed = true
 	return nil
 }
 
-// copyZipEntry 把源归档中的一个条目原样复制到目标 writer，保留其头部（名称/压缩方法/时间等）。
+// copyZipEntry 把源归档中的一个条目搬到目标 writer，保留其头部（名称/压缩方法/时间等）。
+//
+// 优先用 zip.Writer.Copy：它直接搬运已压缩的原始字节，不解压也不重压。
+// 退回逐条解压+重压时，写回一本 200 页的漫画要把整卷重新压一遍——CPU 白烧一轮，
+// 还可能因压缩级别不同而让文件变大。Copy 对少数条目会返回不支持，此时才走老路径。
 func copyZipEntry(zw *zip.Writer, f *zip.File) error {
+	if err := zw.Copy(f); err == nil {
+		return nil
+	}
+
 	rc, err := f.Open()
 	if err != nil {
 		return err

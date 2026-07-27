@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -128,9 +129,43 @@ func (z *ZipArchive) ReadPage(name string) ([]byte, error) {
 	return nil, errors.New("page not found")
 }
 
+// ReadMetadataFile 查找并读取归档内的元数据文件（目前只有 ComicInfo.xml）。
+//
+// 匹配语义刻意比 ReadPage 宽松：大小写不敏感、允许位于任意层级（根目录优先）。
+// 真实归档里 comicinfo.xml、ComicInfo.XML、Scans/ComicInfo.xml 都很常见，而写回侧
+// （comicinfo_writeback.go）本来就用 EqualFold 匹配——读侧要求精确全名会造成
+// 「读不到但能写」的语义分叉：内嵌元数据被静默漏读，用户却看不出原因。
 func (z *ZipArchive) ReadMetadataFile(name string) ([]byte, error) {
-	// 用于提取 ComicInfo.xml 等
-	return z.ReadPage(name)
+	z.mu.RLock()
+	defer z.mu.RUnlock()
+
+	var fallback *zip.File
+	for _, f := range z.reader.File {
+		if !strings.EqualFold(path.Base(f.Name), name) {
+			continue
+		}
+		// 根目录命中优先；子目录里的先记下来作为兜底。
+		if !strings.ContainsRune(f.Name, '/') {
+			return readZipEntry(f)
+		}
+		if fallback == nil {
+			fallback = f
+		}
+	}
+	if fallback != nil {
+		return readZipEntry(fallback)
+	}
+	return nil, fmt.Errorf("parser: metadata file %q not found", name)
+}
+
+// readZipEntry 打开并读取一个 zip 条目（带解压炸弹上限）。
+func readZipEntry(f *zip.File) ([]byte, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return readEntryLimited(rc, f.FileInfo().Size(), f.Name)
 }
 
 func getMediaType(ext string) string {

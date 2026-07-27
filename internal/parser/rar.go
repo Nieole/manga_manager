@@ -12,8 +12,10 @@ package parser
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -150,8 +152,51 @@ func (r *RarArchive) readPageLocked(name string, reopened bool) ([]byte, error) 
 	return nil, errors.New("page not found")
 }
 
+// readMetadataLocked 以宽松匹配（大小写不敏感 + 任意层级）查找元数据文件。
+func (r *RarArchive) readMetadataLocked(name string) ([]byte, error) {
+	// 缓存里可能已有（前滚时按原名缓存），先按宽松规则扫一遍。
+	for cached, data := range r.cache {
+		if matchesArchiveEntry(cached, name, true) {
+			return append([]byte(nil), data...), nil
+		}
+	}
+	if err := r.reopenLocked(); err != nil {
+		return nil, err
+	}
+	data, found, err := r.advanceLooseLocked(name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("parser: metadata file %q not found", name)
+	}
+	return append([]byte(nil), data...), nil
+}
+
+// advanceLooseLocked 与 advanceLocked 同义，但目标名按宽松规则匹配。
+func (r *RarArchive) advanceLooseLocked(target string) ([]byte, bool, error) {
+	return r.advanceWithMatch(target, true)
+}
+
+// matchesArchiveEntry 判定归档条目名是否命中目标。
+// loose=false 时要求全名精确相等（页图读取，名字来自 GetPages，必然精确）；
+// loose=true 时按 basename 大小写不敏感比较（元数据文件，真实归档里大小写与层级都很杂）。
+func matchesArchiveEntry(entryName, target string, loose bool) bool {
+	if entryName == target {
+		return true
+	}
+	if !loose {
+		return false
+	}
+	return strings.EqualFold(path.Base(entryName), target)
+}
+
 // advanceLocked 前滚游标，把途经条目的字节读入缓存，直到遇到 target（返回其字节）或 EOF（found=false）。
 func (r *RarArchive) advanceLocked(target string) (data []byte, found bool, err error) {
+	return r.advanceWithMatch(target, false)
+}
+
+func (r *RarArchive) advanceWithMatch(target string, looseTarget bool) (data []byte, found bool, err error) {
 	if r.rr == nil {
 		if err := r.reopenLocked(); err != nil {
 			return nil, false, err
@@ -169,7 +214,7 @@ func (r *RarArchive) advanceLocked(target string) (data []byte, found bool, err 
 		if header.IsDir {
 			continue
 		}
-		isTarget := header.Name == target
+		isTarget := matchesArchiveEntry(header.Name, target, looseTarget)
 		// 只对目标条目和图片页解字节：rr.Next() 本身会零解压跳到下一个条目头，
 		// 所以途经的非图片条目直接跳过即可。此前对每个途经条目无条件 readEntryLimited，
 		// 使得一次未命中的 ComicInfo.xml 探测（扫描期每卷都会做）把整卷 CBR 解压一遍。
@@ -237,6 +282,13 @@ func (r *RarArchive) cachePutLocked(name string, data []byte) {
 	r.cacheBytes += len(data)
 }
 
+// ReadMetadataFile 与 zip 侧保持同一匹配语义：大小写不敏感、允许任意层级。
+// RAR 是前向只读流，无法先枚举再挑选，故在前滚过程中用宽松比较判定目标。
 func (r *RarArchive) ReadMetadataFile(name string) ([]byte, error) {
-	return r.ReadPage(name)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil, ErrArchiveClosed
+	}
+	return r.readMetadataLocked(name)
 }

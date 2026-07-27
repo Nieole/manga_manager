@@ -303,15 +303,15 @@ func buildComicInfoForBook(book database.Book, series database.Series, books []d
 		Summary:     firstNonEmpty(nullString(book.Summary), nullString(series.Summary)),
 		Number:      firstNonEmpty(nullString(book.Number), formatNullableFloat(book.SortNumber)),
 		Volume:      book.Volume,
-		Count:       len(books),
+		Count:       parser.LenientInt(len(books)),
 		Publisher:   nullString(series.Publisher),
 		Genre:       joinTagNames(tags),
 		LanguageISO: nullString(series.Language),
-		PageCount:   int(book.PageCount),
+		PageCount:   parser.LenientInt(book.PageCount),
 	}
 
 	if series.Rating.Valid {
-		info.CommunityRating = float32(series.Rating.Float64)
+		info.CommunityRating = parser.LenientFloat(series.Rating.Float64)
 	}
 
 	for _, author := range authors {
