@@ -13,6 +13,7 @@ package parser
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,16 +26,22 @@ import (
 // 收紧上限来验证淘汰 + 重开路径。默认 64 MiB：漫画常见几十~几百页、单页数 MB，足以覆盖顺序阅读的滑动窗口。
 var rarPageCacheMaxBytes = 64 << 20
 
+// ErrArchiveClosed 表示归档句柄已被关闭（通常是被归档池淘汰），调用方应重新获取一个句柄。
+var ErrArchiveClosed = errors.New("parser: archive handle is closed")
+
 // RarArchive 处理 cbr/rar 等标准归档，并维护一个随读取前滚的会话缓存（见文件头说明）。
 type RarArchive struct {
 	path string
 
-	mu         sync.Mutex
-	rr         *rardecode.ReadCloser // 持久游标；nil 表示未打开
-	atEOF      bool                  // 游标已扫到 EOF
-	seen       map[string]bool       // 当前游标已途经的条目名（用于判断目标是否在游标之后）
-	cache      map[string][]byte     // 已解出的页字节
-	cacheOrder []string              // FIFO 淘汰顺序
+	mu     sync.Mutex
+	closed bool                  // Close 后置位：句柄进入终态，任何读取直接报错而非静默重开
+	rr     *rardecode.ReadCloser // 持久游标；nil 表示未打开
+	atEOF  bool                  // 游标已扫到 EOF
+	seen   map[string]bool       // 当前游标已途经的条目名（用于判断目标是否在游标之后）
+	// cache 只保留「图片页」与显式读取过的目标条目的字节。途经的非图片条目（封面缩略图、
+	// 元数据、说明文本等）一律跳过不解压——否则一次未命中的 ComicInfo.xml 探测就会把整卷解一遍。
+	cache      map[string][]byte
+	cacheOrder []string // FIFO 淘汰顺序
 	cacheBytes int
 }
 
@@ -54,6 +61,10 @@ func (r *RarArchive) Close() error {
 		r.rr.Close()
 		r.rr = nil
 	}
+	// closed 必须先于置空各 map：否则归档池淘汰本句柄后，仍持有它的在途请求会走
+	// readPageLocked → reopenLocked（只重建 seen，不重建 cache）→ cachePutLocked 向
+	// nil map 赋值，直接 panic。置位后所有读取路径都在入口返回 ErrArchiveClosed。
+	r.closed = true
 	r.seen = nil
 	r.cache = nil
 	r.cacheOrder = nil
@@ -104,6 +115,9 @@ func (r *RarArchive) GetPages() ([]PageMetadata, error) {
 func (r *RarArchive) ReadPage(name string) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return nil, ErrArchiveClosed
+	}
 	return r.readPageLocked(name, false)
 }
 
@@ -155,16 +169,39 @@ func (r *RarArchive) advanceLocked(target string) (data []byte, found bool, err 
 		if header.IsDir {
 			continue
 		}
+		isTarget := header.Name == target
+		// 只对目标条目和图片页解字节：rr.Next() 本身会零解压跳到下一个条目头，
+		// 所以途经的非图片条目直接跳过即可。此前对每个途经条目无条件 readEntryLimited，
+		// 使得一次未命中的 ComicInfo.xml 探测（扫描期每卷都会做）把整卷 CBR 解压一遍。
+		if !isTarget && !isCacheablePage(header.Name) {
+			r.seen[header.Name] = true
+			continue
+		}
 		b, readErr := readEntryLimited(r.rr, header.UnPackedSize, header.Name)
 		if readErr != nil {
-			return nil, false, readErr
+			if isTarget {
+				return nil, false, readErr
+			}
+			// 途经条目损坏或超限不应连累本次前滚：记为已途经但不缓存，继续找目标。
+			// 旧实现在这里直接返回错误，一个坏条目会让它之后的所有页都读不出来。
+			slog.Warn("Skipping unreadable RAR entry during scan-ahead",
+				"archive", r.path, "entry", header.Name, "error", readErr)
+			r.seen[header.Name] = true
+			continue
 		}
 		r.seen[header.Name] = true
 		r.cachePutLocked(header.Name, b)
-		if header.Name == target {
+		if isTarget {
 			return b, true, nil
 		}
 	}
+}
+
+// isCacheablePage 判断某个归档条目是否值得在前滚途中解压并缓存。
+// 只有可读图片页才值得——它们是顺序阅读的下一批目标；其余条目解压纯属浪费 CPU 与内存预算。
+func isCacheablePage(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return getMediaType(ext) != "application/octet-stream"
 }
 
 // reopenLocked 关闭旧游标、从头重开，并重置「已途经」集合与 EOF 标记；字节缓存按名寻址、与游标位置无关，保留。

@@ -78,10 +78,11 @@ func (c *Controller) listBookArchiveSourcePagesWithStats(ctx context.Context, so
 		}
 	}
 
-	arc, err := parser.GetArchiveFromPool(source.Path)
+	arc, releaseArchive, err := parser.GetArchiveFromPool(source.Path)
 	if err != nil {
 		return nil, false, err
 	}
+	defer releaseArchive()
 
 	pages, err := arc.GetPages()
 	if err != nil {

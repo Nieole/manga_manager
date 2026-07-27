@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -311,6 +312,13 @@ func (c *Controller) runBackground(fn func()) {
 	c.lifecycleMu.Unlock()
 	go func() {
 		defer c.backgroundWG.Done()
+		// 后台任务的 panic 不经过 middleware.Recoverer（那只覆盖 HTTP handler goroutine），
+		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让该任务失败，服务继续可用。
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("Background task panicked", "panic", rec, "stack", string(debug.Stack()))
+			}
+		}()
 		fn()
 	}()
 }

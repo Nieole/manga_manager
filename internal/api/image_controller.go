@@ -80,6 +80,20 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	filter := normalizeServerImageFilter(r.URL.Query().Get("filter"))
 	autoCrop := r.URL.Query().Get("auto_crop") == "true"
 
+	// 目标尺寸必须在进入缓存/转码路径之前校验：这两个值最终会变成 resize 的目标画布，
+	// 负值经 uint() 转换会回绕成天文数字、超大值直接申请数 GB 缓冲，任一都能让进程 OOM。
+	// 解析失败按「未指定」处理（保持既有宽松语义），但一旦是合法数字就必须落在安全区间内。
+	reqWidth, wErr := parsePositiveDimension(widthStr)
+	reqHeight, hErr := parsePositiveDimension(heightStr)
+	if wErr != nil || hErr != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid image dimension parameter")
+		return
+	}
+	if err := images.ValidateTargetDimensions(reqWidth, reqHeight); err != nil {
+		jsonError(w, http.StatusBadRequest, "Requested image size exceeds limits")
+		return
+	}
+
 	// 构建缓存 Key：包含所有会改变最终图像字节的处理参数，防止切换滤镜、画质、放大参数后复用旧图。
 	// 同时引入文件修改时间和大小，避免归档被覆盖或 ID 复用时浏览器继续命中旧 ETag。
 	w2xScaleStr := r.URL.Query().Get("w2x_scale")
@@ -175,10 +189,12 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read pages"}, nil
 		}
 
-		archiver, err := parser.GetArchiveFromPool(source.Path)
+		archiver, releaseArchive, err := parser.GetArchiveFromPool(source.Path)
 		if err != nil {
 			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read internal archive"}, nil
 		}
+		// 借用期间池不会真正关闭该句柄，避免读到一半被 LRU 淘汰而抽走文件描述符。
+		defer releaseArchive()
 		annotatePageImageDiagnostics(workCtx, true, false, false, false)
 
 		data, err := archiver.ReadPage(pageInfo.Name)
@@ -214,12 +230,9 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		if q, err := strconv.Atoi(qualityStr); err == nil {
 			opts.Quality = q
 		}
-		if wv, err := strconv.Atoi(widthStr); err == nil {
-			opts.Width = wv
-		}
-		if hv, err := strconv.Atoi(heightStr); err == nil {
-			opts.Height = hv
-		}
+		// 已在入口处解析并校验过，这里直接复用（0 表示未指定）。
+		opts.Width = reqWidth
+		opts.Height = reqHeight
 
 		finalData, finalContentType, err := images.ProcessImage(data, pageInfo.MediaType, opts)
 		if err != nil {
@@ -284,6 +297,24 @@ func (c *Controller) logPageImageServed(bookID, pageNumber int64, source, conten
 
 func weakETag(value string) string {
 	return `W/"` + fmt.Sprintf("%x", sha1.Sum([]byte(value))) + `"`
+}
+
+// parsePositiveDimension 解析 w/h 这类尺寸查询参数。
+// 空串表示「未指定」，返回 0；非数字或负数视为非法输入，由调用方回 400。
+// 注意不能沿用「解析失败就当没传」的旧写法：?w=-1 在旧代码里会被 Atoi 成功解析成 -1，
+// 再经 uint(-1) 回绕成 18446744073709551615，直接把 resize 的目标画布撑爆。
+func parsePositiveDimension(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("not a number: %q", raw)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("negative dimension: %d", v)
+	}
+	return v, nil
 }
 
 func normalizeServerImageFilter(filter string) string {

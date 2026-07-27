@@ -8,6 +8,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,13 +114,15 @@ func TestArchivePoolInitResizesExistingPool(t *testing.T) {
 
 	InitPool(3)
 	for _, path := range paths {
-		arc, err := GetArchiveFromPool(path)
+		arc, release, err := GetArchiveFromPool(path)
 		if err != nil {
 			t.Fatalf("get archive failed: %v", err)
 		}
 		if _, err := arc.GetPages(); err != nil {
 			t.Fatalf("get pages failed: %v", err)
 		}
+		// 归还借用，否则后续 resize 只会把 item 标记为待关闭而不真正释放句柄。
+		release()
 	}
 	if len(globalPool.items) != 3 {
 		t.Fatalf("expected 3 cached archives, got %d", len(globalPool.items))
@@ -151,4 +154,69 @@ func writeParserTestCBZ(path string) error {
 		return err
 	}
 	return zw.Close()
+}
+
+// TestPoolEvictionDoesNotCloseBorrowedHandle 锁住归档池的引用计数语义。
+//
+// 池发放的是共享句柄。淘汰若当场 Close，仍持有它的在途请求就会读到一个已关闭的句柄：
+// zip 侧返回 "file already closed"（500），rar 侧更会向 Close 置空的 cache map 写入而 panic。
+// 引用计数保证 Close 推迟到最后一个借用方归还之后。
+func TestPoolEvictionDoesNotCloseBorrowedHandle(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a.cbz")
+	pathB := filepath.Join(dir, "b.cbz")
+	for _, p := range []string{pathA, pathB} {
+		if err := writeParserTestCBZ(p); err != nil {
+			t.Fatalf("write cbz failed: %v", err)
+		}
+	}
+
+	InitPool(1)
+	t.Cleanup(ResetArchivePool)
+
+	arcA, releaseA, err := GetArchiveFromPool(pathA)
+	if err != nil {
+		t.Fatalf("get archive A failed: %v", err)
+	}
+	pagesA, err := arcA.GetPages()
+	if err != nil {
+		t.Fatalf("get pages A failed: %v", err)
+	}
+
+	// 借用 A 的同时取 B：池容量为 1，A 会被淘汰出 map，但不该被真正关闭。
+	_, releaseB, err := GetArchiveFromPool(pathB)
+	if err != nil {
+		t.Fatalf("get archive B failed: %v", err)
+	}
+	defer releaseB()
+
+	if _, err := arcA.ReadPage(pagesA[0].Name); err != nil {
+		t.Fatalf("borrowed handle became unusable after eviction: %v", err)
+	}
+
+	releaseA()
+
+	// 归还后句柄才真正关闭；再读应报错而不是 panic。
+	if _, err := arcA.ReadPage(pagesA[0].Name); err == nil {
+		t.Fatal("expected read on fully released handle to fail")
+	}
+}
+
+// TestRarReadAfterCloseReturnsErrorNotPanic 锁住 RAR 句柄的关闭终态。
+// 旧实现 Close 把 cache 置 nil 而 reopenLocked 只重建 seen，关闭后再读会向 nil map 赋值而 panic。
+func TestRarReadAfterCloseReturnsErrorNotPanic(t *testing.T) {
+	arc, err := OpenRar(filepath.Join(t.TempDir(), "missing.cbr"))
+	if err != nil {
+		t.Fatalf("open rar failed: %v", err)
+	}
+	if err := arc.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	if _, err := arc.ReadPage("001.png"); !errors.Is(err, ErrArchiveClosed) {
+		t.Fatalf("expected ErrArchiveClosed after Close, got %v", err)
+	}
+	if _, err := arc.ReadMetadataFile("ComicInfo.xml"); !errors.Is(err, ErrArchiveClosed) {
+		t.Fatalf("expected ErrArchiveClosed from ReadMetadataFile, got %v", err)
+	}
 }

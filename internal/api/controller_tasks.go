@@ -406,7 +406,39 @@ func (c *Controller) persistTaskStatus(task TaskStatus) {
 	if c.taskEngine.persistPending == nil {
 		c.taskEngine.persistPending = make(map[string]TaskStatus)
 	}
-	c.taskEngine.persistPending[task.Key] = task
+	// 必须存深拷贝：TaskStatus 的结构体拷贝共享同一批 map header，而 flushTaskPersist 会在
+	// 释放 taskMutex 之后才遍历这些 map。若存的是活任务的 map，进度回调（持锁原地写）与落盘
+	// 遍历（锁外读）就会重叠，触发 `fatal error: concurrent map read and map write`——
+	// 那是 runtime throw 而非 panic，recover 与 middleware.Recoverer 都拦不住，进程直接退出。
+	c.taskEngine.persistPending[task.Key] = cloneTaskStatus(task)
+}
+
+// cloneTaskStatus 返回 task 的深拷贝，逐一复制四个可变 map 字段。
+// 任何会让快照逃出 taskMutex 临界区的路径（异步落盘、HTTP 序列化、重试取值）都必须先克隆，
+// 否则调用方读到的是仍在被写入的活 map。
+func cloneTaskStatus(task TaskStatus) TaskStatus {
+	task.MessageParams = cloneStringMap(task.MessageParams)
+	task.Labels = cloneStringMap(task.Labels)
+	task.Params = cloneStringMap(task.Params)
+	if task.Metrics != nil {
+		metrics := make(map[string]int64, len(task.Metrics))
+		for k, v := range task.Metrics {
+			metrics[k] = v
+		}
+		task.Metrics = metrics
+	}
+	return task
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // persistTaskStatusFinal 用于任务终态（完成/失败/取消）：仍走同一异步队列（保持单一写入方、不与
@@ -1022,7 +1054,9 @@ func (c *Controller) listTaskStatuses(ctx context.Context, filters database.Task
 		// 进度改为异步落盘后，活动任务的内存快照比 DB 记录更新（DB 可能滞后最多一个落盘周期）。
 		// 同时存在于内存与 DB 时用内存版本，避免 API 返回被滞后的 DB 进度覆盖。
 		if memTask, ok := c.taskEngine.tasks[task.Key]; ok {
-			task = memTask
+			// 克隆：返回的切片会在 Unlock 之后由 listTasks 交给 json.Marshal 遍历，
+			// 而运行中的任务仍在持锁原地写 Metrics/Params，共享 map 会导致并发读写 fatal。
+			task = cloneTaskStatus(memTask)
 		}
 		items = append(items, task)
 		seen[task.Key] = true
@@ -1049,7 +1083,7 @@ func (c *Controller) listTaskStatuses(ctx context.Context, filters database.Task
 				continue
 			}
 		}
-		items = append(items, task)
+		items = append(items, cloneTaskStatus(task))
 	}
 	c.taskEngine.mutex.Unlock()
 
@@ -1133,6 +1167,11 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 
 	c.taskEngine.mutex.Lock()
 	task, ok := c.taskEngine.tasks[taskKey]
+	if ok {
+		// 克隆后才能带出临界区：relauncher 会读 task.Params，而同名任务若仍在跑，
+		// 其进度回调正持锁写同一个 map。
+		task = cloneTaskStatus(task)
+	}
 	c.taskEngine.mutex.Unlock()
 	if !ok {
 		records, err := c.store.ListTasks(r.Context(), database.TaskFilters{Query: taskKey, Limit: 20})

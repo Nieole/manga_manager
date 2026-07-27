@@ -665,16 +665,27 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 
 	// 第一遍：仅收集“确证缺失”（os.IsNotExist）的系列；权限、超时、网络等不确定错误
 	// 一律跳过而非删除，避免瞬时 IO 故障被误判为文件消失。
+	//
+	// 注意 series.Path 并不总对应磁盘上真实存在的目录：库根目录直放的散装归档
+	// （<root>/OnePiece.cbz）会被 workerProcess 归到一个合成路径 <root>/OnePiece 下，
+	// 该目录从来就不存在。只按目录是否存在判定，会把这类“虚拟系列”连同其书籍与
+	// 每用户阅读进度一起 CASCADE 删掉，且每次扫描重建、下次清理再删，进度反复丢失。
+	// 因此改为二次确认：目录不存在时再看它的书还在不在磁盘上，只要还有一本在就不删。
 	var missingSeries []database.Series
 	for _, series := range seriesList {
-		if _, statErr := os.Stat(series.Path); statErr != nil {
-			if os.IsNotExist(statErr) {
-				missingSeries = append(missingSeries, series)
-			} else {
-				slog.Warn("Skipping series with ambiguous stat error during cleanup",
-					"series_id", series.ID, "path", series.Path, "error", statErr)
-			}
+		if _, statErr := os.Stat(series.Path); statErr == nil {
+			continue
+		} else if !os.IsNotExist(statErr) {
+			slog.Warn("Skipping series with ambiguous stat error during cleanup",
+				"series_id", series.ID, "path", series.Path, "error", statErr)
+			continue
 		}
+		if s.seriesHasSurvivingBook(ctx, series.ID) {
+			slog.Debug("Series directory missing but books still on disk; treating as virtual series",
+				"series_id", series.ID, "path", series.Path)
+			continue
+		}
+		missingSeries = append(missingSeries, series)
 	}
 
 	// 熔断：待删系列占比过高，极可能是存储异常而非真实删除。
@@ -730,6 +741,28 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 
 	slog.Info("Library cleanup completed", "library_id", libraryID, "removed_series", len(removedSeries))
 	return nil
+}
+
+// seriesHasSurvivingBook 报告该系列名下是否还有至少一本书的文件真实存在于磁盘。
+// 用于在删除“目录已不存在”的系列之前做二次确认：库根散装文件构成的虚拟系列没有对应目录，
+// 但它们的书是真实存在的，不能因为目录探测失败就整串删掉。
+// 查询失败时返回 true（fail-safe：宁可留下一个幽灵记录，也不要误删阅读进度）。
+func (s *Scanner) seriesHasSurvivingBook(ctx context.Context, seriesID int64) bool {
+	books, err := s.store.ListBooksBySeries(ctx, seriesID)
+	if err != nil {
+		slog.Warn("Failed to list books while confirming series removal; keeping series",
+			"series_id", seriesID, "error", err)
+		return true
+	}
+	for _, book := range books {
+		if _, statErr := os.Stat(book.Path); statErr == nil {
+			return true
+		} else if !os.IsNotExist(statErr) {
+			// 权限/超时等不确定错误同样按“可能还在”处理，与上方系列级判定口径一致。
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error) {
