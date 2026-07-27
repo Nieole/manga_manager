@@ -905,6 +905,15 @@ func Migrate(dbPath string) error {
 		`CREATE INDEX IF NOT EXISTS idx_books_cover_pick ON books(series_id, sort_number, name) WHERE cover_path IS NOT NULL AND cover_path != ''`,
 		`CREATE INDEX IF NOT EXISTS idx_books_library_modified ON books(library_id, file_modified_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_books_library_last_read ON books(library_id, last_read_at) WHERE last_read_at IS NOT NULL`,
+		// 健康报告的两个高频谓词都很稀疏（健康的库里绝大多数书不满足），用部分索引可以
+		// 把整表扫描换成只扫命中行。没有它们时 /api/health/report 每次请求都要对 books
+		// 做约 10 次全表扫描，几十万行的库上单次请求即达秒级。
+		`CREATE INDEX IF NOT EXISTS idx_books_health_empty_pages ON books(library_id) WHERE page_count <= 0`,
+		`CREATE INDEX IF NOT EXISTS idx_books_health_missing_cover ON books(library_id) WHERE cover_path IS NULL OR cover_path = ''`,
+		// 账户列表与设备诊断按 username 过滤 + 按时间倒序取最近事件；无索引时每个账号
+		// 都要扫一遍 koreader_sync_events（该表带保留上限，仍可达万行量级）。
+		`CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_user_created ON koreader_sync_events(username, created_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_user_doc ON koreader_sync_events(username, document)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id)`,
@@ -1346,48 +1355,91 @@ func rebuildBookSearchIndexContext(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
+// backfillSeriesInitials 回填 series.name_initial。
+//
+// 按 id keyset 分批读取 + 每批一个事务：旧实现先把整张 series 载入内存、再在单个事务里
+// 逐行 UPDATE。大库上这意味着回填期间整表驻留内存，且那一个长事务会一直持有写锁，
+// 期间任何写操作（扫描入库、进度更新）都要排队等它。
+//
+// 分批后单批内存与锁持有时间都是常数级；中途失败也只丢当前批，已提交的批次不必重做。
+// listSeriesInitialBackfillBatch 按 id keyset 取一批待回填的系列。
+//
+// 手写而非走 sqlc：其 SQLite 解析器无法处理这条 `WHERE id > ? ORDER BY id LIMIT ?`
+// （报 extraneous input），而仓库里 user_progress.go / user_stats.go / koreader_queries.go
+// 已有同样的「sqlc 表达不了就手写」先例。
+func listSeriesInitialBackfillBatch(ctx context.Context, db *sql.DB, afterID int64, limit int) ([]ListSeriesInitialBackfillCandidatesRow, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, name, title, name_initial FROM series WHERE id > ? ORDER BY id LIMIT ?`,
+		afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []ListSeriesInitialBackfillCandidatesRow
+	for rows.Next() {
+		var i ListSeriesInitialBackfillCandidatesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Title, &i.NameInitial); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
 func backfillSeriesInitials(db *sql.DB) error {
 	ctx := context.Background()
 	q := New(db)
 
-	type update struct {
-		id      int64
-		initial string
-	}
-	updates := make([]update, 0)
-	candidates, err := q.ListSeriesInitialBackfillCandidates(ctx)
-	if err != nil {
-		return err
-	}
-	for _, candidate := range candidates {
-		nextInitial := SeriesInitialFromNullTitle(candidate.Title, candidate.Name)
-		if candidate.NameInitial != nextInitial {
-			updates = append(updates, update{
-				id:      candidate.ID,
-				initial: nextInitial,
-			})
-		}
-	}
-	if len(updates) == 0 {
-		return nil
-	}
+	const batchSize = 2000
+	var lastID int64
 
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	tq := q.WithTx(tx)
-
-	for _, item := range updates {
-		if err := tq.UpdateSeriesInitial(ctx, UpdateSeriesInitialParams{
-			NameInitial: item.initial,
-			ID:          item.id,
-		}); err != nil {
-			_ = tx.Rollback()
+	for {
+		candidates, err := listSeriesInitialBackfillBatch(ctx, db, lastID, batchSize)
+		if err != nil {
 			return err
 		}
+		if len(candidates) == 0 {
+			return nil
+		}
+
+		type update struct {
+			id      int64
+			initial string
+		}
+		updates := make([]update, 0, len(candidates))
+		for _, candidate := range candidates {
+			lastID = candidate.ID
+			nextInitial := SeriesInitialFromNullTitle(candidate.Title, candidate.Name)
+			if candidate.NameInitial != nextInitial {
+				updates = append(updates, update{id: candidate.ID, initial: nextInitial})
+			}
+		}
+
+		if len(updates) > 0 {
+			tx, err := db.Begin()
+			if err != nil {
+				return err
+			}
+			tq := q.WithTx(tx)
+			for _, item := range updates {
+				if err := tq.UpdateSeriesInitial(ctx, UpdateSeriesInitialParams{
+					NameInitial: item.initial,
+					ID:          item.id,
+				}); err != nil {
+					_ = tx.Rollback()
+					return err
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+		}
+
+		if len(candidates) < batchSize {
+			return nil
+		}
 	}
-	return tx.Commit()
 }
 
 // migrateReadingBookmarksUserScope 把书签表从「全局共享」迁到「按用户隔离」。

@@ -5,7 +5,9 @@
 package database
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -433,5 +435,79 @@ func TestMigrateReadingBookmarksAddsUserScope(t *testing.T) {
 	// 迁移可重复执行（幂等）。
 	if err := Migrate(dbPath); err != nil {
 		t.Fatalf("second migrate failed: %v", err)
+	}
+}
+
+// TestBackfillSeriesInitialsCoversAllBatches 锁住首字母回填的分批正确性。
+//
+// 回填改成了 keyset 分批（旧实现把整张 series 载入内存并在单个长事务里逐行 UPDATE，
+// 大库上既占内存又长时间持有写锁）。分批实现最容易错的是边界：跨批时 lastID 没推进
+// 会死循环，推进过头会漏行。这里刻意造出「行数正好跨多个批次」的数据来覆盖。
+func TestBackfillSeriesInitialsCoversAllBatches(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "backfill.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
+		Name: "Lib", Path: "/lib", ScanMode: "none", ScanInterval: 60, ScanFormats: "cbz",
+	})
+	if err != nil {
+		t.Fatalf("create library failed: %v", err)
+	}
+
+	// 造 250 个系列，并把 name_initial 全部写成一个错误值，模拟「需要回填」。
+	const total = 250
+	names := make([]string, 0, total)
+	for i := range total {
+		name := fmt.Sprintf("Series %03d", i)
+		names = append(names, name)
+		if _, err := store.CreateSeries(ctx, CreateSeriesParams{
+			LibraryID:   lib.ID,
+			Name:        name,
+			Path:        fmt.Sprintf("/lib/%s", name),
+			NameInitial: "#",
+		}); err != nil {
+			t.Fatalf("create series %d failed: %v", i, err)
+		}
+	}
+	db := store.(*SqlStore).DB()
+	if _, err := db.ExecContext(ctx, `UPDATE series SET name_initial = 'WRONG'`); err != nil {
+		t.Fatalf("seed wrong initials failed: %v", err)
+	}
+
+	if err := backfillSeriesInitials(db); err != nil {
+		t.Fatalf("backfill failed: %v", err)
+	}
+
+	// 一行都不能漏：任何仍是 WRONG 的行都说明分批把它跳过了。
+	var stale int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM series WHERE name_initial = 'WRONG'`).Scan(&stale); err != nil {
+		t.Fatalf("count stale failed: %v", err)
+	}
+	if stale != 0 {
+		t.Fatalf("backfill skipped %d rows across batch boundaries", stale)
+	}
+
+	// 且回填出的值必须与逐行计算的结果一致。
+	for _, name := range names {
+		var got string
+		if err := db.QueryRowContext(ctx, `SELECT name_initial FROM series WHERE name = ?`, name).Scan(&got); err != nil {
+			t.Fatalf("read initial for %q failed: %v", name, err)
+		}
+		if want := SeriesInitial("", name); got != want {
+			t.Fatalf("series %q: initial = %q, want %q", name, got, want)
+		}
+	}
+
+	// 幂等：再跑一次不应改变任何东西，也不应死循环。
+	if err := backfillSeriesInitials(db); err != nil {
+		t.Fatalf("second backfill failed: %v", err)
 	}
 }

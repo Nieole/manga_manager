@@ -1569,7 +1569,7 @@ LIMIT sqlc.arg(limit_count);
 SELECT COUNT(*)
 FROM books b
 WHERE (sqlc.arg(library_id) = 0 OR b.library_id = sqlc.arg(library_id))
-  AND COALESCE(b.quick_hash, '') = '';
+  AND (b.quick_hash IS NULL OR b.quick_hash = '');
 
 -- name: ListHealthMissingQuickHash :many
 SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
@@ -1579,7 +1579,7 @@ FROM books b
 JOIN series s ON s.id = b.series_id
 JOIN libraries l ON l.id = b.library_id
 WHERE (sqlc.arg(library_id) = 0 OR b.library_id = sqlc.arg(library_id))
-  AND COALESCE(b.quick_hash, '') = ''
+  AND (b.quick_hash IS NULL OR b.quick_hash = '')
 ORDER BY b.updated_at DESC, b.id DESC
 LIMIT sqlc.arg(limit_count);
 

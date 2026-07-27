@@ -244,7 +244,7 @@ const countHealthMissingQuickHash = `-- name: CountHealthMissingQuickHash :one
 SELECT COUNT(*)
 FROM books b
 WHERE (?1 = 0 OR b.library_id = ?1)
-  AND COALESCE(b.quick_hash, '') = ''
+  AND (b.quick_hash IS NULL OR b.quick_hash = '')
 `
 
 func (q *Queries) CountHealthMissingQuickHash(ctx context.Context, libraryID interface{}) (int64, error) {
@@ -3557,7 +3557,7 @@ FROM books b
 JOIN series s ON s.id = b.series_id
 JOIN libraries l ON l.id = b.library_id
 WHERE (?1 = 0 OR b.library_id = ?1)
-  AND COALESCE(b.quick_hash, '') = ''
+  AND (b.quick_hash IS NULL OR b.quick_hash = '')
 ORDER BY b.updated_at DESC, b.id DESC
 LIMIT ?2
 `

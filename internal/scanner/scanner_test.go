@@ -753,6 +753,10 @@ func TestCleanupLibraryKeepsRootLevelLooseArchives(t *testing.T) {
 		t.Fatalf("expected 3 scanned books, got %d", len(booksBefore))
 	}
 
+	// 等封面队列排空再清理：ScanLibrary 返回时封面生成仍在异步写 books.cover_path，
+	// 而 CleanupLibrary 会 CASCADE 删除 books——两者重叠会让断言看到中间状态。
+	waitForScannerCoverQueue(t, s)
+
 	if err := s.CleanupLibrary(ctx, lib.ID); err != nil {
 		t.Fatalf("cleanup library failed: %v", err)
 	}
@@ -800,6 +804,8 @@ func TestCleanupLibraryRemovesSeriesWhenFilesAreGone(t *testing.T) {
 	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true); err != nil {
 		t.Fatalf("scan library failed: %v", err)
 	}
+
+	waitForScannerCoverQueue(t, s)
 
 	// 只删掉一个系列（1/3 < 50% 熔断线），它的目录与书文件都消失。
 	if err := os.RemoveAll(filepath.Join(libraryPath, "Series Gamma")); err != nil {
@@ -855,5 +861,16 @@ func TestScanSeriesReportsConflictInsteadOfSilentSuccess(t *testing.T) {
 	err := s.ScanSeries(context.Background(), 42, false)
 	if !errors.Is(err, ErrScanAlreadyRunning) {
 		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
+	}
+}
+
+// waitForScannerCoverQueue 等待进程级封面生成队列排空。
+// 扫描是「入库同步、封面异步」，不等它就断言的用例会偶发看到中间状态。
+func waitForScannerCoverQueue(t testing.TB, s *Scanner) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.waitForCoverQueue(ctx); err != nil {
+		t.Fatalf("wait cover queue failed: %v", err)
 	}
 }
