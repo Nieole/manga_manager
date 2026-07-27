@@ -243,7 +243,7 @@ func (s *SqlStore) AssignOrphanKOReaderAccountsToUser(ctx context.Context, userI
 // 该用户最近阅读的书目（跨库，用于看板「继续阅读」）。返回行结构与全局版一致。
 func (s *SqlStore) GetUserRecentReadAll(ctx context.Context, userID, limit int64) ([]GetRecentReadAllRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.name, s.id, b.id, b.name, b.title, usp.last_read_at, ubp.last_read_page, b.page_count, COALESCE(sc.cover_path, '')
+		SELECT s.name, s.id, b.id, b.name, b.title, usp.last_read_at, ubp.last_read_page, b.page_count, COALESCE(sc.cover_path, ''), b.path
 		FROM user_series_progress usp
 		JOIN series s ON s.id = usp.series_id
 		JOIN books b ON b.id = usp.last_read_book_id
@@ -261,7 +261,7 @@ func (s *SqlStore) GetUserRecentReadAll(ctx context.Context, userID, limit int64
 	for rows.Next() {
 		var i GetRecentReadAllRow
 		if err := rows.Scan(&i.SeriesName, &i.SeriesID, &i.BookID, &i.BookName, &i.BookTitle,
-			&i.LastReadAt, &i.LastReadPage, &i.PageCount, &i.CoverPath); err != nil {
+			&i.LastReadAt, &i.LastReadPage, &i.PageCount, &i.CoverPath, &i.BookPath); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

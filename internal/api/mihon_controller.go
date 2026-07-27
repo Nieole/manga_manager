@@ -120,8 +120,16 @@ func (c *Controller) setupMihonRoutes(r chi.Router) {
 		r.Get("/books/{bookId}/pages", c.mihonBookPages)
 		r.Get("/books/{bookId}/pages/{pageNumber}", c.servePageImage)
 		r.Post("/books/{bookId}/progress", c.updateBookProgress)
+		// 协议内的资源路由，理由同 OPDS：响应里下发的封面/缩略图/整卷下载链接不能指向 /api，
+		// 那边由 authGate 守卫、只认 session cookie，而 Mihon 客户端带的是 HTTP Basic 凭据。
+		r.Get("/books/{bookId}/file", c.serveBookFile)
+		r.Get("/covers/{bookId}", c.serveCoverImage)
+		r.Get("/thumbnails/*", c.serveThumbnailImage)
 	})
 }
+
+// mihonResourceBase 是 Mihon 响应内所有资源链接的前缀。
+const mihonResourceBase = "/api/mihon/v1"
 
 func (c *Controller) mihonLibraries(w http.ResponseWriter, r *http.Request) {
 	libs, err := c.store.ListLibraries(r.Context())
@@ -195,7 +203,7 @@ func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request
 		}
 		coverURL := ""
 		if row.CoverPath != "" {
-			coverURL = "/api/thumbnails/" + row.CoverPath
+			coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 		}
 		items = append(items, MihonContinueItemResponse{
 			SeriesID:     row.SeriesID,
@@ -458,7 +466,7 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		coverURL := ""
 		if row.CoverPath.Valid && row.CoverPath.String != "" {
-			coverURL = "/api/thumbnails/" + row.CoverPath.String
+			coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath.String
 		}
 		items = append(items, MihonSeriesResponse{
 			ID:          row.ID,
@@ -546,7 +554,7 @@ func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 	items := make([]MihonPageResponse, 0, len(pages))
 	for i, page := range pages {
 		pageNumber := int64(i + 1)
-		imageURL := fmt.Sprintf("/api/mihon/v1/books/%d/pages/%d%s", bookID, pageNumber, query)
+		imageURL := fmt.Sprintf(mihonResourceBase+"/books/%d/pages/%d%s", bookID, pageNumber, query)
 		items = append(items, MihonPageResponse{
 			Index:     pageNumber,
 			MediaType: page.MediaType,
@@ -628,7 +636,7 @@ func mihonCollectionFromView(view CollectionView) MihonCollectionResponse {
 func mihonSeriesFromCollectionRow(row collectionSeriesListItem) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	}
 	return MihonSeriesResponse{
 		ID:         row.ID,
@@ -647,7 +655,7 @@ func mihonSeriesFromCollectionRow(row collectionSeriesListItem) MihonSeriesRespo
 func mihonSeriesFromRecentAddedRow(row database.ListRecentAddedSeriesRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	} else {
 		coverURL = mihonCoverURL(row.CoverBookID)
 	}
@@ -669,7 +677,7 @@ func mihonSeriesFromRecentAddedRow(row database.ListRecentAddedSeriesRow) MihonS
 func mihonSeriesFromReadingListRow(row database.ListReadingListSeriesPageRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	} else {
 		coverURL = mihonCoverURL(row.CoverBookID)
 	}
@@ -691,7 +699,7 @@ func mihonSeriesFromReadingListRow(row database.ListReadingListSeriesPageRow) Mi
 func mihonSeriesFromProtocolRow(row database.ProtocolSeriesRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	} else {
 		coverURL = mihonCoverURL(row.CoverBookID)
 	}
@@ -713,7 +721,7 @@ func mihonSeriesFromProtocolRow(row database.ProtocolSeriesRow) MihonSeriesRespo
 func mihonSeriesFromSearchRow(row database.SearchSeriesPagedRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath.Valid && row.CoverPath.String != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath.String
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath.String
 	}
 	totalPages := int64(0)
 	if row.TotalPages.Valid {
@@ -760,5 +768,5 @@ func mihonCoverURL(bookID int64) string {
 	if bookID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("/api/covers/%d", bookID)
+	return fmt.Sprintf(mihonResourceBase+"/covers/%d", bookID)
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -142,8 +143,18 @@ func (c *Controller) SetupOPDSRoutes(r chi.Router) {
 		r.Get("/libraries/{libraryId}", c.opdsLibrarySeries)
 		r.Get("/series/{seriesId}", c.opdsSeriesBooks)
 		r.Get("/books/{bookId}/pages/{pageNumber}", c.opdsStreamPageImage)
+		// 协议内的资源路由。feed 里的整卷下载/封面/缩略图链接必须指向这里，不能指向 /api：
+		// /api 组由 authGate 守卫、只认 session cookie，而 OPDS 客户端带的是 HTTP Basic 凭据，
+		// 请求过去必然 401——整卷下载与封面在真实阅读器上完全不可用。
+		// 这几条复用与 /api 相同的 handler，区别只在于走的是本组的 requireBasicAuth。
+		r.Get("/books/{bookId}/file", c.serveBookFile)
+		r.Get("/books/{bookId}/cover", c.serveCoverImage)
+		r.Get("/thumbnails/*", c.serveThumbnailImage)
 	})
 }
+
+// opdsResourceBase 是 OPDS feed 内所有资源链接的前缀。
+const opdsResourceBase = "/opds/v1.2"
 
 func xmlResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/atom+xml;charset=utf-8")
@@ -383,9 +394,9 @@ func opdsBookAcquisitionLinks(bookID, pageCount int64, lastReadPage sql.NullInt6
 	links := []OPDSLink{
 		// 整卷下载：非 PSE 的桌面/传统 OPDS 客户端据此拉取原始 CBZ/CBR/PDF 整包；type 反映真实归档
 		// MIME（下载路由本身再以权威 Content-Type 下发）。放在首位，令整卷下载成为主获取项。
-		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf("/api/books/%d/file", bookID), Type: bookDownloadContentType(bookPath)},
+		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf(opdsResourceBase+"/books/%d/file", bookID), Type: bookDownloadContentType(bookPath)},
 		// 首页 JPEG：作为封面/预览补充，保留历史行为，兼容只取第一页的旧客户端。
-		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf("/api/pages/%d/1", bookID), Type: "image/jpeg"},
+		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf(opdsResourceBase+"/books/%d/pages/1", bookID), Type: "image/jpeg"},
 	}
 	if pageCount <= 0 {
 		return links
@@ -414,7 +425,7 @@ func opdsSeriesEntryFromListItem(item collectionSeriesListItem) OPDSEntry {
 	if item.CoverPath != "" {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
-			Href: fmt.Sprintf("/api/thumbnails/%s", item.CoverPath),
+			Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", item.CoverPath),
 			Type: opdsThumbnailMIME(item.CoverPath),
 		})
 	}
@@ -442,7 +453,7 @@ func opdsSeriesEntryFromSearchRow(row database.SearchSeriesPagedRow) OPDSEntry {
 	if row.CoverPath.Valid && row.CoverPath.String != "" {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
-			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath.String),
+			Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", row.CoverPath.String),
 			Type: opdsThumbnailMIME(row.CoverPath.String),
 		})
 	}
@@ -463,7 +474,7 @@ func opdsSeriesEntryFromRecentAddedRow(row database.ListRecentAddedSeriesRow) OP
 	if row.CoverPath != "" {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
-			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+			Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", row.CoverPath),
 			Type: opdsThumbnailMIME(row.CoverPath),
 		})
 	}
@@ -484,7 +495,7 @@ func opdsSeriesEntryFromProtocolRow(row database.ProtocolSeriesRow) OPDSEntry {
 	if row.CoverPath != "" {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
-			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+			Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", row.CoverPath),
 			Type: opdsThumbnailMIME(row.CoverPath),
 		})
 	}
@@ -512,7 +523,7 @@ func opdsSeriesEntryFromReadingListRow(row database.ListReadingListSeriesPageRow
 	if row.CoverPath != "" {
 		links = append(links, OPDSLink{
 			Rel:  "http://opds-spec.org/image/thumbnail",
-			Href: fmt.Sprintf("/api/thumbnails/%s", row.CoverPath),
+			Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", row.CoverPath),
 			Type: opdsThumbnailMIME(row.CoverPath),
 		})
 	}
@@ -884,7 +895,7 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 		if s.CoverPath != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
-				Href: fmt.Sprintf("/api/thumbnails/%s", s.CoverPath),
+				Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", s.CoverPath),
 				Type: opdsThumbnailMIME(s.CoverPath),
 			})
 		}
@@ -927,7 +938,18 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	slices.SortStableFunc(books, booksort.CompareBooks)
 	c.overlayUserProgress(r.Context(), c.currentUserID(r), books)
 
-	series, _ := c.store.GetSeries(r.Context(), seriesID)
+	// 不存在的系列必须回 404 而不是 200 + 空 feed：吞掉这个错误会让阅读器把
+	// 「系列已被删除」显示成「这个系列一本书都没有」，用户无从判断。
+	series, err := c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Series not found", http.StatusNotFound)
+			return
+		}
+		slog.Error("opds: failed to load series", "series_id", seriesID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
 	seriesTitle := series.Name
 	if series.Title.Valid && series.Title.String != "" {
 		seriesTitle = series.Title.String
@@ -951,7 +973,7 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		if b.CoverPath.Valid && b.CoverPath.String != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
-				Href: fmt.Sprintf("/api/thumbnails/%s", b.CoverPath.String),
+				Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", b.CoverPath.String),
 				Type: opdsThumbnailMIME(b.CoverPath.String),
 			})
 		}
@@ -1018,11 +1040,13 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 		if item.LastReadPage.Valid && item.PageCount > 0 {
 			content = opdsContinueProgress(locale, item.SeriesName, item.LastReadPage.Int64, item.PageCount)
 		}
-		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage, "")
+		// 传真实归档路径：此前传空串，导致「继续阅读」feed 里的整卷下载 MIME 恒为
+		// application/octet-stream，部分阅读器据此拒绝或按错误类型处理。
+		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage, item.BookPath)
 		if item.CoverPath != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
-				Href: fmt.Sprintf("/api/thumbnails/%s", item.CoverPath),
+				Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", item.CoverPath),
 				Type: opdsThumbnailMIME(item.CoverPath),
 			})
 		}

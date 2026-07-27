@@ -1832,7 +1832,8 @@ SELECT
     ss.last_read_at,
     b.last_read_page,
     b.page_count,
-    COALESCE(ss.cover_path, '') AS cover_path
+    COALESCE(ss.cover_path, '') AS cover_path,
+    b.path AS book_path
 FROM series_stats ss INDEXED BY idx_series_stats_last_read
 JOIN series s ON s.id = ss.series_id
 JOIN books b ON b.id = ss.last_read_book_id
@@ -1854,6 +1855,7 @@ type GetRecentReadAllRow struct {
 	LastReadPage sql.NullInt64  `json:"last_read_page"`
 	PageCount    int64          `json:"page_count"`
 	CoverPath    string         `json:"cover_path"`
+	BookPath     string         `json:"book_path"`
 }
 
 func (q *Queries) GetRecentReadAll(ctx context.Context, limit int64) ([]GetRecentReadAllRow, error) {
@@ -1875,6 +1877,7 @@ func (q *Queries) GetRecentReadAll(ctx context.Context, limit int64) ([]GetRecen
 			&i.LastReadPage,
 			&i.PageCount,
 			&i.CoverPath,
+			&i.BookPath,
 		); err != nil {
 			return nil, err
 		}

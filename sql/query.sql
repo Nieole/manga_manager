@@ -1386,7 +1386,8 @@ SELECT
     ss.last_read_at,
     b.last_read_page,
     b.page_count,
-    COALESCE(ss.cover_path, '') AS cover_path
+    COALESCE(ss.cover_path, '') AS cover_path,
+    b.path AS book_path
 FROM series_stats ss INDEXED BY idx_series_stats_last_read
 JOIN series s ON s.id = ss.series_id
 JOIN books b ON b.id = ss.last_read_book_id
