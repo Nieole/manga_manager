@@ -177,13 +177,8 @@ func (c *Controller) getPeriodStats(w http.ResponseWriter, r *http.Request) {
 
 // getRecentReadAll 返回跨库的最近阅读记录（用于 Dashboard 首页）
 func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
-	limitStr := r.URL.Query().Get("limit")
-	limit := int64(20)
-	if limitStr != "" {
-		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil && l > 0 {
-			limit = l
-		}
-	}
+	// 与 /api/series/search 统一口径：此前这里没有上限。
+	limit := int64(queryLimit(r, "limit", 20, maxListLimit))
 
 	var (
 		items []database.GetRecentReadAllRow

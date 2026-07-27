@@ -149,7 +149,7 @@ func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) 
 	rows, err := c.store.ListRecentAddedSeries(r.Context(), database.ListRecentAddedSeriesParams{
 		LibraryID: libraryID,
 		Limit:     int64(limit),
-		Offset:    int64((page - 1) * limit),
+		Offset:    pageOffset(page, limit),
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent series")
@@ -268,7 +268,7 @@ func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Reque
 	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
 		ReadingListID: listID,
 		Limit:         int64(limit),
-		Offset:        int64((page - 1) * limit),
+		Offset:        pageOffset(page, limit),
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list series")
@@ -295,7 +295,7 @@ func (c *Controller) mihonCollectionSeries(w http.ResponseWriter, r *http.Reques
 	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", 30, 100)
-	_, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, (page-1)*limit)
+	_, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, int(pageOffset(page, limit)))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Collection not found")
@@ -334,7 +334,7 @@ func (c *Controller) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.R
 	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", filter.PageSize, 100)
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, (page-1)*limit, 0)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), 0)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch smart collection series")
 		return
@@ -383,7 +383,7 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	limit := positiveQueryInt(r, "limit", 30, 100)
 	libraryID := int64(positiveQueryInt(r, "libraryId", 0, 0))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	offset := int64((page - 1) * limit)
+	offset := pageOffset(page, limit)
 
 	var tags []string
 	if tagsParam := r.URL.Query().Get("tag"); tagsParam != "" {
@@ -565,7 +565,12 @@ func positiveQueryInt(r *http.Request, key string, fallback, max int) int {
 	if value == 0 && fallback > 0 {
 		return fallback
 	}
-	if max > 0 && value > max {
+	// 与 OPDS 侧同理：max<=0 不再意味着无上限。page 无上界时 (page-1)*limit 先溢出，
+	// 再经 int32(offset) 截断，超大页码会静默返回第一页而不是空页。
+	if max <= 0 {
+		max = maxPageNumber
+	}
+	if value > max {
 		return max
 	}
 	return value

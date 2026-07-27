@@ -152,15 +152,14 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	limitStr := r.URL.Query().Get("limit")
-	limit := 20
-	if limitStr != "" {
-		_, _ = fmt.Sscanf(limitStr, "%d", &limit)
-	}
-	offsetStr := r.URL.Query().Get("offset")
-	offset := 0
-	if offsetStr != "" {
-		_, _ = fmt.Sscanf(offsetStr, "%d", &offset)
+	// 这两个值会原样透传给外部元数据源（Bangumi/AniList/ComicVine…）。
+	// 旧写法用 fmt.Sscanf 且完全不校验：limit=99999999 会直接打到上游，既浪费我们的
+	// 配额也可能触发对方限流封禁；解析失败时 Sscanf 还会让变量保持默认值而不报错。
+	// 上限取 50 与各 provider 单页返回量对齐。
+	limit := queryLimit(r, "limit", 20, maxScrapeSearchLimit)
+	offset := queryOffset(r, "offset")
+	if offset > maxScrapeSearchOffset {
+		offset = maxScrapeSearchOffset
 	}
 
 	results, total, err := provider.SearchMetadata(requestContextWithLocale(r), searchTitle, limit, offset)

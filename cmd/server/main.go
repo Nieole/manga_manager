@@ -102,6 +102,9 @@ func main() {
 	r.Use(middleware.RequestID)
 	r.Use(api.RequestMetrics)
 	r.Use(middleware.Recoverer)
+	// 请求体闸门要早于任何会读 body 的处理：未鉴权的 /api/auth/login 与 KOReader 协议端点
+	// 此前没有任何上限，单个巨型 JSON 即可撑爆内存。
+	r.Use(api.RequestBodyLimit)
 	r.Use(securityHeaders)
 	r.Use(middleware.Compress(5,
 		"text/html",
@@ -191,7 +194,11 @@ func main() {
 		Addr:              addr,
 		Handler:           r,
 		ReadHeaderTimeout: 15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// ReadTimeout 覆盖整个请求（含 body）的读取：没有它，一个慢速客户端可以一直
+		// 挂着连接慢慢喂 body 占用 goroutine。取值需容得下最大的封面上传走慢速链路。
+		// 不设 WriteTimeout：SSE 与整卷下载都是长写，设了会被中途掐断。
+		ReadTimeout: 120 * time.Second,
+		IdleTimeout: 60 * time.Second,
 	}
 
 	// 优雅停机：捕获 SIGINT/SIGTERM，先停止接收新连接并排空在途请求，再收尾后台任务与资源。

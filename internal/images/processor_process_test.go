@@ -358,3 +358,40 @@ func TestValidateTargetDimensionsAllowsUnspecified(t *testing.T) {
 		t.Fatalf("expected 0x0 (unspecified) to be allowed, got %v", err)
 	}
 }
+
+// TestNormalizeWaifu2xParams 锁住 AI 放大参数的白名单。
+//
+// 这三个值来自 HTTP 查询串，Waifu2xFormat 会被拼进沙盒输出路径
+// （filepath.Join(sandboxDir, "out."+format)）与子进程 argv，未归一化时
+// "../../../tmp/x" 可让引擎把文件写到沙盒之外。
+func TestNormalizeWaifu2xParams(t *testing.T) {
+	formatCases := map[string]string{
+		"":                  "webp",
+		"webp":              "webp",
+		"PNG":               "png",
+		"jpeg":              "jpg",
+		"jpg":               "jpg",
+		"../../../tmp/evil": "webp",
+		"png/../../etc":     "webp",
+		"exe":               "webp",
+	}
+	for in, want := range formatCases {
+		if got := normalizeWaifu2xFormat(in); got != want {
+			t.Fatalf("normalizeWaifu2xFormat(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	scaleCases := map[int]int{0: 2, 1: 1, 2: 2, 3: 2, 4: 4, 8: 2, -1: 2, 99999: 2}
+	for in, want := range scaleCases {
+		if got := normalizeWaifu2xScale(in); got != want {
+			t.Fatalf("normalizeWaifu2xScale(%d) = %d, want %d", in, got, want)
+		}
+	}
+
+	noiseCases := map[int]int{-5: -1, -1: -1, 0: 0, 3: 3, 99: 3}
+	for in, want := range noiseCases {
+		if got := normalizeWaifu2xNoise(in); got != want {
+			t.Fatalf("normalizeWaifu2xNoise(%d) = %d, want %d", in, got, want)
+		}
+	}
+}

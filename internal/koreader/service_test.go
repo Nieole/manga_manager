@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -293,5 +294,44 @@ func TestSaveProgressLastWriteWinsAllowsRollback(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly 1 progress_regressed event, got %d", count)
+	}
+}
+
+// TestSaveProgressRejectsOversizedFields 锁住 kosync 进度载荷的字段长度上限。
+// 这些字段直接落库（document 还进 UNIQUE 索引），无上限时被改造过的设备可以
+// 把单条记录撑到任意大小，反复推送即可撑爆数据库。
+func TestSaveProgressRejectsOversizedFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload ProgressPayload
+	}{
+		{"document too long", ProgressPayload{
+			Document: strings.Repeat("a", maxProgressDocumentLen+1),
+			Progress: "0.5", Device: "kobo", DeviceID: "dev1",
+		}},
+		{"progress too long", ProgressPayload{
+			Document: "doc", Progress: strings.Repeat("a", maxProgressValueLen+1),
+			Device: "kobo", DeviceID: "dev1",
+		}},
+		{"device too long", ProgressPayload{
+			Document: "doc", Progress: "0.5",
+			Device: strings.Repeat("a", maxProgressDeviceLen+1), DeviceID: "dev1",
+		}},
+		{"device id too long", ProgressPayload{
+			Document: "doc", Progress: "0.5", Device: "kobo",
+			DeviceID: strings.Repeat("a", maxProgressDeviceLen+1),
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateProgressPayloadLengths(tc.payload); err == nil {
+				t.Fatal("expected oversized field to be rejected")
+			}
+		})
+	}
+
+	ok := ProgressPayload{Document: "series/vol01.cbz", Progress: "0.42", Device: "kobo", DeviceID: "dev1"}
+	if err := validateProgressPayloadLengths(ok); err != nil {
+		t.Fatalf("expected ordinary payload to pass, got %v", err)
 	}
 }

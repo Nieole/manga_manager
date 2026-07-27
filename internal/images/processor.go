@@ -113,6 +113,41 @@ func ValidateTargetDimensions(width, height int) error {
 	return nil
 }
 
+// normalizeWaifu2xFormat 把用户可控的输出格式收敛到白名单。
+// 该值会成为沙盒内输出文件的扩展名并作为 -f 参数传给引擎，任何未知值一律回落 webp。
+func normalizeWaifu2xFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "png":
+		return "png"
+	case "jpg", "jpeg":
+		return "jpg"
+	default:
+		return "webp"
+	}
+}
+
+// normalizeWaifu2xScale 把放大倍数收敛到引擎实际支持的档位。
+// 未钳制时 w2x_scale=99999 会让引擎去生成一张天文尺寸的图。
+func normalizeWaifu2xScale(scale int) int {
+	switch scale {
+	case 1, 2, 4:
+		return scale
+	default:
+		return 2
+	}
+}
+
+// normalizeWaifu2xNoise 把降噪等级夹到引擎支持的 [-1, 3]。
+func normalizeWaifu2xNoise(noise int) int {
+	if noise < -1 {
+		return -1
+	}
+	if noise > 3 {
+		return 3
+	}
+	return noise
+}
+
 // formatMatchesContentType 判断目标输出格式是否与源 Content-Type 一致（jpg 归一化为 jpeg）。
 func formatMatchesContentType(format, contentType string) bool {
 	f := strings.ToLower(strings.TrimSpace(format))
@@ -128,6 +163,15 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	if err := ValidateTargetDimensions(opts.Width, opts.Height); err != nil {
 		return nil, "", fmt.Errorf("invalid target size: %w", err)
 	}
+
+	// AI 放大参数白名单。这三个值来自 HTTP 查询串（w2x_scale / w2x_noise / w2x_format），
+	// 下游会把 Waifu2xFormat 拼进沙盒输出路径、子进程 argv，以及回传的 Content-Type。
+	// 旧代码直接 filepath.Join(sandboxDir, "out."+format)，一个 "../../../tmp/x" 就能让
+	// 引擎把文件写到沙盒外。必须在入口归一化——放在 execWaifu2x 内部不行，那里拿的是
+	// opts 的值拷贝，归一化结果传不回这里的 Content-Type 推导。
+	opts.Waifu2xFormat = normalizeWaifu2xFormat(opts.Waifu2xFormat)
+	opts.Waifu2xScale = normalizeWaifu2xScale(opts.Waifu2xScale)
+	opts.Waifu2xNoise = normalizeWaifu2xNoise(opts.Waifu2xNoise)
 
 	// 如果没有任何缩放/滤镜/质量/裁切需求，且目标格式未指定或与源格式一致，直接透传原始字节，
 	// 避免「源已是目标格式（如 format=webp 而源就是 webp）」仍白白解码 + 重编码一次（且可能损质）。

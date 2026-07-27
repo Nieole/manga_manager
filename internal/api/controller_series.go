@@ -64,23 +64,13 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limitStr := r.URL.Query().Get("limit")
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil || limit <= 0 {
-		limit = 50
-	}
 	// 上限保护：limit 只有下限校验时，一个 limit=1000000 就能让本端点物化并 JSON 编码整库
 	// (~24 列含 summary 长文本) 的全部系列，等同单请求 OOM/超时。UI 最大页大小为 100，200 留足余量。
-	if limit > maxSeriesPageLimit {
-		limit = maxSeriesPageLimit
-	}
-
-	pageStr := r.URL.Query().Get("page")
-	page, err := strconv.Atoi(pageStr)
-	if err != nil || page <= 0 {
-		page = 1
-	}
-	offset := (page - 1) * limit
+	limit := queryLimit(r, "limit", 50, maxSeriesPageLimit)
+	// page 同样必须钳制：无上界时 (page-1)*limit 会溢出，offset 再经 int32 截断成 0，
+	// 极大页码会静默返回第一页而不是空页。
+	page := queryPage(r, "page")
+	offset := int(pageOffset(page, limit))
 
 	var tags []string
 	if tagsParam := r.URL.Query().Get("tags"); tagsParam != "" {
@@ -171,13 +161,8 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	limitStr := r.URL.Query().Get("limit")
-	limit := int64(10) // 默认读取 10 条
-	if limitStr != "" {
-		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil && l > 0 {
-			limit = l
-		}
-	}
+	// 与 /api/series/search 统一口径：此前这里没有上限，limit=1000000 可让单请求物化整库。
+	limit := int64(queryLimit(r, "limit", 10, maxSeriesPageLimit))
 
 	ctx := r.Context()
 	var items []database.GetRecentReadSeriesRow

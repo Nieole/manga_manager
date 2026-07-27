@@ -321,20 +321,38 @@ func opdsPositiveQueryInt(r *http.Request, key string, fallback, max int) int {
 	if err != nil || value <= 0 {
 		value = fallback
 	}
-	if max > 0 && value > max {
+	// max<=0 曾表示「不设上限」，但那让 page 可以取到任意大的值，(page-1)*limit 随即
+	// 溢出 int 变成负数，opdsSliceBounds 拿负 start 去切片直接 panic。
+	// 现在无论调用方是否指定，都至少落在 maxPageNumber 之内。
+	if max <= 0 {
+		max = maxPageNumber
+	}
+	if value > max {
 		value = max
 	}
 	return value
 }
 
+// opdsSliceBounds 计算内存分页的切片区间，对任何入参都返回 0 <= start <= end <= total。
+// 防御性钳制而非信任调用方：这里的返回值直接用于切片下标，算错一次就是 panic。
 func opdsSliceBounds(total, page, limit int) (int, int) {
-	start := (page - 1) * limit
-	if start > total {
-		start = total
+	if total < 0 {
+		total = 0
 	}
-	end := start + limit
+	start64 := pageOffset(page, limit)
+	if start64 > int64(total) {
+		start64 = int64(total)
+	}
+	start := int(start64)
+	end := start
+	if limit > 0 {
+		end = start + limit
+	}
 	if end > total {
 		end = total
+	}
+	if end < start {
+		end = start
 	}
 	return start, end
 }
@@ -521,7 +539,7 @@ func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
 	rows, err := c.store.ListRecentAddedSeries(r.Context(), database.ListRecentAddedSeriesParams{
 		LibraryID: libraryID,
 		Limit:     int64(limit),
-		Offset:    int64((page - 1) * limit),
+		Offset:    pageOffset(page, limit),
 	})
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -657,7 +675,7 @@ func (c *Controller) opdsReadingListSeries(w http.ResponseWriter, r *http.Reques
 	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
 		ReadingListID: listID,
 		Limit:         int64(limit),
-		Offset:        int64((page - 1) * limit),
+		Offset:        pageOffset(page, limit),
 	})
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -687,7 +705,7 @@ func (c *Controller) opdsStaticCollectionSeries(w http.ResponseWriter, r *http.R
 	}
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
-	view, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, (page-1)*limit)
+	view, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, int(pageOffset(page, limit)))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Collection not found", http.StatusNotFound)
@@ -729,7 +747,7 @@ func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Re
 	}
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", filter.PageSize, 200)
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, (page-1)*limit, 0)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), 0)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -845,7 +863,7 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 	rows, err := c.store.ListOPDSLibrarySeriesPaged(r.Context(), database.ListOPDSLibrarySeriesPagedParams{
 		LibraryID: libID,
 		Limit:     int64(limit),
-		Offset:    int64((page - 1) * limit),
+		Offset:    pageOffset(page, limit),
 	})
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)

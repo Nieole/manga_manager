@@ -21,6 +21,15 @@ import (
 	"manga-manager/internal/taskcontrol"
 )
 
+// kosync 进度载荷各字段的长度上限。设备侧本就只会推送文件路径/百分比串/设备名，
+// 这些取值远小于上限；设限是为了挡住被改造过的客户端把单条记录撑到任意大小
+// （document 还会进 UNIQUE 索引，撑大后连索引一起膨胀）。
+const (
+	maxProgressDocumentLen = 512
+	maxProgressValueLen    = 512
+	maxProgressDeviceLen   = 128
+)
+
 var (
 	ErrUnauthorized      = errors.New("unauthorized")
 	ErrForbidden         = errors.New("forbidden")
@@ -155,6 +164,23 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 	return account, nil
 }
 
+// validateProgressPayloadLengths 校验进度载荷各字段的长度。
+// 这些字段直接落库（document 还进 UNIQUE 索引），此前完全不限长，
+// 一台被改造过的设备可以把单条记录撑到任意大小，反复推送即可撑爆数据库。
+func validateProgressPayloadLengths(payload ProgressPayload) error {
+	switch {
+	case len(payload.Document) > maxProgressDocumentLen:
+		return fmt.Errorf("document exceeds %d bytes", maxProgressDocumentLen)
+	case len(payload.Progress) > maxProgressValueLen:
+		return fmt.Errorf("progress exceeds %d bytes", maxProgressValueLen)
+	case len(payload.Device) > maxProgressDeviceLen:
+		return fmt.Errorf("device exceeds %d bytes", maxProgressDeviceLen)
+	case len(payload.DeviceID) > maxProgressDeviceLen:
+		return fmt.Errorf("device_id exceeds %d bytes", maxProgressDeviceLen)
+	}
+	return nil
+}
+
 func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload ProgressPayload) (SyncResult, error) {
 	account, err := s.Authenticate(ctx, creds)
 	if err != nil {
@@ -170,6 +196,9 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	payload.DeviceID = strings.TrimSpace(payload.DeviceID)
 	if payload.Document == "" || payload.Progress == "" || payload.Device == "" || payload.DeviceID == "" {
 		return SyncResult{}, fmt.Errorf("invalid progress payload")
+	}
+	if err := validateProgressPayloadLengths(payload); err != nil {
+		return SyncResult{}, err
 	}
 	if payload.Percentage < 0 {
 		payload.Percentage = 0
