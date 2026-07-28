@@ -52,6 +52,7 @@ func (c *Controller) cacheImageMemory(key string, data []byte) {
 //     换个用户走同一代理就可能直接命中；
 //   - 一年不回源意味着换封面、重建缩略图后旧图还会顶一年，而这些 URL 里
 //     没有内容版本令牌，没法靠改 URL 绕开。
+//
 // 改为 private + 必须回源验证：ETag 仍在，条件请求命中时返回 304，省下的带宽一样多。
 const pageImageCacheControl = "private, max-age=0, must-revalidate"
 

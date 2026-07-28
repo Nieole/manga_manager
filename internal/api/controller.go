@@ -70,8 +70,8 @@ type Controller struct {
 	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 访问这些状态（定义见 controller_tasks.go）。
 	taskEngine *taskEngine
 
-	rebuildThumbAggMu sync.Mutex
-	rebuildThumbAgg   *rebuildThumbAggregator
+	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
+	rebuildThumbAgg *rebuildThumbAggregator
 
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
@@ -207,29 +207,31 @@ type taskIOMetrics struct {
 	HashedFiles    int64
 }
 
-// rebuildThumbAggregator 跟踪缩略图重建任务的聚合进度。
-// runGlobalScan 按库依次扫描，但 cover 队列是异步的，相邻两个库的 cover job 可能交错。
-// 因此 baseline 仅记录已确定 final 的库的累计 metrics；perLibPending 记录每个仍可能更新的库
-// 当前的实时 metrics 快照；汇总到任务时取 baseline + sum(perLibPending)。
-type rebuildThumbAggregator struct {
-	totalLibraries int
-	doneLibraries  int
-	baseline       map[string]int64
-	perLibPending  map[int64]map[string]int64
-	finalizedLibs  map[int64]struct{}
-	// finalizedCoverSeen[libID] = 该库 fixate 后从 progress 事件中观察到的 generated_covers 最大值，
-	// 避免 cover queue 异步阶段对已 fixate 库的二次累计。
-	finalizedCoverSeen map[int64]int64
-	currentLibID       int64
-	currentLibName     string
-	currentLibPath     string
+// controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
+// 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
+type controllerCacheSizes struct {
+	image          int
+	page           int
+	bookPageSource int
+	progressWrite  int
 }
 
-func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
-	cache, _ := lru.New[string, []byte](256)
-	pageCache, _ := lru.New[string, []parser.PageMetadata](128)
-	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](512)
-	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](2048)
+func defaultControllerCacheSizes() controllerCacheSizes {
+	return controllerCacheSizes{image: 256, page: 128, bookPageSource: 512, progressWrite: 2048}
+}
+
+// newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
+// 它不启动任何后台 goroutine，也不碰文件监听——那些属于「运行」而非「装配」，由 NewController 负责。
+//
+// 拆出这一层是因为白盒测试此前手工拼装 Controller，与 NewController 长期分叉：
+// 每加一个组件字段，测试构造器就漏一个，直到某个用例 nil panic 才被发现（franchiseRebuilder、
+// taskEngine.relaunchers、两个限流器、rebuildThumbAgg 都各栽过一次，代码里留下了一串
+// 「与 NewController 一致」的补丁注释）。现在两条路径共用同一份装配，这类分叉从结构上不再可能。
+func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
+	cache, _ := lru.New[string, []byte](sizes.image)
+	pageCache, _ := lru.New[string, []parser.PageMetadata](sizes.page)
+	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](sizes.bookPageSource)
+	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
 	c := &Controller{
 		store:               store,
 		stats:               newStatsCache(),
@@ -245,6 +247,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 		sse:                 newSSEBroker(),
 		taskEngine:          newTaskEngine(),
 		recommendations:     newRecommendationCache(24 * time.Hour),
+		rebuildThumbAgg:     newRebuildThumbAggregator(),
 		openPath:            openPathInDefaultFileManager,
 		// 登录：15 分钟窗口内累计 5 次失败即锁定，基础 1 分钟、指数退避、封顶 15 分钟。
 		loginLimiter: newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
@@ -262,6 +265,12 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 
 	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptions 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
+
+	return c
+}
+
+func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
+	c := newControllerCore(store, scan, cfg, cfgPath, defaultControllerCacheSizes())
 
 	c.recoverInterruptedTasks()
 

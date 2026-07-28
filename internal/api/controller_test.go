@@ -30,7 +30,6 @@ import (
 	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
-	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 func newTestController(t testing.TB) (*Controller, database.Store, any, string) {
@@ -66,36 +65,14 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 	}
 
 	cfgManager := config.NewManager(cfg)
-	imageCache, _ := lru.New[string, []byte](8)
-	pageCache, _ := lru.New[string, []parser.PageMetadata](8)
-	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](8)
-	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](8)
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
 	scan := scanner.NewScanner(store, cfgManager)
 
-	controller := &Controller{
-		store:               store,
-		stats:               newStatsCache(),
-		imageCache:          imageCache,
-		pageCache:           pageCache,
-		bookPageSourceCache: bookPageSourceCache,
-		progressWriteCache:  progressWriteCache,
-		scanner:             scan,
-		config:              cfgManager,
-		koreader:            koreader.NewService(store, cfgManager),
-		external:            external.NewManager(store, 30*time.Minute),
-		configPath:          configPath,
-		taskEngine:          newTaskEngine(),
-		sse:                 newSSEBroker(),
-		recommendations:     newRecommendationCache(24 * time.Hour),
-		// 与 NewController 一致：鉴权限流器不可为 nil（否则 login / Basic 路径解引用会 panic）。
-		loginLimiter:     newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
-		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
-	}
-	// 与 NewController 一致：构建任务重试注册表，否则新建任务的 Retryable 恒为 false。
-	controller.taskEngine.relaunchers = controller.buildTaskRelaunchers()
-	// 与 NewController 一致：注入 franchiseRebuilder，否则触发 scheduleFranchiseRebuild 会 nil panic。
-	controller.franchiseRebuilder = newFranchiseRebuilder(controller.RebuildFranchiseCollections, controller.runBackground)
+	// 与生产路径共用同一份装配（newControllerCore），只把缓存容量调小以便用几条数据触发淘汰。
+	// 不走 NewController 是因为后者还会启动守护/落盘/SSE/文件监听等后台服务，测试不需要也不该起。
+	controller := newControllerCore(store, scan, cfgManager, configPath, controllerCacheSizes{
+		image: 8, page: 8, bookPageSource: 8, progressWrite: 8,
+	})
 
 	t.Cleanup(parser.ResetArchivePool)
 	t.Cleanup(controller.Close)
@@ -2562,27 +2539,12 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	// 进度/终态改为异步落盘（M42）：显式刷一次，模拟服务生命周期内的落盘/优雅关闭，再由新实例读回。
 	controller.flushTaskPersist()
 
+	// 用同一份装配另起一个实例，模拟「进程重启后从库里读回任务」。
 	cfg := controller.config
-	imageCache, _ := lru.New[string, []byte](8)
-	pageCache, _ := lru.New[string, []parser.PageMetadata](8)
-	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](8)
-	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](8)
-	reloaded := &Controller{
-		store:               store,
-		stats:               newStatsCache(),
-		imageCache:          imageCache,
-		pageCache:           pageCache,
-		bookPageSourceCache: bookPageSourceCache,
-		progressWriteCache:  progressWriteCache,
-		scanner:             scanner.NewScanner(store, cfg),
-		config:              cfg,
-		koreader:            koreader.NewService(store, cfg),
-		external:            external.NewManager(store, 30*time.Minute),
-		configPath:          filepath.Join(tempDir, "config.yaml"),
-		taskEngine:          newTaskEngine(),
-		sse:                 newSSEBroker(),
-		recommendations:     newRecommendationCache(24 * time.Hour),
-	}
+	reloaded := newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
+		filepath.Join(tempDir, "config.yaml"), controllerCacheSizes{
+			image: 8, page: 8, bookPageSource: 8, progressWrite: 8,
+		})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)
 	rec := httptest.NewRecorder()

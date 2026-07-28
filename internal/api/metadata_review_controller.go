@@ -360,9 +360,9 @@ func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, autho
 			Locked:     locked["publisher"],
 		},
 		{
-			Name:       "status",
-			Label:      metadataFieldLabel("status"),
-			Current:    seriesText(series.Status),
+			Name:    "status",
+			Label:   metadataFieldLabel("status"),
+			Current: seriesText(series.Status),
 			// 用 Optional 版：数据源没给状态时提案留空，由下游的「空提案不入队」逻辑丢弃。
 			// 折成 "unknown" 会让不提供状态的数据源每次刮削都提议把已有的正确状态改成 unknown。
 			Proposed:   metadataOptionalStatus(result.Status),

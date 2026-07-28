@@ -97,48 +97,15 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 	if report.Scope != "library" {
 		return
 	}
-	c.rebuildThumbAggMu.Lock()
-	agg := c.rebuildThumbAgg
-	if agg == nil {
-		c.rebuildThumbAggMu.Unlock()
+	snap := c.rebuildThumbAgg.applyProgress(report)
+	if !snap.Active {
 		return
 	}
-	if agg.perLibPending == nil {
-		agg.perLibPending = make(map[int64]map[string]int64)
-	}
-	if agg.finalizedCoverSeen == nil {
-		agg.finalizedCoverSeen = make(map[int64]int64)
-	}
-	if _, finalized := agg.finalizedLibs[report.ID]; finalized {
-		// 库 fixate 时已把当时的 generated_covers 计入 baseline。这里只把 progress 事件中
-		// 新增的 generated_covers 增量补回 baseline，其它 metrics 不再变更。
-		newSeen := report.Metrics["generated_covers"]
-		if newSeen > agg.finalizedCoverSeen[report.ID] {
-			agg.baseline["generated_covers"] += newSeen - agg.finalizedCoverSeen[report.ID]
-			agg.finalizedCoverSeen[report.ID] = newSeen
-		}
-	} else {
-		snapshot := make(map[string]int64, len(report.Metrics))
-		for k, v := range report.Metrics {
-			snapshot[k] = v
-		}
-		agg.perLibPending[report.ID] = snapshot
-	}
-
-	merged := make(map[string]int64, len(agg.baseline)+8)
-	for k, v := range agg.baseline {
-		merged[k] = v
-	}
-	for _, pending := range agg.perLibPending {
-		for k, v := range pending {
-			merged[k] += v
-		}
-	}
-	currentLibName := agg.currentLibName
-	currentLibPath := agg.currentLibPath
-	doneLibs := agg.doneLibraries
-	totalLibs := agg.totalLibraries
-	c.rebuildThumbAggMu.Unlock()
+	merged := snap.Metrics
+	currentLibName := snap.CurrentLibName
+	currentLibPath := snap.CurrentLibPath
+	doneLibs := snap.DoneLibraries
+	totalLibs := snap.TotalLibraries
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
 	phase := report.Phase
@@ -175,41 +142,17 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 }
 
 func (c *Controller) initRebuildThumbAggregator(totalLibraries int) {
-	c.rebuildThumbAggMu.Lock()
-	defer c.rebuildThumbAggMu.Unlock()
-	c.rebuildThumbAgg = &rebuildThumbAggregator{
-		totalLibraries:     totalLibraries,
-		baseline:           make(map[string]int64),
-		perLibPending:      make(map[int64]map[string]int64),
-		finalizedLibs:      make(map[int64]struct{}),
-		finalizedCoverSeen: make(map[int64]int64),
-	}
+	c.rebuildThumbAgg.begin(totalLibraries)
 }
 
 func (c *Controller) releaseRebuildThumbAggregator() {
-	c.rebuildThumbAggMu.Lock()
-	c.rebuildThumbAgg = nil
-	c.rebuildThumbAggMu.Unlock()
+	c.rebuildThumbAgg.end()
 }
 
 // trackRebuildThumbLibraryProgress 在 runGlobalScan 的库切换边界更新聚合器，
 // current 是已完成库数（progress 回调 i 表示"开始第 i+1 个"，i+1 表示"完成第 i+1 个"）。
 func (c *Controller) trackRebuildThumbLibraryProgress(current, total int, lib database.Library) {
-	c.rebuildThumbAggMu.Lock()
-	defer c.rebuildThumbAggMu.Unlock()
-	if c.rebuildThumbAgg == nil {
-		c.rebuildThumbAgg = &rebuildThumbAggregator{
-			baseline:           make(map[string]int64),
-			perLibPending:      make(map[int64]map[string]int64),
-			finalizedLibs:      make(map[int64]struct{}),
-			finalizedCoverSeen: make(map[int64]int64),
-		}
-	}
-	c.rebuildThumbAgg.totalLibraries = total
-	c.rebuildThumbAgg.doneLibraries = current
-	c.rebuildThumbAgg.currentLibID = lib.ID
-	c.rebuildThumbAgg.currentLibName = lib.Name
-	c.rebuildThumbAgg.currentLibPath = lib.Path
+	c.rebuildThumbAgg.trackLibrary(current, total, lib)
 }
 
 // fixateRebuildThumbBaseline 在某个库扫描"主流程"完成时被调用（cover queue 仍可能在异步中），
@@ -221,47 +164,13 @@ func (c *Controller) fixateRebuildThumbBaseline(report scanner.ScanMetricsReport
 	if report.Scope != "library" {
 		return
 	}
-	c.rebuildThumbAggMu.Lock()
-	agg := c.rebuildThumbAgg
-	if agg == nil {
-		c.rebuildThumbAggMu.Unlock()
+	snap := c.rebuildThumbAgg.fixateLibrary(report)
+	if !snap.Active {
 		return
 	}
-	if agg.baseline == nil {
-		agg.baseline = make(map[string]int64)
-	}
-	if agg.finalizedLibs == nil {
-		agg.finalizedLibs = make(map[int64]struct{})
-	}
-	if agg.finalizedCoverSeen == nil {
-		agg.finalizedCoverSeen = make(map[int64]int64)
-	}
-	delete(agg.perLibPending, report.ID)
-	agg.finalizedLibs[report.ID] = struct{}{}
-	agg.finalizedCoverSeen[report.ID] = report.GeneratedCovers
-	agg.baseline["discovered_archives"] += report.DiscoveredArchives
-	agg.baseline["skipped_archives"] += report.SkippedArchives
-	agg.baseline["processed_archives"] += report.ProcessedArchives
-	agg.baseline["opened_archives"] += report.OpenedArchives
-	agg.baseline["hashed_files"] += report.HashedFiles
-	agg.baseline["queued_covers"] += report.QueuedCovers
-	agg.baseline["generated_covers"] += report.GeneratedCovers
-	agg.baseline["failed_archives"] += report.FailedArchives
-	agg.baseline["io_wait_ms"] += report.IOWaitMillis
-	agg.baseline["paused_ms"] += report.PausedMillis
-	agg.baseline["thumbnail_write_ms"] += report.ThumbnailWriteMillis
-	merged := make(map[string]int64, len(agg.baseline)+len(agg.perLibPending))
-	for k, v := range agg.baseline {
-		merged[k] = v
-	}
-	for _, pending := range agg.perLibPending {
-		for k, v := range pending {
-			merged[k] += v
-		}
-	}
-	totalLibs := agg.totalLibraries
-	doneLibs := agg.doneLibraries
-	c.rebuildThumbAggMu.Unlock()
+	merged := snap.Metrics
+	totalLibs := snap.TotalLibraries
+	doneLibs := snap.DoneLibraries
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
 	code := "task.msg.rebuild_thumbnails.rebuilding"
@@ -276,24 +185,13 @@ func (c *Controller) fixateRebuildThumbBaseline(report scanner.ScanMetricsReport
 // refreshRebuildThumbTaskFromAggregator 用聚合器中已记录的 metrics 立即刷新一次任务，
 // 用于在 runGlobalScan 库切换边界（无 progress 事件携带 metrics 的时机）保持任务消息和当前库标签同步。
 func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library) {
-	c.rebuildThumbAggMu.Lock()
-	agg := c.rebuildThumbAgg
-	if agg == nil {
-		c.rebuildThumbAggMu.Unlock()
+	snap := c.rebuildThumbAgg.snapshot()
+	if !snap.Active {
 		return
 	}
-	merged := make(map[string]int64, len(agg.baseline)+8)
-	for k, v := range agg.baseline {
-		merged[k] = v
-	}
-	for _, pending := range agg.perLibPending {
-		for k, v := range pending {
-			merged[k] += v
-		}
-	}
-	doneLibs := agg.doneLibraries
-	totalLibs := agg.totalLibraries
-	c.rebuildThumbAggMu.Unlock()
+	merged := snap.Metrics
+	doneLibs := snap.DoneLibraries
+	totalLibs := snap.TotalLibraries
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
 	code := "task.msg.rebuild_thumbnails.rebuilding_library"
@@ -309,22 +207,11 @@ func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library)
 // refreshRebuildThumbTaskMessage 在阶段切换（如等待封面队列收尾）时刷新任务消息和阶段，
 // 但保留聚合器累计的 current/total（避免被旧的占位 total 重置成 100%）。
 func (c *Controller) refreshRebuildThumbTaskMessage(code string, params map[string]string, phase string) {
-	c.rebuildThumbAggMu.Lock()
-	agg := c.rebuildThumbAgg
-	if agg == nil {
-		c.rebuildThumbAggMu.Unlock()
+	snap := c.rebuildThumbAgg.snapshot()
+	if !snap.Active {
 		return
 	}
-	merged := make(map[string]int64, len(agg.baseline)+8)
-	for k, v := range agg.baseline {
-		merged[k] = v
-	}
-	for _, pending := range agg.perLibPending {
-		for k, v := range pending {
-			merged[k] += v
-		}
-	}
-	c.rebuildThumbAggMu.Unlock()
+	merged := snap.Metrics
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
 	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, params, phase, "", merged, nil)
