@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +14,20 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// ConfigFilePerm 是 config.yaml 的落盘权限：仅属主可读写。
+//
+// 该文件里存着 llm.api_key 与刮削器凭据（mal_client_id / comicvine_api_key）的明文。
+// 用 0644 落盘等于把这些密钥交给本机任意用户，而这恰好架空了 MaskSecrets 那套
+// 「不向客户端回显明文密钥」的加固——前端拿不到，本机 shell 一个 cat 就拿到了。
+//
+// 注意这是**确定性**的收紧而非依赖 umask：os.CreateTemp 本就建出 0600，
+// AtomicWriteFile 随后的 os.Chmod 不经 umask 过滤，rename 又是整个 inode 替换，
+// 所以最终权限精确等于这里传的值，中间也不存在短暂全局可读的窗口。
+//
+// 存量安装不会被自动收紧（createDefaultConfig 只在文件不存在时触发），
+// 需要用户在设置页保存一次，或按 README 手动 chmod 600。
+const ConfigFilePerm os.FileMode = 0o600
 
 // AtomicWriteFile 原子写文件：先写入同目录临时文件再 rename 覆盖目标，避免写入过程中崩溃/断电
 // 留下半截配置文件（半截 YAML 会让下次启动解析失败且无自愈路径）。os.Rename 在 Windows 上也会
@@ -54,6 +69,18 @@ type Config struct {
 		// CPU-DoS 防护）都以客户端 IP 为键，无条件采信 XFF 意味着攻击者每个请求换一个伪造
 		// IP 就能把限流完全绕过。直连部署本就不该有转发头；套了反代的部署显式配上网段即可。
 		TrustedProxies []string `yaml:"trusted_proxies" json:"trusted_proxies"`
+		// CookieSecure 决定会话 Cookie 是否带 Secure 标志：auto（默认）/ always / never。
+		//
+		// auto 与 TrustedProxies 共用同一套「代理头可不可信」口径：直连 TLS，或直连对端落在
+		// TrustedProxies 内且它声明 X-Forwarded-Proto: https。所以 TrustedProxies 留空时，
+		// 反代后的 HTTPS 部署在 auto 下拿不到 Secure —— 这不是疏漏，是「不信任未声明来源的头」
+		// 的必然结果。
+		//
+		// 留这个字段就是为了不逼管理员在「放宽限流的信任面」和「丢掉 Secure」之间二选一：
+		// 这本来是两个独立决定。TLS 在反代终结、又不想把反代网段填进 TrustedProxies 的部署，
+		// 显式写 always 即可；反向地，反代错误声明了 https 而实际服务明文时，Secure 会让浏览器
+		// 直接丢弃 Cookie（登录彻底失效），此时用 never 压回去。
+		CookieSecure string `yaml:"cookie_secure" json:"cookie_secure"`
 	} `yaml:"server" json:"server"`
 	Database struct {
 		Path string `yaml:"path" json:"path"`
@@ -130,6 +157,15 @@ const (
 	LogLevelInfo                 = "info"
 	LogLevelWarn                 = "warn"
 	LogLevelError                = "error"
+
+	// CookieSecure* 是 server.cookie_secure 的取值：会话 Cookie 的 Secure 标志由谁说了算。
+	//   auto   —— 按连接实际情况判定（直连 TLS，或**可信**代理声明的 X-Forwarded-Proto: https）
+	//   always —— 无条件带 Secure，给「TLS 在反代终结、又不想放宽 trusted_proxies」的部署一个出口
+	//   never  —— 无条件不带，反向逃生口：反代错误声明了 https 而实际是明文时，
+	//             auto 会让浏览器直接丢弃 Cookie（登录彻底失效），需要能手动压回去
+	CookieSecureAuto   = "auto"
+	CookieSecureAlways = "always"
+	CookieSecureNever  = "never"
 )
 
 // SecretMask 是回显给前端的敏感字段占位符。前端把它原样存进只写输入框（如 <input type=password>），
@@ -205,6 +241,7 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg.Server.Host = "0.0.0.0"
 	cfg.Server.Port = 8080
 	cfg.Server.AllowedOrigins = []string{"http://*", "https://*"}
+	cfg.Server.CookieSecure = CookieSecureAuto
 	cfg.Database.Path = "./data/manga.db"
 	cfg.Library.Paths = []string{}
 	cfg.Library.StorageProfile = StorageProfileAuto
@@ -244,7 +281,9 @@ func createDefaultConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if err := AtomicWriteFile(path, data, 0644); err != nil {
+	// 首次生成就按仅属主可读写落盘：此刻密钥还是空的，但用户随后会在设置页填进来，
+	// 那时权限位已经定型（persistConfig 用的是同一个常量），没有补救窗口。
+	if err := AtomicWriteFile(path, data, ConfigFilePerm); err != nil {
 		return nil, err
 	}
 
@@ -312,6 +351,7 @@ func NormalizeConfig(cfg *Config) {
 		cfg.Server.Host = "0.0.0.0"
 	}
 	cfg.Server.AllowedOrigins = normalizeAllowedOrigins(cfg.Server.AllowedOrigins)
+	cfg.Server.CookieSecure = normalizeCookieSecure(cfg.Server.CookieSecure)
 	if cfg.Database.Path == "" {
 		cfg.Database.Path = "./data/manga.db"
 	}
@@ -360,6 +400,24 @@ func NormalizeConfig(cfg *Config) {
 		matchMode = KOReaderMatchModeBinaryHash
 	}
 	cfg.KOReader.MatchMode = matchMode
+}
+
+// normalizeCookieSecure 把 server.cookie_secure 收敛到三个合法取值之一。
+//
+// 非法值回落 auto 并告警，而不是留给 ValidateConfig：LoadConfig 只调 NormalizeConfig，
+// 启动路径上根本没人跑 ValidateConfig（它只服务于设置页的保存前校验）。若这里不处理，
+// 把 "alwyas" 写错的管理员得到的就是一次完全无声的降级——正是这次要消灭的那类问题。
+func normalizeCookieSecure(raw string) string {
+	switch value := strings.ToLower(strings.TrimSpace(raw)); value {
+	case CookieSecureAuto, CookieSecureAlways, CookieSecureNever:
+		return value
+	case "":
+		return CookieSecureAuto
+	default:
+		slog.Warn("Unknown server.cookie_secure value, falling back to auto",
+			"value", raw, "allowed", []string{CookieSecureAuto, CookieSecureAlways, CookieSecureNever})
+		return CookieSecureAuto
+	}
 }
 
 func normalizeAllowedOrigins(origins []string) []string {

@@ -20,6 +20,19 @@ server:
     # 套了 Nginx/Caddy/Traefik 的部署填上代理所在网段，例如：
     #   trusted_proxies: ["127.0.0.1/32", "::1/128", "172.17.0.0/16"]
     trusted_proxies: []
+    # 会话 Cookie 的 Secure 标志由谁说了算：auto（默认）/ always / never。
+    #
+    #   auto   直连 TLS，或**可信**代理（见上面的 trusted_proxies）声明
+    #          X-Forwarded-Proto: https 时才带 Secure。未登记的对端声明 https 会被忽略
+    #          并在日志里告警一次 —— 否则任何客户端都能自己决定这个标志。
+    #   always 无条件带。给「TLS 在反代终结、但不打算把反代网段填进 trusted_proxies」
+    #          的部署一个明确出口：这两件事本来就是独立决定，不该被迫二选一。
+    #   never  无条件不带。反向逃生口：反代错误地声明了 https 而实际服务明文时，
+    #          Secure 会让浏览器直接丢弃 Cookie，登录彻底失效，这时需要能手动压回去。
+    #
+    # 反代终结 TLS 的部署二选一即可：要么把代理网段填进 trusted_proxies（同时也修好限流的真实 IP），
+    # 要么在这里写 always。写错的值会回落 auto 并在启动日志告警。
+    cookie_secure: auto
 database:
     path: ./data/manga.db
 library:

@@ -35,6 +35,19 @@ func (c *Controller) clientIP(r *http.Request) string {
 	return remote
 }
 
+// trustsForwardedHeaders 报告本次请求的转发头是否可信（直连对端落在 server.trusted_proxies 内）。
+//
+// 这是「代理头可不可信」这个概念的唯一出口：clientIP 用它决定要不要采信 X-Forwarded-For，
+// 会话 Cookie 的 Secure 判定用它决定要不要采信 X-Forwarded-Proto。两者此前各有一套口径
+// ——限流侧已按 trusted_proxies 收紧，Cookie 侧却仍无条件采信 —— 收到同一个函数上，
+// 这类分叉才不会重新长出来。
+func (c *Controller) trustsForwardedHeaders(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return c.trustsProxy(remoteHost(r.RemoteAddr))
+}
+
 // trustsProxy 判断直连对端是否属于已声明的可信代理。
 func (c *Controller) trustsProxy(remote string) bool {
 	if remote == "" {

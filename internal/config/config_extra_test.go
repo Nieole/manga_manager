@@ -4,7 +4,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -489,5 +491,53 @@ func TestResolveStoragePolicyFallsBackToLibraryDefault(t *testing.T) {
 	}
 	if resolved.VolumeKey == "" {
 		t.Fatalf("resolved policy should carry a volume key")
+	}
+}
+
+// TestGeneratedConfigIsOwnerOnly 守卫「配置文件不得对本机其他用户可读」这一不变式。
+//
+// config.yaml 里是 llm.api_key 与刮削器凭据的明文。断言刻意写**字面量** 0o600 而不是
+// config.ConfigFilePerm：若用常量做期望值，有人把常量改回 0644 时生产与断言会一起放宽，
+// 用例照绿——那正是这条不变式最可能的回归方式。
+func TestGeneratedConfigIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows 走 ACL，Go 的 os.Chmod 只映射只读位，Mode().Perm() 恒为 0666/0444，
+		// 断言 POSIX 权限位在该平台上没有意义（CI 矩阵含 windows-latest）。
+		t.Skip("windows 无 POSIX 权限位")
+	}
+
+	const ownerOnly os.FileMode = 0o600
+
+	// createDefaultConfig 会无条件 os.MkdirAll("./data")，是相对 cwd 的；
+	// 不切目录会在 internal/config/ 下拉出一个 data 目录。
+	t.Chdir(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	if _, err := LoadConfig(path); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat generated config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != ownerOnly {
+		t.Fatalf("首次生成的 config.yaml 权限 = %04o, want %04o", got, ownerOnly)
+	}
+
+	// 覆盖既有的宽松文件时必须收紧，而不是沿用目标旧 inode 的权限
+	// ——AtomicWriteFile 是 chmod 临时文件后 rename，这一行盯住那个假设。
+	loose := filepath.Join(t.TempDir(), "existing.yaml")
+	if err := os.WriteFile(loose, []byte("server:\n  port: 8080\n"), 0o644); err != nil {
+		t.Fatalf("seed loose file: %v", err)
+	}
+	if err := AtomicWriteFile(loose, []byte("server:\n  port: 8081\n"), ConfigFilePerm); err != nil {
+		t.Fatalf("AtomicWriteFile: %v", err)
+	}
+	info, err = os.Stat(loose)
+	if err != nil {
+		t.Fatalf("stat rewritten config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != ownerOnly {
+		t.Fatalf("覆盖既有 0644 文件后权限 = %04o, want %04o", got, ownerOnly)
 	}
 }

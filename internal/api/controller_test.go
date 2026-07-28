@@ -285,6 +285,9 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	updated.Logging.Level = config.LogLevelDebug
 	updated.Protocols.OPDS.Enabled = true
 	updated.Protocols.Mihon.Enabled = true
+	// cookie_secure 是安全逃生口（反代终结 TLS 时管理员唯一能拿回 Secure 标志的开关），
+	// 前端是整对象 POST，所以它必须能原样往返；被某次保存静默丢回 auto 是无声降级。
+	updated.Server.CookieSecure = config.CookieSecureAlways
 
 	body, err := json.Marshal(updated)
 	if err != nil {
@@ -311,6 +314,9 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	}
 	if !snapshot.Protocols.OPDS.Enabled || !snapshot.Protocols.Mihon.Enabled {
 		t.Fatalf("expected protocol toggles to persist, got OPDS=%v Mihon=%v", snapshot.Protocols.OPDS.Enabled, snapshot.Protocols.Mihon.Enabled)
+	}
+	if snapshot.Server.CookieSecure != config.CookieSecureAlways {
+		t.Fatalf("expected cookie_secure to survive the round trip, got %q", snapshot.Server.CookieSecure)
 	}
 
 	if _, err := os.Stat(controller.configPath); err != nil {

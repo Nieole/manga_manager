@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 )
 
@@ -88,33 +89,87 @@ func verifyPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
 
-func isTLS(r *http.Request) bool {
+// sessionCookieSecure 决定会话 Cookie 是否带 Secure 标志。
+//
+// 判定顺序是「显式配置 → 可信代理的声明 → 直连 TLS」，三者都有明确理由：
+//
+//   - server.cookie_secure 是管理员的显式意图，永远优先。
+//   - 其次才看转发头，且只在直连对端落在 server.trusted_proxies 内时采信。
+//     无条件采信 X-Forwarded-Proto 意味着任何客户端都能自己决定 Secure 标志，
+//     这与已按 trusted_proxies 收紧的 clientIP 是两套口径。
+//   - **可信代理说了 http 就以它为准，不再看 r.TLS**：proxy→backend 之间常另有一段内部 TLS，
+//     若让 r.TLS 覆盖代理的声明，明文对外的部署会被误判成 https 而下发 Secure，
+//     浏览器随即丢弃 Cookie，登录直接失效。r.TLS 只在没有可信声明时兜底。
+func (c *Controller) sessionCookieSecure(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	switch c.currentConfig().Server.CookieSecure {
+	case config.CookieSecureAlways:
+		return true
+	case config.CookieSecureNever:
+		return false
+	}
+
+	forwardedProto := forwardedRequestProto(r)
+	if c.trustsForwardedHeaders(r) {
+		if forwardedProto != "" {
+			return strings.EqualFold(forwardedProto, "https")
+		}
+	} else if strings.EqualFold(forwardedProto, "https") {
+		// 声明了 https 却来自未登记的对端：忽略它，但要让管理员知道为什么 Secure 没生效，
+		// 否则表现就是「明明是 HTTPS 部署，Cookie 却没有 Secure」的无声降级。
+		c.warnUntrustedForwardedProto()
+	}
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return false
 }
 
-func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
+// forwardedRequestProto 取转发协议，与 requestBaseURL 同口径（X-Forwarded-Proto 优先，
+// 其次 X-Forwarded-Scheme）——只统一「信不信」而头名不统一，口径就仍然是两套。
+func forwardedRequestProto(r *http.Request) string {
+	if proto := firstHeaderValue(r, "X-Forwarded-Proto"); proto != "" {
+		return proto
+	}
+	return firstHeaderValue(r, "X-Forwarded-Scheme")
+}
+
+// warnUntrustedForwardedProto 每进程只告警一次：该头由客户端可控，
+// 未配 trusted_proxies 的直连部署可能被任意请求触发，逐次打日志等于给了一个刷日志的口子。
+func (c *Controller) warnUntrustedForwardedProto() {
+	if c == nil {
+		return
+	}
+	c.untrustedProtoWarnOnce.Do(func() {
+		slog.Warn("Ignoring X-Forwarded-Proto: https from an untrusted peer; session cookie will not be marked Secure",
+			"hint", "configure server.trusted_proxies with the proxy network, or set server.cookie_secure: always")
+	})
+}
+
+func (c *Controller) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isTLS(r),
+		Secure:   c.sessionCookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
 		MaxAge:   int(time.Until(expires).Seconds()),
 	})
 }
 
-func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+func (c *Controller) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isTLS(r),
+		// 清除也要带上与写入时一致的 Secure：属性不匹配时浏览器可能不认为是同一个 Cookie，
+		// 于是「登出」留下一个仍然有效的会话 Cookie。
+		Secure:   c.sessionCookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
@@ -302,7 +357,7 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 		now := time.Now()
 		sess, user, err := c.store.GetSessionWithUser(r.Context(), hashSessionID(cookie.Value), now)
 		if err != nil {
-			clearSessionCookie(w, r)
+			c.clearSessionCookie(w, r)
 			jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 			return
 		}
@@ -352,7 +407,7 @@ func (c *Controller) startSession(ctx context.Context, w http.ResponseWriter, r 
 	}); err != nil {
 		return "", err
 	}
-	setSessionCookie(w, r, raw, expires)
+	c.setSessionCookie(w, r, raw, expires)
 	return csrf, nil
 }
 
@@ -499,7 +554,7 @@ func (c *Controller) logout(w http.ResponseWriter, r *http.Request) {
 	if sess, ok := sessionFromContext(r.Context()); ok {
 		_ = c.store.DeleteSession(r.Context(), sess.ID)
 	}
-	clearSessionCookie(w, r)
+	c.clearSessionCookie(w, r)
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

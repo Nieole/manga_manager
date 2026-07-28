@@ -78,6 +78,9 @@ type Controller struct {
 	// 鉴权链路的进程内状态（账户存在性、Basic 凭据缓存、两个失败限流器）
 	// 已抽成独立组件（auth_state.go）。
 	auth *authState
+	// untrustedProtoWarnOnce 保证「忽略了来自不可信对端的 X-Forwarded-Proto」这条告警每进程只打一次：
+	// 该头由客户端可控，逐次打日志等于给了一个刷日志的口子。
+	untrustedProtoWarnOnce sync.Once
 
 	lifecycleOnce sync.Once
 	shutdownOnce  sync.Once
@@ -434,7 +437,9 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 		return err
 	}
 	// 原子写：避免保存过程中崩溃留下半截 config.yaml 导致下次启动解析失败。
-	if err := config.AtomicWriteFile(c.configPath, data, 0644); err != nil {
+	// 权限用 ConfigFilePerm(0600)：这条路径写的是 RestoreMaskedSecrets 回填后的**真实**密钥，
+	// 是明文 api_key 真正落盘的地方（首次生成时配置里还没有密钥）。
+	if err := config.AtomicWriteFile(c.configPath, data, config.ConfigFilePerm); err != nil {
 		return err
 	}
 	c.config.Replace(cfg)
