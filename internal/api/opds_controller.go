@@ -579,7 +579,7 @@ func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
-	views, err := c.loadCollectionViews(r.Context())
+	views, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return

@@ -197,3 +197,24 @@ func smartCollectionOrderClause(filter SmartCollectionFilter) string {
 }
 
 var _ = sql.ErrNoRows
+
+// CountSmartCollectionSeries 返回智能书架当前命中的系列数。
+//
+// 刻意复用 buildSmartCollectionBaseQuery —— 与列表**同一份**查询，只是把 SELECT 换成 COUNT(*)。
+// 此前书架列表里的计数是 ListCollectionViews 内联的另一套 SQL，与列表口径有六处分歧：
+// completed 用 `=` 而列表用 `>=`（后者已有回归测试锁定）、进度读全局 books.last_read_page
+// 而列表读 user_series_progress、进度百分比现算而列表读 series_stats 缓存、
+// 标签/作者用四路 LEFT JOIN + COUNT(DISTINCT) 而列表用 EXISTS、letter 不做大写归一、
+// 内层派生表还漏了 library 过滤（对全库 books 聚合）。
+// 于是用户会看到「书架上写着 12 个系列，点进去只有 9 个」。
+//
+// 顺带解决性能：旧实现每个智能书架都要对整张 books 做一次全表聚合，而 /api/collection-views
+// 是 Web/OPDS/Mihon 三个入口共用且无缓存的。
+func (s *SqlStore) CountSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter) (int, error) {
+	baseQuery, args := buildSmartCollectionBaseQuery(filter)
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) "+baseQuery, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}

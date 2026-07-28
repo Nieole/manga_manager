@@ -221,7 +221,7 @@ func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request
 }
 
 func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
-	views, err := c.loadCollectionViews(r.Context())
+	views, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch collections")
 		return

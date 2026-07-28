@@ -131,6 +131,9 @@ type Store interface {
 	ForEachReferencedCoverPath(ctx context.Context, fn func(path string) error) error
 	// SampleCandidateSeriesForAI 随机取候选系列供 AI 推荐（见 ai_candidates.go）。
 	SampleCandidateSeriesForAI(ctx context.Context, userID int64, limit int64) ([]CandidateSeriesForAI, error)
+	// CountSmartCollectionSeries 与智能书架列表共用同一份查询，保证计数与列表口径一致。
+	CountSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter) (int, error)
+	ListSmartFilters(ctx context.Context) ([]SmartFilter, error)
 	GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error)
 	MigrateGlobalProgressToUser(ctx context.Context, userID int64) error
 	GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error)

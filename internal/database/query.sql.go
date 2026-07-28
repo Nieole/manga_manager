@@ -2922,44 +2922,7 @@ SELECT
     ) AS description,
     sf.library_id,
     l.name AS library_name,
-    (
-        SELECT COUNT(DISTINCT s.id)
-        FROM series s
-        LEFT JOIN series_tags st ON s.id = st.series_id
-        LEFT JOIN tags t ON st.tag_id = t.id
-        LEFT JOIN series_authors sa ON s.id = sa.series_id
-        LEFT JOIN authors a ON sa.author_id = a.id
-        LEFT JOIN (
-            SELECT
-                series_id,
-                COUNT(*) as book_count,
-                SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN 1 ELSE 0 END) as read_books,
-                SUM(CASE WHEN page_count > 0 AND last_read_page >= page_count THEN 1 ELSE 0 END) as completed_books,
-                CASE
-                    WHEN SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END) > 0
-                    THEN SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN MIN(last_read_page, page_count) ELSE 0 END) * 100.0 / SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END)
-                    ELSE 0
-                END as progress_percent
-            FROM books
-            GROUP BY series_id
-        ) rp ON rp.series_id = s.id
-        WHERE s.library_id = sf.library_id
-          AND (sf.active_status IS NULL OR s.status = sf.active_status)
-          AND (sf.active_letter IS NULL OR s.name_initial = sf.active_letter)
-          AND (sf.active_tag IS NULL OR t.name = sf.active_tag)
-          AND (sf.active_author IS NULL OR a.name = sf.active_author)
-          AND (sf.min_rating IS NULL OR s.rating >= sf.min_rating)
-          AND (sf.max_rating IS NULL OR s.rating <= sf.max_rating)
-          AND (sf.min_progress IS NULL OR COALESCE(rp.progress_percent, 0) >= sf.min_progress)
-          AND (sf.max_progress IS NULL OR COALESCE(rp.progress_percent, 0) <= sf.max_progress)
-          AND (sf.added_within_days IS NULL OR s.created_at >= datetime('now', '-' || sf.added_within_days || ' days'))
-          AND (
-            sf.read_state IS NULL
-            OR (sf.read_state = 'unread' AND COALESCE(rp.read_books, 0) = 0)
-            OR (sf.read_state = 'reading' AND COALESCE(rp.read_books, 0) > 0 AND COALESCE(rp.completed_books, 0) < COALESCE(rp.book_count, 0))
-            OR (sf.read_state = 'completed' AND COALESCE(rp.book_count, 0) > 0 AND COALESCE(rp.completed_books, 0) = COALESCE(rp.book_count, 0))
-          )
-    ) AS series_count,
+    CAST(0 AS INTEGER) AS series_count,
     'smart_filter' AS source_type,
     CAST(NULL AS INTEGER) AS source_review_id,
     CAST(0 AS INTEGER) AS sort_order,
@@ -4955,6 +4918,56 @@ func (q *Queries) ListSeriesInitialBackfillCandidates(ctx context.Context) ([]Li
 			&i.Name,
 			&i.Title,
 			&i.NameInitial,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSmartFilters = `-- name: ListSmartFilters :many
+SELECT id, library_id, name, active_tag, active_author, active_status, active_letter,
+       read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
+       sort_by_field, sort_dir, page_size, created_at, updated_at
+FROM smart_filters
+ORDER BY id
+`
+
+func (q *Queries) ListSmartFilters(ctx context.Context) ([]SmartFilter, error) {
+	rows, err := q.db.QueryContext(ctx, listSmartFilters)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SmartFilter
+	for rows.Next() {
+		var i SmartFilter
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Name,
+			&i.ActiveTag,
+			&i.ActiveAuthor,
+			&i.ActiveStatus,
+			&i.ActiveLetter,
+			&i.ReadState,
+			&i.MinRating,
+			&i.MaxRating,
+			&i.MinProgress,
+			&i.MaxProgress,
+			&i.AddedWithinDays,
+			&i.SortByField,
+			&i.SortDir,
+			&i.PageSize,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -147,6 +147,7 @@ type Querier interface {
 	// the cover-bearing ListSeriesByLibrary is kept for the UI series list.
 	ListSeriesByLibraryLite(ctx context.Context, libraryID int64) ([]Series, error)
 	ListSeriesInitialBackfillCandidates(ctx context.Context) ([]ListSeriesInitialBackfillCandidatesRow, error)
+	ListSmartFilters(ctx context.Context) ([]SmartFilter, error)
 	ListSmartFiltersByLibrary(ctx context.Context, libraryID int64) ([]SmartFilter, error)
 	ListStaticCollectionSeriesPaged(ctx context.Context, arg ListStaticCollectionSeriesPagedParams) ([]ListStaticCollectionSeriesPagedRow, error)
 	LogReadingActivity(ctx context.Context, arg LogReadingActivityParams) error
