@@ -85,9 +85,11 @@ func (c *ComicVineProvider) endpoint() string {
 func NewComicVineProvider(apiKey string) *ComicVineProvider {
 	return &ComicVineProvider{
 		apiKey: apiKey,
-		httpClient: &http.Client{
+		// 出站请求经进程级并发闸门（见 provider_budget.go）：多个刮削任务可以同时在跑，
+		// 每个都各自 new 一个 Provider，不在这里收口就会把对同一数据源的请求速率成倍放大。
+		httpClient: withProviderBudget(&http.Client{
 			Timeout: 15 * time.Second,
-		},
+		}, "Comic Vine"),
 	}
 }
 
