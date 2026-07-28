@@ -7,6 +7,7 @@ package koreader
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,9 @@ const (
 	maxProgressDocumentLen = 512
 	maxProgressValueLen    = 512
 	maxProgressDeviceLen   = 128
+	// maxRegisterUsernameLen 限制设备自助注册的用户名长度。同理由：该路径未鉴权，
+	// 而 username 会进 koreader_accounts 的 UNIQUE 索引。
+	maxRegisterUsernameLen = 128
 )
 
 var (
@@ -73,7 +77,15 @@ func NewService(store database.Store, cfg *config.Manager) *Service {
 func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash string) (database.KOReaderAccount, error) {
 	username = strings.TrimSpace(username)
 	passwordHash = NormalizeSyncKey(passwordHash)
-	if username == "" || passwordHash == "" {
+	// 这条路径未鉴权，写入的两个值直接落库且 username 进 UNIQUE 索引，所以先把形状卡死：
+	// kosync 协议里 password 就是 md5 十六进制串，IsValidSyncKey 正是该形状的既有描述
+	// （此前它只在测试里被引用，实际校验位一直空着，任意字符串都能被当作密钥存进去）。
+	if username == "" || len(username) > maxRegisterUsernameLen || !IsValidSyncKey(passwordHash) {
+		slog.Warn("KOReader device registration rejected: malformed credentials",
+			// 不打印 username 原文：未鉴权输入不应原样进日志。
+			"username_length", len(username),
+			"password_hash_length", len(passwordHash),
+		)
 		return database.KOReaderAccount{}, ErrUnauthorized
 	}
 	if _, err := s.store.GetKOReaderAccountByUsername(ctx, username); err == nil {
@@ -144,14 +156,25 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 	}
 	// 管理端创建的账号：sync_key 存的是原始密钥，客户端发送 md5(sync_key)，比对 HashKey(sync_key)。
 	// 设备自助注册的账号：sync_key 存的就是客户端提交的 md5（与 x-auth-key 同值），再做等值比对。
+	//
+	// 两次比较都走 crypto/subtle 且**都必须求值**（用位或而非 || 短路）：这三个 kosync 端点全部未鉴权、
+	// 无失败限流也无锁定，creds.Key 完全由请求头控制，正是逐字节计时探测最理想的条件。
+	// Go 的字符串 != 在首个不同字节处短路，攻击者据此可以一位一位地把密钥试出来。
+	//
+	// 长度不等时 ConstantTimeCompare 直接返 0：泄漏的是服务端存储值的长度而不是内容
+	// （expectedKey 恒为 32 位 hex；storedKey 是库里的原始值，历史数据可能是任意长度），可以接受，
+	// 不必为此额外做 padding。
 	expectedKey := HashKey(account.SyncKey)
 	storedKey := NormalizeSyncKey(account.SyncKey)
-	if expectedKey != creds.Key && storedKey != creds.Key {
+	matchesExpected := subtle.ConstantTimeCompare([]byte(expectedKey), []byte(creds.Key))
+	matchesStored := subtle.ConstantTimeCompare([]byte(storedKey), []byte(creds.Key))
+	if matchesExpected|matchesStored != 1 {
+		// 刻意不打印 expected_key_prefix：那是**正确答案**的前 32 bit，而这条分支任何未鉴权
+		// 请求都能触发。把在线时序通道堵上、却留着这条可任意触发的离线通道，等于没修。
 		slog.Warn("KOReader authenticate rejected: client key mismatch",
 			"username", creds.Username,
 			"account_id", account.ID,
 			"stored_raw_key_length", len(account.SyncKey),
-			"expected_key_prefix", keyPreview(expectedKey),
 			"client_key_prefix", keyPreview(creds.Key),
 		)
 		return database.KOReaderAccount{}, ErrUnauthorized

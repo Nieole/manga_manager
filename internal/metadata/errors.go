@@ -12,6 +12,7 @@ package metadata
 import (
 	"errors"
 	"net/url"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -48,4 +49,19 @@ func truncateUpstreamBody(body []byte) string {
 		cut = cut[:len(cut)-1]
 	}
 	return string(cut) + "…(truncated)"
+}
+
+// redactSecret 把 s 里出现的 secret 换成占位符，原文与 URL 转义两种形态都覆盖。
+//
+// 用在「上游响应体要被写进日志或 HTTP 错误响应」的路径上：网关的错误页经常把被请求的
+// 完整 URI 原样回显，而我们的凭据就在那个 URI 的 query 里。不脱敏等于把密钥从后端搬到前端。
+func redactSecret(s, secret string) string {
+	if secret == "" || s == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, secret, "[REDACTED]")
+	if escaped := url.QueryEscape(secret); escaped != secret {
+		s = strings.ReplaceAll(s, escaped, "[REDACTED]")
+	}
+	return s
 }

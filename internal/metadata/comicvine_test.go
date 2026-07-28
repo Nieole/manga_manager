@@ -4,7 +4,9 @@ package metadata
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -112,5 +114,80 @@ func TestStripComicVineHTML(t *testing.T) {
 		if got := stripComicVineHTML(c.in); got != c.want {
 			t.Errorf("stripComicVineHTML(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// TestComicVineDoesNotLeakAPIKeyOnRedirect 守卫「跟随重定向时不外泄凭据」。
+//
+// Comic Vine 只支持在 query 里传 api_key（官方文档没有任何 header 认证方式），所以密钥
+// 必然出现在请求 URL 上。而 Go 的 http.Client 在跟随重定向时会把**上一跳的完整 URL**
+// 自动填进 Referer——stripSensitiveHeaders 只清 Authorization/Cookie 一类，Referer 不在其中。
+// 上游或中间代理回一次跨站 302，明文密钥就进了第三方的访问日志。
+//
+// 这里起两台真实的 httptest 服务器走完整重定向链路：单机断言「Referer 非空」是骗不过去的，
+// 必须看下游**实际收到**了什么。
+func TestComicVineDoesNotLeakAPIKeyOnRedirect(t *testing.T) {
+	const secret = "cv-secret-token"
+
+	var downstreamReferer string
+	var downstreamQuery string
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downstreamReferer = r.Header.Get("Referer")
+		downstreamQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error":"OK","number_of_total_results":0,"results":[]}`))
+	}))
+	defer downstream.Close()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, downstream.URL+"/next", http.StatusFound)
+	}))
+	defer upstream.Close()
+
+	p := NewComicVineProvider(secret)
+	p.baseURL = upstream.URL + "/api/search/"
+	if _, _, err := p.SearchMetadata(context.Background(), "saga", 20, 0); err != nil {
+		t.Fatalf("SearchMetadata failed: %v", err)
+	}
+
+	if downstreamReferer == "" {
+		t.Fatal("下游没收到 Referer —— 说明请求根本没走到重定向目标，用例失去意义")
+	}
+	if strings.Contains(downstreamReferer, secret) {
+		t.Fatalf("Referer 把 api_key 泄漏给了重定向目标: %q", downstreamReferer)
+	}
+	// 重定向目标 URL 本身不带 query（Location 里没写），所以下游按 HTTP 语义拿不到 api_key
+	// ——这恰恰是威胁成立的原因：第三方从 URL 里拿不到，却能从 Referer 里白拿。
+	// 断言这一点，是为了确认本用例覆盖的确实是「query 之外的泄漏通道」。
+	if strings.Contains(downstreamQuery, secret) {
+		t.Fatalf("重定向目标的 query 里出现了 api_key（%q），本用例应覆盖的是 Referer 通道", downstreamQuery)
+	}
+}
+
+// TestComicVineRedactsAPIKeyInUpstreamError 守卫「上游错误响应体不把凭据带给用户」。
+// 网关的错误页常把被请求的完整 URI 原样回显，而这段串会写进 HTTP 响应体交给前端。
+func TestComicVineRedactsAPIKeyInUpstreamError(t *testing.T) {
+	const secret = "cv-secret-token"
+
+	p := NewComicVineProvider(secret)
+	p.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		echoed := "<html>403 Forbidden: " + req.URL.RequestURI() + "</html>"
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Body:       io.NopCloser(strings.NewReader(echoed)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})}
+
+	_, _, err := p.SearchMetadata(context.Background(), "saga", 20, 0)
+	if err == nil {
+		t.Fatal("expected an error for 403")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("错误串把 api_key 透传给了调用方（进而进入 HTTP 响应体）: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("期望脱敏占位符出现在错误串里，实际: %v", err)
 	}
 }

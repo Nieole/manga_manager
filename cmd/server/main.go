@@ -233,10 +233,50 @@ func main() {
 	slog.Info("Shutdown complete")
 }
 
+// contentSecurityPolicy 是全站静态 CSP。每一条放宽都对应 web/ 里实地存在的用法，不是模板抄来的；
+// 想收紧任何一条之前，请先确认对应用法确实已消失。
+//
+//   - script-src 'self'：前提是 index.html 里没有内联 <script>。SW 注册脚本已抽到 /register-sw.js；
+//     若有人把它挪回内联，CSP 会静默拦掉它 —— SW 永不注册、离线阅读与 PWA 安装随之失效，
+//     而且浏览器控制台之外没有任何迹象。TestIndexHTMLHasNoInlineScript 是这条的兜底。
+//   - style-src 'unsafe-inline'：@yui540/comimi 在运行时 document.createElement("style") 注入整套
+//     阅读器样式，ComimiTheme.tsx 自己也渲染了一段 <style>。前者随库版本变化，用 hash 固定不可维护；
+//     去掉这一项，Comimi 阅读主题会彻底掉样式。
+//   - img-src blob:：阅读器把取到的页图字节转成 URL.createObjectURL 再喂给 <img>（usePageImageCache.ts）。
+//   - img-src data:：ComimiTheme 用 1x1 透明 GIF 的 data URI 占位，真实页图随后异步换上。
+//   - img-src https:：刮削搜索结果直接渲染各元数据源（AniList / MangaDex / MyAnimeList / Comic Vine /
+//     Bangumi）返回的远端封面 URL，这些主机随 provider 配置变化、无法枚举。
+//     只放行 https：provider 若返回 http:// 封面会裂图，但这是刻意的 —— https 部署下混合内容本就被
+//     浏览器拦截，加 http: 也无效，正解是由后端代理远端封面（另一个改动）。
+//   - connect-src 'self'：axios 不设 baseURL，EventSource 指向 /api/events，全部同源。
+//
+// 刻意不写的：'unsafe-eval'（构建产物里无 eval / new Function / wasm）、font-src / media-src /
+// frame-src 的放宽（无自带字体文件、无音视频、无 iframe）。
+//
+// 刻意不加 upgrade-insecure-requests：本服务的典型部署是局域网 http:// 直连，
+// 升级后所有同源请求都会指向一个并不存在的 https 端口，整站瞬间不可用。
+//
+// 注意这条头也会随 /sw.js 的响应下发，从而成为 Service Worker 自身的 CSP。当前 sw.js 对跨域请求
+// 在 fetch 事件里直接放行不拦截，网络访问全是同源，所以 'self' 不影响现状；但今后若在 sw.js 里
+// 加跨域 fetch，会被这条 CSP 拦下，且报错只出现在 SW 的独立控制台里。
+const contentSecurityPolicy = "default-src 'self'; " +
+	"base-uri 'none'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob: https:; " +
+	"connect-src 'self'; " +
+	"worker-src 'self'; " +
+	"manifest-src 'self'"
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		// frame-ancestors 与上面的 X-Frame-Options: DENY 等价，两者并存是为了兼容只认旧头的客户端。
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)

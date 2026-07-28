@@ -114,3 +114,38 @@ func TestSSERegistrationDoesNotBlockAfterShutdown(t *testing.T) {
 		t.Fatal("serveHTTP blocked forever registering with a stopped broker")
 	}
 }
+
+// TestSSEServeHTTPLeavesCORSToMiddleware 守卫 SSE 端点不自设 CORS 头。
+//
+// 这里曾硬写 Access-Control-Allow-Origin: *，覆盖掉 main.go 按 server.allowed_origins 计算出的
+// 白名单，等于给这一个端点单独开了个全放通的口子。而且它连功能都不对：会话是 Cookie 鉴权，
+// 带凭据的跨源请求在 ACAO 为 * 时被浏览器直接拒收。
+//
+// 缺陷本身已在批次 E 修掉，但当时没留下防线——这个用例就是那条防线：
+// 同源的 EventSource 本就不需要 ACAO，CORS 该由中间件统一决定。
+func TestSSEServeHTTPLeavesCORSToMiddleware(t *testing.T) {
+	broker := newSSEBroker()
+	broker.closeClients() // 不启动 run 循环：serveHTTP 会立刻返回，只留下它写的响应头
+
+	rec := httptest.NewRecorder()
+	broker.serveHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+
+	for _, header := range []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Credentials",
+	} {
+		if got := rec.Header().Get(header); got != "" {
+			t.Errorf("SSE 端点自设了 %s = %q —— CORS 应由 main.go 的 cors 中间件按 allowed_origins 统一决定", header, got)
+		}
+	}
+	// 这三个头才是 SSE 自己该管的；改动它们任一都会破坏 EventSource 或被反代缓冲。
+	for header, want := range map[string]string{
+		"Content-Type":  "text/event-stream",
+		"Cache-Control": "no-cache",
+		"Connection":    "keep-alive",
+	} {
+		if got := rec.Header().Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+}

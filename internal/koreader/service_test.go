@@ -335,3 +335,125 @@ func TestSaveProgressRejectsOversizedFields(t *testing.T) {
 		t.Fatalf("expected ordinary payload to pass, got %v", err)
 	}
 }
+
+// TestAuthenticateKeyComparisonMatrix 覆盖密钥比对的全部分支。
+//
+// 这三个 kosync 端点未鉴权、无失败限流也无锁定，客户端提交值完全可控——密钥比对因此是
+// 时序侧信道最理想的靶子。用例本身测不出「是否恒定时间」（Go 里没有可靠的计时断言），
+// 它保证的是改成 subtle 之后语义没走样：两种历史形态的 sync_key 都仍能通过，其余一律拒。
+func TestAuthenticateKeyComparisonMatrix(t *testing.T) {
+	rawSecret := "secret-key"
+	selfRegHash := HashKey("device-password")
+
+	cases := []struct {
+		name      string
+		username  string
+		seed      bool
+		storedKey string
+		enabled   bool
+		clientKey string
+		wantErr   error
+	}{
+		{
+			name: "管理端建号：客户端发 md5(原始密钥)", username: "admin-made", seed: true,
+			storedKey: rawSecret, enabled: true, clientKey: HashKey(rawSecret), wantErr: nil,
+		},
+		{
+			name: "设备自助注册：库里存的就是客户端 md5", username: "self-reg", seed: true,
+			storedKey: selfRegHash, enabled: true, clientKey: selfRegHash, wantErr: nil,
+		},
+		{
+			name: "密钥不匹配", username: "wrong-key", seed: true,
+			storedKey: rawSecret, enabled: true, clientKey: HashKey("nope"), wantErr: ErrUnauthorized,
+		},
+		{
+			// 长度不同的分支：ConstantTimeCompare 在长度不等时直接返 0。
+			name: "客户端提交的密钥长度不同", username: "short-key", seed: true,
+			storedKey: rawSecret, enabled: true, clientKey: "abc", wantErr: ErrUnauthorized,
+		},
+		{
+			name: "账号不存在", username: "ghost", seed: false,
+			clientKey: HashKey(rawSecret), wantErr: ErrForbidden,
+		},
+		{
+			name: "账号已禁用", username: "disabled", seed: true,
+			storedKey: rawSecret, enabled: false, clientKey: HashKey(rawSecret), wantErr: ErrForbidden,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+			ctx := context.Background()
+			if tc.seed {
+				if _, err := store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
+					Username: tc.username, SyncKey: tc.storedKey, Enabled: tc.enabled,
+				}); err != nil {
+					t.Fatalf("CreateKOReaderAccount: %v", err)
+				}
+			}
+
+			_, err := svc.Authenticate(ctx, Credentials{Username: tc.username, Key: tc.clientKey})
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Authenticate = %v, want success", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Authenticate = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestRegisterDeviceRejectsMalformedCredentials 守卫未鉴权注册端点的输入形状。
+//
+// kosync 协议里 password 就是 md5 十六进制串。此前该端点只判空，任意字符串都能被当成
+// 密钥存进 koreader_accounts（username 还进 UNIQUE 索引）。每条拒绝用例都额外断言
+// **账号没有落库**——只返错却把行写进去，等于没挡住。
+func TestRegisterDeviceRejectsMalformedCredentials(t *testing.T) {
+	validHash := HashKey("pw")
+
+	cases := []struct {
+		name     string
+		username string
+		password string
+	}{
+		{"空用户名", "", validHash},
+		{"空密码", "device", ""},
+		{"密码不是 md5 十六进制", "device", "not-a-md5-hash"},
+		{"密码长度不足 32", "device", "abcdef0123456789"},
+		{"密码含非十六进制字符", "device", strings.Repeat("z", 32)},
+		{"用户名超长", strings.Repeat("a", 1024), validHash},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+			ctx := context.Background()
+
+			if _, err := svc.RegisterDevice(ctx, tc.username, tc.password); !errors.Is(err, ErrUnauthorized) {
+				t.Fatalf("RegisterDevice = %v, want ErrUnauthorized", err)
+			}
+			if tc.username != "" {
+				if _, err := store.GetKOReaderAccountByUsername(ctx, tc.username); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("被拒绝的注册不应落库，GetKOReaderAccountByUsername = %v", err)
+				}
+			}
+		})
+	}
+
+	t.Run("合法凭据仍可注册", func(t *testing.T) {
+		svc, _, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+		ctx := context.Background()
+		account, err := svc.RegisterDevice(ctx, "device", validHash)
+		if err != nil {
+			t.Fatalf("RegisterDevice: %v", err)
+		}
+		// 注册后必须立刻能用同一个 md5 认证（该值同时也是后续请求的 x-auth-key）。
+		if _, err := svc.Authenticate(ctx, Credentials{Username: account.Username, Key: validHash}); err != nil {
+			t.Fatalf("注册后立即认证失败: %v", err)
+		}
+	})
+}
