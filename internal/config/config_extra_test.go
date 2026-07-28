@@ -541,3 +541,59 @@ func TestGeneratedConfigIsOwnerOnly(t *testing.T) {
 		t.Fatalf("覆盖既有 0644 文件后权限 = %04o, want %04o", got, ownerOnly)
 	}
 }
+
+// TestSnapshotIsDeepCopy 守卫「Snapshot 返回的是真正独立的副本」。
+//
+// Config 的值拷贝只复制切片头。此前 Snapshot 直接返回 m.cfg，调用方拿到的切片与 Manager
+// 内部共享底层数组——而 ResolveStoragePolicy 恰好会对 StoragePolicies 做就地归一化，
+// 于是「读配置」变成了并发写同一段内存。
+func TestSnapshotIsDeepCopy(t *testing.T) {
+	var cfg Config
+	cfg.Server.AllowedOrigins = []string{"https://example.com"}
+	cfg.Server.TrustedProxies = []string{"10.0.0.0/8"}
+	cfg.Library.Paths = []string{"/library"}
+	cfg.Library.StoragePolicies = []LibraryStoragePolicy{{Path: "/library", StorageProfile: "hdd"}}
+	m := NewManager(&cfg)
+
+	// 改动传给 NewManager 的那份，不应影响 Manager 内部。
+	cfg.Server.AllowedOrigins[0] = "https://evil.example"
+	cfg.Library.StoragePolicies[0].Path = "/tampered"
+
+	first := m.Snapshot()
+	if first.Server.AllowedOrigins[0] != "https://example.com" {
+		t.Fatalf("NewManager 未隔离入参：AllowedOrigins[0] = %q", first.Server.AllowedOrigins[0])
+	}
+	if first.Library.StoragePolicies[0].Path != "/library" {
+		t.Fatalf("NewManager 未隔离入参：StoragePolicies[0].Path = %q", first.Library.StoragePolicies[0].Path)
+	}
+
+	// 改动一份快照，不应波及后续快照。
+	first.Server.TrustedProxies[0] = "0.0.0.0/0"
+	first.Library.StoragePolicies[0].StorageProfile = "ssd"
+
+	second := m.Snapshot()
+	if second.Server.TrustedProxies[0] != "10.0.0.0/8" {
+		t.Fatalf("快照之间共享了底层数组：TrustedProxies[0] = %q", second.Server.TrustedProxies[0])
+	}
+	if second.Library.StoragePolicies[0].StorageProfile != "hdd" {
+		t.Fatalf("快照之间共享了底层数组：StorageProfile = %q", second.Library.StoragePolicies[0].StorageProfile)
+	}
+}
+
+// TestResolveStoragePolicyDoesNotMutateInput 把「不写入参」钉成 ResolveStoragePolicy 的契约。
+//
+// 这是上面那条竞争的根因：函数按值收 Config，却对切片元素就地归一化，写穿了副本的假象。
+// 把 CloneConfig 那一行去掉即刻变红。
+func TestResolveStoragePolicyDoesNotMutateInput(t *testing.T) {
+	var cfg Config
+	cfg.Library.StoragePolicies = []LibraryStoragePolicy{
+		{Path: "  /library  ", StorageProfile: "  HDD  "},
+	}
+	before := cfg.Library.StoragePolicies[0]
+
+	_ = ResolveStoragePolicy(cfg, "/library/series/vol1.cbz")
+
+	if got := cfg.Library.StoragePolicies[0]; got != before {
+		t.Fatalf("ResolveStoragePolicy 改写了调用方的 StoragePolicies：%+v -> %+v", before, got)
+	}
+}

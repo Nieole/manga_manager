@@ -4095,7 +4095,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	// 缓存按 (locale, user) 分区；无会话上下文时 currentUserID 为 0。
-	controller.recommendations.store(recommendationCacheKey("zh-CN", 0), []AIRecommendationResponse{{
+	controller.recommendations.storeAt(controller.recommendations.snapshotGen(), recommendationCacheKey("zh-CN", 0), []AIRecommendationResponse{{
 		SeriesID:  99,
 		Reason:    "Cached reason",
 		Title:     "Cached title",

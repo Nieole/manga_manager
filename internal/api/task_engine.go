@@ -547,22 +547,42 @@ func (e *taskEngine) failTaskCore(key, message, code string, params map[string]s
 	e.publishTaskStatusLocked(task)
 }
 
+// pruneTasksLocked 把内存任务表裁到 maxRetainedTasks，**活动任务无条件保留**。
+//
+// 内存里的这份是活动任务的唯一可写副本：updateTaskCore 等一律「tasks[key] 查不到就 return」。
+// 一个仍在跑的任务被裁掉之后，它后续的全部进度、指标乃至终态更新都会静默失效，
+// 任务面板上永远停在最后一次进度、也再不会变成「完成」。
+//
+// 而按 Sequence 降序排并不能保护它：Sequence 只在有更新时才递增，一个长时间无进度上报的
+// 长任务（大库扫描的哈希阶段就是如此）会被后来的大量短任务超过，正好落进被裁的那一段——
+// 这恰恰是缺陷最容易触发的情形，所以必须按状态判定而不是靠排序位置。
 func (e *taskEngine) pruneTasksLocked() {
 	if len(e.tasks) <= maxRetainedTasks {
 		return
 	}
 
-	items := make([]TaskStatus, 0, len(e.tasks))
+	next := make(map[string]TaskStatus, maxRetainedTasks+1)
+	finished := make([]TaskStatus, 0, len(e.tasks))
 	for _, task := range e.tasks {
-		items = append(items, task)
-	}
-	sortTaskStatusesByRecency(items)
-
-	next := make(map[string]TaskStatus, len(items))
-	for _, task := range items {
-		if len(next) >= maxRetainedTasks {
-			break
+		if taskIsActive(task.Status) {
+			next[task.Key] = task
+			continue
 		}
+		finished = append(finished, task)
+	}
+
+	// 配额只在已终结的任务之间分配。活动任务本身就超额时 quota 为 0：
+	// 此时全部保留活动任务、丢掉所有历史，也好过丢掉一个还在跑的任务。
+	quota := maxRetainedTasks - len(next)
+	if quota <= 0 {
+		e.tasks = next
+		return
+	}
+	if len(finished) > quota {
+		sortTaskStatusesByRecency(finished)
+		finished = finished[:quota]
+	}
+	for _, task := range finished {
 		next[task.Key] = task
 	}
 	e.tasks = next
@@ -698,7 +718,7 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (TaskStat
 
 // ---- 控制：清理 / 暂停 / 恢复 / 取消 / 停机 ----
 
-// clear 按过滤条件删除 DB 中的任务记录，并同步清掉内存中对应的非运行态任务，返回删除的 DB 行数。
+// clear 按过滤条件删除 DB 中的任务记录，并同步清掉内存中对应的**非活动态**任务，返回删除的 DB 行数。
 func (e *taskEngine) clear(ctx context.Context, filters database.TaskFilters) (int64, error) {
 	removed, err := e.store.DeleteTasks(ctx, filters)
 	if err != nil {
@@ -723,7 +743,9 @@ func (e *taskEngine) clear(ctx context.Context, filters database.TaskFilters) (i
 		if filters.ScopeID != nil && (task.ScopeID == nil || *task.ScopeID != *filters.ScopeID) {
 			continue
 		}
-		if task.Status == "running" {
+		// paused / cancelling 与 running 一样，内存里这份是唯一可写副本：删掉之后
+		// resume 会变成 404，而任务体仍卡在 PauseGate 上永远等不到放行。
+		if taskIsActive(task.Status) {
 			continue
 		}
 		delete(e.tasks, key)

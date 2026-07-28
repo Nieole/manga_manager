@@ -232,7 +232,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer cleanupCancel()
 		var lastUpdate time.Time
 		snapshot, err := c.external.ScanSession(taskCtx, sessionID, func(current, total int, message string) {
@@ -278,7 +278,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	}
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer cleanupCancel()
 		plan, err := c.external.PrepareTransfer(taskCtx, libraryID, sessionID, seriesIDs)
 		if errors.Is(err, context.Canceled) {

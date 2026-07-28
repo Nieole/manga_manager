@@ -686,7 +686,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 	c.taskEngine.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(key, func() {
 		defer cleanupCancel()
 		updated, total, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {
 			c.taskEngine.updateTaskDetailsMsg(key, current, total, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
@@ -718,7 +718,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	}, "")
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(key, func() {
 		defer cleanupCancel()
 		updated, total, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, _ string) {
 			c.taskEngine.updateTaskDetailsMsg(key, current, total, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{
@@ -751,7 +751,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	c.taskEngine.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(key, func() {
 		defer cleanupCancel()
 		c.taskEngine.updateTaskDetailsMsg(key, 0, 2, "task.msg.refresh_koreader_matching.rebuild_start", nil, "hashing", "", nil, nil)
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {

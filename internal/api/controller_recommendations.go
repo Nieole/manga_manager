@@ -67,6 +67,10 @@ func (c *Controller) cachedRecommendations(key string) []AIRecommendationRespons
 // computeRecommendations 拉候选、调 LLM 生成推荐并回填缓存。由 getRecommendations 经 singleflight 调用，
 // 保证同一 locale 的并发请求只执行一次。
 func (c *Controller) computeRecommendations(ctx context.Context, locale string, userID int64) ([]AIRecommendationResponse, error) {
+	// 先记下缓存世代：LLM 推理要几秒到几十秒，期间可能发生删库并 purge 缓存。
+	// 回填时若世代已变，说明这份结果基于已不存在的数据，storeAt 会丢弃它。
+	cacheGen := c.recommendations.snapshotGen()
+
 	// 1. 获取该用户最常看的 10 个标签。多用户下必须走 user_reading_activity，
 	//    否则每个人拿到的都是全站合并出来的偏好。
 	var (
@@ -147,7 +151,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 
 	// 回填缓存。键必须与 getRecommendations 读取时用的完全一致，否则写进去的分区
 	// 永远读不到，每次首页请求都会重新调一次 LLM。
-	c.recommendations.store(recommendationCacheKey(locale, userID), finalRecs)
+	c.recommendations.storeAt(cacheGen, recommendationCacheKey(locale, userID), finalRecs)
 
 	return finalRecs, nil
 }
@@ -166,7 +170,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"locale": locale}, scopeName)
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer cleanupCancel()
 		libraryID, taskLocale := libID, locale
 		ctx := metadata.WithLocale(taskCtx, taskLocale)
@@ -273,4 +277,10 @@ func (c *Controller) rebuildInitials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
+// purgeRecommendationCache 清空 AI 推荐缓存（库结构变化后调用）。
+// 与 invalidateDashboardStatsCache / purgeReadingPathCaches 并列，让删库那三行读起来是一件事。
+func (c *Controller) purgeRecommendationCache() {
+	c.recommendations.purge()
 }

@@ -298,6 +298,25 @@ func (c *Controller) lifecycleDone() <-chan struct{} {
 	return c.done
 }
 
+// runBackgroundTask 与 runBackground 相同，但额外保证：goroutine 一旦 panic，
+// taskKey 对应的任务会被置为失败态。
+//
+// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。任务体 panic 时不会走到任何
+// finishTask/failTask，任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，
+// 于是那个 key 从此恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
+// 把 panic 转成一次显式失败，用户至少能看到原因并重试。
+func (c *Controller) runBackgroundTask(taskKey string, fn func()) {
+	c.runBackground(func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("Background task panicked", "task_key", taskKey, "panic", rec, "stack", string(debug.Stack()))
+				c.taskEngine.failTaskWithError(taskKey, "Background task panicked", fmt.Sprint(rec))
+			}
+		}()
+		fn()
+	})
+}
+
 func (c *Controller) runBackground(fn func()) {
 	c.lifecycleDone()
 	c.lifecycleMu.Lock()
@@ -311,6 +330,7 @@ func (c *Controller) runBackground(fn func()) {
 		defer c.backgroundWG.Done()
 		// 后台任务的 panic 不经过 middleware.Recoverer（那只覆盖 HTTP handler goroutine），
 		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让该任务失败，服务继续可用。
+		// 任务型调用点请走 runBackgroundTask，它会额外把对应任务置为失败态。
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("Background task panicked", "panic", rec, "stack", string(debug.Stack()))
@@ -485,7 +505,23 @@ func openPathInDefaultFileManager(path string) error {
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
 
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// 必须有配对的 Wait：Start 之后不 Wait，子进程退出后会在 Unix 内核里留下僵尸表项，
+	// 而 Go 运行时不会替我们收割——每点一次「在文件管理器中打开」就泄漏一个。
+	//
+	// 但**不能同步等**：这些命令拉起的是长期存活的 GUI 进程（Finder / Explorer / 文件管理器），
+	// 同步 Wait 会把 HTTP 请求一直挂到用户关掉那个窗口为止。
+	//
+	// 也刻意不走 runBackground：那会把这个 goroutine 计入 backgroundWG，于是优雅停机要等
+	// 用户关闭文件管理器才能完成。这个 goroutine 的唯一职责就是收尸，进程退出时随之消失即可。
+	//
+	// （对应地也不用 exec.CommandContext + 超时兜底：那会在超时后杀掉用户正开着的文件管理器。）
+	go func() {
+		_ = cmd.Wait() // explorer.exe 惯例返回非零退出码，与成功与否无关，丢弃即可
+	}()
+	return nil
 }
 
 // startPageCacheJanitor 周期性地把磁盘页缓存修剪到配置的容量上限（单 goroutine 串行，经

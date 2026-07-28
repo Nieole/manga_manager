@@ -639,7 +639,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, "全库")
 	taskCtx, cleanup := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer cleanup()
 		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
 			"task.msg.scrape.cancelled_all", "task.msg.scrape.complete_all", "Scraping series metadata", provider, allSeries)
@@ -714,7 +714,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, scopeName)
 	taskCtx, cleanup := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer cleanup()
 		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
 			"task.msg.scrape.cancelled_library", "task.msg.scrape.complete_library", "Scraping library series metadata", provider, allSeries)

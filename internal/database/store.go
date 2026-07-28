@@ -225,16 +225,35 @@ func (s *SqlStore) DeleteKOReaderAccount(ctx context.Context, id int64) error {
 }
 
 // ExecTx 提供一个事务包裹器以进行批量执行，这对防止 SQLite 并发锁极为关键
+// ExecTx 提供一个事务包裹器以进行批量执行，这对防止 SQLite 并发锁极为关键。
+//
+// 收尾必须走 defer 而不是只在错误分支回滚：DSN 里的 _txlock=immediate 让 BeginTx 当场就握住
+// SQLite 写锁（见 migrate.go 的 sqliteDSN），fn 一旦 panic，事务既不提交也不回滚地悬在那里——
+// 连接不还池、写锁不释放，此后整个进程的写入都要等满 busy_timeout 再报 database is locked，
+// 只有重启能救。HTTP 路径上尤其隐蔽：middleware.Recoverer 把 panic 吃掉之后服务看着还活着，
+// 写入却已经全死了。
+//
+// 这里刻意**不** recover：defer 在栈展开时本就会执行，回滚不需要 recover 帮忙。
+// recover 后重新 panic 会把 traceback 截断在本函数的 defer 帧上，丢掉 fn 内真正的崩溃点；
+// 而把 panic 转成 error 更糟——程序 bug 会伪装成一次普通的事务失败，被 scanner 的 flush
+// 计入 failedArchives 后继续跑，用「静默的数据丢失」换掉了「响亮的崩溃」。
+// panic 该穿透就让它穿透，回滚由 defer 保证。
 func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	// 正常提交或已显式回滚之后再 Rollback 只返回 ErrTxDone，是无害的空操作。
+	defer func() { _ = tx.Rollback() }()
 
 	q := s.Queries.WithTx(tx)
 	if err := fn(q); err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
-			return fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+		// ctx 被取消时 database/sql 的 awaitDone 已经替我们回滚过，这里的 Rollback 必然返回
+		// ErrTxDone，属于正常收尾而非回滚失败，不该污染错误信息。
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			// 两个 %w 而不是 %v：上层要靠 errors.Is 认出原始错误（如 scrape 链路的
+			// errNoMetadataChanges），%v 拼接会把错误链拍平成字符串。
+			return fmt.Errorf("tx err: %w, rb err: %w", err, rbErr)
 		}
 		return err
 	}

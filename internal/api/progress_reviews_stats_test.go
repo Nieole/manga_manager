@@ -833,7 +833,7 @@ func TestRecommendationCacheIsPartitionedPerUser(t *testing.T) {
 	userB := mkTestUser(t, store, "bob", database.RoleRegular)
 
 	// 只给 A 预置缓存。
-	controller.recommendations.store(recommendationCacheKey("zh-CN", userA.ID), []AIRecommendationResponse{{
+	controller.recommendations.storeAt(controller.recommendations.snapshotGen(), recommendationCacheKey("zh-CN", userA.ID), []AIRecommendationResponse{{
 		SeriesID: 1, Title: "alice pick",
 	}})
 

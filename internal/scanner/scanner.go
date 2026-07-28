@@ -46,13 +46,21 @@ type Scanner struct {
 	onBatchIngested func(action string)
 	onScanMetrics   func(ScanMetricsReport)
 	onScanProgress  func(ScanProgressReport)
+	// dirtyRefreshInterval 是系列读模型的节流刷新间隔。做成字段而不是常量，是为了让
+	// 回归测试能在毫秒级触发 ticker 分支——否则「刷新失败保留脏标记、下一次 tick 重试」
+	// 这条路径需要一次跑满 10 秒的扫描才能覆盖到。
+	dirtyRefreshInterval time.Duration
 }
+
+// defaultDirtyRefreshInterval 是 dirtyRefreshInterval 的默认值。
+const defaultDirtyRefreshInterval = 10 * time.Second
 
 func NewScanner(store database.Store, cfg *config.Manager) *Scanner {
 	s := &Scanner{
-		store:       store,
-		config:      cfg,
-		openArchive: parser.OpenArchive,
+		store:                store,
+		config:               cfg,
+		openArchive:          parser.OpenArchive,
+		dirtyRefreshInterval: defaultDirtyRefreshInterval,
 	}
 	s.active.libraries = make(map[int64]struct{})
 	s.active.series = make(map[int64]struct{})
@@ -137,7 +145,10 @@ type scanMetrics struct {
 	failedArchives     atomic.Int64
 	// rehomedBooks 统计本次扫描把多少条已入库记录按改名重连到了新路径。
 	// 这是会改动用户数据的行为，必须可观测——否则「书怎么没变多」只能靠翻日志猜。
-	rehomedBooks         atomic.Int64
+	rehomedBooks atomic.Int64
+	// staleSeriesStats 记录扫描收尾时仍未刷新成功的系列数：这些系列的统计会一直不准，
+	// 直到它们再次被扫描到。是「静默不一致」变可见的唯一途径。
+	staleSeriesStats     atomic.Int64
 	ioWaitMillis         atomic.Int64
 	pausedMillis         atomic.Int64
 	thumbnailWriteMillis atomic.Int64
@@ -153,6 +164,7 @@ type scanMetricsSnapshot struct {
 	generatedCovers      int64
 	failedArchives       int64
 	rehomedBooks         int64
+	staleSeriesStats     int64
 	ioWaitMillis         int64
 	pausedMillis         int64
 	thumbnailWriteMillis int64
@@ -174,6 +186,7 @@ type ScanMetricsReport struct {
 	GeneratedCovers        int64
 	FailedArchives         int64
 	RehomedBooks           int64
+	StaleSeriesStats       int64
 	IOWaitMillis           int64
 	PausedMillis           int64
 	ThumbnailWriteMillis   int64
@@ -241,6 +254,7 @@ func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
 			"generated_covers":    snapshot.generatedCovers,
 			"failed_archives":     snapshot.failedArchives,
 			"rehomed_books":       snapshot.rehomedBooks,
+			"stale_series_stats":  snapshot.staleSeriesStats,
 			"io_wait_ms":          snapshot.ioWaitMillis,
 			"paused_ms":           snapshot.pausedMillis,
 			"thumbnail_write_ms":  snapshot.thumbnailWriteMillis,
@@ -262,6 +276,7 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 		generatedCovers:      m.generatedCovers.Load(),
 		failedArchives:       m.failedArchives.Load(),
 		rehomedBooks:         m.rehomedBooks.Load(),
+		staleSeriesStats:     m.staleSeriesStats.Load(),
 		ioWaitMillis:         m.ioWaitMillis.Load(),
 		pausedMillis:         m.pausedMillis.Load(),
 		thumbnailWriteMillis: m.thumbnailWriteMillis.Load(),
@@ -811,6 +826,7 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 		"generated_covers", snapshot.generatedCovers,
 		"failed_archives", snapshot.failedArchives,
 		"rehomed_books", snapshot.rehomedBooks,
+		"stale_series_stats", snapshot.staleSeriesStats,
 		"io_wait_ms", snapshot.ioWaitMillis,
 		"paused_ms", snapshot.pausedMillis,
 		"thumbnail_write_ms", snapshot.thumbnailWriteMillis,
@@ -852,6 +868,7 @@ func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.Resol
 		GeneratedCovers:        snapshot.generatedCovers,
 		FailedArchives:         snapshot.failedArchives,
 		RehomedBooks:           snapshot.rehomedBooks,
+		StaleSeriesStats:       snapshot.staleSeriesStats,
 		IOWaitMillis:           snapshot.ioWaitMillis,
 		PausedMillis:           snapshot.pausedMillis,
 		ThumbnailWriteMillis:   snapshot.thumbnailWriteMillis,
@@ -1332,35 +1349,79 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		batch = batch[:0]
 	}
 
-	// refreshDirtySeries 节流刷新累积的 touched 系列读模型：每个系列一次 UpdateSeriesStatistics（series 冗余
-	// 统计列 book_count/volume_count/total_pages）+ RefreshSeriesStats（series_stats 读模型），各自独立事务。
-	// 由 10s ticker 与扫描末尾调用，使任一系列在两次刷新间至少间隔一个 tick，取代每批一次的全量重算。
-	refreshDirtySeries := func() {
+	// refreshDirtySeries 节流刷新累积的 touched 系列读模型（series 冗余统计列 + series_stats +
+	// 每用户聚合，见 RefreshSeriesDerivedData）。由 10s ticker 与扫描末尾调用，使任一系列在两次刷新
+	// 之间至少间隔一个 tick，取代此前每批一次的全量重算。
+	//
+	// **刷新失败时保留脏标记**：此前无论成败都 delete，于是扫描被取消或 DB 瞬时出错时，
+	// 那些系列的 book_count/total_pages 与读模型就永久停在旧值——没有任何后台自愈路径
+	// （启动回填被 user_version 门控，api 侧也没有重算系列统计的维护任务），
+	// 只有该系列今后再次发生文件变动、或用户手动强制扫描，才会被纠正回来。
+	//
+	// warnedSeries 让同一个系列只在首次失败时告警：长扫描下每 10s 刷一屏重复告警会淹没真正的信息。
+	warnedSeries := make(map[int64]bool)
+	refreshDirtySeries := func(refreshCtx context.Context) {
 		if len(dirtySeries) == 0 {
 			return
 		}
 		for sid := range dirtySeries {
-			if err := s.store.UpdateSeriesStatistics(ctx, database.UpdateSeriesStatisticsParams{
-				SeriesID: sid, SeriesID_2: sid, SeriesID_3: sid, ID: sid,
-			}); err != nil {
-				slog.Warn("Failed to update series statistics", "series_id", sid, "err", err)
-			}
-			if err := s.store.RefreshSeriesStats(ctx, sid); err != nil {
-				slog.Warn("Failed to refresh series stats", "series_id", sid, "err", err)
+			if err := s.store.RefreshSeriesDerivedData(refreshCtx, sid); err != nil {
+				if !warnedSeries[sid] {
+					warnedSeries[sid] = true
+					slog.Warn("Failed to refresh series derived data, keeping it dirty for a later retry",
+						"series_id", sid, "err", err)
+				}
+				continue
 			}
 			delete(dirtySeries, sid)
+			delete(warnedSeries, sid)
 		}
 	}
 
-	ticker := time.NewTicker(10 * time.Second)
+	// drainDirtySeries 是扫描收尾时的最后一次刷新。它刻意用 WithoutCancel 派生的 ctx：
+	// 扫描被取消时，ctx 已经 Done，用它去刷新只会立刻失败，把整批脏标记原样留下——
+	// 而这之后再没有人会来刷它们了。取消要停的是「继续扫描」，不是「把已经写进去的东西算对」。
+	//
+	// 每个系列单独给 1 秒超时、总预算 5 秒：单个系列被写锁卡住时不至于吃光全部预算，
+	// 其余系列仍有机会刷成功。5s 明显小于 SQLite 的 busy_timeout，重度写竞争下会走告警分支
+	// 并保留脏标记——这是刻意的取舍，不能让停机被一个卡住的刷新无限期拖住。
+	drainDirtySeries := func() {
+		if len(dirtySeries) == 0 {
+			return
+		}
+		drainCtx, cancelDrain := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancelDrain()
+		for sid := range dirtySeries {
+			perSeries, cancelOne := context.WithTimeout(drainCtx, time.Second)
+			err := s.store.RefreshSeriesDerivedData(perSeries, sid)
+			cancelOne()
+			if err != nil {
+				continue
+			}
+			delete(dirtySeries, sid)
+		}
+		if remaining := len(dirtySeries); remaining > 0 {
+			// 这些系列的统计会一直不准，直到它们再次被扫描到。必须让它可见。
+			metrics.staleSeriesStats.Add(int64(remaining))
+			slog.Error("Scan finished with stale series statistics",
+				"stale_series", remaining,
+				"hint", "these series keep outdated book_count/total_pages until they are scanned again")
+		}
+	}
+
+	refreshInterval := s.dirtyRefreshInterval
+	if refreshInterval <= 0 {
+		refreshInterval = defaultDirtyRefreshInterval
+	}
+	ticker := time.NewTicker(refreshInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case res, ok := <-results:
 			if !ok {
-				flush()              // 通道被收尾，最后一次刷盘
-				refreshDirtySeries() // 扫描结束：兜底刷新所有剩余 touched 系列读模型，保证最终一致
+				flush()            // 通道被收尾，最后一次刷盘
+				drainDirtySeries() // 扫描结束：兜底刷新剩余 touched 系列（取消时也要刷，见其注释）
 				if s.onBatchIngested != nil {
 					s.onBatchIngested("scan_completed")
 				}
@@ -1379,8 +1440,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				flush()
 			}
 		case <-ticker.C:
-			flush()              // 按时间自然聚合，避免低频挂起锁
-			refreshDirtySeries() // 每 ~10s 节流刷新一次 touched 系列（取代每批全量重算）
+			flush()                 // 按时间自然聚合，避免低频挂起锁
+			refreshDirtySeries(ctx) // 每 ~10s 节流刷新一次 touched 系列（取代每批全量重算）
 		}
 	}
 }

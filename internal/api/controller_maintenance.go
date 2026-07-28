@@ -127,7 +127,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 	c.taskEngine.setTaskMetadata("rebuild_index", nil, "")
 
 	taskCtx, release := c.taskEngine.newTaskContext("rebuild_index")
-	c.runBackground(func() {
+	c.runBackgroundTask("rebuild_index", func() {
 		defer release()
 
 		if err := c.store.RebuildSeriesSearchIndex(taskCtx); err != nil {
@@ -181,7 +181,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		thumbDir = cfg.Cache.Dir
 	}
 
-	c.runBackground(func() {
+	c.runBackgroundTask("rebuild_thumbnails", func() {
 		defer cleanupCancel()
 		defer c.releaseRebuildThumbAggregator()
 		c.initRebuildThumbAggregator(0)

@@ -29,13 +29,49 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		c.watcher.UnwatchLibrary(lib.Path)
 	}
 
+	// 先取消该库的在跑任务再删行。取消是异步的（任务转入 cancelling，手上那批事务仍会刷完），
+	// 所以这里的收益不是「彻底避免写冲突」——FK 会挡住对已删库的回写——而是缩短
+	// 「扫描还在往一个马上要消失的库里写」的窗口，少一批注定失败的事务与错误日志。
+	// 代价是 DeleteLibrary 万一失败，一个合法扫描已被取消；用户重新触发即可，
+	// 比留下一个对着不存在的库空转的扫描要好。
+	c.cancelLibraryScopedTasks(libraryID)
+
 	err = c.store.DeleteLibrary(ctx, libraryID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete library")
 		return
 	}
 
+	// 三份缓存都以「库里有哪些书」为前提，删库后必须一起失效，且只在删除确实成功之后做
+	// ——删除失败时缓存仍然是对的，白清一次只会让下一批请求平白多打一次库。
+	c.invalidateDashboardStatsCache("library_deleted")
+	c.purgeReadingPathCaches()
+	c.purgeRecommendationCache()
+
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// cancelLibraryScopedTasks 取消该库范围内、经任务引擎启动的在跑任务。
+//
+// 覆盖边界必须说清楚：只有这三类任务在引擎里有条目和可取消的 ctx。
+// 而 interval 守护扫描、watcher 触发的扫描、以及全库重扫都是拿 context.Background()
+// 直接调 scanner 的，既没有任务条目也无从取消——删库对它们无效，只能靠外键约束兜底
+// （它们会空转刷一阵错误日志，但不会重建被删的行）。让扫描器自己感知库消失属于扫描器边界的改动。
+func (c *Controller) cancelLibraryScopedTasks(libraryID int64) {
+	for _, prefix := range []string{"scan_library_", "scrape_library_", "ai_grouping_library_"} {
+		key := prefix + strconv.FormatInt(libraryID, 10)
+		err := c.taskEngine.cancel(key)
+		switch {
+		case err == nil:
+			slog.Info("Cancelled task for deleted library", "task_key", key, "library_id", libraryID)
+		case errors.Is(err, errTaskNotFound), errors.Is(err, errTaskNotRunning),
+			errors.Is(err, errTaskNotCancelable), errors.Is(err, errTaskCancelUnavailable):
+			// 没有这个任务、已经结束、或还没登记好 runtime（启动与注册 runtime 之间有个窗口）。
+			// 取消失败一律不阻塞删库：库行删掉之后，外键约束会挡住任何回写。
+		default:
+			slog.Warn("Failed to cancel task for deleted library", "task_key", key, "error", err)
+		}
+	}
 }
 
 type CreateLibraryRequest struct {
@@ -254,7 +290,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) boo
 	c.taskEngine.setTaskEffectiveLimit(taskKey, limits)
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer c.purgeReadingPathCaches()
 		err := c.scanner.ScanLibrary(taskCtx, lib.ID, lib.Path, force)
 		cleanupCancel()
@@ -330,7 +366,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	}, scopeName)
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer c.purgeReadingPathCaches()
 		err := c.scanner.ScanSeries(taskCtx, seriesID, force)
 		cleanupCancel()
@@ -402,7 +438,7 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	}
 	c.taskEngine.setTaskMetadata(taskKey, nil, scopeName)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		c.taskEngine.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.cleanup_library.scanning_records", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, "scanning_records", "", nil, nil)
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
 		if err != nil {
