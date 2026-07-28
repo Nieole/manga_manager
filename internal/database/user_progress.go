@@ -130,40 +130,84 @@ func (s *SqlStore) ClearUserBookProgress(ctx context.Context, userID, bookID int
 	})
 }
 
-// SetUserBooksReadState 批量把若干书标记为已读（进度=页数）或未读（清除），一次事务内刷新受影响系列。
+// setUserBooksReadStateBatch 是「一批书」的读状态写入，整批在一个事务内完成。
+const setUserBooksReadStateBatch = 500
+
+// SetUserBooksReadState 批量把若干书标记为已读（进度=页数）或未读（清除），并刷新受影响系列。
+//
+// 分批而不是一个大事务：DSN 里的 _txlock=immediate 让 BeginTx 当场就握住 SQLite 写锁，
+// 而这条路径的书数由用户选区决定（bulkUpdateSeriesProgress 甚至能把几个系列展开成整库几万本）。
+// 6 万本书实测要 12 万条语句、连续持写锁约 2.5 秒——期间扫描器落库与所有阅读进度保存全部排队，
+// 最长要等满 busy_timeout。
+//
+// 分批的代价是整体不再原子：中途失败会留下「前几批已生效」的状态。这对读状态标记是可接受的
+// ——它本就是幂等的逐本操作，用户重试一次即可，而且部分成功比「点了没反应还把库锁死两秒」更好。
 func (s *SqlStore) SetUserBooksReadState(ctx context.Context, userID int64, bookIDs []int64, isRead bool, at time.Time) error {
+	for start := 0; start < len(bookIDs); start += setUserBooksReadStateBatch {
+		end := start + setUserBooksReadStateBatch
+		if end > len(bookIDs) {
+			end = len(bookIDs)
+		}
+		if err := s.setUserBooksReadStateChunk(ctx, userID, bookIDs[start:end], isRead, at); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SqlStore) setUserBooksReadStateChunk(ctx context.Context, userID int64, bookIDs []int64, isRead bool, at time.Time) error {
 	if len(bookIDs) == 0 {
 		return nil
 	}
+	placeholders, idArgs := sqlInClause(bookIDs)
+
 	return s.ExecTx(ctx, func(q *Queries) error {
+		// 一次查出这批书涉及的系列，取代此前「每本书一条 SELECT series_id」。
+		// 顺带天然过滤掉已不存在的 book_id（旧实现靠逐条 ErrNoRows 跳过）。
 		affected := make(map[int64]struct{})
-		for _, bookID := range bookIDs {
-			seriesID, err := q.GetSeriesIDByBookID(ctx, bookID)
-			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					continue
-				}
+		rows, err := q.db.QueryContext(ctx,
+			`SELECT DISTINCT series_id FROM books WHERE id IN (`+placeholders+`)`, idArgs...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var seriesID int64
+			if err := rows.Scan(&seriesID); err != nil {
+				rows.Close()
 				return err
-			}
-			if isRead {
-				// 已读：进度设为该书页数（page_count 为 0 时用大哨兵值，语义同旧 UpdateBookProgress）。
-				if _, err := q.db.ExecContext(ctx,
-					`INSERT INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, updated_at)
-					 SELECT ?, id, CASE WHEN page_count > 0 THEN page_count ELSE 99999 END, ?, CURRENT_TIMESTAMP
-					 FROM books WHERE id = ?
-					 ON CONFLICT(user_id, book_id) DO UPDATE SET
-					   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, updated_at = CURRENT_TIMESTAMP`,
-					userID, at, bookID); err != nil {
-					return err
-				}
-			} else {
-				if _, err := q.db.ExecContext(ctx,
-					`DELETE FROM user_book_progress WHERE user_id = ? AND book_id = ?`, userID, bookID); err != nil {
-					return err
-				}
 			}
 			affected[seriesID] = struct{}{}
 		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(affected) == 0 {
+			return nil // 这批 id 全都不存在
+		}
+
+		if isRead {
+			// 已读：进度设为该书页数（page_count 为 0 时用大哨兵值，语义同旧 UpdateBookProgress）。
+			args := append([]interface{}{userID, at}, idArgs...)
+			if _, err := q.db.ExecContext(ctx,
+				`INSERT INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, updated_at)
+				 SELECT ?, id, CASE WHEN page_count > 0 THEN page_count ELSE 99999 END, ?, CURRENT_TIMESTAMP
+				 FROM books WHERE id IN (`+placeholders+`)
+				 ON CONFLICT(user_id, book_id) DO UPDATE SET
+				   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, updated_at = CURRENT_TIMESTAMP`,
+				args...); err != nil {
+				return err
+			}
+		} else {
+			args := append([]interface{}{userID}, idArgs...)
+			if _, err := q.db.ExecContext(ctx,
+				`DELETE FROM user_book_progress WHERE user_id = ? AND book_id IN (`+placeholders+`)`,
+				args...); err != nil {
+				return err
+			}
+		}
+
+		// 刷新留在本批事务内：跨批挪到最后会让「写已生效但聚合还没更新」的窗口横跨整个操作。
 		for seriesID := range affected {
 			if err := refreshUserSeriesProgressTx(ctx, q, userID, seriesID); err != nil {
 				return err

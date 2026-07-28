@@ -1371,53 +1371,6 @@ func (q *Queries) GetBookCoverPathsByIDs(ctx context.Context, ids []int64) ([]Ge
 	return items, nil
 }
 
-const getCandidateSeriesForAI = `-- name: GetCandidateSeriesForAI :many
-SELECT s.id, s.title, s.name, s.summary, 
-       (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
-FROM series s
-WHERE s.summary IS NOT NULL AND s.summary != '' 
-  AND (s.total_pages = 0 OR (CAST(s.book_count AS REAL) > 0 AND (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) < s.book_count * 0.5))
-ORDER BY RANDOM()
-LIMIT ?
-`
-
-type GetCandidateSeriesForAIRow struct {
-	ID        int64          `json:"id"`
-	Title     sql.NullString `json:"title"`
-	Name      string         `json:"name"`
-	Summary   sql.NullString `json:"summary"`
-	CoverPath sql.NullString `json:"cover_path"`
-}
-
-func (q *Queries) GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error) {
-	rows, err := q.db.QueryContext(ctx, getCandidateSeriesForAI, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetCandidateSeriesForAIRow
-	for rows.Next() {
-		var i GetCandidateSeriesForAIRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Title,
-			&i.Name,
-			&i.Summary,
-			&i.CoverPath,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getConnectedSeriesRelations = `-- name: GetConnectedSeriesRelations :many
 WITH RECURSIVE
   connected (id) AS (

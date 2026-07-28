@@ -1015,6 +1015,10 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "No books updated"})
 		return
 	}
+	if len(req.BookIDs) > maxBulkReadStateBooks {
+		jsonError(w, http.StatusBadRequest, "Too many books in one request")
+		return
+	}
 
 	ctx := r.Context()
 	// 已登录用户走每用户进度：一次事务内标记全部书并按系列刷新 user_series_progress。
@@ -1069,6 +1073,11 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "No series updated", "updated": 0})
 		return
 	}
+	// 系列 id 数本身就要限：每个都会被展开成该系列的全部书。
+	if len(req.SeriesIDs) > maxBulkReadStateSeries {
+		jsonError(w, http.StatusBadRequest, "Too many series in one request")
+		return
+	}
 
 	ctx := r.Context()
 	uid := c.currentUserID(r)
@@ -1085,6 +1094,11 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 			for _, b := range books {
 				bookIDs = append(bookIDs, b.ID)
 			}
+		}
+		// 展开后的书数同样要挡：系列 id 数在上限内，展开结果仍可能是整库量级。
+		if len(bookIDs) > maxBulkReadStateBooks {
+			jsonError(w, http.StatusBadRequest, "Selected series expand to too many books")
+			return
 		}
 		if err := c.store.SetUserBooksReadState(ctx, uid, bookIDs, req.IsRead, time.Now()); err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to update progress")

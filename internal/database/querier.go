@@ -75,7 +75,6 @@ type Querier interface {
 	GetBookByPath(ctx context.Context, path string) (Book, error)
 	GetBookCoverPath(ctx context.Context, id int64) (string, error)
 	GetBookCoverPathsByIDs(ctx context.Context, ids []int64) ([]GetBookCoverPathsByIDsRow, error)
-	GetCandidateSeriesForAI(ctx context.Context, limit int64) ([]GetCandidateSeriesForAIRow, error)
 	GetConnectedSeriesRelations(ctx context.Context, startSeriesID int64) ([]GetConnectedSeriesRelationsRow, error)
 	GetContinueReadingSequels(ctx context.Context) ([]GetContinueReadingSequelsRow, error)
 	GetDashboardCoreStats(ctx context.Context) (GetDashboardCoreStatsRow, error)

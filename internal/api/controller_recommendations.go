@@ -89,14 +89,16 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 		}
 	}
 
-	// 2. 随机获取 20 本可能有兴趣的候选漫画
-	candidateRows, err := c.store.GetCandidateSeriesForAI(ctx, 20)
+	// 2. 随机获取 20 本可能有兴趣的候选漫画。
+	//    传 userID 是必需的：「排除已读过半」的过滤要看**这个用户**的进度，
+	//    读全局 books.last_read_page 在多用户下恒为 0，等于没有过滤。
+	candidateRows, err := c.store.SampleCandidateSeriesForAI(ctx, userID, 20)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch candidates from database: %w", err)
 	}
 
 	var candidates []metadata.CandidateSeries
-	var candidatesMap = make(map[int64]database.GetCandidateSeriesForAIRow)
+	var candidatesMap = make(map[int64]database.CandidateSeriesForAI)
 	for _, cr := range candidateRows {
 		title := cr.Title.String
 		if title == "" {

@@ -129,6 +129,8 @@ type Store interface {
 	RefreshSeriesDerivedData(ctx context.Context, seriesID int64) error
 	// ForEachReferencedCoverPath 流式遍历被引用的封面路径（见 cover_paths.go 的契约注释）。
 	ForEachReferencedCoverPath(ctx context.Context, fn func(path string) error) error
+	// SampleCandidateSeriesForAI 随机取候选系列供 AI 推荐（见 ai_candidates.go）。
+	SampleCandidateSeriesForAI(ctx context.Context, userID int64, limit int64) ([]CandidateSeriesForAI, error)
 	GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error)
 	MigrateGlobalProgressToUser(ctx context.Context, userID int64) error
 	GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error)

@@ -35,6 +35,14 @@ const (
 	// maxCollectionBatchSize 是「一次批量操作最多涉及多少个条目」的上限，
 	// 用于合集批量添加、阅读清单重排这类接受 ID 数组的端点。
 	maxCollectionBatchSize = 1000
+
+	// maxBulkReadStateBooks / maxBulkReadStateSeries 是批量标记读状态的两道上限。
+	//
+	// 单靠 1 MiB 的请求体上限挡不住这条路径：bulkUpdateSeriesProgress 收到的是**系列** id，
+	// 每个都会被展开成该系列的全部书，几十个 id 就能变成整库几万本。
+	// 而每本书都要写一次进度并刷新所属系列的聚合，全部在写锁下进行。
+	maxBulkReadStateBooks  = 20000
+	maxBulkReadStateSeries = 2000
 )
 
 // clampLimit 解析 limit 型参数并钳到 [1, max]。

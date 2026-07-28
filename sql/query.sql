@@ -722,15 +722,6 @@ GROUP BY t.id
 ORDER BY tag_count DESC
 LIMIT ?;
 
--- name: GetCandidateSeriesForAI :many
-SELECT s.id, s.title, s.name, s.summary, 
-       (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
-FROM series s
-WHERE s.summary IS NOT NULL AND s.summary != '' 
-  AND (s.total_pages = 0 OR (CAST(s.book_count AS REAL) > 0 AND (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) < s.book_count * 0.5))
-ORDER BY RANDOM()
-LIMIT ?;
-
 -- name: GetSeriesWithoutCollection :many
 SELECT s.id, s.title, s.name, s.summary
 FROM series s
