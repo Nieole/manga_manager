@@ -222,15 +222,15 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 
 func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) (string, bool) {
 	taskKey := externalLibraryScanTaskKey(libraryID, sessionID)
-	if !c.startPausableCancelableTaskMsg(taskKey, "scan_external_library", "task.msg.scan_external_library.start", nil, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scan_external_library", "task.msg.scan_external_library.start", nil, 0) {
 		return taskKey, false
 	}
 
 	lib, err := c.store.GetLibrary(context.Background(), libraryID)
 	if err == nil {
-		c.setTaskMetadata(taskKey, map[string]string{"session_id": sessionID}, lib.Name)
+		c.taskEngine.setTaskMetadata(taskKey, map[string]string{"session_id": sessionID}, lib.Name)
 	}
-	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
 	c.runBackground(func() {
 		defer cleanupCancel()
@@ -238,25 +238,25 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 		snapshot, err := c.external.ScanSession(taskCtx, sessionID, func(current, total int, message string) {
 			now := time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTaskDetails(taskKey, current, total, message, "discovering", "", map[string]int64{
+				c.taskEngine.updateTaskDetails(taskKey, current, total, message, "discovering", "", map[string]int64{
 					"scanned_files": int64(current),
 				}, nil)
 				lastUpdate = now
 			}
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_external_library.cancelled", nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_external_library.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg(taskKey, "task.msg.scan_external_library.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.scan_external_library.failed", nil, err.Error())
 			return
 		}
 		if snapshot.ScannedFiles > 0 {
-			c.updateTaskMsg(taskKey, snapshot.ScannedFiles, snapshot.ScannedFiles, "task.msg.scan_external_library.progress", map[string]string{"count": strconv.Itoa(snapshot.ScannedFiles)})
-			c.finishTaskMsg(taskKey, "task.msg.scan_external_library.complete", nil)
+			c.taskEngine.updateTaskMsg(taskKey, snapshot.ScannedFiles, snapshot.ScannedFiles, "task.msg.scan_external_library.progress", map[string]string{"count": strconv.Itoa(snapshot.ScannedFiles)})
+			c.taskEngine.finishTaskMsg(taskKey, "task.msg.scan_external_library.complete", nil)
 		} else {
-			c.completeTaskMsg(taskKey, "completed", "task.msg.scan_external_library.complete_empty", nil)
+			c.taskEngine.completeTaskMsg(taskKey, "completed", "task.msg.scan_external_library.complete_empty", nil)
 		}
 		c.PublishEvent("refresh")
 	})
@@ -265,32 +265,32 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 
 func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, seriesIDs []int64) (string, bool) {
 	taskKey := externalLibraryTransferTaskKey(libraryID, sessionID)
-	if !c.startPausableCancelableTaskMsg(taskKey, "transfer_external_library", "task.msg.transfer_external_library.start", nil, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "transfer_external_library", "task.msg.transfer_external_library.start", nil, 0) {
 		return taskKey, false
 	}
 
 	lib, err := c.store.GetLibrary(context.Background(), libraryID)
 	if err == nil {
-		c.setTaskMetadata(taskKey, map[string]string{
+		c.taskEngine.setTaskMetadata(taskKey, map[string]string{
 			"session_id":   sessionID,
 			"series_count": strconv.Itoa(len(seriesIDs)),
 		}, lib.Name)
 	}
-	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
 	c.runBackground(func() {
 		defer cleanupCancel()
 		plan, err := c.external.PrepareTransfer(taskCtx, libraryID, sessionID, seriesIDs)
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg(taskKey, "task.msg.transfer_external_library.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.transfer_external_library.failed", nil, err.Error())
 			return
 		}
 		if len(plan.Operations) == 0 {
-			c.finishTaskMsg(taskKey, "task.msg.transfer_external_library.all_exist", nil)
+			c.taskEngine.finishTaskMsg(taskKey, "task.msg.transfer_external_library.all_exist", nil)
 			c.PublishEvent("refresh")
 			return
 		}
@@ -301,12 +301,12 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		var lastUpdate time.Time
 		for index, op := range plan.Operations {
 			if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
-				c.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
+				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
 				return
 			}
 			now := time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTaskDetailsMsg(taskKey, index, len(plan.Operations), "task.msg.transfer_external_library.transferring", map[string]string{"path": op.RelativePath}, "transferring_files", op.RelativePath, map[string]int64{
+				c.taskEngine.updateTaskDetailsMsg(taskKey, index, len(plan.Operations), "task.msg.transfer_external_library.transferring", map[string]string{"path": op.RelativePath}, "transferring_files", op.RelativePath, map[string]int64{
 					"transferred_files": int64(index),
 				}, nil)
 				lastUpdate = now
@@ -325,7 +325,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			}
 			now = time.Now()
 			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.updateTaskDetailsMsg(taskKey, index+1, len(plan.Operations), "task.msg.transfer_external_library.progress", map[string]string{"done": strconv.Itoa(index + 1), "total": strconv.Itoa(len(plan.Operations))}, "transferring_files", op.RelativePath, map[string]int64{
+				c.taskEngine.updateTaskDetailsMsg(taskKey, index+1, len(plan.Operations), "task.msg.transfer_external_library.progress", map[string]string{"done": strconv.Itoa(index + 1), "total": strconv.Itoa(len(plan.Operations))}, "transferring_files", op.RelativePath, map[string]int64{
 					"transferred_files": int64(index + 1),
 				}, nil)
 				lastUpdate = now
@@ -333,7 +333,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		}
 
 		if len(failures) > 0 {
-			c.failTaskErrMsg(taskKey,
+			c.taskEngine.failTaskErrMsg(taskKey,
 				"task.msg.transfer_external_library.complete_with_failures",
 				map[string]string{"success": strconv.Itoa(len(plan.Operations) - len(failures)), "failed": strconv.Itoa(len(failures))},
 				strings.Join(failures, "\n"))
@@ -341,7 +341,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			return
 		}
 
-		c.finishTaskMsg(taskKey, "task.msg.transfer_external_library.complete", map[string]string{"added": strconv.Itoa(len(plan.Operations)), "existing": strconv.Itoa(plan.ExistingBooks + skipped)})
+		c.taskEngine.finishTaskMsg(taskKey, "task.msg.transfer_external_library.complete", map[string]string{"added": strconv.Itoa(len(plan.Operations)), "existing": strconv.Itoa(plan.ExistingBooks + skipped)})
 		c.PublishEvent("refresh")
 	})
 	return taskKey, true

@@ -100,25 +100,8 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 }
 
 func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
-	c.taskEngine.mutex.Lock()
-	defer c.taskEngine.mutex.Unlock()
-
-	var latestScan *TaskStatus
-	var latestCover *TaskStatus
-	for _, task := range c.taskEngine.tasks {
-		switch task.Type {
-		case "scan_library", "scan_series":
-			if latestScan == nil || task.UpdatedAt.After(latestScan.UpdatedAt) {
-				copyTask := task
-				latestScan = &copyTask
-			}
-		case "rebuild_thumbnails":
-			if latestCover == nil || task.UpdatedAt.After(latestCover.UpdatedAt) {
-				copyTask := task
-				latestCover = &copyTask
-			}
-		}
-	}
+	latestScan := c.taskEngine.latestTaskByTypes("scan_library", "scan_series")
+	latestCover := c.taskEngine.latestTaskByTypes("rebuild_thumbnails")
 
 	scanRate := taskArchiveOpenRate(latestScan)
 	coverRate := taskArchiveOpenRate(latestCover)

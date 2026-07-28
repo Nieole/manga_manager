@@ -230,7 +230,6 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		external:           external.NewManager(store, 30*time.Minute),
 		configPath:         cfgPath,
 		sse:                newSSEBroker(),
-		taskEngine:         newTaskEngine(),
 		recommendations:    newRecommendationCache(24 * time.Hour),
 		rebuildThumbAgg:    newRebuildThumbAggregator(),
 		openPath:           openPathInDefaultFileManager,
@@ -245,7 +244,9 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
-	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptions 会经 isRetryableTaskType 查表）之前完成。
+	// taskEngine 依赖 c 的 SSE 投递与生命周期信号，同样须在 c 构造完成后建立。
+	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone)
+	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptionsCore 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
 	return c
@@ -259,7 +260,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	c.runBackground(func() { c.sse.run(c.lifecycleDone()) })
 	c.runBackground(c.startDaemon)
 	c.runBackground(c.startPageCacheJanitor)
-	c.runBackground(c.startTaskPersister)
+	c.runBackground(c.taskEngine.startTaskPersister)
 	c.runBackground(c.startSessionJanitor)
 
 	// 初始化文件系统监控
@@ -326,27 +327,7 @@ func (c *Controller) Close() {
 		if c.watcher != nil {
 			c.watcher.Stop()
 		}
-		c.taskEngine.mutex.Lock()
-		cancels := make([]context.CancelFunc, 0, len(c.taskEngine.runtimes))
-		pauses := make([]*taskcontrol.PauseGate, 0, len(c.taskEngine.runtimes))
-		for _, runtime := range c.taskEngine.runtimes {
-			if runtime == nil {
-				continue
-			}
-			if runtime.PauseGate != nil {
-				pauses = append(pauses, runtime.PauseGate)
-			}
-			if runtime.Cancel != nil {
-				cancels = append(cancels, runtime.Cancel)
-			}
-		}
-		c.taskEngine.mutex.Unlock()
-		for _, gate := range pauses {
-			gate.Resume()
-		}
-		for _, cancel := range cancels {
-			cancel()
-		}
+		c.taskEngine.stopAllRuntimes()
 	})
 	c.backgroundWG.Wait()
 }

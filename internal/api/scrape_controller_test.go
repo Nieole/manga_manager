@@ -180,7 +180,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		controller, store, _, rootDir := newTestController(t)
 		seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-		if !controller.startTask("scrape_all_series", "scrape", "running", 1) {
+		if !controller.taskEngine.startTask("scrape_all_series", "scrape", "running", 1) {
 			t.Fatal("expected batch scrape task to start")
 		}
 
@@ -234,7 +234,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
 		taskKey := "scrape_library_" + strconv.FormatInt(lib.ID, 10)
-		if !controller.startTask(taskKey, "scrape", "running", 1) {
+		if !controller.taskEngine.startTask(taskKey, "scrape", "running", 1) {
 			t.Fatal("expected library scrape task to start")
 		}
 

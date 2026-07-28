@@ -897,7 +897,7 @@ func TestPauseAndResumeStorageIO(t *testing.T) {
 func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	taskKey := "scan_library_42"
-	if !controller.startTask(taskKey, "scan_library", "scan", 1) {
+	if !controller.taskEngine.startTask(taskKey, "scan_library", "scan", 1) {
 		t.Fatal("expected task to start")
 	}
 	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
@@ -926,10 +926,10 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 
 func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	if !controller.startTask("rebuild_thumbnails", "rebuild_thumbnails", "running", 1) {
+	if !controller.taskEngine.startTask("rebuild_thumbnails", "rebuild_thumbnails", "running", 1) {
 		t.Fatal("expected thumbnail rebuild task to start")
 	}
-	if !controller.startTask("scan_library_42", "scan_library", "running", 1) {
+	if !controller.taskEngine.startTask("scan_library_42", "scan_library", "running", 1) {
 		t.Fatal("expected scan task to start")
 	}
 
@@ -1396,10 +1396,10 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	}
 
 	taskKey := "scan_series_" + strconv.FormatInt(series.ID, 10)
-	if !controller.startTask(taskKey, "scan_series", "scan series", 1) {
+	if !controller.taskEngine.startTask(taskKey, "scan_series", "scan series", 1) {
 		t.Fatal("expected scan series task to start")
 	}
-	controller.failTaskWithError(taskKey, "failed series scan", "archive error")
+	controller.taskEngine.failTaskWithError(taskKey, "failed series scan", "archive error")
 
 	contextRec := httptest.NewRecorder()
 	controller.getSeriesContext(contextRec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
@@ -2110,7 +2110,7 @@ func TestTaskConflictHandlers(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-	if !controller.startTask("scan_series_"+strconv.FormatInt(series.ID, 10), "scan_series", "running", 1) {
+	if !controller.taskEngine.startTask("scan_series_"+strconv.FormatInt(series.ID, 10), "scan_series", "running", 1) {
 		t.Fatal("expected scan series task to start")
 	}
 	scanSeriesRec := httptest.NewRecorder()
@@ -2119,7 +2119,7 @@ func TestTaskConflictHandlers(t *testing.T) {
 		t.Fatalf("expected duplicate scan series 409, got %d", scanSeriesRec.Code)
 	}
 
-	if !controller.startTask("cleanup_library_"+strconv.FormatInt(lib.ID, 10), "cleanup_library", "running", 1) {
+	if !controller.taskEngine.startTask("cleanup_library_"+strconv.FormatInt(lib.ID, 10), "cleanup_library", "running", 1) {
 		t.Fatal("expected cleanup task to start")
 	}
 	cleanupRec := httptest.NewRecorder()
@@ -2439,12 +2439,12 @@ func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.startTask("older", "scan_library", "older task", 1) {
+	if !controller.taskEngine.startTask("older", "scan_library", "older task", 1) {
 		t.Fatal("expected first task to start")
 	}
-	controller.finishTask("older", "done")
+	controller.taskEngine.finishTask("older", "done")
 
-	if !controller.startTask("newer", "rebuild_index", "newer task", 1) {
+	if !controller.taskEngine.startTask("newer", "rebuild_index", "newer task", 1) {
 		t.Fatal("expected second task to start")
 	}
 
@@ -2471,15 +2471,15 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 func TestListTasksSupportsStatusFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.startTask("failed_one", "scan_library", "failed task", 1) {
+	if !controller.taskEngine.startTask("failed_one", "scan_library", "failed task", 1) {
 		t.Fatal("expected failed task to start")
 	}
-	controller.failTask("failed_one", "boom")
+	controller.taskEngine.failTask("failed_one", "boom")
 
-	if !controller.startTask("completed_one", "rebuild_index", "completed task", 1) {
+	if !controller.taskEngine.startTask("completed_one", "rebuild_index", "completed task", 1) {
 		t.Fatal("expected completed task to start")
 	}
-	controller.finishTask("completed_one", "done")
+	controller.taskEngine.finishTask("completed_one", "done")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?status=failed", nil)
 	rec := httptest.NewRecorder()
@@ -2501,15 +2501,15 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.startTask("scan_series_12", "scan_series", "series 12", 1) {
+	if !controller.taskEngine.startTask("scan_series_12", "scan_series", "series 12", 1) {
 		t.Fatal("expected task to start")
 	}
-	controller.finishTask("scan_series_12", "done")
+	controller.taskEngine.finishTask("scan_series_12", "done")
 
-	if !controller.startTask("scan_series_18", "scan_series", "series 18", 1) {
+	if !controller.taskEngine.startTask("scan_series_18", "scan_series", "series 18", 1) {
 		t.Fatal("expected task to start")
 	}
-	controller.finishTask("scan_series_18", "done")
+	controller.taskEngine.finishTask("scan_series_18", "done")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=18", nil)
 	rec := httptest.NewRecorder()
@@ -2531,13 +2531,13 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 
-	if !controller.startTask("scan_series_77", "scan_series", "series 77", 1) {
+	if !controller.taskEngine.startTask("scan_series_77", "scan_series", "series 77", 1) {
 		t.Fatal("expected task to start")
 	}
-	controller.setTaskMetadata("scan_series_77", map[string]string{"force": "true"}, "Series 77")
-	controller.failTaskWithError("scan_series_77", "failed series scan", "archive error")
+	controller.taskEngine.setTaskMetadata("scan_series_77", map[string]string{"force": "true"}, "Series 77")
+	controller.taskEngine.failTaskWithError("scan_series_77", "failed series scan", "archive error")
 	// 进度/终态改为异步落盘（M42）：显式刷一次，模拟服务生命周期内的落盘/优雅关闭，再由新实例读回。
-	controller.flushTaskPersist()
+	controller.taskEngine.flushTaskPersist()
 
 	// 用同一份装配另起一个实例，模拟「进程重启后从库里读回任务」。
 	cfg := controller.config
@@ -2630,15 +2630,15 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.startTask("completed_one", "rebuild_index", "completed task", 1) {
+	if !controller.taskEngine.startTask("completed_one", "rebuild_index", "completed task", 1) {
 		t.Fatal("expected completed task to start")
 	}
-	controller.finishTask("completed_one", "done")
+	controller.taskEngine.finishTask("completed_one", "done")
 
-	if !controller.startTask("failed_one", "scan_library", "failed task", 1) {
+	if !controller.taskEngine.startTask("failed_one", "scan_library", "failed task", 1) {
 		t.Fatal("expected failed task to start")
 	}
-	controller.failTask("failed_one", "boom")
+	controller.taskEngine.failTask("failed_one", "boom")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=completed", nil)
 	rec := httptest.NewRecorder()
@@ -2663,22 +2663,22 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.startTask("scan_series_10", "scan_series", "series 10", 1) {
+	if !controller.taskEngine.startTask("scan_series_10", "scan_series", "series 10", 1) {
 		t.Fatal("expected first task to start")
 	}
-	controller.finishTask("scan_series_10", "done")
+	controller.taskEngine.finishTask("scan_series_10", "done")
 
-	if !controller.startTask("scan_series_11", "scan_series", "series 11", 1) {
+	if !controller.taskEngine.startTask("scan_series_11", "scan_series", "series 11", 1) {
 		t.Fatal("expected second task to start")
 	}
-	controller.finishTask("scan_series_11", "done")
+	controller.taskEngine.finishTask("scan_series_11", "done")
 
-	if !controller.startTask("scan_library_11", "scan_library", "library 11", 1) {
+	if !controller.taskEngine.startTask("scan_library_11", "scan_library", "library 11", 1) {
 		t.Fatal("expected third task to start")
 	}
-	controller.finishTask("scan_library_11", "done")
+	controller.taskEngine.finishTask("scan_library_11", "done")
 	// 终态改为异步落盘（M42）：清理走 DeleteTasks 删 DB 记录，需先刷盘让已完成任务进入 DB 再清。
-	controller.flushTaskPersist()
+	controller.taskEngine.flushTaskPersist()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
 	rec := httptest.NewRecorder()
@@ -2723,10 +2723,10 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.startCancelableTask(taskKey, "scan_library", "running", 1) {
+	if !controller.taskEngine.startCancelableTask(taskKey, "scan_library", "running", 1) {
 		t.Fatal("expected task to start")
 	}
-	ctx, cleanup := controller.newTaskContext(taskKey)
+	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
 	defer cleanup()
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
@@ -2764,10 +2764,10 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
+	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
 		t.Fatal("expected task to start")
 	}
-	ctx, cleanup := controller.newTaskContext(taskKey)
+	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
 	defer cleanup()
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
@@ -2919,10 +2919,10 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scrape_library_7"
-	if !controller.startPausableCancelableTask(taskKey, "scrape", "running", 3) {
+	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scrape", "running", 3) {
 		t.Fatal("expected task to start")
 	}
-	controller.updateTaskDetails(taskKey, 1, 3, "写入审阅队列: Foo", "queueing_review", "Foo", map[string]int64{
+	controller.taskEngine.updateTaskDetails(taskKey, 1, 3, "写入审阅队列: Foo", "queueing_review", "Foo", map[string]int64{
 		"total_series":         3,
 		"processed_series":     1,
 		"success_count":        1,
@@ -3084,7 +3084,7 @@ func TestPauseTaskRejectsNonPausableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	if !controller.startTask(taskKey, "rebuild_index", "running", 1) {
+	if !controller.taskEngine.startTask(taskKey, "rebuild_index", "running", 1) {
 		t.Fatal("expected task to start")
 	}
 
@@ -3101,10 +3101,10 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
+	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
 		t.Fatal("expected task to start")
 	}
-	ctx, cleanup := controller.newTaskContext(taskKey)
+	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
 	defer cleanup()
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
@@ -3145,7 +3145,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	if !controller.startTask(taskKey, "rebuild_index", "running", 1) {
+	if !controller.taskEngine.startTask(taskKey, "rebuild_index", "running", 1) {
 		t.Fatal("expected task to start")
 	}
 
@@ -3187,10 +3187,10 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.startTask("scan_series_999", "scan_series", "failed series scan", 1) {
+	if !controller.taskEngine.startTask("scan_series_999", "scan_series", "failed series scan", 1) {
 		t.Fatal("expected task to start")
 	}
-	controller.failTask("scan_series_999", "failed")
+	controller.taskEngine.failTask("scan_series_999", "failed")
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_series_999/retry", nil, "taskKey", "scan_series_999")
 	rec := httptest.NewRecorder()
@@ -3232,7 +3232,7 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 		t.Fatalf("CreateLibrary failed: %v", err)
 	}
 
-	if !controller.startTask("scan_library_"+strconv.FormatInt(lib.ID, 10), "scan_library", "running", 1) {
+	if !controller.taskEngine.startTask("scan_library_"+strconv.FormatInt(lib.ID, 10), "scan_library", "running", 1) {
 		t.Fatal("expected task to start")
 	}
 
@@ -4580,14 +4580,14 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
-	if !controller.startTask("scan_library_5", "scan_library", "lib 5", 100) {
+	if !controller.taskEngine.startTask("scan_library_5", "scan_library", "lib 5", 100) {
 		t.Fatal("expected task to start")
 	}
-	controller.updateTask("scan_library_5", 42, 100, "processing")
+	controller.taskEngine.updateTask("scan_library_5", 42, 100, "processing")
 
 	// 进度改为异步落盘（M42）：listTaskStatuses 应立即反映内存里的最新进度，
 	// 而不是尚未刷盘（此时为空/滞后）的 DB 记录。
-	tasks, err := controller.listTaskStatuses(context.Background(), database.TaskFilters{})
+	tasks, err := controller.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{})
 	if err != nil {
 		t.Fatalf("listTaskStatuses failed: %v", err)
 	}
@@ -4602,7 +4602,7 @@ func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
 	}
 
 	// 刷盘后 DB 记录也应带上该进度。
-	controller.flushTaskPersist()
+	controller.taskEngine.flushTaskPersist()
 	records, err := store.ListTasks(context.Background(), database.TaskFilters{})
 	if err != nil {
 		t.Fatalf("ListTasks failed: %v", err)
@@ -4633,7 +4633,7 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	}
 
 	// 运行中的任务 -> 409
-	if !controller.startTask("scan_series_5", "scan_series", "running", 1) {
+	if !controller.taskEngine.startTask("scan_series_5", "scan_series", "running", 1) {
 		t.Fatal("expected task to start")
 	}
 	rec = httptest.NewRecorder()
@@ -4643,10 +4643,10 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	}
 
 	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500；此前所有重试失败一律误报 409。
-	if !controller.startTask("scan_library_77777", "scan_library", "failed", 1) {
+	if !controller.taskEngine.startTask("scan_library_77777", "scan_library", "failed", 1) {
 		t.Fatal("expected task to start")
 	}
-	controller.failTask("scan_library_77777", "failed")
+	controller.taskEngine.failTask("scan_library_77777", "failed")
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_library_77777"))
 	if rec.Code != http.StatusInternalServerError {
@@ -4660,11 +4660,11 @@ func TestIsRetryableTaskTypeDerivedFromRegistry(t *testing.T) {
 		t.Fatal("expected registered relaunchers")
 	}
 	for taskType := range controller.taskEngine.relaunchers {
-		if !controller.isRetryableTaskType(taskType) {
+		if !controller.taskEngine.isRetryableTaskType(taskType) {
 			t.Fatalf("registered type %q should be retryable", taskType)
 		}
 	}
-	if controller.isRetryableTaskType("nonexistent_type") {
+	if controller.taskEngine.isRetryableTaskType("nonexistent_type") {
 		t.Fatal("unregistered type should not be retryable")
 	}
 }
@@ -4673,10 +4673,10 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	// i18n 路径：finishTaskMsg 设置 message_code + message_params，并清空 Message。
-	if !controller.startTask("scan_library_9", "scan_library", "start", 1) {
+	if !controller.taskEngine.startTask("scan_library_9", "scan_library", "start", 1) {
 		t.Fatal("expected task to start")
 	}
-	controller.finishTaskMsg("scan_library_9", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
+	controller.taskEngine.finishTaskMsg("scan_library_9", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
 	controller.taskEngine.mutex.Lock()
 	coded := controller.taskEngine.tasks["scan_library_9"]
 	controller.taskEngine.mutex.Unlock()
@@ -4694,8 +4694,8 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 	}
 
 	// 兼容路径：未迁移的 finishTask 仍直接设 Message，并清空 code（互斥）。
-	controller.startTask("scan_library_10", "scan_library", "start", 1)
-	controller.finishTask("scan_library_10", "直接文案")
+	controller.taskEngine.startTask("scan_library_10", "scan_library", "start", 1)
+	controller.taskEngine.finishTask("scan_library_10", "直接文案")
 	controller.taskEngine.mutex.Lock()
 	legacy := controller.taskEngine.tasks["scan_library_10"]
 	controller.taskEngine.mutex.Unlock()

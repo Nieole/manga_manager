@@ -25,7 +25,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	const taskKey = "scan:library:1"
-	if !controller.startTask(taskKey, "library_scan", "scanning", 1000) {
+	if !controller.taskEngine.startTask(taskKey, "library_scan", "scanning", 1000) {
 		t.Fatal("expected task to start")
 	}
 
@@ -43,7 +43,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 				return
 			default:
 			}
-			controller.updateTaskDetails(taskKey, i, 1000, "scanning", "phase", "item",
+			controller.taskEngine.updateTaskDetails(taskKey, i, 1000, "scanning", "phase", "item",
 				map[string]int64{"processed": int64(i)},
 				map[string]string{"library": "alpha"})
 		}
@@ -54,7 +54,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	go func() {
 		defer readers.Done()
 		for range 200 {
-			controller.flushTaskPersist()
+			controller.taskEngine.flushTaskPersist()
 		}
 	}()
 
@@ -63,7 +63,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	go func() {
 		defer readers.Done()
 		for range 200 {
-			items, err := controller.listTaskStatuses(context.Background(), database.TaskFilters{Limit: 50})
+			items, err := controller.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{Limit: 50})
 			if err != nil {
 				continue
 			}
@@ -86,5 +86,5 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	readers.Wait()
 	close(stop)
 	writer.Wait()
-	controller.finishTask(taskKey, "done")
+	controller.taskEngine.finishTask(taskKey, "done")
 }

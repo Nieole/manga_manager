@@ -26,7 +26,7 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 	default:
 		taskKey = fmt.Sprintf("scan_library_%d", report.ID)
 	}
-	c.mergeTaskParams(taskKey, map[string]string{
+	c.taskEngine.mergeTaskParams(taskKey, map[string]string{
 		"storage_profile":          report.StorageProfile,
 		"volume_key":               report.VolumeKey,
 		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
@@ -44,13 +44,13 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
 		"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
 	})
-	c.mergeTaskParams("rebuild_thumbnails", map[string]string{
+	c.taskEngine.mergeTaskParams("rebuild_thumbnails", map[string]string{
 		"storage_profile":          report.StorageProfile,
 		"volume_key":               report.VolumeKey,
 		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
 		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
 	})
-	c.mergeRunningTaskMetricSums("rebuild_thumbnails", map[string]int64{
+	c.taskEngine.mergeRunningTaskMetricSums("rebuild_thumbnails", map[string]int64{
 		"discovered_archives": report.DiscoveredArchives,
 		"skipped_archives":    report.SkippedArchives,
 		"processed_archives":  report.ProcessedArchives,
@@ -87,7 +87,7 @@ func (c *Controller) handleScannerProgressEvent(report scanner.ScanProgressRepor
 		code = "task.msg.scan.scanning_item"
 		msgParams = map[string]string{"item": filepath.Base(report.CurrentItem)}
 	}
-	c.updateTaskDetailsMsg(taskKey, current, total, code, msgParams, report.Phase, report.CurrentItem, metrics, nil)
+	c.taskEngine.updateTaskDetailsMsg(taskKey, current, total, code, msgParams, report.Phase, report.CurrentItem, metrics, nil)
 
 	// 若正在执行缩略图重建，按全局视角同步 rebuild_thumbnails 任务进度
 	c.applyScannerProgressToRebuildThumbnails(report)
@@ -138,7 +138,7 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 	labels := map[string]string{
 		"current_library": currentLibName,
 	}
-	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, phase, currentItem, merged, labels)
+	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, phase, currentItem, merged, labels)
 }
 
 func (c *Controller) initRebuildThumbAggregator(totalLibraries int) {
@@ -179,7 +179,7 @@ func (c *Controller) fixateRebuildThumbBaseline(report scanner.ScanMetricsReport
 		code = "task.msg.rebuild_thumbnails.libraries_completed"
 		msgParams = map[string]string{"done": strconv.Itoa(doneLibs), "total": strconv.Itoa(totalLibs)}
 	}
-	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "queueing_covers", "", merged, nil)
+	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "queueing_covers", "", merged, nil)
 }
 
 // refreshRebuildThumbTaskFromAggregator 用聚合器中已记录的 metrics 立即刷新一次任务，
@@ -201,7 +201,7 @@ func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library)
 		msgParams = map[string]string{"lib": lib.Name, "done": strconv.Itoa(doneLibs + 1), "total": strconv.Itoa(totalLibs)}
 	}
 	labels := map[string]string{"current_library": lib.Name}
-	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "reading_metadata", lib.Path, merged, labels)
+	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "reading_metadata", lib.Path, merged, labels)
 }
 
 // refreshRebuildThumbTaskMessage 在阶段切换（如等待封面队列收尾）时刷新任务消息和阶段，
@@ -214,7 +214,7 @@ func (c *Controller) refreshRebuildThumbTaskMessage(code string, params map[stri
 	merged := snap.Metrics
 
 	current, total := rebuildThumbProgressFromMetrics(merged)
-	c.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, params, phase, "", merged, nil)
+	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, params, phase, "", merged, nil)
 }
 
 // rebuildThumbProgressFromMetrics 把"重建缩略图"任务的进度展开成两阶段：

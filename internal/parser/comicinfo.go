@@ -15,23 +15,23 @@ import (
 
 // ComicInfo 代表了基于 ComicRack 约定的标准内嵌元数据格式
 type ComicInfo struct {
-	XMLName         xml.Name `xml:"ComicInfo"`
-	Title           string   `xml:"Title,omitempty"`
-	Series          string   `xml:"Series,omitempty"`
-	Number          string   `xml:"Number,omitempty"`
-	Count           LenientInt `xml:"Count,omitempty"`
-	Volume          string   `xml:"Volume,omitempty"`
-	Summary         string   `xml:"Summary,omitempty"`
-	Writer          string   `xml:"Writer,omitempty"`
-	Penciller       string   `xml:"Penciller,omitempty"`
-	Letterer        string   `xml:"Letterer,omitempty"`
-	Translator      string   `xml:"Translator,omitempty"`
-	Publisher       string   `xml:"Publisher,omitempty"`
-	Genre           string   `xml:"Genre,omitempty"`
-	Web             string   `xml:"Web,omitempty"`
-	LanguageISO     string   `xml:"LanguageISO,omitempty"`
-	Manga           string   `xml:"Manga,omitempty"`           // Yes, No, RightToLeft
-	Rating          string   `xml:"Rating,omitempty"`          // Unknown, Rating Pending, Early Childhood, Everyone, Everyone 10+, Teen, Mature 17+, Adults Only 18+  (可选项，数字如 4.0 也常见)
+	XMLName         xml.Name     `xml:"ComicInfo"`
+	Title           string       `xml:"Title,omitempty"`
+	Series          string       `xml:"Series,omitempty"`
+	Number          string       `xml:"Number,omitempty"`
+	Count           LenientInt   `xml:"Count,omitempty"`
+	Volume          string       `xml:"Volume,omitempty"`
+	Summary         string       `xml:"Summary,omitempty"`
+	Writer          string       `xml:"Writer,omitempty"`
+	Penciller       string       `xml:"Penciller,omitempty"`
+	Letterer        string       `xml:"Letterer,omitempty"`
+	Translator      string       `xml:"Translator,omitempty"`
+	Publisher       string       `xml:"Publisher,omitempty"`
+	Genre           string       `xml:"Genre,omitempty"`
+	Web             string       `xml:"Web,omitempty"`
+	LanguageISO     string       `xml:"LanguageISO,omitempty"`
+	Manga           string       `xml:"Manga,omitempty"`           // Yes, No, RightToLeft
+	Rating          string       `xml:"Rating,omitempty"`          // Unknown, Rating Pending, Early Childhood, Everyone, Everyone 10+, Teen, Mature 17+, Adults Only 18+  (可选项，数字如 4.0 也常见)
 	CommunityRating LenientFloat `xml:"CommunityRating,omitempty"` // 真实分值 0.0 - 5.0
 	PageCount       LenientInt   `xml:"PageCount,omitempty"`
 }

@@ -155,7 +155,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 // aiGroupingLibrary 扫描资料库中没有集合的系列，利用 LLM 进行智能分组
 func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	taskKey := fmt.Sprintf("ai_grouping_library_%d", libID)
-	if !c.startPausableCancelableTaskMsg(taskKey, "ai_grouping", "task.msg.ai_grouping.start", nil, 1) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "ai_grouping", "task.msg.ai_grouping.start", nil, 1) {
 		return false
 	}
 	scopeName := ""
@@ -163,34 +163,34 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 		scopeName = lib.Name
 	}
 	// 持久化 locale 到任务参数，使重试能恢复原始语言（此前 locale 从未落库、重试只能硬编码 zh-CN）。
-	c.setTaskMetadata(taskKey, map[string]string{"locale": locale}, scopeName)
-	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
+	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"locale": locale}, scopeName)
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
 	c.runBackground(func() {
 		defer cleanupCancel()
 		libraryID, taskLocale := libID, locale
 		ctx := metadata.WithLocale(taskCtx, taskLocale)
 
-		c.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.ai_grouping.collecting_series", nil, "collecting_series", "", nil, nil)
+		c.taskEngine.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.ai_grouping.collecting_series", nil, "collecting_series", "", nil, nil)
 		seriesRows, err := c.store.GetSeriesWithoutCollection(ctx, libraryID)
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 		if err != nil {
 			slog.Error("Failed to fetch series for grouping", "error", err)
-			c.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_db_fetch", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_db_fetch", nil, err.Error())
 			return
 		}
 
 		slog.Info("AI grouping: fetched candidate series", "library_id", libraryID, "count", len(seriesRows))
 
 		if len(seriesRows) == 0 {
-			c.finishTaskMsg(taskKey, "task.msg.ai_grouping.all_already_grouped", nil)
+			c.taskEngine.finishTaskMsg(taskKey, "task.msg.ai_grouping.all_already_grouped", nil)
 			return
 		}
 		if err := taskcontrol.Wait(ctx); errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 
@@ -214,39 +214,39 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 
 		cfg := c.currentConfig()
 		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
-		c.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.ai_grouping.requesting_provider", nil, "requesting_provider", "", map[string]int64{
+		c.taskEngine.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.ai_grouping.requesting_provider", nil, "requesting_provider", "", map[string]int64{
 			"candidate_series": int64(len(candidates)),
 		}, map[string]string{
 			"provider": provider.Name(),
 		})
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 		if err != nil {
 			slog.Error("Failed to generate grouping", "error", err)
-			c.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_generate", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_generate", nil, err.Error())
 			return
 		}
 
-		c.updateTaskDetailsMsg(taskKey, 1, 1, "task.msg.ai_grouping.queueing_review", nil, "queueing_review", "", nil, nil)
+		c.taskEngine.updateTaskDetailsMsg(taskKey, 1, 1, "task.msg.ai_grouping.queueing_review", nil, "queueing_review", "", nil, nil)
 		review, reviewCollections, err := c.createAIGroupingReview(ctx, libraryID, provider.Name(), candidates, collections)
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.ai_grouping.cancelled", nil)
 			return
 		}
 		if err != nil {
 			slog.Error("Failed to create AI grouping review", "library_id", libraryID, "error", err)
-			c.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_create_review", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.ai_grouping.fail_create_review", nil, err.Error())
 			return
 		}
 		if reviewCollections == 0 {
-			c.finishTaskMsg(taskKey, "task.msg.ai_grouping.no_review_collections", nil)
+			c.taskEngine.finishTaskMsg(taskKey, "task.msg.ai_grouping.no_review_collections", nil)
 			return
 		}
 
-		c.finishTaskMsg(taskKey, "task.msg.ai_grouping.review_generated", map[string]string{"reviewId": strconv.FormatInt(review.ID, 10), "count": strconv.Itoa(reviewCollections)})
+		c.taskEngine.finishTaskMsg(taskKey, "task.msg.ai_grouping.review_generated", map[string]string{"reviewId": strconv.FormatInt(review.ID, 10), "count": strconv.Itoa(reviewCollections)})
 		c.PublishEvent("refresh")
 	})
 

@@ -399,6 +399,7 @@ type coverJob struct {
 //   - 更糟的是重建缩略图任务已经 RemoveAll 了整个缩略图目录并清空了 cover_path，
 //     却把被跳过的库当作成功——而增量扫描只比对 mtime+size、不检查封面是否缺失，
 //     那批封面从此不会自愈，必须人工再跑一次 force 扫描。
+//
 // 调用方应显式判定此错误：等待重试、或让任务以失败收尾并提示「该库正被其它扫描占用」。
 var ErrScanAlreadyRunning = errors.New("scanner: a scan is already running for this target")
 
