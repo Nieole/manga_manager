@@ -18,7 +18,11 @@ import (
 // 仅在库版本低于此值时执行一次，之后每次启动跳过——这些操作成本随库规模线性增长，运行期已由触发器与
 // RefreshSeriesStats 增量维护。新增需要全量回填的 schema 变更时，把该值 +1。
 // v2：新增 tags.series_count 的一次性回填，确保已升级到 v1 的库也会补算。
-const currentSchemaVersion = 2
+// v3：新增短关键字的 2-gram 辅助索引（series_gram_fts / book_gram_fts），存量库需要回填一次。
+//
+//	注意 user_version 是在回填**成功之后**才写的，所以回填中途被杀不会留下「已完成」的假象，
+//	下次启动会整份重来——这正是我们要的语义，别改成「表非空就算已回填」那种探针。
+const currentSchemaVersion = 3
 
 func Migrate(dbPath string) error {
 	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
@@ -182,6 +186,44 @@ func Migrate(dbPath string) error {
 			DELETE FROM book_search_fts WHERE rowid = OLD.id;
 			INSERT INTO book_search_fts(rowid, series_id, library_id, name, title)
 			VALUES (NEW.id, NEW.series_id, NEW.library_id, NEW.name, COALESCE(NEW.title, ''));
+		END`,
+		// ---- 短关键字的 2-gram 辅助索引 ----
+		//
+		// 触发列表与上面 6 条 trg_*_search_fts_* **完全一致**：两张索引必须同生同灭，
+		// 否则短关键字与长关键字会看到两份不同的数据。
+		//
+		// gram 文本用 SQL 的 lower() 而不是 Go 侧的 strings.ToLower：SQLite 无 ICU 时 lower()
+		// 只折叠 ASCII A-Z，而 Go 按 Unicode 折叠——索引侧与查询侧必须用同一套折叠规则，
+		// 用 Go 拼 MATCH 会和索引对不上。这也与既有 instr(lower(a), lower(b)) 的语义逐字对齐。
+		//
+		// length()/substr() 在 TEXT 上按字符计数；i 走到 length(t) 让最后一个单字也留一个 gram，
+		// 1 字关键字才能靠前缀 MATCH 命中。
+		//
+		// 写放大实测约 17.6µs/行。扫描侧有 mtime+size 增量拦截，未变更的文件根本走不到这里；
+		// 新增/变更的书每本都要开归档读数页（毫秒级起步），这点开销是噪声。
+		`CREATE TRIGGER IF NOT EXISTS trg_series_gram_fts_ai AFTER INSERT ON series BEGIN
+			INSERT INTO series_gram_fts(rowid, library_id, name, title)
+			VALUES (NEW.id, NEW.library_id, (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(NEW.name), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x), (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(COALESCE(NEW.title, '')), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x));
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_series_gram_fts_ad AFTER DELETE ON series BEGIN
+			DELETE FROM series_gram_fts WHERE rowid = OLD.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_series_gram_fts_au AFTER UPDATE OF library_id, name, title ON series BEGIN
+			DELETE FROM series_gram_fts WHERE rowid = OLD.id;
+			INSERT INTO series_gram_fts(rowid, library_id, name, title)
+			VALUES (NEW.id, NEW.library_id, (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(NEW.name), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x), (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(COALESCE(NEW.title, '')), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x));
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_book_gram_fts_ai AFTER INSERT ON books BEGIN
+			INSERT INTO book_gram_fts(rowid, series_id, library_id, name, title)
+			VALUES (NEW.id, NEW.series_id, NEW.library_id, (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(NEW.name), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x), (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(COALESCE(NEW.title, '')), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x));
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_book_gram_fts_ad AFTER DELETE ON books BEGIN
+			DELETE FROM book_gram_fts WHERE rowid = OLD.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_book_gram_fts_au AFTER UPDATE OF series_id, library_id, name, title ON books BEGIN
+			DELETE FROM book_gram_fts WHERE rowid = OLD.id;
+			INSERT INTO book_gram_fts(rowid, series_id, library_id, name, title)
+			VALUES (NEW.id, NEW.series_id, NEW.library_id, (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(NEW.name), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x), (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(COALESCE(NEW.title, '')), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x));
 		END`,
 	}); err != nil {
 		return err
@@ -505,6 +547,14 @@ func migrateFTSTables(db *sql.DB) (rebuilt bool, err error) {
 		`DROP TRIGGER IF EXISTS trg_book_search_fts_ad`,
 		`DROP TRIGGER IF EXISTS trg_book_search_fts_au`,
 		`DROP TRIGGER IF EXISTS trg_book_search_fts_series_au`,
+		`DROP TRIGGER IF EXISTS trg_series_gram_fts_ai`,
+		`DROP TRIGGER IF EXISTS trg_series_gram_fts_ad`,
+		`DROP TRIGGER IF EXISTS trg_series_gram_fts_au`,
+		`DROP TRIGGER IF EXISTS trg_book_gram_fts_ai`,
+		`DROP TRIGGER IF EXISTS trg_book_gram_fts_ad`,
+		`DROP TRIGGER IF EXISTS trg_book_gram_fts_au`,
+		`DROP TABLE IF EXISTS series_gram_fts`,
+		`DROP TABLE IF EXISTS book_gram_fts`,
 		`DROP TABLE IF EXISTS series_search_fts`,
 		`DROP TABLE IF EXISTS book_search_fts`,
 	} {
@@ -569,14 +619,28 @@ func rebuildBookSearchIndex(db *sql.DB) error {
 	return rebuildBookSearchIndexContext(context.Background(), db)
 }
 
+// rebuildSeriesSearchIndexContext 重建系列的两张搜索索引。
+//
+// 两张一起重建而不是各给一个函数：它们的数据必须始终同源，分开就迟早会有调用方只重建一张。
+// Migrate 与维护任务 rebuild_index 都走这里，因而都自动覆盖。
 func rebuildSeriesSearchIndexContext(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `DELETE FROM series_search_fts`); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `
+	if _, err := db.ExecContext(ctx, `
 		INSERT INTO series_search_fts(rowid, library_id, name, title)
 		SELECT id, library_id, name, COALESCE(title, '')
 		FROM series
+	`); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM series_gram_fts`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO series_gram_fts(rowid, library_id, name, title)
+		SELECT s.id, s.library_id, (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(s.name), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x), (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(COALESCE(s.title, '')), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x)
+		FROM series s
 	`)
 	return err
 }
@@ -585,10 +649,20 @@ func rebuildBookSearchIndexContext(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `DELETE FROM book_search_fts`); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `
+	if _, err := db.ExecContext(ctx, `
 		INSERT INTO book_search_fts(rowid, series_id, library_id, name, title)
 		SELECT id, series_id, library_id, name, COALESCE(title, '')
 		FROM books
+	`); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM book_gram_fts`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO book_gram_fts(rowid, series_id, library_id, name, title)
+		SELECT b.id, b.series_id, b.library_id, (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(b.name), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x), (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(COALESCE(b.title, '')), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x)
+		FROM books b
 	`)
 	return err
 }

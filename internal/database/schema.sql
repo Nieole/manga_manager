@@ -77,6 +77,34 @@ CREATE VIRTUAL TABLE IF NOT EXISTS series_search_fts USING fts5(
     contentless_delete = 1
 );
 
+-- series_gram_fts / book_gram_fts are 2-gram auxiliary indexes for SHORT keywords.
+--
+-- The trigram tokenizer used by *_search_fts produces no tokens for keywords shorter than
+-- 3 characters, so CJK users searching two characters fall back to a full-table instr() scan
+-- (measured 204ms per query on 200k books -- a single global search does that twice).
+-- SQLite has no n-gram length option and the modernc driver does not expose fts5_api,
+-- so a custom tokenizer is not available -- hence a separate index.
+--
+-- The indexed text is not the original: it is lower(text) sliced into 2-character windows at
+-- every character position, each encoded as the hex of its UTF-8 bytes (e.g. two CJK chars ->
+-- 'E6B5B7E8B49F'). Hex was chosen because it contains only [0-9A-F]: no FTS5 syntax characters
+-- to escape, and any tokenizer splits it cleanly on spaces. Windows run through the final single
+-- character, so every position starts a gram and 1-character keywords can be answered with a
+-- prefix MATCH (UTF-8 is self-synchronising, so the prefix is unambiguous).
+--
+-- detail = none: this index only answers "which rowids contain this token". No phrase/proximity
+-- queries, no column filters, no bm25 (short-keyword ranking uses a CASE expression anyway).
+-- Dropping the position map cuts the books-side index from ~23MB to ~8MB on 200k books.
+CREATE VIRTUAL TABLE IF NOT EXISTS series_gram_fts USING fts5(
+    library_id UNINDEXED,
+    name,
+    title,
+    tokenize = 'ascii',
+    content = '',
+    contentless_delete = 1,
+    detail = none
+);
+
 CREATE TABLE IF NOT EXISTS series_stats (
     series_id INTEGER PRIMARY KEY,
     cover_path TEXT NOT NULL DEFAULT '',
@@ -183,6 +211,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS book_search_fts USING fts5(
     tokenize = 'trigram',
     content = '',
     contentless_delete = 1
+);
+
+-- See series_gram_fts. The books side is where short-keyword search actually hurts:
+-- a 2-character keyword scans every book row, and that is 96% of a global search's cost.
+CREATE VIRTUAL TABLE IF NOT EXISTS book_gram_fts USING fts5(
+    series_id UNINDEXED,
+    library_id UNINDEXED,
+    name,
+    title,
+    tokenize = 'ascii',
+    content = '',
+    contentless_delete = 1,
+    detail = none
 );
 
 CREATE TABLE IF NOT EXISTS series_links (

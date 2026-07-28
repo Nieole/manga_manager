@@ -70,6 +70,13 @@ type Book struct {
 	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
+type BookGramFt struct {
+	SeriesID  string `json:"series_id"`
+	LibraryID string `json:"library_id"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
+}
+
 type BookSearchFt struct {
 	SeriesID  string `json:"series_id"`
 	LibraryID string `json:"library_id"`
@@ -243,6 +250,12 @@ type Series struct {
 type SeriesAuthor struct {
 	SeriesID int64 `json:"series_id"`
 	AuthorID int64 `json:"author_id"`
+}
+
+type SeriesGramFt struct {
+	LibraryID string `json:"library_id"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
 }
 
 type SeriesLink struct {

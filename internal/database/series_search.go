@@ -379,7 +379,24 @@ func (s *SqlStore) searchGlobalBooksFTS(ctx context.Context, keyword string, lim
 	return scanBookSearchHits(rows)
 }
 
+// searchGlobalBooksSubstring 见 searchGlobalSeriesSubstring 的说明。
+// books 侧才是短关键字搜索的大头：2 字关键字在 20 万本书上实测 204ms，占一次全局搜索耗时的 96%。
 func (s *SqlStore) searchGlobalBooksSubstring(ctx context.Context, keyword string, limit int32) ([]BookSearchHit, error) {
+	whereClause := `instr(lower(b.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(b.title, '')), lower(?)) > 0
+		   OR instr(lower(s.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
+		   OR instr(lower(b.path), lower(?)) > 0`
+	whereArgs := []interface{}{keyword, keyword, keyword, keyword, keyword}
+	if expr, ok := gramMatchExpr(keyword); ok {
+		whereClause = bookGramFilter
+		whereArgs = []interface{}{expr, expr}
+	}
+
+	args := []interface{}{keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword}
+	args = append(args, whereArgs...)
+	args = append(args, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
@@ -394,11 +411,7 @@ func (s *SqlStore) searchGlobalBooksSubstring(ctx context.Context, keyword strin
 			END AS score
 		FROM books b
 		JOIN series s ON s.id = b.series_id
-		WHERE instr(lower(b.name), lower(?)) > 0
-		   OR instr(lower(COALESCE(b.title, '')), lower(?)) > 0
-		   OR instr(lower(s.name), lower(?)) > 0
-		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
-		   OR instr(lower(b.path), lower(?)) > 0
+		WHERE `+whereClause+`
 		ORDER BY
 			CASE
 				WHEN lower(b.name) = lower(?) OR lower(COALESCE(b.title, '')) = lower(?) THEN 0
@@ -412,7 +425,7 @@ func (s *SqlStore) searchGlobalBooksSubstring(ctx context.Context, keyword strin
 			b.sort_number ASC,
 			b.name COLLATE NOCASE ASC
 		LIMIT ?
-	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +473,28 @@ func (s *SqlStore) searchGlobalSeriesFTS(ctx context.Context, keyword string, li
 	return scanSeriesSearchHits(rows)
 }
 
+// searchGlobalSeriesSubstring 是 FTS 之外的兜底搜索。
+//
+// 关键字为 1-2 字时改走 series_gram_fts（见 gram_search.go）：trigram 分词器对 <3 字符不产生 token，
+// 否则这里就是一次全表 instr 扫描。注意 gram 索引只覆盖 name/title，不覆盖 path——
+// 这与 >=3 字走的 FTS 路径一致（那张表也只索引 name/title），而 2 个字符去子串匹配整条文件路径
+// 本来就基本等于全匹配，不是有意义的检索。
+//
+// SELECT 与 ORDER BY 里的 instr 只作用于 WHERE 已经筛出来的行，用于排序打分，不影响扫描量。
 func (s *SqlStore) searchGlobalSeriesSubstring(ctx context.Context, keyword string, limit int32) ([]SeriesSearchHit, error) {
+	whereClause := `instr(lower(s.name), lower(?)) > 0
+		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
+		   OR instr(lower(s.path), lower(?)) > 0`
+	whereArgs := []interface{}{keyword, keyword, keyword}
+	if expr, ok := gramMatchExpr(keyword); ok {
+		whereClause = seriesGramFilter
+		whereArgs = []interface{}{expr}
+	}
+
+	args := []interface{}{keyword, keyword, keyword, keyword}
+	args = append(args, whereArgs...)
+	args = append(args, keyword, keyword, keyword, keyword, limit)
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			s.id, s.library_id, s.name, s.title, s.summary, s.publisher, s.status, s.rating, s.language, s.locked_fields, s.name_initial, s.path, s.created_at, s.updated_at, s.is_favorite, s.volume_count, s.book_count, s.total_pages,
@@ -477,9 +511,7 @@ func (s *SqlStore) searchGlobalSeriesSubstring(ctx context.Context, keyword stri
 			END AS score
 		FROM series s
 		LEFT JOIN series_stats ss ON ss.series_id = s.id
-		WHERE instr(lower(s.name), lower(?)) > 0
-		   OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0
-		   OR instr(lower(s.path), lower(?)) > 0
+		WHERE `+whereClause+`
 		ORDER BY
 			CASE
 				WHEN lower(s.name) = lower(?) OR lower(COALESCE(s.title, '')) = lower(?) THEN 0
@@ -488,7 +520,7 @@ func (s *SqlStore) searchGlobalSeriesSubstring(ctx context.Context, keyword stri
 			END,
 			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
 		LIMIT ?
-	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
