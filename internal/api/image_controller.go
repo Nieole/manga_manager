@@ -5,6 +5,7 @@
 package api
 
 import (
+	"container/heap"
 	"context"
 	"crypto/sha1"
 	"database/sql"
@@ -14,7 +15,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -556,8 +556,20 @@ func (c *Controller) collectPageCacheStats() (pageCacheStatsResponse, error) {
 	return stats, err
 }
 
-// enforcePageCacheBudget 在磁盘页缓存超过配置上限时，按最旧优先（FIFO by mtime）淘汰到低水位。
+// enforcePageCacheBudget 在磁盘页缓存超过配置上限时，按最旧优先淘汰到低水位。
 // 由单个后台清道夫 goroutine 串行调用，无锁竞争、零请求路径开销。上限 <=0 表示不限，直接返回。
+//
+// 分两趟走，而不是一趟把所有条目都装进切片：
+// 稳态下缓存**不超标**（这是常态），此时第一趟只累加总大小、不留任何条目，直接早退。
+// 旧实现无论超不超标都先把整个目录的条目列表建出来——2 GiB 上限、每页几十到几百 KB，
+// 就是几千到几万个条目常驻在那一瞬间，纯属白付。
+//
+// 超标时第二趟才收集淘汰候选，且只保留「最旧的那一批」而不是全部：
+// 用一个按 mtime 的大顶堆，堆内累计大小一旦够删就把最新的挤出去。
+// 于是常驻量与「需要删多少」成正比，与缓存里总共有多少文件无关。
+//
+// 淘汰用 mtime 而不是 atime：绝大多数生产文件系统挂载时带 noatime（或 relatime），
+// atime 根本不更新，拿它做 LRU 会得到一个随机顺序。mtime 至少是「写入时间」这个确定语义。
 func (c *Controller) enforcePageCacheBudget() {
 	cfg := c.currentConfig()
 	if !cfg.Cache.PageDiskCacheEnabled || cfg.Cache.PageDiskCacheMaxBytes <= 0 {
@@ -569,49 +581,116 @@ func (c *Controller) enforcePageCacheBudget() {
 		return // 根目录白名单，防误删
 	}
 
-	type cacheEntry struct {
-		path string
-		size int64
-		mod  time.Time
-	}
-	var entries []cacheEntry
+	// 第一趟：只累加总大小。
 	var total int64
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil // 最佳努力，忽略不可达项
 		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
+		if info, statErr := d.Info(); statErr == nil {
+			total += info.Size()
 		}
-		entries = append(entries, cacheEntry{path: path, size: info.Size(), mod: info.ModTime()})
-		total += info.Size()
 		return nil
 	})
 	if total <= maxBytes {
 		return
 	}
 
-	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
 	lowWater := maxBytes * 9 / 10 // 降到 90% 低水位，滞回避免每轮抖动
+	need := total - lowWater
+	// 多收 25% 的候选：删除可能失败（Windows 上正被读取的页文件 unlink 会失败），
+	// 旧实现靠「候选就是全部文件」兜底，这里靠这点余量兜底。
+	need += need / 4
+
+	victims := collectOldestFiles(dir, need)
 	removed, freed := 0, int64(0)
-	for _, e := range entries {
+	for _, v := range victims {
 		if total <= lowWater {
 			break
 		}
-		if err := os.Remove(e.path); err != nil {
+		if err := os.Remove(v.path); err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				slog.Warn("Failed to evict page cache file", "path", e.path, "error", err)
+				slog.Warn("Failed to evict page cache file", "path", v.path, "error", err)
 			}
 			continue
 		}
-		total -= e.size
+		total -= v.size
 		removed++
-		freed += e.size
+		freed += v.size
 	}
 	if removed > 0 {
 		slog.Info("Page cache budget enforced", "removed_files", removed, "freed_bytes", freed, "remaining_bytes", total)
 	}
+	if total > lowWater {
+		// 候选不够或删除大量失败。下一轮 ticker 会再来一次，这里只记一笔便于诊断。
+		slog.Warn("Page cache still above low water mark after eviction",
+			"remaining_bytes", total, "low_water", lowWater)
+	}
+}
+
+// pageCacheVictim 是一个待淘汰的缓存文件。
+type pageCacheVictim struct {
+	path string
+	size int64
+	mod  time.Time
+}
+
+// victimHeap 是按 mtime 的**大顶堆**：堆顶是候选里最新的那个。
+// 这样在累计大小已经够删时，可以把最新的挤出去、只留最旧的一批。
+type victimHeap []pageCacheVictim
+
+func (h victimHeap) Len() int            { return len(h) }
+func (h victimHeap) Less(i, j int) bool  { return h[i].mod.After(h[j].mod) }
+func (h victimHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *victimHeap) Push(x interface{}) { *h = append(*h, x.(pageCacheVictim)) }
+func (h *victimHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
+}
+
+// collectOldestFiles 返回按 mtime 从旧到新排列的一批文件，其累计大小刚好覆盖 need。
+// 常驻内存与「需要删多少」成正比，与目录里总共有多少文件无关。
+func collectOldestFiles(dir string, need int64) []pageCacheVictim {
+	h := &victimHeap{}
+	heap.Init(h)
+	var heldBytes int64
+
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return nil
+		}
+		candidate := pageCacheVictim{path: path, size: info.Size(), mod: info.ModTime()}
+		heap.Push(h, candidate)
+		heldBytes += candidate.size
+
+		// 只要挤掉堆顶（最新的那个）之后仍然够删，就挤掉它。
+		for h.Len() > 1 {
+			newest := (*h)[0]
+			if heldBytes-newest.size < need {
+				break
+			}
+			heap.Pop(h)
+			heldBytes -= newest.size
+		}
+		return nil
+	})
+
+	victims := make([]pageCacheVictim, 0, h.Len())
+	for h.Len() > 0 {
+		victims = append(victims, heap.Pop(h).(pageCacheVictim))
+	}
+	// heap.Pop 按「最新优先」出堆，反转成「最旧优先」。
+	for i, j := 0, len(victims)-1; i < j; i, j = i+1, j-1 {
+		victims[i], victims[j] = victims[j], victims[i]
+	}
+	return victims
 }
 
 func removeDirectoryContents(dir string) error {

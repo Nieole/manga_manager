@@ -71,7 +71,7 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 	// 与生产路径共用同一份装配（newControllerCore），只把缓存容量调小以便用几条数据触发淘汰。
 	// 不走 NewController 是因为后者还会启动守护/落盘/SSE/文件监听等后台服务，测试不需要也不该起。
 	controller := newControllerCore(store, scan, cfgManager, configPath, controllerCacheSizes{
-		image: 8, page: 8, bookPageSource: 8, progressWrite: 8,
+		imageBytes: 8 << 10, page: 8, bookPageSource: 8, progressWrite: 8,
 	})
 
 	t.Cleanup(parser.ResetArchivePool)
@@ -2549,7 +2549,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	cfg := controller.config
 	reloaded := newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
 		filepath.Join(tempDir, "config.yaml"), controllerCacheSizes{
-			image: 8, page: 8, bookPageSource: 8, progressWrite: 8,
+			imageBytes: 8 << 10, page: 8, bookPageSource: 8, progressWrite: 8,
 		})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)

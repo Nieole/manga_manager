@@ -41,8 +41,10 @@ import (
 )
 
 type Controller struct {
-	store      database.Store
-	imageCache *lru.Cache[string, []byte]
+	store database.Store
+	// imageCache 按**总字节**限流（见 image_memory_cache.go）。此前是按条数的 LRU，
+	// 256 条 × 4 MiB 单条上限 = 1 GiB 常驻上界，而它只是个加速缓存。
+	imageCache *imageMemoryCache
 	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
 	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
 	pageArchive        *pageArchiveCache
@@ -201,14 +203,15 @@ type taskIOMetrics struct {
 // controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
 // 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
 type controllerCacheSizes struct {
-	image          int
+	// imageBytes 是页图内存缓存的**字节**预算（不是条数）。
+	imageBytes     int64
 	page           int
 	bookPageSource int
 	progressWrite  int
 }
 
 func defaultControllerCacheSizes() controllerCacheSizes {
-	return controllerCacheSizes{image: 256, page: 128, bookPageSource: 512, progressWrite: 2048}
+	return controllerCacheSizes{imageBytes: defaultImageCacheBytes, page: 128, bookPageSource: 512, progressWrite: 2048}
 }
 
 // newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
@@ -219,7 +222,7 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 // taskEngine.relaunchers、两个限流器、rebuildThumbAgg 都各栽过一次，代码里留下了一串
 // 「与 NewController 一致」的补丁注释）。现在两条路径共用同一份装配，这类分叉从结构上不再可能。
 func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
-	cache, _ := lru.New[string, []byte](sizes.image)
+	cache := newImageMemoryCache(sizes.imageBytes)
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
 	c := &Controller{
 		store:              store,
