@@ -134,6 +134,8 @@ type Store interface {
 	// CountSmartCollectionSeries 与智能书架列表共用同一份查询，保证计数与列表口径一致。
 	CountSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter) (int, error)
 	ListSmartFilters(ctx context.Context) ([]SmartFilter, error)
+	// RefreshSeriesCover 只刷新 series_stats 的封面两列（封面 worker 的热路径，见 scanner）。
+	RefreshSeriesCover(ctx context.Context, seriesID int64) error
 	GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error)
 	MigrateGlobalProgressToUser(ctx context.Context, userID int64) error
 	GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error)

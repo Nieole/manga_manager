@@ -155,6 +155,7 @@ type Querier interface {
 	MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error
 	MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error
 	MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error)
+	RefreshSeriesCover(ctx context.Context, id int64) error
 	RefreshSeriesStats(ctx context.Context, id int64) error
 	RehomeBookPath(ctx context.Context, arg RehomeBookPathParams) (int64, error)
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error

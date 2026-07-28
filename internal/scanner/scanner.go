@@ -1572,8 +1572,16 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	if job.progress != nil {
 		job.progress.publish("queueing_covers", job.candidate.path, false)
 	}
-	if err := s.store.RefreshSeriesStats(ctx, job.seriesID); err != nil {
-		slog.Warn("Failed to refresh series stats after queued thumbnail", "series_id", job.seriesID, "error", err)
+	// 只刷新封面那两列，而不是跑完整的 RefreshSeriesStats。
+	//
+	// 后者含 9 个相关子查询（已读页数求和、已读/读完计数、最近阅读、标签与作者串……），
+	// 其中多个是对该系列全部书的聚合。而封面 worker 是**每生成一张封面就调一次**：
+	// 一个 K 卷系列首扫就是 K 次全系列聚合，退化成 O(K²) 行扫描 + K 次独立写事务。
+	// 这里真正变了的只有 books.cover_path 一列，其余统计与它无关。
+	//
+	// 其余统计由入库侧的 dirtySeries 节流刷新负责（见 ingestResults），职责不重叠。
+	if err := s.store.RefreshSeriesCover(ctx, job.seriesID); err != nil {
+		slog.Warn("Failed to refresh series cover after queued thumbnail", "series_id", job.seriesID, "error", err)
 	}
 	if s.onBatchIngested != nil {
 		s.onBatchIngested("thumbnail_updated")

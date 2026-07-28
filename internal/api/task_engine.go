@@ -40,6 +40,36 @@ var (
 	errTaskCancelUnavailable = errors.New("task cancellation is not available")
 )
 
+// taskProgressPublishInterval 是逐条目进度的 SSE 最小投递间隔。
+//
+// 取 200ms 的依据在前端而不是后端：进度条本身带 500ms 的宽度过渡动画，
+// 比这更密的推送浏览器根本画不出第二帧。仓库里其余节流也都更粗
+// （扫描器上报 250ms、任务落盘 500ms），所以这道闸门不会让任何现有可见刷新变粗，
+// 只砍掉逐条目回调那种上百赫兹的空转。
+const taskProgressPublishInterval = 200 * time.Millisecond
+
+// taskPublishGate 是单个任务的 SSE 发布水位。
+//
+// 除时间外还记下上次**已发布**的展示态：阶段与文案的跃迁（「清理缓存」→「重建中」）
+// 是用户正在等的语义变化，被计数器节流吞掉会让任务气泡长时间停在过期的阶段名上。
+// 而纯计数器推进吞掉多少都无所谓——载荷是全量快照，下一条自然带上累积后的最新值。
+type taskPublishGate struct {
+	at          time.Time
+	status      string
+	phase       string
+	messageCode string
+	message     string
+}
+
+// suppresses 判断这条进度能否被本水位吞掉：仍在窗口内、且展示态一字未变。
+func (g taskPublishGate) suppresses(task TaskStatus, now time.Time, window time.Duration) bool {
+	return now.Sub(g.at) < window &&
+		g.status == task.Status &&
+		g.phase == task.Phase &&
+		g.messageCode == task.MessageCode &&
+		g.message == task.Message
+}
+
 // taskEngine 是后台任务引擎：任务表、运行时句柄、序号、异步落盘的待写集合与唤醒信号，以及任务重试注册表。
 type taskEngine struct {
 	// ---- 外部依赖（装配期注入，之后只读）----
@@ -67,6 +97,21 @@ type taskEngine struct {
 	// 在 newControllerCore 中一次性填好（重启函数要调 Controller 的领域方法，故由 Controller 构建），
 	// 此后只读，不需要持锁。
 	relaunchers map[string]taskRelauncher
+
+	// publishGates 记录每个任务上次投递进度的时刻与展示态，用于节流逐条目进度（见 taskPublishGate）。
+	publishGates map[string]taskPublishGate
+
+	// now 让测试注入可控时钟。生产恒为 nil，走 time.Now。
+	// 节流的正确性只能靠时序断言证明——固定 sleep 的用例既慢又杀不掉「水位只写一次」这类错误实现。
+	now func() time.Time
+}
+
+// clock 返回当前时刻（测试可经 now 字段注入）。
+func (e *taskEngine) clock() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
 }
 
 func newTaskEngine(store database.Store, publish func(string), done func() <-chan struct{}) *taskEngine {
@@ -78,6 +123,7 @@ func newTaskEngine(store database.Store, publish func(string), done func() <-cha
 		runtimes:       make(map[string]*TaskRuntime),
 		persistPending: make(map[string]TaskStatus),
 		persistWake:    make(chan struct{}, 1),
+		publishGates:   make(map[string]taskPublishGate),
 	}
 }
 
@@ -162,6 +208,31 @@ func (e *taskEngine) flushTaskPersist() {
 			slog.Warn("Failed to persist task status", "task_key", task.Key, "error", err)
 		}
 	}
+}
+
+// publishTaskProgressLocked 是**逐条目进度**专用的投递入口，带节流。调用方持有 mutex。
+//
+// 只有它会被节流；启动、终态、暂停/恢复/取消一律走 publishTaskStatusLocked 无条件投递——
+// 那些是用户在等的状态跃迁，吞掉哪怕一条都会让界面停在错误的状态上。
+//
+// 节流只跳过**投递**，内存状态照常更新：任务表里始终是最新值，被跳过期间的进度会由
+// 下一条投递带出去（载荷本就是全量快照，不是增量）。
+func (e *taskEngine) publishTaskProgressLocked(task TaskStatus) {
+	if e.publishGates == nil {
+		e.publishGates = make(map[string]taskPublishGate)
+	}
+	now := e.clock()
+	if gate, ok := e.publishGates[task.Key]; ok && gate.suppresses(task, now, taskProgressPublishInterval) {
+		return
+	}
+	e.publishGates[task.Key] = taskPublishGate{
+		at:          now,
+		status:      task.Status,
+		phase:       task.Phase,
+		messageCode: task.MessageCode,
+		message:     task.Message,
+	}
+	e.publishTaskStatusLocked(task)
 }
 
 // publishTaskStatusLocked 把任务快照投递给 SSE 订阅者。调用方持有 mutex：
@@ -300,7 +371,7 @@ func (e *taskEngine) updateTaskCore(key string, current, total int, message, cod
 	enrichTaskProgress(&task)
 	e.tasks[key] = task
 	e.persistTaskStatus(task)
-	e.publishTaskStatusLocked(task)
+	e.publishTaskProgressLocked(task)
 }
 
 func (e *taskEngine) updateTaskDetails(key string, current, total int, message, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
@@ -357,7 +428,7 @@ func (e *taskEngine) updateTaskDetailsCore(key string, current, total int, messa
 	enrichTaskProgress(&task)
 	e.tasks[key] = task
 	e.persistTaskStatus(task)
-	e.publishTaskStatusLocked(task)
+	e.publishTaskProgressLocked(task)
 }
 
 func (e *taskEngine) setTaskMetadata(key string, params map[string]string, scopeName string) {
@@ -377,7 +448,7 @@ func (e *taskEngine) setTaskMetadata(key string, params map[string]string, scope
 	hydrateTaskStatusDerivedFields(&task)
 	e.tasks[key] = task
 	e.persistTaskStatus(task)
-	e.publishTaskStatusLocked(task)
+	e.publishTaskProgressLocked(task)
 }
 
 func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
@@ -403,7 +474,7 @@ func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	hydrateTaskStatusDerivedFields(&task)
 	e.tasks[key] = task
 	e.persistTaskStatus(task)
-	e.publishTaskStatusLocked(task)
+	e.publishTaskProgressLocked(task)
 }
 
 func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[string]int64, params map[string]string) {
@@ -439,7 +510,7 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 	hydrateTaskStatusDerivedFields(&task)
 	e.tasks[key] = task
 	e.persistTaskStatus(task)
-	e.publishTaskStatusLocked(task)
+	e.publishTaskProgressLocked(task)
 }
 
 func (e *taskEngine) setTaskEffectiveLimit(key string, limit TaskLimits) {
@@ -457,7 +528,7 @@ func (e *taskEngine) setTaskEffectiveLimit(key string, limit TaskLimits) {
 	hydrateTaskStatusDerivedFields(&task)
 	e.tasks[key] = task
 	e.persistTaskStatus(task)
-	e.publishTaskStatusLocked(task)
+	e.publishTaskProgressLocked(task)
 }
 
 // ---- 终态 ----
@@ -508,6 +579,8 @@ func (e *taskEngine) completeTaskCore(key, status, message, code string, params 
 	task.Sequence = e.seq
 	e.tasks[key] = task
 	delete(e.runtimes, key)
+	// 终态清掉水位：同名任务重跑时首帧必须无条件放行，否则会被上一轮的残留水位吞掉。
+	delete(e.publishGates, key)
 	e.persistTaskStatusFinal(task)
 	e.publishTaskStatusLocked(task)
 }
@@ -543,6 +616,8 @@ func (e *taskEngine) failTaskCore(key, message, code string, params map[string]s
 	task.Sequence = e.seq
 	e.tasks[key] = task
 	delete(e.runtimes, key)
+	// 终态清掉水位：同名任务重跑时首帧必须无条件放行，否则会被上一轮的残留水位吞掉。
+	delete(e.publishGates, key)
 	e.persistTaskStatusFinal(task)
 	e.publishTaskStatusLocked(task)
 }

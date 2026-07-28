@@ -530,6 +530,32 @@ SET
     updated_at = CURRENT_TIMESTAMP
 WHERE series.id = ?;
 
+-- name: RefreshSeriesCover :exec
+INSERT INTO series_stats (series_id, cover_path, cover_book_id, updated_at)
+SELECT
+    s.id,
+    COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS cover_path,
+    COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS cover_book_id,
+    CURRENT_TIMESTAMP
+FROM series s
+WHERE s.id = ?
+ON CONFLICT(series_id) DO UPDATE SET
+    cover_path = excluded.cover_path,
+    cover_book_id = excluded.cover_book_id,
+    updated_at = CURRENT_TIMESTAMP;
+
 -- name: RefreshSeriesStats :exec
 INSERT INTO series_stats (
     series_id,

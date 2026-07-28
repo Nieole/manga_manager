@@ -5196,6 +5196,38 @@ func (q *Queries) MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedT
 	return result.RowsAffected()
 }
 
+const refreshSeriesCover = `-- name: RefreshSeriesCover :exec
+INSERT INTO series_stats (series_id, cover_path, cover_book_id, updated_at)
+SELECT
+    s.id,
+    COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS cover_path,
+    COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS cover_book_id,
+    CURRENT_TIMESTAMP
+FROM series s
+WHERE s.id = ?
+ON CONFLICT(series_id) DO UPDATE SET
+    cover_path = excluded.cover_path,
+    cover_book_id = excluded.cover_book_id,
+    updated_at = CURRENT_TIMESTAMP
+`
+
+func (q *Queries) RefreshSeriesCover(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, refreshSeriesCover, id)
+	return err
+}
+
 const refreshSeriesStats = `-- name: RefreshSeriesStats :exec
 INSERT INTO series_stats (
     series_id,
