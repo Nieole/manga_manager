@@ -646,7 +646,7 @@ func (s *Service) applyBookProgress(ctx context.Context, match database.KOReader
 		return err
 	}
 	// 全局活动始终记；已关联站点用户时同时记每用户活动，使 KOReader 阅读也计入连续天数/热力图/年度回顾。
-	if err := s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page}); err != nil {
+	if err := s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page, Date: database.ActivityDayKey(time.Now())}); err != nil {
 		return err
 	}
 	if userID > 0 {

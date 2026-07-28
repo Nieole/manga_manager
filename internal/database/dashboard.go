@@ -5,6 +5,7 @@ package database
 
 import (
 	"context"
+	"time"
 )
 
 type DashboardStats struct {
@@ -95,8 +96,8 @@ func (s *SqlStore) GetDashboardVolatileStats(ctx context.Context) (*DashboardVol
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
-			(SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) AS active_days_7
-	`).Scan(&stats.ReadBooks, &stats.ActiveDays7)
+			(SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= ?) AS active_days_7
+	`, ActivityDayKeyBefore(time.Now(), 7)).Scan(&stats.ReadBooks, &stats.ActiveDays7)
 	if err != nil {
 		return nil, err
 	}

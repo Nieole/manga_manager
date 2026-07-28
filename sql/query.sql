@@ -1329,7 +1329,7 @@ SELECT
     (SELECT COUNT(*) FROM books) AS total_books,
     (SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
     (SELECT COALESCE(SUM(page_count), 0) FROM books) AS total_pages,
-    (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) AS active_days_7;
+    (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= sqlc.arg(since_date)) AS active_days_7;
 
 -- name: ListLibrarySizes :many
 SELECT l.id AS library_id, l.name AS library_name, COALESCE(bs.total_size, 0) AS total_size
@@ -1344,13 +1344,13 @@ ORDER BY bs.total_size DESC;
 -- name: GetActivityHeatmap :many
 SELECT date, SUM(pages_read) AS page_count
 FROM reading_activity
-WHERE date >= DATE('now', sqlc.arg(offset_clause))
+WHERE date >= sqlc.arg(since_date)
 GROUP BY date
 ORDER BY date ASC;
 
 -- name: LogReadingActivity :exec
 INSERT INTO reading_activity (book_id, date, pages_read)
-VALUES (?, DATE('now'), ?)
+VALUES (?, ?, ?)
 ON CONFLICT(book_id, date) DO UPDATE SET
     pages_read = MAX(reading_activity.pages_read, excluded.pages_read);
 

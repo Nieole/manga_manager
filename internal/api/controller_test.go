@@ -3566,7 +3566,7 @@ func TestGetActivityHeatmapReturnsReadingData(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
 
-	if err := store.LogReadingActivity(context.Background(), database.LogReadingActivityParams{BookID: book.ID, PagesRead: 7}); err != nil {
+	if err := store.LogReadingActivity(context.Background(), database.LogReadingActivityParams{BookID: book.ID, PagesRead: 7, Date: database.ActivityDayKey(time.Now())}); err != nil {
 		t.Fatalf("LogReadingActivity failed: %v", err)
 	}
 

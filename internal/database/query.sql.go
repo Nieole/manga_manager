@@ -1020,7 +1020,7 @@ func (q *Queries) GetAIGroupingReviewCollection(ctx context.Context, id int64) (
 const getActivityHeatmap = `-- name: GetActivityHeatmap :many
 SELECT date, SUM(pages_read) AS page_count
 FROM reading_activity
-WHERE date >= DATE('now', ?1)
+WHERE date >= ?1
 GROUP BY date
 ORDER BY date ASC
 `
@@ -1030,8 +1030,8 @@ type GetActivityHeatmapRow struct {
 	PageCount sql.NullFloat64 `json:"page_count"`
 }
 
-func (q *Queries) GetActivityHeatmap(ctx context.Context, offsetClause interface{}) ([]GetActivityHeatmapRow, error) {
-	rows, err := q.db.QueryContext(ctx, getActivityHeatmap, offsetClause)
+func (q *Queries) GetActivityHeatmap(ctx context.Context, sinceDate string) ([]GetActivityHeatmapRow, error) {
+	rows, err := q.db.QueryContext(ctx, getActivityHeatmap, sinceDate)
 	if err != nil {
 		return nil, err
 	}
@@ -1504,7 +1504,7 @@ SELECT
     (SELECT COUNT(*) FROM books) AS total_books,
     (SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
     (SELECT COALESCE(SUM(page_count), 0) FROM books) AS total_pages,
-    (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) AS active_days_7
+    (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= ?1) AS active_days_7
 `
 
 type GetDashboardCoreStatsRow struct {
@@ -1515,8 +1515,8 @@ type GetDashboardCoreStatsRow struct {
 	ActiveDays7 int64       `json:"active_days_7"`
 }
 
-func (q *Queries) GetDashboardCoreStats(ctx context.Context) (GetDashboardCoreStatsRow, error) {
-	row := q.db.QueryRowContext(ctx, getDashboardCoreStats)
+func (q *Queries) GetDashboardCoreStats(ctx context.Context, sinceDate string) (GetDashboardCoreStatsRow, error) {
+	row := q.db.QueryRowContext(ctx, getDashboardCoreStats, sinceDate)
 	var i GetDashboardCoreStatsRow
 	err := row.Scan(
 		&i.TotalSeries,
@@ -5100,18 +5100,19 @@ func (q *Queries) ListStaticCollectionSeriesPaged(ctx context.Context, arg ListS
 
 const logReadingActivity = `-- name: LogReadingActivity :exec
 INSERT INTO reading_activity (book_id, date, pages_read)
-VALUES (?, DATE('now'), ?)
+VALUES (?, ?, ?)
 ON CONFLICT(book_id, date) DO UPDATE SET
     pages_read = MAX(reading_activity.pages_read, excluded.pages_read)
 `
 
 type LogReadingActivityParams struct {
-	BookID    int64 `json:"book_id"`
-	PagesRead int64 `json:"pages_read"`
+	BookID    int64  `json:"book_id"`
+	Date      string `json:"date"`
+	PagesRead int64  `json:"pages_read"`
 }
 
 func (q *Queries) LogReadingActivity(ctx context.Context, arg LogReadingActivityParams) error {
-	_, err := q.db.ExecContext(ctx, logReadingActivity, arg.BookID, arg.PagesRead)
+	_, err := q.db.ExecContext(ctx, logReadingActivity, arg.BookID, arg.Date, arg.PagesRead)
 	return err
 }
 

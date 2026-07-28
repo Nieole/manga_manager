@@ -224,7 +224,7 @@ func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) 
 
 // logReadingActivity 记录当日阅读活动：全局表始终写（向后兼容 / uid==0），uid>0 时同时写每用户表（供热力图/连续天数/回顾）。
 func (c *Controller) logReadingActivity(ctx context.Context, uid, bookID, pages int64) {
-	if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: pages}); err != nil {
+	if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: pages, Date: database.ActivityDayKey(time.Now())}); err != nil {
 		slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
 	}
 	if uid > 0 {

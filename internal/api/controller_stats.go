@@ -86,7 +86,9 @@ func (c *Controller) getActivityHeatmap(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rows, err := c.store.GetActivityHeatmap(r.Context(), offset)
+	// 下界在 Go 侧按本地时区算好：表里的 date 现在是本地日历日（见 database.ActivityDayKey），
+	// 交给 SQLite 的 DATE('now', ?) 会按 UTC 算，跨时区部署下窗口整体错开一天。
+	rows, err := c.store.GetActivityHeatmap(r.Context(), database.HeatmapSinceDate(offset))
 	if err != nil {
 		slog.Error("GetActivityHeatmap failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get activity heatmap")

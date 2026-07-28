@@ -1174,7 +1174,7 @@ func applyBookReadStateTx(ctx context.Context, q *database.Queries, book databas
 	}
 
 	if isRead && validPage {
-		if err := q.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page}); err != nil {
+		if err := q.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page, Date: database.ActivityDayKey(time.Now())}); err != nil {
 			slog.Error("Failed to log reading activity", "book_id", book.ID, "error", err)
 		}
 	}
