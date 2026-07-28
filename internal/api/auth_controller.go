@@ -123,51 +123,22 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 
 // ---- 阅读协议 HTTP Basic 鉴权（OPDS / Mihon）----
 
-const basicAuthCacheTTL = 5 * time.Minute
-
-type basicAuthEntry struct {
-	userID    int64
-	expiresAt time.Time
-}
-
-func basicAuthCacheKey(username, password string) string {
-	sum := sha256.Sum256([]byte(username + "\x00" + password))
-	return hex.EncodeToString(sum[:])
-}
-
-// resolveBasicAuthUser 校验 Basic 凭据并返回站点用户 id；带 TTL 内存缓存以免每个协议请求都跑 bcrypt。
+// resolveBasicAuthUser 校验 Basic 凭据并返回站点用户 id；
+// 命中缓存即免去一次 bcrypt（bcrypt 故意很慢，协议客户端每个请求都带凭据）。
 func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, password string) (int64, bool) {
 	if username == "" || password == "" {
 		return 0, false
 	}
-	key := basicAuthCacheKey(username, password)
 	now := time.Now()
-	if v, ok := c.basicAuthCache.Load(key); ok {
-		if e, ok := v.(basicAuthEntry); ok && e.expiresAt.After(now) {
-			return e.userID, true
-		}
-		c.basicAuthCache.Delete(key)
+	if uid, ok := c.auth.lookupBasicAuth(username, password, now); ok {
+		return uid, true
 	}
 	user, err := c.store.GetUserByUsername(ctx, username)
 	if err != nil || !verifyPassword(user.PasswordHash, password) {
 		return 0, false
 	}
-	c.basicAuthCache.Store(key, basicAuthEntry{userID: user.ID, expiresAt: now.Add(basicAuthCacheTTL)})
+	c.auth.rememberBasicAuth(username, password, user.ID, now)
 	return user.ID, true
-}
-
-// invalidateBasicAuthCacheForUser 清掉某用户在 Basic 鉴权缓存里的全部条目。
-//
-// 缓存键是 (用户名+口令) 的哈希，改密后旧口令对应的条目仍然有效，最长 5 分钟内
-// 旧密码在 OPDS/Mihon 上照样能登录——对「改密以踢掉泄露的凭据」这个动机来说是致命的。
-// 条目数很少（每个活跃客户端一条），Range 全表清理的开销可忽略。
-func (c *Controller) invalidateBasicAuthCacheForUser(userID int64) {
-	c.basicAuthCache.Range(func(key, value any) bool {
-		if e, ok := value.(basicAuthEntry); ok && e.userID == userID {
-			c.basicAuthCache.Delete(key)
-		}
-		return true
-	})
 }
 
 // requireBasicAuth 是阅读协议（OPDS/Mihon）的 HTTP Basic 鉴权中间件：校验站点用户名+密码，
@@ -181,20 +152,20 @@ func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 		}
 		// 按 IP 的失败限流：锁定期内直接 429，避免攻击者用错误凭据反复触发昂贵的 bcrypt（CPU-DoS）。
 		ipKey := "basic:" + c.clientIP(r)
-		if d, locked := c.basicAuthLimiter.retryAfter(ipKey); locked {
+		if d, locked := c.auth.basicAuthLimiter.retryAfter(ipKey); locked {
 			respondTooManyAttempts(w, r, d)
 			return
 		}
 		if username, password, ok := r.BasicAuth(); ok {
 			if uid, valid := c.resolveBasicAuthUser(r.Context(), username, password); valid {
 				if user, err := c.store.GetUserByID(r.Context(), uid); err == nil {
-					c.basicAuthLimiter.recordSuccess(ipKey)
+					c.auth.basicAuthLimiter.recordSuccess(ipKey)
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, user)))
 					return
 				}
 			}
 		}
-		c.basicAuthLimiter.recordFailure(ipKey)
+		c.auth.basicAuthLimiter.recordFailure(ipKey)
 		w.Header().Set("WWW-Authenticate", `Basic realm="manga-manager"`)
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 	})
@@ -257,7 +228,7 @@ func isCsrfExempt(p string) bool {
 // usersExist 报告站点是否已存在账户；一旦为真即缓存，避免每请求 COUNT。
 // 出错时按「已存在」处理（fail-closed）：公开鉴权端点在 authGate 中先于此判断放行，故首启 setup 不受影响。
 func (c *Controller) usersExist(ctx context.Context) bool {
-	if c.usersPresent.Load() {
+	if c.auth.usersExist() {
 		return true
 	}
 	n, err := c.store.CountUsers(ctx)
@@ -265,7 +236,7 @@ func (c *Controller) usersExist(ctx context.Context) bool {
 		return true
 	}
 	if n > 0 {
-		c.usersPresent.Store(true)
+		c.auth.markUsersExist()
 		return true
 	}
 	return false
@@ -463,7 +434,7 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "failed to create admin")
 		return
 	}
-	c.usersPresent.Store(true)
+	c.auth.markUsersExist()
 	// 把旧的全局阅读进度迁移到首个管理员名下（幂等）。失败不阻断建号，仅记录。
 	if err := c.store.MigrateGlobalProgressToUser(ctx, user.ID); err != nil {
 		slog.Warn("migrate global progress to first admin failed", "user_id", user.ID, "error", err)
@@ -488,7 +459,7 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ipKey := "ip:" + c.clientIP(r)
-	if d, locked := c.loginLimiter.retryAfter(ipKey); locked {
+	if d, locked := c.auth.loginLimiter.retryAfter(ipKey); locked {
 		respondTooManyAttempts(w, r, d)
 		return
 	}
@@ -501,20 +472,20 @@ func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	}
 	username := strings.TrimSpace(req.Username)
 	userKey := "user:" + strings.ToLower(username)
-	if d, locked := c.loginLimiter.retryAfter(userKey); locked {
+	if d, locked := c.auth.loginLimiter.retryAfter(userKey); locked {
 		respondTooManyAttempts(w, r, d)
 		return
 	}
 	user, err := c.store.GetUserByUsername(ctx, username)
 	if err != nil || !verifyPassword(user.PasswordHash, req.Password) {
 		// 同时对来源 IP 与目标用户名计失败：前者挡单机横扫多账户，后者挡分布式打单账户。
-		c.loginLimiter.recordFailure(ipKey)
-		c.loginLimiter.recordFailure(userKey)
+		c.auth.loginLimiter.recordFailure(ipKey)
+		c.auth.loginLimiter.recordFailure(userKey)
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.invalid_credentials"))
 		return
 	}
-	c.loginLimiter.recordSuccess(ipKey)
-	c.loginLimiter.recordSuccess(userKey)
+	c.auth.loginLimiter.recordSuccess(ipKey)
+	c.auth.loginLimiter.recordSuccess(userKey)
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "failed to start session")
@@ -576,7 +547,7 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 旧口令必须立刻从 Basic 鉴权缓存里踢掉，否则它在 OPDS/Mihon 上最长还能再用 5 分钟。
-	c.invalidateBasicAuthCacheForUser(user.ID)
+	c.auth.invalidateBasicAuthForUser(user.ID)
 	// 改密即失效全部旧会话（含其他设备），再为当前设备建立新会话。
 	_ = c.store.DeleteSessionsForUser(ctx, user.ID)
 	csrf, err := c.startSession(ctx, w, r, user.ID)
@@ -726,7 +697,7 @@ func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 管理员重置他人密码同理：被重置的账号的旧口令要立刻失效。
-	c.invalidateBasicAuthCacheForUser(id)
+	c.auth.invalidateBasicAuthForUser(id)
 	_ = c.store.DeleteSessionsForUser(ctx, id)
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }

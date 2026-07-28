@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -32,7 +31,6 @@ import (
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
-	"manga-manager/internal/parser"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/taskcontrol"
@@ -43,11 +41,12 @@ import (
 )
 
 type Controller struct {
-	store               database.Store
-	imageCache          *lru.Cache[string, []byte]
-	pageCache           *lru.Cache[string, []parser.PageMetadata]
-	bookPageSourceCache *lru.Cache[int64, cachedBookPageSource]
-	progressWriteCache  *lru.Cache[int64, cachedProgressWrite]
+	store      database.Store
+	imageCache *lru.Cache[string, []byte]
+	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
+	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
+	pageArchive        *pageArchiveCache
+	progressWriteCache *lru.Cache[int64, cachedProgressWrite]
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
 	stats      *statsCache
 	scanner    *scanner.Scanner
@@ -76,20 +75,9 @@ type Controller struct {
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
 
-	// usersPresent 缓存「站点已存在账户」这一事实：一旦创建了首个管理员即恒为 true，
-	// authGate 据此判断是否处于「首启/尚无账户」的直通模式，避免每个请求都 COUNT(users)。
-	// 账户体系保证至少留一个管理员，故该标志一旦置真不再回退。
-	usersPresent atomic.Bool
-
-	// basicAuthCache 缓存阅读协议（OPDS/Mihon）已通过校验的 Basic 凭据（key=用户名+口令哈希 → 用户 id + 过期），
-	// 避免每个协议请求都跑一次 bcrypt（bcrypt 故意很慢）。零值即可用，条目带 TTL。
-	basicAuthCache sync.Map
-
-	// loginLimiter 对 /api/auth/login 做失败暴破防护（按 IP + 用户名双键，指数退避锁定）。
-	// basicAuthLimiter 对 OPDS/Mihon 的 Basic 鉴权做按 IP 的失败限流，锁定期内直接 429 而不再跑 bcrypt，
-	// 兼作 bcrypt CPU-DoS 防护。
-	loginLimiter     *attemptLimiter
-	basicAuthLimiter *attemptLimiter
+	// 鉴权链路的进程内状态（账户存在性、Basic 凭据缓存、两个失败限流器）
+	// 已抽成独立组件（auth_state.go）。
+	auth *authState
 
 	lifecycleOnce sync.Once
 	shutdownOnce  sync.Once
@@ -229,30 +217,24 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 // 「与 NewController 一致」的补丁注释）。现在两条路径共用同一份装配，这类分叉从结构上不再可能。
 func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
 	cache, _ := lru.New[string, []byte](sizes.image)
-	pageCache, _ := lru.New[string, []parser.PageMetadata](sizes.page)
-	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](sizes.bookPageSource)
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
 	c := &Controller{
-		store:               store,
-		stats:               newStatsCache(),
-		imageCache:          cache,
-		pageCache:           pageCache,
-		bookPageSourceCache: bookPageSourceCache,
-		progressWriteCache:  progressWriteCache,
-		scanner:             scan,
-		config:              cfg,
-		koreader:            koreader.NewService(store, cfg),
-		external:            external.NewManager(store, 30*time.Minute),
-		configPath:          cfgPath,
-		sse:                 newSSEBroker(),
-		taskEngine:          newTaskEngine(),
-		recommendations:     newRecommendationCache(24 * time.Hour),
-		rebuildThumbAgg:     newRebuildThumbAggregator(),
-		openPath:            openPathInDefaultFileManager,
-		// 登录：15 分钟窗口内累计 5 次失败即锁定，基础 1 分钟、指数退避、封顶 15 分钟。
-		loginLimiter: newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
-		// 协议 Basic：更宽松些（客户端每次请求都带凭据），5 分钟窗口内 10 次失败锁定，封顶 10 分钟。
-		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
+		store:              store,
+		stats:              newStatsCache(),
+		imageCache:         cache,
+		pageArchive:        newPageArchiveCache(sizes.bookPageSource, sizes.page),
+		progressWriteCache: progressWriteCache,
+		scanner:            scan,
+		config:             cfg,
+		koreader:           koreader.NewService(store, cfg),
+		external:           external.NewManager(store, 30*time.Minute),
+		configPath:         cfgPath,
+		sse:                newSSEBroker(),
+		taskEngine:         newTaskEngine(),
+		recommendations:    newRecommendationCache(24 * time.Hour),
+		rebuildThumbAgg:    newRebuildThumbAggregator(),
+		openPath:           openPathInDefaultFileManager,
+		auth:               newAuthState(),
 	}
 	if scan != nil {
 		scan.SetBatchCallback(c.handleScannerBatchEvent)
