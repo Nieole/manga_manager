@@ -1843,29 +1843,18 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current
 	cfg := s.currentConfig()
 	thumbDir := thumbnailBaseDir(cfg)
 
-	// Fetch all referenced cover paths from DB
+	// 流式收集被引用的封面路径。此前是两次 :many 查询各自把整库路径读进切片再折进 map，
+	// 那两份切片纯属中转（10 万本书要多分配一遍字符串与底层数组），且 DISTINCT 的去重
+	// 也是白付的——map 本来就去重。
+	//
+	// 注意 taskcontrol.Wait 必须放在遍历**之后**：回调期间数据库游标是开着的，
+	// 在里面等待暂停闸会把一个连接和一个 WAL 读快照一起挂住。
 	usedPaths := make(map[string]bool)
-
-	// Books
-	bookCovers, err := s.store.GetReferencedBookCoverPaths(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch book covers: %w", err)
-	}
-	for _, p := range bookCovers {
-		if p.Valid && p.String != "" {
-			usedPaths[filepath.ToSlash(p.String)] = true
-		}
-	}
-
-	// Series Stats
-	seriesCovers, err := s.store.GetReferencedSeriesCoverPaths(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch series covers: %w", err)
-	}
-	for _, p := range seriesCovers {
-		if p != "" {
-			usedPaths[filepath.ToSlash(p)] = true
-		}
+	if err := s.store.ForEachReferencedCoverPath(ctx, func(path string) error {
+		usedPaths[path] = true
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to fetch referenced cover paths: %w", err)
 	}
 
 	if err := taskcontrol.Wait(ctx); err != nil {
@@ -1877,7 +1866,7 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current
 	var deletedFiles int
 	var scannedFiles int
 
-	err = filepath.WalkDir(thumbDir, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(thumbDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil

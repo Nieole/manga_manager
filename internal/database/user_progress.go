@@ -194,23 +194,35 @@ func (s *SqlStore) GetUserBookProgressMap(ctx context.Context, userID int64, boo
 	if len(bookIDs) == 0 {
 		return out, nil
 	}
-	inClause, args := sqlInClause(bookIDs)
-	query := `SELECT book_id, last_read_page, last_read_at FROM user_book_progress WHERE user_id = ? AND book_id IN (` + inClause + `)`
-	fullArgs := append([]interface{}{userID}, args...)
-	rows, err := s.db.QueryContext(ctx, query, fullArgs...)
+	// 分批展开 IN (...)：贴着 SQLite 变量上限（32766）会直接报 too many SQL variables，
+	// 而这里的 bookIDs 来自「一页列表里的书」，批量操作下可以很大。
+	//
+	// 分批的代价是结果不再是单条语句的一致性快照：并发的进度写入可能插在两批之间，
+	// 返回的 map 因而可能混合不同时点的状态。这是有意接受的——该 map 只用于给列表响应
+	// 叠加进度展示，叠加本身也从不与写入串行；要保持快照语义得把整个循环包进只读事务，
+	// 为一次展示付这个代价不值得。
+	err := sqlInBatches(bookIDs, func(placeholders string, args []interface{}) error {
+		query := `SELECT book_id, last_read_page, last_read_at FROM user_book_progress WHERE user_id = ? AND book_id IN (` + placeholders + `)`
+		fullArgs := append([]interface{}{userID}, args...)
+		rows, err := s.db.QueryContext(ctx, query, fullArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var bookID int64
+			var p UserBookProgress
+			if err := rows.Scan(&bookID, &p.LastReadPage, &p.LastReadAt); err != nil {
+				return err
+			}
+			out[bookID] = p
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var bookID int64
-		var p UserBookProgress
-		if err := rows.Scan(&bookID, &p.LastReadPage, &p.LastReadAt); err != nil {
-			return nil, err
-		}
-		out[bookID] = p
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetKOReaderAccountUserID 返回某 KOReader 账户绑定的站点用户 id；0 表示未关联（进度回落到全局）。

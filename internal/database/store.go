@@ -127,6 +127,8 @@ type Store interface {
 	// RefreshSeriesDerivedData 重算系列的全部派生数据（冗余统计 + series_stats + 每用户聚合），
 	// 供「系列组成发生变化」的调用方（删书、批量移除）统一收口。
 	RefreshSeriesDerivedData(ctx context.Context, seriesID int64) error
+	// ForEachReferencedCoverPath 流式遍历被引用的封面路径（见 cover_paths.go 的契约注释）。
+	ForEachReferencedCoverPath(ctx context.Context, fn func(path string) error) error
 	GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error)
 	MigrateGlobalProgressToUser(ctx context.Context, userID int64) error
 	GetKOReaderAccountUserID(ctx context.Context, username string) (int64, error)
@@ -458,6 +460,30 @@ type BulkSeriesEdit struct {
 	Publisher  *string
 }
 
+// sqlInBatchSize 是 IN (...) 展开的单批 ID 数上限。
+//
+// 硬约束是 SQLite 的 SQLITE_MAX_VARIABLE_NUMBER（32766）：超过就直接报
+// "too many SQL variables"，批量编辑在大选区下会整个失败。
+// 但取 500 而不是贴着上限，是因为超长的参数列表本身就很慢——同一份 4 万个 ID，
+// 500 一批比贴着变量上限分两批快约一个数量级（准备语句与参数绑定的开销随参数数量非线性增长）。
+const sqlInBatchSize = 500
+
+// sqlInBatches 把 ids 切成不超过 sqlInBatchSize 的批次，逐批调用 fn。
+// 调用方拿到的是「这一批」的占位符与参数，需要自己保证跨批的语义（见各调用点注释）。
+func sqlInBatches(ids []int64, fn func(placeholders string, args []interface{}) error) error {
+	for start := 0; start < len(ids); start += sqlInBatchSize {
+		end := start + sqlInBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		placeholders, args := sqlInClause(ids[start:end])
+		if err := fn(placeholders, args); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func sqlInClause(ids []int64) (string, []interface{}) {
 	placeholders := make([]string, len(ids))
 	args := make([]interface{}, len(ids))
@@ -480,17 +506,24 @@ func (s *SqlStore) BulkEditSeries(ctx context.Context, seriesIDs []int64, edit B
 	defer func() { _ = tx.Rollback() }() // Commit 之后的 Rollback 返回 ErrTxDone，无害
 
 	q := s.Queries.WithTx(tx)
-	inPlaceholders, inArgs := sqlInClause(seriesIDs)
 
+	// 以下三处都按 sqlInBatchSize 分批展开 IN (...)：整个 BulkEditSeries 仍在同一个事务里，
+	// 所以分批只影响语句条数，不影响原子性——用户选中上万个系列时，要么全成要么全不成，这一点没变。
 	if edit.Status != nil {
-		args := append([]interface{}{*edit.Status}, inArgs...)
-		if _, err := tx.ExecContext(ctx, `UPDATE series SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+inPlaceholders+`)`, args...); err != nil {
+		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
+			args := append([]interface{}{*edit.Status}, inArgs...)
+			_, execErr := tx.ExecContext(ctx, `UPDATE series SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+placeholders+`)`, args...)
+			return execErr
+		}); err != nil {
 			return err
 		}
 	}
 	if edit.Publisher != nil {
-		args := append([]interface{}{*edit.Publisher}, inArgs...)
-		if _, err := tx.ExecContext(ctx, `UPDATE series SET publisher = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+inPlaceholders+`)`, args...); err != nil {
+		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
+			args := append([]interface{}{*edit.Publisher}, inArgs...)
+			_, execErr := tx.ExecContext(ctx, `UPDATE series SET publisher = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+placeholders+`)`, args...)
+			return execErr
+		}); err != nil {
 			return err
 		}
 	}
@@ -504,10 +537,17 @@ func (s *SqlStore) BulkEditSeries(ctx context.Context, seriesIDs []int64, edit B
 		if err != nil {
 			return err
 		}
-		for _, sid := range seriesIDs {
-			if err := q.LinkSeriesTag(ctx, LinkSeriesTagParams{SeriesID: sid, TagID: tag.ID}); err != nil {
-				return err
-			}
+		// 一条语句挂一批，而不是每个系列一条：选中数万个系列时后者就是数万条 INSERT。
+		// 用 SELECT id FROM series WHERE id IN (...) 取代直接 VALUES，顺带把选区里
+		// 已不存在的系列 id 挡在外面——否则外键约束会让整个批量编辑失败。
+		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
+			args := append([]interface{}{tag.ID}, inArgs...)
+			_, execErr := tx.ExecContext(ctx,
+				`INSERT OR IGNORE INTO series_tags (series_id, tag_id) SELECT id, ? FROM series WHERE id IN (`+placeholders+`)`,
+				args...)
+			return execErr
+		}); err != nil {
+			return err
 		}
 	}
 
@@ -516,10 +556,13 @@ func (s *SqlStore) BulkEditSeries(ctx context.Context, seriesIDs []int64, edit B
 		if name == "" {
 			continue
 		}
-		args := append(append([]interface{}{}, inArgs...), name)
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM series_tags WHERE series_id IN (`+inPlaceholders+`) AND tag_id IN (SELECT id FROM tags WHERE name = ?)`,
-			args...); err != nil {
+		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
+			args := append(append([]interface{}{}, inArgs...), name)
+			_, execErr := tx.ExecContext(ctx,
+				`DELETE FROM series_tags WHERE series_id IN (`+placeholders+`) AND tag_id IN (SELECT id FROM tags WHERE name = ?)`,
+				args...)
+			return execErr
+		}); err != nil {
 			return err
 		}
 	}
