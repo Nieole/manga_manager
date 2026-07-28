@@ -279,7 +279,12 @@ SELECT * FROM books WHERE series_id = ? ORDER BY volume, sort_number, name;
 
 
 -- name: ListBooksByLibrary :many
-SELECT id, path, file_modified_at, size, page_count, cover_path FROM books WHERE library_id = ?;
+SELECT id, path, file_modified_at, size, page_count, cover_path, file_hash, quick_hash FROM books WHERE library_id = ?;
+
+-- name: RehomeBookPath :execrows
+UPDATE books
+SET path = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND path = ?;
 
 -- name: DeleteBookByPath :exec
 DELETE FROM books WHERE path = ?;

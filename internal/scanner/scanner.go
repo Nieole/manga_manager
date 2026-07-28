@@ -127,14 +127,17 @@ type scanJob struct {
 }
 
 type scanMetrics struct {
-	discoveredArchives   atomic.Int64
-	skippedArchives      atomic.Int64
-	processedArchives    atomic.Int64
-	openedArchives       atomic.Int64
-	hashedFiles          atomic.Int64
-	queuedCovers         atomic.Int64
-	generatedCovers      atomic.Int64
-	failedArchives       atomic.Int64
+	discoveredArchives atomic.Int64
+	skippedArchives    atomic.Int64
+	processedArchives  atomic.Int64
+	openedArchives     atomic.Int64
+	hashedFiles        atomic.Int64
+	queuedCovers       atomic.Int64
+	generatedCovers    atomic.Int64
+	failedArchives     atomic.Int64
+	// rehomedBooks 统计本次扫描把多少条已入库记录按改名重连到了新路径。
+	// 这是会改动用户数据的行为，必须可观测——否则「书怎么没变多」只能靠翻日志猜。
+	rehomedBooks         atomic.Int64
 	ioWaitMillis         atomic.Int64
 	pausedMillis         atomic.Int64
 	thumbnailWriteMillis atomic.Int64
@@ -149,6 +152,7 @@ type scanMetricsSnapshot struct {
 	queuedCovers         int64
 	generatedCovers      int64
 	failedArchives       int64
+	rehomedBooks         int64
 	ioWaitMillis         int64
 	pausedMillis         int64
 	thumbnailWriteMillis int64
@@ -169,6 +173,7 @@ type ScanMetricsReport struct {
 	QueuedCovers           int64
 	GeneratedCovers        int64
 	FailedArchives         int64
+	RehomedBooks           int64
 	IOWaitMillis           int64
 	PausedMillis           int64
 	ThumbnailWriteMillis   int64
@@ -235,6 +240,7 @@ func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
 			"queued_covers":       snapshot.queuedCovers,
 			"generated_covers":    snapshot.generatedCovers,
 			"failed_archives":     snapshot.failedArchives,
+			"rehomed_books":       snapshot.rehomedBooks,
 			"io_wait_ms":          snapshot.ioWaitMillis,
 			"paused_ms":           snapshot.pausedMillis,
 			"thumbnail_write_ms":  snapshot.thumbnailWriteMillis,
@@ -255,6 +261,7 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 		queuedCovers:         m.queuedCovers.Load(),
 		generatedCovers:      m.generatedCovers.Load(),
 		failedArchives:       m.failedArchives.Load(),
+		rehomedBooks:         m.rehomedBooks.Load(),
 		ioWaitMillis:         m.ioWaitMillis.Load(),
 		pausedMillis:         m.pausedMillis.Load(),
 		thumbnailWriteMillis: m.thumbnailWriteMillis.Load(),
@@ -373,6 +380,9 @@ type scanResult struct {
 	quickHash            string
 	pathFingerprint      string
 	pathFingerprintNoExt string
+	// rehome 非 nil 表示这个文件被判定为某条已入库记录的改名/移动：入库时先把那条记录
+	// 改挂到新路径（保留 id 从而保留阅读进度与所有 CASCADE 关联），再走正常的 upsert。
+	rehome *bookRehome
 }
 
 type coverCandidate struct {
@@ -419,19 +429,21 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	progress.publish("loading_existing_books", "", true)
 
 	// 增量扫描先加载已入库文件的修改时间和大小，未变化的归档可以跳过重读，降低大库重复扫描成本。
+	// 同一份清单还用于构建改名重连索引——强制扫描不吃增量跳过，但一样需要识别改名，
+	// 所以这次查询不再受 opts.Force 控制（每次扫描一条查询，相对随后要读的 N 个归档可忽略）。
 	bookCache := make(map[string]bookScanSnapshot)
 
+	existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
+	if err != nil {
+		slog.Warn("Failed to load existing books cache", "library_id", libraryID, "error", err)
+		return err
+	}
 	if !opts.Force {
-		existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
-		if err != nil {
-			slog.Warn("Failed to load existing books cache", "library_id", libraryID, "error", err)
-			return err
-		}
-
 		for _, b := range existingBooks {
 			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 		}
 	}
+	renames := newRenameIndex(rehomeCandidatesFromLibraryRows(existingBooks))
 
 	jobs := make(chan scanJob, 1000)
 	results := make(chan scanResult, 1000)
@@ -458,7 +470,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, libraryID, results, metrics, progress)
+		s.ingestResults(ctx, libraryID, results, metrics, progress, renames)
 	}()
 
 	// 第 1 阶段：文件发现。
@@ -555,13 +567,15 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	progress := newScanProgressReporter("series", seriesID, metrics, s.onScanProgress)
 	progress.publish("loading_existing_books", "", true)
 	bookCache := make(map[string]bookScanSnapshot)
-	if !opts.Force {
-		existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID)
-		if err == nil {
+	// 与 ScanLibrary 同理：这份清单同时供增量跳过与改名重连使用，强制扫描也需要后者。
+	var renames *renameIndex
+	if existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID); err == nil {
+		if !opts.Force {
 			for _, b := range existingBooks {
 				bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 			}
 		}
+		renames = newRenameIndex(rehomeCandidatesFromBooks(existingBooks))
 	}
 
 	jobs := make(chan scanJob, 100)
@@ -584,7 +598,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, series.LibraryID, results, metrics, progress)
+		s.ingestResults(ctx, series.LibraryID, results, metrics, progress, renames)
 	}()
 
 	var walkErr error
@@ -796,6 +810,7 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 		"queued_covers", snapshot.queuedCovers,
 		"generated_covers", snapshot.generatedCovers,
 		"failed_archives", snapshot.failedArchives,
+		"rehomed_books", snapshot.rehomedBooks,
 		"io_wait_ms", snapshot.ioWaitMillis,
 		"paused_ms", snapshot.pausedMillis,
 		"thumbnail_write_ms", snapshot.thumbnailWriteMillis,
@@ -836,6 +851,7 @@ func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.Resol
 		QueuedCovers:           snapshot.queuedCovers,
 		GeneratedCovers:        snapshot.generatedCovers,
 		FailedArchives:         snapshot.failedArchives,
+		RehomedBooks:           snapshot.rehomedBooks,
 		IOWaitMillis:           snapshot.ioWaitMillis,
 		PausedMillis:           snapshot.pausedMillis,
 		ThumbnailWriteMillis:   snapshot.thumbnailWriteMillis,
@@ -1074,7 +1090,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 }
 
-func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics, progress *scanProgressReporter) {
+// ingestResults 是唯一的写入协程。renames 为本次扫描的改名重连索引（可为 nil，表示不做重连）：
+// 认领在这里而不是解析 worker 里做，因为「一条旧记录只能被认领一次」在单写入方下天然成立。
+func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics, progress *scanProgressReporter, renames *renameIndex) {
 	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
 	seriesCache := make(map[string]database.Series)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
@@ -1237,6 +1255,29 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					}
 				}
 
+				// 改名重连：先把那条「文件已消失」的旧记录改挂到新路径上，紧接着的 UpsertBookByPath
+				// 就会经 ON CONFLICT(path) 命中同一行——id 不变，user_book_progress / 书签 / 合集归属
+				// 因而全部保留。若更新落空（并发扫描已把该行改走），退回按新书插入即可。
+				if res.rehome != nil {
+					affected, err := q.RehomeBookPath(ctx, database.RehomeBookPathParams{
+						Path:   res.book.Path,
+						ID:     res.rehome.bookID,
+						Path_2: res.rehome.oldPath,
+					})
+					switch {
+					case err != nil:
+						slog.Warn("Failed to rehome renamed book", "book_id", res.rehome.bookID,
+							"old_path", res.rehome.oldPath, "new_path", res.book.Path, "error", err)
+					case affected == 0:
+						slog.Info("Skipped rehoming renamed book because the row moved concurrently",
+							"book_id", res.rehome.bookID, "old_path", res.rehome.oldPath)
+					default:
+						slog.Info("Rehomed renamed book", "book_id", res.rehome.bookID,
+							"old_path", res.rehome.oldPath, "new_path", res.book.Path, "match", res.rehome.reason)
+						metrics.rehomedBooks.Add(1)
+					}
+				}
+
 				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at，返回带主键的对象
 				actualBook, err := q.UpsertBookByPath(ctx, res.book)
 				if err != nil {
@@ -1325,6 +1366,14 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 				return
 			}
+			// 改名认领必须在事务外完成：它要对旧路径做一次 os.Stat。
+			res.rehome = renames.claim(rehomeRequest{
+				path:      res.book.Path,
+				size:      res.book.Size,
+				modTime:   res.book.FileModifiedAt,
+				quickHash: res.quickHash,
+				fileHash:  res.fileHash,
+			})
 			batch = append(batch, res)
 			if len(batch) >= batchSize {
 				flush()

@@ -39,6 +39,7 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 		"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
 		"generated_covers":         strconv.FormatInt(report.GeneratedCovers, 10),
 		"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
+		"rehomed_books":            strconv.FormatInt(report.RehomedBooks, 10),
 		"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
 		"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
 		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),

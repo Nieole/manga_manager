@@ -1508,6 +1508,7 @@ export const messages: MessageCatalog = {
     'settings.maintenance.taskMetric.processed_archives': 'Processed archives',
     'settings.maintenance.taskMetric.opened_archives': 'Opened archives',
     'settings.maintenance.taskMetric.failed_archives': 'Failed archives',
+    'settings.maintenance.taskMetric.rehomed_books': 'Renamed & relinked',
     'settings.maintenance.taskMetric.hashed_files': 'Hashed files',
     'settings.maintenance.taskMetric.queued_covers': 'Queued covers',
     'settings.maintenance.taskMetric.generated_covers': 'Generated covers',

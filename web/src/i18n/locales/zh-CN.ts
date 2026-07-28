@@ -1508,6 +1508,7 @@ export const messages: MessageCatalog = {
     'settings.maintenance.taskMetric.processed_archives': '处理归档',
     'settings.maintenance.taskMetric.opened_archives': '打开归档',
     'settings.maintenance.taskMetric.failed_archives': '失败归档',
+    'settings.maintenance.taskMetric.rehomed_books': '改名重连',
     'settings.maintenance.taskMetric.hashed_files': '计算哈希',
     'settings.maintenance.taskMetric.queued_covers': '封面入队',
     'settings.maintenance.taskMetric.generated_covers': '生成封面',

@@ -2784,7 +2784,7 @@ func (q *Queries) ListAIGroupingReviews(ctx context.Context, arg ListAIGroupingR
 }
 
 const listBooksByLibrary = `-- name: ListBooksByLibrary :many
-SELECT id, path, file_modified_at, size, page_count, cover_path FROM books WHERE library_id = ?
+SELECT id, path, file_modified_at, size, page_count, cover_path, file_hash, quick_hash FROM books WHERE library_id = ?
 `
 
 type ListBooksByLibraryRow struct {
@@ -2794,6 +2794,8 @@ type ListBooksByLibraryRow struct {
 	Size           int64          `json:"size"`
 	PageCount      int64          `json:"page_count"`
 	CoverPath      sql.NullString `json:"cover_path"`
+	FileHash       sql.NullString `json:"file_hash"`
+	QuickHash      sql.NullString `json:"quick_hash"`
 }
 
 func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error) {
@@ -2812,6 +2814,8 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]Li
 			&i.Size,
 			&i.PageCount,
 			&i.CoverPath,
+			&i.FileHash,
+			&i.QuickHash,
 		); err != nil {
 			return nil, err
 		}
@@ -5329,6 +5333,26 @@ ON CONFLICT(series_id) DO UPDATE SET
 func (q *Queries) RefreshSeriesStats(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, refreshSeriesStats, id)
 	return err
+}
+
+const rehomeBookPath = `-- name: RehomeBookPath :execrows
+UPDATE books
+SET path = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND path = ?
+`
+
+type RehomeBookPathParams struct {
+	Path   string `json:"path"`
+	ID     int64  `json:"id"`
+	Path_2 string `json:"path_2"`
+}
+
+func (q *Queries) RehomeBookPath(ctx context.Context, arg RehomeBookPathParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rehomeBookPath, arg.Path, arg.ID, arg.Path_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const removeReadingListItem = `-- name: RemoveReadingListItem :exec
