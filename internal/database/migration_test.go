@@ -7,8 +7,8 @@ package database
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
