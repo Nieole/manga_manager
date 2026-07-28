@@ -22,7 +22,56 @@ type ValidationResult struct {
 	Issues []ValidationIssue `json:"issues"`
 }
 
+// ValidateConfig 是完整校验：纯值域 + 需要触盘的深度校验（目录可达、外置可执行文件存在）。
+// 「有人在等结果」的路径（设置页保存）用它——路径写错要当场告诉用户。
 func ValidateConfig(cfg *Config) ValidationResult {
+	result := ValidateConfigValues(cfg)
+	if cfg == nil {
+		return result
+	}
+	result.Issues = append(result.Issues, validateFilesystemTargets(cfg)...)
+	result.Valid = len(result.Issues) == 0
+	return result
+}
+
+// validateFilesystemTargets 是需要触盘的那部分校验。
+//
+// 单独成层是因为它每一条都可能在离线的网络挂载上把调用方的 goroutine 卡住，
+// 而配置热重载跑在后台监听 goroutine 里——卡住它等于连带卡死事件循环与停机等待。
+// 何况「目录此刻不可达」本就不该成为拒绝一份取值完全合法的 YAML 的理由。
+func validateFilesystemTargets(cfg *Config) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	if strings.TrimSpace(cfg.Database.Path) != "" {
+		if err := checkParentDir(cfg.Database.Path); err != nil {
+			issues = append(issues, ValidationIssue{Field: "database.path", Message: err.Error(), Severity: "error"})
+		}
+	}
+	if strings.TrimSpace(cfg.Cache.Dir) != "" {
+		if err := checkDir(cfg.Cache.Dir); err != nil {
+			issues = append(issues, ValidationIssue{Field: "cache.dir", Message: err.Error(), Severity: "error"})
+		}
+	}
+	for _, item := range []struct {
+		field string
+		value string
+	}{
+		{field: "scanner.waifu2x_path", value: cfg.Scanner.Waifu2xPath},
+		{field: "scanner.realcugan_path", value: cfg.Scanner.RealCuganPath},
+	} {
+		if strings.TrimSpace(item.value) == "" {
+			continue
+		}
+		if info, err := os.Stat(item.value); err != nil {
+			issues = append(issues, ValidationIssue{Field: item.field, Message: "指定的可执行文件不存在或不可访问。", Severity: "error"})
+		} else if info.IsDir() {
+			issues = append(issues, ValidationIssue{Field: item.field, Message: "这里需要填写可执行文件路径，而不是目录。", Severity: "error"})
+		}
+	}
+	return issues
+}
+
+// ValidateConfigValues 只做纯值域校验：端口范围、枚举取值、并发下限等，全程不碰文件系统。
+func ValidateConfigValues(cfg *Config) ValidationResult {
 	issues := make([]ValidationIssue, 0)
 	if cfg == nil {
 		return ValidationResult{
@@ -53,14 +102,10 @@ func ValidateConfig(cfg *Config) ValidationResult {
 
 	if strings.TrimSpace(cfg.Database.Path) == "" {
 		issues = append(issues, ValidationIssue{Field: "database.path", Message: "数据库路径不能为空。", Severity: "error"})
-	} else if err := checkParentDir(cfg.Database.Path); err != nil {
-		issues = append(issues, ValidationIssue{Field: "database.path", Message: err.Error(), Severity: "error"})
 	}
 
 	if strings.TrimSpace(cfg.Cache.Dir) == "" {
 		issues = append(issues, ValidationIssue{Field: "cache.dir", Message: "缓存目录不能为空。", Severity: "error"})
-	} else if err := checkDir(cfg.Cache.Dir); err != nil {
-		issues = append(issues, ValidationIssue{Field: "cache.dir", Message: err.Error(), Severity: "error"})
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.Logging.Level)) {
@@ -115,23 +160,6 @@ func ValidateConfig(cfg *Config) ValidationResult {
 	case "webp", "avif", "jpg", "jpeg":
 	default:
 		issues = append(issues, ValidationIssue{Field: "scanner.thumbnail_format", Message: "缩略图格式仅支持 webp、avif、jpg。", Severity: "error"})
-	}
-
-	for _, item := range []struct {
-		field string
-		value string
-	}{
-		{field: "scanner.waifu2x_path", value: cfg.Scanner.Waifu2xPath},
-		{field: "scanner.realcugan_path", value: cfg.Scanner.RealCuganPath},
-	} {
-		if strings.TrimSpace(item.value) == "" {
-			continue
-		}
-		if info, err := os.Stat(item.value); err != nil {
-			issues = append(issues, ValidationIssue{Field: item.field, Message: "指定的可执行文件不存在或不可访问。", Severity: "error"})
-		} else if info.IsDir() {
-			issues = append(issues, ValidationIssue{Field: item.field, Message: "这里需要填写可执行文件路径，而不是目录。", Severity: "error"})
-		}
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(cfg.LLM.Provider))

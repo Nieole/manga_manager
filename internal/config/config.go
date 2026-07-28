@@ -205,11 +205,30 @@ func RestoreMaskedSecrets(incoming *Config, current Config) {
 	}
 }
 
+// LoadConfig 读取配置；文件不存在时**生成一份默认配置并写回磁盘**。
+//
+// 这个写盘副作用只适合启动路径。热重载必须用 LoadConfigFile：编辑器保存常常是
+// 「先把 config.yaml rename 走、再写新文件」，事件恰好落在文件缺失的那个窗口时，
+// LoadConfig 会把用户的配置**覆盖成默认值**，同时把内存配置也清成默认——
+// 一次编辑保存换来整份配置丢失。
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	cfg, err := LoadConfigFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return createDefaultConfig(path)
+		}
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// LoadConfigFile 读取并归一化配置，**不做任何写盘**。文件不存在时原样返回 os.ErrNotExist。
+// 供热重载等「不该有副作用」的路径使用。
+func LoadConfigFile(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, err
 		}
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}

@@ -34,8 +34,6 @@ import (
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/web"
-
-	"github.com/fsnotify/fsnotify"
 )
 
 var (
@@ -83,7 +81,25 @@ func main() {
 	cfgManager := config.NewManager(cfg)
 
 	// 启动配置热重载监听
-	go watchConfig(resolvedConfigPath, cfgManager)
+	// 配置热重载监听：拿住句柄以便停机时停掉。此前是裸 `go watchConfig(...)`，
+	// 进程活着就永远停不掉——停机排空的 20 秒里仍可能落地一次重载，改写日志级别、
+	// 归档句柄池与 AI 并发。
+	// 启动时也跑一次值域校验，理由是「热重载会拒绝不合法的配置」这条规则必须对用户可见：
+	// 否则一个配置本就非法的实例，表现是「改了文件却怎么都不生效」，而日志里只有一行
+	// rejected，用户无从知道问题出在哪、也不知道热重载已经变成哑巴了。
+	// 这里刻意不 fatal——保持既有的可启动性，坏值的实际影响由各使用点自行承担。
+	if result := config.ValidateConfigValues(cfg); !result.Valid {
+		slog.Warn("Configuration has invalid values",
+			"path", resolvedConfigPath,
+			"issues", config.FormatValidationIssues(result.Issues),
+			"hint", "hot-reload will refuse to apply this file until these are fixed")
+	}
+
+	cfgWatcher, watchErr := config.StartWatcher(resolvedConfigPath, cfgManager, runtimecfg.Apply)
+	if watchErr != nil {
+		// 监听建不起来只影响「改文件自动生效」，服务本身照常跑（经设置页保存仍立即生效）。
+		slog.Warn("Config hot-reload disabled", "path", resolvedConfigPath, "error", watchErr)
+	}
 
 	if err := database.Migrate(cfg.Database.Path); err != nil {
 		slog.Error("Failed to migrate database schema", "error", err)
@@ -222,13 +238,18 @@ func main() {
 	stop() // 恢复默认信号处理：停机过程中再次 Ctrl-C 可强制退出
 	slog.Info("Shutdown signal received, draining in-flight requests...")
 
+	// 先停配置监听：排空期间不该再有热重载去改写日志级别 / 归档句柄池 / AI 并发。
+	// （此前下方那条「停配置监听」的注释是空话——apiController.Close() 停的是
+	// 库目录的 scanner.FileWatcher，与配置监听毫无关系。）
+	cfgWatcher.Stop()
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Graceful HTTP shutdown failed", "error", err)
 	}
 
-	// 收尾后台服务：停配置监听、恢复暂停闸、取消后台任务并等待其退出。
+	// 收尾后台服务：恢复暂停闸、取消后台任务并等待其退出。
 	apiController.Close()
 	slog.Info("Shutdown complete")
 }
@@ -377,72 +398,4 @@ func absOrSelf(path string) string {
 		return abs
 	}
 	return path
-}
-
-func watchConfig(path string, cfgManager *config.Manager) {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		slog.Error("Failed to create config watcher", "error", err)
-		return
-	}
-	defer watcher.Close()
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		absPath = path
-	}
-	// 监听所在目录而非文件本身：编辑器保存与本项目的原子写都会以 rename 替换文件，
-	// 直接 watch 文件在 Linux 上会因 inode 变化而永久失效（收不到后续事件）。监听目录后
-	// 按文件名过滤，即可稳定捕获替换后的新文件。
-	dir := filepath.Dir(absPath)
-	if err := watcher.Add(dir); err != nil {
-		slog.Error("Failed to add config directory to watcher", "dir", dir, "error", err)
-		return
-	}
-
-	slog.Info("Config hot-reload watcher started", "path", absPath, "watching_dir", dir)
-
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-			if filepath.Clean(event.Name) != absPath {
-				continue // 只关心目标 config 文件，忽略同目录下的临时文件/数据文件事件
-			}
-			// 原子替换/编辑器保存表现为 Write、Create 或 Rename-到位，任一都触发重载。
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
-				slog.Info("Config file changed, re-applying settings...", "event", event.Name)
-				newCfg, err := config.LoadConfig(path)
-				if err != nil {
-					slog.Error("Failed to reload config during hot-swap", "error", err)
-					continue
-				}
-
-				// 1. 同步更新全局单例/传递的引用
-				// 注意：这里更新的是 *newCfg，如果 apiController 持有的是 *cfg 的引用，
-				// 我们需要手动将 *newCfg 的值刷入 *currentCfg 指向的内存，
-				// 或者确保后端组件统一订阅配置变更。
-				// 简单的做法是把新值 Copy 过去 (深拷贝结构体)
-				cfgManager.Replace(newCfg)
-				currentCfg := cfgManager.Snapshot()
-
-				// 2. 重建配置派生资源——与 API 保存路径共用同一 runtimecfg.Apply，避免两条路径副作用不一致。
-				if err := runtimecfg.Apply(&currentCfg); err != nil {
-					slog.Error("Failed to apply runtime config during hot-swap", "error", err)
-				}
-
-				slog.Info("Config hot-reload applied successfully",
-					"log_level", currentCfg.Logging.Level,
-					"pool_size", currentCfg.Scanner.ArchivePoolSize,
-					"ai_concurrency", currentCfg.Scanner.MaxAiConcurrency)
-			}
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			slog.Error("Config watcher error", "error", err)
-		}
-	}
 }
