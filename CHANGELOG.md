@@ -4,6 +4,27 @@
 
 ---
 
+### 📌 增量记录 — 2026-07-29（扫描器边界 · 审核状态机）
+
+#### 扫描与文件监听
+- **尊重库级 `scan_formats`**：该字段前后端俱全（设置页可勾选 cbz/cbr/zip/rar），但扫描器与 watcher 一直用的是全局白名单——用户勾了「只扫 cbz」，rar/zip 照样被打开入库。新增 `LibraryScanOptions.IgnoreFormatFilter`：格式过滤的语义是「导入哪些文件」，不该殃及已入库的内容，因此重建缩略图这类维护扫描必须看得见全部书籍，否则被排除格式的书会永久失去封面。新增 `format_filtered_archives` 指标，静默少扫变得可见。
+- **修复 watcher 的兄弟目录串台**：此前用无分隔符的 `strings.HasPrefix` 判断事件属于哪个库，`/data/manga2` 的事件会被判成属于 `/data/manga`；两处匹配又都是「第一个命中就 break」，而 Go 的 map 迭代顺序随机，所以受害的是哪个库每次都不一样。改用 `filepath.Rel`（Windows 另做大小写归一），并改为对**所有**包含该路径的库排期（嵌套库共享子树）。
+- **watcher 派生的扫描/清理纳入停机管辖**：此前用 `context.Background()` + 裸 goroutine，既不可取消也不被优雅关闭追踪，`srv.Shutdown` 返回之后它们仍在往一个即将关掉的 store 里写。`Stop()` 现在取消并等待它们退出；`CleanupLibrary` 补三处取消早退。
+- **递归注册遇错继续**：`watchRecursive` 此前首个错误就中止整棵 `WalkDir`，一个不可读的子目录会让它之后的整片子树静默失监。现在返回 `WatchReport` 分项记账，inotify 配额触顶（ENOSPC）单独标记。另修一处：旧代码先登记再 `Add`、失败才删，而 `exists` 短路一旦命中就永久跳过——现在改为 Add 成功之后才登记。
+- **支持符号链接**：把外置盘上的系列目录软链进库根（多盘位 NAS 的常见组织方式）此前整棵被跳过，用户只看到「扫描完成，0 本新增」；软链的归档文件又用 lstat 取 size/mtime，而链接自身的 mtime 只在重建链接时才变，导致目标被替换后增量扫描永远判定「毫无变化」。新增 `walkDirFollowingSymlinks`（扫描器与 watcher 共用）：报出的路径改写回链接一侧，按解析后的真实路径防环，两个链接指向同一目录时只遍历一次。
+- **整文件哈希可取消**：新增 `koreader.FingerprintFileContext`。一本几 GB 的归档读完要几十秒，此前期间取消信号完全传不进来。
+
+#### 元数据审核
+- **补齐 reject 的 pending 守卫，并把守卫下沉到 SQL**：四条终态推进路径里只有单条 reject 漏了检查，于是一条已 applied 的审核可以被改成 rejected；而 SQL 里 `applied_at`/`rejected_at` 是「CASE … ELSE 保留旧值」的累加写法，结果是同一行同时带两个终态时间戳，`series_metadata_provenance` 还指着它——审计链变成「系列的元数据来自一条已被拒绝的审核」。守卫改为 `ResolvePendingMetadataReview` 的 `AND lower(status) = 'pending'`，影响行数为 0 即冲突，同时堵住了「HTTP 层读到 pending → 写入」之间的 TOCTOU 窗口。**对外行为变更**：重复 reject / 对终态 review 操作由 200 变为 **409**。
+- **删除死列 `metadata_review_fields.status`**：唯一写入点硬编码 `'pending'`，全仓无 UPDATE/DELETE，且两条把字段送到前端的读路径都只查 pending review——写进别的值也永远读不出来。字段级的应用结果本就由 `series_metadata_provenance` 承担，留着只会成为第二真相源。迁移里以 `PRAGMA table_info` 探测后 `DROP COLUMN`（本身不幂等），API 响应 `fields[]` 随之少一个恒为 `"pending"` 的 key。**升级后不可回滚到本版之前的二进制**（旧版 SELECT/INSERT 显式带该列）。
+
+#### 验证
+- 新增扫描器/监听器用例：格式过滤（含维护扫描不过滤）、路径归属与嵌套库、停机取消与等待、递归注册容错与记账契约、软链跟进/防环/断链、`CleanupLibrary` 的两道防误删闸门（库根不可达、待删占比熔断）与取消早退、watcher 事件循环端到端。
+- 新增审核用例：终态守卫（6 个 table-driven 分支 + 时间戳不变量）、TOCTOU 陈旧快照、迁移删列的存量库/幂等/全新库三态。
+- 全部高危修复均已反向验证（回退修复后用例变红）。`go build/vet/test ./...`、`-race`、`golangci-lint`（0 issues）、sqlc 与 tsgen 漂移检查、前端 lint/tsc/test 全绿。
+
+---
+
 ### 📌 增量记录 — 2026-07-17（CI / 构建修复 · v1.3.2）
 
 > 修复 v1.3.1 引入的构建流水线问题，让 lint 门禁与发布二进制都用打了补丁的工具链——已发布产物随之干净。功能与 v1.3.1 一致。

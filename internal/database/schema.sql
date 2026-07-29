@@ -266,7 +266,6 @@ CREATE TABLE IF NOT EXISTS metadata_review_fields (
     source TEXT NOT NULL DEFAULT '',
     source_url TEXT NOT NULL DEFAULT '',
     locked BOOLEAN NOT NULL DEFAULT FALSE,
-    status TEXT NOT NULL DEFAULT 'pending',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(review_id, field_name),

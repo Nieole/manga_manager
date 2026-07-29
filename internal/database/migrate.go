@@ -103,6 +103,15 @@ func Migrate(dbPath string) error {
 		}
 	}
 
+	// metadata_review_fields.status 是死数据：唯一写入点硬编码 'pending'，全仓没有任何
+	// UPDATE/DELETE，且两条把 fields 送到前端的读路径都只查 pending review——就算写进
+	// applied/skipped 也永远不可能被读到。字段级的应用结果本就该由 series_metadata_provenance
+	// 承担，留着这一列只会变成第二真相源。schema.sql 用的是 CREATE TABLE IF NOT EXISTS，
+	// 存量库不会因为 schema 改了就重建，只有这条 ALTER 才能真正落地。
+	if err := dropColumnIfExists(db, "metadata_review_fields", "status"); err != nil {
+		return err
+	}
+
 	if err := execMigrationStatements(db, []string{
 		// 移除 series 上的嵌套前缀冗余索引：(library_id, updated_at) 与 (library_id, updated_at, name)
 		// 都是 (library_id, updated_at, name, id) 的严格前缀，created_* 同理。按 B-tree 前缀性质，保留的
@@ -846,5 +855,19 @@ func ensureColumn(db *sql.DB, table, column, definition string) error {
 	}
 
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	return err
+}
+
+// dropColumnIfExists 幂等地删掉一列。
+//
+// ALTER TABLE ... DROP COLUMN 本身**不**幂等（列不在时直接报 no such column），
+// 而迁移每次启动都会重放，所以必须先探测。PRAGMA table_info 对不存在的表返回 0 行且不报错，
+// 因此表还没建出来时这里会安全地跳过。
+func dropColumnIfExists(db *sql.DB, table, column string) error {
+	exists, err := tableHasColumn(db, table, column)
+	if err != nil || !exists {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, column))
 	return err
 }

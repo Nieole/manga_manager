@@ -114,7 +114,6 @@ export interface MetadataReviewField {
   locked: boolean;
   source: string;
   source_url: string;
-  status: string;
 }
 
 export interface MetadataReview {

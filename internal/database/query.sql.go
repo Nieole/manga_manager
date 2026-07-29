@@ -672,11 +672,11 @@ func (q *Queries) CreateMetadataReview(ctx context.Context, arg CreateMetadataRe
 
 const createMetadataReviewField = `-- name: CreateMetadataReviewField :one
 INSERT INTO metadata_review_fields (
-    review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status
+    review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked
 ) VALUES (
-    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
 )
-RETURNING id, review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status, created_at, updated_at
+RETURNING id, review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, created_at, updated_at
 `
 
 type CreateMetadataReviewFieldParams struct {
@@ -688,7 +688,6 @@ type CreateMetadataReviewFieldParams struct {
 	Source        string  `json:"source"`
 	SourceUrl     string  `json:"source_url"`
 	Locked        bool    `json:"locked"`
-	Status        string  `json:"status"`
 }
 
 func (q *Queries) CreateMetadataReviewField(ctx context.Context, arg CreateMetadataReviewFieldParams) (MetadataReviewField, error) {
@@ -701,7 +700,6 @@ func (q *Queries) CreateMetadataReviewField(ctx context.Context, arg CreateMetad
 		arg.Source,
 		arg.SourceUrl,
 		arg.Locked,
-		arg.Status,
 	)
 	var i MetadataReviewField
 	err := row.Scan(
@@ -714,7 +712,6 @@ func (q *Queries) CreateMetadataReviewField(ctx context.Context, arg CreateMetad
 		&i.Source,
 		&i.SourceUrl,
 		&i.Locked,
-		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -3667,7 +3664,7 @@ func (q *Queries) ListLibrarySizes(ctx context.Context) ([]ListLibrarySizesRow, 
 }
 
 const listMetadataReviewFields = `-- name: ListMetadataReviewFields :many
-SELECT id, review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status, created_at, updated_at FROM metadata_review_fields WHERE review_id = ? ORDER BY id ASC
+SELECT id, review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, created_at, updated_at FROM metadata_review_fields WHERE review_id = ? ORDER BY id ASC
 `
 
 func (q *Queries) ListMetadataReviewFields(ctx context.Context, reviewID int64) ([]MetadataReviewField, error) {
@@ -3689,7 +3686,6 @@ func (q *Queries) ListMetadataReviewFields(ctx context.Context, reviewID int64) 
 			&i.Source,
 			&i.SourceUrl,
 			&i.Locked,
-			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -3707,7 +3703,7 @@ func (q *Queries) ListMetadataReviewFields(ctx context.Context, reviewID int64) 
 }
 
 const listMetadataReviewFieldsByReviews = `-- name: ListMetadataReviewFieldsByReviews :many
-SELECT id, review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status, created_at, updated_at FROM metadata_review_fields
+SELECT id, review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, created_at, updated_at FROM metadata_review_fields
 WHERE review_id IN (/*SLICE:review_ids*/?)
 ORDER BY review_id ASC, id ASC
 `
@@ -3741,7 +3737,6 @@ func (q *Queries) ListMetadataReviewFieldsByReviews(ctx context.Context, reviewI
 			&i.Source,
 			&i.SourceUrl,
 			&i.Locked,
-			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -5385,6 +5380,29 @@ func (q *Queries) RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeri
 	return result.RowsAffected()
 }
 
+const resolvePendingMetadataReview = `-- name: ResolvePendingMetadataReview :execrows
+UPDATE metadata_reviews
+SET status = ?1,
+    updated_at = CURRENT_TIMESTAMP,
+    applied_at = CASE WHEN ?1 = 'applied' THEN CURRENT_TIMESTAMP ELSE applied_at END,
+    rejected_at = CASE WHEN ?1 = 'rejected' THEN CURRENT_TIMESTAMP ELSE rejected_at END
+WHERE id = ?2
+  AND lower(status) = 'pending'
+`
+
+type ResolvePendingMetadataReviewParams struct {
+	Status string `json:"status"`
+	ID     int64  `json:"id"`
+}
+
+func (q *Queries) ResolvePendingMetadataReview(ctx context.Context, arg ResolvePendingMetadataReviewParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resolvePendingMetadataReview, arg.Status, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const seriesExistsByID = `-- name: SeriesExistsByID :one
 SELECT id FROM series WHERE id = ?
 `
@@ -5576,43 +5594,6 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		&i.ScanInterval,
 		&i.ScanFormats,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const updateMetadataReviewStatus = `-- name: UpdateMetadataReviewStatus :one
-UPDATE metadata_reviews
-SET status = ?1,
-    updated_at = CURRENT_TIMESTAMP,
-    applied_at = CASE WHEN ?1 = 'applied' THEN CURRENT_TIMESTAMP ELSE applied_at END,
-    rejected_at = CASE WHEN ?1 = 'rejected' THEN CURRENT_TIMESTAMP ELSE rejected_at END
-WHERE id = ?2
-RETURNING id, series_id, provider, source_url, source_id, source_query, summary, confidence, status, raw_payload, created_at, updated_at, applied_at, rejected_at
-`
-
-type UpdateMetadataReviewStatusParams struct {
-	Status string `json:"status"`
-	ID     int64  `json:"id"`
-}
-
-func (q *Queries) UpdateMetadataReviewStatus(ctx context.Context, arg UpdateMetadataReviewStatusParams) (MetadataReview, error) {
-	row := q.db.QueryRowContext(ctx, updateMetadataReviewStatus, arg.Status, arg.ID)
-	var i MetadataReview
-	err := row.Scan(
-		&i.ID,
-		&i.SeriesID,
-		&i.Provider,
-		&i.SourceUrl,
-		&i.SourceID,
-		&i.SourceQuery,
-		&i.Summary,
-		&i.Confidence,
-		&i.Status,
-		&i.RawPayload,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.AppliedAt,
-		&i.RejectedAt,
 	)
 	return i, err
 }

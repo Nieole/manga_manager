@@ -511,3 +511,186 @@ func TestBackfillSeriesInitialsCoversAllBatches(t *testing.T) {
 		t.Fatalf("second backfill failed: %v", err)
 	}
 }
+
+// legacyMetadataReviewSchema 是带 status 列的旧版 metadata_review_fields，
+// 连同它依赖的最小骨架。用来验证存量库能被迁移真正改造，而不是只改 schema.sql 就以为完事
+// ——execSchemaStatements 用的是 CREATE TABLE IF NOT EXISTS，老库根本不会重建。
+const legacyMetadataReviewSchema = `
+CREATE TABLE libraries (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	path TEXT NOT NULL UNIQUE,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE series (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	library_id INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	path TEXT NOT NULL UNIQUE,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
+);
+CREATE TABLE metadata_reviews (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	series_id INTEGER NOT NULL,
+	provider TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'pending',
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
+);
+CREATE TABLE metadata_review_fields (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	review_id INTEGER NOT NULL,
+	field_name TEXT NOT NULL,
+	current_value TEXT NOT NULL DEFAULT '',
+	proposed_value TEXT NOT NULL DEFAULT '',
+	confidence REAL NOT NULL DEFAULT 0,
+	source TEXT NOT NULL DEFAULT '',
+	source_url TEXT NOT NULL DEFAULT '',
+	locked BOOLEAN NOT NULL DEFAULT FALSE,
+	status TEXT NOT NULL DEFAULT 'pending',
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(review_id, field_name),
+	FOREIGN KEY(review_id) REFERENCES metadata_reviews(id) ON DELETE CASCADE
+);
+INSERT INTO libraries (id, name, path) VALUES (1, 'Lib', '/tmp/lib');
+INSERT INTO series (id, library_id, name, path) VALUES (1, 1, 'S', '/tmp/lib/S');
+INSERT INTO metadata_reviews (id, series_id, provider) VALUES (1, 1, 'bangumi');
+INSERT INTO metadata_review_fields (review_id, field_name, proposed_value, status)
+	VALUES (1, 'title', 'External Title', 'pending');
+`
+
+func columnNames(t *testing.T, db *sql.DB, table string) map[string]bool {
+	t.Helper()
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(%s): %v", table, err)
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return cols
+}
+
+// TestMigrateDropsMetadataReviewFieldStatusColumn 守卫「字段级 status 死列被真正清掉」。
+//
+// 该列自建表起只有一个硬编码 'pending' 的写入点，全仓没有 UPDATE/DELETE，
+// 而把 fields 送到前端的两条读路径都只查 pending review——就算写进别的值也永远读不出来。
+// 它只会变成 series_metadata_provenance 之外的第二真相源。
+func TestMigrateDropsMetadataReviewFieldStatusColumn(t *testing.T) {
+	t.Run("存量库首次迁移即删除该列且不损坏数据", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "legacy.db")
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		if _, err := db.Exec(legacyMetadataReviewSchema); err != nil {
+			t.Fatalf("建旧表失败: %v", err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+
+		if err := Migrate(dbPath); err != nil {
+			t.Fatalf("Migrate: %v", err)
+		}
+
+		db, err = sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("reopen: %v", err)
+		}
+		defer db.Close()
+
+		if columnNames(t, db, "metadata_review_fields")["status"] {
+			t.Fatal("存量库里 status 列还在 —— 只改 schema.sql 不会重建老表，必须靠迁移里的 DROP")
+		}
+		var fieldName, proposed string
+		if err := db.QueryRow(
+			`SELECT field_name, proposed_value FROM metadata_review_fields WHERE review_id = 1`,
+		).Scan(&fieldName, &proposed); err != nil {
+			t.Fatalf("原有行读不回来了: %v", err)
+		}
+		if fieldName != "title" || proposed != "External Title" {
+			t.Fatalf("ALTER 把行数据改坏了：field_name=%q proposed=%q", fieldName, proposed)
+		}
+	})
+
+	t.Run("存量库重复迁移保持幂等", func(t *testing.T) {
+		// 这才是裸 ALTER（不做存在性探测）会翻车的真实路径：
+		// 第一次 DROP 成功，第二次必须是无操作，而不是 no such column。
+		dbPath := filepath.Join(t.TempDir(), "legacy.db")
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		if _, err := db.Exec(legacyMetadataReviewSchema); err != nil {
+			t.Fatalf("建旧表失败: %v", err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+
+		for i := 1; i <= 2; i++ {
+			if err := Migrate(dbPath); err != nil {
+				t.Fatalf("第 %d 次 Migrate 失败: %v —— DROP COLUMN 本身不幂等，必须先探测", i, err)
+			}
+		}
+
+		db, err = sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("reopen: %v", err)
+		}
+		defer db.Close()
+		if columnNames(t, db, "metadata_review_fields")["status"] {
+			t.Fatal("重复迁移后 status 列又冒出来了")
+		}
+	})
+
+	t.Run("全新库不含该列且写入路径可用", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "fresh.db")
+		if err := Migrate(dbPath); err != nil {
+			t.Fatalf("Migrate: %v", err)
+		}
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer db.Close()
+		if columnNames(t, db, "metadata_review_fields")["status"] {
+			t.Fatal("全新库仍带 status 列 —— schema.sql 没改干净")
+		}
+		// 不带 status 列的 INSERT 必须能跑通（对应 CreateMetadataReviewField 的新形态）。
+		if _, err := db.Exec(`INSERT INTO libraries (id, name, path) VALUES (1, 'L', '/tmp/l')`); err != nil {
+			t.Fatalf("seed library: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO series (id, library_id, name, path) VALUES (1, 1, 'S', '/tmp/l/S')`); err != nil {
+			t.Fatalf("seed series: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO metadata_reviews (id, series_id, provider) VALUES (1, 1, 'bangumi')`); err != nil {
+			t.Fatalf("seed review: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO metadata_review_fields (review_id, field_name, proposed_value)
+			VALUES (1, 'title', 'X')`); err != nil {
+			t.Fatalf("不带 status 的插入失败: %v", err)
+		}
+	})
+}

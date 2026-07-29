@@ -434,20 +434,20 @@ WHERE mr.status = 'pending'
 ORDER BY mr.confidence ASC, mr.created_at ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
--- name: UpdateMetadataReviewStatus :one
+-- name: ResolvePendingMetadataReview :execrows
 UPDATE metadata_reviews
 SET status = sqlc.arg(status),
     updated_at = CURRENT_TIMESTAMP,
     applied_at = CASE WHEN sqlc.arg(status) = 'applied' THEN CURRENT_TIMESTAMP ELSE applied_at END,
     rejected_at = CASE WHEN sqlc.arg(status) = 'rejected' THEN CURRENT_TIMESTAMP ELSE rejected_at END
 WHERE id = sqlc.arg(id)
-RETURNING *;
+  AND lower(status) = 'pending';
 
 -- name: CreateMetadataReviewField :one
 INSERT INTO metadata_review_fields (
-    review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status
+    review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked
 ) VALUES (
-    sqlc.arg(review_id), sqlc.arg(field_name), sqlc.arg(current_value), sqlc.arg(proposed_value), sqlc.arg(confidence), sqlc.arg(source), sqlc.arg(source_url), sqlc.arg(locked), sqlc.arg(status)
+    sqlc.arg(review_id), sqlc.arg(field_name), sqlc.arg(current_value), sqlc.arg(proposed_value), sqlc.arg(confidence), sqlc.arg(source), sqlc.arg(source_url), sqlc.arg(locked)
 )
 RETURNING *;
 

@@ -160,6 +160,7 @@ type Querier interface {
 	RehomeBookPath(ctx context.Context, arg RehomeBookPathParams) (int64, error)
 	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
 	RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) (int64, error)
+	ResolvePendingMetadataReview(ctx context.Context, arg ResolvePendingMetadataReviewParams) (int64, error)
 	SeriesExistsByID(ctx context.Context, id int64) (int64, error)
 	SetBookCoverIfMissing(ctx context.Context, arg SetBookCoverIfMissingParams) (int64, error)
 	TouchCollection(ctx context.Context, id int64) error
@@ -168,7 +169,6 @@ type Querier interface {
 	UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error
 	UpdateCollectionDetails(ctx context.Context, arg UpdateCollectionDetailsParams) error
 	UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error)
-	UpdateMetadataReviewStatus(ctx context.Context, arg UpdateMetadataReviewStatusParams) (MetadataReview, error)
 	UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error)
 	UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) error
 	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error

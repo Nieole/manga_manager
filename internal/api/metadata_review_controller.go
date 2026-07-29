@@ -22,6 +22,35 @@ import (
 
 var errNoMetadataChanges = errors.New("no metadata changes")
 
+// errMetadataReviewNotPending 表示这条 review 已经不在 pending 状态了。
+var errMetadataReviewNotPending = errors.New("metadata review is not pending")
+
+// resolveMetadataReviewStatus 把 review 从 pending 推进到终态（applied / rejected）。
+//
+// 守卫落在 SQL 的 WHERE 里而不是只做 Go 侧判断：HTTP 层读到 pending 与真正写入之间存在窗口，
+// 并发的 apply/reject（或用户重复点击、多标签页）会先后写同一行，而 SQL 的
+// applied_at/rejected_at 是 CASE + ELSE 旧值的累加式写法——结果是一行同时带
+// applied_at 与 rejected_at，status 却只剩后写的那个。series_metadata_provenance.review_id
+// 还指着它，审计链变成「系列的元数据来自一条已被拒绝的审核」，自相矛盾且无法复原。
+//
+// 影响行数为 0 即冲突：可能是并发抢先处理，也可能是 review 已随系列级联删除，两者都按 409 收口
+// （调用方保留的前置 GetMetadataReview 只把「一开始就不存在」分流到 404）。
+//
+// 形参取 database.Querier，事务内的 *database.Queries 与事务外的 c.store 都满足。
+func resolveMetadataReviewStatus(ctx context.Context, q database.Querier, reviewID int64, status string) error {
+	rows, err := q.ResolvePendingMetadataReview(ctx, database.ResolvePendingMetadataReviewParams{
+		Status: status,
+		ID:     reviewID,
+	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errMetadataReviewNotPending
+	}
+	return nil
+}
+
 type metadataReviewFieldDraft struct {
 	Name       string
 	Label      string
@@ -40,7 +69,6 @@ type metadataReviewFieldView struct {
 	Locked     bool    `json:"locked"`
 	Source     string  `json:"source"`
 	SourceURL  string  `json:"source_url"`
-	Status     string  `json:"status"`
 }
 
 type metadataReviewView struct {
@@ -449,7 +477,6 @@ func metadataReviewFieldToView(field database.MetadataReviewField) metadataRevie
 		Locked:     field.Locked,
 		Source:     field.Source,
 		SourceURL:  field.SourceUrl,
-		Status:     field.Status,
 	}
 }
 
@@ -678,7 +705,6 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 				Source:        strings.TrimSpace(providerName),
 				SourceUrl:     sourceURL,
 				Locked:        change.Locked,
-				Status:        "pending",
 			})
 			if err != nil {
 				return err
@@ -746,9 +772,10 @@ func (c *Controller) applyReviewedMetadata(ctx context.Context, series database.
 		SourceQuery:  review.SourceQuery,
 		ReviewID:     &review.ID,
 	}, func(q *database.Queries) error {
-		// 同一事务内标记 review 已应用：元数据写入与状态更新原子，避免元数据已写但状态仍 pending 被重复 apply。
-		_, err := q.UpdateMetadataReviewStatus(ctx, database.UpdateMetadataReviewStatusParams{Status: "applied", ID: review.ID})
-		return err
+		// 同一事务内把 review 从 pending CAS 到 applied：元数据写入与状态推进原子，
+		// 避免元数据已写但状态仍 pending 被重复 apply。守卫必须在事务内的 SQL 上，
+		// 因为调用方读到的 pending 是事务外的旧快照，到这里可能已被别的请求推进过了。
+		return resolveMetadataReviewStatus(ctx, q, review.ID, "applied")
 	})
 }
 
@@ -910,7 +937,13 @@ func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := c.applyReviewedMetadata(r.Context(), series, review, fields); err != nil {
-		// applyReviewedMetadata 在同一事务内写元数据并标记 review 为 applied，任一失败整体回滚、状态保持 pending。
+		// applyReviewedMetadata 在同一事务内写元数据并把 review CAS 到 applied，任一失败整体回滚。
+		if errors.Is(err, errMetadataReviewNotPending) {
+			// 上面那次 pending 判断到写入之间被并发 apply/reject 抢先，元数据写入已整体撤销。
+			// 不回吐 series 快照：抢先者的结果才是准的，返回半新半旧的数据只会误导前端。
+			jsonError(w, http.StatusConflict, "Metadata review is not pending")
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, "Failed to apply metadata review")
 		return
 	}
@@ -959,7 +992,9 @@ func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Req
 			continue
 		}
 		if err := c.applyReviewedMetadata(r.Context(), series, review, fields); err != nil {
-			// applyReviewedMetadata 已在同一事务内标记 review 为 applied，失败则整体回滚、状态保持 pending。
+			// 事务整体回滚。被并发抢先（errMetadataReviewNotPending）也归入 failed：
+			// 状态由抢先者决定，这里不特判——metadataReviewBulkResponse 是前端既有契约，
+			// 不为此新增 conflict 桶。
 			result.Failed = append(result.Failed, id)
 			continue
 		}
@@ -983,11 +1018,18 @@ func (c *Controller) rejectMetadataReview(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusNotFound, "Metadata review not found")
 		return
 	}
-
-	if _, err := c.store.UpdateMetadataReviewStatus(r.Context(), database.UpdateMetadataReviewStatusParams{
-		Status: "rejected",
-		ID:     review.ID,
-	}); err != nil {
+	// 四条终态推进路径里只有这一条漏了 pending 守卫：已 applied 的 review 可以被改成 rejected，
+	// 而 applied_at 因 CASE 的 ELSE 分支被保留，于是行上两个时间戳同时非空。
+	// 前置检查省一次写锁并给出快速 409，真正的防线是下面 SQL 里的 CAS。
+	if strings.ToLower(review.Status) != "pending" {
+		jsonError(w, http.StatusConflict, "Metadata review is not pending")
+		return
+	}
+	if err := resolveMetadataReviewStatus(r.Context(), c.store, review.ID, "rejected"); err != nil {
+		if errors.Is(err, errMetadataReviewNotPending) {
+			jsonError(w, http.StatusConflict, "Metadata review is not pending")
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, "Failed to reject metadata review")
 		return
 	}
@@ -1017,10 +1059,8 @@ func (c *Controller) bulkRejectMetadataReviews(w http.ResponseWriter, r *http.Re
 			result.Failed = append(result.Failed, id)
 			continue
 		}
-		if _, err := c.store.UpdateMetadataReviewStatus(r.Context(), database.UpdateMetadataReviewStatusParams{
-			Status: "rejected",
-			ID:     review.ID,
-		}); err != nil {
+		if err := resolveMetadataReviewStatus(r.Context(), c.store, review.ID, "rejected"); err != nil {
+			// 冲突同样归入 Failed，与本路径既有的「非 pending -> Failed」语义一致。
 			result.Failed = append(result.Failed, id)
 			continue
 		}
