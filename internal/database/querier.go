@@ -116,6 +116,7 @@ type Querier interface {
 	ListCollectionViews(ctx context.Context) ([]ListCollectionViewsRow, error)
 	ListCollectionsWithSeriesCount(ctx context.Context) ([]ListCollectionsWithSeriesCountRow, error)
 	ListExternalLibraryBooks(ctx context.Context, libraryID int64) ([]ListExternalLibraryBooksRow, error)
+	ListExternalTransferBooksBySeries(ctx context.Context, seriesIds []int64) ([]ListExternalTransferBooksBySeriesRow, error)
 	ListForwardSeriesRelations(ctx context.Context, sourceSeriesID int64) ([]ListForwardSeriesRelationsRow, error)
 	ListHealthDuplicateFileHash(ctx context.Context, arg ListHealthDuplicateFileHashParams) ([]ListHealthDuplicateFileHashRow, error)
 	ListHealthDuplicateQuickHash(ctx context.Context, arg ListHealthDuplicateQuickHashParams) ([]ListHealthDuplicateQuickHashRow, error)

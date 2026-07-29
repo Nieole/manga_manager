@@ -1694,3 +1694,9 @@ LIMIT ?;
 SELECT * FROM ai_grouping_review_collections
 WHERE review_id IN (sqlc.slice('review_ids'))
 ORDER BY review_id ASC, id ASC;
+
+-- name: ListExternalTransferBooksBySeries :many
+SELECT id, series_id, library_id, path, volume
+FROM books
+WHERE series_id IN (sqlc.slice('series_ids'))
+ORDER BY series_id, volume, sort_number, name;

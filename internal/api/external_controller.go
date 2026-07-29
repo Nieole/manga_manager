@@ -181,6 +181,14 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		jsonError(w, http.StatusBadRequest, "series_ids is required")
 		return
 	}
+	// 每个系列 id 都会被展开成该系列的全部书，几十个 id 就能变成整库几万本。
+	// 全站唯一的闸门是 1 MiB 请求体上限，而它是明确按十万级 int64 id 设计的，
+	// 挡不住这条路径。批量标记读状态那边早有同款上限（maxBulkReadStateSeries），
+	// 这个端点是同构的形状，只是漏了。
+	if len(req.SeriesIDs) > maxExternalTransferSeries {
+		jsonError(w, http.StatusBadRequest, "Too many series in one request")
+		return
+	}
 
 	plan, err := c.external.PrepareTransfer(r.Context(), libraryID, sessionID, req.SeriesIDs)
 	if err != nil {
@@ -205,7 +213,10 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	taskKey, started := c.launchExternalLibraryTransferTask(libraryID, sessionID, req.SeriesIDs)
+	// 把**已经算好的** plan 交给后台任务。此前这里只是为了拿 plan.MissingBooks 决定
+	// 回 200 还是 202，算完就整个丢掉，后台任务再用同一份入参重新规划一遍——
+	// 一次传输请求把 PrepareTransfer 完整跑两遍（含全部 DB 往返）。
+	taskKey, started := c.launchExternalLibraryTransferTask(libraryID, sessionID, plan)
 	if !started {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An external library transfer is already running"})
 		return
@@ -263,7 +274,9 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	return taskKey, true
 }
 
-func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, seriesIDs []int64) (string, bool) {
+// launchExternalLibraryTransferTask 用**调用方已经算好的** plan 起后台传输任务。
+// 传 plan 而不是 seriesIDs，是为了不让 PrepareTransfer 在一次请求里跑两遍。
+func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, plan external.TransferPlan) (string, bool) {
 	taskKey := externalLibraryTransferTaskKey(libraryID, sessionID)
 	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "transfer_external_library", "task.msg.transfer_external_library.start", nil, 0) {
 		return taskKey, false
@@ -273,20 +286,15 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	if err == nil {
 		c.taskEngine.setTaskMetadata(taskKey, map[string]string{
 			"session_id":   sessionID,
-			"series_count": strconv.Itoa(len(seriesIDs)),
+			"series_count": strconv.Itoa(plan.SeriesCount),
 		}, lib.Name)
 	}
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
 	c.runBackgroundTask(taskKey, func() {
 		defer cleanupCancel()
-		plan, err := c.external.PrepareTransfer(taskCtx, libraryID, sessionID, seriesIDs)
-		if errors.Is(err, context.Canceled) {
+		if err := taskCtx.Err(); err != nil {
 			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
-			return
-		}
-		if err != nil {
-			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.transfer_external_library.failed", nil, err.Error())
 			return
 		}
 		if len(plan.Operations) == 0 {

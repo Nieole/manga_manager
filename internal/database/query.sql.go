@@ -3146,6 +3146,60 @@ func (q *Queries) ListExternalLibraryBooks(ctx context.Context, libraryID int64)
 	return items, nil
 }
 
+const listExternalTransferBooksBySeries = `-- name: ListExternalTransferBooksBySeries :many
+SELECT id, series_id, library_id, path, volume
+FROM books
+WHERE series_id IN (/*SLICE:series_ids*/?)
+ORDER BY series_id, volume, sort_number, name
+`
+
+type ListExternalTransferBooksBySeriesRow struct {
+	ID        int64  `json:"id"`
+	SeriesID  int64  `json:"series_id"`
+	LibraryID int64  `json:"library_id"`
+	Path      string `json:"path"`
+	Volume    string `json:"volume"`
+}
+
+func (q *Queries) ListExternalTransferBooksBySeries(ctx context.Context, seriesIds []int64) ([]ListExternalTransferBooksBySeriesRow, error) {
+	query := listExternalTransferBooksBySeries
+	var queryParams []interface{}
+	if len(seriesIds) > 0 {
+		for _, v := range seriesIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:series_ids*/?", strings.Repeat(",?", len(seriesIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:series_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExternalTransferBooksBySeriesRow
+	for rows.Next() {
+		var i ListExternalTransferBooksBySeriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SeriesID,
+			&i.LibraryID,
+			&i.Path,
+			&i.Volume,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listForwardSeriesRelations = `-- name: ListForwardSeriesRelations :many
 SELECT sr.id, sr.target_series_id, s.name AS target_series_name, sr.relation_type
 FROM series_relations sr

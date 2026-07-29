@@ -43,6 +43,11 @@ const (
 	// 而每本书都要写一次进度并刷新所属系列的聚合，全部在写锁下进行。
 	maxBulkReadStateBooks  = 20000
 	maxBulkReadStateSeries = 2000
+
+	// maxExternalTransferSeries 是外部库传输一次能选多少个系列。
+	// 与 maxBulkReadStateSeries 同构、同量级：这个端点收到的也是系列 id，
+	// 每个都会被展开成整个系列的书，再逐本读盘拷贝到外接盘。
+	maxExternalTransferSeries = 2000
 )
 
 // clampLimit 解析 limit 型参数并钳到 [1, max]。

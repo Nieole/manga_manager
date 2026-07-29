@@ -408,35 +408,48 @@ func (m *Manager) PrepareTransfer(ctx context.Context, libraryID int64, sessionI
 	ignoreExtension := s.IgnoreExtension
 	m.mu.Unlock()
 
-	plan := TransferPlan{SeriesCount: len(seriesIDs)}
-	for _, seriesID := range seriesIDs {
-		books, err := m.store.ListBooksBySeries(ctx, seriesID)
+	// 先去重。此前直接 len(seriesIDs) 当 SeriesCount，循环里对每个元素无条件累加，
+	// 于是 series_ids:[7,7] 会把系列 7 的每本书规划两遍——missing_books 翻倍、
+	// Operations 里出现源与目标都相同的重复项，用户看到的数字和进度条分母都是错的。
+	unique := make([]int64, 0, len(seriesIDs))
+	seen := make(map[int64]struct{}, len(seriesIDs))
+	for _, id := range seriesIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	plan := TransferPlan{SeriesCount: len(unique)}
+	// 一次批量取齐所有系列的书。此前是逐 seriesID 一次 SELECT *（books 表 24 列、
+	// 含 summary 长文本），选中几百个系列就是几百次往返，而这段还要跑两遍（见 handler）。
+	books, err := m.store.ListExternalTransferBooksBySeries(ctx, unique)
+	if err != nil {
+		return TransferPlan{}, err
+	}
+	for _, book := range books {
+		if book.LibraryID != libraryID {
+			continue
+		}
+		matchKey, displayRel, err := relativePathKeys(libraryPath, book.Path, ignoreExtension)
 		if err != nil {
-			return TransferPlan{}, err
+			continue
 		}
-		for _, book := range books {
-			if book.LibraryID != libraryID {
-				continue
-			}
-			matchKey, displayRel, err := relativePathKeys(libraryPath, book.Path, ignoreExtension)
-			if err != nil {
-				continue
-			}
-			if _, ok := matchedKeys[matchKey]; ok {
-				plan.ExistingBooks++
-				continue
-			}
-			plan.MissingBooks++
-			plan.Operations = append(plan.Operations, TransferOperation{
-				BookID:       book.ID,
-				SeriesID:     book.SeriesID,
-				SeriesName:   book.Volume,
-				SourcePath:   book.Path,
-				Destination:  filepath.Join(externalPath, filepath.FromSlash(displayRel)),
-				RelativePath: displayRel,
-				MatchKey:     matchKey,
-			})
+		if _, ok := matchedKeys[matchKey]; ok {
+			plan.ExistingBooks++
+			continue
 		}
+		plan.MissingBooks++
+		plan.Operations = append(plan.Operations, TransferOperation{
+			BookID:       book.ID,
+			SeriesID:     book.SeriesID,
+			SeriesName:   book.Volume,
+			SourcePath:   book.Path,
+			Destination:  filepath.Join(externalPath, filepath.FromSlash(displayRel)),
+			RelativePath: displayRel,
+			MatchKey:     matchKey,
+		})
 	}
 	return plan, nil
 }
