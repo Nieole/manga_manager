@@ -1390,10 +1390,14 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 		t.Fatalf("insert relation failed: %v", err)
 	}
 
+	// 上面的 updateSeriesInfo 把 title/summary 锁了，而锁定字段不再入队（入队了也只会在
+	// apply 时被静默丢弃）。这里补一个未锁定的 publisher 提案，让本用例真正关心的
+	// 「系列上下文里带出待审记录」仍有东西可断言。
 	if _, _, _, err := controller.queueMetadataReview(context.Background(), info, &metadata.SeriesMetadata{
 		Provider:   "bangumi",
 		Title:      "Alpha Metadata",
 		Summary:    "Reviewed summary",
+		Publisher:  "Reviewed Publisher",
 		SourceID:   42,
 		SourceURL:  "https://bgm.tv/subject/42",
 		Confidence: 0.9,

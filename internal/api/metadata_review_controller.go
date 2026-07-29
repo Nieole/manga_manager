@@ -22,6 +22,11 @@ import (
 
 var errNoMetadataChanges = errors.New("no metadata changes")
 
+// errAllFieldsLocked 表示确实有差异，但差异字段全部被用户锁定了。
+// 与 errNoMetadataChanges 分开是因为用户该采取的动作完全不同：一个是「解锁后再试」，
+// 一个是「数据已经是最新的」。此前两者都走同一条路径，用户只能看到含糊的提示。
+var errAllFieldsLocked = errors.New("all changed fields are locked")
+
 // errMetadataReviewNotPending 表示这条 review 已经不在 pending 状态了。
 var errMetadataReviewNotPending = errors.New("metadata review is not pending")
 
@@ -183,13 +188,20 @@ func titleFieldLabel(s string) string {
 }
 
 func metadataLockedFieldSet(series database.Series) map[string]bool {
+	if !series.LockedFields.Valid {
+		return map[string]bool{}
+	}
+	return parseLockedFieldSet(series.LockedFields.String)
+}
+
+// parseLockedFieldSet 解析 locked_fields 的逗号分隔表示。
+// 单独抽出来是因为收件箱查询直接取的是 s.locked_fields 字符串（没有整行 Series）。
+func parseLockedFieldSet(raw string) map[string]bool {
 	locked := make(map[string]bool)
-	if series.LockedFields.Valid && series.LockedFields.String != "" {
-		for _, field := range strings.Split(series.LockedFields.String, ",") {
-			field = strings.TrimSpace(field)
-			if field != "" {
-				locked[field] = true
-			}
+	for _, field := range strings.Split(raw, ",") {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			locked[field] = true
 		}
 	}
 	return locked
@@ -351,7 +363,9 @@ func metadataSourceURL(providerName string, result *metadata.SeriesMetadata) str
 	return ""
 }
 
-func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, authors []database.Author, result *metadata.SeriesMetadata, providerName string) []metadataReviewFieldDraft {
+// metadataBuildFieldDrafts 产出可入队的字段提案，并返回「因锁定而被跳过」的字段数。
+// 后者用来把「全被锁住」与「本来就没差异」两种结果区分开。
+func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, authors []database.Author, result *metadata.SeriesMetadata, providerName string) ([]metadataReviewFieldDraft, int) {
 	locked := metadataLockedFieldSet(series)
 	currentTags := metadataJoinTags(tags)
 	proposedTags := metadataJoinProposedTags(result.Tags)
@@ -424,6 +438,7 @@ func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, autho
 	}
 
 	changes := make([]metadataReviewFieldDraft, 0, len(drafts))
+	lockedSkipped := 0
 	for _, draft := range drafts {
 		if draft.Proposed == "" {
 			continue
@@ -431,9 +446,20 @@ func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, autho
 		if strings.EqualFold(strings.TrimSpace(draft.Current), strings.TrimSpace(draft.Proposed)) {
 			continue
 		}
+		// 锁定字段不入队。此前它们照样进待审队列，用户在收件箱里看到一条带锁徽章的提案、
+		// 点「应用」，apply 又会把它静默跳过——一次什么也没发生的操作，却把整条 review 标成已应用。
+		//
+		// 这个判断必须排在上面两个 continue **之后**：放最前面的话，
+		// 「提案为空」或「与当前值完全相同」的锁定字段也会被算进 lockedSkipped，
+		// 于是一次「数据毫无差异、但恰好有个字段被锁」的刮削会报「差异字段均已被锁定」，
+		// 正好把要区分的两种语义搞反。lockedSkipped 只统计「不锁就会入队」的字段。
+		if draft.Locked {
+			lockedSkipped++
+			continue
+		}
 		changes = append(changes, draft)
 	}
-	return changes
+	return changes, lockedSkipped
 }
 
 func seriesText(value sql.NullString) string {
@@ -467,20 +493,25 @@ func metadataNumber(value float64) string {
 	return strconv.FormatFloat(value, 'f', 1, 64)
 }
 
-func metadataReviewFieldToView(field database.MetadataReviewField) metadataReviewFieldView {
+// metadataReviewFieldToView 把待审字段转成前端视图。
+//
+// lockedNow 是**当前**的锁定集。不能直接用行上的 field.Locked——那是入队瞬间的快照，
+// 「先入队、后加锁」的行 locked=false，于是 UI 上没有任何锁徽章，用户点了应用，
+// 该字段却被静默丢弃。锁定状态是系列的当前属性，展示时就该按当前值算。
+func metadataReviewFieldToView(field database.MetadataReviewField, lockedNow map[string]bool) metadataReviewFieldView {
 	return metadataReviewFieldView{
 		Name:       field.FieldName,
 		Label:      metadataFieldLabel(field.FieldName),
 		Current:    field.CurrentValue,
 		Proposed:   field.ProposedValue,
 		Confidence: field.Confidence,
-		Locked:     field.Locked,
+		Locked:     field.Locked || lockedNow[field.FieldName],
 		Source:     field.Source,
 		SourceURL:  field.SourceUrl,
 	}
 }
 
-func metadataReviewToView(review database.MetadataReview, fields []database.MetadataReviewField) metadataReviewView {
+func metadataReviewToView(review database.MetadataReview, fields []database.MetadataReviewField, lockedNow map[string]bool) metadataReviewView {
 	view := metadataReviewView{
 		ID:          review.ID,
 		SeriesID:    review.SeriesID,
@@ -505,12 +536,12 @@ func metadataReviewToView(review database.MetadataReview, fields []database.Meta
 		view.RejectedAt = &value
 	}
 	for _, field := range fields {
-		view.Fields = append(view.Fields, metadataReviewFieldToView(field))
+		view.Fields = append(view.Fields, metadataReviewFieldToView(field, lockedNow))
 	}
 	return view
 }
 
-func metadataReviewInboxRowToView(row database.ListPendingMetadataReviewInboxRow, fields []database.MetadataReviewField) metadataReviewInboxItemView {
+func metadataReviewInboxRowToView(row database.ListPendingMetadataReviewInboxRow, fields []database.MetadataReviewField, lockedNow map[string]bool) metadataReviewInboxItemView {
 	review := database.MetadataReview{
 		ID:          row.ID,
 		SeriesID:    row.SeriesID,
@@ -528,7 +559,7 @@ func metadataReviewInboxRowToView(row database.ListPendingMetadataReviewInboxRow
 		RejectedAt:  row.RejectedAt,
 	}
 	return metadataReviewInboxItemView{
-		metadataReviewView: metadataReviewToView(review, fields),
+		metadataReviewView: metadataReviewToView(review, fields, lockedNow),
 		LibraryID:          row.LibraryID,
 		LibraryName:        row.LibraryName,
 		SeriesName:         row.SeriesName,
@@ -616,9 +647,17 @@ func metadataReviewDraftSignature(changes []metadataReviewFieldDraft, sourceID i
 	return signature
 }
 
-func metadataReviewFieldsSignature(fields []database.MetadataReviewField, sourceID int64) map[string]string {
+// metadataReviewFieldsSignature 给已入库的待审字段算签名。
+//
+// locked 参数是**当前**的锁定集，不是行上那个入队瞬间的 Locked 快照：新一轮刮削产出的
+// changes 已经把当前锁定的字段筛掉了，这边若不同口径地筛，「入队后用户又加了锁」就会让
+// 两边签名永远对不上，于是每次刮削都为同一个系列再堆一条几乎相同的待审记录。
+func metadataReviewFieldsSignature(fields []database.MetadataReviewField, sourceID int64, locked map[string]bool) map[string]string {
 	signature := make(map[string]string, len(fields)+1)
 	for _, field := range fields {
+		if locked[field.FieldName] {
+			continue
+		}
 		signature[field.FieldName] = normalizeMetadataReviewValue(field.CurrentValue) + "\x00" + normalizeMetadataReviewValue(field.ProposedValue)
 	}
 	signature["\x00source_id"] = strconv.FormatInt(sourceID, 10)
@@ -657,21 +696,29 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 			return err
 		}
 
-		changes := metadataBuildFieldDrafts(series, tags, authors, result, providerName)
+		changes, lockedSkipped := metadataBuildFieldDrafts(series, tags, authors, result, providerName)
 		if len(changes) == 0 {
+			if lockedSkipped > 0 {
+				// 与「本来就没差异」区分开：这里是有差异但全被用户锁住了，
+				// 调用方该告诉用户「解锁后再试」，而不是「数据已是最新」。
+				return errAllFieldsLocked
+			}
 			return errNoMetadataChanges
 		}
+		lockedNow := metadataLockedFieldSet(series)
 		nextSignature := metadataReviewDraftSignature(changes, int64(result.SourceID))
 		pendingReviews, err := q.ListPendingMetadataReviewsBySeries(ctx, series.ID)
 		if err != nil {
 			return err
 		}
+		// ListPendingMetadataReviewsBySeries 带 ORDER BY confidence DESC, created_at DESC，
+		// 所以「多条历史记录过滤后签名相同」时复用哪一条是确定的：置信度最高、最新的那条。
 		for _, pendingReview := range pendingReviews {
 			fields, err := q.ListMetadataReviewFields(ctx, pendingReview.ID)
 			if err != nil {
 				return err
 			}
-			if metadataReviewSignaturesEqual(nextSignature, metadataReviewFieldsSignature(fields, pendingReview.SourceID)) {
+			if metadataReviewSignaturesEqual(nextSignature, metadataReviewFieldsSignature(fields, pendingReview.SourceID, lockedNow)) {
 				createdReview = pendingReview
 				createdFields = fields
 				isNew = false
@@ -728,6 +775,21 @@ func (c *Controller) applyReviewedMetadata(ctx context.Context, series database.
 	if len(fields) == 0 {
 		return errNoMetadataChanges
 	}
+	// 入队之后用户又给字段加了锁：applyMetadataToSeriesWithHook 内部本来就会跳过它们，
+	// 但那是静默的——整条 review 照样被标成 applied，用户看不出哪些提案没被写进去。
+	// 在这里先筛一遍，全被锁住时明确报 errAllFieldsLocked，让调用方给出可行动的提示。
+	lockedNow := metadataLockedFieldSet(series)
+	applicable := make([]database.MetadataReviewField, 0, len(fields))
+	for _, field := range fields {
+		if lockedNow[field.FieldName] {
+			continue
+		}
+		applicable = append(applicable, field)
+	}
+	if len(applicable) == 0 {
+		return errAllFieldsLocked
+	}
+	fields = applicable
 	metadataResult := &metadata.SeriesMetadata{
 		Provider:   review.Provider,
 		SourceID:   int(review.SourceID),
@@ -796,6 +858,13 @@ func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Req
 }
 
 func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int64) (metadataReviewResponse, error) {
+	// 取一次系列，用于按**当前**锁定集渲染字段的 locked 徽章（行上那个是入队瞬间的快照）。
+	series, err := c.store.GetSeries(ctx, seriesID)
+	if err != nil {
+		return metadataReviewResponse{}, err
+	}
+	lockedNow := metadataLockedFieldSet(series)
+
 	reviews, err := c.store.ListPendingMetadataReviewsBySeries(ctx, seriesID)
 	if err != nil {
 		return metadataReviewResponse{}, err
@@ -821,7 +890,7 @@ func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int6
 		if err != nil {
 			return metadataReviewResponse{}, err
 		}
-		payload.Reviews = append(payload.Reviews, metadataReviewToView(review, fields))
+		payload.Reviews = append(payload.Reviews, metadataReviewToView(review, fields, lockedNow))
 	}
 	for _, row := range provenanceRows {
 		payload.Provenance = append(payload.Provenance, provenanceToView(row))
@@ -901,7 +970,7 @@ func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	for _, row := range rows {
-		payload.Items = append(payload.Items, metadataReviewInboxRowToView(row, fieldsByReview[row.ID]))
+		payload.Items = append(payload.Items, metadataReviewInboxRowToView(row, fieldsByReview[row.ID], parseLockedFieldSet(row.SeriesLockedFields)))
 	}
 
 	jsonResponse(w, http.StatusOK, payload)
@@ -942,6 +1011,27 @@ func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request)
 			// 上面那次 pending 判断到写入之间被并发 apply/reject 抢先，元数据写入已整体撤销。
 			// 不回吐 series 快照：抢先者的结果才是准的，返回半新半旧的数据只会误导前端。
 			jsonError(w, http.StatusConflict, "Metadata review is not pending")
+			return
+		}
+		// 下面两种都是**良性结果**而非服务端故障，此前一律落 500，用户看到的是「服务器错误」。
+		// 返回 200 + applied:false + 具体 outcome，前端才能给出可行动的提示
+		//（「先解锁字段」还是「数据已是最新」）。review 保持 pending，不消费掉。
+		if errors.Is(err, errAllFieldsLocked) {
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"success": true,
+				"applied": false,
+				"outcome": "locked_skipped",
+				"review":  reviewID,
+			})
+			return
+		}
+		if errors.Is(err, errNoMetadataChanges) {
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"success": true,
+				"applied": false,
+				"outcome": "no_changes",
+				"review":  reviewID,
+			})
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "Failed to apply metadata review")
@@ -992,7 +1082,13 @@ func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Req
 			continue
 		}
 		if err := c.applyReviewedMetadata(r.Context(), series, review, fields); err != nil {
-			// 事务整体回滚。被并发抢先（errMetadataReviewNotPending）也归入 failed：
+			// 「全被锁住」与「无变更」是良性结果，落 Skipped 而不是 Failed——
+			// 前端把 Failed 当成出错来提示，会让用户以为系统坏了。
+			if errors.Is(err, errAllFieldsLocked) || errors.Is(err, errNoMetadataChanges) {
+				result.Skipped = append(result.Skipped, id)
+				continue
+			}
+			// 事务整体回滚。被并发抢先（errMetadataReviewNotPending）归入 failed：
 			// 状态由抢先者决定，这里不特判——metadataReviewBulkResponse 是前端既有契约，
 			// 不为此新增 conflict 桶。
 			result.Failed = append(result.Failed, id)

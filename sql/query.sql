@@ -410,6 +410,7 @@ SELECT
     l.name as library_name,
     s.name as series_name,
     COALESCE(s.title, '') as series_title,
+    COALESCE(s.locked_fields, '') as series_locked_fields,
     CAST(COALESCE((
         SELECT b.id
         FROM books b

@@ -4139,6 +4139,7 @@ SELECT
     l.name as library_name,
     s.name as series_name,
     COALESCE(s.title, '') as series_title,
+    COALESCE(s.locked_fields, '') as series_locked_fields,
     CAST(COALESCE((
         SELECT b.id
         FROM books b
@@ -4173,27 +4174,28 @@ type ListPendingMetadataReviewInboxParams struct {
 }
 
 type ListPendingMetadataReviewInboxRow struct {
-	ID               int64        `json:"id"`
-	SeriesID         int64        `json:"series_id"`
-	Provider         string       `json:"provider"`
-	SourceUrl        string       `json:"source_url"`
-	SourceID         int64        `json:"source_id"`
-	SourceQuery      string       `json:"source_query"`
-	Summary          string       `json:"summary"`
-	Confidence       float64      `json:"confidence"`
-	Status           string       `json:"status"`
-	RawPayload       string       `json:"raw_payload"`
-	CreatedAt        time.Time    `json:"created_at"`
-	UpdatedAt        time.Time    `json:"updated_at"`
-	AppliedAt        sql.NullTime `json:"applied_at"`
-	RejectedAt       sql.NullTime `json:"rejected_at"`
-	LibraryID        int64        `json:"library_id"`
-	LibraryName      string       `json:"library_name"`
-	SeriesName       string       `json:"series_name"`
-	SeriesTitle      string       `json:"series_title"`
-	CoverBookID      int64        `json:"cover_book_id"`
-	FieldCount       int64        `json:"field_count"`
-	LockedFieldCount int64        `json:"locked_field_count"`
+	ID                 int64        `json:"id"`
+	SeriesID           int64        `json:"series_id"`
+	Provider           string       `json:"provider"`
+	SourceUrl          string       `json:"source_url"`
+	SourceID           int64        `json:"source_id"`
+	SourceQuery        string       `json:"source_query"`
+	Summary            string       `json:"summary"`
+	Confidence         float64      `json:"confidence"`
+	Status             string       `json:"status"`
+	RawPayload         string       `json:"raw_payload"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+	AppliedAt          sql.NullTime `json:"applied_at"`
+	RejectedAt         sql.NullTime `json:"rejected_at"`
+	LibraryID          int64        `json:"library_id"`
+	LibraryName        string       `json:"library_name"`
+	SeriesName         string       `json:"series_name"`
+	SeriesTitle        string       `json:"series_title"`
+	SeriesLockedFields string       `json:"series_locked_fields"`
+	CoverBookID        int64        `json:"cover_book_id"`
+	FieldCount         int64        `json:"field_count"`
+	LockedFieldCount   int64        `json:"locked_field_count"`
 }
 
 func (q *Queries) ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error) {
@@ -4230,6 +4232,7 @@ func (q *Queries) ListPendingMetadataReviewInbox(ctx context.Context, arg ListPe
 			&i.LibraryName,
 			&i.SeriesName,
 			&i.SeriesTitle,
+			&i.SeriesLockedFields,
 			&i.CoverBookID,
 			&i.FieldCount,
 			&i.LockedFieldCount,
