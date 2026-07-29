@@ -4,7 +4,7 @@
  * 维护时应关注组件职责边界、可访问性、主题变量、加载态和不同页面的复用语义。
  */
 
-import { useEffect, useId, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -33,6 +33,11 @@ interface ModalShellProps {
   headerClassName?: string;
   footerClassName?: string;
 }
+
+// FOCUSABLE_SELECTOR 覆盖浏览器默认可聚焦的元素，外加显式 tabindex 的自定义控件。
+// 排除 tabindex="-1"：那是「可以用脚本聚焦、但不进 Tab 顺序」的约定。
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const sizeClassMap: Record<ModalSize, string> = {
   compact: 'max-w-lg',
@@ -64,6 +69,7 @@ export function ModalShell({
   const { t } = useI18n();
   const titleId = useId();
   const descriptionId = useId();
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -71,17 +77,65 @@ export function ModalShell({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
+    // 记住是谁打开的这个弹窗，关闭时把焦点还回去。
+    // 不还的话，键盘用户关掉弹窗后焦点回到 <body>，下一次 Tab 要从整页开头重新走一遍。
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    // 打开时把焦点移进弹窗。此前焦点仍留在背景里：读屏软件读的还是背后那一页，
+    // 键盘用户按 Tab 是在背景内容之间走，弹窗形同不存在。
+    const focusFirst = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const target = panel.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? panel;
+      target.focus();
+    };
+    // 等一帧：内容可能是异步渲染的（懒加载的表单、Suspense 边界）。
+    const raf = requestAnimationFrame(focusFirst);
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (closeOnEsc && event.key === 'Escape') {
         onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      // 焦点陷阱：aria-modal 只是告诉读屏软件「背景不可用」，浏览器的 Tab 顺序并不受它约束。
+      // 没有这段，Tab 会走出弹窗、落到背后那一页的链接上——视觉上被遮住，却仍然可聚焦、可点击。
+      const panel = panelRef.current;
+      if (!panel) return;
+      // 不用 offsetParent 过滤「不可见元素」：弹窗面板本身挂在 position: fixed 的容器里，
+      // 里面所有元素的 offsetParent 都是 null，那样过滤会把整个列表清空、陷阱直接失效。
+      // 隐藏元素靠 hidden 属性排除即可；disabled 已经在选择器里挡掉了。
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (el) => !el.hasAttribute('hidden'),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (event.shiftKey && (active === first || !panel.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !panel.contains(active))) {
+        event.preventDefault();
+        first.focus();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
 
     return () => {
+      cancelAnimationFrame(raf);
       document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
+      // 元素可能已随页面变化被卸载，isConnected 兜一下。
+      if (previouslyFocused && previouslyFocused.isConnected) {
+        previouslyFocused.focus();
+      }
     };
   }, [closeOnEsc, onClose, open]);
 
@@ -101,8 +155,10 @@ export function ModalShell({
         className={`relative flex min-h-full justify-center px-4 ${placement === 'top' ? 'items-start pt-[8vh] pb-6' : 'items-center py-4'}`}
       >
         <div
+          ref={panelRef}
           role="dialog"
           aria-modal="true"
+          tabIndex={-1}
           aria-labelledby={title ? titleId : undefined}
           aria-describedby={description ? descriptionId : undefined}
           onClick={(event) => event.stopPropagation()}
