@@ -8,6 +8,7 @@ import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../auth/AuthProvider';
+import { libraryFormPayload, useLibraryForm, type LibraryFormValues } from './layout/useLibraryForm';
 import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle, BarChart3 } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
@@ -36,6 +37,16 @@ interface ConfirmDialogState {
     tone?: 'primary' | 'warning' | 'danger';
     onConfirm: (() => Promise<void> | void) | null;
 }
+
+// EMPTY_LIBRARY_FORM 是「新增」弹窗的初始值，也是新增成功后重置回去的值。
+const EMPTY_LIBRARY_FORM: LibraryFormValues = {
+    name: '',
+    path: '',
+    scanMode: 'none',
+    koreaderSyncEnabled: true,
+    scanInterval: DEFAULT_SCAN_INTERVAL,
+    scanFormats: DEFAULT_SCAN_FORMATS,
+};
 
 export default function Layout() {
     // 资料库的增删改、扫描、AI 分组与系统设置在后端都是管理员专属（见 isRegularWritablePath：
@@ -87,24 +98,12 @@ export default function Layout() {
             return next;
         });
     };
-    const [newLibName, setNewLibName] = useState("");
-    const [newLibPath, setNewLibPath] = useState("");
-    const [newLibScanMode, setNewLibScanMode] = useState("none");
-    const [newLibKOReaderSyncEnabled, setNewLibKOReaderSyncEnabled] = useState(true);
-    const [newLibScanInterval, setNewLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
-    const [newLibScanFormats, setNewLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
-    const [adding, setAdding] = useState(false);
+    const addForm = useLibraryForm(EMPTY_LIBRARY_FORM);
 
     // 编辑资源库状态
     const [showEditModal, setShowEditModal] = useState(false);
     const [editLibId, setEditLibId] = useState("");
-    const [editLibName, setEditLibName] = useState("");
-    const [editLibPath, setEditLibPath] = useState("");
-    const [editLibScanMode, setEditLibScanMode] = useState("none");
-    const [editLibKOReaderSyncEnabled, setEditLibKOReaderSyncEnabled] = useState(true);
-    const [editLibScanInterval, setEditLibScanInterval] = useState(DEFAULT_SCAN_INTERVAL);
-    const [editLibScanFormats, setEditLibScanFormats] = useState(DEFAULT_SCAN_FORMATS);
-    const [editing, setEditing] = useState(false);
+    const editForm = useLibraryForm(EMPTY_LIBRARY_FORM);
 
     // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
     const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -155,12 +154,16 @@ export default function Layout() {
         const target = libraries.find((lib) => String(lib.id) === String(libraryId));
         if (!target) return;
         setEditLibId(String(target.id));
-        setEditLibName(target.name || "");
-        setEditLibPath(target.path || "");
-        setEditLibScanMode(target.scan_mode || "none");
-        setEditLibKOReaderSyncEnabled(target.koreader_sync_enabled ?? true);
-        setEditLibScanInterval(target.scan_interval || DEFAULT_SCAN_INTERVAL);
-        setEditLibScanFormats(target.scan_formats || supportedScanFormats);
+        editForm.reset({
+            name: target.name || "",
+            path: target.path || "",
+            scanMode: target.scan_mode || "none",
+            koreaderSyncEnabled: target.koreader_sync_enabled ?? true,
+            scanInterval: target.scan_interval || DEFAULT_SCAN_INTERVAL,
+            // 编辑弹窗的格式回落到**当前后端支持的集合**，而不是编译期常量：
+            // 老库行可能是空的，此时该给用户一个可用的默认值。
+            scanFormats: target.scan_formats || supportedScanFormats,
+        });
         setShowEditModal(true);
     };
 
@@ -256,8 +259,10 @@ export default function Layout() {
             .then((res) => {
                 if (res.data?.default_scan_formats) {
                     setSupportedScanFormats(res.data.default_scan_formats);
-                    setNewLibScanFormats(res.data.default_scan_formats);
-                    setEditLibScanFormats(res.data.default_scan_formats);
+                    // 两张表单的格式都跟着后端声明的默认集合走（保持原行为）。
+                    // 这个效应只在挂载时跑一次，用户还来不及输入，覆盖是安全的。
+                    addForm.setScanFormats(res.data.default_scan_formats);
+                    editForm.setScanFormats(res.data.default_scan_formats);
                 }
             })
             .catch(() => { });
@@ -311,54 +316,39 @@ export default function Layout() {
 
     const handleAddLibrary = async (e: React.FormEvent) => {
         e.preventDefault();
-        setAdding(true);
+        addForm.setSubmitting(true);
         try {
-            await apiClient.post('/api/libraries', {
-                name: newLibName,
-                path: newLibPath,
-                scan_mode: newLibScanMode,
-                koreader_sync_enabled: newLibKOReaderSyncEnabled,
-                scan_interval: newLibScanInterval,
-                scan_formats: newLibScanFormats
-            });
+            await apiClient.post('/api/libraries', libraryFormPayload(addForm.values));
             setShowAddModal(false);
-            setNewLibName("");
-            setNewLibPath("");
-            setNewLibScanMode("none");
-            setNewLibKOReaderSyncEnabled(true);
-            setNewLibScanInterval(DEFAULT_SCAN_INTERVAL);
-            setNewLibScanFormats(DEFAULT_SCAN_FORMATS);
-            saveRecentLibraryPath(newLibPath);
+            // 新增成功后清空表单：下次点「新增」应当是一张白纸。
+            // 编辑不做这一步——那份值就是这个库的当前配置，留着才对。
+            addForm.reset(EMPTY_LIBRARY_FORM);
+            saveRecentLibraryPath(addForm.values.path);
             fetchLibraries();
+            // 只有新增会拨 refreshTrigger：新库需要让各处的列表重新拉一遍；
+            // 编辑改的是已有库的配置，不涉及集合变化。
             setRefreshTrigger(prev => prev + 1);
         } catch (error) {
             console.error(error);
             showToast(extractErrorMessage(error, t('layout.toast.addLibraryFailed')), 'error');
         } finally {
-            setAdding(false);
+            addForm.setSubmitting(false);
         }
     };
 
     const handleEditLibrarySubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setEditing(true);
+        editForm.setSubmitting(true);
         try {
-            await apiClient.put(`/api/libraries/${editLibId}`, {
-                name: editLibName,
-                path: editLibPath,
-                scan_mode: editLibScanMode,
-                koreader_sync_enabled: editLibKOReaderSyncEnabled,
-                scan_interval: editLibScanInterval,
-                scan_formats: editLibScanFormats
-            });
+            await apiClient.put(`/api/libraries/${editLibId}`, libraryFormPayload(editForm.values));
             setShowEditModal(false);
-            saveRecentLibraryPath(editLibPath);
+            saveRecentLibraryPath(editForm.values.path);
             fetchLibraries();
         } catch (error) {
             console.error(error);
             showToast(extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
         } finally {
-            setEditing(false);
+            editForm.setSubmitting(false);
         }
     };
 
@@ -916,13 +906,7 @@ export default function Layout() {
                         submitLabel={t('layout.libraryModal.addSubmit')}
                         submittingLabel={t('layout.libraryModal.addSubmitting')}
                         open={showAddModal}
-                        name={newLibName}
-                        path={newLibPath}
-                        scanMode={newLibScanMode}
-                        koreaderSyncEnabled={newLibKOReaderSyncEnabled}
-                        scanInterval={newLibScanInterval}
-                        scanFormats={newLibScanFormats}
-                        submitting={adding}
+                        {...addForm.bindings}
                         browsing={browsing}
                         browseCurrent={browseCurrent}
                         browseParent={browseParent}
@@ -932,16 +916,10 @@ export default function Layout() {
                         supportedScanFormats={supportedScanFormats}
                         onClose={() => setShowAddModal(false)}
                         onSubmit={handleAddLibrary}
-                        onNameChange={setNewLibName}
-                        onPathChange={setNewLibPath}
-                        onScanModeChange={setNewLibScanMode}
-                        onKOReaderSyncEnabledChange={setNewLibKOReaderSyncEnabled}
-                        onScanIntervalChange={setNewLibScanInterval}
-                        onScanFormatsChange={setNewLibScanFormats}
                         onOpenDirectoryBrowser={openDirectoryBrowser}
                         onCloseDirectoryBrowser={() => setBrowsing(false)}
                         onChooseCurrentDirectory={() => {
-                            setNewLibPath(browseCurrent);
+                            addForm.setPath(browseCurrent);
                             setBrowsing(false);
                         }}
                         onNavigateDirectory={navigateDirectoryBrowser}
@@ -952,13 +930,7 @@ export default function Layout() {
                         submitLabel={t('layout.libraryModal.editSubmit')}
                         submittingLabel={t('layout.libraryModal.editSubmitting')}
                         open={showEditModal}
-                        name={editLibName}
-                        path={editLibPath}
-                        scanMode={editLibScanMode}
-                        koreaderSyncEnabled={editLibKOReaderSyncEnabled}
-                        scanInterval={editLibScanInterval}
-                        scanFormats={editLibScanFormats}
-                        submitting={editing}
+                        {...editForm.bindings}
                         browsing={browsing}
                         browseCurrent={browseCurrent}
                         browseParent={browseParent}
@@ -968,16 +940,10 @@ export default function Layout() {
                         supportedScanFormats={supportedScanFormats}
                         onClose={() => setShowEditModal(false)}
                         onSubmit={handleEditLibrarySubmit}
-                        onNameChange={setEditLibName}
-                        onPathChange={setEditLibPath}
-                        onScanModeChange={setEditLibScanMode}
-                        onKOReaderSyncEnabledChange={setEditLibKOReaderSyncEnabled}
-                        onScanIntervalChange={setEditLibScanInterval}
-                        onScanFormatsChange={setEditLibScanFormats}
                         onOpenDirectoryBrowser={openDirectoryBrowser}
                         onCloseDirectoryBrowser={() => setBrowsing(false)}
                         onChooseCurrentDirectory={() => {
-                            setEditLibPath(browseCurrent);
+                            editForm.setPath(browseCurrent);
                             setBrowsing(false);
                         }}
                         onNavigateDirectory={navigateDirectoryBrowser}
