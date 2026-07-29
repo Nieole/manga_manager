@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 
+import { useAuth } from '../../auth/AuthProvider';
 import AddToCollectionModal from '../../components/AddToCollectionModal';
 import BulkEditSeriesModal from '../../components/BulkEditSeriesModal';
 import { useToast } from '../../components/ToastProvider';
@@ -42,6 +43,7 @@ export default function LibraryPage() {
   const { libId } = useParams<{ libId: string }>();
   const { showToast } = useToast();
   const { t } = useI18n();
+  const { isAdmin } = useAuth();
   const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
 
   // 资料库页面的筛选状态需要同时满足三件事：URL 可回放、后端查询可复现、浏览器刷新后用户选择不丢失。
@@ -298,6 +300,7 @@ export default function LibraryPage() {
         searchValue={keyword}
         searchInputRef={searchInputRef}
         externalSessionActive={Boolean(externalLib.externalSession)}
+        canUseExternal={isAdmin}
         viewMode={viewMode}
         onSearchChange={setKeyword}
         onToggleSelectionMode={selection.toggleSelectionMode}

@@ -83,13 +83,18 @@ func TestAdminOnlyPathsIncludeBrowseDirs(t *testing.T) {
 		"/api/system/config",
 		"/api/users",
 		"/api/users/3",
+		// 外部库会话：读侧此前落在「读方法一律放行」分支里，普通账号能拿到
+		// 带服务器绝对路径的会话快照。这是 isAdminOnlyPath 唯一的单元级守卫。
+		"/api/libraries/1/external-libraries/session/1-2",
+		"/api/libraries/1/external-libraries/scan",
 	}
 	for _, p := range adminOnly {
 		if !isAdminOnlyPath(p) {
 			t.Fatalf("%s must be admin-only", p)
 		}
 	}
-	for _, p := range []string{"/api/libraries", "/api/series/search", "/api/books/1/progress"} {
+	// 注意规则用的是带斜杠的 "/api/libraries/" 前缀，"/api/libraries" 本身不受影响。
+	for _, p := range []string{"/api/libraries", "/api/libraries/1", "/api/series/search", "/api/books/1/progress"} {
 		if isAdminOnlyPath(p) {
 			t.Fatalf("%s should not be admin-only", p)
 		}

@@ -309,6 +309,13 @@ func isAdminOnlyPath(p string) bool {
 	if p == "/api/users" || strings.HasPrefix(p, "/api/users/") {
 		return true
 	}
+	// 外部库会话：读写鉴权此前不对称。POST 因为是改写方法被挡在管理员之外，
+	// 而 GET 落进「读方法一律放行」分支——任意已登录的普通账号都能拿到会话快照，
+	// 里面带着服务器上的**绝对路径**（external_path 与 library_path）。
+	// 外部库传输本身是纯管理员功能，读侧没有理由比写侧宽。
+	if strings.HasPrefix(p, "/api/libraries/") && strings.Contains(p, "/external-libraries/") {
+		return true
+	}
 	return p == "/api/browse-dirs"
 }
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -21,7 +22,36 @@ import (
 var (
 	ErrSessionNotFound = errors.New("external session not found")
 	ErrSessionNotReady = errors.New("external session not ready")
+	// ErrExternalPathInvalid 表示外部路径不是一个可用的绝对目录。
+	ErrExternalPathInvalid = errors.New("external path must be an absolute directory")
+	// ErrExternalPathInsideLibrary 表示外部路径与资料库根目录重叠。
+	// 往库内传输会让下一次扫描把这些副本收编成重复书籍，用户还得手动去重。
+	ErrExternalPathInsideLibrary = errors.New("external path overlaps the library root")
 )
+
+// pathsOverlap 报告两个路径是否有包含关系（含相等）。
+//
+// 与 scanner 的 pathUnderRoot 同口径：用 filepath.Rel 而不是补分隔符再 HasPrefix，
+// 顺带处理了 . 与 .. 的规范化；Windows 上文件系统大小写不敏感，先归一化再比。
+func pathsOverlap(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		a = strings.ToLower(a)
+		b = strings.ToLower(b)
+	}
+	if a == b {
+		return true
+	}
+	for _, pair := range [2][2]string{{a, b}, {b, a}} {
+		rel, err := filepath.Rel(pair[1], pair[0])
+		if err != nil {
+			continue
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
 
 type SessionSnapshot struct {
 	SessionID       string    `json:"session_id"`
@@ -109,12 +139,34 @@ func (m *Manager) CreateSession(ctx context.Context, libraryID int64, externalPa
 		return SessionSnapshot{}, err
 	}
 
+	// 必须是绝对路径。相对路径会被静默解释成**服务进程的工作目录**——用户以为传到了
+	// 外接盘，实际写进了服务的运行目录。filepath.Abs 帮不上忙：它只是把 "." 拼上 CWD
+	// 之后返回一个完全合法的目录，错误就此变得不可见。
+	if !filepath.IsAbs(externalPath) {
+		return SessionSnapshot{}, ErrExternalPathInvalid
+	}
+	externalPath = filepath.Clean(externalPath)
+
+	// 拒掉 POSIX 根：拿 "/" 当外部库会去遍历整个文件系统。
+	// VolumeName 的判断是为了放过 Windows 的 D:\ 与 \\server\share\——
+	// 「整块外接盘 / NAS 根目录当外部库」正是这个功能的头号用法，误杀它才是回归。
+	if filepath.Dir(externalPath) == externalPath && filepath.VolumeName(externalPath) == "" {
+		return SessionSnapshot{}, ErrExternalPathInvalid
+	}
+
 	info, err := os.Stat(externalPath)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
 	if !info.IsDir() {
 		return SessionSnapshot{}, fmt.Errorf("external path is not a directory")
+	}
+
+	// 外部路径与库根重叠时，传输产生的副本会被下一次扫描收编成重复书籍，用户还得手动去重。
+	// 注意这里只挡**本库**：external_path 指向另一个资料库根时后果一模一样，但那需要
+	// 拉全部库列表，留作后续（此处不假装已经全堵住）。
+	if pathsOverlap(externalPath, filepath.Clean(lib.Path)) {
+		return SessionSnapshot{}, ErrExternalPathInsideLibrary
 	}
 
 	now := time.Now()
