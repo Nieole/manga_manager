@@ -347,6 +347,13 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	return taskKey, true
 }
 
+// copyFileToExternalLibrary 把一本书拷到外部库，返回「目标是否已存在（跳过）」。
+//
+// 必须先写同目录临时文件再 rename，不能直接往最终路径写。外部库传输的目的地通常是
+// USB/SD 外接盘，单本几百 MB、整个系列要跑几十分钟；直接写最终路径时，进程被强杀
+// 或外接盘中途掉线就会留下一个截断的 .cbz。而后续两处「已存在」的判定——本函数开头的
+// os.Stat，以及 external/manager.go 里按扩展名列举归档——都**只看路径不看内容**，
+// 于是这本坏书在阅读器上永远打不开，重传多少次都会被当成「已经有了」而跳过。
 func copyFileToExternalLibrary(src, dst string, createdDirs map[string]struct{}) (bool, error) {
 	if createdDirs == nil {
 		createdDirs = make(map[string]struct{})
@@ -375,27 +382,55 @@ func copyFileToExternalLibrary(src, dst string, createdDirs map[string]struct{})
 		return false, err
 	}
 
-	targetFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	// 临时文件名与源文件名无关，是刻意的：漫画文件名最容易逼近 NAME_MAX（255 字节，
+	// 中文名 UTF-8 每字 3 字节只够约 85 字），把原名嵌进 pattern 再加随机后缀会让一批
+	// 今天能正常传输的书直接报 "file name too long"。与 comicinfo 写回同款定长 pattern。
+	targetFile, err := os.CreateTemp(parentDir, ".mm-transfer-*.tmp")
 	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return true, nil
-		}
 		return false, err
 	}
+	tmpName := targetFile.Name()
+	committed := false
 	defer func() {
+		if committed {
+			return
+		}
 		_ = targetFile.Close()
+		_ = os.Remove(tmpName)
 	}()
 
 	bufPtr := transferCopyBufferPool.Get().(*[]byte)
 	defer transferCopyBufferPool.Put(bufPtr)
 
 	if _, err := io.CopyBuffer(targetFile, sourceFile, *bufPtr); err != nil {
-		_ = os.Remove(dst)
+		return false, err
+	}
+	// Sync 之后再 rename：外接盘掉电时，只有落盘的数据才谈得上「原子替换」。
+	if err := targetFile.Sync(); err != nil {
 		return false, err
 	}
 	if err := targetFile.Close(); err != nil {
 		return false, err
 	}
-
-	return false, os.Chtimes(dst, info.ModTime(), info.ModTime())
+	// os.CreateTemp 建的是 0600，尽力放宽到 0644。用 _ = 忽略错误是有意的：
+	// 目的地常是 exFAT/FAT32/网络挂载，chmod 在那里要么是 no-op 要么直接 ENOTSUP，
+	// 为一个在该文件系统上根本没有意义的权限位让整本书传输失败不划算。
+	_ = os.Chmod(tmpName, 0o644)
+	// mtime 在 rename 之前设：os.Rename 不改 mtime，而 rename 之后目标已对外可见，
+	// 此时再改属性等于让别人看到一个属性还没定型的文件。
+	if err := os.Chtimes(tmpName, info.ModTime(), info.ModTime()); err != nil {
+		return false, err
+	}
+	// rename 前再确认一次目标不存在。开头那次 Stat 到这里隔了整个拷贝过程（可能几分钟），
+	// 期间别的传输任务完全可能已经把同一本书放好了；rename 会无声覆盖，那才是真的丢数据。
+	if _, err := os.Stat(dst); err == nil {
+		return true, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return false, err
+	}
+	committed = true
+	return false, nil
 }
