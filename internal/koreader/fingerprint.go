@@ -5,6 +5,7 @@
 package koreader
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
@@ -33,7 +34,17 @@ func IsValidSyncKey(raw string) bool {
 	return syncKeyPattern.MatchString(NormalizeSyncKey(raw))
 }
 
+// FingerprintFile 计算整个文件的 md5。
+//
+// 仅供无长任务上下文的调用方使用；扫描/重建索引这类可被取消的批量路径请用
+// FingerprintFileContext——它们一本可能有几个 GB，读完一遍要几十秒，
+// 期间取消信号完全传不进来，任务面板上的「取消」会像是没反应。
 func FingerprintFile(path string) (string, error) {
+	return FingerprintFileContext(context.Background(), path)
+}
+
+// FingerprintFileContext 与 FingerprintFile 相同，但整文件读取可被 ctx 打断。
+func FingerprintFileContext(ctx context.Context, path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -41,10 +52,26 @@ func FingerprintFile(path string) (string, error) {
 	defer f.Close()
 
 	h := md5.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, &contextReader{ctx: ctx, r: f}); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// contextReader 在每次 Read 前检查取消。
+//
+// 只实现 Read（不透传 WriteTo/ReadFrom）是刻意的：那些快路径会把整段拷贝下沉到内核，
+// 中途就再没有检查取消的机会了。代价是 io.Copy 的 32KiB 缓冲——取消后最多再多读一块。
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *contextReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 func FingerprintQuickFile(path string) (string, error) {

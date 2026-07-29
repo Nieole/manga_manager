@@ -390,7 +390,7 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 			}
 			params := database.UpdateBookIdentityParams{ID: book.ID}
 			if matchConfig.MatchMode == config.KOReaderMatchModeBinaryHash {
-				fileHash, err := FingerprintFile(book.Path)
+				fileHash, err := FingerprintFileContext(ctx, book.Path)
 				if err != nil {
 					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
 					afterID = book.ID

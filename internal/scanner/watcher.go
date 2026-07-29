@@ -7,6 +7,7 @@ package scanner
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -393,7 +394,7 @@ func (fw *FileWatcher) watchRecursive(root string) WatchReport {
 		}
 	}
 
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	_ = walkDirFollowingSymlinks(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if d == nil {
 				// 连根都 lstat 不了，这一趟什么也没遍历到。
@@ -411,16 +412,15 @@ func (fw *FileWatcher) watchRecursive(root string) WatchReport {
 			return filepath.SkipDir // 跳过这一棵，继续走兄弟目录
 		}
 		if !d.IsDir() {
-			// WalkDir 用 lstat，所以「指向目录的软链」在这里就静静溜走了，
-			// 根本进不到下面的注册流程。记一笔让运维看得见这棵子树没被监听。
-			if d.Type()&os.ModeSymlink != 0 {
-				if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-					report.SymlinkDirs++
-				}
-			}
 			return nil
 		}
 		report.Total++
+		// 软链目录是被 walkDirFollowingSymlinks 跟进来的（链接路径这一侧）。
+		// 单独记一笔：inotify/kqueue 注册的是链接解析后的真实目录，
+		// 事件名却挂在链接路径下，出问题时这个数字能省掉一轮排查。
+		if lst, lerr := os.Lstat(path); lerr == nil && lst.Mode()&os.ModeSymlink != 0 {
+			report.SymlinkDirs++
+		}
 
 		fw.mu.Lock()
 		_, exists := fw.watched[path]

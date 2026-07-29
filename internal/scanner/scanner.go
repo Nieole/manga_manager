@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -541,7 +542,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	// WalkDir 只负责识别候选漫画归档并投递任务，不打开归档内容，确保发现阶段可以快速响应暂停和取消。
 	var walkErr error
 	progress.publish("discovering", rootPath, true)
-	walkErr = filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
+	walkErr = walkDirFollowingSymlinks(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
@@ -677,7 +678,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 
 	var walkErr error
 	progress.publish("discovering", series.Path, true)
-	walkErr = filepath.WalkDir(series.Path, func(path string, d os.DirEntry, err error) error {
+	walkErr = walkDirFollowingSymlinks(series.Path, func(path string, d fs.DirEntry, err error) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
@@ -1131,7 +1132,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		if metrics != nil && paused > 0 {
 			metrics.pausedMillis.Add(paused.Milliseconds())
 		}
-		fileHash, err = koreader.FingerprintFile(job.path)
+		fileHash, err = koreader.FingerprintFileContext(ctx, job.path)
 		releaseToken()
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)

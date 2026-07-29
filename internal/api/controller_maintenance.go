@@ -482,7 +482,7 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 			}
 			metrics.StorageProfile = policy.StorageProfile
 			metrics.VolumeKey = policy.VolumeKey
-			fileHash, err := koreader.FingerprintFile(book.Path)
+			fileHash, err := koreader.FingerprintFileContext(ctx, book.Path)
 			releaseToken()
 			metrics.HashedFiles++
 			if err != nil {

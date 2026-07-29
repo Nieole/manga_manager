@@ -5,6 +5,8 @@
 package koreader
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,5 +64,38 @@ func TestFingerprintQuickFileSmallFiles(t *testing.T) {
 		if h1 == "" || h1 != h2 {
 			t.Fatalf("%s: expected stable non-empty hash, got %q / %q", tc.name, h1, h2)
 		}
+	}
+}
+
+// TestFingerprintFileContextStopsOnCancel 守卫「整文件哈希可被取消」。
+//
+// 一本几 GB 的 CBR 读完一遍要几十秒，期间取消信号完全传不进来，
+// 任务面板上的「取消」会像是没反应——重建 KOReader 索引与 identity 档位扫描都走这条路径。
+func TestFingerprintFileContextStopsOnCancel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.cbz")
+	// 要明显大过 io.Copy 的 32KiB 缓冲，否则一次 Read 就读完了，取消检查根本没机会介入。
+	if err := os.WriteFile(path, make([]byte, 4<<20), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := FingerprintFileContext(ctx, path); !errors.Is(err, context.Canceled) {
+		t.Fatalf("已取消的 ctx 返回 %v，期望 context.Canceled —— 取消打不断整文件读取", err)
+	}
+
+	// 未取消时结果必须与不带 ctx 的版本逐字相同：指纹是 KOReader 匹配的主键，
+	// 变了就等于全库进度重新对不上。
+	want, err := FingerprintFile(path)
+	if err != nil {
+		t.Fatalf("FingerprintFile: %v", err)
+	}
+	got, err := FingerprintFileContext(context.Background(), path)
+	if err != nil {
+		t.Fatalf("FingerprintFileContext: %v", err)
+	}
+	if got != want {
+		t.Fatalf("带 ctx 的指纹 %q 与原实现 %q 不一致 —— 全库 KOReader 进度会重新对不上", got, want)
 	}
 }
