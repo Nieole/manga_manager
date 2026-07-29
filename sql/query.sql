@@ -1680,3 +1680,6 @@ WHERE s1.library_id = ? OR s2.library_id = ?;
 
 -- name: DeleteFranchiseCollections :exec
 DELETE FROM collections WHERE source_type = 'system_franchise';
+
+-- name: DeleteMetadataReviewField :exec
+DELETE FROM metadata_review_fields WHERE review_id = ? AND field_name = ?;

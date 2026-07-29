@@ -57,6 +57,7 @@ type Querier interface {
 	DeleteCollection(ctx context.Context, id int64) (int64, error)
 	DeleteFranchiseCollections(ctx context.Context) error
 	DeleteLibrary(ctx context.Context, id int64) error
+	DeleteMetadataReviewField(ctx context.Context, arg DeleteMetadataReviewFieldParams) error
 	DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error)
 	DeleteReadingList(ctx context.Context, id int64) (int64, error)
 	DeleteSeries(ctx context.Context, id int64) error

@@ -18,9 +18,14 @@
 - **补齐 reject 的 pending 守卫，并把守卫下沉到 SQL**：四条终态推进路径里只有单条 reject 漏了检查，于是一条已 applied 的审核可以被改成 rejected；而 SQL 里 `applied_at`/`rejected_at` 是「CASE … ELSE 保留旧值」的累加写法，结果是同一行同时带两个终态时间戳，`series_metadata_provenance` 还指着它——审计链变成「系列的元数据来自一条已被拒绝的审核」。守卫改为 `ResolvePendingMetadataReview` 的 `AND lower(status) = 'pending'`，影响行数为 0 即冲突，同时堵住了「HTTP 层读到 pending → 写入」之间的 TOCTOU 窗口。**对外行为变更**：重复 reject / 对终态 review 操作由 200 变为 **409**。
 - **删除死列 `metadata_review_fields.status`**：唯一写入点硬编码 `'pending'`，全仓无 UPDATE/DELETE，且两条把字段送到前端的读路径都只查 pending review——写进别的值也永远读不出来。字段级的应用结果本就由 `series_metadata_provenance` 承担，留着只会成为第二真相源。迁移里以 `PRAGMA table_info` 探测后 `DROP COLUMN`（本身不幂等），API 响应 `fields[]` 随之少一个恒为 `"pending"` 的 key。**升级后不可回滚到本版之前的二进制**（旧版 SELECT/INSERT 显式带该列）。
 
+- **部分应用不再让提案永久消失**：bulk-apply 的默认 `fill_empty` 模式只写「当前值为空」的字段，却把**整条**审核标成已应用，而收件箱只查 pending——被筛掉的提案从此在界面上彻底消失，用户想应用它只能重新刮削一遍。单条 apply 遇到部分锁定字段时同理。现在只有全部提案都处理完才关单；否则删掉已写入的字段行，让审核带着剩下的提案继续待处理。删行而非留着，是因为已应用字段的 `current_value` 已经过时，留下会在收件箱里陈列一个「当前值 == 提案值」的假差异。批量响应新增 `partial` 桶（与 `applied` 分开：这些条目还留在收件箱里）。
+- **锁定字段不再入队与静默丢弃**：字段锁的语义是「这个值我手动定过，别让刮削覆盖」，但此前它只在写入的最后一步生效。锁定字段照样入队为待审提案，用户点「应用」后被静默跳过，整条审核却算已应用。现在入队侧直接跳过；展示侧的锁徽章改为按**当前** `locked_fields` 判定（行上那个是入队瞬间的快照，「先入队、后加锁」的字段在界面上没有任何标记）；应用侧全被锁时明确报「差异字段均已锁定」且**不消费**该审核。
+- **良性结果不再报 500**：「差异字段均已锁定」与「无变更」此前一律返回 HTTP 500，用户看到的是「服务器错误」。现在返回 200 + `applied:false` + 具体 `outcome`，批量侧从 `failed` 改落 `skipped`。
+- **接上未匹配 KOReader 计数**：`/api/reviews/inbox/summary` 的 `koreader_unmatched` 恒为 0，导致设置页显示「未匹配 N 条」而审核中心显示 0。只按 KOReader 是否启用门控（与健康报告同口径），且**刻意不并入 `total`**——它没有逐条 apply/reject 的状态机，混进去会让首页的待审核横幅常亮且点进去无事可做。
+
 #### 验证
 - 新增扫描器/监听器用例：格式过滤（含维护扫描不过滤）、路径归属与嵌套库、停机取消与等待、递归注册容错与记账契约、软链跟进/防环/断链、`CleanupLibrary` 的两道防误删闸门（库根不可达、待删占比熔断）与取消早退、watcher 事件循环端到端。
-- 新增审核用例：终态守卫（6 个 table-driven 分支 + 时间戳不变量）、TOCTOU 陈旧快照、迁移删列的存量库/幂等/全新库三态。
+- 新增审核用例：终态守卫（6 个 table-driven 分支 + 时间戳不变量）、TOCTOU 陈旧快照、迁移删列的存量库/幂等/全新库三态、锁定字段全链路（入队/展示/应用/去重签名）、部分应用保留剩余提案与二次应用关单。
 - 全部高危修复均已反向验证（回退修复后用例变红）。`go build/vet/test ./...`、`-race`、`golangci-lint`（0 issues）、sqlc 与 tsgen 漂移检查、前端 lint/tsc/test 全绿。
 
 ---

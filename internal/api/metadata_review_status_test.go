@@ -215,7 +215,7 @@ func TestApplyReviewedMetadataRejectsStaleSnapshot(t *testing.T) {
 	}
 
 	// review 仍是事务外读到的那份 pending 快照。
-	err = controller.applyReviewedMetadata(ctx, series, review, fields)
+	_, err = controller.applyReviewedMetadata(ctx, series, review, fields, fields)
 	if !errors.Is(err, errMetadataReviewNotPending) {
 		t.Fatalf("applyReviewedMetadata 返回 %v，期望 errMetadataReviewNotPending —— "+
 			"事务外的 pending 判断是可以过期的，守卫必须在事务内的 SQL 上", err)

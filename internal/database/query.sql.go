@@ -885,6 +885,20 @@ func (q *Queries) DeleteLibrary(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteMetadataReviewField = `-- name: DeleteMetadataReviewField :exec
+DELETE FROM metadata_review_fields WHERE review_id = ? AND field_name = ?
+`
+
+type DeleteMetadataReviewFieldParams struct {
+	ReviewID  int64  `json:"review_id"`
+	FieldName string `json:"field_name"`
+}
+
+func (q *Queries) DeleteMetadataReviewField(ctx context.Context, arg DeleteMetadataReviewFieldParams) error {
+	_, err := q.db.ExecContext(ctx, deleteMetadataReviewField, arg.ReviewID, arg.FieldName)
+	return err
+}
+
 const deleteReadingBookmark = `-- name: DeleteReadingBookmark :execrows
 DELETE FROM reading_bookmarks
 WHERE id = ? AND user_id = ? AND book_id = ?

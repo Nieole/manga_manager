@@ -4054,7 +4054,10 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 	if err := json.NewDecoder(applyRec.Body).Decode(&applyResp); err != nil {
 		t.Fatalf("decode bulk apply failed: %v", err)
 	}
-	if len(applyResp.Applied) != 1 || len(applyResp.Failed) != 0 {
+	// fill_empty 只写「当前值为空」的字段，title 被筛掉了。整条 review 因此**不能**关单
+	// ——收件箱只查 pending，关单等于把没应用的 title 提案永久抹掉。落 Partial 桶：
+	// 它还留在收件箱里等着处理，报成 Applied 会让用户以为已经处理完了。
+	if len(applyResp.Partial) != 1 || len(applyResp.Applied) != 0 || len(applyResp.Failed) != 0 {
 		t.Fatalf("unexpected bulk apply response: %+v", applyResp)
 	}
 
