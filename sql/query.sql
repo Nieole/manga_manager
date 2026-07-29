@@ -1683,3 +1683,14 @@ DELETE FROM collections WHERE source_type = 'system_franchise';
 
 -- name: DeleteMetadataReviewField :exec
 DELETE FROM metadata_review_fields WHERE review_id = ? AND field_name = ?;
+
+-- name: ListRecentRejectedMetadataReviewsBySeries :many
+SELECT * FROM metadata_reviews
+WHERE series_id = ? AND status = 'rejected'
+ORDER BY rejected_at DESC, id DESC
+LIMIT ?;
+
+-- name: ListAIGroupingReviewCollectionsByReviews :many
+SELECT * FROM ai_grouping_review_collections
+WHERE review_id IN (sqlc.slice('review_ids'))
+ORDER BY review_id ASC, id ASC;

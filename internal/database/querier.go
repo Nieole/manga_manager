@@ -108,6 +108,7 @@ type Querier interface {
 	LinkSeriesLink(ctx context.Context, arg LinkSeriesLinkParams) (SeriesLink, error)
 	LinkSeriesTag(ctx context.Context, arg LinkSeriesTagParams) error
 	ListAIGroupingReviewCollections(ctx context.Context, reviewID int64) ([]AiGroupingReviewCollection, error)
+	ListAIGroupingReviewCollectionsByReviews(ctx context.Context, reviewIds []int64) ([]AiGroupingReviewCollection, error)
 	ListAIGroupingReviews(ctx context.Context, arg ListAIGroupingReviewsParams) ([]ListAIGroupingReviewsRow, error)
 	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)
@@ -139,6 +140,7 @@ type Querier interface {
 	ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error)
 	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)
 	ListRecentAddedSeries(ctx context.Context, arg ListRecentAddedSeriesParams) ([]ListRecentAddedSeriesRow, error)
+	ListRecentRejectedMetadataReviewsBySeries(ctx context.Context, arg ListRecentRejectedMetadataReviewsBySeriesParams) ([]MetadataReview, error)
 	ListReverseSeriesRelations(ctx context.Context, targetSeriesID int64) ([]ListReverseSeriesRelationsRow, error)
 	ListSeriesByLibrary(ctx context.Context, libraryID int64) ([]ListSeriesByLibraryRow, error)
 	// Same series columns as ListSeriesByLibrary but WITHOUT the per-row correlated cover subquery,

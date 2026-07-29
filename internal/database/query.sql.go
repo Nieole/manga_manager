@@ -2659,6 +2659,56 @@ func (q *Queries) ListAIGroupingReviewCollections(ctx context.Context, reviewID 
 	return items, nil
 }
 
+const listAIGroupingReviewCollectionsByReviews = `-- name: ListAIGroupingReviewCollectionsByReviews :many
+SELECT id, review_id, name, description, series_ids, series_count, status, created_collection_id, created_at, updated_at FROM ai_grouping_review_collections
+WHERE review_id IN (/*SLICE:review_ids*/?)
+ORDER BY review_id ASC, id ASC
+`
+
+func (q *Queries) ListAIGroupingReviewCollectionsByReviews(ctx context.Context, reviewIds []int64) ([]AiGroupingReviewCollection, error) {
+	query := listAIGroupingReviewCollectionsByReviews
+	var queryParams []interface{}
+	if len(reviewIds) > 0 {
+		for _, v := range reviewIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:review_ids*/?", strings.Repeat(",?", len(reviewIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:review_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AiGroupingReviewCollection
+	for rows.Next() {
+		var i AiGroupingReviewCollection
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReviewID,
+			&i.Name,
+			&i.Description,
+			&i.SeriesIds,
+			&i.SeriesCount,
+			&i.Status,
+			&i.CreatedCollectionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAIGroupingReviews = `-- name: ListAIGroupingReviews :many
 SELECT
     agr.id,
@@ -4683,6 +4733,56 @@ func (q *Queries) ListRecentAddedSeries(ctx context.Context, arg ListRecentAdded
 			&i.TotalPages,
 			&i.CoverPath,
 			&i.CoverBookID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentRejectedMetadataReviewsBySeries = `-- name: ListRecentRejectedMetadataReviewsBySeries :many
+SELECT id, series_id, provider, source_url, source_id, source_query, summary, confidence, status, raw_payload, created_at, updated_at, applied_at, rejected_at FROM metadata_reviews
+WHERE series_id = ? AND status = 'rejected'
+ORDER BY rejected_at DESC, id DESC
+LIMIT ?
+`
+
+type ListRecentRejectedMetadataReviewsBySeriesParams struct {
+	SeriesID int64 `json:"series_id"`
+	Limit    int64 `json:"limit"`
+}
+
+func (q *Queries) ListRecentRejectedMetadataReviewsBySeries(ctx context.Context, arg ListRecentRejectedMetadataReviewsBySeriesParams) ([]MetadataReview, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentRejectedMetadataReviewsBySeries, arg.SeriesID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetadataReview
+	for rows.Next() {
+		var i MetadataReview
+		if err := rows.Scan(
+			&i.ID,
+			&i.SeriesID,
+			&i.Provider,
+			&i.SourceUrl,
+			&i.SourceID,
+			&i.SourceQuery,
+			&i.Summary,
+			&i.Confidence,
+			&i.Status,
+			&i.RawPayload,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AppliedAt,
+			&i.RejectedAt,
 		); err != nil {
 			return nil, err
 		}

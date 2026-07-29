@@ -85,22 +85,83 @@ func aiGroupingParseSeriesIDs(raw string) []int64 {
 	return clean
 }
 
-func aiGroupingSeriesViews(ctx context.Context, q database.Querier, ids []int64) []aiGroupingReviewSeriesView {
+// aiGroupingViewData 是渲染审核视图所需的预取数据。
+//
+// 引入它是为了消掉两层 N+1：列表接口每页 30 条审核，此前逐条查一次候选合集
+// （30 次），再对每个合集逐个查一次系列名（30 × 合集数，实测可到 150+ 次）。
+// 更糟的是那两处查询的错误都被 `_` 吞掉，DB 故障时接口照样返回 200，
+// 候选合集静默显示为空——用户会以为 AI 什么都没分出来。
+type aiGroupingViewData struct {
+	collectionsByReview map[int64][]database.AiGroupingReviewCollection
+	seriesByID          map[int64]database.GetSeriesNamesByIDsRow
+}
+
+// loadAIGroupingViewData 一次性取齐这批审核的候选合集与涉及的全部系列名。
+func loadAIGroupingViewData(ctx context.Context, q database.Querier, reviewIDs []int64) (aiGroupingViewData, error) {
+	data := aiGroupingViewData{
+		collectionsByReview: map[int64][]database.AiGroupingReviewCollection{},
+		seriesByID:          map[int64]database.GetSeriesNamesByIDsRow{},
+	}
+	if len(reviewIDs) == 0 {
+		return data, nil
+	}
+
+	collections, err := q.ListAIGroupingReviewCollectionsByReviews(ctx, reviewIDs)
+	if err != nil {
+		return aiGroupingViewData{}, err
+	}
+	seriesIDSet := map[int64]struct{}{}
+	for _, collection := range collections {
+		data.collectionsByReview[collection.ReviewID] = append(data.collectionsByReview[collection.ReviewID], collection)
+		for _, id := range aiGroupingParseSeriesIDs(collection.SeriesIds) {
+			seriesIDSet[id] = struct{}{}
+		}
+	}
+	if len(seriesIDSet) == 0 {
+		return data, nil
+	}
+
+	seriesIDs := make([]int64, 0, len(seriesIDSet))
+	for id := range seriesIDSet {
+		seriesIDs = append(seriesIDs, id)
+	}
+	rows, err := q.GetSeriesNamesByIDs(ctx, seriesIDs)
+	if err != nil {
+		return aiGroupingViewData{}, err
+	}
+	for _, row := range rows {
+		data.seriesByID[row.ID] = row
+	}
+	return data, nil
+}
+
+// loadAIGroupingViewDataForCollection 给「只渲染单个候选合集」的路径用。
+func loadAIGroupingViewDataForCollection(ctx context.Context, q database.Querier, collection database.AiGroupingReviewCollection) (aiGroupingViewData, error) {
+	data := aiGroupingViewData{
+		collectionsByReview: map[int64][]database.AiGroupingReviewCollection{},
+		seriesByID:          map[int64]database.GetSeriesNamesByIDsRow{},
+	}
+	ids := aiGroupingParseSeriesIDs(collection.SeriesIds)
 	if len(ids) == 0 {
-		return []aiGroupingReviewSeriesView{}
+		return data, nil
 	}
 	rows, err := q.GetSeriesNamesByIDs(ctx, ids)
 	if err != nil {
-		return []aiGroupingReviewSeriesView{}
+		return aiGroupingViewData{}, err
 	}
-	byID := make(map[int64]database.GetSeriesNamesByIDsRow, len(rows))
 	for _, row := range rows {
-		byID[row.ID] = row
+		data.seriesByID[row.ID] = row
 	}
+	return data, nil
+}
+
+func (d aiGroupingViewData) seriesViews(ids []int64) []aiGroupingReviewSeriesView {
 	views := make([]aiGroupingReviewSeriesView, 0, len(ids))
 	for _, id := range ids {
-		row, ok := byID[id]
+		row, ok := d.seriesByID[id]
 		if !ok {
+			// 系列已被删除：跳过而不是留空壳。ai_grouping_review_collections.series_ids
+			// 是一串裸 ID，没有外键，所以这种情况是正常的。
 			continue
 		}
 		views = append(views, aiGroupingReviewSeriesView{
@@ -112,7 +173,7 @@ func aiGroupingSeriesViews(ctx context.Context, q database.Querier, ids []int64)
 	return views
 }
 
-func aiGroupingReviewCollectionToView(ctx context.Context, q database.Querier, row database.AiGroupingReviewCollection) aiGroupingReviewCollectionView {
+func aiGroupingReviewCollectionToView(data aiGroupingViewData, row database.AiGroupingReviewCollection) aiGroupingReviewCollectionView {
 	ids := aiGroupingParseSeriesIDs(row.SeriesIds)
 	view := aiGroupingReviewCollectionView{
 		ID:          row.ID,
@@ -120,7 +181,7 @@ func aiGroupingReviewCollectionToView(ctx context.Context, q database.Querier, r
 		Name:        row.Name,
 		Description: strings.TrimSpace(row.Description),
 		SeriesIDs:   ids,
-		Series:      aiGroupingSeriesViews(ctx, q, ids),
+		Series:      data.seriesViews(ids),
 		SeriesCount: row.SeriesCount,
 		Status:      row.Status,
 	}
@@ -131,8 +192,8 @@ func aiGroupingReviewCollectionToView(ctx context.Context, q database.Querier, r
 	return view
 }
 
-func aiGroupingReviewToView(ctx context.Context, q database.Querier, review database.AiGroupingReview, libraryName string) aiGroupingReviewView {
-	collections, _ := q.ListAIGroupingReviewCollections(ctx, review.ID)
+func aiGroupingReviewToView(data aiGroupingViewData, review database.AiGroupingReview, libraryName string) aiGroupingReviewView {
+	collections := data.collectionsByReview[review.ID]
 	view := aiGroupingReviewView{
 		ID:              review.ID,
 		LibraryID:       review.LibraryID,
@@ -155,7 +216,7 @@ func aiGroupingReviewToView(ctx context.Context, q database.Querier, review data
 		view.RejectedAt = &value
 	}
 	for _, collection := range collections {
-		view.Collections = append(view.Collections, aiGroupingReviewCollectionToView(ctx, q, collection))
+		view.Collections = append(view.Collections, aiGroupingReviewCollectionToView(data, collection))
 	}
 	return view
 }
@@ -310,9 +371,20 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 		Limit:  limit,
 		Offset: offset,
 	}
+	reviewIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		reviewIDs = append(reviewIDs, row.ID)
+	}
+	// 预取要么全成功要么整体报错：此前这两步的错误被 `_` 吞掉，DB 故障时接口返回 200
+	// 且候选合集全为空，用户会以为 AI 一个分组都没分出来。
+	data, err := loadAIGroupingViewData(r.Context(), c.store, reviewIDs)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load AI grouping review details")
+		return
+	}
 	for _, row := range rows {
 		review := aiGroupingReviewFromListRow(row)
-		payload.Items = append(payload.Items, aiGroupingReviewToView(r.Context(), c.store, review, row.LibraryName))
+		payload.Items = append(payload.Items, aiGroupingReviewToView(data, review, row.LibraryName))
 	}
 	jsonResponse(w, http.StatusOK, payload)
 }
@@ -379,7 +451,12 @@ func (c *Controller) updateAIGroupingReviewCollection(w http.ResponseWriter, r *
 		jsonError(w, http.StatusInternalServerError, "Failed to update AI grouping review collection")
 		return
 	}
-	jsonResponse(w, http.StatusOK, aiGroupingReviewCollectionToView(r.Context(), c.store, updated))
+	collectionData, err := loadAIGroupingViewDataForCollection(r.Context(), c.store, updated)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load AI grouping collection details")
+		return
+	}
+	jsonResponse(w, http.StatusOK, aiGroupingReviewCollectionToView(collectionData, updated))
 }
 
 func mustJSON(ids []int64) string {

@@ -711,6 +711,8 @@ export const messages: MessageCatalog = {
     'series.toast.applyMetadataSuccess': '已将选定元数据加入审核队列',
     'series.toast.applyMetadataFailed': '应用元数据失败',
     'series.toast.scrapeDuplicate': '待审核队列中已存在相同来源的记录，已为您忽略',
+    'series.toast.scrapeRejectedBefore': '这份提案此前已被拒绝，已为您忽略；如需重新加入队列请使用强制刮削',
+    'series.toast.scrapeAllLocked': '有差异的字段都已被锁定，解锁后再试',
     'series.toast.metadataReviewQueued': '已加入元数据审核队列，待确认字段 {{count}} 项',
     'series.toast.noMetadataReviewChanges': '没有可加入审核队列的元数据变化',
     'series.toast.metadataReviewApplied': '元数据审核已应用',

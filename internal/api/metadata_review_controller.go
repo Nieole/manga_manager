@@ -27,6 +27,25 @@ var errNoMetadataChanges = errors.New("no metadata changes")
 // 一个是「数据已经是最新的」。此前两者都走同一条路径，用户只能看到含糊的提示。
 var errAllFieldsLocked = errors.New("all changed fields are locked")
 
+// errMetadataReviewRejectedBefore 表示这份提案与一条**已被用户拒绝**的记录逐字相同。
+// 此前只跟 pending 记录去重，于是用户拒绝之后，下一次刮削（尤其是定时的全库刮削）
+// 会把同一份提案原样再塞回队列——用户得反复拒绝同一条东西。
+var errMetadataReviewRejectedBefore = errors.New("an identical proposal was rejected before")
+
+// rejectedDedupWindow 是回溯多少条最近的拒绝记录参与去重。
+//
+// 刻意不做成「全部历史拒绝记录」：那会随时间无界增长，而用户真正会反复看到的
+// 就是最近那些。取 20 已经远超实际使用中单个系列的拒绝次数。
+const rejectedDedupWindow = 20
+
+// queueReviewOptions 控制入队的去重行为。
+type queueReviewOptions struct {
+	// IgnoreRejected 让本次入队跳过「与已拒绝记录去重」这一步。
+	// 交互式的刮削入口会在用户显式要求时置位——否则一旦拒绝过，用户就再也没法
+	// 把同一份数据重新加回队列了，这是个死胡同。后台批量刮削永远不置位。
+	IgnoreRejected bool
+}
+
 // applyOutcomeLabel 把一次 apply 的结果折成前端能分支的字符串。
 func applyOutcomeLabel(outcome metadataApplyOutcome) string {
 	if outcome.Partial() {
@@ -688,6 +707,10 @@ func metadataReviewSignaturesEqual(left, right map[string]string) bool {
 }
 
 func (c *Controller) queueMetadataReview(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, providerName, sourceQuery string) (database.MetadataReview, []database.MetadataReviewField, bool, error) {
+	return c.queueMetadataReviewWithOptions(ctx, series, result, providerName, sourceQuery, queueReviewOptions{})
+}
+
+func (c *Controller) queueMetadataReviewWithOptions(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, providerName, sourceQuery string, opts queueReviewOptions) (database.MetadataReview, []database.MetadataReviewField, bool, error) {
 	var createdReview database.MetadataReview
 	var createdFields []database.MetadataReviewField
 	sourceURL := metadataSourceURL(providerName, result)
@@ -734,6 +757,27 @@ func (c *Controller) queueMetadataReview(ctx context.Context, series database.Se
 				createdFields = fields
 				isNew = false
 				return nil
+			}
+		}
+
+		// 再跟最近被拒绝的记录比一遍。只比 pending 的话，用户拒绝之后下一次刮削
+		// （尤其是定时的全库刮削）会把同一份提案原样塞回来，变成反复拒绝同一条东西。
+		if !opts.IgnoreRejected {
+			rejected, err := q.ListRecentRejectedMetadataReviewsBySeries(ctx, database.ListRecentRejectedMetadataReviewsBySeriesParams{
+				SeriesID: series.ID,
+				Limit:    rejectedDedupWindow,
+			})
+			if err != nil {
+				return err
+			}
+			for _, rejectedReview := range rejected {
+				fields, err := q.ListMetadataReviewFields(ctx, rejectedReview.ID)
+				if err != nil {
+					return err
+				}
+				if metadataReviewSignaturesEqual(nextSignature, metadataReviewFieldsSignature(fields, rejectedReview.SourceID, lockedNow)) {
+					return errMetadataReviewRejectedBefore
+				}
 			}
 		}
 

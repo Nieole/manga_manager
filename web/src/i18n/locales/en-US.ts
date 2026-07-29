@@ -711,6 +711,8 @@ export const messages: MessageCatalog = {
     'series.toast.applyMetadataSuccess': 'Selected metadata was queued for review',
     'series.toast.applyMetadataFailed': 'Failed to apply metadata',
     'series.toast.scrapeDuplicate': 'A review with the same source already exists in the queue and was skipped',
+    'series.toast.scrapeRejectedBefore': 'An identical proposal was rejected earlier and was skipped; use force scrape to queue it again',
+    'series.toast.scrapeAllLocked': 'Every differing field is locked; unlock them and try again',
     'series.toast.metadataReviewQueued': 'Metadata review queued with {{count}} fields pending',
     'series.toast.noMetadataReviewChanges': 'No metadata changes to review',
     'series.toast.metadataReviewApplied': 'Metadata review applied',

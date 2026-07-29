@@ -199,14 +199,18 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, isNew, err := c.queueMetadataReview(r.Context(), series, &result, providerName, series.Name)
+	// force=1 让用户能把「拒绝过的提案」重新加回队列。没有这个出口，一旦误拒就是死胡同：
+	// 之后每次刮削都会被去重挡下，同一份数据再也进不来。
+	forced := isTruthyParam(r.URL.Query().Get("force"))
+	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, &result, providerName, series.Name,
+		queueReviewOptions{IgnoreRejected: forced})
 	if err != nil {
-		if errors.Is(err, errNoMetadataChanges) {
+		if outcome, message, ok := queueOutcomeForError(err); ok {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"success": true,
 				"queued":  false,
-				"outcome": "no_changes",
-				"message": "所有数据与当前信息完全一致，无需更新",
+				"outcome": outcome,
+				"message": message,
 			})
 			return
 		}
@@ -232,6 +236,31 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		"field_count": len(fields),
 		"series":      series,
 	})
+}
+
+// queueOutcomeForError 把入队时的「良性结果」哨兵折成给前端的 outcome 与文案。
+//
+// 这三种都不是故障：数据本来就一致、差异全被用户锁住、或这份提案此前已被拒绝。
+// 此前只识别 errNoMetadataChanges，另外两种一路落到 HTTP 500，用户看到「服务器错误」。
+func queueOutcomeForError(err error) (outcome, message string, ok bool) {
+	switch {
+	case errors.Is(err, errNoMetadataChanges):
+		return "no_changes", "所有数据与当前信息完全一致，无需更新", true
+	case errors.Is(err, errAllFieldsLocked):
+		return "all_locked", "有差异的字段都已被锁定，解锁后再试", true
+	case errors.Is(err, errMetadataReviewRejectedBefore):
+		return "rejected_before", "这份提案此前已被拒绝，已为您忽略；如需重新加入队列请使用强制刮削", true
+	}
+	return "", "", false
+}
+
+// isTruthyParam 判定查询参数是否表示「是」。
+func isTruthyParam(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions) error {
@@ -453,13 +482,14 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, isNew, err := c.queueMetadataReview(r.Context(), series, result, provider.Name(), searchTitle)
+	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, result, provider.Name(), searchTitle,
+		queueReviewOptions{IgnoreRejected: isTruthyParam(r.URL.Query().Get("force"))})
 	if err != nil {
-		if errors.Is(err, errNoMetadataChanges) {
+		if outcome, message, ok := queueOutcomeForError(err); ok {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"scraped": false,
-				"outcome": "no_changes",
-				"message": fmt.Sprintf("从 %s 找到条目，但所有数据与当前信息完全一致，无需加入待审核队列", provider.Name()),
+				"outcome": outcome,
+				"message": fmt.Sprintf("从 %s 找到条目，但%s", provider.Name(), message),
 			})
 			return
 		}
@@ -576,7 +606,9 @@ func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, 
 				m.queuedReview++
 				slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
 			}
-		} else if !errors.Is(err, errNoMetadataChanges) {
+		} else if _, _, benign := queueOutcomeForError(err); !benign {
+			// 「无变更」「差异全被锁」「此前已拒绝」都是正常结果，不该计入失败——
+			// 计进去会让一次完全正常的全库刮削在任务面板上报出一片红。
 			m.failed++
 			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 		}
