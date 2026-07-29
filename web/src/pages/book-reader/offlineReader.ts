@@ -198,6 +198,24 @@ export async function cacheBookForOffline({
   const urls = [...staticUrls, ...pageUrls];
   let cachedPages = 0;
 
+  // 先登记再下载。此前这条元数据是**整个循环跑完之后**才写的，于是下到第 300/500 页
+  // 断网时：300 份响应留在 Cache Storage 里，而书目索引里没有这本书——离线书架看不见它，
+  // deleteOfflineBook 也删不掉（它按索引里的 urls 清理）。用户只剩「清空全部」这一个出口。
+  // 先写索引之后，中途失败留下的是一本「300/500 未完成」的书：看得见、能单独删、能重下。
+  const startedAt = new Date().toISOString();
+  const pendingMeta = readBookMeta();
+  pendingMeta[bookId] = {
+    bookId,
+    title,
+    pageCount: pages.length,
+    cachedPages: 0,
+    cachedAt: startedAt,
+    imageProfile,
+    // 整份 URL 列表先记全：删除按它清理，没下到的那些 cache.delete 返回 false，无副作用。
+    urls: urls.map(absoluteURL),
+  };
+  writeBookMeta(pendingMeta);
+
   for (const url of urls) {
     const request = new Request(absoluteURL(url), { credentials: 'same-origin' });
     const response = await fetch(request);
@@ -211,16 +229,9 @@ export async function cacheBookForOffline({
     }
   }
 
+  // 全部落盘后把计数补齐（cachedAt 沿用开始时刻，离线书架按它排序）。
   const allMeta = readBookMeta();
-  allMeta[bookId] = {
-    bookId,
-    title,
-    pageCount: pages.length,
-    cachedPages,
-    cachedAt: new Date().toISOString(),
-    imageProfile,
-    urls: urls.map(absoluteURL),
-  };
+  allMeta[bookId] = { ...pendingMeta[bookId], cachedPages };
   writeBookMeta(allMeta);
 
   return await getOfflineBookStatus(bookId) ?? {
@@ -228,7 +239,7 @@ export async function cacheBookForOffline({
     title,
     pageCount: pages.length,
     cachedPages,
-    cachedAt: allMeta[bookId].cachedAt,
+    cachedAt: startedAt,
     imageProfile,
   };
 }
