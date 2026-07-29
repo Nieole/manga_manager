@@ -777,8 +777,16 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 	// 该目录从来就不存在。只按目录是否存在判定，会把这类“虚拟系列”连同其书籍与
 	// 每用户阅读进度一起 CASCADE 删掉，且每次扫描重建、下次清理再删，进度反复丢失。
 	// 因此改为二次确认：目录不存在时再看它的书还在不在磁盘上，只要还有一本在就不删。
+	//
+	// 三处 ctx 早退（本循环 / 删系列 / 删书）都是安全的：取消只会造成**少删**。
+	// seriesHasSurvivingBook 出错时返回 true（保守留下），missingSeries 只会被低估，
+	// DeleteSeries/DeleteBook 拿到已取消的 ctx 直接失败，所以半途停下不会级联删除、
+	// 更不会丢阅读进度；剩下的幽灵记录留到下一次清理。
 	var missingSeries []database.Series
 	for _, series := range seriesList {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, statErr := os.Stat(series.Path); statErr == nil {
 			continue
 		} else if !os.IsNotExist(statErr) {
@@ -802,6 +810,9 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 
 	removedSeries := make(map[int64]bool, len(missingSeries))
 	for _, series := range missingSeries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		slog.Info("Removing missing series", "series_id", series.ID, "path", series.Path)
 		if err := s.store.DeleteSeries(ctx, series.ID); err != nil {
 			slog.Error("Failed to delete series", "series_id", series.ID, "error", err)
@@ -812,6 +823,9 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 
 	// 存活的系列再逐卷清理缺失书籍（同样只在确证缺失时删除）。
 	for _, series := range seriesList {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if removedSeries[series.ID] {
 			continue
 		}
