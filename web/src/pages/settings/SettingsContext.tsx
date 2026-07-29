@@ -210,7 +210,7 @@ interface ConfigContextValue {
   llmTestResult: string | null;
   showToast: (text: string, type?: 'success' | 'error') => void;
   fieldErrors: (field: string) => string[];
-  saveConfig: (successMessage?: string) => Promise<void>;
+  saveConfig: (section: ConfigSectionKey, successMessage?: string) => Promise<void>;
   handleTestLLM: () => Promise<void>;
   handleAction: (path: string, successMessage: string, errorMessage?: string) => Promise<void>;
   hasSectionChanges: (section: SettingsSectionKey) => boolean;
@@ -264,35 +264,75 @@ function buildKOReaderForm(
   };
 }
 
-function pickSectionSnapshot(config: Config, section: Exclude<SettingsSectionKey, 'overview' | 'appearance' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance'>) {
-  switch (section) {
-    case 'library':
-      return {
-        server: config.server,
-        database: config.database,
-        library: config.library,
-        logging: config.logging,
-        scanner: {
-          workers: config.scanner.workers,
-          scan_profile: config.scanner.scan_profile,
-          archive_pool_size: config.scanner.archive_pool_size,
-        },
-      };
-    case 'media':
-      return {
-        cache: config.cache,
-        scanner: {
-          thumbnail_format: config.scanner.thumbnail_format,
-          waifu2x_path: config.scanner.waifu2x_path,
-          realcugan_path: config.scanner.realcugan_path,
-          max_ai_concurrency: config.scanner.max_ai_concurrency,
-        },
-      };
-    case 'ai':
-      return {
-        llm: config.llm,
-      };
+export type ConfigSectionKey = Exclude<
+  SettingsSectionKey,
+  'overview' | 'appearance' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance'
+>;
+
+// SECTION_FIELD_PATHS 是「哪些配置字段属于哪个分区」的**唯一**事实源。
+//
+// 脏标记与保存必须用同一份定义，否则两者会漂移：脏标记说这个分区没改，保存却把它写了出去。
+// 路径用点号表示，只到需要区分的那一层——例如 scanner 下只有部分字段属于 library 分区，
+// 其余属于 media 分区，所以这里必须写到叶子。
+const SECTION_FIELD_PATHS: Record<ConfigSectionKey, string[]> = {
+  library: [
+    'server',
+    'database',
+    'library',
+    'logging',
+    'scanner.workers',
+    'scanner.scan_profile',
+    'scanner.archive_pool_size',
+  ],
+  media: [
+    'cache',
+    'scanner.thumbnail_format',
+    'scanner.waifu2x_path',
+    'scanner.realcugan_path',
+    'scanner.max_ai_concurrency',
+  ],
+  ai: ['llm'],
+};
+
+function readPath(source: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((acc, key) => {
+    if (acc && typeof acc === 'object') return (acc as Record<string, unknown>)[key];
+    return undefined;
+  }, source);
+}
+
+// writePath 在 target 上按路径写值，沿途只复制被改动的那一层，其余保持原引用。
+function writePath(target: Record<string, unknown>, path: string, value: unknown): void {
+  const keys = path.split('.');
+  let node = target;
+  for (let i = 0; i < keys.length - 1; i += 1) {
+    const key = keys[i];
+    const child = node[key];
+    node[key] = child && typeof child === 'object' ? { ...(child as Record<string, unknown>) } : {};
+    node = node[key] as Record<string, unknown>;
   }
+  node[keys[keys.length - 1]] = value;
+}
+
+function pickSectionSnapshot(config: Config, section: ConfigSectionKey) {
+  const snapshot: Record<string, unknown> = {};
+  for (const path of SECTION_FIELD_PATHS[section]) {
+    writePath(snapshot, path, readPath(config, path));
+  }
+  return snapshot;
+}
+
+// applySectionSnapshot 把 draft 里**只属于该分区**的字段叠到 base 上。
+//
+// 这是「保存本分区」真正的语义。此前 saveConfig 直接把整份 config state 发出去，
+// 而那份 state 里带着用户在**其他分区**改了却没保存的草稿——点一下「保存媒体设置」，
+// 顺手把没打算提交的 AI 密钥、扫描并发数一起写进了后端，界面上没有任何提示。
+export function applySectionSnapshot(base: Config, draft: Config, section: ConfigSectionKey): Config {
+  const merged = { ...(base as unknown as Record<string, unknown>) };
+  for (const path of SECTION_FIELD_PATHS[section]) {
+    writePath(merged, path, readPath(draft, path));
+  }
+  return merged as unknown as Config;
 }
 
 export function formatKOReaderLatestSync(value?: { Time: string; Valid: boolean } | null): string {
@@ -427,11 +467,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const koreaderFieldErrors = useCallback((field: string) => koreaderValidationByField.get(field) || [], [koreaderValidationByField]);
 
   const saveConfig = useCallback(
-    async (successMessage = t('settings.toast.configSaved')) => {
-      if (!config) return;
+    async (section: ConfigSectionKey, successMessage = t('settings.toast.configSaved')) => {
+      if (!config || !initialConfig) return;
       setSaving(true);
       try {
-        const res = await apiClient.post('/api/system/config', config);
+        // 只提交本分区的字段：以服务端最近一次下发的 initialConfig 为底，
+        // 把本分区的编辑叠上去。其他分区未保存的草稿留在本地，不会被顺手写出去。
+        // 敏感字段（LLM APIKey 等）在 initialConfig 里是占位符，后端会据此保留原值，
+        // 所以这样叠加不会把密钥抹成掩码串。
+        const payload = applySectionSnapshot(initialConfig, config, section);
+        const res = await apiClient.post('/api/system/config', payload);
         setValidation(res.data.validation);
         showToast(res.data.message || successMessage, 'success');
         await fetchConfig();
@@ -448,7 +493,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSaving(false);
       }
     },
-    [config, fetchConfig, showToast, t],
+    [config, initialConfig, fetchConfig, showToast, t],
   );
 
   const handleTestLLM = useCallback(async () => {

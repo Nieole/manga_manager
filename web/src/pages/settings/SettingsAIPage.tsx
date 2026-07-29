@@ -103,7 +103,7 @@ export function SettingsAIPage() {
         {llmTestResult && <pre className="max-h-56 overflow-auto rounded-lg border border-gray-800 bg-black/40 p-3 text-sm text-gray-200 whitespace-pre-wrap">{llmTestResult}</pre>}
       </section>
 
-      <SettingsSaveBar saving={saving} label={t('settings.ai.saveLabel')} hint={t('settings.ai.saveHint')} onSave={() => saveConfig(t('settings.ai.saved'))} />
+      <SettingsSaveBar saving={saving} label={t('settings.ai.saveLabel')} hint={t('settings.ai.saveHint')} onSave={() => saveConfig('ai', t('settings.ai.saved'))} />
     </div>
   );
 }
