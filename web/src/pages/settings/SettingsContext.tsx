@@ -299,6 +299,11 @@ const SECTION_FIELD_PATHS: Record<ConfigSectionKey, string[]> = {
   connections: ['protocols'],
 };
 
+// 注意 config.koreader 不属于任何分区：KOReader 设置走独立的 koreaderForm state，
+// 保存也走独立的 saveKOReader。因此分区化刷新之后 config.koreader 会停留在旧值——
+// 今天无害（没有任何地方从 config.koreader 读值渲染），但若以后有人开始读它，
+// 要么给它补一个分区，要么在那里改用 koreaderForm。
+
 function readPath(source: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((acc, key) => {
     if (acc && typeof acc === 'object') return (acc as Record<string, unknown>)[key];
@@ -403,15 +408,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     koreaderStatusRef.current = koreaderStatus;
   }, [koreaderStatus]);
 
-  // savedSection 非空表示「刚保存完这个分区」：此时只把该分区刷成服务端的新值，
-  // 其余分区保留用户手上的草稿。
+  // savedSection 表示「刚保存完什么」：
+  //   - undefined：首屏加载，整份替换（此时 prev 为 null，本来也没有草稿可保）；
+  //   - 某个配置分区：只把该分区刷成服务端的新值，其余分区保留用户手上的草稿；
+  //   - 'koreader'：KOReader 的表单是独立 state（koreaderForm），不在 config 草稿里，
+  //     所以这里一个 config 分区都不该动。
   //
   // 「只保存本分区」的对偶就是「只刷新本分区」。少了这一半，保存 AI 设置会顺手把
   // 资料库分区没保存的草稿整片抹掉、侧边栏的脏点也一起熄灭，全程没有任何提示——
   // 方向比原缺陷安全（丢的是本地草稿不是写库），但同样是静默的。
-  const fetchConfig = useCallback(async (savedSection?: ConfigSectionKey) => {
+  const fetchConfig = useCallback(async (savedSection?: ConfigSectionKey | 'koreader') => {
     const res = await apiClient.get<ConfigEnvelope>('/api/system/config');
-    setConfig((prev) => (prev && savedSection ? applySectionSnapshot(prev, res.data.config, savedSection) : res.data.config));
+    setConfig((prev) => {
+      if (!prev || savedSection === undefined) return res.data.config;
+      if (savedSection === 'koreader') return prev;
+      return applySectionSnapshot(prev, res.data.config, savedSection);
+    });
     // initialConfig 是「服务端真相」的基线，必须整份更新。
     setInitialConfig(res.data.config);
     setValidation(res.data.validation);
@@ -481,6 +493,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const saveConfig = useCallback(
     async (section: ConfigSectionKey, successMessage = t('settings.toast.configSaved')) => {
       if (!config || !initialConfig) return;
+      // 连接分区没有 SaveBar，只走 saveProtocols（它以服务端快照取 protocols）。
+      // 从这里进来会以**活草稿**为源，与 saveProtocols 的语义打架，所以直接挡掉。
+      if (section === 'connections') return;
       setSaving(true);
       try {
         // 只提交本分区的字段：以服务端最近一次下发的 initialConfig 为底，
@@ -516,14 +531,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const saveProtocols = useCallback(
     async (protocol: 'opds' | 'mihon', enabled: boolean) => {
       if (!config || !initialConfig) return;
+      // 在服务端快照上展开，而不是重建 `{opds:{enabled}, mihon:{enabled}}`。
+      // applySectionSnapshot 对 protocols 是整块替换：后端哪天给 opds/mihon 加第二个字段，
+      // 重建式写法会立刻把它抹成 undefined。
       const draft = {
-        ...config,
+        ...initialConfig,
         protocols: {
-          opds: { enabled: config.protocols?.opds?.enabled ?? false },
-          mihon: { enabled: config.protocols?.mihon?.enabled ?? false },
+          ...initialConfig.protocols,
+          [protocol]: { ...initialConfig.protocols?.[protocol], enabled },
         },
       } as Config;
-      draft.protocols[protocol] = { enabled };
       const payload = applySectionSnapshot(initialConfig, draft, 'connections');
       const res = await apiClient.post('/api/system/config', payload);
       setValidation(res.data.validation);
@@ -581,7 +598,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setNeedsMatchingMaintenance(requiresMaintenance);
       setKOReaderValidation({ valid: true, issues: [] });
       showToast(t('settings.toast.koreaderSaved'), 'success');
-      await Promise.all([fetchConfig(), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()]);
+      await Promise.all([fetchConfig('koreader'), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
       if (isAxiosError(error) && error.response?.status === 422) {

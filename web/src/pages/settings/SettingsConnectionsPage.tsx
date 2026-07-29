@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { apiClient } from '../../api/client';
+import { apiClient, isAxiosError } from '../../api/client';
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, PlugZap, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
@@ -171,7 +171,13 @@ export function SettingsConnectionsPage() {
       await loadConnections();
     } catch (error) {
       console.error(error);
-      showToast(t('settings.toast.configSaveFailed'), 'error');
+      // 422 单独归类：连接页没有任何字段级错误 UI，混进泛化的「保存失败」里
+      // 用户完全无从判断是配置不合法还是服务端出错。
+      if (isAxiosError(error) && error.response?.status === 422) {
+        showToast(t('settings.toast.configInvalid'), 'error');
+      } else {
+        showToast(t('settings.toast.configSaveFailed'), 'error');
+      }
     } finally {
       setSavingProtocol(null);
     }
