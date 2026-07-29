@@ -10,7 +10,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { apiClient } from '../api/client';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon, ClipboardCheck, ArrowRight } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
-import { monthIndexFromDateStr, formatHeatmapMonthLabel } from '../utils/heatmap';
+import { buildHeatmapCells, monthIndexFromDateStr, formatHeatmapMonthLabel } from '../utils/heatmap';
 
 interface LibraryOverview {
     id: number;
@@ -513,26 +513,13 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
         'bg-komgaPrimary',          // 4: 极多
     ];
 
-    // 生成从今天往前 TOTAL_DAYS 天的日期网格
-    const today = new Date();
-    const cells: { date: string; count: number; dayOfWeek: number }[] = [];
-
-    // 找到起始日期：从 TOTAL_DAYS 前开始，对齐到周一
-    const startDate = new Date(today);
-    startDate.setDate(startDate.getDate() - TOTAL_DAYS + 1);
-    // 调整到最近的周一
-    const startDow = startDate.getDay();
-    const adjustToMonday = startDow === 0 ? -6 : 1 - startDow;
-    startDate.setDate(startDate.getDate() + adjustToMonday);
-
-    const endDate = new Date(today);
-    const current = new Date(startDate);
-    while (current <= endDate) {
-        const dateStr = current.toISOString().slice(0, 10);
-        const count = activityMap.get(dateStr) || 0;
-        cells.push({ date: dateStr, count, dayOfWeek: current.getDay() });
-        current.setDate(current.getDate() + 1);
-    }
+    // 日期网格全程用 UTC 日历（与后端 DATE('now') 同口径）。
+    // 此前日期串取自 toISOString（UTC）、行位置取自 getDay()（本地），两套日历混用，
+    // 本地时刻跨过 UTC 日界时整张网格会相对星期标签统一错开一行。
+    const cells = buildHeatmapCells(TOTAL_DAYS).map((cell) => ({
+        ...cell,
+        count: activityMap.get(cell.date) || 0,
+    }));
 
     // 按周分组（每列一周，每行一天）
     const weekColumns: typeof cells[] = [];

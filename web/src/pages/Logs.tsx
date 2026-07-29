@@ -225,31 +225,31 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
             <div className="rounded-2xl border border-gray-700 bg-gray-900 p-4 space-y-3 shadow-lg shadow-black/5 select-none">
               <div className="flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-komgaPrimary animate-ping shrink-0"></span>
-                <h2 className="text-xs font-semibold uppercase tracking-wider text-komgaPrimary">系统性能 Ops Dashboard</h2>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-komgaPrimary">{t('logs.perf.title')}</h2>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
-                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">平均响应时间</p>
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">{t('logs.perf.avgResponse')}</p>
                   <p className="mt-1 text-base font-bold text-komgaPrimary">{performance.average_ms ?? 0}ms</p>
                 </div>
                 <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
-                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">P95 响应延迟</p>
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">{t('logs.perf.p95')}</p>
                   <p className="mt-1 text-base font-bold text-komgaSecondary">{performance.p95_ms ?? 0}ms</p>
                 </div>
                 <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
-                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">图片缓存率</p>
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">{t('logs.perf.cacheHitRate')}</p>
                   <p className="mt-1 text-base font-bold text-komgaPrimary">
                     {performance.page_image_requests > 0 ? Math.round((performance.page_image_cache_hits / performance.page_image_requests) * 100) : 0}%
                   </p>
                 </div>
                 <div className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-center transition-all hover:bg-gray-800">
-                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">IO 等待时间</p>
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-wider">{t('logs.perf.ioWait')}</p>
                   <p className="mt-1 text-base font-bold text-komgaSecondary">{performance.page_image_io_wait_ms ?? 0}ms</p>
                 </div>
               </div>
               <div className="text-[10px] text-gray-500 flex justify-between px-1">
-                <span>并发处理归档: {performance.page_image_archive_opens ?? 0} 个</span>
-                <span>总处理流量: {performance.total_bytes ? `${Math.round(performance.total_bytes / 1024 / 1024)} MB` : '0 B'}</span>
+                <span>{t('logs.perf.archiveOpens', { count: performance.page_image_archive_opens ?? 0 })}</span>
+                <span>{t('logs.perf.totalBytes', { size: performance.total_bytes ? `${Math.round(performance.total_bytes / 1024 / 1024)} MB` : '0 B' })}</span>
               </div>
             </div>
           )}

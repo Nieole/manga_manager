@@ -25,6 +25,10 @@ function syncRequestHeaders(): HeadersInit {
 const OFFLINE_BOOK_CACHE = 'manga-manager-offline-books-v1';
 const OFFLINE_BOOKS_KEY = 'manga-manager:offline-books';
 const OFFLINE_PROGRESS_KEY = 'manga-manager:offline-progress';
+// OFFLINE_OWNER_KEY 记住这台设备上的离线数据属于哪个用户。
+// 没有它就无从判断「换人了」——而共享设备上最常见的情形恰恰是上一个人直接关窗口、
+// 从不点登出，登出时的清理根本不会被触发。
+const OFFLINE_OWNER_KEY = 'manga-manager:offline-owner';
 
 export interface OfflineBookStatus {
   bookId: string;
@@ -302,6 +306,54 @@ export function deleteQueuedOfflineProgress(bookId: string) {
 
 export function clearQueuedOfflineProgress() {
   writeQueuedProgress({});
+}
+
+// reconcileOfflineOwner 对账「这台设备上的离线数据属于谁」，换人时清掉上一个人的残留。
+// 返回是否真的清理过。
+//
+// 为什么不能只挂在 logout 上：换人有四条路径，只有一条是显式登出。login/setup 直接建立
+// 新会话、刷新页面走状态探测、会话过期走 401 拦截——三条都不经过 logout。而新用户只要
+// 打开任意一个阅读器页面，useReaderOffline 就会自动把队列里的进度同步上去，
+// 于是上一个人的阅读进度被写进了新账号。
+//
+// 书目索引（OFFLINE_BOOKS_KEY）也要一起清：已下载的书页留在 Cache Storage 里，
+// 而 Service Worker 在断网时是直接从缓存命中的，**不经过任何服务端鉴权**——
+// 不清索引，下一个用户就能在离线书架上看到并读完上一个人下载的书。
+// 字节本身留作孤儿，仍可由离线书架的「清空全部」按缓存名整体删除。
+export function reconcileOfflineOwner(userId: number | null): boolean {
+  let previous: string | null = null;
+  try {
+    previous = localStorage.getItem(OFFLINE_OWNER_KEY);
+  } catch {
+    // localStorage 不可用（隐私模式/配额）：无从对账，也无从泄露，直接放行。
+    return false;
+  }
+
+  if (userId === null) {
+    try {
+      localStorage.removeItem(OFFLINE_OWNER_KEY);
+    } catch {
+      // 忽略：清不掉标记不影响下面的清理。
+    }
+    clearQueuedOfflineProgress();
+    writeBookMeta({});
+    return previous !== null;
+  }
+
+  const next = String(userId);
+  try {
+    localStorage.setItem(OFFLINE_OWNER_KEY, next);
+  } catch {
+    // 写不进标记时不做清理：宁可漏清也不要每次登录都把用户自己的离线数据删掉。
+    return false;
+  }
+  // previous 为空是「升级后首次登录」——此时的残留归属未知，按当前用户认领而不是清掉，
+  // 否则所有老用户升级后会平白丢一次离线书目。
+  if (previous === null || previous === next) return false;
+
+  clearQueuedOfflineProgress();
+  writeBookMeta({});
+  return true;
 }
 
 export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncResult> {

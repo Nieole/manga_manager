@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { monthIndexFromDateStr, formatHeatmapMonthLabel } from './heatmap';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildHeatmapCells, dayOfWeekFromDateStr, formatHeatmapMonthLabel, monthIndexFromDateStr } from './heatmap';
 
 describe('heatmap month labels', () => {
   // 回归：月份取值必须只看日期串字面，不受运行时区影响（此前 new Date('2026-06-01').getMonth() 在负时区读成 5 月）。
@@ -53,5 +53,48 @@ describe('heatmap month labels', () => {
     // zh-CN renders the short month as "<n>月"; the number must match the literal month field.
     expect(formatHeatmapMonthLabel('2026-03-01', 'zh-CN')).toBe('3月');
     expect(formatHeatmapMonthLabel('2026-11-30', 'zh-CN')).toBe('11月');
+  });
+});
+
+describe('热力图日期网格', () => {
+  const origTZ = process.env.TZ;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    process.env.TZ = origTZ;
+  });
+
+  // 每个格子的行位置由 dayOfWeek 决定、取数由 date 决定。两者若来自不同日历，
+  // 用户会看到自己的阅读记录落在错误的星期几上。
+  // 触发条件不是「非零时区必错」，而是「本地时刻跨过 UTC 日界」——
+  // UTC+8 是当地 08:00 之后、UTC-5 是当地 19:00 之后，也就是大半天。
+  const cases = [
+    { name: 'UTC+8 当地凌晨（已跨过 UTC 日界）', tz: 'Asia/Shanghai', at: '2026-07-28T17:00:00Z' },
+    { name: 'UTC-5 当地深夜（已跨过 UTC 日界）', tz: 'America/New_York', at: '2026-07-30T01:00:00Z' },
+    { name: 'UTC 本身', tz: 'UTC', at: '2026-07-29T12:00:00Z' },
+    { name: 'UTC+8 当地下午（未跨界）', tz: 'Asia/Shanghai', at: '2026-07-29T09:00:00Z' },
+  ];
+
+  for (const tc of cases) {
+    it(`${tc.name}：每个格子的星期与自身日期一致`, () => {
+      process.env.TZ = tc.tz;
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(tc.at));
+
+      const mismatched = buildHeatmapCells(28).filter(
+        (cell) => cell.dayOfWeek !== dayOfWeekFromDateStr(cell.date),
+      );
+      expect(mismatched.map((c) => `${c.date}=${c.dayOfWeek}`)).toEqual([]);
+    });
+  }
+
+  it('起点对齐到周一，终点是今天', () => {
+    process.env.TZ = 'Asia/Shanghai';
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-28T17:00:00Z'));
+
+    const cells = buildHeatmapCells(28);
+    expect(cells[0].dayOfWeek).toBe(1);
+    expect(cells[cells.length - 1].date).toBe('2026-07-28');
   });
 });

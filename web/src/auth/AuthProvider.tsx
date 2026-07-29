@@ -8,7 +8,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiClient, getApiErrorMessage, isAxiosError } from '../api/client';
-import { clearQueuedOfflineProgress } from '../pages/book-reader/offlineReader';
+import { reconcileOfflineOwner } from '../pages/book-reader/offlineReader';
 import { setCsrfToken } from '../utils/apiAuth';
 
 export type UserRole = 'admin' | 'regular';
@@ -53,6 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
 
   const applySession = useCallback((data: SessionResponse) => {
+    // 换人对账放在最前：此刻旧会话的 CSRF 还没被覆盖，清理动作用的仍是一致的上下文。
+    reconcileOfflineOwner(data.user.id);
     setCsrfToken(data.csrf_token);
     setUser(data.user);
     setSetupRequired(false);
@@ -63,9 +65,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await apiClient.get<AuthStatusResponse>('/api/auth/status');
       setSetupRequired(data.setup_required);
       if (data.authenticated && data.user) {
+        reconcileOfflineOwner(data.user.id);
         setCsrfToken(data.csrf_token ?? '');
         setUser(data.user);
       } else {
+        reconcileOfflineOwner(null);
         setCsrfToken('');
         setUser(null);
       }
@@ -90,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isAxiosError(error) && error.response?.status === 401) {
           const url = error.config?.url ?? '';
           if (!url.includes('/api/auth/login') && !url.includes('/api/auth/status')) {
+            reconcileOfflineOwner(null);
             setCsrfToken('');
             setUser(null);
           }
@@ -130,12 +135,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setCsrfToken('');
     setUser(null);
-    // 清掉本地的离线阅读残留：共享设备上换个账号登录后，上一个用户的离线书目仍会显示，
-    // 而待同步队列里的进度会在下次同步时被写进新账号名下。
-    // 只清「待同步队列」而不删已下载的书页：删掉别人下载的整本书对误操作代价太大，
-    // 且书页本身在服务端也需要鉴权才能重新拉取，泄露面有限。
+    // 清掉本地的离线阅读残留（待同步队列 + 书目索引）。
+    //
+    // 注意这只是四条「换人」路径中的一条，而且是最不常发生的一条——共享设备上更常见的是
+    // 上一个人直接关窗口。另外三条（登录/刷新/会话过期）在 applySession、refresh
+    // 与 401 拦截器里各自对账，见 reconcileOfflineOwner。
     try {
-      clearQueuedOfflineProgress();
+      reconcileOfflineOwner(null);
     } catch {
       // localStorage 不可用（隐私模式/配额）时忽略：登出本身不应因此失败。
     }
