@@ -285,7 +285,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 			}
 			for _, lib := range libs {
 				if lib.ScanMode == "watch" {
-					_ = fw.WatchLibrary(lib.ID, lib.Path)
+					_ = fw.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
 				}
 			}
 		})

@@ -1510,6 +1510,7 @@ export const messages: MessageCatalog = {
     'settings.maintenance.taskMetric.failed_archives': 'Failed archives',
     'settings.maintenance.taskMetric.rehomed_books': 'Renamed & relinked',
     'settings.maintenance.taskMetric.stale_series_stats': 'Stats pending recompute',
+    'settings.maintenance.taskMetric.format_filtered_archives': 'Skipped by format filter',
     'settings.maintenance.taskMetric.hashed_files': 'Hashed files',
     'settings.maintenance.taskMetric.queued_covers': 'Queued covers',
     'settings.maintenance.taskMetric.generated_covers': 'Generated covers',

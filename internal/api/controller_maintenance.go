@@ -10,6 +10,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 	"net/http"
@@ -86,7 +87,12 @@ func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress func(current, total int, lib database.Library)) error {
+// runGlobalScan 依次强制重扫全部资料库。
+//
+// ignoreFormatFilter 只在「重建缩略图」时为真：该任务先删光缩略图文件并清空所有 cover_path，
+// 再靠这次扫描重建。若仍按库的 scan_formats 过滤，被排除格式的书就再也不会被访问到，
+// 它们的封面会永久消失——而格式过滤的语义是「导入哪些文件」，不该殃及已入库的内容。
+func (c *Controller) runGlobalScan(ctx context.Context, force bool, ignoreFormatFilter bool, progress func(current, total int, lib database.Library)) error {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		return err
@@ -102,7 +108,10 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 		if progress != nil {
 			progress(i, total, lib)
 		}
-		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force); err != nil {
+		if err := c.scanner.ScanLibraryWithOptions(ctx, lib.ID, lib.Path, scanner.LibraryScanOptions{
+			Force:              force,
+			IgnoreFormatFilter: ignoreFormatFilter,
+		}); err != nil {
 			return err
 		}
 		c.purgeReadingPathCaches()
@@ -204,7 +213,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 			return
 		}
 		c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil, "reading_metadata", "", nil, nil)
-		err := c.runGlobalScan(taskCtx, true, func(current, total int, lib database.Library) {
+		err := c.runGlobalScan(taskCtx, true, true /* 重建缩略图必须看得见全部已入库的书 */, func(current, total int, lib database.Library) {
 			c.trackRebuildThumbLibraryProgress(current, total, lib)
 			c.refreshRebuildThumbTaskFromAggregator(lib)
 		})

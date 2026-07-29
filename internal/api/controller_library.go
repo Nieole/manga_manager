@@ -168,7 +168,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	c.invalidateDashboardStatsCache("library_created")
 
 	if createdLib.ScanMode == "watch" && c.watcher != nil {
-		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path)
+		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path, createdLib.ScanFormats)
 	}
 
 	// 触发异步扫描任务，不阻塞前端 API 响应
@@ -265,7 +265,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	if c.watcher != nil {
 		c.watcher.UnwatchLibrary(existingLib.Path)
 		if updatedLib.ScanMode == "watch" {
-			_ = c.watcher.WatchLibrary(updatedLib.ID, updatedLib.Path)
+			_ = c.watcher.WatchLibrary(updatedLib.ID, updatedLib.Path, updatedLib.ScanFormats)
 		}
 	}
 

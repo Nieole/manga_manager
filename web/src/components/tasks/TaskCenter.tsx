@@ -48,6 +48,7 @@ const taskMetricKeys = [
   'failed_archives',
   'rehomed_books',
   'stale_series_stats',
+  'format_filtered_archives',
   'hashed_files',
   'queued_covers',
   'generated_covers',

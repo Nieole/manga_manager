@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +32,9 @@ type FileWatcher struct {
 	// pendingCleanup: 检测到删除/重命名后按库排期，去抖后触发 CleanupLibrary 清除幽灵记录
 	pendingCleanup map[int64]time.Time
 	stopCh         chan struct{}
-	formats        []string
+	// formats 是**按库**的归档格式集（libraryID -> 集合）。
+	// 此前是一份全局列表，于是库级 scan_formats 在监听侧同样形同虚设。
+	formats map[int64]config.ScanFormatSet
 }
 
 func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
@@ -43,24 +46,56 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 		scanner:        s,
 		watcher:        w,
 		pending:        make(map[int64]time.Time),
+		formats:        make(map[int64]config.ScanFormatSet),
 		libs:           make(map[string]int64),
 		watched:        make(map[string]struct{}),
 		pendingCleanup: make(map[int64]time.Time),
 		stopCh:         make(chan struct{}),
-		formats: func() []string {
-			formats := make([]string, 0, len(config.SupportedScanFormats))
-			for _, item := range config.SupportedScanFormats {
-				formats = append(formats, "."+item)
-			}
-			return formats
-		}(),
 	}, nil
 }
 
+// pathUnderRoot 报告 child 是否位于 root 之内（含 child == root）。
+//
+// 此前用的是无分隔符的 strings.HasPrefix，于是 /data/manga2 的事件会被判成属于 /data/manga——
+// 两个前缀相同的兄弟目录库互相串台。事件循环与 handleRemoval 都是 `for ... range fw.libs` 后
+// 第一个命中就 break，而 Go 的 map 迭代顺序随机，所以受害的是哪个库每次都不一样：
+// 删除事件被记到错误的库上，真正该清理的库留下幽灵记录。
+//
+// 用 filepath.Rel 而不是「补一个分隔符再 HasPrefix」，是因为它顺带处理了 . 与 .. 的规范化；
+// 跨盘符（Windows 的 C: 与 D:）时 Rel 返回错误而非 ".."，这里按「不在其内」处理，正确。
+func pathUnderRoot(child, root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	absChild, err := filepath.Abs(child)
+	if err != nil {
+		absChild = filepath.Clean(child)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		absRoot = filepath.Clean(root)
+	}
+	if runtime.GOOS == "windows" {
+		// Windows 的文件系统大小写不敏感：C:\Data\Manga 与 c:\data\manga 是同一个目录。
+		absChild = strings.ToLower(absChild)
+		absRoot = strings.ToLower(absRoot)
+	}
+	if absChild == absRoot {
+		return true
+	}
+	rel, err := filepath.Rel(absRoot, absChild)
+	if err != nil {
+		return false // 跨盘符等无法表达相对关系的情形
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // WatchLibrary 开始监听指定库目录
-func (fw *FileWatcher) WatchLibrary(libraryID int64, path string) error {
+func (fw *FileWatcher) WatchLibrary(libraryID int64, path string, scanFormats string) error {
 	fw.mu.Lock()
 	fw.libs[path] = libraryID
+	fw.formats[libraryID] = config.NewScanFormatSet(scanFormats)
 	fw.mu.Unlock()
 
 	err := fw.watchRecursive(path)
@@ -75,6 +110,9 @@ func (fw *FileWatcher) WatchLibrary(libraryID int64, path string) error {
 // UnwatchLibrary 停止监听
 func (fw *FileWatcher) UnwatchLibrary(path string) {
 	fw.mu.Lock()
+	if libID, ok := fw.libs[path]; ok {
+		delete(fw.formats, libID) // 与 libs 配套清理，否则删库/改库路径会让 formats 泄漏
+	}
 	delete(fw.libs, path)
 	var toRemove []string
 	for watchedPath := range fw.watched {
@@ -102,10 +140,13 @@ func (fw *FileWatcher) handleRemoval(name string) {
 			delete(fw.watched, watchedPath)
 		}
 	}
+	// 对**所有**包含该路径的库排期，不是找到一个就 break。
+	// 嵌套库（一个库的根在另一个库之内）共享同一棵子树，两边都需要清理幽灵记录；
+	// 而 break 加上 map 的随机迭代顺序，等于随机挑一个库来清、另一个永远漏掉。
+	// CleanupLibrary 本身幂等且自带熔断，重复排期是安全的。
 	for libPath, libID := range fw.libs {
-		if strings.HasPrefix(name, libPath) {
+		if pathUnderRoot(name, libPath) {
 			fw.pendingCleanup[libID] = time.Now()
-			break
 		}
 	}
 	fw.mu.Unlock()
@@ -147,25 +188,26 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 				}
 				// 检查是否是支持的漫画文件
 				ext := strings.ToLower(filepath.Ext(event.Name))
-				supported := false
-				for _, f := range fw.formats {
-					if ext == f {
-						supported = true
-						break
-					}
-				}
-				if !supported {
+				// 锁外的廉价预筛：先用全局白名单挡掉 .nfo/.jpg/编辑器临时文件这类绝大多数事件。
+				// 库级格式过滤放到下面定位库之后再做——若把它也挪到这里，每个无关事件都要抢一次
+				// fw.mu 并遍历全部库，而这是事件循环里唯一的全局锁，大库批量写入时会明显变热。
+				if !config.IsSupportedArchiveExtension(ext) {
 					continue
 				}
 
-				// 找到所属的库
+				// 找到所属的库，并按**该库**的 scan_formats 判定是否值得重扫。
+				// 同 handleRemoval：所有包含该文件的库都要排期（嵌套库共享子树）。
 				fw.mu.Lock()
 				for libPath, libID := range fw.libs {
-					if strings.HasPrefix(event.Name, libPath) {
-						fw.pending[libID] = time.Now()
-						slog.Debug("File change detected", "file", event.Name, "library_id", libID)
-						break
+					if !pathUnderRoot(event.Name, libPath) {
+						continue
 					}
+					// formats 里查不到（库刚被 Unwatch 的竞态）时取零值 -> fail-open，与扫描器同口径。
+					if !fw.formats[libID].Matches(event.Name) {
+						continue
+					}
+					fw.pending[libID] = time.Now()
+					slog.Debug("File change detected", "file", event.Name, "library_id", libID)
 				}
 				fw.mu.Unlock()
 

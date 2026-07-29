@@ -96,6 +96,21 @@ func (s *Scanner) scanOptions(force bool) ScanOptions {
 	return ScanOptions{Force: force, Profile: profile}
 }
 
+// libraryScanFormats 取该库生效的归档格式集。
+//
+// 取不到库行时返回零值（fail-open，等价于全部支持格式）而不是中止扫描：
+// 紧随其后的 ListBooksByLibrary 本来就会在真正的库故障时返回错误，这里再 abort 一次
+// 只会把一次偶发的 DB 抖动变成「新文件静默不可见」。
+func (s *Scanner) libraryScanFormats(ctx context.Context, libraryID int64) config.ScanFormatSet {
+	lib, err := s.store.GetLibrary(ctx, libraryID)
+	if err != nil {
+		slog.Warn("Failed to load library scan formats, falling back to all supported formats",
+			"library_id", libraryID, "error", err)
+		return config.ScanFormatSet{}
+	}
+	return config.NewScanFormatSet(lib.ScanFormats)
+}
+
 func (s *Scanner) beginLibraryScan(libraryID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,26 +163,30 @@ type scanMetrics struct {
 	rehomedBooks atomic.Int64
 	// staleSeriesStats 记录扫描收尾时仍未刷新成功的系列数：这些系列的统计会一直不准，
 	// 直到它们再次被扫描到。是「静默不一致」变可见的唯一途径。
-	staleSeriesStats     atomic.Int64
-	ioWaitMillis         atomic.Int64
-	pausedMillis         atomic.Int64
-	thumbnailWriteMillis atomic.Int64
+	staleSeriesStats atomic.Int64
+	// formatFilteredArchives 统计「本可入库但被库级 scan_formats 排除」的文件数。
+	// 格式过滤是用户看不见的静默少扫，不给数字的话「我的书怎么少了 800 本」只能靠翻配置猜。
+	formatFilteredArchives atomic.Int64
+	ioWaitMillis           atomic.Int64
+	pausedMillis           atomic.Int64
+	thumbnailWriteMillis   atomic.Int64
 }
 
 type scanMetricsSnapshot struct {
-	discoveredArchives   int64
-	skippedArchives      int64
-	processedArchives    int64
-	openedArchives       int64
-	hashedFiles          int64
-	queuedCovers         int64
-	generatedCovers      int64
-	failedArchives       int64
-	rehomedBooks         int64
-	staleSeriesStats     int64
-	ioWaitMillis         int64
-	pausedMillis         int64
-	thumbnailWriteMillis int64
+	discoveredArchives     int64
+	skippedArchives        int64
+	processedArchives      int64
+	openedArchives         int64
+	hashedFiles            int64
+	queuedCovers           int64
+	generatedCovers        int64
+	failedArchives         int64
+	rehomedBooks           int64
+	staleSeriesStats       int64
+	formatFilteredArchives int64
+	ioWaitMillis           int64
+	pausedMillis           int64
+	thumbnailWriteMillis   int64
 }
 
 type ScanMetricsReport struct {
@@ -187,6 +206,7 @@ type ScanMetricsReport struct {
 	FailedArchives         int64
 	RehomedBooks           int64
 	StaleSeriesStats       int64
+	FormatFilteredArchives int64
 	IOWaitMillis           int64
 	PausedMillis           int64
 	ThumbnailWriteMillis   int64
@@ -245,19 +265,20 @@ func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
 		Current:     current,
 		Total:       total,
 		Metrics: map[string]int64{
-			"discovered_archives": snapshot.discoveredArchives,
-			"skipped_archives":    snapshot.skippedArchives,
-			"processed_archives":  snapshot.processedArchives,
-			"opened_archives":     snapshot.openedArchives,
-			"hashed_files":        snapshot.hashedFiles,
-			"queued_covers":       snapshot.queuedCovers,
-			"generated_covers":    snapshot.generatedCovers,
-			"failed_archives":     snapshot.failedArchives,
-			"rehomed_books":       snapshot.rehomedBooks,
-			"stale_series_stats":  snapshot.staleSeriesStats,
-			"io_wait_ms":          snapshot.ioWaitMillis,
-			"paused_ms":           snapshot.pausedMillis,
-			"thumbnail_write_ms":  snapshot.thumbnailWriteMillis,
+			"discovered_archives":      snapshot.discoveredArchives,
+			"skipped_archives":         snapshot.skippedArchives,
+			"processed_archives":       snapshot.processedArchives,
+			"opened_archives":          snapshot.openedArchives,
+			"hashed_files":             snapshot.hashedFiles,
+			"queued_covers":            snapshot.queuedCovers,
+			"generated_covers":         snapshot.generatedCovers,
+			"failed_archives":          snapshot.failedArchives,
+			"rehomed_books":            snapshot.rehomedBooks,
+			"stale_series_stats":       snapshot.staleSeriesStats,
+			"format_filtered_archives": snapshot.formatFilteredArchives,
+			"io_wait_ms":               snapshot.ioWaitMillis,
+			"paused_ms":                snapshot.pausedMillis,
+			"thumbnail_write_ms":       snapshot.thumbnailWriteMillis,
 		},
 	})
 }
@@ -267,19 +288,20 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 		return scanMetricsSnapshot{}
 	}
 	return scanMetricsSnapshot{
-		discoveredArchives:   m.discoveredArchives.Load(),
-		skippedArchives:      m.skippedArchives.Load(),
-		processedArchives:    m.processedArchives.Load(),
-		openedArchives:       m.openedArchives.Load(),
-		hashedFiles:          m.hashedFiles.Load(),
-		queuedCovers:         m.queuedCovers.Load(),
-		generatedCovers:      m.generatedCovers.Load(),
-		failedArchives:       m.failedArchives.Load(),
-		rehomedBooks:         m.rehomedBooks.Load(),
-		staleSeriesStats:     m.staleSeriesStats.Load(),
-		ioWaitMillis:         m.ioWaitMillis.Load(),
-		pausedMillis:         m.pausedMillis.Load(),
-		thumbnailWriteMillis: m.thumbnailWriteMillis.Load(),
+		discoveredArchives:     m.discoveredArchives.Load(),
+		skippedArchives:        m.skippedArchives.Load(),
+		processedArchives:      m.processedArchives.Load(),
+		openedArchives:         m.openedArchives.Load(),
+		hashedFiles:            m.hashedFiles.Load(),
+		queuedCovers:           m.queuedCovers.Load(),
+		generatedCovers:        m.generatedCovers.Load(),
+		failedArchives:         m.failedArchives.Load(),
+		rehomedBooks:           m.rehomedBooks.Load(),
+		staleSeriesStats:       m.staleSeriesStats.Load(),
+		formatFilteredArchives: m.formatFilteredArchives.Load(),
+		ioWaitMillis:           m.ioWaitMillis.Load(),
+		pausedMillis:           m.pausedMillis.Load(),
+		thumbnailWriteMillis:   m.thumbnailWriteMillis.Load(),
 	}
 }
 
@@ -430,7 +452,26 @@ var ErrScanAlreadyRunning = errors.New("scanner: a scan is already running for t
 
 // ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
 // 业务上它需要同时保证增量扫描够快、强制修复能重建封面和索引、任务进度能实时反馈给前端。
+// LibraryScanOptions 是整库扫描的可选行为。
+type LibraryScanOptions struct {
+	// Force 跳过 mtime+size 的增量拦截，重读每个归档。
+	Force bool
+	// IgnoreFormatFilter 让本次扫描无视库的 scan_formats。
+	//
+	// 只有「重建缩略图」这类**对已入库内容的维护**才该置位：它会先删光缩略图文件、
+	// 清空所有 cover_path，再靠一次强制扫描重建。若这次扫描仍按 scan_formats 过滤，
+	// 被排除格式的书就再也不会被访问到——缩略图已删、cover_path 已清、且永不重生。
+	// 格式过滤的语义是「导入哪些文件」，不是「已入库的书哪些还算数」。
+	IgnoreFormatFilter bool
+}
+
+// ScanLibrary 按默认选项扫描整库（尊重库的 scan_formats）。
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
+	return s.ScanLibraryWithOptions(ctx, libraryID, rootPath, LibraryScanOptions{Force: force})
+}
+
+func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions) error {
+	force := scanOpts.Force
 	if !s.beginLibraryScan(libraryID) {
 		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)
 		return ErrScanAlreadyRunning
@@ -442,6 +483,14 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 	metrics := &scanMetrics{}
 	progress := newScanProgressReporter("library", libraryID, metrics, s.onScanProgress)
 	progress.publish("loading_existing_books", "", true)
+
+	// 库级格式过滤：libraries.scan_formats 此前前后端俱全却从没人读，用户勾了「只扫 cbz」
+	// 扫描器照样打开 rar/zip。这是**发现阶段**的过滤（决定导入哪些文件）；
+	// 已入库的书不受影响——CleanupLibrary 只按「文件是否还在磁盘上」删行，与格式无关。
+	formats := config.ScanFormatSet{} // 零值 = 全部支持格式
+	if !scanOpts.IgnoreFormatFilter {
+		formats = s.libraryScanFormats(ctx, libraryID)
+	}
 
 	// 增量扫描先加载已入库文件的修改时间和大小，未变化的归档可以跳过重读，降低大库重复扫描成本。
 	// 同一份清单还用于构建改名重连索引——强制扫描不吃增量跳过，但一样需要识别改名，
@@ -509,6 +558,12 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
+		if config.IsSupportedArchiveExtension(ext) && !formats.Matches(path) {
+			// 本可入库、但被用户的 scan_formats 排除。只统计这一类，
+			// 别把 .txt/.jpg 之类的噪音也算进去，否则这个数字没有诊断价值。
+			metrics.formatFilteredArchives.Add(1)
+			return nil
+		}
 		if config.IsSupportedArchiveExtension(ext) {
 			metrics.discoveredArchives.Add(1)
 			progress.publish("discovering", path, false)
@@ -581,6 +636,10 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	metrics := &scanMetrics{}
 	progress := newScanProgressReporter("series", seriesID, metrics, s.onScanProgress)
 	progress.publish("loading_existing_books", "", true)
+	// 与 ScanLibrary 同口径的格式过滤；library 行在上面已经取过，零额外查询。
+	// 系列扫描与库扫描必须同口径，否则「单系列重扫」会把库扫描刚过滤掉的文件重新灌进来。
+	formats := config.NewScanFormatSet(library.ScanFormats)
+
 	bookCache := make(map[string]bookScanSnapshot)
 	// 与 ScanLibrary 同理：这份清单同时供增量跳过与改名重连使用，强制扫描也需要后者。
 	var renames *renameIndex
@@ -634,6 +693,12 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
+		if config.IsSupportedArchiveExtension(ext) && !formats.Matches(path) {
+			// 本可入库、但被用户的 scan_formats 排除。只统计这一类，
+			// 别把 .txt/.jpg 之类的噪音也算进去，否则这个数字没有诊断价值。
+			metrics.formatFilteredArchives.Add(1)
+			return nil
+		}
 		if config.IsSupportedArchiveExtension(ext) {
 			metrics.discoveredArchives.Add(1)
 			progress.publish("discovering", path, false)
@@ -827,6 +892,7 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 		"failed_archives", snapshot.failedArchives,
 		"rehomed_books", snapshot.rehomedBooks,
 		"stale_series_stats", snapshot.staleSeriesStats,
+		"format_filtered_archives", snapshot.formatFilteredArchives,
 		"io_wait_ms", snapshot.ioWaitMillis,
 		"paused_ms", snapshot.pausedMillis,
 		"thumbnail_write_ms", snapshot.thumbnailWriteMillis,
@@ -869,6 +935,7 @@ func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.Resol
 		FailedArchives:         snapshot.failedArchives,
 		RehomedBooks:           snapshot.rehomedBooks,
 		StaleSeriesStats:       snapshot.staleSeriesStats,
+		FormatFilteredArchives: snapshot.formatFilteredArchives,
 		IOWaitMillis:           snapshot.ioWaitMillis,
 		PausedMillis:           snapshot.pausedMillis,
 		ThumbnailWriteMillis:   snapshot.thumbnailWriteMillis,
