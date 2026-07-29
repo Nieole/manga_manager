@@ -101,11 +101,36 @@ func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash str
 	if err != nil {
 		return database.KOReaderAccount{}, err
 	}
-	// 设备自助注册的账户无站点用户上下文——归属首个管理员（与「现有账户并入第一个管理员」口径一致）。
-	if adminID, e := s.store.FirstAdminUserID(ctx); e == nil {
-		if e := s.store.SetKOReaderAccountUser(ctx, account.ID, adminID); e != nil {
-			slog.Warn("Failed to assign self-registered KOReader account to admin", "account_id", account.ID, "error", e)
+	// 设备自助注册没有站点用户上下文，账号归属只能靠猜。站点只有一个用户时这个猜测无歧义；
+	// 一旦有第二个用户，把账号挂到「首个管理员」名下就是纯粹的错误归属——SaveProgress 会顺着
+	// 账户的 user_id 去写 user_book_progress 与 user_reading_activity，于是普通用户拿设备
+	// 自助注册之后，他读到哪管理员的进度就跳到哪，而他自己账号下的进度全丢。
+	// 因此多用户站点一律留 user_id=0（进度回落全局），由管理员在设置里显式指派。
+	assigned := false
+	userCount, countErr := s.store.CountUsers(ctx)
+	if countErr != nil {
+		slog.Warn("Failed to count site users for self-registered KOReader account",
+			"account_id", account.ID, "error", countErr)
+	} else if userCount == 1 {
+		if adminID, e := s.store.FirstAdminUserID(ctx); e == nil {
+			if e := s.store.SetKOReaderAccountUser(ctx, account.ID, adminID); e != nil {
+				slog.Warn("Failed to assign self-registered KOReader account to admin",
+					"account_id", account.ID, "error", e)
+			} else {
+				assigned = true
+			}
 		}
+	}
+	if !assigned {
+		// 未归属的账号其同步进度回落全局，任何站点用户都看不到。这里落一条 direction="system"
+		// 的审计行仅供事后查库定位——注意站内目前**没有任何界面会显示它**：四处消费
+		// koreader_sync_events 的查询都带 `direction != 'system'`。
+		_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
+			Direction: "system",
+			Username:  account.Username,
+			Status:    "account_unassigned",
+			Message:   "设备自助注册的账号未关联站点用户，其同步进度不计入任何用户，请在设置中指派",
+		})
 	}
 	return account, nil
 }

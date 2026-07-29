@@ -457,3 +457,127 @@ func TestRegisterDeviceRejectsMalformedCredentials(t *testing.T) {
 		}
 	})
 }
+
+// createServiceTestUser 建一个站点用户（role 由调用方指定）。
+func createServiceTestUser(t *testing.T, store database.Store, username, role string) database.User {
+	t.Helper()
+	user, err := store.CreateUser(context.Background(), database.CreateUserParams{
+		Username:     username,
+		PasswordHash: "x",
+		Role:         role,
+		DisplayName:  username,
+	})
+	if err != nil {
+		t.Fatalf("create user %q failed: %v", username, err)
+	}
+	return user
+}
+
+// TestRegisterDeviceDoesNotBindToAdminInMultiUserSite 守卫「自助注册的账号不会被错误归属」。
+//
+// 设备自助注册没有站点用户上下文，此前一律把新账号绑到 id 最小的管理员。多用户站点里
+// 这就是纯粹的错误归属：普通用户拿设备注册之后，SaveProgress 会顺着账户的 user_id 把进度
+// 写进**管理员**的 user_book_progress 与 user_reading_activity——他读到哪管理员的进度就
+// 跳到哪（还会计入管理员的热力图与连续天数），而他自己账号下的进度全丢。
+func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
+	service, store, rootDir := newTestService(t, "file_path")
+	ctx := context.Background()
+
+	admin := createServiceTestUser(t, store, "admin", database.RoleAdmin)
+	createServiceTestUser(t, store, "bob", database.RoleRegular)
+
+	_, book := seedServiceBook(t, store, rootDir, "Library A", "Series Alpha", "Volume01.cbz")
+	// 预置一个**小于总页数**的已读进度：seedServiceBook 的书 PageCount=32，
+	// 而 applyBookProgress 有「不回退」保护（page < prev 直接返回），
+	// 预置值若 >= 32，缺陷代码下第二条断言会假绿。
+	if err := store.SetUserBookProgress(ctx, admin.ID, book.ID, 4, time.Now()); err != nil {
+		t.Fatalf("预置管理员进度失败: %v", err)
+	}
+
+	account, err := service.RegisterDevice(ctx, "stranger-device", HashKey("hunter2"))
+	if err != nil {
+		t.Fatalf("RegisterDevice: %v", err)
+	}
+
+	// 三条断言彼此独立，用 Errorf 而不是 Fatalf：否则第一条挂掉后另两条不求值，
+	// 回退修复时看不出它们是否也守得住。
+	userID, err := store.GetKOReaderAccountUserID(ctx, account.Username)
+	if err != nil {
+		t.Fatalf("GetKOReaderAccountUserID: %v", err)
+	}
+	if userID != 0 {
+		t.Errorf("自助注册的账号被绑到了 user_id=%d —— 多用户站点无从判断它属于谁，"+
+			"挂到首个管理员名下会让别人的阅读进度写进管理员账户", userID)
+	}
+
+	// 走一次真实的进度上报，确认管理员的数据没有被改写。
+	// 先建立书籍指纹索引：CreateBook 不写 path_fingerprint，不跑这一步的话下面的上报
+	// 匹配不到任何书，applyBookProgress 根本不会被调用——两条断言就成了永远为真的空断言。
+	if _, _, err := service.RebuildBookIdentities(ctx, 10, nil); err != nil {
+		t.Fatalf("RebuildBookIdentities: %v", err)
+	}
+
+	// file_path 模式下服务端拿到的 document 是**设备上的原始路径**，由服务端自己算指纹，
+	// 所以这里要传相对路径而不是已经算好的哈希（传哈希会被再哈希一遍，永远匹配不上）。
+	// 下面的 res.Matched 守卫保证这次上报确实走到了写进度的分支——否则两条断言都是空断言。
+	res, err := service.SaveProgress(ctx, Credentials{Username: account.Username, Key: HashKey("hunter2")}, ProgressPayload{
+		Document:   "Series Alpha/Volume01.cbz",
+		Percentage: 1.0,
+		Progress:   "/body/DocFragment[32]",
+		Device:     "Kindle",
+		DeviceID:   "device-x",
+	})
+	if err != nil {
+		t.Fatalf("SaveProgress 失败: %v —— 用例必须真的走到写进度的分支才有判别力", err)
+	}
+	if !res.Matched {
+		t.Fatalf("上报没有匹配到书籍（%+v）—— 用例必须真的走到写进度的分支才有判别力", res)
+	}
+
+	progress, ok, err := store.GetUserBookProgress(ctx, admin.ID, book.ID)
+	if err != nil {
+		t.Fatalf("GetUserBookProgress: %v", err)
+	}
+	if ok && progress.LastReadPage.Valid && progress.LastReadPage.Int64 > 4 {
+		t.Errorf("管理员的阅读进度被推到了第 %d 页 —— 陌生设备的进度写进了管理员账户",
+			progress.LastReadPage.Int64)
+	}
+
+	sqlStore, ok2 := store.(*database.SqlStore)
+	if !ok2 {
+		t.Fatalf("需要 *SqlStore 才能直查活动表，得到 %T", store)
+	}
+	var activityRows int
+	if err := sqlStore.DB().QueryRow(
+		`SELECT COUNT(*) FROM user_reading_activity WHERE user_id = ?`, admin.ID).Scan(&activityRows); err != nil {
+		t.Fatalf("查 user_reading_activity: %v", err)
+	}
+	if activityRows != 0 {
+		t.Errorf("管理员的活动记录多出了 %d 行 —— 陌生设备的阅读会计入管理员的热力图与连续天数",
+			activityRows)
+	}
+}
+
+// TestRegisterDeviceBindsToSoleUserInSingleUserSite 是反向护栏。
+//
+// 单用户站点里唯一的用户就是唯一可能的归属，这个猜测无歧义，必须保留
+// ——否则绝大多数部署会从「进度能同步到我账户」退化成「进度谁也看不到」。
+func TestRegisterDeviceBindsToSoleUserInSingleUserSite(t *testing.T) {
+	service, store, _ := newTestService(t, "file_path")
+	ctx := context.Background()
+
+	admin := createServiceTestUser(t, store, "admin", database.RoleAdmin)
+
+	account, err := service.RegisterDevice(ctx, "my-kindle", HashKey("hunter2"))
+	if err != nil {
+		t.Fatalf("RegisterDevice: %v", err)
+	}
+	userID, err := store.GetKOReaderAccountUserID(ctx, account.Username)
+	if err != nil {
+		t.Fatalf("GetKOReaderAccountUserID: %v", err)
+	}
+	if userID != admin.ID {
+		t.Fatalf("单用户站点的自助注册账号 user_id=%d，期望 %d —— "+
+			"绝大多数部署会因此变成「进度谁也看不到」", userID, admin.ID)
+	}
+}
