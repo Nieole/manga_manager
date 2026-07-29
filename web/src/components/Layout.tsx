@@ -7,6 +7,7 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
+import { useAuth } from '../auth/AuthProvider';
 import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle, BarChart3 } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
@@ -37,6 +38,10 @@ interface ConfirmDialogState {
 }
 
 export default function Layout() {
+    // 资料库的增删改、扫描、AI 分组与系统设置在后端都是管理员专属（见 isRegularWritablePath：
+    // 普通账号的写权限只有阅读进度、书签与短评）。前端此前照样把这些入口渲染出来，
+    // 普通用户点了只会吃一个 403 再弹一句泛化的失败提示——看起来像系统坏了，而不是没权限。
+    const { isAdmin } = useAuth();
     const { t } = useI18n();
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
@@ -460,6 +465,7 @@ export default function Layout() {
                     >
                         <HelpCircle className="w-5 h-5" />
                     </button>
+                    {isAdmin && (
                     <Link
                         to="/settings"
                         className="p-2 text-gray-400 hover:text-komgaPrimary hover:bg-gray-800 rounded-full transition-colors"
@@ -467,6 +473,7 @@ export default function Layout() {
                     >
                         <SettingsIcon className="w-6 h-6" />
                     </Link>
+                    )}
                     <UserMenu />
                 </div>
             </header>
@@ -599,6 +606,7 @@ export default function Layout() {
                                 matcher={(p) => p.startsWith('/ops') || p === '/logs' || p === '/organize/tasks'}
                                 onClick={() => setIsSidebarOpen(false)}
                             />
+                            {isAdmin && (
                             <SidebarLink
                                 to="/settings"
                                 icon={<SettingsIcon className="w-4 h-4 shrink-0" />}
@@ -608,6 +616,7 @@ export default function Layout() {
                                 matcher={(p) => p.startsWith('/settings')}
                                 onClick={() => setIsSidebarOpen(false)}
                             />
+                            )}
                         </SidebarGroup>
 
                         {/* 分割线 */}
@@ -629,6 +638,7 @@ export default function Layout() {
                                         )}
                                         <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isLibrariesExpanded ? 'rotate-0' : '-rotate-90'}`} />
                                     </button>
+                                    {isAdmin && (
                                     <button
                                         onClick={() => setShowAddModal(true)}
                                         className="text-gray-500 hover:text-white transition-colors"
@@ -636,10 +646,14 @@ export default function Layout() {
                                     >
                                         <Plus className="w-4 h-4" />
                                     </button>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="w-full flex justify-center py-2 text-amber-400/50">
-                                    <FolderOpen className="w-5 h-5 cursor-pointer hover:text-white" onClick={() => setShowAddModal(true)} />
+                                    <FolderOpen
+                                        className={`w-5 h-5 ${isAdmin ? 'cursor-pointer hover:text-white' : ''}`}
+                                        onClick={isAdmin ? () => setShowAddModal(true) : undefined}
+                                    />
                                 </div>
                             )}
 
@@ -713,7 +727,7 @@ export default function Layout() {
                                             </span>
                                         </div>
                                     </div>
-                                    {!isDesktopSidebarCollapsed && (
+                                    {!isDesktopSidebarCollapsed && isAdmin && (
                                     <div>
                                         <button
                                             onClick={(e) => {

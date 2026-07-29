@@ -8,6 +8,7 @@ import { Suspense, lazy, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
+import { useAuth } from './auth/AuthProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthGate } from './auth/AuthGate';
 import { useI18n } from './i18n/LocaleProvider';
@@ -67,6 +68,17 @@ function withRouteFallback(element: ReactNode) {
   );
 }
 
+// RequireAdmin 是路由级的管理员守卫。
+//
+// 隐藏入口只挡住了「点得到」的路径，直接输 URL 或用旧书签仍会进到设置页——
+// 那里的每个接口都是管理员专属，普通用户看到的是一屏加载失败，像系统坏了。
+// 这里直接把他们送回首页；真正的权限判定仍在后端，这层只负责别让界面自相矛盾。
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const { isAdmin } = useAuth();
+  if (!isAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 function App() {
   return (
     <ErrorBoundary>
@@ -100,7 +112,7 @@ function App() {
           {/* 离线书架 */}
           <Route path="offline" element={withRouteFallback(<OfflineShelf />)} />
           {/* 系统配置中心 */}
-          <Route path="settings" element={withRouteFallback(<Settings />)}>
+          <Route path="settings" element={<RequireAdmin>{withRouteFallback(<Settings />)}</RequireAdmin>}>
             <Route index element={withRouteFallback(<SettingsOverviewPage />)} />
             <Route path="appearance" element={withRouteFallback(<SettingsAppearancePage />)} />
             <Route path="library" element={withRouteFallback(<SettingsLibraryPage />)} />

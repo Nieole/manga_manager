@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
 import { apiClient } from '../api/client';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon, ClipboardCheck, ArrowRight } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
@@ -59,6 +60,7 @@ interface RecommendedItem {
 }
 
 export default function Dashboard() {
+    const { isAdmin } = useAuth();
     const { t, formatNumber } = useI18n();
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [libraries, setLibraries] = useState<LibraryOverview[]>([]);
@@ -171,7 +173,8 @@ export default function Dashboard() {
                                 title={t('dashboard.onboarding.step1.title')}
                                 description={t('dashboard.onboarding.step1.description')}
                                 actionLabel={t('dashboard.onboarding.step1.action')}
-                                onClick={() => window.dispatchEvent(new Event('manga-manager:open-add-library'))}
+                                // 建库是管理员动作；普通用户点了只会吃 403。
+                                onClick={isAdmin ? () => window.dispatchEvent(new Event('manga-manager:open-add-library')) : undefined}
                                 icon={<FolderPlus className="w-5 h-5 text-komgaPrimary" />}
                             />
                             <OnboardingCard
@@ -672,7 +675,10 @@ function OnboardingCard({
     title: string;
     description: string;
     actionLabel: string;
-    onClick: () => void;
+    // onClick 为空时只渲染说明、不渲染按钮：引导卡说的是「怎么把站点搭起来」，
+    // 而那些动作在后端都是管理员专属。给普通用户留一颗必然吃 403 的按钮，
+    // 比不给按钮更糟——他会以为系统坏了。
+    onClick?: () => void;
     icon: React.ReactNode;
 }) {
     return (
@@ -682,12 +688,14 @@ function OnboardingCard({
                 <h2 className="text-base font-semibold text-white">{title}</h2>
             </div>
             <p className="text-sm text-gray-400 leading-6 min-h-[72px]">{description}</p>
-            <button
-                onClick={onClick}
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800"
-            >
-                {actionLabel}
-            </button>
+            {onClick && (
+                <button
+                    onClick={onClick}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800"
+                >
+                    {actionLabel}
+                </button>
+            )}
         </div>
     );
 }
