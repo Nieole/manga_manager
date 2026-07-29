@@ -170,7 +170,12 @@ export interface KOReaderDeviceItem {
 }
 
 export interface KOReaderDeviceConflictItem {
-  id: number;
+  // "<来源表>:<主键>" 形式的复合标识，只用于列表 key。这个列表是两张表的 UNION，
+  // 两边的自增主键会重号，所以它**不是**任何接口的入参。
+  id: string;
+  source_table: string;
+  // 只在这一行确实对应一条进度记录时才有；「重置进度」只能用它。
+  progress_id?: number;
   type: string;
   severity: 'warning' | 'error' | string;
   username: string;

@@ -149,7 +149,17 @@ type KOReaderDeviceMatchMethod struct {
 }
 
 type KOReaderDeviceConflict struct {
-	ID         int64         `json:"id"`
+	// SourceTable 是这一行来自哪张表：koreader_progress 或 koreader_sync_events。
+	//
+	// 必须显式带出来。这个列表是两张表的 UNION ALL，而两张表各自有独立的 AUTOINCREMENT
+	// 序列、都从 1 开始，所以同一个 id 同时是一条进度和一条事件的合法主键——不是理论可能，
+	// 是常态。此前只回一个裸整数，调用方无从判断它能不能喂给按进度主键操作的接口。
+	SourceTable string `json:"source_table"`
+	// SourceID 是该行在其来源表里的主键。要定位这一行必须 (SourceTable, SourceID) 一起看。
+	SourceID int64 `json:"source_id"`
+	// ProgressID 只在这一行确实对应一条 koreader_progress 记录时才有值。
+	// 「重置进度」这类按进度主键删除的操作只能用它——用 SourceID 会删错行。
+	ProgressID sql.NullInt64 `json:"progress_id"`
 	Type       string        `json:"type"`
 	Severity   string        `json:"severity"`
 	Username   string        `json:"username"`

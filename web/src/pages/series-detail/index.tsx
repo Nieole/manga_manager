@@ -111,10 +111,12 @@ export default function SeriesDetailPage() {
 
   const continueCta = useMemo(() => buildContinueCta(ctx.continueInfo, ctx.books), [ctx.continueInfo, ctx.books]);
 
-  // 背景封面优先使用已有封面路径的书籍，并带 updated_at 版本参数，让封面重建后浏览器可以刷新视觉背景。
+  // 背景封面优先使用已有封面路径的书籍。不带 ?v=updated_at：那一列会因为一堆与封面无关的
+  // 写入而变（例如 KOReader 重建索引回填的身份指纹），整库任一无关变更都会让这张大图重下。
+  // 封面端点带弱 ETag 且是 must-revalidate，封面真变了浏览器自然拿到新图。
   const coverUrl = useMemo(() => {
     const b = ctx.books.find((book) => book.cover_path?.Valid && book.cover_path?.String) || ctx.books[0];
-    return b ? `/api/covers/${b.id}${b.updated_at ? `?v=${new Date(b.updated_at).getTime()}` : ''}` : null;
+    return b ? `/api/covers/${b.id}` : null;
   }, [ctx.books]);
 
   const handleBack = useCallback(() => {

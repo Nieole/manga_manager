@@ -119,7 +119,15 @@ type KOReaderMatchMethodItem struct {
 }
 
 type KOReaderDeviceConflictItem struct {
-	ID            int64   `json:"id"`
+	// ID 是 "<来源表>:<主键>" 形式的复合标识，只用于前端 key，不是任何接口的入参。
+	//
+	// 此前它是一个裸整数，而这个列表是 koreader_progress 与 koreader_sync_events 的
+	// UNION ALL——两张表各有独立的 AUTOINCREMENT、都从 1 开始，同一个 id 同时是两边的
+	// 合法主键。前端把它当进度主键传给「重置进度」，删掉的就是另一台设备的阅读进度。
+	ID          string `json:"id"`
+	SourceTable string `json:"source_table"`
+	// ProgressID 只在这一行确实对应一条进度记录时才有值；「重置进度」只能用它。
+	ProgressID    *int64  `json:"progress_id,omitempty"`
 	Type          string  `json:"type"`
 	Severity      string  `json:"severity"`
 	Username      string  `json:"username"`
@@ -297,7 +305,8 @@ func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http
 
 	for _, conflict := range conflicts {
 		item := KOReaderDeviceConflictItem{
-			ID:            conflict.ID,
+			ID:            fmt.Sprintf("%s:%d", conflict.SourceTable, conflict.SourceID),
+			SourceTable:   conflict.SourceTable,
 			Type:          conflict.Type,
 			Severity:      conflict.Severity,
 			Username:      conflict.Username,
@@ -311,6 +320,10 @@ func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http
 			Percentage:    conflict.Percentage,
 			UpdatedAt:     conflict.UpdatedAt.Format(time.RFC3339),
 			Suggestion:    koreaderConflictSuggestion(requestLocale(r), conflict, cfg),
+		}
+		if conflict.ProgressID.Valid {
+			progressID := conflict.ProgressID.Int64
+			item.ProgressID = &progressID
 		}
 		if conflict.BookID.Valid {
 			bookID := conflict.BookID.Int64
