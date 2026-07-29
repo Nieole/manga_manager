@@ -211,6 +211,7 @@ interface ConfigContextValue {
   showToast: (text: string, type?: 'success' | 'error') => void;
   fieldErrors: (field: string) => string[];
   saveConfig: (section: ConfigSectionKey, successMessage?: string) => Promise<void>;
+  saveProtocols: (protocol: 'opds' | 'mihon', enabled: boolean) => Promise<void>;
   handleTestLLM: () => Promise<void>;
   handleAction: (path: string, successMessage: string, errorMessage?: string) => Promise<void>;
   hasSectionChanges: (section: SettingsSectionKey) => boolean;
@@ -264,9 +265,11 @@ function buildKOReaderForm(
   };
 }
 
+// connections 也是一个配置分区（协议开关落在 config.protocols 下），只是它没有 SaveBar
+// ——开关一拨就即时保存。它不参与 hasSectionChanges 的脏标记正是因为没有草稿态。
 export type ConfigSectionKey = Exclude<
   SettingsSectionKey,
-  'overview' | 'appearance' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance'
+  'overview' | 'appearance' | 'koreader' | 'tags' | 'users' | 'maintenance'
 >;
 
 // SECTION_FIELD_PATHS 是「哪些配置字段属于哪个分区」的**唯一**事实源。
@@ -292,6 +295,8 @@ const SECTION_FIELD_PATHS: Record<ConfigSectionKey, string[]> = {
     'scanner.max_ai_concurrency',
   ],
   ai: ['llm'],
+  // protocols 整块属于连接分区：opds / mihon 两个子键没有被别的分区瓜分，无需写到叶子。
+  connections: ['protocols'],
 };
 
 function readPath(source: unknown, path: string): unknown {
@@ -398,9 +403,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     koreaderStatusRef.current = koreaderStatus;
   }, [koreaderStatus]);
 
-  const fetchConfig = useCallback(async () => {
+  // savedSection 非空表示「刚保存完这个分区」：此时只把该分区刷成服务端的新值，
+  // 其余分区保留用户手上的草稿。
+  //
+  // 「只保存本分区」的对偶就是「只刷新本分区」。少了这一半，保存 AI 设置会顺手把
+  // 资料库分区没保存的草稿整片抹掉、侧边栏的脏点也一起熄灭，全程没有任何提示——
+  // 方向比原缺陷安全（丢的是本地草稿不是写库），但同样是静默的。
+  const fetchConfig = useCallback(async (savedSection?: ConfigSectionKey) => {
     const res = await apiClient.get<ConfigEnvelope>('/api/system/config');
-    setConfig(res.data.config);
+    setConfig((prev) => (prev && savedSection ? applySectionSnapshot(prev, res.data.config, savedSection) : res.data.config));
+    // initialConfig 是「服务端真相」的基线，必须整份更新。
     setInitialConfig(res.data.config);
     setValidation(res.data.validation);
     setCapabilities(res.data.capabilities);
@@ -479,7 +491,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         const res = await apiClient.post('/api/system/config', payload);
         setValidation(res.data.validation);
         showToast(res.data.message || successMessage, 'success');
-        await fetchConfig();
+        await fetchConfig(section);
       } catch (error) {
         console.error(error);
         if (isAxiosError(error) && error.response?.status === 422) {
@@ -494,6 +506,30 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       }
     },
     [config, initialConfig, fetchConfig, showToast, t],
+  );
+
+  // saveProtocols 保存协议开关。
+  //
+  // 与 saveConfig 同一套语义：以服务端最近一次下发的 initialConfig 为底，只叠加 protocols。
+  // 连接页此前自己拼 `{...config, protocols}` 再整份 POST——基底是**活的草稿**，
+  // 于是「在资料库分区改了并发数没保存、切到连接页拨一下 OPDS 开关」就把那份改动一并写库了。
+  const saveProtocols = useCallback(
+    async (protocol: 'opds' | 'mihon', enabled: boolean) => {
+      if (!config || !initialConfig) return;
+      const draft = {
+        ...config,
+        protocols: {
+          opds: { enabled: config.protocols?.opds?.enabled ?? false },
+          mihon: { enabled: config.protocols?.mihon?.enabled ?? false },
+        },
+      } as Config;
+      draft.protocols[protocol] = { enabled };
+      const payload = applySectionSnapshot(initialConfig, draft, 'connections');
+      const res = await apiClient.post('/api/system/config', payload);
+      setValidation(res.data.validation);
+      await fetchConfig('connections');
+    },
+    [config, initialConfig, fetchConfig],
   );
 
   const handleTestLLM = useCallback(async () => {
@@ -684,6 +720,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showToast,
       fieldErrors,
       saveConfig,
+      saveProtocols,
       handleTestLLM,
       handleAction,
       hasSectionChanges,
@@ -699,6 +736,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       llmTestResult,
       loading,
       saveConfig,
+      saveProtocols,
       saving,
       showToast,
       testingLLM,

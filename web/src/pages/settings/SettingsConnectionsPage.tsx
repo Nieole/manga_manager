@@ -63,7 +63,7 @@ interface ClientConnectionsResponse {
 
 export function SettingsConnectionsPage() {
   const { t } = useI18n();
-  const { config, setConfig, showToast } = useSettings();
+  const { config, saveProtocols, showToast } = useSettings();
   const [loading, setLoading] = useState(true);
   const [copying, setCopying] = useState<string | null>(null);
   const [savingProtocol, setSavingProtocol] = useState<'opds' | 'mihon' | null>(null);
@@ -156,18 +156,12 @@ export function SettingsConnectionsPage() {
 
   const setProtocolEnabled = async (protocol: 'opds' | 'mihon', enabled: boolean) => {
     if (!config) return;
-    const nextConfig = {
-      ...config,
-      protocols: {
-        opds: { enabled: config.protocols?.opds?.enabled ?? false },
-        mihon: { enabled: config.protocols?.mihon?.enabled ?? false },
-      },
-    };
-    nextConfig.protocols[protocol] = { enabled };
     setSavingProtocol(protocol);
     try {
-      const res = await apiClient.post('/api/system/config', nextConfig);
-      setConfig(res.data?.config || nextConfig);
+      // 走 context 的 saveProtocols：它以服务端快照为底只叠加 protocols。
+      // 这里此前自己拼 `{...config, protocols}` 再整份 POST，基底是活的草稿——
+      // 用户在别的分区改了没保存的东西会被这一下开关顺手写进后端。
+      await saveProtocols(protocol, enabled);
       showToast(
         t(enabled ? 'settings.connections.protocolEnabledToast' : 'settings.connections.protocolDisabledToast', {
           label: protocol === 'opds' ? 'OPDS' : 'Mihon',

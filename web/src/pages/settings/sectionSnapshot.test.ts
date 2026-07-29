@@ -98,3 +98,44 @@ describe('applySectionSnapshot', () => {
     expect((payload.llm as unknown as { api_key: string }).api_key).toBe('__mm_secret_unchanged__');
   });
 });
+
+describe('保存后的刷新同样只覆盖本分区', () => {
+  it('保存 AI 之后，资料库分区的草稿不被服务端配置抹掉', () => {
+    // fetchConfig(savedSection) 的语义：以手上的草稿为底，只把刚保存的那个分区
+    // 换成服务端的新值。少了这一半，「只保存本分区」就只做了一半——
+    // 保存 AI 会顺手把资料库分区没保存的草稿整片抹掉，侧边栏脏点一起熄灭，全程无提示。
+    const draft = makeConfig({
+      scanner: {
+        workers: 99, // library 分区的草稿，用户还没保存
+        scan_profile: 'fast_scan',
+        archive_pool_size: 8,
+        thumbnail_format: 'webp',
+        waifu2x_path: '',
+        realcugan_path: '',
+        max_ai_concurrency: 1,
+      },
+      llm: { provider: 'openai', api_key: 'sk-saved' },
+    });
+    const fromServer = makeConfig({ llm: { provider: 'openai', api_key: '__mm_secret_unchanged__' } });
+
+    const next = applySectionSnapshot(draft, fromServer, 'ai');
+
+    expect((next.scanner as unknown as { workers: number }).workers).toBe(99);
+    expect((next.llm as unknown as { api_key: string }).api_key).toBe('__mm_secret_unchanged__');
+  });
+
+  it('连接分区只带出 protocols', () => {
+    // 协议开关此前自己拼 `{...config, protocols}` 再整份 POST，基底是活的草稿——
+    // 「在资料库分区改了没保存、切到连接页拨一下 OPDS」就把那份改动一并写库了。
+    const server = makeConfig({ protocols: { opds: { enabled: false }, mihon: { enabled: false } } });
+    const draft = makeConfig({
+      protocols: { opds: { enabled: true }, mihon: { enabled: false } },
+      llm: { provider: 'openai', api_key: 'sk-draft' },
+    });
+
+    const payload = applySectionSnapshot(server, draft, 'connections');
+
+    expect((payload.protocols as unknown as { opds: { enabled: boolean } }).opds.enabled).toBe(true);
+    expect(payload.llm).toEqual(server.llm);
+  });
+});
