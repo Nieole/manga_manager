@@ -538,7 +538,7 @@ VALUES (
     COALESCE(NULLIF(CAST(?3 AS TEXT), ''), 'manual'),
     ?4
 )
-RETURNING id, name, description, cover_url, sort_order, source_type, source_review_id, created_at, updated_at
+RETURNING id, name, description, cover_url, sort_order, source_type, source_review_id, source_key, created_at, updated_at
 `
 
 type CreateCollectionParams struct {
@@ -564,6 +564,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.SortOrder,
 		&i.SourceType,
 		&i.SourceReviewID,
+		&i.SourceKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -837,6 +838,18 @@ func (q *Queries) CreateSimpleCollection(ctx context.Context, arg CreateSimpleCo
 	return id, err
 }
 
+const deleteAllFranchiseCollections = `-- name: DeleteAllFranchiseCollections :execrows
+DELETE FROM collections WHERE source_type = 'system_franchise'
+`
+
+func (q *Queries) DeleteAllFranchiseCollections(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteAllFranchiseCollections)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteBook = `-- name: DeleteBook :exec
 DELETE FROM books WHERE id = ?
 `
@@ -957,6 +970,30 @@ DELETE FROM smart_filters WHERE id = ?
 
 func (q *Queries) DeleteSmartFilter(ctx context.Context, id int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteSmartFilter, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteStaleFranchiseCollections = `-- name: DeleteStaleFranchiseCollections :execrows
+DELETE FROM collections
+WHERE source_type = 'system_franchise'
+  AND (source_key = '' OR source_key NOT IN (/*SLICE:keep_keys*/?))
+`
+
+func (q *Queries) DeleteStaleFranchiseCollections(ctx context.Context, keepKeys []string) (int64, error) {
+	query := deleteStaleFranchiseCollections
+	var queryParams []interface{}
+	if len(keepKeys) > 0 {
+		for _, v := range keepKeys {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:keep_keys*/?", strings.Repeat(",?", len(keepKeys))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:keep_keys*/?", "NULL", 1)
+	}
+	result, err := q.db.ExecContext(ctx, query, queryParams...)
 	if err != nil {
 		return 0, err
 	}
@@ -2947,6 +2984,33 @@ func (q *Queries) ListCollectionSeries(ctx context.Context, collectionID int64) 
 	return items, nil
 }
 
+const listCollectionSeriesIDs = `-- name: ListCollectionSeriesIDs :many
+SELECT series_id FROM collection_series WHERE collection_id = ?
+`
+
+func (q *Queries) ListCollectionSeriesIDs(ctx context.Context, collectionID int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listCollectionSeriesIDs, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var series_id int64
+		if err := rows.Scan(&series_id); err != nil {
+			return nil, err
+		}
+		items = append(items, series_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCollectionViews = `-- name: ListCollectionViews :many
 SELECT
     'collection:' || c.id AS view_id,
@@ -3229,6 +3293,39 @@ func (q *Queries) ListForwardSeriesRelations(ctx context.Context, sourceSeriesID
 			&i.TargetSeriesName,
 			&i.RelationType,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFranchiseCollectionKeys = `-- name: ListFranchiseCollectionKeys :many
+SELECT id, source_key FROM collections
+WHERE source_type = 'system_franchise' AND source_key != ''
+`
+
+type ListFranchiseCollectionKeysRow struct {
+	ID        int64  `json:"id"`
+	SourceKey string `json:"source_key"`
+}
+
+func (q *Queries) ListFranchiseCollectionKeys(ctx context.Context) ([]ListFranchiseCollectionKeysRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFranchiseCollectionKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFranchiseCollectionKeysRow
+	for rows.Next() {
+		var i ListFranchiseCollectionKeysRow
+		if err := rows.Scan(&i.ID, &i.SourceKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -6133,6 +6230,41 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 		&i.PathFingerprint,
 		&i.PathFingerprintNoExt,
 		&i.FilenameFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertFranchiseCollection = `-- name: UpsertFranchiseCollection :one
+INSERT INTO collections (name, description, source_type, source_key)
+VALUES (?1, ?2, 'system_franchise', ?3)
+ON CONFLICT(source_type, source_key) WHERE source_key != ''
+DO UPDATE SET
+    name = excluded.name,
+    description = excluded.description,
+    updated_at = CASE WHEN collections.name != excluded.name THEN CURRENT_TIMESTAMP ELSE collections.updated_at END
+RETURNING id, name, description, cover_url, sort_order, source_type, source_review_id, source_key, created_at, updated_at
+`
+
+type UpsertFranchiseCollectionParams struct {
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+	SourceKey   string         `json:"source_key"`
+}
+
+func (q *Queries) UpsertFranchiseCollection(ctx context.Context, arg UpsertFranchiseCollectionParams) (Collection, error) {
+	row := q.db.QueryRowContext(ctx, upsertFranchiseCollection, arg.Name, arg.Description, arg.SourceKey)
+	var i Collection
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CoverUrl,
+		&i.SortOrder,
+		&i.SourceType,
+		&i.SourceReviewID,
+		&i.SourceKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

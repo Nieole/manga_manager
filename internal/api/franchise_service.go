@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"manga-manager/internal/database"
 	"net/http"
+	"sort"
+	"strconv"
 )
 
 // scheduleFranchiseRebuild 委托给 franchiseRebuilder（合并式调度已抽入 franchise_rebuilder.go）。
@@ -34,10 +36,20 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 	}
 
 	// 2. Find connected components
+	//
+	// 遍历顺序必须确定：Go 的 map 迭代是随机的，而下面用 comp 的最小 id 做稳定键、
+	// 用它对应的系列名做合集名。不排序的话，同一批关系每次重建都可能算出不同的
+	// 起点、不同的名字——用户会看到合集名无缘无故变来变去。
+	nodes := make([]int64, 0, len(adj))
+	for node := range adj {
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i] < nodes[j] })
+
 	visited := make(map[int64]bool)
 	var components [][]int64
 
-	for node := range adj {
+	for _, node := range nodes {
 		if !visited[node] {
 			var comp []int64
 			queue := []int64{node}
@@ -57,6 +69,9 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 			}
 			// Only care about franchises with at least 2 series
 			if len(comp) > 1 {
+				// comp[0] 是 BFS 的起点，而外层是按 id 升序遍历并标记 visited 的，
+				// 所以起点必然是这个连通分量里最小的 id——任何更小的成员都会更早被访问、
+				// 自己去当起点。下面直接拿 comp[0] 当稳定键，不必再排一次。
 				components = append(components, comp)
 			}
 		}
@@ -78,35 +93,81 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 		}
 	}
 
-	// 4. 删旧建新整体入事务：先删后建原子化，避免中途失败/并发交错留下“已删光/半重建”的
-	//    不一致状态；错误直接返回以触发回滚（此前吞错并 continue）。
+	// 4. 按稳定自然键 upsert + 成员差集，整体入事务。
+	//
+	// 此前是「整体 DELETE 再全部重建」。这条路径在每次新增/删除/修改系列关系时都会跑一遍，
+	// 于是用户加一条关系就会让**所有** franchise 合集换一遍 id——而合集 id 是对外暴露的：
+	// Mihon 的 /mihon/collections/{id}/series 与 OPDS 的 /opds/collections/{id} 都按它取数，
+	// 客户端书库里记下的条目会集体失效；用户在站内收藏的合集链接同理。
+	//
+	// 键取连通分量的最小系列 id。它在「有更大 id 的系列加入」「关系类型变化」这些常见改动下
+	// 都不变；只有当一个 id 更小的系列并进来时才会换键——那种情况下这个合集的身份本身
+	// 也确实变了（两个 franchise 合并），换 id 是诚实的。
+	keys := make([]string, 0, len(components))
 	err = c.store.ExecTx(ctx, func(q *database.Queries) error {
-		if err := q.DeleteFranchiseCollections(ctx); err != nil {
-			return err
-		}
-		for i, comp := range components {
-			name := fmt.Sprintf("Franchise #%d", i+1)
+		for _, comp := range components {
+			key := strconv.FormatInt(comp[0], 10)
+			keys = append(keys, key)
+
+			name := "Franchise #" + key
 			if n, ok := nameByID[comp[0]]; ok && n != "" {
 				name = n + " Franchise"
 			}
-			created, err := q.CreateCollection(ctx, database.CreateCollectionParams{
+			collection, err := q.UpsertFranchiseCollection(ctx, database.UpsertFranchiseCollectionParams{
 				Name:        name,
 				Description: sql.NullString{String: "Auto-generated franchise collection based on series relations.", Valid: true},
-				SourceType:  "system_franchise",
+				SourceKey:   key,
 			})
 			if err != nil {
 				return err
 			}
+
+			// 成员差集：只增删真正变化的那几行。整体重建会让 collection_series.added_at
+			// 全部刷新，「加入时间」这个字段就永久失去意义了。
+			existing, err := q.ListCollectionSeriesIDs(ctx, collection.ID)
+			if err != nil {
+				return err
+			}
+			want := make(map[int64]struct{}, len(comp))
 			for _, seriesID := range comp {
+				want[seriesID] = struct{}{}
+			}
+			have := make(map[int64]struct{}, len(existing))
+			for _, seriesID := range existing {
+				have[seriesID] = struct{}{}
+			}
+			for _, seriesID := range comp {
+				if _, ok := have[seriesID]; ok {
+					continue
+				}
 				if _, err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
-					CollectionID: created.ID,
+					CollectionID: collection.ID,
+					SeriesID:     seriesID,
+				}); err != nil {
+					return err
+				}
+			}
+			for _, seriesID := range existing {
+				if _, ok := want[seriesID]; ok {
+					continue
+				}
+				if _, err := q.RemoveSeriesFromCollection(ctx, database.RemoveSeriesFromCollectionParams{
+					CollectionID: collection.ID,
 					SeriesID:     seriesID,
 				}); err != nil {
 					return err
 				}
 			}
 		}
-		return nil
+
+		// 清掉不再对应任何连通分量的 franchise 合集。source_key 为空的旧行（升级前建的）
+		// 也算过期——它们会被上面的 upsert 用新键重建一遍。
+		if len(keys) == 0 {
+			_, err := q.DeleteAllFranchiseCollections(ctx)
+			return err
+		}
+		_, err := q.DeleteStaleFranchiseCollections(ctx, keys)
+		return err
 	})
 	if err != nil {
 		slog.Error("Failed to rebuild franchise collections", "error", err)

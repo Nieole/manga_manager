@@ -92,6 +92,7 @@ type Collection struct {
 	SortOrder      int64          `json:"sort_order"`
 	SourceType     string         `json:"source_type"`
 	SourceReviewID sql.NullInt64  `json:"source_review_id"`
+	SourceKey      string         `json:"source_key"`
 	CreatedAt      sql.NullTime   `json:"created_at"`
 	UpdatedAt      sql.NullTime   `json:"updated_at"`
 }

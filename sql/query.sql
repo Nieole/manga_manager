@@ -877,6 +877,31 @@ VALUES (
 )
 RETURNING *;
 
+-- name: UpsertFranchiseCollection :one
+INSERT INTO collections (name, description, source_type, source_key)
+VALUES (sqlc.arg(name), sqlc.arg(description), 'system_franchise', sqlc.arg(source_key))
+ON CONFLICT(source_type, source_key) WHERE source_key != ''
+DO UPDATE SET
+    name = excluded.name,
+    description = excluded.description,
+    updated_at = CASE WHEN collections.name != excluded.name THEN CURRENT_TIMESTAMP ELSE collections.updated_at END
+RETURNING *;
+
+-- name: ListFranchiseCollectionKeys :many
+SELECT id, source_key FROM collections
+WHERE source_type = 'system_franchise' AND source_key != '';
+
+-- name: ListCollectionSeriesIDs :many
+SELECT series_id FROM collection_series WHERE collection_id = ?;
+
+-- name: DeleteStaleFranchiseCollections :execrows
+DELETE FROM collections
+WHERE source_type = 'system_franchise'
+  AND (source_key = '' OR source_key NOT IN (sqlc.slice('keep_keys')));
+
+-- name: DeleteAllFranchiseCollections :execrows
+DELETE FROM collections WHERE source_type = 'system_franchise';
+
 -- name: AddSeriesToCollection :execrows
 INSERT OR IGNORE INTO collection_series (collection_id, series_id)
 VALUES (?, ?);

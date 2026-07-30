@@ -97,6 +97,10 @@ func Migrate(dbPath string) error {
 		{table: "smart_filters", name: "added_within_days", definition: "INTEGER"},
 		{table: "tags", name: "series_count", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{table: "koreader_accounts", name: "user_id", definition: "INTEGER NOT NULL DEFAULT 0"},
+		// source_key 让系统生成的合集有稳定自然键，从而按键 upsert 而不是整体重建。
+		// 存量行留空串：下一次重建会按新键建出正确的行，旧的无键行由
+		// DeleteStaleFranchiseCollections 一并清掉（它把 source_key='' 也算作过期）。
+		{table: "collections", name: "source_key", definition: "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := ensureColumn(db, column.table, column.name, column.definition); err != nil {
 			return err

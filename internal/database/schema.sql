@@ -337,10 +337,18 @@ CREATE TABLE IF NOT EXISTS collections (
     sort_order INTEGER NOT NULL DEFAULT 0,
     source_type TEXT NOT NULL DEFAULT 'manual',
     source_review_id INTEGER,
+    -- source_key 是系统生成合集的稳定自然键（手工合集留空）。
+    -- 有了它，系统合集才能按键 upsert 而不是每次整体删掉重建——重建换 id 会让用户收藏的
+    -- 链接、以及 Mihon/OPDS 客户端里按 id 记下的书库条目全部失效。
+    source_key TEXT NOT NULL DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(source_review_id) REFERENCES ai_grouping_reviews(id) ON DELETE SET NULL
 );
+
+-- 部分唯一索引：只约束带键的系统合集，手工合集（source_key='')不受影响。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_source_key
+    ON collections(source_type, source_key) WHERE source_key != '';
 
 CREATE TABLE IF NOT EXISTS collection_series (
     collection_id INTEGER NOT NULL,

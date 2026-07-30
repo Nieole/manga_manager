@@ -52,6 +52,7 @@ type Querier interface {
 	CreateSeries(ctx context.Context, arg CreateSeriesParams) (Series, error)
 	CreateSeriesRelation(ctx context.Context, arg CreateSeriesRelationParams) error
 	CreateSimpleCollection(ctx context.Context, arg CreateSimpleCollectionParams) (int64, error)
+	DeleteAllFranchiseCollections(ctx context.Context) (int64, error)
 	DeleteBook(ctx context.Context, id int64) error
 	DeleteBookByPath(ctx context.Context, path string) error
 	DeleteCollection(ctx context.Context, id int64) (int64, error)
@@ -63,6 +64,7 @@ type Querier interface {
 	DeleteSeries(ctx context.Context, id int64) error
 	DeleteSeriesRelation(ctx context.Context, id int64) (int64, error)
 	DeleteSmartFilter(ctx context.Context, id int64) (int64, error)
+	DeleteStaleFranchiseCollections(ctx context.Context, keepKeys []string) (int64, error)
 	FindExistingSeriesRelation(ctx context.Context, arg FindExistingSeriesRelationParams) (int64, error)
 	GetAIGroupingReview(ctx context.Context, id int64) (AiGroupingReview, error)
 	GetAIGroupingReviewCollection(ctx context.Context, id int64) (AiGroupingReviewCollection, error)
@@ -113,11 +115,13 @@ type Querier interface {
 	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)
 	ListCollectionSeries(ctx context.Context, collectionID int64) ([]ListCollectionSeriesRow, error)
+	ListCollectionSeriesIDs(ctx context.Context, collectionID int64) ([]int64, error)
 	ListCollectionViews(ctx context.Context) ([]ListCollectionViewsRow, error)
 	ListCollectionsWithSeriesCount(ctx context.Context) ([]ListCollectionsWithSeriesCountRow, error)
 	ListExternalLibraryBooks(ctx context.Context, libraryID int64) ([]ListExternalLibraryBooksRow, error)
 	ListExternalTransferBooksBySeries(ctx context.Context, seriesIds []int64) ([]ListExternalTransferBooksBySeriesRow, error)
 	ListForwardSeriesRelations(ctx context.Context, sourceSeriesID int64) ([]ListForwardSeriesRelationsRow, error)
+	ListFranchiseCollectionKeys(ctx context.Context) ([]ListFranchiseCollectionKeysRow, error)
 	ListHealthDuplicateFileHash(ctx context.Context, arg ListHealthDuplicateFileHashParams) ([]ListHealthDuplicateFileHashRow, error)
 	ListHealthDuplicateQuickHash(ctx context.Context, arg ListHealthDuplicateQuickHashParams) ([]ListHealthDuplicateQuickHashRow, error)
 	ListHealthEmptyPages(ctx context.Context, arg ListHealthEmptyPagesParams) ([]ListHealthEmptyPagesRow, error)
@@ -183,6 +187,7 @@ type Querier interface {
 	UpdateSmartFilter(ctx context.Context, arg UpdateSmartFilterParams) (SmartFilter, error)
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
 	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error)
+	UpsertFranchiseCollection(ctx context.Context, arg UpsertFranchiseCollectionParams) (Collection, error)
 	UpsertReadingBookmark(ctx context.Context, arg UpsertReadingBookmarkParams) (ReadingBookmark, error)
 	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error)
 	UpsertSeriesMetadataProvenance(ctx context.Context, arg UpsertSeriesMetadataProvenanceParams) (SeriesMetadataProvenance, error)
