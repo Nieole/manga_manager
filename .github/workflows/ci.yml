@@ -13,6 +13,10 @@ permissions:
   contents: read
 
 env:
+  # 所有 action 现已原生 node24，这个开关是**安全网**而不是必需项：
+  # 万一将来某次依赖升级又引入一个仍在 node20 的 action，它能让其继续跑在 node24 上，
+  # 而不是等 GitHub 从 runner 上彻底移除 node20 那天 CI 突然全红。
+  # 它不会掩盖弃用告警——告警照样会打出来，正是靠它才发现有四个 action 还在 node20。
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -64,8 +68,10 @@ jobs:
 
       - name: Lint Go (golangci-lint)
         if: matrix.os == 'ubuntu-latest'
-        # golangci-lint v2 requires golangci-lint-action v7 (v6 only supports v1).
-        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
+        # golangci-lint-action v8+ 要求 golangci-lint >= v2.1.0（下面钉的是 v2.12.2）。
+        # v9 是把运行时从 node20 搬到 node24 的那一版——GitHub 已弃用 node20，
+        # 留在 v7 只会一直被强制降级运行并刷弃用告警。
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
 
