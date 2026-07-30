@@ -880,15 +880,6 @@ func (q *Queries) DeleteCollection(ctx context.Context, id int64) (int64, error)
 	return result.RowsAffected()
 }
 
-const deleteFranchiseCollections = `-- name: DeleteFranchiseCollections :exec
-DELETE FROM collections WHERE source_type = 'system_franchise'
-`
-
-func (q *Queries) DeleteFranchiseCollections(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteFranchiseCollections)
-	return err
-}
-
 const deleteLibrary = `-- name: DeleteLibrary :exec
 DELETE FROM libraries WHERE id = ?
 `
@@ -3293,39 +3284,6 @@ func (q *Queries) ListForwardSeriesRelations(ctx context.Context, sourceSeriesID
 			&i.TargetSeriesName,
 			&i.RelationType,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listFranchiseCollectionKeys = `-- name: ListFranchiseCollectionKeys :many
-SELECT id, source_key FROM collections
-WHERE source_type = 'system_franchise' AND source_key != ''
-`
-
-type ListFranchiseCollectionKeysRow struct {
-	ID        int64  `json:"id"`
-	SourceKey string `json:"source_key"`
-}
-
-func (q *Queries) ListFranchiseCollectionKeys(ctx context.Context) ([]ListFranchiseCollectionKeysRow, error) {
-	rows, err := q.db.QueryContext(ctx, listFranchiseCollectionKeys)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListFranchiseCollectionKeysRow
-	for rows.Next() {
-		var i ListFranchiseCollectionKeysRow
-		if err := rows.Scan(&i.ID, &i.SourceKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

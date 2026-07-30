@@ -12,6 +12,7 @@ package api
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"manga-manager/internal/database"
@@ -87,6 +88,9 @@ func readFranchises(t *testing.T, store database.Store) []franchiseSnapshot {
 		if err != nil {
 			t.Fatalf("ListCollectionSeriesIDs: %v", err)
 		}
+		// 在 Go 侧排序，不依赖查询的返回顺序。下面有两处按 Members[0] 分派的判断，
+		// 顺序一变它们会**静默跳过**断言（走 continue）而不是报红——那比误报更危险。
+		sort.Slice(members, func(a, b int) bool { return members[a] < members[b] })
 		out[i].Members = members
 	}
 	return out
@@ -276,5 +280,91 @@ func TestFranchiseRebuildReplacesLegacyKeylessRows(t *testing.T) {
 	}
 	if after[0].Name == "Legacy Franchise" {
 		t.Fatal("留下的是那条无键旧行")
+	}
+}
+
+// TestFranchiseRebuildDropsEveryCollectionWhenLastRelationGone 覆盖「零连通分量」这个分支。
+//
+// 它是承重的，不是防御性冗余：sqlc 对空 slice 生成的是 `NOT IN (NULL)`，
+// 那个条件对任何值都不成立，于是带键的行一条都删不掉。少了这个分支，用户删掉最后一条
+// 系列关系后，界面上会永远挂着一堆没有任何依据的 franchise 合集。
+func TestFranchiseRebuildDropsEveryCollectionWhenLastRelationGone(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	ctx := context.Background()
+
+	_, ids := seedFranchiseSeries(t, store, 3)
+	addRelation(t, store, ids[0], ids[1])
+	if err := controller.RebuildFranchiseCollections(ctx); err != nil {
+		t.Fatalf("首次重建: %v", err)
+	}
+	if got := len(readFranchises(t, store)); got != 1 {
+		t.Fatalf("期望 1 个合集，实际 %d", got)
+	}
+
+	sqlStore := store.(*database.SqlStore)
+	if _, err := sqlStore.DB().ExecContext(ctx, `DELETE FROM series_relations`); err != nil {
+		t.Fatalf("清空关系: %v", err)
+	}
+	if err := controller.RebuildFranchiseCollections(ctx); err != nil {
+		t.Fatalf("二次重建: %v", err)
+	}
+
+	if got := len(readFranchises(t, store)); got != 0 {
+		t.Fatalf("期望 0 个合集，实际 %d —— 最后一条关系删掉后仍挂着没有依据的合集", got)
+	}
+}
+
+// TestFranchiseRebuildTouchesUpdatedAtOnlyWhenMembersChange 钉住 updated_at 的语义。
+//
+// 站内其他三处成员变动（合集详情、合集视图、AI 分组落地）都在写完成员后 TouchCollection。
+// 旧实现整体删行重建，行是新建的、updated_at 天然是新的；换成差集之后若不补这一下，
+// franchise 合集就能增删成员而 updated_at 原地不动——而它是对外可见的
+// （OPDS 的 <updated> 与 Mihon 的 updated_at 都读它）。
+//
+// 反过来也要守：成员没变时不该无谓地顶时间戳，否则每次系列关系改动都会让**所有**
+// franchise 合集看起来「刚更新过」。
+func TestFranchiseRebuildTouchesUpdatedAtOnlyWhenMembersChange(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	ctx := context.Background()
+
+	_, ids := seedFranchiseSeries(t, store, 4)
+	addRelation(t, store, ids[0], ids[1])
+	if err := controller.RebuildFranchiseCollections(ctx); err != nil {
+		t.Fatalf("首次重建: %v", err)
+	}
+
+	sqlStore := store.(*database.SqlStore)
+	readUpdatedAt := func() string {
+		var value string
+		if err := sqlStore.DB().QueryRowContext(ctx,
+			`SELECT updated_at FROM collections WHERE source_type = 'system_franchise'`).Scan(&value); err != nil {
+			t.Fatalf("读 updated_at: %v", err)
+		}
+		return value
+	}
+
+	// 压到一个远古值：SQLite 的 CURRENT_TIMESTAMP 只有秒精度，
+	// 直接比对两次重建的时间戳在同一秒内完全相同，是一条永不报红的死断言。
+	const ancient = "2000-01-01 00:00:00"
+	if _, err := sqlStore.DB().ExecContext(ctx,
+		`UPDATE collections SET updated_at = ? WHERE source_type = 'system_franchise'`, ancient); err != nil {
+		t.Fatalf("压 updated_at: %v", err)
+	}
+
+	// 成员没变的重建：不该动时间戳。
+	if err := controller.RebuildFranchiseCollections(ctx); err != nil {
+		t.Fatalf("空转重建: %v", err)
+	}
+	if got := readUpdatedAt(); got[:len("2000-01-01")] != "2000-01-01" {
+		t.Errorf("成员没变却顶了 updated_at（%s）—— 每次关系改动都会让所有 franchise 看起来刚更新过", got)
+	}
+
+	// 成员变了：必须顶时间戳。
+	addRelation(t, store, ids[1], ids[2])
+	if err := controller.RebuildFranchiseCollections(ctx); err != nil {
+		t.Fatalf("成员变化后重建: %v", err)
+	}
+	if got := readUpdatedAt(); got[:len("2000-01-01")] == "2000-01-01" {
+		t.Errorf("成员变了却没顶 updated_at —— OPDS 的 <updated> 与 Mihon 的 updated_at 都读它")
 	}
 }

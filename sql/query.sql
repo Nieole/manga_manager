@@ -887,9 +887,6 @@ DO UPDATE SET
     updated_at = CASE WHEN collections.name != excluded.name THEN CURRENT_TIMESTAMP ELSE collections.updated_at END
 RETURNING *;
 
--- name: ListFranchiseCollectionKeys :many
-SELECT id, source_key FROM collections
-WHERE source_type = 'system_franchise' AND source_key != '';
 
 -- name: ListCollectionSeriesIDs :many
 SELECT series_id FROM collection_series WHERE collection_id = ?;
@@ -1703,8 +1700,6 @@ LEFT JOIN series_stats ss1 ON ss1.series_id = s1.id
 LEFT JOIN series_stats ss2 ON ss2.series_id = s2.id
 WHERE s1.library_id = ? OR s2.library_id = ?;
 
--- name: DeleteFranchiseCollections :exec
-DELETE FROM collections WHERE source_type = 'system_franchise';
 
 -- name: DeleteMetadataReviewField :exec
 DELETE FROM metadata_review_fields WHERE review_id = ? AND field_name = ?;

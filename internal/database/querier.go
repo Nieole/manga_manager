@@ -56,7 +56,6 @@ type Querier interface {
 	DeleteBook(ctx context.Context, id int64) error
 	DeleteBookByPath(ctx context.Context, path string) error
 	DeleteCollection(ctx context.Context, id int64) (int64, error)
-	DeleteFranchiseCollections(ctx context.Context) error
 	DeleteLibrary(ctx context.Context, id int64) error
 	DeleteMetadataReviewField(ctx context.Context, arg DeleteMetadataReviewFieldParams) error
 	DeleteReadingBookmark(ctx context.Context, arg DeleteReadingBookmarkParams) (int64, error)
@@ -121,7 +120,6 @@ type Querier interface {
 	ListExternalLibraryBooks(ctx context.Context, libraryID int64) ([]ListExternalLibraryBooksRow, error)
 	ListExternalTransferBooksBySeries(ctx context.Context, seriesIds []int64) ([]ListExternalTransferBooksBySeriesRow, error)
 	ListForwardSeriesRelations(ctx context.Context, sourceSeriesID int64) ([]ListForwardSeriesRelationsRow, error)
-	ListFranchiseCollectionKeys(ctx context.Context) ([]ListFranchiseCollectionKeysRow, error)
 	ListHealthDuplicateFileHash(ctx context.Context, arg ListHealthDuplicateFileHashParams) ([]ListHealthDuplicateFileHashRow, error)
 	ListHealthDuplicateQuickHash(ctx context.Context, arg ListHealthDuplicateQuickHashParams) ([]ListHealthDuplicateQuickHashRow, error)
 	ListHealthEmptyPages(ctx context.Context, arg ListHealthEmptyPagesParams) ([]ListHealthEmptyPagesRow, error)

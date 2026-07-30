@@ -136,6 +136,7 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 			for _, seriesID := range existing {
 				have[seriesID] = struct{}{}
 			}
+			membersChanged := false
 			for _, seriesID := range comp {
 				if _, ok := have[seriesID]; ok {
 					continue
@@ -146,6 +147,7 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 				}); err != nil {
 					return err
 				}
+				membersChanged = true
 			}
 			for _, seriesID := range existing {
 				if _, ok := want[seriesID]; ok {
@@ -157,11 +159,26 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 				}); err != nil {
 					return err
 				}
+				membersChanged = true
+			}
+			// 成员真的变了才顶 updated_at，与站内其他三处成员变动的写法一致
+			// （合集详情、合集视图、AI 分组落地都在写完成员后 TouchCollection）。
+			// 旧实现整体删行重建，行是新建的、updated_at 天然是新的；换成差集之后
+			// 若不补这一下，franchise 合集就能增删成员而 updated_at 原地不动
+			// ——而它是对外可见的（OPDS 的 <updated> 与 Mihon 的 updated_at 都读它）。
+			if membersChanged {
+				if err := q.TouchCollection(ctx, collection.ID); err != nil {
+					return err
+				}
 			}
 		}
 
 		// 清掉不再对应任何连通分量的 franchise 合集。source_key 为空的旧行（升级前建的）
 		// 也算过期——它们会被上面的 upsert 用新键重建一遍。
+		// keys 为空必须走「全删」而不是 DeleteStaleFranchiseCollections：
+		// sqlc 对空 slice 生成的是 `NOT IN (NULL)`，那个条件对任何值都不成立，
+		// 于是带键的行一条都删不掉——最后一条系列关系被删除后，界面上会永远挂着
+		// 一堆没有任何依据的 franchise 合集。这个分支是承重的，不是防御性冗余。
 		if len(keys) == 0 {
 			_, err := q.DeleteAllFranchiseCollections(ctx)
 			return err
