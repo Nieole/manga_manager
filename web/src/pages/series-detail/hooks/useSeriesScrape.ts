@@ -79,6 +79,12 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
           showToast(t('series.toast.noMetadataReviewChanges'), 'success');
         } else if (outcome === 'duplicate_ignored') {
           showToast(t('series.toast.scrapeDuplicate'), 'success');
+        } else if (outcome === 'rejected_before') {
+          // 与「队列里已有相同记录」区分开：这条是用户自己拒过的，
+          // 文案要说明可以强制重新加入，否则误拒之后就是死胡同。
+          showToast(t('series.toast.scrapeRejectedBefore'), 'success');
+        } else if (outcome === 'all_locked') {
+          showToast(t('series.toast.scrapeAllLocked'), 'success');
         } else {
           // outcome === 'not_found'，或老后端未返回 outcome 时兜底显示后端 message。
           showToast(res.data.message || t('series.toast.metadataNotFound'), 'error');
@@ -108,6 +114,10 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
             msg = t('series.toast.scrapeDuplicate');
           } else if (outcome === 'no_changes') {
             msg = t('series.toast.noMetadataReviewChanges');
+          } else if (outcome === 'rejected_before') {
+            msg = t('series.toast.scrapeRejectedBefore');
+          } else if (outcome === 'all_locked') {
+            msg = t('series.toast.scrapeAllLocked');
           } else {
             msg = res.data.message || t('series.toast.noMetadataReviewChanges');
           }

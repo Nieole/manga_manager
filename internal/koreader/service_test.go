@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -293,5 +294,290 @@ func TestSaveProgressLastWriteWinsAllowsRollback(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly 1 progress_regressed event, got %d", count)
+	}
+}
+
+// TestSaveProgressRejectsOversizedFields 锁住 kosync 进度载荷的字段长度上限。
+// 这些字段直接落库（document 还进 UNIQUE 索引），无上限时被改造过的设备可以
+// 把单条记录撑到任意大小，反复推送即可撑爆数据库。
+func TestSaveProgressRejectsOversizedFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload ProgressPayload
+	}{
+		{"document too long", ProgressPayload{
+			Document: strings.Repeat("a", maxProgressDocumentLen+1),
+			Progress: "0.5", Device: "kobo", DeviceID: "dev1",
+		}},
+		{"progress too long", ProgressPayload{
+			Document: "doc", Progress: strings.Repeat("a", maxProgressValueLen+1),
+			Device: "kobo", DeviceID: "dev1",
+		}},
+		{"device too long", ProgressPayload{
+			Document: "doc", Progress: "0.5",
+			Device: strings.Repeat("a", maxProgressDeviceLen+1), DeviceID: "dev1",
+		}},
+		{"device id too long", ProgressPayload{
+			Document: "doc", Progress: "0.5", Device: "kobo",
+			DeviceID: strings.Repeat("a", maxProgressDeviceLen+1),
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateProgressPayloadLengths(tc.payload); err == nil {
+				t.Fatal("expected oversized field to be rejected")
+			}
+		})
+	}
+
+	ok := ProgressPayload{Document: "series/vol01.cbz", Progress: "0.42", Device: "kobo", DeviceID: "dev1"}
+	if err := validateProgressPayloadLengths(ok); err != nil {
+		t.Fatalf("expected ordinary payload to pass, got %v", err)
+	}
+}
+
+// TestAuthenticateKeyComparisonMatrix 覆盖密钥比对的全部分支。
+//
+// 这三个 kosync 端点未鉴权、无失败限流也无锁定，客户端提交值完全可控——密钥比对因此是
+// 时序侧信道最理想的靶子。用例本身测不出「是否恒定时间」（Go 里没有可靠的计时断言），
+// 它保证的是改成 subtle 之后语义没走样：两种历史形态的 sync_key 都仍能通过，其余一律拒。
+func TestAuthenticateKeyComparisonMatrix(t *testing.T) {
+	rawSecret := "secret-key"
+	selfRegHash := HashKey("device-password")
+
+	cases := []struct {
+		name      string
+		username  string
+		seed      bool
+		storedKey string
+		enabled   bool
+		clientKey string
+		wantErr   error
+	}{
+		{
+			name: "管理端建号：客户端发 md5(原始密钥)", username: "admin-made", seed: true,
+			storedKey: rawSecret, enabled: true, clientKey: HashKey(rawSecret), wantErr: nil,
+		},
+		{
+			name: "设备自助注册：库里存的就是客户端 md5", username: "self-reg", seed: true,
+			storedKey: selfRegHash, enabled: true, clientKey: selfRegHash, wantErr: nil,
+		},
+		{
+			name: "密钥不匹配", username: "wrong-key", seed: true,
+			storedKey: rawSecret, enabled: true, clientKey: HashKey("nope"), wantErr: ErrUnauthorized,
+		},
+		{
+			// 长度不同的分支：ConstantTimeCompare 在长度不等时直接返 0。
+			name: "客户端提交的密钥长度不同", username: "short-key", seed: true,
+			storedKey: rawSecret, enabled: true, clientKey: "abc", wantErr: ErrUnauthorized,
+		},
+		{
+			name: "账号不存在", username: "ghost", seed: false,
+			clientKey: HashKey(rawSecret), wantErr: ErrForbidden,
+		},
+		{
+			name: "账号已禁用", username: "disabled", seed: true,
+			storedKey: rawSecret, enabled: false, clientKey: HashKey(rawSecret), wantErr: ErrForbidden,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+			ctx := context.Background()
+			if tc.seed {
+				if _, err := store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
+					Username: tc.username, SyncKey: tc.storedKey, Enabled: tc.enabled,
+				}); err != nil {
+					t.Fatalf("CreateKOReaderAccount: %v", err)
+				}
+			}
+
+			_, err := svc.Authenticate(ctx, Credentials{Username: tc.username, Key: tc.clientKey})
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Authenticate = %v, want success", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Authenticate = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestRegisterDeviceRejectsMalformedCredentials 守卫未鉴权注册端点的输入形状。
+//
+// kosync 协议里 password 就是 md5 十六进制串。此前该端点只判空，任意字符串都能被当成
+// 密钥存进 koreader_accounts（username 还进 UNIQUE 索引）。每条拒绝用例都额外断言
+// **账号没有落库**——只返错却把行写进去，等于没挡住。
+func TestRegisterDeviceRejectsMalformedCredentials(t *testing.T) {
+	validHash := HashKey("pw")
+
+	cases := []struct {
+		name     string
+		username string
+		password string
+	}{
+		{"空用户名", "", validHash},
+		{"空密码", "device", ""},
+		{"密码不是 md5 十六进制", "device", "not-a-md5-hash"},
+		{"密码长度不足 32", "device", "abcdef0123456789"},
+		{"密码含非十六进制字符", "device", strings.Repeat("z", 32)},
+		{"用户名超长", strings.Repeat("a", 1024), validHash},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+			ctx := context.Background()
+
+			if _, err := svc.RegisterDevice(ctx, tc.username, tc.password); !errors.Is(err, ErrUnauthorized) {
+				t.Fatalf("RegisterDevice = %v, want ErrUnauthorized", err)
+			}
+			if tc.username != "" {
+				if _, err := store.GetKOReaderAccountByUsername(ctx, tc.username); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("被拒绝的注册不应落库，GetKOReaderAccountByUsername = %v", err)
+				}
+			}
+		})
+	}
+
+	t.Run("合法凭据仍可注册", func(t *testing.T) {
+		svc, _, _ := newTestService(t, config.KOReaderMatchModeBinaryHash)
+		ctx := context.Background()
+		account, err := svc.RegisterDevice(ctx, "device", validHash)
+		if err != nil {
+			t.Fatalf("RegisterDevice: %v", err)
+		}
+		// 注册后必须立刻能用同一个 md5 认证（该值同时也是后续请求的 x-auth-key）。
+		if _, err := svc.Authenticate(ctx, Credentials{Username: account.Username, Key: validHash}); err != nil {
+			t.Fatalf("注册后立即认证失败: %v", err)
+		}
+	})
+}
+
+// createServiceTestUser 建一个站点用户（role 由调用方指定）。
+func createServiceTestUser(t *testing.T, store database.Store, username, role string) database.User {
+	t.Helper()
+	user, err := store.CreateUser(context.Background(), database.CreateUserParams{
+		Username:     username,
+		PasswordHash: "x",
+		Role:         role,
+		DisplayName:  username,
+	})
+	if err != nil {
+		t.Fatalf("create user %q failed: %v", username, err)
+	}
+	return user
+}
+
+// TestRegisterDeviceDoesNotBindToAdminInMultiUserSite 守卫「自助注册的账号不会被错误归属」。
+//
+// 设备自助注册没有站点用户上下文，此前一律把新账号绑到 id 最小的管理员。多用户站点里
+// 这就是纯粹的错误归属：普通用户拿设备注册之后，SaveProgress 会顺着账户的 user_id 把进度
+// 写进**管理员**的 user_book_progress 与 user_reading_activity——他读到哪管理员的进度就
+// 跳到哪（还会计入管理员的热力图与连续天数），而他自己账号下的进度全丢。
+func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
+	service, store, rootDir := newTestService(t, "file_path")
+	ctx := context.Background()
+
+	admin := createServiceTestUser(t, store, "admin", database.RoleAdmin)
+	createServiceTestUser(t, store, "bob", database.RoleRegular)
+
+	_, book := seedServiceBook(t, store, rootDir, "Library A", "Series Alpha", "Volume01.cbz")
+	// 预置一个**小于总页数**的已读进度：seedServiceBook 的书 PageCount=32，
+	// 而 applyBookProgress 有「不回退」保护（page < prev 直接返回），
+	// 预置值若 >= 32，缺陷代码下第二条断言会假绿。
+	if err := store.SetUserBookProgress(ctx, admin.ID, book.ID, 4, time.Now()); err != nil {
+		t.Fatalf("预置管理员进度失败: %v", err)
+	}
+
+	account, err := service.RegisterDevice(ctx, "stranger-device", HashKey("hunter2"))
+	if err != nil {
+		t.Fatalf("RegisterDevice: %v", err)
+	}
+
+	// 三条断言彼此独立，用 Errorf 而不是 Fatalf：否则第一条挂掉后另两条不求值，
+	// 回退修复时看不出它们是否也守得住。
+	userID, err := store.GetKOReaderAccountUserID(ctx, account.Username)
+	if err != nil {
+		t.Fatalf("GetKOReaderAccountUserID: %v", err)
+	}
+	if userID != 0 {
+		t.Errorf("自助注册的账号被绑到了 user_id=%d —— 多用户站点无从判断它属于谁，"+
+			"挂到首个管理员名下会让别人的阅读进度写进管理员账户", userID)
+	}
+
+	// 走一次真实的进度上报，确认管理员的数据没有被改写。
+	// 先建立书籍指纹索引：CreateBook 不写 path_fingerprint，不跑这一步的话下面的上报
+	// 匹配不到任何书，applyBookProgress 根本不会被调用——两条断言就成了永远为真的空断言。
+	if _, _, err := service.RebuildBookIdentities(ctx, 10, nil); err != nil {
+		t.Fatalf("RebuildBookIdentities: %v", err)
+	}
+
+	// file_path 模式下服务端拿到的 document 是**设备上的原始路径**，由服务端自己算指纹，
+	// 所以这里要传相对路径而不是已经算好的哈希（传哈希会被再哈希一遍，永远匹配不上）。
+	// 下面的 res.Matched 守卫保证这次上报确实走到了写进度的分支——否则两条断言都是空断言。
+	res, err := service.SaveProgress(ctx, Credentials{Username: account.Username, Key: HashKey("hunter2")}, ProgressPayload{
+		Document:   "Series Alpha/Volume01.cbz",
+		Percentage: 1.0,
+		Progress:   "/body/DocFragment[32]",
+		Device:     "Kindle",
+		DeviceID:   "device-x",
+	})
+	if err != nil {
+		t.Fatalf("SaveProgress 失败: %v —— 用例必须真的走到写进度的分支才有判别力", err)
+	}
+	if !res.Matched {
+		t.Fatalf("上报没有匹配到书籍（%+v）—— 用例必须真的走到写进度的分支才有判别力", res)
+	}
+
+	progress, ok, err := store.GetUserBookProgress(ctx, admin.ID, book.ID)
+	if err != nil {
+		t.Fatalf("GetUserBookProgress: %v", err)
+	}
+	if ok && progress.LastReadPage.Valid && progress.LastReadPage.Int64 > 4 {
+		t.Errorf("管理员的阅读进度被推到了第 %d 页 —— 陌生设备的进度写进了管理员账户",
+			progress.LastReadPage.Int64)
+	}
+
+	sqlStore, ok2 := store.(*database.SqlStore)
+	if !ok2 {
+		t.Fatalf("需要 *SqlStore 才能直查活动表，得到 %T", store)
+	}
+	var activityRows int
+	if err := sqlStore.DB().QueryRow(
+		`SELECT COUNT(*) FROM user_reading_activity WHERE user_id = ?`, admin.ID).Scan(&activityRows); err != nil {
+		t.Fatalf("查 user_reading_activity: %v", err)
+	}
+	if activityRows != 0 {
+		t.Errorf("管理员的活动记录多出了 %d 行 —— 陌生设备的阅读会计入管理员的热力图与连续天数",
+			activityRows)
+	}
+}
+
+// TestRegisterDeviceBindsToSoleUserInSingleUserSite 是反向护栏。
+//
+// 单用户站点里唯一的用户就是唯一可能的归属，这个猜测无歧义，必须保留
+// ——否则绝大多数部署会从「进度能同步到我账户」退化成「进度谁也看不到」。
+func TestRegisterDeviceBindsToSoleUserInSingleUserSite(t *testing.T) {
+	service, store, _ := newTestService(t, "file_path")
+	ctx := context.Background()
+
+	admin := createServiceTestUser(t, store, "admin", database.RoleAdmin)
+
+	account, err := service.RegisterDevice(ctx, "my-kindle", HashKey("hunter2"))
+	if err != nil {
+		t.Fatalf("RegisterDevice: %v", err)
+	}
+	userID, err := store.GetKOReaderAccountUserID(ctx, account.Username)
+	if err != nil {
+		t.Fatalf("GetKOReaderAccountUserID: %v", err)
+	}
+	if userID != admin.ID {
+		t.Fatalf("单用户站点的自助注册账号 user_id=%d，期望 %d —— "+
+			"绝大多数部署会因此变成「进度谁也看不到」", userID, admin.ID)
 	}
 }

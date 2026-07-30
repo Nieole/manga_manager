@@ -170,7 +170,12 @@ export interface KOReaderDeviceItem {
 }
 
 export interface KOReaderDeviceConflictItem {
-  id: number;
+  // "<来源表>:<主键>" 形式的复合标识，只用于列表 key。这个列表是两张表的 UNION，
+  // 两边的自增主键会重号，所以它**不是**任何接口的入参。
+  id: string;
+  source_table: string;
+  // 只在这一行确实对应一条进度记录时才有；「重置进度」只能用它。
+  progress_id?: number;
   type: string;
   severity: 'warning' | 'error' | string;
   username: string;
@@ -205,7 +210,8 @@ interface ConfigContextValue {
   llmTestResult: string | null;
   showToast: (text: string, type?: 'success' | 'error') => void;
   fieldErrors: (field: string) => string[];
-  saveConfig: (successMessage?: string) => Promise<void>;
+  saveConfig: (section: ConfigSectionKey, successMessage?: string) => Promise<void>;
+  saveProtocols: (protocol: 'opds' | 'mihon', enabled: boolean) => Promise<void>;
   handleTestLLM: () => Promise<void>;
   handleAction: (path: string, successMessage: string, errorMessage?: string) => Promise<void>;
   hasSectionChanges: (section: SettingsSectionKey) => boolean;
@@ -259,35 +265,84 @@ function buildKOReaderForm(
   };
 }
 
-function pickSectionSnapshot(config: Config, section: Exclude<SettingsSectionKey, 'overview' | 'appearance' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance'>) {
-  switch (section) {
-    case 'library':
-      return {
-        server: config.server,
-        database: config.database,
-        library: config.library,
-        logging: config.logging,
-        scanner: {
-          workers: config.scanner.workers,
-          scan_profile: config.scanner.scan_profile,
-          archive_pool_size: config.scanner.archive_pool_size,
-        },
-      };
-    case 'media':
-      return {
-        cache: config.cache,
-        scanner: {
-          thumbnail_format: config.scanner.thumbnail_format,
-          waifu2x_path: config.scanner.waifu2x_path,
-          realcugan_path: config.scanner.realcugan_path,
-          max_ai_concurrency: config.scanner.max_ai_concurrency,
-        },
-      };
-    case 'ai':
-      return {
-        llm: config.llm,
-      };
+// connections 也是一个配置分区（协议开关落在 config.protocols 下），只是它没有 SaveBar
+// ——开关一拨就即时保存。它不参与 hasSectionChanges 的脏标记正是因为没有草稿态。
+export type ConfigSectionKey = Exclude<
+  SettingsSectionKey,
+  'overview' | 'appearance' | 'koreader' | 'tags' | 'users' | 'maintenance'
+>;
+
+// SECTION_FIELD_PATHS 是「哪些配置字段属于哪个分区」的**唯一**事实源。
+//
+// 脏标记与保存必须用同一份定义，否则两者会漂移：脏标记说这个分区没改，保存却把它写了出去。
+// 路径用点号表示，只到需要区分的那一层——例如 scanner 下只有部分字段属于 library 分区，
+// 其余属于 media 分区，所以这里必须写到叶子。
+const SECTION_FIELD_PATHS: Record<ConfigSectionKey, string[]> = {
+  library: [
+    'server',
+    'database',
+    'library',
+    'logging',
+    'scanner.workers',
+    'scanner.scan_profile',
+    'scanner.archive_pool_size',
+  ],
+  media: [
+    'cache',
+    'scanner.thumbnail_format',
+    'scanner.waifu2x_path',
+    'scanner.realcugan_path',
+    'scanner.max_ai_concurrency',
+  ],
+  ai: ['llm'],
+  // protocols 整块属于连接分区：opds / mihon 两个子键没有被别的分区瓜分，无需写到叶子。
+  connections: ['protocols'],
+};
+
+// 注意 config.koreader 不属于任何分区：KOReader 设置走独立的 koreaderForm state，
+// 保存也走独立的 saveKOReader。因此分区化刷新之后 config.koreader 会停留在旧值——
+// 今天无害（没有任何地方从 config.koreader 读值渲染），但若以后有人开始读它，
+// 要么给它补一个分区，要么在那里改用 koreaderForm。
+
+function readPath(source: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((acc, key) => {
+    if (acc && typeof acc === 'object') return (acc as Record<string, unknown>)[key];
+    return undefined;
+  }, source);
+}
+
+// writePath 在 target 上按路径写值，沿途只复制被改动的那一层，其余保持原引用。
+function writePath(target: Record<string, unknown>, path: string, value: unknown): void {
+  const keys = path.split('.');
+  let node = target;
+  for (let i = 0; i < keys.length - 1; i += 1) {
+    const key = keys[i];
+    const child = node[key];
+    node[key] = child && typeof child === 'object' ? { ...(child as Record<string, unknown>) } : {};
+    node = node[key] as Record<string, unknown>;
   }
+  node[keys[keys.length - 1]] = value;
+}
+
+function pickSectionSnapshot(config: Config, section: ConfigSectionKey) {
+  const snapshot: Record<string, unknown> = {};
+  for (const path of SECTION_FIELD_PATHS[section]) {
+    writePath(snapshot, path, readPath(config, path));
+  }
+  return snapshot;
+}
+
+// applySectionSnapshot 把 draft 里**只属于该分区**的字段叠到 base 上。
+//
+// 这是「保存本分区」真正的语义。此前 saveConfig 直接把整份 config state 发出去，
+// 而那份 state 里带着用户在**其他分区**改了却没保存的草稿——点一下「保存媒体设置」，
+// 顺手把没打算提交的 AI 密钥、扫描并发数一起写进了后端，界面上没有任何提示。
+export function applySectionSnapshot(base: Config, draft: Config, section: ConfigSectionKey): Config {
+  const merged = { ...(base as unknown as Record<string, unknown>) };
+  for (const path of SECTION_FIELD_PATHS[section]) {
+    writePath(merged, path, readPath(draft, path));
+  }
+  return merged as unknown as Config;
 }
 
 export function formatKOReaderLatestSync(value?: { Time: string; Valid: boolean } | null): string {
@@ -353,9 +408,23 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     koreaderStatusRef.current = koreaderStatus;
   }, [koreaderStatus]);
 
-  const fetchConfig = useCallback(async () => {
+  // savedSection 表示「刚保存完什么」：
+  //   - undefined：首屏加载，整份替换（此时 prev 为 null，本来也没有草稿可保）；
+  //   - 某个配置分区：只把该分区刷成服务端的新值，其余分区保留用户手上的草稿；
+  //   - 'koreader'：KOReader 的表单是独立 state（koreaderForm），不在 config 草稿里，
+  //     所以这里一个 config 分区都不该动。
+  //
+  // 「只保存本分区」的对偶就是「只刷新本分区」。少了这一半，保存 AI 设置会顺手把
+  // 资料库分区没保存的草稿整片抹掉、侧边栏的脏点也一起熄灭，全程没有任何提示——
+  // 方向比原缺陷安全（丢的是本地草稿不是写库），但同样是静默的。
+  const fetchConfig = useCallback(async (savedSection?: ConfigSectionKey | 'koreader') => {
     const res = await apiClient.get<ConfigEnvelope>('/api/system/config');
-    setConfig(res.data.config);
+    setConfig((prev) => {
+      if (!prev || savedSection === undefined) return res.data.config;
+      if (savedSection === 'koreader') return prev;
+      return applySectionSnapshot(prev, res.data.config, savedSection);
+    });
+    // initialConfig 是「服务端真相」的基线，必须整份更新。
     setInitialConfig(res.data.config);
     setValidation(res.data.validation);
     setCapabilities(res.data.capabilities);
@@ -422,14 +491,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const koreaderFieldErrors = useCallback((field: string) => koreaderValidationByField.get(field) || [], [koreaderValidationByField]);
 
   const saveConfig = useCallback(
-    async (successMessage = t('settings.toast.configSaved')) => {
-      if (!config) return;
+    async (section: ConfigSectionKey, successMessage = t('settings.toast.configSaved')) => {
+      if (!config || !initialConfig) return;
+      // 连接分区没有 SaveBar，只走 saveProtocols（它以服务端快照取 protocols）。
+      // 从这里进来会以**活草稿**为源，与 saveProtocols 的语义打架，所以直接挡掉。
+      if (section === 'connections') return;
       setSaving(true);
       try {
-        const res = await apiClient.post('/api/system/config', config);
+        // 只提交本分区的字段：以服务端最近一次下发的 initialConfig 为底，
+        // 把本分区的编辑叠上去。其他分区未保存的草稿留在本地，不会被顺手写出去。
+        // 敏感字段（LLM APIKey 等）在 initialConfig 里是占位符，后端会据此保留原值，
+        // 所以这样叠加不会把密钥抹成掩码串。
+        const payload = applySectionSnapshot(initialConfig, config, section);
+        const res = await apiClient.post('/api/system/config', payload);
         setValidation(res.data.validation);
         showToast(res.data.message || successMessage, 'success');
-        await fetchConfig();
+        await fetchConfig(section);
       } catch (error) {
         console.error(error);
         if (isAxiosError(error) && error.response?.status === 422) {
@@ -443,7 +520,33 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSaving(false);
       }
     },
-    [config, fetchConfig, showToast, t],
+    [config, initialConfig, fetchConfig, showToast, t],
+  );
+
+  // saveProtocols 保存协议开关。
+  //
+  // 与 saveConfig 同一套语义：以服务端最近一次下发的 initialConfig 为底，只叠加 protocols。
+  // 连接页此前自己拼 `{...config, protocols}` 再整份 POST——基底是**活的草稿**，
+  // 于是「在资料库分区改了并发数没保存、切到连接页拨一下 OPDS 开关」就把那份改动一并写库了。
+  const saveProtocols = useCallback(
+    async (protocol: 'opds' | 'mihon', enabled: boolean) => {
+      if (!config || !initialConfig) return;
+      // 在服务端快照上展开，而不是重建 `{opds:{enabled}, mihon:{enabled}}`。
+      // applySectionSnapshot 对 protocols 是整块替换：后端哪天给 opds/mihon 加第二个字段，
+      // 重建式写法会立刻把它抹成 undefined。
+      const draft = {
+        ...initialConfig,
+        protocols: {
+          ...initialConfig.protocols,
+          [protocol]: { ...initialConfig.protocols?.[protocol], enabled },
+        },
+      } as Config;
+      const payload = applySectionSnapshot(initialConfig, draft, 'connections');
+      const res = await apiClient.post('/api/system/config', payload);
+      setValidation(res.data.validation);
+      await fetchConfig('connections');
+    },
+    [config, initialConfig, fetchConfig],
   );
 
   const handleTestLLM = useCallback(async () => {
@@ -495,7 +598,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setNeedsMatchingMaintenance(requiresMaintenance);
       setKOReaderValidation({ valid: true, issues: [] });
       showToast(t('settings.toast.koreaderSaved'), 'success');
-      await Promise.all([fetchConfig(), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()]);
+      await Promise.all([fetchConfig('koreader'), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
       if (isAxiosError(error) && error.response?.status === 422) {
@@ -634,6 +737,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showToast,
       fieldErrors,
       saveConfig,
+      saveProtocols,
       handleTestLLM,
       handleAction,
       hasSectionChanges,
@@ -649,6 +753,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       llmTestResult,
       loading,
       saveConfig,
+      saveProtocols,
       saving,
       showToast,
       testingLLM,

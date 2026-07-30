@@ -141,9 +141,11 @@ type BangumiProvider struct {
 func NewBangumiProvider() *BangumiProvider {
 	return &BangumiProvider{
 		ClientURL: "https://api.bgm.tv",
-		httpClient: &http.Client{
+		// 出站请求经进程级并发闸门（见 provider_budget.go）：多个刮削任务可以同时在跑，
+		// 每个都各自 new 一个 Provider，不在这里收口就会把对同一数据源的请求速率成倍放大。
+		httpClient: withProviderBudget(&http.Client{
 			Timeout: 15 * time.Second,
-		},
+		}, "Bangumi"),
 	}
 }
 
@@ -205,7 +207,7 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("bangumi: request failed: %w", err)
+			return nil, 0, fmt.Errorf("bangumi: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -238,7 +240,7 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 		}
 
 		slog.Error("Bangumi API error", "status", status, "body", string(respBody), "url", apiUrl)
-		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, string(respBody))
+		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, truncateUpstreamBody(respBody))
 	}
 
 	if len(result.Data) == 0 {

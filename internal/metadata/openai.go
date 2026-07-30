@@ -97,13 +97,13 @@ func (o *OpenAIProvider) sendRequest(ctx context.Context, prompt string, require
 
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("openai: request failed: %w", err)
+		return "", fmt.Errorf("openai: request failed: %w", sanitizeTransportError(err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("openai: API returned status %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("openai: API returned status %d: %s", resp.StatusCode, truncateUpstreamBody(respBody))
 	}
 
 	var aiResp openAIResponse
@@ -131,16 +131,44 @@ func (o *OpenAIProvider) sendRequest(ctx context.Context, prompt string, require
 }
 
 // extractJSONString 抽取 Markdown 中的 JSON 块（有些模型仍然会输出 ```json 前缀）
+// extractJSONString 从 LLM 的自由文本输出里提取 JSON 载荷。
+//
+// 旧实现只认「整段被 ``` 包裹」这一种形态：模型只要在前面加一句
+// "Here is the metadata you requested:"，整轮刮削就会失败，而失败信息还会把
+// 整段原始输出拼进 error 回显给前端。实际输出形态很杂，这里按三级降级：
+//  1. 去掉任意位置的 ``` 围栏（含 ```json 标注）；
+//  2. 若结果本身已是合法 JSON，直接用；
+//  3. 否则退到「第一个 { 到最后一个 }」的子串，再校验一次合法性。
 func extractJSONString(input string) string {
-	input = strings.TrimSpace(input)
-	if strings.HasPrefix(input, "```json") {
-		input = strings.TrimPrefix(input, "```json")
-		input = strings.TrimSuffix(input, "```")
-	} else if strings.HasPrefix(input, "```") {
-		input = strings.TrimPrefix(input, "```")
-		input = strings.TrimSuffix(input, "```")
+	trimmed := strings.TrimSpace(input)
+
+	// 第 1 级：剥离围栏。围栏可能出现在中间（前面有一句说明文字）。
+	if idx := strings.Index(trimmed, "```"); idx >= 0 {
+		rest := trimmed[idx+3:]
+		rest = strings.TrimPrefix(rest, "json")
+		rest = strings.TrimPrefix(rest, "JSON")
+		if end := strings.Index(rest, "```"); end >= 0 {
+			rest = rest[:end]
+		}
+		if candidate := strings.TrimSpace(rest); candidate != "" {
+			trimmed = candidate
+		}
 	}
-	return strings.TrimSpace(input)
+
+	// 第 2 级：已经是合法 JSON 就直接用。
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+
+	// 第 3 级：截取最外层的花括号区间。
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start >= 0 && end > start {
+		if candidate := strings.TrimSpace(trimmed[start : end+1]); json.Valid([]byte(candidate)) {
+			return candidate
+		}
+	}
+	return trimmed
 }
 
 func (o *OpenAIProvider) FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error) {
@@ -155,6 +183,13 @@ func (o *OpenAIProvider) FetchSeriesMetadata(ctx context.Context, title string) 
 	var result llmMetadataResult
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
 		return nil, fmt.Errorf("openai: response is not valid JSON: %w\nRaw: %s", err, content)
+	}
+
+	// 与 Ollama 保持同一契约：LLM 表示「不了解该作品」时返回 (nil, nil)，让调用方据此
+	// 判定「没找到」。此前这两个 Provider 在该情形下仍返回一个各字段全空的结构体，
+	// 于是批量刮削把幻觉空结果计为成功，并把一堆空提案塞进待审队列。
+	if strings.TrimSpace(result.Title) == "" && strings.TrimSpace(result.Summary) == "" {
+		return nil, nil
 	}
 
 	metadata := &SeriesMetadata{
@@ -176,7 +211,9 @@ func (o *OpenAIProvider) SearchMetadata(ctx context.Context, title string, limit
 	if err != nil {
 		return nil, 0, err
 	}
-	if result.Title == "" && result.Summary == "" {
+	// FetchSeriesMetadata 现在在「LLM 不了解该作品」时返回 (nil, nil)，这里必须先判 nil
+	// 再取字段，否则会空指针 panic。
+	if result == nil {
 		return []*SeriesMetadata{}, 0, nil
 	}
 	return []*SeriesMetadata{result}, 1, nil

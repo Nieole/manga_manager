@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // cachedStructuralStats 缓存结构性统计（含 books 全表扫描），仅在扫描/库结构变化时失效。
@@ -39,6 +41,12 @@ type statsCache struct {
 	volatileMu    sync.RWMutex
 	volatileCache *cachedVolatileStats
 	volatileGen   int64
+
+	// group 合并同一类统计的并发冷加载。缺了它，缓存失效的那一瞬间（扫描刚结束、
+	// 所有打开着看板的客户端同时收到 SSE refresh）每个请求都会各自跑一遍
+	// GetDashboardStructuralStats——那是对 books 的全表 COUNT/SUM，几十万行的库上
+	// 一次就要秒级，N 个并发请求就是 N 倍的重复扫描。
+	group singleflight.Group
 }
 
 func newStatsCache() *statsCache {
@@ -84,10 +92,13 @@ func (s *statsCache) loadStructural(ctx context.Context, store database.Store) (
 	generation := s.structuralGen
 	s.structuralMu.RUnlock()
 
-	stats, err := store.GetDashboardStructuralStats(ctx)
+	loaded, err, _ := s.group.Do("structural", func() (any, error) {
+		return store.GetDashboardStructuralStats(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}
+	stats, _ := loaded.(*database.DashboardStructuralStats)
 	if stats == nil {
 		stats = &database.DashboardStructuralStats{}
 	}
@@ -113,10 +124,13 @@ func (s *statsCache) loadVolatile(ctx context.Context, store database.Store) (*d
 	generation := s.volatileGen
 	s.volatileMu.RUnlock()
 
-	stats, err := store.GetDashboardVolatileStats(ctx)
+	loaded, err, _ := s.group.Do("volatile", func() (any, error) {
+		return store.GetDashboardVolatileStats(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}
+	stats, _ := loaded.(*database.DashboardVolatileStats)
 	if stats == nil {
 		stats = &database.DashboardVolatileStats{}
 	}

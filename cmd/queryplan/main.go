@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -148,8 +149,10 @@ func main() {
 			expected: []string{"idx_series_stats_last_read"},
 		},
 		{
-			name:     "dashboard/stats-counts",
-			query:    `SELECT (SELECT COUNT(*) FROM series), (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM books WHERE last_read_page > 0), (SELECT COALESCE(SUM(page_count), 0) FROM books), (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days'))`,
+			name:  "dashboard/stats-counts",
+			query: `SELECT (SELECT COUNT(*) FROM series), (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM books WHERE last_read_page > 0), (SELECT COALESCE(SUM(page_count), 0) FROM books), (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= ?)`,
+			// 下界改为传参：活动日期已统一为服务器本地日历日，不再用 SQLite 的 DATE('now')。
+			args:     []any{time.Now().AddDate(0, 0, -7).Format("2006-01-02")},
 			expected: []string{"idx_books_read_progress_series", "idx_reading_activity_date"},
 		},
 		{

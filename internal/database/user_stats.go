@@ -8,6 +8,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,14 +50,32 @@ type UserSeriesReview struct {
 
 // ---- 每用户每日活动 ----
 
+// ActivityDayKey 返回 t 所在的**本地**日历日（YYYY-MM-DD）。
+//
+// 活动日期此前用 SQLite 的 DATE('now')，那是 UTC 日历日；而 last_read_at 落库时是本地墙钟串。
+// 于是同一次阅读在两套日历下分属不同的一天——UTC+8 时区、本地 2026-01-01 07:00 读完一本书，
+// 活动记成 2025-12-31 而 last_read_at 前缀是 2026-01-01，年度回顾里「读完的书」算进 2026、
+// 「翻过的页」算进 2025，同一次阅读被劈成两年。
+//
+// 统一到服务器本地时区：用户看到的「今天读了多少」本来就该按他所在的那一天算。
+func ActivityDayKey(t time.Time) string {
+	return t.Format("2006-01-02")
+}
+
+// ActivityDayKeyBefore 返回距 t 若干天之前的本地日历日，供「近 N 天」这类范围查询做下界。
+func ActivityDayKeyBefore(t time.Time, days int) string {
+	return ActivityDayKey(t.AddDate(0, 0, -days))
+}
+
 // LogUserReadingActivity 记录某用户当天在某书翻读的页数（pages_read 取 MAX，语义同旧全局表）。
 func (s *SqlStore) LogUserReadingActivity(ctx context.Context, userID, bookID, pages int64) error {
+	// 日期在 Go 侧按本地时区算好再传参，不用 DATE('now')（那是 UTC，见 ActivityDayKey 的注释）。
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_reading_activity (user_id, book_id, date, pages_read)
-		 VALUES (?, ?, DATE('now'), ?)
+		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(user_id, book_id, date) DO UPDATE SET
 		   pages_read = MAX(user_reading_activity.pages_read, excluded.pages_read)`,
-		userID, bookID, pages)
+		userID, bookID, ActivityDayKey(time.Now()), pages)
 	return err
 }
 
@@ -64,8 +84,8 @@ func (s *SqlStore) GetUserActivityHeatmap(ctx context.Context, userID int64, off
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT date, SUM(pages_read) AS page_count
 		 FROM user_reading_activity
-		 WHERE user_id = ? AND date >= DATE('now', ?)
-		 GROUP BY date ORDER BY date ASC`, userID, offsetClause)
+		 WHERE user_id = ? AND date >= ?
+		 GROUP BY date ORDER BY date ASC`, userID, HeatmapSinceDate(offsetClause))
 	if err != nil {
 		return nil, err
 	}
@@ -157,10 +177,10 @@ func (s *SqlStore) AddUserBookReadingTime(ctx context.Context, userID, bookID, s
 		}
 		_, err := q.db.ExecContext(ctx,
 			`INSERT INTO user_reading_activity (user_id, book_id, date, pages_read, read_seconds)
-			 VALUES (?, ?, DATE('now'), 0, ?)
+			 VALUES (?, ?, ?, 0, ?)
 			 ON CONFLICT(user_id, book_id, date) DO UPDATE SET
 			   read_seconds = read_seconds + excluded.read_seconds`,
-			userID, bookID, seconds)
+			userID, bookID, ActivityDayKey(time.Now()), seconds)
 		return err
 	})
 }
@@ -310,4 +330,52 @@ func (s *SqlStore) MigrateGlobalActivityToUser(ctx context.Context, userID int64
 		`INSERT OR IGNORE INTO user_reading_activity (user_id, book_id, date, pages_read)
 		 SELECT ?, book_id, date, pages_read FROM reading_activity`, userID)
 	return err
+}
+
+// GetUserTopReadingTags 是 GetTopReadingTags 的每用户版本。
+//
+// sqlc 版基于全局 reading_activity 聚合，多用户下所有人拿到同一份「常看标签」，
+// AI 推荐因此完全没有个人化，还会把彼此的阅读偏好互相泄露。
+// user_reading_activity 位于 schema_handwritten.sql（避开 sqlc），故手写于此。
+func (s *SqlStore) GetUserTopReadingTags(ctx context.Context, userID, limit int64) ([]GetTopReadingTagsRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.name, COUNT(*) AS tag_count
+		FROM tags t
+		JOIN series_tags st ON t.id = st.tag_id
+		JOIN books b ON st.series_id = b.series_id
+		JOIN user_reading_activity ura ON b.id = ura.book_id
+		WHERE ura.user_id = ?
+		GROUP BY t.id
+		ORDER BY tag_count DESC
+		LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []GetTopReadingTagsRow
+	for rows.Next() {
+		var i GetTopReadingTagsRow
+		if err := rows.Scan(&i.Name, &i.TagCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
+// HeatmapSinceDate 把既有的 offsetClause（形如 "-112 days"）换算成本地日历日下界。
+//
+// 保留字符串入参是为了不改调用方签名；解析失败时退回 112 天，与前端热力图的默认窗口一致。
+// 之所以不继续把它交给 SQLite 的 DATE('now', ?)，是因为那样下界按 UTC 算、
+// 而表里的 date 现在是本地日历日，跨时区部署下窗口会整体错开一天。
+func HeatmapSinceDate(offsetClause string) string {
+	days := 112
+	fields := strings.Fields(strings.TrimSpace(offsetClause))
+	if len(fields) > 0 {
+		if n, err := strconv.Atoi(strings.TrimPrefix(fields[0], "-")); err == nil && n > 0 {
+			days = n
+		}
+	}
+	return ActivityDayKeyBefore(time.Now(), days)
 }

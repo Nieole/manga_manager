@@ -77,6 +77,34 @@ CREATE VIRTUAL TABLE IF NOT EXISTS series_search_fts USING fts5(
     contentless_delete = 1
 );
 
+-- series_gram_fts / book_gram_fts are 2-gram auxiliary indexes for SHORT keywords.
+--
+-- The trigram tokenizer used by *_search_fts produces no tokens for keywords shorter than
+-- 3 characters, so CJK users searching two characters fall back to a full-table instr() scan
+-- (measured 204ms per query on 200k books -- a single global search does that twice).
+-- SQLite has no n-gram length option and the modernc driver does not expose fts5_api,
+-- so a custom tokenizer is not available -- hence a separate index.
+--
+-- The indexed text is not the original: it is lower(text) sliced into 2-character windows at
+-- every character position, each encoded as the hex of its UTF-8 bytes (e.g. two CJK chars ->
+-- 'E6B5B7E8B49F'). Hex was chosen because it contains only [0-9A-F]: no FTS5 syntax characters
+-- to escape, and any tokenizer splits it cleanly on spaces. Windows run through the final single
+-- character, so every position starts a gram and 1-character keywords can be answered with a
+-- prefix MATCH (UTF-8 is self-synchronising, so the prefix is unambiguous).
+--
+-- detail = none: this index only answers "which rowids contain this token". No phrase/proximity
+-- queries, no column filters, no bm25 (short-keyword ranking uses a CASE expression anyway).
+-- Dropping the position map cuts the books-side index from ~23MB to ~8MB on 200k books.
+CREATE VIRTUAL TABLE IF NOT EXISTS series_gram_fts USING fts5(
+    library_id UNINDEXED,
+    name,
+    title,
+    tokenize = 'ascii',
+    content = '',
+    contentless_delete = 1,
+    detail = none
+);
+
 CREATE TABLE IF NOT EXISTS series_stats (
     series_id INTEGER PRIMARY KEY,
     cover_path TEXT NOT NULL DEFAULT '',
@@ -185,6 +213,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS book_search_fts USING fts5(
     contentless_delete = 1
 );
 
+-- See series_gram_fts. The books side is where short-keyword search actually hurts:
+-- a 2-character keyword scans every book row, and that is 96% of a global search's cost.
+CREATE VIRTUAL TABLE IF NOT EXISTS book_gram_fts USING fts5(
+    series_id UNINDEXED,
+    library_id UNINDEXED,
+    name,
+    title,
+    tokenize = 'ascii',
+    content = '',
+    contentless_delete = 1,
+    detail = none
+);
+
 CREATE TABLE IF NOT EXISTS series_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     series_id INTEGER NOT NULL,
@@ -225,7 +266,6 @@ CREATE TABLE IF NOT EXISTS metadata_review_fields (
     source TEXT NOT NULL DEFAULT '',
     source_url TEXT NOT NULL DEFAULT '',
     locked BOOLEAN NOT NULL DEFAULT FALSE,
-    status TEXT NOT NULL DEFAULT 'pending',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(review_id, field_name),
@@ -297,10 +337,18 @@ CREATE TABLE IF NOT EXISTS collections (
     sort_order INTEGER NOT NULL DEFAULT 0,
     source_type TEXT NOT NULL DEFAULT 'manual',
     source_review_id INTEGER,
+    -- source_key 是系统生成合集的稳定自然键（手工合集留空）。
+    -- 有了它，系统合集才能按键 upsert 而不是每次整体删掉重建——重建换 id 会让用户收藏的
+    -- 链接、以及 Mihon/OPDS 客户端里按 id 记下的书库条目全部失效。
+    source_key TEXT NOT NULL DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(source_review_id) REFERENCES ai_grouping_reviews(id) ON DELETE SET NULL
 );
+
+-- 部分唯一索引：只约束带键的系统合集，手工合集（source_key='')不受影响。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_source_key
+    ON collections(source_type, source_key) WHERE source_key != '';
 
 CREATE TABLE IF NOT EXISTS collection_series (
     collection_id INTEGER NOT NULL,
@@ -392,18 +440,22 @@ CREATE TABLE IF NOT EXISTS reading_activity (
 
 CREATE INDEX IF NOT EXISTS idx_reading_activity_date ON reading_activity(date);
 
+-- 书签按用户隔离：user_id=0 保留给「尚未启用多用户」的历史数据与单用户部署。
+-- 唯一约束必须含 user_id，否则两个用户无法各自给同一本书的同一页加书签。
 CREATE TABLE IF NOT EXISTS reading_bookmarks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL DEFAULT 0,
     book_id INTEGER NOT NULL,
     page INTEGER NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(book_id, page),
+    UNIQUE(user_id, book_id, page),
     FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id);
+CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_user_book ON reading_bookmarks(user_id, book_id, page);
 
 CREATE TABLE IF NOT EXISTS tasks (
     key TEXT PRIMARY KEY,

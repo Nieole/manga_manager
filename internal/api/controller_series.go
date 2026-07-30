@@ -64,23 +64,13 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limitStr := r.URL.Query().Get("limit")
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil || limit <= 0 {
-		limit = 50
-	}
 	// 上限保护：limit 只有下限校验时，一个 limit=1000000 就能让本端点物化并 JSON 编码整库
 	// (~24 列含 summary 长文本) 的全部系列，等同单请求 OOM/超时。UI 最大页大小为 100，200 留足余量。
-	if limit > maxSeriesPageLimit {
-		limit = maxSeriesPageLimit
-	}
-
-	pageStr := r.URL.Query().Get("page")
-	page, err := strconv.Atoi(pageStr)
-	if err != nil || page <= 0 {
-		page = 1
-	}
-	offset := (page - 1) * limit
+	limit := queryLimit(r, "limit", 50, maxSeriesPageLimit)
+	// page 同样必须钳制：无上界时 (page-1)*limit 会溢出，offset 再经 int32 截断成 0，
+	// 极大页码会静默返回第一页而不是空页。
+	page := queryPage(r, "page")
+	offset := int(pageOffset(page, limit))
 
 	var tags []string
 	if tagsParam := r.URL.Query().Get("tags"); tagsParam != "" {
@@ -171,13 +161,8 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	limitStr := r.URL.Query().Get("limit")
-	limit := int64(10) // 默认读取 10 条
-	if limitStr != "" {
-		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil && l > 0 {
-			limit = l
-		}
-	}
+	// 与 /api/series/search 统一口径：此前这里没有上限，limit=1000000 可让单请求物化整库。
+	limit := int64(queryLimit(r, "limit", 10, maxSeriesPageLimit))
 
 	ctx := r.Context()
 	var items []database.GetRecentReadSeriesRow
@@ -315,26 +300,41 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		// 这一整段是「先清空、再重建」：所有写入错误都必须向上返回让 ExecTx 回滚。
+		// 此前全部用 `_ =` / `err == nil` 吞掉，于是清空成功但重建失败时，事务照样提交，
+		// 用户的标签/作者/链接被静默清空，接口还返回 200。
 		if req.Tags != nil {
-			_ = q.ClearSeriesTags(r.Context(), seriesID)
+			if err := q.ClearSeriesTags(r.Context(), seriesID); err != nil {
+				return err
+			}
 			for _, t := range req.Tags {
 				if strings.TrimSpace(t) == "" {
 					continue
 				}
-				if inserted, err := q.UpsertTag(r.Context(), t); err == nil {
-					_ = q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
+				inserted, err := q.UpsertTag(r.Context(), t)
+				if err != nil {
+					return err
+				}
+				if err := q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID}); err != nil {
+					return err
 				}
 			}
 		}
 
 		if req.Authors != nil {
-			_ = q.ClearSeriesAuthors(r.Context(), seriesID)
+			if err := q.ClearSeriesAuthors(r.Context(), seriesID); err != nil {
+				return err
+			}
 			for _, a := range req.Authors {
 				if strings.TrimSpace(a.Name) == "" {
 					continue
 				}
-				if inserted, err := q.UpsertAuthor(r.Context(), database.UpsertAuthorParams{Name: a.Name, Role: a.Role}); err == nil {
-					_ = q.LinkSeriesAuthor(r.Context(), database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID})
+				inserted, err := q.UpsertAuthor(r.Context(), database.UpsertAuthorParams{Name: a.Name, Role: a.Role})
+				if err != nil {
+					return err
+				}
+				if err := q.LinkSeriesAuthor(r.Context(), database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID}); err != nil {
+					return err
 				}
 			}
 		}
@@ -476,9 +476,14 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. 获取书籍列表
+	// 书籍列表是这个响应的主干，也是「继续阅读」落点的计算依据。
+	// 查询失败时返回 200 + 空系列会让前端把「数据库暂时不可用」显示成「这个系列没有书」，
+	// 并据此算出错误的续读位置；与同文件 getSeriesContinueEndpoint 的口径统一为 500。
 	books, err := c.store.ListBooksBySeries(ctx, seriesID)
 	if err != nil {
 		slog.Error("Failed to fetch books for context", "series_id", seriesID, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to load series context")
+		return
 	}
 	if books == nil {
 		books = []database.Book{}
@@ -525,7 +530,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		metadataReview = emptyMetadataReviewResponse()
 	}
 
-	failedTasks, err := c.listTaskStatuses(ctx, database.TaskFilters{
+	failedTasks, err := c.taskEngine.listTaskStatuses(ctx, database.TaskFilters{
 		Status:  "failed",
 		Scope:   "series",
 		ScopeID: &seriesID,

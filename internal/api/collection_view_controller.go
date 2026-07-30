@@ -85,7 +85,7 @@ const (
 )
 
 func (c *Controller) listCollectionViews(w http.ResponseWriter, r *http.Request) {
-	items, err := c.loadCollectionViews(r.Context())
+	items, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list collection views")
 		return
@@ -93,10 +93,34 @@ func (c *Controller) listCollectionViews(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) loadCollectionViews(ctx context.Context) ([]CollectionView, error) {
+// loadCollectionViews 汇总静态合集与智能书架。
+//
+// 智能书架的系列数**不再由 SQL 内联子查询算**，而是逐个走 CountSmartCollectionSeries——
+// 也就是列表本身用的那份查询。此前那段内联 SQL 与列表口径有六处分歧（completed 的 = vs >=、
+// 全局进度 vs 每用户进度、内层派生表漏了 library 过滤等），用户会看到
+// 「书架上写着 12 个系列，点进去只有 9 个」。它同时还是对整张 books 的全表聚合。
+//
+// 代价是每个智能书架一次计数查询。智能书架数量是个位数量级，而每次计数现在都走索引，
+// 比原来「一次查询里对整张 books 做 N 遍聚合」便宜得多。
+func (c *Controller) loadCollectionViews(ctx context.Context, userID int64) ([]CollectionView, error) {
 	rows, err := c.store.ListCollectionViews(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// 只在确有智能书架时才去取筛选定义。
+	smartFilters := make(map[int64]database.SmartFilter)
+	for _, row := range rows {
+		if row.Kind == "smart" {
+			filters, ferr := c.store.ListSmartFilters(ctx)
+			if ferr != nil {
+				return nil, ferr
+			}
+			for _, f := range filters {
+				smartFilters[f.ID] = f
+			}
+			break
+		}
 	}
 
 	items := make([]CollectionView, 0, len(rows))
@@ -114,6 +138,15 @@ func (c *Controller) loadCollectionViews(ctx context.Context) ([]CollectionView,
 			SortOrder:   int(row.SortOrder),
 			CreatedAt:   row.CreatedAt.Time,
 			UpdatedAt:   row.UpdatedAt.Time,
+		}
+		if row.Kind == "smart" {
+			if raw, ok := smartFilters[row.ID]; ok {
+				count, cerr := c.store.CountSmartCollectionSeries(ctx, smartCollectionFilterFrom(smartFilterFromDB(raw), userID))
+				if cerr != nil {
+					return nil, cerr
+				}
+				item.SeriesCount = count
+			}
 		}
 		if row.LibraryID.Valid {
 			value := row.LibraryID.Int64
@@ -192,7 +225,14 @@ func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter Smart
 	if offset < 0 {
 		offset = 0
 	}
-	return c.store.SearchSmartCollectionSeries(ctx, database.SmartCollectionFilter{
+	return c.store.SearchSmartCollectionSeries(ctx, smartCollectionFilterFrom(filter, userID), limit, offset)
+}
+
+// smartCollectionFilterFrom 把 API 层的 SmartFilter 转成数据层的查询条件。
+// 抽出来是为了让「书架列表的计数」与「书架详情的列表」用**同一个**构造——
+// 两处各写一份正是此前计数与列表口径分歧的来源。
+func smartCollectionFilterFrom(filter SmartFilter, userID int64) database.SmartCollectionFilter {
+	return database.SmartCollectionFilter{
 		UserID:          userID,
 		LibraryID:       filter.LibraryID,
 		ActiveLetter:    stringValue(filter.ActiveLetter),
@@ -207,7 +247,7 @@ func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter Smart
 		ReadState:       stringValue(filter.ReadState),
 		SortByField:     filter.SortByField,
 		SortDir:         filter.SortDir,
-	}, limit, offset)
+	}
 }
 
 func (c *Controller) getSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
@@ -376,6 +416,16 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// 重名校验：preview 端点会算出 name_conflict 并提示用户，但真正写入时此前不拦，
+	// 于是用户明知冲突仍能确认，最终得到两个同名合集、在列表里根本分不清哪个是哪个。
+	if conflict, err := c.collectionNameExists(r.Context(), name); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to check collection name")
+		return
+	} else if conflict {
+		jsonError(w, http.StatusConflict, "A collection with this name already exists")
+		return
+	}
+
 	var createdID int64
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
 		created, err := q.CreateCollection(r.Context(), database.CreateCollectionParams{
@@ -388,7 +438,7 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 		for _, row := range rows {
-			if err := q.AddSeriesToCollection(r.Context(), database.AddSeriesToCollectionParams{
+			if _, err := q.AddSeriesToCollection(r.Context(), database.AddSeriesToCollectionParams{
 				CollectionID: created.ID,
 				SeriesID:     row.ID,
 			}); err != nil {

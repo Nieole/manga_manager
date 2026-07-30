@@ -569,7 +569,7 @@ func TestReadingStatsDualPathPerUser(t *testing.T) {
 		t.Fatalf("add user reading time: %v", err)
 	}
 	// 全局与每用户活动分别写入，验证热力图按 uid 分流。
-	if err := store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: 5}); err != nil {
+	if err := store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: 5, Date: database.ActivityDayKey(time.Now())}); err != nil {
 		t.Fatalf("log global activity: %v", err)
 	}
 	if err := store.LogUserReadingActivity(ctx, userA.ID, book.ID, 3); err != nil {
@@ -750,5 +750,101 @@ func TestOPDSProtocolBasicAuth(t *testing.T) {
 	c.config.Replace(&cfg2)
 	if code := get(func(req *http.Request) { req.SetBasicAuth("reader", "password1") }); code != http.StatusNotFound {
 		t.Fatalf("disabled OPDS want 404 even with valid creds, got %d", code)
+	}
+}
+
+// TestReadingBookmarksPerUserIsolation 锁住书签的多用户隔离。
+//
+// reading_bookmarks 表原先没有 user_id，且唯一约束是 UNIQUE(book_id, page)：
+// 任意两个用户共享同一批书签，可以互相读取、覆盖笔记、甚至删除对方的记录——
+// 而书签笔记是私人内容。加 user_id 后唯一约束改为 (user_id, book_id, page)，
+// 两个用户才能各自给同一页加互不干扰的书签。
+func TestReadingBookmarksPerUserIsolation(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 30)
+	userA := mkTestUser(t, store, "alice", database.RoleRegular)
+	userB := mkTestUser(t, store, "bob", database.RoleRegular)
+	bid := strconv.FormatInt(book.ID, 10)
+
+	upsert := func(u database.User, page int, note string) *httptest.ResponseRecorder {
+		body := []byte(`{"page":` + strconv.Itoa(page) + `,"note":"` + note + `"}`)
+		req := withUserContext(requestWithRouteParam(http.MethodPost, "/x", body, "bookId", bid), u)
+		rec := httptest.NewRecorder()
+		controller.upsertReadingBookmark(rec, req)
+		return rec
+	}
+	list := func(u database.User) []database.ReadingBookmark {
+		req := withUserContext(requestWithRouteParam(http.MethodGet, "/x", nil, "bookId", bid), u)
+		rec := httptest.NewRecorder()
+		controller.listReadingBookmarks(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list bookmarks want 200 got %d: %s", rec.Code, rec.Body.String())
+		}
+		var items []database.ReadingBookmark
+		if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+			t.Fatalf("decode bookmarks failed: %v", err)
+		}
+		return items
+	}
+
+	// 两个用户给同一本书的同一页加书签：旧的 UNIQUE(book_id, page) 会让第二次写入
+	// 变成覆盖，加了 user_id 之后应各存一条。
+	if rec := upsert(userA, 5, "alice note"); rec.Code != http.StatusOK {
+		t.Fatalf("A upsert want 200 got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := upsert(userB, 5, "bob note"); rec.Code != http.StatusOK {
+		t.Fatalf("B upsert want 200 got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	aItems := list(userA)
+	bItems := list(userB)
+	if len(aItems) != 1 || aItems[0].Note != "alice note" {
+		t.Fatalf("A should see only its own bookmark, got %+v", aItems)
+	}
+	if len(bItems) != 1 || bItems[0].Note != "bob note" {
+		t.Fatalf("B should see only its own bookmark, got %+v", bItems)
+	}
+
+	// A 不能删掉 B 的书签。
+	req := withUserContext(
+		requestWithRouteParams(http.MethodDelete, "/x", nil, map[string]string{
+			"bookId":     bid,
+			"bookmarkId": strconv.FormatInt(bItems[0].ID, 10),
+		}),
+		userA,
+	)
+	rec := httptest.NewRecorder()
+	controller.deleteReadingBookmark(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-user bookmark delete should 404, got %d", rec.Code)
+	}
+	if got := list(userB); len(got) != 1 {
+		t.Fatalf("B bookmark must survive A's delete attempt, got %+v", got)
+	}
+}
+
+// TestRecommendationCacheIsPartitionedPerUser 锁住 AI 推荐的按用户分区。
+//
+// 推荐是基于该用户的阅读历史算出来的，此前缓存只按 locale 分区：所有人共用同一份
+// 结果——既没有个人化，也把彼此的阅读偏好互相泄露。
+func TestRecommendationCacheIsPartitionedPerUser(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	userA := mkTestUser(t, store, "alice", database.RoleRegular)
+	userB := mkTestUser(t, store, "bob", database.RoleRegular)
+
+	// 只给 A 预置缓存。
+	controller.recommendations.storeAt(controller.recommendations.snapshotGen(), recommendationCacheKey("zh-CN", userA.ID), []AIRecommendationResponse{{
+		SeriesID: 1, Title: "alice pick",
+	}})
+
+	if got := controller.cachedRecommendations(recommendationCacheKey("zh-CN", userA.ID)); len(got) != 1 {
+		t.Fatalf("A should hit its own cache, got %+v", got)
+	}
+	if got := controller.cachedRecommendations(recommendationCacheKey("zh-CN", userB.ID)); got != nil {
+		t.Fatalf("B must not read A's recommendations, got %+v", got)
+	}
+	// 同一用户不同语言仍是独立分区。
+	if got := controller.cachedRecommendations(recommendationCacheKey("en-US", userA.ID)); got != nil {
+		t.Fatalf("locale partition leaked, got %+v", got)
 	}
 }

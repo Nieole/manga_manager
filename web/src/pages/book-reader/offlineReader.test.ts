@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setCsrfToken } from '../../utils/apiAuth';
 import {
   buildBulkSyncItems,
   buildFallbackProgressBody,
@@ -84,6 +85,30 @@ describe('syncQueuedOfflineProgress', () => {
 
   const queue = (entries: Record<string, unknown>) => ls.setItem(KEY, JSON.stringify(entries));
   const remaining = () => Object.keys(JSON.parse(ls.getItem(KEY) || '{}'));
+
+  // 回归（bug: 离线进度回传缺 CSRF 头）：这两个端点是 POST，服务端 authGate 对改写类方法
+  // 强制校验 X-CSRF-Token。此前用裸 fetch 只发 Content-Type，于是所有排队的离线进度必然 403——
+  // 离线读完再联网，进度永远同步不回服务端，队列条目也因此永远删不掉。
+  // 现有用例只断言 body、不看请求头，正是这条缺陷长期没被发现的原因。
+  it('sends the CSRF token on both the bulk and the per-book sync requests', async () => {
+    setCsrfToken('csrf-token-abc');
+    queue({ '42': { bookId: '42', page: 5, updatedAt: '2020-01-01T00:00:00Z' } });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })   // bulk：结果为空 → 逐本回退
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });  // per-book
+    vi.stubGlobal('fetch', fetchMock);
+
+    await syncQueuedOfflineProgress();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      const [, opts] = call as [string, { headers: Record<string, string> }];
+      expect(opts.headers['X-CSRF-Token']).toBe('csrf-token-abc');
+      expect(opts.headers['Content-Type']).toBe('application/json');
+    }
+    setCsrfToken('');
+  });
 
   // 回归 (bug: results 为空即清空队列)：bulk 返回 200 但结果不可解析时不能删队列，应逐本回退。
   it('does not drop the queue when bulk returns 200 with an unparseable body; falls back per-book', async () => {

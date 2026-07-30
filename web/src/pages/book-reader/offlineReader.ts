@@ -5,10 +5,30 @@
  */
 
 import type { Page } from './types';
+import { getCsrfToken } from '../../utils/apiAuth';
+
+// syncRequestHeaders 构造离线进度回传所需的请求头。
+//
+// 这两个端点是 POST，服务端的 authGate 对改写类方法强制校验 X-CSRF-Token。
+// 此前这里用裸 fetch 且只发 Content-Type，于是所有排队的离线进度必然 403——
+// 离线读完再联网，进度永远同步不回服务端，而队列里的条目也因此永远删不掉。
+// 同源 fetch 默认就带 Cookie（credentials 默认 same-origin），这里显式写出以免日后被改错。
+function syncRequestHeaders(): HeadersInit {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const csrf = getCsrfToken();
+  if (csrf) {
+    headers['X-CSRF-Token'] = csrf;
+  }
+  return headers;
+}
 
 const OFFLINE_BOOK_CACHE = 'manga-manager-offline-books-v1';
 const OFFLINE_BOOKS_KEY = 'manga-manager:offline-books';
 const OFFLINE_PROGRESS_KEY = 'manga-manager:offline-progress';
+// OFFLINE_OWNER_KEY 记住这台设备上的离线数据属于哪个用户。
+// 没有它就无从判断「换人了」——而共享设备上最常见的情形恰恰是上一个人直接关窗口、
+// 从不点登出，登出时的清理根本不会被触发。
+const OFFLINE_OWNER_KEY = 'manga-manager:offline-owner';
 
 export interface OfflineBookStatus {
   bookId: string;
@@ -178,6 +198,24 @@ export async function cacheBookForOffline({
   const urls = [...staticUrls, ...pageUrls];
   let cachedPages = 0;
 
+  // 先登记再下载。此前这条元数据是**整个循环跑完之后**才写的，于是下到第 300/500 页
+  // 断网时：300 份响应留在 Cache Storage 里，而书目索引里没有这本书——离线书架看不见它，
+  // deleteOfflineBook 也删不掉（它按索引里的 urls 清理）。用户只剩「清空全部」这一个出口。
+  // 先写索引之后，中途失败留下的是一本「300/500 未完成」的书：看得见、能单独删、能重下。
+  const startedAt = new Date().toISOString();
+  const pendingMeta = readBookMeta();
+  pendingMeta[bookId] = {
+    bookId,
+    title,
+    pageCount: pages.length,
+    cachedPages: 0,
+    cachedAt: startedAt,
+    imageProfile,
+    // 整份 URL 列表先记全：删除按它清理，没下到的那些 cache.delete 返回 false，无副作用。
+    urls: urls.map(absoluteURL),
+  };
+  writeBookMeta(pendingMeta);
+
   for (const url of urls) {
     const request = new Request(absoluteURL(url), { credentials: 'same-origin' });
     const response = await fetch(request);
@@ -191,16 +229,9 @@ export async function cacheBookForOffline({
     }
   }
 
+  // 全部落盘后把计数补齐（cachedAt 沿用开始时刻，离线书架按它排序）。
   const allMeta = readBookMeta();
-  allMeta[bookId] = {
-    bookId,
-    title,
-    pageCount: pages.length,
-    cachedPages,
-    cachedAt: new Date().toISOString(),
-    imageProfile,
-    urls: urls.map(absoluteURL),
-  };
+  allMeta[bookId] = { ...pendingMeta[bookId], cachedPages };
   writeBookMeta(allMeta);
 
   return await getOfflineBookStatus(bookId) ?? {
@@ -208,7 +239,7 @@ export async function cacheBookForOffline({
     title,
     pageCount: pages.length,
     cachedPages,
-    cachedAt: allMeta[bookId].cachedAt,
+    cachedAt: startedAt,
     imageProfile,
   };
 }
@@ -288,6 +319,54 @@ export function clearQueuedOfflineProgress() {
   writeQueuedProgress({});
 }
 
+// reconcileOfflineOwner 对账「这台设备上的离线数据属于谁」，换人时清掉上一个人的残留。
+// 返回是否真的清理过。
+//
+// 为什么不能只挂在 logout 上：换人有四条路径，只有一条是显式登出。login/setup 直接建立
+// 新会话、刷新页面走状态探测、会话过期走 401 拦截——三条都不经过 logout。而新用户只要
+// 打开任意一个阅读器页面，useReaderOffline 就会自动把队列里的进度同步上去，
+// 于是上一个人的阅读进度被写进了新账号。
+//
+// 书目索引（OFFLINE_BOOKS_KEY）也要一起清：已下载的书页留在 Cache Storage 里，
+// 而 Service Worker 在断网时是直接从缓存命中的，**不经过任何服务端鉴权**——
+// 不清索引，下一个用户就能在离线书架上看到并读完上一个人下载的书。
+// 字节本身留作孤儿，仍可由离线书架的「清空全部」按缓存名整体删除。
+export function reconcileOfflineOwner(userId: number | null): boolean {
+  let previous: string | null = null;
+  try {
+    previous = localStorage.getItem(OFFLINE_OWNER_KEY);
+  } catch {
+    // localStorage 不可用（隐私模式/配额）：无从对账，也无从泄露，直接放行。
+    return false;
+  }
+
+  if (userId === null) {
+    try {
+      localStorage.removeItem(OFFLINE_OWNER_KEY);
+    } catch {
+      // 忽略：清不掉标记不影响下面的清理。
+    }
+    clearQueuedOfflineProgress();
+    writeBookMeta({});
+    return previous !== null;
+  }
+
+  const next = String(userId);
+  try {
+    localStorage.setItem(OFFLINE_OWNER_KEY, next);
+  } catch {
+    // 写不进标记时不做清理：宁可漏清也不要每次登录都把用户自己的离线数据删掉。
+    return false;
+  }
+  // previous 为空是「升级后首次登录」——此时的残留归属未知，按当前用户认领而不是清掉，
+  // 否则所有老用户升级后会平白丢一次离线书目。
+  if (previous === null || previous === next) return false;
+
+  clearQueuedOfflineProgress();
+  writeBookMeta({});
+  return true;
+}
+
 export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncResult> {
   if (!navigator.onLine) {
     const progress = readQueuedProgress();
@@ -308,7 +387,8 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
   try {
     const response = await fetch('/api/books/bulk-progress/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      headers: syncRequestHeaders(),
       body: JSON.stringify({ items: payload }),
     });
     if (response.ok) {
@@ -345,7 +425,8 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
       try {
         const response = await fetch(`/api/books/${bookId}/progress`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          headers: syncRequestHeaders(),
           // 带上 updated_at，让单本端点也能做「服务端已有更新进度则跳过」的陈旧判定，
           // 否则 bulk 端点不可用时逐本回退会把服务端较新的跨设备进度覆盖回退。
           body: JSON.stringify(buildFallbackProgressBody(item)),

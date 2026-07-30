@@ -7,6 +7,7 @@ package koreader
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +20,18 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/taskcontrol"
+)
+
+// kosync 进度载荷各字段的长度上限。设备侧本就只会推送文件路径/百分比串/设备名，
+// 这些取值远小于上限；设限是为了挡住被改造过的客户端把单条记录撑到任意大小
+// （document 还会进 UNIQUE 索引，撑大后连索引一起膨胀）。
+const (
+	maxProgressDocumentLen = 512
+	maxProgressValueLen    = 512
+	maxProgressDeviceLen   = 128
+	// maxRegisterUsernameLen 限制设备自助注册的用户名长度。同理由：该路径未鉴权，
+	// 而 username 会进 koreader_accounts 的 UNIQUE 索引。
+	maxRegisterUsernameLen = 128
 )
 
 var (
@@ -64,7 +77,15 @@ func NewService(store database.Store, cfg *config.Manager) *Service {
 func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash string) (database.KOReaderAccount, error) {
 	username = strings.TrimSpace(username)
 	passwordHash = NormalizeSyncKey(passwordHash)
-	if username == "" || passwordHash == "" {
+	// 这条路径未鉴权，写入的两个值直接落库且 username 进 UNIQUE 索引，所以先把形状卡死：
+	// kosync 协议里 password 就是 md5 十六进制串，IsValidSyncKey 正是该形状的既有描述
+	// （此前它只在测试里被引用，实际校验位一直空着，任意字符串都能被当作密钥存进去）。
+	if username == "" || len(username) > maxRegisterUsernameLen || !IsValidSyncKey(passwordHash) {
+		slog.Warn("KOReader device registration rejected: malformed credentials",
+			// 不打印 username 原文：未鉴权输入不应原样进日志。
+			"username_length", len(username),
+			"password_hash_length", len(passwordHash),
+		)
 		return database.KOReaderAccount{}, ErrUnauthorized
 	}
 	if _, err := s.store.GetKOReaderAccountByUsername(ctx, username); err == nil {
@@ -80,11 +101,36 @@ func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash str
 	if err != nil {
 		return database.KOReaderAccount{}, err
 	}
-	// 设备自助注册的账户无站点用户上下文——归属首个管理员（与「现有账户并入第一个管理员」口径一致）。
-	if adminID, e := s.store.FirstAdminUserID(ctx); e == nil {
-		if e := s.store.SetKOReaderAccountUser(ctx, account.ID, adminID); e != nil {
-			slog.Warn("Failed to assign self-registered KOReader account to admin", "account_id", account.ID, "error", e)
+	// 设备自助注册没有站点用户上下文，账号归属只能靠猜。站点只有一个用户时这个猜测无歧义；
+	// 一旦有第二个用户，把账号挂到「首个管理员」名下就是纯粹的错误归属——SaveProgress 会顺着
+	// 账户的 user_id 去写 user_book_progress 与 user_reading_activity，于是普通用户拿设备
+	// 自助注册之后，他读到哪管理员的进度就跳到哪，而他自己账号下的进度全丢。
+	// 因此多用户站点一律留 user_id=0（进度回落全局），由管理员在设置里显式指派。
+	assigned := false
+	userCount, countErr := s.store.CountUsers(ctx)
+	if countErr != nil {
+		slog.Warn("Failed to count site users for self-registered KOReader account",
+			"account_id", account.ID, "error", countErr)
+	} else if userCount == 1 {
+		if adminID, e := s.store.FirstAdminUserID(ctx); e == nil {
+			if e := s.store.SetKOReaderAccountUser(ctx, account.ID, adminID); e != nil {
+				slog.Warn("Failed to assign self-registered KOReader account to admin",
+					"account_id", account.ID, "error", e)
+			} else {
+				assigned = true
+			}
 		}
+	}
+	if !assigned {
+		// 未归属的账号其同步进度回落全局，任何站点用户都看不到。这里落一条 direction="system"
+		// 的审计行仅供事后查库定位——注意站内目前**没有任何界面会显示它**：四处消费
+		// koreader_sync_events 的查询都带 `direction != 'system'`。
+		_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
+			Direction: "system",
+			Username:  account.Username,
+			Status:    "account_unassigned",
+			Message:   "设备自助注册的账号未关联站点用户，其同步进度不计入任何用户，请在设置中指派",
+		})
 	}
 	return account, nil
 }
@@ -135,14 +181,25 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 	}
 	// 管理端创建的账号：sync_key 存的是原始密钥，客户端发送 md5(sync_key)，比对 HashKey(sync_key)。
 	// 设备自助注册的账号：sync_key 存的就是客户端提交的 md5（与 x-auth-key 同值），再做等值比对。
+	//
+	// 两次比较都走 crypto/subtle 且**都必须求值**（用位或而非 || 短路）：这三个 kosync 端点全部未鉴权、
+	// 无失败限流也无锁定，creds.Key 完全由请求头控制，正是逐字节计时探测最理想的条件。
+	// Go 的字符串 != 在首个不同字节处短路，攻击者据此可以一位一位地把密钥试出来。
+	//
+	// 长度不等时 ConstantTimeCompare 直接返 0：泄漏的是服务端存储值的长度而不是内容
+	// （expectedKey 恒为 32 位 hex；storedKey 是库里的原始值，历史数据可能是任意长度），可以接受，
+	// 不必为此额外做 padding。
 	expectedKey := HashKey(account.SyncKey)
 	storedKey := NormalizeSyncKey(account.SyncKey)
-	if expectedKey != creds.Key && storedKey != creds.Key {
+	matchesExpected := subtle.ConstantTimeCompare([]byte(expectedKey), []byte(creds.Key))
+	matchesStored := subtle.ConstantTimeCompare([]byte(storedKey), []byte(creds.Key))
+	if matchesExpected|matchesStored != 1 {
+		// 刻意不打印 expected_key_prefix：那是**正确答案**的前 32 bit，而这条分支任何未鉴权
+		// 请求都能触发。把在线时序通道堵上、却留着这条可任意触发的离线通道，等于没修。
 		slog.Warn("KOReader authenticate rejected: client key mismatch",
 			"username", creds.Username,
 			"account_id", account.ID,
 			"stored_raw_key_length", len(account.SyncKey),
-			"expected_key_prefix", keyPreview(expectedKey),
 			"client_key_prefix", keyPreview(creds.Key),
 		)
 		return database.KOReaderAccount{}, ErrUnauthorized
@@ -153,6 +210,23 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 		"client_key_prefix", keyPreview(creds.Key),
 	)
 	return account, nil
+}
+
+// validateProgressPayloadLengths 校验进度载荷各字段的长度。
+// 这些字段直接落库（document 还进 UNIQUE 索引），此前完全不限长，
+// 一台被改造过的设备可以把单条记录撑到任意大小，反复推送即可撑爆数据库。
+func validateProgressPayloadLengths(payload ProgressPayload) error {
+	switch {
+	case len(payload.Document) > maxProgressDocumentLen:
+		return fmt.Errorf("document exceeds %d bytes", maxProgressDocumentLen)
+	case len(payload.Progress) > maxProgressValueLen:
+		return fmt.Errorf("progress exceeds %d bytes", maxProgressValueLen)
+	case len(payload.Device) > maxProgressDeviceLen:
+		return fmt.Errorf("device exceeds %d bytes", maxProgressDeviceLen)
+	case len(payload.DeviceID) > maxProgressDeviceLen:
+		return fmt.Errorf("device_id exceeds %d bytes", maxProgressDeviceLen)
+	}
+	return nil
 }
 
 func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload ProgressPayload) (SyncResult, error) {
@@ -170,6 +244,9 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	payload.DeviceID = strings.TrimSpace(payload.DeviceID)
 	if payload.Document == "" || payload.Progress == "" || payload.Device == "" || payload.DeviceID == "" {
 		return SyncResult{}, fmt.Errorf("invalid progress payload")
+	}
+	if err := validateProgressPayloadLengths(payload); err != nil {
+		return SyncResult{}, err
 	}
 	if payload.Percentage < 0 {
 		payload.Percentage = 0
@@ -338,7 +415,7 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 			}
 			params := database.UpdateBookIdentityParams{ID: book.ID}
 			if matchConfig.MatchMode == config.KOReaderMatchModeBinaryHash {
-				fileHash, err := FingerprintFile(book.Path)
+				fileHash, err := FingerprintFileContext(ctx, book.Path)
 				if err != nil {
 					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
 					afterID = book.ID
@@ -594,7 +671,7 @@ func (s *Service) applyBookProgress(ctx context.Context, match database.KOReader
 		return err
 	}
 	// 全局活动始终记；已关联站点用户时同时记每用户活动，使 KOReader 阅读也计入连续天数/热力图/年度回顾。
-	if err := s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page}); err != nil {
+	if err := s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page, Date: database.ActivityDayKey(time.Now())}); err != nil {
 		return err
 	}
 	if userID > 0 {

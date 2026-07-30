@@ -10,6 +10,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 	"net/http"
@@ -17,22 +18,61 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// 触发扫描全库，作为通用的挂载工具
+// triggerGlobalScan 对所有资料库做一次强制全量扫描，返回前等待全部完成。
+//
+// 旧实现给每个库起一个裸 goroutine 就直接返回：这些 goroutine 不在 backgroundWG 里，
+// 优雅停机不会等它们，进程退出时 sql.DB 已关而扫描还在写库。改为受调用方 ctx 约束、
+// 同步等待——调用方本就跑在 runBackground 里，等待不会阻塞任何请求。
 func (c *Controller) triggerGlobalScan(ctx context.Context) {
 	libs, err := c.store.ListLibraries(ctx)
-	if err == nil {
-		for _, lib := range libs {
-			go func(lib database.Library) {
-				defer c.purgeReadingPathCaches()
-				if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true); err != nil {
-					slog.Error("Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
-				}
-			}(lib)
+	if err != nil {
+		slog.Error("Global scan aborted: failed to list libraries", "error", err)
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, lib := range libs {
+		wg.Add(1)
+		go func(lib database.Library) {
+			defer wg.Done()
+			defer c.purgeReadingPathCaches()
+			if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true); err != nil {
+				slog.Error("Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
+			}
+		}(lib)
+	}
+	wg.Wait()
+}
+
+// clearThumbnailDir 清空缩略图目录，但保留页图磁盘缓存子目录。
+//
+// 缩略图目录就是 cache.dir 本身，而页图磁盘缓存在 <cache.dir>/pages/ 下。
+// 此前直接 os.RemoveAll(cache.dir)，于是「重建缩略图」会把整个页图缓存一并抹掉——
+// 用户只想修封面，代价却是之后每一页都要重新解码转码一遍。
+func (c *Controller) clearThumbnailDir(thumbDir string) error {
+	pageCacheDir := filepath.Clean(c.processedImageCacheDir())
+
+	entries, err := os.ReadDir(thumbDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		full := filepath.Join(thumbDir, entry.Name())
+		if entry.IsDir() && filepath.Clean(full) == pageCacheDir {
+			continue // 页图缓存与缩略图无关，别误伤
+		}
+		if err := os.RemoveAll(full); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 // clearAllCoverPaths 把数据库中 books 与 series_stats 的 cover_path 字段清空，
@@ -47,7 +87,12 @@ func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress func(current, total int, lib database.Library)) error {
+// runGlobalScan 依次强制重扫全部资料库。
+//
+// ignoreFormatFilter 只在「重建缩略图」时为真：该任务先删光缩略图文件并清空所有 cover_path，
+// 再靠这次扫描重建。若仍按库的 scan_formats 过滤，被排除格式的书就再也不会被访问到，
+// 它们的封面会永久消失——而格式过滤的语义是「导入哪些文件」，不该殃及已入库的内容。
+func (c *Controller) runGlobalScan(ctx context.Context, force bool, ignoreFormatFilter bool, progress func(current, total int, lib database.Library)) error {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		return err
@@ -63,7 +108,10 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 		if progress != nil {
 			progress(i, total, lib)
 		}
-		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force); err != nil {
+		if err := c.scanner.ScanLibraryWithOptions(ctx, lib.ID, lib.Path, scanner.LibraryScanOptions{
+			Force:              force,
+			IgnoreFormatFilter: ignoreFormatFilter,
+		}); err != nil {
 			return err
 		}
 		c.purgeReadingPathCaches()
@@ -74,23 +122,39 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, progress fun
 	return nil
 }
 
+// launchRebuildIndexTask 异步重建 FTS 索引并随后做一次全量扫描。
+//
+// 此前这三步全在 HTTP 请求 goroutine 里同步跑：FTS 是 DELETE + INSERT...SELECT 全表重灌，
+// 大库上会把请求挂到结束（反代通常先 504），期间任务显示 running、进度恒为 0 且不可取消；
+// 随后的 `go c.triggerGlobalScan(context.Background())` 又派生出一批完全脱离
+// backgroundWG 的扫描 goroutine，Close() 不会等它们，main 返回后 store.Close() 关掉
+// sql.DB 而扫描仍在写库，产生 "sql: database is closed" 与半截写入。
 func (c *Controller) launchRebuildIndexTask() error {
-	if !c.startTaskMsg("rebuild_index", "rebuild_index", "task.msg.rebuild_index.start", nil, 1) {
+	if !c.taskEngine.startTaskMsg("rebuild_index", "rebuild_index", "task.msg.rebuild_index.start", nil, 1) {
 		return errTaskAlreadyRunning
 	}
-	c.setTaskMetadata("rebuild_index", nil, "")
+	c.taskEngine.setTaskMetadata("rebuild_index", nil, "")
 
-	if err := c.store.RebuildSeriesSearchIndex(context.Background()); err != nil {
-		c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite series search index rebuild failed: %v", err), err.Error())
-		return err
-	}
-	if err := c.store.RebuildBookSearchIndex(context.Background()); err != nil {
-		c.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite book search index rebuild failed: %v", err), err.Error())
-		return err
-	}
+	taskCtx, release := c.taskEngine.newTaskContext("rebuild_index")
+	c.runBackgroundTask("rebuild_index", func() {
+		defer release()
 
-	go c.triggerGlobalScan(context.Background())
-	c.finishTaskMsg("rebuild_index", "task.msg.rebuild_index.complete", nil)
+		if err := c.store.RebuildSeriesSearchIndex(taskCtx); err != nil {
+			c.taskEngine.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite series search index rebuild failed: %v", err), err.Error())
+			return
+		}
+		if err := c.store.RebuildBookSearchIndex(taskCtx); err != nil {
+			c.taskEngine.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite book search index rebuild failed: %v", err), err.Error())
+			return
+		}
+		if err := taskCtx.Err(); err != nil {
+			c.taskEngine.failTaskWithError("rebuild_index", "Search index rebuild cancelled", err.Error())
+			return
+		}
+
+		c.triggerGlobalScan(taskCtx)
+		c.taskEngine.finishTaskMsg("rebuild_index", "task.msg.rebuild_index.complete", nil)
+	})
 	return nil
 }
 
@@ -107,18 +171,18 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchRebuildThumbnailsTask() error {
-	if !c.startPausableCancelableTaskMsg("rebuild_thumbnails", "rebuild_thumbnails", "task.msg.rebuild_thumbnails.start", nil, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg("rebuild_thumbnails", "rebuild_thumbnails", "task.msg.rebuild_thumbnails.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
 	policy := config.ResolveStoragePolicy(c.currentConfig(), "")
-	c.setTaskMetadata("rebuild_thumbnails", map[string]string{
+	c.taskEngine.setTaskMetadata("rebuild_thumbnails", map[string]string{
 		"storage_profile":   policy.StorageProfile,
 		"volume_key":        policy.VolumeKey,
 		"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
 		"execution_mode":    "low_impact",
 	}, "")
-	c.setTaskEffectiveLimit("rebuild_thumbnails", c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.newTaskContext("rebuild_thumbnails")
+	c.taskEngine.setTaskEffectiveLimit("rebuild_thumbnails", c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext("rebuild_thumbnails")
 
 	thumbDir := filepath.Join(".", "data", "thumbnails")
 	cfg := c.currentConfig()
@@ -126,50 +190,50 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		thumbDir = cfg.Cache.Dir
 	}
 
-	c.runBackground(func() {
+	c.runBackgroundTask("rebuild_thumbnails", func() {
 		defer cleanupCancel()
 		defer c.releaseRebuildThumbAggregator()
 		c.initRebuildThumbAggregator(0)
-		c.updateTaskDetailsMsg("rebuild_thumbnails", 0, 0, "task.msg.rebuild_thumbnails.clearing_cache", nil, "clearing_cache", thumbDir, nil, nil)
-		if err := os.RemoveAll(thumbDir); err != nil {
-			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cache_failed", nil, err.Error())
+		c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", 0, 0, "task.msg.rebuild_thumbnails.clearing_cache", nil, "clearing_cache", thumbDir, nil, nil)
+		if err := c.clearThumbnailDir(thumbDir); err != nil {
+			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cache_failed", nil, err.Error())
 			return
 		}
 		if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
-			c.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
+			c.taskEngine.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
 			return
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
-			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.mkdir_failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.mkdir_failed", nil, err.Error())
 			return
 		}
-		c.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.clearing_cover_index", nil, "clearing_cache", "", nil, nil)
+		c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.clearing_cover_index", nil, "clearing_cache", "", nil, nil)
 		if err := c.clearAllCoverPaths(taskCtx); err != nil {
-			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cover_index_failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cover_index_failed", nil, err.Error())
 			return
 		}
-		c.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil, "reading_metadata", "", nil, nil)
-		err := c.runGlobalScan(taskCtx, true, func(current, total int, lib database.Library) {
+		c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil, "reading_metadata", "", nil, nil)
+		err := c.runGlobalScan(taskCtx, true, true /* 重建缩略图必须看得见全部已入库的书 */, func(current, total int, lib database.Library) {
 			c.trackRebuildThumbLibraryProgress(current, total, lib)
 			c.refreshRebuildThumbTaskFromAggregator(lib)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
+			c.taskEngine.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.failed", nil, err.Error())
 			return
 		}
 		c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
 		if err := c.scanner.WaitForCoverQueue(taskCtx); errors.Is(err, context.Canceled) {
-			c.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
+			c.taskEngine.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
 			return
 		} else if err != nil {
-			c.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.wait_queue_failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.wait_queue_failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.complete", nil)
+		c.taskEngine.finishTaskMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.complete", nil)
 		c.warmDashboardStatsCacheAsync("rebuild_thumbnails_completed")
 	})
 	c.PublishEvent("refresh_thumbnails")
@@ -185,30 +249,33 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchCleanupThumbnailsTask() error {
-	if !c.startPausableCancelableTaskMsg("cleanup_thumbnails", "cleanup_thumbnails", "task.msg.cleanup_thumbnails.start", nil, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg("cleanup_thumbnails", "cleanup_thumbnails", "task.msg.cleanup_thumbnails.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
-	taskCtx, cleanupCancel := c.newTaskContext("cleanup_thumbnails")
-	c.setTaskMetadata("cleanup_thumbnails", nil, "")
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext("cleanup_thumbnails")
+	c.taskEngine.setTaskMetadata("cleanup_thumbnails", nil, "")
 
-	go c.runBackground(func() {
+	// 这里曾写成 `go c.runBackground(...)`：多套一层 goroutine 会让 runBackground 的
+	// closed 检查与 backgroundWG.Add 都发生在另一个调度点上，停机竞态下任务会被静默丢弃，
+	// 而 newTaskContext 已登记的 runtime 记录留在内存里泄漏。与其余 34 个调用点保持一致。
+	c.runBackground(func() {
 		defer cleanupCancel()
 
-		c.updateTaskDetailsMsg("cleanup_thumbnails", 0, -1, "task.msg.cleanup_thumbnails.scanning", nil, "cleanup", "", nil, nil)
+		c.taskEngine.updateTaskDetailsMsg("cleanup_thumbnails", 0, -1, "task.msg.cleanup_thumbnails.scanning", nil, "cleanup", "", nil, nil)
 
 		err := c.scanner.CleanupThumbnails(taskCtx, func(deleted, scanned int, msg string) {
-			c.updateTaskDetails("cleanup_thumbnails", deleted, scanned, msg, "cleanup", "", nil, nil)
+			c.taskEngine.updateTaskDetails("cleanup_thumbnails", deleted, scanned, msg, "cleanup", "", nil, nil)
 		})
 
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg("cleanup_thumbnails", "cancelled", "task.msg.cleanup_thumbnails.cancelled", nil)
+			c.taskEngine.completeTaskMsg("cleanup_thumbnails", "cancelled", "task.msg.cleanup_thumbnails.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.complete", nil)
+		c.taskEngine.finishTaskMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.complete", nil)
 	})
 	return nil
 }
@@ -222,17 +289,17 @@ func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
-	if !c.startPausableCancelableTaskMsg("rebuild_file_identities", "rebuild_file_identities", "task.msg.rebuild_file_identities.start", nil, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg("rebuild_file_identities", "rebuild_file_identities", "task.msg.rebuild_file_identities.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
-	c.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "")
-	c.setTaskEffectiveLimit("rebuild_file_identities", c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.newTaskContext("rebuild_file_identities")
+	c.taskEngine.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "")
+	c.taskEngine.setTaskEffectiveLimit("rebuild_file_identities", c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext("rebuild_file_identities")
 
 	c.runBackground(func() {
 		defer cleanupCancel()
 		updated, total, err := c.runRebuildFileIdentities(taskCtx, 500, func(current, total int, _ string, metrics taskIOMetrics) {
-			c.updateTaskDetailsMsg("rebuild_file_identities", current, total, "task.msg.rebuild_file_identities.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
+			c.taskEngine.updateTaskDetailsMsg("rebuild_file_identities", current, total, "task.msg.rebuild_file_identities.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
 				"hashed_files": metrics.HashedFiles,
 				"io_wait_ms":   metrics.IOWaitMillis,
 				"paused_ms":    metrics.PausedMillis,
@@ -240,17 +307,17 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 				"storage_profile": metrics.StorageProfile,
 				"volume_key":      metrics.VolumeKey,
 			})
-			c.mergeTaskParams("rebuild_file_identities", taskIOMetricsParams(metrics))
+			c.taskEngine.mergeTaskParams("rebuild_file_identities", taskIOMetricsParams(metrics))
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg("rebuild_file_identities", "cancelled", "task.msg.rebuild_file_identities.cancelled", nil)
+			c.taskEngine.completeTaskMsg("rebuild_file_identities", "cancelled", "task.msg.rebuild_file_identities.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		c.taskEngine.finishTaskMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return nil
 }
@@ -337,20 +404,20 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 		return false
 	}
 
-	if !c.startPausableCancelableTaskMsg(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "task.msg.book_hash_backfill.start", nil, int(missingCount)) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "task.msg.book_hash_backfill.start", nil, int(missingCount)) {
 		return false
 	}
-	c.setTaskMetadata(lowPriorityBookHashTaskKey, map[string]string{
+	c.taskEngine.setTaskMetadata(lowPriorityBookHashTaskKey, map[string]string{
 		"match_mode": config.KOReaderMatchModeBinaryHash,
 		"profile":    "full_hash_low_priority",
 		"reason":     reason,
 	}, "")
-	c.setTaskEffectiveLimit(lowPriorityBookHashTaskKey, c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.newTaskContext(lowPriorityBookHashTaskKey)
+	c.taskEngine.setTaskEffectiveLimit(lowPriorityBookHashTaskKey, c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(lowPriorityBookHashTaskKey)
 
 	c.runBackground(func() {
 		updated, total, err := c.runBackfillFullHashesLowPriority(taskCtx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, _ string, metrics taskIOMetrics) {
-			c.updateTaskDetailsMsg(lowPriorityBookHashTaskKey, current, total, "task.msg.book_hash_backfill.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
+			c.taskEngine.updateTaskDetailsMsg(lowPriorityBookHashTaskKey, current, total, "task.msg.book_hash_backfill.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
 				"hashed_files": metrics.HashedFiles,
 				"io_wait_ms":   metrics.IOWaitMillis,
 				"paused_ms":    metrics.PausedMillis,
@@ -358,18 +425,18 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 				"storage_profile": metrics.StorageProfile,
 				"volume_key":      metrics.VolumeKey,
 			})
-			c.mergeTaskParams(lowPriorityBookHashTaskKey, taskIOMetricsParams(metrics))
+			c.taskEngine.mergeTaskParams(lowPriorityBookHashTaskKey, taskIOMetricsParams(metrics))
 		})
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(lowPriorityBookHashTaskKey, "cancelled", "task.msg.book_hash_backfill.cancelled", nil)
+			c.taskEngine.completeTaskMsg(lowPriorityBookHashTaskKey, "cancelled", "task.msg.book_hash_backfill.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		c.taskEngine.finishTaskMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return true
 }
@@ -415,7 +482,7 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 			}
 			metrics.StorageProfile = policy.StorageProfile
 			metrics.VolumeKey = policy.VolumeKey
-			fileHash, err := koreader.FingerprintFile(book.Path)
+			fileHash, err := koreader.FingerprintFileContext(ctx, book.Path)
 			releaseToken()
 			metrics.HashedFiles++
 			if err != nil {

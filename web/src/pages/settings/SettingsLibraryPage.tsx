@@ -458,7 +458,7 @@ export function SettingsLibraryPage() {
         )}
       </section>
 
-      <SettingsSaveBar saving={saving} label={t('settings.library.saveLabel')} hint={t('settings.library.saveHint')} onSave={() => saveConfig(t('settings.library.saved'))} />
+      <SettingsSaveBar saving={saving} label={t('settings.library.saveLabel')} hint={t('settings.library.saveHint')} onSave={() => saveConfig('library', t('settings.library.saved'))} />
     </div>
   );
 }

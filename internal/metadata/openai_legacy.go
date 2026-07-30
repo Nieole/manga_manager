@@ -102,13 +102,13 @@ func (o *OpenAILegacyProvider) sendRequest(ctx context.Context, prompt string, r
 
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("openai-legacy: request failed: %w", err)
+		return "", fmt.Errorf("openai-legacy: request failed: %w", sanitizeTransportError(err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("openai-legacy: API returned status %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("openai-legacy: API returned status %d: %s", resp.StatusCode, truncateUpstreamBody(respBody))
 	}
 
 	var aiResp openAILegacyResponse
@@ -141,6 +141,12 @@ func (o *OpenAILegacyProvider) FetchSeriesMetadata(ctx context.Context, title st
 	var meta SeriesMetadata
 	if err := json.Unmarshal([]byte(content), &meta); err != nil {
 		return nil, fmt.Errorf("openai-legacy: failed to parse JSON output: %w\nOutput: %s", err, content)
+	}
+	// 与 Ollama 保持同一契约：LLM 表示「不了解该作品」时返回 (nil, nil)，让调用方据此
+	// 判定「没找到」。此前在该情形下仍返回一个各字段全空的结构体，于是批量刮削把幻觉
+	// 空结果计为成功，并把一堆空提案塞进待审队列。
+	if strings.TrimSpace(meta.Title) == "" && strings.TrimSpace(meta.Summary) == "" {
+		return nil, nil
 	}
 	meta.Status = NormalizeStatusCode(meta.Status)
 	meta.Provider = o.Name()

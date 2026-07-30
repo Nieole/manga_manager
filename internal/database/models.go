@@ -70,6 +70,13 @@ type Book struct {
 	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
+type BookGramFt struct {
+	SeriesID  string `json:"series_id"`
+	LibraryID string `json:"library_id"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
+}
+
 type BookSearchFt struct {
 	SeriesID  string `json:"series_id"`
 	LibraryID string `json:"library_id"`
@@ -85,6 +92,7 @@ type Collection struct {
 	SortOrder      int64          `json:"sort_order"`
 	SourceType     string         `json:"source_type"`
 	SourceReviewID sql.NullInt64  `json:"source_review_id"`
+	SourceKey      string         `json:"source_key"`
 	CreatedAt      sql.NullTime   `json:"created_at"`
 	UpdatedAt      sql.NullTime   `json:"updated_at"`
 }
@@ -177,7 +185,6 @@ type MetadataReviewField struct {
 	Source        string    `json:"source"`
 	SourceUrl     string    `json:"source_url"`
 	Locked        bool      `json:"locked"`
-	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -192,6 +199,7 @@ type ReadingActivity struct {
 
 type ReadingBookmark struct {
 	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
 	BookID    int64     `json:"book_id"`
 	Page      int64     `json:"page"`
 	Note      string    `json:"note"`
@@ -242,6 +250,12 @@ type Series struct {
 type SeriesAuthor struct {
 	SeriesID int64 `json:"series_id"`
 	AuthorID int64 `json:"author_id"`
+}
+
+type SeriesGramFt struct {
+	LibraryID string `json:"library_id"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
 }
 
 type SeriesLink struct {

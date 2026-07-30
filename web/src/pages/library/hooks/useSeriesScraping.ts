@@ -122,14 +122,23 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
       if (!scrapingSeries) return;
       setIsScraping(true);
       try {
-        const res = await apiClient.post<{ queued?: boolean; message?: string }>(
+        const res = await apiClient.post<{ queued?: boolean; outcome?: string; message?: string }>(
           `/api/series/${scrapingSeries.id}/scrape-apply?provider=${scrapeProvider}`,
           metadata,
         );
-        // 后端可能因待审核队列中已存在完全相同的记录而忽略本次提交（queued=false），
-        // 此时应提示用户而非静默当作成功。
+        // 后端可能因多种原因不入队（queued=false），按 outcome 给出各自的原因，
+        // 而不是一律说「队列里已有相同记录」——那对「此前已拒绝」和「字段全被锁」都是错的。
         if (res.data?.queued === false) {
-          onError('series.toast.scrapeDuplicate');
+          const outcome = res.data?.outcome;
+          if (outcome === 'rejected_before') {
+            onError('series.toast.scrapeRejectedBefore');
+          } else if (outcome === 'all_locked') {
+            onError('series.toast.scrapeAllLocked');
+          } else if (outcome === 'no_changes') {
+            onError('series.toast.noMetadataReviewChanges');
+          } else {
+            onError('series.toast.scrapeDuplicate');
+          }
         } else {
           onSuccess(scrapingSeries.id);
         }

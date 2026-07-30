@@ -23,6 +23,6 @@ func (c *Controller) searchProtocolSeries(ctx context.Context, query string, pag
 		limit = 30
 	}
 
-	rows, total, err := c.store.SearchProtocolSeries(ctx, query, int32(limit), int32((page-1)*limit))
+	rows, total, err := c.store.SearchProtocolSeries(ctx, query, int32(limit), int32(pageOffset(page, limit)))
 	return rows, total, true, err
 }

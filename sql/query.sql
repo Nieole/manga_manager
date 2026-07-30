@@ -279,7 +279,12 @@ SELECT * FROM books WHERE series_id = ? ORDER BY volume, sort_number, name;
 
 
 -- name: ListBooksByLibrary :many
-SELECT id, path, file_modified_at, size, page_count, cover_path FROM books WHERE library_id = ?;
+SELECT id, path, file_modified_at, size, page_count, cover_path, file_hash, quick_hash FROM books WHERE library_id = ?;
+
+-- name: RehomeBookPath :execrows
+UPDATE books
+SET path = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND path = ?;
 
 -- name: DeleteBookByPath :exec
 DELETE FROM books WHERE path = ?;
@@ -405,6 +410,7 @@ SELECT
     l.name as library_name,
     s.name as series_name,
     COALESCE(s.title, '') as series_title,
+    COALESCE(s.locked_fields, '') as series_locked_fields,
     CAST(COALESCE((
         SELECT b.id
         FROM books b
@@ -429,20 +435,20 @@ WHERE mr.status = 'pending'
 ORDER BY mr.confidence ASC, mr.created_at ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
--- name: UpdateMetadataReviewStatus :one
+-- name: ResolvePendingMetadataReview :execrows
 UPDATE metadata_reviews
 SET status = sqlc.arg(status),
     updated_at = CURRENT_TIMESTAMP,
     applied_at = CASE WHEN sqlc.arg(status) = 'applied' THEN CURRENT_TIMESTAMP ELSE applied_at END,
     rejected_at = CASE WHEN sqlc.arg(status) = 'rejected' THEN CURRENT_TIMESTAMP ELSE rejected_at END
 WHERE id = sqlc.arg(id)
-RETURNING *;
+  AND lower(status) = 'pending';
 
 -- name: CreateMetadataReviewField :one
 INSERT INTO metadata_review_fields (
-    review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked, status
+    review_id, field_name, current_value, proposed_value, confidence, source, source_url, locked
 ) VALUES (
-    sqlc.arg(review_id), sqlc.arg(field_name), sqlc.arg(current_value), sqlc.arg(proposed_value), sqlc.arg(confidence), sqlc.arg(source), sqlc.arg(source_url), sqlc.arg(locked), sqlc.arg(status)
+    sqlc.arg(review_id), sqlc.arg(field_name), sqlc.arg(current_value), sqlc.arg(proposed_value), sqlc.arg(confidence), sqlc.arg(source), sqlc.arg(source_url), sqlc.arg(locked)
 )
 RETURNING *;
 
@@ -524,6 +530,32 @@ SET
     total_pages = (SELECT COALESCE(SUM(page_count), 0) FROM books b WHERE b.series_id = ?),
     updated_at = CURRENT_TIMESTAMP
 WHERE series.id = ?;
+
+-- name: RefreshSeriesCover :exec
+INSERT INTO series_stats (series_id, cover_path, cover_book_id, updated_at)
+SELECT
+    s.id,
+    COALESCE((
+        SELECT b.cover_path
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), '') AS cover_path,
+    COALESCE((
+        SELECT b.id
+        FROM books b
+        WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
+        ORDER BY b.sort_number, b.name
+        LIMIT 1
+    ), 0) AS cover_book_id,
+    CURRENT_TIMESTAMP
+FROM series s
+WHERE s.id = ?
+ON CONFLICT(series_id) DO UPDATE SET
+    cover_path = excluded.cover_path,
+    cover_book_id = excluded.cover_book_id,
+    updated_at = CURRENT_TIMESTAMP;
 
 -- name: RefreshSeriesStats :exec
 INSERT INTO series_stats (
@@ -717,15 +749,6 @@ GROUP BY t.id
 ORDER BY tag_count DESC
 LIMIT ?;
 
--- name: GetCandidateSeriesForAI :many
-SELECT s.id, s.title, s.name, s.summary, 
-       (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path
-FROM series s
-WHERE s.summary IS NOT NULL AND s.summary != '' 
-  AND (s.total_pages = 0 OR (CAST(s.book_count AS REAL) > 0 AND (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) < s.book_count * 0.5))
-ORDER BY RANDOM()
-LIMIT ?;
-
 -- name: GetSeriesWithoutCollection :many
 SELECT s.id, s.title, s.name, s.summary
 FROM series s
@@ -854,7 +877,29 @@ VALUES (
 )
 RETURNING *;
 
--- name: AddSeriesToCollection :exec
+-- name: UpsertFranchiseCollection :one
+INSERT INTO collections (name, description, source_type, source_key)
+VALUES (sqlc.arg(name), sqlc.arg(description), 'system_franchise', sqlc.arg(source_key))
+ON CONFLICT(source_type, source_key) WHERE source_key != ''
+DO UPDATE SET
+    name = excluded.name,
+    description = excluded.description,
+    updated_at = CASE WHEN collections.name != excluded.name THEN CURRENT_TIMESTAMP ELSE collections.updated_at END
+RETURNING *;
+
+
+-- name: ListCollectionSeriesIDs :many
+SELECT series_id FROM collection_series WHERE collection_id = ?;
+
+-- name: DeleteStaleFranchiseCollections :execrows
+DELETE FROM collections
+WHERE source_type = 'system_franchise'
+  AND (source_key = '' OR source_key NOT IN (sqlc.slice('keep_keys')));
+
+-- name: DeleteAllFranchiseCollections :execrows
+DELETE FROM collections WHERE source_type = 'system_franchise';
+
+-- name: AddSeriesToCollection :execrows
 INSERT OR IGNORE INTO collection_series (collection_id, series_id)
 VALUES (?, ?);
 
@@ -891,7 +936,7 @@ SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 
--- name: DeleteReadingList :exec
+-- name: DeleteReadingList :execrows
 DELETE FROM reading_lists WHERE id = ?;
 
 -- name: ListReadingListItems :many
@@ -1040,7 +1085,7 @@ ORDER BY c.sort_order, c.name;
 INSERT INTO collections (name, description) VALUES (?, ?)
 RETURNING id;
 
--- name: DeleteCollection :exec
+-- name: DeleteCollection :execrows
 DELETE FROM collections WHERE id = ?;
 
 -- name: UpdateCollectionDetails :exec
@@ -1062,7 +1107,7 @@ JOIN series s ON s.id = cs.series_id
 WHERE cs.collection_id = ?
 ORDER BY cs.sort_order, s.name;
 
--- name: RemoveSeriesFromCollection :exec
+-- name: RemoveSeriesFromCollection :execrows
 DELETE FROM collection_series WHERE collection_id = ? AND series_id = ?;
 
 -- name: CollectionNameExists :one
@@ -1104,44 +1149,7 @@ SELECT
     ) AS description,
     sf.library_id,
     l.name AS library_name,
-    (
-        SELECT COUNT(DISTINCT s.id)
-        FROM series s
-        LEFT JOIN series_tags st ON s.id = st.series_id
-        LEFT JOIN tags t ON st.tag_id = t.id
-        LEFT JOIN series_authors sa ON s.id = sa.series_id
-        LEFT JOIN authors a ON sa.author_id = a.id
-        LEFT JOIN (
-            SELECT
-                series_id,
-                COUNT(*) as book_count,
-                SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN 1 ELSE 0 END) as read_books,
-                SUM(CASE WHEN page_count > 0 AND last_read_page >= page_count THEN 1 ELSE 0 END) as completed_books,
-                CASE
-                    WHEN SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END) > 0
-                    THEN SUM(CASE WHEN last_read_page IS NOT NULL AND last_read_page > 0 THEN MIN(last_read_page, page_count) ELSE 0 END) * 100.0 / SUM(CASE WHEN page_count > 0 THEN page_count ELSE 0 END)
-                    ELSE 0
-                END as progress_percent
-            FROM books
-            GROUP BY series_id
-        ) rp ON rp.series_id = s.id
-        WHERE s.library_id = sf.library_id
-          AND (sf.active_status IS NULL OR s.status = sf.active_status)
-          AND (sf.active_letter IS NULL OR s.name_initial = sf.active_letter)
-          AND (sf.active_tag IS NULL OR t.name = sf.active_tag)
-          AND (sf.active_author IS NULL OR a.name = sf.active_author)
-          AND (sf.min_rating IS NULL OR s.rating >= sf.min_rating)
-          AND (sf.max_rating IS NULL OR s.rating <= sf.max_rating)
-          AND (sf.min_progress IS NULL OR COALESCE(rp.progress_percent, 0) >= sf.min_progress)
-          AND (sf.max_progress IS NULL OR COALESCE(rp.progress_percent, 0) <= sf.max_progress)
-          AND (sf.added_within_days IS NULL OR s.created_at >= datetime('now', '-' || sf.added_within_days || ' days'))
-          AND (
-            sf.read_state IS NULL
-            OR (sf.read_state = 'unread' AND COALESCE(rp.read_books, 0) = 0)
-            OR (sf.read_state = 'reading' AND COALESCE(rp.read_books, 0) > 0 AND COALESCE(rp.completed_books, 0) < COALESCE(rp.book_count, 0))
-            OR (sf.read_state = 'completed' AND COALESCE(rp.book_count, 0) > 0 AND COALESCE(rp.completed_books, 0) = COALESCE(rp.book_count, 0))
-          )
-    ) AS series_count,
+    CAST(0 AS INTEGER) AS series_count,
     'smart_filter' AS source_type,
     CAST(NULL AS INTEGER) AS source_review_id,
     CAST(0 AS INTEGER) AS sort_order,
@@ -1222,8 +1230,15 @@ UPDATE series_relations
 SET relation_type = ?
 WHERE id = ?;
 
--- name: DeleteSeriesRelation :exec
+-- name: DeleteSeriesRelation :execrows
 DELETE FROM series_relations WHERE id = ?;
+
+-- name: ListSmartFilters :many
+SELECT id, library_id, name, active_tag, active_author, active_status, active_letter,
+       read_state, min_rating, max_rating, min_progress, max_progress, added_within_days,
+       sort_by_field, sort_dir, page_size, created_at, updated_at
+FROM smart_filters
+ORDER BY id;
 
 -- name: ListSmartFiltersByLibrary :many
 SELECT id, library_id, name, active_tag, active_author, active_status, active_letter,
@@ -1333,7 +1348,7 @@ SELECT
     (SELECT COUNT(*) FROM books) AS total_books,
     (SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
     (SELECT COALESCE(SUM(page_count), 0) FROM books) AS total_pages,
-    (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= DATE('now', '-7 days')) AS active_days_7;
+    (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= sqlc.arg(since_date)) AS active_days_7;
 
 -- name: ListLibrarySizes :many
 SELECT l.id AS library_id, l.name AS library_name, COALESCE(bs.total_size, 0) AS total_size
@@ -1348,33 +1363,33 @@ ORDER BY bs.total_size DESC;
 -- name: GetActivityHeatmap :many
 SELECT date, SUM(pages_read) AS page_count
 FROM reading_activity
-WHERE date >= DATE('now', sqlc.arg(offset_clause))
+WHERE date >= sqlc.arg(since_date)
 GROUP BY date
 ORDER BY date ASC;
 
 -- name: LogReadingActivity :exec
 INSERT INTO reading_activity (book_id, date, pages_read)
-VALUES (?, DATE('now'), ?)
+VALUES (?, ?, ?)
 ON CONFLICT(book_id, date) DO UPDATE SET
     pages_read = MAX(reading_activity.pages_read, excluded.pages_read);
 
 -- name: ListReadingBookmarks :many
-SELECT id, book_id, page, note, created_at, updated_at
+SELECT id, user_id, book_id, page, note, created_at, updated_at
 FROM reading_bookmarks
-WHERE book_id = ?
+WHERE user_id = ? AND book_id = ?
 ORDER BY page ASC, id ASC;
 
 -- name: UpsertReadingBookmark :one
-INSERT INTO reading_bookmarks (book_id, page, note)
-VALUES (?, ?, ?)
-ON CONFLICT(book_id, page) DO UPDATE SET
+INSERT INTO reading_bookmarks (user_id, book_id, page, note)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(user_id, book_id, page) DO UPDATE SET
     note = excluded.note,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, book_id, page, note, created_at, updated_at;
+RETURNING id, user_id, book_id, page, note, created_at, updated_at;
 
 -- name: DeleteReadingBookmark :execrows
 DELETE FROM reading_bookmarks
-WHERE id = ? AND book_id = ?;
+WHERE id = ? AND user_id = ? AND book_id = ?;
 
 -- name: GetRecentReadAll :many
 SELECT
@@ -1386,7 +1401,8 @@ SELECT
     ss.last_read_at,
     b.last_read_page,
     b.page_count,
-    COALESCE(ss.cover_path, '') AS cover_path
+    COALESCE(ss.cover_path, '') AS cover_path,
+    b.path AS book_path
 FROM series_stats ss INDEXED BY idx_series_stats_last_read
 JOIN series s ON s.id = ss.series_id
 JOIN books b ON b.id = ss.last_read_book_id
@@ -1568,7 +1584,7 @@ LIMIT sqlc.arg(limit_count);
 SELECT COUNT(*)
 FROM books b
 WHERE (sqlc.arg(library_id) = 0 OR b.library_id = sqlc.arg(library_id))
-  AND COALESCE(b.quick_hash, '') = '';
+  AND (b.quick_hash IS NULL OR b.quick_hash = '');
 
 -- name: ListHealthMissingQuickHash :many
 SELECT l.id AS library_id, l.name AS library_name, s.id AS series_id, s.name AS series_name,
@@ -1578,7 +1594,7 @@ FROM books b
 JOIN series s ON s.id = b.series_id
 JOIN libraries l ON l.id = b.library_id
 WHERE (sqlc.arg(library_id) = 0 OR b.library_id = sqlc.arg(library_id))
-  AND COALESCE(b.quick_hash, '') = ''
+  AND (b.quick_hash IS NULL OR b.quick_hash = '')
 ORDER BY b.updated_at DESC, b.id DESC
 LIMIT sqlc.arg(limit_count);
 
@@ -1684,5 +1700,23 @@ LEFT JOIN series_stats ss1 ON ss1.series_id = s1.id
 LEFT JOIN series_stats ss2 ON ss2.series_id = s2.id
 WHERE s1.library_id = ? OR s2.library_id = ?;
 
--- name: DeleteFranchiseCollections :exec
-DELETE FROM collections WHERE source_type = 'system_franchise';
+
+-- name: DeleteMetadataReviewField :exec
+DELETE FROM metadata_review_fields WHERE review_id = ? AND field_name = ?;
+
+-- name: ListRecentRejectedMetadataReviewsBySeries :many
+SELECT * FROM metadata_reviews
+WHERE series_id = ? AND status = 'rejected'
+ORDER BY rejected_at DESC, id DESC
+LIMIT ?;
+
+-- name: ListAIGroupingReviewCollectionsByReviews :many
+SELECT * FROM ai_grouping_review_collections
+WHERE review_id IN (sqlc.slice('review_ids'))
+ORDER BY review_id ASC, id ASC;
+
+-- name: ListExternalTransferBooksBySeries :many
+SELECT id, series_id, library_id, path, volume
+FROM books
+WHERE series_id IN (sqlc.slice('series_ids'))
+ORDER BY series_id, volume, sort_number, name;

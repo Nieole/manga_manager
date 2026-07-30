@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // OpenArchive 根据后缀自动分发归档解压驱动
@@ -44,16 +45,16 @@ func naturalCompare(a, b string) bool {
 		lowPath := strings.ToLower(filepath.ToSlash(path))
 		base := filepath.Base(lowPath)
 
-		// 如果文件名包含任何排除关键字，则不视为封面
+		// 如果文件名命中任何排除关键字，则不视为封面
 		for _, ex := range excludeKeywords {
-			if strings.Contains(base, ex) {
+			if matchesFilenameKeyword(base, ex) {
 				return false
 			}
 		}
 
-		// 1. 优先检查文件名是否包含关键标识
+		// 1. 优先检查文件名是否命中关键标识
 		for _, kw := range coverKeywords {
-			if strings.Contains(base, kw) {
+			if matchesFilenameKeyword(base, kw) {
 				return true
 			}
 		}
@@ -124,4 +125,54 @@ func naturalCompare(a, b string) bool {
 	}
 
 	return len(aChunks) < len(bChunks)
+}
+
+// matchesFilenameKeyword 判定文件名是否命中某个封面/排除关键字。
+//
+// 对 ASCII 关键字必须按「词」匹配而不是裸子串：短关键字 ad / bc / fc 在裸
+// strings.Contains 下会误伤大量正常文件名——"Loaded.jpg" 含 ad、"abc.jpg" 含 bc、
+// "specfic_01.jpg" 含 fc。一旦误判，该页会被当成广告页排到全卷最后，或被当成封面
+// 顶到最前，整卷页序就错了。
+//
+// 命中规则：按非字母数字切词后，某个词等于关键字，或以关键字开头且其余部分全是数字
+// （覆盖 cover1 / fc02 这类写法）。非 ASCII 关键字（封面/封底/广告）本身足够长且
+// 不参与分词，仍用子串匹配。
+func matchesFilenameKeyword(base, keyword string) bool {
+	if keyword == "" {
+		return false
+	}
+	if !isASCIILower(keyword) {
+		return strings.Contains(base, keyword)
+	}
+
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	for _, token := range strings.FieldsFunc(name, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if token == keyword {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(token, keyword); ok && rest != "" && isAllDigits(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCIILower(s string) bool {
+	for _, r := range s {
+		if r > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

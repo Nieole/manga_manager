@@ -5,6 +5,7 @@
 package api
 
 import (
+	"container/heap"
 	"context"
 	"crypto/sha1"
 	"database/sql"
@@ -12,10 +13,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +44,17 @@ func (c *Controller) cacheImageMemory(key string, data []byte) {
 		c.imageCache.Add(key, data)
 	}
 }
+
+// pageImageCacheControl 是所有需要鉴权的图片端点（页图/封面/缩略图）的缓存策略。
+//
+// 此前一律下发 "public, max-age=31536000"：
+//   - public 允许共享缓存（企业代理、CDN）存下需要鉴权才能看的书页，
+//     换个用户走同一代理就可能直接命中；
+//   - 一年不回源意味着换封面、重建缩略图后旧图还会顶一年，而这些 URL 里
+//     没有内容版本令牌，没法靠改 URL 绕开。
+//
+// 改为 private + 必须回源验证：ETag 仍在，条件请求命中时返回 304，省下的带宽一样多。
+const pageImageCacheControl = "private, max-age=0, must-revalidate"
 
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
@@ -80,6 +90,20 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	filter := normalizeServerImageFilter(r.URL.Query().Get("filter"))
 	autoCrop := r.URL.Query().Get("auto_crop") == "true"
 
+	// 目标尺寸必须在进入缓存/转码路径之前校验：这两个值最终会变成 resize 的目标画布，
+	// 负值经 uint() 转换会回绕成天文数字、超大值直接申请数 GB 缓冲，任一都能让进程 OOM。
+	// 解析失败按「未指定」处理（保持既有宽松语义），但一旦是合法数字就必须落在安全区间内。
+	reqWidth, wErr := parsePositiveDimension(widthStr)
+	reqHeight, hErr := parsePositiveDimension(heightStr)
+	if wErr != nil || hErr != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid image dimension parameter")
+		return
+	}
+	if err := images.ValidateTargetDimensions(reqWidth, reqHeight); err != nil {
+		jsonError(w, http.StatusBadRequest, "Requested image size exceeds limits")
+		return
+	}
+
 	// 构建缓存 Key：包含所有会改变最终图像字节的处理参数，防止切换滤镜、画质、放大参数后复用旧图。
 	// 同时引入文件修改时间和大小，避免归档被覆盖或 ID 复用时浏览器继续命中旧 ETag。
 	w2xScaleStr := r.URL.Query().Get("w2x_scale")
@@ -95,7 +119,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	if r.Header.Get("If-None-Match") == etag {
 		annotatePageImageRequest(ctx, bookID, pageNumber, true, "client", transform)
 		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.Header().Set("Cache-Control", pageImageCacheControl)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -112,7 +136,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			c.logPageImageServed(bookID, pageNumber, "memory", contentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 			w.Header().Set("Content-Type", contentType) // 缓存命中时也以实际字节探测类型为准，避免前端按错误格式解码。
 			w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
-			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("Cache-Control", pageImageCacheControl)
 			w.Header().Set("ETag", etag)
 			w.Write(cachedData)
 			return
@@ -125,7 +149,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 				c.logPageImageServed(bookID, pageNumber, "disk", cachedContentType, len(cachedData), time.Since(started), format, filter, autoCrop)
 				w.Header().Set("Content-Type", cachedContentType)
 				w.Header().Set("Content-Length", strconv.Itoa(len(cachedData)))
-				w.Header().Set("Cache-Control", "public, max-age=31536000")
+				w.Header().Set("Cache-Control", pageImageCacheControl)
 				w.Header().Set("ETag", etag)
 				w.Write(cachedData)
 				return
@@ -175,10 +199,12 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read pages"}, nil
 		}
 
-		archiver, err := parser.GetArchiveFromPool(source.Path)
+		archiver, releaseArchive, err := parser.GetArchiveFromPool(source.Path)
 		if err != nil {
 			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read internal archive"}, nil
 		}
+		// 借用期间池不会真正关闭该句柄，避免读到一半被 LRU 淘汰而抽走文件描述符。
+		defer releaseArchive()
 		annotatePageImageDiagnostics(workCtx, true, false, false, false)
 
 		data, err := archiver.ReadPage(pageInfo.Name)
@@ -214,12 +240,9 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		if q, err := strconv.Atoi(qualityStr); err == nil {
 			opts.Quality = q
 		}
-		if wv, err := strconv.Atoi(widthStr); err == nil {
-			opts.Width = wv
-		}
-		if hv, err := strconv.Atoi(heightStr); err == nil {
-			opts.Height = hv
-		}
+		// 已在入口处解析并校验过，这里直接复用（0 表示未指定）。
+		opts.Width = reqWidth
+		opts.Height = reqHeight
 
 		finalData, finalContentType, err := images.ProcessImage(data, pageInfo.MediaType, opts)
 		if err != nil {
@@ -252,7 +275,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 
 	// Cache control for performant client-side static assets
 	// In production read this from config or context
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("Cache-Control", pageImageCacheControl)
 	w.Header().Set("ETag", etag)
 
 	cacheSource := "raw"
@@ -284,6 +307,24 @@ func (c *Controller) logPageImageServed(bookID, pageNumber int64, source, conten
 
 func weakETag(value string) string {
 	return `W/"` + fmt.Sprintf("%x", sha1.Sum([]byte(value))) + `"`
+}
+
+// parsePositiveDimension 解析 w/h 这类尺寸查询参数。
+// 空串表示「未指定」，返回 0；非数字或负数视为非法输入，由调用方回 400。
+// 注意不能沿用「解析失败就当没传」的旧写法：?w=-1 在旧代码里会被 Atoi 成功解析成 -1，
+// 再经 uint(-1) 回绕成 18446744073709551615，直接把 resize 的目标画布撑爆。
+func parsePositiveDimension(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("not a number: %q", raw)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("negative dimension: %d", v)
+	}
+	return v, nil
 }
 
 func normalizeServerImageFilter(filter string) string {
@@ -420,7 +461,36 @@ func (c *Controller) writeDiskImageCache(cacheKey string, data []byte, contentTy
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, fileName), data, 0o644)
+	// 原子写：直接 WriteFile 时，磁盘写满（ENOSPC）或进程被杀会留下半截文件，
+	// 而读取侧只检查「存在且非空」，于是这个截断的字节流会被当成有效缓存长期下发——
+	// 用户看到的是某一页永远显示不出来，清缓存才好。先写临时文件再 rename 即可避免。
+	target := filepath.Join(dir, fileName)
+	tmp, err := os.CreateTemp(dir, "."+fileName+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (c *Controller) getPageCacheStats(w http.ResponseWriter, r *http.Request) {
@@ -486,8 +556,20 @@ func (c *Controller) collectPageCacheStats() (pageCacheStatsResponse, error) {
 	return stats, err
 }
 
-// enforcePageCacheBudget 在磁盘页缓存超过配置上限时，按最旧优先（FIFO by mtime）淘汰到低水位。
+// enforcePageCacheBudget 在磁盘页缓存超过配置上限时，按最旧优先淘汰到低水位。
 // 由单个后台清道夫 goroutine 串行调用，无锁竞争、零请求路径开销。上限 <=0 表示不限，直接返回。
+//
+// 分两趟走，而不是一趟把所有条目都装进切片：
+// 稳态下缓存**不超标**（这是常态），此时第一趟只累加总大小、不留任何条目，直接早退。
+// 旧实现无论超不超标都先把整个目录的条目列表建出来——2 GiB 上限、每页几十到几百 KB，
+// 就是几千到几万个条目常驻在那一瞬间，纯属白付。
+//
+// 超标时第二趟才收集淘汰候选，且只保留「最旧的那一批」而不是全部：
+// 用一个按 mtime 的大顶堆，堆内累计大小一旦够删就把最新的挤出去。
+// 于是常驻量与「需要删多少」成正比，与缓存里总共有多少文件无关。
+//
+// 淘汰用 mtime 而不是 atime：绝大多数生产文件系统挂载时带 noatime（或 relatime），
+// atime 根本不更新，拿它做 LRU 会得到一个随机顺序。mtime 至少是「写入时间」这个确定语义。
 func (c *Controller) enforcePageCacheBudget() {
 	cfg := c.currentConfig()
 	if !cfg.Cache.PageDiskCacheEnabled || cfg.Cache.PageDiskCacheMaxBytes <= 0 {
@@ -499,49 +581,116 @@ func (c *Controller) enforcePageCacheBudget() {
 		return // 根目录白名单，防误删
 	}
 
-	type cacheEntry struct {
-		path string
-		size int64
-		mod  time.Time
-	}
-	var entries []cacheEntry
+	// 第一趟：只累加总大小。
 	var total int64
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil // 最佳努力，忽略不可达项
 		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
+		if info, statErr := d.Info(); statErr == nil {
+			total += info.Size()
 		}
-		entries = append(entries, cacheEntry{path: path, size: info.Size(), mod: info.ModTime()})
-		total += info.Size()
 		return nil
 	})
 	if total <= maxBytes {
 		return
 	}
 
-	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
 	lowWater := maxBytes * 9 / 10 // 降到 90% 低水位，滞回避免每轮抖动
+	need := total - lowWater
+	// 多收 25% 的候选：删除可能失败（Windows 上正被读取的页文件 unlink 会失败），
+	// 旧实现靠「候选就是全部文件」兜底，这里靠这点余量兜底。
+	need += need / 4
+
+	victims := collectOldestFiles(dir, need)
 	removed, freed := 0, int64(0)
-	for _, e := range entries {
+	for _, v := range victims {
 		if total <= lowWater {
 			break
 		}
-		if err := os.Remove(e.path); err != nil {
+		if err := os.Remove(v.path); err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				slog.Warn("Failed to evict page cache file", "path", e.path, "error", err)
+				slog.Warn("Failed to evict page cache file", "path", v.path, "error", err)
 			}
 			continue
 		}
-		total -= e.size
+		total -= v.size
 		removed++
-		freed += e.size
+		freed += v.size
 	}
 	if removed > 0 {
 		slog.Info("Page cache budget enforced", "removed_files", removed, "freed_bytes", freed, "remaining_bytes", total)
 	}
+	if total > lowWater {
+		// 候选不够或删除大量失败。下一轮 ticker 会再来一次，这里只记一笔便于诊断。
+		slog.Warn("Page cache still above low water mark after eviction",
+			"remaining_bytes", total, "low_water", lowWater)
+	}
+}
+
+// pageCacheVictim 是一个待淘汰的缓存文件。
+type pageCacheVictim struct {
+	path string
+	size int64
+	mod  time.Time
+}
+
+// victimHeap 是按 mtime 的**大顶堆**：堆顶是候选里最新的那个。
+// 这样在累计大小已经够删时，可以把最新的挤出去、只留最旧的一批。
+type victimHeap []pageCacheVictim
+
+func (h victimHeap) Len() int            { return len(h) }
+func (h victimHeap) Less(i, j int) bool  { return h[i].mod.After(h[j].mod) }
+func (h victimHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *victimHeap) Push(x interface{}) { *h = append(*h, x.(pageCacheVictim)) }
+func (h *victimHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
+}
+
+// collectOldestFiles 返回按 mtime 从旧到新排列的一批文件，其累计大小刚好覆盖 need。
+// 常驻内存与「需要删多少」成正比，与目录里总共有多少文件无关。
+func collectOldestFiles(dir string, need int64) []pageCacheVictim {
+	h := &victimHeap{}
+	heap.Init(h)
+	var heldBytes int64
+
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return nil
+		}
+		candidate := pageCacheVictim{path: path, size: info.Size(), mod: info.ModTime()}
+		heap.Push(h, candidate)
+		heldBytes += candidate.size
+
+		// 只要挤掉堆顶（最新的那个）之后仍然够删，就挤掉它。
+		for h.Len() > 1 {
+			newest := (*h)[0]
+			if heldBytes-newest.size < need {
+				break
+			}
+			heap.Pop(h)
+			heldBytes -= newest.size
+		}
+		return nil
+	})
+
+	victims := make([]pageCacheVictim, 0, h.Len())
+	for h.Len() > 0 {
+		victims = append(victims, heap.Pop(h).(pageCacheVictim))
+	}
+	// heap.Pop 按「最新优先」出堆，反转成「最旧优先」。
+	for i, j := 0, len(victims)-1; i < j; i, j = i+1, j-1 {
+		victims[i], victims[j] = victims[j], victims[i]
+	}
+	return victims
 }
 
 func removeDirectoryContents(dir string) error {
@@ -589,7 +738,7 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 			// 不会复读旧封面；内容不变则客户端可凭 If-None-Match 命中 304，省去整图重传。
 			// http.ServeFile 仍会提供 Last-Modified 作为兜底条件请求。
 			etag := weakETag(fmt.Sprintf("cover-%s-%d-%d", coverPath, info.ModTime().UnixNano(), info.Size()))
-			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("Cache-Control", pageImageCacheControl)
 			w.Header().Del("Vary")
 			w.Header().Set("ETag", etag)
 			if r.Header.Get("If-None-Match") == etag {
@@ -658,7 +807,7 @@ func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 	// 携带真实（可能含中文）卷名，兼容不识别 RFC 5987 的老客户端。
 	asciiName := strconv.FormatInt(bookID, 10) + strings.ToLower(filepath.Ext(book.Path))
 	w.Header().Set("Content-Type", bookDownloadContentType(book.Path))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", asciiName, url.PathEscape(displayName)))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(asciiName, displayName))
 	// 原始归档不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，便于客户端缓存与断点续传。
 	w.Header().Del("Vary")
 

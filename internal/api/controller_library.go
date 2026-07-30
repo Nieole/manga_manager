@@ -29,13 +29,49 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		c.watcher.UnwatchLibrary(lib.Path)
 	}
 
+	// 先取消该库的在跑任务再删行。取消是异步的（任务转入 cancelling，手上那批事务仍会刷完），
+	// 所以这里的收益不是「彻底避免写冲突」——FK 会挡住对已删库的回写——而是缩短
+	// 「扫描还在往一个马上要消失的库里写」的窗口，少一批注定失败的事务与错误日志。
+	// 代价是 DeleteLibrary 万一失败，一个合法扫描已被取消；用户重新触发即可，
+	// 比留下一个对着不存在的库空转的扫描要好。
+	c.cancelLibraryScopedTasks(libraryID)
+
 	err = c.store.DeleteLibrary(ctx, libraryID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete library")
 		return
 	}
 
+	// 三份缓存都以「库里有哪些书」为前提，删库后必须一起失效，且只在删除确实成功之后做
+	// ——删除失败时缓存仍然是对的，白清一次只会让下一批请求平白多打一次库。
+	c.invalidateDashboardStatsCache("library_deleted")
+	c.purgeReadingPathCaches()
+	c.purgeRecommendationCache()
+
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// cancelLibraryScopedTasks 取消该库范围内、经任务引擎启动的在跑任务。
+//
+// 覆盖边界必须说清楚：只有这三类任务在引擎里有条目和可取消的 ctx。
+// 而 interval 守护扫描、watcher 触发的扫描、以及全库重扫都是拿 context.Background()
+// 直接调 scanner 的，既没有任务条目也无从取消——删库对它们无效，只能靠外键约束兜底
+// （它们会空转刷一阵错误日志，但不会重建被删的行）。让扫描器自己感知库消失属于扫描器边界的改动。
+func (c *Controller) cancelLibraryScopedTasks(libraryID int64) {
+	for _, prefix := range []string{"scan_library_", "scrape_library_", "ai_grouping_library_"} {
+		key := prefix + strconv.FormatInt(libraryID, 10)
+		err := c.taskEngine.cancel(key)
+		switch {
+		case err == nil:
+			slog.Info("Cancelled task for deleted library", "task_key", key, "library_id", libraryID)
+		case errors.Is(err, errTaskNotFound), errors.Is(err, errTaskNotRunning),
+			errors.Is(err, errTaskNotCancelable), errors.Is(err, errTaskCancelUnavailable):
+			// 没有这个任务、已经结束、或还没登记好 runtime（启动与注册 runtime 之间有个窗口）。
+			// 取消失败一律不阻塞删库：库行删掉之后，外键约束会挡住任何回写。
+		default:
+			slog.Warn("Failed to cancel task for deleted library", "task_key", key, "error", err)
+		}
+	}
 }
 
 type CreateLibraryRequest struct {
@@ -132,7 +168,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	c.invalidateDashboardStatsCache("library_created")
 
 	if createdLib.ScanMode == "watch" && c.watcher != nil {
-		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path)
+		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path, createdLib.ScanFormats)
 	}
 
 	// 触发异步扫描任务，不阻塞前端 API 响应
@@ -229,7 +265,7 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	if c.watcher != nil {
 		c.watcher.UnwatchLibrary(existingLib.Path)
 		if updatedLib.ScanMode == "watch" {
-			_ = c.watcher.WatchLibrary(updatedLib.ID, updatedLib.Path)
+			_ = c.watcher.WatchLibrary(updatedLib.ID, updatedLib.Path, updatedLib.ScanFormats)
 		}
 	}
 
@@ -238,12 +274,12 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) bool {
 	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
-	if !c.startPausableCancelableTaskMsg(taskKey, "scan_library", "task.msg.scan_library.start", map[string]string{"name": lib.Name}, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scan_library", "task.msg.scan_library.start", map[string]string{"name": lib.Name}, 0) {
 		return false
 	}
 	limits := c.taskLimitsForPath(lib.Path, force)
 	storagePolicy := config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
-	c.setTaskMetadata(taskKey, map[string]string{
+	c.taskEngine.setTaskMetadata(taskKey, map[string]string{
 		"force":                    strconv.FormatBool(force),
 		"scan_profile":             c.currentConfig().Scanner.ScanProfile,
 		"storage_profile":          storagePolicy.StorageProfile,
@@ -251,24 +287,24 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) boo
 		"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
 		"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
 	}, lib.Name)
-	c.setTaskEffectiveLimit(taskKey, limits)
-	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
+	c.taskEngine.setTaskEffectiveLimit(taskKey, limits)
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer c.purgeReadingPathCaches()
 		err := c.scanner.ScanLibrary(taskCtx, lib.ID, lib.Path, force)
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
 			c.invalidateDashboardStatsCache("scan_library_cancelled")
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_library.cancelled", map[string]string{"name": lib.Name})
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_library.cancelled", map[string]string{"name": lib.Name})
 			return
 		}
 		if err != nil {
 			c.invalidateDashboardStatsCache("scan_library_failed")
-			c.failTaskErrMsg(taskKey, "task.msg.scan_library.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.scan_library.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg(taskKey, "task.msg.scan_library.complete", map[string]string{"name": lib.Name})
+		c.taskEngine.finishTaskMsg(taskKey, "task.msg.scan_library.complete", map[string]string{"name": lib.Name})
 		c.warmDashboardStatsCacheAsync("scan_library_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_library")
 	})
@@ -302,7 +338,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
-	if !c.startPausableCancelableTaskMsg(taskKey, "scan_series", "task.msg.scan_series.start", map[string]string{"id": strconv.FormatInt(seriesID, 10)}, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scan_series", "task.msg.scan_series.start", map[string]string{"id": strconv.FormatInt(seriesID, 10)}, 0) {
 		return false
 	}
 	scopeName := ""
@@ -317,10 +353,10 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 	if series, err := c.store.GetSeries(context.Background(), seriesID); err == nil {
 		if lib, libErr := c.store.GetLibrary(context.Background(), series.LibraryID); libErr == nil {
 			storagePolicy = config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
-			c.setTaskEffectiveLimit(taskKey, c.taskLimitsForPath(lib.Path, force))
+			c.taskEngine.setTaskEffectiveLimit(taskKey, c.taskLimitsForPath(lib.Path, force))
 		}
 	}
-	c.setTaskMetadata(taskKey, map[string]string{
+	c.taskEngine.setTaskMetadata(taskKey, map[string]string{
 		"force":                    strconv.FormatBool(force),
 		"scan_profile":             c.currentConfig().Scanner.ScanProfile,
 		"storage_profile":          storagePolicy.StorageProfile,
@@ -328,24 +364,24 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
 		"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
 		"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
 	}, scopeName)
-	taskCtx, cleanupCancel := c.newTaskContext(taskKey)
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer c.purgeReadingPathCaches()
 		err := c.scanner.ScanSeries(taskCtx, seriesID, force)
 		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
 			c.invalidateDashboardStatsCache("scan_series_cancelled")
-			c.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_series.cancelled", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_series.cancelled", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
 			return
 		}
 		if err != nil {
 			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
 			c.invalidateDashboardStatsCache("scan_series_failed")
-			c.failTaskErrMsg(taskKey, "task.msg.scan_series.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.scan_series.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg(taskKey, "task.msg.scan_series.complete", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
+		c.taskEngine.finishTaskMsg(taskKey, "task.msg.scan_series.complete", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
 		c.warmDashboardStatsCacheAsync("scan_series_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_series")
 	})
@@ -393,24 +429,24 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 // 清理失效资源记录
 func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
 	taskKey := fmt.Sprintf("cleanup_library_%d", libraryID)
-	if !c.startTaskMsg(taskKey, "cleanup_library", "task.msg.cleanup_library.start", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, 1) {
+	if !c.taskEngine.startTaskMsg(taskKey, "cleanup_library", "task.msg.cleanup_library.start", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, 1) {
 		return false
 	}
 	scopeName := ""
 	if lib, err := c.store.GetLibrary(context.Background(), libraryID); err == nil {
 		scopeName = lib.Name
 	}
-	c.setTaskMetadata(taskKey, nil, scopeName)
+	c.taskEngine.setTaskMetadata(taskKey, nil, scopeName)
 
-	c.runBackground(func() {
-		c.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.cleanup_library.scanning_records", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, "scanning_records", "", nil, nil)
+	c.runBackgroundTask(taskKey, func() {
+		c.taskEngine.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.cleanup_library.scanning_records", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, "scanning_records", "", nil, nil)
 		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
 		if err != nil {
 			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
-			c.failTaskErrMsg(taskKey, "task.msg.cleanup_library.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.cleanup_library.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg(taskKey, "task.msg.cleanup_library.complete", map[string]string{"id": strconv.FormatInt(libraryID, 10)})
+		c.taskEngine.finishTaskMsg(taskKey, "task.msg.cleanup_library.complete", map[string]string{"id": strconv.FormatInt(libraryID, 10)})
 	})
 
 	return true

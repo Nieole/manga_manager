@@ -708,3 +708,169 @@ func writeScannerTestCBZ(path string, files map[string][]byte) error {
 	}
 	return zw.Close()
 }
+
+// TestCleanupLibraryKeepsRootLevelLooseArchives 锁住散装归档的清理语义。
+//
+// 库根目录直放的 <root>/Loose Volume.cbz 会被归到合成系列路径 <root>/Loose Volume 下，
+// 而该目录在磁盘上从不存在。CleanupLibrary 若只按目录是否存在判定，就会把这个系列连同
+// 它的书与每用户阅读进度一并 CASCADE 删掉——而书文件明明还在。更糟的是下次扫描会重建，
+// 再下次清理再删，进度反复丢失。50% 熔断在散装文件占少数时完全不触发。
+func TestCleanupLibraryKeepsRootLevelLooseArchives(t *testing.T) {
+	rootDir, store, lib, libraryPath := newScannerTestLibrary(t)
+	ctx := context.Background()
+
+	// 两个规规矩矩放在子目录里的系列，把散装系列的占比压到 1/3，明确低于 50% 熔断线，
+	// 使本用例不依赖熔断阈值的边界比较语义。
+	for _, name := range []string{"Series Alpha", "Series Beta"} {
+		dir := filepath.Join(libraryPath, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s failed: %v", name, err)
+		}
+		if err := writeScannerTestCBZ(filepath.Join(dir, name+" 01.cbz"), map[string][]byte{"001.png": testPNG1x1}); err != nil {
+			t.Fatalf("write nested cbz for %s failed: %v", name, err)
+		}
+	}
+	// 直接躺在库根目录下的散装归档。
+	looseArchive := filepath.Join(libraryPath, "Loose Volume.cbz")
+	if err := writeScannerTestCBZ(looseArchive, map[string][]byte{"001.png": testPNG1x1}); err != nil {
+		t.Fatalf("write loose cbz failed: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Scanner.Workers = 1
+	cfg.Scanner.ThumbnailFormat = "webp"
+	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
+	s := NewScanner(store, config.NewManager(cfg))
+	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true); err != nil {
+		t.Fatalf("scan library failed: %v", err)
+	}
+
+	booksBefore, err := store.ListBooksByLibrary(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("list books failed: %v", err)
+	}
+	if len(booksBefore) != 3 {
+		t.Fatalf("expected 3 scanned books, got %d", len(booksBefore))
+	}
+
+	// 等封面队列排空再清理：ScanLibrary 返回时封面生成仍在异步写 books.cover_path，
+	// 而 CleanupLibrary 会 CASCADE 删除 books——两者重叠会让断言看到中间状态。
+	waitForScannerCoverQueue(t, s)
+
+	if err := s.CleanupLibrary(ctx, lib.ID); err != nil {
+		t.Fatalf("cleanup library failed: %v", err)
+	}
+
+	booksAfter, err := store.ListBooksByLibrary(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("list books after cleanup failed: %v", err)
+	}
+	if len(booksAfter) != len(booksBefore) {
+		t.Fatalf("cleanup deleted books whose files still exist: had %d, left %d", len(booksBefore), len(booksAfter))
+	}
+
+	var sawLoose bool
+	for _, b := range booksAfter {
+		if b.Path == looseArchive {
+			sawLoose = true
+		}
+	}
+	if !sawLoose {
+		t.Fatalf("loose root-level archive %q was removed by cleanup", looseArchive)
+	}
+}
+
+// TestCleanupLibraryRemovesSeriesWhenFilesAreGone 确认上面的保护没有把清理彻底废掉：
+// 目录和书文件都真的不在了，该系列仍应被删除。
+func TestCleanupLibraryRemovesSeriesWhenFilesAreGone(t *testing.T) {
+	rootDir, store, lib, libraryPath := newScannerTestLibrary(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"Series Alpha", "Series Beta", "Series Gamma"} {
+		dir := filepath.Join(libraryPath, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s failed: %v", name, err)
+		}
+		if err := writeScannerTestCBZ(filepath.Join(dir, name+" 01.cbz"), map[string][]byte{"001.png": testPNG1x1}); err != nil {
+			t.Fatalf("write cbz for %s failed: %v", name, err)
+		}
+	}
+
+	cfg := &config.Config{}
+	cfg.Scanner.Workers = 1
+	cfg.Scanner.ThumbnailFormat = "webp"
+	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
+	s := NewScanner(store, config.NewManager(cfg))
+	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true); err != nil {
+		t.Fatalf("scan library failed: %v", err)
+	}
+
+	waitForScannerCoverQueue(t, s)
+
+	// 只删掉一个系列（1/3 < 50% 熔断线），它的目录与书文件都消失。
+	if err := os.RemoveAll(filepath.Join(libraryPath, "Series Gamma")); err != nil {
+		t.Fatalf("remove series dir failed: %v", err)
+	}
+
+	if err := s.CleanupLibrary(ctx, lib.ID); err != nil {
+		t.Fatalf("cleanup library failed: %v", err)
+	}
+
+	seriesList, err := store.ListSeriesByLibraryLite(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("list series failed: %v", err)
+	}
+	for _, sr := range seriesList {
+		if filepath.Base(sr.Path) == "Series Gamma" {
+			t.Fatalf("expected genuinely missing series to be removed, still present: %s", sr.Path)
+		}
+	}
+	if len(seriesList) != 2 {
+		t.Fatalf("expected 2 surviving series, got %d", len(seriesList))
+	}
+}
+
+// TestScanLibraryReportsConflictInsteadOfSilentSuccess 锁住并发扫描守卫的错误语义。
+//
+// 旧实现冲突时返回 nil，调用方无从区分「扫完了」和「压根没扫」：任务面板会在零点几秒内
+// 谎报「扫描完成」；更糟的是重建缩略图任务已经 RemoveAll 了缩略图目录并清空 cover_path，
+// 却把被跳过的库当作成功——而增量扫描只比对 mtime+size、不检查封面缺失，那批封面从此
+// 不会自愈，必须人工再跑一次 force 扫描。
+func TestScanLibraryReportsConflictInsteadOfSilentSuccess(t *testing.T) {
+	s := NewScanner(nil, config.NewManager(&config.Config{}))
+
+	if !s.beginLibraryScan(7) {
+		t.Fatal("expected to acquire the library scan guard")
+	}
+	defer s.endLibraryScan(7)
+
+	err := s.ScanLibrary(context.Background(), 7, t.TempDir(), false)
+	if !errors.Is(err, ErrScanAlreadyRunning) {
+		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
+	}
+}
+
+func TestScanSeriesReportsConflictInsteadOfSilentSuccess(t *testing.T) {
+	s := NewScanner(nil, config.NewManager(&config.Config{}))
+
+	if !s.beginSeriesScan(42) {
+		t.Fatal("expected to acquire the series scan guard")
+	}
+	defer s.endSeriesScan(42)
+
+	err := s.ScanSeries(context.Background(), 42, false)
+	if !errors.Is(err, ErrScanAlreadyRunning) {
+		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
+	}
+}
+
+// waitForScannerCoverQueue 等待进程级封面生成队列排空。
+// 扫描是「入库同步、封面异步」，不等它就断言的用例会偶发看到中间状态。
+func waitForScannerCoverQueue(t testing.TB, s *Scanner) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.waitForCoverQueue(ctx); err != nil {
+		t.Fatalf("wait cover queue failed: %v", err)
+	}
+}

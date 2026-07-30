@@ -152,15 +152,14 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	limitStr := r.URL.Query().Get("limit")
-	limit := 20
-	if limitStr != "" {
-		_, _ = fmt.Sscanf(limitStr, "%d", &limit)
-	}
-	offsetStr := r.URL.Query().Get("offset")
-	offset := 0
-	if offsetStr != "" {
-		_, _ = fmt.Sscanf(offsetStr, "%d", &offset)
+	// 这两个值会原样透传给外部元数据源（Bangumi/AniList/ComicVine…）。
+	// 旧写法用 fmt.Sscanf 且完全不校验：limit=99999999 会直接打到上游，既浪费我们的
+	// 配额也可能触发对方限流封禁；解析失败时 Sscanf 还会让变量保持默认值而不报错。
+	// 上限取 50 与各 provider 单页返回量对齐。
+	limit := queryLimit(r, "limit", 20, maxScrapeSearchLimit)
+	offset := queryOffset(r, "offset")
+	if offset > maxScrapeSearchOffset {
+		offset = maxScrapeSearchOffset
 	}
 
 	results, total, err := provider.SearchMetadata(requestContextWithLocale(r), searchTitle, limit, offset)
@@ -200,14 +199,18 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, isNew, err := c.queueMetadataReview(r.Context(), series, &result, providerName, series.Name)
+	// force=1 让用户能把「拒绝过的提案」重新加回队列。没有这个出口，一旦误拒就是死胡同：
+	// 之后每次刮削都会被去重挡下，同一份数据再也进不来。
+	forced := isTruthyParam(r.URL.Query().Get("force"))
+	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, &result, providerName, series.Name,
+		queueReviewOptions{IgnoreRejected: forced})
 	if err != nil {
-		if errors.Is(err, errNoMetadataChanges) {
+		if outcome, message, ok := queueOutcomeForError(err); ok {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"success": true,
 				"queued":  false,
-				"outcome": "no_changes",
-				"message": "所有数据与当前信息完全一致，无需更新",
+				"outcome": outcome,
+				"message": message,
 			})
 			return
 		}
@@ -233,6 +236,31 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		"field_count": len(fields),
 		"series":      series,
 	})
+}
+
+// queueOutcomeForError 把入队时的「良性结果」哨兵折成给前端的 outcome 与文案。
+//
+// 这三种都不是故障：数据本来就一致、差异全被用户锁住、或这份提案此前已被拒绝。
+// 此前只识别 errNoMetadataChanges，另外两种一路落到 HTTP 500，用户看到「服务器错误」。
+func queueOutcomeForError(err error) (outcome, message string, ok bool) {
+	switch {
+	case errors.Is(err, errNoMetadataChanges):
+		return "no_changes", "所有数据与当前信息完全一致，无需更新", true
+	case errors.Is(err, errAllFieldsLocked):
+		return "all_locked", "有差异的字段都已被锁定，解锁后再试", true
+	case errors.Is(err, errMetadataReviewRejectedBefore):
+		return "rejected_before", "这份提案此前已被拒绝，已为您忽略；如需重新加入队列请使用强制刮削", true
+	}
+	return "", "", false
+}
+
+// isTruthyParam 判定查询参数是否表示「是」。
+func isTruthyParam(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions) error {
@@ -454,13 +482,14 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, isNew, err := c.queueMetadataReview(r.Context(), series, result, provider.Name(), searchTitle)
+	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, result, provider.Name(), searchTitle,
+		queueReviewOptions{IgnoreRejected: isTruthyParam(r.URL.Query().Get("force"))})
 	if err != nil {
-		if errors.Is(err, errNoMetadataChanges) {
+		if outcome, message, ok := queueOutcomeForError(err); ok {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"scraped": false,
-				"outcome": "no_changes",
-				"message": fmt.Sprintf("从 %s 找到条目，但所有数据与当前信息完全一致，无需加入待审核队列", provider.Name()),
+				"outcome": outcome,
+				"message": fmt.Sprintf("从 %s 找到条目，但%s", provider.Name(), message),
 			})
 			return
 		}
@@ -530,18 +559,18 @@ func (m scrapeMetrics) toMap() map[string]int64 {
 // 此前两个函数各有一份约 150 行的近乎逐行拷贝（且日志已发生漂移），此处统一到带完整日志的版本。
 func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, providerName, cancelCode, doneCode, logMsg string, provider metadata.Provider, entries []scrapeSeriesEntry) {
 	m := scrapeMetrics{total: len(entries)}
-	c.updateTaskDetailsMsg(taskKey, 0, m.total, "task.msg.scrape.collecting_series", nil, "collecting_series", "", m.toMap(), nil)
+	c.taskEngine.updateTaskDetailsMsg(taskKey, 0, m.total, "task.msg.scrape.collecting_series", nil, "collecting_series", "", m.toMap(), nil)
 
 	for i, entry := range entries {
 		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 		slog.Info(logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
 
 		m.providerRequests++
 		m.processed = i
-		c.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.requesting_provider", map[string]string{"name": entry.Name}, "requesting_provider", entry.Name, m.toMap(), map[string]string{
+		c.taskEngine.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.requesting_provider", map[string]string{"name": entry.Name}, "requesting_provider", entry.Name, m.toMap(), map[string]string{
 			"provider":            providerKey,
 			"provider_name":       providerName,
 			"current_series_id":   strconv.FormatInt(entry.ID, 10),
@@ -566,9 +595,9 @@ func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, 
 			continue
 		}
 
-		c.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.queueing_review", map[string]string{"name": entry.Name}, "queueing_review", entry.Name, m.toMap(), nil)
+		c.taskEngine.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.queueing_review", map[string]string{"name": entry.Name}, "queueing_review", entry.Name, m.toMap(), nil)
 		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 		if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
@@ -577,29 +606,31 @@ func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, 
 				m.queuedReview++
 				slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
 			}
-		} else if !errors.Is(err, errNoMetadataChanges) {
+		} else if _, _, benign := queueOutcomeForError(err); !benign {
+			// 「无变更」「差异全被锁」「此前已拒绝」都是正常结果，不该计入失败——
+			// 计进去会让一次完全正常的全库刮削在任务面板上报出一片红。
 			m.failed++
 			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 		}
 		m.processed = i + 1
-		c.updateTaskDetailsMsg(taskKey, i+1, m.total, "task.msg.scrape.rate_limited_wait", map[string]string{"name": entry.Name}, "rate_limited_wait", entry.Name, m.toMap(), nil)
+		c.taskEngine.updateTaskDetailsMsg(taskKey, i+1, m.total, "task.msg.scrape.rate_limited_wait", map[string]string{"name": entry.Name}, "rate_limited_wait", entry.Name, m.toMap(), nil)
 
 		// 速率限制
 		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 		select {
 		case <-time.After(scrapeRateLimitDelay):
 			m.rateLimitedWait += scrapeRateLimitDelay
 		case <-bgCtx.Done():
-			c.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
+			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
 			return
 		}
 	}
 
 	slog.Info("Scrape task completed", "provider", providerName, "task_key", taskKey, "success_count", m.success, "total_count", m.total)
-	c.finishTaskMsg(taskKey, doneCode, map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)})
+	c.taskEngine.finishTaskMsg(taskKey, doneCode, map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)})
 	c.PublishEvent("refresh")
 }
 
@@ -634,13 +665,13 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	totalCount := len(allSeries)
 	providerName := provider.Name()
 	taskKey := "scrape_all_series"
-	if !c.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.all_series.start", map[string]string{"provider": providerName}, totalCount) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.all_series.start", map[string]string{"provider": providerName}, totalCount) {
 		return errTaskAlreadyRunning
 	}
-	c.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, "全库")
-	taskCtx, cleanup := c.newTaskContext(taskKey)
+	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, "全库")
+	taskCtx, cleanup := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer cleanup()
 		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
 			"task.msg.scrape.cancelled_all", "task.msg.scrape.complete_all", "Scraping series metadata", provider, allSeries)
@@ -705,17 +736,17 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 	totalCount := len(allSeries)
 	providerName := provider.Name()
 	taskKey := fmt.Sprintf("scrape_library_%d", libraryID)
-	if !c.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.library.start", map[string]string{"provider": providerName}, totalCount) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.library.start", map[string]string{"provider": providerName}, totalCount) {
 		return errTaskAlreadyRunning
 	}
 	scopeName := ""
 	if lib, err := c.store.GetLibrary(ctx, libraryID); err == nil {
 		scopeName = lib.Name
 	}
-	c.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, scopeName)
-	taskCtx, cleanup := c.newTaskContext(taskKey)
+	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, scopeName)
+	taskCtx, cleanup := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(taskKey, func() {
 		defer cleanup()
 		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
 			"task.msg.scrape.cancelled_library", "task.msg.scrape.complete_library", "Scraping library series metadata", provider, allSeries)

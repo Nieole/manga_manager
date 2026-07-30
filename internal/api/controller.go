@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,10 +18,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -30,7 +31,6 @@ import (
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
-	"manga-manager/internal/parser"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/taskcontrol"
@@ -41,11 +41,14 @@ import (
 )
 
 type Controller struct {
-	store               database.Store
-	imageCache          *lru.Cache[string, []byte]
-	pageCache           *lru.Cache[string, []parser.PageMetadata]
-	bookPageSourceCache *lru.Cache[int64, cachedBookPageSource]
-	progressWriteCache  *lru.Cache[int64, cachedProgressWrite]
+	store database.Store
+	// imageCache 按**总字节**限流（见 image_memory_cache.go）。此前是按条数的 LRU，
+	// 256 条 × 4 MiB 单条上限 = 1 GiB 常驻上界，而它只是个加速缓存。
+	imageCache *imageMemoryCache
+	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
+	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
+	pageArchive        *pageArchiveCache
+	progressWriteCache *lru.Cache[int64, cachedProgressWrite]
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
 	stats      *statsCache
 	scanner    *scanner.Scanner
@@ -68,26 +71,18 @@ type Controller struct {
 	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 访问这些状态（定义见 controller_tasks.go）。
 	taskEngine *taskEngine
 
-	rebuildThumbAggMu sync.Mutex
-	rebuildThumbAgg   *rebuildThumbAggregator
+	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
+	rebuildThumbAgg *rebuildThumbAggregator
 
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
 
-	// usersPresent 缓存「站点已存在账户」这一事实：一旦创建了首个管理员即恒为 true，
-	// authGate 据此判断是否处于「首启/尚无账户」的直通模式，避免每个请求都 COUNT(users)。
-	// 账户体系保证至少留一个管理员，故该标志一旦置真不再回退。
-	usersPresent atomic.Bool
-
-	// basicAuthCache 缓存阅读协议（OPDS/Mihon）已通过校验的 Basic 凭据（key=用户名+口令哈希 → 用户 id + 过期），
-	// 避免每个协议请求都跑一次 bcrypt（bcrypt 故意很慢）。零值即可用，条目带 TTL。
-	basicAuthCache sync.Map
-
-	// loginLimiter 对 /api/auth/login 做失败暴破防护（按 IP + 用户名双键，指数退避锁定）。
-	// basicAuthLimiter 对 OPDS/Mihon 的 Basic 鉴权做按 IP 的失败限流，锁定期内直接 429 而不再跑 bcrypt，
-	// 兼作 bcrypt CPU-DoS 防护。
-	loginLimiter     *attemptLimiter
-	basicAuthLimiter *attemptLimiter
+	// 鉴权链路的进程内状态（账户存在性、Basic 凭据缓存、两个失败限流器）
+	// 已抽成独立组件（auth_state.go）。
+	auth *authState
+	// untrustedProtoWarnOnce 保证「忽略了来自不可信对端的 X-Forwarded-Proto」这条告警每进程只打一次：
+	// 该头由客户端可控，逐次打日志等于给了一个刷日志的口子。
+	untrustedProtoWarnOnce sync.Once
 
 	lifecycleOnce sync.Once
 	shutdownOnce  sync.Once
@@ -205,49 +200,46 @@ type taskIOMetrics struct {
 	HashedFiles    int64
 }
 
-// rebuildThumbAggregator 跟踪缩略图重建任务的聚合进度。
-// runGlobalScan 按库依次扫描，但 cover 队列是异步的，相邻两个库的 cover job 可能交错。
-// 因此 baseline 仅记录已确定 final 的库的累计 metrics；perLibPending 记录每个仍可能更新的库
-// 当前的实时 metrics 快照；汇总到任务时取 baseline + sum(perLibPending)。
-type rebuildThumbAggregator struct {
-	totalLibraries int
-	doneLibraries  int
-	baseline       map[string]int64
-	perLibPending  map[int64]map[string]int64
-	finalizedLibs  map[int64]struct{}
-	// finalizedCoverSeen[libID] = 该库 fixate 后从 progress 事件中观察到的 generated_covers 最大值，
-	// 避免 cover queue 异步阶段对已 fixate 库的二次累计。
-	finalizedCoverSeen map[int64]int64
-	currentLibID       int64
-	currentLibName     string
-	currentLibPath     string
+// controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
+// 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
+type controllerCacheSizes struct {
+	// imageBytes 是页图内存缓存的**字节**预算（不是条数）。
+	imageBytes     int64
+	page           int
+	bookPageSource int
+	progressWrite  int
 }
 
-func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
-	cache, _ := lru.New[string, []byte](256)
-	pageCache, _ := lru.New[string, []parser.PageMetadata](128)
-	bookPageSourceCache, _ := lru.New[int64, cachedBookPageSource](512)
-	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](2048)
+func defaultControllerCacheSizes() controllerCacheSizes {
+	return controllerCacheSizes{imageBytes: defaultImageCacheBytes, page: 128, bookPageSource: 512, progressWrite: 2048}
+}
+
+// newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
+// 它不启动任何后台 goroutine，也不碰文件监听——那些属于「运行」而非「装配」，由 NewController 负责。
+//
+// 拆出这一层是因为白盒测试此前手工拼装 Controller，与 NewController 长期分叉：
+// 每加一个组件字段，测试构造器就漏一个，直到某个用例 nil panic 才被发现（franchiseRebuilder、
+// taskEngine.relaunchers、两个限流器、rebuildThumbAgg 都各栽过一次，代码里留下了一串
+// 「与 NewController 一致」的补丁注释）。现在两条路径共用同一份装配，这类分叉从结构上不再可能。
+func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
+	cache := newImageMemoryCache(sizes.imageBytes)
+	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
 	c := &Controller{
-		store:               store,
-		stats:               newStatsCache(),
-		imageCache:          cache,
-		pageCache:           pageCache,
-		bookPageSourceCache: bookPageSourceCache,
-		progressWriteCache:  progressWriteCache,
-		scanner:             scan,
-		config:              cfg,
-		koreader:            koreader.NewService(store, cfg),
-		external:            external.NewManager(store, 30*time.Minute),
-		configPath:          cfgPath,
-		sse:                 newSSEBroker(),
-		taskEngine:          newTaskEngine(),
-		recommendations:     newRecommendationCache(24 * time.Hour),
-		openPath:            openPathInDefaultFileManager,
-		// 登录：15 分钟窗口内累计 5 次失败即锁定，基础 1 分钟、指数退避、封顶 15 分钟。
-		loginLimiter: newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
-		// 协议 Basic：更宽松些（客户端每次请求都带凭据），5 分钟窗口内 10 次失败锁定，封顶 10 分钟。
-		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
+		store:              store,
+		stats:              newStatsCache(),
+		imageCache:         cache,
+		pageArchive:        newPageArchiveCache(sizes.bookPageSource, sizes.page),
+		progressWriteCache: progressWriteCache,
+		scanner:            scan,
+		config:             cfg,
+		koreader:           koreader.NewService(store, cfg),
+		external:           external.NewManager(store, 30*time.Minute),
+		configPath:         cfgPath,
+		sse:                newSSEBroker(),
+		recommendations:    newRecommendationCache(24 * time.Hour),
+		rebuildThumbAgg:    newRebuildThumbAggregator(),
+		openPath:           openPathInDefaultFileManager,
+		auth:               newAuthState(),
 	}
 	if scan != nil {
 		scan.SetBatchCallback(c.handleScannerBatchEvent)
@@ -258,15 +250,24 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
-	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptions 会经 isRetryableTaskType 查表）之前完成。
+	// taskEngine 依赖 c 的 SSE 投递与生命周期信号，同样须在 c 构造完成后建立。
+	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone)
+	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptionsCore 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
+
+	return c
+}
+
+func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
+	c := newControllerCore(store, scan, cfg, cfgPath, defaultControllerCacheSizes())
 
 	c.recoverInterruptedTasks()
 
 	c.runBackground(func() { c.sse.run(c.lifecycleDone()) })
 	c.runBackground(c.startDaemon)
 	c.runBackground(c.startPageCacheJanitor)
-	c.runBackground(c.startTaskPersister)
+	c.runBackground(c.taskEngine.startTaskPersister)
+	c.runBackground(c.startSessionJanitor)
 
 	// 初始化文件系统监控
 	fw, err := scanner.NewFileWatcher(scan)
@@ -284,7 +285,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 			}
 			for _, lib := range libs {
 				if lib.ScanMode == "watch" {
-					_ = fw.WatchLibrary(lib.ID, lib.Path)
+					_ = fw.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
 				}
 			}
 		})
@@ -300,6 +301,25 @@ func (c *Controller) lifecycleDone() <-chan struct{} {
 	return c.done
 }
 
+// runBackgroundTask 与 runBackground 相同，但额外保证：goroutine 一旦 panic，
+// taskKey 对应的任务会被置为失败态。
+//
+// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。任务体 panic 时不会走到任何
+// finishTask/failTask，任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，
+// 于是那个 key 从此恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
+// 把 panic 转成一次显式失败，用户至少能看到原因并重试。
+func (c *Controller) runBackgroundTask(taskKey string, fn func()) {
+	c.runBackground(func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("Background task panicked", "task_key", taskKey, "panic", rec, "stack", string(debug.Stack()))
+				c.taskEngine.failTaskWithError(taskKey, "Background task panicked", fmt.Sprint(rec))
+			}
+		}()
+		fn()
+	})
+}
+
 func (c *Controller) runBackground(fn func()) {
 	c.lifecycleDone()
 	c.lifecycleMu.Lock()
@@ -311,6 +331,14 @@ func (c *Controller) runBackground(fn func()) {
 	c.lifecycleMu.Unlock()
 	go func() {
 		defer c.backgroundWG.Done()
+		// 后台任务的 panic 不经过 middleware.Recoverer（那只覆盖 HTTP handler goroutine），
+		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让该任务失败，服务继续可用。
+		// 任务型调用点请走 runBackgroundTask，它会额外把对应任务置为失败态。
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("Background task panicked", "panic", rec, "stack", string(debug.Stack()))
+			}
+		}()
 		fn()
 	}()
 }
@@ -325,27 +353,7 @@ func (c *Controller) Close() {
 		if c.watcher != nil {
 			c.watcher.Stop()
 		}
-		c.taskEngine.mutex.Lock()
-		cancels := make([]context.CancelFunc, 0, len(c.taskEngine.runtimes))
-		pauses := make([]*taskcontrol.PauseGate, 0, len(c.taskEngine.runtimes))
-		for _, runtime := range c.taskEngine.runtimes {
-			if runtime == nil {
-				continue
-			}
-			if runtime.PauseGate != nil {
-				pauses = append(pauses, runtime.PauseGate)
-			}
-			if runtime.Cancel != nil {
-				cancels = append(cancels, runtime.Cancel)
-			}
-		}
-		c.taskEngine.mutex.Unlock()
-		for _, gate := range pauses {
-			gate.Resume()
-		}
-		for _, cancel := range cancels {
-			cancel()
-		}
+		c.taskEngine.stopAllRuntimes()
 	})
 	c.backgroundWG.Wait()
 }
@@ -400,7 +408,8 @@ func (c *Controller) requireProtocolEnabled(protocol string) func(http.Handler) 
 
 // 说明：历史上的可选共享令牌鉴权（requireAuth / extractAPIToken）已随多用户改造退役——
 // /api 组现由 authGate（Cookie session + CSRF + 角色，见 auth_controller.go）统一守卫。
-// Server.Auth 配置字段保留以兼容既有配置文件解析与脱敏，但不再用于 Web UI 鉴权。
+// 对应的 Server.Auth 配置字段也已删除——保留一个没有任何代码校验的鉴权开关，只会让
+// 管理员在启动日志看到「令牌鉴权已启用」而误以为站点已加固。
 
 // constantTimeTokenMatch 用恒定时间比较避免令牌校验的时序侧信道（现用于 CSRF 令牌比对）。
 func constantTimeTokenMatch(provided, expected string) bool {
@@ -451,7 +460,9 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 		return err
 	}
 	// 原子写：避免保存过程中崩溃留下半截 config.yaml 导致下次启动解析失败。
-	if err := config.AtomicWriteFile(c.configPath, data, 0644); err != nil {
+	// 权限用 ConfigFilePerm(0600)：这条路径写的是 RestoreMaskedSecrets 回填后的**真实**密钥，
+	// 是明文 api_key 真正落盘的地方（首次生成时配置里还没有密钥）。
+	if err := config.AtomicWriteFile(c.configPath, data, config.ConfigFilePerm); err != nil {
 		return err
 	}
 	c.config.Replace(cfg)
@@ -497,7 +508,23 @@ func openPathInDefaultFileManager(path string) error {
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
 
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// 必须有配对的 Wait：Start 之后不 Wait，子进程退出后会在 Unix 内核里留下僵尸表项，
+	// 而 Go 运行时不会替我们收割——每点一次「在文件管理器中打开」就泄漏一个。
+	//
+	// 但**不能同步等**：这些命令拉起的是长期存活的 GUI 进程（Finder / Explorer / 文件管理器），
+	// 同步 Wait 会把 HTTP 请求一直挂到用户关掉那个窗口为止。
+	//
+	// 也刻意不走 runBackground：那会把这个 goroutine 计入 backgroundWG，于是优雅停机要等
+	// 用户关闭文件管理器才能完成。这个 goroutine 的唯一职责就是收尸，进程退出时随之消失即可。
+	//
+	// （对应地也不用 exec.CommandContext + 超时兜底：那会在超时后杀掉用户正开着的文件管理器。）
+	go func() {
+		_ = cmd.Wait() // explorer.exe 惯例返回非零退出码，与成功与否无关，丢弃即可
+	}()
+	return nil
 }
 
 // startPageCacheJanitor 周期性地把磁盘页缓存修剪到配置的容量上限（单 goroutine 串行，经
@@ -552,6 +579,12 @@ func (c *Controller) startDaemon() {
 					id, path := lib.ID, lib.Path
 					defer c.purgeReadingPathCaches()
 					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
+					// 「已有扫描在跑」不是故障：定时守护与手动扫描本就可能撞车，
+					// 下一个 tick 会再试，不必按错误刷屏。
+					if errors.Is(err, scanner.ErrScanAlreadyRunning) {
+						slog.Info("Auto-scan skipped, another scan is in progress", "library_id", id)
+						return
+					}
 					if err != nil {
 						slog.Error("Auto-scan failed", "library_id", id, "error", err)
 						c.invalidateDashboardStatsCache("auto_scan_failed")
@@ -811,7 +844,7 @@ func (c *Controller) serveThumbnailImage(w http.ResponseWriter, r *http.Request)
 	}
 	filename := chi.URLParam(r, "*")
 	fullPath := filepath.Join(thumbDir, filename)
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("Cache-Control", pageImageCacheControl)
 	// 图片资源不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，
 	// 否则浏览器以 (URL+Origin) 为缓存 key，同源 <img> 请求无法命中缓存。
 	w.Header().Del("Vary")
@@ -985,6 +1018,10 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "No books updated"})
 		return
 	}
+	if len(req.BookIDs) > maxBulkReadStateBooks {
+		jsonError(w, http.StatusBadRequest, "Too many books in one request")
+		return
+	}
 
 	ctx := r.Context()
 	// 已登录用户走每用户进度：一次事务内标记全部书并按系列刷新 user_series_progress。
@@ -1039,6 +1076,11 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "No series updated", "updated": 0})
 		return
 	}
+	// 系列 id 数本身就要限：每个都会被展开成该系列的全部书。
+	if len(req.SeriesIDs) > maxBulkReadStateSeries {
+		jsonError(w, http.StatusBadRequest, "Too many series in one request")
+		return
+	}
 
 	ctx := r.Context()
 	uid := c.currentUserID(r)
@@ -1055,6 +1097,11 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 			for _, b := range books {
 				bookIDs = append(bookIDs, b.ID)
 			}
+		}
+		// 展开后的书数同样要挡：系列 id 数在上限内，展开结果仍可能是整库量级。
+		if len(bookIDs) > maxBulkReadStateBooks {
+			jsonError(w, http.StatusBadRequest, "Selected series expand to too many books")
+			return
 		}
 		if err := c.store.SetUserBooksReadState(ctx, uid, bookIDs, req.IsRead, time.Now()); err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
@@ -1130,7 +1177,7 @@ func applyBookReadStateTx(ctx context.Context, q *database.Queries, book databas
 	}
 
 	if isRead && validPage {
-		if err := q.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page}); err != nil {
+		if err := q.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page, Date: database.ActivityDayKey(time.Now())}); err != nil {
 			slog.Error("Failed to log reading activity", "book_id", book.ID, "error", err)
 		}
 	}
@@ -1171,4 +1218,16 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, pages)
+}
+
+// ShutdownNotify 让 Controller 在 HTTP 停机开始时先切断 SSE 长连接。
+//
+// 供 main 注册到 http.Server.RegisterOnShutdown：Shutdown 会在开始时同步调用它，
+// 之后才去排空在途请求。没有这一步，任何开着页面的浏览器标签都会让 Shutdown
+// 一直等到 20 秒超时——SSE 是长连接，「在途请求排空」对它永远不会自然完成。
+func (c *Controller) ShutdownNotify() {
+	if c == nil {
+		return
+	}
+	c.sse.closeClients()
 }

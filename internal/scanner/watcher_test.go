@@ -5,6 +5,7 @@
 package scanner
 
 import (
+	"manga-manager/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func TestWatchLibraryWatchesNestedDirectories(t *testing.T) {
 	}
 	defer fw.Stop()
 
-	if err := fw.WatchLibrary(1, root); err != nil {
+	if err := fw.WatchLibrary(1, root, config.DefaultScanFormatsCSV); err != nil {
 		t.Fatalf("WatchLibrary failed: %v", err)
 	}
 
@@ -52,7 +53,7 @@ func TestUnwatchLibraryRemovesNestedDirectories(t *testing.T) {
 	}
 	defer fw.Stop()
 
-	if err := fw.WatchLibrary(1, root); err != nil {
+	if err := fw.WatchLibrary(1, root, config.DefaultScanFormatsCSV); err != nil {
 		t.Fatalf("WatchLibrary failed: %v", err)
 	}
 

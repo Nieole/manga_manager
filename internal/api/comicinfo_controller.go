@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/storageio"
+	"manga-manager/internal/taskcontrol"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -67,12 +69,11 @@ func (c *Controller) exportSeriesComicInfoArchive(w http.ResponseWriter, r *http
 		return
 	}
 
-	filename := sanitizeDownloadFilename(firstNonEmpty(nullString(series.Title), series.Name))
-	if filename == "" {
-		filename = fmt.Sprintf("series-%d", series.ID)
-	}
+	// 真实（可能含中文）标题走 filename*=；ASCII 兜底用 series id，永远可解析。
+	displayName := sanitizeDownloadFilename(firstNonEmpty(nullString(series.Title), series.Name)) + "-ComicInfo.zip"
+	asciiName := fmt.Sprintf("series-%d-ComicInfo.zip", series.ID)
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-ComicInfo.zip"`, filename))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(asciiName, displayName))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -125,12 +126,10 @@ func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	filename := sanitizeDownloadFilename(strings.TrimSuffix(book.Name, filepath.Ext(book.Name)))
-	if filename == "" {
-		filename = fmt.Sprintf("book-%d", book.ID)
-	}
+	displayName := sanitizeDownloadFilename(strings.TrimSuffix(book.Name, filepath.Ext(book.Name))) + "-ComicInfo.xml"
+	asciiName := fmt.Sprintf("book-%d-ComicInfo.xml", book.ID)
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-ComicInfo.xml"`, filename))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(asciiName, displayName))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -213,30 +212,72 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	written, skipped, failed := 0, 0, 0
-	for _, book := range books {
-		info := buildComicInfoForBook(book, series, books, tags, authors)
-		data, marshalErr := parser.MarshalComicInfo(info)
-		if marshalErr != nil {
-			failed++
-			continue
-		}
-		if err := parser.WriteComicInfoIntoArchive(book.Path, data); err != nil {
-			if errors.Is(err, parser.ErrArchiveNotWritable) {
-				skipped++
+	// 回写整个系列的归档要逐本解压重压，大系列可以跑到分钟级。此前这一切都在 HTTP 请求
+	// goroutine 里同步做：请求会一直挂着直到最后一本写完，中途无法取消、没有进度可看，
+	// 而且完全绕开了存储 IO 调度——阅读器取页会和它抢同一块盘。
+	//
+	// 改成后台任务：走 startTaskWithOptions 拿到取消能力，每本书前取一次 IO 令牌，
+	// 与扫描/哈希回填共用同一套卷级并发上限。
+	taskKey := fmt.Sprintf("write_comicinfo_series_%d", seriesID)
+	if !c.taskEngine.startCancelableTask(taskKey, "write_comicinfo", "正在写入 ComicInfo", len(books)) {
+		jsonError(w, http.StatusConflict, "ComicInfo write is already running for this series")
+		return
+	}
+	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"series_id": strconv.FormatInt(seriesID, 10)}, series.Name)
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
+
+	c.runBackgroundTask(taskKey, func() {
+		defer cleanupCancel()
+		written, skipped, failed := 0, 0, 0
+		for i, book := range books {
+			if err := taskcontrol.Wait(taskCtx); err != nil {
+				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.control.cancelling", nil)
+				return
+			}
+			if taskCtx.Err() != nil {
+				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.control.cancelling", nil)
+				return
+			}
+
+			// 拿 IO 令牌：归档回写是重 IO（逐本解压重压），不受调度会让阅读器取页明显卡顿。
+			// 用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，共用同一档并发上限。
+			_, releaseToken, _, _, tokenErr := c.acquireTaskStorageToken(taskCtx, book.Path, storageio.WorkKindMetadataScan)
+			if tokenErr != nil {
+				failed++
 				continue
 			}
-			slog.Error("write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", err)
-			failed++
-			continue
-		}
-		written++
-	}
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"written": written,
-		"skipped": skipped,
-		"failed":  failed,
+			info := buildComicInfoForBook(book, series, books, tags, authors)
+			data, marshalErr := parser.MarshalComicInfo(info)
+			if marshalErr != nil {
+				releaseToken()
+				failed++
+				continue
+			}
+			writeErr := parser.WriteComicInfoIntoArchive(book.Path, data)
+			releaseToken()
+
+			switch {
+			case writeErr == nil:
+				written++
+			case errors.Is(writeErr, parser.ErrArchiveNotWritable):
+				skipped++
+			default:
+				slog.Error("write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", writeErr)
+				failed++
+			}
+
+			c.taskEngine.updateTaskDetails(taskKey, i+1, len(books), "", "writing", book.Name, map[string]int64{
+				"written": int64(written), "skipped": int64(skipped), "failed": int64(failed),
+			}, nil)
+		}
+		c.taskEngine.finishTask(taskKey, fmt.Sprintf("已写入 %d 本，跳过 %d 本，失败 %d 本", written, skipped, failed))
+	})
+
+	jsonResponse(w, http.StatusAccepted, map[string]interface{}{
+		"status":   "started",
+		"task_key": taskKey,
+		"total":    len(books),
 	})
 }
 
@@ -303,15 +344,15 @@ func buildComicInfoForBook(book database.Book, series database.Series, books []d
 		Summary:     firstNonEmpty(nullString(book.Summary), nullString(series.Summary)),
 		Number:      firstNonEmpty(nullString(book.Number), formatNullableFloat(book.SortNumber)),
 		Volume:      book.Volume,
-		Count:       len(books),
+		Count:       parser.LenientInt(len(books)),
 		Publisher:   nullString(series.Publisher),
 		Genre:       joinTagNames(tags),
 		LanguageISO: nullString(series.Language),
-		PageCount:   int(book.PageCount),
+		PageCount:   parser.LenientInt(book.PageCount),
 	}
 
 	if series.Rating.Valid {
-		info.CommunityRating = float32(series.Rating.Float64)
+		info.CommunityRating = parser.LenientFloat(series.Rating.Float64)
 	}
 
 	for _, author := range authors {

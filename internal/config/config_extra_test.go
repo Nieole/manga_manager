@@ -4,23 +4,23 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// TestMaskAndRestoreAllSecrets 覆盖全部四类敏感字段（LLM Key / Auth Token / ComicVine / MAL）的脱敏与回填。
+// TestMaskAndRestoreAllSecrets 覆盖全部敏感字段（LLM Key / ComicVine / MAL）的脱敏与回填。
 func TestMaskAndRestoreAllSecrets(t *testing.T) {
 	var cfg Config
 	cfg.LLM.APIKey = "llm-real"
-	cfg.Server.Auth.Token = "auth-real"
 	cfg.Scrapers.ComicVineAPIKey = "cv-real"
 	cfg.Scrapers.MALClientID = "mal-real"
 
 	masked := MaskSecrets(cfg)
 	for name, got := range map[string]string{
 		"llm":       masked.LLM.APIKey,
-		"auth":      masked.Server.Auth.Token,
 		"comicvine": masked.Scrapers.ComicVineAPIKey,
 		"mal":       masked.Scrapers.MALClientID,
 	} {
@@ -491,5 +491,109 @@ func TestResolveStoragePolicyFallsBackToLibraryDefault(t *testing.T) {
 	}
 	if resolved.VolumeKey == "" {
 		t.Fatalf("resolved policy should carry a volume key")
+	}
+}
+
+// TestGeneratedConfigIsOwnerOnly 守卫「配置文件不得对本机其他用户可读」这一不变式。
+//
+// config.yaml 里是 llm.api_key 与刮削器凭据的明文。断言刻意写**字面量** 0o600 而不是
+// config.ConfigFilePerm：若用常量做期望值，有人把常量改回 0644 时生产与断言会一起放宽，
+// 用例照绿——那正是这条不变式最可能的回归方式。
+func TestGeneratedConfigIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows 走 ACL，Go 的 os.Chmod 只映射只读位，Mode().Perm() 恒为 0666/0444，
+		// 断言 POSIX 权限位在该平台上没有意义（CI 矩阵含 windows-latest）。
+		t.Skip("windows 无 POSIX 权限位")
+	}
+
+	const ownerOnly os.FileMode = 0o600
+
+	// createDefaultConfig 会无条件 os.MkdirAll("./data")，是相对 cwd 的；
+	// 不切目录会在 internal/config/ 下拉出一个 data 目录。
+	t.Chdir(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	if _, err := LoadConfig(path); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat generated config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != ownerOnly {
+		t.Fatalf("首次生成的 config.yaml 权限 = %04o, want %04o", got, ownerOnly)
+	}
+
+	// 覆盖既有的宽松文件时必须收紧，而不是沿用目标旧 inode 的权限
+	// ——AtomicWriteFile 是 chmod 临时文件后 rename，这一行盯住那个假设。
+	loose := filepath.Join(t.TempDir(), "existing.yaml")
+	if err := os.WriteFile(loose, []byte("server:\n  port: 8080\n"), 0o644); err != nil {
+		t.Fatalf("seed loose file: %v", err)
+	}
+	if err := AtomicWriteFile(loose, []byte("server:\n  port: 8081\n"), ConfigFilePerm); err != nil {
+		t.Fatalf("AtomicWriteFile: %v", err)
+	}
+	info, err = os.Stat(loose)
+	if err != nil {
+		t.Fatalf("stat rewritten config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != ownerOnly {
+		t.Fatalf("覆盖既有 0644 文件后权限 = %04o, want %04o", got, ownerOnly)
+	}
+}
+
+// TestSnapshotIsDeepCopy 守卫「Snapshot 返回的是真正独立的副本」。
+//
+// Config 的值拷贝只复制切片头。此前 Snapshot 直接返回 m.cfg，调用方拿到的切片与 Manager
+// 内部共享底层数组——而 ResolveStoragePolicy 恰好会对 StoragePolicies 做就地归一化，
+// 于是「读配置」变成了并发写同一段内存。
+func TestSnapshotIsDeepCopy(t *testing.T) {
+	var cfg Config
+	cfg.Server.AllowedOrigins = []string{"https://example.com"}
+	cfg.Server.TrustedProxies = []string{"10.0.0.0/8"}
+	cfg.Library.Paths = []string{"/library"}
+	cfg.Library.StoragePolicies = []LibraryStoragePolicy{{Path: "/library", StorageProfile: "hdd"}}
+	m := NewManager(&cfg)
+
+	// 改动传给 NewManager 的那份，不应影响 Manager 内部。
+	cfg.Server.AllowedOrigins[0] = "https://evil.example"
+	cfg.Library.StoragePolicies[0].Path = "/tampered"
+
+	first := m.Snapshot()
+	if first.Server.AllowedOrigins[0] != "https://example.com" {
+		t.Fatalf("NewManager 未隔离入参：AllowedOrigins[0] = %q", first.Server.AllowedOrigins[0])
+	}
+	if first.Library.StoragePolicies[0].Path != "/library" {
+		t.Fatalf("NewManager 未隔离入参：StoragePolicies[0].Path = %q", first.Library.StoragePolicies[0].Path)
+	}
+
+	// 改动一份快照，不应波及后续快照。
+	first.Server.TrustedProxies[0] = "0.0.0.0/0"
+	first.Library.StoragePolicies[0].StorageProfile = "ssd"
+
+	second := m.Snapshot()
+	if second.Server.TrustedProxies[0] != "10.0.0.0/8" {
+		t.Fatalf("快照之间共享了底层数组：TrustedProxies[0] = %q", second.Server.TrustedProxies[0])
+	}
+	if second.Library.StoragePolicies[0].StorageProfile != "hdd" {
+		t.Fatalf("快照之间共享了底层数组：StorageProfile = %q", second.Library.StoragePolicies[0].StorageProfile)
+	}
+}
+
+// TestResolveStoragePolicyDoesNotMutateInput 把「不写入参」钉成 ResolveStoragePolicy 的契约。
+//
+// 这是上面那条竞争的根因：函数按值收 Config，却对切片元素就地归一化，写穿了副本的假象。
+// 把 CloneConfig 那一行去掉即刻变红。
+func TestResolveStoragePolicyDoesNotMutateInput(t *testing.T) {
+	var cfg Config
+	cfg.Library.StoragePolicies = []LibraryStoragePolicy{
+		{Path: "  /library  ", StorageProfile: "  HDD  "},
+	}
+	before := cfg.Library.StoragePolicies[0]
+
+	_ = ResolveStoragePolicy(cfg, "/library/series/vol1.cbz")
+
+	if got := cfg.Library.StoragePolicies[0]; got != before {
+		t.Fatalf("ResolveStoragePolicy 改写了调用方的 StoragePolicies：%+v -> %+v", before, got)
 	}
 }

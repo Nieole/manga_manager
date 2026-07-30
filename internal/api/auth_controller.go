@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 )
 
@@ -88,33 +89,87 @@ func verifyPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
 
-func isTLS(r *http.Request) bool {
+// sessionCookieSecure 决定会话 Cookie 是否带 Secure 标志。
+//
+// 判定顺序是「显式配置 → 可信代理的声明 → 直连 TLS」，三者都有明确理由：
+//
+//   - server.cookie_secure 是管理员的显式意图，永远优先。
+//   - 其次才看转发头，且只在直连对端落在 server.trusted_proxies 内时采信。
+//     无条件采信 X-Forwarded-Proto 意味着任何客户端都能自己决定 Secure 标志，
+//     这与已按 trusted_proxies 收紧的 clientIP 是两套口径。
+//   - **可信代理说了 http 就以它为准，不再看 r.TLS**：proxy→backend 之间常另有一段内部 TLS，
+//     若让 r.TLS 覆盖代理的声明，明文对外的部署会被误判成 https 而下发 Secure，
+//     浏览器随即丢弃 Cookie，登录直接失效。r.TLS 只在没有可信声明时兜底。
+func (c *Controller) sessionCookieSecure(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	switch c.currentConfig().Server.CookieSecure {
+	case config.CookieSecureAlways:
+		return true
+	case config.CookieSecureNever:
+		return false
+	}
+
+	forwardedProto := forwardedRequestProto(r)
+	if c.trustsForwardedHeaders(r) {
+		if forwardedProto != "" {
+			return strings.EqualFold(forwardedProto, "https")
+		}
+	} else if strings.EqualFold(forwardedProto, "https") {
+		// 声明了 https 却来自未登记的对端：忽略它，但要让管理员知道为什么 Secure 没生效，
+		// 否则表现就是「明明是 HTTPS 部署，Cookie 却没有 Secure」的无声降级。
+		c.warnUntrustedForwardedProto()
+	}
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return false
 }
 
-func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
+// forwardedRequestProto 取转发协议，与 requestBaseURL 同口径（X-Forwarded-Proto 优先，
+// 其次 X-Forwarded-Scheme）——只统一「信不信」而头名不统一，口径就仍然是两套。
+func forwardedRequestProto(r *http.Request) string {
+	if proto := firstHeaderValue(r, "X-Forwarded-Proto"); proto != "" {
+		return proto
+	}
+	return firstHeaderValue(r, "X-Forwarded-Scheme")
+}
+
+// warnUntrustedForwardedProto 每进程只告警一次：该头由客户端可控，
+// 未配 trusted_proxies 的直连部署可能被任意请求触发，逐次打日志等于给了一个刷日志的口子。
+func (c *Controller) warnUntrustedForwardedProto() {
+	if c == nil {
+		return
+	}
+	c.untrustedProtoWarnOnce.Do(func() {
+		slog.Warn("Ignoring X-Forwarded-Proto: https from an untrusted peer; session cookie will not be marked Secure",
+			"hint", "configure server.trusted_proxies with the proxy network, or set server.cookie_secure: always")
+	})
+}
+
+func (c *Controller) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isTLS(r),
+		Secure:   c.sessionCookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
 		MaxAge:   int(time.Until(expires).Seconds()),
 	})
 }
 
-func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+func (c *Controller) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isTLS(r),
+		// 清除也要带上与写入时一致的 Secure：属性不匹配时浏览器可能不认为是同一个 Cookie，
+		// 于是「登出」留下一个仍然有效的会话 Cookie。
+		Secure:   c.sessionCookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
@@ -123,36 +178,21 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 
 // ---- 阅读协议 HTTP Basic 鉴权（OPDS / Mihon）----
 
-const basicAuthCacheTTL = 5 * time.Minute
-
-type basicAuthEntry struct {
-	userID    int64
-	expiresAt time.Time
-}
-
-func basicAuthCacheKey(username, password string) string {
-	sum := sha256.Sum256([]byte(username + "\x00" + password))
-	return hex.EncodeToString(sum[:])
-}
-
-// resolveBasicAuthUser 校验 Basic 凭据并返回站点用户 id；带 TTL 内存缓存以免每个协议请求都跑 bcrypt。
+// resolveBasicAuthUser 校验 Basic 凭据并返回站点用户 id；
+// 命中缓存即免去一次 bcrypt（bcrypt 故意很慢，协议客户端每个请求都带凭据）。
 func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, password string) (int64, bool) {
 	if username == "" || password == "" {
 		return 0, false
 	}
-	key := basicAuthCacheKey(username, password)
 	now := time.Now()
-	if v, ok := c.basicAuthCache.Load(key); ok {
-		if e, ok := v.(basicAuthEntry); ok && e.expiresAt.After(now) {
-			return e.userID, true
-		}
-		c.basicAuthCache.Delete(key)
+	if uid, ok := c.auth.lookupBasicAuth(username, password, now); ok {
+		return uid, true
 	}
 	user, err := c.store.GetUserByUsername(ctx, username)
 	if err != nil || !verifyPassword(user.PasswordHash, password) {
 		return 0, false
 	}
-	c.basicAuthCache.Store(key, basicAuthEntry{userID: user.ID, expiresAt: now.Add(basicAuthCacheTTL)})
+	c.auth.rememberBasicAuth(username, password, user.ID, now)
 	return user.ID, true
 }
 
@@ -166,21 +206,21 @@ func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 			return
 		}
 		// 按 IP 的失败限流：锁定期内直接 429，避免攻击者用错误凭据反复触发昂贵的 bcrypt（CPU-DoS）。
-		ipKey := "basic:" + clientIP(r)
-		if d, locked := c.basicAuthLimiter.retryAfter(ipKey); locked {
+		ipKey := "basic:" + c.clientIP(r)
+		if d, locked := c.auth.basicAuthLimiter.retryAfter(ipKey); locked {
 			respondTooManyAttempts(w, r, d)
 			return
 		}
 		if username, password, ok := r.BasicAuth(); ok {
 			if uid, valid := c.resolveBasicAuthUser(r.Context(), username, password); valid {
 				if user, err := c.store.GetUserByID(r.Context(), uid); err == nil {
-					c.basicAuthLimiter.recordSuccess(ipKey)
+					c.auth.basicAuthLimiter.recordSuccess(ipKey)
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, user)))
 					return
 				}
 			}
 		}
-		c.basicAuthLimiter.recordFailure(ipKey)
+		c.auth.basicAuthLimiter.recordFailure(ipKey)
 		w.Header().Set("WWW-Authenticate", `Basic realm="manga-manager"`)
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 	})
@@ -225,6 +265,15 @@ func isRegularWritablePath(p string) bool {
 	return false
 }
 
+// isPasswordChangeAllowedPath 是「必须先改密」状态下仍可访问的端点白名单。
+func isPasswordChangeAllowedPath(p string) bool {
+	switch p {
+	case "/api/auth/me", "/api/auth/logout", "/api/auth/change-password", "/api/auth/status":
+		return true
+	}
+	return false
+}
+
 // isCsrfExempt 免除个别端点的 CSRF 校验：阅读时长上报经 navigator.sendBeacon 发送，无法附带 X-CSRF-Token 头。
 // 该端点仅为本人某书累加阅读秒数（仍要求有效会话 Cookie），被伪造的风险与影响极低。
 func isCsrfExempt(p string) bool {
@@ -234,7 +283,7 @@ func isCsrfExempt(p string) bool {
 // usersExist 报告站点是否已存在账户；一旦为真即缓存，避免每请求 COUNT。
 // 出错时按「已存在」处理（fail-closed）：公开鉴权端点在 authGate 中先于此判断放行，故首启 setup 不受影响。
 func (c *Controller) usersExist(ctx context.Context) bool {
-	if c.usersPresent.Load() {
+	if c.auth.usersExist() {
 		return true
 	}
 	n, err := c.store.CountUsers(ctx)
@@ -242,17 +291,39 @@ func (c *Controller) usersExist(ctx context.Context) bool {
 		return true
 	}
 	if n > 0 {
-		c.usersPresent.Store(true)
+		c.auth.markUsersExist()
 		return true
 	}
 	return false
+}
+
+// isAdminOnlyPath 列出「连读取都必须是管理员」的路径。
+//
+// 除了 /api/system/ 与 /api/users 这两个前缀，还必须显式包含 /api/browse-dirs：
+// 它是 GET，落到 authorize 的「读方法一律放行」分支里，于是任意已登录的普通账号
+// （设计上只该浏览漫画与记录本人进度）都能从 ?path=/ 起逐级枚举宿主机的完整目录结构。
+func isAdminOnlyPath(p string) bool {
+	if strings.HasPrefix(p, "/api/system/") {
+		return true
+	}
+	if p == "/api/users" || strings.HasPrefix(p, "/api/users/") {
+		return true
+	}
+	// 外部库会话：读写鉴权此前不对称。POST 因为是改写方法被挡在管理员之外，
+	// 而 GET 落进「读方法一律放行」分支——任意已登录的普通账号都能拿到会话快照，
+	// 里面带着服务器上的**绝对路径**（external_path 与 library_path）。
+	// 外部库传输本身是纯管理员功能，读侧没有理由比写侧宽。
+	if strings.HasPrefix(p, "/api/libraries/") && strings.Contains(p, "/external-libraries/") {
+		return true
+	}
+	return p == "/api/browse-dirs"
 }
 
 // authorize 依角色与路径判定权限：/system 与 /users 为管理专属（含只读）；读方法对已登录用户开放；
 // 改写方法仅管理员放行，普通用户限个人写操作（见 isRegularWritablePath）。
 func (c *Controller) authorize(user database.User, r *http.Request) bool {
 	p := r.URL.Path
-	if strings.HasPrefix(p, "/api/system/") || p == "/api/users" || strings.HasPrefix(p, "/api/users/") {
+	if isAdminOnlyPath(p) {
 		return user.IsAdmin()
 	}
 	if !isMutating(r.Method) {
@@ -293,7 +364,7 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 		now := time.Now()
 		sess, user, err := c.store.GetSessionWithUser(r.Context(), hashSessionID(cookie.Value), now)
 		if err != nil {
-			clearSessionCookie(w, r)
+			c.clearSessionCookie(w, r)
 			jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 			return
 		}
@@ -305,6 +376,13 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 		}
 		if !c.authorize(user, r) {
 			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.admin_required"))
+			return
+		}
+		// must_change_password 此前只由前端 AuthGate 拦截，服务端从不校验：任何非浏览器
+		// 客户端（curl / 阅读协议以外的脚本）都能拿着管理员分配的初始密码无限期使用。
+		// 这里在服务端强制收敛到「只能看自己、登出、改密」几个端点。
+		if user.MustChangePassword && !isPasswordChangeAllowedPath(p) {
+			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.password_change_required"))
 			return
 		}
 		if now.Sub(sess.LastSeenAt) > sessionTouchAfter {
@@ -336,7 +414,7 @@ func (c *Controller) startSession(ctx context.Context, w http.ResponseWriter, r 
 	}); err != nil {
 		return "", err
 	}
-	setSessionCookie(w, r, raw, expires)
+	c.setSessionCookie(w, r, raw, expires)
 	return csrf, nil
 }
 
@@ -418,7 +496,7 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "failed to create admin")
 		return
 	}
-	c.usersPresent.Store(true)
+	c.auth.markUsersExist()
 	// 把旧的全局阅读进度迁移到首个管理员名下（幂等）。失败不阻断建号，仅记录。
 	if err := c.store.MigrateGlobalProgressToUser(ctx, user.ID); err != nil {
 		slog.Warn("migrate global progress to first admin failed", "user_id", user.ID, "error", err)
@@ -442,8 +520,8 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 // login 校验用户名口令，成功则建会话下发 cookie。带按 IP + 用户名的失败暴破限流。
 func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	ipKey := "ip:" + clientIP(r)
-	if d, locked := c.loginLimiter.retryAfter(ipKey); locked {
+	ipKey := "ip:" + c.clientIP(r)
+	if d, locked := c.auth.loginLimiter.retryAfter(ipKey); locked {
 		respondTooManyAttempts(w, r, d)
 		return
 	}
@@ -456,20 +534,20 @@ func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	}
 	username := strings.TrimSpace(req.Username)
 	userKey := "user:" + strings.ToLower(username)
-	if d, locked := c.loginLimiter.retryAfter(userKey); locked {
+	if d, locked := c.auth.loginLimiter.retryAfter(userKey); locked {
 		respondTooManyAttempts(w, r, d)
 		return
 	}
 	user, err := c.store.GetUserByUsername(ctx, username)
 	if err != nil || !verifyPassword(user.PasswordHash, req.Password) {
 		// 同时对来源 IP 与目标用户名计失败：前者挡单机横扫多账户，后者挡分布式打单账户。
-		c.loginLimiter.recordFailure(ipKey)
-		c.loginLimiter.recordFailure(userKey)
+		c.auth.loginLimiter.recordFailure(ipKey)
+		c.auth.loginLimiter.recordFailure(userKey)
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.invalid_credentials"))
 		return
 	}
-	c.loginLimiter.recordSuccess(ipKey)
-	c.loginLimiter.recordSuccess(userKey)
+	c.auth.loginLimiter.recordSuccess(ipKey)
+	c.auth.loginLimiter.recordSuccess(userKey)
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "failed to start session")
@@ -483,7 +561,7 @@ func (c *Controller) logout(w http.ResponseWriter, r *http.Request) {
 	if sess, ok := sessionFromContext(r.Context()); ok {
 		_ = c.store.DeleteSession(r.Context(), sess.ID)
 	}
-	clearSessionCookie(w, r)
+	c.clearSessionCookie(w, r)
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -530,6 +608,8 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "failed to update password")
 		return
 	}
+	// 旧口令必须立刻从 Basic 鉴权缓存里踢掉，否则它在 OPDS/Mihon 上最长还能再用 5 分钟。
+	c.auth.invalidateBasicAuthForUser(user.ID)
 	// 改密即失效全部旧会话（含其他设备），再为当前设备建立新会话。
 	_ = c.store.DeleteSessionsForUser(ctx, user.ID)
 	csrf, err := c.startSession(ctx, w, r, user.ID)
@@ -678,6 +758,8 @@ func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "failed to reset password")
 		return
 	}
+	// 管理员重置他人密码同理：被重置的账号的旧口令要立刻失效。
+	c.auth.invalidateBasicAuthForUser(id)
 	_ = c.store.DeleteSessionsForUser(ctx, id)
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -733,4 +815,35 @@ func decodeAuthJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	return true
+}
+
+// startSessionJanitor 周期性清理过期会话。
+//
+// store.DeleteExpiredSessions 早就实现了、也有 DB 层单测，但生产代码里一个调用点都没有：
+// sessions 表只增不减，一个长期运行的实例会无限积累已过期的行。
+// 随 Controller 生命周期退出（经 runBackground 登记，Close 会等待）。
+func (c *Controller) startSessionJanitor() {
+	const interval = time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	prune := func() {
+		if c.store == nil {
+			return
+		}
+		if err := c.store.DeleteExpiredSessions(context.Background(), time.Now()); err != nil {
+			slog.Warn("Failed to prune expired sessions", "error", err)
+		}
+	}
+	// 启动时先清一次，避免实例频繁重启时永远等不到第一个 tick。
+	prune()
+
+	for {
+		select {
+		case <-c.lifecycleDone():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }

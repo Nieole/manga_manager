@@ -6,8 +6,9 @@
 
 import { Suspense, lazy, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
+import { useAuth } from './auth/AuthProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthGate } from './auth/AuthGate';
 import { useI18n } from './i18n/LocaleProvider';
@@ -49,8 +50,33 @@ function RouteFallback() {
   );
 }
 
+// RouteBoundary 给每个路由元素套一层独立的错误边界。
+//
+// 只有一个顶层 ErrorBoundary 时，任一页面渲染异常会把整棵树连同 Layout 一起卸载——
+// 侧边栏、SSE 长连接、任务进度气泡全没了，用户唯一的恢复手段是整页跳转。
+// 按 pathname 作 key：路由切换时重置边界状态，否则一次崩溃会让后续导航一直停在错误页。
+function RouteBoundary({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  return <ErrorBoundary key={pathname}>{children}</ErrorBoundary>;
+}
+
 function withRouteFallback(element: ReactNode) {
-  return <Suspense fallback={<RouteFallback />}>{element}</Suspense>;
+  return (
+    <RouteBoundary>
+      <Suspense fallback={<RouteFallback />}>{element}</Suspense>
+    </RouteBoundary>
+  );
+}
+
+// RequireAdmin 是路由级的管理员守卫。
+//
+// 隐藏入口只挡住了「点得到」的路径，直接输 URL 或用旧书签仍会进到设置页——
+// 那里的每个接口都是管理员专属，普通用户看到的是一屏加载失败，像系统坏了。
+// 这里直接把他们送回首页；真正的权限判定仍在后端，这层只负责别让界面自相矛盾。
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const { isAdmin } = useAuth();
+  if (!isAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
 }
 
 function App() {
@@ -86,7 +112,7 @@ function App() {
           {/* 离线书架 */}
           <Route path="offline" element={withRouteFallback(<OfflineShelf />)} />
           {/* 系统配置中心 */}
-          <Route path="settings" element={withRouteFallback(<Settings />)}>
+          <Route path="settings" element={<RequireAdmin>{withRouteFallback(<Settings />)}</RequireAdmin>}>
             <Route index element={withRouteFallback(<SettingsOverviewPage />)} />
             <Route path="appearance" element={withRouteFallback(<SettingsAppearancePage />)} />
             <Route path="library" element={withRouteFallback(<SettingsLibraryPage />)} />

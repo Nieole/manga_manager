@@ -34,8 +34,6 @@ import (
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/web"
-
-	"github.com/fsnotify/fsnotify"
 )
 
 var (
@@ -83,7 +81,25 @@ func main() {
 	cfgManager := config.NewManager(cfg)
 
 	// 启动配置热重载监听
-	go watchConfig(resolvedConfigPath, cfgManager)
+	// 配置热重载监听：拿住句柄以便停机时停掉。此前是裸 `go watchConfig(...)`，
+	// 进程活着就永远停不掉——停机排空的 20 秒里仍可能落地一次重载，改写日志级别、
+	// 归档句柄池与 AI 并发。
+	// 启动时也跑一次值域校验，理由是「热重载会拒绝不合法的配置」这条规则必须对用户可见：
+	// 否则一个配置本就非法的实例，表现是「改了文件却怎么都不生效」，而日志里只有一行
+	// rejected，用户无从知道问题出在哪、也不知道热重载已经变成哑巴了。
+	// 这里刻意不 fatal——保持既有的可启动性，坏值的实际影响由各使用点自行承担。
+	if result := config.ValidateConfigValues(cfg); !result.Valid {
+		slog.Warn("Configuration has invalid values",
+			"path", resolvedConfigPath,
+			"issues", config.FormatValidationIssues(result.Issues),
+			"hint", "hot-reload will refuse to apply this file until these are fixed")
+	}
+
+	cfgWatcher, watchErr := config.StartWatcher(resolvedConfigPath, cfgManager, runtimecfg.Apply)
+	if watchErr != nil {
+		// 监听建不起来只影响「改文件自动生效」，服务本身照常跑（经设置页保存仍立即生效）。
+		slog.Warn("Config hot-reload disabled", "path", resolvedConfigPath, "error", watchErr)
+	}
 
 	if err := database.Migrate(cfg.Database.Path); err != nil {
 		slog.Error("Failed to migrate database schema", "error", err)
@@ -102,6 +118,9 @@ func main() {
 	r.Use(middleware.RequestID)
 	r.Use(api.RequestMetrics)
 	r.Use(middleware.Recoverer)
+	// 请求体闸门要早于任何会读 body 的处理：未鉴权的 /api/auth/login 与 KOReader 协议端点
+	// 此前没有任何上限，单个巨型 JSON 即可撑爆内存。
+	r.Use(api.RequestBodyLimit)
 	r.Use(securityHeaders)
 	r.Use(middleware.Compress(5,
 		"text/html",
@@ -129,14 +148,14 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// 启动期安全姿态告警：提示无鉴权裸奔 / 鉴权配置不完整。
-	switch {
-	case cfg.Server.Auth.Enabled && cfg.Server.Auth.Token == "":
-		slog.Warn("server.auth.enabled=true 但 token 为空，管理 API 鉴权未生效（视为关闭）。请设置 server.auth.token。")
-	case cfg.Server.Auth.Enabled:
-		slog.Info("管理 API 令牌鉴权已启用")
-	case cfg.Server.Host == "0.0.0.0":
-		slog.Warn("管理 API 无鉴权且监听 0.0.0.0，仅应用于受信内网或前置反向代理。可设置 server.auth 开启令牌鉴权。")
+	// 启动期安全姿态告警：提示无鉴权裸奔。
+	// 注意这里不再有「令牌鉴权已启用」这一档——历史上的共享令牌鉴权已随多用户改造退役
+	// （见 internal/api/controller.go 的说明），配置项也已删除。此前 main 仍会在
+	// server.auth.enabled=true 时打印「管理 API 令牌鉴权已启用」，而实际上没有任何代码
+	// 校验该令牌，管理员会误以为已经加固。
+	if cfg.Server.Host == "0.0.0.0" {
+		slog.Info("管理 API 监听 0.0.0.0，鉴权由站点账户体系（会话 Cookie + CSRF）提供；" +
+			"若前置反向代理，请配置 server.trusted_proxies 以便限流拿到真实客户端 IP。")
 	}
 
 	// API 端点挂载
@@ -191,8 +210,17 @@ func main() {
 		Addr:              addr,
 		Handler:           r,
 		ReadHeaderTimeout: 15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// ReadTimeout 覆盖整个请求（含 body）的读取：没有它，一个慢速客户端可以一直
+		// 挂着连接慢慢喂 body 占用 goroutine。取值需容得下最大的封面上传走慢速链路。
+		// 不设 WriteTimeout：SSE 与整卷下载都是长写，设了会被中途掐断。
+		ReadTimeout: 120 * time.Second,
+		IdleTimeout: 60 * time.Second,
 	}
+
+	// SSE 是长连接，Shutdown 的「排空在途请求」对它永远不会自然完成——不先切断的话，
+	// 只要有一个浏览器标签开着，每次停机都必然跑满 20 秒超时。RegisterOnShutdown 的
+	// 回调会在 Shutdown 一开始被同步调用，正好用于此。
+	srv.RegisterOnShutdown(apiController.ShutdownNotify)
 
 	// 优雅停机：捕获 SIGINT/SIGTERM，先停止接收新连接并排空在途请求，再收尾后台任务与资源。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -210,21 +238,66 @@ func main() {
 	stop() // 恢复默认信号处理：停机过程中再次 Ctrl-C 可强制退出
 	slog.Info("Shutdown signal received, draining in-flight requests...")
 
+	// 先停配置监听：排空期间不该再有热重载去改写日志级别 / 归档句柄池 / AI 并发。
+	// （此前下方那条「停配置监听」的注释是空话——apiController.Close() 停的是
+	// 库目录的 scanner.FileWatcher，与配置监听毫无关系。）
+	cfgWatcher.Stop()
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Graceful HTTP shutdown failed", "error", err)
 	}
 
-	// 收尾后台服务：停配置监听、恢复暂停闸、取消后台任务并等待其退出。
+	// 收尾后台服务：恢复暂停闸、取消后台任务并等待其退出。
 	apiController.Close()
 	slog.Info("Shutdown complete")
 }
+
+// contentSecurityPolicy 是全站静态 CSP。每一条放宽都对应 web/ 里实地存在的用法，不是模板抄来的；
+// 想收紧任何一条之前，请先确认对应用法确实已消失。
+//
+//   - script-src 'self'：前提是 index.html 里没有内联 <script>。SW 注册脚本已抽到 /register-sw.js；
+//     若有人把它挪回内联，CSP 会静默拦掉它 —— SW 永不注册、离线阅读与 PWA 安装随之失效，
+//     而且浏览器控制台之外没有任何迹象。TestIndexHTMLHasNoInlineScript 是这条的兜底。
+//   - style-src 'unsafe-inline'：@yui540/comimi 在运行时 document.createElement("style") 注入整套
+//     阅读器样式，ComimiTheme.tsx 自己也渲染了一段 <style>。前者随库版本变化，用 hash 固定不可维护；
+//     去掉这一项，Comimi 阅读主题会彻底掉样式。
+//   - img-src blob:：阅读器把取到的页图字节转成 URL.createObjectURL 再喂给 <img>（usePageImageCache.ts）。
+//   - img-src data:：ComimiTheme 用 1x1 透明 GIF 的 data URI 占位，真实页图随后异步换上。
+//   - img-src https:：刮削搜索结果直接渲染各元数据源（AniList / MangaDex / MyAnimeList / Comic Vine /
+//     Bangumi）返回的远端封面 URL，这些主机随 provider 配置变化、无法枚举。
+//     只放行 https：provider 若返回 http:// 封面会裂图，但这是刻意的 —— https 部署下混合内容本就被
+//     浏览器拦截，加 http: 也无效，正解是由后端代理远端封面（另一个改动）。
+//   - connect-src 'self'：axios 不设 baseURL，EventSource 指向 /api/events，全部同源。
+//
+// 刻意不写的：'unsafe-eval'（构建产物里无 eval / new Function / wasm）、font-src / media-src /
+// frame-src 的放宽（无自带字体文件、无音视频、无 iframe）。
+//
+// 刻意不加 upgrade-insecure-requests：本服务的典型部署是局域网 http:// 直连，
+// 升级后所有同源请求都会指向一个并不存在的 https 端口，整站瞬间不可用。
+//
+// 注意这条头也会随 /sw.js 的响应下发，从而成为 Service Worker 自身的 CSP。当前 sw.js 对跨域请求
+// 在 fetch 事件里直接放行不拦截，网络访问全是同源，所以 'self' 不影响现状；但今后若在 sw.js 里
+// 加跨域 fetch，会被这条 CSP 拦下，且报错只出现在 SW 的独立控制台里。
+const contentSecurityPolicy = "default-src 'self'; " +
+	"base-uri 'none'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob: https:; " +
+	"connect-src 'self'; " +
+	"worker-src 'self'; " +
+	"manifest-src 'self'"
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		// frame-ancestors 与上面的 X-Frame-Options: DENY 等价，两者并存是为了兼容只认旧头的客户端。
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)
@@ -325,72 +398,4 @@ func absOrSelf(path string) string {
 		return abs
 	}
 	return path
-}
-
-func watchConfig(path string, cfgManager *config.Manager) {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		slog.Error("Failed to create config watcher", "error", err)
-		return
-	}
-	defer watcher.Close()
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		absPath = path
-	}
-	// 监听所在目录而非文件本身：编辑器保存与本项目的原子写都会以 rename 替换文件，
-	// 直接 watch 文件在 Linux 上会因 inode 变化而永久失效（收不到后续事件）。监听目录后
-	// 按文件名过滤，即可稳定捕获替换后的新文件。
-	dir := filepath.Dir(absPath)
-	if err := watcher.Add(dir); err != nil {
-		slog.Error("Failed to add config directory to watcher", "dir", dir, "error", err)
-		return
-	}
-
-	slog.Info("Config hot-reload watcher started", "path", absPath, "watching_dir", dir)
-
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-			if filepath.Clean(event.Name) != absPath {
-				continue // 只关心目标 config 文件，忽略同目录下的临时文件/数据文件事件
-			}
-			// 原子替换/编辑器保存表现为 Write、Create 或 Rename-到位，任一都触发重载。
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
-				slog.Info("Config file changed, re-applying settings...", "event", event.Name)
-				newCfg, err := config.LoadConfig(path)
-				if err != nil {
-					slog.Error("Failed to reload config during hot-swap", "error", err)
-					continue
-				}
-
-				// 1. 同步更新全局单例/传递的引用
-				// 注意：这里更新的是 *newCfg，如果 apiController 持有的是 *cfg 的引用，
-				// 我们需要手动将 *newCfg 的值刷入 *currentCfg 指向的内存，
-				// 或者确保后端组件统一订阅配置变更。
-				// 简单的做法是把新值 Copy 过去 (深拷贝结构体)
-				cfgManager.Replace(newCfg)
-				currentCfg := cfgManager.Snapshot()
-
-				// 2. 重建配置派生资源——与 API 保存路径共用同一 runtimecfg.Apply，避免两条路径副作用不一致。
-				if err := runtimecfg.Apply(&currentCfg); err != nil {
-					slog.Error("Failed to apply runtime config during hot-swap", "error", err)
-				}
-
-				slog.Info("Config hot-reload applied successfully",
-					"log_level", currentCfg.Logging.Level,
-					"pool_size", currentCfg.Scanner.ArchivePoolSize,
-					"ai_concurrency", currentCfg.Scanner.MaxAiConcurrency)
-			}
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			slog.Error("Config watcher error", "error", err)
-		}
-	}
 }

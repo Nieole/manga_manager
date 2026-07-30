@@ -16,7 +16,8 @@ export interface ScrapeProvider {
 let cached: ScrapeProvider[] | null = null;
 let inflight: Promise<ScrapeProvider[]> | null = null;
 
-function loadProviders(): Promise<ScrapeProvider[]> {
+// loadScrapeProviders 导出供测试直接驱动缓存语义（组件层仍用下面的 hook）。
+export function loadScrapeProviders(): Promise<ScrapeProvider[]> {
   if (cached) return Promise.resolve(cached);
   if (!inflight) {
     inflight = apiClient
@@ -26,8 +27,11 @@ function loadProviders(): Promise<ScrapeProvider[]> {
         return cached;
       })
       .catch(() => {
-        cached = [];
-        return cached;
+        // 失败时**不写缓存**。此前这里 `cached = []`，于是一次瞬时错误（网络抖动、
+        // 后端刚重启）就把空数组固化成整个会话的答案：刮削菜单从此永远是空的，
+        // 用户不刷新页面就再也刮不了元数据，而界面上没有任何提示说明为什么。
+        // 不缓存意味着下一个挂载的组件会重试一次——正是这里想要的行为。
+        return [];
       })
       .finally(() => {
         inflight = null;
@@ -41,7 +45,7 @@ export function useScrapeProviders(): ScrapeProvider[] {
   const [providers, setProviders] = useState<ScrapeProvider[]>(cached ?? []);
   useEffect(() => {
     let active = true;
-    loadProviders().then((list) => {
+    loadScrapeProviders().then((list) => {
       if (active) setProviders(list);
     });
     return () => {
@@ -49,4 +53,11 @@ export function useScrapeProviders(): ScrapeProvider[] {
     };
   }, []);
   return providers;
+}
+
+// __resetScrapeProvidersCacheForTest 清空模块级缓存。仅供测试使用：
+// 缓存是模块级的，用例之间不隔离的话前一条的结果会渗进后一条。
+export function __resetScrapeProvidersCacheForTest(): void {
+  cached = null;
+  inflight = null;
 }

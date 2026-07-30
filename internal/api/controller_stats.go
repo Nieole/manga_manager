@@ -86,7 +86,9 @@ func (c *Controller) getActivityHeatmap(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rows, err := c.store.GetActivityHeatmap(r.Context(), offset)
+	// 下界在 Go 侧按本地时区算好：表里的 date 现在是本地日历日（见 database.ActivityDayKey），
+	// 交给 SQLite 的 DATE('now', ?) 会按 UTC 算，跨时区部署下窗口整体错开一天。
+	rows, err := c.store.GetActivityHeatmap(r.Context(), database.HeatmapSinceDate(offset))
 	if err != nil {
 		slog.Error("GetActivityHeatmap failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get activity heatmap")
@@ -177,13 +179,8 @@ func (c *Controller) getPeriodStats(w http.ResponseWriter, r *http.Request) {
 
 // getRecentReadAll 返回跨库的最近阅读记录（用于 Dashboard 首页）
 func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
-	limitStr := r.URL.Query().Get("limit")
-	limit := int64(20)
-	if limitStr != "" {
-		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil && l > 0 {
-			limit = l
-		}
-	}
+	// 与 /api/series/search 统一口径：此前这里没有上限。
+	limit := int64(queryLimit(r, "limit", 20, maxListLimit))
 
 	var (
 		items []database.GetRecentReadAllRow

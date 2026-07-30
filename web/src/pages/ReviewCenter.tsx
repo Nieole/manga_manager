@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 import { GitCompareArrows, Layers3, Loader2, ShieldCheck } from 'lucide-react';
 import { PageShell, PageHeader } from '../components/PageShell';
 import { useI18n } from '../i18n/LocaleProvider';
+import { apiClient } from '../api/client';
 
 const MetadataReviews = lazy(() => import('./MetadataReviews'));
 const AIGroupingReviews = lazy(() => import('./AIGroupingReviews'));
@@ -27,15 +28,15 @@ export default function ReviewCenter() {
   };
 
   const refreshCounts = useCallback(() => {
-    fetch('/api/reviews/inbox/summary')
-      .then((res) => res.json())
-      .then((data) => {
+    // 走 apiClient 而非裸 fetch：后者绕过 401 全局登出与 locale 头。
+    apiClient.get('/api/reviews/inbox/summary')
+      .then(({ data }) => {
         setMetadataCount(data?.counts?.metadata ?? 0);
         setAiGroupingCount(data?.counts?.ai_grouping ?? 0);
       })
       .catch(() => {
-        setMetadataCount(0);
-        setAiGroupingCount(0);
+        // 请求失败不代表「没有待办」。清零会让角标消失，用户以为已处理完；
+        // 保留上一次的计数更接近真实状态。
       });
   }, []);
 

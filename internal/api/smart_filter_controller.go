@@ -175,6 +175,11 @@ func (c *Controller) updateSmartFilter(w http.ResponseWriter, r *http.Request) {
 		PageSize:        int64(normalized.PageSize),
 	})
 	if err != nil {
+		// 改名撞到 UNIQUE(library_id, name) 是用户输入冲突，不是服务端故障。
+		if isUniqueConstraintError(err) {
+			jsonError(w, http.StatusConflict, "A smart filter with this name already exists in this library")
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, "Failed to update smart filter")
 		return
 	}

@@ -116,7 +116,7 @@ export function SettingsMediaPage() {
         </div>
       </section>
 
-      <SettingsSaveBar saving={saving} label={t('settings.media.saveLabel')} hint={t('settings.media.saveHint')} onSave={() => saveConfig(t('settings.media.saved'))} />
+      <SettingsSaveBar saving={saving} label={t('settings.media.saveLabel')} hint={t('settings.media.saveHint')} onSave={() => saveConfig('media', t('settings.media.saved'))} />
     </div>
   );
 }

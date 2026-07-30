@@ -21,6 +21,9 @@ interface LibraryHeaderProps {
   searchValue: string;
   searchInputRef: React.RefObject<HTMLInputElement>;
   externalSessionActive: boolean;
+  // 外部库传输是纯管理员功能（会话接口本身也已收为管理员专属）。
+  // 给普通用户显示这个入口只会让他们点进去吃 403。
+  canUseExternal: boolean;
   viewMode: ViewMode;
   onSearchChange: (value: string) => void;
   onToggleSelectionMode: () => void;
@@ -43,6 +46,7 @@ export function LibraryHeader({
   searchValue,
   searchInputRef,
   externalSessionActive,
+  canUseExternal,
   viewMode,
   onSearchChange,
   onToggleSelectionMode,
@@ -84,6 +88,7 @@ export function LibraryHeader({
               /
             </kbd>
           </div>
+          {canUseExternal && (
           <button
             onClick={onOpenExternal}
             className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors ${
@@ -96,6 +101,7 @@ export function LibraryHeader({
             <HardDrive className="h-4 w-4" />
             <span className="hidden sm:inline">{t('home.external.title')}</span>
           </button>
+          )}
           {hasSeries && (
             <button
               onClick={() => navigate(`/libraries/${libraryId}/franchise-graph`)}

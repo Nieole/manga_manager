@@ -90,9 +90,11 @@ type MyAnimeListProvider struct {
 func NewMyAnimeListProvider(clientID string) *MyAnimeListProvider {
 	return &MyAnimeListProvider{
 		clientID: clientID,
-		httpClient: &http.Client{
+		// 出站请求经进程级并发闸门（见 provider_budget.go）：多个刮削任务可以同时在跑，
+		// 每个都各自 new 一个 Provider，不在这里收口就会把对同一数据源的请求速率成倍放大。
+		httpClient: withProviderBudget(&http.Client{
 			Timeout: 15 * time.Second,
-		},
+		}, "MyAnimeList"),
 	}
 }
 
@@ -148,7 +150,7 @@ func (m *MyAnimeListProvider) SearchMetadata(ctx context.Context, title string, 
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("myanimelist: request failed: %w", err)
+			return nil, 0, fmt.Errorf("myanimelist: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -180,8 +182,8 @@ func (m *MyAnimeListProvider) SearchMetadata(ctx context.Context, title string, 
 			continue
 		}
 
-		slog.Error("MyAnimeList API error", "status", status, "body", string(respBody))
-		return nil, 0, fmt.Errorf("myanimelist: API returned status %d: %s", status, string(respBody))
+		slog.Error("MyAnimeList API error", "status", status, "body", truncateUpstreamBody(respBody))
+		return nil, 0, fmt.Errorf("myanimelist: API returned status %d: %s", status, truncateUpstreamBody(respBody))
 	}
 
 	if len(result.Data) == 0 {

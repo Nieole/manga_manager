@@ -119,7 +119,15 @@ type KOReaderMatchMethodItem struct {
 }
 
 type KOReaderDeviceConflictItem struct {
-	ID            int64   `json:"id"`
+	// ID 是 "<来源表>:<主键>" 形式的复合标识，只用于前端 key，不是任何接口的入参。
+	//
+	// 此前它是一个裸整数，而这个列表是 koreader_progress 与 koreader_sync_events 的
+	// UNION ALL——两张表各有独立的 AUTOINCREMENT、都从 1 开始，同一个 id 同时是两边的
+	// 合法主键。前端把它当进度主键传给「重置进度」，删掉的就是另一台设备的阅读进度。
+	ID          string `json:"id"`
+	SourceTable string `json:"source_table"`
+	// ProgressID 只在这一行确实对应一条进度记录时才有值；「重置进度」只能用它。
+	ProgressID    *int64  `json:"progress_id,omitempty"`
 	Type          string  `json:"type"`
 	Severity      string  `json:"severity"`
 	Username      string  `json:"username"`
@@ -297,7 +305,8 @@ func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http
 
 	for _, conflict := range conflicts {
 		item := KOReaderDeviceConflictItem{
-			ID:            conflict.ID,
+			ID:            fmt.Sprintf("%s:%d", conflict.SourceTable, conflict.SourceID),
+			SourceTable:   conflict.SourceTable,
 			Type:          conflict.Type,
 			Severity:      conflict.Severity,
 			Username:      conflict.Username,
@@ -311,6 +320,10 @@ func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http
 			Percentage:    conflict.Percentage,
 			UpdatedAt:     conflict.UpdatedAt.Format(time.RFC3339),
 			Suggestion:    koreaderConflictSuggestion(requestLocale(r), conflict, cfg),
+		}
+		if conflict.ProgressID.Valid {
+			progressID := conflict.ProgressID.Int64
+			item.ProgressID = &progressID
 		}
 		if conflict.BookID.Valid {
 			bookID := conflict.BookID.Int64
@@ -676,110 +689,110 @@ func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Re
 func (c *Controller) launchRebuildBookHashesTask() error {
 	key := "rebuild_book_hashes"
 	cfg := c.currentConfig()
-	if !c.startPausableCancelableTaskMsg(key, "rebuild_book_hashes", "task.msg.koreader_rebuild_hashes.start", nil, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(key, "rebuild_book_hashes", "task.msg.koreader_rebuild_hashes.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
-	c.setTaskMetadata(key, map[string]string{
+	c.taskEngine.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "")
-	c.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.newTaskContext(key)
+	c.taskEngine.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(key, func() {
 		defer cleanupCancel()
 		updated, total, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {
-			c.updateTaskDetailsMsg(key, current, total, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
+			c.taskEngine.updateTaskDetailsMsg(key, current, total, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
 				"processed_books": int64(current),
 			}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(key, "cancelled", "task.msg.koreader_rebuild_hashes.cancelled", nil)
+			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.koreader_rebuild_hashes.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg(key, "task.msg.koreader_rebuild_hashes.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(key, "task.msg.koreader_rebuild_hashes.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg(key, "task.msg.koreader_rebuild_hashes.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		c.taskEngine.finishTaskMsg(key, "task.msg.koreader_rebuild_hashes.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return nil
 }
 
 func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	key := "reconcile_koreader_progress"
-	if !c.startPausableCancelableTaskMsg(key, "reconcile_koreader_progress", "task.msg.reconcile_koreader_progress.start", nil, 0) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(key, "reconcile_koreader_progress", "task.msg.reconcile_koreader_progress.start", nil, 0) {
 		return errTaskAlreadyRunning
 	}
 	cfg := c.currentConfig()
-	c.setTaskMetadata(key, map[string]string{
+	c.taskEngine.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "")
-	taskCtx, cleanupCancel := c.newTaskContext(key)
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(key, func() {
 		defer cleanupCancel()
 		updated, total, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, _ string) {
-			c.updateTaskDetailsMsg(key, current, total, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{
+			c.taskEngine.updateTaskDetailsMsg(key, current, total, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{
 				"processed_progress": int64(current),
 			}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(key, "cancelled", "task.msg.reconcile_koreader_progress.cancelled", nil)
+			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.reconcile_koreader_progress.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg(key, "task.msg.reconcile_koreader_progress.failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(key, "task.msg.reconcile_koreader_progress.failed", nil, err.Error())
 			return
 		}
-		c.finishTaskMsg(key, "task.msg.reconcile_koreader_progress.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		c.taskEngine.finishTaskMsg(key, "task.msg.reconcile_koreader_progress.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
 	})
 	return nil
 }
 
 func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	key := "refresh_koreader_matching"
-	if !c.startPausableCancelableTaskMsg(key, "refresh_koreader_matching", "task.msg.refresh_koreader_matching.start", nil, 2) {
+	if !c.taskEngine.startPausableCancelableTaskMsg(key, "refresh_koreader_matching", "task.msg.refresh_koreader_matching.start", nil, 2) {
 		return errTaskAlreadyRunning
 	}
 	cfg := c.currentConfig()
-	c.setTaskMetadata(key, map[string]string{
+	c.taskEngine.setTaskMetadata(key, map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
 		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
 	}, "")
-	c.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.newTaskContext(key)
+	c.taskEngine.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
+	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(key, func() {
 		defer cleanupCancel()
-		c.updateTaskDetailsMsg(key, 0, 2, "task.msg.refresh_koreader_matching.rebuild_start", nil, "hashing", "", nil, nil)
+		c.taskEngine.updateTaskDetailsMsg(key, 0, 2, "task.msg.refresh_koreader_matching.rebuild_start", nil, "hashing", "", nil, nil)
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {
-			c.updateTaskDetailsMsg(key, 0, 2, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{"processed_books": int64(current)}, nil)
+			c.taskEngine.updateTaskDetailsMsg(key, 0, 2, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{"processed_books": int64(current)}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
+			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.rebuild_failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.rebuild_failed", nil, err.Error())
 			return
 		}
 
-		c.updateTaskDetailsMsg(key, 1, 2, "task.msg.refresh_koreader_matching.reconcile_start", map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)}, "reconciling_progress", "", nil, nil)
+		c.taskEngine.updateTaskDetailsMsg(key, 1, 2, "task.msg.refresh_koreader_matching.reconcile_start", map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)}, "reconciling_progress", "", nil, nil)
 		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, _ string) {
-			c.updateTaskDetailsMsg(key, 1, 2, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{"processed_progress": int64(current)}, nil)
+			c.taskEngine.updateTaskDetailsMsg(key, 1, 2, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{"processed_progress": int64(current)}, nil)
 		})
 		if errors.Is(err, context.Canceled) {
-			c.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
+			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
 			return
 		}
 		if err != nil {
-			c.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.reconcile_failed", nil, err.Error())
+			c.taskEngine.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.reconcile_failed", nil, err.Error())
 			return
 		}
 
-		c.finishTaskMsg(key, "task.msg.refresh_koreader_matching.complete", map[string]string{"updatedBooks": strconv.Itoa(updatedBooks), "totalBooks": strconv.Itoa(totalBooks), "updatedProgress": strconv.Itoa(updatedProgress), "totalProgress": strconv.Itoa(totalProgress)})
+		c.taskEngine.finishTaskMsg(key, "task.msg.refresh_koreader_matching.complete", map[string]string{"updatedBooks": strconv.Itoa(updatedBooks), "totalBooks": strconv.Itoa(totalBooks), "updatedProgress": strconv.Itoa(updatedProgress), "totalProgress": strconv.Itoa(totalProgress)})
 	})
 	return nil
 }
@@ -850,7 +863,7 @@ func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
 	})
 	slog.Info("KOReader self-registration succeeded",
 		"username", account.Username,
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 	)
 	writeKOReaderJSON(w, r, http.StatusCreated, map[string]string{"username": account.Username})
 }
@@ -859,7 +872,7 @@ func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
 		slog.Warn("KOReader auth request rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
-			"client_ip", requestClientIP(r),
+			"client_ip", c.clientIP(r),
 			"user_agent", r.UserAgent(),
 		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
@@ -869,7 +882,7 @@ func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	slog.Info("KOReader auth request received",
 		"username", creds.Username,
 		"client_key_prefix", authKeyPreview(creds.Key),
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 		"user_agent", r.UserAgent(),
 		"accept", r.Header.Get("Accept"),
 	)
@@ -886,7 +899,7 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 	if !c.currentConfig().KOReader.Enabled {
 		slog.Warn("KOReader progress push rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
-			"client_ip", requestClientIP(r),
+			"client_ip", c.clientIP(r),
 			"user_agent", r.UserAgent(),
 		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
@@ -905,7 +918,7 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 		"document", strings.TrimSpace(payload.Document),
 		"device", strings.TrimSpace(payload.Device),
 		"device_id", strings.TrimSpace(payload.DeviceID),
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 	)
 	result, err := c.koreader.SaveProgress(r.Context(), creds, payload)
 	if err != nil {
@@ -925,7 +938,7 @@ func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request)
 		slog.Warn("KOReader progress pull rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
 			"document", chi.URLParam(r, "document"),
-			"client_ip", requestClientIP(r),
+			"client_ip", c.clientIP(r),
 			"user_agent", r.UserAgent(),
 		)
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
@@ -937,7 +950,7 @@ func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request)
 		"username", creds.Username,
 		"client_key_prefix", authKeyPreview(creds.Key),
 		"document", document,
-		"client_ip", requestClientIP(r),
+		"client_ip", c.clientIP(r),
 		"user_agent", r.UserAgent(),
 	)
 	record, err := c.koreader.GetProgress(r.Context(), creds, document)
@@ -1019,24 +1032,6 @@ func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Cred
 		"message", message,
 		"client_key_prefix", authKeyPreview(creds.Key),
 	)
-}
-
-func requestClientIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
-		value := strings.TrimSpace(r.Header.Get(header))
-		if value == "" {
-			continue
-		}
-		if header == "X-Forwarded-For" && strings.Contains(value, ",") {
-			parts := strings.Split(value, ",")
-			return strings.TrimSpace(parts[0])
-		}
-		return value
-	}
-	return r.RemoteAddr
 }
 
 func authKeyPreview(value string) string {

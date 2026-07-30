@@ -224,7 +224,7 @@ func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) 
 
 // logReadingActivity 记录当日阅读活动：全局表始终写（向后兼容 / uid==0），uid>0 时同时写每用户表（供热力图/连续天数/回顾）。
 func (c *Controller) logReadingActivity(ctx context.Context, uid, bookID, pages int64) {
-	if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: pages}); err != nil {
+	if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: pages, Date: database.ActivityDayKey(time.Now())}); err != nil {
 		slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
 	}
 	if uid > 0 {
@@ -450,7 +450,11 @@ func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	items, err := c.store.ListReadingBookmarks(r.Context(), bookID)
+	// 书签按用户隔离：此前表里没有 user_id，多用户之间可互读、覆盖、删除对方的书签与私人笔记。
+	items, err := c.store.ListReadingBookmarks(r.Context(), database.ListReadingBookmarksParams{
+		UserID: c.currentUserID(r),
+		BookID: bookID,
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load reading bookmarks")
 		return
@@ -488,6 +492,7 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 	}
 
 	item, err := c.store.UpsertReadingBookmark(r.Context(), database.UpsertReadingBookmarkParams{
+		UserID: c.currentUserID(r),
 		BookID: bookID,
 		Page:   page,
 		Note:   strings.TrimSpace(req.Note),
@@ -512,6 +517,7 @@ func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Reques
 	}
 	affected, err := c.store.DeleteReadingBookmark(r.Context(), database.DeleteReadingBookmarkParams{
 		ID:     bookmarkID,
+		UserID: c.currentUserID(r),
 		BookID: bookID,
 	})
 	if err != nil {

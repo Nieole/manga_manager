@@ -5,6 +5,9 @@ on:
     branches:
       - main
   pull_request:
+  # 供 release.yml 复用：发布前必须先跑完整的 lint / 测试 / 漏洞扫描 / 契约漂移门禁，
+  # 否则「只要打了 tag 就直接构建并发布二进制」——CI 的所有把关对发布物一律失效。
+  workflow_call:
 
 permissions:
   contents: read
@@ -25,16 +28,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "1.25.x"
           cache: true
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "24"
           cache: npm
@@ -62,7 +65,7 @@ jobs:
       - name: Lint Go (golangci-lint)
         if: matrix.os == 'ubuntu-latest'
         # golangci-lint v2 requires golangci-lint-action v7 (v6 only supports v1).
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
         with:
           version: v2.12.2
 
@@ -72,7 +75,7 @@ jobs:
         env:
           GOTOOLCHAIN: auto
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
 
       - name: Run Go tests
@@ -91,7 +94,14 @@ jobs:
         run: |
           go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
           sqlc generate
-          git diff --exit-code -- internal/database
+          # 用 git status 而非 git diff：后者看不见新生成的**未跟踪**文件，
+          # 新增 query 却漏提交产物时会被静默放行。
+          if [[ -n "$(git status --porcelain -- internal/database)" ]]; then
+            echo "::error::sqlc 产物与仓库不一致，请在本地跑 sqlc generate 后提交"
+            git status --porcelain -- internal/database
+            git diff -- internal/database
+            exit 1
+          fi
         # sqlc 在 stderr 输出的 "mismatched input" 为非致命诊断，Linux 下退出码 0；
         # 若生成产物与仓库不一致（drift）则 git diff 失败，CI 报错。
 
@@ -101,7 +111,11 @@ jobs:
         # 若源结构体改了却没重新生成，git diff 失败、CI 报错，防止手写/生成类型与后端漂移。
         run: |
           go run ./cmd/tsgen
-          git diff --exit-code -- web/src/api/generated.ts
+          if [[ -n "$(git status --porcelain -- web/src/api/generated.ts)" ]]; then
+            echo "::error::生成的 TS 契约与仓库不一致，请在本地跑 go run ./cmd/tsgen 后提交"
+            git diff -- web/src/api/generated.ts
+            exit 1
+          fi
 
       - name: Verify server build
         # WebP encoding (chai2010/webp) requires CGO; make it explicit rather than relying on the

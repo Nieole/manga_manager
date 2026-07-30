@@ -318,3 +318,80 @@ func TestAutoCropImageKeepsTinyImages(t *testing.T) {
 		t.Fatalf("tiny image should be returned unchanged, got %+v", got.Bounds())
 	}
 }
+
+// TestProcessImageRejectsUnsafeTargetDimensions 锁住输出画布的尺寸闸门。
+//
+// 解码侧的 maxDecodePixels 只约束「源图有多大」，管不住「要输出多大」——目标画布由调用方
+// 的 Width/Height 决定。负值经 uint() 转换会回绕成天文数字，超大值会让 resize 直接申请
+// 数 GB 缓冲，任一都能让单次请求打爆进程。
+func TestProcessImageRejectsUnsafeTargetDimensions(t *testing.T) {
+	src := makeTestPNG(t, 8, 8)
+
+	cases := []struct {
+		name          string
+		width, height int
+	}{
+		{"negative width wraps around on uint conversion", -1, 0},
+		{"negative height wraps around on uint conversion", 0, -1},
+		{"width beyond single-side limit", MaxTargetDimension + 1, 0},
+		{"height beyond single-side limit", 0, MaxTargetDimension + 1},
+		{"area beyond budget despite legal sides", MaxTargetDimension, MaxTargetDimension},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: tc.width, Height: tc.height}); err == nil {
+				t.Fatalf("expected ProcessImage to reject %dx%d", tc.width, tc.height)
+			}
+		})
+	}
+}
+
+func TestProcessImageAcceptsReasonableTargetDimensions(t *testing.T) {
+	src := makeTestPNG(t, 8, 8)
+	if _, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 4, Height: 4}); err != nil {
+		t.Fatalf("expected ordinary resize to succeed, got %v", err)
+	}
+}
+
+func TestValidateTargetDimensionsAllowsUnspecified(t *testing.T) {
+	if err := ValidateTargetDimensions(0, 0); err != nil {
+		t.Fatalf("expected 0x0 (unspecified) to be allowed, got %v", err)
+	}
+}
+
+// TestNormalizeWaifu2xParams 锁住 AI 放大参数的白名单。
+//
+// 这三个值来自 HTTP 查询串，Waifu2xFormat 会被拼进沙盒输出路径
+// （filepath.Join(sandboxDir, "out."+format)）与子进程 argv，未归一化时
+// "../../../tmp/x" 可让引擎把文件写到沙盒之外。
+func TestNormalizeWaifu2xParams(t *testing.T) {
+	formatCases := map[string]string{
+		"":                  "webp",
+		"webp":              "webp",
+		"PNG":               "png",
+		"jpeg":              "jpg",
+		"jpg":               "jpg",
+		"../../../tmp/evil": "webp",
+		"png/../../etc":     "webp",
+		"exe":               "webp",
+	}
+	for in, want := range formatCases {
+		if got := normalizeWaifu2xFormat(in); got != want {
+			t.Fatalf("normalizeWaifu2xFormat(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	scaleCases := map[int]int{0: 2, 1: 1, 2: 2, 3: 2, 4: 4, 8: 2, -1: 2, 99999: 2}
+	for in, want := range scaleCases {
+		if got := normalizeWaifu2xScale(in); got != want {
+			t.Fatalf("normalizeWaifu2xScale(%d) = %d, want %d", in, got, want)
+		}
+	}
+
+	noiseCases := map[int]int{-5: -1, -1: -1, 0: 0, 3: 3, 99: 3}
+	for in, want := range noiseCases {
+		if got := normalizeWaifu2xNoise(in); got != want {
+			t.Fatalf("normalizeWaifu2xNoise(%d) = %d, want %d", in, got, want)
+		}
+	}
+}

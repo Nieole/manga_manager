@@ -7,7 +7,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strings"
 )
 
@@ -107,13 +106,79 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 	return report, nil
 }
 
+// scopeKey 标识一个健康问题所归属的任务作用域。
+type scopeKey struct {
+	scope string
+	id    int64
+}
+
+// lastTaskKeysForScopes 批量取每个 (scope, scope_id) 下最近一次任务的 key。
+//
+// 用窗口函数在一条 SQL 里分组取最新，避免 N 次单行查询。
+// scopeKey 数量由调用方去重后传入，通常在几十到上千之间；这里按批切分占位符，
+// 免得撞上 SQLite 的变量数上限（32766）。
+func (s *SqlStore) lastTaskKeysForScopes(ctx context.Context, wanted map[scopeKey]struct{}) (map[scopeKey]string, error) {
+	latest := make(map[scopeKey]string, len(wanted))
+	if len(wanted) == 0 {
+		return latest, nil
+	}
+
+	keys := make([]scopeKey, 0, len(wanted))
+	for key := range wanted {
+		keys = append(keys, key)
+	}
+
+	// 每个 key 占 2 个占位符（scope + scope_id），留足余量按 400 个 key 一批。
+	const batchSize = 400
+	for start := 0; start < len(keys); start += batchSize {
+		end := min(start+batchSize, len(keys))
+		batch := keys[start:end]
+
+		conditions := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch)*2)
+		for _, key := range batch {
+			conditions = append(conditions, "(scope = ? AND scope_id = ?)")
+			args = append(args, key.scope, key.id)
+		}
+
+		query := `
+			SELECT scope, scope_id, key FROM (
+				SELECT scope, scope_id, key,
+					ROW_NUMBER() OVER (PARTITION BY scope, scope_id ORDER BY updated_at DESC) AS rn
+				FROM tasks
+				WHERE ` + strings.Join(conditions, " OR ") + `
+			) WHERE rn = 1`
+
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var (
+				scope   string
+				scopeID sql.NullInt64
+				taskKey string
+			)
+			if err := rows.Scan(&scope, &scopeID, &taskKey); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if !scopeID.Valid {
+				continue
+			}
+			latest[scopeKey{scope: scope, id: scopeID.Int64}] = taskKey
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return latest, nil
+}
+
 func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue) error {
 	if len(issues) == 0 {
 		return nil
-	}
-	type scopeKey struct {
-		scope string
-		id    int64
 	}
 	wanted := make(map[scopeKey]struct{})
 	for _, issue := range issues {
@@ -127,20 +192,14 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 	if len(wanted) == 0 {
 		return nil
 	}
-	latest := make(map[scopeKey]string, len(wanted))
-	for key := range wanted {
-		taskKey, err := s.Queries.GetLastTaskKeyForScope(ctx, GetLastTaskKeyForScopeParams{
-			Scope:   key.scope,
-			ScopeID: sql.NullInt64{Int64: key.id, Valid: true},
-		})
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		latest[key] = taskKey
+	// 一次查完，而不是每个 (scope, scope_id) 单独发一条。
+	// 健康报告一次最多带回上千条 issue，逐条单查会打出上千条单行 SQL——
+	// 光是往返开销就让 /api/health/report 变成秒级请求。
+	latest, err := s.lastTaskKeysForScopes(ctx, wanted)
+	if err != nil {
+		return err
 	}
+
 	for i := range issues {
 		issue := &issues[i]
 		if issue.SeriesID != nil {

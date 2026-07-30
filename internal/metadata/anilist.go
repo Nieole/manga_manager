@@ -128,9 +128,11 @@ type AniListProvider struct {
 func NewAniListProvider() *AniListProvider {
 	return &AniListProvider{
 		Endpoint: anilistEndpoint,
-		httpClient: &http.Client{
+		// 出站请求经进程级并发闸门（见 provider_budget.go）：多个刮削任务可以同时在跑，
+		// 每个都各自 new 一个 Provider，不在这里收口就会把对同一数据源的请求速率成倍放大。
+		httpClient: withProviderBudget(&http.Client{
 			Timeout: 15 * time.Second,
-		},
+		}, "AniList"),
 	}
 }
 
@@ -190,7 +192,7 @@ func (a *AniListProvider) SearchMetadata(ctx context.Context, title string, limi
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("anilist: request failed: %w", err)
+			return nil, 0, fmt.Errorf("anilist: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -223,7 +225,7 @@ func (a *AniListProvider) SearchMetadata(ctx context.Context, title string, limi
 		}
 
 		slog.Error("AniList API error", "status", status, "body", string(respBody), "url", a.Endpoint)
-		return nil, 0, fmt.Errorf("anilist: API returned status %d: %s", status, string(respBody))
+		return nil, 0, fmt.Errorf("anilist: API returned status %d: %s", status, truncateUpstreamBody(respBody))
 	}
 
 	if len(result.Errors) > 0 {

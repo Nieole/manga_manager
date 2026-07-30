@@ -6,11 +6,15 @@ package scanner
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"manga-manager/internal/config"
@@ -30,7 +34,22 @@ type FileWatcher struct {
 	// pendingCleanup: 检测到删除/重命名后按库排期，去抖后触发 CleanupLibrary 清除幽灵记录
 	pendingCleanup map[int64]time.Time
 	stopCh         chan struct{}
-	formats        []string
+	stopOnce       sync.Once
+	// formats 是**按库**的归档格式集（libraryID -> 集合）。
+	// 此前是一份全局列表，于是库级 scan_formats 在监听侧同样形同虚设。
+	formats map[int64]config.ScanFormatSet
+
+	// baseCtx 随 Stop 一起取消，watcher 派生的所有扫描/清理都挂在它下面。
+	// 此前这两处用的是 context.Background() 且以裸 goroutine 启动：既不可取消，
+	// 停机也不等待——优雅关闭返回之后它们仍在往一个即将关掉的 store 里写。
+	baseCtx    context.Context
+	cancelBase context.CancelFunc
+	// inFlight 追踪派生出去的扫描/清理，Stop 会等它们退出。
+	inFlight sync.WaitGroup
+
+	// scanLibrary / cleanupLibrary 供测试注入桩；生产留 nil 时走 fw.scanner。
+	scanLibrary    func(ctx context.Context, libraryID int64, rootPath string, force bool) error
+	cleanupLibrary func(ctx context.Context, libraryID int64) error
 }
 
 func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
@@ -38,42 +57,94 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &FileWatcher{
 		scanner:        s,
 		watcher:        w,
 		pending:        make(map[int64]time.Time),
+		formats:        make(map[int64]config.ScanFormatSet),
 		libs:           make(map[string]int64),
 		watched:        make(map[string]struct{}),
 		pendingCleanup: make(map[int64]time.Time),
 		stopCh:         make(chan struct{}),
-		formats: func() []string {
-			formats := make([]string, 0, len(config.SupportedScanFormats))
-			for _, item := range config.SupportedScanFormats {
-				formats = append(formats, "."+item)
-			}
-			return formats
-		}(),
+		baseCtx:        ctx,
+		cancelBase:     cancel,
 	}, nil
 }
 
+// pathUnderRoot 报告 child 是否位于 root 之内（含 child == root）。
+//
+// 此前用的是无分隔符的 strings.HasPrefix，于是 /data/manga2 的事件会被判成属于 /data/manga——
+// 两个前缀相同的兄弟目录库互相串台。事件循环与 handleRemoval 都是 `for ... range fw.libs` 后
+// 第一个命中就 break，而 Go 的 map 迭代顺序随机，所以受害的是哪个库每次都不一样：
+// 删除事件被记到错误的库上，真正该清理的库留下幽灵记录。
+//
+// 用 filepath.Rel 而不是「补一个分隔符再 HasPrefix」，是因为它顺带处理了 . 与 .. 的规范化；
+// 跨盘符（Windows 的 C: 与 D:）时 Rel 返回错误而非 ".."，这里按「不在其内」处理，正确。
+func pathUnderRoot(child, root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	absChild, err := filepath.Abs(child)
+	if err != nil {
+		absChild = filepath.Clean(child)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		absRoot = filepath.Clean(root)
+	}
+	if runtime.GOOS == "windows" {
+		// Windows 的文件系统大小写不敏感：C:\Data\Manga 与 c:\data\manga 是同一个目录。
+		absChild = strings.ToLower(absChild)
+		absRoot = strings.ToLower(absRoot)
+	}
+	if absChild == absRoot {
+		return true
+	}
+	rel, err := filepath.Rel(absRoot, absChild)
+	if err != nil {
+		return false // 跨盘符等无法表达相对关系的情形
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // WatchLibrary 开始监听指定库目录
-func (fw *FileWatcher) WatchLibrary(libraryID int64, path string) error {
+func (fw *FileWatcher) WatchLibrary(libraryID int64, path string, scanFormats string) error {
 	fw.mu.Lock()
 	fw.libs[path] = libraryID
+	fw.formats[libraryID] = config.NewScanFormatSet(scanFormats)
 	fw.mu.Unlock()
 
-	err := fw.watchRecursive(path)
-	if err != nil {
-		slog.Warn("Failed to watch library directory", "path", path, "error", err)
-	} else {
-		slog.Info("File watcher started for library", "library_id", libraryID, "path", path)
+	report := fw.watchRecursive(path)
+	switch {
+	case report.LimitReached:
+		slog.Error("File watcher hit the kernel watch limit; most of this library will not be monitored",
+			"library_id", libraryID, "path", path, "watched", report.Watched, "failed", report.Failed,
+			"hint", "raise fs.inotify.max_user_watches", "error", report.FirstErr)
+	case !report.OK():
+		slog.Warn("File watcher registered only part of the library",
+			"library_id", libraryID, "path", path,
+			"total", report.Total, "watched", report.Watched, "failed", report.Failed,
+			"unreadable_dirs", report.UnreadableDirs, "error", report.FirstErr)
+	default:
+		slog.Info("File watcher started for library", "library_id", libraryID, "path", path,
+			"watched", report.Watched, "symlink_dirs", report.SymlinkDirs)
 	}
-	return err
+	// 部分失败不再当作整体失败：能监听多少算多少，比整库不监听强得多。
+	// 只有一个目录都没能注册上才向调用方报错。
+	if report.Watched == 0 && report.AlreadyWatched == 0 && report.FirstErr != nil {
+		return report.FirstErr
+	}
+	return nil
 }
 
 // UnwatchLibrary 停止监听
 func (fw *FileWatcher) UnwatchLibrary(path string) {
 	fw.mu.Lock()
+	if libID, ok := fw.libs[path]; ok {
+		delete(fw.formats, libID) // 与 libs 配套清理，否则删库/改库路径会让 formats 泄漏
+	}
 	delete(fw.libs, path)
 	var toRemove []string
 	for watchedPath := range fw.watched {
@@ -101,10 +172,13 @@ func (fw *FileWatcher) handleRemoval(name string) {
 			delete(fw.watched, watchedPath)
 		}
 	}
+	// 对**所有**包含该路径的库排期，不是找到一个就 break。
+	// 嵌套库（一个库的根在另一个库之内）共享同一棵子树，两边都需要清理幽灵记录；
+	// 而 break 加上 map 的随机迭代顺序，等于随机挑一个库来清、另一个永远漏掉。
+	// CleanupLibrary 本身幂等且自带熔断，重复排期是安全的。
 	for libPath, libID := range fw.libs {
-		if strings.HasPrefix(name, libPath) {
+		if pathUnderRoot(name, libPath) {
 			fw.pendingCleanup[libID] = time.Now()
-			break
 		}
 	}
 	fw.mu.Unlock()
@@ -131,8 +205,9 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 				}
 				if event.Op&fsnotify.Create != 0 {
 					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-						if err := fw.watchRecursive(event.Name); err != nil {
-							slog.Warn("Failed to watch new subdirectory", "path", event.Name, "error", err)
+						if r := fw.watchRecursive(event.Name); r.FirstErr != nil {
+							slog.Warn("Failed to watch part of the new subdirectory",
+								"path", event.Name, "watched", r.Watched, "failed", r.Failed, "error", r.FirstErr)
 						}
 					}
 				}
@@ -146,25 +221,26 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 				}
 				// 检查是否是支持的漫画文件
 				ext := strings.ToLower(filepath.Ext(event.Name))
-				supported := false
-				for _, f := range fw.formats {
-					if ext == f {
-						supported = true
-						break
-					}
-				}
-				if !supported {
+				// 锁外的廉价预筛：先用全局白名单挡掉 .nfo/.jpg/编辑器临时文件这类绝大多数事件。
+				// 库级格式过滤放到下面定位库之后再做——若把它也挪到这里，每个无关事件都要抢一次
+				// fw.mu 并遍历全部库，而这是事件循环里唯一的全局锁，大库批量写入时会明显变热。
+				if !config.IsSupportedArchiveExtension(ext) {
 					continue
 				}
 
-				// 找到所属的库
+				// 找到所属的库，并按**该库**的 scan_formats 判定是否值得重扫。
+				// 同 handleRemoval：所有包含该文件的库都要排期（嵌套库共享子树）。
 				fw.mu.Lock()
 				for libPath, libID := range fw.libs {
-					if strings.HasPrefix(event.Name, libPath) {
-						fw.pending[libID] = time.Now()
-						slog.Debug("File change detected", "file", event.Name, "library_id", libID)
-						break
+					if !pathUnderRoot(event.Name, libPath) {
+						continue
 					}
+					// formats 里查不到（库刚被 Unwatch 的竞态）时取零值 -> fail-open，与扫描器同口径。
+					if !fw.formats[libID].Matches(event.Name) {
+						continue
+					}
+					fw.pending[libID] = time.Now()
+					slog.Debug("File change detected", "file", event.Name, "library_id", libID)
 				}
 				fw.mu.Unlock()
 
@@ -194,8 +270,19 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 							if publishEvent != nil {
 								publishEvent("hot_reload:")
 							}
+							fw.inFlight.Add(1)
 							go func(id int64, path string) {
-								if err := fw.scanner.ScanLibrary(context.Background(), id, path, false); err != nil {
+								defer fw.inFlight.Done()
+								err := fw.runScanLibrary(fw.baseCtx, id, path, false)
+								switch {
+								case errors.Is(err, context.Canceled):
+									// 停机取消，不是故障。
+
+								case errors.Is(err, ErrScanAlreadyRunning):
+									// 文件变更去抖后触发的扫描与在跑的扫描撞车属正常情况：
+									// 正在跑的那次本就会看到这批新文件，无需重试也不必报错。
+									slog.Info("Hot reload scan skipped, another scan is in progress", "library_id", id)
+								case err != nil:
 									slog.Error("Hot reload scan failed", "library_id", id, "error", err)
 								}
 							}(libID, libPath)
@@ -207,8 +294,10 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 				for libID, lastChange := range fw.pendingCleanup {
 					if now.Sub(lastChange) >= 5*time.Second {
 						delete(fw.pendingCleanup, libID)
+						fw.inFlight.Add(1)
 						go func(id int64) {
-							if err := fw.scanner.CleanupLibrary(context.Background(), id); err != nil {
+							defer fw.inFlight.Done()
+							if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
 								slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
 							}
 						}(libID)
@@ -220,37 +309,137 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 	}()
 }
 
-// Stop 停止文件监控
+// Stop 停止监听，取消并等待 watcher 派生的扫描/清理退出。
+//
+// Stop 返回代表「事件循环与本 watcher 派生的 ScanLibrary/CleanupLibrary 调用栈都已退出」。
+// **不包括** Scanner 的全局封面 worker 池——那是进程级共享的，取消后队列里的任务会
+// 迅速空转排干（runCoverJob 入口先等暂停闸），残留窗口最多是几个在飞的封面任务。
 func (fw *FileWatcher) Stop() {
-	close(fw.stopCh)
-	_ = fw.watcher.Close()
+	fw.stopOnce.Do(func() {
+		close(fw.stopCh)
+		fw.cancelBase()
+		_ = fw.watcher.Close()
+	})
+	fw.inFlight.Wait()
 }
 
-func (fw *FileWatcher) watchRecursive(root string) error {
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+// runScanLibrary / runCleanupLibrary 是可注入的间接层，生产走真实 scanner。
+func (fw *FileWatcher) runScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
+	if fw.scanLibrary != nil {
+		return fw.scanLibrary(ctx, libraryID, rootPath, force)
+	}
+	return fw.scanner.ScanLibrary(ctx, libraryID, rootPath, force)
+}
+
+func (fw *FileWatcher) runCleanupLibrary(ctx context.Context, libraryID int64) error {
+	if fw.cleanupLibrary != nil {
+		return fw.cleanupLibrary(ctx, libraryID)
+	}
+	return fw.scanner.CleanupLibrary(ctx, libraryID)
+}
+
+// WatchReport 汇报一次递归注册的结果。
+//
+// 记账契约（用例会钉住）：Total 是**遍历到的目录数**，每个目录恰好落进
+// Watched / AlreadyWatched / Failed 三者之一，三者之和恒等于 Total。
+// SymlinkDirs 与 UnreadableDirs 是正交的补充计数，不参与上面的划分。
+type WatchReport struct {
+	Total          int
+	Watched        int
+	AlreadyWatched int
+	Failed         int
+
+	// SymlinkDirs 记「指向目录的软链」。它不在 Total 里：filepath.WalkDir 用的是 lstat，
+	// 软链在它眼里不是目录，压根不会进入注册流程。单独记一笔只为让运维看得见
+	// ——fsnotify 也不跟进软链目标，这棵子树确实没被监听。它**不算故障**，
+	// 否则一个装饰性的软链就会让整库报「监听不完整」，所以不参与 OK()。
+	SymlinkDirs int
+	// UnreadableDirs 表示目录自身注册与否另说，但它的子目录没能枚举出来
+	// （权限/瞬时 IO），也就是这棵子树有遗漏。它与上面三项正交：这类目录在
+	// 前一次回调里已经被计过账了，不能重复划分。
+	UnreadableDirs int
+	// LimitReached 表示撞上了内核 watch 配额（Linux 的 fs.inotify.max_user_watches）。
+	// 这一条要单独拎出来：它不是某个目录的偶发问题，而是「从这里往后基本都会失败」，
+	// 运维动作也不同（调 sysctl，而不是查权限）。
+	LimitReached bool
+	// FirstErr 保留第一个失败原因，供调用方打日志时给出可诊断的样本。
+	FirstErr error
+}
+
+// OK 报告是否全量注册成功。软链目录不算失败（见字段注释）。
+func (r WatchReport) OK() bool {
+	return r.Failed == 0 && r.UnreadableDirs == 0 && !r.LimitReached
+}
+
+// watchRecursive 递归注册目录监听，**遇错继续**。
+//
+// 此前的实现把 WalkDir 的错误与 watcher.Add 的错误直接 return 出去，于是一个不可读的
+// 子目录（权限）或一次配额不足，会让 WalkDir 立刻中止——该目录之后的**整棵子树**
+// 静默失监，而唯一的调用方还只打了条 Warn。大库里这意味着用户以为开着热重载，
+// 实际上大半个库的改动永远不会被发现。
+//
+// 另一处更隐蔽：旧代码先把 path 记进 fw.watched，Add 失败才删。但事件循环里新建目录
+// 走的也是这个函数，`exists` 短路一旦命中就直接返回——所以只要有一瞬间记错了，
+// 那个目录就再也不会被重试注册。现在改成 **Add 成功之后才登记**。
+func (fw *FileWatcher) watchRecursive(root string) WatchReport {
+	var report WatchReport
+	fail := func(err error) {
+		report.Failed++
+		if report.FirstErr == nil {
+			report.FirstErr = err
+		}
+		if errors.Is(err, syscall.ENOSPC) {
+			// ENOSPC 在 inotify 语境下不是「磁盘满」，而是 watch 数触顶。
+			report.LimitReached = true
+		}
+	}
+
+	_ = walkDirFollowingSymlinks(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			if d == nil {
+				// 连根都 lstat 不了，这一趟什么也没遍历到。
+				report.Total++
+				fail(err)
+				return nil
+			}
+			// 走到这里意味着「目录本身访问过了（上一次回调已计过账），但子项枚举失败」。
+			// WalkDir 对同一个目录会先以 err==nil 回调一次、ReadDir 出错后再回调一次，
+			// 这里若再 Total++ 就会重复计数、破坏「四项之和 == Total」的契约。
+			report.UnreadableDirs++
+			if report.FirstErr == nil {
+				report.FirstErr = err
+			}
+			return filepath.SkipDir // 跳过这一棵，继续走兄弟目录
 		}
 		if !d.IsDir() {
 			return nil
 		}
+		report.Total++
+		// 软链目录是被 walkDirFollowingSymlinks 跟进来的（链接路径这一侧）。
+		// 单独记一笔：inotify/kqueue 注册的是链接解析后的真实目录，
+		// 事件名却挂在链接路径下，出问题时这个数字能省掉一轮排查。
+		if lst, lerr := os.Lstat(path); lerr == nil && lst.Mode()&os.ModeSymlink != 0 {
+			report.SymlinkDirs++
+		}
 
 		fw.mu.Lock()
 		_, exists := fw.watched[path]
-		if !exists {
-			fw.watched[path] = struct{}{}
-		}
 		fw.mu.Unlock()
 		if exists {
+			report.AlreadyWatched++
 			return nil
 		}
 
 		if err := fw.watcher.Add(path); err != nil {
-			fw.mu.Lock()
-			delete(fw.watched, path)
-			fw.mu.Unlock()
-			return err
+			fail(err)
+			// 不登记进 fw.watched：登记了就会被上面的 exists 短路永久跳过，再也没有重试机会。
+			return nil
 		}
+		fw.mu.Lock()
+		fw.watched[path] = struct{}{}
+		fw.mu.Unlock()
+		report.Watched++
 		return nil
 	})
+	return report
 }

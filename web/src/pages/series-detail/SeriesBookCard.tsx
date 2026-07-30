@@ -68,9 +68,13 @@ export function SeriesBookCard({
   const showProgress = book.page_count > 0 && readPage > 0;
   const showResumeBadge = readPage > 0 && !isFinished && book.page_count > 0;
 
-  const coverVersion = coverBust > 0 ? coverBust : book.updated_at ? new Date(book.updated_at).getTime() : 0;
+  // 只在**显式**重建封面后才加 ?v=（coverBust）。不再回落到 book.updated_at：
+  // 那一列会因为一堆与封面无关的写入而变（例如 KOReader 重建索引回填的身份指纹），
+  // 于是整库任一无关变更都会让所有封面 URL 失效、全部重下一遍。
+  // 常规刷新交给 HTTP 缓存：封面端点下发 private, max-age=0, must-revalidate
+  // 并带基于 cover_path + mtime + size 的弱 ETag，封面真变了浏览器自然会拿到新图。
   const coverSrc = book.cover_path?.Valid || coverBust > 0
-    ? `/api/covers/${book.id}${coverVersion ? `?v=${coverVersion}` : ''}`
+    ? `/api/covers/${book.id}${coverBust > 0 ? `?v=${coverBust}` : ''}`
     : null;
 
   return (

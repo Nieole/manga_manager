@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { apiClient } from '../../api/client';
+import { apiClient, isAxiosError } from '../../api/client';
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, PlugZap, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useSettings } from './SettingsContext';
@@ -63,7 +63,7 @@ interface ClientConnectionsResponse {
 
 export function SettingsConnectionsPage() {
   const { t } = useI18n();
-  const { config, setConfig, showToast } = useSettings();
+  const { config, saveProtocols, showToast } = useSettings();
   const [loading, setLoading] = useState(true);
   const [copying, setCopying] = useState<string | null>(null);
   const [savingProtocol, setSavingProtocol] = useState<'opds' | 'mihon' | null>(null);
@@ -156,18 +156,12 @@ export function SettingsConnectionsPage() {
 
   const setProtocolEnabled = async (protocol: 'opds' | 'mihon', enabled: boolean) => {
     if (!config) return;
-    const nextConfig = {
-      ...config,
-      protocols: {
-        opds: { enabled: config.protocols?.opds?.enabled ?? false },
-        mihon: { enabled: config.protocols?.mihon?.enabled ?? false },
-      },
-    };
-    nextConfig.protocols[protocol] = { enabled };
     setSavingProtocol(protocol);
     try {
-      const res = await apiClient.post('/api/system/config', nextConfig);
-      setConfig(res.data?.config || nextConfig);
+      // 走 context 的 saveProtocols：它以服务端快照为底只叠加 protocols。
+      // 这里此前自己拼 `{...config, protocols}` 再整份 POST，基底是活的草稿——
+      // 用户在别的分区改了没保存的东西会被这一下开关顺手写进后端。
+      await saveProtocols(protocol, enabled);
       showToast(
         t(enabled ? 'settings.connections.protocolEnabledToast' : 'settings.connections.protocolDisabledToast', {
           label: protocol === 'opds' ? 'OPDS' : 'Mihon',
@@ -177,7 +171,13 @@ export function SettingsConnectionsPage() {
       await loadConnections();
     } catch (error) {
       console.error(error);
-      showToast(t('settings.toast.configSaveFailed'), 'error');
+      // 422 单独归类：连接页没有任何字段级错误 UI，混进泛化的「保存失败」里
+      // 用户完全无从判断是配置不合法还是服务端出错。
+      if (isAxiosError(error) && error.response?.status === 422) {
+        showToast(t('settings.toast.configInvalid'), 'error');
+      } else {
+        showToast(t('settings.toast.configSaveFailed'), 'error');
+      }
     } finally {
       setSavingProtocol(null);
     }

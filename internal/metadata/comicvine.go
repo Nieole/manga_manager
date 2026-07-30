@@ -22,6 +22,10 @@ import (
 const (
 	comicvineMaxRetries = 3
 	comicvineBaseURL    = "https://comicvine.gamespot.com/api/search/"
+	// comicvineRetryMaxDelay 是单次退避的上限。缺了它，上游一个 Retry-After: 3600
+	// 就能让整个批量刮削任务在这里干等一小时——bangumi 侧本来有这层钳制，
+	// 这里在抄那段重试循环时漏掉了。
+	comicvineRetryMaxDelay = 30 * time.Second
 )
 
 // comicvineTagRegexp 用于剥离 description 字段中的 HTML 标签。
@@ -65,14 +69,27 @@ type comicvinePublisher struct {
 type ComicVineProvider struct {
 	apiKey     string
 	httpClient *http.Client
+	// baseURL 允许测试把请求指向本地 httptest 服务；为空时用官方端点。
+	// 这是让「密钥不外泄」「Key 失效要报错」这类性质可被端到端验证的最小接缝。
+	baseURL string
+}
+
+// endpoint 返回实际请求地址。
+func (c *ComicVineProvider) endpoint() string {
+	if c.baseURL != "" {
+		return c.baseURL
+	}
+	return comicvineBaseURL
 }
 
 func NewComicVineProvider(apiKey string) *ComicVineProvider {
 	return &ComicVineProvider{
 		apiKey: apiKey,
-		httpClient: &http.Client{
+		// 出站请求经进程级并发闸门（见 provider_budget.go）：多个刮削任务可以同时在跑，
+		// 每个都各自 new 一个 Provider，不在这里收口就会把对同一数据源的请求速率成倍放大。
+		httpClient: withProviderBudget(&http.Client{
 			Timeout: 15 * time.Second,
-		},
+		}, "Comic Vine"),
 	}
 }
 
@@ -103,7 +120,6 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 	}
 
 	query := url.Values{}
-	query.Set("api_key", c.apiKey)
 	query.Set("format", "json")
 	query.Set("resources", "volume")
 	query.Set("query", title)
@@ -111,17 +127,31 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 	query.Set("offset", fmt.Sprintf("%d", offset))
 	query.Set("field_list", "id,name,deck,description,image,count_of_issues,start_year,site_detail_url,publisher")
 
-	apiURL := comicvineBaseURL + "?" + query.Encode()
+	// safeURL 刻意**不含** api_key，是本函数里唯一可以进日志或错误串的地址；
+	// 凭据在 NewRequest 之后单独注入 req.URL.RawQuery。也就是说 req.URL 与 req.URL.String()
+	// 一律不得出现在 slog / fmt.Errorf 里（Do 失败时的 *url.Error 已由 sanitizeTransportError 兜住）。
+	//
+	// Comic Vine 只支持 query 传密钥，官方文档没有任何 header 认证方式，所以「改用请求头」这条路走不通；
+	// 能做的是把密钥的暴露面压到最小：不进日志、不进错误串、不随重定向外泄（见下方 Referer）。
+	encodedQuery := query.Encode()
+	safeURL := c.endpoint() + "?" + encodedQuery
 
 	slog.Info("Comic Vine search request", "query", title, "limit", limit, "offset", offset)
 
 	// 有限次指数退避重试：仅对 429 与 5xx 重试，尊重 Retry-After；退避可被 context 取消打断。
 	var result comicvineSearchResponse
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, safeURL, nil)
 		if err != nil {
-			return nil, 0, fmt.Errorf("comicvine: failed to create request: %w", err)
+			return nil, 0, fmt.Errorf("comicvine: failed to create request: %w", sanitizeTransportError(err))
 		}
+		// 密钥在这里才注入，且只存在于 req.URL 上（safeURL 保持干净，见上方注释）。
+		req.URL.RawQuery = encodedQuery + "&api_key=" + url.QueryEscape(c.apiKey)
+		// 显式设置 Referer 是必须的：Go 的 http.Client 跟随重定向时，会把**上一跳的完整 URL**
+		// （含 ?api_key=...）自动填进 Referer，而 stripSensitiveHeaders 只清 Authorization/Cookie
+		// 一类，Referer 不在其中。上游或中间代理回一次跨站 302，明文密钥就进了第三方的访问日志。
+		// net/http 的 refererForURL 在请求已显式带 Referer 时会原样沿用——这里给它一个不含凭据的值。
+		req.Header.Set("Referer", c.endpoint())
 		// Comic Vine 会拒绝空 User-Agent，必须显式设置。
 		req.Header.Set("User-Agent", "MangaManager/1.0 (https://github.com/manga-manager)")
 		req.Header.Set("Accept", "application/json")
@@ -131,7 +161,7 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			if ctx.Err() != nil {
 				return nil, 0, ctx.Err()
 			}
-			return nil, 0, fmt.Errorf("comicvine: request failed: %w", err)
+			return nil, 0, fmt.Errorf("comicvine: request failed: %w", sanitizeTransportError(err))
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -153,6 +183,9 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			if wait <= 0 {
 				wait = backoffDelay(attempt)
 			}
+			if wait > comicvineRetryMaxDelay {
+				wait = comicvineRetryMaxDelay
+			}
 			slog.Warn("Comic Vine API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String())
 			if werr := sleepWithContext(ctx, wait); werr != nil {
 				return nil, 0, werr
@@ -160,8 +193,18 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			continue
 		}
 
-		slog.Error("Comic Vine API error", "status", status, "body", string(respBody))
-		return nil, 0, fmt.Errorf("comicvine: API returned status %d: %s", status, string(respBody))
+		// 上游网关的错误页常把「被请求的 URI」原样回显，而这段串按 errors.go 的约定会写进
+		// HTTP 响应体交给用户看——不脱敏就等于把密钥从后端搬到了前端。
+		body := redactSecret(truncateUpstreamBody(respBody), c.apiKey)
+		slog.Error("Comic Vine API error", "status", status, "body", body)
+		return nil, 0, fmt.Errorf("comicvine: API returned status %d: %s", status, body)
+	}
+
+	// Comic Vine 对「Key 失效 / 配额耗尽 / 参数非法」一律回 HTTP 200，把真正的失败写在
+	// 响应体的 error 字段里（成功时为 "OK"）。此前这个字段声明了却从不读取，于是这些
+	// 故障全被当成「未找到匹配条目」——用户看到的是刮不到结果，而不是「该换 Key 了」。
+	if e := strings.TrimSpace(result.Error); e != "" && !strings.EqualFold(e, "OK") {
+		return nil, 0, fmt.Errorf("comicvine: API error: %s", e)
 	}
 
 	if len(result.Results) == 0 {

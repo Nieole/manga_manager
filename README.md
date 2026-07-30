@@ -121,7 +121,8 @@ Manga Manager 是一款自托管的本地漫画 / 画集管理与阅读服务器
 > 🔐 **身份认证与安全**
 >
 > - 认证为**默认强制、无需额外开关**:一旦创建首个管理员,所有 Web UI 与 `/api` 接口(OPDS / Mihon 协议端点除外,见下)均要求登录会话。唯一例外是**全新数据库尚未完成初始化**的短暂窗口(此时尚无任何账户,接口处于直通状态),因此请在首次启动后**立即完成管理员创建**。
-> - 服务默认监听 `0.0.0.0:8080`,且**不内置 HTTPS,也没有登录失败限流 / 锁定**。对公网暴露时请置于反向代理(Nginx / Caddy 等)之后并启用 TLS(HTTPS 下会话 Cookie 会自动带 `Secure`)。
+> - 服务默认监听 `0.0.0.0:8080`,且**不内置 HTTPS**。对公网暴露时请置于反向代理(Nginx / Caddy 等)之后并启用 TLS。登录与协议 Basic 鉴权均有按客户端 IP 的失败限流与指数退避锁定。
+> - 反代终结 TLS 时,会话 Cookie 的 `Secure` 标志需要你二选一:把代理网段填进 `server.trusted_proxies`(同时也修好限流所依赖的真实客户端 IP),或直接设 `server.cookie_secure: always`。默认的 `auto` **不会**采信来自未登记对端的 `X-Forwarded-Proto`——那个头任何客户端都能伪造,无条件采信等于让客户端自己决定这个安全标志。
 > - 默认注入安全响应头(`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy`);当 CORS 来源配置为通配符时,自动关闭带凭据的跨域请求。
 > - OPDS / Mihon 协议端点默认关闭,启用后使用 **HTTP Basic**(站点用户名 + 口令)鉴权;KOReader 同步使用**独立的按账户同步密钥**。
 
@@ -177,7 +178,25 @@ Windows 下可使用 `build.ps1`(仅产出 Windows AMD64 单个二进制,使用�
 
 - `-config`(或环境变量 `MANGA_MANAGER_CONFIG`):配置文件路径,默认 `config.yaml`。
 - `-data-dir`(或环境变量 `MANGA_MANAGER_DATA_DIR`):数据目录,默认 `data`。
-- 配置文件支持基于 `fsnotify` 的热重载,可参考仓库内 `config.example.yaml`(该模板并非穷举所有配置项)。
+- 配置文件支持基于 `fsnotify` 的热重载,可参考仓库内 `config.example.yaml`(该模板并非穷举所有配置项)。热重载的三条行为值得知道:
+  - 编辑器保存产生的多个事件会在 **500ms** 内合并,只重载一次;
+  - 重载前先做**取值校验**(端口范围、枚举值、并发下限等),不通过则整份拒绝并保留当前配置,日志里会列出具体问题——此时磁盘配置与运行中的配置会分叉,请按日志修正后重新保存;
+  - 内容与当前配置一致时跳过重建(设置页保存本身会回弹一次文件事件)。
+
+### 5. 配置文件权限
+
+`config.yaml` 里存着 LLM API Key 与刮削器凭据的**明文**。本程序新生成或经设置页保存的配置一律按 `0600`(仅属主可读写)落盘。
+
+但两种情况下文件权限不受本程序控制,**多用户主机上建议手动收紧一次**:
+
+```bash
+chmod 600 config.yaml
+```
+
+- 升级前就存在的 `config.yaml`——只有在设置页保存过一次之后才会被收紧;
+- 由 `cp config.example.yaml config.yaml` 得到的文件——权限来自你的 `umask`。
+
+需要说明的是,这只覆盖配置文件。`data/manga.db` 仍按 `umask` 创建,其中存有账户口令的 bcrypt 摘要与会话 CSRF 令牌;若主机上有其他不受信任的本地用户,该文件同样需要单独收紧。
 
 ---
 

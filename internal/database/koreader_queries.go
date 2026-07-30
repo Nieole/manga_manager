@@ -505,16 +505,45 @@ func (q *Queries) ListBooksMissingQuickHashBatch(ctx context.Context, afterID in
 	return items, rows.Err()
 }
 
+// UpdateBookIdentity 回填 KOReader 匹配用的身份索引（内容哈希与路径指纹）。
+//
+// 刻意**不**刷新 books.updated_at：这四列是 KOReader 匹配用的内部索引，不构成
+// 「这本书变了」。此前无条件刷新的后果是，一次「重建 KOReader 索引」会把整库的
+// books.updated_at 推到同一秒——三条健康报告查询的 `ORDER BY b.updated_at DESC`
+// 第一排序键随之全部相等，排序退化成按 id；前端封面 URL 上的 ?v=updated_at
+// 也会整库失效，等于让所有人重下一遍全部封面。
+//
+// 语义因此收窄：books.updated_at 只表示书籍内容/元数据的变更，由 UpsertBookByPath
+// 与封面更新负责。看到这条 UPDATE 里没有 updated_at 时别当成漏写补回去。
+//
+// WHERE 里那串 `<> ”  AND COALESCE(col,”) <> ?` 是「真的有变化才写」的守卫：
+// 每次扫描都会调这个方法，而绝大多数调用的四个值与库里逐字相同，没有守卫就是
+// 一次次纯粹的写放大（还要连带触发 FTS 与索引维护）。
 func (q *Queries) UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error {
 	_, err := q.db.ExecContext(ctx, `
 		UPDATE books
 		SET file_hash = CASE WHEN ? = '' THEN file_hash ELSE ? END,
 		    quick_hash = CASE WHEN ? = '' THEN quick_hash ELSE ? END,
 		    path_fingerprint = CASE WHEN ? = '' THEN path_fingerprint ELSE ? END,
-		    path_fingerprint_no_ext = CASE WHEN ? = '' THEN path_fingerprint_no_ext ELSE ? END,
-		    updated_at = CURRENT_TIMESTAMP
+		    path_fingerprint_no_ext = CASE WHEN ? = '' THEN path_fingerprint_no_ext ELSE ? END
 		WHERE id = ?
-	`, arg.FileHash, arg.FileHash, arg.QuickHash, arg.QuickHash, arg.PathFingerprint, arg.PathFingerprint, arg.PathFingerprintNoExt, arg.PathFingerprintNoExt, arg.ID)
+		  AND (
+		       (? <> '' AND COALESCE(file_hash, '') <> ?)
+		    OR (? <> '' AND COALESCE(quick_hash, '') <> ?)
+		    OR (? <> '' AND COALESCE(path_fingerprint, '') <> ?)
+		    OR (? <> '' AND COALESCE(path_fingerprint_no_ext, '') <> ?)
+		  )
+	`,
+		arg.FileHash, arg.FileHash,
+		arg.QuickHash, arg.QuickHash,
+		arg.PathFingerprint, arg.PathFingerprint,
+		arg.PathFingerprintNoExt, arg.PathFingerprintNoExt,
+		arg.ID,
+		arg.FileHash, arg.FileHash,
+		arg.QuickHash, arg.QuickHash,
+		arg.PathFingerprint, arg.PathFingerprint,
+		arg.PathFingerprintNoExt, arg.PathFingerprintNoExt,
+	)
 	return err
 }
 
@@ -677,7 +706,9 @@ func (q *Queries) ListKOReaderDeviceConflicts(ctx context.Context, limit int) ([
 	}
 	rows, err := q.db.QueryContext(ctx, `
 		SELECT
-			p.id,
+			'koreader_progress' AS source_table,
+			p.id AS source_id,
+			p.id AS progress_id,
 			'unmatched_progress' AS type,
 			'warning' AS severity,
 			p.username,
@@ -694,7 +725,12 @@ func (q *Queries) ListKOReaderDeviceConflicts(ctx context.Context, limit int) ([
 		WHERE p.book_id IS NULL
 		UNION ALL
 		SELECT
-			e.id,
+			'koreader_sync_events' AS source_table,
+			e.id AS source_id,
+			-- 事件行只有在同 (username, document) 上真的存在一条进度时才有 progress_id。
+			-- 此前这里回的是 e.id，而两张表的自增序列各自从 1 开始，于是「重置进度」
+			-- 会拿一个事件主键去删同号的进度记录——删掉的是另一台设备的阅读进度。
+			p.id AS progress_id,
 			'sync_error' AS type,
 			CASE WHEN e.status LIKE 'auth_failed%' THEN 'error' ELSE 'warning' END AS severity,
 			e.username,
@@ -724,7 +760,9 @@ func (q *Queries) ListKOReaderDeviceConflicts(ctx context.Context, limit int) ([
 		var item KOReaderDeviceConflict
 		var updatedAt sql.NullString
 		if err := rows.Scan(
-			&item.ID,
+			&item.SourceTable,
+			&item.SourceID,
+			&item.ProgressID,
 			&item.Type,
 			&item.Severity,
 			&item.Username,

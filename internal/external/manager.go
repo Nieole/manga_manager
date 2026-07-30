@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -18,10 +19,55 @@ import (
 	"manga-manager/internal/database"
 )
 
+// Store 是本包真正需要的那三个查询。
+//
+// 刻意**不**用 database.Store（277 个方法）：不是为了「解耦」——参数与返回值仍是
+// database 包里 sqlc 生成的类型，import 边一分不减——而是为了让一类具体的性能回归
+// 在编译期就写不出来。传输规划曾经是逐 seriesID 一次 SELECT *，几百个系列就是几百次
+// 往返；现在窄接口里根本没有 ListBooksBySeries，想写回去得先改这个声明，
+// 而那一步会被 code review 看见。
+//
+// 注意这个接口里没有 ExecTx：交出 *Queries 就等于把 171 个方法一并交出去，
+// 收窄就成了纯粹的表演。本包不需要事务，正好可以名副其实。
+type Store interface {
+	GetLibrary(ctx context.Context, id int64) (database.Library, error)
+	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]database.ExternalLibraryBookRow, error)
+	ListExternalTransferBooksBySeries(ctx context.Context, seriesIDs []int64) ([]database.ListExternalTransferBooksBySeriesRow, error)
+}
+
 var (
 	ErrSessionNotFound = errors.New("external session not found")
 	ErrSessionNotReady = errors.New("external session not ready")
+	// ErrExternalPathInvalid 表示外部路径不是一个可用的绝对目录。
+	ErrExternalPathInvalid = errors.New("external path must be an absolute directory")
+	// ErrExternalPathInsideLibrary 表示外部路径与资料库根目录重叠。
+	// 往库内传输会让下一次扫描把这些副本收编成重复书籍，用户还得手动去重。
+	ErrExternalPathInsideLibrary = errors.New("external path overlaps the library root")
 )
+
+// pathsOverlap 报告两个路径是否有包含关系（含相等）。
+//
+// 与 scanner 的 pathUnderRoot 同口径：用 filepath.Rel 而不是补分隔符再 HasPrefix，
+// 顺带处理了 . 与 .. 的规范化；Windows 上文件系统大小写不敏感，先归一化再比。
+func pathsOverlap(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		a = strings.ToLower(a)
+		b = strings.ToLower(b)
+	}
+	if a == b {
+		return true
+	}
+	for _, pair := range [2][2]string{{a, b}, {b, a}} {
+		rel, err := filepath.Rel(pair[1], pair[0])
+		if err != nil {
+			continue
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
 
 type SessionSnapshot struct {
 	SessionID       string    `json:"session_id"`
@@ -89,13 +135,13 @@ type session struct {
 }
 
 type Manager struct {
-	store    database.Store
+	store    Store
 	ttl      time.Duration
 	mu       sync.RWMutex
 	sessions map[string]*session
 }
 
-func NewManager(store database.Store, ttl time.Duration) *Manager {
+func NewManager(store Store, ttl time.Duration) *Manager {
 	return &Manager{
 		store:    store,
 		ttl:      ttl,
@@ -109,12 +155,34 @@ func (m *Manager) CreateSession(ctx context.Context, libraryID int64, externalPa
 		return SessionSnapshot{}, err
 	}
 
+	// 必须是绝对路径。相对路径会被静默解释成**服务进程的工作目录**——用户以为传到了
+	// 外接盘，实际写进了服务的运行目录。filepath.Abs 帮不上忙：它只是把 "." 拼上 CWD
+	// 之后返回一个完全合法的目录，错误就此变得不可见。
+	if !filepath.IsAbs(externalPath) {
+		return SessionSnapshot{}, ErrExternalPathInvalid
+	}
+	externalPath = filepath.Clean(externalPath)
+
+	// 拒掉 POSIX 根：拿 "/" 当外部库会去遍历整个文件系统。
+	// VolumeName 的判断是为了放过 Windows 的 D:\ 与 \\server\share\——
+	// 「整块外接盘 / NAS 根目录当外部库」正是这个功能的头号用法，误杀它才是回归。
+	if filepath.Dir(externalPath) == externalPath && filepath.VolumeName(externalPath) == "" {
+		return SessionSnapshot{}, ErrExternalPathInvalid
+	}
+
 	info, err := os.Stat(externalPath)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
 	if !info.IsDir() {
 		return SessionSnapshot{}, fmt.Errorf("external path is not a directory")
+	}
+
+	// 外部路径与库根重叠时，传输产生的副本会被下一次扫描收编成重复书籍，用户还得手动去重。
+	// 注意这里只挡**本库**：external_path 指向另一个资料库根时后果一模一样，但那需要
+	// 拉全部库列表，留作后续（此处不假装已经全堵住）。
+	if pathsOverlap(externalPath, filepath.Clean(lib.Path)) {
+		return SessionSnapshot{}, ErrExternalPathInsideLibrary
 	}
 
 	now := time.Now()
@@ -356,35 +424,48 @@ func (m *Manager) PrepareTransfer(ctx context.Context, libraryID int64, sessionI
 	ignoreExtension := s.IgnoreExtension
 	m.mu.Unlock()
 
-	plan := TransferPlan{SeriesCount: len(seriesIDs)}
-	for _, seriesID := range seriesIDs {
-		books, err := m.store.ListBooksBySeries(ctx, seriesID)
+	// 先去重。此前直接 len(seriesIDs) 当 SeriesCount，循环里对每个元素无条件累加，
+	// 于是 series_ids:[7,7] 会把系列 7 的每本书规划两遍——missing_books 翻倍、
+	// Operations 里出现源与目标都相同的重复项，用户看到的数字和进度条分母都是错的。
+	unique := make([]int64, 0, len(seriesIDs))
+	seen := make(map[int64]struct{}, len(seriesIDs))
+	for _, id := range seriesIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	plan := TransferPlan{SeriesCount: len(unique)}
+	// 一次批量取齐所有系列的书。此前是逐 seriesID 一次 SELECT *（books 表 24 列、
+	// 含 summary 长文本），选中几百个系列就是几百次往返，而这段还要跑两遍（见 handler）。
+	books, err := m.store.ListExternalTransferBooksBySeries(ctx, unique)
+	if err != nil {
+		return TransferPlan{}, err
+	}
+	for _, book := range books {
+		if book.LibraryID != libraryID {
+			continue
+		}
+		matchKey, displayRel, err := relativePathKeys(libraryPath, book.Path, ignoreExtension)
 		if err != nil {
-			return TransferPlan{}, err
+			continue
 		}
-		for _, book := range books {
-			if book.LibraryID != libraryID {
-				continue
-			}
-			matchKey, displayRel, err := relativePathKeys(libraryPath, book.Path, ignoreExtension)
-			if err != nil {
-				continue
-			}
-			if _, ok := matchedKeys[matchKey]; ok {
-				plan.ExistingBooks++
-				continue
-			}
-			plan.MissingBooks++
-			plan.Operations = append(plan.Operations, TransferOperation{
-				BookID:       book.ID,
-				SeriesID:     book.SeriesID,
-				SeriesName:   book.Volume,
-				SourcePath:   book.Path,
-				Destination:  filepath.Join(externalPath, filepath.FromSlash(displayRel)),
-				RelativePath: displayRel,
-				MatchKey:     matchKey,
-			})
+		if _, ok := matchedKeys[matchKey]; ok {
+			plan.ExistingBooks++
+			continue
 		}
+		plan.MissingBooks++
+		plan.Operations = append(plan.Operations, TransferOperation{
+			BookID:       book.ID,
+			SeriesID:     book.SeriesID,
+			SeriesName:   book.Volume,
+			SourcePath:   book.Path,
+			Destination:  filepath.Join(externalPath, filepath.FromSlash(displayRel)),
+			RelativePath: displayRel,
+			MatchKey:     matchKey,
+		})
 	}
 	return plan, nil
 }

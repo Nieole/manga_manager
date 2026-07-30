@@ -103,8 +103,15 @@ func (c *Controller) deleteCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
-	if err := c.store.DeleteCollection(r.Context(), id); err != nil {
+	// 检查影响行数：不存在的资源返回 200 会让前端把「这个合集早就没了」当成删除成功，
+	// 列表刷新后它却还在（因为压根不是同一个 id），用户只会觉得功能时灵时不灵。
+	affected, err := c.store.DeleteCollection(r.Context(), id)
+	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete collection")
+		return
+	}
+	if affected == 0 {
+		jsonError(w, http.StatusNotFound, "Collection not found")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -127,8 +134,38 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
+	// 名称必填：此前不校验，一个不含 name 字段的 PUT（前端只想改描述时很自然就会这么发）
+	// 会把 Name 写成空串，合集在列表里变成一个没有名字的条目。
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		jsonError(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+	// collections.name 上没有数据库级唯一约束（重名由应用层判定），所以必须显式查一次。
+	// 与快照固化路径共用同一判定，保证「哪里都不许出现两个同名合集」。
+	current, err := c.store.GetStaticCollectionView(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Collection not found")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to load collection")
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(current.Name), name) {
+		conflict, err := c.collectionNameExists(r.Context(), name)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "Failed to check collection name")
+			return
+		}
+		if conflict {
+			jsonError(w, http.StatusConflict, "A collection with this name already exists")
+			return
+		}
+	}
+
 	if err := c.store.UpdateCollectionDetails(r.Context(), database.UpdateCollectionDetailsParams{
-		Name:        req.Name,
+		Name:        name,
 		Description: nullStringFromString(req.Description),
 		ID:          id,
 	}); err != nil {
@@ -182,15 +219,33 @@ func (c *Controller) addSeriesToCollection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// 数量上限：与智能合集快照口径一致，防止单个请求塞入任意多条。
+	if len(req.SeriesIDs) > maxCollectionBatchSize {
+		jsonError(w, http.StatusBadRequest, "Too many series in one request")
+		return
+	}
+
 	ctx := r.Context()
 	added := 0
-	for _, sid := range req.SeriesIDs {
-		if err := c.store.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
-			CollectionID: id,
-			SeriesID:     sid,
-		}); err == nil {
-			added++
+	// 整批放进一个事务：逐条独立写入时，中途失败会留下「加了一半」的合集，
+	// 而 added 计数又只统计「没报错」的次数——AddSeriesToCollection 用的是
+	// INSERT OR IGNORE，重复添加不报错也不插入，于是 added 把空操作也算成了成功。
+	err = c.store.ExecTx(ctx, func(q *database.Queries) error {
+		for _, sid := range req.SeriesIDs {
+			affected, err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
+				CollectionID: id,
+				SeriesID:     sid,
+			})
+			if err != nil {
+				return err
+			}
+			added += int(affected)
 		}
+		return nil
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to add series to collection")
+		return
 	}
 
 	_ = c.store.TouchCollection(ctx, id)
@@ -211,11 +266,16 @@ func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := c.store.RemoveSeriesFromCollection(r.Context(), database.RemoveSeriesFromCollectionParams{
+	affected, err := c.store.RemoveSeriesFromCollection(r.Context(), database.RemoveSeriesFromCollectionParams{
 		CollectionID: collectionID,
 		SeriesID:     seriesID,
-	}); err != nil {
+	})
+	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to remove series")
+		return
+	}
+	if affected == 0 {
+		jsonError(w, http.StatusNotFound, "Series is not in this collection")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "removed"})
@@ -502,7 +562,15 @@ func (c *Controller) deleteSeriesRelation(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid relation ID")
 		return
 	}
-	_ = c.store.DeleteSeriesRelation(r.Context(), relationID)
+	affected, err := c.store.DeleteSeriesRelation(r.Context(), relationID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to delete relation")
+		return
+	}
+	if affected == 0 {
+		jsonError(w, http.StatusNotFound, "Relation not found")
+		return
+	}
 
 	// 合并式调度 franchise 重建（去抖 + 登记到 backgroundWG）
 	c.scheduleFranchiseRebuild()

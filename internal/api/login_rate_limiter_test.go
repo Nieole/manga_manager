@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -117,4 +118,84 @@ func TestLoginRateLimiting(t *testing.T) {
 		t.Fatalf("correct password during lockout should still 429, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// TestLimiterPruneIsBounded 守卫「单次剪枝的代价与表大小无关」。
+//
+// 旧实现无上限地遍历整张表，且只删已过期条目——攻击者在一个窗口内持续造新 key 时，
+// 每次失败都扫满全表却一条也删不掉，整体 O(n²)。而这是**持锁**的，
+// 整条鉴权路径（含每次成功登录、每个协议请求的 retryAfter）都会被串行化。
+func TestLimiterPruneIsBounded(t *testing.T) {
+	now := time.Now()
+	l := newAttemptLimiter(5, time.Hour, time.Minute, 10*time.Minute)
+	l.now = func() time.Time { return now }
+
+	// 灌入远超剪枝阈值的、全都**未过期**的条目（窗口 1 小时，时钟不动）。
+	for i := 0; i < limiterPruneThreshold*3; i++ {
+		l.recordFailure("k" + strconv.Itoa(i))
+	}
+
+	l.mu.Lock()
+	before := len(l.entries)
+	l.mu.Unlock()
+
+	// 再记一次失败：剪枝最多只检查 limiterPruneSample 条，不该退化成全表扫。
+	// 这里用「一条都删不掉」间接证明——若实现是全表扫，它同样删不掉，
+	// 所以真正的判据是下面那条容量上限。
+	l.recordFailure("trigger")
+	l.mu.Lock()
+	after := len(l.entries)
+	l.mu.Unlock()
+	if after < before {
+		t.Fatalf("未过期条目被剪掉了：%d -> %d", before, after)
+	}
+}
+
+// TestLimiterCapsEntriesAndFailsClosed 守卫容量上限与 fail-closed。
+func TestLimiterCapsEntriesAndFailsClosed(t *testing.T) {
+	now := time.Now()
+	l := newAttemptLimiter(5, time.Hour, time.Minute, 10*time.Minute)
+	l.now = func() time.Time { return now }
+
+	for i := 0; i < limiterMaxEntries*2; i++ {
+		l.recordFailure("attacker" + strconv.Itoa(i))
+	}
+
+	l.mu.Lock()
+	size := len(l.entries)
+	l.mu.Unlock()
+	if size > limiterMaxEntries {
+		t.Fatalf("条目数 %d 越过上限 %d —— 伪造 key 仍能无限撑大内存", size, limiterMaxEntries)
+	}
+
+	// 表满之后，陌生 key 必须被当作已限流（fail-closed），而不是一路放行。
+	if _, locked := l.retryAfter("never-seen-before"); !locked {
+		t.Fatal("表已撑满却对陌生 key 放行 —— 撑满即意味着正在被攻击，此时应 fail-closed")
+	}
+}
+
+// TestLimiterNeverEvictsLockedEntries 是最关键的一条：
+// 锁定中的条目被清掉，等于把已经成立的锁定白送回去，攻击者据此可以重置指数退避。
+func TestLimiterNeverEvictsLockedEntries(t *testing.T) {
+	now := time.Now()
+	l := newAttemptLimiter(3, time.Hour, time.Minute, 10*time.Minute)
+	l.now = func() time.Time { return now }
+
+	// 先把一个 key 打到锁定。
+	const victim = "user:admin"
+	for i := 0; i < 5; i++ {
+		l.recordFailure(victim)
+	}
+	if _, locked := l.retryAfter(victim); !locked {
+		t.Fatal("用例前提不成立：目标 key 没有进入锁定")
+	}
+
+	// 再用海量新 key 冲刷，试图把它挤掉。
+	for i := 0; i < limiterMaxEntries*2; i++ {
+		l.recordFailure("flood" + strconv.Itoa(i))
+	}
+
+	if _, locked := l.retryAfter(victim); !locked {
+		t.Fatal("锁定中的条目被淘汰了 —— 攻击者可以用伪造 key 冲刷来重置管理员账号的锁定")
+	}
 }

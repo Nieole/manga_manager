@@ -117,15 +117,14 @@ func TestSetupRoutesEnforcesSession(t *testing.T) {
 	}
 }
 
-// TestGetSystemConfigMasksSecrets 验证配置回显对 LLM api_key 与 server.auth.token 脱敏，
+// TestGetSystemConfigMasksSecrets 验证配置回显对 LLM api_key 与刮削器凭据脱敏，
 // 且响应正文不含明文（对应 P0 的信息泄露修复）。
 func TestGetSystemConfigMasksSecrets(t *testing.T) {
 	c, _, _, _ := newTestController(t)
 
 	cfg := c.currentConfig()
 	cfg.LLM.APIKey = "sk-super-secret"
-	cfg.Server.Auth.Enabled = true
-	cfg.Server.Auth.Token = "topsecrettoken"
+	cfg.Scrapers.ComicVineAPIKey = "topsecrettoken"
 	c.config.Replace(&cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/config", nil)
@@ -142,8 +141,8 @@ func TestGetSystemConfigMasksSecrets(t *testing.T) {
 	if resp.Config.LLM.APIKey != config.SecretMask {
 		t.Fatalf("api_key not masked: %q", resp.Config.LLM.APIKey)
 	}
-	if resp.Config.Server.Auth.Token != config.SecretMask {
-		t.Fatalf("auth token not masked: %q", resp.Config.Server.Auth.Token)
+	if resp.Config.Scrapers.ComicVineAPIKey != config.SecretMask {
+		t.Fatalf("comicvine key not masked: %q", resp.Config.Scrapers.ComicVineAPIKey)
 	}
 	if bytes.Contains(rec.Body.Bytes(), []byte("sk-super-secret")) ||
 		bytes.Contains(rec.Body.Bytes(), []byte("topsecrettoken")) {

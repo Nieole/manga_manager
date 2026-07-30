@@ -206,7 +206,8 @@ func TestOPDSFeeds(t *testing.T) {
 			t.Fatalf("expected download + first-page + stream + thumbnail links, got %+v", entry.Links)
 		}
 		download := findOPDSLink(entry.Links, "http://opds-spec.org/acquisition")
-		if download == nil || download.Href != "/api/books/"+strconv.FormatInt(book.ID, 10)+"/file" {
+		// 下载链接必须落在 /opds/v1.2 组内（受 Basic 鉴权保护），而不是只认 session cookie 的 /api。
+		if download == nil || download.Href != opdsResourceBase+"/books/"+strconv.FormatInt(book.ID, 10)+"/file" {
 			t.Fatalf("expected whole-book download acquisition link, got %+v", entry.Links)
 		}
 		if download.Type != "application/vnd.comicbook+zip" {
@@ -588,5 +589,60 @@ func TestOPDSRootFeedLocalization(t *testing.T) {
 	}
 	if hasEntryTitle(en, "最近添加") {
 		t.Fatal("did not expect Chinese entry title with en-US locale")
+	}
+}
+
+// TestOPDSFeedLinksStayInsideProtocolScope 锁住阅读协议的鉴权自洽性。
+//
+// /api 组由 authGate 守卫、只认 session cookie，而 OPDS 客户端带的是 HTTP Basic 凭据。
+// feed 里只要有一条链接指向 /api，真实阅读器请求过去就是 401——此前整卷下载、封面、
+// 缩略图全部指向 /api，也就是说这三样在任何 OPDS 客户端上都不可用。
+// 唯一允许的例外是 /api/mihon/v1（authGate 显式放行 + 自带 Basic 鉴权）。
+func TestOPDSFeedLinksStayInsideProtocolScope(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, book := seedBookFixture(t, store, rootDir, "Lib", "Series Alpha", "alpha 01.cbz", 12)
+
+	feeds := map[string]func(http.ResponseWriter, *http.Request){
+		"series books": controller.opdsSeriesBooks,
+		"recent added": controller.opdsRecentAdded,
+		"libraries":    controller.opdsLibraries,
+	}
+	params := map[string]map[string]string{
+		"series books": {"seriesId": strconv.FormatInt(series.ID, 10)},
+	}
+
+	for name, handler := range feeds {
+		t.Run(name, func(t *testing.T) {
+			req := requestWithRouteParams(http.MethodGet, "/opds/v1.2/x", nil, params[name])
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("feed %s want 200 got %d: %s", name, rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			for _, line := range strings.Split(body, "\n") {
+				if !strings.Contains(line, `href="/api/`) {
+					continue
+				}
+				if strings.Contains(line, `href="/api/mihon/v1`) {
+					continue // Mihon 组自带 Basic 鉴权，是合法例外
+				}
+				t.Fatalf("feed %s leaks a cookie-only /api link: %s", name, strings.TrimSpace(line))
+			}
+		})
+	}
+	_ = book
+}
+
+// TestOPDSSeriesBooksMissingSeriesReturns404 确认不存在的系列不再返回 200 + 空 feed。
+func TestOPDSSeriesBooksMissingSeriesReturns404(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	req := requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/999999", nil, "seriesId", "999999")
+	rec := httptest.NewRecorder()
+	controller.opdsSeriesBooks(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing series should return 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }

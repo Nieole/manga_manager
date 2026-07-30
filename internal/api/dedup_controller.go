@@ -66,6 +66,10 @@ func (c *Controller) removeBooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	removed, trashed, failed := 0, 0, 0
+	// 记录受影响的系列：删除会改变系列组成，而 series.book_count/total_pages 与每用户的
+	// user_series_progress 都是派生数据，不重算就会长期偏差（进度条与「已完成」计数出错）。
+	// 按系列去重后统一刷新，避免同系列被重复触发 N 次全量重算。
+	affectedSeries := make(map[int64]struct{})
 	for _, id := range req.BookIDs {
 		book, err := c.store.GetBook(r.Context(), id)
 		if err != nil {
@@ -86,7 +90,14 @@ func (c *Controller) removeBooks(w http.ResponseWriter, r *http.Request) {
 			failed++
 			continue
 		}
+		affectedSeries[book.SeriesID] = struct{}{}
 		removed++
+	}
+
+	for seriesID := range affectedSeries {
+		if err := c.store.RefreshSeriesDerivedData(r.Context(), seriesID); err != nil {
+			slog.Warn("refresh series derived data after removal failed", "series_id", seriesID, "error", err)
+		}
 	}
 
 	c.invalidateDashboardStatsCache("dedup_remove")
@@ -119,5 +130,12 @@ func moveFileToTrash(srcPath, trashDir string, bookID int64) error {
 		return err
 	}
 	in.Close()
-	return os.Remove(srcPath)
+	if err := os.Remove(srcPath); err != nil {
+		// 删源失败（只读挂载、权限、被占用）时必须回滚副本：否则回收站里留下一份拷贝、
+		// 原位置文件还在，用户看到的是「删除失败」但磁盘上凭空多了一份，且调用方因为
+		// 收到错误不会删记录，下次重试又会再复制一次。
+		_ = os.Remove(dest)
+		return err
+	}
+	return nil
 }

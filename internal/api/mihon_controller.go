@@ -120,8 +120,16 @@ func (c *Controller) setupMihonRoutes(r chi.Router) {
 		r.Get("/books/{bookId}/pages", c.mihonBookPages)
 		r.Get("/books/{bookId}/pages/{pageNumber}", c.servePageImage)
 		r.Post("/books/{bookId}/progress", c.updateBookProgress)
+		// 协议内的资源路由，理由同 OPDS：响应里下发的封面/缩略图/整卷下载链接不能指向 /api，
+		// 那边由 authGate 守卫、只认 session cookie，而 Mihon 客户端带的是 HTTP Basic 凭据。
+		r.Get("/books/{bookId}/file", c.serveBookFile)
+		r.Get("/covers/{bookId}", c.serveCoverImage)
+		r.Get("/thumbnails/*", c.serveThumbnailImage)
 	})
 }
+
+// mihonResourceBase 是 Mihon 响应内所有资源链接的前缀。
+const mihonResourceBase = "/api/mihon/v1"
 
 func (c *Controller) mihonLibraries(w http.ResponseWriter, r *http.Request) {
 	libs, err := c.store.ListLibraries(r.Context())
@@ -149,7 +157,7 @@ func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) 
 	rows, err := c.store.ListRecentAddedSeries(r.Context(), database.ListRecentAddedSeriesParams{
 		LibraryID: libraryID,
 		Limit:     int64(limit),
-		Offset:    int64((page - 1) * limit),
+		Offset:    pageOffset(page, limit),
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent series")
@@ -195,7 +203,7 @@ func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request
 		}
 		coverURL := ""
 		if row.CoverPath != "" {
-			coverURL = "/api/thumbnails/" + row.CoverPath
+			coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 		}
 		items = append(items, MihonContinueItemResponse{
 			SeriesID:     row.SeriesID,
@@ -213,7 +221,7 @@ func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request
 }
 
 func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
-	views, err := c.loadCollectionViews(r.Context())
+	views, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch collections")
 		return
@@ -268,7 +276,7 @@ func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Reque
 	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
 		ReadingListID: listID,
 		Limit:         int64(limit),
-		Offset:        int64((page - 1) * limit),
+		Offset:        pageOffset(page, limit),
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list series")
@@ -295,7 +303,7 @@ func (c *Controller) mihonCollectionSeries(w http.ResponseWriter, r *http.Reques
 	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", 30, 100)
-	_, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, (page-1)*limit)
+	_, rows, total, err := c.loadStaticCollectionSeries(r.Context(), collectionID, limit, int(pageOffset(page, limit)))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "Collection not found")
@@ -334,7 +342,7 @@ func (c *Controller) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.R
 	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", filter.PageSize, 100)
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, (page-1)*limit, 0)
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), c.currentUserID(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch smart collection series")
 		return
@@ -383,7 +391,7 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	limit := positiveQueryInt(r, "limit", 30, 100)
 	libraryID := int64(positiveQueryInt(r, "libraryId", 0, 0))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	offset := int64((page - 1) * limit)
+	offset := pageOffset(page, limit)
 
 	var tags []string
 	if tagsParam := r.URL.Query().Get("tag"); tagsParam != "" {
@@ -458,7 +466,7 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		coverURL := ""
 		if row.CoverPath.Valid && row.CoverPath.String != "" {
-			coverURL = "/api/thumbnails/" + row.CoverPath.String
+			coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath.String
 		}
 		items = append(items, MihonSeriesResponse{
 			ID:          row.ID,
@@ -546,7 +554,7 @@ func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 	items := make([]MihonPageResponse, 0, len(pages))
 	for i, page := range pages {
 		pageNumber := int64(i + 1)
-		imageURL := fmt.Sprintf("/api/mihon/v1/books/%d/pages/%d%s", bookID, pageNumber, query)
+		imageURL := fmt.Sprintf(mihonResourceBase+"/books/%d/pages/%d%s", bookID, pageNumber, query)
 		items = append(items, MihonPageResponse{
 			Index:     pageNumber,
 			MediaType: page.MediaType,
@@ -565,7 +573,12 @@ func positiveQueryInt(r *http.Request, key string, fallback, max int) int {
 	if value == 0 && fallback > 0 {
 		return fallback
 	}
-	if max > 0 && value > max {
+	// 与 OPDS 侧同理：max<=0 不再意味着无上限。page 无上界时 (page-1)*limit 先溢出，
+	// 再经 int32(offset) 截断，超大页码会静默返回第一页而不是空页。
+	if max <= 0 {
+		max = maxPageNumber
+	}
+	if value > max {
 		return max
 	}
 	return value
@@ -623,7 +636,7 @@ func mihonCollectionFromView(view CollectionView) MihonCollectionResponse {
 func mihonSeriesFromCollectionRow(row collectionSeriesListItem) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	}
 	return MihonSeriesResponse{
 		ID:         row.ID,
@@ -642,7 +655,7 @@ func mihonSeriesFromCollectionRow(row collectionSeriesListItem) MihonSeriesRespo
 func mihonSeriesFromRecentAddedRow(row database.ListRecentAddedSeriesRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	} else {
 		coverURL = mihonCoverURL(row.CoverBookID)
 	}
@@ -664,7 +677,7 @@ func mihonSeriesFromRecentAddedRow(row database.ListRecentAddedSeriesRow) MihonS
 func mihonSeriesFromReadingListRow(row database.ListReadingListSeriesPageRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	} else {
 		coverURL = mihonCoverURL(row.CoverBookID)
 	}
@@ -686,7 +699,7 @@ func mihonSeriesFromReadingListRow(row database.ListReadingListSeriesPageRow) Mi
 func mihonSeriesFromProtocolRow(row database.ProtocolSeriesRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath
 	} else {
 		coverURL = mihonCoverURL(row.CoverBookID)
 	}
@@ -708,7 +721,7 @@ func mihonSeriesFromProtocolRow(row database.ProtocolSeriesRow) MihonSeriesRespo
 func mihonSeriesFromSearchRow(row database.SearchSeriesPagedRow) MihonSeriesResponse {
 	coverURL := ""
 	if row.CoverPath.Valid && row.CoverPath.String != "" {
-		coverURL = "/api/thumbnails/" + row.CoverPath.String
+		coverURL = mihonResourceBase + "/thumbnails/" + row.CoverPath.String
 	}
 	totalPages := int64(0)
 	if row.TotalPages.Valid {
@@ -755,5 +768,5 @@ func mihonCoverURL(bookID int64) string {
 	if bookID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("/api/covers/%d", bookID)
+	return fmt.Sprintf(mihonResourceBase+"/covers/%d", bookID)
 }

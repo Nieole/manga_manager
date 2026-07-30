@@ -49,10 +49,16 @@ func ExtractSortNumber(label string) (float64, bool) {
 			return value, true
 		}
 	}
-	// 谨慎兜底：先剔除括号段（排除年份标签/会场号），再取第一个非年份数字 token；
+	// 谨慎兜底：先剔除括号段（排除年份标签/会场号），再取**最后一个**非年份数字 token；
 	// 若全为年份则回退首个年份，保证纯年份文件名仍可排序。
+	//
+	// 取末位而非首位，是因为漫画命名惯例把卷话号放在末尾，而标题本身常含数字：
+	// "20th Century Boys 05.cbz" 取首位会得到 20，于是该系列每一卷的 sort_number
+	// 都是 20，排序整个退化成按文件名字典序。取末位则正确得到 5。
 	cleaned := bracketRegexp.ReplaceAllString(label, " ")
 	var firstYear string
+	var lastValue float64
+	var haveValue bool
 	for _, tok := range arabicNumberRegexp.FindAllString(cleaned, -1) {
 		if yearRegexp.MatchString(tok) {
 			if firstYear == "" {
@@ -61,8 +67,12 @@ func ExtractSortNumber(label string) (float64, bool) {
 			continue
 		}
 		if value, err := strconv.ParseFloat(tok, 64); err == nil {
-			return value, true
+			lastValue = value
+			haveValue = true
 		}
+	}
+	if haveValue {
+		return lastValue, true
 	}
 	if firstYear != "" {
 		if value, err := strconv.ParseFloat(firstYear, 64); err == nil {

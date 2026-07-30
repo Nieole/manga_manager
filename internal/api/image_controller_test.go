@@ -65,7 +65,8 @@ func TestServeCoverImage(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
-		if rec.Header().Get("Cache-Control") != "public, max-age=31536000" {
+		// 需要鉴权的图片不能进共享缓存，也不能一年不回源。
+		if rec.Header().Get("Cache-Control") != pageImageCacheControl {
 			t.Fatalf("unexpected cache control header: %q", rec.Header().Get("Cache-Control"))
 		}
 		if rec.Body.String() != string(coverData) {
@@ -110,7 +111,8 @@ func TestServeThumbnailImageETag(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if rec.Header().Get("Cache-Control") != "public, max-age=31536000" {
+	// 需要鉴权的图片不能进共享缓存，也不能一年不回源。
+	if rec.Header().Get("Cache-Control") != pageImageCacheControl {
 		t.Fatalf("unexpected cache control header: %q", rec.Header().Get("Cache-Control"))
 	}
 	etag := rec.Header().Get("ETag")
@@ -233,7 +235,8 @@ func TestServePageImage(t *testing.T) {
 		if rec.Header().Get("Content-Type") != "image/png" {
 			t.Fatalf("unexpected page content type: %q", rec.Header().Get("Content-Type"))
 		}
-		if rec.Header().Get("Cache-Control") != "public, max-age=31536000" {
+		// 需要鉴权的图片不能进共享缓存，也不能一年不回源。
+		if rec.Header().Get("Cache-Control") != pageImageCacheControl {
 			t.Fatalf("unexpected cache control header: %q", rec.Header().Get("Cache-Control"))
 		}
 		if len(rec.Body.Bytes()) == 0 {
