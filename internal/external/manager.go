@@ -19,6 +19,22 @@ import (
 	"manga-manager/internal/database"
 )
 
+// Store 是本包真正需要的那三个查询。
+//
+// 刻意**不**用 database.Store（277 个方法）：不是为了「解耦」——参数与返回值仍是
+// database 包里 sqlc 生成的类型，import 边一分不减——而是为了让一类具体的性能回归
+// 在编译期就写不出来。传输规划曾经是逐 seriesID 一次 SELECT *，几百个系列就是几百次
+// 往返；现在窄接口里根本没有 ListBooksBySeries，想写回去得先改这个声明，
+// 而那一步会被 code review 看见。
+//
+// 注意这个接口里没有 ExecTx：交出 *Queries 就等于把 171 个方法一并交出去，
+// 收窄就成了纯粹的表演。本包不需要事务，正好可以名副其实。
+type Store interface {
+	GetLibrary(ctx context.Context, id int64) (database.Library, error)
+	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]database.ExternalLibraryBookRow, error)
+	ListExternalTransferBooksBySeries(ctx context.Context, seriesIDs []int64) ([]database.ListExternalTransferBooksBySeriesRow, error)
+}
+
 var (
 	ErrSessionNotFound = errors.New("external session not found")
 	ErrSessionNotReady = errors.New("external session not ready")
@@ -119,13 +135,13 @@ type session struct {
 }
 
 type Manager struct {
-	store    database.Store
+	store    Store
 	ttl      time.Duration
 	mu       sync.RWMutex
 	sessions map[string]*session
 }
 
-func NewManager(store database.Store, ttl time.Duration) *Manager {
+func NewManager(store Store, ttl time.Duration) *Manager {
 	return &Manager{
 		store:    store,
 		ttl:      ttl,

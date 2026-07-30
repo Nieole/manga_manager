@@ -113,3 +113,24 @@ func TestPathsOverlap(t *testing.T) {
 		}
 	}
 }
+
+// TestNarrowStoreExcludesPerSeriesQuery 是编译期守卫的运行期说明。
+//
+// 本包的 Store 接口刻意只声明三个查询。它挡的不是「解耦」——参数与返回值仍是 database
+// 包里 sqlc 生成的类型，import 边一分不减——而是一类具体的性能回归：传输规划曾经是
+// 逐 seriesID 一次 `SELECT *`（books 表 24 列含长文本），几百个系列就是几百次往返。
+//
+// 现在窄接口里根本没有 ListBooksBySeries，想写回去得先改那个声明，而那一步会被
+// code review 看见。这条用例本身只确认「真实的 *SqlStore 仍然满足这个窄接口」——
+// 若有人给接口加了一个 SqlStore 没实现的方法，这里会编译失败。
+func TestNarrowStoreExcludesPerSeriesQuery(t *testing.T) {
+	store, _, _ := newExternalTestStore(t)
+
+	var narrow Store = store
+	if narrow == nil {
+		t.Fatal("真实 store 不满足本包的窄接口")
+	}
+
+	// 真正的约束在类型声明上：Store 里没有 ListBooksBySeries，所以本包的任何代码都
+	// **写不出**逐系列查询——想写回去必须先改那个接口声明，而那一步会被 review 看见。
+}
