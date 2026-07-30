@@ -332,7 +332,8 @@ export function clearQueuedOfflineProgress() {
 // 不清索引，下一个用户就能在离线书架上看到并读完上一个人下载的书。
 // 字节本身留作孤儿，仍可由离线书架的「清空全部」按缓存名整体删除。
 export function reconcileOfflineOwner(userId: number | null): boolean {
-  let previous: string | null = null;
+  // 不给初值：try 里必然赋值，catch 里直接 return，那个 null 读不到。
+  let previous: string | null;
   try {
     previous = localStorage.getItem(OFFLINE_OWNER_KEY);
   } catch {

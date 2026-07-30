@@ -114,7 +114,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       applySession(data);
     } catch (error) {
-      throw new Error(getApiErrorMessage(error, 'setup failed'));
+      // 原始错误挂到 cause 上：getApiErrorMessage 只取出给用户看的那句话，
+      // 而状态码、响应体这些排查要用的信息都在原始的 axios 错误里。
+      throw new Error(getApiErrorMessage(error, 'setup failed'), { cause: error });
     }
   }, [applySession]);
 
@@ -123,7 +125,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await apiClient.post<SessionResponse>('/api/auth/login', { username, password });
       applySession(data);
     } catch (error) {
-      throw new Error(getApiErrorMessage(error, 'login failed'));
+      // 原始错误挂到 cause 上：getApiErrorMessage 只取出给用户看的那句话，
+      // 而状态码、响应体这些排查要用的信息都在原始的 axios 错误里。
+      throw new Error(getApiErrorMessage(error, 'login failed'), { cause: error });
     }
   }, [applySession]);
 
@@ -156,7 +160,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.csrf_token) setCsrfToken(data.csrf_token);
       await refresh();
     } catch (error) {
-      throw new Error(getApiErrorMessage(error, 'change password failed'));
+      // 原始错误挂到 cause 上：getApiErrorMessage 只取出给用户看的那句话，
+      // 而状态码、响应体这些排查要用的信息都在原始的 axios 错误里。
+      throw new Error(getApiErrorMessage(error, 'change password failed'), { cause: error });
     }
   }, [refresh]);
 
