@@ -2,6 +2,7 @@
 // 反射生成对应的 TypeScript 接口到 web/src/api/generated.ts，消除此前前端手写类型与后端各自漂移的问题。
 // sql.Null* / time.Time 等按约定映射；sql.Null* 复用 web/src/api/contracts.ts 的单一定义（生成文件 import 之）。
 // 维护时：需要新增受管契约类型时，把它加入 targets 列表即可；CI 会 `go run ./cmd/tsgen` 后 git diff 校验不漂移。
+
 package main
 
 import (
