@@ -17,7 +17,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +82,11 @@ type taskEngine struct {
 	publish func(string)
 	// done 返回 Controller 的生命周期信号，落盘 goroutine 据此退出前做最后一次刷盘。
 	done func() <-chan struct{}
+	// runBackground 开一个受停机管辖的 goroutine（登记停机 WaitGroup、关闭后拒绝新任务）。
+	// 引擎向外索取这项能力，而不是由外部替它开 goroutine 再反向伸手改任务表——后者曾把
+	// 「多套一层 goroutine → 停机竞态下任务被静默丢弃、运行时句柄泄漏」这类缺陷放进代码里。
+	// 测试注入同步执行版本即可确定性地断言终态，不必等待真实 goroutine。
+	runBackground func(func())
 
 	// ---- 受 mutex 保护的状态 ----
 
@@ -114,11 +121,12 @@ func (e *taskEngine) clock() time.Time {
 	return time.Now()
 }
 
-func newTaskEngine(store database.Store, publish func(string), done func() <-chan struct{}) *taskEngine {
+func newTaskEngine(store database.Store, publish func(string), done func() <-chan struct{}, runBackground func(func())) *taskEngine {
 	return &taskEngine{
 		store:          store,
 		publish:        publish,
 		done:           done,
+		runBackground:  runBackground,
 		tasks:          make(map[string]TaskStatus),
 		runtimes:       make(map[string]*TaskRuntime),
 		persistPending: make(map[string]TaskStatus),
@@ -251,6 +259,25 @@ func (e *taskEngine) publishTaskStatusLocked(task TaskStatus) {
 }
 
 // ---- 启动 ----
+
+// runTaskGoroutine 在受停机管辖的后台 goroutine 里执行任务体，并保证任务体一旦 panic，
+// key 对应的任务被置为失败态。
+//
+// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。panic 的任务体走不到任何
+// finishTask/failTask，任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，
+// 于是那个任务键从此恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
+// 把 panic 转成一次显式失败，用户至少能看到原因并重试。
+func (e *taskEngine) runTaskGoroutine(key string, fn func()) {
+	e.runBackground(func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("Background task panicked", "task_key", key, "panic", rec, "stack", string(debug.Stack()))
+				e.failTaskWithError(key, "Background task panicked", fmt.Sprint(rec))
+			}
+		}()
+		fn()
+	})
+}
 
 func (e *taskEngine) startTask(key, taskType, message string, total int) bool {
 	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, false, false)

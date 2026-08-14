@@ -250,8 +250,8 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
-	// taskEngine 依赖 c 的 SSE 投递与生命周期信号，同样须在 c 构造完成后建立。
-	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone)
+	// taskEngine 依赖 c 的 SSE 投递、生命周期信号与后台运行能力，同样须在 c 构造完成后建立。
+	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone, c.runBackground)
 	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptionsCore 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
@@ -301,23 +301,13 @@ func (c *Controller) lifecycleDone() <-chan struct{} {
 	return c.done
 }
 
-// runBackgroundTask 与 runBackground 相同，但额外保证：goroutine 一旦 panic，
-// taskKey 对应的任务会被置为失败态。
+// runBackgroundTask 是任务型后台调用点的入口，原样转发给任务引擎。
 //
-// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。任务体 panic 时不会走到任何
-// finishTask/failTask，任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，
-// 于是那个 key 从此恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
-// 把 panic 转成一次显式失败，用户至少能看到原因并重试。
+// 「起一个受停机管辖的 goroutine」如今是引擎的注入依赖（见 newTaskEngine 的第四个参数），
+// panic → 失败态那条兜底也随之搬进引擎内部：控制器只提供能力，不再反向伸手改任务表。
+// 本方法保留仅为让既有的启动点一行不改，待它们迁到引擎的启动入口后即可删除。
 func (c *Controller) runBackgroundTask(taskKey string, fn func()) {
-	c.runBackground(func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				slog.Error("Background task panicked", "task_key", taskKey, "panic", rec, "stack", string(debug.Stack()))
-				c.taskEngine.failTaskWithError(taskKey, "Background task panicked", fmt.Sprint(rec))
-			}
-		}()
-		fn()
-	})
+	c.taskEngine.runTaskGoroutine(taskKey, fn)
 }
 
 func (c *Controller) runBackground(fn func()) {

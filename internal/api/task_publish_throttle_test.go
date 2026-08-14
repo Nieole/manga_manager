@@ -43,7 +43,8 @@ func newThrottleTestEngine(clock *fakeClock) (*taskEngine, *[]string) {
 		mu.Lock()
 		defer mu.Unlock()
 		published = append(published, payload)
-	}, nil)
+		// 后台能力取同步执行版：本文件不启动任务体，只是不留 nil 给后来者踩。
+	}, nil, func(fn func()) { fn() })
 	e.now = clock.Now
 	return e, &published
 }
