@@ -16,24 +16,7 @@ import (
 	"time"
 )
 
-// fakeClock 让节流的时序断言可控。固定 sleep 的用例既慢，又杀不掉
-// 「水位只在首次写入、之后再不更新」这类错误实现。
-type fakeClock struct {
-	mu  sync.Mutex
-	now time.Time
-}
-
-func (c *fakeClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *fakeClock) advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
-}
+// 可控时钟 fakeClock 见 task_engine_seam_test.go：它是这个 seam 的注入依赖之一。
 
 // newThrottleTestEngine 造一个只统计投递条数的引擎。
 func newThrottleTestEngine(clock *fakeClock) (*taskEngine, *[]string) {

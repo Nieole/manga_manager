@@ -272,44 +272,51 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, updatedLib)
 }
 
-func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) bool {
-	taskKey := fmt.Sprintf("scan_library_%d", lib.ID)
-	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scan_library", "task.msg.scan_library.start", map[string]string{"name": lib.Name}, 0) {
-		return false
-	}
-	limits := c.taskLimitsForPath(lib.Path, force)
-	storagePolicy := config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
-	c.taskEngine.setTaskMetadata(taskKey, map[string]string{
-		"force":                    strconv.FormatBool(force),
-		"scan_profile":             c.currentConfig().Scanner.ScanProfile,
-		"storage_profile":          storagePolicy.StorageProfile,
-		"volume_key":               storagePolicy.VolumeKey,
-		"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
-		"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
-	}, lib.Name)
-	c.taskEngine.setTaskEffectiveLimit(taskKey, limits)
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
+// launchLibraryScanTask 是资料库扫描任务的启动点，走引擎的启动入口。
+//
+// 启动仪式（槽位闸门、元数据、并发上限、可取消可暂停的上下文、后台 goroutine、三条终态分支、
+// panic 兜底）全部由引擎承担；这里只剩两样东西：一份任务声明，和一个任务体。
+// 任务体里保留的仍是**领域**动作——缓存失效、预热、串联后台哈希回填——这些不该由引擎代劳。
+func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) error {
+	cfg := c.currentConfig()
+	storagePolicy := config.ResolveStoragePolicy(cfg, lib.Path)
 
-	c.runBackgroundTask(taskKey, func() {
+	spec := TaskSpec{
+		Key:         fmt.Sprintf("scan_library_%d", lib.ID),
+		Type:        "scan_library",
+		StartCode:   "task.msg.scan_library.start",
+		StartParams: map[string]string{"name": lib.Name},
+		CanCancel:   true,
+		CanPause:    true,
+		ScopeName:   lib.Name,
+		Metadata: map[string]string{
+			"force":                    strconv.FormatBool(force),
+			"scan_profile":             cfg.Scanner.ScanProfile,
+			"storage_profile":          storagePolicy.StorageProfile,
+			"volume_key":               storagePolicy.VolumeKey,
+			"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
+			"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
+		},
+		Limits:       c.taskLimitsForPath(lib.Path, force),
+		CompleteCode: "task.msg.scan_library.complete",
+		CancelCode:   "task.msg.scan_library.cancelled",
+		FailCode:     "task.msg.scan_library.failed",
+	}
+
+	return c.taskEngine.Run(spec, func(ctx context.Context, _ *TaskProgress) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
-		err := c.scanner.ScanLibrary(taskCtx, lib.ID, lib.Path, force)
-		cleanupCancel()
-		if errors.Is(err, context.Canceled) {
-			c.invalidateDashboardStatsCache("scan_library_cancelled")
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_library.cancelled", map[string]string{"name": lib.Name})
-			return
-		}
-		if err != nil {
+		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force); err != nil {
+			if errors.Is(err, context.Canceled) {
+				c.invalidateDashboardStatsCache("scan_library_cancelled")
+				return TaskResult{Params: map[string]string{"name": lib.Name}}, err
+			}
 			c.invalidateDashboardStatsCache("scan_library_failed")
-			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.scan_library.failed", nil, err.Error())
-			return
+			return TaskResult{}, err
 		}
-		c.taskEngine.finishTaskMsg(taskKey, "task.msg.scan_library.complete", map[string]string{"name": lib.Name})
 		c.warmDashboardStatsCacheAsync("scan_library_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_library")
+		return TaskResult{Params: map[string]string{"name": lib.Name}}, nil
 	})
-
-	return true
 }
 
 func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
@@ -328,8 +335,15 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	if !c.launchLibraryScanTask(lib, isForce) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scan is already running"})
+	// 只有「同类任务已在运行」才是 409。启动入口今天只会返回这一个哨兵错误，但签名已经放开成
+	// error，把任何错误都翻成 409 会让将来某个真正的内部错误伪装成「已在运行」，用户等一个
+	// 永远不会出现的任务。判定口径与 retryTask 一致。
+	if err := c.launchLibraryScanTask(lib, isForce); err != nil {
+		if errors.Is(err, errTaskAlreadyRunning) {
+			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scan is already running"})
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to start library scan")
 		return
 	}
 

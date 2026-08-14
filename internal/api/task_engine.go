@@ -11,6 +11,7 @@
 //   - 任何要把 TaskStatus 带出临界区的路径（异步落盘、HTTP 序列化、重试取参）必须先 cloneTaskStatus，
 //     否则会与仍在持锁原地写 Metrics/Params 的进度回调撞成 `fatal error: concurrent map read and
 //     map write`——那是 runtime throw 而非 panic，recover 与 middleware.Recoverer 都拦不住。
+
 package api
 
 import (
@@ -301,19 +302,7 @@ func (e *taskEngine) startPausableCancelableTaskMsg(key, taskType, code string, 
 }
 
 func (e *taskEngine) startTaskWithOptionsCore(key, taskType, message, code string, params map[string]string, total int, canCancel bool, canPause bool) bool {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	if e.tasks == nil {
-		e.tasks = make(map[string]TaskStatus)
-	}
-
-	if existing, ok := e.tasks[key]; ok && taskIsActive(existing.Status) {
-		return false
-	}
-
 	now := time.Now()
-	e.seq++
 	scope, scopeID := inferTaskScope(taskType, key)
 	task := TaskStatus{
 		Key:           key,
@@ -328,12 +317,34 @@ func (e *taskEngine) startTaskWithOptionsCore(key, taskType, message, code strin
 		Total:         total,
 		CanCancel:     canCancel,
 		CanPause:      canPause,
-		Retryable:     e.isRetryableTaskType(taskType),
 		StartedAt:     now,
 		UpdatedAt:     now,
-		Sequence:      e.seq,
 	}
-	e.tasks[key] = task
+
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	return e.admitTaskLocked(task)
+}
+
+// admitTaskLocked 是新任务落地的**唯一**机制：过任务键闸门，然后编号、入表、裁剪、落盘、投递。
+// 调用方持有 mutex，并已把这个任务的全部字段填好（Sequence 与 Retryable 除外，由这里补）。
+//
+// 两个任务构造点（启动入口的任务声明、以及尚未迁走的旧启动方法族）共用它，是为了让「五步顺序」
+// 只存在一份：这几步漏掉任何一步都不会有编译错误，而后果各不相同——漏投递则界面上任务不出现，
+// 漏落盘则重启后任务凭空消失，漏裁剪则任务表无限增长。
+func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
+	if e.tasks == nil {
+		e.tasks = make(map[string]TaskStatus)
+	}
+	if existing, ok := e.tasks[task.Key]; ok && taskIsActive(existing.Status) {
+		return false
+	}
+
+	task.Retryable = e.isRetryableTaskType(task.Type)
+	e.seq++
+	task.Sequence = e.seq
+
+	e.tasks[task.Key] = task
 	e.pruneTasksLocked()
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
@@ -347,21 +358,28 @@ func (e *taskEngine) newTaskContext(key string) (context.Context, func()) {
 	gate := taskcontrol.NewPauseGate()
 	taskCtx := taskcontrol.WithPauseGate(ctx, gate)
 
-	e.mutex.Lock()
-	if e.runtimes == nil {
-		e.runtimes = make(map[string]*TaskRuntime)
-	}
-	e.runtimes[key] = &TaskRuntime{
+	runtime := &TaskRuntime{
 		Context:   taskCtx,
 		Cancel:    cancel,
 		PauseGate: gate,
 		StartedAt: time.Now(),
 	}
+
+	e.mutex.Lock()
+	if e.runtimes == nil {
+		e.runtimes = make(map[string]*TaskRuntime)
+	}
+	e.runtimes[key] = runtime
 	e.mutex.Unlock()
 
+	// 只归还**自己那份**句柄。终态写入本身也会清掉这一项，于是一个走 defer 清理的任务体在
+	// 收尾之后才执行清理；此间同名任务若已重新启动并登记了自己的句柄，无差别 delete 会把
+	// 新任务的 ctx 与**暂停闸门**一起抹掉——那个任务从此暂停不了也取消不了，直到进程重启。
 	cleanup := func() {
 		e.mutex.Lock()
-		delete(e.runtimes, key)
+		if e.runtimes[key] == runtime {
+			delete(e.runtimes, key)
+		}
 		e.mutex.Unlock()
 	}
 
@@ -561,12 +579,12 @@ func (e *taskEngine) setTaskEffectiveLimit(key string, limit TaskLimits) {
 // ---- 终态 ----
 
 func (e *taskEngine) finishTask(key, message string) {
-	e.completeTaskCore(key, "completed", message, "", nil)
+	e.finalizeTaskCore(key, "completed", message, "", nil)
 }
 
 // finishTaskMsg 是 finishTask 的 i18n 版：只发稳定消息码 + 占位参数。
 func (e *taskEngine) finishTaskMsg(key, code string, params map[string]string) {
-	e.completeTaskCore(key, "completed", "", code, params)
+	e.finalizeTaskCore(key, "completed", "", code, params)
 }
 
 func (e *taskEngine) failTask(key, message string) {
@@ -575,10 +593,16 @@ func (e *taskEngine) failTask(key, message string) {
 
 // completeTaskMsg 是 completeTask 的 i18n 版（多用于取消态等终态）。
 func (e *taskEngine) completeTaskMsg(key, status, code string, params map[string]string) {
-	e.completeTaskCore(key, status, "", code, params)
+	e.finalizeTaskCore(key, status, "", code, params)
 }
 
-func (e *taskEngine) completeTaskCore(key, status, message, code string, params map[string]string) {
+// finalizeTaskCore 把任务落成 status 指名的那个**终态**，失败态除外（那条走 failTaskCore，
+// 它还要记下技术错误串）。
+//
+// 名字刻意不叫 complete：**完成**只是四个终态里的一个，这个函数同样用来写**已取消**。
+// 它的旧名字 completeTaskCore 正是 CONTEXT.md 点名要消除的那处模糊——「用『完成』这个词写入
+// 已取消终态」，读代码的人会以为取消走的是另一条路径，于是去找一条不存在的函数。
+func (e *taskEngine) finalizeTaskCore(key, status, message, code string, params map[string]string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 

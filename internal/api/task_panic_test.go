@@ -10,47 +10,12 @@
 package api
 
 import (
-	"encoding/json"
 	"strings"
-	"sync"
 	"testing"
 )
 
-// newBackgroundTestEngine 造一个后台能力可控的引擎：run 决定任务体何时、乃至是否执行。
-// 观测面是投递出去的载荷本身，与 SSE 订阅者看到的完全一致。
-func newBackgroundTestEngine(run func(func())) (*taskEngine, func() []TaskStatus) {
-	var mu sync.Mutex
-	var published []TaskStatus
-	e := newTaskEngine(nil, func(payload string) {
-		var task TaskStatus
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(payload, "task_progress:")), &task); err != nil {
-			return
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		published = append(published, task)
-	}, nil, run)
-	return e, func() []TaskStatus {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]TaskStatus(nil), published...)
-	}
-}
-
-// runTaskBodySynchronously 是「同步执行」版的后台能力：任务体在启动调用返回前就跑完。
-func runTaskBodySynchronously(fn func()) { fn() }
-
-// lastPublishedTask 返回该任务键最后一条被投递出去的快照。
-func lastPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskStatus {
-	t.Helper()
-	for i := len(snapshots) - 1; i >= 0; i-- {
-		if snapshots[i].Key == key {
-			return snapshots[i]
-		}
-	}
-	t.Fatalf("任务 %q 一条快照都没被投递出去", key)
-	return TaskStatus{}
-}
+// 本文件用到的引擎装置（newBackgroundTestEngine / runTaskBodySynchronously / lastPublishedTask）
+// 见 task_engine_seam_test.go——它们是这个 seam 的共用装置，与启动入口的契约用例共享。
 
 // TestTaskBodyPanicMarksTaskFailed 是本次改造要买到的那条覆盖。
 func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {

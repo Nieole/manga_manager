@@ -57,10 +57,9 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 			if err != nil {
 				return err
 			}
-			if !c.launchLibraryScanTask(lib, forceParam(task)) {
-				return errTaskAlreadyRunning
-			}
-			return nil
+			// 启动入口本就返回「同类任务已在运行」哨兵错误，重启函数原样透传即可，
+			// 不必再把一个布尔值转换回哨兵错误。
+			return c.launchLibraryScanTask(lib, forceParam(task))
 		},
 		"scan_series": func(ctx context.Context, task TaskStatus) error {
 			if task.ScopeID == nil {
