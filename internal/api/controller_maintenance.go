@@ -257,8 +257,8 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 
 	// 这里曾写成 `go c.runBackground(...)`：多套一层 goroutine 会让 runBackground 的
 	// closed 检查与 backgroundWG.Add 都发生在另一个调度点上，停机竞态下任务会被静默丢弃，
-	// 而 newTaskContext 已登记的 runtime 记录留在内存里泄漏。与其余 34 个调用点保持一致。
-	c.runBackground(func() {
+	// 而 newTaskContext 已登记的 runtime 记录留在内存里泄漏。
+	c.runBackgroundTask("cleanup_thumbnails", func() {
 		defer cleanupCancel()
 
 		c.taskEngine.updateTaskDetailsMsg("cleanup_thumbnails", 0, -1, "task.msg.cleanup_thumbnails.scanning", nil, "cleanup", "", nil, nil)
@@ -296,7 +296,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 	c.taskEngine.setTaskEffectiveLimit("rebuild_file_identities", c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext("rebuild_file_identities")
 
-	c.runBackground(func() {
+	c.runBackgroundTask("rebuild_file_identities", func() {
 		defer cleanupCancel()
 		updated, total, err := c.runRebuildFileIdentities(taskCtx, 500, func(current, total int, _ string, metrics taskIOMetrics) {
 			c.taskEngine.updateTaskDetailsMsg("rebuild_file_identities", current, total, "task.msg.rebuild_file_identities.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
@@ -415,7 +415,10 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 	c.taskEngine.setTaskEffectiveLimit(lowPriorityBookHashTaskKey, c.taskLimitsForPath("", true))
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(lowPriorityBookHashTaskKey)
 
-	c.runBackground(func() {
+	c.runBackgroundTask(lowPriorityBookHashTaskKey, func() {
+		// 必须 defer：这里曾是裸调用，写在任务体跑完之后。任务体一旦 panic 就走不到那一行，
+		// newTaskContext 登记的运行时句柄连同它持有的 cancel 一起泄漏在内存里。
+		defer cleanupCancel()
 		updated, total, err := c.runBackfillFullHashesLowPriority(taskCtx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, _ string, metrics taskIOMetrics) {
 			c.taskEngine.updateTaskDetailsMsg(lowPriorityBookHashTaskKey, current, total, "task.msg.book_hash_backfill.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
 				"hashed_files": metrics.HashedFiles,
@@ -427,7 +430,6 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
 			})
 			c.taskEngine.mergeTaskParams(lowPriorityBookHashTaskKey, taskIOMetricsParams(metrics))
 		})
-		cleanupCancel()
 		if errors.Is(err, context.Canceled) {
 			c.taskEngine.completeTaskMsg(lowPriorityBookHashTaskKey, "cancelled", "task.msg.book_hash_backfill.cancelled", nil)
 			return

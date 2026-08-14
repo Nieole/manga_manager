@@ -39,9 +39,9 @@
 
 `/code-review` 两轴各自独立指到同一处：`runTaskGoroutine` 里那条 `runBackground == nil` 守卫。它是不可达分支（三个构造点无一传 nil），且 `return` 掉之后任务恰好停在 running——复刻的正是它上方注释声称要消灭的缺陷。已删除。同轮还改了：引擎侧方法名 `runTaskBackground` → `runTaskGoroutine`（与 `Controller.runBackgroundTask` 同词异序、难以区分）；测试注释里「闸门」误指任务键门禁（该词按 CONTEXT.md 专属**暂停闸门**）；节流用例不再跨文件消费 panic 用例里的 helper。
 
-**留给后续票的一处观察**
+**评审发现的既有缺口（已在后续提交中单独修复）**
 
-`launchCleanupThumbnailsTask`、`launchRebuildFileIdentitiesTask` 与低优先级哈希回填三处启动点直接用 `c.runBackground` 而非 `runBackgroundTask`，因此至今没有 panic 兜底。这是既有缺口，不在本票范围（本票要求启动点一行不改）；它们迁到启动入口后（票 06）缺口自动消失。
+`launchCleanupThumbnailsTask`、`launchRebuildFileIdentitiesTask` 与低优先级哈希回填三处启动点直接用 `c.runBackground` 而非 `runBackgroundTask`，因此至今没有 panic 兜底。不在本票范围（本票要求启动点一行不改），故另开一个提交处理：三处改走 `runBackgroundTask`，低优先级哈希回填的 `cleanupCancel()` 补 `defer`（此前写在任务体之后，panic 时运行时句柄真的会泄漏），并新增 `TestTaskLaunchersUsePanicGuardedBackground` 以源码扫描钉住「占了任务键就必须走带兜底的入口」。该守卫在票 02–10 迁移过程中自然静默，票 11 删掉 `runBackgroundTask` 后即可退休。
 
 **验证**
 
