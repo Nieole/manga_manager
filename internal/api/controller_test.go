@@ -1,6 +1,8 @@
-// 业务说明：本文件是业务回归测试，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
+// 守 api 层的对外契约：请求打进 handler、结果从真库读回，断言状态码与错误语义、响应字段的
+// 形状、写路径落库后的可见结果。这些契约破了，前端拿到的是形状对而含义错的 200。
+// 任务的进度与终态先进内存再异步刷盘，相关用例必须分「内存立即可见」与「刷盘后 DB 追上」两段断言，
+// 只查 DB 会把一次异步延迟误判成丢数据。
+// 全包共用的测试装配 newTestController 也在这里。
 
 package api
 
@@ -903,9 +905,7 @@ func TestPauseAndResumeStorageIO(t *testing.T) {
 func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startTask(taskKey, "scan_library", "scan", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1})
 	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
 		Scope:                  "library",
 		ID:                     42,
@@ -932,12 +932,8 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 
 func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	if !controller.taskEngine.startTask("rebuild_thumbnails", "rebuild_thumbnails", "running", 1) {
-		t.Fatal("expected thumbnail rebuild task to start")
-	}
-	if !controller.taskEngine.startTask("scan_library_42", "scan_library", "running", 1) {
-		t.Fatal("expected scan task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
 
 	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
 		Scope:                "library",
@@ -1390,9 +1386,8 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 		t.Fatalf("insert relation failed: %v", err)
 	}
 
-	// 上面的 updateSeriesInfo 把 title/summary 锁了，而锁定字段不再入队（入队了也只会在
-	// apply 时被静默丢弃）。这里补一个未锁定的 publisher 提案，让本用例真正关心的
-	// 「系列上下文里带出待审记录」仍有东西可断言。
+	// 本用例先前经 updateSeriesInfo 锁了 title/summary，而锁定字段不入队（入队了也会在
+	// apply 时被丢弃）。补一个未锁定的 publisher 提案，「系列上下文带出待审记录」才有东西可断言。
 	if _, _, _, err := controller.queueMetadataReview(context.Background(), info, &metadata.SeriesMetadata{
 		Provider:   "bangumi",
 		Title:      "Alpha Metadata",
@@ -1406,10 +1401,10 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	}
 
 	taskKey := "scan_series_" + strconv.FormatInt(series.ID, 10)
-	if !controller.taskEngine.startTask(taskKey, "scan_series", "scan series", 1) {
-		t.Fatal("expected scan series task to start")
-	}
-	controller.taskEngine.failTaskWithError(taskKey, "failed series scan", "archive error")
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: taskKey, Type: "scan_series", Total: 1,
+		Terminal: "failed", FailError: "archive error",
+	})
 
 	contextRec := httptest.NewRecorder()
 	controller.getSeriesContext(contextRec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
@@ -1974,8 +1969,8 @@ func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
 	}
 }
 
-// TestSearchSeriesPagedCapsLimit 验证超大 limit 被压到硬上限（maxSeriesPageLimit=200），
-// 防止单请求 limit=1000000 物化并 JSON 编码整库导致 OOM/超时。
+// TestSearchSeriesPagedCapsLimit 验证超大 limit 被压到 maxSeriesPageLimit，
+// 否则一个 limit=1000000 就能让单请求物化并 JSON 编码整库。
 func TestSearchSeriesPagedCapsLimit(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 10)
@@ -2120,18 +2115,14 @@ func TestTaskConflictHandlers(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-	if !controller.taskEngine.startTask("scan_series_"+strconv.FormatInt(series.ID, 10), "scan_series", "running", 1) {
-		t.Fatal("expected scan series task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_" + strconv.FormatInt(series.ID, 10), Type: "scan_series", Total: 1})
 	scanSeriesRec := httptest.NewRecorder()
 	controller.scanSeries(scanSeriesRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scan", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if scanSeriesRec.Code != http.StatusConflict {
 		t.Fatalf("expected duplicate scan series 409, got %d", scanSeriesRec.Code)
 	}
 
-	if !controller.taskEngine.startTask("cleanup_library_"+strconv.FormatInt(lib.ID, 10), "cleanup_library", "running", 1) {
-		t.Fatal("expected cleanup task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "cleanup_library_" + strconv.FormatInt(lib.ID, 10), Type: "cleanup_library", Total: 1})
 	cleanupRec := httptest.NewRecorder()
 	controller.cleanupLibrary(cleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/cleanup", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if cleanupRec.Code != http.StatusConflict {
@@ -2449,14 +2440,8 @@ func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("older", "scan_library", "older task", 1) {
-		t.Fatal("expected first task to start")
-	}
-	controller.taskEngine.finishTask("older", "done")
-
-	if !controller.taskEngine.startTask("newer", "rebuild_index", "newer task", 1) {
-		t.Fatal("expected second task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "older", Type: "scan_library", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "newer", Type: "rebuild_index", Total: 1})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
 	rec := httptest.NewRecorder()
@@ -2481,15 +2466,8 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 func TestListTasksSupportsStatusFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("failed_one", "scan_library", "failed task", 1) {
-		t.Fatal("expected failed task to start")
-	}
-	controller.taskEngine.failTask("failed_one", "boom")
-
-	if !controller.taskEngine.startTask("completed_one", "rebuild_index", "completed task", 1) {
-		t.Fatal("expected completed task to start")
-	}
-	controller.taskEngine.finishTask("completed_one", "done")
+	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Type: "scan_library", Total: 1, Terminal: "failed", FailError: "boom"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Type: "rebuild_index", Total: 1, Terminal: "completed"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?status=failed", nil)
 	rec := httptest.NewRecorder()
@@ -2511,15 +2489,8 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_12", "scan_series", "series 12", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_12", "done")
-
-	if !controller.taskEngine.startTask("scan_series_18", "scan_series", "series 18", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_18", "done")
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_12", Type: "scan_series", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_18", Type: "scan_series", Total: 1, Terminal: "completed"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=18", nil)
 	rec := httptest.NewRecorder()
@@ -2541,12 +2512,12 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_77", "scan_series", "series 77", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.setTaskMetadata("scan_series_77", map[string]string{"force": "true"}, "Series 77")
-	controller.taskEngine.failTaskWithError("scan_series_77", "failed series scan", "archive error")
-	// 进度/终态改为异步落盘（M42）：显式刷一次，模拟服务生命周期内的落盘/优雅关闭，再由新实例读回。
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: "scan_series_77", Type: "scan_series", Total: 1,
+		Metadata: map[string]string{"force": "true"}, ScopeName: "Series 77",
+		Terminal: "failed", FailError: "archive error",
+	})
+	// 进度与终态是异步落盘的：显式刷一次模拟优雅关闭，再由新实例读回。
 	controller.taskEngine.flushTaskPersist()
 
 	// 用同一份装配另起一个实例，模拟「进程重启后从库里读回任务」。
@@ -2640,15 +2611,8 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("completed_one", "rebuild_index", "completed task", 1) {
-		t.Fatal("expected completed task to start")
-	}
-	controller.taskEngine.finishTask("completed_one", "done")
-
-	if !controller.taskEngine.startTask("failed_one", "scan_library", "failed task", 1) {
-		t.Fatal("expected failed task to start")
-	}
-	controller.taskEngine.failTask("failed_one", "boom")
+	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Type: "rebuild_index", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Type: "scan_library", Total: 1, Terminal: "failed", FailError: "boom"})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=completed", nil)
 	rec := httptest.NewRecorder()
@@ -2673,21 +2637,10 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_10", "scan_series", "series 10", 1) {
-		t.Fatal("expected first task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_10", "done")
-
-	if !controller.taskEngine.startTask("scan_series_11", "scan_series", "series 11", 1) {
-		t.Fatal("expected second task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_11", "done")
-
-	if !controller.taskEngine.startTask("scan_library_11", "scan_library", "library 11", 1) {
-		t.Fatal("expected third task to start")
-	}
-	controller.taskEngine.finishTask("scan_library_11", "done")
-	// 终态改为异步落盘（M42）：清理走 DeleteTasks 删 DB 记录，需先刷盘让已完成任务进入 DB 再清。
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_10", Type: "scan_series", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_11", Type: "scan_series", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_11", Type: "scan_library", Total: 1, Terminal: "completed"})
+	// 清理走 DeleteTasks 删 DB 记录，而终态是异步落盘的：先刷盘让已完成任务进了 DB 才删得掉。
 	controller.taskEngine.flushTaskPersist()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
@@ -2733,11 +2686,8 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startCancelableTask(taskKey, "scan_library", "running", 1) {
-		t.Fatal("expected task to start")
-	}
-	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
-	defer cleanup()
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1, CanCancel: true})
+	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -2765,20 +2715,16 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	if task.MessageCode != "task.msg.control.cancelling" {
 		t.Fatalf("expected cancelling message code, got code=%q message=%q", task.MessageCode, task.Message)
 	}
-	if task.Message != "" {
-		t.Fatalf("expected message cleared when code set, got %q", task.Message)
-	}
+	// 「设了码就清掉直接文案」这条互斥归 applyTaskMessage 管，由 TestTaskMessageCodeEmission 覆盖：
+	// 播下的任务从来就没有直接文案，在这里断言 Message 为空是一条永远不会红的假覆盖。
 }
 
 func TestPauseResumeTaskLifecycle(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
-		t.Fatal("expected task to start")
-	}
-	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
-	defer cleanup()
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -2929,10 +2875,11 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scrape_library_7"
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scrape", "running", 3) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.updateTaskDetails(taskKey, 1, 3, "写入审阅队列: Foo", "queueing_review", "Foo", map[string]int64{
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scrape", Total: 3, CanCancel: true, CanPause: true})
+	progress.Advance(1, 3, "task.msg.scrape.queueing_review", map[string]string{"name": "Foo"})
+	progress.Phase("queueing_review", "", nil)
+	progress.Item("Foo")
+	progress.Metrics(map[string]int64{
 		"total_series":         3,
 		"processed_series":     1,
 		"success_count":        1,
@@ -2942,7 +2889,8 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 		"provider_requests":    1,
 		"provider_errors":      0,
 		"rate_limited_wait_ms": 500,
-	}, map[string]string{
+	})
+	progress.Labels(map[string]string{
 		"provider":            "bangumi",
 		"provider_name":       "Bangumi",
 		"current_series_id":   "42",
@@ -3094,9 +3042,7 @@ func TestPauseTaskRejectsNonPausableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	if !controller.taskEngine.startTask(taskKey, "rebuild_index", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/pause", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3111,11 +3057,8 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
-		t.Fatal("expected task to start")
-	}
-	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
-	defer cleanup()
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3155,9 +3098,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	if !controller.taskEngine.startTask(taskKey, "rebuild_index", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/cancel", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3197,10 +3138,11 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_999", "scan_series", "failed series scan", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.failTask("scan_series_999", "failed")
+	const seededFailCode = "seed.scan_series.failed"
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: "scan_series_999", Type: "scan_series", Total: 1,
+		Terminal: "failed", TerminalCode: seededFailCode,
+	})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_series_999/retry", nil, "taskKey", "scan_series_999")
 	rec := httptest.NewRecorder()
@@ -3217,7 +3159,7 @@ func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	if task.Status == "running" {
 		t.Fatalf("expected retried task to finish quickly, got %+v", task)
 	}
-	if task.Message == "failed" {
+	if task.MessageCode == seededFailCode {
 		t.Fatalf("expected retried task to update message, got %+v", task)
 	}
 }
@@ -3242,9 +3184,7 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 		t.Fatalf("CreateLibrary failed: %v", err)
 	}
 
-	if !controller.taskEngine.startTask("scan_library_"+strconv.FormatInt(lib.ID, 10), "scan_library", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_" + strconv.FormatInt(lib.ID, 10), Type: "scan_library", Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/scan", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
@@ -3744,7 +3684,7 @@ func TestReadingBookmarksLifecycle(t *testing.T) {
 		t.Fatalf("expected bookmark delete 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
 
-	// 无会话上下文时 currentUserID 返回 0（单用户/历史数据口径），与 handler 写入侧一致。
+	// 无会话上下文时 currentUserID 返回 0（单用户部署的口径），与 handler 写入侧一致。
 	remaining, err := store.ListReadingBookmarks(context.Background(), database.ListReadingBookmarksParams{
 		UserID: 0,
 		BookID: book.ID,
@@ -3936,8 +3876,8 @@ func TestQueueMetadataReviewDeduplicatesPendingEquivalentContent(t *testing.T) {
 }
 
 // TestQueueMetadataReviewKeepsDistinctSourcesSeparate 验证：字段 diff 相同但来源条目（SourceID）
-// 不同的两次提交不会被去重复用，而是各自独立入队并保留自己的 source_url。
-// 复现 bug：选中第 3 条候选应用后，审核页超链接却指向第 1 条。
+// 不同的两次提交不得被去重复用，各自独立入队并保留自己的 source_url。
+// 一旦按 diff 去重，用户选中第 3 条候选，审核页的来源超链接会指向第 1 条。
 func TestQueueMetadataReviewKeepsDistinctSourcesSeparate(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
@@ -4170,7 +4110,7 @@ func TestScrapeSeriesMetadataReturnsErrorForInvalidLLMEndpoint(t *testing.T) {
 	}
 }
 
-// --- 阶段 0 后端调整：上一本 / 系列续读 / 批量进度同步 ---
+// --- 上一本 / 系列续读 / 批量进度同步 ---
 
 func seedBookInSeries(t testing.TB, store database.Store, series database.Series, libraryID int64, name string, pageCount int64) database.Book {
 	t.Helper()
@@ -4593,13 +4533,10 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_library_5", "scan_library", "lib 5", 100) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.updateTask("scan_library_5", 42, 100, "processing")
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Type: "scan_library", Total: 100})
+	progress.Advance(42, 100, "", nil)
 
-	// 进度改为异步落盘（M42）：listTaskStatuses 应立即反映内存里的最新进度，
-	// 而不是尚未刷盘（此时为空/滞后）的 DB 记录。
+	// listTaskStatuses 必须立即反映内存里的最新进度，而不是尚未刷盘、还滞后的 DB 记录。
 	tasks, err := controller.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{})
 	if err != nil {
 		t.Fatalf("listTaskStatuses failed: %v", err)
@@ -4646,20 +4583,15 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	}
 
 	// 运行中的任务 -> 409
-	if !controller.taskEngine.startTask("scan_series_5", "scan_series", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Type: "scan_series", Total: 1})
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_series_5"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("running task: expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500；此前所有重试失败一律误报 409。
-	if !controller.taskEngine.startTask("scan_library_77777", "scan_library", "failed", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.failTask("scan_library_77777", "failed")
+	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500，不得混进 409。
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_77777", Type: "scan_library", Total: 1, Terminal: "failed"})
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_library_77777"))
 	if rec.Code != http.StatusInternalServerError {
@@ -4685,11 +4617,12 @@ func TestIsRetryableTaskTypeDerivedFromRegistry(t *testing.T) {
 func TestTaskMessageCodeEmission(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	// i18n 路径：finishTaskMsg 设置 message_code + message_params，并清空 Message。
-	if !controller.taskEngine.startTask("scan_library_9", "scan_library", "start", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.finishTaskMsg("scan_library_9", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
+	// i18n 路径：**终态**文案落成 message_code + message_params，并清空 Message。
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: "scan_library_9", Type: "scan_library", Total: 1,
+		Terminal: "completed", TerminalCode: "task.msg.scan_library.complete",
+		TerminalParams: map[string]string{"name": "Lib A"},
+	})
 	controller.taskEngine.mutex.Lock()
 	coded := controller.taskEngine.tasks["scan_library_9"]
 	controller.taskEngine.mutex.Unlock()
@@ -4706,14 +4639,16 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 		t.Fatalf("expected status completed, got %q", coded.Status)
 	}
 
-	// 兼容路径：未迁移的 finishTask 仍直接设 Message，并清空 code（互斥）。
-	controller.taskEngine.startTask("scan_library_10", "scan_library", "start", 1)
-	controller.taskEngine.finishTask("scan_library_10", "直接文案")
-	controller.taskEngine.mutex.Lock()
-	legacy := controller.taskEngine.tasks["scan_library_10"]
-	controller.taskEngine.mutex.Unlock()
-	if legacy.Message != "直接文案" || legacy.MessageCode != "" {
-		t.Fatalf("legacy finishTask: want Message set & code empty, got msg=%q code=%q", legacy.Message, legacy.MessageCode)
+	// Message 与 MessageCode 的互斥（后设者胜）是模型层纯函数的职责，不依赖任何引擎路径：
+	// 两者同时留在任务上时，前端会把已本地化的码和一句原始文案叠着渲染。
+	mixed := TaskStatus{MessageCode: "task.msg.scan_library.complete", MessageParams: map[string]string{"name": "Lib A"}}
+	applyTaskMessage(&mixed, "直接文案", "", nil)
+	if mixed.Message != "直接文案" || mixed.MessageCode != "" || mixed.MessageParams != nil {
+		t.Fatalf("直接文案没有清掉先前的码：msg=%q code=%q params=%v", mixed.Message, mixed.MessageCode, mixed.MessageParams)
+	}
+	applyTaskMessage(&mixed, "", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
+	if mixed.MessageCode != "task.msg.scan_library.complete" || mixed.Message != "" {
+		t.Fatalf("消息码没有清掉先前的直接文案：msg=%q code=%q", mixed.Message, mixed.MessageCode)
 	}
 }
 

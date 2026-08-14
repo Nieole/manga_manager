@@ -1,11 +1,8 @@
-// 业务说明：本文件是任务引擎**启动入口**的契约用例。
-//
-// 这些不变量此前散落在各个手抄的启动点里、且大多零覆盖：任务体返回什么就该进哪条**终态**、
-// 同一**任务键**已有**活动态**任务时必须连任务体都不执行、**运行时句柄**必须在每条退出路径上归还。
-// 它们能被写下来，是因为启动仪式收进了引擎：断言对象是引擎的返回值与投递出去的载荷，
-// 不需要数据库、配置管理器、归档池与扫描器。
-//
-// 装置见 task_engine_seam_test.go。
+// 守任务引擎**启动入口**的契约：任务体返回什么就该进哪条**终态**、同一**任务键**已有**活动态**
+// 任务（含**取消中**）时连任务体都不得执行、**运行时句柄**必须在每条退出路径（含 panic）上归还、
+// 整份任务声明在诞生那一帧就带齐。
+// 破了分别是：任务停在进行中永不收尾、同一个库被并发扫描两遍、每次退出泄漏一份 ctx 与暂停闸门、
+// 任务先以无名形态出现在列表里。装置见 newBackgroundTestEngine。
 
 package api
 
@@ -35,7 +32,7 @@ func specForTest(key string) TaskSpec {
 }
 
 // TestRunSettlesByBodyError 钉住三条终态分支：任务体只返回错误，由引擎裁决进哪一条。
-// 此前这三条分支在每个启动点各手抄一遍，其中不少还用「完成」这个词写入**已取消**终态。
+// 包裹过的 context.Canceled 同样要进**已取消**，而不是掉进「其余错误」那条。
 func TestRunSettlesByBodyError(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -229,8 +226,8 @@ func TestRunRejectsWhileCancelling(t *testing.T) {
 	}
 }
 
-// TestRunReleasesRuntimeOnEveryExitPath 钉住**运行时句柄**的归还。此前每个启动点都要自己在
-// 每条退出路径上手写延迟清理，漏写就泄漏一份 ctx 与**暂停闸门**——低优先级哈希回填那处就漏过。
+// TestRunReleasesRuntimeOnEveryExitPath 钉住**运行时句柄**在每条退出路径（含 panic）上都归还：
+// 漏掉一条就泄漏一份 ctx 与**暂停闸门**，且那个任务键再也起不来。
 func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 	cases := []struct {
 		name string
@@ -285,9 +282,9 @@ func TestRunPanicStillMarksTaskFailed(t *testing.T) {
 	}
 }
 
-// TestRunLandsWholeSpecAtBirth 钉住任务声明一次性落地：作用域名、元数据与并发上限此前是启动
-// 之后三次独立的写入（其中并发上限那次还会被自己刚写下的节流水位吞掉），中间存在一个任务已经
-// 出现在列表里、却还没有作用域名的窗口。
+// TestRunLandsWholeSpecAtBirth 钉住任务声明一次性落地：作用域名、元数据与并发上限必须在诞生
+// 那一帧就带齐。拆成启动之后的多次补写，任务会先以无名形态出现在列表里，而补写的那几帧
+// 还会被首帧刚写下的节流水位吞掉。
 func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	// 后台能力只登记不执行：观测的是任务**诞生那一刻**的首帧，任务体跑不跑无关。
 	e, snapshots := newBackgroundTestEngine(func(func()) {})
@@ -344,9 +341,8 @@ func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
 	}
 }
 
-// TestTaskProgressAdvanceAndPhaseAreIndependent 钉住进度接口按真实用途切开的那条决定：
-// **计数推进**只回答「做完了多少」，**阶段**只回答「在做什么」。此前两者挤在同一个九参数方法里，
-// 播报阶段必须编造凑数的计数值、并靠给总数传 -1 哨兵表达「别动总数」。
+// TestTaskProgressAdvanceAndPhaseAreIndependent 钉住进度接口按用途切开的边界：**计数推进**只回答
+// 「做完了多少」，**阶段**只回答「在做什么」，条目名/指标/标签各管各的字段，谁都不许越界改别人的。
 func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
@@ -364,11 +360,13 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 			t.Fatalf("阶段播报之后 phase=%q current=%d total=%d，它不该碰计数与总数", task.Phase, task.Current, task.Total)
 		}
 
-		// 条目名与指标都不改变展示态，因而会被节流水位吞掉；越过窗口才看得到它们的那一帧。
+		// 条目名、指标与标签都不改变展示态，因而会被节流水位吞掉；越过窗口才看得到它们的那一帧。
 		clock.advance(taskProgressPublishInterval * 2)
 		tp.Item("volume_03.cbz")
 		clock.advance(taskProgressPublishInterval * 2)
 		tp.Metrics(map[string]int64{"hashed_files": 12})
+		clock.advance(taskProgressPublishInterval * 2)
+		tp.Labels(map[string]string{"provider_name": "Bangumi"})
 
 		task := lastPublishedTask(t, snapshots(), key)
 		if task.CurrentItem != "volume_03.cbz" {
@@ -376,6 +374,9 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 		}
 		if task.Metrics["hashed_files"] != 12 {
 			t.Fatalf("指标没落到任务上：%v", task.Metrics)
+		}
+		if task.Labels["provider_name"] != "Bangumi" {
+			t.Fatalf("标签没落到任务上：%v", task.Labels)
 		}
 		if task.Phase != "hashing" || task.Current != 3 || task.Total != 20 || task.MessageCode != "progress.hashing" {
 			t.Fatalf("条目名与指标动了不属于它们的字段：phase=%q current=%d total=%d code=%q",

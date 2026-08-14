@@ -1,11 +1,8 @@
-// 业务说明：本文件守卫「任务体 panic → 该任务置为失败态」这条兜底，此前零覆盖。
+// 守「任务体 panic → 该任务置为失败态」这条兜底，以及 panic 之后任务键与运行时句柄都回到干净状态。
 //
-// 它的缺失是用户可观察的：panic 的任务体走不到任何 finishTask/failTask，任务永远停在 running；
-// 而活动任务既不被 pruneTasksLocked 淘汰、也不被 clearTasks 删除，于是那个**任务键**从此恒定
-// 返回 409「已在运行」——同类任务在进程重启前再也发不起来。
-//
-// 能写下这组用例，靠的是把「开一个受停机管辖的 goroutine」变成引擎的第四个注入依赖：
-// 注入同步执行版本之后，终态在调用返回时就已落定，不必 sleep 或轮询去等一个真实 goroutine。
+// 破了是用户可观察的：panic 的任务体走不到任何收尾，任务永远停在 running；而活动任务既不被
+// pruneTasksLocked 淘汰、也不被 clearTasks 删除，那个**任务键**从此恒定返回 409「已在运行」，
+// 同类任务在进程重启前再也发不起来，同时每次 panic 泄漏一份 ctx 与暂停闸门。
 
 package api
 
@@ -14,16 +11,11 @@ import (
 	"testing"
 )
 
-// 本文件用到的引擎装置（newBackgroundTestEngine / runTaskBodySynchronously / lastPublishedTask）
-// 见 task_engine_seam_test.go——它们是这个 seam 的共用装置，与启动入口的契约用例共享。
-
-// TestTaskBodyPanicMarksTaskFailed 是本次改造要买到的那条覆盖。
 func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
 
 	const key = "rebuild_thumbnails"
-	e.startTask(key, "rebuild_thumbnails", "rebuilding", 100)
-	e.newTaskContext(key)
+	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails", Total: 100})
 
 	e.runTaskGoroutine(key, func() { panic("boom") })
 
@@ -48,8 +40,7 @@ func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
 	e, _ := newBackgroundTestEngine(runTaskBodySynchronously)
 
 	const key = "rebuild_index"
-	e.startTask(key, "rebuild_index", "rebuilding", 0)
-	e.newTaskContext(key)
+	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_index"})
 	e.runTaskGoroutine(key, func() { panic("boom") })
 
 	e.mutex.Lock()
@@ -59,8 +50,8 @@ func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
 		t.Fatal("panic 后运行时句柄仍留在表里 —— 每个 panic 的任务都会泄漏一份 ctx 与暂停闸门")
 	}
 
-	if !e.startTask(key, "rebuild_index", "rebuilding", 0) {
-		t.Fatal("panic 之后同一任务键再也起不来 —— 用户要重启进程才能重试")
+	if _, err := trySeedTask(e, taskSeed{Key: key, Type: "rebuild_index"}); err != nil {
+		t.Fatalf("panic 之后同一任务键再也起不来（%v）—— 用户要重启进程才能重试", err)
 	}
 }
 
@@ -72,7 +63,7 @@ func TestTaskBodyRunsThroughInjectedBackgroundCapability(t *testing.T) {
 	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ })
 
 	const key = "scan_library_1"
-	e.startTask(key, "scan_library", "scanning", 10)
+	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10})
 
 	bodyRan := false
 	e.runTaskGoroutine(key, func() { bodyRan = true })
@@ -92,7 +83,7 @@ func TestTaskGoroutineOnlyGuardsPanics(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
 
 	const key = "scan_library_1"
-	e.startTask(key, "scan_library", "scanning", 10)
+	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10})
 	e.runTaskGoroutine(key, func() {})
 
 	if task := lastPublishedTask(t, snapshots(), key); task.Status != "running" {

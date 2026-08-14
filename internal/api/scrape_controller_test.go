@@ -1,6 +1,7 @@
-// 业务说明：本文件是业务回归测试，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
+// 守刮削写回系列这条路径：locked_fields 里的字段一律不被覆盖、也不留下来源存证，重复应用同一份
+// 数据不得产生第二条来源链接。锁失效就是用户手工改过的元数据被外部源悄悄抹掉。
+// 另守批量入口的 409（同类任务已在跑）与响应里的 outcome 结果码——前端按 outcome 分支，
+// 换成解析中文 message 会随文案改动一起碎掉。
 
 package api
 
@@ -180,9 +181,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		controller, store, _, rootDir := newTestController(t)
 		seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-		if !controller.taskEngine.startTask("scrape_all_series", "scrape", "running", 1) {
-			t.Fatal("expected batch scrape task to start")
-		}
+		seedTask(t, controller.taskEngine, taskSeed{Key: "scrape_all_series", Type: "scrape", Total: 1})
 
 		rec := httptest.NewRecorder()
 		controller.batchScrapeAllSeries(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/scrape/all", bytes.NewBufferString(`{}`)))
@@ -234,9 +233,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
 		taskKey := "scrape_library_" + strconv.FormatInt(lib.ID, 10)
-		if !controller.taskEngine.startTask(taskKey, "scrape", "running", 1) {
-			t.Fatal("expected library scrape task to start")
-		}
+		seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scrape", Total: 1})
 
 		rec := httptest.NewRecorder()
 		controller.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/scrape", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
@@ -280,7 +277,7 @@ func TestApplyScrapedMetadataOutcomeCodes(t *testing.T) {
 		t.Fatalf("first apply: expected outcome=queued, got %v (resp=%v)", first["outcome"], first)
 	}
 
-	// 再次提交完全相同的数据应命中重复忽略，outcome=duplicate_ignored（此前前端靠中文 message.includes 判断）。
+	// 再次提交完全相同的数据应命中重复忽略，outcome=duplicate_ignored。
 	second := post()
 	if second["outcome"] != "duplicate_ignored" {
 		t.Fatalf("second apply: expected outcome=duplicate_ignored, got %v (resp=%v)", second["outcome"], second)

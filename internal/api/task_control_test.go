@@ -1,3 +1,9 @@
+// 守暂停/恢复/取消三个端点的错误语义：引擎只返回控制哨兵错误，每个哨兵都必须在
+// taskControlResponses 里有自己的状态码与文案。
+//
+// 漏映射一个哨兵不会有编译错误，只会退化成 500 "Task control failed"——任务面板按 404/409
+// 分别提示，用户于是只看到一句「操作失败」，无从知道任务是不在了还是状态不对。
+
 package api
 
 import (
@@ -8,10 +14,6 @@ import (
 )
 
 // TestTaskControlErrorMapping 把任务引擎的每个控制哨兵错误钉到它的 HTTP 状态码与响应文案上。
-//
-// 暂停/恢复/取消三个端点原本各自内联了一串 jsonError 分支；现在引擎只返回哨兵错误，
-// 由 taskControlResponses 做映射。这张表是那次收口的回归护栏：漏映射某个哨兵会退化成
-// 500 "Task control failed"，而客户端（任务面板）是按 404/409 分别提示的。
 func TestTaskControlErrorMapping(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -48,7 +50,6 @@ func TestTaskControlErrorMapping(t *testing.T) {
 }
 
 // TestTaskControlEndpointsRejectUnknownTask 覆盖三个端点在任务不存在时的 404。
-// 此前只有「不可暂停/不可取消」两条 409 路径有用例，404 分支无覆盖。
 func TestTaskControlEndpointsRejectUnknownTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
@@ -77,9 +78,7 @@ func TestResumeTaskRejectsRunningTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "rebuild_index", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1, CanCancel: true, CanPause: true})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/resume", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()

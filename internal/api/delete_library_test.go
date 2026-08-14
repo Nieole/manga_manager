@@ -1,8 +1,6 @@
-// 业务说明：本文件守卫删库时的收尾动作。
-//
-// deleteLibrary 会级联删掉整个库的数据，但三份进程内缓存（看板统计、阅读路径的归档来源/页清单、
-// AI 推荐）都是以「库里有哪些书」为前提算出来的。不失效它们，用户在删库后看到的仍是旧数字与
-// 旧推荐，且没有任何自愈路径——统计缓存有 TTL，推荐缓存的 TTL 是 24 小时。
+// 守删库的收尾动作：三份进程内缓存（看板统计、阅读路径的归档来源/页清单、AI 推荐）必须
+// 随之失效，跑在该库上的任务必须先被请求取消，缩短往已删库继续写入的窗口。
+// 缓存不清，用户删库后看到的还是旧数字与旧推荐，而推荐缓存的 TTL 是 24 小时，没有更快的自愈路径。
 
 package api
 
@@ -61,10 +59,7 @@ func TestDeleteLibraryCancelsScopedTask(t *testing.T) {
 	}
 
 	taskKey := "scan_library_" + strconv.FormatInt(lib.ID, 10)
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scan_library", "scanning", 100) {
-		t.Fatal("任务未能启动")
-	}
-	controller.taskEngine.newTaskContext(taskKey) // 登记 runtime，cancel 才有 ctx 可取消
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
 
 	req := requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()

@@ -1,15 +1,8 @@
-// 业务说明：本文件是任务引擎对外的**唯一启动入口**。
-//
-// 此前启动一个后台任务要手抄五步：申请任务槽位 → 写元数据 → 写并发上限 → 建可取消可暂停的上下文
-// → 起后台 goroutine 并在其中手写「取消 / 失败 / 完成」三条收尾分支。这套流程的正确性完全依赖
-// 「抄对」，而漏掉任何一步都不会有编译错误——代码里已经留下过多套一层 goroutine 导致任务被静默
-// 丢弃的事故记录。
-//
-// 现在调用方只提交一份任务声明（TaskSpec）与一个任务体，其余全部由引擎承担。任务体只做两件事：
-// 干活，以及经进度句柄报告**计数推进**与**阶段**。它不接触**任务键**、不自己判断**终态**、
-// 不自己起 goroutine。
-//
-// 并发约定与 task_engine.go 一致：本文件里带 Locked 后缀之外的方法自行加解锁。
+// 任务引擎对外的**唯一启动入口**：调用方提交一份任务声明（TaskSpec）与一个任务体，槽位申领、
+// 上下文与运行时句柄、后台 goroutine、三条终态分支全部由引擎承担。
+// 任务体只做两件事——干活，以及经 TaskProgress 报告**计数推进**与**阶段**；它不接触**任务键**、
+// 不自己判断**终态**、不自己起 goroutine。
+// 并发约定与 taskEngine 一致：带 Locked 后缀之外的方法自行加解锁。
 
 package api
 
@@ -22,8 +15,8 @@ import (
 
 // TaskSpec 是一份任务声明：「这是一个什么任务」的完整描述，一次性交给引擎。
 //
-// 它把此前四次独立的写入（启动、元数据、作用域名、并发上限）合成一次原子落地，因此不再存在
-// 「任务已经出现在列表里、但还没有作用域名」的窗口——那个窗口今天是可以被任务列表接口观察到的。
+// 整份声明必须原子落地。拆成启动之后的多次补写，会留下一个「任务已经出现在列表里、却还没有
+// 作用域名」的窗口——那是任务列表接口能观察到的，而补写的那几帧还会被首帧刚写下的节流水位吞掉。
 type TaskSpec struct {
 	Key  string
 	Type string
@@ -64,8 +57,8 @@ type TaskResult struct {
 
 // TaskProgress 是任务体唯一的进度上报句柄，已绑定**任务键**。
 //
-// 「谁有资格写某个任务的进度」因此从「谁会拼那个任务键字符串」变成「谁被交给了这个句柄」——
-// 这是一条结构约束，而拼字符串不是。任务体内部也不再重复出现同一个键。
+// 「谁有资格写某个任务的进度」由「谁被交给了这个句柄」决定，而不是「谁会拼那个任务键字符串」——
+// 前者是结构约束，后者不是。任务体内部因此也不必重复出现同一个键。
 type TaskProgress struct {
 	engine *taskEngine
 	key    string
@@ -87,9 +80,9 @@ func (e *taskEngine) Run(spec TaskSpec, fn func(ctx context.Context, tp *TaskPro
 	progress := &TaskProgress{engine: e, key: spec.Key}
 
 	e.runTaskGoroutine(spec.Key, func() {
-		// 用 defer 归还**运行时句柄**，好处是它不依赖任务体走哪条出口：panic 也会经这里归还，
-		// 之后才由 runTaskGoroutine 的兜底把任务置为失败态。手写这条延迟清理时漏写或写成裸调用，
-		// 任务体一 panic 就泄漏一份 ctx 与**暂停闸门**——`launchLowPriorityBookHashBackfillTask` 曾如此。
+		// 必须用 defer 归还**运行时句柄**：它因此不依赖任务体走哪条出口，panic 也会经这里归还，
+		// 之后才由 runTaskGoroutine 的兜底把任务置为失败态。写成裸调用的话，任务体一 panic
+		// 就泄漏一份 ctx 与**暂停闸门**，那个任务键从此暂停不了也取消不了。
 		defer releaseRuntime()
 		result, err := fn(taskCtx, progress)
 		e.settleTask(spec, result, err)
@@ -133,8 +126,8 @@ func (e *taskEngine) claimTaskSlot(spec TaskSpec) bool {
 
 // settleTask 是三条终态分支的唯一裁决处：**任务体返回的错误**决定进哪一条，TaskResult 只能改文案。
 //
-// 不提供「任务体自行调用收尾方法」的第二条路径——那正是本次要消灭的隐式约定：
-// 两条路径并存时，「忘了收尾」与「收了两次」都不会有编译错误。
+// 不得再开「任务体自行调用收尾方法」的第二条路径：两条路径并存时，
+// 「忘了收尾」与「收了两次」都不会有编译错误。
 func (e *taskEngine) settleTask(spec TaskSpec, result TaskResult, err error) {
 	switch {
 	case err == nil:
@@ -156,8 +149,8 @@ func (tp *TaskProgress) Advance(current, total int, code string, params map[stri
 	})
 }
 
-// Phase 报告**阶段**：正在做什么。它只动阶段与文案，不碰计数——
-// 此前这要靠给九参数方法的总数传 -1 哨兵来表达「别动总数」，且必须编造一个凑数的计数值。
+// Phase 报告**阶段**：正在做什么。它只动阶段与文案，不碰计数与总数，
+// 因此播报阶段不必编造一个凑数的计数值。
 //
 // 名字用 Phase 而不是 Stage：CONTEXT.md 把 stage 列为这个概念要避开的词。
 func (tp *TaskProgress) Phase(phase, code string, params map[string]string) {
@@ -178,8 +171,14 @@ func (tp *TaskProgress) Item(name string) {
 	tp.engine.applyTaskProgress(tp.key, taskProgressUpdate{item: name})
 }
 
-// taskProgressUpdate 是进度句柄四个方法的共同载体：只有被显式设置的字段才会写进任务。
-// 「不改变总数」由「不传总数」表达，哨兵值随之消失。
+// Labels 合并任务标签（刮削源名、当前系列名等展示用的字符串），按键覆盖。
+// 与 Metrics 的区别只在值的类型：标签给人看，指标要参与计算。
+func (tp *TaskProgress) Labels(l map[string]string) {
+	tp.engine.applyTaskProgress(tp.key, taskProgressUpdate{labels: l})
+}
+
+// taskProgressUpdate 是进度句柄各方法的共同载体：只有被显式设置的字段才会写进任务。
+// 「不改变总数」由「不传总数」表达，不用哨兵值。
 type taskProgressUpdate struct {
 	current *int
 	total   *int
@@ -188,6 +187,7 @@ type taskProgressUpdate struct {
 	code    string
 	params  map[string]string
 	metrics map[string]int64
+	labels  map[string]string
 }
 
 // applyTaskProgress 把一次上报写进任务表并按节流水位投递。
@@ -221,6 +221,14 @@ func (e *taskEngine) applyTaskProgress(key string, update taskProgressUpdate) {
 		}
 		for k, v := range update.metrics {
 			task.Metrics[k] = v
+		}
+	}
+	if len(update.labels) > 0 {
+		if task.Labels == nil {
+			task.Labels = make(map[string]string, len(update.labels))
+		}
+		for k, v := range update.labels {
+			task.Labels[k] = v
 		}
 	}
 	task.UpdatedAt = time.Now()

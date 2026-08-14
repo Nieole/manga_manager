@@ -1,16 +1,7 @@
-// 业务说明：本文件是后台任务引擎，持有任务子域的**全部可变状态**并独占其锁。
-//
-// 此前这些状态挂在 taskEngine 上、方法却挂在 Controller 上（`c.taskEngine.xxx` 出现 130+ 次），
-// 于是「谁能改任务表」这条边界在 17.9k 行的 api 包里没有任何结构约束——任何 Controller 方法都能
-// 顺手锁 mutex 改 tasks。现在状态与方法归一到同一个类型上：引擎只依赖三样外部能力（落盘用的 store、
-// 投递 SSE 的 publish、感知停机的 done），Controller 侧退化为 HTTP 层与领域重启函数的持有者。
-//
-// 并发约定：
-//   - 除 relaunchers（装配期写入，之后只读）外，全部字段由 mutex 保护。
-//   - 名字带 Locked 后缀的方法要求调用方已持锁；其余方法自行加解锁。
-//   - 任何要把 TaskStatus 带出临界区的路径（异步落盘、HTTP 序列化、重试取参）必须先 cloneTaskStatus，
-//     否则会与仍在持锁原地写 Metrics/Params 的进度回调撞成 `fatal error: concurrent map read and
-//     map write`——那是 runtime throw 而非 panic，recover 与 middleware.Recoverer 都拦不住。
+// 后台任务引擎的状态与生命周期：任务表、运行时句柄、异步落盘、SSE 投递与节流、淘汰、查询与控制。
+// 任务子域的全部可变状态归它所有，只依赖四样注入的外部能力——落盘的 store、投递 SSE 的 publish、
+// 感知停机的 done、开受停机管辖 goroutine 的 runBackground。Controller 不得直接触碰任务表。
+// 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
 
 package api
 
@@ -32,7 +23,7 @@ import (
 )
 
 // 任务控制（暂停/恢复/取消）与重试查找的哨兵错误。引擎只表达「为什么不行」，
-// 具体的 HTTP 状态码与英文文案由 controller_tasks.go 的映射表决定，避免引擎依赖传输层语义。
+// 具体的 HTTP 状态码与英文文案由 taskControlResponses 决定，避免引擎依赖传输层语义。
 var (
 	errTaskNotFound          = errors.New("task not found")
 	errTaskNotRunning        = errors.New("task is not running")
@@ -74,6 +65,13 @@ func (g taskPublishGate) suppresses(task TaskStatus, now time.Time, window time.
 }
 
 // taskEngine 是后台任务引擎：任务表、运行时句柄、序号、异步落盘的待写集合与唤醒信号，以及任务重试注册表。
+//
+// 并发约定：
+//   - 除 relaunchers（装配期写入，之后只读）外，全部字段由 mutex 保护。
+//   - 名字带 Locked 后缀的方法要求调用方已持锁；其余方法自行加解锁。
+//   - 任何要把 TaskStatus 带出临界区的路径（异步落盘、HTTP 序列化、重试取参）必须先 cloneTaskStatus，
+//     否则会与仍在持锁原地写 Metrics/Params 的进度回调撞成 `fatal error: concurrent map read and
+//     map write`——那是 runtime throw 而非 panic，recover 与 middleware.Recoverer 都拦不住。
 type taskEngine struct {
 	// ---- 外部依赖（装配期注入，之后只读）----
 
@@ -84,8 +82,8 @@ type taskEngine struct {
 	// done 返回 Controller 的生命周期信号，落盘 goroutine 据此退出前做最后一次刷盘。
 	done func() <-chan struct{}
 	// runBackground 开一个受停机管辖的 goroutine（登记停机 WaitGroup、关闭后拒绝新任务）。
-	// 引擎向外索取这项能力，而不是由外部替它开 goroutine 再反向伸手改任务表——后者曾把
-	// 「多套一层 goroutine → 停机竞态下任务被静默丢弃、运行时句柄泄漏」这类缺陷放进代码里。
+	// 任务体必须经这项能力启动：外部替引擎开 goroutine 再反向伸手改任务表，会多套一层调度，
+	// 停机竞态下任务被静默丢弃、运行时句柄泄漏，且两处都不会有编译错误。
 	// 测试注入同步执行版本即可确定性地断言终态，不必等待真实 goroutine。
 	runBackground func(func())
 
@@ -136,7 +134,8 @@ func newTaskEngine(store database.Store, publish func(string), done func() <-cha
 	}
 }
 
-// isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试，消除第二份硬编码清单。
+// isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试。
+// 「哪些类型可重试」不得另立第二份清单——两份清单一旦不同步，界面上的重试按钮会指向一个没人能重启的任务。
 func (e *taskEngine) isRetryableTaskType(taskType string) bool {
 	_, ok := e.relaunchers[taskType]
 	return ok
@@ -280,16 +279,8 @@ func (e *taskEngine) runTaskGoroutine(key string, fn func()) {
 	})
 }
 
-func (e *taskEngine) startTask(key, taskType, message string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, false, false)
-}
-
 func (e *taskEngine) startCancelableTask(key, taskType, message string, total int) bool {
 	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, false)
-}
-
-func (e *taskEngine) startPausableCancelableTask(key, taskType, message string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, true)
 }
 
 // startTaskMsg 等是启动方法的 i18n 版：初始消息用稳定码 + 占位参数。
@@ -329,7 +320,7 @@ func (e *taskEngine) startTaskWithOptionsCore(key, taskType, message, code strin
 // admitTaskLocked 是新任务落地的**唯一**机制：过任务键闸门，然后编号、入表、裁剪、落盘、投递。
 // 调用方持有 mutex，并已把这个任务的全部字段填好（Sequence 与 Retryable 除外，由这里补）。
 //
-// 两个任务构造点（启动入口的任务声明、以及尚未迁走的旧启动方法族）共用它，是为了让「五步顺序」
+// 两个任务构造点（claimTaskSlot 与 startTaskWithOptionsCore）共用它，是为了让「五步顺序」
 // 只存在一份：这几步漏掉任何一步都不会有编译错误，而后果各不相同——漏投递则界面上任务不出现，
 // 漏落盘则重启后任务凭空消失，漏裁剪则任务表无限增长。
 func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
@@ -388,11 +379,7 @@ func (e *taskEngine) newTaskContext(key string) (context.Context, func()) {
 
 // ---- 进度更新 ----
 
-func (e *taskEngine) updateTask(key string, current, total int, message string) {
-	e.updateTaskCore(key, current, total, message, "", nil)
-}
-
-// updateTaskMsg 是 updateTask 的 i18n 版：只发稳定消息码 + 占位参数，由前端本地化渲染。
+// updateTaskMsg 是逐条目进度的 i18n 版：只发稳定消息码 + 占位参数，由前端本地化渲染。
 func (e *taskEngine) updateTaskMsg(key string, current, total int, code string, params map[string]string) {
 	e.updateTaskCore(key, current, total, "", code, params)
 }
@@ -587,10 +574,6 @@ func (e *taskEngine) finishTaskMsg(key, code string, params map[string]string) {
 	e.finalizeTaskCore(key, "completed", "", code, params)
 }
 
-func (e *taskEngine) failTask(key, message string) {
-	e.failTaskCore(key, message, "", nil, message)
-}
-
 // completeTaskMsg 是 completeTask 的 i18n 版（多用于取消态等终态）。
 func (e *taskEngine) completeTaskMsg(key, status, code string, params map[string]string) {
 	e.finalizeTaskCore(key, status, "", code, params)
@@ -599,9 +582,8 @@ func (e *taskEngine) completeTaskMsg(key, status, code string, params map[string
 // finalizeTaskCore 把任务落成 status 指名的那个**终态**，失败态除外（那条走 failTaskCore，
 // 它还要记下技术错误串）。
 //
-// 名字刻意不叫 complete：**完成**只是四个终态里的一个，这个函数同样用来写**已取消**。
-// 它的旧名字 completeTaskCore 正是 CONTEXT.md 点名要消除的那处模糊——「用『完成』这个词写入
-// 已取消终态」，读代码的人会以为取消走的是另一条路径，于是去找一条不存在的函数。
+// 名字刻意不叫 complete：**完成**只是终态里的一个，**已取消**同样从这里写入。用「完成」命名
+// 会让读代码的人以为取消另有一条路径，进而去找一个不存在的函数——CONTEXT.md 点名要避开这处模糊。
 func (e *taskEngine) finalizeTaskCore(key, status, message, code string, params map[string]string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
@@ -747,8 +729,8 @@ func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.Task
 	seen := make(map[string]bool, len(records))
 	for _, record := range records {
 		task := taskStatusFromRecord(record)
-		// 进度改为异步落盘后，活动任务的内存快照比 DB 记录更新（DB 可能滞后最多一个落盘周期）。
-		// 同时存在于内存与 DB 时用内存版本，避免 API 返回被滞后的 DB 进度覆盖。
+		// 进度是异步落盘的，DB 记录最多滞后一个落盘周期。同时存在于内存与 DB 时必须取内存版本，
+		// 否则 API 返回的进度会被滞后的 DB 快照盖回去。
 		if memTask, ok := e.tasks[task.Key]; ok {
 			// 克隆：返回的切片会在 Unlock 之后由 listTasks 交给 json.Marshal 遍历，
 			// 而运行中的任务仍在持锁原地写 Metrics/Params，共享 map 会导致并发读写 fatal。
