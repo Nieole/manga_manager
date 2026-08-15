@@ -2,7 +2,7 @@
 // SSE 投递、停机信号与「开一个受停机管辖的 goroutine」的能力。把后台能力换成同步执行版后，
 // 任务终态在调用返回时就已落定，不必 sleep 或轮询去等真实 goroutine——契约用例能做到毫秒级、
 // 且不需要数据库/配置/扫描器，原因即在此。观测面固定为投递出去的载荷，与 SSE 订阅者看到的
-// 完全一致，不断言内部字段布局；本文件不含用例，只供 task_panic_test.go 与 task_run_test.go 消费。
+// 完全一致，不断言内部字段布局；本文件不含用例，只供同包的契约用例消费。
 
 package api
 
@@ -78,6 +78,19 @@ func publishedCountFor(snapshots []TaskStatus, key string) int {
 		}
 	}
 	return count
+}
+
+// publishedTaskWithCode 返回该任务键带指定文案码的最后一条快照。终态会改掉文案码，
+// 所以中途那些帧只能这样取——lastPublishedTask 拿到的永远是收尾那一条。
+func publishedTaskWithCode(t *testing.T, snapshots []TaskStatus, key, code string) TaskStatus {
+	t.Helper()
+	for i := len(snapshots) - 1; i >= 0; i-- {
+		if snapshots[i].Key == key && snapshots[i].MessageCode == code {
+			return snapshots[i]
+		}
+	}
+	t.Fatalf("任务 %q 没有投递过任何带文案码 %q 的载荷", key, code)
+	return TaskStatus{}
 }
 
 // firstPublishedTask 返回该任务键**第一条**被投递出去的快照，用于断言任务诞生那一刻就已带齐

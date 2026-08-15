@@ -283,11 +283,7 @@ func (e *taskEngine) startCancelableTask(key, taskType, message string, total in
 	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, false)
 }
 
-// startTaskMsg 等是启动方法的 i18n 版：初始消息用稳定码 + 占位参数。
-func (e *taskEngine) startTaskMsg(key, taskType, code string, params map[string]string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, "", code, params, total, false, false)
-}
-
+// startPausableCancelableTaskMsg 是启动方法的 i18n 版：初始消息用稳定码 + 占位参数。
 func (e *taskEngine) startPausableCancelableTaskMsg(key, taskType, code string, params map[string]string, total int) bool {
 	return e.startTaskWithOptionsCore(key, taskType, "", code, params, total, true, true)
 }

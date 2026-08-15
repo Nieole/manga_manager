@@ -1924,7 +1924,9 @@ func extensionFromContentType(contentType, fallbackFormat string) string {
 // CleanupThumbnails scans the thumbnails directory and removes any files
 // that are not referenced in the database (by books or series_stats).
 // It also cleans up empty subdirectories.
-func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current, total int, msg string)) error {
+//
+// progressCb 只收计数：展示文案是调用方的事，扫描器不渲染用户可见文字。
+func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(deleted, scanned int)) error {
 	cfg := s.currentConfig()
 	thumbDir := thumbnailBaseDir(cfg)
 
@@ -1979,7 +1981,7 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current
 
 		scannedFiles++
 		if scannedFiles%100 == 0 && progressCb != nil {
-			progressCb(deletedFiles, scannedFiles, fmt.Sprintf("已扫描 %d 个文件，删除 %d 个", scannedFiles, deletedFiles))
+			progressCb(deletedFiles, scannedFiles)
 		}
 
 		slashRelPath := filepath.ToSlash(relPath)
@@ -2002,7 +2004,7 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current
 	}
 
 	if progressCb != nil {
-		progressCb(deletedFiles, scannedFiles, fmt.Sprintf("清理完成，共删除 %d 个冗余缩略图", deletedFiles))
+		progressCb(deletedFiles, scannedFiles)
 	}
 
 	return nil

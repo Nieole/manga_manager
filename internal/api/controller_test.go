@@ -3624,7 +3624,7 @@ func TestRunBackfillFullHashesLowPriorityBackfillsFileHash(t *testing.T) {
 
 	var progressCalls int
 	var lastMetrics taskIOMetrics
-	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, func(current, total int, message string, metrics taskIOMetrics) {
+	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, func(current, total int, metrics taskIOMetrics) {
 		progressCalls++
 		lastMetrics = metrics
 	})

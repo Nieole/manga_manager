@@ -317,7 +317,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 			return TaskResult{}, err
 		}
 		c.warmDashboardStatsCacheAsync("scan_library_completed")
-		c.launchLowPriorityBookHashBackfillTask("scan_library")
+		c.chainBookHashBackfill("scan_library")
 		return TaskResult{Params: map[string]string{"name": lib.Name}}, nil
 	})
 }
@@ -404,7 +404,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 			return TaskResult{}, err
 		}
 		c.warmDashboardStatsCacheAsync("scan_series_completed")
-		c.launchLowPriorityBookHashBackfillTask("scan_series")
+		c.chainBookHashBackfill("scan_series")
 		return TaskResult{Params: idParams}, nil
 	})
 }

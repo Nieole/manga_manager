@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -122,48 +121,40 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, ignoreFormat
 	return nil
 }
 
-// launchRebuildIndexTask 异步重建 FTS 索引并随后做一次全量扫描。
+// launchRebuildIndexTask 是索引重建任务的启动点，走引擎的启动入口：重灌两份 FTS 索引，
+// 随后同步等一次全量扫描（等待的理由见 triggerGlobalScan）。
 //
-// 必须整体作为可取消的后台任务跑，且派生的扫描要挂在 backgroundWG 上、不能裸 goroutine：
-// FTS 重灌与随后的全库扫描在大库上都可能跑到分钟级，同步做会把请求一直挂到反代超时；
-// 脱离 backgroundWG 的话，Close() 不会等它，进程退出后 store.Close() 关闭 sql.DB
-// 时扫描可能仍在写库。
+// 两步重灌各有专属失败文案码：技术错误串两步长得一样，只报一句「重建索引失败」的话，
+// 用户不知道该去查系列索引还是书籍索引。
 func (c *Controller) launchRebuildIndexTask() error {
-	if !c.taskEngine.startTaskMsg("rebuild_index", "rebuild_index", "task.msg.rebuild_index.start", nil, 1) {
-		return errTaskAlreadyRunning
+	spec := TaskSpec{
+		Key:          "rebuild_index",
+		Type:         "rebuild_index",
+		StartCode:    "task.msg.rebuild_index.start",
+		Total:        1,
+		CompleteCode: "task.msg.rebuild_index.complete",
+		CancelCode:   "task.msg.rebuild_index.cancelled",
+		FailCode:     "task.msg.rebuild_index.failed",
 	}
-	c.taskEngine.setTaskMetadata("rebuild_index", nil, "")
 
-	taskCtx, release := c.taskEngine.newTaskContext("rebuild_index")
-	c.runBackgroundTask("rebuild_index", func() {
-		defer release()
-
-		if err := c.store.RebuildSeriesSearchIndex(taskCtx); err != nil {
-			c.taskEngine.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite series search index rebuild failed: %v", err), err.Error())
-			return
+	return c.taskEngine.Run(spec, func(ctx context.Context, _ *TaskProgress) (TaskResult, error) {
+		if err := c.store.RebuildSeriesSearchIndex(ctx); err != nil {
+			return taskFailure("task.msg.rebuild_index.series_failed", err), err
 		}
-		if err := c.store.RebuildBookSearchIndex(taskCtx); err != nil {
-			c.taskEngine.failTaskWithError("rebuild_index", fmt.Sprintf("SQLite book search index rebuild failed: %v", err), err.Error())
-			return
+		if err := c.store.RebuildBookSearchIndex(ctx); err != nil {
+			return taskFailure("task.msg.rebuild_index.book_failed", err), err
 		}
-		if err := taskCtx.Err(); err != nil {
-			c.taskEngine.failTaskWithError("rebuild_index", "Search index rebuild cancelled", err.Error())
-			return
+		if err := ctx.Err(); err != nil {
+			return TaskResult{}, err
 		}
-
-		c.triggerGlobalScan(taskCtx)
-		c.taskEngine.finishTaskMsg("rebuild_index", "task.msg.rebuild_index.complete", nil)
+		c.triggerGlobalScan(ctx)
+		return TaskResult{}, nil
 	})
-	return nil
 }
 
 func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRebuildIndexTask(); err != nil {
-		if strings.Contains(err.Error(), "already running") {
-			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A search index rebuild is already running"})
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to rebuild search index")
+		writeTaskLaunchError(w, err, "A search index rebuild is already running", "Failed to rebuild search index")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.search_index_rebuilt")})
@@ -245,81 +236,92 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.thumbnails_rebuilding")})
 }
 
+// launchCleanupThumbnailsTask 是缩略图清理任务的启动点，走引擎的启动入口。
 func (c *Controller) launchCleanupThumbnailsTask() error {
-	if !c.taskEngine.startPausableCancelableTaskMsg("cleanup_thumbnails", "cleanup_thumbnails", "task.msg.cleanup_thumbnails.start", nil, 0) {
-		return errTaskAlreadyRunning
+	spec := TaskSpec{
+		Key:          "cleanup_thumbnails",
+		Type:         "cleanup_thumbnails",
+		StartCode:    "task.msg.cleanup_thumbnails.start",
+		CanCancel:    true,
+		CanPause:     true,
+		CompleteCode: "task.msg.cleanup_thumbnails.complete",
+		CancelCode:   "task.msg.cleanup_thumbnails.cancelled",
+		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext("cleanup_thumbnails")
-	c.taskEngine.setTaskMetadata("cleanup_thumbnails", nil, "")
 
-	// 这里曾写成 `go c.runBackground(...)`：多套一层 goroutine 会让 runBackground 的
-	// closed 检查与 backgroundWG.Add 都发生在另一个调度点上，停机竞态下任务会被静默丢弃，
-	// 而 newTaskContext 已登记的 runtime 记录留在内存里泄漏。
-	c.runBackgroundTask("cleanup_thumbnails", func() {
-		defer cleanupCancel()
-
-		c.taskEngine.updateTaskDetailsMsg("cleanup_thumbnails", 0, -1, "task.msg.cleanup_thumbnails.scanning", nil, "cleanup", "", nil, nil)
-
-		err := c.scanner.CleanupThumbnails(taskCtx, func(deleted, scanned int, msg string) {
-			c.taskEngine.updateTaskDetails("cleanup_thumbnails", deleted, scanned, msg, "cleanup", "", nil, nil)
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
+		tp.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
+		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
+			tp.Advance(deleted, scanned, "task.msg.cleanup_thumbnails.progress", map[string]string{
+				"deleted": strconv.Itoa(deleted),
+				"scanned": strconv.Itoa(scanned),
+			})
 		})
-
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg("cleanup_thumbnails", "cancelled", "task.msg.cleanup_thumbnails.cancelled", nil)
-			return
-		}
-		if err != nil {
-			c.taskEngine.failTaskErrMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.failed", nil, err.Error())
-			return
-		}
-		c.taskEngine.finishTaskMsg("cleanup_thumbnails", "task.msg.cleanup_thumbnails.complete", nil)
+		return TaskResult{}, err
 	})
-	return nil
 }
 
 func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchCleanupThumbnailsTask(); err != nil {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail cleanup is already running"})
+		writeTaskLaunchError(w, err, "A thumbnail cleanup is already running", "Failed to start thumbnail cleanup")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.cover_cleanup_started")})
 }
 
+// launchRebuildFileIdentitiesTask 是文件身份重建任务的启动点，走引擎的启动入口。
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
-	if !c.taskEngine.startPausableCancelableTaskMsg("rebuild_file_identities", "rebuild_file_identities", "task.msg.rebuild_file_identities.start", nil, 0) {
-		return errTaskAlreadyRunning
+	spec := TaskSpec{
+		Key:          "rebuild_file_identities",
+		Type:         "rebuild_file_identities",
+		StartCode:    "task.msg.rebuild_file_identities.start",
+		CanCancel:    true,
+		CanPause:     true,
+		Metadata:     map[string]string{"profile": "quick_hash"},
+		Limits:       c.taskLimitsForPath("", true),
+		CompleteCode: "task.msg.rebuild_file_identities.complete",
+		CancelCode:   "task.msg.rebuild_file_identities.cancelled",
+		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
-	c.taskEngine.setTaskMetadata("rebuild_file_identities", map[string]string{"profile": "quick_hash"}, "")
-	c.taskEngine.setTaskEffectiveLimit("rebuild_file_identities", c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext("rebuild_file_identities")
 
-	c.runBackgroundTask("rebuild_file_identities", func() {
-		defer cleanupCancel()
-		updated, total, err := c.runRebuildFileIdentities(taskCtx, 500, func(current, total int, _ string, metrics taskIOMetrics) {
-			c.taskEngine.updateTaskDetailsMsg("rebuild_file_identities", current, total, "task.msg.rebuild_file_identities.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
-				"hashed_files": metrics.HashedFiles,
-				"io_wait_ms":   metrics.IOWaitMillis,
-				"paused_ms":    metrics.PausedMillis,
-			}, map[string]string{
-				"storage_profile": metrics.StorageProfile,
-				"volume_key":      metrics.VolumeKey,
-			})
-			c.taskEngine.mergeTaskParams("rebuild_file_identities", taskIOMetricsParams(metrics))
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		updated, total, err := c.runRebuildFileIdentities(ctx, 500, func(current, total int, metrics taskIOMetrics) {
+			reportHashProgress(tp, current, total, "task.msg.rebuild_file_identities.progress", metrics)
 		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg("rebuild_file_identities", "cancelled", "task.msg.rebuild_file_identities.cancelled", nil)
-			return
-		}
 		if err != nil {
-			c.taskEngine.failTaskErrMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.failed", nil, err.Error())
-			return
+			return TaskResult{}, err
 		}
-		c.taskEngine.finishTaskMsg("rebuild_file_identities", "task.msg.rebuild_file_identities.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		return TaskResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
 	})
-	return nil
 }
 
-func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, progress func(current, total int, message string, metrics taskIOMetrics)) (int, int, error) {
+// reportHashProgress 把一次哈希进度上报成**一帧**，外加**任务参数**那一条通道。
+//
+// 文件身份重建与低优先级哈希回填除文案码外完全同形，共用一份实现，免得两处各自漂移。
+// 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 TaskProgress.Report）。
+// IO 参数走的是另一条通道（存储 IO 面板按参数名读，见 taskArchiveOpenRate），只能单独一次。
+func reportHashProgress(tp *TaskProgress, current, total int, code string, metrics taskIOMetrics) {
+	tp.Report(TaskFrame{
+		Current: &current,
+		Total:   &total,
+		Phase:   "hashing",
+		Code:    code,
+		Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
+		Metrics: map[string]int64{
+			"hashed_files": metrics.HashedFiles,
+			"io_wait_ms":   metrics.IOWaitMillis,
+			"paused_ms":    metrics.PausedMillis,
+		},
+		Labels: map[string]string{
+			"storage_profile": metrics.StorageProfile,
+			"volume_key":      metrics.VolumeKey,
+		},
+	})
+	tp.MergeParams(taskIOMetricsParams(metrics))
+}
+
+func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, progress func(current, total int, metrics taskIOMetrics)) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -378,69 +380,74 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 			updated++
 			afterID = book.ID
 			if progress != nil {
-				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值与指标。
-				progress(updated, total, "", metrics)
+				progress(updated, total, metrics)
 			}
 		}
 	}
 	return updated, total, nil
 }
 
-func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) bool {
+// launchLowPriorityBookHashBackfillTask 是低优先级哈希回填任务的启动点，走引擎的启动入口。
+// 它由**资料库扫描**与**系列扫描**的任务体在收尾前发起，是唯一一个由另一个任务的任务体启动的任务。
+//
+// 返回 nil 表示没有该做而没做的事：任务已发起，或者按前置条件本就不该发起——KOReader 未启用、
+// 匹配模式不是二进制哈希、根本没有书缺哈希。被**任务键**闸门挡下时返回 errTaskAlreadyRunning，
+// 这在本路径上是常态而非异常：回填跑得久，后一次扫描收尾时撞上它很常见，调用方据此自行取舍。
+func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error {
 	cfg := c.currentConfig()
 	if !cfg.KOReader.Enabled || cfg.KOReader.MatchMode != config.KOReaderMatchModeBinaryHash {
-		return false
+		return nil
 	}
 
 	missingCount, err := c.store.CountBooksMissingIdentity(context.Background(), config.KOReaderMatchModeBinaryHash)
 	if err != nil {
-		slog.Warn("Failed to count missing full hashes for background backfill", "error", err)
-		return false
+		return fmt.Errorf("count books missing full hash: %w", err)
 	}
 	if missingCount == 0 {
-		return false
+		return nil
 	}
 
-	if !c.taskEngine.startPausableCancelableTaskMsg(lowPriorityBookHashTaskKey, "rebuild_book_hashes", "task.msg.book_hash_backfill.start", nil, int(missingCount)) {
-		return false
+	spec := TaskSpec{
+		Key:       lowPriorityBookHashTaskKey,
+		Type:      "rebuild_book_hashes",
+		StartCode: "task.msg.book_hash_backfill.start",
+		Total:     int(missingCount),
+		CanCancel: true,
+		CanPause:  true,
+		Metadata: map[string]string{
+			"match_mode": config.KOReaderMatchModeBinaryHash,
+			"profile":    "full_hash_low_priority",
+			"reason":     reason,
+		},
+		Limits:       c.taskLimitsForPath("", true),
+		CompleteCode: "task.msg.book_hash_backfill.complete",
+		CancelCode:   "task.msg.book_hash_backfill.cancelled",
+		FailCode:     "task.msg.book_hash_backfill.failed",
 	}
-	c.taskEngine.setTaskMetadata(lowPriorityBookHashTaskKey, map[string]string{
-		"match_mode": config.KOReaderMatchModeBinaryHash,
-		"profile":    "full_hash_low_priority",
-		"reason":     reason,
-	}, "")
-	c.taskEngine.setTaskEffectiveLimit(lowPriorityBookHashTaskKey, c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(lowPriorityBookHashTaskKey)
 
-	c.runBackgroundTask(lowPriorityBookHashTaskKey, func() {
-		// 必须 defer：这里曾是裸调用，写在任务体跑完之后。任务体一旦 panic 就走不到那一行，
-		// newTaskContext 登记的运行时句柄连同它持有的 cancel 一起泄漏在内存里。
-		defer cleanupCancel()
-		updated, total, err := c.runBackfillFullHashesLowPriority(taskCtx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, _ string, metrics taskIOMetrics) {
-			c.taskEngine.updateTaskDetailsMsg(lowPriorityBookHashTaskKey, current, total, "task.msg.book_hash_backfill.progress", map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
-				"hashed_files": metrics.HashedFiles,
-				"io_wait_ms":   metrics.IOWaitMillis,
-				"paused_ms":    metrics.PausedMillis,
-			}, map[string]string{
-				"storage_profile": metrics.StorageProfile,
-				"volume_key":      metrics.VolumeKey,
-			})
-			c.taskEngine.mergeTaskParams(lowPriorityBookHashTaskKey, taskIOMetricsParams(metrics))
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, metrics taskIOMetrics) {
+			reportHashProgress(tp, current, total, "task.msg.book_hash_backfill.progress", metrics)
 		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(lowPriorityBookHashTaskKey, "cancelled", "task.msg.book_hash_backfill.cancelled", nil)
-			return
-		}
 		if err != nil {
-			c.taskEngine.failTaskErrMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.failed", nil, err.Error())
-			return
+			return TaskResult{}, err
 		}
-		c.taskEngine.finishTaskMsg(lowPriorityBookHashTaskKey, "task.msg.book_hash_backfill.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		return TaskResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
 	})
-	return true
 }
 
-func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, batchGap time.Duration, progress func(current, total int, message string, metrics taskIOMetrics)) (int, int, error) {
+// chainBookHashBackfill 是扫描任务体收尾时串联哈希回填的那一下：尽力而为，起不来不影响这次扫描。
+//
+// 「同类任务已在运行」在这里不记日志——回填跑得久，连着扫两个资料库时后一次必然撞上它，
+// 记下来只是噪音。其余错误要记：数不清缺口是真出了问题，而调用方是任务体，没有别的地方能报。
+func (c *Controller) chainBookHashBackfill(reason string) {
+	err := c.launchLowPriorityBookHashBackfillTask(reason)
+	if err != nil && !errors.Is(err, errTaskAlreadyRunning) {
+		slog.Warn("Background book hash backfill not started", "reason", reason, "error", err)
+	}
+}
+
+func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, batchGap time.Duration, progress func(current, total int, metrics taskIOMetrics)) (int, int, error) {
 	if limit <= 0 {
 		limit = lowPriorityBookHashBatchSize
 	}
@@ -499,8 +506,7 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 			updated++
 			afterID = book.ID
 			if progress != nil {
-				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值与指标。
-				progress(updated, total, "", metrics)
+				progress(updated, total, metrics)
 			}
 		}
 
@@ -524,7 +530,7 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 
 func (c *Controller) rebuildFileIdentities(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRebuildFileIdentitiesTask(); err != nil {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A file identity rebuild is already running"})
+		writeTaskLaunchError(w, err, "A file identity rebuild is already running", "Failed to start file identity rebuild")
 		return
 	}
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "maintenance.file_identity_rebuild_started")})
