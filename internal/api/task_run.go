@@ -55,6 +55,18 @@ type TaskResult struct {
 	Params map[string]string
 }
 
+// taskFailure 给一个失败原因配上它专属的文案码，取消除外。
+//
+// 一个任务体的各道工序常各有各的失败文案，而取消同样以 ctx.Err() 的形式从这些调用里返回；
+// TaskResult 的文案覆盖对 settleTask 裁决出的每条分支一视同仁，无条件带上码的话，
+// 用户按下取消看到的会是「清空封面索引失败」而不是「已取消」。
+func taskFailure(code string, err error) TaskResult {
+	if errors.Is(err, context.Canceled) {
+		return TaskResult{}
+	}
+	return TaskResult{Code: code}
+}
+
 // TaskProgress 是任务体唯一的进度上报句柄，已绑定**任务键**。
 //
 // 「谁有资格写某个任务的进度」由「谁被交给了这个句柄」决定，而不是「谁会拼那个任务键字符串」——
@@ -168,6 +180,15 @@ func (tp *TaskProgress) Metrics(m map[string]int64) {
 // 代价是它与同一次事件里的那一帧各自投递一次，因此只给逐库报文这种低频路径用。
 func (tp *TaskProgress) AddMetrics(increments map[string]int64, params map[string]string) {
 	tp.engine.mergeRunningTaskMetricSums(tp.key, increments, params)
+}
+
+// MergeParams 按键合并**任务参数**（TaskStatus.Params）：**重启函数**读回入参、存储 IO 面板
+// 读取扫描计数用的正是这一份。上报方手里握着这些参数的全量当前值时用它。
+//
+// 它与 TaskFrame.Params 只差一个字，去处却不同——那一路是文案占位参数（TaskStatus.MessageParams）。
+// 接反不会有编译错误，后果是任务参数丢失，或者文案把占位符原样渲染出来。
+func (tp *TaskProgress) MergeParams(params map[string]string) {
+	tp.engine.mergeTaskParams(tp.key, params)
 }
 
 // Item 报告当前正在处理的条目名。

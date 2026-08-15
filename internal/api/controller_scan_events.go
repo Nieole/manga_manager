@@ -1,12 +1,12 @@
 // scanner 回调在 api 侧的落点：把批次/指标/进度事件翻成任务更新与 SSE。
 //
-// 「重建缩略图」是逐库扫描出来的，各库报文合成那一条任务的单份进度，写它要先从
-// rebuildThumbAggregator 的快照里取到**进度句柄**（所有权模型见那里）。
+// 一份报文最多落到两个任务上，两者的**进度句柄**各有保管处：扫描任务本身的在
+// scanProgressHandles（按扫描对象索引），「重建缩略图」的在 rebuildThumbAggregator
+// （逐库扫描合成单份进度）。取不到句柄就是「没有这样一个任务在跑」，本文件不另作判断。
 
 package api
 
 import (
-	"fmt"
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
 	"path/filepath"
@@ -22,61 +22,64 @@ func (c *Controller) handleScannerBatchEvent(action string) {
 }
 
 func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport) {
-	taskKey := ""
-	switch report.Scope {
-	case "series":
-		taskKey = fmt.Sprintf("scan_series_%d", report.ID)
-	default:
-		taskKey = fmt.Sprintf("scan_library_%d", report.ID)
+	if progress := c.scanProgress.lookup(scanTargetOf(report.Scope, report.ID)); progress != nil {
+		progress.MergeParams(map[string]string{
+			"storage_profile":          report.StorageProfile,
+			"volume_key":               report.VolumeKey,
+			"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
+			"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
+			"discovered_archives":      strconv.FormatInt(report.DiscoveredArchives, 10),
+			"skipped_archives":         strconv.FormatInt(report.SkippedArchives, 10),
+			"processed_archives":       strconv.FormatInt(report.ProcessedArchives, 10),
+			"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
+			"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
+			"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
+			"generated_covers":         strconv.FormatInt(report.GeneratedCovers, 10),
+			"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
+			"rehomed_books":            strconv.FormatInt(report.RehomedBooks, 10),
+			"stale_series_stats":       strconv.FormatInt(report.StaleSeriesStats, 10),
+			"format_filtered_archives": strconv.FormatInt(report.FormatFilteredArchives, 10),
+			"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
+			"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
+			"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
+			"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
+		})
 	}
-	c.taskEngine.mergeTaskParams(taskKey, map[string]string{
-		"storage_profile":          report.StorageProfile,
-		"volume_key":               report.VolumeKey,
-		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
-		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
-		"discovered_archives":      strconv.FormatInt(report.DiscoveredArchives, 10),
-		"skipped_archives":         strconv.FormatInt(report.SkippedArchives, 10),
-		"processed_archives":       strconv.FormatInt(report.ProcessedArchives, 10),
-		"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
-		"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
-		"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
-		"generated_covers":         strconv.FormatInt(report.GeneratedCovers, 10),
-		"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
-		"rehomed_books":            strconv.FormatInt(report.RehomedBooks, 10),
-		"stale_series_stats":       strconv.FormatInt(report.StaleSeriesStats, 10),
-		"format_filtered_archives": strconv.FormatInt(report.FormatFilteredArchives, 10),
-		"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
-		"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
-		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
-		"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
-	})
 	c.fixateRebuildThumbBaseline(report)
 }
 
 func (c *Controller) handleScannerProgressEvent(report scanner.ScanProgressReport) {
-	taskKey := ""
-	switch report.Scope {
-	case "series":
-		taskKey = fmt.Sprintf("scan_series_%d", report.ID)
-	default:
-		taskKey = fmt.Sprintf("scan_library_%d", report.ID)
+	if progress := c.scanProgress.lookup(scanTargetOf(report.Scope, report.ID)); progress != nil {
+		progress.Report(scanProgressFrame(report))
 	}
+
+	// 若正在执行缩略图重建，按全局视角同步那条任务的进度
+	c.applyScannerProgressToRebuildThumbnails(report)
+}
+
+// scanProgressFrame 把扫描器的一份进度报文翻成**一帧**任务进度。
+//
+// 一份报文里计数、阶段、当前条目与指标同时变，只能整帧报（理由见 TaskProgress.Report）。
+func scanProgressFrame(report scanner.ScanProgressReport) TaskFrame {
 	metrics := make(map[string]int64, len(report.Metrics))
 	for key, value := range report.Metrics {
 		metrics[key] = value
 	}
 	current := int(report.Current)
 	total := int(report.Total)
-	code := "task.msg.scan.scanning"
-	var msgParams map[string]string
-	if report.CurrentItem != "" {
-		code = "task.msg.scan.scanning_item"
-		msgParams = map[string]string{"item": filepath.Base(report.CurrentItem)}
+	frame := TaskFrame{
+		Current: &current,
+		Total:   &total,
+		Phase:   report.Phase,
+		Item:    report.CurrentItem,
+		Code:    "task.msg.scan.scanning",
+		Metrics: metrics,
 	}
-	c.taskEngine.updateTaskDetailsMsg(taskKey, current, total, code, msgParams, report.Phase, report.CurrentItem, metrics, nil)
-
-	// 若正在执行缩略图重建，按全局视角同步那条任务的进度
-	c.applyScannerProgressToRebuildThumbnails(report)
+	if report.CurrentItem != "" {
+		frame.Code = "task.msg.scan.scanning_item"
+		frame.Params = map[string]string{"item": filepath.Base(report.CurrentItem)}
+	}
+	return frame
 }
 
 func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.ScanProgressReport) {

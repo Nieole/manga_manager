@@ -205,17 +205,17 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 
 		tp.Report(TaskFrame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
 		if err := c.clearThumbnailDir(thumbDir); err != nil {
-			return rebuildThumbFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
+			return taskFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
-			return rebuildThumbFailure("task.msg.rebuild_thumbnails.mkdir_failed", err), err
+			return taskFailure("task.msg.rebuild_thumbnails.mkdir_failed", err), err
 		}
 		tp.Phase("clearing_cache", "task.msg.rebuild_thumbnails.clearing_cover_index", nil)
 		if err := c.clearAllCoverPaths(ctx); err != nil {
-			return rebuildThumbFailure("task.msg.rebuild_thumbnails.clear_cover_index_failed", err), err
+			return taskFailure("task.msg.rebuild_thumbnails.clear_cover_index_failed", err), err
 		}
 		tp.Phase("reading_metadata", "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil)
 		if err := c.runGlobalScan(ctx, true, true /* 重建缩略图必须看得见全部已入库的书 */, func(current, total int, lib database.Library) {
@@ -226,7 +226,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		}
 		c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
 		if err := c.scanner.WaitForCoverQueue(ctx); err != nil {
-			return rebuildThumbFailure("task.msg.rebuild_thumbnails.wait_queue_failed", err), err
+			return taskFailure("task.msg.rebuild_thumbnails.wait_queue_failed", err), err
 		}
 		c.warmDashboardStatsCacheAsync("rebuild_thumbnails_completed")
 		return TaskResult{}, nil
@@ -237,21 +237,9 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 	return nil
 }
 
-// rebuildThumbFailure 给一个失败原因配上它专属的文案码，取消除外。
-//
-// 重建的几个工序各有各的失败文案，而取消同样以 ctx.Err() 的形式从这些调用里返回；
-// TaskResult 的文案覆盖对 settleTask 裁决出的每条分支一视同仁，无条件带上码的话，
-// 用户按下取消看到的会是「清空封面索引失败」而不是「已取消」。
-func rebuildThumbFailure(code string, err error) TaskResult {
-	if errors.Is(err, context.Canceled) {
-		return TaskResult{}
-	}
-	return TaskResult{Code: code}
-}
-
 func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRebuildThumbnailsTask(); err != nil {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A thumbnail rebuild is already running"})
+		writeTaskLaunchError(w, err, "A thumbnail rebuild is already running", "Failed to start thumbnail rebuild")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.thumbnails_rebuilding")})

@@ -68,6 +68,18 @@ func lastPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskSta
 	return TaskStatus{}
 }
 
+// publishedCountFor 数一数该任务键被投递出去的快照条数，供「该不该投递这一条」的用例断言
+// 投递次数本身——节流吞掉与句柄没交出去都表现为一条也不多。
+func publishedCountFor(snapshots []TaskStatus, key string) int {
+	count := 0
+	for _, snapshot := range snapshots {
+		if snapshot.Key == key {
+			count++
+		}
+	}
+	return count
+}
+
 // firstPublishedTask 返回该任务键**第一条**被投递出去的快照，用于断言任务诞生那一刻就已带齐
 // 作用域、元数据与并发上限，不得拆成启动之后的多次独立写入、中间留下可被观察到的空窗。
 func firstPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskStatus {

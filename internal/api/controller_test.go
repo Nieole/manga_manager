@@ -905,7 +905,10 @@ func TestPauseAndResumeStorageIO(t *testing.T) {
 func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	taskKey := "scan_library_42"
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1})
+	// 写这条扫描任务的资格来自任务体登记的**进度句柄**，不是拼出来的任务键——
+	// 不把句柄登记出去，扫描器的报文就无处可落。
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1})
+	t.Cleanup(controller.scanProgress.track(libraryScanTarget(42), progress))
 	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
 		Scope:                  "library",
 		ID:                     42,
@@ -937,7 +940,9 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
 	controller.initRebuildThumbAggregator(progress, 0)
 	t.Cleanup(controller.releaseRebuildThumbAggregator)
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
+	// 存储 IO 面板的扫描速率读的是这条扫描任务的参数，同样只能经它自己的句柄写入。
+	scanProgress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
+	t.Cleanup(controller.scanProgress.track(libraryScanTarget(42), scanProgress))
 
 	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
 		Scope:                "library",

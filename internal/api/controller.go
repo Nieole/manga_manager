@@ -70,6 +70,9 @@ type Controller struct {
 	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
 	rebuildThumbAgg *rebuildThumbAggregator
 
+	// 资料库/系列扫描任务的进度句柄保管处已抽成独立组件（scan_progress_handles.go），自带互斥锁。
+	scanProgress *scanProgressHandles
+
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
 
@@ -232,6 +235,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),
 		rebuildThumbAgg:    newRebuildThumbAggregator(),
+		scanProgress:       newScanProgressHandles(),
 		openPath:           openPathInDefaultFileManager,
 		auth:               newAuthState(),
 	}

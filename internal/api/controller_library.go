@@ -303,7 +303,10 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 		FailCode:     "task.msg.scan_library.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, _ *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		// 扫描器回调不在任务体的调用栈上，把句柄登记出去它才有地方报进度（见 scanProgressHandles）。
+		releaseProgress := c.scanProgress.track(libraryScanTarget(lib.ID), tp)
+		defer releaseProgress()
 		defer c.purgeReadingPathCaches()
 		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -335,72 +338,75 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	// 只有「同类任务已在运行」才是 409。启动入口今天只会返回这一个哨兵错误，但签名已经放开成
-	// error，把任何错误都翻成 409 会让将来某个真正的内部错误伪装成「已在运行」，用户等一个
-	// 永远不会出现的任务。判定口径与 retryTask 一致。
 	if err := c.launchLibraryScanTask(lib, isForce); err != nil {
-		if errors.Is(err, errTaskAlreadyRunning) {
-			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scan is already running"})
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to start library scan")
+		writeTaskLaunchError(w, err, "A library scan is already running", "Failed to start library scan")
 		return
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
 }
 
-func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) bool {
-	taskKey := fmt.Sprintf("scan_series_%d", seriesID)
-	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scan_series", "task.msg.scan_series.start", map[string]string{"id": strconv.FormatInt(seriesID, 10)}, 0) {
-		return false
-	}
+// launchSeriesScanTask 是系列扫描任务的启动点，走引擎的启动入口。
+//
+// 存储画像与并发上限来自系列所属的**资料库**，因此任务声明要先查两跳（系列 → 资料库）才能拼齐；
+// 查不到就按「没有上限可报」落地，见下。
+func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
+	idParams := map[string]string{"id": strconv.FormatInt(seriesID, 10)}
 	scopeName := ""
+	storagePolicy := config.ResolvedStoragePolicy{}
+	// 并发上限只在真找到了所属资料库时才有意义：查不到就让任务声明里的 Limits 留零值，
+	// 引擎不会为它凭空造一份全零的上限（那会在任务面板上显示成「0 并发」的假数据）。
+	limits := TaskLimits{}
 	if series, err := c.store.GetSeries(context.Background(), seriesID); err == nil {
+		scopeName = series.Name
 		if series.Title.Valid && strings.TrimSpace(series.Title.String) != "" {
 			scopeName = series.Title.String
-		} else {
-			scopeName = series.Name
 		}
-	}
-	storagePolicy := config.ResolvedStoragePolicy{}
-	if series, err := c.store.GetSeries(context.Background(), seriesID); err == nil {
 		if lib, libErr := c.store.GetLibrary(context.Background(), series.LibraryID); libErr == nil {
 			storagePolicy = config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
-			c.taskEngine.setTaskEffectiveLimit(taskKey, c.taskLimitsForPath(lib.Path, force))
+			limits = c.taskLimitsForPath(lib.Path, force)
 		}
 	}
-	c.taskEngine.setTaskMetadata(taskKey, map[string]string{
-		"force":                    strconv.FormatBool(force),
-		"scan_profile":             c.currentConfig().Scanner.ScanProfile,
-		"storage_profile":          storagePolicy.StorageProfile,
-		"volume_key":               storagePolicy.VolumeKey,
-		"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
-		"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
-	}, scopeName)
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackgroundTask(taskKey, func() {
+	spec := TaskSpec{
+		Key:         fmt.Sprintf("scan_series_%d", seriesID),
+		Type:        "scan_series",
+		StartCode:   "task.msg.scan_series.start",
+		StartParams: idParams,
+		CanCancel:   true,
+		CanPause:    true,
+		ScopeName:   scopeName,
+		Metadata: map[string]string{
+			"force":                    strconv.FormatBool(force),
+			"scan_profile":             c.currentConfig().Scanner.ScanProfile,
+			"storage_profile":          storagePolicy.StorageProfile,
+			"volume_key":               storagePolicy.VolumeKey,
+			"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
+			"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
+		},
+		Limits:       limits,
+		CompleteCode: "task.msg.scan_series.complete",
+		CancelCode:   "task.msg.scan_series.cancelled",
+		FailCode:     "task.msg.scan_series.failed",
+	}
+
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		releaseProgress := c.scanProgress.track(seriesScanTarget(seriesID), tp)
+		defer releaseProgress()
 		defer c.purgeReadingPathCaches()
-		err := c.scanner.ScanSeries(taskCtx, seriesID, force)
-		cleanupCancel()
-		if errors.Is(err, context.Canceled) {
-			c.invalidateDashboardStatsCache("scan_series_cancelled")
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_series.cancelled", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
-			return
-		}
-		if err != nil {
+		if err := c.scanner.ScanSeries(ctx, seriesID, force); err != nil {
+			if errors.Is(err, context.Canceled) {
+				c.invalidateDashboardStatsCache("scan_series_cancelled")
+				return TaskResult{Params: idParams}, err
+			}
 			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
 			c.invalidateDashboardStatsCache("scan_series_failed")
-			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.scan_series.failed", nil, err.Error())
-			return
+			return TaskResult{}, err
 		}
-		c.taskEngine.finishTaskMsg(taskKey, "task.msg.scan_series.complete", map[string]string{"id": strconv.FormatInt(seriesID, 10)})
 		c.warmDashboardStatsCacheAsync("scan_series_completed")
 		c.launchLowPriorityBookHashBackfillTask("scan_series")
+		return TaskResult{Params: idParams}, nil
 	})
-
-	return true
 }
 
 func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
@@ -412,8 +418,8 @@ func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	if !c.launchSeriesScanTask(seriesID, isForce) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A series scan is already running"})
+	if err := c.launchSeriesScanTask(seriesID, isForce); err != nil {
+		writeTaskLaunchError(w, err, "A series scan is already running", "Failed to start series scan")
 		return
 	}
 
@@ -440,30 +446,40 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, series)
 }
 
-// 清理失效资源记录
-func (c *Controller) launchCleanupLibraryTask(libraryID int64) bool {
-	taskKey := fmt.Sprintf("cleanup_library_%d", libraryID)
-	if !c.taskEngine.startTaskMsg(taskKey, "cleanup_library", "task.msg.cleanup_library.start", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, 1) {
-		return false
-	}
+// launchCleanupLibraryTask 清理该资料库里已失效的资源记录，走引擎的启动入口。
+//
+// 任务声明里没有取消文案码，因为任务体用 context.Background() 跑（理由见那里），
+// 引擎裁决不出**已取消**这条分支。两者必须一起改：只换成任务体的 ctx 的话，
+// scanner.CleanupLibrary 会在可中断点返回 ctx.Err()，任务落进一条没有文案的已取消态，
+// 界面上停着上一句「正在清理」不动。
+func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
+	idParams := map[string]string{"id": strconv.FormatInt(libraryID, 10)}
 	scopeName := ""
 	if lib, err := c.store.GetLibrary(context.Background(), libraryID); err == nil {
 		scopeName = lib.Name
 	}
-	c.taskEngine.setTaskMetadata(taskKey, nil, scopeName)
 
-	c.runBackgroundTask(taskKey, func() {
-		c.taskEngine.updateTaskDetailsMsg(taskKey, 0, 1, "task.msg.cleanup_library.scanning_records", map[string]string{"id": strconv.FormatInt(libraryID, 10)}, "scanning_records", "", nil, nil)
-		err := c.scanner.CleanupLibrary(context.Background(), libraryID)
-		if err != nil {
+	spec := TaskSpec{
+		Key:          fmt.Sprintf("cleanup_library_%d", libraryID),
+		Type:         "cleanup_library",
+		StartCode:    "task.msg.cleanup_library.start",
+		StartParams:  idParams,
+		Total:        1,
+		ScopeName:    scopeName,
+		CompleteCode: "task.msg.cleanup_library.complete",
+		FailCode:     "task.msg.cleanup_library.failed",
+	}
+
+	return c.taskEngine.Run(spec, func(_ context.Context, tp *TaskProgress) (TaskResult, error) {
+		tp.Phase("scanning_records", "task.msg.cleanup_library.scanning_records", idParams)
+		// 刻意不用任务体的 ctx：本任务不可取消，而停机会取消所有任务 ctx——用了它，
+		// 一次关服就会把这个没人取消过的任务写成**已取消**。改动前先读本函数的 doc。
+		if err := c.scanner.CleanupLibrary(context.Background(), libraryID); err != nil {
 			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
-			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.cleanup_library.failed", nil, err.Error())
-			return
+			return TaskResult{}, err
 		}
-		c.taskEngine.finishTaskMsg(taskKey, "task.msg.cleanup_library.complete", map[string]string{"id": strconv.FormatInt(libraryID, 10)})
+		return TaskResult{Params: idParams}, nil
 	})
-
-	return true
 }
 
 func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
@@ -472,8 +488,8 @@ func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
-	if !c.launchCleanupLibraryTask(libraryID) {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library cleanup is already running"})
+	if err := c.launchCleanupLibraryTask(libraryID); err != nil {
+		writeTaskLaunchError(w, err, "A library cleanup is already running", "Failed to start library cleanup")
 		return
 	}
 

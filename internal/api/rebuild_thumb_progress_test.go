@@ -34,17 +34,6 @@ func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*Controller, func
 	return c, snapshots, clock
 }
 
-// publishedCountFor 数一数该任务键被投递出去的快照条数。
-func publishedCountFor(snapshots []TaskStatus, key string) int {
-	count := 0
-	for _, snapshot := range snapshots {
-		if snapshot.Key == key {
-			count++
-		}
-	}
-	return count
-}
-
 const rebuildThumbTestKey = "rebuild_thumbnails"
 
 func seedRebuildThumbTask(t *testing.T, c *Controller) *TaskProgress {

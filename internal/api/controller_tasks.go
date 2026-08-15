@@ -33,6 +33,19 @@ type taskRelauncher func(ctx context.Context, task TaskStatus) error
 // errTaskAlreadyRunning 是重试时"同类任务已在运行"的哨兵错误。
 var errTaskAlreadyRunning = errors.New("task already running")
 
+// writeTaskLaunchError 把启动入口的错误翻成 HTTP 响应：只有「同类任务已在运行」是 409。
+//
+// 启动入口今天只会返回这一个哨兵错误，但签名已经放开成 error，把任何错误都翻成 409 会让
+// 将来某个真正的内部错误伪装成「已在运行」，用户等一个永远不会出现的任务。
+// 判定口径与 retryTask 一致；conflict 与 failure 是两条分支各自的英文提示。
+func writeTaskLaunchError(w http.ResponseWriter, err error, conflict, failure string) {
+	if errors.Is(err, errTaskAlreadyRunning) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": conflict})
+		return
+	}
+	jsonError(w, http.StatusInternalServerError, failure)
+}
+
 // buildTaskRelaunchers 注册各任务类型 -> 重启函数，是重试分发与"可重试类型"的唯一事实来源。
 func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 	libraryID := func(task TaskStatus) (int64, error) {
@@ -62,20 +75,14 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 			if task.ScopeID == nil {
 				return fmt.Errorf("task %q missing series id", task.Key)
 			}
-			if !c.launchSeriesScanTask(*task.ScopeID, forceParam(task)) {
-				return errTaskAlreadyRunning
-			}
-			return nil
+			return c.launchSeriesScanTask(*task.ScopeID, forceParam(task))
 		},
 		"cleanup_library": func(ctx context.Context, task TaskStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
 			}
-			if !c.launchCleanupLibraryTask(id) {
-				return errTaskAlreadyRunning
-			}
-			return nil
+			return c.launchCleanupLibraryTask(id)
 		},
 		"rebuild_index": func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRebuildIndexTask()
@@ -102,10 +109,7 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 			if locale == "" {
 				locale = "zh-CN"
 			}
-			if !c.launchAIGroupingTask(id, locale) {
-				return errTaskAlreadyRunning
-			}
-			return nil
+			return c.launchAIGroupingTask(id, locale)
 		},
 		"rebuild_book_hashes": func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRebuildBookHashesTask()
