@@ -250,7 +250,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 
 	// taskEngine 依赖 c 的 SSE 投递、生命周期信号与后台运行能力，同样须在 c 构造完成后建立。
 	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone, c.runBackground)
-	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptionsCore 会经 isRetryableTaskType 查表）之前完成。
+	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
 	return c
@@ -299,15 +299,6 @@ func (c *Controller) lifecycleDone() <-chan struct{} {
 	return c.done
 }
 
-// runBackgroundTask 是任务型后台调用点的入口，原样转发给任务引擎。
-//
-// 起一个受停机管辖的 goroutine、panic 与失败态兜底都由引擎内部处理（见 newTaskEngine
-// 的第四个参数）：控制器只提供能力，不得反向伸手改任务表。本方法保留仅为让既有的启动点
-// 一行不改，待它们迁到引擎的启动入口后即可删除。
-func (c *Controller) runBackgroundTask(taskKey string, fn func()) {
-	c.taskEngine.runTaskGoroutine(taskKey, fn)
-}
-
 func (c *Controller) runBackground(fn func()) {
 	c.lifecycleDone()
 	c.lifecycleMu.Lock()
@@ -320,8 +311,8 @@ func (c *Controller) runBackground(fn func()) {
 	go func() {
 		defer c.backgroundWG.Done()
 		// 后台任务的 panic 不经过 middleware.Recoverer（那只覆盖 HTTP handler goroutine），
-		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让该任务失败，服务继续可用。
-		// 任务型调用点请走 runBackgroundTask，它会额外把对应任务置为失败态。
+		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让服务继续可用。
+		// 任务体这一路另有兜底：引擎在 runTaskGoroutine 里把对应任务一并置为失败态。
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("Background task panicked", "panic", rec, "stack", string(debug.Stack()))

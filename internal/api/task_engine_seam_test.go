@@ -33,6 +33,30 @@ func (c *fakeClock) advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
+// steppingClock 每读一次就自己往前走一步。引擎每投递一帧读一次时钟，因此步长取一个投递窗口
+// 就等于「每一帧都恰好落在窗口之外」。它测的是水位认不认这个注入的时钟——任务体里若还留着一层
+// 按墙上时钟计时的节流，这个时钟怎么走都撬不动它。
+type steppingClock struct {
+	clock *fakeClock
+	step  time.Duration
+}
+
+func (c *steppingClock) Now() time.Time {
+	now := c.clock.Now()
+	c.clock.advance(c.step)
+	return now
+}
+
+// frozenClock 是不动的时钟：窗口内展示态一字未变的那些帧都该被吞掉。
+func frozenClock() func() time.Time {
+	return (&fakeClock{now: time.Unix(1700000000, 0)}).Now
+}
+
+// windowSteppingClock 每读一次跨过一个投递窗口：每一帧都该被放行。
+func windowSteppingClock() func() time.Time {
+	return (&steppingClock{clock: &fakeClock{now: time.Unix(1700000000, 0)}, step: taskProgressPublishInterval}).Now
+}
+
 // newBackgroundTestEngine 造一个后台能力可控的引擎：run 决定任务体何时、乃至是否执行。
 func newBackgroundTestEngine(run func(func())) (*taskEngine, func() []TaskStatus) {
 	var mu sync.Mutex
@@ -80,17 +104,28 @@ func publishedCountFor(snapshots []TaskStatus, key string) int {
 	return count
 }
 
-// publishedTaskWithCode 返回该任务键带指定文案码的最后一条快照。终态会改掉文案码，
+// publishedTasksWithCode 按投递顺序取出该任务键带指定文案码的全部载荷。终态会改掉文案码，
 // 所以中途那些帧只能这样取——lastPublishedTask 拿到的永远是收尾那一条。
-func publishedTaskWithCode(t *testing.T, snapshots []TaskStatus, key, code string) TaskStatus {
-	t.Helper()
-	for i := len(snapshots) - 1; i >= 0; i-- {
-		if snapshots[i].Key == key && snapshots[i].MessageCode == code {
-			return snapshots[i]
+// 「这一帧该不该出去」那类断言数的就是它的长度：节流吞掉与句柄没交出去都表现为一条也不多。
+func publishedTasksWithCode(snapshots []TaskStatus, key, code string) []TaskStatus {
+	var matched []TaskStatus
+	for _, snapshot := range snapshots {
+		if snapshot.Key == key && snapshot.MessageCode == code {
+			matched = append(matched, snapshot)
 		}
 	}
-	t.Fatalf("任务 %q 没有投递过任何带文案码 %q 的载荷", key, code)
-	return TaskStatus{}
+	return matched
+}
+
+// publishedTaskWithCode 返回该任务键带指定文案码的最后一条快照；一条都没有即 t.Fatal。
+func publishedTaskWithCode(t *testing.T, snapshots []TaskStatus, key, code string) TaskStatus {
+	t.Helper()
+	matched := publishedTasksWithCode(snapshots, key, code)
+	if len(matched) == 0 {
+		t.Fatalf("任务 %q 没有投递过任何带文案码 %q 的载荷", key, code)
+		return TaskStatus{}
+	}
+	return matched[len(matched)-1]
 }
 
 // firstPublishedTask 返回该任务键**第一条**被投递出去的快照，用于断言任务诞生那一刻就已带齐

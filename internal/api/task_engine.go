@@ -263,9 +263,9 @@ func (e *taskEngine) publishTaskStatusLocked(task TaskStatus) {
 // runTaskGoroutine 在受停机管辖的后台 goroutine 里执行任务体，并保证任务体一旦 panic，
 // key 对应的任务被置为失败态。
 //
-// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。panic 的任务体走不到任何
-// finishTask/failTask，任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，
-// 于是那个任务键从此恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
+// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。panic 的任务体走不到 settleTask，
+// 任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，于是那个任务键从此
+// 恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
 // 把 panic 转成一次显式失败，用户至少能看到原因并重试。
 func (e *taskEngine) runTaskGoroutine(key string, fn func()) {
 	e.runBackground(func() {
@@ -279,41 +279,12 @@ func (e *taskEngine) runTaskGoroutine(key string, fn func()) {
 	})
 }
 
-func (e *taskEngine) startCancelableTask(key, taskType, message string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, false)
-}
-
-func (e *taskEngine) startTaskWithOptionsCore(key, taskType, message, code string, params map[string]string, total int, canCancel bool, canPause bool) bool {
-	now := time.Now()
-	scope, scopeID := inferTaskScope(taskType, key)
-	task := TaskStatus{
-		Key:           key,
-		Type:          taskType,
-		Scope:         scope,
-		ScopeID:       scopeID,
-		Status:        "running",
-		Message:       message,
-		MessageCode:   code,
-		MessageParams: params,
-		Current:       0,
-		Total:         total,
-		CanCancel:     canCancel,
-		CanPause:      canPause,
-		StartedAt:     now,
-		UpdatedAt:     now,
-	}
-
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	return e.admitTaskLocked(task)
-}
-
 // admitTaskLocked 是新任务落地的**唯一**机制：过任务键闸门，然后编号、入表、裁剪、落盘、投递。
 // 调用方持有 mutex，并已把这个任务的全部字段填好（Sequence 与 Retryable 除外，由这里补）。
 //
-// 两个任务构造点（claimTaskSlot 与 startTaskWithOptionsCore）共用它，是为了让「五步顺序」
-// 只存在一份：这几步漏掉任何一步都不会有编译错误，而后果各不相同——漏投递则界面上任务不出现，
-// 漏落盘则重启后任务凭空消失，漏裁剪则任务表无限增长。
+// 它与 claimTaskSlot 分家，是为了让「填字段」与「五步顺序」各在一处：后面这几步漏掉任何一步
+// 都不会有编译错误，而后果各不相同——漏投递则界面上任务不出现，漏落盘则重启后任务凭空消失，
+// 漏裁剪则任务表无限增长。
 func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
 	if e.tasks == nil {
 		e.tasks = make(map[string]TaskStatus)
@@ -369,77 +340,6 @@ func (e *taskEngine) newTaskContext(key string) (context.Context, func()) {
 }
 
 // ---- 进度更新 ----
-
-func (e *taskEngine) updateTaskDetails(key string, current, total int, message, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
-	e.updateTaskDetailsCore(key, current, total, message, "", nil, phase, currentItem, metrics, labels)
-}
-
-func (e *taskEngine) updateTaskDetailsCore(key string, current, total int, message, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	if !taskIsActive(task.Status) {
-		return
-	}
-	task.Current = current
-	if total >= 0 {
-		task.Total = total
-	}
-	applyTaskMessage(&task, message, code, params)
-	if phase != "" {
-		task.Phase = phase
-	}
-	if currentItem != "" {
-		task.CurrentItem = currentItem
-	}
-	if len(metrics) > 0 {
-		if task.Metrics == nil {
-			task.Metrics = make(map[string]int64, len(metrics))
-		}
-		for k, v := range metrics {
-			task.Metrics[k] = v
-		}
-	}
-	if len(labels) > 0 {
-		if task.Labels == nil {
-			task.Labels = make(map[string]string, len(labels))
-		}
-		for k, v := range labels {
-			task.Labels[k] = v
-		}
-	}
-	task.UpdatedAt = time.Now()
-	e.seq++
-	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
-
-func (e *taskEngine) setTaskMetadata(key string, params map[string]string, scopeName string) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	task.Params = params
-	if strings.TrimSpace(scopeName) != "" {
-		task.ScopeName = scopeName
-	}
-	e.seq++
-	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
 
 func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	if len(params) == 0 {
@@ -504,15 +404,6 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 }
 
 // ---- 终态 ----
-
-func (e *taskEngine) finishTask(key, message string) {
-	e.finalizeTaskCore(key, "completed", message, "", nil)
-}
-
-// completeTaskMsg 是 completeTask 的 i18n 版（多用于取消态等终态）。
-func (e *taskEngine) completeTaskMsg(key, status, code string, params map[string]string) {
-	e.finalizeTaskCore(key, status, "", code, params)
-}
 
 // finalizeTaskCore 把任务落成 status 指名的那个**终态**，失败态除外（那条走 failTaskCore，
 // 它还要记下技术错误串）。

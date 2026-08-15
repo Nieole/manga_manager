@@ -3,6 +3,7 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -208,33 +209,55 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 回写整个系列的归档要逐本解压重压，大系列可以跑到分钟级，因此必须做成可取消的后台任务：
-	// 同步做会让请求一直挂到最后一本写完、中途无法取消也看不到进度。每本书前取一次 IO 令牌，
-	// 与扫描/哈希回填共用同一套卷级并发上限，避免绕开存储 IO 调度让阅读器取页被拖慢。
-	taskKey := fmt.Sprintf("write_comicinfo_series_%d", seriesID)
-	if !c.taskEngine.startCancelableTask(taskKey, "write_comicinfo", "正在写入 ComicInfo", len(books)) {
-		jsonError(w, http.StatusConflict, "ComicInfo write is already running for this series")
+	if err := c.launchWriteSeriesComicInfoTask(series, books, tags, authors); err != nil {
+		writeTaskLaunchError(w, err, "ComicInfo write is already running for this series", "Failed to start ComicInfo write")
 		return
 	}
-	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"series_id": strconv.FormatInt(seriesID, 10)}, series.Name)
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackgroundTask(taskKey, func() {
-		defer cleanupCancel()
+	jsonResponse(w, http.StatusAccepted, map[string]interface{}{
+		"status":   "started",
+		"task_key": writeComicInfoTaskKey(seriesID),
+		"total":    len(books),
+	})
+}
+
+// writeComicInfoTaskKey 拼回写任务的**任务键**。HTTP 层要把它回给前端，任务声明也要用它，
+// 因此它是两处共用的一份实现而不是各拼各的。
+func writeComicInfoTaskKey(seriesID int64) string {
+	return fmt.Sprintf("write_comicinfo_series_%d", seriesID)
+}
+
+// launchWriteSeriesComicInfoTask 是 ComicInfo 回写任务的启动点，走引擎的启动入口。
+//
+// 回写整个系列要逐本解压重压，大系列可以跑到分钟级，因此必须做成后台任务：同步做会让请求一直
+// 挂到最后一本写完、中途无法取消也看不到进度。它**可取消但不可暂停**——每本书都是一次原子替换，
+// 停在两本之间没有额外好处，而任务中心的暂停控件正是由 CanPause 决定的。
+//
+// 系列、书目、标签与作者由调用方备齐后传入：任务声明要一次性落地，其中的作用域显示名来自系列。
+func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, books []database.Book, tags []database.Tag, authors []database.Author) error {
+	spec := TaskSpec{
+		Key:          writeComicInfoTaskKey(series.ID),
+		Type:         "write_comicinfo",
+		StartCode:    "task.msg.write_comicinfo.start",
+		Total:        len(books),
+		CanCancel:    true,
+		Metadata:     map[string]string{"series_id": strconv.FormatInt(series.ID, 10)},
+		ScopeName:    series.Name,
+		CompleteCode: "task.msg.write_comicinfo.complete",
+		CancelCode:   "task.msg.write_comicinfo.cancelled",
+		FailCode:     "task.msg.write_comicinfo.failed",
+	}
+
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
-			if err := taskcontrol.Wait(taskCtx); err != nil {
-				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.control.cancelling", nil)
-				return
-			}
-			if taskCtx.Err() != nil {
-				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.control.cancelling", nil)
-				return
+			if err := taskcontrol.Wait(ctx); err != nil {
+				return TaskResult{}, err
 			}
 
 			// 拿 IO 令牌：归档回写是重 IO（逐本解压重压），不受调度会让阅读器取页明显卡顿。
 			// 用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，共用同一档并发上限。
-			_, releaseToken, _, _, tokenErr := c.acquireTaskStorageToken(taskCtx, book.Path, storageio.WorkKindMetadataScan)
+			_, releaseToken, _, _, tokenErr := c.acquireTaskStorageToken(ctx, book.Path, storageio.WorkKindMetadataScan)
 			if tokenErr != nil {
 				failed++
 				continue
@@ -260,17 +283,26 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 				failed++
 			}
 
-			c.taskEngine.updateTaskDetails(taskKey, i+1, len(books), "", "writing", book.Name, map[string]int64{
-				"written": int64(written), "skipped": int64(skipped), "failed": int64(failed),
-			}, nil)
+			// 计数、书名与三个结局计数同属这一本书，必须整帧报出：拆开报会被投递水位撕断，
+			// 撕开之后是什么样见 TaskProgress.Report。
+			current, total := i+1, len(books)
+			tp.Report(TaskFrame{
+				Current: &current,
+				Total:   &total,
+				Phase:   "writing",
+				Item:    book.Name,
+				Code:    "task.msg.write_comicinfo.progress",
+				Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
+				Metrics: map[string]int64{
+					"written": int64(written), "skipped": int64(skipped), "failed": int64(failed),
+				},
+			})
 		}
-		c.taskEngine.finishTask(taskKey, fmt.Sprintf("已写入 %d 本，跳过 %d 本，失败 %d 本", written, skipped, failed))
-	})
-
-	jsonResponse(w, http.StatusAccepted, map[string]interface{}{
-		"status":   "started",
-		"task_key": taskKey,
-		"total":    len(books),
+		return TaskResult{Params: map[string]string{
+			"written": strconv.Itoa(written),
+			"skipped": strconv.Itoa(skipped),
+			"failed":  strconv.Itoa(failed),
+		}}, nil
 	})
 }
 

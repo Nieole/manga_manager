@@ -46,20 +46,6 @@ func (s *externalTaskStore) ListExternalTransferBooksBySeries(context.Context, [
 	return s.transfers, nil
 }
 
-// steppingClock 每读一次就自己往前走一步。引擎每投递一帧读一次时钟，因此步长取一个投递窗口
-// 就等于「每一帧都恰好落在窗口之外」。它测的是水位认不认这个注入的时钟——任务体里若还留着一层
-// 按墙上时钟计时的节流，这个时钟怎么走都撬不动它。
-type steppingClock struct {
-	clock *fakeClock
-	step  time.Duration
-}
-
-func (c *steppingClock) Now() time.Time {
-	now := c.clock.Now()
-	c.clock.advance(c.step)
-	return now
-}
-
 // externalRig 把两个外部库任务体需要的东西凑齐：引擎（仍经它唯一的 seam 构造）、外部库会话
 // 管理器，以及资料库与外部库两个真实目录——传输任务真的在拷文件。
 type externalRig struct {
@@ -114,16 +100,6 @@ func newExternalRig(t *testing.T, books int, now func() time.Time, run func(func
 	}
 }
 
-// frozenClock 是不动的时钟：窗口内的一切都该被吞掉。
-func frozenClock() func() time.Time {
-	return (&fakeClock{now: time.Unix(1700000000, 0)}).Now
-}
-
-// windowSteppingClock 每读一次跨过一个投递窗口：每一帧都该被放行。
-func windowSteppingClock() func() time.Time {
-	return (&steppingClock{clock: &fakeClock{now: time.Unix(1700000000, 0)}, step: taskProgressPublishInterval}).Now
-}
-
 // readySession 建一个会话并扫成 ready 态——传输的规划阶段只认 ready。
 func (r *externalRig) readySession(t *testing.T) string {
 	t.Helper()
@@ -144,17 +120,6 @@ func (r *externalRig) plan(t *testing.T, sessionID string) external.TransferPlan
 		t.Fatalf("规划传输: %v", err)
 	}
 	return plan
-}
-
-// countPublishedWithCode 数一数该任务键带指定文案码的载荷投递了几条。
-func countPublishedWithCode(snapshots []TaskStatus, key, code string) int {
-	count := 0
-	for _, snapshot := range snapshots {
-		if snapshot.Key == key && snapshot.MessageCode == code {
-			count++
-		}
-	}
-	return count
 }
 
 const transferItemCode = "task.msg.transfer_external_library.transferring"
@@ -178,7 +143,7 @@ func TestExternalTransferProgressObeysEngineWaterLevelOnly(t *testing.T) {
 			t.Fatalf("启动传输失败: %v", err)
 		}
 		key := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
-		return countPublishedWithCode(rig.snapshots(), key, transferItemCode)
+		return len(publishedTasksWithCode(rig.snapshots(), key, transferItemCode))
 	}
 
 	if got := itemFramesPublished(t, frozenClock()); got != 1 {
