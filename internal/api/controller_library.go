@@ -454,10 +454,7 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 // 界面上停着上一句「正在清理」不动。
 func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
 	idParams := map[string]string{"id": strconv.FormatInt(libraryID, 10)}
-	scopeName := ""
-	if lib, err := c.store.GetLibrary(context.Background(), libraryID); err == nil {
-		scopeName = lib.Name
-	}
+	scopeName := c.libraryScopeName(libraryID)
 
 	spec := TaskSpec{
 		Key:          fmt.Sprintf("cleanup_library_%d", libraryID),

@@ -163,10 +163,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 // 它的**完成**分支有三个（生成了审阅单 / 全都已分组 / 没产出可审阅的合集），失败分支有三个，
 // 取消分支只有一个：都由任务体经 TaskResult 覆盖任务声明里的默认码表达。
 func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
-	scopeName := ""
-	if lib, err := c.store.GetLibrary(context.Background(), libID); err == nil {
-		scopeName = lib.Name
-	}
+	scopeName := c.libraryScopeName(libID)
 
 	spec := TaskSpec{
 		Key:       fmt.Sprintf("ai_grouping_library_%d", libID),

@@ -271,7 +271,9 @@ func (m *Manager) GetSeriesCoverage(libraryID int64, sessionID string, seriesIDs
 	return items, nil
 }
 
-func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress func(current, total int, message string)) (SessionSnapshot, error) {
+// ScanSession 遍历外部路径并与本库书目对账。progress 只报两个计数，不带展示文案：
+// 用户可见文字由调用方按语种渲染，本包渲染的话英文用户会看到中文。
+func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress func(current, total int)) (SessionSnapshot, error) {
 	m.mu.Lock()
 	m.pruneLocked(time.Now())
 	s, ok := m.sessions[sessionID]
@@ -376,7 +378,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 		m.mu.Unlock()
 
 		if progress != nil {
-			progress(index+1, total, fmt.Sprintf("已扫描 %d / %d 个外部资源文件", index+1, total))
+			progress(index+1, total)
 		}
 	}
 

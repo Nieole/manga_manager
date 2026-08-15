@@ -46,6 +46,18 @@ func writeTaskLaunchError(w http.ResponseWriter, err error, conflict, failure st
 	jsonError(w, http.StatusInternalServerError, failure)
 }
 
+// libraryScopeName 取资料库在界面上的显示名，取不到返回空串。
+//
+// 读不到库名不是启动失败：任务声明的其余部分不依赖它，而 claimTaskSlot 对空串本就无操作。
+// 为一次读库失败挡下整个任务，用户失去的是任务本身，换来的只是一个标签。
+func (c *Controller) libraryScopeName(libraryID int64) string {
+	lib, err := c.store.GetLibrary(context.Background(), libraryID)
+	if err != nil {
+		return ""
+	}
+	return lib.Name
+}
+
 // buildTaskRelaunchers 注册各任务类型 -> 重启函数，是重试分发与"可重试类型"的唯一事实来源。
 func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 	libraryID := func(task TaskStatus) (int64, error) {

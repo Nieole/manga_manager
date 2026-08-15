@@ -283,11 +283,6 @@ func (e *taskEngine) startCancelableTask(key, taskType, message string, total in
 	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, false)
 }
 
-// startPausableCancelableTaskMsg 是启动方法的 i18n 版：初始消息用稳定码 + 占位参数。
-func (e *taskEngine) startPausableCancelableTaskMsg(key, taskType, code string, params map[string]string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, "", code, params, total, true, true)
-}
-
 func (e *taskEngine) startTaskWithOptionsCore(key, taskType, message, code string, params map[string]string, total int, canCancel bool, canPause bool) bool {
 	now := time.Now()
 	scope, scopeID := inferTaskScope(taskType, key)
@@ -375,41 +370,8 @@ func (e *taskEngine) newTaskContext(key string) (context.Context, func()) {
 
 // ---- 进度更新 ----
 
-// updateTaskMsg 是逐条目进度的 i18n 版：只发稳定消息码 + 占位参数，由前端本地化渲染。
-func (e *taskEngine) updateTaskMsg(key string, current, total int, code string, params map[string]string) {
-	e.updateTaskCore(key, current, total, "", code, params)
-}
-
-func (e *taskEngine) updateTaskCore(key string, current, total int, message, code string, params map[string]string) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	task.Current = current
-	if total >= 0 {
-		task.Total = total
-	}
-	applyTaskMessage(&task, message, code, params)
-	task.UpdatedAt = time.Now()
-	e.seq++
-	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
-
 func (e *taskEngine) updateTaskDetails(key string, current, total int, message, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
 	e.updateTaskDetailsCore(key, current, total, message, "", nil, phase, currentItem, metrics, labels)
-}
-
-// updateTaskDetailsMsg 是 updateTaskDetails 的 i18n 版：消息改为稳定码 + 占位参数，其余（phase/currentItem/
-// metrics/labels）语义不变。
-func (e *taskEngine) updateTaskDetailsMsg(key string, current, total int, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
-	e.updateTaskDetailsCore(key, current, total, "", code, params, phase, currentItem, metrics, labels)
 }
 
 func (e *taskEngine) updateTaskDetailsCore(key string, current, total int, message, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
@@ -547,11 +509,6 @@ func (e *taskEngine) finishTask(key, message string) {
 	e.finalizeTaskCore(key, "completed", message, "", nil)
 }
 
-// finishTaskMsg 是 finishTask 的 i18n 版：只发稳定消息码 + 占位参数。
-func (e *taskEngine) finishTaskMsg(key, code string, params map[string]string) {
-	e.finalizeTaskCore(key, "completed", "", code, params)
-}
-
 // completeTaskMsg 是 completeTask 的 i18n 版（多用于取消态等终态）。
 func (e *taskEngine) completeTaskMsg(key, status, code string, params map[string]string) {
 	e.finalizeTaskCore(key, status, "", code, params)
@@ -600,11 +557,6 @@ func (e *taskEngine) failTaskWithError(key, message, taskError string) {
 	e.failTaskCore(key, message, "", nil, taskError)
 }
 
-// failTaskErrMsg 是 failTaskWithError 的 i18n 版：显示消息用稳定码，taskError 保留原始技术错误串（诊断用，不翻译）。
-func (e *taskEngine) failTaskErrMsg(key, code string, params map[string]string, taskError string) {
-	e.failTaskCore(key, "", code, params, taskError)
-}
-
 func (e *taskEngine) failTaskCore(key, message, code string, params map[string]string, taskError string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
@@ -635,7 +587,7 @@ func (e *taskEngine) failTaskCore(key, message, code string, params map[string]s
 
 // pruneTasksLocked 把内存任务表裁到 maxRetainedTasks，**活动任务无条件保留**。
 //
-// 内存里的这份是活动任务的唯一可写副本：updateTaskCore 等一律「tasks[key] 查不到就 return」。
+// 内存里的这份是活动任务的唯一可写副本：applyTaskProgress 等一律「tasks[key] 查不到就 return」。
 // 一个仍在跑的任务被裁掉之后，它后续的全部进度、指标乃至终态更新都会静默失效，
 // 任务面板上永远停在最后一次进度、也再不会变成「完成」。
 //
