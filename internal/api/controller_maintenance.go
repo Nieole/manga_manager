@@ -1,4 +1,4 @@
-// 业务说明：本文件由 controller.go 拆分而来，属于后端 API 层的维护任务子域，负责全库扫描、索引重建、缩略图重建/清理、文件指纹重建与低优先级全量哈希回填等运维任务的编排与接口。
+// 本文件由 controller.go 拆分而来，属于后端 API 层的维护任务子域，负责全库扫描、索引重建、缩略图重建/清理、文件指纹重建与低优先级全量哈希回填等运维任务的编排与接口。
 
 package api
 
@@ -50,9 +50,9 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 
 // clearThumbnailDir 清空缩略图目录，但保留页图磁盘缓存子目录。
 //
-// 缩略图目录就是 cache.dir 本身，而页图磁盘缓存在 <cache.dir>/pages/ 下。
-// 此前直接 os.RemoveAll(cache.dir)，于是「重建缩略图」会把整个页图缓存一并抹掉——
-// 用户只想修封面，代价却是之后每一页都要重新解码转码一遍。
+// 缩略图目录就是 cache.dir 本身，而页图磁盘缓存在 <cache.dir>/pages/ 下，二者必须分开清：
+// 直接 os.RemoveAll(cache.dir) 会连页图缓存一并抹掉，用户只想修封面，代价却是之后
+// 每一页都要重新解码转码一遍。
 func (c *Controller) clearThumbnailDir(thumbDir string) error {
 	pageCacheDir := filepath.Clean(c.processedImageCacheDir())
 
@@ -124,11 +124,10 @@ func (c *Controller) runGlobalScan(ctx context.Context, force bool, ignoreFormat
 
 // launchRebuildIndexTask 异步重建 FTS 索引并随后做一次全量扫描。
 //
-// 此前这三步全在 HTTP 请求 goroutine 里同步跑：FTS 是 DELETE + INSERT...SELECT 全表重灌，
-// 大库上会把请求挂到结束（反代通常先 504），期间任务显示 running、进度恒为 0 且不可取消；
-// 随后的 `go c.triggerGlobalScan(context.Background())` 又派生出一批完全脱离
-// backgroundWG 的扫描 goroutine，Close() 不会等它们，main 返回后 store.Close() 关掉
-// sql.DB 而扫描仍在写库，产生 "sql: database is closed" 与半截写入。
+// 必须整体作为可取消的后台任务跑，且派生的扫描要挂在 backgroundWG 上、不能裸 goroutine：
+// FTS 重灌与随后的全库扫描在大库上都可能跑到分钟级，同步做会把请求一直挂到反代超时；
+// 脱离 backgroundWG 的话，Close() 不会等它，进程退出后 store.Close() 关闭 sql.DB
+// 时扫描可能仍在写库。
 func (c *Controller) launchRebuildIndexTask() error {
 	if !c.taskEngine.startTaskMsg("rebuild_index", "rebuild_index", "task.msg.rebuild_index.start", nil, 1) {
 		return errTaskAlreadyRunning
@@ -170,74 +169,84 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "maintenance.search_index_rebuilt")})
 }
 
+// launchRebuildThumbnailsTask 是缩略图重建任务的启动点，走引擎的启动入口。
+//
+// 任务体开工第一件事是把进度句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
+// 之外写入，所有权模型见那里。
 func (c *Controller) launchRebuildThumbnailsTask() error {
-	if !c.taskEngine.startPausableCancelableTaskMsg("rebuild_thumbnails", "rebuild_thumbnails", "task.msg.rebuild_thumbnails.start", nil, 0) {
-		return errTaskAlreadyRunning
-	}
-	policy := config.ResolveStoragePolicy(c.currentConfig(), "")
-	c.taskEngine.setTaskMetadata("rebuild_thumbnails", map[string]string{
-		"storage_profile":   policy.StorageProfile,
-		"volume_key":        policy.VolumeKey,
-		"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
-		"execution_mode":    "low_impact",
-	}, "")
-	c.taskEngine.setTaskEffectiveLimit("rebuild_thumbnails", c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext("rebuild_thumbnails")
-
-	thumbDir := filepath.Join(".", "data", "thumbnails")
 	cfg := c.currentConfig()
+	policy := config.ResolveStoragePolicy(cfg, "")
+	thumbDir := filepath.Join(".", "data", "thumbnails")
 	if cfg.Cache.Dir != "" {
 		thumbDir = cfg.Cache.Dir
 	}
 
-	c.runBackgroundTask("rebuild_thumbnails", func() {
-		defer cleanupCancel()
+	spec := TaskSpec{
+		Key:       "rebuild_thumbnails",
+		Type:      "rebuild_thumbnails",
+		StartCode: "task.msg.rebuild_thumbnails.start",
+		CanCancel: true,
+		CanPause:  true,
+		Metadata: map[string]string{
+			"storage_profile":   policy.StorageProfile,
+			"volume_key":        policy.VolumeKey,
+			"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
+			"execution_mode":    "low_impact",
+		},
+		Limits:       c.taskLimitsForPath("", true),
+		CompleteCode: "task.msg.rebuild_thumbnails.complete",
+		CancelCode:   "task.msg.rebuild_thumbnails.cancelled",
+		FailCode:     "task.msg.rebuild_thumbnails.failed",
+	}
+
+	if err := c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		c.initRebuildThumbAggregator(tp, 0)
 		defer c.releaseRebuildThumbAggregator()
-		c.initRebuildThumbAggregator(0)
-		c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", 0, 0, "task.msg.rebuild_thumbnails.clearing_cache", nil, "clearing_cache", thumbDir, nil, nil)
+
+		tp.Report(TaskFrame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
 		if err := c.clearThumbnailDir(thumbDir); err != nil {
-			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cache_failed", nil, err.Error())
-			return
+			return rebuildThumbFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
-		if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
-			return
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return TaskResult{}, err
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
-			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.mkdir_failed", nil, err.Error())
-			return
+			return rebuildThumbFailure("task.msg.rebuild_thumbnails.mkdir_failed", err), err
 		}
-		c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.clearing_cover_index", nil, "clearing_cache", "", nil, nil)
-		if err := c.clearAllCoverPaths(taskCtx); err != nil {
-			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.clear_cover_index_failed", nil, err.Error())
-			return
+		tp.Phase("clearing_cache", "task.msg.rebuild_thumbnails.clearing_cover_index", nil)
+		if err := c.clearAllCoverPaths(ctx); err != nil {
+			return rebuildThumbFailure("task.msg.rebuild_thumbnails.clear_cover_index_failed", err), err
 		}
-		c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", 0, -1, "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil, "reading_metadata", "", nil, nil)
-		err := c.runGlobalScan(taskCtx, true, true /* 重建缩略图必须看得见全部已入库的书 */, func(current, total int, lib database.Library) {
+		tp.Phase("reading_metadata", "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil)
+		if err := c.runGlobalScan(ctx, true, true /* 重建缩略图必须看得见全部已入库的书 */, func(current, total int, lib database.Library) {
 			c.trackRebuildThumbLibraryProgress(current, total, lib)
 			c.refreshRebuildThumbTaskFromAggregator(lib)
-		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
-			return
-		}
-		if err != nil {
-			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.failed", nil, err.Error())
-			return
+		}); err != nil {
+			return TaskResult{}, err
 		}
 		c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
-		if err := c.scanner.WaitForCoverQueue(taskCtx); errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg("rebuild_thumbnails", "cancelled", "task.msg.rebuild_thumbnails.cancelled", nil)
-			return
-		} else if err != nil {
-			c.taskEngine.failTaskErrMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.wait_queue_failed", nil, err.Error())
-			return
+		if err := c.scanner.WaitForCoverQueue(ctx); err != nil {
+			return rebuildThumbFailure("task.msg.rebuild_thumbnails.wait_queue_failed", err), err
 		}
-		c.taskEngine.finishTaskMsg("rebuild_thumbnails", "task.msg.rebuild_thumbnails.complete", nil)
 		c.warmDashboardStatsCacheAsync("rebuild_thumbnails_completed")
-	})
+		return TaskResult{}, nil
+	}); err != nil {
+		return err
+	}
 	c.PublishEvent("refresh_thumbnails")
 	return nil
+}
+
+// rebuildThumbFailure 给一个失败原因配上它专属的文案码，取消除外。
+//
+// 重建的几个工序各有各的失败文案，而取消同样以 ctx.Err() 的形式从这些调用里返回；
+// TaskResult 的文案覆盖对 settleTask 裁决出的每条分支一视同仁，无条件带上码的话，
+// 用户按下取消看到的会是「清空封面索引失败」而不是「已取消」。
+func rebuildThumbFailure(code string, err error) TaskResult {
+	if errors.Is(err, context.Canceled) {
+		return TaskResult{}
+	}
+	return TaskResult{Code: code}
 }
 
 func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {

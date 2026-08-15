@@ -1,12 +1,8 @@
-// 业务说明：本文件把「重建缩略图」任务的跨库进度聚合从 Controller 上帝对象里抽成独立组件。
+// 「重建缩略图」任务的跨库进度聚合，以及该任务**进度句柄**的保管处。
 //
-// 该任务会依次全量扫描每个资料库，而扫描器只按单库上报 metrics；要在任务面板上显示一个
-// 全局进度，就得把「已完成库的最终值（baseline）」与「进行中库的最新快照（perLibPending）」
-// 合并起来。麻烦在于封面生成是异步的：某个库的主流程结束后，cover queue 仍会继续上报该库的
-// generated_covers，若不加区分就会与已计入 baseline 的值重复累计。
-//
-// rebuildThumbAggregator 自带互斥锁并只暴露「快照」这一种读取方式，把上述时序规则收在一处。
-// Controller 仅持有一个引用，不再暴露 rebuildThumbAgg / rebuildThumbAggMu 两个字段。
+// 它的进度由任务体**之外**写入——写入者是扫描器的 goroutine，不在任务体的调用栈上。
+// 任务体因此在开工时把句柄交给聚合器，写入者从快照里取句柄再写进度；
+// 「有没有拿到句柄」既是写入资格，也就是「重建是否在进行中」这个判定本身。
 
 package api
 
@@ -18,15 +14,21 @@ import (
 )
 
 // rebuildThumbAggregator 聚合「重建缩略图」任务在多个资料库之间的进度。
+//
+// 该任务会依次全量扫描每个资料库，而扫描器只按单库上报 metrics；要在任务面板上显示一个
+// 全局进度，就得把「已完成库的最终值（baseline）」与「进行中库的最新快照（perLibPending）」
+// 合并起来。麻烦在于封面生成是异步的：某个库的主流程结束后，cover queue 仍会继续上报该库的
+// generated_covers，若不加区分就会与已计入 baseline 的值重复累计（去重规则见 fixateLibrary）。
+//
 // 须经 newRebuildThumbAggregator 构造；所有方法对 nil 接收者安全，
 // 与 sseBroker.publish 的既有写法一致——白盒测试会手工拼装 Controller，
 // 漏掉某个组件时应表现为「该功能无操作」而不是 nil 解引用 panic。
 type rebuildThumbAggregator struct {
 	mu sync.Mutex
 
-	// active 为 false 表示当前没有在跑重建任务，所有更新都是无操作。
-	// 用标志位而不是把整个聚合器置 nil，是为了让 Controller 侧不必再判空。
-	active bool
+	// progress 是任务体交来的进度句柄；为 nil 表示当前没有在跑重建任务，所有更新都是无操作。
+	// 它不只是一个状态位：拿不到句柄的代码没有任何办法写这个任务的进度。
+	progress *TaskProgress
 
 	totalLibraries int
 	doneLibraries  int
@@ -41,10 +43,11 @@ type rebuildThumbAggregator struct {
 	currentLibPath     string
 }
 
-// rebuildThumbSnapshot 是聚合器对外暴露的只读视图。
-// 所有读取路径都走它，避免调用方各自持锁拼装 merged（此前有四处几乎相同的复制粘贴）。
+// rebuildThumbSnapshot 是聚合器对外暴露的只读视图，也是进度句柄的交付方式。
+// 所有读取路径都走它：调用方不得自行持锁拼装 merged，否则合并规则会散成好几份各自漂移。
 type rebuildThumbSnapshot struct {
-	Active         bool
+	// Progress 为 nil 表示当前没有在跑重建任务，取到快照的一方应直接跳过。
+	Progress       *TaskProgress
 	Metrics        map[string]int64
 	DoneLibraries  int
 	TotalLibraries int
@@ -56,19 +59,19 @@ func newRebuildThumbAggregator() *rebuildThumbAggregator {
 	return &rebuildThumbAggregator{}
 }
 
-// begin 开启一轮聚合并重置全部状态。
-func (a *rebuildThumbAggregator) begin(totalLibraries int) {
+// begin 开启一轮聚合并重置全部状态，progress 是任务体交来的进度句柄。
+func (a *rebuildThumbAggregator) begin(progress *TaskProgress, totalLibraries int) {
 	if a == nil {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.reset()
-	a.active = true
+	a.progress = progress
 	a.totalLibraries = totalLibraries
 }
 
-// end 结束本轮聚合；之后的更新都是无操作，直到下一次 begin。
+// end 结束本轮聚合并交回进度句柄；之后的更新都是无操作，直到下一次 begin。
 func (a *rebuildThumbAggregator) end() {
 	if a == nil {
 		return
@@ -80,7 +83,7 @@ func (a *rebuildThumbAggregator) end() {
 
 // reset 清空状态，调用方须持锁。
 func (a *rebuildThumbAggregator) reset() {
-	a.active = false
+	a.progress = nil
 	a.totalLibraries = 0
 	a.doneLibraries = 0
 	a.baseline = make(map[string]int64)
@@ -94,18 +97,14 @@ func (a *rebuildThumbAggregator) reset() {
 
 // trackLibrary 在 runGlobalScan 的库切换边界更新聚合器，
 // done 是已完成库数（progress 回调 i 表示「开始第 i+1 个」，i+1 表示「完成第 i+1 个」）。
-//
-// 允许在 begin 之前被调用：早期实现里 trackLibraryProgress 会惰性建聚合器，
-// 这里保留同样的宽容语义，避免调用顺序变化导致进度整段丢失。
 func (a *rebuildThumbAggregator) trackLibrary(done, total int, lib database.Library) {
 	if a == nil {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.active {
-		a.reset()
-		a.active = true
+	if a.progress == nil {
+		return
 	}
 	a.totalLibraries = total
 	a.doneLibraries = done
@@ -115,14 +114,13 @@ func (a *rebuildThumbAggregator) trackLibrary(done, total int, lib database.Libr
 }
 
 // applyProgress 吸收扫描器的单库进度事件，返回吸收后的快照。
-// Active 为 false 时表示当前没有在跑重建任务，调用方应直接跳过。
 func (a *rebuildThumbAggregator) applyProgress(report scanner.ScanProgressReport) rebuildThumbSnapshot {
 	if a == nil {
 		return rebuildThumbSnapshot{}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.active {
+	if a.progress == nil {
 		return rebuildThumbSnapshot{}
 	}
 
@@ -156,7 +154,7 @@ func (a *rebuildThumbAggregator) fixateLibrary(report scanner.ScanMetricsReport)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.active {
+	if a.progress == nil {
 		return rebuildThumbSnapshot{}
 	}
 
@@ -189,7 +187,7 @@ func (a *rebuildThumbAggregator) snapshot() rebuildThumbSnapshot {
 
 // snapshotLocked 合并 baseline 与各库 pending，调用方须持锁。
 func (a *rebuildThumbAggregator) snapshotLocked() rebuildThumbSnapshot {
-	if !a.active {
+	if a.progress == nil {
 		return rebuildThumbSnapshot{}
 	}
 	merged := make(map[string]int64, len(a.baseline)+8)
@@ -202,7 +200,7 @@ func (a *rebuildThumbAggregator) snapshotLocked() rebuildThumbSnapshot {
 		}
 	}
 	return rebuildThumbSnapshot{
-		Active:         true,
+		Progress:       a.progress,
 		Metrics:        merged,
 		DoneLibraries:  a.doneLibraries,
 		TotalLibraries: a.totalLibraries,

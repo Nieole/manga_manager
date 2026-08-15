@@ -932,7 +932,11 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 
 func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
+	// 写重建任务的资格来自任务体交给聚合器的**进度句柄**，不是拼出来的任务键——
+	// 不把句柄交出去，扫描器的报文就无处可落。
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
+	controller.initRebuildThumbAggregator(progress, 0)
+	t.Cleanup(controller.releaseRebuildThumbAggregator)
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
 
 	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{

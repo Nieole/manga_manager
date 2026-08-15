@@ -141,12 +141,7 @@ func (e *taskEngine) settleTask(spec TaskSpec, result TaskResult, err error) {
 
 // Advance 报告**计数推进**：做完了多少、一共多少。它只动计数与总数，不碰**阶段**。
 func (tp *TaskProgress) Advance(current, total int, code string, params map[string]string) {
-	tp.engine.applyTaskProgress(tp.key, taskProgressUpdate{
-		current: &current,
-		total:   &total,
-		code:    code,
-		params:  params,
-	})
+	tp.Report(TaskFrame{Current: &current, Total: &total, Code: code, Params: params})
 }
 
 // Phase 报告**阶段**：正在做什么。它只动阶段与文案，不碰计数与总数，
@@ -154,47 +149,67 @@ func (tp *TaskProgress) Advance(current, total int, code string, params map[stri
 //
 // 名字用 Phase 而不是 Stage：CONTEXT.md 把 stage 列为这个概念要避开的词。
 func (tp *TaskProgress) Phase(phase, code string, params map[string]string) {
-	tp.engine.applyTaskProgress(tp.key, taskProgressUpdate{
-		phase:  phase,
-		code:   code,
-		params: params,
-	})
+	tp.Report(TaskFrame{Phase: phase, Code: code, Params: params})
 }
 
-// Metrics 合并任务指标（已哈希文件数、IO 等待毫秒等），按键覆盖。
+// Metrics 合并任务指标（已哈希文件数、IO 等待毫秒等），按键**覆盖**。
+// 上报方手里握着该指标的全量当前值时用它。
 func (tp *TaskProgress) Metrics(m map[string]int64) {
-	tp.engine.applyTaskProgress(tp.key, taskProgressUpdate{metrics: m})
+	tp.Report(TaskFrame{Metrics: m})
+}
+
+// AddMetrics 按键**累加**指标增量，并顺带补齐随同一份报文而来的描述性参数（存储画像、卷标识等）。
+//
+// 与 Metrics 的分工在于上报方看得见多少：跨资料库的任务收到的每份报文只覆盖其中一个库，
+// 全局总量只能由引擎累加得出。挑错一个不会有编译错误，后果是指标要么翻倍、要么只剩最后一份报文。
+//
+// 它刻意不走 TaskFrame：那条路是「设」，这条是「加」；而且这里的参数落进 TaskStatus.Params
+// 而非 MessageParams——存储 IO 面板按参数名读这些累计值（见 taskArchiveOpenRate）。
+// 代价是它与同一次事件里的那一帧各自投递一次，因此只给逐库报文这种低频路径用。
+func (tp *TaskProgress) AddMetrics(increments map[string]int64, params map[string]string) {
+	tp.engine.mergeRunningTaskMetricSums(tp.key, increments, params)
 }
 
 // Item 报告当前正在处理的条目名。
 func (tp *TaskProgress) Item(name string) {
-	tp.engine.applyTaskProgress(tp.key, taskProgressUpdate{item: name})
+	tp.Report(TaskFrame{Item: name})
 }
 
 // Labels 合并任务标签（刮削源名、当前系列名等展示用的字符串），按键覆盖。
 // 与 Metrics 的区别只在值的类型：标签给人看，指标要参与计算。
 func (tp *TaskProgress) Labels(l map[string]string) {
-	tp.engine.applyTaskProgress(tp.key, taskProgressUpdate{labels: l})
+	tp.Report(TaskFrame{Labels: l})
 }
 
-// taskProgressUpdate 是进度句柄各方法的共同载体：只有被显式设置的字段才会写进任务。
-// 「不改变总数」由「不传总数」表达，不用哨兵值。
-type taskProgressUpdate struct {
-	current *int
-	total   *int
-	phase   string
-	item    string
-	code    string
-	params  map[string]string
-	metrics map[string]int64
-	labels  map[string]string
+// TaskFrame 是一次上报的载体：只有被显式设置的字段会写进任务。
+// 「不改变总数」由「不设 Total」表达，不用哨兵值；播报**阶段**也不必编造一个凑数的计数值。
+type TaskFrame struct {
+	Current *int
+	Total   *int
+	Phase   string
+	Item    string
+	Code    string
+	Params  map[string]string
+	Metrics map[string]int64
+	Labels  map[string]string
 }
 
-// applyTaskProgress 把一次上报写进任务表并按节流水位投递。
+// Report 把一帧**原子地**写进任务：一次加锁、一次投递。
+//
+// 日常上报请用 Advance / Phase / Item / Metrics / Labels——它们各自只回答一个问题，
+// 是这个句柄的主用法。Report 留给那些「一个外部事件天然就是一整帧」的写入者，
+// 典型是把扫描器的一份报文翻成一帧进度：那种帧拆成几次报会撕开——
+// 投递水位放行了其中一条中间态，又把后面补齐的那条吞掉，于是同一份载荷里
+// 指标已经走到第 N 条、进度条还停在第 N-1 条。
+func (tp *TaskProgress) Report(frame TaskFrame) {
+	tp.engine.applyTaskProgress(tp.key, frame)
+}
+
+// applyTaskProgress 把一帧上报写进任务表并按节流水位投递。
 //
 // 任务已进入终态后一律忽略：扫描器的进度回调不在任务体的调用栈上，晚一拍很常见，
 // 放行会把一个已经收尾的任务在界面上拽回运行中。
-func (e *taskEngine) applyTaskProgress(key string, update taskProgressUpdate) {
+func (e *taskEngine) applyTaskProgress(key string, frame TaskFrame) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -202,32 +217,32 @@ func (e *taskEngine) applyTaskProgress(key string, update taskProgressUpdate) {
 	if !ok || !taskIsActive(task.Status) {
 		return
 	}
-	if update.current != nil {
-		task.Current = *update.current
+	if frame.Current != nil {
+		task.Current = *frame.Current
 	}
-	if update.total != nil {
-		task.Total = *update.total
+	if frame.Total != nil {
+		task.Total = *frame.Total
 	}
-	applyTaskMessage(&task, "", update.code, update.params)
-	if update.phase != "" {
-		task.Phase = update.phase
+	applyTaskMessage(&task, "", frame.Code, frame.Params)
+	if frame.Phase != "" {
+		task.Phase = frame.Phase
 	}
-	if update.item != "" {
-		task.CurrentItem = update.item
+	if frame.Item != "" {
+		task.CurrentItem = frame.Item
 	}
-	if len(update.metrics) > 0 {
+	if len(frame.Metrics) > 0 {
 		if task.Metrics == nil {
-			task.Metrics = make(map[string]int64, len(update.metrics))
+			task.Metrics = make(map[string]int64, len(frame.Metrics))
 		}
-		for k, v := range update.metrics {
+		for k, v := range frame.Metrics {
 			task.Metrics[k] = v
 		}
 	}
-	if len(update.labels) > 0 {
+	if len(frame.Labels) > 0 {
 		if task.Labels == nil {
-			task.Labels = make(map[string]string, len(update.labels))
+			task.Labels = make(map[string]string, len(frame.Labels))
 		}
-		for k, v := range update.labels {
+		for k, v := range frame.Labels {
 			task.Labels[k] = v
 		}
 	}
