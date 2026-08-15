@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端设置页面，负责运行时配置、扫描选项、元数据 Provider、缓存和系统能力的可视化管理。
- * 它把后端配置模型映射为用户可编辑表单，是系统行为变更的主要入口。
- * 维护时应关注字段默认值、保存反馈、敏感信息展示、配置刷新和与 config.Manager 的语义一致。
- */
-
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { apiClient, isAxiosError } from '../../api/client';
 import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
@@ -194,9 +188,9 @@ export interface KOReaderDeviceConflictItem {
 
 type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance';
 
-// mega-context 已拆成两个独立 context（由同一个 SettingsProvider 分别 memo 后嵌套提供）：
-// ConfigContextValue 承载核心配置域 + 共享助手；KOReaderContextValue 承载易变的 KOReader 状态
-// （账户/设备/匹配/表单）。如此 KOReader 账户/设备等高频变化不再重渲仅消费配置的页面。
+// ConfigContextValue 与 KOReaderContextValue 是两个独立 context（由同一个 SettingsProvider
+// 分别 memo 后嵌套提供）：前者承载核心配置域 + 共享助手，后者承载易变的 KOReader 状态
+// （账户/设备/匹配/表单），使 KOReader 高频变化不会连带重渲仅消费配置的页面。
 interface ConfigContextValue {
   config: Config | null;
   setConfig: React.Dispatch<React.SetStateAction<Config | null>>;
@@ -334,9 +328,8 @@ function pickSectionSnapshot(config: Config, section: ConfigSectionKey) {
 
 // applySectionSnapshot 把 draft 里**只属于该分区**的字段叠到 base 上。
 //
-// 这是「保存本分区」真正的语义。此前 saveConfig 直接把整份 config state 发出去，
-// 而那份 state 里带着用户在**其他分区**改了却没保存的草稿——点一下「保存媒体设置」，
-// 顺手把没打算提交的 AI 密钥、扫描并发数一起写进了后端，界面上没有任何提示。
+// 这是「保存本分区」真正的语义：saveConfig 不得把整份 config state 发出去，否则
+// 用户在**其他分区**改了却没保存的草稿会被一并静默写进后端，界面上不会有任何提示。
 export function applySectionSnapshot(base: Config, draft: Config, section: ConfigSectionKey): Config {
   const merged = { ...(base as unknown as Record<string, unknown>) };
   for (const path of SECTION_FIELD_PATHS[section]) {
@@ -525,9 +518,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   // saveProtocols 保存协议开关。
   //
-  // 与 saveConfig 同一套语义：以服务端最近一次下发的 initialConfig 为底，只叠加 protocols。
-  // 连接页此前自己拼 `{...config, protocols}` 再整份 POST——基底是**活的草稿**，
-  // 于是「在资料库分区改了并发数没保存、切到连接页拨一下 OPDS 开关」就把那份改动一并写库了。
+  // 与 saveConfig 同一套语义：以服务端最近一次下发的 initialConfig 为底，只叠加 protocols，
+  // 不得自己拼 `{...config, protocols}` 再整份 POST——基底是**活的草稿**，会把用户
+  // 在别的分区改了没保存的东西一并写库。
   const saveProtocols = useCallback(
     async (protocol: 'opds' | 'mihon', enabled: boolean) => {
       if (!config || !initialConfig) return;
@@ -824,7 +817,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// useSettings 返回配置域 context（保留原名，配置类页面无需改动，且不再随 KOReader 状态 churn 重渲）。
+// useSettings 返回配置域 context（保留原名以兼容既有页面），不随 KOReader 状态 churn 重渲。
 export function useSettings() {
   const context = useContext(ConfigContext);
   if (!context) {

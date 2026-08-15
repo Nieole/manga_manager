@@ -1,4 +1,4 @@
-// 业务说明：本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「系列搜索与分页」子域。
+// 本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「系列搜索与分页」子域。
 // 它承载 FTS5 与子串回退双路径、offset/cursor 双分页、筛选条件拼装与游标编解码。
 // 维护时应保证 SQL 全部参数化、排序字段走白名单，并让新增排序同时覆盖 offset 与 cursor 两条路径。
 
@@ -554,7 +554,7 @@ type SeriesListFilters struct {
 	MaxProgress *float64
 	// 仅保留最近 N 天内加入的系列；0 表示不限。
 	AddedWithinDays int
-	// UserID>0 时进度来源为该用户的 user_series_progress（多用户）；0 表示旧的全局 series_stats。
+	// UserID>0 时进度来源为该用户的 user_series_progress（多用户）；0 表示全局 series_stats。
 	// 不计入 hasAny()——它只切换进度来源，不构成过滤条件。
 	UserID int64
 }

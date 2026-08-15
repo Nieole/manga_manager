@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务回归测试，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
-
 package api
 
 import (
@@ -594,10 +590,9 @@ func TestOPDSRootFeedLocalization(t *testing.T) {
 
 // TestOPDSFeedLinksStayInsideProtocolScope 锁住阅读协议的鉴权自洽性。
 //
-// /api 组由 authGate 守卫、只认 session cookie，而 OPDS 客户端带的是 HTTP Basic 凭据。
-// feed 里只要有一条链接指向 /api，真实阅读器请求过去就是 401——此前整卷下载、封面、
-// 缩略图全部指向 /api，也就是说这三样在任何 OPDS 客户端上都不可用。
-// 唯一允许的例外是 /api/mihon/v1（authGate 显式放行 + 自带 Basic 鉴权）。
+// /api 组由 authGate 守卫、只认 session cookie，而 OPDS 客户端带的是 HTTP Basic 凭据；
+// feed 里任何链接指向 /api，真实阅读器请求过去就是 401。唯一允许的例外是
+// /api/mihon/v1（authGate 显式放行 + 自带 Basic 鉴权）。
 func TestOPDSFeedLinksStayInsideProtocolScope(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	_, series, book := seedBookFixture(t, store, rootDir, "Lib", "Series Alpha", "alpha 01.cbz", 12)
@@ -634,7 +629,7 @@ func TestOPDSFeedLinksStayInsideProtocolScope(t *testing.T) {
 	_ = book
 }
 
-// TestOPDSSeriesBooksMissingSeriesReturns404 确认不存在的系列不再返回 200 + 空 feed。
+// TestOPDSSeriesBooksMissingSeriesReturns404 确认不存在的系列返回 404，而不是 200 + 空 feed。
 func TestOPDSSeriesBooksMissingSeriesReturns404(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 

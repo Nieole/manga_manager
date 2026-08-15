@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于元数据聚合链路，负责从 Comic Vine 开放 API 抓取漫画卷（volume）的标题、简介、出版商与封面信息。
-// 它为系列详情补全和搜索候选提供英文漫画（欧美 comics）侧的数据来源，结果需交由人工审核而非直接覆盖数据库。
-// 维护时应关注 Comic Vine 的严格限流（429）、必需的 User-Agent 头、HTML 描述清洗以及 apiKey 缺失时的降级。
-
 package metadata
 
 import (
@@ -201,8 +197,8 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 	}
 
 	// Comic Vine 对「Key 失效 / 配额耗尽 / 参数非法」一律回 HTTP 200，把真正的失败写在
-	// 响应体的 error 字段里（成功时为 "OK"）。此前这个字段声明了却从不读取，于是这些
-	// 故障全被当成「未找到匹配条目」——用户看到的是刮不到结果，而不是「该换 Key 了」。
+	// 响应体的 error 字段里（成功时为 "OK"）——必须读取并校验该字段，否则这些故障会被
+	// 误判成「未找到匹配条目」，用户看到的是刮不到结果，而不是「该换 Key 了」。
 	if e := strings.TrimSpace(result.Error); e != "" && !strings.EqualFold(e, "OK") {
 		return nil, 0, fmt.Errorf("comicvine: API error: %s", e)
 	}

@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务回归测试，属于项目源码的一部分，负责支撑漫画管理器在资料库、阅读器、扫描、元数据或系统设置中的具体业务能力。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
-
 package booksort
 
 import (
@@ -37,7 +33,7 @@ func TestExtractSortNumberSupportsChineseOrdinalChapters(t *testing.T) {
 	}
 }
 
-// TestExtractSortNumberIgnoresYearAndBracketNoise 覆盖 M27：年份标签/会场号/组名不再污染卷号。
+// TestExtractSortNumberIgnoresYearAndBracketNoise 守年份标签/会场号/组名不得污染卷号。
 func TestExtractSortNumberIgnoresYearAndBracketNoise(t *testing.T) {
 	tests := []struct {
 		name string

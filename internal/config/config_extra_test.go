@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，覆盖运行时配置的密钥脱敏往返、归一化默认/夹取、LLM 端点推导与校验。
+// 本文件是业务回归测试，覆盖运行时配置的密钥脱敏往返、归一化默认/夹取、LLM 端点推导与校验。
 // 这些是设置页保存链路与后端服务读取配置的事实来源，重构须保持默认值、兼容迁移与校验语义一致。
 
 package config
@@ -544,9 +544,9 @@ func TestGeneratedConfigIsOwnerOnly(t *testing.T) {
 
 // TestSnapshotIsDeepCopy 守卫「Snapshot 返回的是真正独立的副本」。
 //
-// Config 的值拷贝只复制切片头。此前 Snapshot 直接返回 m.cfg，调用方拿到的切片与 Manager
-// 内部共享底层数组——而 ResolveStoragePolicy 恰好会对 StoragePolicies 做就地归一化，
-// 于是「读配置」变成了并发写同一段内存。
+// Config 的值拷贝只复制切片头，切片本身仍与调用方共享底层数组——Snapshot 必须返回深拷贝，
+// 否则调用方拿到的切片与 Manager 内部是同一份；而 ResolveStoragePolicy 恰好会对 StoragePolicies
+// 做就地归一化，于是「读配置」会变成并发写同一段内存。
 func TestSnapshotIsDeepCopy(t *testing.T) {
 	var cfg Config
 	cfg.Server.AllowedOrigins = []string{"https://example.com"}

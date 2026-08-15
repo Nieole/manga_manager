@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端共享组件层，负责沉淀按钮、面板、列表、封面、进度和反馈等可复用 UI 片段。
- * 它让资料库、阅读器、设置和系列详情在视觉和交互上保持一致。
- * 维护时应关注组件职责边界、可访问性、主题变量、加载态和不同页面的复用语义。
- */
-
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
@@ -81,8 +75,8 @@ export function ModalShell({
     // 不还的话，键盘用户关掉弹窗后焦点回到 <body>，下一次 Tab 要从整页开头重新走一遍。
     const previouslyFocused = document.activeElement as HTMLElement | null;
 
-    // 打开时把焦点移进弹窗。此前焦点仍留在背景里：读屏软件读的还是背后那一页，
-    // 键盘用户按 Tab 是在背景内容之间走，弹窗形同不存在。
+    // 打开时必须把焦点移进弹窗，否则读屏软件读的还是背景那一页，
+    // 键盘用户按 Tab 也是在背景内容之间走——弹窗形同不存在。
     const focusFirst = () => {
       const panel = panelRef.current;
       if (!panel) return;

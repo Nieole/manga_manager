@@ -1,4 +1,4 @@
-// 业务说明：本文件由 controller.go 拆分而来，属于后端 API 层的阅读进度子域，负责上一本/下一本导航、单本与批量进度更新、KOReader 风格批量同步、阅读书签的增删查。
+// 本文件由 controller.go 拆分而来，属于后端 API 层的阅读进度子域，负责上一本/下一本导航、单本与批量进度更新、KOReader 风格批量同步、阅读书签的增删查。
 
 package api
 
@@ -450,7 +450,7 @@ func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 书签按用户隔离：此前表里没有 user_id，多用户之间可互读、覆盖、删除对方的书签与私人笔记。
+	// 书签必须按用户隔离（携带 user_id），否则多用户之间可互读、覆盖、删除对方的书签与私人笔记。
 	items, err := c.store.ListReadingBookmarks(r.Context(), database.ListReadingBookmarksParams{
 		UserID: c.currentUserID(r),
 		BookID: bookID,

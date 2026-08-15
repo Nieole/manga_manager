@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
-// 它连接 sqlc 生成查询与上层领域服务，是资料库筛选、搜索同步和关系图谱的数据基础。
-// 维护时应保持 schema、查询定义、事务边界和迁移兼容，避免破坏既有用户数据。
-
 package database
 
 import (
@@ -96,9 +92,9 @@ func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter Smart
 const smartCollectionProgressExpr = `CASE WHEN s.total_pages > 0 THEN COALESCE(ss.read_pages, 0) * 100.0 / s.total_pages ELSE 0 END`
 
 func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any) {
-	// 改用预计算的 series_stats 缓存（每系列一行、按 series_id 主键关联），并配合 series 表的
-	// 冗余统计列（book_count / total_pages），取代此前对整个 books 表做的三重全表聚合。
-	// 由于不再有绕过 library 过滤的派生表，WHERE s.library_id = ? 能真正把查询限定在本库范围内。
+	// 聚合由预计算的 series_stats 缓存（每系列一行、按 series_id 主键关联）与 series 表的
+	// 冗余统计列（book_count / total_pages）承担；查询不得引入绕过 library 过滤的派生表，
+	// 否则 WHERE s.library_id = ? 就管不到内层。
 	// sc = 全局封面/标签缓存；ss = 进度来源（UserID>0 时按用户拆分）。progressJoin 的 user_id 占位符
 	// 位于 WHERE 之前，故其实参须先于 filter.LibraryID。
 	args := []any{}
@@ -107,10 +103,10 @@ func buildSmartCollectionBaseQuery(filter SmartCollectionFilter) (string, []any)
 		progressJoin = "LEFT JOIN user_series_progress ss ON ss.series_id = s.id AND ss.user_id = ?"
 		args = append(args, filter.UserID)
 	}
-	// 标签/作者不再用四路 LEFT JOIN + GROUP BY 收敛（那会让每系列产出 tags×authors 行的中间集、
-	// 需物化去重 filesort，且 GROUP BY 使所有 series 复合排序索引失效）。改用与主列表 buildSeriesSearchQuery
-	// 一致的口径：标签串直接读预计算的 sc.tag_names_cache，ActiveTag/ActiveAuthor 用 EXISTS 子查询表达，
-	// 使每系列恒为单行、走排序索引、计数从 COUNT(DISTINCT) 爆炸集退回 COUNT(*)。
+	// 标签/作者不得用 LEFT JOIN + GROUP BY 收敛：那会让每系列产出 tags×authors 行的中间集、
+	// 需物化去重 filesort，且 GROUP BY 使 series 复合排序索引失效。这里与主列表
+	// buildSeriesSearchQuery 一致，改走 EXISTS 子查询表达 ActiveTag/ActiveAuthor、标签串直接读
+	// 预计算的 sc.tag_names_cache，使每系列恒为单行、走排序索引、COUNT 用 COUNT(*)。
 	query := `
 		FROM series s
 		LEFT JOIN series_stats sc ON sc.series_id = s.id
@@ -200,16 +196,8 @@ var _ = sql.ErrNoRows
 
 // CountSmartCollectionSeries 返回智能书架当前命中的系列数。
 //
-// 刻意复用 buildSmartCollectionBaseQuery —— 与列表**同一份**查询，只是把 SELECT 换成 COUNT(*)。
-// 此前书架列表里的计数是 ListCollectionViews 内联的另一套 SQL，与列表口径有六处分歧：
-// completed 用 `=` 而列表用 `>=`（后者已有回归测试锁定）、进度读全局 books.last_read_page
-// 而列表读 user_series_progress、进度百分比现算而列表读 series_stats 缓存、
-// 标签/作者用四路 LEFT JOIN + COUNT(DISTINCT) 而列表用 EXISTS、letter 不做大写归一、
-// 内层派生表还漏了 library 过滤（对全库 books 聚合）。
-// 于是用户会看到「书架上写着 12 个系列，点进去只有 9 个」。
-//
-// 顺带解决性能：旧实现每个智能书架都要对整张 books 做一次全表聚合，而 /api/collection-views
-// 是 Web/OPDS/Mihon 三个入口共用且无缓存的。
+// 必须复用 buildSmartCollectionBaseQuery，只把 SELECT 换成 COUNT(*)：与列表用另一套 SQL
+// 口径分裂，会出现「书架显示 12 个系列，点进去只有 9 个」这类计数与列表对不上的问题。
 func (s *SqlStore) CountSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter) (int, error) {
 	baseQuery, args := buildSmartCollectionBaseQuery(filter)
 	var total int

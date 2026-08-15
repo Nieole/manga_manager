@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DEFAULT_PAGE_SIZE } from '../types';
@@ -87,8 +81,8 @@ function writeStoredSettings(libId: string, payload: SavedLibrarySettings) {
 }
 
 /**
- * useLibraryFilters：把过滤、排序、分页从 Home.tsx 抽出，并与服务端持久化、
- * URL query 同步。其余 UI 不再直接持有这部分 state。
+ * useLibraryFilters：过滤、排序、分页状态的唯一来源，与 URL query 及服务端持久化设置
+ * 同步；其余 UI 不应绕过它直接持有这部分 state。
  */
 export function useLibraryFilters({ libId }: { libId: string | undefined }): UseLibraryFiltersResult {
   const [searchParams, setSearchParams] = useSearchParams();

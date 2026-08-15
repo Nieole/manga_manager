@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，集中提供查询参数的解析与边界钳制。
-// 它是分页、列表上限这类「所有端点都要做、做漏一处就出事」的公共约束的唯一事实来源。
-// 维护时应保证新增端点复用这里的助手，而不是各自再写一份 Atoi + 手工判断。
-
 package api
 
 import (
@@ -14,9 +10,8 @@ import (
 
 // 分页与列表规模的统一上界。
 //
-// 这些常量存在的原因是历史上每个端点各写一套解析：有的钳了上限、有的没钳，
-// 于是 /api/series/search 加固之后，/api/stats/recent-read 仍能被要求返回整库。
-// 更糟的是分页无上界时 (page-1)*limit 会溢出 int，OPDS 侧算出负 start 后切片直接 panic。
+// 所有分页/列表端点必须复用这套钳制，不得各自实现：limit 不设上限会让端点被要求
+// 返回整库；page 不设上限时 (page-1)*limit 会溢出 int，OPDS 侧算出负 start 后切片直接 panic。
 const (
 	// maxPageNumber 是任何分页端点允许的最大页码。
 	// 取值只需保证 maxPageNumber * maxListLimit 远小于 int64 上限即可安全计算 offset，
@@ -122,8 +117,8 @@ func pageOffset(page, limit int) int64 {
 
 // 请求体大小上限。
 //
-// 此前全站没有任何 body 闸门：未鉴权的 /api/auth/login、KOReader 协议端点都能被单个
-// 巨型 JSON 打爆内存（json.Decode 会把整个 body 读进来）。这里统一在中间件层设闸，
+// 未鉴权的 /api/auth/login、KOReader 协议端点必须有 body 闸门：json.Decode 会把整个
+// body 读进内存，不设上限就能被单个巨型 JSON 打爆内存。这里统一在中间件层设闸，
 // 只有明确需要大 body 的上传端点走放宽档。
 const (
 	// defaultMaxRequestBody 覆盖所有 JSON 端点。1 MiB 足够放下最大的批量操作载荷

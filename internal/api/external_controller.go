@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -213,9 +209,8 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// 把**已经算好的** plan 交给后台任务。此前这里只是为了拿 plan.MissingBooks 决定
-	// 回 200 还是 202，算完就整个丢掉，后台任务再用同一份入参重新规划一遍——
-	// 一次传输请求把 PrepareTransfer 完整跑两遍（含全部 DB 往返）。
+	// 把**已经算好的** plan 交给后台任务，不能让后台任务再用同一份入参重新规划一遍——
+	// 否则一次传输请求会把 PrepareTransfer（含全部 DB 往返）完整跑两遍。
 	taskKey, started := c.launchExternalLibraryTransferTask(libraryID, sessionID, plan)
 	if !started {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An external library transfer is already running"})

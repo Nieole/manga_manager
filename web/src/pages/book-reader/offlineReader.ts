@@ -1,18 +1,11 @@
-/**
- * 业务说明：本文件是业务实现，属于前端阅读器页面，负责呈现漫画页、阅读偏好、键盘/触控操作、进度同步和缓存体验。
- * 它直接承载用户阅读主流程，需要把后端页面 API、缩放模式和本地偏好组合成稳定交互。
- * 维护时应关注页面预加载、错误恢复、移动端布局、进度写回频率和快捷操作一致性。
- */
-
 import type { Page } from './types';
 import { getCsrfToken } from '../../utils/apiAuth';
 
 // syncRequestHeaders 构造离线进度回传所需的请求头。
 //
-// 这两个端点是 POST，服务端的 authGate 对改写类方法强制校验 X-CSRF-Token。
-// 此前这里用裸 fetch 且只发 Content-Type，于是所有排队的离线进度必然 403——
-// 离线读完再联网，进度永远同步不回服务端，而队列里的条目也因此永远删不掉。
-// 同源 fetch 默认就带 Cookie（credentials 默认 same-origin），这里显式写出以免日后被改错。
+// 这两个端点是 POST，服务端的 authGate 对改写类方法强制校验 X-CSRF-Token，
+// 缺了它离线进度会全部 403 且永远同步不回去。同源 fetch 默认就带 Cookie
+//（credentials 默认 same-origin），这里显式写出以免日后被改错。
 function syncRequestHeaders(): HeadersInit {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const csrf = getCsrfToken();
@@ -198,10 +191,10 @@ export async function cacheBookForOffline({
   const urls = [...staticUrls, ...pageUrls];
   let cachedPages = 0;
 
-  // 先登记再下载。此前这条元数据是**整个循环跑完之后**才写的，于是下到第 300/500 页
-  // 断网时：300 份响应留在 Cache Storage 里，而书目索引里没有这本书——离线书架看不见它，
-  // deleteOfflineBook 也删不掉（它按索引里的 urls 清理）。用户只剩「清空全部」这一个出口。
-  // 先写索引之后，中途失败留下的是一本「300/500 未完成」的书：看得见、能单独删、能重下。
+  // 必须先登记索引再下载：若反过来，下载中途断网时已缓存的响应留在 Cache Storage 里，
+  // 而书目索引里没有这本书——离线书架看不见它，deleteOfflineBook 也删不掉（它按索引里
+  // 的 urls 清理），用户只剩「清空全部」这一个出口。先写索引后，中途失败留下的是一本
+  // 「未完成」的书：看得见、能单独删、能重下。
   const startedAt = new Date().toISOString();
   const pendingMeta = readBookMeta();
   pendingMeta[bookId] = {

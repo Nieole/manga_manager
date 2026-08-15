@@ -1,6 +1,6 @@
-// 业务说明：本文件是业务回归测试，属于 KOReader 集成链路，负责识别设备阅读记录并与本地漫画阅读进度对齐。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
+// 守 KOReader 同步链路的三类不变量：密钥比对必须为常数时间且形态校验不能漏（否则密钥可被
+// 侧信道试出，或任意字符串被当成密钥落库）；自助注册的账号归属不能靠猜（多用户站点下猜错
+// 会把别人的阅读进度写进错误账户）；进度载荷字段必须限长，否则被改造过的设备能撑爆数据库。
 
 package koreader
 
@@ -409,9 +409,9 @@ func TestAuthenticateKeyComparisonMatrix(t *testing.T) {
 
 // TestRegisterDeviceRejectsMalformedCredentials 守卫未鉴权注册端点的输入形状。
 //
-// kosync 协议里 password 就是 md5 十六进制串。此前该端点只判空，任意字符串都能被当成
-// 密钥存进 koreader_accounts（username 还进 UNIQUE 索引）。每条拒绝用例都额外断言
-// **账号没有落库**——只返错却把行写进去，等于没挡住。
+// kosync 协议里 password 就是 md5 十六进制串，必须校验其形状——不校验的话任意字符串
+// 都能被当成密钥存进 koreader_accounts（username 还进 UNIQUE 索引）。每条拒绝用例都
+// 额外断言**账号没有落库**——只返错却把行写进去，等于没挡住。
 func TestRegisterDeviceRejectsMalformedCredentials(t *testing.T) {
 	validHash := HashKey("pw")
 
@@ -475,10 +475,10 @@ func createServiceTestUser(t *testing.T, store database.Store, username, role st
 
 // TestRegisterDeviceDoesNotBindToAdminInMultiUserSite 守卫「自助注册的账号不会被错误归属」。
 //
-// 设备自助注册没有站点用户上下文，此前一律把新账号绑到 id 最小的管理员。多用户站点里
-// 这就是纯粹的错误归属：普通用户拿设备注册之后，SaveProgress 会顺着账户的 user_id 把进度
-// 写进**管理员**的 user_book_progress 与 user_reading_activity——他读到哪管理员的进度就
-// 跳到哪（还会计入管理员的热力图与连续天数），而他自己账号下的进度全丢。
+// 设备自助注册没有站点用户上下文，账号归属不能靠猜——多用户站点里把新账号绑到某个管理员
+// 就是错误归属：SaveProgress 会顺着账户的 user_id 把进度写进**管理员**的 user_book_progress
+// 与 user_reading_activity，普通用户读到哪管理员的进度就跳到哪（还会计入管理员的热力图与
+// 连续天数），而他自己账号下的进度全丢。
 func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
 	service, store, rootDir := newTestService(t, "file_path")
 	ctx := context.Background()

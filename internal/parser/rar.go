@@ -1,13 +1,3 @@
-// 业务说明：本文件是业务实现，属于漫画文件解析层，负责识别归档、目录、页序、页数和可读取图片条目。
-// 它是扫描入库、封面提取、阅读器翻页和存储 IO 调度的底层事实来源。
-// 维护时应保证多格式兼容、自然排序一致、异常归档可诊断，并避免重复解压造成性能浪费。
-//
-// RAR 是前向只读流（rardecode 无法 seek），此前每次 ReadPage 都重开归档并从头 rr.Next() 顺序查找目标页，
-// 整卷阅读退化为 O(N²)、归档池对 RAR 毫无收益。本实现引入「会话缓存」：一个随读取前滚的持久游标，把途经
-// 页的字节填入有界 FIFO 缓存，后续翻页命中缓存即 O(1)；只有反向跳读到已被淘汰的页才重开。整卷顺序阅读因此
-// 降到 O(N)。游标 / 缓存全程由互斥保护，故被归档池共享的同一 *RarArchive 可安全并发读取（同档读取串行化，
-// 这与 RAR 解码本就顺序一致）。
-
 package parser
 
 import (
@@ -31,7 +21,11 @@ var rarPageCacheMaxBytes = 64 << 20
 // ErrArchiveClosed 表示归档句柄已被关闭（通常是被归档池淘汰），调用方应重新获取一个句柄。
 var ErrArchiveClosed = errors.New("parser: archive handle is closed")
 
-// RarArchive 处理 cbr/rar 等标准归档，并维护一个随读取前滚的会话缓存（见文件头说明）。
+// RarArchive 处理 cbr/rar 等标准归档。RAR 是前向只读流（rardecode 无法 seek），故维护一个
+// 随读取前滚的持久游标，把途经页的字节填入有界 FIFO 缓存，翻页命中缓存即 O(1)，只有反向跳读
+// 到已被淘汰的页才重开归档；整卷顺序阅读因此是 O(N) 而非每页重开重扫的 O(N²)。
+// 游标 / 缓存全程由 mu 保护，故被归档池共享的同一 *RarArchive 可安全并发读取（同档读取串行化，
+// 这与 RAR 解码本就顺序一致）。
 type RarArchive struct {
 	path string
 
@@ -216,8 +210,8 @@ func (r *RarArchive) advanceWithMatch(target string, looseTarget bool) (data []b
 		}
 		isTarget := matchesArchiveEntry(header.Name, target, looseTarget)
 		// 只对目标条目和图片页解字节：rr.Next() 本身会零解压跳到下一个条目头，
-		// 所以途经的非图片条目直接跳过即可。此前对每个途经条目无条件 readEntryLimited，
-		// 使得一次未命中的 ComicInfo.xml 探测（扫描期每卷都会做）把整卷 CBR 解压一遍。
+		// 所以途经的非图片条目直接跳过即可，否则一次未命中的 ComicInfo.xml 探测
+		// （扫描期每卷都会做）就会把整卷 CBR 解压一遍。
 		if !isTarget && !isCacheablePage(header.Name) {
 			r.seen[header.Name] = true
 			continue
@@ -228,7 +222,6 @@ func (r *RarArchive) advanceWithMatch(target string, looseTarget bool) (data []b
 				return nil, false, readErr
 			}
 			// 途经条目损坏或超限不应连累本次前滚：记为已途经但不缓存，继续找目标。
-			// 旧实现在这里直接返回错误，一个坏条目会让它之后的所有页都读不出来。
 			slog.Warn("Skipping unreadable RAR entry during scan-ahead",
 				"archive", r.path, "entry", header.Name, "error", readErr)
 			r.seen[header.Name] = true

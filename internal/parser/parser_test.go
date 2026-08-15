@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，属于漫画文件解析层，负责识别归档、目录、页序、页数和可读取图片条目。
+// 本文件是业务回归测试，属于漫画文件解析层，负责识别归档、目录、页序、页数和可读取图片条目。
 // 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
 // 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
 
@@ -265,7 +265,7 @@ func TestNaturalCompareDoesNotMisclassifyOrdinaryNames(t *testing.T) {
 	}
 }
 
-// TestParseComicInfoToleratesDirtyNumericFields 锁住脏数值字段不再拖垮整份元数据。
+// TestParseComicInfoToleratesDirtyNumericFields 锁住：脏数值字段不应拖垮整份元数据。
 // 各路打包工具生成的 ComicInfo.xml 里，数值字段出现 "N/A"、"" 这类内容很常见；
 // 用裸 int/float 时 xml.Unmarshal 会整份失败，而调用方两层都吞掉了这个错误，
 // 用户只会看到「这本书没有内嵌元数据」。

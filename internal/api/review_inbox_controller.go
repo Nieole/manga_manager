@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -47,8 +43,6 @@ func (c *Controller) getReviewInboxSummary(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 这个数此前恒为 0：契约里的字段早就在，Store 上的窄查询也早就有，只是从没接上。
-	//
 	// 只按 KOReader 是否启用门控，与 health_controller.go 的 SkipKOReader 完全同口径
 	// ——同一个数字（koreader_progress.book_id IS NULL 的全局计数）经 /api/health/report
 	// 本来就对所有登录用户可见，这里再加角色门控不增加任何安全性，只会让 /organize 与

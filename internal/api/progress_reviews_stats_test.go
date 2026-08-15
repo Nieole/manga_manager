@@ -1,4 +1,4 @@
-// 业务说明：本文件是后端 HTTP API 层的回归测试，聚焦「阅读进度 / 阅读时长 / 个人系列短评 / 深度统计」
+// 本文件是后端 HTTP API 层的回归测试，聚焦「阅读进度 / 阅读时长 / 个人系列短评 / 深度统计」
 // 这几条每用户业务线的边界与双路径（uid==0 全局旧路径 vs uid>0 每用户路径），以及筛选参数解析、
 // 角色写权限、阅读协议 Basic 鉴权。测试直接调用处理器（注入 userCtxKey 模拟已登录会话）或经真实
 // chi 路由（authGate）验证中间件行为，断言真实用户可观察结果，而非实现细节。
@@ -755,10 +755,8 @@ func TestOPDSProtocolBasicAuth(t *testing.T) {
 
 // TestReadingBookmarksPerUserIsolation 锁住书签的多用户隔离。
 //
-// reading_bookmarks 表原先没有 user_id，且唯一约束是 UNIQUE(book_id, page)：
-// 任意两个用户共享同一批书签，可以互相读取、覆盖笔记、甚至删除对方的记录——
-// 而书签笔记是私人内容。加 user_id 后唯一约束改为 (user_id, book_id, page)，
-// 两个用户才能各自给同一页加互不干扰的书签。
+// 唯一约束必须包含 user_id：否则任意两个用户共享同一批书签，能互相读取、覆盖笔记、
+// 甚至删除对方的记录——书签笔记是私人内容，不能被别的用户看到。
 func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 30)
@@ -787,8 +785,8 @@ func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 		return items
 	}
 
-	// 两个用户给同一本书的同一页加书签：旧的 UNIQUE(book_id, page) 会让第二次写入
-	// 变成覆盖，加了 user_id 之后应各存一条。
+	// 两个用户给同一本书的同一页加书签：UNIQUE 约束必须带 user_id，否则第二次写入
+	// 会覆盖第一次，两个用户只能存下一条。
 	if rec := upsert(userA, 5, "alice note"); rec.Code != http.StatusOK {
 		t.Fatalf("A upsert want 200 got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -825,8 +823,8 @@ func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 
 // TestRecommendationCacheIsPartitionedPerUser 锁住 AI 推荐的按用户分区。
 //
-// 推荐是基于该用户的阅读历史算出来的，此前缓存只按 locale 分区：所有人共用同一份
-// 结果——既没有个人化，也把彼此的阅读偏好互相泄露。
+// 推荐基于该用户的阅读历史算出，缓存键必须带上 user：仅按 locale 分区会让所有人
+// 共用同一份结果——既没有个人化，也把彼此的阅读偏好互相泄露。
 func TestRecommendationCacheIsPartitionedPerUser(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	userA := mkTestUser(t, store, "alice", database.RoleRegular)

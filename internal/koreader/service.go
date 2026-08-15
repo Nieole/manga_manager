@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于 KOReader 集成链路，负责识别设备阅读记录并与本地漫画阅读进度对齐。
-// 它把外部阅读器状态映射为应用内书籍、章节和页码进度，支撑跨设备继续阅读。
-// 维护时应关注指纹匹配、时间戳优先级、路径差异和重复同步的幂等性。
-
 package koreader
 
 import (
@@ -78,8 +74,8 @@ func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash str
 	username = strings.TrimSpace(username)
 	passwordHash = NormalizeSyncKey(passwordHash)
 	// 这条路径未鉴权，写入的两个值直接落库且 username 进 UNIQUE 索引，所以先把形状卡死：
-	// kosync 协议里 password 就是 md5 十六进制串，IsValidSyncKey 正是该形状的既有描述
-	// （此前它只在测试里被引用，实际校验位一直空着，任意字符串都能被当作密钥存进去）。
+	// kosync 协议里 password 就是 md5 十六进制串，必须显式过 IsValidSyncKey——不校验的话
+	// 任意字符串都能被当作密钥存进去。
 	if username == "" || len(username) > maxRegisterUsernameLen || !IsValidSyncKey(passwordHash) {
 		slog.Warn("KOReader device registration rejected: malformed credentials",
 			// 不打印 username 原文：未鉴权输入不应原样进日志。
@@ -213,7 +209,7 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 }
 
 // validateProgressPayloadLengths 校验进度载荷各字段的长度。
-// 这些字段直接落库（document 还进 UNIQUE 索引），此前完全不限长，
+// 这些字段直接落库（document 还进 UNIQUE 索引），必须限长：不限长的话，
 // 一台被改造过的设备可以把单条记录撑到任意大小，反复推送即可撑爆数据库。
 func validateProgressPayloadLengths(payload ProgressPayload) error {
 	switch {

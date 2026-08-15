@@ -1,4 +1,4 @@
-// 业务说明：本文件是「每用户阅读进度」的数据访问层（多用户阶段2）。它把旧的全局
+// 本文件是「每用户阅读进度」的数据访问层（多用户阶段2）。它把旧的全局
 // books.last_read_page/last_read_at 拆成按用户的 user_book_progress，并派生每用户 × 每系列的
 // user_series_progress 聚合（进度条/已读·完成计数/最近阅读），供列表、看板、继续阅读按当前用户取数。
 // 维护要点：写入进度后必须按 (user, series) 增量刷新 user_series_progress；旧全局进度在首个管理员
@@ -162,8 +162,7 @@ func (s *SqlStore) setUserBooksReadStateChunk(ctx context.Context, userID int64,
 	placeholders, idArgs := sqlInClause(bookIDs)
 
 	return s.ExecTx(ctx, func(q *Queries) error {
-		// 一次查出这批书涉及的系列，取代此前「每本书一条 SELECT series_id」。
-		// 顺带天然过滤掉已不存在的 book_id（旧实现靠逐条 ErrNoRows 跳过）。
+		// 一次查出这批书涉及的系列，顺带天然过滤掉已不存在的 book_id。
 		affected := make(map[int64]struct{})
 		rows, err := q.db.QueryContext(ctx,
 			`SELECT DISTINCT series_id FROM books WHERE id IN (`+placeholders+`)`, idArgs...)
@@ -490,8 +489,8 @@ func (s *SqlStore) RefreshUserSeriesProgressForAllUsers(ctx context.Context, ser
 // RefreshSeriesDerivedData 重算某系列的全部派生数据：series 行上的冗余统计、
 // series_stats 缓存表，以及所有用户的 user_series_progress 聚合。
 //
-// 存在的意义是让「系列组成变了」的调用方只需要记住一件事。此前 removeBooks 只刷了
-// series_stats，漏掉 series.book_count/total_pages 与每用户聚合，导致进度条与完成态长期偏差。
+// 存在的意义是让「系列组成变了」的调用方只需要记住调这一个函数：只调 RefreshSeriesStats
+// 会漏掉 series.book_count/total_pages 与每用户聚合，让进度条与完成态长期偏差。
 func (s *SqlStore) RefreshSeriesDerivedData(ctx context.Context, seriesID int64) error {
 	if seriesID <= 0 {
 		return nil

@@ -1,5 +1,5 @@
-// 业务说明：本文件是业务回归测试，属于后端鉴权/限流边界，验证客户端 IP 的可信来源判定。
-// 客户端 IP 是限流的分桶键，取错等于限流失效，因此这里锁的是安全属性而非工具函数行为。
+// 守客户端 IP 的可信来源判定：只有直连对端落在 trusted_proxies 网段内才采信转发头。
+// 客户端 IP 是限流的分桶键，取错等于限流失效——这里锁的是安全属性而非工具函数行为。
 
 package api
 
@@ -20,8 +20,8 @@ func newClientIPController(t *testing.T, trusted ...string) *Controller {
 
 // TestClientIPIgnoresForwardedHeadersFromUntrustedPeer 是本批次的核心断言。
 //
-// 限流以客户端 IP 为键。旧实现无条件采信 X-Forwarded-For：攻击者每个请求换一个伪造
-// IP 就是一个全新的桶，登录暴破防护与 OPDS/Mihon 的 bcrypt CPU-DoS 防护双双失效。
+// 限流以客户端 IP 为键：无条件采信 X-Forwarded-For 会让攻击者每个请求换一个伪造
+// IP 就开出一个全新的桶，登录暴破防护与 OPDS/Mihon 的 bcrypt CPU-DoS 防护双双失效。
 func TestClientIPIgnoresForwardedHeadersFromUntrustedPeer(t *testing.T) {
 	c := newClientIPController(t) // trusted_proxies 为空 = 谁都不信
 
@@ -83,7 +83,7 @@ func TestAdminOnlyPathsIncludeBrowseDirs(t *testing.T) {
 		"/api/system/config",
 		"/api/users",
 		"/api/users/3",
-		// 外部库会话：读侧此前落在「读方法一律放行」分支里，普通账号能拿到
+		// 外部库会话：读侧不得落进「读方法一律放行」分支，否则普通账号能拿到
 		// 带服务器绝对路径的会话快照。这是 isAdminOnlyPath 唯一的单元级守卫。
 		"/api/libraries/1/external-libraries/session/1-2",
 		"/api/libraries/1/external-libraries/scan",
@@ -101,8 +101,8 @@ func TestAdminOnlyPathsIncludeBrowseDirs(t *testing.T) {
 	}
 }
 
-// TestPasswordChangeGateAllowsOnlySelfServiceEndpoints 锁住服务端的强制改密。
-// 此前 must_change_password 只由前端 AuthGate 拦截，非浏览器客户端可无限期使用初始密码。
+// TestPasswordChangeGateAllowsOnlySelfServiceEndpoints 锁住服务端的强制改密：
+// must_change_password 不能只由前端 AuthGate 拦截，否则非浏览器客户端可无限期使用初始密码。
 func TestPasswordChangeGateAllowsOnlySelfServiceEndpoints(t *testing.T) {
 	for _, p := range []string{"/api/auth/me", "/api/auth/logout", "/api/auth/change-password", "/api/auth/status"} {
 		if !isPasswordChangeAllowedPath(p) {

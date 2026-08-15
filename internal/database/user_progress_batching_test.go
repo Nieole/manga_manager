@@ -1,4 +1,4 @@
-// 业务说明：本文件守卫批量读状态写入的分批。
+// 本文件守卫批量读状态写入的分批。
 //
 // DSN 里的 _txlock=immediate 让 BeginTx 当场握住 SQLite 写锁，而这条路径的书数由用户选区决定
 // （批量标记「整个系列已读」会把系列展开成全部书）。整批装进一个事务意味着写锁被连续持有到最后一本，
@@ -55,7 +55,7 @@ func TestSetUserBooksReadStateBatching(t *testing.T) {
 		}
 		bookIDs = append(bookIDs, id)
 	}
-	// 混入一个不存在的 id：旧实现靠逐条 ErrNoRows 跳过，新实现靠 IN 查询天然过滤。
+	// 混入一个不存在的 id：验证 IN 查询能天然跳过它。
 	bookIDs = append(bookIDs, bookIDs[len(bookIDs)-1]+100000)
 
 	now := time.Now()

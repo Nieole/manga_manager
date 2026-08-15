@@ -1,4 +1,4 @@
-// 业务说明：本文件由 controller.go 拆分而来，属于后端 API 层的系列/标签/作者子域，负责系列分页搜索、系列信息与上下文、标签与作者的查询/搜索接口。
+// 本文件由 controller.go 拆分而来，属于后端 API 层的系列/标签/作者子域，负责系列分页搜索、系列信息与上下文、标签与作者的查询/搜索接口。
 
 package api
 
@@ -161,7 +161,7 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 与 /api/series/search 统一口径：此前这里没有上限，limit=1000000 可让单请求物化整库。
+	// 与 /api/series/search 统一口径：limit 必须有上限，否则 limit=1000000 会让单请求物化整库。
 	limit := int64(queryLimit(r, "limit", 10, maxSeriesPageLimit))
 
 	ctx := r.Context()
@@ -300,9 +300,8 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// 这一整段是「先清空、再重建」：所有写入错误都必须向上返回让 ExecTx 回滚。
-		// 此前全部用 `_ =` / `err == nil` 吞掉，于是清空成功但重建失败时，事务照样提交，
-		// 用户的标签/作者/链接被静默清空，接口还返回 200。
+		// 这一整段是「先清空、再重建」：所有写入错误都必须向上返回让 ExecTx 回滚，否则
+		// 清空成功但重建失败时事务照样提交，用户的标签/作者/链接被静默清空，接口还返回 200。
 		if req.Tags != nil {
 			if err := q.ClearSeriesTags(r.Context(), seriesID); err != nil {
 				return err

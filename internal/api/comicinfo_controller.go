@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -212,12 +208,9 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 回写整个系列的归档要逐本解压重压，大系列可以跑到分钟级。此前这一切都在 HTTP 请求
-	// goroutine 里同步做：请求会一直挂着直到最后一本写完，中途无法取消、没有进度可看，
-	// 而且完全绕开了存储 IO 调度——阅读器取页会和它抢同一块盘。
-	//
-	// 改成后台任务：走 startTaskWithOptions 拿到取消能力，每本书前取一次 IO 令牌，
-	// 与扫描/哈希回填共用同一套卷级并发上限。
+	// 回写整个系列的归档要逐本解压重压，大系列可以跑到分钟级，因此必须做成可取消的后台任务：
+	// 同步做会让请求一直挂到最后一本写完、中途无法取消也看不到进度。每本书前取一次 IO 令牌，
+	// 与扫描/哈希回填共用同一套卷级并发上限，避免绕开存储 IO 调度让阅读器取页被拖慢。
 	taskKey := fmt.Sprintf("write_comicinfo_series_%d", seriesID)
 	if !c.taskEngine.startCancelableTask(taskKey, "write_comicinfo", "正在写入 ComicInfo", len(books)) {
 		jsonError(w, http.StatusConflict, "ComicInfo write is already running for this series")

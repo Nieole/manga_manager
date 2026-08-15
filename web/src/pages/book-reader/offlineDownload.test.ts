@@ -1,15 +1,9 @@
 /**
  * @vitest-environment jsdom
  *
- * 业务说明：本文件守卫「离线下载中途失败不会留下删不掉的孤儿缓存」。
- *
- * 下载是逐个 URL 串行 fetch + cache.put 的，任何一步失败就抛出。而书目索引此前是
- * **整个循环跑完之后**才写的：下到第 300/500 页断网时，300 份响应留在 Cache Storage 里，
- * 索引里却没有这本书——离线书架按索引渲染，于是这本书在界面上根本不存在。
- *
- * 字节本身并非删不掉（deleteOfflineBook 除了按索引里的 urls 清理，还会按路径前缀
- * 兜底扫一遍缓存），但用户没有任何入口去触发它：看不见的书点不了删除。
- * 唯一的出口是「清空全部」，连带把别的书一起删掉。
+ * 本文件守卫「离线下载中途失败不会留下删不掉的孤儿缓存」：书目索引必须随每次成功
+ * fetch 同步写入，不能等整个循环跑完才写，否则断网时已下载的页留在 Cache Storage 里
+ * 但索引查不到，离线书架按索引渲染，这本书就从界面消失，也没有入口能单独删除那些字节。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -105,8 +99,8 @@ describe('cacheBookForOffline', () => {
     expect(listed[0].pageCount).toBe(5);
   });
 
-  // 这一条是护栏而不是红/绿判据：deleteOfflineBook 的路径前缀兜底让它在修复前也是绿的。
-  // 留着是为了锁住「删除要连字节一起清干净」——上面那两条负责证明「界面上看得见」。
+  // 护栏而非红/绿判据：deleteOfflineBook 的路径前缀兜底让这条用例在修复前也是绿的；
+  // 它锁的是「删除要连字节一起清干净」这条约束，不负责证明书在界面上看得见。
   it('中途失败留下的残片可以被单独删除且不留字节', async () => {
     stubFetch(5);
     await expect(cacheBookForOffline(OPTIONS)).rejects.toThrow();

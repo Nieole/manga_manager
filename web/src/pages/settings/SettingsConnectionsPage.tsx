@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端设置页面，负责运行时配置、扫描选项、元数据 Provider、缓存和系统能力的可视化管理。
- * 它把后端配置模型映射为用户可编辑表单，是系统行为变更的主要入口。
- * 维护时应关注字段默认值、保存反馈、敏感信息展示、配置刷新和与 config.Manager 的语义一致。
- */
-
 import { useEffect, useMemo, useState } from 'react';
 import { apiClient, isAxiosError } from '../../api/client';
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, PlugZap, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
@@ -158,9 +152,9 @@ export function SettingsConnectionsPage() {
     if (!config) return;
     setSavingProtocol(protocol);
     try {
-      // 走 context 的 saveProtocols：它以服务端快照为底只叠加 protocols。
-      // 这里此前自己拼 `{...config, protocols}` 再整份 POST，基底是活的草稿——
-      // 用户在别的分区改了没保存的东西会被这一下开关顺手写进后端。
+      // 走 context 的 saveProtocols：它以服务端快照为底只叠加 protocols，不要自己拼
+      // `{...config, protocols}` 再整份 POST——基底是活的草稿，用户在别的分区改了
+      // 没保存的东西会被这一下开关顺手写进后端。
       await saveProtocols(protocol, enabled);
       showToast(
         t(enabled ? 'settings.connections.protocolEnabledToast' : 'settings.connections.protocolDisabledToast', {

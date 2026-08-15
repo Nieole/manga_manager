@@ -1,8 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，提供客户端 IP 的唯一提取实现。
-// 客户端 IP 是限流（登录暴破、OPDS/Mihon 的 bcrypt CPU-DoS 防护）的分桶键，
-// 取错就等于限流失效，因此这里是安全边界的一部分，不是普通工具函数。
-// 维护时应保证所有需要客户端 IP 的调用点都走 clientIP，不要再各自解析转发头。
-
 package api
 
 import (
@@ -38,9 +33,8 @@ func (c *Controller) clientIP(r *http.Request) string {
 // trustsForwardedHeaders 报告本次请求的转发头是否可信（直连对端落在 server.trusted_proxies 内）。
 //
 // 这是「代理头可不可信」这个概念的唯一出口：clientIP 用它决定要不要采信 X-Forwarded-For，
-// 会话 Cookie 的 Secure 判定用它决定要不要采信 X-Forwarded-Proto。两者此前各有一套口径
-// ——限流侧已按 trusted_proxies 收紧，Cookie 侧却仍无条件采信 —— 收到同一个函数上，
-// 这类分叉才不会重新长出来。
+// 会话 Cookie 的 Secure 判定用它决定要不要采信 X-Forwarded-Proto。两者必须共用同一套
+// trusted_proxies 判定，否则限流侧收紧了、Cookie 侧却仍可能无条件采信，分叉早晚重新长出来。
 func (c *Controller) trustsForwardedHeaders(r *http.Request) bool {
 	if r == nil {
 		return false

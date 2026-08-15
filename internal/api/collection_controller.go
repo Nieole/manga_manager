@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -134,8 +130,8 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	// 名称必填：此前不校验，一个不含 name 字段的 PUT（前端只想改描述时很自然就会这么发）
-	// 会把 Name 写成空串，合集在列表里变成一个没有名字的条目。
+	// 名称必填：PUT 请求缺 name 字段时不能直接写成空串（前端只想改描述时很自然就会这么发），
+	// 否则合集会在列表里变成一个没有名字的条目。
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		jsonError(w, http.StatusBadRequest, "Name is required")
@@ -415,8 +411,8 @@ func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// 硬性上限：库级图谱此前无界返回全库关系，超大库会产生巨型 payload 且前端 O(N^2) 力导向布局冻结主线程。
-	// 截断到安全边界（前端另有更小的节点级上限做可读性截断，见 franchise-graph 页）。非静默：记录被丢弃的数量。
+	// 硬性上限：库级图谱必须截断，否则超大库会产生巨型 payload 且前端 O(N^2) 力导向布局冻结主线程。
+	// 截断到安全边界（前端另有更小的节点级上限做可读性截断，见 franchise-graph 页）；非静默，记录被丢弃的数量。
 	const maxLibraryFranchiseRelations = 4000
 	if len(items) > maxLibraryFranchiseRelations {
 		slog.Warn("library franchise graph truncated",

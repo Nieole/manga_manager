@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于项目源码的一部分，负责支撑漫画管理器在资料库、阅读器、扫描、元数据或系统设置中的具体业务能力。
- * 它与相邻模块共同组成前后端业务链路，修改时需要结合调用方理解数据流和用户可见行为。
- * 维护时应关注输入输出契约、错误处理、状态同步和与既有业务语义的一致性。
- */
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
@@ -513,9 +507,8 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
         'bg-komgaPrimary',          // 4: 极多
     ];
 
-    // 日期网格全程用 UTC 日历（与后端 DATE('now') 同口径）。
-    // 此前日期串取自 toISOString（UTC）、行位置取自 getDay()（本地），两套日历混用，
-    // 本地时刻跨过 UTC 日界时整张网格会相对星期标签统一错开一行。
+    // 日期网格全程用 UTC 日历（与后端 DATE('now') 同口径），不可与本地时区混用——
+    // 日期串与行位置一旦分别取自不同时区来源，本地时刻跨过 UTC 日界时整张网格会错开一行。
     const cells = buildHeatmapCells(TOTAL_DAYS).map((cell) => ({
         ...cell,
         count: activityMap.get(cell.date) || 0,

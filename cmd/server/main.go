@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端服务启动入口，负责装配配置、数据库、扫描器、HTTP 路由和静态资源服务。
-// 它把内部各领域服务连接成可运行进程，是部署、初始化和运行时诊断的入口。
-// 维护时应保持启动顺序、资源释放、错误日志和前端资源挂载逻辑清晰可追踪。
-
 package main
 
 import (
@@ -74,16 +70,15 @@ func main() {
 		"config", resolvedConfigPath, "data_dir", resolvedDataDir)
 
 	// 初始化配置派生的运行时资源（归档句柄池、AI 并发、日志级别）。与热重载 / API 保存走同一 runtimecfg.Apply，
-	// 保证三条生效路径的副作用一致。日志级别此前已由 logger.Init 设过，这里再设一次是幂等的。
+	// 保证三条生效路径的副作用一致。这里重复设置日志级别是幂等的，不会有副作用。
 	if err := runtimecfg.Apply(cfg); err != nil {
 		slog.Warn("Failed to apply runtime config at startup", "error", err)
 	}
 	cfgManager := config.NewManager(cfg)
 
 	// 启动配置热重载监听
-	// 配置热重载监听：拿住句柄以便停机时停掉。此前是裸 `go watchConfig(...)`，
-	// 进程活着就永远停不掉——停机排空的 20 秒里仍可能落地一次重载，改写日志级别、
-	// 归档句柄池与 AI 并发。
+	// 配置热重载监听：拿住句柄以便停机时停掉，避免停机排空的 20 秒里仍落地一次重载，
+	// 改写日志级别、归档句柄池与 AI 并发。
 	// 启动时也跑一次值域校验，理由是「热重载会拒绝不合法的配置」这条规则必须对用户可见：
 	// 否则一个配置本就非法的实例，表现是「改了文件却怎么都不生效」，而日志里只有一行
 	// rejected，用户无从知道问题出在哪、也不知道热重载已经变成哑巴了。
@@ -119,7 +114,7 @@ func main() {
 	r.Use(api.RequestMetrics)
 	r.Use(middleware.Recoverer)
 	// 请求体闸门要早于任何会读 body 的处理：未鉴权的 /api/auth/login 与 KOReader 协议端点
-	// 此前没有任何上限，单个巨型 JSON 即可撑爆内存。
+	// 若无上限，单个巨型 JSON 即可撑爆内存。
 	r.Use(api.RequestBodyLimit)
 	r.Use(securityHeaders)
 	r.Use(middleware.Compress(5,
@@ -149,10 +144,8 @@ func main() {
 	}))
 
 	// 启动期安全姿态告警：提示无鉴权裸奔。
-	// 注意这里不再有「令牌鉴权已启用」这一档——历史上的共享令牌鉴权已随多用户改造退役
-	// （见 internal/api/controller.go 的说明），配置项也已删除。此前 main 仍会在
-	// server.auth.enabled=true 时打印「管理 API 令牌鉴权已启用」，而实际上没有任何代码
-	// 校验该令牌，管理员会误以为已经加固。
+	// 不要恢复打印「令牌鉴权已启用」——共享令牌鉴权已退役（见 internal/api/controller.go），
+	// 无任何代码校验该令牌，打印这条会让管理员误以为已经加固。
 	if cfg.Server.Host == "0.0.0.0" {
 		slog.Info("管理 API 监听 0.0.0.0，鉴权由站点账户体系（会话 Cookie + CSRF）提供；" +
 			"若前置反向代理，请配置 server.trusted_proxies 以便限流拿到真实客户端 IP。")
@@ -239,8 +232,7 @@ func main() {
 	slog.Info("Shutdown signal received, draining in-flight requests...")
 
 	// 先停配置监听：排空期间不该再有热重载去改写日志级别 / 归档句柄池 / AI 并发。
-	// （此前下方那条「停配置监听」的注释是空话——apiController.Close() 停的是
-	// 库目录的 scanner.FileWatcher，与配置监听毫无关系。）
+	// apiController.Close() 停的是库目录的 scanner.FileWatcher，与配置监听是两回事。
 	cfgWatcher.Stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

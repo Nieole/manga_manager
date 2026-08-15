@@ -1,4 +1,4 @@
-// 业务说明：本文件是站点多用户鉴权的 HTTP 层，实现「强制登录 + 首次建管理员 + 角色」这条主线。
+// 本文件是站点多用户鉴权的 HTTP 层，实现「强制登录 + 首次建管理员 + 角色」这条主线。
 // 采用服务端会话（Cookie session）+ 同步器式 CSRF 令牌：cookie 存不可读的随机会话令牌，
 // DB 存其 SHA-256；改写类请求需在 X-CSRF-Token 头回传会话绑定的 CSRF 令牌。角色分 admin（全权）
 // 与 regular（只读浏览 + 记录本人进度/书签/短评）。authGate 是全 /api 组统一的鉴权中间件。
@@ -309,10 +309,9 @@ func isAdminOnlyPath(p string) bool {
 	if p == "/api/users" || strings.HasPrefix(p, "/api/users/") {
 		return true
 	}
-	// 外部库会话：读写鉴权此前不对称。POST 因为是改写方法被挡在管理员之外，
-	// 而 GET 落进「读方法一律放行」分支——任意已登录的普通账号都能拿到会话快照，
-	// 里面带着服务器上的**绝对路径**（external_path 与 library_path）。
-	// 外部库传输本身是纯管理员功能，读侧没有理由比写侧宽。
+	// 外部库传输本身是纯管理员功能，读侧不得比写侧宽：GET 若落进「读方法一律放行」分支，
+	// 任意已登录的普通账号都能拿到会话快照，里面带着服务器上的**绝对路径**
+	// （external_path 与 library_path）。
 	if strings.HasPrefix(p, "/api/libraries/") && strings.Contains(p, "/external-libraries/") {
 		return true
 	}
@@ -378,9 +377,9 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.admin_required"))
 			return
 		}
-		// must_change_password 此前只由前端 AuthGate 拦截，服务端从不校验：任何非浏览器
-		// 客户端（curl / 阅读协议以外的脚本）都能拿着管理员分配的初始密码无限期使用。
-		// 这里在服务端强制收敛到「只能看自己、登出、改密」几个端点。
+		// must_change_password 必须在服务端校验，不能只靠前端 AuthGate 拦截：否则任何
+		// 非浏览器客户端（curl / 阅读协议以外的脚本）都能拿着管理员分配的初始密码无限期
+		// 使用。这里强制收敛到「只能看自己、登出、改密」几个端点。
 		if user.MustChangePassword && !isPasswordChangeAllowedPath(p) {
 			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.password_change_required"))
 			return
@@ -448,7 +447,7 @@ func (c *Controller) authStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, resp)
 }
 
-// setupAdmin 在站点尚无账户时创建首个管理员并立即登录。承接旧全局进度与 KOReader 账户的迁移在阶段2/3 挂接。
+// setupAdmin 在站点尚无账户时创建首个管理员并立即登录，同时把旧的全局阅读进度/活动与孤儿 KOReader 账户并入该管理员。
 func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	count, err := c.store.CountUsers(ctx)

@@ -1,9 +1,6 @@
-// 业务说明：本文件守卫「智能书架的计数与它的列表一致」。
-//
-// 书架列表页显示的系列数此前是 ListCollectionViews 内联的一套 SQL，与真正出列表的查询
-// （buildSmartCollectionBaseQuery）是两套独立实现，有六处口径分歧——最刺眼的是
-// completed 用 `=` 而列表用 `>=`，以及计数读全局 books.last_read_page 而列表读每用户进度。
-// 用户看到的就是「书架上写着 12 个系列，点进去只有 9 个」。
+// 守「智能书架的计数与它的列表一致」：两者必须共用同一份查询构造
+// （smartCollectionFilterFrom），不能各自实现一套判定，否则会出现
+// 「书架上写着 N 个系列，点进去却是另一个数」。
 
 package api
 

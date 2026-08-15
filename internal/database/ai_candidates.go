@@ -1,11 +1,6 @@
-// 业务说明：本文件为 AI 阅读推荐挑选候选系列。
-//
-// 两个问题一起修：
-//
-//  1. 采样用 ORDER BY RANDOM()。SQLite 会给**每一行**算一次随机数，再把整张结果集排序——
-//     用不了任何索引，代价随库规模线性增长，而实际只取 20 条。
-//  2. 「排除已读过半」的过滤读的是 books.last_read_page，那是多用户改造后已停写的全局列。
-//     于是该子查询恒为 0、条件恒真，过滤形同虚设：读完的作品照样被推荐回来。
+// 本文件为 AI 阅读推荐挑选候选系列：采样必须走主键范围探针而不是 ORDER BY RANDOM()（那会给
+// 每一行算随机数再整表排序，代价随库规模线性增长）；「排除已读过半」必须按当前用户读取每用户
+// 进度，不得依赖 books.last_read_page 那个已停写的全局列。
 
 package database
 
@@ -56,8 +51,8 @@ WHERE s.summary IS NOT NULL AND s.summary != ''
 // 做法是「分层探针」：把 [minID, maxID] 按候选数切成 limit 个区间，每个区间取第一条命中行。
 // 每次探针都是主键范围查找（SEARCH s USING INTEGER PRIMARY KEY），不必给全表算随机数、更不必排序。
 //
-// 分层探针天然产出 id 升序，直接喂给 LLM 会因为 prompt 的位置偏好而系统性偏向最早入库的作品——
-// 旧的 ORDER BY RANDOM() 顺带提供了这层随机性，所以返回前必须再洗一次牌。
+// 分层探针天然产出 id 升序，直接喂给 LLM 会因为 prompt 的位置偏好而系统性偏向最早入库的作品，
+// 所以返回前必须再洗一次牌。
 func (s *SqlStore) SampleCandidateSeriesForAI(ctx context.Context, userID int64, limit int64) ([]CandidateSeriesForAI, error) {
 	if limit <= 0 {
 		return nil, nil

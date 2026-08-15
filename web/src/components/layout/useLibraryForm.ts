@@ -1,12 +1,8 @@
 /**
- * 业务说明：资料库表单（新增/编辑）的共享状态。
+ * 资料库表单（新增/编辑）的共享状态：逐字段更新与 reset/setPath/setScanFormats 都只精确改
+ * 自己负责的字段，不做整份覆盖，避免清掉用户已填的其他内容。
  *
- * 此前「新增」与「编辑」在 Layout 里是两套**完全平行**的实现：newLib* 七个 state
- * 与 editLib* 八个 state，各自一份逐字段的 setter 与提交逻辑。两套代码做同一件事，
- * 唯一的区别只有「打哪个接口」和「成功后重置不重置」——而这种平行结构的代价是漂移：
- * 给表单加第七个字段时很容易只改一边，然后编辑弹窗少一个字段、还没人发现。
- *
- * 这里只抽「表单状态」，不抽「提交」：两条路的提交在语义上确实不同（见 Layout 里的注释），
+ * 只抽「表单状态」，不抽「提交」：两条路的提交在语义上确实不同（见 Layout 里的注释），
  * 硬合成一个带 mode 分支的函数只会把差异藏进 if 里，不会让它更清楚。
  */
 
@@ -82,8 +78,7 @@ export function useLibraryForm(initial: LibraryFormValues): LibraryFormState {
 }
 
 // libraryFormPayload 把表单值转成后端契约的字段名。
-// 新增与编辑发的是同一份载荷（只是方法与 URL 不同），抽出来保证两边不会漂移
-// ——此前这段 JSON 在 Layout 里逐字重复了两遍。
+// 新增与编辑发的是同一份载荷（只是方法与 URL 不同），字段名转换不得在调用点各写一份，否则漂移。
 export function libraryFormPayload(values: LibraryFormValues) {
   return {
     name: values.name,

@@ -1,4 +1,4 @@
-// 业务说明：本文件守卫短关键字搜索的两件事：结果与原来的 instr 全表扫**逐条一致**，
+// 本文件守卫短关键字搜索的两件事：结果与 instr 全表扫**逐条一致**，
 // 以及查询确实走了索引而不是退回全表。
 //
 // 性能优化最容易悄悄改变语义，而搜索的语义变化是静默的——用户只会觉得「搜不到了」。
@@ -68,7 +68,7 @@ func TestGramSearchMatchesSubstringSemantics(t *testing.T) {
 
 			gramIDs := queryIDs(t, store,
 				`SELECT s.id FROM series s WHERE `+seriesGramFilter+` ORDER BY s.id`, expr)
-			// 基准：原来的 instr 语义（gram 索引只覆盖 name/title，故基准也只比这两列）。
+			// 基准：instr 语义（gram 索引只覆盖 name/title，故基准也只比这两列）。
 			trimmed := strings.TrimSpace(kw)
 			instrIDs := queryIDs(t, store,
 				`SELECT s.id FROM series s
@@ -135,7 +135,7 @@ func TestGramSearchSurvivesRename(t *testing.T) {
 	}
 }
 
-// TestGramSearchUsesIndex 断言查询计划不再是全表扫。
+// TestGramSearchUsesIndex 断言查询计划是索引扫描，而非全表扫。
 //
 // 判据用「外层对 books 是主键点查」而不是「不含 SCAN b」：
 // 子查询里的 `SCAN book_gram_fts VIRTUAL TABLE ...` 本身就含子串 SCAN b，

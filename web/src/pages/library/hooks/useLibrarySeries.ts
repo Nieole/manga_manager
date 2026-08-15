@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
 import { type AxiosResponse } from 'axios';
@@ -36,8 +30,7 @@ interface UseLibrarySeriesResult {
   allSeries: Series[];
   totalSeries: number;
   loading: boolean;
-  // error 为最近一次取列表失败的可读消息（成功后清空）；供页面渲染错误条 + 重试入口，
-  // 替代此前 catch 只 console.error、用户只见空白列表的静默失败。
+  // error 为最近一次取列表失败的可读消息（成功后清空）；供页面渲染错误条 + 重试入口。
   error: string | null;
   pageCursorMap: Record<number, string>;
   resetPagination: () => void;

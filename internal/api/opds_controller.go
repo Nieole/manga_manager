@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -25,7 +21,7 @@ import (
 )
 
 // opdsThumbnailMIME 按缩略图文件扩展名推导 MIME。缩略图默认生成 webp（可配置 avif/jpg），
-// 此前 OPDS 链接一律硬编码 image/jpeg，与实际字节不符。
+// 返回的 MIME 必须与实际字节格式一致，不能对所有格式都报 image/jpeg。
 func opdsThumbnailMIME(coverPath string) string {
 	switch strings.ToLower(filepath.Ext(coverPath)) {
 	case ".webp":
@@ -332,9 +328,8 @@ func opdsPositiveQueryInt(r *http.Request, key string, fallback, max int) int {
 	if err != nil || value <= 0 {
 		value = fallback
 	}
-	// max<=0 曾表示「不设上限」，但那让 page 可以取到任意大的值，(page-1)*limit 随即
+	// max<=0 时钳到 maxPageNumber，不当作「不设上限」：page 无上界会让 (page-1)*limit
 	// 溢出 int 变成负数，opdsSliceBounds 拿负 start 去切片直接 panic。
-	// 现在无论调用方是否指定，都至少落在 maxPageNumber 之内。
 	if max <= 0 {
 		max = maxPageNumber
 	}
@@ -865,7 +860,8 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
 
-	// 在数据库层分页（LIMIT/OFFSET + COUNT），不再一次性加载整库系列再内存切片。
+	// 在数据库层分页（LIMIT/OFFSET + COUNT），避免整库系列一次性加载进内存再切片——
+	// 大型库下内存与延迟开销会随库大小线性增长。
 	total, err := c.store.CountSeriesByLibrary(r.Context(), libID)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -1040,7 +1036,7 @@ func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request)
 		if item.LastReadPage.Valid && item.PageCount > 0 {
 			content = opdsContinueProgress(locale, item.SeriesName, item.LastReadPage.Int64, item.PageCount)
 		}
-		// 传真实归档路径：此前传空串，导致「继续阅读」feed 里的整卷下载 MIME 恒为
+		// 必须传真实归档路径：整卷下载的 MIME 靠它推导，传空串会让 MIME 恒为
 		// application/octet-stream，部分阅读器据此拒绝或按错误类型处理。
 		links := opdsBookAcquisitionLinks(item.BookID, item.PageCount, item.LastReadPage, item.BookPath)
 		if item.CoverPath != "" {

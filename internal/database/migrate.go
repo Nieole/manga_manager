@@ -1,4 +1,4 @@
-// 业务说明：本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「schema 迁移与回填」子域。
+// 本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「schema 迁移与回填」子域。
 // 它负责建表、幂等 DDL 重放、按 user_version 门控的一次性回填、FTS 结构升级与历史数据迁移。
 // 维护时应保证每条语句幂等、老库升级路径不崩，并把昂贵的全量回填挡在版本门控之后。
 
@@ -246,7 +246,7 @@ func Migrate(dbPath string) error {
 		return err
 	}
 
-	// 一次性全量回填只在 schema 版本升级时执行（此前每次启动都无条件全量重算，成本随库规模线性膨胀）。
+	// 一次性全量回填只在 schema 版本升级时执行，避免每次启动都做一遍随库规模线性增长的全量重算。
 	needFullBackfill := userVersion < currentSchemaVersion
 	if needFullBackfill {
 		if err := backfillSeriesInitials(db); err != nil {

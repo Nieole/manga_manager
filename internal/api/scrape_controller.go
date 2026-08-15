@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -240,8 +236,8 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 
 // queueOutcomeForError 把入队时的「良性结果」哨兵折成给前端的 outcome 与文案。
 //
-// 这三种都不是故障：数据本来就一致、差异全被用户锁住、或这份提案此前已被拒绝。
-// 此前只识别 errNoMetadataChanges，另外两种一路落到 HTTP 500，用户看到「服务器错误」。
+// 这三种都不是故障：数据本来就一致、差异全被用户锁住、或这份提案已被拒绝过；
+// 必须都在这里识别并映射为良性 outcome，漏掉的会被上抛为 HTTP 500，用户看到「服务器错误」。
 func queueOutcomeForError(err error) (outcome, message string, ok bool) {
 	switch {
 	case errors.Is(err, errNoMetadataChanges):
@@ -525,8 +521,8 @@ type scrapeSeriesEntry struct {
 	Name string
 }
 
-// scrapeMetrics 聚合刮削任务的实时计数；toMap 生成任务进度指标，消除此前在两个刮削函数里各自
-// 重复 4 次的 9 键 map 字面量。
+// scrapeMetrics 聚合刮削任务的实时计数；toMap 转换成任务进度上报用的 map，
+// 全库/单库两条刮削路径共用同一份字段集，避免两处各自维护一份 map 字面量。
 type scrapeMetrics struct {
 	total            int
 	processed        int
@@ -554,9 +550,9 @@ func (m scrapeMetrics) toMap() map[string]int64 {
 }
 
 // runScrapeTask 是全库/单库两种批量刮削的共享执行体：对 entries 逐个请求 provider、写入元数据
-// 审阅队列、按速率限制推进，并持续上报进度与指标。cancelMsg/donePrefix/logMsg 承载两个入口的
+// 审阅队列、按速率限制推进，并持续上报进度与指标。cancelCode/doneCode/logMsg 承载两个入口的
 // 文案差异。bgCtx 必须已注入 locale；调用方负责 start/setTaskMetadata/cleanup 与 goroutine 调度。
-// 此前两个函数各有一份约 150 行的近乎逐行拷贝（且日志已发生漂移），此处统一到带完整日志的版本。
+// 两个入口必须共用这一份实现，分叉成两份各自维护会重新导致日志与进度上报互相漂移。
 func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, providerName, cancelCode, doneCode, logMsg string, provider metadata.Provider, entries []scrapeSeriesEntry) {
 	m := scrapeMetrics{total: len(entries)}
 	c.taskEngine.updateTaskDetailsMsg(taskKey, 0, m.total, "task.msg.scrape.collecting_series", nil, "collecting_series", "", m.toMap(), nil)

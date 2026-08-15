@@ -1,13 +1,7 @@
-// 业务说明：本文件把鉴权链路的进程内状态从 Controller 上帝对象里抽成独立组件。
-//
-// 这四样东西看着零散，其实服务同一个问题——「这个请求该不该被放进来，以及要不要先拖住它」：
-//   - usersPresent      站点是否已有账户（决定首启直通窗口是否关闭）
-//   - basicAuthCache    OPDS/Mihon 的 Basic 凭据校验结果缓存（bcrypt 故意很慢，不能每请求跑一次）
-//   - loginLimiter      /api/auth/login 的失败暴破防护
-//   - basicAuthLimiter  阅读协议 Basic 鉴权的失败限流，兼作 bcrypt 的 CPU-DoS 防护
-//
-// 它们之间有真实的耦合：改密必须同时失效 basicAuthCache（否则旧口令还能在协议侧用满 TTL），
-// 而限流与缓存共用同一个「客户端 IP」概念。收在一个组件里，这些关系才有地方写下来。
+// 本文件把鉴权链路的进程内状态（账户是否已存在、Basic 凭据缓存、两个失败限流器）
+// 从 Controller 抽成独立组件：这些状态彼此耦合——改密必须同时失效 basicAuthCache，
+// 否则旧口令还能在协议侧用满 TTL；限流与缓存又共用同一个「客户端 IP」概念——
+// 分散在 Controller 里，这些关系没地方统一维护。
 
 package api
 
@@ -40,7 +34,8 @@ type authState struct {
 	// 用 sync.Map 而非带锁 map：读多写少，且条目数等于活跃协议客户端数（个位到几十）。
 	basicAuthCache sync.Map
 
-	loginLimiter     *attemptLimiter
+	loginLimiter *attemptLimiter
+	// basicAuthLimiter 限流阅读协议 Basic 鉴权的失败尝试，兼作 bcrypt 的 CPU-DoS 防护。
 	basicAuthLimiter *attemptLimiter
 }
 

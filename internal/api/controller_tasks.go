@@ -1,10 +1,8 @@
-// 业务说明：本文件是任务子域的 **HTTP 层与装配层**：任务列表/清理/重试/暂停/恢复/取消六个端点，
-// 任务重试注册表（taskType -> 重启函数，需调用 Controller 的领域方法），以及依赖运行时配置的
-// 存储 IO 令牌与并发上限推导。
+// 本文件是任务子域的 HTTP 层与装配层：任务列表/清理/重试/暂停/恢复/取消六个端点、
+// 任务重试注册表（taskType -> 重启函数），以及依赖运行时配置的存储 IO 令牌与并发上限推导。
 //
-// 任务引擎自身的可变状态与状态机在 task_engine.go；TaskStatus 的纯转换函数在 task_model.go。
-// 本文件不直接读写任务表，只经 c.taskEngine 的方法操作——如果这里出现了 taskEngine.mutex，
-// 说明有状态逻辑漏在了 HTTP 层。
+// 引擎自身的可变状态与状态机在 task_engine.go，TaskStatus 的纯转换函数在 task_model.go；
+// 本文件只经 c.taskEngine 的方法操作任务表，出现 taskEngine.mutex 即说明状态逻辑漏到了这里。
 
 package api
 
@@ -35,8 +33,7 @@ type taskRelauncher func(ctx context.Context, task TaskStatus) error
 // errTaskAlreadyRunning 是重试时"同类任务已在运行"的哨兵错误。
 var errTaskAlreadyRunning = errors.New("task already running")
 
-// buildTaskRelaunchers 注册各任务类型 -> 重启函数，是重试分发与"可重试类型"的唯一事实来源，
-// 取代此前分散在 retryTask 的 switch 与 isRetryableTaskType 两份需同步维护的硬编码清单。
+// buildTaskRelaunchers 注册各任务类型 -> 重启函数，是重试分发与"可重试类型"的唯一事实来源。
 func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 	libraryID := func(task TaskStatus) (int64, error) {
 		if task.ScopeID == nil {
@@ -94,8 +91,7 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 			if err != nil {
 				return err
 			}
-			// locale 优先取任务持久化的原始值，其次取本次重试请求的语言（ctx 注入），最后回退 zh-CN，
-			// 修复此前无条件硬编码 zh-CN 导致非中文用户重试 AI 分组回落中文的问题。
+			// locale 优先取任务持久化的原始值，其次取本次重试请求的语言（ctx 注入），最后回退 zh-CN。
 			locale := ""
 			if task.Params != nil {
 				locale = task.Params["locale"]
@@ -222,8 +218,7 @@ func (c *Controller) taskLimitsForPath(path string, force bool) TaskLimits {
 
 // ---- HTTP 端点 ----
 
-// taskFiltersFromQuery 解析六个任务端点共用的过滤参数。无法解析的 scope_id/limit 按「不过滤」处理，
-// 与此前各 handler 内联的解析逻辑一致。
+// taskFiltersFromQuery 解析六个任务端点共用的过滤参数。无法解析的 scope_id/limit 按「不过滤」处理。
 func taskFiltersFromQuery(r *http.Request) database.TaskFilters {
 	query := r.URL.Query()
 	filters := database.TaskFilters{
@@ -302,15 +297,14 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 用本次重试请求自身的 Accept-Language 构造 ctx，供 relauncher（如 AI 分组）在无持久化 locale 时
-	// 恢复语言，修复此前无条件硬编码 zh-CN。
+	// 用本次重试请求自身的 Accept-Language 构造 ctx，供 relauncher（如 AI 分组）在无持久化
+	// locale 时恢复语言。
 	if err := relaunch(requestContextWithLocale(r), task); err != nil {
 		if errors.Is(err, errTaskAlreadyRunning) {
 			jsonError(w, http.StatusConflict, "Task is already running")
 			return
 		}
-		// 区分错误语义：仅"已在运行"是 409，其它（缺少 scope、GetLibrary 失败等内部错误）返回 500，
-		// 修复此前把所有重试失败一律误报为 409 的问题。
+		// 区分错误语义：仅"已在运行"是 409，其它（缺少 scope、GetLibrary 失败等内部错误）返回 500。
 		slog.Error("Task retry failed", "task_key", taskKey, "task_type", task.Type, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retry task")
 		return

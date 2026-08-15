@@ -1,14 +1,9 @@
-// 业务说明：本文件守卫元数据审核的终态状态机 —— pending 只能单向流转到 applied 或 rejected。
+// 本文件守卫元数据审核的终态状态机——pending 只能单向流转到 applied 或 rejected。
 //
-// 四条终态推进路径（单条 apply / 单条 reject / 批量 apply / 批量 reject）里，单条 reject
-// 此前完全没有 pending 守卫：一条已 applied 的审核可以被改成 rejected，而 SQL 里
-// applied_at/rejected_at 是「CASE ... ELSE 保留旧值」的累加写法，于是这一行同时带着
-// applied_at 与 rejected_at，status 却只剩后写的那个。series_metadata_provenance.review_id
-// 还指着它，审计链变成「系列的元数据来自一条已被拒绝的审核」，自相矛盾且无法复原。
-//
-// 更深一层是 TOCTOU：守卫只做在 HTTP 层的内存判断上，读到 pending 与真正写入之间存在窗口，
-// 并发的 apply/reject 会写出同一种脏行，而 apply 那一路还会用事务外读到的旧 series 快照
-// 把先提交者刚写好的字段回滚成旧值。
+// 约束：四条终态推进路径（单条/批量 apply、单条/批量 reject）都必须挡住终态复写；
+// applied_at 与 rejected_at 不得同时非空，否则 series_metadata_provenance 会指向一条
+// 自相矛盾的审核记录。pending 判断必须在写入的同一次 SQL/事务内完成，只在 HTTP 层做
+// 内存判断会留下 TOCTOU 窗口，让并发的 apply/reject 写出脏行。
 
 package api
 

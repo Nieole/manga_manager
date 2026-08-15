@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -573,8 +569,8 @@ func positiveQueryInt(r *http.Request, key string, fallback, max int) int {
 	if value == 0 && fallback > 0 {
 		return fallback
 	}
-	// 与 OPDS 侧同理：max<=0 不再意味着无上限。page 无上界时 (page-1)*limit 先溢出，
-	// 再经 int32(offset) 截断，超大页码会静默返回第一页而不是空页。
+	// 与 OPDS 侧同理：max<=0 时用 maxPageNumber 兜底，不当作无上限——page 无上界时
+	// (page-1)*limit 先溢出，再经 int32(offset) 截断，超大页码会静默返回第一页而不是空页。
 	if max <= 0 {
 		max = maxPageNumber
 	}

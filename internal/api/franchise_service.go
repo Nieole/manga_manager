@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -77,7 +73,7 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 		}
 	}
 
-	// 3. 一次批量取每个连通分量代表系列的名称，消除此前逐分量 GetSeries 的 N+1。
+	// 3. 一次批量取每个连通分量代表系列的名称，避免逐分量单独 GetSeries 造成 N+1。
 	firstIDs := make([]int64, 0, len(components))
 	for _, comp := range components {
 		firstIDs = append(firstIDs, comp[0])
@@ -93,12 +89,10 @@ func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
 		}
 	}
 
-	// 4. 按稳定自然键 upsert + 成员差集，整体入事务。
-	//
-	// 此前是「整体 DELETE 再全部重建」。这条路径在每次新增/删除/修改系列关系时都会跑一遍，
-	// 于是用户加一条关系就会让**所有** franchise 合集换一遍 id——而合集 id 是对外暴露的：
-	// Mihon 的 /mihon/collections/{id}/series 与 OPDS 的 /opds/collections/{id} 都按它取数，
-	// 客户端书库里记下的条目会集体失效；用户在站内收藏的合集链接同理。
+	// 4. 按稳定自然键 upsert + 成员差集，整体入事务；不得改回「整体 DELETE 再全部重建」——
+	// 合集 id 是对外暴露的：Mihon 的 /mihon/collections/{id}/series 与 OPDS 的
+	// /opds/collections/{id} 都按它取数，重建会让所有 franchise 合集换一遍 id，
+	// 客户端书库里记下的条目与用户站内收藏的合集链接会集体失效。
 	//
 	// 键取连通分量的最小系列 id。它在「有更大 id 的系列加入」「关系类型变化」这些常见改动下
 	// 都不变；只有当一个 id 更小的系列并进来时才会换键——那种情况下这个合集的身份本身

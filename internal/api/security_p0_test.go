@@ -16,7 +16,7 @@ import (
 )
 
 // TestSetupRoutesEnforcesSession 通过真实的 SetupRoutes 路由树验证多用户 authGate 接入了 /api 组：
-// 首启（尚无账户）时非公开端点即已 401（不再直通，收敛 setup 窗口攻击面）→ 建首个管理员后锁定
+// 首启（尚无账户）时非公开端点必须已 401，不得直通（收敛 setup 窗口攻击面）→ 建首个管理员后锁定
 // → 未登录 401 → 登录拿 cookie/csrf 后放行 → 改写方法缺 CSRF 403、带 CSRF 通过；Mihon 前缀始终
 // 不被会话鉴权 401 拦截。
 func TestSetupRoutesEnforcesSession(t *testing.T) {

@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -24,12 +20,12 @@ var errNoMetadataChanges = errors.New("no metadata changes")
 
 // errAllFieldsLocked 表示确实有差异，但差异字段全部被用户锁定了。
 // 与 errNoMetadataChanges 分开是因为用户该采取的动作完全不同：一个是「解锁后再试」，
-// 一个是「数据已经是最新的」。此前两者都走同一条路径，用户只能看到含糊的提示。
+// 一个是「数据已经是最新的」。
 var errAllFieldsLocked = errors.New("all changed fields are locked")
 
 // errMetadataReviewRejectedBefore 表示这份提案与一条**已被用户拒绝**的记录逐字相同。
-// 此前只跟 pending 记录去重，于是用户拒绝之后，下一次刮削（尤其是定时的全库刮削）
-// 会把同一份提案原样再塞回队列——用户得反复拒绝同一条东西。
+// 去重必须同时覆盖 pending 与已拒绝的记录，否则用户拒绝之后，下一次刮削
+// （尤其是定时的全库刮削）会把同一份提案原样再塞回队列，逼用户反复拒绝同一条东西。
 var errMetadataReviewRejectedBefore = errors.New("an identical proposal was rejected before")
 
 // rejectedDedupWindow 是回溯多少条最近的拒绝记录参与去重。
@@ -476,8 +472,8 @@ func metadataBuildFieldDrafts(series database.Series, tags []database.Tag, autho
 		if strings.EqualFold(strings.TrimSpace(draft.Current), strings.TrimSpace(draft.Proposed)) {
 			continue
 		}
-		// 锁定字段不入队。此前它们照样进待审队列，用户在收件箱里看到一条带锁徽章的提案、
-		// 点「应用」，apply 又会把它静默跳过——一次什么也没发生的操作，却把整条 review 标成已应用。
+		// 锁定字段不得入队：入队的话 apply 会静默跳过它、却仍把整条 review 标成已应用，
+		// 用户点「应用」实际什么也没发生，界面上却显示成功。
 		//
 		// 这个判断必须排在上面两个 continue **之后**：放最前面的话，
 		// 「提案为空」或「与当前值完全相同」的锁定字段也会被算进 lockedSkipped，
@@ -841,10 +837,9 @@ func (o metadataApplyOutcome) Partial() bool { return len(o.Remaining) > 0 }
 // applyReviewedMetadata 把 selected 里的提案写进系列。
 //
 // all 是该 review 的全部字段行，selected 是本次要写的子集（bulk 的 fill_empty 模式会先筛一遍）。
-// 两者分开传是为了修掉一个会**永久丢数据**的行为：此前 fill_empty 只写「当前值为空」的字段，
-// 却把整条 review 标成 applied，而收件箱只查 pending——没被写入的提案就此从界面上彻底消失，
-// 用户既看不到也没法再应用。现在只有全部提案都处理完才关单，否则删掉已应用的行、
-// 让 review 带着剩下的提案继续 pending。
+// 两者分开传是为了避免永久丢数据：只有全部提案都处理完才能把 review 标成 applied，
+// 否则必须只删掉已应用的行，让 review 带着剩下的提案继续 pending——收件箱只查
+// pending，关单关早了会让未写入的提案从界面上彻底消失，用户既看不到也没法再应用。
 func (c *Controller) applyReviewedMetadata(ctx context.Context, series database.Series, review database.MetadataReview, selected, all []database.MetadataReviewField) (metadataApplyOutcome, error) {
 	var outcome metadataApplyOutcome
 	if len(selected) == 0 {
@@ -1058,7 +1053,7 @@ func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Requ
 		Limit:  limit,
 		Offset: offset,
 	}
-	// 一次性批量取所有 review 的字段，避免逐条查询造成 N+1（此前每行 review 单独发一次 SQL）。
+	// 一次性批量取所有 review 的字段，避免逐条查询造成 N+1。
 	fieldsByReview := make(map[int64][]database.MetadataReviewField, len(rows))
 	if len(rows) > 0 {
 		reviewIDs := make([]int64, 0, len(rows))
@@ -1119,8 +1114,8 @@ func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request)
 			jsonError(w, http.StatusConflict, "Metadata review is not pending")
 			return
 		}
-		// 下面两种都是**良性结果**而非服务端故障，此前一律落 500，用户看到的是「服务器错误」。
-		// 返回 200 + applied:false + 具体 outcome，前端才能给出可行动的提示
+		// 下面两种都是**良性结果**而非服务端故障，必须回 200 + applied:false + 具体 outcome，
+		// 不能落 500——落 500 时前端只能提示「服务器错误」，给不出可行动的建议
 		//（「先解锁字段」还是「数据已是最新」）。review 保持 pending，不消费掉。
 		if errors.Is(err, errAllFieldsLocked) {
 			jsonResponse(w, http.StatusOK, map[string]any{

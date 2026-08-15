@@ -1,14 +1,9 @@
 /**
  * @vitest-environment jsdom
  *
- * 业务说明：本文件是资料库表单重构的行为基准。
- *
- * 「新增」与「编辑」此前是两套完全平行的实现（各七八个 state、各一份逐字段 setter
- * 与提交逻辑）。两套代码做同一件事，代价是漂移：给表单加第七个字段时很容易只改一边，
- * 然后编辑弹窗少一个字段、还没人发现。
- *
- * 抽成共享 hook 之后，真正需要守住的是「两条路**本来就该不同**的地方没有被合掉」。
- * 那份差异清单写在下面的用例里。
+ * 守「新增」「编辑」共享的资料库表单状态：字段独立更新互不影响、reset/setPath/setScanFormats
+ * 只精确改自己那个字段、两个 hook 实例互不串状态、bindings 形状与弹窗受控 props 对齐、载荷
+ * 字段名与后端契约一致。破了任一条，两条路会在某个字段上重新悄悄漂移。
  */
 
 import { act, renderHook } from '@testing-library/react';
@@ -122,8 +117,8 @@ describe('useLibraryForm', () => {
 
 describe('libraryFormPayload', () => {
   it('字段名与后端契约一致', () => {
-    // 新增（POST）与编辑（PUT）发的是同一份载荷，只是方法与 URL 不同。
-    // 此前这段 JSON 在两处逐字重复，是最容易漂移的地方。
+    // 新增（POST）与编辑（PUT）发的是同一份载荷，只是方法与 URL 不同——
+    // 字段名转换不得在两处分开维护，否则最容易漂移。
     expect(
       libraryFormPayload({
         name: 'Library A',

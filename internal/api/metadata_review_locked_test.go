@@ -1,12 +1,9 @@
-// 业务说明：本文件守卫「锁定字段」在整条审核链路上的一致行为。
+// 本文件守卫「锁定字段」在整条审核链路上的一致行为：入队、apply、展示三处对锁的
+// 判断必须用同一份**当前**锁定集，不能用入队时的快照。
 //
-// 字段锁的语义是「这个值我手动定过，别让刮削覆盖」。但此前锁只在 apply 的最后一步生效：
-// 锁定字段照样入队为待审提案，用户在收件箱里看到它、点「应用」，写入时又被静默跳过
-// ——一次什么都没发生的操作，整条 review 却被标成已应用，被丢弃的提案再也找不回来
-//（收件箱只查 pending）。全部字段都被锁时更糟：接口返回「成功」，实际零写入。
-//
-// 另一半是展示口径：行上的 locked 是**入队瞬间**的快照。「先入队、后加锁」的行 locked=false，
-// UI 上没有任何锁徽章，用户点了应用照样被丢弃。锁定是系列的当前属性，展示时就该按当前值算。
+// 约束：锁定字段不得入队为待审提案；apply 遇到锁定字段必须跳过写入，且不得把 review
+// 标成 applied（否则被跳过的提案在只查 pending 的收件箱里永久消失）；展示的锁徽章要
+// 按当前锁定集渲染。
 
 package api
 
@@ -52,7 +49,7 @@ func fullScrapeResult() *metadata.SeriesMetadata {
 	}
 }
 
-// TestLockedFieldsAreNotQueued：锁定字段不再进待审队列。
+// TestLockedFieldsAreNotQueued：锁定字段不得进入待审队列。
 func TestLockedFieldsAreNotQueued(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	ctx := context.Background()
@@ -88,8 +85,8 @@ func TestLockedFieldsAreNotQueued(t *testing.T) {
 
 // TestAllFieldsLockedReportsDistinctOutcome：差异全被锁住时要与「本来就没差异」区分开。
 //
-// 两者对用户意味着完全不同的动作（解锁 vs 无需处理），此前都走同一条路径，
-// 而且 apply 侧还会返回 HTTP 500，看起来像服务器坏了。
+// 两者对用户意味着完全不同的动作（解锁 vs 无需处理），必须报告为可区分的结果，
+// apply 侧尤其不能因此返回 HTTP 500。
 func TestAllFieldsLockedReportsDistinctOutcome(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	ctx := context.Background()
@@ -108,10 +105,8 @@ func TestAllFieldsLockedReportsDistinctOutcome(t *testing.T) {
 	}
 }
 
-// TestApplySkipsFieldsLockedAfterQueueing：入队后才加的锁也要生效，且报告要诚实。
-//
-// 这是原缺陷里最隐蔽的一半：入队时未锁 → 行上 locked=false → UI 无徽章 →
-// 用户点应用 → 写入时被跳过，而整条 review 被标成 applied。
+// TestApplySkipsFieldsLockedAfterQueueing：入队后才加的锁也要生效，且报告要诚实——
+// 不能一边跳过写入一边把 review 标成 applied。
 func TestApplySkipsFieldsLockedAfterQueueing(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	ctx := context.Background()
@@ -155,8 +150,8 @@ func TestApplySkipsFieldsLockedAfterQueueing(t *testing.T) {
 		t.Error("锁定字段仍被写入了")
 	}
 
-	// review 必须**保持 pending**：被跳过的提案还留在收件箱里，用户解锁后还能再应用。
-	// 此前它会被标成 applied，而收件箱只查 pending，这些提案就此永久消失。
+	// review 必须**保持 pending**：标成 applied 会让被跳过的提案在只查 pending 的
+	// 收件箱里永久消失，用户解锁后也找不回来。
 	reloaded, err := store.GetMetadataReview(ctx, review.ID)
 	if err != nil {
 		t.Fatalf("GetMetadataReview: %v", err)

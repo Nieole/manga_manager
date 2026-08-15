@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -42,8 +38,8 @@ import (
 
 type Controller struct {
 	store database.Store
-	// imageCache 按**总字节**限流（见 image_memory_cache.go）。此前是按条数的 LRU，
-	// 256 条 × 4 MiB 单条上限 = 1 GiB 常驻上界，而它只是个加速缓存。
+	// imageCache 必须按**总字节**限流（见 image_memory_cache.go），不能按条数——
+	// 页图大小悬殊，按条数给不出稳定的内存上界，而它只是个加速缓存。
 	imageCache *imageMemoryCache
 	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
 	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
@@ -217,10 +213,8 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 // newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
 // 它不启动任何后台 goroutine，也不碰文件监听——那些属于「运行」而非「装配」，由 NewController 负责。
 //
-// 拆出这一层是因为白盒测试此前手工拼装 Controller，与 NewController 长期分叉：
-// 每加一个组件字段，测试构造器就漏一个，直到某个用例 nil panic 才被发现（franchiseRebuilder、
-// taskEngine.relaunchers、两个限流器、rebuildThumbAgg 都各栽过一次，代码里留下了一串
-// 「与 NewController 一致」的补丁注释）。现在两条路径共用同一份装配，这类分叉从结构上不再可能。
+// 白盒测试构造 Controller 必须调用这里，不得手工拼装字段：手工拼装在新增组件字段时容易漏掉，
+// 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
 func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
 	cache := newImageMemoryCache(sizes.imageBytes)
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
@@ -303,9 +297,9 @@ func (c *Controller) lifecycleDone() <-chan struct{} {
 
 // runBackgroundTask 是任务型后台调用点的入口，原样转发给任务引擎。
 //
-// 「起一个受停机管辖的 goroutine」如今是引擎的注入依赖（见 newTaskEngine 的第四个参数），
-// panic → 失败态那条兜底也随之搬进引擎内部：控制器只提供能力，不再反向伸手改任务表。
-// 本方法保留仅为让既有的启动点一行不改，待它们迁到引擎的启动入口后即可删除。
+// 起一个受停机管辖的 goroutine、panic 与失败态兜底都由引擎内部处理（见 newTaskEngine
+// 的第四个参数）：控制器只提供能力，不得反向伸手改任务表。本方法保留仅为让既有的启动点
+// 一行不改，待它们迁到引擎的启动入口后即可删除。
 func (c *Controller) runBackgroundTask(taskKey string, fn func()) {
 	c.taskEngine.runTaskGoroutine(taskKey, fn)
 }
@@ -457,7 +451,7 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 	}
 	c.config.Replace(cfg)
 	// 与文件热重载走同一条 runtimecfg.Apply：重建 parser 池 / images 处理器并设置日志级别，使经 UI 保存的
-	// archive_pool_size / max_ai_concurrency 立即生效，而不再依赖文件监听回环（监听器失效时也能生效）。
+	// archive_pool_size / max_ai_concurrency 立即生效，不依赖文件监听回环（监听器失效时也能生效）。
 	if err := runtimecfg.Apply(cfg); err != nil {
 		return err
 	}
@@ -1141,8 +1135,8 @@ func (c *Controller) applySeriesBooksReadStateTx(ctx context.Context, seriesID i
 	})
 }
 
-// applyBookReadStateTx 在事务内更新单本书的阅读状态，语义与旧的 updateBookReadState 一致
-// （已读=最大页码并记阅读活动，未读=清空进度），但使用事务绑定的原始 q 方法、不做逐书统计刷新。
+// applyBookReadStateTx 在事务内更新单本书的阅读状态（已读=最大页码并记阅读活动，未读=清空进度），
+// 使用事务绑定的原始 q 方法，不做逐书统计刷新。
 func applyBookReadStateTx(ctx context.Context, q *database.Queries, book database.Book, isRead bool) error {
 	page := int64(1)
 	validPage := false

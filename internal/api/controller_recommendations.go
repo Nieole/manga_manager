@@ -1,4 +1,4 @@
-// 业务说明：本文件由 controller.go 拆分而来，属于后端 API 层的推荐与 AI 分组子域，负责首页推荐的计算/缓存、AI 分组任务编排、系列首字母重建等接口。
+// 本文件由 controller.go 拆分而来，属于后端 API 层的推荐与 AI 分组子域，负责首页推荐的计算/缓存、AI 分组任务编排、系列首字母重建等接口。
 
 package api
 
@@ -168,7 +168,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) bool {
 	if lib, err := c.store.GetLibrary(context.Background(), libID); err == nil {
 		scopeName = lib.Name
 	}
-	// 持久化 locale 到任务参数，使重试能恢复原始语言（此前 locale 从未落库、重试只能硬编码 zh-CN）。
+	// 持久化 locale 到任务参数：重试路径靠它恢复原始语言，缺失时只能回退成硬编码 zh-CN。
 	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"locale": locale}, scopeName)
 	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 

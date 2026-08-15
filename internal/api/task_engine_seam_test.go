@@ -1,12 +1,8 @@
-// 业务说明：本文件是任务引擎那**唯一一个 seam** 的共用测试装置。
-//
-// 该 seam 就是引擎的构造点 `newTaskEngine`：注入落盘存储、SSE 投递、停机信号与
-// 「开一个受停机管辖的 goroutine」的能力。把后台能力换成同步执行版之后，任务的**终态**在
-// 调用返回时就已落定，不必 sleep 或轮询去等一个真实 goroutine——这是契约用例能做到毫秒级、
-// 且不需要数据库/配置/扫描器的全部原因。
-//
-// 观测面固定为**投递出去的载荷**：与 SSE 订阅者看到的完全一致，不断言内部字段布局。
-// 本文件不含任何用例，只供 task_panic_test.go 与 task_run_test.go 共同消费。
+// 本文件是任务引擎唯一 seam 的共用测试装置：该 seam 是构造点 `newTaskEngine`，注入落盘存储、
+// SSE 投递、停机信号与「开一个受停机管辖的 goroutine」的能力。把后台能力换成同步执行版后，
+// 任务终态在调用返回时就已落定，不必 sleep 或轮询去等真实 goroutine——契约用例能做到毫秒级、
+// 且不需要数据库/配置/扫描器，原因即在此。观测面固定为投递出去的载荷，与 SSE 订阅者看到的
+// 完全一致，不断言内部字段布局；本文件不含用例，只供 task_panic_test.go 与 task_run_test.go 消费。
 
 package api
 
@@ -73,7 +69,7 @@ func lastPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskSta
 }
 
 // firstPublishedTask 返回该任务键**第一条**被投递出去的快照，用于断言任务诞生那一刻就已带齐
-// 作用域、元数据与并发上限——此前它们是启动之后三次独立的写入，中间存在可被观察到的空窗。
+// 作用域、元数据与并发上限，不得拆成启动之后的多次独立写入、中间留下可被观察到的空窗。
 func firstPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskStatus {
 	t.Helper()
 	for _, snapshot := range snapshots {

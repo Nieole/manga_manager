@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端系列详情页面，负责展示系列信息、卷册列表、元数据审核、关系维护和阅读入口。
- * 它把数据库中的书籍聚合、外部元数据和人工编辑结果组织成单个系列的业务视图。
- * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
- */
-
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
 import type {
@@ -28,7 +22,7 @@ interface UseSeriesContextParams {
 export interface SeriesContextState {
   loading: boolean;
   // error 为最近一次加载系列上下文失败的可读消息（成功后清空）；供详情页在主数据缺失时
-  // 渲染错误 + 重试，替代此前 catch 只 console.error、失败后把 null series 传给整页导致破损。
+  // 渲染错误 + 重试。
   error: string | null;
   retry: () => void;
   series: Series | null;

@@ -1,10 +1,9 @@
-// 业务说明：本文件提供一个零依赖、并发安全的失败尝试限流器，用于登录暴破防护，以及 OPDS/Mihon
-// 的 HTTP Basic 鉴权的 bcrypt CPU-DoS 防护。按 key（IP / 用户名）统计失败次数，超阈值后进入指数退避
-// 锁定期，锁定期内的请求被直接 429 拒绝，从而无需再跑昂贵的 bcrypt。设计上刻意不引入 httprate 等外部
-// 依赖，并把「按用户名锁定」这类自定义逻辑收在一处。
+// 本文件提供一个零依赖、并发安全的失败尝试限流器，用于登录暴破防护与 OPDS/Mihon HTTP Basic
+// 鉴权的 bcrypt CPU-DoS 防护：按 key（IP / 用户名）统计失败次数，超阈值后指数退避锁定，
+// 锁定期内直接 429、不再跑 bcrypt；不引入 httprate 等外部依赖，自定义逻辑收在一处。
 //
-// 代理注意：clientIP 优先取 X-Forwarded-For 首跳，其次退回 RemoteAddr。部署在反向代理之后时，
-// 反代应写入真实客户端 IP；若反代未写 XFF，则同一反代后的所有客户端会共享一个 IP 桶（可能相互影响）。
+// 代理注意：clientIP 优先取 X-Forwarded-For 首跳，否则退回 RemoteAddr；反代未写 XFF 时，
+// 同一反代后的所有客户端会共享一个 IP 桶。
 
 package api
 
@@ -102,15 +101,11 @@ func (l *attemptLimiter) recordSuccess(key string) {
 const (
 	// limiterPruneThreshold 是触发剪枝的条目数。低于它完全不扫。
 	limiterPruneThreshold = 1024
-	// limiterPruneSample 是单次剪枝最多检查的条目数。
-	//
-	// 旧实现无上限地遍历整张表，且只删「已过期」条目——攻击者只要在一个窗口内持续造新 key，
-	// 每次失败都要扫满全表却一条也删不掉，单次 O(n)、整体 O(n²)。实测 10 万条时单次 recordFailure
-	// 要 1.9ms，而这是**持锁**的：整条鉴权路径（含每次成功登录、每个 OPDS/Mihon 请求的 retryAfter）
-	// 被串行化到每秒几百次。
-	//
-	// 改成定额采样后单次剪枝是 O(1) 的：Go 的 map 迭代起点随机，每次看一批不同的条目，
-	// 过期条目会在若干次失败之内被陆续清掉。剪枝本就只是内存回收，不需要「一次清干净」。
+	// limiterPruneSample 是单次剪枝最多检查的条目数，让单次剪枝保持 O(1) 而不是 O(n)：
+	// 持续造新 key 的攻击者会让「扫全表且只删过期项」的剪枝退化成整体 O(n²)，而剪枝是
+	// **持锁**的，会把整条鉴权路径（含每次成功登录、每个 OPDS/Mihon 请求的 retryAfter）
+	// 串行拖慢。定额采样下 Go 的 map 迭代起点随机，每次看一批不同的条目，过期条目会在
+	// 若干次失败之内被陆续清掉——剪枝本就只是内存回收，不需要「一次清干净」。
 	limiterPruneSample = 256
 	// limiterMaxEntries 是条目数硬上限。到顶后不再接纳新 key（见 recordFailure）。
 	limiterMaxEntries = 8192

@@ -1,4 +1,4 @@
-// 业务说明：本文件把服务端事件推送（SSE）从 Controller 上帝对象里抽成独立组件。sseBroker 用「单 goroutine
+// 本文件把服务端事件推送（SSE）从 Controller 上帝对象里抽成独立组件。sseBroker 用「单 goroutine
 // 事件循环 + channel」的 actor 模式管理订阅者集合：run() 是唯一读写 clients 的 goroutine，故无需加锁；
 // serveHTTP 通过 channel 注册/注销自己，publish 非阻塞投递事件，背压时主动断开卡死的消费者让其自动重连。
 // Controller 仅持有 *sseBroker 引用并做请求编排（PublishEvent 保留为薄委托，供 Scanner / FileWatcher 调用）。
@@ -95,8 +95,8 @@ func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	// 这里不设 Access-Control-Allow-Origin：CORS 由 main.go 的 cors 中间件按
-	// server.allowed_origins 统一决定。此前硬写 "*" 会覆盖那份白名单，等于给这个
+	// 这里不得设 Access-Control-Allow-Origin：CORS 由 main.go 的 cors 中间件按
+	// server.allowed_origins 统一决定，硬写 "*" 会覆盖那份白名单，等于给这个
 	// 端点单独开了个全放通的口子；而同源的 EventSource 本就不需要 ACAO 头。
 
 	flusher, _ := w.(http.Flusher)

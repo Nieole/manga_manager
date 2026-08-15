@@ -1,12 +1,6 @@
-// 业务说明：本文件提供「被引用的封面路径」的流式遍历，服务于缩略图清理。
-//
-// 原来的 GetReferencedBookCoverPaths / GetReferencedSeriesCoverPaths 是 sqlc 的 :many，
-// 会把整库的封面路径全量读进一个切片再返回；唯一的调用方（Scanner.CleanupThumbnails）
-// 随后把它们折进一个 map 就把切片丢了。也就是说那份切片纯属中转，10 万本书要为它
-// 多分配一遍字符串与切片底层数组。
-//
-// DISTINCT 同样是白付的：调用方本来就用 map 去重。而 SQLite 的 DISTINCT 会引入一个
-// temp B-tree 把结果全物化一遍——去掉它，行是边扫边出的。
+// 本文件提供「被引用的封面路径」的流式遍历，服务于缩略图清理。
+// 不要改回一次性返回切片：调用方（Scanner.CleanupThumbnails）只做流式去重，
+// 大库下物化整表结果是纯浪费。
 
 package database
 

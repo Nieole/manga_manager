@@ -1,4 +1,4 @@
-// 业务说明：本文件守卫配置热重载的四条性质：去抖、值域门禁、缺文件时不覆盖、可被停掉。
+// 本文件守卫配置热重载的四条性质：去抖、值域门禁、缺文件时不覆盖、可被停掉。
 //
 // 这条链路的每种失效都是静默的：坏值直接生效、整份配置被默认值覆盖、停机期间还在改全局资源。
 // 用例直接向事件循环注入 fsnotify 事件，因而不依赖真实文件系统的事件时序（那在 CI 上不稳）。
@@ -99,7 +99,8 @@ func TestWatcherRejectsInvalidValues(t *testing.T) {
 		name   string
 		mutate func(*Config)
 	}{
-		// 这几个都能穿过 NormalizeConfig（它只兜零值），此前会被原样装进运行中的进程。
+		// 这几个都能穿过 NormalizeConfig（它只兜零值），必须靠 ValidateConfigValues 拦下，
+		// 否则会被原样装进运行中的进程。
 		{"端口越界", func(c *Config) { c.Server.Port = 70000 }},
 		{"归档池为负", func(c *Config) { c.Scanner.ArchivePoolSize = -3 }},
 		{"缩略图格式非法", func(c *Config) { c.Scanner.ThumbnailFormat = "gif" }},
@@ -191,8 +192,8 @@ func TestWatcherSkipsIdenticalContent(t *testing.T) {
 	}
 }
 
-// TestWatcherStopEndsEventLoop 守卫「监听器真的能被停掉」。
-// 此前它是裸 goroutine，进程活着就永远停不掉——停机排空期间仍可能落地一次重载。
+// TestWatcherStopEndsEventLoop 守卫「监听器真的能被停掉」：Stop 必须等事件循环真正退出，
+// 否则停机排空期间仍可能落地一次重载。
 func TestWatcherStopEndsEventLoop(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

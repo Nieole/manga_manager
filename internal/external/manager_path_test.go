@@ -1,11 +1,6 @@
-// 业务说明：本文件守卫外部库路径的取值范围。
-//
-// external_path 此前完全不受约束：传什么存什么。三种取值各自造成真实损害——
-//   - 相对路径（"."）被静默解释成**服务进程的工作目录**，用户以为传到了外接盘，
-//     实际写进了服务的运行目录；
-//   - "/" 会让扫描去遍历整个文件系统；
-//   - 指向资料库自己的子目录时，传输产生的副本会被下一次扫描收编成重复书籍，
-//     用户还得手动去重。
+// 本文件守卫外部库路径的取值范围：相对路径、文件系统根、库内子目录都必须被拒——
+// 否则要么把传输目标误判成服务进程的工作目录、要么让扫描遍历整个文件系统、
+// 要么让传输出的副本被下一次扫描收编成重复书籍，用户还得手动去重。
 
 package external
 
@@ -116,13 +111,13 @@ func TestPathsOverlap(t *testing.T) {
 
 // TestNarrowStoreExcludesPerSeriesQuery 是编译期守卫的运行期说明。
 //
-// 本包的 Store 接口刻意只声明三个查询。它挡的不是「解耦」——参数与返回值仍是 database
-// 包里 sqlc 生成的类型，import 边一分不减——而是一类具体的性能回归：传输规划曾经是
-// 逐 seriesID 一次 `SELECT *`（books 表 24 列含长文本），几百个系列就是几百次往返。
+// 本包的 Store 接口刻意只声明三个查询，挡的不是「解耦」——参数与返回值仍是 database
+// 包里 sqlc 生成的类型，import 边一分不减——而是让「逐 seriesID 一次 SELECT * 查系列
+// 书目」这类 N+1 性能回归在编译期就写不出来：窄接口里没有 ListBooksBySeries，想加
+// 回去得先改这个声明，这一步会被 code review 看见。
 //
-// 现在窄接口里根本没有 ListBooksBySeries，想写回去得先改那个声明，而那一步会被
-// code review 看见。这条用例本身只确认「真实的 *SqlStore 仍然满足这个窄接口」——
-// 若有人给接口加了一个 SqlStore 没实现的方法，这里会编译失败。
+// 这条用例本身只确认「真实的 *SqlStore 仍然满足这个窄接口」——若有人给接口加了一个
+// SqlStore 没实现的方法，这里会编译失败。
 func TestNarrowStoreExcludesPerSeriesQuery(t *testing.T) {
 	store, _, _ := newExternalTestStore(t)
 

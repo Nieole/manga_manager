@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端系列详情页面，负责展示系列信息、卷册列表、元数据审核、关系维护和阅读入口。
- * 它把数据库中的书籍聚合、外部元数据和人工编辑结果组织成单个系列的业务视图。
- * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
- */
-
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BookImage, CheckCircle2, MoreHorizontal } from 'lucide-react';
@@ -68,9 +62,9 @@ export function SeriesBookCard({
   const showProgress = book.page_count > 0 && readPage > 0;
   const showResumeBadge = readPage > 0 && !isFinished && book.page_count > 0;
 
-  // 只在**显式**重建封面后才加 ?v=（coverBust）。不再回落到 book.updated_at：
-  // 那一列会因为一堆与封面无关的写入而变（例如 KOReader 重建索引回填的身份指纹），
-  // 于是整库任一无关变更都会让所有封面 URL 失效、全部重下一遍。
+  // 只在**显式**重建封面后才加 ?v=（coverBust），不用 book.updated_at：该列会因封面
+  // 无关的写入而变（例如 KOReader 重建索引回填的身份指纹），用它会让整库任一无关变更
+  // 都使所有封面 URL 失效、全部重下一遍。
   // 常规刷新交给 HTTP 缓存：封面端点下发 private, max-age=0, must-revalidate
   // 并带基于 cover_path + mtime + size 的弱 ETag，封面真变了浏览器自然会拿到新图。
   const coverSrc = book.cover_path?.Valid || coverBust > 0

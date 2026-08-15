@@ -1,4 +1,4 @@
-// 业务说明：本文件用已提交的 RAR 夹具（testdata/*.cbr，由 rar 一次性生成）回归 cbr/rar 阅读路径。
+// 本文件用已提交的 RAR 夹具（testdata/*.cbr，由 rar 一次性生成）回归 cbr/rar 阅读路径。
 // 夹具是二进制、只读，CI 无需任何 rar 工具即可用纯 Go 的 rardecode 读取；覆盖过滤 / 自然排序 / 精确读页 /
 // 元数据读取，以及会话缓存下的顺序 / 随机 / 反向跳读 / 并发读取正确性。
 
@@ -177,8 +177,7 @@ func TestRarArchiveSequentialReadAll(t *testing.T) {
 	}
 }
 
-// BenchmarkRarSequentialReadAllPages 度量顺序读全 40 页的成本。会话缓存下整卷是一次前向扫描（O(N)）；
-// 此前每次 ReadPage 重开并从头扫描是 O(N²)。
+// BenchmarkRarSequentialReadAllPages 度量顺序读全 40 页的成本：会话缓存下整卷是一次前向扫描（O(N)）。
 func BenchmarkRarSequentialReadAllPages(b *testing.B) {
 	names := make([]string, 40)
 	for i := 1; i <= 40; i++ {

@@ -1,10 +1,8 @@
-// 业务说明：本文件是任务子域的**模型层**，只放纯函数——TaskStatus 与数据库 TaskRecord 之间的双向
-// 转换、派生字段（percent/rate/eta、phase/metrics/labels/limit 的 params 编解码）、消息码与直接消息的
-// 互斥规则，以及快照深拷贝。
-//
-// 这里的函数不碰任何共享状态、不加锁、不做 IO，因此可以被引擎（task_engine.go）与 HTTP 层
-// （controller_tasks.go）同时调用而无需考虑时序。改动时请保持这一性质：一旦某个函数需要读写
-// taskEngine 的字段，它就该搬到 task_engine.go 去。
+// 本文件是任务子域的**模型层**，只放纯函数——TaskStatus 与数据库 TaskRecord 之间的双向
+// 转换、派生字段（percent/rate/eta、phase/metrics/labels/limit 的 params 编解码）、消息码与
+// 直接消息的互斥规则，以及快照深拷贝。这里的函数不碰共享状态、不加锁、不做 IO，因此可被
+// 引擎（task_engine.go）与 HTTP 层（controller_tasks.go）同时调用而无需考虑时序；一旦某个
+// 函数需要读写 taskEngine 的字段，它就该搬到 task_engine.go 去。
 
 package api
 

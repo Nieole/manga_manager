@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -121,9 +117,9 @@ type KOReaderMatchMethodItem struct {
 type KOReaderDeviceConflictItem struct {
 	// ID 是 "<来源表>:<主键>" 形式的复合标识，只用于前端 key，不是任何接口的入参。
 	//
-	// 此前它是一个裸整数，而这个列表是 koreader_progress 与 koreader_sync_events 的
-	// UNION ALL——两张表各有独立的 AUTOINCREMENT、都从 1 开始，同一个 id 同时是两边的
-	// 合法主键。前端把它当进度主键传给「重置进度」，删掉的就是另一台设备的阅读进度。
+	// 不能是裸整数：这个列表是 koreader_progress 与 koreader_sync_events 的 UNION ALL，
+	// 两张表各有独立的 AUTOINCREMENT、都从 1 开始，同一个 id 同时是两边的合法主键。
+	// 裸整数一旦被前端当进度主键传给「重置进度」，删掉的就是另一台设备的阅读进度。
 	ID          string `json:"id"`
 	SourceTable string `json:"source_table"`
 	// ProgressID 只在这一行确实对应一条进度记录时才有值；「重置进度」只能用它。

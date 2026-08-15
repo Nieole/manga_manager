@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于 KOReader 集成链路，负责识别设备阅读记录并与本地漫画阅读进度对齐。
-// 它把外部阅读器状态映射为应用内书籍、章节和页码进度，支撑跨设备继续阅读。
-// 维护时应关注指纹匹配、时间戳优先级、路径差异和重复同步的幂等性。
-
 package koreader
 
 import (
@@ -98,8 +94,8 @@ func FingerprintQuickFile(path string) (string, error) {
 		if !errors.Is(err, io.ErrUnexpectedEOF) && err != io.EOF {
 			return "", err
 		}
-		// 短读时按「实际读到的字节数 n」重切，绝不越界。此前用 info.Size() 重切，若文件在 Stat 之后被截短
-		// （info.Size() 比缓冲区容量还大），buf[:info.Size()] 会触发 slice 越界 panic。
+		// 短读时必须按「实际读到的字节数 n」重切，不能用 info.Size()：文件可能在 Stat 之后
+		// 被截短，此时 info.Size() 比缓冲区容量还大，buf[:info.Size()] 会 slice 越界 panic。
 		buf = buf[:n]
 	}
 	if len(buf) > 0 {

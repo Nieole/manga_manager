@@ -1,12 +1,8 @@
-// 业务说明：本文件守卫审核中心角标的计数口径。
+// 本文件守卫审核中心角标的计数口径。
 //
-// koreader_unmatched 此前恒为 0：契约里的字段早在（前端 ReviewCenter/Dashboard 都能读到），
-// Store 上的 CountUnmatchedKOReaderProgress 也早在，只是 API 层从没接上——管理员在设置页
-// 看到「未匹配 N 条」，在审核中心看到 0，两个页面的数字互相矛盾。
-//
-// 另一半同样重要：这个数**不能**并入 Total。metadata / ai_grouping 有 pending→applied/rejected
-// 的逐条状态机，而未匹配的 KOReader 进度没有 pending 态也没有逐条动作（只有全局 reconcile 任务）。
-// Dashboard 的「有 N 条待审核」横幅只读 Total，混进一个不随审核动作下降的数会让横幅常亮。
+// koreader_unmatched 必须如实上报，且不能并入 Total：metadata / ai_grouping 有
+// pending→applied/rejected 的逐条状态机，未匹配的 KOReader 进度没有（只有全局 reconcile
+// 任务）——混进 Total 会让「有 N 条待审核」横幅常亮却无事可做。
 
 package api
 
