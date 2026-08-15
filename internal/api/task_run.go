@@ -37,6 +37,13 @@ type TaskSpec struct {
 	Metadata  map[string]string
 	ScopeName string
 
+	// Labels 是启动时就已知、整个任务期间不变的展示标签（刮削源名等），落进 TaskStatus.Labels。
+	//
+	// 它与 Metadata 只隔一层编码：标签落盘时被编码成 `label.` 前缀的任务参数、读回时再解码，
+	// 因此塞进 Metadata 也「能用」——代价是任务声明里出现一份编码后的形状，接反了不会有编译错误。
+	// 开跑之后才变的标签走 TaskProgress.Labels，两条路都是按键合并。
+	Labels map[string]string
+
 	// Limits 是该任务实际生效的并发上限。零值表示这个任务没有上限可报（多数维护任务如此），
 	// 引擎不会为它凭空造一份全零的上限。
 	Limits TaskLimits
@@ -120,6 +127,7 @@ func (e *taskEngine) claimTaskSlot(spec TaskSpec) bool {
 		CanCancel:     spec.CanCancel,
 		CanPause:      spec.CanPause,
 		Params:        spec.Metadata,
+		Labels:        spec.Labels,
 		StartedAt:     now,
 		UpdatedAt:     now,
 	}
