@@ -1939,6 +1939,7 @@ export const messages: MessageCatalog = {
     'task.msg.control.paused': 'Task paused, waiting to resume',
     'task.msg.control.resumed': 'Task resumed',
     'task.msg.control.cancelling': 'Cancelling task...',
+    'task.msg.control.panicked': 'Task failed with an unexpected internal error',
     'task.scope.system': 'System',
     'task.scope.library': 'Library',
     'task.scope.series': 'Series',

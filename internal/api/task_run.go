@@ -11,6 +11,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"manga-manager/internal/taskcontrol"
 )
 
 // TaskSpec 是一份任务声明：「这是一个什么任务」的完整描述，一次性交给引擎。
@@ -91,11 +93,10 @@ type TaskProgress struct {
 // 刻意保留的不变量：槽位闸门**同步**执行、任务体**异步**执行。Run 返回时任务已在列表里、
 // 而任务体尚未开跑，HTTP 层才能立即返回 202 而不被任务体阻塞。
 func (e *taskEngine) Run(spec TaskSpec, fn func(ctx context.Context, tp *TaskProgress) (TaskResult, error)) error {
-	if !e.claimTaskSlot(spec) {
+	taskCtx, releaseRuntime, claimed := e.claimTaskSlot(spec)
+	if !claimed {
 		return errTaskAlreadyRunning
 	}
-
-	taskCtx, releaseRuntime := e.newTaskContext(spec.Key)
 	progress := &TaskProgress{engine: e, key: spec.Key}
 
 	e.runTaskGoroutine(spec.Key, func() {
@@ -111,8 +112,18 @@ func (e *taskEngine) Run(spec TaskSpec, fn func(ctx context.Context, tp *TaskPro
 }
 
 // claimTaskSlot 同步申领任务槽位：同一任务键已有活动态任务时返回 false，
-// 否则把整份任务声明一次性落成任务行，并投递一帧完整的首帧。
-func (e *taskEngine) claimTaskSlot(spec TaskSpec) bool {
+// 否则把整份任务声明一次性落成任务行、投递一帧完整的首帧，并建好**运行时句柄**。
+//
+// 句柄与任务行必须在同一次持锁内一起落地。分成两步的话，两步之间存在一个「任务已经出现在
+// 列表里、却还没有 ctx 与**暂停闸门**」的窗口——用户在那一瞬按下取消会吃一条
+// errTaskCancelUnavailable。反过来，把建句柄挪到闸门之前则更糟：被闸门挡下的那次启动会把
+// 正在跑的那个任务的句柄换成一份没人持有的，那个任务从此暂停不了也取消不了。
+//
+// 任务声明里的三份 map 一律克隆：引擎此后持锁原地写它们，而调用方在锁外仍握着自己那份，
+// 共享同一个 map header 迟早撞成 taskEngine 符号 doc 里写的那种 fatal error。
+//
+// 返回的 release 必须在任务体退出时调用，否则句柄会一直留在表里。
+func (e *taskEngine) claimTaskSlot(spec TaskSpec) (context.Context, func(), bool) {
 	now := time.Now()
 	scope, scopeID := inferTaskScope(spec.Type, spec.Key)
 	task := TaskStatus{
@@ -122,12 +133,12 @@ func (e *taskEngine) claimTaskSlot(spec TaskSpec) bool {
 		ScopeID:       scopeID,
 		Status:        "running",
 		MessageCode:   spec.StartCode,
-		MessageParams: spec.StartParams,
+		MessageParams: cloneStringMap(spec.StartParams),
 		Total:         spec.Total,
 		CanCancel:     spec.CanCancel,
 		CanPause:      spec.CanPause,
-		Params:        spec.Metadata,
-		Labels:        spec.Labels,
+		Params:        cloneStringMap(spec.Metadata),
+		Labels:        cloneStringMap(spec.Labels),
 		StartedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -141,7 +152,46 @@ func (e *taskEngine) claimTaskSlot(spec TaskSpec) bool {
 
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
-	return e.admitTaskLocked(task)
+	if !e.admitTaskLocked(task) {
+		return nil, nil, false
+	}
+	taskCtx, release := e.newTaskRuntimeLocked(spec.Key, now)
+	return taskCtx, release, true
+}
+
+// newTaskRuntimeLocked 为任务体建立可取消 + 可暂停的 ctx，并登记**运行时句柄**供暂停/恢复/取消
+// 接口操作。调用方持有 mutex。
+//
+// 它只被 claimTaskSlot 调用，因此「拿得到一份任务句柄」等价于「刚刚成功申领到一个任务槽位」。
+// 单独暴露出去就等于开了一条给任意任务键凭空造句柄的路，包括那些根本没有任务行的键。
+func (e *taskEngine) newTaskRuntimeLocked(key string, startedAt time.Time) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	gate := taskcontrol.NewPauseGate()
+	taskCtx := taskcontrol.WithPauseGate(ctx, gate)
+
+	runtime := &TaskRuntime{
+		Context:   taskCtx,
+		Cancel:    cancel,
+		PauseGate: gate,
+		StartedAt: startedAt,
+	}
+	if e.runtimes == nil {
+		e.runtimes = make(map[string]*TaskRuntime)
+	}
+	e.runtimes[key] = runtime
+
+	// 只归还**自己那份**句柄。终态写入本身也会清掉这一项，于是一个走 defer 清理的任务体在
+	// 收尾之后才执行清理；此间同名任务若已重新启动并登记了自己的句柄，无差别 delete 会把
+	// 新任务的 ctx 与**暂停闸门**一起抹掉——那个任务从此暂停不了也取消不了，直到进程重启。
+	release := func() {
+		e.mutex.Lock()
+		if e.runtimes[key] == runtime {
+			delete(e.runtimes, key)
+		}
+		e.mutex.Unlock()
+	}
+
+	return taskCtx, release
 }
 
 // settleTask 是三条终态分支的唯一裁决处：**任务体返回的错误**决定进哪一条，TaskResult 只能改文案。
@@ -151,11 +201,11 @@ func (e *taskEngine) claimTaskSlot(spec TaskSpec) bool {
 func (e *taskEngine) settleTask(spec TaskSpec, result TaskResult, err error) {
 	switch {
 	case err == nil:
-		e.finalizeTaskCore(spec.Key, "completed", "", firstNonEmptyTaskValue(result.Code, spec.CompleteCode), result.Params)
+		e.finalizeTask(spec.Key, "completed", firstNonEmptyTaskValue(result.Code, spec.CompleteCode), result.Params)
 	case errors.Is(err, context.Canceled):
-		e.finalizeTaskCore(spec.Key, "cancelled", "", firstNonEmptyTaskValue(result.Code, spec.CancelCode), result.Params)
+		e.finalizeTask(spec.Key, "cancelled", firstNonEmptyTaskValue(result.Code, spec.CancelCode), result.Params)
 	default:
-		e.failTaskCore(spec.Key, "", firstNonEmptyTaskValue(result.Code, spec.FailCode), result.Params, err.Error())
+		e.failTask(spec.Key, firstNonEmptyTaskValue(result.Code, spec.FailCode), result.Params, err.Error())
 	}
 }
 
@@ -252,7 +302,7 @@ func (e *taskEngine) applyTaskProgress(key string, frame TaskFrame) {
 	if frame.Total != nil {
 		task.Total = *frame.Total
 	}
-	applyTaskMessage(&task, "", frame.Code, frame.Params)
+	applyTaskMessage(&task, frame.Code, frame.Params)
 	if frame.Phase != "" {
 		task.Phase = frame.Phase
 	}

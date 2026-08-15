@@ -44,25 +44,28 @@ func taskIsActive(status string) bool {
 	return status == "running" || status == "paused" || status == "cancelling"
 }
 
-// applyTaskMessage 在任务上设置显示消息，保证 Message 与 MessageCode 互斥（后设者胜）：
-// 传入 code 时走 i18n（记录 code+params、清空 Message），否则退回直接设置 Message（未迁移 i18n 的调用点）。
-func applyTaskMessage(task *TaskStatus, message, code string, params map[string]string) {
-	if code != "" {
-		task.MessageCode = code
-		task.MessageParams = params
-		task.Message = ""
+// applyTaskMessage 在任务上设置显示消息。消息词汇只有 i18n 码一种，因此它只收码与占位参数；
+// 空码是无操作，用于「这一帧不改文案」。
+//
+// 清空 Message 不是可省的防御：它与 MessageCode 必须互斥，理由见 TaskStatus.Message 的字段 doc。
+func applyTaskMessage(task *TaskStatus, code string, params map[string]string) {
+	if code == "" {
 		return
 	}
-	if message != "" {
-		task.Message = message
-		task.MessageCode = ""
-		task.MessageParams = nil
-	}
+	task.MessageCode = code
+	// 克隆而不是存下调用方那份：任务上的每个可变 map 都归引擎所有，没有例外——
+	// 「这几个归引擎、那个不归」是记不住的，而记错一次的后果见 taskEngine 的符号 doc。
+	task.MessageParams = cloneStringMap(params)
+	task.Message = ""
 }
 
-// cloneTaskStatus 返回 task 的深拷贝，逐一复制四个可变 map 字段。
+// cloneTaskStatus 返回 task 的深拷贝：**每一个**引用类型字段都要复制，不只是那几个 map。
 // 任何会让快照逃出 taskEngine.mutex 临界区的路径（异步落盘、HTTP 序列化、重试取值）都必须先克隆，
 // 否则调用方读到的是仍在被写入的活 map。
+//
+// 给 TaskStatus 加引用类型字段的人必须顺手加到这里——漏掉不会有编译错误，后果是那个字段
+// 在锁外被读、同时被持锁的进度回调写。EffectiveLimit 就是这样一个非 map 的引用字段
+// （hydrateTaskStatusDerivedFields 会经 applyTaskLimitParam 穿过这个指针写）。
 func cloneTaskStatus(task TaskStatus) TaskStatus {
 	task.MessageParams = cloneStringMap(task.MessageParams)
 	task.Labels = cloneStringMap(task.Labels)
@@ -73,6 +76,10 @@ func cloneTaskStatus(task TaskStatus) TaskStatus {
 			metrics[k] = v
 		}
 		task.Metrics = metrics
+	}
+	if task.EffectiveLimit != nil {
+		limits := *task.EffectiveLimit
+		task.EffectiveLimit = &limits
 	}
 	return task
 }

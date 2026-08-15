@@ -13,8 +13,8 @@ export interface TaskMessageSource {
 }
 
 /**
- * getTaskMessage 渲染任务的显示消息：后端迁移到 i18n 的任务会带稳定的 message_code + message_params，
- * 按当前语言渲染；尚未迁移的任务仍回退到后端直接下发的 message（再退到任务类型）。
+ * getTaskMessage 渲染任务的显示消息：后端每一帧都带稳定的 message_code + message_params，按当前语言渲染。
+ * message 只承载服务重启把任务转成中断时写进落盘记录的那句已渲染文案，因此只作缺键兜底（再退到任务类型）。
  */
 export function getTaskMessage(task: TaskMessageSource, t: Translator): string {
   if (task.message_code) {

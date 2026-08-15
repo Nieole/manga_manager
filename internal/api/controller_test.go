@@ -4648,16 +4648,19 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 		t.Fatalf("expected status completed, got %q", coded.Status)
 	}
 
-	// Message 与 MessageCode 的互斥（后设者胜）是模型层纯函数的职责，不依赖任何引擎路径：
-	// 两者同时留在任务上时，前端会把已本地化的码和一句原始文案叠着渲染。
-	mixed := TaskStatus{MessageCode: "task.msg.scan_library.complete", MessageParams: map[string]string{"name": "Lib A"}}
-	applyTaskMessage(&mixed, "直接文案", "", nil)
-	if mixed.Message != "直接文案" || mixed.MessageCode != "" || mixed.MessageParams != nil {
-		t.Fatalf("直接文案没有清掉先前的码：msg=%q code=%q params=%v", mixed.Message, mixed.MessageCode, mixed.MessageParams)
+	// Message 与 MessageCode 的互斥是模型层纯函数的职责，不依赖任何引擎路径。
+	// 这里的 Message 取的是它今天唯一的来源形状——从**落盘记录**读回的一句已渲染文案。
+	restored := TaskStatus{Message: "任务因服务重启而中断，可重试"}
+	applyTaskMessage(&restored, "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
+	if restored.MessageCode != "task.msg.scan_library.complete" || restored.Message != "" {
+		t.Fatalf("消息码没有清掉落盘记录里那句直接文案：msg=%q code=%q", restored.Message, restored.MessageCode)
 	}
-	applyTaskMessage(&mixed, "", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
-	if mixed.MessageCode != "task.msg.scan_library.complete" || mixed.Message != "" {
-		t.Fatalf("消息码没有清掉先前的直接文案：msg=%q code=%q", mixed.Message, mixed.MessageCode)
+
+	// 空码是无操作：一帧进度不带文案时不得把任务上已有的文案抹掉。
+	unchanged := TaskStatus{MessageCode: "task.msg.scan_library.complete", MessageParams: map[string]string{"name": "Lib A"}}
+	applyTaskMessage(&unchanged, "", nil)
+	if unchanged.MessageCode != "task.msg.scan_library.complete" || unchanged.MessageParams["name"] != "Lib A" {
+		t.Fatalf("空码把已有文案抹掉了：code=%q params=%v", unchanged.MessageCode, unchanged.MessageParams)
 	}
 }
 

@@ -28,8 +28,10 @@ type taskSeed struct {
 	CanCancel bool
 	CanPause  bool
 
-	// Metadata 落进任务参数（**重启函数**从这里读回原始入参），ScopeName 是作用域的显示名。
+	// Metadata 落进任务参数（**重启函数**从这里读回原始入参），Labels 落进展示标签，
+	// ScopeName 是作用域的显示名。
 	Metadata  map[string]string
+	Labels    map[string]string
 	ScopeName string
 	Limits    TaskLimits
 
@@ -88,6 +90,7 @@ func trySeedTask(e *taskEngine, seed taskSeed) (*TaskProgress, error) {
 		CanCancel:   seed.CanCancel,
 		CanPause:    seed.CanPause,
 		Metadata:    seed.Metadata,
+		Labels:      seed.Labels,
 		ScopeName:   seed.ScopeName,
 		Limits:      seed.Limits,
 	}

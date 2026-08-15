@@ -260,6 +260,13 @@ func (e *taskEngine) publishTaskStatusLocked(task TaskStatus) {
 
 // ---- 启动 ----
 
+// taskPanicMessageCode 是 panic 兜底下发的失败文案码。
+//
+// panic 兜底是引擎唯一直接面向用户说话的地方，因此也必须只用 i18n 码：一句写死在这里的文案
+// 没有任何地方能翻译它，非英文用户看到的就是一句英文。panic 值本身另走 TaskStatus.Error，
+// 那是技术串、不面向翻译。
+const taskPanicMessageCode = "task.msg.control.panicked"
+
 // runTaskGoroutine 在受停机管辖的后台 goroutine 里执行任务体，并保证任务体一旦 panic，
 // key 对应的任务被置为失败态。
 //
@@ -272,7 +279,7 @@ func (e *taskEngine) runTaskGoroutine(key string, fn func()) {
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("Background task panicked", "task_key", key, "panic", rec, "stack", string(debug.Stack()))
-				e.failTaskWithError(key, "Background task panicked", fmt.Sprint(rec))
+				e.failTask(key, taskPanicMessageCode, nil, fmt.Sprint(rec))
 			}
 		}()
 		fn()
@@ -302,41 +309,6 @@ func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return true
-}
-
-// newTaskContext 为任务体建立可取消 + 可暂停的 ctx，并登记运行时句柄供暂停/恢复/取消接口操作。
-// 返回的 cleanup 必须在任务体退出时调用，否则运行时句柄会一直留在表里。
-func (e *taskEngine) newTaskContext(key string) (context.Context, func()) {
-	ctx, cancel := context.WithCancel(context.Background())
-	gate := taskcontrol.NewPauseGate()
-	taskCtx := taskcontrol.WithPauseGate(ctx, gate)
-
-	runtime := &TaskRuntime{
-		Context:   taskCtx,
-		Cancel:    cancel,
-		PauseGate: gate,
-		StartedAt: time.Now(),
-	}
-
-	e.mutex.Lock()
-	if e.runtimes == nil {
-		e.runtimes = make(map[string]*TaskRuntime)
-	}
-	e.runtimes[key] = runtime
-	e.mutex.Unlock()
-
-	// 只归还**自己那份**句柄。终态写入本身也会清掉这一项，于是一个走 defer 清理的任务体在
-	// 收尾之后才执行清理；此间同名任务若已重新启动并登记了自己的句柄，无差别 delete 会把
-	// 新任务的 ctx 与**暂停闸门**一起抹掉——那个任务从此暂停不了也取消不了，直到进程重启。
-	cleanup := func() {
-		e.mutex.Lock()
-		if e.runtimes[key] == runtime {
-			delete(e.runtimes, key)
-		}
-		e.mutex.Unlock()
-	}
-
-	return taskCtx, cleanup
 }
 
 // ---- 进度更新 ----
@@ -405,12 +377,12 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 
 // ---- 终态 ----
 
-// finalizeTaskCore 把任务落成 status 指名的那个**终态**，失败态除外（那条走 failTaskCore，
+// finalizeTask 把任务落成 status 指名的那个**终态**，失败态除外（那条走 failTask，
 // 它还要记下技术错误串）。
 //
 // 名字刻意不叫 complete：**完成**只是终态里的一个，**已取消**同样从这里写入。用「完成」命名
 // 会让读代码的人以为取消另有一条路径，进而去找一个不存在的函数——CONTEXT.md 点名要避开这处模糊。
-func (e *taskEngine) finalizeTaskCore(key, status, message, code string, params map[string]string) {
+func (e *taskEngine) finalizeTask(key, status, code string, params map[string]string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -420,7 +392,7 @@ func (e *taskEngine) finalizeTaskCore(key, status, message, code string, params 
 	}
 	now := time.Now()
 	task.Status = status
-	applyTaskMessage(&task, message, code, params)
+	applyTaskMessage(&task, code, params)
 	if status != "failed" {
 		task.Error = ""
 	}
@@ -444,11 +416,9 @@ func (e *taskEngine) finalizeTaskCore(key, status, message, code string, params 
 	e.publishTaskStatusLocked(task)
 }
 
-func (e *taskEngine) failTaskWithError(key, message, taskError string) {
-	e.failTaskCore(key, message, "", nil, taskError)
-}
-
-func (e *taskEngine) failTaskCore(key, message, code string, params map[string]string, taskError string) {
+// failTask 把任务落成失败态。它与 finalizeTask 分家只为多带一个 taskError：
+// 那是给用户看排查线索用的技术错误串，与 code 指名的那句可翻译文案是两条通道。
+func (e *taskEngine) failTask(key, code string, params map[string]string, taskError string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -458,7 +428,7 @@ func (e *taskEngine) failTaskCore(key, message, code string, params map[string]s
 	}
 	now := time.Now()
 	task.Status = "failed"
-	applyTaskMessage(&task, message, code, params)
+	applyTaskMessage(&task, code, params)
 	task.Error = taskError
 	task.CanCancel = false
 	task.CanPause = false
@@ -709,7 +679,7 @@ func (e *taskEngine) pause(key string) error {
 	task.CanResume = true
 	task.PausedAt = &now
 	task.PauseReason = "manual_pause"
-	applyTaskMessage(&task, "", "task.msg.control.paused", nil)
+	applyTaskMessage(&task, "task.msg.control.paused", nil)
 	task.UpdatedAt = now
 	e.seq++
 	task.Sequence = e.seq
@@ -741,7 +711,7 @@ func (e *taskEngine) resume(key string) error {
 	task.CanResume = false
 	task.PausedAt = nil
 	task.PauseReason = ""
-	applyTaskMessage(&task, "", "task.msg.control.resumed", nil)
+	applyTaskMessage(&task, "task.msg.control.resumed", nil)
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
@@ -780,7 +750,7 @@ func (e *taskEngine) cancel(key string) error {
 	task.CanPause = false
 	task.CanResume = false
 	task.Status = "cancelling"
-	applyTaskMessage(&task, "", "task.msg.control.cancelling", nil)
+	applyTaskMessage(&task, "task.msg.control.cancelling", nil)
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq

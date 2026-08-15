@@ -573,7 +573,7 @@ func (m scrapeMetrics) frame(current int, phase, code, seriesName string) TaskFr
 // 两个入口必须共用这一份实现，分叉成两份各自维护会导致日志与进度上报互相漂移。
 //
 // 各个可中断点只把错误返回上去，由引擎裁决**终态**：取消落已取消，其余落失败。
-// newTaskContext 给的 ctx 没有 deadline，**暂停闸门**也只返回 nil 或 ctx.Err()，因此今天走不到
+// 启动入口交下来的 ctx 没有 deadline，**暂停闸门**也只返回 nil 或 ctx.Err()，因此今天走不到
 // 失败那条；将来若给任务上下文加了超时，这条等价即失效。
 func (c *Controller) runScrapeTask(ctx context.Context, tp *TaskProgress, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (TaskResult, error) {
 	providerName := provider.Name()

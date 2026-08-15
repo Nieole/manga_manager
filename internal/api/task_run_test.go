@@ -408,3 +408,67 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 		t.Fatalf("终态之后的迟到进度改写了任务：status=%q phase=%q", task.Status, task.Phase)
 	}
 }
+
+// TestTaskMapsAreOwnedByTheEngine 钉住「任务上的每个可变 map 都归引擎所有」这条约定：
+// 无论 map 是随任务声明进来的，还是随某一帧进来的，引擎都不得存下调用方那一份。
+//
+// 破了就是 taskEngine 符号 doc 写的那种 fatal error——runtime throw，拦不住。
+func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
+	// 后台能力只登记不执行：任务停在活动态，进度写得进去。
+	e, _ := newBackgroundTestEngine(func(func()) {})
+
+	metadata := map[string]string{"provider": "anilist"}
+	labels := map[string]string{"provider_name": "AniList"}
+	startParams := map[string]string{"name": "Main"}
+	handle := seedTask(t, e, taskSeed{
+		Key: "scan_library_1", Type: "scan_library",
+		Metadata: metadata, Labels: labels,
+		StartCode: "spec.start", StartParams: startParams,
+	})
+
+	frameParams := map[string]string{"count": "7"}
+	handle.MergeParams(map[string]string{"scanned_series": "7"})
+	handle.Labels(map[string]string{"current_series": "Beta"})
+	handle.Report(TaskFrame{Code: "progress.scanning", Params: frameParams})
+
+	// 从引擎那侧写一笔：调用方那几份跟着变，就说明存的是同一个 map header。
+	e.mutex.Lock()
+	stored := e.tasks["scan_library_1"]
+	stored.Params["probe"] = "1"
+	stored.Labels["probe"] = "1"
+	stored.MessageParams["probe"] = "1"
+	e.mutex.Unlock()
+
+	for name, callerOwned := range map[string]map[string]string{
+		"任务声明的 Metadata":    metadata,
+		"任务声明的 Labels":      labels,
+		"任务声明的 StartParams": startParams,
+		"某一帧的 Params":       frameParams,
+	} {
+		if _, leaked := callerOwned["probe"]; leaked {
+			t.Fatalf("引擎存下了调用方那份 map（%s）：%v", name, callerOwned)
+		}
+	}
+}
+
+// TestRejectedLaunchLeavesTheRunningTaskControllable 钉住**运行时句柄**与任务行同生：
+// 被**任务键**闸门挡下的那次启动一步都不得往前走。抢在闸门之前建句柄的话，第二次启动会把
+// 正在跑的那个任务的 ctx 与**暂停闸门**换成一份没人持有的，那个任务从此暂停不了也取消不了。
+func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
+	e, _ := newBackgroundTestEngine(func(func()) {})
+
+	const key = "scan_library_1"
+	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", CanCancel: true, CanPause: true})
+	running := seededTaskContext(t, e, key)
+
+	if _, err := trySeedTask(e, taskSeed{Key: key, Type: "scan_library", CanCancel: true, CanPause: true}); !errors.Is(err, errTaskAlreadyRunning) {
+		t.Fatalf("同键第二次启动返回 %v, want errTaskAlreadyRunning", err)
+	}
+
+	if seededTaskContext(t, e, key) != running {
+		t.Fatal("被闸门挡下的那次启动换掉了在跑任务的运行时句柄")
+	}
+	if err := e.cancel(key); err != nil {
+		t.Fatalf("在跑的任务取消不了了: %v", err)
+	}
+}

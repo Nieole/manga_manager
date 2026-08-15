@@ -34,6 +34,25 @@ func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {
 	}
 }
 
+// TestTaskPanicSpeaksInMessageCode 守「消息词汇只有 i18n 码一种」在引擎自己下发的那句文案上
+// 也成立（理由见 taskPanicMessageCode）。破了，非英文用户在任务中心看到的是一句谁都翻译不了的话。
+func TestTaskPanicSpeaksInMessageCode(t *testing.T) {
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+
+	const key = "rebuild_thumbnails"
+	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails"})
+
+	e.runTaskGoroutine(key, func() { panic("boom") })
+
+	task := lastPublishedTask(t, snapshots(), key)
+	if task.MessageCode != taskPanicMessageCode {
+		t.Fatalf("panic 兜底下发的文案码为 %q, want %q", task.MessageCode, taskPanicMessageCode)
+	}
+	if task.Message != "" {
+		t.Fatalf("引擎给用户下发了一句字面量文案 %q —— 它绕过了整套 i18n，谁都翻译不了", task.Message)
+	}
+}
+
 // TestTaskPanicReleasesKeyAndRuntime 断言 panic 之后任务键与运行时句柄都回到干净状态：
 // 同一任务键可以再次启动（这是上一条用例保护的行为的用户可见面），且运行时句柄不泄漏在内存里。
 func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {

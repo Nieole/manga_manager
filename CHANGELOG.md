@@ -82,6 +82,7 @@
 
 ## 更早的版本
 
+- [2026-08](docs/changelog/2026-08.md) — 1 条
 - [2026-07](docs/changelog/2026-07.md) — 95 条
 - [2026-06](docs/changelog/2026-06.md) — 3 条
 - [2026-05](docs/changelog/2026-05.md) — 58 条
