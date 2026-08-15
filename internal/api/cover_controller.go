@@ -1,4 +1,4 @@
-// 业务说明：本文件属于后端 HTTP API 层，负责“自定义封面”——把书内某一页设为封面，或上传一张图片作为封面。
+// 本文件属于后端 HTTP API 层，负责“自定义封面”——把书内某一页设为封面，或上传一张图片作为封面。
 // 它复用扫描器的封面缩略图管线（Scanner.SetBookCoverFromPage / SetBookCoverFromImage），无条件覆盖 books.cover_path。
 // 维护时应关注：上传体积/类型校验（首个 multipart 处理器）、内容寻址缓存、错误语义与派生系列封面的刷新。
 

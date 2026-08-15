@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，聚焦系列列表/搜索查询构造器（buildSeriesSearchQuery）与其
+// 本文件是业务回归测试，聚焦系列列表/搜索查询构造器（buildSeriesSearchQuery）与其
 // 两条分页入口 SearchSeriesPaged（offset）/ SearchSeriesCursor（keyset）。重点保护「全局 vs 每用户」
 // 双进度来源（series_stats vs user_series_progress）在读数/最近阅读列上的隔离与正确性，以及关键字/
 // 首字母/状态/分页边界与游标错误路径，防止未来对 SQL 拼装或占位符顺序的重构悄悄改变行为。

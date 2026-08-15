@@ -1,9 +1,8 @@
-// 业务说明：本文件守卫 CleanupLibrary 的两道「防误删」闸门与 watcher 的端到端事件通路。
+// 守 CleanupLibrary 的两道防误删闸门：库根不可达即整体中止，缺失比例过高即熔断。
 //
-// CleanupLibrary 是全仓破坏性最强的一段代码：它按目录是否存在删除系列，而 DELETE 会
-// CASCADE 到书籍与每用户阅读进度。两道闸门保护的都是同一类事故——存储离线、盘符漂移、
-// UNC 断连时库内所有路径都会「看起来不存在」，一次自动清理就能抹掉整库的阅读记录。
-// 这两道闸门此前没有任何用例，改动时无从知道它们还在不在。
+// 它按目录是否存在删除系列，而 DELETE 会 CASCADE 到书与每用户阅读进度。存储离线、盘符漂移、
+// UNC 断连时库内所有路径都「看起来不存在」，闸门失效则一次自动清理就抹掉整库的阅读记录。
+// 另守 watcher 事件循环确实为新文件排扫描，并按库级 scan_formats 过滤。
 
 package scanner
 
@@ -146,8 +145,6 @@ func TestCleanupStillRemovesMinorityMissingSeries(t *testing.T) {
 
 // TestWatcherEventLoopSchedulesScanOnNewFile 是 watcher 的端到端判据：
 // 真实的 fsnotify 事件 → 定位所属库 → 记入 pending。
-//
-// 事件循环此前完全没有用例，格式过滤、库归属判定、去抖这三段逻辑全靠人眼守。
 func TestWatcherEventLoopSchedulesScanOnNewFile(t *testing.T) {
 	fw := newLifecycleWatcher(t)
 	t.Cleanup(fw.Stop)

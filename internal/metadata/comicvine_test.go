@@ -1,4 +1,4 @@
-// 业务说明：本文件是 Comic Vine Provider 的解析回归测试，验证 apiKey 前置校验、deck 优先/description 清洗回退、
+// 本文件是 Comic Vine Provider 的解析回归测试，验证 apiKey 前置校验、deck 优先/description 清洗回退、
 // 封面 super/medium 优先级、出版商与发行年份提取、总数透传，以及 stripComicVineHTML 纯逻辑。
 
 package metadata

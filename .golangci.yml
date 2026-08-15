@@ -19,12 +19,11 @@ linters:
         - os.Remove
         - os.RemoveAll
     staticcheck:
-      # Keep SA* (bug/security/deprecation) checks; replicate golangci-lint's default ST-check
-      # exclusions (naming/package-comment conventions would force large renames like
-      # SqlStore->SQLStore) and additionally silence a few pure-style S/QF nits.
+      # Keep SA* (bug/security/deprecation) and ST1000, which gates the package-doc layer described
+      # in docs/agents/doc-style.md. Naming-convention ST checks stay off: enabling them would force
+      # wide renames like Url->URL, SqlStore->SQLStore. A few pure-style S/QF nits are silenced too.
       checks:
         - all
-        - -ST1000 # package comment
         - -ST1003 # naming conventions (would force Url->URL, SqlStore->SQLStore, ...)
         - -ST1016 # receiver name consistency
         - -ST1020 # comment on exported method

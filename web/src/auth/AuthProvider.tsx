@@ -1,5 +1,5 @@
 /**
- * 业务说明：本文件是前端多用户鉴权的全局状态层。应用启动时探测站点初始化与登录态
+ * 本文件是前端多用户鉴权的全局状态层。应用启动时探测站点初始化与登录态
  * （GET /api/auth/status），并提供 setup / login / logout / changePassword 等动作。
  * 登录成功后把后端下发的 CSRF 令牌交给 apiAuth（供改写类请求携带），会话本身走 HttpOnly Cookie。
  * 还安装了 401 响应拦截：会话过期时清空登录态，交由 AuthGate 回到登录页。

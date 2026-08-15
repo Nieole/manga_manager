@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，覆盖智能合集筛选器 buildSmartCollectionBaseQuery / smartCollectionOrderClause。
+// 本文件是业务回归测试，覆盖智能合集筛选器 buildSmartCollectionBaseQuery / smartCollectionOrderClause。
 // 重点保护阅读状态(未读/在读/完成)、评分区间、进度区间、加入天数、排序方向，以及「全局 vs 每用户」进度来源切换，
 // 确保智能合集的取数口径与常规库列表(buildSeriesSearchQuery)保持一致，防止筛选/排序在重构后漂移。
 

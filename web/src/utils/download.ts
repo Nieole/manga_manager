@@ -1,5 +1,5 @@
 /**
- * 业务说明：本文件为“下载原始归档文件”提供前端触发助手。
+ * 本文件为“下载原始归档文件”提供前端触发助手。
  * 后端 GET /api/books/{id}/file 已带 Content-Disposition: attachment 与正确 MIME（cbz/cbr/zip/rar），
  * 这里只负责触发浏览器下载：会话 Cookie 同源自动携带，无需改写 URL。
  * 维护时应保持不覆盖服务器给出的文件名。

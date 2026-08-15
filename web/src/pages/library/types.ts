@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 // Null* 契约原语统一收敛到 api/contracts.ts（单一来源），此处再导出以保持既有 import 路径不变。
 export type { NullString, NullInt64, NullTime, NullFloat64 } from '../../api/contracts';
 import type { NullString, NullInt64, NullTime, NullFloat64 } from '../../api/contracts';

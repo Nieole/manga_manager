@@ -1,7 +1,7 @@
-// 业务说明：本文件是前后端契约类型的生成器（M47）。它以 Go 侧的响应结构体为单一事实源，
-// 反射生成对应的 TypeScript 接口到 web/src/api/generated.ts，消除此前前端手写类型与后端各自漂移的问题。
-// sql.Null* / time.Time 等按约定映射；sql.Null* 复用 web/src/api/contracts.ts 的单一定义（生成文件 import 之）。
-// 维护时：需要新增受管契约类型时，把它加入 targets 列表即可；CI 会 `go run ./cmd/tsgen` 后 git diff 校验不漂移。
+// 前后端契约类型的生成器：以 Go 侧的响应结构体为单一事实源，反射生成对应的 TypeScript 接口到
+// web/src/api/generated.ts，使前端类型无从与后端漂移。sql.Null* / time.Time 等按约定映射，
+// 其中 sql.Null* 复用 web/src/api/contracts.ts 的单一定义（生成文件 import 之）。
+// 新增受管契约类型时把它加入 targets；CI 会 `go run ./cmd/tsgen` 后用 git diff 校验不漂移。
 
 package main
 
@@ -48,7 +48,7 @@ func main() {
 
 	var out strings.Builder
 	out.WriteString("/**\n")
-	out.WriteString(" * 业务说明：本文件由 cmd/tsgen 自动生成（M47），请勿手工编辑。\n")
+	out.WriteString(" * 本文件由 cmd/tsgen 自动生成，请勿手工编辑。\n")
 	out.WriteString(" * 它以 Go 后端的响应结构体为单一事实源生成前端契约类型，防止手写类型与后端漂移。\n")
 	out.WriteString(" * 重新生成：`go run ./cmd/tsgen`；CI 会校验其与源一致。\n")
 	out.WriteString(" */\n\n")

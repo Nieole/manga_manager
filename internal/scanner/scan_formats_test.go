@@ -1,12 +1,8 @@
-// 业务说明：本文件守卫库级 scan_formats 真的被扫描器与监听器执行。
+// 守库级 scan_formats 真的被扫描器与监听器执行：用户勾了「只扫 cbz」，rar/zip 就不该入库。
 //
-// 该字段前后端俱全（设置页可勾选 cbz/cbr/zip/rar），但扫描器一直用的是全局白名单
-// ——用户勾了「只扫 cbz」，rar/zip 照样被打开入库。
-//
-// 用例一律跑 fast 档位：该档位不打开归档（opensArchive() 为 false），
-// 于是 .cbr 夹具可以只是个占位文件。若用 metadata 档位，parser 会按扩展名分发到 RarArchive、
-// 打不开就直接丢弃该文件——那样「格式过滤是否生效」就被「归档能不能打开」掩盖了，
-// 用例在修复前后都是红的，什么也证明不了。
+// 用例必须跑 fast 档位。该档位不打开归档（opensArchive() 为 false），.cbr 夹具才能只是个占位
+// 文件；换成 metadata 档位，parser 会按扩展名分发到 RarArchive 并因打不开而丢弃该文件，
+// 「格式过滤是否生效」就被「归档能不能打开」掩盖，用例什么也证明不了。
 
 package scanner
 

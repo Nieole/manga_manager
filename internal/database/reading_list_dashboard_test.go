@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，覆盖阅读清单进度聚合 GetReadingListItemProgress（全局 vs 每用户
+// 本文件是业务回归测试，覆盖阅读清单进度聚合 GetReadingListItemProgress（全局 vs 每用户
 // 双来源）与全局统计看板 GetDashboardStats / Structural / Volatile。保护「看板/清单进度取数口径」在
 // series_stats 与 user_series_progress 之间正确切换，以及结构性统计(系列/书/页/库体积)与易变统计(已读/活跃天数)的准确性。
 

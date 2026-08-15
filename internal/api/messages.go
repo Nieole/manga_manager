@@ -1,9 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 API 层的国际化支撑，为直接由 HTTP 响应下发、
-// 前端无法二次翻译的用户可见文案（鉴权错误、资料库校验等）按 locale 选择中/英文本。
-// 与 opds_controller.go 的 opdsText 同一思路：这类响应前端只能原样展示（校验消息随结果结构下发、
-// 错误 toast 直接显示后端 error 字段），故必须后端按 Accept-Language / X-App-Locale 本地化。
-// 维护时应保证 zh-CN 与 en-US 两张表 key 一致，新增文案须两处同步。
-
 package api
 
 // apiMessages 按 locale 提供直接经 HTTP 响应下发的用户可见文案。

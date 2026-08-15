@@ -1,9 +1,8 @@
-// 业务说明：本文件守卫「系列读模型的刷新失败不会被静默丢弃」。
+// 守「系列读模型的刷新失败不会被静默丢弃」：刷新失败或扫描被取消时，脏标记必须留着。
 //
-// 扫描期间被触及的系列进 dirtySeries，由 10s ticker 与扫描收尾各刷一次。此前无论刷新成败
-// 都会清掉脏标记——扫描被取消或 DB 瞬时出错时，那些系列的 book_count/total_pages 与
-// series_stats 就永久停在旧值。没有任何后台自愈路径：启动回填被 user_version 门控，
-// api 侧也没有重算系列统计的维护任务，只有该系列今后再次发生文件变动才会被纠正。
+// 丢了标记，那些系列的 book_count/total_pages 与 series_stats 就永久停在旧值，且没有任何后台
+// 自愈路径——启动回填被 user_version 门控，api 侧也没有重算系列统计的维护任务，只有该系列
+// 今后再次发生文件变动才会被纠正。
 
 package scanner
 
@@ -44,7 +43,6 @@ func TestScanReportsStaleSeriesStatsInsteadOfSilentlyDropping(t *testing.T) {
 	}{
 		{
 			// 刷新持续失败：脏标记被保留，扫描收尾把「还有多少系列统计不准」报出来。
-			// 此前这里是完全静默的——统计永久停在旧值，日志和指标里都看不到任何迹象。
 			name: "刷新失败必须变成可见的指标", failures: 1000, wantStale: true, wantBookCount: 0,
 		},
 		{

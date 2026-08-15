@@ -1,6 +1,5 @@
-// 业务说明：本文件是业务实现，属于漫画库扫描链路，负责发现文件、建立书籍和系列记录、提取封面、同步索引并维护任务进度。
-// 它决定本地文件系统如何变成前端资料库、搜索结果和系列聚合视图。
-// 维护时应重点关注增量扫描、重命名/删除处理、元数据回填、SQLite FTS5 搜索索引同步和长任务取消。
+// 扫描主体：Scanner 的构造与配置快照、单库与单系列扫描的编排、同库并发拒绝、档位与
+// worker 数决策、指标与进度上报。目录遍历、改名重连各在同包的 walk.go 与 rehome.go。
 
 package scanner
 
@@ -442,13 +441,10 @@ type coverJob struct {
 
 // ErrScanAlreadyRunning 表示同一资料库/系列上已有扫描在跑，本次调用被跳过。
 //
-// 此前这两处冲突时返回 nil，调用方无从区分「扫完了」和「压根没扫」：
-//   - 任务面板会在零点几秒内谎报「扫描完成」；
-//   - 更糟的是重建缩略图任务已经 RemoveAll 了整个缩略图目录并清空了 cover_path，
-//     却把被跳过的库当作成功——而增量扫描只比对 mtime+size、不检查封面是否缺失，
-//     那批封面从此不会自愈，必须人工再跑一次 force 扫描。
-//
-// 调用方应显式判定此错误：等待重试、或让任务以失败收尾并提示「该库正被其它扫描占用」。
+// 调用方必须显式判定此错误：等待重试，或让任务以失败收尾并提示「该库正被其它扫描占用」。
+// 把它当成功处理的代价——任务面板会在零点几秒内谎报「扫描完成」；更糟的是重建缩略图任务
+// 已经 RemoveAll 了整个缩略图目录并清空 cover_path，却把被跳过的库当作成功，而增量扫描只比对
+// mtime+size、不检查封面是否缺失，那批封面从此不会自愈，必须人工再跑一次 force 扫描。
 var ErrScanAlreadyRunning = errors.New("scanner: a scan is already running for this target")
 
 // ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
@@ -485,9 +481,8 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	progress := newScanProgressReporter("library", libraryID, metrics, s.onScanProgress)
 	progress.publish("loading_existing_books", "", true)
 
-	// 库级格式过滤：libraries.scan_formats 此前前后端俱全却从没人读，用户勾了「只扫 cbz」
-	// 扫描器照样打开 rar/zip。这是**发现阶段**的过滤（决定导入哪些文件）；
-	// 已入库的书不受影响——CleanupLibrary 只按「文件是否还在磁盘上」删行，与格式无关。
+	// 库级格式过滤是**发现阶段**的过滤，只决定导入哪些文件；已入库的书不受影响——
+	// CleanupLibrary 只按「文件是否还在磁盘上」删行，与格式无关。
 	formats := config.ScanFormatSet{} // 零值 = 全部支持格式
 	if !scanOpts.IgnoreFormatFilter {
 		formats = s.libraryScanFormats(ctx, libraryID)
@@ -495,7 +490,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 
 	// 增量扫描先加载已入库文件的修改时间和大小，未变化的归档可以跳过重读，降低大库重复扫描成本。
 	// 同一份清单还用于构建改名重连索引——强制扫描不吃增量跳过，但一样需要识别改名，
-	// 所以这次查询不再受 opts.Force 控制（每次扫描一条查询，相对随后要读的 N 个归档可忽略）。
+	// 因此这条查询无论 opts.Force 与否都执行（每次扫描一条查询，相对随后要读的 N 个归档可忽略）。
 	bookCache := make(map[string]bookScanSnapshot)
 
 	existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
@@ -1214,9 +1209,9 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 	var batch []scanResult
 	const batchSize = 100 // 每蓄满 100 卷漫画就开启一次写事务
 
-	// dirtySeries 累积整个扫描过程中被触及、待刷新读模型的系列。刷新改为节流（10s ticker）+ 扫描末尾兜底，
-	// 取代此前每批都对每个 touched 系列全量 UpdateSeriesStatistics + RefreshSeriesStats——跨多批的大系列由
-	// O(K²/batch)（每批重扫该系列已入库的全部书）降为按时间节流的有界次数，同时保留扫描中每 ~10s 的增量 UX。
+	// dirtySeries 累积整个扫描过程中被触及、待刷新读模型的系列。刷新按 10s ticker 节流 + 扫描末尾兜底：
+	// 不能改成每批都对每个 touched 系列全量 UpdateSeriesStatistics + RefreshSeriesStats——那样跨多批的大
+	// 系列每批都要重扫它已入库的全部书，退化成 O(K²/batch)。节流同时保留扫描中每 ~10s 的增量 UX。
 	dirtySeries := make(map[int64]bool)
 
 	flush := func() {
@@ -1405,14 +1400,14 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 
 			}
-			// 读模型刷新不再在批事务内逐系列全量重算（避免大系列被每批重扫成 O(K²)）；改为把 touched 系列
-			// 累积到 dirtySeries，交由 refreshDirtySeries 在 10s ticker 与扫描末尾节流刷新（见批成功分支与主循环）。
+			// 读模型刷新不放在批事务内：touched 系列累积到 dirtySeries，交由 refreshDirtySeries 在 10s ticker
+			// 与扫描末尾节流刷新。放进事务里逐系列全量重算会让大系列被每批重扫成 O(K²)。
 			return nil
 		})
 
 		if err != nil {
-			// 整批写事务失败会丢弃最多 batchSize 本书。此前静默丢弃、任务仍报成功；
-			// 现把丢弃数计入 failedArchives，使其在扫描完成日志与指标中可见。
+			// 整批写事务失败会丢弃最多 batchSize 本书。丢弃数必须计入 failedArchives，
+			// 否则任务会静默报成功，扫描完成日志与指标里看不出任何异常。
 			slog.Error("Batch ingest transaction failed, dropping batch", "book_count", len(batch), "error", err)
 			metrics.failedArchives.Add(int64(len(batch)))
 		} else {
@@ -1433,10 +1428,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 
 	// refreshDirtySeries 节流刷新累积的 touched 系列读模型（series 冗余统计列 + series_stats +
 	// 每用户聚合，见 RefreshSeriesDerivedData）。由 10s ticker 与扫描末尾调用，使任一系列在两次刷新
-	// 之间至少间隔一个 tick，取代此前每批一次的全量重算。
+	// 之间至少间隔一个 tick。
 	//
-	// **刷新失败时保留脏标记**：此前无论成败都 delete，于是扫描被取消或 DB 瞬时出错时，
-	// 那些系列的 book_count/total_pages 与读模型就永久停在旧值——没有任何后台自愈路径
+	// **刷新失败时保留脏标记**，不能改成无论成败都 delete：扫描被取消或 DB 瞬时出错时，
+	// 那些系列的 book_count/total_pages 与读模型会永久停在旧值——没有任何后台自愈路径
 	// （启动回填被 user_version 门控，api 侧也没有重算系列统计的维护任务），
 	// 只有该系列今后再次发生文件变动、或用户手动强制扫描，才会被纠正回来。
 	//
@@ -1933,9 +1928,9 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current
 	cfg := s.currentConfig()
 	thumbDir := thumbnailBaseDir(cfg)
 
-	// 流式收集被引用的封面路径。此前是两次 :many 查询各自把整库路径读进切片再折进 map，
-	// 那两份切片纯属中转（10 万本书要多分配一遍字符串与底层数组），且 DISTINCT 的去重
-	// 也是白付的——map 本来就去重。
+	// 流式收集被引用的封面路径，不要换回 :many 查询把整库路径先读进切片再折进 map：
+	// 那两份切片纯属中转（10 万本书要多分配一遍字符串与底层数组），DISTINCT 的去重也是
+	// 白付的——map 本来就去重。
 	//
 	// 注意 taskcontrol.Wait 必须放在遍历**之后**：回调期间数据库游标是开着的，
 	// 在里面等待暂停闸会把一个连接和一个 WAL 读快照一起挂住。

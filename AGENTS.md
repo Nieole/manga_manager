@@ -16,7 +16,7 @@ Use `./build.sh` for a full release-style build; it installs frontend dependenci
 Go code should stay `gofmt`-clean and package-oriented; keep handlers thin and push logic into `internal/*` services. React/TypeScript uses the existing Vite + ESLint setup, 2-space indentation, PascalCase for components (`SeriesHeader.tsx`), and `useX` for hooks (`useReaderPreferences.ts`). Prefer small, behavior-preserving refactors over broad rewrites.
 
 ## Documentation & Comments
-注释与文档只写**当前的结果**；历史归 `CHANGELOG.md` 与 `docs/adr/`。每段内容有唯一**归属**，环境（`package.json`、`config.example.yaml`、`--help`）本身也是一处。引用代码写符号名——行号、出现次数、代码行数都会**腐坏**。分**层**写，每层只答一个问题，答不下就往下沉：Go 是 package doc → 文件头（≤5 行）→ 符号 doc → 行内，前端去掉 package doc 这层。
+注释与文档只写**当前的结果**；历史归 `CHANGELOG.md` 与 `docs/adr/`。每段内容有唯一**归属**，环境（`package.json`、`config.example.yaml`、`--help`）本身也是一处。引用代码写符号名——行号、出现次数、代码行数都会**腐坏**。分**层**写，每层只答一个问题，答不下就往下沉：Go 是 package doc → 文件头（≤5 行）→ 符号 doc → 行内，前端去掉 package doc 这层。文件头可选——说不出一句从文件名与 package doc 推不出来的话，就不写。
 
 写文件头、处置带历史的旧注释、判断一段内容归哪个文件时，见 `docs/agents/doc-style.md`；`scripts/check-doc-style.sh` 是配套检查器。
 
