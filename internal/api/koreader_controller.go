@@ -660,7 +660,7 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 
 func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRebuildBookHashesTask(); err != nil {
-		jsonError(w, http.StatusConflict, err.Error())
+		writeTaskLaunchError(w, err, "A KOReader index rebuild is already running", "Failed to start KOReader index rebuild")
 		return
 	}
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.index_rebuild_started")})
@@ -668,7 +668,7 @@ func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Reques
 
 func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRefreshKOReaderMatchingTask(); err != nil {
-		jsonError(w, http.StatusConflict, err.Error())
+		writeTaskLaunchError(w, err, "A KOReader matching refresh is already running", "Failed to start KOReader matching refresh")
 		return
 	}
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.match_apply_started")})
@@ -676,121 +676,175 @@ func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Reques
 
 func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchReconcileKOReaderProgressTask(); err != nil {
-		jsonError(w, http.StatusConflict, err.Error())
+		writeTaskLaunchError(w, err, "A KOReader progress reconciliation is already running", "Failed to start KOReader progress reconciliation")
 		return
 	}
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.reconcile_started")})
 }
 
+// koreaderTaskBatchSize 是三个 KOReader 任务每批取多少条待处理记录：一次查询取回多少行、
+// 因而一次在内存里握住多少行。三处取同一个值，同一个库上的批次节奏才一致。
+const koreaderTaskBatchSize = 500
+
+// koreaderMatchMetadata 是三个 KOReader 任务共同的**任务参数**：任务中心按 match_mode 与
+// path_ignore_extension 渲染「路径索引 / 二进制哈希索引」那块标签（前端 formatKOReaderIndexLabel）。
+// 三处必须写同一份，缺一个键界面就回落到默认标签，用户看到的索引类型是错的。
+func koreaderMatchMetadata(cfg config.Config) map[string]string {
+	return map[string]string{
+		"match_mode":            cfg.KOReader.MatchMode,
+		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
+	}
+}
+
+// koreaderFingerprintFrame 把一次**指纹**重建进度翻成**一帧**：**计数推进**、**阶段**、文案与
+// 指标同属一次事件，拆开报会被投递水位撕断（撕开的样子见 TaskProgress.Report）。
+// 书籍指纹重建与匹配刷新的第一阶段共用它，帧的内容因此只有一份。
+func koreaderFingerprintFrame(current, total int) TaskFrame {
+	return TaskFrame{
+		Current: &current,
+		Total:   &total,
+		Phase:   "hashing",
+		Code:    "task.msg.koreader_rebuild_hashes.progress",
+		Params:  map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)},
+		Metrics: map[string]int64{"processed_books": int64(current)},
+	}
+}
+
+// koreaderReconcileFrame 把一次进度对账翻成一帧，整帧报出的理由同 koreaderFingerprintFrame。
+// 进度对账与匹配刷新的第二阶段共用它。
+func koreaderReconcileFrame(current, total int) TaskFrame {
+	return TaskFrame{
+		Current: &current,
+		Total:   &total,
+		Phase:   "reconciling_progress",
+		Code:    "task.msg.reconcile_koreader_progress.progress",
+		Params:  map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)},
+		Metrics: map[string]int64{"processed_progress": int64(current)},
+	}
+}
+
+// holdingStepCount 摘掉一帧的计数推进，把进度条留在原处，其余照报。
+//
+// 只有匹配刷新用它：那个任务的进度条数的是它自己的两个阶段（0/2 → 1/2），而两个阶段内部复用的
+// 正是上面两个帧——原样报进去，用户会看到「40 / 共 2」这种读数。逐条目计数在那里只进占位参数
+// 与指标，两处都还在帧里。
+func holdingStepCount(frame TaskFrame) TaskFrame {
+	frame.Current, frame.Total = nil, nil
+	return frame
+}
+
+// launchRebuildBookHashesTask 是书籍**指纹**重建任务的启动点，走引擎的启动入口。
 func (c *Controller) launchRebuildBookHashesTask() error {
-	key := "rebuild_book_hashes"
-	cfg := c.currentConfig()
-	if !c.taskEngine.startPausableCancelableTaskMsg(key, "rebuild_book_hashes", "task.msg.koreader_rebuild_hashes.start", nil, 0) {
-		return errTaskAlreadyRunning
+	spec := TaskSpec{
+		Key:          "rebuild_book_hashes",
+		Type:         "rebuild_book_hashes",
+		StartCode:    "task.msg.koreader_rebuild_hashes.start",
+		CanCancel:    true,
+		CanPause:     true,
+		Metadata:     koreaderMatchMetadata(c.currentConfig()),
+		Limits:       c.taskLimitsForPath("", true),
+		CompleteCode: "task.msg.koreader_rebuild_hashes.complete",
+		CancelCode:   "task.msg.koreader_rebuild_hashes.cancelled",
+		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
 	}
-	c.taskEngine.setTaskMetadata(key, map[string]string{
-		"match_mode":            cfg.KOReader.MatchMode,
-		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
-	}, "")
-	c.taskEngine.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackgroundTask(key, func() {
-		defer cleanupCancel()
-		updated, total, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {
-			c.taskEngine.updateTaskDetailsMsg(key, current, total, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{
-				"processed_books": int64(current),
-			}, nil)
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		updated, total, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, func(current, total int) {
+			tp.Report(koreaderFingerprintFrame(current, total))
 		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.koreader_rebuild_hashes.cancelled", nil)
-			return
-		}
 		if err != nil {
-			c.taskEngine.failTaskErrMsg(key, "task.msg.koreader_rebuild_hashes.failed", nil, err.Error())
-			return
+			return TaskResult{}, err
 		}
-		c.taskEngine.finishTaskMsg(key, "task.msg.koreader_rebuild_hashes.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		return TaskResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
 	})
-	return nil
 }
 
+// launchReconcileKOReaderProgressTask 是 KOReader 进度对账任务的启动点，走引擎的启动入口。
+//
+// 三个任务里只有它不报并发上限：另外两个要逐本读书文件算指纹，taskLimitsForPath 给出的正是
+// 那条路径上的上限，而对账只重算已落库记录的归属。零值的 Limits 表示「没有上限可报」，
+// 不是「上限为 0」——后者会在任务面板上多出一组假数据（见 TaskSpec.Limits）。
 func (c *Controller) launchReconcileKOReaderProgressTask() error {
-	key := "reconcile_koreader_progress"
-	if !c.taskEngine.startPausableCancelableTaskMsg(key, "reconcile_koreader_progress", "task.msg.reconcile_koreader_progress.start", nil, 0) {
-		return errTaskAlreadyRunning
+	spec := TaskSpec{
+		Key:          "reconcile_koreader_progress",
+		Type:         "reconcile_koreader_progress",
+		StartCode:    "task.msg.reconcile_koreader_progress.start",
+		CanCancel:    true,
+		CanPause:     true,
+		Metadata:     koreaderMatchMetadata(c.currentConfig()),
+		CompleteCode: "task.msg.reconcile_koreader_progress.complete",
+		CancelCode:   "task.msg.reconcile_koreader_progress.cancelled",
+		FailCode:     "task.msg.reconcile_koreader_progress.failed",
 	}
-	cfg := c.currentConfig()
-	c.taskEngine.setTaskMetadata(key, map[string]string{
-		"match_mode":            cfg.KOReader.MatchMode,
-		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
-	}, "")
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackgroundTask(key, func() {
-		defer cleanupCancel()
-		updated, total, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, _ string) {
-			c.taskEngine.updateTaskDetailsMsg(key, current, total, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{
-				"processed_progress": int64(current),
-			}, nil)
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, func(current, total int) {
+			tp.Report(koreaderReconcileFrame(current, total))
 		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.reconcile_koreader_progress.cancelled", nil)
-			return
-		}
 		if err != nil {
-			c.taskEngine.failTaskErrMsg(key, "task.msg.reconcile_koreader_progress.failed", nil, err.Error())
-			return
+			return TaskResult{}, err
 		}
-		c.taskEngine.finishTaskMsg(key, "task.msg.reconcile_koreader_progress.complete", map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)})
+		return TaskResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
 	})
-	return nil
 }
 
+// launchRefreshKOReaderMatchingTask 是匹配刷新任务的启动点，走引擎的启动入口。
+//
+// 它是**两阶段**任务：先重建**指纹**，再对账进度。进度条数的因此是阶段而不是条目——总数在
+// 任务声明里就是 2，两个阶段的逐条目回调一次都不动它，逐条目计数只进占位参数与指标。
+//
+// 两步各有专属失败文案码，取消则无论停在哪一步都落同一条取消码：taskFailure 把取消挡在专属码
+// 之外，否则用户按下取消看到的会是「索引重建失败」。
+//
+// 任务声明里那条默认失败码今天走不到（两步的失败各被覆盖、取消走取消码）。留着是因为
+// FailCode 留空会让将来任何一条未覆盖的失败路径把**起始**文案原样渲染成失败态的文案。
 func (c *Controller) launchRefreshKOReaderMatchingTask() error {
-	key := "refresh_koreader_matching"
-	if !c.taskEngine.startPausableCancelableTaskMsg(key, "refresh_koreader_matching", "task.msg.refresh_koreader_matching.start", nil, 2) {
-		return errTaskAlreadyRunning
+	spec := TaskSpec{
+		Key:          "refresh_koreader_matching",
+		Type:         "refresh_koreader_matching",
+		StartCode:    "task.msg.refresh_koreader_matching.start",
+		Total:        2,
+		CanCancel:    true,
+		CanPause:     true,
+		Metadata:     koreaderMatchMetadata(c.currentConfig()),
+		Limits:       c.taskLimitsForPath("", true),
+		CompleteCode: "task.msg.refresh_koreader_matching.complete",
+		CancelCode:   "task.msg.refresh_koreader_matching.cancelled",
+		FailCode:     "task.msg.refresh_koreader_matching.failed",
 	}
-	cfg := c.currentConfig()
-	c.taskEngine.setTaskMetadata(key, map[string]string{
-		"match_mode":            cfg.KOReader.MatchMode,
-		"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension),
-	}, "")
-	c.taskEngine.setTaskEffectiveLimit(key, c.taskLimitsForPath("", true))
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(key)
 
-	c.runBackgroundTask(key, func() {
-		defer cleanupCancel()
-		c.taskEngine.updateTaskDetailsMsg(key, 0, 2, "task.msg.refresh_koreader_matching.rebuild_start", nil, "hashing", "", nil, nil)
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(taskCtx, 500, func(current, total int, _ string) {
-			c.taskEngine.updateTaskDetailsMsg(key, 0, 2, "task.msg.koreader_rebuild_hashes.progress", map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)}, "hashing", "", map[string]int64{"processed_books": int64(current)}, nil)
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, func(current, total int) {
+			tp.Report(holdingStepCount(koreaderFingerprintFrame(current, total)))
 		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
-			return
-		}
 		if err != nil {
-			c.taskEngine.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.rebuild_failed", nil, err.Error())
-			return
+			return taskFailure("task.msg.refresh_koreader_matching.rebuild_failed", err), err
 		}
 
-		c.taskEngine.updateTaskDetailsMsg(key, 1, 2, "task.msg.refresh_koreader_matching.reconcile_start", map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)}, "reconciling_progress", "", nil, nil)
-		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(taskCtx, 500, func(current, total int, _ string) {
-			c.taskEngine.updateTaskDetailsMsg(key, 1, 2, "task.msg.reconcile_koreader_progress.progress", map[string]string{"processed": strconv.Itoa(current), "total": strconv.Itoa(total)}, "reconciling_progress", "", map[string]int64{"processed_progress": int64(current)}, nil)
+		// 阶段跃迁与阶段计数是同一件事，必须一帧报出：分成两次的话，先出去的那条载荷带着
+		// 新计数与旧阶段名，而补齐的那条会被水位吞掉（阶段与文案码此时已经一字未变）。
+		reconcileStep := 1
+		tp.Report(TaskFrame{
+			Current: &reconcileStep,
+			Phase:   "reconciling_progress",
+			Code:    "task.msg.refresh_koreader_matching.reconcile_start",
+			Params:  map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)},
 		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(key, "cancelled", "task.msg.refresh_koreader_matching.cancelled", nil)
-			return
-		}
+		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, func(current, total int) {
+			tp.Report(holdingStepCount(koreaderReconcileFrame(current, total)))
+		})
 		if err != nil {
-			c.taskEngine.failTaskErrMsg(key, "task.msg.refresh_koreader_matching.reconcile_failed", nil, err.Error())
-			return
+			return taskFailure("task.msg.refresh_koreader_matching.reconcile_failed", err), err
 		}
 
-		c.taskEngine.finishTaskMsg(key, "task.msg.refresh_koreader_matching.complete", map[string]string{"updatedBooks": strconv.Itoa(updatedBooks), "totalBooks": strconv.Itoa(totalBooks), "updatedProgress": strconv.Itoa(updatedProgress), "totalProgress": strconv.Itoa(totalProgress)})
+		return TaskResult{Params: map[string]string{
+			"updatedBooks":    strconv.Itoa(updatedBooks),
+			"totalBooks":      strconv.Itoa(totalBooks),
+			"updatedProgress": strconv.Itoa(updatedProgress),
+			"totalProgress":   strconv.Itoa(totalProgress),
+		}}, nil
 	})
-	return nil
 }
 
 func (c *Controller) koreaderHealthcheck(w http.ResponseWriter, r *http.Request) {

@@ -380,7 +380,7 @@ func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReade
 	return record, nil
 }
 
-func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
+func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress func(current, total int)) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -430,15 +430,14 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 			updated++
 			afterID = book.ID
 			if progress != nil {
-				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值。
-				progress(updated, total, "")
+				progress(updated, total)
 			}
 		}
 	}
 	return updated, total, nil
 }
 
-func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
+func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress func(current, total int)) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -483,8 +482,7 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 			processed++
 			afterID = item.ID
 			if progress != nil {
-				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值。
-				progress(processed, total, "")
+				progress(processed, total)
 			}
 		}
 	}

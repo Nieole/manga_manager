@@ -1858,6 +1858,7 @@ export const messages: MessageCatalog = {
     'task.msg.reconcile_koreader_progress.complete': 'KOReader 进度重关联完成，已更新 {{updated}} / {{total}} 条记录',
     'task.msg.refresh_koreader_matching.rebuild_start': '开始重建 KOReader 索引',
     'task.msg.refresh_koreader_matching.cancelled': 'KOReader 匹配规则应用已取消',
+    'task.msg.refresh_koreader_matching.failed': 'KOReader 匹配规则应用失败',
     'task.msg.refresh_koreader_matching.rebuild_failed': 'KOReader 索引重建失败',
     'task.msg.refresh_koreader_matching.reconcile_start': '索引已更新 {{updated}} / {{total}}，本阶段开始重关联未匹配记录',
     'task.msg.refresh_koreader_matching.reconcile_failed': 'KOReader 进度重关联失败',

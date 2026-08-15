@@ -541,24 +541,6 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 	e.publishTaskProgressLocked(task)
 }
 
-func (e *taskEngine) setTaskEffectiveLimit(key string, limit TaskLimits) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	task.EffectiveLimit = &limit
-	task.UpdatedAt = time.Now()
-	e.seq++
-	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
-
 // ---- 终态 ----
 
 func (e *taskEngine) finishTask(key, message string) {

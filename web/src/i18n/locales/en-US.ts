@@ -1858,6 +1858,7 @@ export const messages: MessageCatalog = {
     'task.msg.reconcile_koreader_progress.complete': 'KOReader progress reconciliation complete: {{updated}} / {{total}} records updated',
     'task.msg.refresh_koreader_matching.rebuild_start': 'Rebuilding KOReader index',
     'task.msg.refresh_koreader_matching.cancelled': 'KOReader matching update cancelled',
+    'task.msg.refresh_koreader_matching.failed': 'KOReader matching update failed',
     'task.msg.refresh_koreader_matching.rebuild_failed': 'KOReader index rebuild failed',
     'task.msg.refresh_koreader_matching.reconcile_start': 'Index updated {{updated}} / {{total}}; reconciling unmatched records',
     'task.msg.refresh_koreader_matching.reconcile_failed': 'KOReader progress reconciliation failed',
