@@ -42,10 +42,11 @@ type Scanner struct {
 		libraries map[int64]struct{}
 		series    map[int64]struct{}
 	}
-	// 批量插入结束后的回调播送机制
+	// 批量插入结束后的回调播送机制。
+	//
+	// 它刻意仍是装配期注册的进程级回调，与**扫描观察者**分属两件事：这几条事件从入库批次
+	// 和封面 worker 两处发出，消费方是缓存失效与 SSE 广播，与「哪一次扫描」无关。
 	onBatchIngested func(action string)
-	onScanMetrics   func(ScanMetricsReport)
-	onScanProgress  func(ScanProgressReport)
 	// dirtyRefreshInterval 是系列读模型的节流刷新间隔。做成字段而不是常量，是为了让
 	// 回归测试能在毫秒级触发 ticker 分支——否则「刷新失败保留脏标记、下一次 tick 重试」
 	// 这条路径需要一次跑满 10 秒的扫描才能覆盖到。
@@ -72,12 +73,20 @@ func (s *Scanner) SetBatchCallback(cb func(string)) {
 	s.onBatchIngested = cb
 }
 
-func (s *Scanner) SetScanMetricsCallback(cb func(ScanMetricsReport)) {
-	s.onScanMetrics = cb
-}
-
-func (s *Scanner) SetScanProgressCallback(cb func(ScanProgressReport)) {
-	s.onScanProgress = cb
+// ScanObserver 是一次扫描把**计数推进**与收尾指标交给的对象，由发起方在调用扫描时交出。
+//
+// 「这份报文属于谁」因此由交出者回答，报文自己不带身份。传 nil 表示这次扫描不属于任何任务
+// （守护扫描、watcher 派生的扫描与建库后的首扫都是如此），此时两个方法都不会被调用。
+//
+// 它的寿命**超出**那次扫描调用：封面生成是异步的，ScanLibrary 返回之后封面队列仍会经同一个
+// 观察者推进 generated_covers。缩略图重建正靠这一段，因此不设撤销机制（见
+// docs/adr/0002-scan-observer-outlives-the-call.md）；扫描任务那一侧的迟到帧由任务引擎的
+// 终态守卫丢弃。实现方须自行保证并发安全——两个方法会被扫描 worker 与封面 worker 并发调用。
+type ScanObserver interface {
+	// Progress 报告一次扫描进行中的计数、**阶段**与当前条目。
+	Progress(ScanProgressReport)
+	// Metrics 报告一次扫描收尾时的全量指标，每次扫描恰好一次。
+	Metrics(ScanMetricsReport)
 }
 
 func (s *Scanner) currentConfig() config.Config {
@@ -189,9 +198,10 @@ type scanMetricsSnapshot struct {
 	thumbnailWriteMillis   int64
 }
 
+// ScanMetricsReport 是一次扫描收尾时的全量指标。
+//
+// 它与 ScanProgressReport 都不带身份：一份报文属于哪次扫描，由收下它的**扫描观察者**回答。
 type ScanMetricsReport struct {
-	Scope                  string
-	ID                     int64
 	StorageProfile         string
 	VolumeKey              string
 	ArchiveOpenConcurrency int
@@ -214,8 +224,6 @@ type ScanMetricsReport struct {
 }
 
 type ScanProgressReport struct {
-	Scope       string
-	ID          int64
 	Phase       string
 	CurrentItem string
 	Current     int64
@@ -224,21 +232,19 @@ type ScanProgressReport struct {
 }
 
 type scanProgressReporter struct {
-	scope   string
-	id      int64
-	metrics *scanMetrics
-	cb      func(ScanProgressReport)
+	metrics  *scanMetrics
+	observer ScanObserver
 
 	mu       sync.Mutex
 	lastSent time.Time
 }
 
-func newScanProgressReporter(scope string, id int64, metrics *scanMetrics, cb func(ScanProgressReport)) *scanProgressReporter {
-	return &scanProgressReporter{scope: scope, id: id, metrics: metrics, cb: cb}
+func newScanProgressReporter(metrics *scanMetrics, observer ScanObserver) *scanProgressReporter {
+	return &scanProgressReporter{metrics: metrics, observer: observer}
 }
 
 func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
-	if r == nil || r.cb == nil {
+	if r == nil || r.observer == nil {
 		return
 	}
 	now := time.Now()
@@ -257,9 +263,7 @@ func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
 		current = snapshot.discoveredArchives
 		total = 0
 	}
-	r.cb(ScanProgressReport{
-		Scope:       r.scope,
-		ID:          r.id,
+	r.observer.Progress(ScanProgressReport{
 		Phase:       phase,
 		CurrentItem: currentItem,
 		Current:     current,
@@ -463,11 +467,17 @@ type LibraryScanOptions struct {
 }
 
 // ScanLibrary 按默认选项扫描整库（尊重库的 scan_formats）。
-func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
-	return s.ScanLibraryWithOptions(ctx, libraryID, rootPath, LibraryScanOptions{Force: force})
+//
+// observer 为 nil 表示这次扫描不属于任何任务，进度与指标无处可报。
+func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool, observer ScanObserver) error {
+	return s.ScanLibraryWithOptions(ctx, libraryID, rootPath, LibraryScanOptions{Force: force}, observer)
 }
 
-func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions) error {
+// ScanLibraryWithOptions 是整库扫描的完整入口。
+//
+// observer 刻意是位置参数而不是 LibraryScanOptions 的一个字段：它是协作方不是开关，
+// 而且结构体字段可以漏填——漏填与「故意不报进度」长得一模一样，都不会有编译错误。
+func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions, observer ScanObserver) error {
 	force := scanOpts.Force
 	if !s.beginLibraryScan(libraryID) {
 		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)
@@ -478,7 +488,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	opts := s.scanOptions(force)
 	started := time.Now()
 	metrics := &scanMetrics{}
-	progress := newScanProgressReporter("library", libraryID, metrics, s.onScanProgress)
+	progress := newScanProgressReporter(metrics, observer)
 	progress.publish("loading_existing_books", "", true)
 
 	// 库级格式过滤是**发现阶段**的过滤，只决定导入哪些文件；已入库的书不受影响——
@@ -604,13 +614,13 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr)
+	s.logScanCompleted("library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
 	return walkErr
 }
 
 // ScanSeries 扫描单一系列目录，将新的卷添加到数据库中
-func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) error {
+func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, observer ScanObserver) error {
 	if !s.beginSeriesScan(seriesID) {
 		slog.Info("Series scan skipped because another scan is already running", "series_id", seriesID)
 		return ErrScanAlreadyRunning
@@ -630,7 +640,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	opts := s.scanOptions(force)
 	started := time.Now()
 	metrics := &scanMetrics{}
-	progress := newScanProgressReporter("series", seriesID, metrics, s.onScanProgress)
+	progress := newScanProgressReporter(metrics, observer)
 	progress.publish("loading_existing_books", "", true)
 	// 与 ScanLibrary 同口径的格式过滤；library 行在上面已经取过，零额外查询。
 	// 系列扫描与库扫描必须同口径，否则「单系列重扫」会把库扫描刚过滤掉的文件重新灌进来。
@@ -737,7 +747,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr)
+	s.logScanCompleted("series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
 	return walkErr
 }
@@ -881,7 +891,10 @@ func (s *Scanner) seriesHasSurvivingBook(ctx context.Context, seriesID int64) bo
 	return false
 }
 
-func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error) {
+// logScanCompleted 打一条收尾日志，并把全量指标交给本次扫描的**扫描观察者**。
+//
+// scope 与 id 只进日志属性：报文本身不带身份，观察者知道自己是谁。
+func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error, observer ScanObserver) {
 	snapshot := metrics.snapshot()
 	policy := config.ResolveStoragePolicy(s.currentConfig(), rootPath)
 	attrs := []any{
@@ -917,20 +930,18 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 	if err != nil {
 		attrs = append(attrs, "error", err)
 		slog.Warn("Scan completed with errors", attrs...)
-		s.publishScanMetrics(scope, id, policy, snapshot, duration)
+		publishScanMetrics(observer, policy, snapshot, duration)
 		return
 	}
 	slog.Info("Scan completed", attrs...)
-	s.publishScanMetrics(scope, id, policy, snapshot, duration)
+	publishScanMetrics(observer, policy, snapshot, duration)
 }
 
-func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.ResolvedStoragePolicy, snapshot scanMetricsSnapshot, duration time.Duration) {
-	if s.onScanMetrics == nil {
+func publishScanMetrics(observer ScanObserver, policy config.ResolvedStoragePolicy, snapshot scanMetricsSnapshot, duration time.Duration) {
+	if observer == nil {
 		return
 	}
-	s.onScanMetrics(ScanMetricsReport{
-		Scope:                  scope,
-		ID:                     id,
+	observer.Metrics(ScanMetricsReport{
 		StorageProfile:         policy.StorageProfile,
 		VolumeKey:              policy.VolumeKey,
 		ArchiveOpenConcurrency: policy.IOPolicy.ArchiveOpenConcurrency,

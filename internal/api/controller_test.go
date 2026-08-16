@@ -905,13 +905,10 @@ func TestPauseAndResumeStorageIO(t *testing.T) {
 func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	taskKey := "scan_library_42"
-	// 写这条扫描任务的资格来自任务体登记的**进度句柄**，不是拼出来的任务键——
-	// 不把句柄登记出去，扫描器的报文就无处可落。
+	// 写这条扫描任务的资格来自任务体交出的**扫描观察者**，不是拼出来的任务键——
+	// 报文不带身份，交给谁就写给谁。
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1})
-	t.Cleanup(controller.scanProgress.track(libraryScanTarget(42), progress))
-	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
-		Scope:                  "library",
-		ID:                     42,
+	newTaskScanObserver(progress).Metrics(scanner.ScanMetricsReport{
 		StorageProfile:         config.StorageProfileHDDExternal,
 		VolumeKey:              "e:",
 		ArchiveOpenConcurrency: 1,
@@ -935,18 +932,16 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 
 func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	// 写重建任务的资格来自任务体交给聚合器的**进度句柄**，不是拼出来的任务键——
-	// 不把句柄交出去，扫描器的报文就无处可落。
+	// 写重建任务的资格来自任务体交给聚合器的**进度句柄**：聚合器据此为每个库造一个
+	// **扫描观察者**，交不出句柄时造不出观察者，报文就无处可落。
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
 	controller.initRebuildThumbAggregator(progress, 0)
 	t.Cleanup(controller.releaseRebuildThumbAggregator)
-	// 存储 IO 面板的扫描速率读的是这条扫描任务的参数，同样只能经它自己的句柄写入。
-	scanProgress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
-	t.Cleanup(controller.scanProgress.track(libraryScanTarget(42), scanProgress))
 
-	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
-		Scope:                "library",
-		ID:                   42,
+	// 重建逐库扫描，每个库一个观察者：跨库总量只能这样加出来，因为每次扫描只报自己那一个库。
+	libA := database.Library{ID: 42, Name: "A", Path: filepath.Join(t.TempDir(), "a")}
+	libB := database.Library{ID: 43, Name: "B", Path: filepath.Join(t.TempDir(), "b")}
+	reportA := scanner.ScanMetricsReport{
 		StorageProfile:       config.StorageProfileHDDExternal,
 		VolumeKey:            "e:",
 		OpenedArchives:       3,
@@ -954,10 +949,9 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		PausedMillis:         80,
 		ThumbnailWriteMillis: 40,
 		DurationMillis:       60000,
-	})
-	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
-		Scope:                "library",
-		ID:                   43,
+	}
+	controller.beginRebuildThumbLibrary(libA, 2).Metrics(reportA)
+	controller.beginRebuildThumbLibrary(libB, 2).Metrics(scanner.ScanMetricsReport{
 		StorageProfile:       config.StorageProfileHDDExternal,
 		VolumeKey:            "e:",
 		OpenedArchives:       2,
@@ -966,6 +960,10 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		ThumbnailWriteMillis: 10,
 		DurationMillis:       30000,
 	})
+
+	// 存储 IO 面板的扫描速率读的是扫描任务自己的参数，与重建任务各写各的。
+	scanProgress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
+	newTaskScanObserver(scanProgress).Metrics(reportA)
 
 	controller.taskEngine.mutex.Lock()
 	task := controller.taskEngine.tasks["rebuild_thumbnails"]

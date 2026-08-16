@@ -327,7 +327,8 @@ func (fw *FileWatcher) runScanLibrary(ctx context.Context, libraryID int64, root
 	if fw.scanLibrary != nil {
 		return fw.scanLibrary(ctx, libraryID, rootPath, force)
 	}
-	return fw.scanner.ScanLibrary(ctx, libraryID, rootPath, force)
+	// watcher 派生的扫描不属于任何任务：它由文件系统事件触发，没有发起方可以承接进度。
+	return fw.scanner.ScanLibrary(ctx, libraryID, rootPath, force, nil)
 }
 
 func (fw *FileWatcher) runCleanupLibrary(ctx context.Context, libraryID int64) error {

@@ -235,7 +235,7 @@ func TestScanImportsSymlinkedSeriesDirectory(t *testing.T) {
 	}
 
 	s := newFormatTestScanner(t, store)
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 

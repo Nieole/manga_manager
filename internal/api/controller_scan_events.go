@@ -1,16 +1,17 @@
-// scanner 回调在 api 侧的落点：把批次/指标/进度事件翻成任务更新与 SSE。
+// scanner 报文在 api 侧的落点：把批次事件翻成缓存失效与 SSE，把进度与指标翻成任务更新。
 //
-// 一份报文最多落到两个任务上，两者的**进度句柄**各有保管处：扫描任务本身的在
-// scanProgressHandles（按扫描对象索引），「重建缩略图」的在 rebuildThumbAggregator
-// （逐库扫描合成单份进度）。取不到句柄就是「没有这样一个任务在跑」，本文件不另作判断。
+// 这里定义两个**扫描观察者**——发起扫描的一方交出哪一个，就决定了这次扫描的报文写到哪：
+// 资料库/系列扫描任务交出 taskScanObserver，「重建缩略图」逐库交出 rebuildThumbLibrary。
+// 无归属的扫描（守护扫描、watcher 派生、建库后首扫）交出 nil，报文无处可报。
 
 package api
 
 import (
-	"manga-manager/internal/database"
-	"manga-manager/internal/scanner"
 	"path/filepath"
 	"strconv"
+
+	"manga-manager/internal/database"
+	"manga-manager/internal/scanner"
 )
 
 func (c *Controller) handleScannerBatchEvent(action string) {
@@ -21,40 +22,49 @@ func (c *Controller) handleScannerBatchEvent(action string) {
 	c.PublishEvent(action)
 }
 
-func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport) {
-	if progress := c.scanProgress.lookup(scanTargetOf(report.Scope, report.ID)); progress != nil {
-		progress.MergeParams(map[string]string{
-			"storage_profile":          report.StorageProfile,
-			"volume_key":               report.VolumeKey,
-			"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
-			"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
-			"discovered_archives":      strconv.FormatInt(report.DiscoveredArchives, 10),
-			"skipped_archives":         strconv.FormatInt(report.SkippedArchives, 10),
-			"processed_archives":       strconv.FormatInt(report.ProcessedArchives, 10),
-			"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
-			"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
-			"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
-			"generated_covers":         strconv.FormatInt(report.GeneratedCovers, 10),
-			"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
-			"rehomed_books":            strconv.FormatInt(report.RehomedBooks, 10),
-			"stale_series_stats":       strconv.FormatInt(report.StaleSeriesStats, 10),
-			"format_filtered_archives": strconv.FormatInt(report.FormatFilteredArchives, 10),
-			"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
-			"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
-			"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
-			"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
-		})
-	}
-	c.fixateRebuildThumbBaseline(report)
+// taskScanObserver 把一次扫描的报文写进它所属任务的**进度句柄**。
+//
+// 它只是句柄的一层翻译，不持有任何状态：谁有资格写这个任务，由「谁拿到了这个句柄」回答，
+// 与句柄本身的所有权模型一致（见 TaskProgress）。
+type taskScanObserver struct {
+	progress *TaskProgress
 }
 
-func (c *Controller) handleScannerProgressEvent(report scanner.ScanProgressReport) {
-	if progress := c.scanProgress.lookup(scanTargetOf(report.Scope, report.ID)); progress != nil {
-		progress.Report(scanProgressFrame(report))
+// newTaskScanObserver 把进度句柄包成一个扫描观察者；句柄为 nil 时返回 nil 接口值，
+// 于是「这次扫描不属于任何任务」在扫描器那边与其余无归属扫描是同一个形状。
+func newTaskScanObserver(progress *TaskProgress) scanner.ScanObserver {
+	if progress == nil {
+		return nil
 	}
+	return &taskScanObserver{progress: progress}
+}
 
-	// 若正在执行缩略图重建，按全局视角同步那条任务的进度
-	c.applyScannerProgressToRebuildThumbnails(report)
+func (o *taskScanObserver) Progress(report scanner.ScanProgressReport) {
+	o.progress.Report(scanProgressFrame(report))
+}
+
+func (o *taskScanObserver) Metrics(report scanner.ScanMetricsReport) {
+	o.progress.MergeParams(map[string]string{
+		"storage_profile":          report.StorageProfile,
+		"volume_key":               report.VolumeKey,
+		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
+		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
+		"discovered_archives":      strconv.FormatInt(report.DiscoveredArchives, 10),
+		"skipped_archives":         strconv.FormatInt(report.SkippedArchives, 10),
+		"processed_archives":       strconv.FormatInt(report.ProcessedArchives, 10),
+		"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
+		"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
+		"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
+		"generated_covers":         strconv.FormatInt(report.GeneratedCovers, 10),
+		"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
+		"rehomed_books":            strconv.FormatInt(report.RehomedBooks, 10),
+		"stale_series_stats":       strconv.FormatInt(report.StaleSeriesStats, 10),
+		"format_filtered_archives": strconv.FormatInt(report.FormatFilteredArchives, 10),
+		"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
+		"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
+		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
+		"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
+	})
 }
 
 // scanProgressFrame 把扫描器的一份进度报文翻成**一帧**任务进度。
@@ -82,11 +92,9 @@ func scanProgressFrame(report scanner.ScanProgressReport) TaskFrame {
 	return frame
 }
 
-func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.ScanProgressReport) {
-	if report.Scope != "library" {
-		return
-	}
-	snap := c.rebuildThumbAgg.applyProgress(report)
+// Progress 把本库的一份进度报文并进跨库聚合，再按全局视角写一帧重建任务的进度。
+func (l *rebuildThumbLibrary) Progress(report scanner.ScanProgressReport) {
+	snap := l.absorbProgress(report)
 	if snap.Progress == nil {
 		return
 	}
@@ -130,29 +138,9 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 	})
 }
 
-func (c *Controller) initRebuildThumbAggregator(progress *TaskProgress, totalLibraries int) {
-	c.rebuildThumbAgg.begin(progress, totalLibraries)
-}
-
-func (c *Controller) releaseRebuildThumbAggregator() {
-	c.rebuildThumbAgg.end()
-}
-
-// trackRebuildThumbLibraryProgress 在 runGlobalScan 的库切换边界更新聚合器，
-// current 是已完成库数（progress 回调 i 表示"开始第 i+1 个"，i+1 表示"完成第 i+1 个"）。
-func (c *Controller) trackRebuildThumbLibraryProgress(current, total int, lib database.Library) {
-	c.rebuildThumbAgg.trackLibrary(current, total, lib)
-}
-
-// fixateRebuildThumbBaseline 在一个库的扫描主流程结束时把它的最终 metrics 计入 baseline，
-// 并把这份报文累加进重建任务的指标与参数。
-// 此刻封面队列可能仍在异步生成，之后还会有该库的 progress 事件带着同一份 metrics 的更新值到来；
-// 定版后必须忽略该库的 perLibPending（直到 releaseRebuildThumbAggregator 或下一次扫描），否则会双计。
-func (c *Controller) fixateRebuildThumbBaseline(report scanner.ScanMetricsReport) {
-	if report.Scope != "library" {
-		return
-	}
-	snap := c.rebuildThumbAgg.fixateLibrary(report)
+// Metrics 在本库扫描主流程结束时定版它的指标，并把这份报文累加进重建任务。
+func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
+	snap := l.fixate(report)
 	if snap.Progress == nil {
 		return
 	}
@@ -191,8 +179,27 @@ func (c *Controller) fixateRebuildThumbBaseline(report scanner.ScanMetricsReport
 	})
 }
 
+func (c *Controller) initRebuildThumbAggregator(progress *TaskProgress, totalLibraries int) {
+	c.rebuildThumbAgg.begin(progress, totalLibraries)
+}
+
+func (c *Controller) releaseRebuildThumbAggregator() {
+	c.rebuildThumbAgg.end()
+}
+
+// beginRebuildThumbLibrary 是交给 runGlobalScan 的观察者工厂：开始一个资料库，
+// 返回这次扫描的**扫描观察者**；重建未在进行时返回 nil 接口值。
+func (c *Controller) beginRebuildThumbLibrary(lib database.Library, totalLibraries int) scanner.ScanObserver {
+	entry := c.rebuildThumbAgg.beginLibrary(lib, totalLibraries)
+	if entry == nil {
+		return nil
+	}
+	c.refreshRebuildThumbTaskFromAggregator(lib)
+	return entry
+}
+
 // refreshRebuildThumbTaskFromAggregator 用聚合器中已记录的 metrics 立即刷新一次任务，
-// 用于在 runGlobalScan 库切换边界（无 progress 事件携带 metrics 的时机）保持任务消息和当前库标签同步。
+// 用于在库切换边界（此刻还没有任何本库报文携带 metrics）把任务消息与当前库标签同步过去。
 func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library) {
 	snap := c.rebuildThumbAgg.snapshot()
 	if snap.Progress == nil {

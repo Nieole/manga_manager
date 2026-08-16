@@ -79,7 +79,7 @@ func TestScanLibraryReturnsContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := s.ScanLibrary(ctx, lib.ID, libraryPath, true)
+	err := s.ScanLibrary(ctx, lib.ID, libraryPath, true, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled, got %v", err)
 	}
@@ -169,7 +169,7 @@ func TestScanLibraryPauseCheckpointBlocksBeforeOpeningArchive(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- s.ScanLibrary(ctx, lib.ID, libraryPath, true)
+		done <- s.ScanLibrary(ctx, lib.ID, libraryPath, true, nil)
 	}()
 
 	select {
@@ -248,7 +248,7 @@ func TestScanLibraryRecordsPageCount(t *testing.T) {
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	scanner := NewScanner(store, config.NewManager(cfg))
-	if err := scanner.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := scanner.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("scan library failed: %v", err)
 	}
 
@@ -296,7 +296,7 @@ func TestScanLibrarySkipsUnchangedArchives(t *testing.T) {
 		return parser.OpenArchive(path)
 	}
 
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("initial scan failed: %v", err)
 	}
 	if openCount.Load() == 0 {
@@ -309,7 +309,7 @@ func TestScanLibrarySkipsUnchangedArchives(t *testing.T) {
 	waitForScannerBookCover(t, s, store, books[0].ID)
 
 	openCount.Store(0)
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false, nil); err != nil {
 		t.Fatalf("incremental scan failed: %v", err)
 	}
 	if openCount.Load() != 0 {
@@ -331,7 +331,7 @@ func TestScanLibraryInvalidatesIncrementalCacheWhenSizeChanges(t *testing.T) {
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	s := NewScanner(store, config.NewManager(cfg))
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("initial scan failed: %v", err)
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -356,7 +356,7 @@ func TestScanLibraryInvalidatesIncrementalCacheWhenSizeChanges(t *testing.T) {
 		openCount.Add(1)
 		return parser.OpenArchive(path)
 	}
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false, nil); err != nil {
 		t.Fatalf("incremental scan failed: %v", err)
 	}
 	if openCount.Load() == 0 {
@@ -394,7 +394,7 @@ func TestFastScanDoesNotOpenArchive(t *testing.T) {
 		return nil, nil
 	}
 
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("fast scan failed: %v", err)
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -448,7 +448,7 @@ func TestKOReaderEnabledMetadataScanDefersBinaryHash(t *testing.T) {
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
 	s := NewScanner(store, config.NewManager(cfg))
 
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -486,7 +486,7 @@ func TestIdentityScanWithExternalHDDPolicyDoesNotSelfDeadlock(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("identity scan failed: %v", err)
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -528,7 +528,7 @@ func TestScanLibraryQueuesMissingCoverGeneration(t *testing.T) {
 		}
 	})
 
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -574,7 +574,7 @@ func TestScanLibraryDeferredRefreshPopulatesStats(t *testing.T) {
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	scanner := NewScanner(store, config.NewManager(cfg))
-	if err := scanner.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := scanner.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}
 	// 排空异步封面队列，避免其在 t.Cleanup 关闭 store / 删除临时目录时仍运行导致清理竞态。
@@ -615,7 +615,7 @@ func BenchmarkScanLibrary_Incremental_NoChanges(b *testing.B) {
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	s := NewScanner(store, config.NewManager(cfg))
-	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true, nil); err != nil {
 		b.Fatalf("initial scan failed: %v", err)
 	}
 	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
@@ -632,7 +632,7 @@ func BenchmarkScanLibrary_Incremental_NoChanges(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false); err != nil {
+		if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false, nil); err != nil {
 			b.Fatalf("incremental scan failed: %v", err)
 		}
 	}
@@ -742,7 +742,7 @@ func TestCleanupLibraryKeepsRootLevelLooseArchives(t *testing.T) {
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	s := NewScanner(store, config.NewManager(cfg))
-	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("scan library failed: %v", err)
 	}
 
@@ -802,7 +802,7 @@ func TestCleanupLibraryRemovesSeriesWhenFilesAreGone(t *testing.T) {
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Cache.Dir = filepath.Join(rootDir, "thumbs")
 	s := NewScanner(store, config.NewManager(cfg))
-	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true, nil); err != nil {
 		t.Fatalf("scan library failed: %v", err)
 	}
 
@@ -845,7 +845,7 @@ func TestScanLibraryReportsConflictInsteadOfSilentSuccess(t *testing.T) {
 	}
 	defer s.endLibraryScan(7)
 
-	err := s.ScanLibrary(context.Background(), 7, t.TempDir(), false)
+	err := s.ScanLibrary(context.Background(), 7, t.TempDir(), false, nil)
 	if !errors.Is(err, ErrScanAlreadyRunning) {
 		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
 	}
@@ -859,7 +859,7 @@ func TestScanSeriesReportsConflictInsteadOfSilentSuccess(t *testing.T) {
 	}
 	defer s.endSeriesScan(42)
 
-	err := s.ScanSeries(context.Background(), 42, false)
+	err := s.ScanSeries(context.Background(), 42, false, nil)
 	if !errors.Is(err, ErrScanAlreadyRunning) {
 		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
 	}

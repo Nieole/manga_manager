@@ -40,7 +40,7 @@ func TestCleanupAbortsWhenLibraryRootIsUnreachable(t *testing.T) {
 	s := newFormatTestScanner(t, store)
 
 	seedSeriesDirs(t, libraryPath, 2)
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 	before, err := store.ListBooksByLibrary(ctx, lib.ID)
@@ -85,7 +85,7 @@ func TestCleanupCircuitBreakerStopsMassDeletion(t *testing.T) {
 
 	const seriesCount = 4
 	seedSeriesDirs(t, libraryPath, seriesCount)
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 	before, _ := store.ListBooksByLibrary(ctx, lib.ID)
@@ -124,7 +124,7 @@ func TestCleanupStillRemovesMinorityMissingSeries(t *testing.T) {
 
 	const seriesCount = 4
 	seedSeriesDirs(t, libraryPath, seriesCount)
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 

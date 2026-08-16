@@ -175,7 +175,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	c.runBackground(func() {
 		// 使用独立 context 避免跟随请求自动取消，创建库默认全量
 		defer c.purgeReadingPathCaches()
-		err := c.scanner.ScanLibrary(context.Background(), createdLib.ID, req.Path, false)
+		err := c.scanner.ScanLibrary(context.Background(), createdLib.ID, req.Path, false, nil)
 		if err != nil {
 			// 在生产环境需要接入日志中心打印
 			_ = err
@@ -304,11 +304,10 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 	}
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
-		// 扫描器回调不在任务体的调用栈上，把句柄登记出去它才有地方报进度（见 scanProgressHandles）。
-		releaseProgress := c.scanProgress.track(libraryScanTarget(lib.ID), tp)
-		defer releaseProgress()
 		defer c.purgeReadingPathCaches()
-		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force); err != nil {
+		// 把**进度句柄**包成**扫描观察者**一起交出去：扫描器的报文不带身份，
+		// 「这次扫描的进度写到哪」由这次交出的是谁回答。
+		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force, newTaskScanObserver(tp)); err != nil {
 			if errors.Is(err, context.Canceled) {
 				c.invalidateDashboardStatsCache("scan_library_cancelled")
 				return TaskResult{Params: map[string]string{"name": lib.Name}}, err
@@ -391,10 +390,8 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 	}
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
-		releaseProgress := c.scanProgress.track(seriesScanTarget(seriesID), tp)
-		defer releaseProgress()
 		defer c.purgeReadingPathCaches()
-		if err := c.scanner.ScanSeries(ctx, seriesID, force); err != nil {
+		if err := c.scanner.ScanSeries(ctx, seriesID, force, newTaskScanObserver(tp)); err != nil {
 			if errors.Is(err, context.Canceled) {
 				c.invalidateDashboardStatsCache("scan_series_cancelled")
 				return TaskResult{Params: idParams}, err

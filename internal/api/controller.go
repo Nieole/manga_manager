@@ -70,9 +70,6 @@ type Controller struct {
 	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
 	rebuildThumbAgg *rebuildThumbAggregator
 
-	// 资料库/系列扫描任务的进度句柄保管处已抽成独立组件（scan_progress_handles.go），自带互斥锁。
-	scanProgress *scanProgressHandles
-
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
 
@@ -237,14 +234,11 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),
 		rebuildThumbAgg:    newRebuildThumbAggregator(),
-		scanProgress:       newScanProgressHandles(),
 		openPath:           openPathInDefaultFileManager,
 		auth:               newAuthState(),
 	}
 	if scan != nil {
 		scan.SetBatchCallback(c.handleScannerBatchEvent)
-		scan.SetScanMetricsCallback(c.handleScannerMetricsEvent)
-		scan.SetScanProgressCallback(c.handleScannerProgressEvent)
 	}
 
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
@@ -559,7 +553,7 @@ func (c *Controller) startDaemon() {
 				c.runBackground(func() {
 					id, path := lib.ID, lib.Path
 					defer c.purgeReadingPathCaches()
-					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
+					err := c.scanner.ScanLibrary(context.Background(), id, path, false, nil)
 					// 「已有扫描在跑」不是故障：定时守护与手动扫描本就可能撞车，
 					// 下一个 tick 会再试，不必按错误刷屏。
 					if errors.Is(err, scanner.ErrScanAlreadyRunning) {

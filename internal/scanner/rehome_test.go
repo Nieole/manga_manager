@@ -21,7 +21,7 @@ import (
 // scanOnceForRehome 跑一次非强制的整库扫描。
 func scanOnceForRehome(t *testing.T, s *Scanner, lib database.Library) {
 	t.Helper()
-	if err := s.ScanLibrary(context.Background(), lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("scan library failed: %v", err)
 	}
 }
@@ -354,7 +354,7 @@ func TestSeriesScanRehomesRenamedBook(t *testing.T) {
 		t.Fatalf("rename failed: %v", err)
 	}
 
-	if err := s.ScanSeries(ctx, book.SeriesID, false); err != nil {
+	if err := s.ScanSeries(ctx, book.SeriesID, false, nil); err != nil {
 		t.Fatalf("scan series failed: %v", err)
 	}
 

@@ -74,10 +74,9 @@ func TestScanRespectsLibraryScanFormats(t *testing.T) {
 			seedTwoFormats(t, libraryPath)
 
 			s := newFormatTestScanner(t, store)
-			var report ScanMetricsReport
-			s.SetScanMetricsCallback(func(r ScanMetricsReport) { report = r })
+			observer := &spyObserver{}
 
-			if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+			if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, observer); err != nil {
 				t.Fatalf("ScanLibrary: %v", err)
 			}
 
@@ -92,6 +91,7 @@ func TestScanRespectsLibraryScanFormats(t *testing.T) {
 				}
 				t.Fatalf("入库 %d 本, want %d（scan_formats=%q）: %v", len(books), tc.wantBooks, tc.scanFormats, paths)
 			}
+			report := observer.lastMetrics()
 			if report.FormatFilteredArchives != tc.wantFilter {
 				t.Fatalf("format_filtered_archives = %d, want %d —— 静默少扫必须可见",
 					report.FormatFilteredArchives, tc.wantFilter)
@@ -109,7 +109,7 @@ func TestScanSeriesRespectsLibraryScanFormats(t *testing.T) {
 	seedTwoFormats(t, libraryPath)
 
 	s := newFormatTestScanner(t, store)
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 	books, _ := store.ListBooksByLibrary(ctx, lib.ID)
@@ -121,7 +121,7 @@ func TestScanSeriesRespectsLibraryScanFormats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBook: %v", err)
 	}
-	if err := s.ScanSeries(ctx, book.SeriesID, true); err != nil {
+	if err := s.ScanSeries(ctx, book.SeriesID, true, nil); err != nil {
 		t.Fatalf("ScanSeries: %v", err)
 	}
 	books, _ = store.ListBooksByLibrary(ctx, lib.ID)
@@ -143,7 +143,7 @@ func TestIgnoreFormatFilterSeesAllIndexedBooks(t *testing.T) {
 	seedTwoFormats(t, libraryPath)
 
 	s := newFormatTestScanner(t, store)
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 	if books, _ := store.ListBooksByLibrary(ctx, lib.ID); len(books) != 2 {
@@ -154,11 +154,11 @@ func TestIgnoreFormatFilterSeesAllIndexedBooks(t *testing.T) {
 	setLibraryScanFormats(t, store, lib.ID, "cbz")
 
 	// 普通扫描会过滤掉 .cbr（但不删已入库的行）。
-	var normal ScanMetricsReport
-	s.SetScanMetricsCallback(func(r ScanMetricsReport) { normal = r })
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, true); err != nil {
+	normalObserver := &spyObserver{}
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, true, normalObserver); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
+	normal := normalObserver.lastMetrics()
 	if normal.FormatFilteredArchives != 1 {
 		t.Fatalf("普通扫描应过滤掉 1 个文件，实际 %d", normal.FormatFilteredArchives)
 	}
@@ -167,13 +167,13 @@ func TestIgnoreFormatFilterSeesAllIndexedBooks(t *testing.T) {
 	}
 
 	// 而维护用的扫描必须看得见全部两本。
-	var maintenance ScanMetricsReport
-	s.SetScanMetricsCallback(func(r ScanMetricsReport) { maintenance = r })
+	maintenanceObserver := &spyObserver{}
 	if err := s.ScanLibraryWithOptions(ctx, lib.ID, lib.Path, LibraryScanOptions{
 		Force: true, IgnoreFormatFilter: true,
-	}); err != nil {
+	}, maintenanceObserver); err != nil {
 		t.Fatalf("ScanLibraryWithOptions: %v", err)
 	}
+	maintenance := maintenanceObserver.lastMetrics()
 	if maintenance.FormatFilteredArchives != 0 {
 		t.Fatalf("维护扫描不该过滤任何文件，实际过滤了 %d 个 —— 被排除格式的书会永久失去封面",
 			maintenance.FormatFilteredArchives)

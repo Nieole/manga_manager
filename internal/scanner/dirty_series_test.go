@@ -71,12 +71,12 @@ func TestScanReportsStaleSeriesStatsInsteadOfSilentlyDropping(t *testing.T) {
 			cfg.Cache.Dir = t.TempDir()
 			s := NewScanner(flaky, config.NewManager(cfg))
 
-			var report ScanMetricsReport
-			s.SetScanMetricsCallback(func(r ScanMetricsReport) { report = r })
+			observer := &spyObserver{}
 
-			if err := s.ScanLibrary(ctx, freshLib.ID, freshLib.Path, false); err != nil {
+			if err := s.ScanLibrary(ctx, freshLib.ID, freshLib.Path, false, observer); err != nil {
 				t.Fatalf("scan library failed: %v", err)
 			}
+			report := observer.lastMetrics()
 
 			if tc.wantStale && report.StaleSeriesStats == 0 {
 				t.Fatal("刷新失败却没有报告 stale_series_stats —— 统计不一致又变回静默了")
@@ -123,7 +123,7 @@ func TestScanDrainsDirtySeriesAfterCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// 用 batch 回调在第一批入库后立刻取消，模拟「扫描中途被用户取消」。
 	s.SetBatchCallback(func(string) { cancel() })
-	_ = s.ScanLibrary(ctx, lib.ID, lib.Path, false)
+	_ = s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil)
 
 	seriesList, err := store.ListSeriesByLibraryLite(context.Background(), lib.ID)
 	if err != nil {

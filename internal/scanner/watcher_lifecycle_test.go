@@ -139,7 +139,7 @@ func TestCleanupLibraryStopsOnCancelledContext(t *testing.T) {
 	if err := writeScannerTestCBZ(filepath.Join(dir, "v1.cbz"), map[string][]byte{"001.png": testPNG1x1}); err != nil {
 		t.Fatalf("write cbz: %v", err)
 	}
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 

@@ -39,7 +39,7 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 		go func(lib database.Library) {
 			defer wg.Done()
 			defer c.purgeReadingPathCaches()
-			if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true); err != nil {
+			if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true, nil); err != nil {
 				slog.Error("Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
 			}
 		}(lib)
@@ -91,32 +91,33 @@ func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
 // ignoreFormatFilter 只在「重建缩略图」时为真：该任务先删光缩略图文件并清空所有 cover_path，
 // 再靠这次扫描重建。若仍按库的 scan_formats 过滤，被排除格式的书就再也不会被访问到，
 // 它们的封面会永久消失——而格式过滤的语义是「导入哪些文件」，不该殃及已入库的内容。
-func (c *Controller) runGlobalScan(ctx context.Context, force bool, ignoreFormatFilter bool, progress func(current, total int, lib database.Library)) error {
+// observerFor 为每个资料库要一个**扫描观察者**；返回 nil 即该库这次扫描不属于任何任务。
+// 调用它本身就是库切换的边界——没有第二条「现在换库了」的通知，两者一旦分家就会有
+// 「观察者已经在收报文、界面上还是上一个库名」的窗口。
+func (c *Controller) runGlobalScan(ctx context.Context, force bool, ignoreFormatFilter bool, observerFor func(lib database.Library, total int) scanner.ScanObserver) error {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		return err
 	}
 	total := len(libs)
-	for i, lib := range libs {
+	for _, lib := range libs {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if progress != nil {
-			progress(i, total, lib)
+		var observer scanner.ScanObserver
+		if observerFor != nil {
+			observer = observerFor(lib, total)
 		}
 		if err := c.scanner.ScanLibraryWithOptions(ctx, lib.ID, lib.Path, scanner.LibraryScanOptions{
 			Force:              force,
 			IgnoreFormatFilter: ignoreFormatFilter,
-		}); err != nil {
+		}, observer); err != nil {
 			return err
 		}
 		c.purgeReadingPathCaches()
-		if progress != nil {
-			progress(i+1, total, lib)
-		}
 	}
 	return nil
 }
@@ -209,10 +210,8 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cover_index_failed", err), err
 		}
 		tp.Phase("reading_metadata", "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil)
-		if err := c.runGlobalScan(ctx, true, true /* 重建缩略图必须看得见全部已入库的书 */, func(current, total int, lib database.Library) {
-			c.trackRebuildThumbLibraryProgress(current, total, lib)
-			c.refreshRebuildThumbTaskFromAggregator(lib)
-		}); err != nil {
+		if err := c.runGlobalScan(ctx, true, true, /* 重建缩略图必须看得见全部已入库的书 */
+			c.beginRebuildThumbLibrary); err != nil {
 			return TaskResult{}, err
 		}
 		c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
