@@ -38,7 +38,7 @@ func (tp *TaskProgress) Item(name string)
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 启动入口同步执行槽位闸门、异步执行任务体（返回时任务体尚未运行，HTTP 层可立即返回 202）
 - [x] 启动入口返回错误：`nil` 表示已启动，沿用既有的「同类任务已在运行」哨兵错误

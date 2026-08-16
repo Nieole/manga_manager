@@ -10,7 +10,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] ComicInfo 回写任务改用新入口
 - [x] 该任务的可取消/不可暂停能力与转换前一致；任务中心不显示暂停控件

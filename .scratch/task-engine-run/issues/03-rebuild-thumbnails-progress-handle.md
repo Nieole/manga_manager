@@ -14,7 +14,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 缩略图重建任务改用新入口，其各不相同的失败文案码通过 `TaskResult` 的文案覆盖机制表达（实为五个：`clear_cache_failed` / `mkdir_failed` / `clear_cover_index_failed` / `wait_queue_failed` 四个走覆盖，`failed` 是任务声明里的默认码不必覆盖；票面写的六个不准）
 - [x] 进度句柄由任务体交给聚合器；扫描事件转译处不再出现该任务的键字符串
