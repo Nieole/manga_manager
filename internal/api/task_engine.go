@@ -434,6 +434,7 @@ func (e *taskEngine) failTask(key, code string, params map[string]string, taskEr
 	task.CanPause = false
 	task.CanResume = false
 	task.PausedAt = nil
+	task.PauseReason = ""
 	task.UpdatedAt = now
 	task.FinishedAt = &now
 	e.seq++

@@ -472,3 +472,30 @@ func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
 		t.Fatalf("在跑的任务取消不了了: %v", err)
 	}
 }
+
+// TestFailedTaskDropsPauseReason 钉住失败**终态**不得带着「暂停原因」。
+//
+// 任务中心把 pause_reason 渲染成一行「暂停原因：手动暂停」，而它对一条已经失败的任务毫无意义
+// ——用户看到的是一条自称「手动暂停」的失败任务。同一处的另外三个控制字段本就已经清掉了。
+func TestFailedTaskDropsPauseReason(t *testing.T) {
+	e, snapshots := newBackgroundTestEngine(func(func()) {})
+
+	const key = "scan_library_1"
+	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	if err := e.pause(key); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+
+	settleSeededTask(e, key, errors.New("disk on fire"))
+
+	task := lastPublishedTask(t, snapshots(), key)
+	if task.Status != "failed" {
+		t.Fatalf("任务终态为 %q, want failed", task.Status)
+	}
+	if task.PauseReason != "" {
+		t.Fatalf("失败的任务带着暂停原因 %q —— 任务中心会渲染成「暂停原因：手动暂停」", task.PauseReason)
+	}
+	if task.PausedAt != nil {
+		t.Fatalf("失败的任务带着 PausedAt：%v", task.PausedAt)
+	}
+}
