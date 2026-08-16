@@ -136,3 +136,34 @@
 - **反向验证两条**：删掉 `applyTaskMessage` 里的 `task.Message = ""`，
   `TestTaskMessageCodeEmission` 变红；把 `cloneStringMap(params)` 改回裸赋值，
   `TestTaskMapsAreOwnedByTheEngine` 变红。两次均已还原。
+
+**对抗复核（24 路）查出的三处 CHANGELOG 准确性缺陷**
+
+这三处全在**面向用户**的 `docs/changelog/2026-08.md` 里，代码侧无问题。逐条核实后已修：
+
+1. **写了一个从未发生过的缺陷。** 外部库传输那条原文说老路径「等于没有节流」，投递「会以数万条的
+   规模冲进 SSE」「所有人的任务中心当场停止更新」。不成立：`main` 的 `launchExternalLibraryTransferTask`
+   循环里拷贝前后那两次上报**共用同一个 `lastUpdate`**，老路径整条循环被限到约 2 帧/秒，洪水够不到。
+   那一幕是「若把两条文案码原样搬到引擎水位上**才会**发生」的后果——它是本票合帧的**理由**，
+   不是历史。已改写成条件句。这是票 09 那条口径限制的同类问题，而当时只照办了「不再滞留」那一条。
+
+2. **「进度节流从此只有一处实现」是过度断言。** `internal/scanner/scanner.go` 的
+   `scanProgressReporter.publish` 至今仍是一道 250ms 墙上时钟进度节流，且喂的就是同一条任务进度流
+   （扫描器回调 → `handleScannerProgressEvent` → `TaskProgress.Report` → `publishTaskProgressLocked`），
+   资料库扫描与系列扫描今天叠着 250ms + 200ms 两道。`taskProgressPublishInterval` 自己的 doc 就写着
+   这件事，两处当场矛盾。已收窄到本次范围。
+   **附带一条给票 09 的更正**：它的偏离 5 写「`internal/` 里不再有第二个按墙上时钟计时的进度节流」，
+   同一处过度断言，正确的说法是「外部库这两条路径的任务体里不再有手写进度节流」。
+
+3. **「任务键恒定 409」从 2 个任务被外推到 3 个。** 低优先级哈希回填的任务键
+   `lowPriorityBookHashTaskKey` **没有任何 HTTP 启动点**（它由资料库扫描与系列扫描的任务体串联发起），
+   而任务中心的重试按钮对活动态根本不渲染。它的用户可见面是另一种：此后每次扫描收尾的自动回填
+   静默不再发起，任务中心多一条永远运行中的幽灵任务；而且 `main` 上它归还上下文那次是裸调用而非
+   `defer`，panic 时句柄反而留着，用户点一次取消就永远停在**取消中**。已按三者各自的表现分开写。
+
+同时补上 `6320072`（失败任务不再带暂停原因进终态）的 CHANGELOG 条目——AGENTS.md 要求用户可见改动
+与改动落在同一批次，它单独成提交时漏了。
+
+复核对代码侧的结论：15 个老接口符号全仓无残留、空码无操作与开工时的行为等价、
+`errTaskCancelUnavailable` 那个窗口确实被关掉、被闸门挡下的启动换不掉在跑任务的句柄、
+超范围的三处（map 克隆、`EffectiveLimit`、panic 文案）都是收缩逼出来或前序票顺延的，逐条备案。
