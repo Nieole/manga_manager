@@ -957,6 +957,26 @@ func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, payload)
 }
 
+// metadataReviewFieldsByReview 一次取回这批提案的字段行，并按提案分组。
+//
+// 逐条取是 N+1：一个系列有几条待裁决提案，就是几次额外查询。
+// 分组保序，每条提案内部仍是 id 升序，与逐条版给出的顺序一致。
+func (c *Controller) metadataReviewFieldsByReview(ctx context.Context, reviewIDs []int64) (map[int64][]database.MetadataReviewField, error) {
+	grouped := make(map[int64][]database.MetadataReviewField, len(reviewIDs))
+	if len(reviewIDs) == 0 {
+		// 空列表被 sqlc 拼成 IN (NULL)，能查、只是白跑一次往返。
+		return grouped, nil
+	}
+	fields, err := c.store.ListMetadataReviewFieldsByReviews(ctx, reviewIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range fields {
+		grouped[field.ReviewID] = append(grouped[field.ReviewID], field)
+	}
+	return grouped, nil
+}
+
 func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int64) (metadataReviewResponse, error) {
 	// 取一次系列，用于按**当前**锁定集渲染字段的 locked 徽章（行上那个是入队瞬间的快照）。
 	series, err := c.store.GetSeries(ctx, seriesID)
@@ -981,16 +1001,21 @@ func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int6
 		provenanceRows = []database.SeriesMetadataProvenance{}
 	}
 
+	reviewIDs := make([]int64, 0, len(reviews))
+	for _, review := range reviews {
+		reviewIDs = append(reviewIDs, review.ID)
+	}
+	fieldsByReview, err := c.metadataReviewFieldsByReview(ctx, reviewIDs)
+	if err != nil {
+		return metadataReviewResponse{}, err
+	}
+
 	payload := metadataReviewResponse{
 		Reviews:    make([]metadataReviewView, 0, len(reviews)),
 		Provenance: make([]metadataProvenanceView, 0, len(provenanceRows)),
 	}
 	for _, review := range reviews {
-		fields, err := c.store.ListMetadataReviewFields(ctx, review.ID)
-		if err != nil {
-			return metadataReviewResponse{}, err
-		}
-		payload.Reviews = append(payload.Reviews, metadataReviewToView(review, fields, lockedNow))
+		payload.Reviews = append(payload.Reviews, metadataReviewToView(review, fieldsByReview[review.ID], lockedNow))
 	}
 	for _, row := range provenanceRows {
 		payload.Provenance = append(payload.Provenance, provenanceToView(row))
@@ -1053,21 +1078,14 @@ func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Requ
 		Limit:  limit,
 		Offset: offset,
 	}
-	// 一次性批量取所有 review 的字段，避免逐条查询造成 N+1。
-	fieldsByReview := make(map[int64][]database.MetadataReviewField, len(rows))
-	if len(rows) > 0 {
-		reviewIDs := make([]int64, 0, len(rows))
-		for _, row := range rows {
-			reviewIDs = append(reviewIDs, row.ID)
-		}
-		allFields, err := c.store.ListMetadataReviewFieldsByReviews(r.Context(), reviewIDs)
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to load metadata review fields")
-			return
-		}
-		for _, f := range allFields {
-			fieldsByReview[f.ReviewID] = append(fieldsByReview[f.ReviewID], f)
-		}
+	reviewIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		reviewIDs = append(reviewIDs, row.ID)
+	}
+	fieldsByReview, err := c.metadataReviewFieldsByReview(r.Context(), reviewIDs)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load metadata review fields")
+		return
 	}
 	for _, row := range rows {
 		payload.Items = append(payload.Items, metadataReviewInboxRowToView(row, fieldsByReview[row.ID], parseLockedFieldSet(row.SeriesLockedFields)))
