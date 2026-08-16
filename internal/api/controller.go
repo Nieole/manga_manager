@@ -27,6 +27,7 @@ import (
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/proposal"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/taskcontrol"
@@ -51,6 +52,7 @@ type Controller struct {
 	config     *config.Manager
 	koreader   *koreader.Service
 	external   *external.Manager
+	proposals  *proposal.Service
 	configPath string
 	watcher    *scanner.FileWatcher
 
@@ -230,6 +232,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		config:             cfg,
 		koreader:           koreader.NewService(store, cfg),
 		external:           external.NewManager(store, 30*time.Minute),
+		proposals:          proposal.NewService(proposalDB{store: store}),
 		configPath:         cfgPath,
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),

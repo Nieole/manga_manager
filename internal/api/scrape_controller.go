@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/proposal"
 	"manga-manager/internal/taskcontrol"
 )
 
@@ -198,28 +198,20 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 	// force=1 让用户能把「拒绝过的提案」重新加回队列。没有这个出口，一旦误拒就是死胡同：
 	// 之后每次刮削都会被去重挡下，同一份数据再也进不来。
 	forced := isTruthyParam(r.URL.Query().Get("force"))
-	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, &result, providerName, series.Name,
-		queueReviewOptions{IgnoreRejected: forced})
+	queued, err := c.proposals.Queue(r.Context(), series, &result, providerName, series.Name,
+		proposal.QueueOptions{IgnoreRejected: forced})
 	if err != nil {
-		if outcome, message, ok := queueOutcomeForError(err); ok {
-			jsonResponse(w, http.StatusOK, map[string]interface{}{
-				"success": true,
-				"queued":  false,
-				"outcome": outcome,
-				"message": message,
-			})
-			return
-		}
 		jsonError(w, http.StatusInternalServerError, "Failed to queue metadata review")
 		return
 	}
 
-	if !isNew {
+	if queued.Status != proposal.QueueQueued {
+		outcome, message := queueOutcomeForStatus(queued.Status)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"queued":  false,
-			"outcome": "duplicate_ignored",
-			"message": "待审核队列中已存在完全相同的记录，已为您忽略",
+			"outcome": outcome,
+			"message": message,
 		})
 		return
 	}
@@ -228,26 +220,30 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		"success":     true,
 		"queued":      true,
 		"outcome":     "queued",
-		"review_id":   review.ID,
-		"field_count": len(fields),
+		"review_id":   queued.Proposal.ID,
+		"field_count": len(queued.Fields),
 		"series":      series,
 	})
 }
 
-// queueOutcomeForError 把入队时的「良性结果」哨兵折成给前端的 outcome 与文案。
+// queueOutcomeForStatus 把一次入队的**非新建**结局折成给前端的 outcome 与文案。
+// 新建成功不经这里——调用方各自组自己的成功响应。
 //
-// 这三种都不是故障：数据本来就一致、差异全被用户锁住、或这份提案已被拒绝过；
-// 必须都在这里识别并映射为良性 outcome，漏掉的会被上抛为 HTTP 500，用户看到「服务器错误」。
-func queueOutcomeForError(err error) (outcome, message string, ok bool) {
-	switch {
-	case errors.Is(err, errNoMetadataChanges):
-		return "no_changes", "所有数据与当前信息完全一致，无需更新", true
-	case errors.Is(err, errAllFieldsLocked):
-		return "all_locked", "有差异的字段都已被锁定，解锁后再试", true
-	case errors.Is(err, errMetadataReviewRejectedBefore):
-		return "rejected_before", "这份提案此前已被拒绝，已为您忽略；如需重新加入队列请使用强制刮削", true
+// 表必须穷举 proposal.QueueStatus 上除「已入队」外的每一个取值：漏掉的会回落成空 outcome，
+// 用户拿到的是一条 200 却与实情无关的兜底提示。
+func queueOutcomeForStatus(status proposal.QueueStatus) (outcome, message string) {
+	switch status {
+	case proposal.QueueReusedExisting:
+		return "duplicate_ignored", "待审核队列中已存在完全相同的记录，已为您忽略"
+	case proposal.QueueNoChanges:
+		return "no_changes", "所有数据与当前信息完全一致，无需更新"
+	case proposal.QueueAllFieldsLocked:
+		return "all_locked", "有差异的字段都已被锁定，解锁后再试"
+	case proposal.QueueRejectedBefore:
+		return "rejected_before", "这份提案此前已被拒绝，已为您忽略；如需重新加入队列请使用强制刮削"
+	default:
+		return "", ""
 	}
-	return "", "", false
 }
 
 // isTruthyParam 判定查询参数是否表示「是」。
@@ -478,26 +474,19 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, result, provider.Name(), searchTitle,
-		queueReviewOptions{IgnoreRejected: isTruthyParam(r.URL.Query().Get("force"))})
+	queued, err := c.proposals.Queue(r.Context(), series, result, provider.Name(), searchTitle,
+		proposal.QueueOptions{IgnoreRejected: isTruthyParam(r.URL.Query().Get("force"))})
 	if err != nil {
-		if outcome, message, ok := queueOutcomeForError(err); ok {
-			jsonResponse(w, http.StatusOK, map[string]interface{}{
-				"scraped": false,
-				"outcome": outcome,
-				"message": fmt.Sprintf("从 %s 找到条目，但%s", provider.Name(), message),
-			})
-			return
-		}
 		jsonError(w, http.StatusInternalServerError, "Failed to save scraped metadata")
 		return
 	}
 
-	if !isNew {
+	if queued.Status != proposal.QueueQueued {
+		outcome, message := queueOutcomeForStatus(queued.Status)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"scraped": false,
-			"outcome": "duplicate_ignored",
-			"message": fmt.Sprintf("从 %s 找到条目，但待审核队列中已存在完全相同的记录，已为您忽略", provider.Name()),
+			"outcome": outcome,
+			"message": fmt.Sprintf("从 %s 找到条目，但%s", provider.Name(), message),
 		})
 		return
 	}
@@ -509,8 +498,8 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		"message":     fmt.Sprintf("已将 %s 的『%s』加入审阅队列", provider.Name(), result.Title),
 		"series":      series,
 		"metadata":    result,
-		"review_id":   review.ID,
-		"field_count": len(fields),
+		"review_id":   queued.Proposal.ID,
+		"field_count": len(queued.Fields),
 	})
 }
 
@@ -617,17 +606,20 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *TaskProgress, provid
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return TaskResult{}, err
 		}
-		if _, _, isNew, err := c.queueMetadataReview(ctx, series, result, providerName, entry.Name); err == nil {
-			m.success++
-			if isNew {
-				m.queuedReview++
-				slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
-			}
-		} else if _, _, benign := queueOutcomeForError(err); !benign {
-			// 「无变更」「差异全被锁」「此前已拒绝」都是正常结果，不该计入失败——
-			// 计进去会让一次完全正常的全库刮削在任务面板上报出一片红。
+		queued, err := c.proposals.Queue(ctx, series, result, providerName, entry.Name, proposal.QueueOptions{})
+		switch {
+		case err != nil:
 			m.failed++
 			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
+		case queued.Status == proposal.QueueQueued:
+			m.success++
+			m.queuedReview++
+			slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
+		case queued.Status == proposal.QueueReusedExisting:
+			m.success++
+		default:
+			// 「无变更」「差异全被锁」「此前已拒绝」都是正常结果，既不计成功也不计失败——
+			// 计进失败会让一次完全正常的全库刮削在任务面板上报出一片红。
 		}
 		m.processed = i + 1
 		tp.Report(m.frame(i+1, "rate_limited_wait", "task.msg.scrape.rate_limited_wait", entry.Name))

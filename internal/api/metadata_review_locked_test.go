@@ -1,16 +1,14 @@
-// 本文件守卫「锁定字段」在整条审核链路上的一致行为：入队、apply、展示三处对锁的
-// 判断必须用同一份**当前**锁定集，不能用入队时的快照。
+// 本文件守卫**当前**锁定集在应用与展示两处的效力：入队时不锁、之后才加的锁同样算数。
 //
-// 约束：锁定字段不得入队为待审提案；apply 遇到锁定字段必须跳过写入，且不得把 review
-// 标成 applied（否则被跳过的提案在只查 pending 的收件箱里永久消失）；展示的锁徽章要
-// 按当前锁定集渲染。
+// 约束：apply 遇到锁定字段必须跳过写入，且不得把 review 标成 applied（否则被跳过的提案
+// 在只查 pending 的收件箱里永久消失）；展示的锁徽章要按当前锁定集渲染，不是入队快照。
+// 入队侧对锁的处置归 internal/proposal 的用例。
 
 package api
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -46,62 +44,6 @@ func fullScrapeResult() *metadata.SeriesMetadata {
 		SourceID:   42,
 		SourceURL:  "https://bgm.tv/subject/42",
 		Confidence: 0.9,
-	}
-}
-
-// TestLockedFieldsAreNotQueued：锁定字段不得进入待审队列。
-func TestLockedFieldsAreNotQueued(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	ctx := context.Background()
-	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series Alpha", "a.cbz", 10)
-
-	lockSeriesFields(t, store, series.ID, "title,summary")
-	series, err := store.GetSeries(ctx, series.ID)
-	if err != nil {
-		t.Fatalf("GetSeries: %v", err)
-	}
-
-	_, fields, _, err := controller.queueMetadataReview(ctx, series, fullScrapeResult(), "bangumi", "Alpha")
-	if err != nil {
-		t.Fatalf("queueMetadataReview: %v", err)
-	}
-
-	queued := map[string]bool{}
-	for _, f := range fields {
-		queued[f.FieldName] = true
-	}
-	for _, locked := range []string{"title", "summary"} {
-		if queued[locked] {
-			t.Errorf("锁定字段 %q 仍被入队 —— 用户点应用后它会被静默丢弃，整条 review 却算已应用", locked)
-		}
-	}
-	// 精确断言字段名集合，而不是「都没被锁」这种恒真判断。
-	for _, want := range []string{"publisher", "status", "rating", "tags"} {
-		if !queued[want] {
-			t.Errorf("未锁定字段 %q 没有入队 —— 过滤过头了", want)
-		}
-	}
-}
-
-// TestAllFieldsLockedReportsDistinctOutcome：差异全被锁住时要与「本来就没差异」区分开。
-//
-// 两者对用户意味着完全不同的动作（解锁 vs 无需处理），必须报告为可区分的结果，
-// apply 侧尤其不能因此返回 HTTP 500。
-func TestAllFieldsLockedReportsDistinctOutcome(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	ctx := context.Background()
-	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series Alpha", "a.cbz", 10)
-
-	lockSeriesFields(t, store, series.ID, "title,summary,publisher,status,rating,tags,authors")
-	series, err := store.GetSeries(ctx, series.ID)
-	if err != nil {
-		t.Fatalf("GetSeries: %v", err)
-	}
-
-	_, _, _, err = controller.queueMetadataReview(ctx, series, fullScrapeResult(), "bangumi", "Alpha")
-	if !errors.Is(err, errAllFieldsLocked) {
-		t.Fatalf("入队返回 %v，期望 errAllFieldsLocked —— 「全被锁」被当成了「没差异」，"+
-			"用户看到「数据已是最新」，实际是该去解锁", err)
 	}
 }
 
@@ -233,38 +175,5 @@ func TestReviewViewReflectsCurrentLockState(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("待审字段里找不到 publisher")
-	}
-}
-
-// TestQueueDedupIgnoresLockedFieldsInSignature：入队后加锁不该制造重复待审记录。
-//
-// 新一轮刮削产出的 changes 已经把当前锁定字段筛掉了，若比对签名时不同口径地筛，
-// 两边永远对不上，每次刮削都会为同一个系列再堆一条几乎相同的待审记录。
-func TestQueueDedupIgnoresLockedFieldsInSignature(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	ctx := context.Background()
-	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series Alpha", "a.cbz", 10)
-
-	first, _, isNew, err := controller.queueMetadataReview(ctx, series, fullScrapeResult(), "bangumi", "Alpha")
-	if err != nil {
-		t.Fatalf("首次入队: %v", err)
-	}
-	if !isNew {
-		t.Fatal("首次入队应当是新建")
-	}
-
-	lockSeriesFields(t, store, series.ID, "title")
-	relocked, err := store.GetSeries(ctx, series.ID)
-	if err != nil {
-		t.Fatalf("GetSeries: %v", err)
-	}
-
-	second, _, isNew, err := controller.queueMetadataReview(ctx, relocked, fullScrapeResult(), "bangumi", "Alpha")
-	if err != nil {
-		t.Fatalf("二次入队: %v", err)
-	}
-	if isNew || second.ID != first.ID {
-		t.Fatalf("加锁后再刮削又建了一条待审记录（%d vs %d）—— 收件箱里会堆同一个系列的重复条目",
-			second.ID, first.ID)
 	}
 }

@@ -256,8 +256,8 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 		// ctx 被取消时 database/sql 的 awaitDone 已经替我们回滚过，这里的 Rollback 必然返回
 		// ErrTxDone，属于正常收尾而非回滚失败，不该污染错误信息。
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			// 两个 %w 而不是 %v：上层要靠 errors.Is 认出原始错误（如 scrape 链路的
-			// errNoMetadataChanges），%v 拼接会把错误链拍平成字符串。
+			// 两个 %w 而不是 %v：上层要靠 errors.Is 认出 fn 返回的原始错误，
+			// %v 拼接会把错误链拍平成字符串。
 			return fmt.Errorf("tx err: %w, rb err: %w", err, rbErr)
 		}
 		return err
