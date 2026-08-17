@@ -308,11 +308,7 @@ func reportHashProgress(tp *TaskProgress, current, total int, code string, metri
 		Phase:   "hashing",
 		Code:    code,
 		Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
-		Metrics: map[string]int64{
-			"hashed_files": metrics.HashedFiles,
-			"io_wait_ms":   metrics.IOWaitMillis,
-			"paused_ms":    metrics.PausedMillis,
-		},
+		Metrics: metrics.frameMetrics(),
 		Labels: map[string]string{
 			"storage_profile": metrics.StorageProfile,
 			"volume_key":      metrics.VolumeKey,

@@ -699,14 +699,20 @@ func koreaderMatchMetadata(cfg config.Config) map[string]string {
 // koreaderFingerprintFrame 把一次**指纹**重建进度翻成**一帧**：**计数推进**、**阶段**、文案与
 // 指标同属一次事件，拆开报会被投递水位撕断（撕开的样子见 TaskProgress.Report）。
 // 书籍指纹重建与匹配刷新的第一阶段共用它，帧的内容因此只有一份。
-func koreaderFingerprintFrame(current, total int) TaskFrame {
+//
+// 档位与卷键不进帧的**标签**，只走**任务参数**那条通道（`taskIOMetricsParams` 会把空值滤掉）：
+// **路径**匹配模式下这个任务一次盘都不读，两项恒为空，而标签是有一个显示一个——写进去等于
+// 把「没有这回事」显示成「实况为空」。IO 那几项指标同样恒为零，但面板只显示大于零的指标。
+func koreaderFingerprintFrame(current, total int, metrics taskIOMetrics) TaskFrame {
+	frameMetrics := metrics.frameMetrics()
+	frameMetrics["processed_books"] = int64(current)
 	return TaskFrame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "hashing",
 		Code:    "task.msg.koreader_rebuild_hashes.progress",
 		Params:  map[string]string{"updated": strconv.Itoa(current), "total": strconv.Itoa(total)},
-		Metrics: map[string]int64{"processed_books": int64(current)},
+		Metrics: frameMetrics,
 	}
 }
 
@@ -749,8 +755,11 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 	}
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
-		updated, total, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, func(current, total int) {
-			tp.Report(koreaderFingerprintFrame(current, total))
+		metrics := taskIOMetrics{}
+		updated, total, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, metrics.absorbHashedFile, func(current, total int) {
+			tp.Report(koreaderFingerprintFrame(current, total, metrics))
+			// IO 参数走的是另一条通道（存储 IO 面板按参数名读），只能单独报一次。
+			tp.MergeParams(taskIOMetricsParams(metrics))
 		})
 		if err != nil {
 			return TaskResult{}, err
@@ -815,8 +824,10 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
 		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, func(current, total int) {
-			tp.Report(holdingStepCount(koreaderFingerprintFrame(current, total)))
+		metrics := taskIOMetrics{}
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, metrics.absorbHashedFile, func(current, total int) {
+			tp.Report(holdingStepCount(koreaderFingerprintFrame(current, total, metrics)))
+			tp.MergeParams(taskIOMetricsParams(metrics))
 		})
 		if err != nil {
 			return taskFailure("task.msg.refresh_koreader_matching.rebuild_failed", err), err

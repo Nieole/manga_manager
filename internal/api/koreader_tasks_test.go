@@ -10,13 +10,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	ksvc "manga-manager/internal/koreader"
+	"manga-manager/internal/storageio"
 )
 
 // koreaderTaskStore 只实现三个 KOReader 任务体真正会调到的那几个方法。其余方法留给内嵌的
@@ -91,9 +95,16 @@ func (s *koreaderTaskStore) advancePublishWindow() {
 // newKOReaderTaskRig 拼出三个 KOReader 任务体需要的那几样：任务引擎（仍经它唯一的 seam 构造，
 // 后台能力换成同步执行版）、KOReader 服务与配置。
 //
-// 匹配模式取**路径**而非二进制哈希：那条路只拼字符串、不读书文件，用例因此不必造临时文件，
+// 匹配模式取**路径**而非二进制哈希：那条路只拼字符串、不读书文件，多数用例因此不必造临时文件，
 // 而任务引擎这一侧走的是同一条路径。顺带让元数据断言看到一组非默认取值。
 func newKOReaderTaskRig(t *testing.T, store *koreaderTaskStore) (*Controller, func() []TaskStatus) {
+	t.Helper()
+	return newKOReaderTaskRigWithMode(t, store, config.KOReaderMatchModeFilePath)
+}
+
+// newKOReaderTaskRigWithMode 是同一套装置，但由用例挑匹配模式：二进制哈希那条路要逐本读书文件，
+// 只有它会走到**磁盘作业**。
+func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMode string) (*Controller, func() []TaskStatus) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	store.clock = clock
@@ -102,16 +113,19 @@ func newKOReaderTaskRig(t *testing.T, store *koreaderTaskStore) (*Controller, fu
 
 	cfg := &config.Config{}
 	cfg.KOReader.Enabled = true
-	cfg.KOReader.MatchMode = config.KOReaderMatchModeFilePath
+	cfg.KOReader.MatchMode = matchMode
 	cfg.KOReader.PathIgnoreExtension = true
 	config.NormalizeConfig(cfg)
 	manager := config.NewManager(cfg)
+
+	// 调度器新建而非取包级实例：包级实例会让用例经由按卷计数的限流器互相污染。
+	diskWork := diskwork.NewRunner(manager.Snapshot, storageio.NewScheduler())
 
 	return &Controller{
 		taskEngine: e,
 		store:      store,
 		config:     manager,
-		koreader:   ksvc.NewService(store, manager),
+		koreader:   ksvc.NewService(store, manager, diskWork),
 	}, snapshots
 }
 
@@ -314,6 +328,33 @@ func TestRebuildBookHashesFrameIsPublishedWhole(t *testing.T) {
 	}
 	if task.MessageParams["updated"] != "2" || task.MessageParams["total"] != "2" {
 		t.Fatalf("完成文案的占位参数为 %v, want updated=2 total=2", task.MessageParams)
+	}
+}
+
+// TestRebuildBookHashesReportsDiskWorkIO 守本包这一侧的接线：每本读盘的实况要从 koreader 的批
+// 循环流回本包的任务指标，并落到**任务参数**那条通道上——存储 IO 面板按参数名读它，帧里的指标
+// 到不了那一行。
+//
+// 断言压在档位、卷键与「计算哈希」上而不是等待毫秒上：无人争用时等待本就是 0，而这三项只要
+// 接线断了就一起消失。
+func TestRebuildBookHashesReportsDiskWorkIO(t *testing.T) {
+	bookPath := filepath.Join(t.TempDir(), "vol1.cbz")
+	if err := os.WriteFile(bookPath, []byte("book"), 0o644); err != nil {
+		t.Fatalf("写书文件失败: %v", err)
+	}
+	store := &koreaderTaskStore{candidates: []database.BookIdentityCandidate{{ID: 1, Path: bookPath}}}
+	c, snapshots := newKOReaderTaskRigWithMode(t, store, config.KOReaderMatchModeBinaryHash)
+
+	if err := c.launchRebuildBookHashesTask(); err != nil {
+		t.Fatalf("启动**指纹**重建失败: %v", err)
+	}
+
+	task := lastPublishedTask(t, snapshots(), "rebuild_book_hashes")
+	if task.Params["hashed_files"] != "1" {
+		t.Fatalf("任务参数里 hashed_files=%q, want \"1\" —— 磁盘作业的实况没有汇回任务指标：%v", task.Params["hashed_files"], task.Params)
+	}
+	if task.Params["storage_profile"] == "" || task.Params["volume_key"] == "" {
+		t.Fatalf("存储档位与卷键没落到**任务参数**上：%v", task.Params)
 	}
 }
 

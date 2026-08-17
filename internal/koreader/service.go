@@ -15,6 +15,8 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
+	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 )
 
@@ -41,6 +43,8 @@ var (
 type Service struct {
 	store database.Store
 	cfg   *config.Manager
+	// diskWork 执行本包唯一一处**磁盘作业**：书籍**指纹**重建逐本读完整个文件。
+	diskWork *diskwork.Runner
 }
 
 type Credentials struct {
@@ -62,8 +66,10 @@ type SyncResult struct {
 	BookID  *int64
 }
 
-func NewService(store database.Store, cfg *config.Manager) *Service {
-	return &Service{store: store, cfg: cfg}
+// NewService 构造 KOReader 同步服务。diskWork 不得为 nil：书籍**指纹**重建要逐本读完整个
+// 文件，那是一次**磁盘作业**，绕开它就等于绕开暂停闸门与存储令牌。
+func NewService(store database.Store, cfg *config.Manager, diskWork *diskwork.Runner) *Service {
+	return &Service{store: store, cfg: cfg, diskWork: diskWork}
 }
 
 // RegisterDevice 实现 kosync /users/create 设备自助注册。KOReader 客户端提交的 password
@@ -380,9 +386,17 @@ func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReade
 	return record, nil
 }
 
-func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress func(current, total int)) (int, int, error) {
+// RebuildBookIdentities 回填缺**指纹**的书。二进制哈希模式下每本要读完整个文件，那是一次
+// **磁盘作业**：absorbDiskWork 收下它在限流上的实况，由调用方折进自己的任务指标（可为 nil）。
+//
+// 指纹算不出来只跳过这一本、推进分页游标；中止只由磁盘作业入口返回的错误——闸门与令牌的错误
+// ——决定。游标停住即死循环：批次按 id > afterID 切，坏书排在末尾时同一本会被永远切回来。
+func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, absorbDiskWork func(diskwork.Stats), progress func(current, total int)) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
+	}
+	if absorbDiskWork == nil {
+		absorbDiskWork = func(diskwork.Stats) {}
 	}
 	matchConfig := s.currentMatchConfig()
 	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchConfig.MatchMode)
@@ -411,9 +425,18 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 			}
 			params := database.UpdateBookIdentityParams{ID: book.ID}
 			if matchConfig.MatchMode == config.KOReaderMatchModeBinaryHash {
-				fileHash, err := FingerprintFileContext(ctx, book.Path)
+				var fileHash string
+				var hashErr error
+				stats, err := s.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
+					fileHash, hashErr = FingerprintFileContext(ctx, book.Path)
+					return nil
+				})
+				absorbDiskWork(stats)
 				if err != nil {
-					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
+					return updated, total, err
+				}
+				if hashErr != nil {
+					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
 					afterID = book.ID
 					continue
 				}

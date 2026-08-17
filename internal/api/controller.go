@@ -223,6 +223,26 @@ func (m *taskIOMetrics) absorbDiskWork(stats diskwork.Stats) {
 	}
 }
 
+// absorbHashedFile 吸收一次**整文件读取**的实况：这个工种的一次**磁盘作业**就是把一本书读一遍，
+// 因此除等待与暂停之外，「计算哈希」也记上一笔。批循环在别的包里的取用点用它——那里够不到本包的
+// 指标，计数只能搭着实况一起回来。
+func (m *taskIOMetrics) absorbHashedFile(stats diskwork.Stats) {
+	if m == nil {
+		return
+	}
+	m.absorbDiskWork(stats)
+	m.HashedFiles++
+}
+
+// frameMetrics 是 IO 指标在**一帧**里的那几个键。两处哈希上报共用一份，键名不会各自漂移。
+func (m *taskIOMetrics) frameMetrics() map[string]int64 {
+	return map[string]int64{
+		"hashed_files": m.HashedFiles,
+		"io_wait_ms":   m.IOWaitMillis,
+		"paused_ms":    m.PausedMillis,
+	}
+}
+
 // controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
 // 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
 type controllerCacheSizes struct {
@@ -253,7 +273,6 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		progressWriteCache: progressWriteCache,
 		scanner:            scan,
 		config:             cfg,
-		koreader:           koreader.NewService(store, cfg),
 		external:           external.NewManager(store, 30*time.Minute),
 		proposals:          proposal.NewService(proposalDB{Store: store}),
 		configPath:         cfgPath,
@@ -269,6 +288,9 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 
 	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.Default)
+
+	// koreader 的书籍**指纹**重建逐本读完整个文件，那是一次**磁盘作业**，因此它要 diskWork（在其后建立）。
+	c.koreader = koreader.NewService(store, cfg, c.diskWork)
 
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)

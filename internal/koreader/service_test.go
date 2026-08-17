@@ -16,9 +16,19 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
+	"manga-manager/internal/storageio"
 )
 
 func newTestService(t *testing.T, matchMode string) (*Service, database.Store, string) {
+	t.Helper()
+	return newTestServiceWithStorage(t, matchMode, storageio.NewScheduler(), nil)
+}
+
+// newTestServiceWithStorage 额外接管存储侧：调度器由用例新建（包级实例会让用例经由按卷计数的
+// 限流器互相污染），tune 可按书树的根改写存储策略，让「读盘先取**存储令牌**」这条路径在用例里
+// 真的走到。
+func newTestServiceWithStorage(t *testing.T, matchMode string, sched *storageio.Scheduler, tune func(cfg *config.Config, rootDir string)) (*Service, database.Store, string) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -36,9 +46,13 @@ func newTestService(t *testing.T, matchMode string) (*Service, database.Store, s
 	cfg := &config.Config{}
 	cfg.Database.Path = dbPath
 	cfg.KOReader.MatchMode = matchMode
+	if tune != nil {
+		tune(cfg, tempDir)
+	}
 	config.NormalizeConfig(cfg)
 
-	return NewService(store, config.NewManager(cfg)), store, tempDir
+	manager := config.NewManager(cfg)
+	return NewService(store, manager, diskwork.NewRunner(manager.Snapshot, sched)), store, tempDir
 }
 
 func seedServiceBook(t *testing.T, store database.Store, rootDir, libraryName, seriesName, bookName string) (database.Library, database.Book) {
@@ -128,7 +142,7 @@ func TestRebuildBookIdentitiesProcessesAllBatches(t *testing.T) {
 		}
 	}
 
-	updated, total, err := service.RebuildBookIdentities(context.Background(), 2, nil)
+	updated, total, err := service.RebuildBookIdentities(context.Background(), 2, nil, nil)
 	if err != nil {
 		t.Fatalf("rebuild identities failed: %v", err)
 	}
@@ -150,7 +164,7 @@ func TestRebuildBookIdentitiesUsesPathIndexesInFilePathMode(t *testing.T) {
 	lib, book := seedServiceBook(t, store, rootDir, "Library", "Parent/Series", "Volume01.cbz")
 	_ = lib
 
-	updated, total, err := service.RebuildBookIdentities(context.Background(), 1, nil)
+	updated, total, err := service.RebuildBookIdentities(context.Background(), 1, nil, nil)
 	if err != nil {
 		t.Fatalf("rebuild identities failed: %v", err)
 	}
@@ -513,7 +527,7 @@ func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
 	// 走一次真实的进度上报，确认管理员的数据没有被改写。
 	// 先建立书籍指纹索引：CreateBook 不写 path_fingerprint，不跑这一步的话下面的上报
 	// 匹配不到任何书，applyBookProgress 根本不会被调用——两条断言就成了永远为真的空断言。
-	if _, _, err := service.RebuildBookIdentities(ctx, 10, nil); err != nil {
+	if _, _, err := service.RebuildBookIdentities(ctx, 10, nil, nil); err != nil {
 		t.Fatalf("RebuildBookIdentities: %v", err)
 	}
 
