@@ -15,7 +15,9 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/storageio"
 )
 
 // maintenanceStore 只实现维护任务体真正会调到的那几个方法。其余方法留给内嵌的 nil 接口——
@@ -98,7 +100,11 @@ func newMaintenanceRig(t *testing.T, store database.Store) (*Controller, func() 
 	cfg.Cache.Dir = t.TempDir()
 	config.NormalizeConfig(cfg)
 
-	return &Controller{taskEngine: e, store: store, config: config.NewManager(cfg)}, snapshots, clock
+	c := &Controller{taskEngine: e, store: store, config: config.NewManager(cfg)}
+	// 两处哈希回填走**磁盘作业**入口。调度器**必须**新建而不能用包级实例：后者按卷计数，
+	// 用例之间会经它互相污染。
+	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
+	return c, snapshots, clock
 }
 
 // TestRebuildIndexNamesTheFailedIndex 守两步索引重灌各自的失败文案码：只报一句「重建索引失败」
@@ -346,8 +352,7 @@ func TestHashBackfillStaysSilentWhenNothingIsMissing(t *testing.T) {
 // seedIdentityCandidates 造 n 本指向真实临时文件的候选书：哈希任务体要真的读到文件才会
 // 上报进度并落库，指向不存在的路径只会走进「记一条警告然后跳过」那条分支。
 //
-// LibraryPath 留空是刻意的：**存储令牌**的卷键因此为空，取令牌一步直接短路，用例不必依赖
-// 全局的 storageio 状态。
+// LibraryPath 留空无妨：**磁盘作业**的卷键与存储策略都由书自己的路径决定，不看它。
 func seedIdentityCandidates(t *testing.T, n int) []database.BookIdentityCandidate {
 	t.Helper()
 	dir := t.TempDir()

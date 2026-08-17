@@ -17,6 +17,8 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
+	"manga-manager/internal/storageio"
 )
 
 const comicInfoSeriesID = int64(7)
@@ -32,7 +34,11 @@ func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Con
 	cfg.Cache.Dir = t.TempDir()
 	config.NormalizeConfig(cfg)
 
-	return &Controller{taskEngine: e, config: config.NewManager(cfg)}, snapshots
+	c := &Controller{taskEngine: e, config: config.NewManager(cfg)}
+	// 回写走**磁盘作业**入口。调度器**必须**新建而不能用包级实例：后者按卷计数，
+	// 用例之间会经它互相污染。
+	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
+	return c, snapshots
 }
 
 func comicInfoSeries() database.Series {

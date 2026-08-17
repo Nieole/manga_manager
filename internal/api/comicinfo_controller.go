@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/storageio"
-	"manga-manager/internal/taskcontrol"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -251,27 +251,25 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
-			if err := taskcontrol.Wait(ctx); err != nil {
-				return TaskResult{}, err
-			}
-
-			// 拿 IO 令牌：归档回写是重 IO（逐本解压重压），不受调度会让阅读器取页明显卡顿。
-			// 用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，共用同一档并发上限。
-			_, releaseToken, _, _, tokenErr := c.acquireTaskStorageToken(ctx, book.Path, storageio.WorkKindMetadataScan)
-			if tokenErr != nil {
-				failed++
-				continue
-			}
-
+			// 聚合与序列化是纯 CPU，留在**磁盘作业**之外：把它们夹进令牌的持有区间只会虚占这块盘
+			// 的归档打开额度。序列化失败与回写失败同属这一本书的失败计数。
 			info := buildComicInfoForBook(book, series, books, tags, authors)
 			data, marshalErr := parser.MarshalComicInfo(info)
 			if marshalErr != nil {
-				releaseToken()
 				failed++
 				continue
 			}
-			writeErr := parser.WriteComicInfoIntoArchive(book.Path, data)
-			releaseToken()
+
+			// 走**磁盘作业**入口：归档回写是重 IO（逐本解压重压），不受调度会让阅读器取页明显卡顿。
+			// 用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，共用同一档并发上限。
+			// 闭包只捕获自己的错误——回写失败是这一本书的结局，中止只由 Do 返回的闸门错误决定。
+			var writeErr error
+			if _, err := c.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
+				writeErr = parser.WriteComicInfoIntoArchive(book.Path, data)
+				return nil
+			}); err != nil {
+				return TaskResult{}, err
+			}
 
 			switch {
 			case writeErr == nil:

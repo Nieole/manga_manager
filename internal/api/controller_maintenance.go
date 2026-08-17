@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
@@ -346,26 +347,21 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 		}
 
 		for _, book := range books {
-			if err := taskcontrol.Wait(ctx); err != nil {
+			// 最干净的**磁盘作业**形状：取令牌 → 读一遍文件 → 立刻归还。闭包只捕获自己的错误，
+			// 因为算不出指纹不该中止整个回填；中止只由 Do 返回的闸门与令牌错误决定。
+			var quickHash string
+			var hashErr error
+			stats, err := c.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
+				quickHash, hashErr = koreader.FingerprintQuickFile(book.Path)
+				return nil
+			})
+			metrics.absorbDiskWork(stats)
+			if err != nil {
 				return updated, total, err
 			}
-			policy, releaseToken, waited, paused, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
-			if tokenErr != nil {
-				return updated, total, tokenErr
-			}
-			if waited > 0 {
-				metrics.IOWaitMillis += waited.Milliseconds()
-			}
-			if paused > 0 {
-				metrics.PausedMillis += paused.Milliseconds()
-			}
-			metrics.StorageProfile = policy.StorageProfile
-			metrics.VolumeKey = policy.VolumeKey
-			quickHash, err := koreader.FingerprintQuickFile(book.Path)
-			releaseToken()
 			metrics.HashedFiles++
-			if err != nil {
-				slog.Warn("Failed to quick-fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
+			if hashErr != nil {
+				slog.Warn("Failed to quick-fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
 				afterID = book.ID
 				continue
 			}
@@ -472,26 +468,19 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 		}
 
 		for _, book := range books {
-			if err := taskcontrol.Wait(ctx); err != nil {
+			var fileHash string
+			var hashErr error
+			stats, err := c.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
+				fileHash, hashErr = koreader.FingerprintFileContext(ctx, book.Path)
+				return nil
+			})
+			metrics.absorbDiskWork(stats)
+			if err != nil {
 				return updated, total, err
 			}
-			policy, releaseToken, waited, paused, tokenErr := c.acquireTaskStorageToken(ctx, book.LibraryPath, storageio.WorkKindIdentityHash)
-			if tokenErr != nil {
-				return updated, total, tokenErr
-			}
-			if waited > 0 {
-				metrics.IOWaitMillis += waited.Milliseconds()
-			}
-			if paused > 0 {
-				metrics.PausedMillis += paused.Milliseconds()
-			}
-			metrics.StorageProfile = policy.StorageProfile
-			metrics.VolumeKey = policy.VolumeKey
-			fileHash, err := koreader.FingerprintFileContext(ctx, book.Path)
-			releaseToken()
 			metrics.HashedFiles++
-			if err != nil {
-				slog.Warn("Failed to backfill full book hash", "book_id", book.ID, "path", book.Path, "error", err)
+			if hashErr != nil {
+				slog.Warn("Failed to backfill full book hash", "book_id", book.ID, "path", book.Path, "error", hashErr)
 				afterID = book.ID
 				continue
 			}
