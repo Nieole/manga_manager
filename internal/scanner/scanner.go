@@ -1664,55 +1664,27 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	}
 }
 
+// slowThumbnailWrite 是缩略图这一趟慢得该被看见的阈值：落盘或等令牌任一超过它就留一条记录。
+const slowThumbnailWrite = 250 * time.Millisecond
+
 func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config, metrics *scanMetrics) (sql.NullString, error) {
 	if existing := existingThumbnailPath(cfg, candidate.bookHash); existing.Valid {
 		return existing, nil
 	}
 
-	storagePolicy := config.ResolveStoragePolicy(cfg, candidate.path)
-	releaseToken, waited, paused, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ArchiveOpenConcurrency, storagePolicy.IOPolicy.CoverConcurrency), storageio.WorkKindCoverBuild)
-	if err != nil {
-		return sql.NullString{}, err
-	}
-	tokenReleased := false
-	releaseSourceToken := func() {
-		if tokenReleased {
-			return
+	// 令牌只覆盖归档 IO：紧随其后的图片转码是纯 CPU 的，圈进持有区间只会虚占归档打开的并发额度。
+	var pageData []byte
+	coverWork := diskwork.Work{Kind: storageio.WorkKindCoverBuild, Path: candidate.path}
+	stats, err := s.diskWork.Do(ctx, coverWork, func() error {
+		arc, err := s.openArchive(candidate.path)
+		if err != nil {
+			return err
 		}
-		tokenReleased = true
-		releaseToken()
-	}
-	defer releaseSourceToken()
-	if metrics != nil && waited > 0 {
-		metrics.ioWaitMillis.Add(waited.Milliseconds())
-	}
-	if metrics != nil && paused > 0 {
-		metrics.pausedMillis.Add(paused.Milliseconds())
-	}
-	if waited >= 250*time.Millisecond {
-		slog.Info("Queued thumbnail waited for storage IO token",
-			"path", candidate.path,
-			"storage_profile", storagePolicy.StorageProfile,
-			"volume_key", storagePolicy.VolumeKey,
-			"io_wait_ms", waited.Milliseconds(),
-		)
-	}
-
-	arc, err := s.openArchive(candidate.path)
-	if err != nil {
-		return sql.NullString{}, err
-	}
-
-	select {
-	case <-ctx.Done():
-		arc.Close()
-		return sql.NullString{}, ctx.Err()
-	default:
-	}
-
-	pageData, err := arc.ReadPage(candidate.pageName)
-	arc.Close()
-	releaseSourceToken()
+		defer arc.Close()
+		pageData, err = arc.ReadPage(candidate.pageName)
+		return err
+	})
+	metrics.absorbDiskWork(stats)
 	if err != nil {
 		return sql.NullString{}, err
 	}
@@ -1742,29 +1714,29 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 	thumbDir := filepath.Join(thumbnailBaseDir(cfg), subDir)
 	fileName := candidate.bookHash + extensionFromContentType(contentType, targetFormat)
 	fullPath := filepath.Join(thumbDir, fileName)
-	writeWait, writePaused, writeDuration, err := s.writeThumbnailFile(ctx, cfg, storagePolicy, candidate.path, thumbDir, fullPath, processed)
-	if metrics != nil {
-		if writeWait > 0 {
-			metrics.ioWaitMillis.Add(writeWait.Milliseconds())
-		}
-		if writePaused > 0 {
-			metrics.pausedMillis.Add(writePaused.Milliseconds())
-		}
-		if writeDuration > 0 {
-			metrics.thumbnailWriteMillis.Add(writeDuration.Milliseconds())
-		}
+	// 缓存目录常和藏书在同一块盘上转，却落不进任何资料库的路径前缀，故把藏书那一侧交给 PolicyFrom。
+	var writeDuration time.Duration
+	writeWork := diskwork.Work{Kind: storageio.WorkKindCacheWrite, Path: thumbDir, PolicyFrom: candidate.path}
+	writeStats, err := s.diskWork.Do(ctx, writeWork, func() error {
+		var err error
+		writeDuration, err = writeThumbnailFile(thumbDir, fullPath, processed)
+		return err
+	})
+	metrics.absorbDiskWork(writeStats)
+	if metrics != nil && writeDuration > 0 {
+		metrics.thumbnailWriteMillis.Add(writeDuration.Milliseconds())
 	}
 	if err != nil {
 		return sql.NullString{}, err
 	}
-	if writeDuration >= 250*time.Millisecond || writeWait >= 250*time.Millisecond {
+	if writeDuration >= slowThumbnailWrite || writeStats.Wait >= slowThumbnailWrite {
 		slog.Info("Queued thumbnail cache write completed",
 			"path", candidate.path,
 			"thumbnail_path", fullPath,
-			"storage_profile", storagePolicy.StorageProfile,
-			"volume_key", config.VolumeKey(fullPath),
-			"io_wait_ms", writeWait.Milliseconds(),
-			"paused_ms", writePaused.Milliseconds(),
+			"storage_profile", writeStats.StorageProfile,
+			"volume_key", writeStats.VolumeKey,
+			"io_wait_ms", writeStats.Wait.Milliseconds(),
+			"paused_ms", writeStats.PausedWait.Milliseconds(),
 			"thumbnail_write_ms", writeDuration.Milliseconds(),
 		)
 	}
@@ -1856,26 +1828,16 @@ func removeGeneratedThumbnail(cfg config.Config, relativePath string) {
 	_ = os.Remove(fullPath)
 }
 
-func (s *Scanner) writeThumbnailFile(ctx context.Context, cfg config.Config, sourcePolicy config.ResolvedStoragePolicy, sourcePath, thumbDir, fullPath string, data []byte) (time.Duration, time.Duration, time.Duration, error) {
-	writePolicy := config.ResolveStoragePolicy(cfg, thumbDir)
-	if config.SameVolume(sourcePath, thumbDir) {
-		writePolicy = sourcePolicy
-		writePolicy.VolumeKey = config.VolumeKey(thumbDir)
-	}
-	releaseToken, waited, paused, err := s.acquireStorageToken(ctx, writePolicy, writePolicy.IOPolicy.CoverConcurrency, storageio.WorkKindCacheWrite)
-	if err != nil {
-		return waited, paused, 0, err
-	}
-	defer releaseToken()
-
+// writeThumbnailFile 把缩略图落盘，返回落盘本身的耗时。等令牌与限流是调用方的事，这里只剩 IO。
+func writeThumbnailFile(thumbDir, fullPath string, data []byte) (time.Duration, error) {
 	started := time.Now()
 	if err := os.MkdirAll(thumbDir, 0755); err != nil {
-		return waited, paused, time.Since(started), err
+		return time.Since(started), err
 	}
 	if err := os.WriteFile(fullPath, data, 0644); err != nil {
-		return waited, paused, time.Since(started), err
+		return time.Since(started), err
 	}
-	return waited, paused, time.Since(started), nil
+	return time.Since(started), nil
 }
 
 func (s *Scanner) waitForCoverQueue(ctx context.Context) error {

@@ -688,6 +688,20 @@ func waitForScannerBookCover(t testing.TB, s *Scanner, store database.Store, boo
 	}
 }
 
+// writeScannerTestSeries 在 seriesPath 下铺一串单页归档，返回它们的完整路径（与 names 同序）。
+func writeScannerTestSeries(t testing.TB, seriesPath string, names ...string) []string {
+	t.Helper()
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		path := filepath.Join(seriesPath, name)
+		if err := writeScannerTestCBZ(path, map[string][]byte{"001.png": testPNG1x1}); err != nil {
+			t.Fatalf("write cbz %s failed: %v", name, err)
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
 func writeScannerTestCBZ(path string, files map[string][]byte) error {
 	f, err := os.Create(path)
 	if err != nil {

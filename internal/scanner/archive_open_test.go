@@ -74,11 +74,7 @@ func TestScanAccountsArchiveFailuresAndKeepsScanning(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, store, lib, libraryPath := newScannerTestLibrary(t)
 			seriesPath := filepath.Join(libraryPath, "Series Alpha")
-			for _, name := range []string{"Alpha 01.cbz", brokenName, "Gamma 03.cbz"} {
-				if err := writeScannerTestCBZ(filepath.Join(seriesPath, name), map[string][]byte{"001.png": testPNG1x1}); err != nil {
-					t.Fatalf("write cbz failed: %v", err)
-				}
-			}
+			writeScannerTestSeries(t, seriesPath, "Alpha 01.cbz", brokenName, "Gamma 03.cbz")
 
 			s := NewScanner(store, config.NewManager(newSlowDiskTestConfig(t)))
 			tc.breakArchive(t, s, filepath.Join(seriesPath, brokenName))
