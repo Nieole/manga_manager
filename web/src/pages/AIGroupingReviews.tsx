@@ -258,6 +258,9 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
         applied,
         rejected,
         skipped: 0,
+        // AI 分组逐条提交，识别不出「已被别人处理过」这一类，因此恒为 0。
+        // 模板与元数据提案共用，缺参会在提示里留下一个空洞。
+        conflict: 0,
         failed,
       }), failed > 0 ? 'error' : 'success');
       setMarkedActions({});

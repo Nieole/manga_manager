@@ -158,7 +158,7 @@ export const messages: MessageCatalog = {
     'reviewInbox.loadingMore': '\u6b63\u5728\u52a0\u8f7d\u66f4\u591a...',
     'reviewInbox.scrollForMore': '\u7ee7\u7eed\u5411\u4e0b\u6eda\u52a8\u52a0\u8f7d\u66f4\u591a',
     'reviewInbox.allLoaded': '\u5df2\u52a0\u8f7d\u5168\u90e8 {{total}} \u9879',
-    'reviewInbox.toast.markedApplied': '\u5df2\u540c\u610f {{applied}} \u9879\uff0c\u5df2\u62d2\u7edd {{rejected}} \u9879\uff0c\u90e8\u5206\u5e94\u7528 {{partial}} \u9879\uff0c\u8df3\u8fc7 {{skipped}} \u9879\uff0c\u5931\u8d25 {{failed}} \u9879',
+    'reviewInbox.toast.markedApplied': '\u5df2\u540c\u610f {{applied}} \u9879\uff0c\u5df2\u62d2\u7edd {{rejected}} \u9879\uff0c\u90e8\u5206\u5e94\u7528 {{partial}} \u9879\uff0c\u8df3\u8fc7 {{skipped}} \u9879\uff0c\u5df2\u88ab\u5904\u7406 {{conflict}} \u9879\uff0c\u5931\u8d25 {{failed}} \u9879',
 
     'status.ongoing': '连载中',
     'status.completed': '已完结',

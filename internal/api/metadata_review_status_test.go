@@ -1,6 +1,6 @@
-// 本文件守四条终态推进路径的**传输语义**：单条/批量的应用与拒绝，撞上已进终态的提案
-// 一律回 409，正常路径回 200。前端按状态码分支——把冲突报成 500 会让用户看到「服务器错误」，
-// 报成 200 则会让界面以为处理成功了。
+// 本文件守四条终态推进路径的**传输语义**：撞上已进终态的提案，单条一律回 409、批量落
+// conflict 桶。前端按状态码与桶分支——把冲突报成 500 会让用户看到「服务器错误」，报成 200
+// 或混进 failed 则分别让界面以为处理成功了、以为出了故障。
 //
 // 终态本身的不变量（时间戳不得同时非空、冲突时整体回滚）归 internal/proposal 的裁决用例。
 
@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"manga-manager/internal/database"
@@ -97,9 +98,35 @@ func TestMetadataReviewTerminalStatusIsGuarded(t *testing.T) {
 	}
 }
 
-// TestBulkMetadataReviewPutsPreemptedInFailed 钉住批量入口对已进终态提案的归桶：
-// 落 failed，与「查不到」同桶——批量响应是前端既有契约，被抢先不另开桶。
-func TestBulkMetadataReviewPutsPreemptedInFailed(t *testing.T) {
+// invokeBulk 让两个批量入口共用同一段请求构造与解析，断言因此只落在归桶上。
+func invokeBulk(t *testing.T, controller *Controller, action string, ids ...int64) metadataReviewBulkResponse {
+	t.Helper()
+	encoded := make([]string, 0, len(ids))
+	for _, id := range ids {
+		encoded = append(encoded, strconv.FormatInt(id, 10))
+	}
+	body := []byte(`{"review_ids":[` + strings.Join(encoded, ",") + `],"mode":"all"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk", bytes.NewReader(body))
+	if action == "apply" {
+		controller.bulkApplyMetadataReviews(rec, req)
+	} else {
+		controller.bulkRejectMetadataReviews(rec, req)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp metadataReviewBulkResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应: %v", err)
+	}
+	return resp
+}
+
+// TestBulkMetadataReviewPutsPreemptedInConflict 钉住批量入口对已进终态提案的归桶：
+// 单独落 conflict 且不把 success 置为 false。被别人抢先是日常情形，混进 failed 会让
+// 用户为一堆并没有坏掉的东西看到红色的失败提示。
+func TestBulkMetadataReviewPutsPreemptedInConflict(t *testing.T) {
 	for _, action := range []string{"apply", "reject"} {
 		t.Run(action, func(t *testing.T) {
 			controller, store, _, _ := newTestController(t)
@@ -113,23 +140,27 @@ func TestBulkMetadataReviewPutsPreemptedInFailed(t *testing.T) {
 				t.Fatalf("抢先拒绝失败：%d %s", rec.Code, rec.Body.String())
 			}
 
-			body := []byte(`{"review_ids":[` + strconv.FormatInt(review.ID, 10) + `],"mode":"all"}`)
-			rec = httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk", bytes.NewReader(body))
-			if action == "apply" {
-				controller.bulkApplyMetadataReviews(rec, req)
-			} else {
-				controller.bulkRejectMetadataReviews(rec, req)
+			resp := invokeBulk(t, controller, action, review.ID)
+			if len(resp.Conflict) != 1 || resp.Conflict[0] != review.ID {
+				t.Fatalf("批量%s 的响应 = %+v，期望被抢先的那条落 conflict", action, resp)
 			}
-			if rec.Code != http.StatusOK {
-				t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
+			if len(resp.Failed) != 0 || !resp.Success {
+				t.Fatalf("批量%s 的响应 = %+v，被抢先不是故障，不该落 failed、也不该把 success 置为 false", action, resp)
 			}
-			var resp metadataReviewBulkResponse
-			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("解析响应: %v", err)
-			}
-			if len(resp.Failed) != 1 || resp.Success {
-				t.Fatalf("批量%s 的响应 = %+v，期望被抢先的那条落 failed 且 success=false", action, resp)
+		})
+	}
+}
+
+// TestBulkMetadataReviewPutsMissingInFailed 钉住 failed 收窄后仍收住的那一类：提案查不到。
+// 它与被抢先不同——库里根本没有这一行，调用方的入参就是坏的。
+func TestBulkMetadataReviewPutsMissingInFailed(t *testing.T) {
+	for _, action := range []string{"apply", "reject"} {
+		t.Run(action, func(t *testing.T) {
+			controller, _, _, _ := newTestController(t)
+
+			resp := invokeBulk(t, controller, action, 987654)
+			if len(resp.Failed) != 1 || len(resp.Conflict) != 0 || resp.Success {
+				t.Fatalf("批量%s 的响应 = %+v，期望查不到的那条落 failed 且 success=false", action, resp)
 			}
 		})
 	}

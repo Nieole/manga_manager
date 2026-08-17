@@ -158,7 +158,7 @@ export const messages: MessageCatalog = {
     'reviewInbox.loadingMore': 'Loading more...',
     'reviewInbox.scrollForMore': 'Scroll to load more',
     'reviewInbox.allLoaded': 'All {{total}} loaded',
-    'reviewInbox.toast.markedApplied': 'Approved {{applied}}, rejected {{rejected}}, partially applied {{partial}}, skipped {{skipped}}, failed {{failed}}',
+    'reviewInbox.toast.markedApplied': 'Approved {{applied}}, rejected {{rejected}}, partially applied {{partial}}, skipped {{skipped}}, already handled {{conflict}}, failed {{failed}}',
 
     'status.ongoing': 'Ongoing',
     'status.completed': 'Completed',

@@ -127,9 +127,13 @@ type metadataReviewBulkResponse struct {
 	Partial  []int64 `json:"partial,omitempty"`
 	Rejected []int64 `json:"rejected,omitempty"`
 	Skipped  []int64 `json:"skipped,omitempty"`
-	Failed   []int64 `json:"failed,omitempty"`
-	Total    int     `json:"total"`
-	Mode     string  `json:"mode"`
+	// Conflict 收 proposal.ApplyConflict / proposal.RejectConflict。与 Failed 分开是因为
+	// 它们并没有坏：混进去会让整条汇总提示变红，而用户什么也不用做。
+	Conflict []int64 `json:"conflict,omitempty"`
+	// Failed 只收真故障：查询报错、写入失败、提案查不到。
+	Failed []int64 `json:"failed,omitempty"`
+	Total  int     `json:"total"`
+	Mode   string  `json:"mode"`
 }
 
 func metadataFieldLabel(name string) string {
@@ -965,13 +969,14 @@ func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Req
 	}
 
 	result := metadataReviewBulkResponse{
-		Success: true,
-		Applied: make([]int64, 0, len(ids)),
-		Partial: make([]int64, 0),
-		Skipped: make([]int64, 0),
-		Failed:  make([]int64, 0),
-		Total:   len(ids),
-		Mode:    mode,
+		Success:  true,
+		Applied:  make([]int64, 0, len(ids)),
+		Partial:  make([]int64, 0),
+		Skipped:  make([]int64, 0),
+		Conflict: make([]int64, 0),
+		Failed:   make([]int64, 0),
+		Total:    len(ids),
+		Mode:     mode,
 	}
 	for _, id := range ids {
 		outcome, err := c.proposals.Apply(r.Context(), id, proposal.ApplyMode(mode))
@@ -990,9 +995,11 @@ func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Req
 			// 良性结果落 Skipped 而不是 Failed——前端把 Failed 当成出错来提示，
 			// 会让用户以为系统坏了。
 			result.Skipped = append(result.Skipped, id)
+		case proposal.ApplyConflict:
+			result.Conflict = append(result.Conflict, id)
 		default:
-			// 被抢先（ApplyConflict）与查不到（ApplyNotFound）都归 Failed：
-			// metadataReviewBulkResponse 是前端既有契约，这里不为被抢先新增桶。
+			// ApplyNotFound 落这里：入参指向的行不存在，是真故障。模块若新增一种结局而
+			// 这里没跟上，也落 failed——保守：报成成功会让用户以为已经处理完了。
 			result.Failed = append(result.Failed, id)
 		}
 	}
@@ -1038,18 +1045,27 @@ func (c *Controller) bulkRejectMetadataReviews(w http.ResponseWriter, r *http.Re
 	result := metadataReviewBulkResponse{
 		Success:  true,
 		Rejected: make([]int64, 0, len(ids)),
+		Conflict: make([]int64, 0),
 		Failed:   make([]int64, 0),
 		Total:    len(ids),
 		Mode:     mode,
 	}
 	for _, id := range ids {
 		outcome, err := c.proposals.Reject(r.Context(), id)
-		if err != nil || outcome.Status != proposal.RejectRejected {
-			// 被抢先与查不到同样归入 Failed，与批量应用一侧的归桶保持一致。
+		if err != nil {
 			result.Failed = append(result.Failed, id)
 			continue
 		}
-		result.Rejected = append(result.Rejected, id)
+		// 归桶与批量应用一侧一致：被抢先落 Conflict，其余（RejectNotFound 与将来新增的
+		// 结局）落 Failed。
+		switch outcome.Status {
+		case proposal.RejectRejected:
+			result.Rejected = append(result.Rejected, id)
+		case proposal.RejectConflict:
+			result.Conflict = append(result.Conflict, id)
+		default:
+			result.Failed = append(result.Failed, id)
+		}
 	}
 	if len(result.Failed) > 0 {
 		result.Success = false
