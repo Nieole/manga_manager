@@ -27,6 +27,7 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/proposal"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
@@ -1395,7 +1396,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 
 	// 本用例先前经 updateSeriesInfo 锁了 title/summary，而锁定字段不入队（入队了也会在
 	// apply 时被丢弃）。补一个未锁定的 publisher 提案，「系列上下文带出待审记录」才有东西可断言。
-	if _, _, _, err := controller.queueMetadataReview(context.Background(), info, &metadata.SeriesMetadata{
+	if _, err := controller.proposals.Queue(context.Background(), info, &metadata.SeriesMetadata{
 		Provider:   "bangumi",
 		Title:      "Alpha Metadata",
 		Summary:    "Reviewed summary",
@@ -1403,7 +1404,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 		SourceID:   42,
 		SourceURL:  "https://bgm.tv/subject/42",
 		Confidence: 0.9,
-	}, "bangumi", "Alpha"); err != nil {
+	}, "bangumi", "Alpha", proposal.QueueOptions{}); err != nil {
 		t.Fatalf("queue metadata review failed: %v", err)
 	}
 
@@ -3815,13 +3816,27 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 		t.Fatalf("unexpected source link: %s", links[0].Url)
 	}
 
-	review, err := store.GetMetadataReview(context.Background(), queued.ReviewID)
-	if err != nil {
-		t.Fatalf("GetMetadataReview failed: %v", err)
+	// 应用之后这条提案必须离开待裁决队列：留在里面，用户会看到一条已经写进系列的提案
+	// 还在等自己裁决，再点一次只会拿到 409。
+	afterRec := httptest.NewRecorder()
+	controller.listSeriesMetadataReview(afterRec, requestWithRouteParam(
+		http.MethodGet,
+		"/api/series/1/metadata-review",
+		nil,
+		"seriesId",
+		strconv.FormatInt(series.ID, 10),
+	))
+	if afterRec.Code != http.StatusOK {
+		t.Fatalf("expected metadata review list 200 after apply, got %d body=%s", afterRec.Code, afterRec.Body.String())
 	}
-	if review.Status != "applied" {
-		t.Fatalf("expected applied review status, got %+v", review)
+	var afterPayload metadataReviewResponse
+	if err := json.NewDecoder(afterRec.Body).Decode(&afterPayload); err != nil {
+		t.Fatalf("decode review list after apply failed: %v", err)
 	}
+	if len(afterPayload.Reviews) != 0 {
+		t.Fatalf("expected the applied review to leave the pending queue, got %+v", afterPayload.Reviews)
+	}
+
 	provenance, err := store.GetSeriesMetadataProvenance(context.Background(), series.ID)
 	if err != nil {
 		t.Fatalf("GetSeriesMetadataProvenance failed: %v", err)
@@ -3855,7 +3870,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 		t.Fatalf("GetSeries A failed: %v", err)
 	}
 
-	reviewA, _, _, err := controller.queueMetadataReview(context.Background(), seriesA, &metadata.SeriesMetadata{
+	queuedA, err := controller.proposals.Queue(context.Background(), seriesA, &metadata.SeriesMetadata{
 		Title:      "External Title",
 		Publisher:  "External Publisher",
 		Summary:    "External summary",
@@ -3863,21 +3878,23 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 		SourceURL:  "https://example.test/a",
 		Provider:   "bangumi",
 		Confidence: 0.7,
-	}, "bangumi", "Series Alpha")
+	}, "bangumi", "Series Alpha", proposal.QueueOptions{})
 	if err != nil {
 		t.Fatalf("queue review A failed: %v", err)
 	}
-	reviewB, _, _, err := controller.queueMetadataReview(context.Background(), seriesB, &metadata.SeriesMetadata{
+	reviewA := queuedA.Proposal
+	queuedB, err := controller.proposals.Queue(context.Background(), seriesB, &metadata.SeriesMetadata{
 		Title:      "Beta Title",
 		Publisher:  "Beta Publisher",
 		SourceID:   2,
 		SourceURL:  "https://example.test/b",
 		Provider:   "bangumi",
 		Confidence: 0.8,
-	}, "bangumi", "Series Beta")
+	}, "bangumi", "Series Beta", proposal.QueueOptions{})
 	if err != nil {
 		t.Fatalf("queue review B failed: %v", err)
 	}
+	reviewB := queuedB.Proposal
 
 	listRec := httptest.NewRecorder()
 	controller.listMetadataReviewInbox(listRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
@@ -3938,12 +3955,34 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 	if rejectRec.Code != http.StatusOK {
 		t.Fatalf("expected bulk reject 200, got %d body=%s", rejectRec.Code, rejectRec.Body.String())
 	}
-	rejected, err := store.GetMetadataReview(context.Background(), reviewB.ID)
-	if err != nil {
-		t.Fatalf("GetMetadataReview B failed: %v", err)
+	var rejectResp metadataReviewBulkResponse
+	if err := json.NewDecoder(rejectRec.Body).Decode(&rejectResp); err != nil {
+		t.Fatalf("decode bulk reject failed: %v", err)
 	}
-	if rejected.Status != "rejected" {
-		t.Fatalf("expected review B rejected, got %+v", rejected)
+	if len(rejectResp.Rejected) != 1 || rejectResp.Rejected[0] != reviewB.ID || len(rejectResp.Failed) != 0 {
+		t.Fatalf("unexpected bulk reject response: %+v", rejectResp)
+	}
+	// 拒绝要同时做到两件事：不把提案值写进系列，且让它离开收件箱。只错一样，
+	// 用户都会以为自己按错了键。
+	updatedB, err := store.GetSeries(context.Background(), seriesB.ID)
+	if err != nil {
+		t.Fatalf("GetSeries B after bulk reject failed: %v", err)
+	}
+	if updatedB.Title.Valid || updatedB.Publisher.Valid {
+		t.Fatalf("expected reject not to write metadata, got title=%+v publisher=%+v", updatedB.Title, updatedB.Publisher)
+	}
+	afterRec := httptest.NewRecorder()
+	controller.listMetadataReviewInbox(afterRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
+	if afterRec.Code != http.StatusOK {
+		t.Fatalf("expected inbox list 200 after bulk actions, got %d body=%s", afterRec.Code, afterRec.Body.String())
+	}
+	var afterInbox metadataReviewInboxResponse
+	if err := json.NewDecoder(afterRec.Body).Decode(&afterInbox); err != nil {
+		t.Fatalf("decode inbox after bulk actions failed: %v", err)
+	}
+	// 只剩 A：它是部分应用，仍待处理；B 已被拒绝。
+	if afterInbox.Total != 1 || len(afterInbox.Items) != 1 || afterInbox.Items[0].ID != reviewA.ID {
+		t.Fatalf("expected only the partially applied review to remain pending, got %+v", afterInbox)
 	}
 }
 

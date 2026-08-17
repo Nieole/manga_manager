@@ -40,6 +40,21 @@ func scrapeFailedMsg(locale, providerName string, err error) string {
 	return fmt.Sprintf("%s 刮削失败: %v", providerName, err)
 }
 
+// scrapeResultSourceURL 给出一条搜索结果的来源链接：数据源自己给了就用它，
+// 否则只有 Bangumi 能从条目 id 拼出可用的外链。
+func scrapeResultSourceURL(providerName string, result *metadata.SeriesMetadata) string {
+	if result == nil {
+		return ""
+	}
+	if strings.TrimSpace(result.SourceURL) != "" {
+		return strings.TrimSpace(result.SourceURL)
+	}
+	if result.SourceID > 0 && strings.EqualFold(providerName, "bangumi") {
+		return fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
+	}
+	return ""
+}
+
 // getProvider 根据名称返回对应的 Provider 实例
 func (c *Controller) getProvider(name string) metadata.Provider {
 	if c.providerFactory != nil {
@@ -115,7 +130,7 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 		"rating":     result.Rating,
 		"tags":       result.Tags,
 		"source_id":  result.SourceID,
-		"source_url": metadataSourceURL(provider.Name(), result),
+		"source_url": scrapeResultSourceURL(provider.Name(), result),
 		"confidence": result.Confidence,
 	})
 }

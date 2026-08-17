@@ -154,11 +154,11 @@ func TestScrapeApplyForceParamRequeues(t *testing.T) {
 	if !forced.Queued {
 		t.Fatalf("force=1 仍未入队：%+v —— UI 上「仍要加入队列」这条路是断的", forced)
 	}
-	pending, err := store.ListPendingMetadataReviewsBySeries(context.Background(), series.ID)
+	listed, err := controller.proposals.ListBySeries(context.Background(), series.ID)
 	if err != nil {
-		t.Fatalf("ListPendingMetadataReviewsBySeries: %v", err)
+		t.Fatalf("ListBySeries: %v", err)
 	}
-	if len(pending) != 1 {
-		t.Fatalf("强制入队后待裁决队列有 %d 条，期望 1 条", len(pending))
+	if len(listed.Proposals) != 1 {
+		t.Fatalf("强制入队后待裁决队列有 %d 条，期望 1 条", len(listed.Proposals))
 	}
 }
