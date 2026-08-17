@@ -993,69 +993,50 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 
 	cfg := s.currentConfig()
-	storagePolicy := config.ResolveStoragePolicy(cfg, rootPath)
 	var pages []parser.PageMetadata
 	var cInfo *parser.ComicInfo
-	// 存储令牌只覆盖真正的归档 IO——打开、读页目录、读 ComicInfo、关闭。路径解析、复合哈希、
-	// 排序号与封面候选都不碰这个归档，放在归还之后，避免虚占归档打开的并发额度。
+	// 令牌覆盖归档 IO 的全程，又不越出它：闭包外那些活不碰这个归档，圈进来只会虚占归档打开的
+	// 并发额度；而令牌若拖到它们之后才还，同卷的指纹申领就要自我等待。
 	if opts.Profile.opensArchive() {
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return
-		}
 		progress.publish("reading_metadata", job.path, false)
-		releaseToken, waited, paused, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.ArchiveOpenConcurrency), storageio.WorkKindMetadataScan)
-		if err != nil {
-			return
-		}
-		if metrics != nil && waited > 0 {
-			metrics.ioWaitMillis.Add(waited.Milliseconds())
-		}
-		if metrics != nil && paused > 0 {
-			metrics.pausedMillis.Add(paused.Milliseconds())
-		}
-		arc, err := s.openArchive(job.path)
-		if err != nil {
-			releaseToken()
+		archiveWork := diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: job.path}
+		stats, err := s.diskWork.Do(ctx, archiveWork, func() error {
+			arc, err := s.openArchive(job.path)
+			if err != nil {
+				if metrics != nil {
+					metrics.failedArchives.Add(1)
+				}
+				slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
+				return err
+			}
+			defer arc.Close()
 			if metrics != nil {
-				metrics.failedArchives.Add(1)
+				metrics.openedArchives.Add(1)
 			}
-			slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
-			return
-		}
-		if metrics != nil {
-			metrics.openedArchives.Add(1)
-		}
-		progress.publish("reading_metadata", job.path, false)
-		closed := false
-		closeArchive := func() {
-			if closed {
-				return
-			}
-			closed = true
-			arc.Close()
-			releaseToken()
-		}
-		defer closeArchive()
+			progress.publish("reading_metadata", job.path, false)
 
-		pages, err = arc.GetPages()
-		if err != nil {
-			if metrics != nil {
-				metrics.failedArchives.Add(1)
+			pages, err = arc.GetPages()
+			if err != nil {
+				if metrics != nil {
+					metrics.failedArchives.Add(1)
+				}
+				slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
+				return err
 			}
-			slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
-			return
-		}
 
-		if opts.Profile.extractsMetadata() {
-			xmlData, err := arc.ReadMetadataFile("ComicInfo.xml")
-			if err == nil {
-				if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
-					cInfo = parsed
+			if opts.Profile.extractsMetadata() {
+				if xmlData, err := arc.ReadMetadataFile("ComicInfo.xml"); err == nil {
+					if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
+						cInfo = parsed
+					}
 				}
 			}
+			return nil
+		})
+		metrics.absorbDiskWork(stats)
+		if err != nil {
+			return
 		}
-		// 必须在此归还，否则后续两处哈希申领同卷存储令牌时会自我等待。
-		closeArchive()
 	}
 
 	// 基于路径、修改时间和大小生成复合哈希，确保文件内容变动时缩略图强制刷新
