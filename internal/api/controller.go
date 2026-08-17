@@ -24,12 +24,14 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
@@ -47,9 +49,11 @@ type Controller struct {
 	pageArchive        *pageArchiveCache
 	progressWriteCache *lru.Cache[int64, cachedProgressWrite]
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
-	stats      *statsCache
-	scanner    *scanner.Scanner
-	config     *config.Manager
+	stats   *statsCache
+	scanner *scanner.Scanner
+	config  *config.Manager
+	// diskWork 执行任务体的**磁盘作业**：闸门、策略、上限、令牌与观测都收在它里面。
+	diskWork   *diskwork.Runner
 	koreader   *koreader.Service
 	external   *external.Manager
 	proposals  *proposal.Service
@@ -243,6 +247,9 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	if scan != nil {
 		scan.SetBatchCallback(c.handleScannerBatchEvent)
 	}
+
+	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
+	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.Default)
 
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)

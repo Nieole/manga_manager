@@ -23,6 +23,7 @@ import (
 	"manga-manager/internal/booksort"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/images"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/parser"
@@ -31,8 +32,10 @@ import (
 )
 
 type Scanner struct {
-	store       database.Store
-	config      *config.Manager
+	store  database.Store
+	config *config.Manager
+	// diskWork 执行扫描器的**磁盘作业**：闸门、策略、上限、令牌与观测都收在它里面。
+	diskWork    *diskwork.Runner
 	openArchive func(string) (parser.Archive, error)
 	coverOnce   sync.Once
 	coverQueue  chan coverJob
@@ -65,6 +68,7 @@ func NewScanner(store database.Store, cfg *config.Manager) *Scanner {
 	}
 	s.active.libraries = make(map[int64]struct{})
 	s.active.series = make(map[int64]struct{})
+	s.diskWork = diskwork.NewRunner(s.currentConfig, storageio.Default)
 	return s
 }
 
@@ -179,6 +183,20 @@ type scanMetrics struct {
 	ioWaitMillis           atomic.Int64
 	pausedMillis           atomic.Int64
 	thumbnailWriteMillis   atomic.Int64
+}
+
+// absorbDiskWork 把一次**磁盘作业**的等待与暂停耗时折进扫描指标。
+// 接收者为 nil 时直接返回，于是取用点上不必再守一次——不属于任何任务的扫描没有指标。
+func (m *scanMetrics) absorbDiskWork(stats diskwork.Stats) {
+	if m == nil {
+		return
+	}
+	if stats.Wait > 0 {
+		m.ioWaitMillis.Add(stats.Wait.Milliseconds())
+	}
+	if stats.PausedWait > 0 {
+		m.pausedMillis.Add(stats.PausedWait.Milliseconds())
+	}
 }
 
 type scanMetricsSnapshot struct {
@@ -1120,59 +1138,49 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 			book.CoverPath = job.existing.coverPath
 		}
 	}
+	// 两处指纹都是最干净的**磁盘作业**形状：取令牌 → 读一遍文件 → 立刻归还。闭包只捕获自己的
+	// 错误，因为算不出指纹不该中止这本书；中止只由 Do 返回的闸门与令牌错误决定。
+	hashWork := diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: job.path}
+
 	var fileHash string
 	if opts.Profile.computesFullHash(cfg) {
-		var err error
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return
-		}
 		progress.publish("hashing", job.path, false)
-		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
-		if tokenErr != nil {
+		var hashErr error
+		stats, err := s.diskWork.Do(ctx, hashWork, func() error {
+			fileHash, hashErr = koreader.FingerprintFileContext(ctx, job.path)
+			return nil
+		})
+		metrics.absorbDiskWork(stats)
+		if err != nil {
 			return
 		}
-		if metrics != nil && waited > 0 {
-			metrics.ioWaitMillis.Add(waited.Milliseconds())
-		}
-		if metrics != nil && paused > 0 {
-			metrics.pausedMillis.Add(paused.Milliseconds())
-		}
-		fileHash, err = koreader.FingerprintFileContext(ctx, job.path)
-		releaseToken()
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
 		progress.publish("hashing", job.path, false)
-		if err != nil {
-			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
+		if hashErr != nil {
+			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}
 
 	var quickHash string
 	if opts.Profile.computesQuickHash() {
-		var err error
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return
-		}
 		progress.publish("hashing", job.path, false)
-		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
-		if tokenErr != nil {
+		var hashErr error
+		stats, err := s.diskWork.Do(ctx, hashWork, func() error {
+			quickHash, hashErr = koreader.FingerprintQuickFile(job.path)
+			return nil
+		})
+		metrics.absorbDiskWork(stats)
+		if err != nil {
 			return
 		}
-		if metrics != nil && waited > 0 {
-			metrics.ioWaitMillis.Add(waited.Milliseconds())
-		}
-		if metrics != nil && paused > 0 {
-			metrics.pausedMillis.Add(paused.Milliseconds())
-		}
-		quickHash, err = koreader.FingerprintQuickFile(job.path)
-		releaseToken()
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
 		progress.publish("hashing", job.path, false)
-		if err != nil {
-			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
+		if hashErr != nil {
+			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}
 
