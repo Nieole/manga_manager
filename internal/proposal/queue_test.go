@@ -16,10 +16,10 @@ import (
 )
 
 // testDB 是用例侧的适配器，与装配处那个同形——本包只认 Queries 与 Database 两个接口。
-type testDB struct{ store database.Store }
+type testDB struct{ database.Store }
 
 func (d testDB) ExecTx(ctx context.Context, fn func(Queries) error) error {
-	return d.store.ExecTx(ctx, func(q *database.Queries) error { return fn(q) })
+	return d.Store.ExecTx(ctx, func(q *database.Queries) error { return fn(q) })
 }
 
 // newTestService 三步装配：migrate、开库、包适配器。真 SQLite——终态守卫、去重比对与
@@ -37,7 +37,7 @@ func newTestService(t *testing.T) (*Service, database.Store) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	return NewService(testDB{store: store}), store
+	return NewService(testDB{Store: store}), store
 }
 
 func seedSeries(t *testing.T, store database.Store, libName, seriesName string) database.Series {
@@ -68,6 +68,10 @@ func seedSeries(t *testing.T, store database.Store, libName, seriesName string) 
 
 func nullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
+}
+
+func nullFloat(value float64) sql.NullFloat64 {
+	return sql.NullFloat64{Float64: value, Valid: true}
 }
 
 // lockFields 把 locked_fields 改成 fields（逗号分隔），并回读改动后的系列。

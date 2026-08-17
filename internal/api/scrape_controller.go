@@ -2,17 +2,14 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/taskcontrol"
@@ -253,181 +250,6 @@ func isTruthyParam(raw string) bool {
 		return true
 	}
 	return false
-}
-
-func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions) error {
-	return c.applyMetadataToSeriesWithHook(ctx, series, result, opts, nil)
-}
-
-// applyMetadataToSeriesWithHook 在同一事务内应用系列元数据，并可选在提交前执行 afterInTx（同事务）。
-// 元数据审阅 apply 借此把「写元数据」与「标记 review 已处理」并入同一事务，避免元数据已写但状态仍
-// pending 导致同一 review 被重复 apply。
-func (c *Controller) applyMetadataToSeriesWithHook(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions, afterInTx func(*database.Queries) error) error {
-	// 解析已锁定字段
-	lockedSet := metadataLockedFieldSet(series)
-	providerName := strings.TrimSpace(opts.ProviderName)
-
-	return c.store.ExecTx(ctx, func(q *database.Queries) error {
-		updateParams := database.UpdateSeriesMetadataParams{ID: series.ID}
-		appliedFields := make(map[string]string)
-		confidence := opts.Confidence
-		if confidence <= 0 {
-			confidence = metadataDefaultConfidence(opts.ProviderName)
-		}
-		reviewID := sql.NullInt64{}
-		if opts.ReviewID != nil {
-			reviewID = sql.NullInt64{Int64: *opts.ReviewID, Valid: true}
-		}
-
-		if !lockedSet["title"] && result.Title != "" {
-			updateParams.Title = sql.NullString{String: result.Title, Valid: true}
-			appliedFields["title"] = result.Title
-		} else {
-			updateParams.Title = series.Title
-		}
-
-		if !lockedSet["summary"] && result.Summary != "" {
-			updateParams.Summary = sql.NullString{String: result.Summary, Valid: true}
-			appliedFields["summary"] = result.Summary
-		} else {
-			updateParams.Summary = series.Summary
-		}
-
-		if !lockedSet["publisher"] && result.Publisher != "" {
-			updateParams.Publisher = sql.NullString{String: result.Publisher, Valid: true}
-			appliedFields["publisher"] = result.Publisher
-		} else {
-			updateParams.Publisher = series.Publisher
-		}
-
-		if !lockedSet["rating"] && result.Rating > 0 {
-			updateParams.Rating = sql.NullFloat64{Float64: result.Rating, Valid: true}
-			appliedFields["rating"] = fmt.Sprintf("%.1f", result.Rating)
-		} else {
-			updateParams.Rating = series.Rating
-		}
-
-		if !lockedSet["status"] && result.Status != "" {
-			status := metadata.NormalizeStatusCode(result.Status)
-			updateParams.Status = sql.NullString{String: status, Valid: true}
-			appliedFields["status"] = status
-		} else {
-			updateParams.Status = series.Status
-		}
-		updateParams.Language = series.Language
-		updateParams.LockedFields = series.LockedFields
-		updateParams.NameInitial = database.SeriesInitialFromNullTitle(updateParams.Title, series.Name)
-
-		_, err := q.UpdateSeriesMetadata(ctx, updateParams)
-		if err != nil {
-			return err
-		}
-
-		recordField := func(fieldName, value string) error {
-			if strings.TrimSpace(value) == "" {
-				return nil
-			}
-			_, err := q.UpsertSeriesMetadataProvenance(ctx, database.UpsertSeriesMetadataProvenanceParams{
-				SeriesID:   series.ID,
-				FieldName:  fieldName,
-				Value:      value,
-				Source:     providerName,
-				SourceUrl:  strings.TrimSpace(opts.SourceURL),
-				Confidence: confidence,
-				ReviewID:   reviewID,
-			})
-			return err
-		}
-
-		for _, fieldName := range []string{"title", "summary", "publisher", "status", "rating"} {
-			if err := recordField(fieldName, appliedFields[fieldName]); err != nil {
-				return err
-			}
-		}
-
-		// 标签
-		var tagValues []string
-		if !lockedSet["tags"] {
-			for _, tagName := range result.Tags {
-				tagName = strings.TrimSpace(tagName)
-				if tagName == "" {
-					continue
-				}
-				if inserted, err := q.UpsertTag(ctx, tagName); err == nil {
-					_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: series.ID, TagID: inserted.ID})
-				}
-				tagValues = append(tagValues, tagName)
-			}
-		}
-		if len(tagValues) > 0 {
-			sort.Strings(tagValues)
-			if err := recordField("tags", strings.Join(tagValues, " / ")); err != nil {
-				return err
-			}
-		}
-
-		// 作者
-		var authorEntries []string
-		if !lockedSet["authors"] && len(result.Authors) > 0 {
-			seen := make(map[string]struct{}, len(result.Authors))
-			for _, a := range result.Authors {
-				name := strings.TrimSpace(a.Name)
-				role := strings.TrimSpace(a.Role)
-				if name == "" {
-					continue
-				}
-				key := strings.ToLower(name + "|" + role)
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				seen[key] = struct{}{}
-				if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{Name: name, Role: role}); err == nil {
-					_ = q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: series.ID, AuthorID: inserted.ID})
-				}
-				authorEntries = append(authorEntries, metadataAuthorEntryString(name, role))
-			}
-		}
-		if len(authorEntries) > 0 {
-			sort.Strings(authorEntries)
-			if err := recordField("authors", strings.Join(authorEntries, " / ")); err != nil {
-				return err
-			}
-		}
-
-		// 来源链接：仅 Bangumi 提供 bgm.tv 外链。providerName 可能是 key（"bangumi"）
-		// 或显示名，统一用包含匹配，避免 LLM 显示名（如 "Ollama LLM"）被误判为可写外链。
-		if result.SourceID > 0 && strings.Contains(strings.ToLower(providerName), "bangumi") {
-			linkName := "Bangumi"
-			linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
-
-			existingLinks, _ := q.GetLinksForSeries(ctx, series.ID)
-			hasLink := false
-			for _, l := range existingLinks {
-				if l.Name == linkName {
-					hasLink = true
-					break
-				}
-			}
-			if !hasLink {
-				_, _ = q.LinkSeriesLink(ctx, database.LinkSeriesLinkParams{
-					SeriesID: series.ID,
-					Name:     linkName,
-					Url:      linkURL,
-				})
-				if err := recordField("source_link", linkURL); err != nil {
-					return err
-				}
-			}
-		}
-
-		if err := q.RefreshSeriesStats(ctx, series.ID); err != nil {
-			return err
-		}
-		if afterInTx != nil {
-			return afterInTx(q)
-		}
-		return nil
-	})
 }
 
 func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request) {

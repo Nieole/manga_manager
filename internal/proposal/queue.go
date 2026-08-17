@@ -121,7 +121,7 @@ func (s *Service) Queue(ctx context.Context, series database.Series, result *met
 		}
 
 		payload, _ := json.Marshal(result)
-		review, err := q.CreateMetadataReview(ctx, database.CreateMetadataReviewParams{
+		created, err := q.CreateMetadataReview(ctx, database.CreateMetadataReviewParams{
 			SeriesID:    series.ID,
 			Provider:    strings.TrimSpace(providerName),
 			SourceUrl:   sourceURL,
@@ -138,7 +138,7 @@ func (s *Service) Queue(ctx context.Context, series database.Series, result *met
 
 		for _, change := range changes {
 			field, err := q.CreateMetadataReviewField(ctx, database.CreateMetadataReviewFieldParams{
-				ReviewID:      review.ID,
+				ReviewID:      created.ID,
 				FieldName:     change.Name,
 				CurrentValue:  change.Current,
 				ProposedValue: change.Proposed,
@@ -156,7 +156,7 @@ func (s *Service) Queue(ctx context.Context, series database.Series, result *met
 		}
 
 		out.Status = QueueQueued
-		out.Proposal = review
+		out.Proposal = created
 		return nil
 	})
 	if err != nil {

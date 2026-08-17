@@ -1,32 +1,31 @@
-// 本文件守卫元数据审核的终态状态机——pending 只能单向流转到 applied 或 rejected。
+// 本文件守四条终态推进路径的**传输语义**：单条/批量的应用与拒绝，撞上已进终态的提案
+// 一律回 409，正常路径回 200。前端按状态码分支——把冲突报成 500 会让用户看到「服务器错误」，
+// 报成 200 则会让界面以为处理成功了。
 //
-// 约束：四条终态推进路径（单条/批量 apply、单条/批量 reject）都必须挡住终态复写；
-// applied_at 与 rejected_at 不得同时非空，否则 series_metadata_provenance 会指向一条
-// 自相矛盾的审核记录。pending 判断必须在写入的同一次 SQL/事务内完成，只在 HTTP 层做
-// 内存判断会留下 TOCTOU 窗口，让并发的 apply/reject 写出脏行。
+// 终态本身的不变量（时间戳不得同时非空、冲突时整体回滚）归 internal/proposal 的裁决用例。
 
 package api
 
 import (
+	"bytes"
 	"context"
-	"database/sql"
-	"errors"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"testing"
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/proposal"
 )
 
-// seedPendingMetadataReview 造一个系列 + 一条 pending 的元数据审核。
+// seedPendingMetadataReview 造一个系列 + 一条待裁决的提案。
 func seedPendingMetadataReview(t *testing.T, controller *Controller, store database.Store, name string) (database.Series, database.MetadataReview) {
 	t.Helper()
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib-"+name, name, "book-"+name+".cbz", 10)
 
-	review, _, _, err := controller.queueMetadataReview(context.Background(), series, &metadata.SeriesMetadata{
+	queued, err := controller.proposals.Queue(context.Background(), series, &metadata.SeriesMetadata{
 		Title:      "External " + name,
 		Publisher:  "External Publisher",
 		Summary:    "External summary",
@@ -34,41 +33,33 @@ func seedPendingMetadataReview(t *testing.T, controller *Controller, store datab
 		SourceURL:  "https://example.test/" + name,
 		Provider:   "bangumi",
 		Confidence: 0.7,
-	}, "bangumi", name)
+	}, "bangumi", name, proposal.QueueOptions{})
 	if err != nil {
-		t.Fatalf("queueMetadataReview: %v", err)
+		t.Fatalf("入队: %v", err)
 	}
-	return series, review
+	if queued.Status != proposal.QueueQueued {
+		t.Fatalf("入队得到 status=%q，用例需要一条新建的提案", queued.Status)
+	}
+	return series, queued.Proposal
 }
 
-// reviewTimestamps 读回 review 的状态与两个终态时间戳。
-func reviewTimestamps(t *testing.T, store database.Store, id int64) (status string, appliedAt, rejectedAt sql.NullTime) {
-	t.Helper()
-	review, err := store.GetMetadataReview(context.Background(), id)
-	if err != nil {
-		t.Fatalf("GetMetadataReview: %v", err)
-	}
-	return review.Status, review.AppliedAt, review.RejectedAt
-}
-
-// TestMetadataReviewTerminalStatusIsGuarded 钉住「终态不可被再次改写」。
+// TestMetadataReviewTerminalStatusIsGuarded 钉住单条入口的 409。
 //
 // 播种一律走 HTTP handler 而不是 store 方法：这样把修复回滚做缺陷还原时，用例是以
 // **断言失败**报红，而不是因为 store 方法改了名而编译不过——后者证明不了任何事。
 func TestMetadataReviewTerminalStatusIsGuarded(t *testing.T) {
 	cases := []struct {
 		name     string
-		seed     string // 先把 review 推到的终态：applied / rejected / ""（保持 pending）
+		seed     string // 先把提案推到的终态：applied / rejected / ""（保持待裁决）
 		action   string // 随后执行的动作：apply / reject
 		wantCode int
-		wantEnd  string // 期望的最终 status
 	}{
-		{"已应用后再拒绝", "applied", "reject", http.StatusConflict, "applied"},
-		{"已拒绝后再应用", "rejected", "apply", http.StatusConflict, "rejected"},
-		{"已拒绝后再拒绝", "rejected", "reject", http.StatusConflict, "rejected"},
-		{"已应用后再应用", "applied", "apply", http.StatusConflict, "applied"},
-		{"pending 正常拒绝", "", "reject", http.StatusOK, "rejected"},
-		{"pending 正常应用", "", "apply", http.StatusOK, "applied"},
+		{"已应用后再拒绝", "applied", "reject", http.StatusConflict},
+		{"已拒绝后再应用", "rejected", "apply", http.StatusConflict},
+		{"已拒绝后再拒绝", "rejected", "reject", http.StatusConflict},
+		{"已应用后再应用", "applied", "apply", http.StatusConflict},
+		{"待裁决时正常拒绝", "", "reject", http.StatusOK},
+		{"待裁决时正常应用", "", "apply", http.StatusOK},
 	}
 
 	for _, tc := range cases {
@@ -102,145 +93,44 @@ func TestMetadataReviewTerminalStatusIsGuarded(t *testing.T) {
 			if rec.Code != tc.wantCode {
 				t.Fatalf("%s 返回 %d，期望 %d（body=%s）", tc.action, rec.Code, tc.wantCode, rec.Body.String())
 			}
-
-			status, appliedAt, rejectedAt := reviewTimestamps(t, store, review.ID)
-			if status != tc.wantEnd {
-				t.Errorf("最终 status = %q，期望 %q —— 终态被再次改写了", status, tc.wantEnd)
-			}
-			// 审计链的核心不变量：两个终态时间戳不能同时非空。
-			// 注意不是 XOR——pending 行两列皆空是合法的，用 XOR 断言会在将来加 pending 用例时误报。
-			if appliedAt.Valid && rejectedAt.Valid {
-				t.Errorf("applied_at 与 rejected_at 同时非空 —— 这一行既「已应用」又「已拒绝」，" +
-					"而 series_metadata_provenance 还指着它，审计链自相矛盾")
-			}
-			switch tc.wantEnd {
-			case "applied":
-				if !appliedAt.Valid {
-					t.Error("状态是 applied 却没有 applied_at")
-				}
-				if rejectedAt.Valid {
-					t.Error("状态是 applied 却带着 rejected_at")
-				}
-			case "rejected":
-				if !rejectedAt.Valid {
-					t.Error("状态是 rejected 却没有 rejected_at")
-				}
-				if appliedAt.Valid {
-					t.Error("状态是 rejected 却带着 applied_at")
-				}
-			}
 		})
 	}
 }
 
-// TestRejectDoesNotRefreshTerminalTimestamp 钉住「重复 reject 不会顶掉原始时间戳」。
-//
-// 单独成例是因为 SQLite 的 CURRENT_TIMESTAMP 只有秒精度：直接比对两次 reject 的时间戳
-// 在缺陷代码下也会「相同」，是一条永不报红的死断言。这里先把 rejected_at 手工改成一个远古值，
-// 缺陷代码会把它顶成当前时间，断言必红。
-func TestRejectDoesNotRefreshTerminalTimestamp(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	_, review := seedPendingMetadataReview(t, controller, store, "Timestamp")
+// TestBulkMetadataReviewPutsPreemptedInFailed 钉住批量入口对已进终态提案的归桶：
+// 落 failed，与「查不到」同桶——批量响应是前端既有契约，被抢先不另开桶。
+func TestBulkMetadataReviewPutsPreemptedInFailed(t *testing.T) {
+	for _, action := range []string{"apply", "reject"} {
+		t.Run(action, func(t *testing.T) {
+			controller, store, _, _ := newTestController(t)
+			_, review := seedPendingMetadataReview(t, controller, store, "Bulk-"+action)
 
-	rec := httptest.NewRecorder()
-	controller.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
-		"reviewId", strconv.FormatInt(review.ID, 10)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("首次 reject 失败：%d %s", rec.Code, rec.Body.String())
-	}
+			// 先把它拒了，等价于另一个标签页抢先处理。
+			rec := httptest.NewRecorder()
+			controller.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
+				"reviewId", strconv.FormatInt(review.ID, 10)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("抢先拒绝失败：%d %s", rec.Code, rec.Body.String())
+			}
 
-	const ancient = "2000-01-01 00:00:00"
-	sqlStore, ok := store.(*database.SqlStore)
-	if !ok {
-		t.Fatalf("需要 *SqlStore 才能直改行，得到 %T", store)
-	}
-	if _, err := sqlStore.DB().Exec(
-		`UPDATE metadata_reviews SET rejected_at = ? WHERE id = ?`, ancient, review.ID); err != nil {
-		t.Fatalf("改写 rejected_at 失败：%v", err)
-	}
-
-	rec = httptest.NewRecorder()
-	controller.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
-		"reviewId", strconv.FormatInt(review.ID, 10)))
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("重复 reject 返回 %d，期望 409", rec.Code)
-	}
-
-	var got string
-	if err := sqlStore.DB().QueryRow(
-		`SELECT rejected_at FROM metadata_reviews WHERE id = ?`, review.ID).Scan(&got); err != nil {
-		t.Fatalf("读回 rejected_at 失败：%v", err)
-	}
-	// 驱动读回来会规范化成 RFC3339（2000-01-01T00:00:00Z），只比对日期部分即可判别是否被顶掉。
-	if !strings.HasPrefix(got, "2000-01-01") {
-		t.Fatalf("rejected_at 被第二次 reject 顶成了 %q —— 原始拒绝时间丢失，审计链断了", got)
-	}
-}
-
-// TestApplyReviewedMetadataRejectsStaleSnapshot 构造 TOCTOU 窗口：
-// 手里的 review 快照仍是 pending，但那一行已被别的请求推进到终态。
-//
-// 这正是并发 apply/reject 或用户在两个标签页里各点一次的真实形态。守卫若只做在
-// HTTP 层的内存判断上，这里会成功写入元数据、把 rejected 覆写成 applied，
-// 并留下同时带两个时间戳的脏行 + 一条指向「已拒绝审核」的 provenance。
-func TestApplyReviewedMetadataRejectsStaleSnapshot(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	series, review := seedPendingMetadataReview(t, controller, store, "Stale")
-	ctx := context.Background()
-
-	fields, err := store.ListMetadataReviewFields(ctx, review.ID)
-	if err != nil {
-		t.Fatalf("ListMetadataReviewFields: %v", err)
-	}
-	if len(fields) == 0 {
-		t.Fatal("审核没有字段提案，用例失去判别力")
-	}
-
-	// 另一个请求抢先把它拒了（这里直接走 handler，等价于并发的第二个请求先提交）。
-	rec := httptest.NewRecorder()
-	controller.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
-		"reviewId", strconv.FormatInt(review.ID, 10)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("抢先 reject 失败：%d %s", rec.Code, rec.Body.String())
-	}
-
-	before, err := store.GetSeries(ctx, series.ID)
-	if err != nil {
-		t.Fatalf("GetSeries: %v", err)
-	}
-
-	// review 仍是事务外读到的那份 pending 快照。
-	_, err = controller.applyReviewedMetadata(ctx, series, review, fields, fields)
-	if !errors.Is(err, errMetadataReviewNotPending) {
-		t.Fatalf("applyReviewedMetadata 返回 %v，期望 errMetadataReviewNotPending —— "+
-			"事务外的 pending 判断是可以过期的，守卫必须在事务内的 SQL 上", err)
-	}
-
-	after, err := store.GetSeries(ctx, series.ID)
-	if err != nil {
-		t.Fatalf("GetSeries: %v", err)
-	}
-	if after.Title != before.Title || after.Publisher != before.Publisher || after.Summary != before.Summary {
-		t.Errorf("冲突时元数据仍被写入了（title %v->%v）—— 事务没有整体回滚",
-			before.Title.String, after.Title.String)
-	}
-
-	prov, err := store.GetSeriesMetadataProvenance(ctx, series.ID)
-	if err != nil {
-		t.Fatalf("GetSeriesMetadataProvenance: %v", err)
-	}
-	if len(prov) != 0 {
-		t.Errorf("留下了 %d 条溯源记录，且指向一条已被拒绝的审核 —— 审计链自相矛盾", len(prov))
-	}
-
-	status, appliedAt, rejectedAt := reviewTimestamps(t, store, review.ID)
-	if status != "rejected" {
-		t.Errorf("status = %q，期望 rejected —— 抢先者的结果被覆写了", status)
-	}
-	if appliedAt.Valid {
-		t.Error("行上残留了 applied_at —— 冲突的 apply 仍然写入了终态时间戳")
-	}
-	if !rejectedAt.Valid {
-		t.Error("rejected_at 丢了")
+			body := []byte(`{"review_ids":[` + strconv.FormatInt(review.ID, 10) + `],"mode":"all"}`)
+			rec = httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk", bytes.NewReader(body))
+			if action == "apply" {
+				controller.bulkApplyMetadataReviews(rec, req)
+			} else {
+				controller.bulkRejectMetadataReviews(rec, req)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
+			}
+			var resp metadataReviewBulkResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("解析响应: %v", err)
+			}
+			if len(resp.Failed) != 1 || resp.Success {
+				t.Fatalf("批量%s 的响应 = %+v，期望被抢先的那条落 failed 且 success=false", action, resp)
+			}
+		})
 	}
 }

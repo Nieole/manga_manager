@@ -232,7 +232,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		config:             cfg,
 		koreader:           koreader.NewService(store, cfg),
 		external:           external.NewManager(store, 30*time.Minute),
-		proposals:          proposal.NewService(proposalDB{store: store}),
+		proposals:          proposal.NewService(proposalDB{Store: store}),
 		configPath:         cfgPath,
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),

@@ -14,6 +14,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/proposal"
 )
 
 var errNoMetadataChanges = errors.New("no metadata changes")
@@ -40,43 +41,6 @@ type queueReviewOptions struct {
 	// 交互式的刮削入口会在用户显式要求时置位——否则一旦拒绝过，用户就再也没法
 	// 把同一份数据重新加回队列了，这是个死胡同。后台批量刮削永远不置位。
 	IgnoreRejected bool
-}
-
-// applyOutcomeLabel 把一次 apply 的结果折成前端能分支的字符串。
-func applyOutcomeLabel(outcome metadataApplyOutcome) string {
-	if outcome.Partial() {
-		return "partial"
-	}
-	return "applied"
-}
-
-// errMetadataReviewNotPending 表示这条 review 已经不在 pending 状态了。
-var errMetadataReviewNotPending = errors.New("metadata review is not pending")
-
-// resolveMetadataReviewStatus 把 review 从 pending 推进到终态（applied / rejected）。
-//
-// 守卫落在 SQL 的 WHERE 里而不是只做 Go 侧判断：HTTP 层读到 pending 与真正写入之间存在窗口，
-// 并发的 apply/reject（或用户重复点击、多标签页）会先后写同一行，而 SQL 的
-// applied_at/rejected_at 是 CASE + ELSE 旧值的累加式写法——结果是一行同时带
-// applied_at 与 rejected_at，status 却只剩后写的那个。series_metadata_provenance.review_id
-// 还指着它，审计链变成「系列的元数据来自一条已被拒绝的审核」，自相矛盾且无法复原。
-//
-// 影响行数为 0 即冲突：可能是并发抢先处理，也可能是 review 已随系列级联删除，两者都按 409 收口
-// （调用方保留的前置 GetMetadataReview 只把「一开始就不存在」分流到 404）。
-//
-// 形参取 database.Querier，事务内的 *database.Queries 与事务外的 c.store 都满足。
-func resolveMetadataReviewStatus(ctx context.Context, q database.Querier, reviewID int64, status string) error {
-	rows, err := q.ResolvePendingMetadataReview(ctx, database.ResolvePendingMetadataReviewParams{
-		Status: status,
-		ID:     reviewID,
-	})
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return errMetadataReviewNotPending
-	}
-	return nil
 }
 
 type metadataReviewFieldDraft struct {
@@ -166,15 +130,6 @@ type metadataReviewBulkResponse struct {
 	Failed   []int64 `json:"failed,omitempty"`
 	Total    int     `json:"total"`
 	Mode     string  `json:"mode"`
-}
-
-type metadataApplyOptions struct {
-	ProviderName string
-	SourceURL    string
-	SourceID     int64
-	Confidence   float64
-	SourceQuery  string
-	ReviewID     *int64
 }
 
 func metadataFieldLabel(name string) string {
@@ -322,31 +277,6 @@ func metadataJoinProposedAuthors(authors []metadata.SeriesAuthor) string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, " / ")
-}
-
-func metadataParseAuthors(value string) []metadata.SeriesAuthor {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	out := make([]metadata.SeriesAuthor, 0)
-	for _, raw := range strings.Split(value, " / ") {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		role := ""
-		name := raw
-		if idx := strings.LastIndex(raw, " ("); idx >= 0 && strings.HasSuffix(raw, ")") {
-			name = strings.TrimSpace(raw[:idx])
-			role = strings.TrimSpace(raw[idx+2 : len(raw)-1])
-		}
-		if name == "" {
-			continue
-		}
-		out = append(out, metadata.SeriesAuthor{Name: name, Role: role})
-	}
-	return out
 }
 
 func metadataDefaultConfidence(providerName string) float64 {
@@ -645,19 +575,6 @@ func metadataReviewIDsFromRequest(w http.ResponseWriter, r *http.Request) ([]int
 	return ids, mode, true
 }
 
-func filterMetadataReviewFieldsForMode(fields []database.MetadataReviewField, mode string) []database.MetadataReviewField {
-	if mode != "fill_empty" {
-		return fields
-	}
-	filtered := make([]database.MetadataReviewField, 0, len(fields))
-	for _, field := range fields {
-		if strings.TrimSpace(field.CurrentValue) == "" {
-			filtered = append(filtered, field)
-		}
-	}
-	return filtered
-}
-
 func normalizeMetadataReviewValue(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
 }
@@ -822,125 +739,6 @@ func (c *Controller) queueMetadataReviewWithOptions(ctx context.Context, series 
 	return createdReview, createdFields, isNew, nil
 }
 
-// metadataApplyOutcome 汇报一次 apply 到底动了哪些字段、review 有没有被关单。
-type metadataApplyOutcome struct {
-	// Applied 是本次真正写进系列的字段名。
-	Applied []string
-	// Remaining 是留在这条 review 里、下次还能再处理的字段名。
-	// 非空即意味着 review 保持 pending——这正是修掉「提案静默消失」的关键。
-	Remaining []string
-}
-
-// Partial 报告本次只应用了一部分提案。
-func (o metadataApplyOutcome) Partial() bool { return len(o.Remaining) > 0 }
-
-// applyReviewedMetadata 把 selected 里的提案写进系列。
-//
-// all 是该 review 的全部字段行，selected 是本次要写的子集（bulk 的 fill_empty 模式会先筛一遍）。
-// 两者分开传是为了避免永久丢数据：只有全部提案都处理完才能把 review 标成 applied，
-// 否则必须只删掉已应用的行，让 review 带着剩下的提案继续 pending——收件箱只查
-// pending，关单关早了会让未写入的提案从界面上彻底消失，用户既看不到也没法再应用。
-func (c *Controller) applyReviewedMetadata(ctx context.Context, series database.Series, review database.MetadataReview, selected, all []database.MetadataReviewField) (metadataApplyOutcome, error) {
-	var outcome metadataApplyOutcome
-	if len(selected) == 0 {
-		return outcome, errNoMetadataChanges
-	}
-	// 入队之后用户又给字段加了锁：applyMetadataToSeriesWithHook 内部本来就会跳过它们，
-	// 但那是静默的——整条 review 照样被标成 applied，用户看不出哪些提案没被写进去。
-	// 在这里先筛一遍，全被锁住时明确报 errAllFieldsLocked，让调用方给出可行动的提示。
-	lockedNow := metadataLockedFieldSet(series)
-	applicable := make([]database.MetadataReviewField, 0, len(selected))
-	for _, field := range selected {
-		if lockedNow[field.FieldName] {
-			continue
-		}
-		applicable = append(applicable, field)
-	}
-	if len(applicable) == 0 {
-		return outcome, errAllFieldsLocked
-	}
-	fields := applicable
-
-	appliedNames := make(map[string]bool, len(fields))
-	for _, field := range fields {
-		appliedNames[field.FieldName] = true
-		outcome.Applied = append(outcome.Applied, field.FieldName)
-	}
-	for _, field := range all {
-		if !appliedNames[field.FieldName] {
-			outcome.Remaining = append(outcome.Remaining, field.FieldName)
-		}
-	}
-	metadataResult := &metadata.SeriesMetadata{
-		Provider:   review.Provider,
-		SourceID:   int(review.SourceID),
-		SourceURL:  review.SourceUrl,
-		Confidence: review.Confidence,
-	}
-	for _, field := range fields {
-		switch field.FieldName {
-		case "title":
-			metadataResult.Title = field.ProposedValue
-		case "summary":
-			metadataResult.Summary = field.ProposedValue
-		case "publisher":
-			metadataResult.Publisher = field.ProposedValue
-		case "status":
-			metadataResult.Status = field.ProposedValue
-		case "rating":
-			if parsed, err := strconv.ParseFloat(field.ProposedValue, 64); err == nil {
-				metadataResult.Rating = parsed
-			}
-		case "tags":
-			if field.ProposedValue != "" {
-				raw := strings.Split(field.ProposedValue, " / ")
-				metadataResult.Tags = make([]string, 0, len(raw))
-				for _, tag := range raw {
-					tag = strings.TrimSpace(tag)
-					if tag != "" {
-						metadataResult.Tags = append(metadataResult.Tags, tag)
-					}
-				}
-			}
-		case "authors":
-			metadataResult.Authors = metadataParseAuthors(field.ProposedValue)
-		}
-	}
-
-	err := c.applyMetadataToSeriesWithHook(ctx, series, metadataResult, metadataApplyOptions{
-		ProviderName: review.Provider,
-		SourceURL:    review.SourceUrl,
-		SourceID:     review.SourceID,
-		Confidence:   review.Confidence,
-		SourceQuery:  review.SourceQuery,
-		ReviewID:     &review.ID,
-	}, func(q *database.Queries) error {
-		if outcome.Partial() {
-			// 只应用了一部分：删掉已写入的字段行，让 review 带着剩下的提案继续 pending。
-			// 删行而不是留着，是因为它们的 current_value 已经过时——留下会在收件箱里
-			// 陈列一个「当前值 → 提案值」都相同的假 diff。剩余字段没被动过，快照仍然有效。
-			// review 保持 pending 也让下一轮刮削的去重签名能自然命中这条记录。
-			for _, name := range outcome.Applied {
-				if err := q.DeleteMetadataReviewField(ctx, database.DeleteMetadataReviewFieldParams{
-					ReviewID:  review.ID,
-					FieldName: name,
-				}); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		// 全部提案都处理完了才关单。同一事务内把 review 从 pending CAS 到 applied：
-		// 元数据写入与状态推进原子，避免元数据已写但状态仍 pending 被重复 apply。
-		// 守卫必须在事务内的 SQL 上，因为调用方读到的 pending 是事务外的旧快照。
-		return resolveMetadataReviewStatus(ctx, q, review.ID, "applied")
-	})
-	if err != nil {
-		return metadataApplyOutcome{}, err
-	}
-	return outcome, nil
-}
-
 func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
@@ -1094,6 +892,25 @@ func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Requ
 	jsonResponse(w, http.StatusOK, payload)
 }
 
+// applyOutcomeCode 把模块的结局分类折成前端分支用的结果码。
+//
+// 映射写在这里而不是直接把 ApplyStatus 的值当 JSON 发出去：结果码是前端契约，改它要看
+// web/ 里谁在读；模块的分类是领域词汇，改它只看领域。两者今天字面相同，不该因此被焊在一起。
+func applyOutcomeCode(status proposal.ApplyStatus) string {
+	switch status {
+	case proposal.ApplyApplied:
+		return "applied"
+	case proposal.ApplyPartial:
+		return "partial"
+	case proposal.ApplyLockedSkipped:
+		return "locked_skipped"
+	case proposal.ApplyNoChanges:
+		return "no_changes"
+	default:
+		return ""
+	}
+}
+
 func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request) {
 	reviewID, err := parseID(r, "reviewId")
 	if err != nil {
@@ -1101,67 +918,39 @@ func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	review, err := c.store.GetMetadataReview(r.Context(), reviewID)
+	outcome, err := c.proposals.Apply(r.Context(), reviewID, proposal.ApplyModeAll)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "Metadata review not found")
-		return
-	}
-	if strings.ToLower(review.Status) != "pending" {
-		jsonError(w, http.StatusConflict, "Metadata review is not pending")
-		return
-	}
-
-	fields, err := c.store.ListMetadataReviewFields(r.Context(), reviewID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load review fields")
-		return
-	}
-
-	series, err := c.store.GetSeries(r.Context(), review.SeriesID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "Series not found")
-		return
-	}
-
-	outcome, err := c.applyReviewedMetadata(r.Context(), series, review, fields, fields)
-	if err != nil {
-		// applyReviewedMetadata 在同一事务内写元数据并把 review CAS 到 applied，任一失败整体回滚。
-		if errors.Is(err, errMetadataReviewNotPending) {
-			// 上面那次 pending 判断到写入之间被并发 apply/reject 抢先，元数据写入已整体撤销。
-			// 不回吐 series 快照：抢先者的结果才是准的，返回半新半旧的数据只会误导前端。
-			jsonError(w, http.StatusConflict, "Metadata review is not pending")
-			return
-		}
-		// 下面两种都是**良性结果**而非服务端故障，必须回 200 + applied:false + 具体 outcome，
-		// 不能落 500——落 500 时前端只能提示「服务器错误」，给不出可行动的建议
-		//（「先解锁字段」还是「数据已是最新」）。review 保持 pending，不消费掉。
-		if errors.Is(err, errAllFieldsLocked) {
-			jsonResponse(w, http.StatusOK, map[string]any{
-				"success": true,
-				"applied": false,
-				"outcome": "locked_skipped",
-				"review":  reviewID,
-			})
-			return
-		}
-		if errors.Is(err, errNoMetadataChanges) {
-			jsonResponse(w, http.StatusOK, map[string]any{
-				"success": true,
-				"applied": false,
-				"outcome": "no_changes",
-				"review":  reviewID,
-			})
-			return
-		}
 		jsonError(w, http.StatusInternalServerError, "Failed to apply metadata review")
 		return
 	}
 
-	updated, _ := c.store.GetSeries(r.Context(), review.SeriesID)
+	switch outcome.Status {
+	case proposal.ApplyNotFound:
+		jsonError(w, http.StatusNotFound, "Metadata review not found")
+		return
+	case proposal.ApplyConflict:
+		// 被并发的 apply/reject（或用户重复点击、多标签页）抢先，元数据写入已整体撤销。
+		// 不回吐 series 快照：抢先者的结果才是准的，返回半新半旧的数据只会误导前端。
+		jsonError(w, http.StatusConflict, "Metadata review is not pending")
+		return
+	case proposal.ApplyLockedSkipped, proposal.ApplyNoChanges:
+		// 这两种都是**良性结果**而非服务端故障，必须回 200 + applied:false + 具体 outcome，
+		// 不能落 500——落 500 时前端只能提示「服务器错误」，给不出可行动的建议
+		//（「先解锁字段」还是「数据已是最新」）。提案保持待裁决，不消费掉。
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"success": true,
+			"applied": false,
+			"outcome": applyOutcomeCode(outcome.Status),
+			"review":  reviewID,
+		})
+		return
+	}
+
+	updated, _ := c.store.GetSeries(r.Context(), outcome.SeriesID)
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"success":          true,
 		"applied":          true,
-		"outcome":          applyOutcomeLabel(outcome),
+		"outcome":          applyOutcomeCode(outcome.Status),
 		"applied_fields":   outcome.Applied,
 		"remaining_fields": outcome.Remaining,
 		"series":           updated,
@@ -1185,47 +974,27 @@ func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Req
 		Mode:    mode,
 	}
 	for _, id := range ids {
-		review, err := c.store.GetMetadataReview(r.Context(), id)
-		if err != nil || strings.ToLower(review.Status) != "pending" {
-			result.Failed = append(result.Failed, id)
-			continue
-		}
-		fields, err := c.store.ListMetadataReviewFields(r.Context(), id)
+		outcome, err := c.proposals.Apply(r.Context(), id, proposal.ApplyMode(mode))
 		if err != nil {
 			result.Failed = append(result.Failed, id)
 			continue
 		}
-		selected := filterMetadataReviewFieldsForMode(fields, mode)
-		if len(selected) == 0 {
-			result.Skipped = append(result.Skipped, id)
-			continue
-		}
-		series, err := c.store.GetSeries(r.Context(), review.SeriesID)
-		if err != nil {
-			result.Failed = append(result.Failed, id)
-			continue
-		}
-		outcome, err := c.applyReviewedMetadata(r.Context(), series, review, selected, fields)
-		if err != nil {
-			// 「全被锁住」与「无变更」是良性结果，落 Skipped 而不是 Failed——
-			// 前端把 Failed 当成出错来提示，会让用户以为系统坏了。
-			if errors.Is(err, errAllFieldsLocked) || errors.Is(err, errNoMetadataChanges) {
-				result.Skipped = append(result.Skipped, id)
-				continue
-			}
-			// 事务整体回滚。被并发抢先（errMetadataReviewNotPending）归入 failed：
-			// 状态由抢先者决定，这里不特判——metadataReviewBulkResponse 是前端既有契约，
-			// 不为此新增 conflict 桶。
-			result.Failed = append(result.Failed, id)
-			continue
-		}
-		if outcome.Partial() {
+		switch outcome.Status {
+		case proposal.ApplyApplied:
+			result.Applied = append(result.Applied, id)
+		case proposal.ApplyPartial:
 			// 只应用了一部分（fill_empty 筛掉的、或已被锁的）。单独成桶而不是塞进 Applied：
-			// 这条 review 还留在收件箱里等着处理，报成「已应用」会让用户以为它已经消失了。
+			// 这条提案还留在收件箱里等着处理，报成「已应用」会让用户以为它已经消失了。
 			result.Partial = append(result.Partial, id)
-			continue
+		case proposal.ApplyLockedSkipped, proposal.ApplyNoChanges:
+			// 良性结果落 Skipped 而不是 Failed——前端把 Failed 当成出错来提示，
+			// 会让用户以为系统坏了。
+			result.Skipped = append(result.Skipped, id)
+		default:
+			// 被抢先（ApplyConflict）与查不到（ApplyNotFound）都归 Failed：
+			// metadataReviewBulkResponse 是前端既有契约，这里不为被抢先新增桶。
+			result.Failed = append(result.Failed, id)
 		}
-		result.Applied = append(result.Applied, id)
 	}
 	if len(result.Failed) > 0 {
 		result.Success = false
@@ -1240,24 +1009,17 @@ func (c *Controller) rejectMetadataReview(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, err := c.store.GetMetadataReview(r.Context(), reviewID)
+	outcome, err := c.proposals.Reject(r.Context(), reviewID)
 	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to reject metadata review")
+		return
+	}
+	switch outcome.Status {
+	case proposal.RejectNotFound:
 		jsonError(w, http.StatusNotFound, "Metadata review not found")
 		return
-	}
-	// 四条终态推进路径里只有这一条漏了 pending 守卫：已 applied 的 review 可以被改成 rejected，
-	// 而 applied_at 因 CASE 的 ELSE 分支被保留，于是行上两个时间戳同时非空。
-	// 前置检查省一次写锁并给出快速 409，真正的防线是下面 SQL 里的 CAS。
-	if strings.ToLower(review.Status) != "pending" {
+	case proposal.RejectConflict:
 		jsonError(w, http.StatusConflict, "Metadata review is not pending")
-		return
-	}
-	if err := resolveMetadataReviewStatus(r.Context(), c.store, review.ID, "rejected"); err != nil {
-		if errors.Is(err, errMetadataReviewNotPending) {
-			jsonError(w, http.StatusConflict, "Metadata review is not pending")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to reject metadata review")
 		return
 	}
 
@@ -1281,13 +1043,9 @@ func (c *Controller) bulkRejectMetadataReviews(w http.ResponseWriter, r *http.Re
 		Mode:     mode,
 	}
 	for _, id := range ids {
-		review, err := c.store.GetMetadataReview(r.Context(), id)
-		if err != nil || strings.ToLower(review.Status) != "pending" {
-			result.Failed = append(result.Failed, id)
-			continue
-		}
-		if err := resolveMetadataReviewStatus(r.Context(), c.store, review.ID, "rejected"); err != nil {
-			// 冲突同样归入 Failed，与本路径既有的「非 pending -> Failed」语义一致。
+		outcome, err := c.proposals.Reject(r.Context(), id)
+		if err != nil || outcome.Status != proposal.RejectRejected {
+			// 被抢先与查不到同样归入 Failed，与批量应用一侧的归桶保持一致。
 			result.Failed = append(result.Failed, id)
 			continue
 		}
