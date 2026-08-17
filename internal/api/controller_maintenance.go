@@ -438,78 +438,26 @@ func (c *Controller) chainBookHashBackfill(reason string) {
 	}
 }
 
+// runBackfillFullHashesLowPriority 走的就是 KOReader 那套**指纹**重建，只是把节奏压低：小批次、
+// 批间停顿，好让它在扫描收尾后长时间跑着也不与别的活抢盘。
+//
+// 匹配模式钉死在二进制哈希，不跟着配置走：这个任务由**资料库扫描**收尾时按「缺全量哈希的书有
+// 几本」发起，声明里报的也是这一档，跑到一半配置被改不该让它改口径去补路径指纹。
 func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, batchGap time.Duration, progress func(current, total int, metrics taskIOMetrics)) (int, int, error) {
 	if limit <= 0 {
 		limit = lowPriorityBookHashBatchSize
 	}
-	missingCount, err := c.store.CountBooksMissingIdentity(ctx, config.KOReaderMatchModeBinaryHash)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	total := int(missingCount)
-	updated := 0
 	metrics := taskIOMetrics{}
-	var afterID int64
-	for {
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return updated, total, err
+	return c.koreader.RebuildBookIdentities(ctx, koreader.RebuildOptions{
+		BatchSize:      limit,
+		BatchGap:       batchGap,
+		MatchMode:      config.KOReaderMatchModeBinaryHash,
+		AbsorbDiskWork: metrics.absorbHashedFile,
+	}, func(current, total int) {
+		if progress != nil {
+			progress(current, total, metrics)
 		}
-		books, err := c.store.ListBooksMissingIdentityBatch(ctx, config.KOReaderMatchModeBinaryHash, afterID, limit)
-		if err != nil {
-			return updated, total, err
-		}
-		if len(books) == 0 {
-			break
-		}
-
-		for _, book := range books {
-			var fileHash string
-			var hashErr error
-			stats, err := c.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
-				fileHash, hashErr = koreader.FingerprintFileContext(ctx, book.Path)
-				return nil
-			})
-			metrics.absorbDiskWork(stats)
-			if err != nil {
-				return updated, total, err
-			}
-			metrics.HashedFiles++
-			if hashErr != nil {
-				slog.Warn("Failed to backfill full book hash", "book_id", book.ID, "path", book.Path, "error", hashErr)
-				afterID = book.ID
-				continue
-			}
-			if err := c.store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
-				ID:       book.ID,
-				FileHash: fileHash,
-			}); err != nil {
-				return updated, total, err
-			}
-
-			updated++
-			afterID = book.ID
-			if progress != nil {
-				progress(updated, total, metrics)
-			}
-		}
-
-		if batchGap > 0 {
-			if err := taskcontrol.Wait(ctx); err != nil {
-				return updated, total, err
-			}
-			timer := time.NewTimer(batchGap)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return updated, total, ctx.Err()
-			}
-		}
-	}
-	return updated, total, nil
+	})
 }
 
 func (c *Controller) rebuildFileIdentities(w http.ResponseWriter, r *http.Request) {

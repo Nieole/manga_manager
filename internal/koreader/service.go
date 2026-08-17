@@ -386,20 +386,40 @@ func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReade
 	return record, nil
 }
 
+// RebuildOptions 调节一次**指纹**重建。零值即「按当前配置的匹配模式、一批 500 本、批间不停顿、
+// 不上报限流实况」。
+type RebuildOptions struct {
+	// BatchSize 是一批取几本；非正时取 500。
+	BatchSize int
+	// BatchGap 是每批之后的停顿，用来把后台回填压低到不与别的活抢盘；非正时不停。
+	// 停顿先过**暂停闸门**，且本身可被取消。
+	BatchGap time.Duration
+	// MatchMode 钉住这次重建按哪种模式补身份；留空表示读当前配置。发起时已按某一种模式盘算过
+	// 缺口的调用方钉住它，免得任务跑到一半配置被改、口径跟着换。
+	MatchMode string
+	// AbsorbDiskWork 收下每本读盘在限流上的实况，由调用方折进自己的任务指标；可为 nil。
+	AbsorbDiskWork func(diskwork.Stats)
+}
+
 // RebuildBookIdentities 回填缺**指纹**的书。二进制哈希模式下每本要读完整个文件，那是一次
-// **磁盘作业**：absorbDiskWork 收下它在限流上的实况，由调用方折进自己的任务指标（可为 nil）。
+// **磁盘作业**；路径模式只拼字符串，一次盘都不读。
 //
 // 指纹算不出来只跳过这一本、推进分页游标；中止只由磁盘作业入口返回的错误——闸门与令牌的错误
 // ——决定。游标停住即死循环：批次按 id > afterID 切，坏书排在末尾时同一本会被永远切回来。
-func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, absorbDiskWork func(diskwork.Stats), progress func(current, total int)) (int, int, error) {
+func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions, progress func(current, total int)) (int, int, error) {
+	limit := opts.BatchSize
 	if limit <= 0 {
 		limit = 500
 	}
+	absorbDiskWork := opts.AbsorbDiskWork
 	if absorbDiskWork == nil {
 		absorbDiskWork = func(diskwork.Stats) {}
 	}
-	matchConfig := s.currentMatchConfig()
-	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchConfig.MatchMode)
+	matchMode := strings.TrimSpace(opts.MatchMode)
+	if matchMode == "" {
+		matchMode = s.currentMatchConfig().MatchMode
+	}
+	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchMode)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -411,7 +431,7 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, absorbDi
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return updated, total, err
 		}
-		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchConfig.MatchMode, afterID, limit)
+		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchMode, afterID, limit)
 		if err != nil {
 			return updated, total, err
 		}
@@ -424,7 +444,7 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, absorbDi
 				return updated, total, err
 			}
 			params := database.UpdateBookIdentityParams{ID: book.ID}
-			if matchConfig.MatchMode == config.KOReaderMatchModeBinaryHash {
+			if matchMode == config.KOReaderMatchModeBinaryHash {
 				var fileHash string
 				var hashErr error
 				stats, err := s.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
@@ -454,6 +474,21 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, absorbDi
 			afterID = book.ID
 			if progress != nil {
 				progress(updated, total)
+			}
+		}
+
+		if opts.BatchGap > 0 {
+			if err := taskcontrol.Wait(ctx); err != nil {
+				return updated, total, err
+			}
+			timer := time.NewTimer(opts.BatchGap)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return updated, total, ctx.Err()
 			}
 		}
 	}

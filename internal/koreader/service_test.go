@@ -142,7 +142,7 @@ func TestRebuildBookIdentitiesProcessesAllBatches(t *testing.T) {
 		}
 	}
 
-	updated, total, err := service.RebuildBookIdentities(context.Background(), 2, nil, nil)
+	updated, total, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 2}, nil)
 	if err != nil {
 		t.Fatalf("rebuild identities failed: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestRebuildBookIdentitiesUsesPathIndexesInFilePathMode(t *testing.T) {
 	lib, book := seedServiceBook(t, store, rootDir, "Library", "Parent/Series", "Volume01.cbz")
 	_ = lib
 
-	updated, total, err := service.RebuildBookIdentities(context.Background(), 1, nil, nil)
+	updated, total, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 1}, nil)
 	if err != nil {
 		t.Fatalf("rebuild identities failed: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
 	// 走一次真实的进度上报，确认管理员的数据没有被改写。
 	// 先建立书籍指纹索引：CreateBook 不写 path_fingerprint，不跑这一步的话下面的上报
 	// 匹配不到任何书，applyBookProgress 根本不会被调用——两条断言就成了永远为真的空断言。
-	if _, _, err := service.RebuildBookIdentities(ctx, 10, nil, nil); err != nil {
+	if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, nil); err != nil {
 		t.Fatalf("RebuildBookIdentities: %v", err)
 	}
 

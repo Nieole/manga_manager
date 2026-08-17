@@ -16,6 +16,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
+	ksvc "manga-manager/internal/koreader"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 )
@@ -34,6 +35,8 @@ type maintenanceStore struct {
 	candidates []database.BookIdentityCandidate
 	listErr    error
 	updated    []database.UpdateBookIdentityParams
+	// askedMatchMode 记下最后一次被问到的匹配模式：全量哈希回填按哪一档盘算缺口，只有从这里看得见。
+	askedMatchMode string
 }
 
 func (s *maintenanceStore) ListLibraries(context.Context) ([]database.Library, error) {
@@ -61,11 +64,13 @@ func (s *maintenanceStore) ListBooksMissingQuickHashBatch(_ context.Context, aft
 	return s.batch(afterID)
 }
 
-func (s *maintenanceStore) CountBooksMissingIdentity(context.Context, string) (int64, error) {
+func (s *maintenanceStore) CountBooksMissingIdentity(_ context.Context, matchMode string) (int64, error) {
+	s.askedMatchMode = matchMode
 	return int64(len(s.candidates)), nil
 }
 
-func (s *maintenanceStore) ListBooksMissingIdentityBatch(_ context.Context, _ string, afterID int64, _ int) ([]database.BookIdentityCandidate, error) {
+func (s *maintenanceStore) ListBooksMissingIdentityBatch(_ context.Context, matchMode string, afterID int64, _ int) ([]database.BookIdentityCandidate, error) {
+	s.askedMatchMode = matchMode
 	return s.batch(afterID)
 }
 
@@ -90,7 +95,9 @@ func (s *maintenanceStore) UpdateBookIdentity(_ context.Context, arg database.Up
 
 // newMaintenanceRig 拼出维护任务体需要的那几样：任务引擎（仍经它唯一的 seam 构造，后台能力换成
 // 同步执行版）、存储与配置。扫描器按需另装，只有缩略图清理会用到。
-func newMaintenanceRig(t *testing.T, store database.Store) (*Controller, func() []TaskStatus, *fakeClock) {
+// newMaintenanceRig 拼出维护任务体需要的那几样。tune 可改写配置——全量哈希回填是否跟着配置里的
+// 匹配模式走，只有把它改掉才看得出来。
+func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*Controller, func() []TaskStatus, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
@@ -98,12 +105,18 @@ func newMaintenanceRig(t *testing.T, store database.Store) (*Controller, func() 
 
 	cfg := &config.Config{}
 	cfg.Cache.Dir = t.TempDir()
+	for _, apply := range tune {
+		apply(cfg)
+	}
 	config.NormalizeConfig(cfg)
 
-	c := &Controller{taskEngine: e, store: store, config: config.NewManager(cfg)}
+	manager := config.NewManager(cfg)
+	c := &Controller{taskEngine: e, store: store, config: manager}
 	// 两处哈希回填走**磁盘作业**入口。调度器**必须**新建而不能用包级实例：后者按卷计数，
 	// 用例之间会经它互相污染。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
+	// 全量哈希回填走的是 KOReader 那套**指纹**重建，两者共用同一个仓储与同一个磁盘作业入口。
+	c.koreader = ksvc.NewService(store, manager, c.diskWork)
 	return c, snapshots, clock
 }
 
@@ -298,6 +311,30 @@ func TestRebuildFileIdentitiesCancellationLandsCancelled(t *testing.T) {
 	task := lastPublishedTask(t, snapshots(), "rebuild_file_identities")
 	if task.Status != "cancelled" || task.MessageCode != "task.msg.rebuild_file_identities.cancelled" {
 		t.Fatalf("终态为 %q / %q, want cancelled + ...cancelled", task.Status, task.MessageCode)
+	}
+}
+
+// TestBackfillFullHashesPinsBinaryHashMode 守低优先级回填的口径：它由**资料库扫描**收尾时按
+// 「缺全量哈希的书有几本」发起，任务声明里报的也是这一档，因此不跟着配置里的匹配模式走——
+// 配置是路径模式时它仍然补全量哈希，而不是掉头去写路径**指纹**、把总数也换成另一批书。
+func TestBackfillFullHashesPinsBinaryHashMode(t *testing.T) {
+	store := &maintenanceStore{candidates: seedIdentityCandidates(t, 1)}
+	c, _, _ := newMaintenanceRig(t, store, func(cfg *config.Config) {
+		cfg.KOReader.MatchMode = config.KOReaderMatchModeFilePath
+	})
+
+	updated, total, err := c.runBackfillFullHashesLowPriority(context.Background(), 500, 0, nil)
+	if err != nil {
+		t.Fatalf("回填返回 %v, want nil", err)
+	}
+	if updated != 1 || total != 1 {
+		t.Fatalf("回填结果为 updated=%d total=%d, want 1/1", updated, total)
+	}
+	if store.askedMatchMode != config.KOReaderMatchModeBinaryHash {
+		t.Fatalf("按 %q 盘算缺口, want %q —— 配置改成路径模式不该让它改口径", store.askedMatchMode, config.KOReaderMatchModeBinaryHash)
+	}
+	if len(store.updated) != 1 || store.updated[0].FileHash == "" || store.updated[0].PathFingerprint != "" {
+		t.Fatalf("落库的是 %+v, want 只写 file_hash", store.updated)
 	}
 }
 

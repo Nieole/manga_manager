@@ -756,7 +756,8 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
 		metrics := taskIOMetrics{}
-		updated, total, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, metrics.absorbHashedFile, func(current, total int) {
+		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize, AbsorbDiskWork: metrics.absorbHashedFile}
+		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, func(current, total int) {
 			tp.Report(koreaderFingerprintFrame(current, total, metrics))
 			// IO 参数走的是另一条通道（存储 IO 面板按参数名读），只能单独报一次。
 			tp.MergeParams(taskIOMetricsParams(metrics))
@@ -825,7 +826,8 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
 		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
 		metrics := taskIOMetrics{}
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, koreaderTaskBatchSize, metrics.absorbHashedFile, func(current, total int) {
+		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize, AbsorbDiskWork: metrics.absorbHashedFile}
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts, func(current, total int) {
 			tp.Report(holdingStepCount(koreaderFingerprintFrame(current, total, metrics)))
 			tp.MergeParams(taskIOMetricsParams(metrics))
 		})

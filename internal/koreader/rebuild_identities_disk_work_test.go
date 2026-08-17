@@ -44,7 +44,7 @@ func assertRebuildBlocked(t *testing.T, service *Service, store database.Store, 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	updated, _, err := service.RebuildBookIdentities(ctx, 500, nil, nil)
+	updated, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 500}, nil)
 	if err == nil {
 		t.Fatalf("重建跑完了 —— %s", reason)
 	}
@@ -95,7 +95,7 @@ func TestRebuildBookIdentitiesAcquiresHashToken(t *testing.T) {
 	held.Release()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	updated, total, err := service.RebuildBookIdentities(ctx, 500, nil, nil)
+	updated, total, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 500}, nil)
 	if err != nil {
 		t.Fatalf("令牌归还后重建返回 %v, want nil", err)
 	}
@@ -130,6 +130,34 @@ func TestRebuildBookIdentitiesYieldsToForegroundReading(t *testing.T) {
 	assertRebuildBlocked(t, service, store, book, "前台正在读这块盘，它该让路")
 }
 
+// TestRebuildBookIdentitiesPausesBetweenBatches 守批间停顿：低优先级回填全靠它把自己压低到长时间
+// 跑着也不碍事，而停顿本身必须可被取消——不然一次关服要等它睡完才走得掉。
+func TestRebuildBookIdentitiesPausesBetweenBatches(t *testing.T) {
+	service, store, rootDir := newTestService(t, config.KOReaderMatchModeBinaryHash)
+
+	first := seedHashableBook(t, store, rootDir, "First")
+	second := seedHashableBook(t, store, rootDir, "Second")
+
+	// 一批一本、停顿 300ms：100ms 的期限必然落在第一批之后的那段停顿里。没有停顿的话两本都会
+	// 在几毫秒内算完，这条用例就再也等不到那个期限。
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	updated, total, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 1, BatchGap: 300 * time.Millisecond}, nil)
+	if err == nil {
+		t.Fatal("重建跑完了 —— 批间停顿没生效，两批之间一步没歇")
+	}
+	if updated != 1 || total != 2 {
+		t.Fatalf("updated=%d total=%d, want 1/2 —— 第一批该算完，第二批该被停顿挡在期限之外", updated, total)
+	}
+	if fileHash, _, _ := loadBookIdentity(t, store, first.ID); fileHash == "" {
+		t.Fatal("第一本的 file_hash 为空 —— 停顿之前那一批该正常算完")
+	}
+	if fileHash, _, _ := loadBookIdentity(t, store, second.ID); fileHash != "" {
+		t.Fatalf("第二本的 file_hash = %q, want 空 —— 停顿被取消打断后不该再往下算", fileHash)
+	}
+}
+
 func TestRebuildBookIdentitiesSkipsUnreadableBookAndAdvancesCursor(t *testing.T) {
 	service, store, rootDir := newTestService(t, config.KOReaderMatchModeBinaryHash)
 
@@ -143,7 +171,7 @@ func TestRebuildBookIdentitiesSkipsUnreadableBookAndAdvancesCursor(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	updated, total, err := service.RebuildBookIdentities(ctx, 500, nil, nil)
+	updated, total, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 500}, nil)
 	if err != nil {
 		t.Fatalf("重建返回 %v, want nil —— 超时说明坏书上的分页游标没推进，同一本被永远切回来", err)
 	}
