@@ -1,0 +1,225 @@
+// 本文件守读通路的两条规则：字段的锁定标志按系列的**当前**锁定集算，以及一批提案的
+// 字段行只换来一次查询。
+//
+// 锁定标志算错，用户会以为某个字段能被应用，点下去却在写入时被静默丢弃；字段行逐条取
+// 则是一个系列有几条待裁决提案、就多几次查询的 N+1。
+
+package proposal
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sync/atomic"
+	"testing"
+
+	"manga-manager/internal/database"
+)
+
+// countingFieldRowDB 统计批量字段行查询被调了几次。不是行为替身：底下仍是同一个真库，
+// 它只在调用经过时加一。
+type countingFieldRowDB struct {
+	Database
+	batchCalls atomic.Int64
+}
+
+func (d *countingFieldRowDB) ListMetadataReviewFieldsByReviews(ctx context.Context, reviewIDs []int64) ([]database.MetadataReviewField, error) {
+	d.batchCalls.Add(1)
+	return d.Database.ListMetadataReviewFieldsByReviews(ctx, reviewIDs)
+}
+
+// fieldByName 从一条提案的字段里挑出某个字段。
+func fieldByName(t *testing.T, fields []Field, name string) Field {
+	t.Helper()
+	for _, field := range fields {
+		if field.Name == name {
+			return field
+		}
+	}
+	t.Fatalf("提案里找不到字段 %q，实际有 %v", name, fieldNames(fields))
+	return Field{}
+}
+
+func fieldNames(fields []Field) []string {
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		names = append(names, field.Name)
+	}
+	return names
+}
+
+// TestListBySeriesLocksFieldsByCurrentLockSet：锁定标志按**当前**锁定集算，不是入队快照。
+//
+// 「先入队、后加锁」的字段行快照恒为 false。照快照渲染，界面上就没有锁徽章，
+// 用户点了应用，该字段却在写入时被静默丢弃。
+func TestListBySeriesLocksFieldsByCurrentLockSet(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+	series := seedSeries(t, store, "Lib", "Series Alpha")
+
+	seedProposal(t, svc, series, fullResult())
+	// 入队之后用户才加的锁。
+	lockFields(t, store, series, "publisher")
+
+	listed, err := svc.ListBySeries(ctx, series.ID)
+	if err != nil {
+		t.Fatalf("ListBySeries: %v", err)
+	}
+	if len(listed.Proposals) != 1 {
+		t.Fatalf("列出 %d 条待裁决提案，期望 1 条", len(listed.Proposals))
+	}
+
+	fields := listed.Proposals[0].Fields
+	if locked := fieldByName(t, fields, "publisher"); !locked.Locked {
+		t.Error("publisher 没有锁定标志 —— 用户会以为它能被应用，点下去却被静默丢弃")
+	}
+	if unlocked := fieldByName(t, fields, "title"); unlocked.Locked {
+		t.Error("title 带上了锁定标志，但它并不在锁定集里 —— 整份锁被串到了别的字段上")
+	}
+}
+
+// TestListBySeriesBatchesFieldRowLookups：三条待裁决提案只该换来一次字段行查询。
+//
+// 顺带守住分组不改变内容：字段仍按入队顺序排列，且没有被串到别的提案上——
+// 三条提案的 title 提案值各不相同。
+func TestListBySeriesBatchesFieldRowLookups(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+	series := seedSeries(t, store, "Lib", "Series Alpha")
+
+	// 每条提案换一个来源条目与标题，签名互不相同，三次入队各建一条。
+	wantTitle := map[int64]string{}
+	wantFieldOrder := map[int64][]string{}
+	for i := range 3 {
+		result := fullResult()
+		result.SourceID = 100 + i
+		result.Title = fmt.Sprintf("Scraped Title %d", i)
+		queued, err := svc.Queue(ctx, series, result, "bangumi", "Alpha", QueueOptions{})
+		if err != nil {
+			t.Fatalf("入队第 %d 条: %v", i+1, err)
+		}
+		if queued.Status != QueueQueued {
+			t.Fatalf("第 %d 条入队得到 status=%q，用例需要三条各自独立的提案", i+1, queued.Status)
+		}
+		wantTitle[queued.Proposal.ID] = result.Title
+		for _, field := range queued.Fields {
+			wantFieldOrder[queued.Proposal.ID] = append(wantFieldOrder[queued.Proposal.ID], field.FieldName)
+		}
+	}
+
+	counting := &countingFieldRowDB{Database: testDB{Store: store}}
+	listed, err := NewService(counting).ListBySeries(ctx, series.ID)
+	if err != nil {
+		t.Fatalf("ListBySeries: %v", err)
+	}
+	if len(listed.Proposals) != 3 {
+		t.Fatalf("列出 %d 条待裁决提案，期望 3 条", len(listed.Proposals))
+	}
+	for _, item := range listed.Proposals {
+		if got := fieldByName(t, item.Fields, "title").Proposed; got != wantTitle[item.Row.ID] {
+			t.Errorf("提案 %d 的 title 提案值是 %q，期望 %q —— 字段行被分到了别的提案上",
+				item.Row.ID, got, wantTitle[item.Row.ID])
+		}
+		if got := fieldNames(item.Fields); !slices.Equal(got, wantFieldOrder[item.Row.ID]) {
+			t.Errorf("提案 %d 的字段顺序是 %v，期望 %v —— 分组把行的顺序打乱了",
+				item.Row.ID, got, wantFieldOrder[item.Row.ID])
+		}
+	}
+
+	if got := counting.batchCalls.Load(); got != 1 {
+		t.Errorf("字段行查询调用了 %d 次，期望 1 次 —— 一个系列有几条待裁决提案就是几次额外查询", got)
+	}
+}
+
+// TestInboxLocksFieldsPerSeries：收件箱一页跨多个系列，锁定集必须逐行各算各的。
+//
+// 共用一份锁定集会把一个系列的锁串到另一个系列的提案上：用户在别处看到不该有的锁徽章，
+// 或者真被锁的字段反倒没有。
+func TestInboxLocksFieldsPerSeries(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+	locked := seedSeries(t, store, "Lib", "Series Locked")
+	open := seedSeries(t, store, "Lib Two", "Series Open")
+
+	seedProposal(t, svc, locked, fullResult())
+	seedProposal(t, svc, open, fullResult())
+	lockFields(t, store, locked, "publisher")
+
+	page, err := svc.Inbox(ctx, InboxQuery{Limit: 30})
+	if err != nil {
+		t.Fatalf("Inbox: %v", err)
+	}
+	if page.Total != 2 || len(page.Items) != 2 {
+		t.Fatalf("收件箱有 %d 条（total=%d），期望 2 条", len(page.Items), page.Total)
+	}
+
+	for _, item := range page.Items {
+		got := fieldByName(t, item.Fields, "publisher").Locked
+		want := item.Row.SeriesID == locked.ID
+		if got != want {
+			t.Errorf("系列 %d 的 publisher 锁定标志是 %v，期望 %v —— 锁被串到了别的系列上",
+				item.Row.SeriesID, got, want)
+		}
+	}
+}
+
+// TestInboxPagesWithoutShrinkingTotal：Total 是**过滤后、分页前**的总数。
+//
+// 让它跟着一页的条数走，收件箱的分页控件就只剩一页，翻不到后面的提案。
+func TestInboxPagesWithoutShrinkingTotal(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+	for i := range 3 {
+		series := seedSeries(t, store, fmt.Sprintf("Lib %d", i), fmt.Sprintf("Series %d", i))
+		seedProposal(t, svc, series, fullResult())
+	}
+
+	first, err := svc.Inbox(ctx, InboxQuery{Limit: 2})
+	if err != nil {
+		t.Fatalf("Inbox 第一页: %v", err)
+	}
+	if len(first.Items) != 2 || first.Total != 3 {
+		t.Fatalf("第一页有 %d 条、total=%d，期望 2 条、total=3", len(first.Items), first.Total)
+	}
+
+	second, err := svc.Inbox(ctx, InboxQuery{Limit: 2, Offset: 2})
+	if err != nil {
+		t.Fatalf("Inbox 第二页: %v", err)
+	}
+	if len(second.Items) != 1 || second.Total != 3 {
+		t.Fatalf("第二页有 %d 条、total=%d，期望 1 条、total=3", len(second.Items), second.Total)
+	}
+	if first.Items[0].Row.ID == second.Items[0].Row.ID {
+		t.Error("第二页返回了第一页的第一条 —— 偏移没有生效，后面的提案永远翻不到")
+	}
+}
+
+// TestPendingCountCountsOnlyPending：角标只该数待裁决的那些。
+//
+// 把已裁决的也算进去，角标会常亮，用户点进收件箱却什么也没有。
+func TestPendingCountCountsOnlyPending(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+	alpha := seedSeries(t, store, "Lib", "Series Alpha")
+	beta := seedSeries(t, store, "Lib Two", "Series Beta")
+
+	seedProposal(t, svc, alpha, fullResult())
+	rejected := seedProposal(t, svc, beta, fullResult())
+
+	count, err := svc.PendingCount(ctx)
+	if err != nil {
+		t.Fatalf("PendingCount: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("待裁决计数是 %d，期望 2", count)
+	}
+
+	rejectProposal(t, store, rejected.ID)
+	count, err = svc.PendingCount(ctx)
+	if err != nil {
+		t.Fatalf("PendingCount: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("拒绝一条之后计数仍是 %d，期望 1 —— 角标不会随裁决动作下降", count)
+	}
+}

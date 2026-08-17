@@ -31,7 +31,7 @@ type reviewInboxSummaryResponse struct {
 func (c *Controller) getReviewInboxSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	metadataCount, err := c.store.CountPendingMetadataReviewInbox(ctx, database.CountPendingMetadataReviewInboxParams{})
+	metadataCount, err := c.proposals.PendingCount(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to count metadata reviews")
 		return

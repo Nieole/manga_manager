@@ -180,11 +180,7 @@ func firstMatching(ctx context.Context, q Queries, candidates []database.Metadat
 	if err != nil {
 		return database.MetadataReview{}, nil, false, err
 	}
-	// 分组保序：批量查询按 review_id、id 升序返回，每条提案内部因此仍是 id 升序。
-	grouped := make(map[int64][]database.MetadataReviewField, len(candidates))
-	for _, row := range rows {
-		grouped[row.ReviewID] = append(grouped[row.ReviewID], row)
-	}
+	grouped := groupFieldRows(rows, len(candidates))
 	for _, candidate := range candidates {
 		fields := grouped[candidate.ID]
 		if signaturesEqual(signature, rowsSignature(fields, candidate.SourceID, locked)) {

@@ -176,14 +176,8 @@ func metadataLockedFieldSet(series database.Series) map[string]bool {
 	if !series.LockedFields.Valid {
 		return map[string]bool{}
 	}
-	return parseLockedFieldSet(series.LockedFields.String)
-}
-
-// parseLockedFieldSet 解析 locked_fields 的逗号分隔表示。
-// 单独抽出来是因为收件箱查询直接取的是 s.locked_fields 字符串（没有整行 Series）。
-func parseLockedFieldSet(raw string) map[string]bool {
 	locked := make(map[string]bool)
-	for _, field := range strings.Split(raw, ",") {
+	for _, field := range strings.Split(series.LockedFields.String, ",") {
 		field = strings.TrimSpace(field)
 		if field != "" {
 			locked[field] = true
@@ -453,25 +447,22 @@ func metadataNumber(value float64) string {
 	return strconv.FormatFloat(value, 'f', 1, 64)
 }
 
-// metadataReviewFieldToView 把待审字段转成前端视图。
-//
-// lockedNow 是**当前**的锁定集。不能直接用行上的 field.Locked——那是入队瞬间的快照，
-// 「先入队、后加锁」的行 locked=false，于是 UI 上没有任何锁徽章，用户点了应用，
-// 该字段却被静默丢弃。锁定状态是系列的当前属性，展示时就该按当前值算。
-func metadataReviewFieldToView(field database.MetadataReviewField, lockedNow map[string]bool) metadataReviewFieldView {
+// metadataReviewFieldToView 把待审字段转成前端视图：只搬字段，只补面向用户的标签。
+// 锁定标志由 proposal.Field.Locked 定值，展示层不得参与那条规则。
+func metadataReviewFieldToView(field proposal.Field) metadataReviewFieldView {
 	return metadataReviewFieldView{
-		Name:       field.FieldName,
-		Label:      metadataFieldLabel(field.FieldName),
-		Current:    field.CurrentValue,
-		Proposed:   field.ProposedValue,
+		Name:       field.Name,
+		Label:      metadataFieldLabel(field.Name),
+		Current:    field.Current,
+		Proposed:   field.Proposed,
 		Confidence: field.Confidence,
-		Locked:     field.Locked || lockedNow[field.FieldName],
+		Locked:     field.Locked,
 		Source:     field.Source,
-		SourceURL:  field.SourceUrl,
+		SourceURL:  field.SourceURL,
 	}
 }
 
-func metadataReviewToView(review database.MetadataReview, fields []database.MetadataReviewField, lockedNow map[string]bool) metadataReviewView {
+func metadataReviewToView(review database.MetadataReview, fields []proposal.Field) metadataReviewView {
 	view := metadataReviewView{
 		ID:          review.ID,
 		SeriesID:    review.SeriesID,
@@ -496,12 +487,12 @@ func metadataReviewToView(review database.MetadataReview, fields []database.Meta
 		view.RejectedAt = &value
 	}
 	for _, field := range fields {
-		view.Fields = append(view.Fields, metadataReviewFieldToView(field, lockedNow))
+		view.Fields = append(view.Fields, metadataReviewFieldToView(field))
 	}
 	return view
 }
 
-func metadataReviewInboxRowToView(row database.ListPendingMetadataReviewInboxRow, fields []database.MetadataReviewField, lockedNow map[string]bool) metadataReviewInboxItemView {
+func metadataReviewInboxRowToView(row database.ListPendingMetadataReviewInboxRow, fields []proposal.Field) metadataReviewInboxItemView {
 	review := database.MetadataReview{
 		ID:          row.ID,
 		SeriesID:    row.SeriesID,
@@ -519,7 +510,7 @@ func metadataReviewInboxRowToView(row database.ListPendingMetadataReviewInboxRow
 		RejectedAt:  row.RejectedAt,
 	}
 	return metadataReviewInboxItemView{
-		metadataReviewView: metadataReviewToView(review, fields, lockedNow),
+		metadataReviewView: metadataReviewToView(review, fields),
 		LibraryID:          row.LibraryID,
 		LibraryName:        row.LibraryName,
 		SeriesName:         row.SeriesName,
@@ -759,67 +750,20 @@ func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, payload)
 }
 
-// metadataReviewFieldsByReview 一次取回这批提案的字段行，并按提案分组。
-//
-// 逐条取是 N+1：一个系列有几条待裁决提案，就是几次额外查询。
-// 分组保序，每条提案内部仍是 id 升序，与逐条版给出的顺序一致。
-func (c *Controller) metadataReviewFieldsByReview(ctx context.Context, reviewIDs []int64) (map[int64][]database.MetadataReviewField, error) {
-	grouped := make(map[int64][]database.MetadataReviewField, len(reviewIDs))
-	if len(reviewIDs) == 0 {
-		// 空列表被 sqlc 拼成 IN (NULL)，能查、只是白跑一次往返。
-		return grouped, nil
-	}
-	fields, err := c.store.ListMetadataReviewFieldsByReviews(ctx, reviewIDs)
-	if err != nil {
-		return nil, err
-	}
-	for _, field := range fields {
-		grouped[field.ReviewID] = append(grouped[field.ReviewID], field)
-	}
-	return grouped, nil
-}
-
 func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int64) (metadataReviewResponse, error) {
-	// 取一次系列，用于按**当前**锁定集渲染字段的 locked 徽章（行上那个是入队瞬间的快照）。
-	series, err := c.store.GetSeries(ctx, seriesID)
-	if err != nil {
-		return metadataReviewResponse{}, err
-	}
-	lockedNow := metadataLockedFieldSet(series)
-
-	reviews, err := c.store.ListPendingMetadataReviewsBySeries(ctx, seriesID)
-	if err != nil {
-		return metadataReviewResponse{}, err
-	}
-	if reviews == nil {
-		reviews = []database.MetadataReview{}
-	}
-
-	provenanceRows, err := c.store.GetSeriesMetadataProvenance(ctx, seriesID)
-	if err != nil {
-		return metadataReviewResponse{}, err
-	}
-	if provenanceRows == nil {
-		provenanceRows = []database.SeriesMetadataProvenance{}
-	}
-
-	reviewIDs := make([]int64, 0, len(reviews))
-	for _, review := range reviews {
-		reviewIDs = append(reviewIDs, review.ID)
-	}
-	fieldsByReview, err := c.metadataReviewFieldsByReview(ctx, reviewIDs)
+	listed, err := c.proposals.ListBySeries(ctx, seriesID)
 	if err != nil {
 		return metadataReviewResponse{}, err
 	}
 
 	payload := metadataReviewResponse{
-		Reviews:    make([]metadataReviewView, 0, len(reviews)),
-		Provenance: make([]metadataProvenanceView, 0, len(provenanceRows)),
+		Reviews:    make([]metadataReviewView, 0, len(listed.Proposals)),
+		Provenance: make([]metadataProvenanceView, 0, len(listed.Provenance)),
 	}
-	for _, review := range reviews {
-		payload.Reviews = append(payload.Reviews, metadataReviewToView(review, fieldsByReview[review.ID], lockedNow))
+	for _, item := range listed.Proposals {
+		payload.Reviews = append(payload.Reviews, metadataReviewToView(item.Row, item.Fields))
 	}
-	for _, row := range provenanceRows {
+	for _, row := range listed.Provenance {
 		payload.Provenance = append(payload.Provenance, provenanceToView(row))
 	}
 
@@ -846,23 +790,10 @@ func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Requ
 	if offset < 0 {
 		offset = 0
 	}
-	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-
-	total, err := c.store.CountPendingMetadataReviewInbox(r.Context(), database.CountPendingMetadataReviewInboxParams{
+	page, err := c.proposals.Inbox(r.Context(), proposal.InboxQuery{
 		LibraryID: libraryID,
-		Provider:  provider,
-		Query:     query,
-	})
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to count metadata reviews")
-		return
-	}
-
-	rows, err := c.store.ListPendingMetadataReviewInbox(r.Context(), database.ListPendingMetadataReviewInboxParams{
-		LibraryID: libraryID,
-		Provider:  provider,
-		Query:     query,
+		Provider:  strings.TrimSpace(r.URL.Query().Get("provider")),
+		Keyword:   strings.TrimSpace(r.URL.Query().Get("q")),
 		Offset:    offset,
 		Limit:     limit,
 	})
@@ -870,27 +801,15 @@ func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Requ
 		jsonError(w, http.StatusInternalServerError, "Failed to list metadata reviews")
 		return
 	}
-	if rows == nil {
-		rows = []database.ListPendingMetadataReviewInboxRow{}
-	}
 
 	payload := metadataReviewInboxResponse{
-		Items:  make([]metadataReviewInboxItemView, 0, len(rows)),
-		Total:  total,
+		Items:  make([]metadataReviewInboxItemView, 0, len(page.Items)),
+		Total:  page.Total,
 		Limit:  limit,
 		Offset: offset,
 	}
-	reviewIDs := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		reviewIDs = append(reviewIDs, row.ID)
-	}
-	fieldsByReview, err := c.metadataReviewFieldsByReview(r.Context(), reviewIDs)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load metadata review fields")
-		return
-	}
-	for _, row := range rows {
-		payload.Items = append(payload.Items, metadataReviewInboxRowToView(row, fieldsByReview[row.ID], parseLockedFieldSet(row.SeriesLockedFields)))
+	for _, item := range page.Items {
+		payload.Items = append(payload.Items, metadataReviewInboxRowToView(item.Row, item.Fields))
 	}
 
 	jsonResponse(w, http.StatusOK, payload)

@@ -1,8 +1,9 @@
-// 本文件守**当前**锁定集在 api 侧的两处效力：单条应用全被锁时的响应形状，
-// 以及系列详情页上锁徽章按当前锁定集渲染（不是入队瞬间的快照）。
+// 本文件守锁定字段在 api 侧的两处传输语义：单条应用全被锁时的响应形状，
+// 以及模块算好的锁定标志确实落到了系列详情的响应里。
 //
-// 锁徽章渲染错，用户会以为某个字段能被应用，点下去却被静默丢弃。
-// 应用时按锁过滤、以及入队侧对锁的处置，都归 internal/proposal 的用例。
+// 锁徽章没送到前端，用户会以为某个字段能被应用，点下去却被静默丢弃。
+// 「锁定标志按当前锁定集算」这条规则本身、应用时按锁过滤、入队侧对锁的处置，
+// 都归 internal/proposal 的用例。
 
 package api
 
@@ -81,8 +82,10 @@ func TestApplyReportsLockedSkippedWithoutServerError(t *testing.T) {
 	}
 }
 
-// TestReviewViewReflectsCurrentLockState：徽章按**当前**锁定集渲染，不是入队快照。
-func TestReviewViewReflectsCurrentLockState(t *testing.T) {
+// TestReviewViewCarriesLockBadgeToResponse：模块算好的锁定标志要一路落到响应里。
+//
+// 规则本身归 internal/proposal 的用例；这里守的是视图映射没把它搬丢。
+func TestReviewViewCarriesLockBadgeToResponse(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	ctx := context.Background()
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series Alpha", "a.cbz", 10)

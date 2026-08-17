@@ -96,8 +96,14 @@ func lockedFieldSet(series database.Series) map[string]bool {
 	if !series.LockedFields.Valid {
 		return map[string]bool{}
 	}
+	return parseLockedFields(series.LockedFields.String)
+}
+
+// parseLockedFields 解析 locked_fields 的逗号分隔表示。
+// 单独抽出来是因为收件箱那条查询直接取 s.locked_fields 字符串，手上没有整行系列。
+func parseLockedFields(raw string) map[string]bool {
 	locked := make(map[string]bool)
-	for _, field := range strings.Split(series.LockedFields.String, ",") {
+	for _, field := range strings.Split(raw, ",") {
 		field = strings.TrimSpace(field)
 		if field != "" {
 			locked[field] = true

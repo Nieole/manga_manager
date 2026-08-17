@@ -41,11 +41,14 @@ type Queries interface {
 	RefreshSeriesStats(ctx context.Context, id int64) error
 }
 
-// Database 是本包可用的数据库能力：事务外只列裁决前要加载的三样，加上拒绝那一条
-// 自成原子的 CAS；其余写入一律经 ExecTx——fn 内的写入要么整体生效，要么整体回滚。
+// Database 是本包可用的数据库能力：事务外只列读路径要用的那些、裁决前要加载的三样，
+// 加上拒绝那一条自成原子的 CAS；其余写入一律经 ExecTx——fn 内的写入要么整体生效，
+// 要么整体回滚。
 //
 // 事务外的这几样刻意逐个列出而不是内嵌整个 Queries：那样会把系列元数据的写入也开放到
 // 事务之外，「写元数据」与「推终态」就又能被拆到两次事务里去，而它们必须原子。
+//
+// 字段行同样只列批量版，与 Queries 一个口径：读路径与裁决路径都不该有第二种取法。
 //
 // 裁决前的加载则刻意留在事务之外，与生产上的真实形态一致：读到待裁决与真正写入之间
 // 存在窗口，别的请求可以在此期间把同一条提案推进到终态。事务内那道 CAS 守的就是这个窗口，
@@ -55,6 +58,12 @@ type Database interface {
 	GetMetadataReview(ctx context.Context, id int64) (database.MetadataReview, error)
 	ListMetadataReviewFieldsByReviews(ctx context.Context, reviewIDs []int64) ([]database.MetadataReviewField, error)
 	ResolvePendingMetadataReview(ctx context.Context, arg database.ResolvePendingMetadataReviewParams) (int64, error)
+
+	// 读路径
+	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]database.MetadataReview, error)
+	GetSeriesMetadataProvenance(ctx context.Context, seriesID int64) ([]database.SeriesMetadataProvenance, error)
+	ListPendingMetadataReviewInbox(ctx context.Context, arg database.ListPendingMetadataReviewInboxParams) ([]database.ListPendingMetadataReviewInboxRow, error)
+	CountPendingMetadataReviewInbox(ctx context.Context, arg database.CountPendingMetadataReviewInboxParams) (int64, error)
 
 	ExecTx(ctx context.Context, fn func(Queries) error) error
 }
