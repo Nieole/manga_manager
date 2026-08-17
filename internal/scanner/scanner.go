@@ -356,10 +356,10 @@ func (s *Scanner) scanWorkerCount(cfg config.Config, rootPath string, opts ScanO
 	policy := config.ResolveStoragePolicy(cfg, rootPath)
 	limit := policy.IOPolicy.ScanConcurrency
 	if opts.Profile.opensArchive() {
-		limit = storageIOLimit(limit, policy.IOPolicy.ArchiveOpenConcurrency)
+		limit = minPositive(limit, policy.IOPolicy.ArchiveOpenConcurrency)
 	}
 	if opts.Profile.computesQuickHash() || opts.Profile.computesFullHash(cfg) {
-		limit = storageIOLimit(limit, policy.IOPolicy.HashConcurrency)
+		limit = minPositive(limit, policy.IOPolicy.HashConcurrency)
 	}
 	if limit > 0 && workers > limit {
 		workers = limit
@@ -370,7 +370,8 @@ func (s *Scanner) scanWorkerCount(cfg config.Config, rootPath string, opts ScanO
 	return workers
 }
 
-func storageIOLimit(values ...int) int {
+// minPositive 取诸项里最小的正值；全非正时返回 0，即不设上限。
+func minPositive(values ...int) int {
 	limit := 0
 	for _, value := range values {
 		if value <= 0 {
@@ -381,23 +382,6 @@ func storageIOLimit(values ...int) int {
 		}
 	}
 	return limit
-}
-
-func (s *Scanner) acquireStorageToken(ctx context.Context, policy config.ResolvedStoragePolicy, limit int, kind storageio.WorkKind) (func(), time.Duration, time.Duration, error) {
-	if limit <= 0 || strings.TrimSpace(policy.VolumeKey) == "" {
-		return func() {}, 0, 0, nil
-	}
-	lease, err := storageio.Default.Acquire(ctx, storageio.Request{
-		VolumeKey:        policy.VolumeKey,
-		Limit:            limit,
-		Kind:             kind,
-		PauseWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
-		IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
-	})
-	if err != nil {
-		return nil, lease.Wait, lease.PausedWait, err
-	}
-	return lease.Release, lease.Wait, lease.PausedWait, nil
 }
 
 func NormalizeScanProfile(raw string) ScanProfile {

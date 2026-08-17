@@ -19,7 +19,6 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
-	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 )
 
@@ -97,46 +96,6 @@ func TestScanWorkerCountUsesExternalHDDPolicy(t *testing.T) {
 
 	if workers != 1 {
 		t.Fatalf("expected external HDD metadata scan to use one worker, got %d", workers)
-	}
-}
-
-func TestAcquireStorageTokenSerializesSameVolume(t *testing.T) {
-	s := NewScanner(nil, config.NewManager(&config.Config{}))
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	policy := config.ResolvedStoragePolicy{
-		StorageProfile: config.StorageProfileHDDExternal,
-		VolumeKey:      "e:",
-		IOPolicy: config.StorageIOPolicy{
-			PauseBackgroundWhenReading: true,
-		},
-	}
-
-	release, _, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
-	if err != nil {
-		t.Fatalf("acquire first token failed: %v", err)
-	}
-
-	acquired := make(chan struct{})
-	go func() {
-		secondRelease, _, _, err := s.acquireStorageToken(ctx, policy, 1, storageio.WorkKindMetadataScan)
-		if err == nil {
-			secondRelease()
-			close(acquired)
-		}
-	}()
-
-	select {
-	case <-acquired:
-		t.Fatal("expected second token acquisition to wait")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	release()
-	select {
-	case <-acquired:
-	case <-time.After(time.Second):
-		t.Fatal("expected second token acquisition after release")
 	}
 }
 

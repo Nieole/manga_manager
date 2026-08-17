@@ -1,5 +1,5 @@
 // 本文件是任务子域的 HTTP 层与装配层：任务列表/清理/重试/暂停/恢复/取消六个端点、
-// 任务重试注册表（taskType -> 重启函数），以及依赖运行时配置的存储 IO 令牌与并发上限推导。
+// 任务重试注册表（taskType -> 重启函数），以及任务面板上报的指标参数与有效并发数推导。
 //
 // 引擎自身的可变状态与状态机在 task_engine.go，TaskStatus 的纯转换函数在 task_model.go；
 // 本文件只经 c.taskEngine 的方法操作任务表，出现 taskEngine.mutex 即说明状态逻辑漏到了这里。
@@ -15,13 +15,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/storageio"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -138,31 +136,10 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 	}
 }
 
-// ---- 存储 IO 令牌与并发上限（依赖运行时配置，不属于任务引擎的内部状态）----
+// ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----
 
-func (c *Controller) acquireTaskStorageToken(ctx context.Context, libraryPath string, kind storageio.WorkKind) (config.ResolvedStoragePolicy, func(), time.Duration, time.Duration, error) {
-	policy := config.ResolveStoragePolicy(c.currentConfig(), libraryPath)
-	limit := minPositiveStorageLimit(policy.IOPolicy.HashConcurrency, policy.IOPolicy.ArchiveOpenConcurrency)
-	if kind == storageio.WorkKindCoverBuild {
-		limit = minPositiveStorageLimit(policy.IOPolicy.CoverConcurrency, policy.IOPolicy.ArchiveOpenConcurrency)
-	}
-	if limit <= 0 || strings.TrimSpace(policy.VolumeKey) == "" {
-		return policy, func() {}, 0, 0, nil
-	}
-	lease, err := storageio.Default.Acquire(ctx, storageio.Request{
-		VolumeKey:        policy.VolumeKey,
-		Limit:            limit,
-		Kind:             kind,
-		PauseWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
-		IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
-	})
-	if err != nil {
-		return policy, nil, lease.Wait, lease.PausedWait, err
-	}
-	return policy, lease.Release, lease.Wait, lease.PausedWait, nil
-}
-
-func minPositiveStorageLimit(values ...int) int {
+// minPositive 取诸项里最小的正值；全非正时返回 0，即不设上限。
+func minPositive(values ...int) int {
 	limit := 0
 	for _, value := range values {
 		if value <= 0 {
@@ -204,10 +181,10 @@ func (c *Controller) taskLimitsForPath(path string, force bool) TaskLimits {
 	}
 	limit := policy.IOPolicy.ScanConcurrency
 	if profile != scanner.ScanProfileFast {
-		limit = minPositiveStorageLimit(limit, policy.IOPolicy.ArchiveOpenConcurrency)
+		limit = minPositive(limit, policy.IOPolicy.ArchiveOpenConcurrency)
 	}
 	if profile == scanner.ScanProfileIdentity || profile == scanner.ScanProfileRepair {
-		limit = minPositiveStorageLimit(limit, policy.IOPolicy.HashConcurrency)
+		limit = minPositive(limit, policy.IOPolicy.HashConcurrency)
 	}
 	effectiveWorkers := workers
 	if limit > 0 && effectiveWorkers > limit {
