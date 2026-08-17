@@ -976,11 +976,11 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 
 	cfg := s.currentConfig()
 	storagePolicy := config.ResolveStoragePolicy(cfg, rootPath)
-	var arc parser.Archive
 	var pages []parser.PageMetadata
-	closeArchive := func() {}
+	var cInfo *parser.ComicInfo
+	// 存储令牌只覆盖真正的归档 IO——打开、读页目录、读 ComicInfo、关闭。路径解析、复合哈希、
+	// 排序号与封面候选都不碰这个归档，放在归还之后，避免虚占归档打开的并发额度。
 	if opts.Profile.opensArchive() {
-		var err error
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return
 		}
@@ -995,7 +995,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		if metrics != nil && paused > 0 {
 			metrics.pausedMillis.Add(paused.Milliseconds())
 		}
-		arc, err = s.openArchive(job.path)
+		arc, err := s.openArchive(job.path)
 		if err != nil {
 			releaseToken()
 			if metrics != nil {
@@ -1009,7 +1009,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		}
 		progress.publish("reading_metadata", job.path, false)
 		closed := false
-		closeArchive = func() {
+		closeArchive := func() {
 			if closed {
 				return
 			}
@@ -1027,6 +1027,17 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 			slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
 			return
 		}
+
+		if opts.Profile.extractsMetadata() {
+			xmlData, err := arc.ReadMetadataFile("ComicInfo.xml")
+			if err == nil {
+				if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
+					cInfo = parsed
+				}
+			}
+		}
+		// 必须在此归还，否则后续两处哈希申领同卷存储令牌时会自我等待。
+		closeArchive()
 	}
 
 	// 基于路径、修改时间和大小生成复合哈希，确保文件内容变动时缩略图强制刷新
@@ -1086,18 +1097,6 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	} else if opts.Profile.extractsMetadata() {
 		slog.Warn("No pages found in archive to extract cover", "path", job.path)
 	}
-
-	// 尝试提取 ComicInfo.xml；归档读取完成后立即释放 IO token，避免后续 hash 再申请同盘 token 时自我等待。
-	var cInfo *parser.ComicInfo
-	if opts.Profile.extractsMetadata() && arc != nil {
-		xmlData, err := arc.ReadMetadataFile("ComicInfo.xml")
-		if err == nil {
-			if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
-				cInfo = parsed
-			}
-		}
-	}
-	closeArchive()
 
 	book := database.UpsertBookByPathParams{
 		LibraryID:      libIDInt,
