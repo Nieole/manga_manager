@@ -69,7 +69,8 @@ func newBackgroundTestEngine(run func(func())) (*taskEngine, func() []TaskStatus
 		mu.Lock()
 		defer mu.Unlock()
 		published = append(published, task)
-	}, nil, run)
+		// 末位的**磁盘作业**入口留 nil：本包的用例不发起磁盘作业，那条契约由 taskrun 的用例守。
+	}, nil, run, nil)
 	return e, func() []TaskStatus {
 		mu.Lock()
 		defer mu.Unlock()

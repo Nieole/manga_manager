@@ -31,6 +31,7 @@ import (
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -933,7 +934,7 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 
 func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	// 写重建任务的资格来自任务体交给聚合器的**进度句柄**：聚合器据此为每个库造一个
+	// 写重建任务的资格来自任务体交给聚合器的**任务句柄**：聚合器据此为每个库造一个
 	// **扫描观察者**，交不出句柄时造不出观察者，报文就无处可落。
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
 	controller.initRebuildThumbAggregator(progress, 0)
@@ -2886,23 +2887,25 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scrape", Total: 3, CanCancel: true, CanPause: true})
 	progress.Advance(1, 3, "task.msg.scrape.queueing_review", map[string]string{"name": "Foo"})
 	progress.Phase("queueing_review", "", nil)
-	progress.Item("Foo")
-	progress.Metrics(map[string]int64{
-		"total_series":         3,
-		"processed_series":     1,
-		"success_count":        1,
-		"failed_count":         0,
-		"not_found_count":      0,
-		"queued_review_count":  1,
-		"provider_requests":    1,
-		"provider_errors":      0,
-		"rate_limited_wait_ms": 500,
-	})
-	progress.Labels(map[string]string{
-		"provider":            "bangumi",
-		"provider_name":       "Bangumi",
-		"current_series_id":   "42",
-		"current_series_name": "Foo",
+	progress.Report(taskrun.Frame{
+		Item: "Foo",
+		Metrics: map[string]int64{
+			"total_series":         3,
+			"processed_series":     1,
+			"success_count":        1,
+			"failed_count":         0,
+			"not_found_count":      0,
+			"queued_review_count":  1,
+			"provider_requests":    1,
+			"provider_errors":      0,
+			"rate_limited_wait_ms": 500,
+		},
+		Labels: map[string]string{
+			"provider":            "bangumi",
+			"provider_name":       "Bangumi",
+			"current_series_id":   "42",
+			"current_series_name": "Foo",
+		},
 	})
 
 	controller.taskEngine.mutex.Lock()

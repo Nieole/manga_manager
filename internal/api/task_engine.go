@@ -1,6 +1,7 @@
 // 后台任务引擎的状态与生命周期：任务表、运行时句柄、异步落盘、SSE 投递与节流、淘汰、查询与控制。
-// 任务子域的全部可变状态归它所有，只依赖四样注入的外部能力——落盘的 store、投递 SSE 的 publish、
-// 感知停机的 done、开受停机管辖 goroutine 的 runBackground。Controller 不得直接触碰任务表。
+// 任务子域的全部可变状态归它所有，只依赖注入进来的外部能力——落盘的 store、投递 SSE 的 publish、
+// 感知停机的 done、开受停机管辖 goroutine 的 runBackground、执行**磁盘作业**的 diskWork。
+// Controller 不得直接触碰任务表。
 // 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
 
 package api
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/taskcontrol"
 )
 
@@ -86,6 +88,9 @@ type taskEngine struct {
 	// 停机竞态下任务被静默丢弃、运行时句柄泄漏，且两处都不会有编译错误。
 	// 测试注入同步执行版本即可确定性地断言终态，不必等待真实 goroutine。
 	runBackground func(func())
+	// diskWork 是交给**任务句柄**的**磁盘作业**入口，留 nil 的后果见 taskrun.New。
+	// 不启动任务体的白盒测试即如此构造。
+	diskWork *diskwork.Runner
 
 	// ---- 受 mutex 保护的状态 ----
 
@@ -120,12 +125,13 @@ func (e *taskEngine) clock() time.Time {
 	return time.Now()
 }
 
-func newTaskEngine(store database.Store, publish func(string), done func() <-chan struct{}, runBackground func(func())) *taskEngine {
+func newTaskEngine(store database.Store, publish func(string), done func() <-chan struct{}, runBackground func(func()), diskWork *diskwork.Runner) *taskEngine {
 	return &taskEngine{
 		store:          store,
 		publish:        publish,
 		done:           done,
 		runBackground:  runBackground,
+		diskWork:       diskWork,
 		tasks:          make(map[string]TaskStatus),
 		runtimes:       make(map[string]*TaskRuntime),
 		persistPending: make(map[string]TaskStatus),

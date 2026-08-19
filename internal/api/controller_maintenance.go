@@ -14,6 +14,7 @@ import (
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/taskrun"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -139,7 +140,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 		FailCode:     "task.msg.rebuild_index.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, _ *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, _ *taskrun.Handle) (TaskResult, error) {
 		if err := c.store.RebuildSeriesSearchIndex(ctx); err != nil {
 			return taskFailure("task.msg.rebuild_index.series_failed", err), err
 		}
@@ -164,7 +165,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 
 // launchRebuildThumbnailsTask 是缩略图重建任务的启动点，走引擎的启动入口。
 //
-// 任务体开工第一件事是把进度句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
+// 任务体开工第一件事是把任务句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
 // 之外写入，所有权模型见那里。
 func (c *Controller) launchRebuildThumbnailsTask() error {
 	cfg := c.currentConfig()
@@ -192,11 +193,11 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		FailCode:     "task.msg.rebuild_thumbnails.failed",
 	}
 
-	if err := c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	if err := c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		c.initRebuildThumbAggregator(tp, 0)
 		defer c.releaseRebuildThumbAggregator()
 
-		tp.Report(TaskFrame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
+		tp.Report(taskrun.Frame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
 		if err := c.clearThumbnailDir(thumbDir); err != nil {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
@@ -249,7 +250,7 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
 		tp.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
 		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
@@ -285,7 +286,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		updated, total, err := c.runRebuildFileIdentities(ctx, 500, func(current, total int, metrics taskIOMetrics) {
 			reportHashProgress(tp, current, total, "task.msg.rebuild_file_identities.progress", metrics)
 		})
@@ -299,10 +300,10 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 // reportHashProgress 把一次哈希进度上报成**一帧**，外加**任务参数**那一条通道。
 //
 // 文件身份重建与低优先级哈希回填除文案码外完全同形，共用一份实现，免得两处各自漂移。
-// 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 TaskProgress.Report）。
+// 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 taskrun.Handle.Report）。
 // IO 参数走的是另一条通道（存储 IO 面板按参数名读，见 taskArchiveOpenRate），只能单独一次。
-func reportHashProgress(tp *TaskProgress, current, total int, code string, metrics taskIOMetrics) {
-	tp.Report(TaskFrame{
+func reportHashProgress(tp *taskrun.Handle, current, total int, code string, metrics taskIOMetrics) {
+	tp.Report(taskrun.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "hashing",
@@ -416,7 +417,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 		FailCode:     "task.msg.book_hash_backfill.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, metrics taskIOMetrics) {
 			reportHashProgress(tp, current, total, "task.msg.book_hash_backfill.progress", metrics)
 		})

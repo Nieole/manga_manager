@@ -12,6 +12,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/taskrun"
 )
 
 // newRebuildThumbTestController 手工拼装出这条链路需要的两个组件：任务引擎与聚合器。
@@ -36,7 +37,7 @@ func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*Controller, func
 
 const rebuildThumbTestKey = "rebuild_thumbnails"
 
-func seedRebuildThumbTask(t *testing.T, c *Controller) *TaskProgress {
+func seedRebuildThumbTask(t *testing.T, c *Controller) *taskrun.Handle {
 	t.Helper()
 	return seedTask(t, c.taskEngine, taskSeed{
 		Key: rebuildThumbTestKey, Type: "rebuild_thumbnails",

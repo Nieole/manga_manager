@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/taskrun"
 )
 
 // TestTaskSnapshotsAreClonedAcrossCriticalSection 并发跑「进度更新」与「落盘 + 列表」，
@@ -28,7 +29,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	var writer, readers sync.WaitGroup
 
 	// 写侧：模拟扫描器的高频进度回调（真实场景每 250ms 一次，回填任务每本书两次——
-	// 进度句柄一次、任务参数一次，两次都在锁内原地写同一批 map）。
+	// **任务句柄**一次、任务参数一次，两次都在锁内原地写同一批 map）。
 	// 持续到读侧跑完为止，保证读写窗口充分重叠。
 	writer.Add(1)
 	go func() {
@@ -40,9 +41,9 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 			default:
 			}
 			progress.Advance(i, 1000, "task.msg.scan_library.progress", map[string]string{"current": strconv.Itoa(i)})
-			progress.Item("item")
-			progress.Metrics(map[string]int64{"processed": int64(i)})
-			progress.Labels(map[string]string{"library": "alpha"})
+			progress.Report(taskrun.Frame{Item: "item"})
+			progress.Report(taskrun.Frame{Metrics: map[string]int64{"processed": int64(i)}})
+			progress.Report(taskrun.Frame{Labels: map[string]string{"library": "alpha"}})
 			controller.taskEngine.mergeTaskParams(taskKey, map[string]string{"library": "alpha"})
 		}
 	}()

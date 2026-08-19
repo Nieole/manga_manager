@@ -19,6 +19,7 @@ import (
 	ksvc "manga-manager/internal/koreader"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/taskrun"
 )
 
 // maintenanceStore 只实现维护任务体真正会调到的那几个方法。其余方法留给内嵌的 nil 接口——
@@ -233,7 +234,7 @@ func TestCleanupThumbnailsReportsPhaseThenCounts(t *testing.T) {
 
 // TestHashProgressFrameIsPublishedWhole 守一次哈希进度只投递一条载荷，且那条载荷内部自洽：
 // 计数、阶段、指标与标签都来自同一本书。拆成 Advance / Phase / Metrics / Labels 四次分报即变红
-// （撕开之后是什么样见 TaskProgress.Report）。
+// （撕开之后是什么样见 taskrun.Handle.Report）。
 func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 	c, snapshots, clock := newMaintenanceRig(t, &maintenanceStore{})
 	const key = "rebuild_file_identities"
@@ -350,7 +351,7 @@ func TestHashBackfillStartsFromInsideATaskBody(t *testing.T) {
 	c.config = config.NewManager(&cfg)
 
 	var chainErr error
-	if err := c.taskEngine.Run(TaskSpec{Key: "scan_library_1", Type: "scan_library"}, func(context.Context, *TaskProgress) (TaskResult, error) {
+	if err := c.taskEngine.Run(TaskSpec{Key: "scan_library_1", Type: "scan_library"}, func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		chainErr = c.launchLowPriorityBookHashBackfillTask("scan_library")
 		return TaskResult{}, nil
 	}); err != nil {

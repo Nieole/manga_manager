@@ -14,6 +14,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	ksvc "manga-manager/internal/koreader"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -697,16 +698,16 @@ func koreaderMatchMetadata(cfg config.Config) map[string]string {
 }
 
 // koreaderFingerprintFrame 把一次**指纹**重建进度翻成**一帧**：**计数推进**、**阶段**、文案与
-// 指标同属一次事件，拆开报会被投递水位撕断（撕开的样子见 TaskProgress.Report）。
+// 指标同属一次事件，拆开报会被投递水位撕断（撕开的样子见 taskrun.Handle.Report）。
 // 书籍指纹重建与匹配刷新的第一阶段共用它，帧的内容因此只有一份。
 //
 // 档位与卷键不进帧的**标签**，只走**任务参数**那条通道（`taskIOMetricsParams` 会把空值滤掉）：
 // **路径**匹配模式下这个任务一次盘都不读，两项恒为空，而标签是有一个显示一个——写进去等于
 // 把「没有这回事」显示成「实况为空」。IO 那几项指标同样恒为零，但面板只显示大于零的指标。
-func koreaderFingerprintFrame(current, total int, metrics taskIOMetrics) TaskFrame {
+func koreaderFingerprintFrame(current, total int, metrics taskIOMetrics) taskrun.Frame {
 	frameMetrics := metrics.frameMetrics()
 	frameMetrics["processed_books"] = int64(current)
-	return TaskFrame{
+	return taskrun.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "hashing",
@@ -718,8 +719,8 @@ func koreaderFingerprintFrame(current, total int, metrics taskIOMetrics) TaskFra
 
 // koreaderReconcileFrame 把一次进度对账翻成一帧，整帧报出的理由同 koreaderFingerprintFrame。
 // 进度对账与匹配刷新的第二阶段共用它。
-func koreaderReconcileFrame(current, total int) TaskFrame {
-	return TaskFrame{
+func koreaderReconcileFrame(current, total int) taskrun.Frame {
+	return taskrun.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "reconciling_progress",
@@ -734,7 +735,7 @@ func koreaderReconcileFrame(current, total int) TaskFrame {
 // 只有匹配刷新用它：那个任务的进度条数的是它自己的两个阶段（0/2 → 1/2），而两个阶段内部复用的
 // 正是上面两个帧——原样报进去，用户会看到「40 / 共 2」这种读数。逐条目计数在那里只进占位参数
 // 与指标，两处都还在帧里。
-func holdingStepCount(frame TaskFrame) TaskFrame {
+func holdingStepCount(frame taskrun.Frame) taskrun.Frame {
 	frame.Current, frame.Total = nil, nil
 	return frame
 }
@@ -754,7 +755,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		metrics := taskIOMetrics{}
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize, AbsorbDiskWork: metrics.absorbHashedFile}
 		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, func(current, total int) {
@@ -787,7 +788,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 		FailCode:     "task.msg.reconcile_koreader_progress.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, func(current, total int) {
 			tp.Report(koreaderReconcileFrame(current, total))
 		})
@@ -823,7 +824,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		FailCode:     "task.msg.refresh_koreader_matching.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
 		metrics := taskIOMetrics{}
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize, AbsorbDiskWork: metrics.absorbHashedFile}
@@ -838,7 +839,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		// 阶段跃迁与阶段计数是同一件事，必须一帧报出：分成两次的话，先出去的那条载荷带着
 		// 新计数与旧阶段名，而补齐的那条会被水位吞掉（阶段与文案码此时已经一字未变）。
 		reconcileStep := 1
-		tp.Report(TaskFrame{
+		tp.Report(taskrun.Frame{
 			Current: &reconcileStep,
 			Phase:   "reconciling_progress",
 			Code:    "task.msg.refresh_koreader_matching.reconcile_start",

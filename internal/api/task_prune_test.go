@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/taskrun"
 )
 
 // floodFinishedTasks 灌入 n 个已完成任务，把内存表推过 maxRetainedTasks。
@@ -25,17 +26,17 @@ func floodFinishedTasks(t *testing.T, engine *taskEngine, n int) {
 func TestPruneKeepsActiveTasks(t *testing.T) {
 	cases := []struct {
 		name  string
-		setup func(t *testing.T, e *taskEngine, key string) *TaskProgress
+		setup func(t *testing.T, e *taskEngine, key string) *taskrun.Handle
 	}{
 		{
 			name: "running 任务不被淘汰",
-			setup: func(t *testing.T, e *taskEngine, key string) *TaskProgress {
+			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
 				return seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
 			},
 		},
 		{
 			name: "paused 任务不被淘汰",
-			setup: func(t *testing.T, e *taskEngine, key string) *TaskProgress {
+			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
 				progress := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
 				if err := e.pause(key); err != nil {
 					t.Fatalf("pause: %v", err)

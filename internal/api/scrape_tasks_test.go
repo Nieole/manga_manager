@@ -211,7 +211,7 @@ func TestScrapeTaskDeclarationLandsWhole(t *testing.T) {
 // TestScrapeFrameIsPublishedWhole 守一次上报只投递一条载荷，且那条载荷内部自洽：计数、指标、
 // 当前条目与占位参数都来自同一个系列。拆成 Advance / Metrics / Item / Labels 四次分报即变红——
 // 后三次会被投递水位吞掉（**阶段**与文案码一字未变），载荷里的指标就此停在上一个系列
-// （撕开的样子见 TaskProgress.Report）。
+// （撕开的样子见 taskrun.Handle.Report）。
 func TestScrapeFrameIsPublishedWhole(t *testing.T) {
 	c, snapshots := newScrapeTaskRig(t, &scrapeTestProvider{fetchErr: errors.New("provider offline")})
 

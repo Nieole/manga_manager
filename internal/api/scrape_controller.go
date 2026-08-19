@@ -13,6 +13,7 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/taskrun"
 )
 
 const scrapeRateLimitDelay = 500 * time.Millisecond
@@ -381,11 +382,11 @@ func scrapeProviderLabels(providerKey, providerName string) map[string]string {
 }
 
 // frame 把刮削任务的一次上报翻成**一帧**：**计数推进**、**阶段**、文案与指标同属一次事件，
-// 拆开报会被投递水位撕断（撕开的样子见 TaskProgress.Report）。
+// 拆开报会被投递水位撕断（撕开的样子见 taskrun.Handle.Report）。
 // 系列名同时是当前条目与文案占位参数；收集阶段那一帧还没有条目，两处都留空。
-func (m scrapeMetrics) frame(current int, phase, code, seriesName string) TaskFrame {
+func (m scrapeMetrics) frame(current int, phase, code, seriesName string) taskrun.Frame {
 	total := m.total
-	frame := TaskFrame{Current: &current, Total: &total, Phase: phase, Code: code, Metrics: m.toMap()}
+	frame := taskrun.Frame{Current: &current, Total: &total, Phase: phase, Code: code, Metrics: m.toMap()}
 	if seriesName != "" {
 		frame.Item = seriesName
 		frame.Params = map[string]string{"name": seriesName}
@@ -394,14 +395,14 @@ func (m scrapeMetrics) frame(current int, phase, code, seriesName string) TaskFr
 }
 
 // runScrapeTask 是全库/单库两种批量刮削的共享任务体：对 entries 逐个请求 provider、写入元数据
-// 审阅队列、按速率限制推进，并经进度句柄上报每一帧。logMsg 承载两个入口的日志差异，
+// 审阅队列、按速率限制推进，并经任务句柄上报每一帧。logMsg 承载两个入口的日志差异，
 // 终态文案的差异则由各自的任务声明承担。ctx 必须已注入 locale。
 // 两个入口必须共用这一份实现，分叉成两份各自维护会导致日志与进度上报互相漂移。
 //
 // 各个可中断点只把错误返回上去，由引擎裁决**终态**：取消落已取消，其余落失败。
 // 启动入口交下来的 ctx 没有 deadline，**暂停闸门**也只返回 nil 或 ctx.Err()，因此今天走不到
 // 失败那条；将来若给任务上下文加了超时，这条等价即失效。
-func (c *Controller) runScrapeTask(ctx context.Context, tp *TaskProgress, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (TaskResult, error) {
+func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (TaskResult, error) {
 	providerName := provider.Name()
 	m := scrapeMetrics{total: len(entries)}
 	tp.Report(m.frame(0, "collecting_series", "task.msg.scrape.collecting_series", ""))
@@ -524,7 +525,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		FailCode:     "task.msg.scrape.failed_all",
 	}
 
-	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping series metadata", allSeries)
 	})
 }
@@ -600,7 +601,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		FailCode:     "task.msg.scrape.failed_library",
 	}
 
-	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping library series metadata", allSeries)
 	})
 }

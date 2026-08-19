@@ -17,6 +17,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -248,7 +249,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 		FailCode:     "task.msg.write_comicinfo.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
 			// 聚合与序列化是纯 CPU，留在**磁盘作业**之外：把它们夹进令牌的持有区间只会虚占这块盘
@@ -282,9 +283,9 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 			}
 
 			// 计数、书名与三个结局计数同属这一本书，必须整帧报出：拆开报会被投递水位撕断，
-			// 撕开之后是什么样见 TaskProgress.Report。
+			// 撕开之后是什么样见 taskrun.Handle.Report。
 			current, total := i+1, len(books)
-			tp.Report(TaskFrame{
+			tp.Report(taskrun.Frame{
 				Current: &current,
 				Total:   &total,
 				Phase:   "writing",

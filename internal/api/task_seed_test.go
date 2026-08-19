@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"manga-manager/internal/taskrun"
 )
 
 // taskSeed 描述一条要播下的任务。零值即「系统**作用域**、不可取消不可暂停、停在运行中」。
@@ -48,8 +50,8 @@ type taskSeed struct {
 	FailError      string
 }
 
-// seedTask 播下一条任务并返回它的进度句柄；被**任务键**闸门拒绝即 t.Fatal。
-func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *TaskProgress {
+// seedTask 播下一条任务并返回它的**任务句柄**；被**任务键**闸门拒绝即 t.Fatal。
+func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *taskrun.Handle {
 	t.Helper()
 	progress, err := trySeedTask(e, seed)
 	if err != nil {
@@ -67,7 +69,7 @@ func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *TaskProgress {
 // **调用约束**：只能在测试自己的 goroutine 上、且此刻没有任何任务体在飞时调用。runBackground
 // 属于引擎「装配期注入、之后只读」的那组字段，不受 mutex 保护，这里的换入换出因此不是并发安全的；
 // 与并发启动的任务撞上时 -race 也未必抓得到（那要恰好两条 goroutine 同时摸到这个字段）。
-func trySeedTask(e *taskEngine, seed taskSeed) (*TaskProgress, error) {
+func trySeedTask(e *taskEngine, seed taskSeed) (*taskrun.Handle, error) {
 	// 这张表是 settleTask 的逆：那边把任务体返回的错误翻成终态，这边把想要的终态翻回错误，
 	// 好让播种和生产落进同一处裁决。改动任一侧都要照着另一侧看一眼——两边都不会有编译错误。
 	var bodyErr error
@@ -101,7 +103,7 @@ func trySeedTask(e *taskEngine, seed taskSeed) (*TaskProgress, error) {
 	defer func() { e.runBackground = restore }()
 	e.runBackground = func(fn func()) { body = fn }
 
-	if err := e.Run(spec, func(context.Context, *TaskProgress) (TaskResult, error) {
+	if err := e.Run(spec, func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return result, bodyErr
 	}); err != nil {
 		return nil, err
@@ -109,8 +111,8 @@ func trySeedTask(e *taskEngine, seed taskSeed) (*TaskProgress, error) {
 	if seed.Terminal != "" {
 		body()
 	}
-	// 与启动入口交给任务体的那个句柄等价：TaskProgress 只是「引擎 + 已绑定的任务键」。
-	return &TaskProgress{engine: e, key: seed.Key}, nil
+	// 与启动入口交给任务体的那个句柄同源：两处都走 newTaskHandle，键在闭包里绑定。
+	return e.newTaskHandle(seed.Key), nil
 }
 
 // settleSeededTask 让一条 seedTask 播下、仍停在**活动态**的任务按「任务体返回了 err」收尾，

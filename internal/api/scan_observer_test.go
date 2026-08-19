@@ -33,7 +33,7 @@ func startedScanRig(t *testing.T, key, taskType string) (scanner.ScanObserver, f
 	return newTaskScanObserver(progress), snapshots, clock
 }
 
-// TestScanProgressFlowsThroughHandedOverObserver 走完一整条交接：启动任务拿到**进度句柄**、
+// TestScanProgressFlowsThroughHandedOverObserver 走完一整条交接：启动任务拿到**任务句柄**、
 // 包成观察者交给扫描器、由扫描器一侧驱动、断言投递出去的载荷。
 //
 // 驱动用的是扫描器真正会调的那两个方法——报文里没有身份，那一侧没有任何办法拼出任务键。

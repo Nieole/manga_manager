@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/taskrun"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -303,9 +304,9 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 		FailCode:     "task.msg.scan_library.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
-		// 把**进度句柄**包成**扫描观察者**一起交出去：扫描器的报文不带身份，
+		// 把**任务句柄**包成**扫描观察者**一起交出去：扫描器的报文不带身份，
 		// 「这次扫描的进度写到哪」由这次交出的是谁回答。
 		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force, newTaskScanObserver(tp)); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -389,7 +390,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 		FailCode:     "task.msg.scan_series.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
 		if err := c.scanner.ScanSeries(ctx, seriesID, force, newTaskScanObserver(tp)); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -464,7 +465,7 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
 		FailCode:     "task.msg.cleanup_library.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(_ context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		tp.Phase("scanning_records", "task.msg.cleanup_library.scanning_records", idParams)
 		// 刻意不用任务体的 ctx：本任务不可取消，而停机会取消所有任务 ctx——用了它，
 		// 一次关服就会把这个没人取消过的任务写成**已取消**。改动前先读本函数的 doc。

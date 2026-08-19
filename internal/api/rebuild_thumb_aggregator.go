@@ -1,4 +1,4 @@
-// 「重建缩略图」任务的跨库进度聚合，以及该任务**进度句柄**的保管处。
+// 「重建缩略图」任务的跨库进度聚合，以及那份**任务句柄**的保管处。
 //
 // 本文件只做记账：合并、去重、算分母。把一份快照翻成一帧任务进度（含文案码的挑选）
 // 在 controller_scan_events.go，rebuildThumbLibrary 的两个**扫描观察者**方法也在那里。
@@ -10,6 +10,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/taskrun"
 )
 
 // rebuildThumbAggregator 聚合「重建缩略图」任务在多个资料库之间的进度。
@@ -25,9 +26,9 @@ import (
 type rebuildThumbAggregator struct {
 	mu sync.Mutex
 
-	// progress 是任务体交来的进度句柄；为 nil 表示当前没有在跑重建任务，所有更新都是无操作。
+	// progress 是任务体交来的任务句柄；为 nil 表示当前没有在跑重建任务，所有更新都是无操作。
 	// 它不只是一个状态位：拿不到句柄的代码没有任何办法写这个任务的进度。
-	progress *TaskProgress
+	progress *taskrun.Handle
 
 	totalLibraries int
 	doneLibraries  int
@@ -58,11 +59,11 @@ type rebuildThumbLibrary struct {
 	coverSeen int64
 }
 
-// rebuildThumbSnapshot 是聚合器对外暴露的只读视图，也是进度句柄的交付方式。
+// rebuildThumbSnapshot 是聚合器对外暴露的只读视图，也是任务句柄的交付方式。
 // 所有读取路径都走它：调用方不得自行持锁拼装 merged，否则合并规则会散成好几份各自漂移。
 type rebuildThumbSnapshot struct {
 	// Progress 为 nil 表示当前没有在跑重建任务，取到快照的一方应直接跳过。
-	Progress       *TaskProgress
+	Progress       *taskrun.Handle
 	Metrics        map[string]int64
 	DoneLibraries  int
 	TotalLibraries int
@@ -74,8 +75,8 @@ func newRebuildThumbAggregator() *rebuildThumbAggregator {
 	return &rebuildThumbAggregator{}
 }
 
-// begin 开启一轮聚合并重置全部状态，progress 是任务体交来的进度句柄。
-func (a *rebuildThumbAggregator) begin(progress *TaskProgress, totalLibraries int) {
+// begin 开启一轮聚合并重置全部状态，progress 是任务体交来的任务句柄。
+func (a *rebuildThumbAggregator) begin(progress *taskrun.Handle, totalLibraries int) {
 	if a == nil {
 		return
 	}
@@ -86,7 +87,7 @@ func (a *rebuildThumbAggregator) begin(progress *TaskProgress, totalLibraries in
 	a.totalLibraries = totalLibraries
 }
 
-// end 结束本轮聚合并交回进度句柄；之后的更新都是无操作，直到下一次 begin。
+// end 结束本轮聚合并交回任务句柄；之后的更新都是无操作，直到下一次 begin。
 //
 // 已交出去的每库观察者不会被收回——它们可能还握在封面队列手里。交回句柄之后，
 // 它们的写入全部退化为无操作，这正是「重建不在进行中」应有的表现。

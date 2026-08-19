@@ -296,7 +296,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
 	// taskEngine 依赖 c 的 SSE 投递、生命周期信号与后台运行能力，同样须在 c 构造完成后建立。
-	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone, c.runBackground)
+	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone, c.runBackground, c.diskWork)
 	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 

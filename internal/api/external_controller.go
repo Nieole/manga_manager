@@ -15,6 +15,7 @@ import (
 
 	"manga-manager/internal/external"
 	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -239,10 +240,10 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		snapshot, err := c.external.ScanSession(ctx, sessionID, func(current, total int) {
 			// 一份报文一整帧：计数、指标与占位参数同时变，拆开报会被投递水位撕断。
-			tp.Report(TaskFrame{
+			tp.Report(taskrun.Frame{
 				Current: &current,
 				Total:   &total,
 				Phase:   "discovering",
@@ -295,7 +296,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *TaskProgress) (TaskResult, error) {
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		if err := ctx.Err(); err != nil {
 			return TaskResult{}, err
 		}
@@ -316,7 +317,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			// 帧报的是**已完成**数，因此在拷贝之前报：单本几百 MB 要拷几分钟，
 			// 这段时间里用户要看到的是正在传的那本书，而不是上一本传完时的旧帧。
 			done := index
-			tp.Report(TaskFrame{
+			tp.Report(taskrun.Frame{
 				Current: &done,
 				Total:   &total,
 				Phase:   "transferring_files",
@@ -341,7 +342,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		// 收尾这一帧的计数与指标回答的是两个问题：Current 是「走完了几本」（失败的也走过了），
 		// transferred_files 是「传成了几本」。
 		transferred := total - len(failures)
-		tp.Report(TaskFrame{
+		tp.Report(taskrun.Frame{
 			Current: &total,
 			Total:   &total,
 			Code:    "task.msg.transfer_external_library.progress",

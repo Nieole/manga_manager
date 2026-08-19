@@ -301,7 +301,7 @@ func TestKOReaderTasksCarryMatchConfigMetadata(t *testing.T) {
 
 // TestRebuildBookHashesFrameIsPublishedWhole 守一次进度回调只投递一条载荷，且那条载荷内部自洽：
 // 计数、指标与占位参数都来自同一本书。拆成 Advance / Metrics 两次分报即变红——后一次会被投递
-// 水位吞掉（阶段与文案码一字未变），载荷里的指标就此停在上一本（撕开的样子见 TaskProgress.Report）。
+// 水位吞掉（阶段与文案码一字未变），载荷里的指标就此停在上一本（撕开的样子见 taskrun.Handle.Report）。
 func TestRebuildBookHashesFrameIsPublishedWhole(t *testing.T) {
 	store := &koreaderTaskStore{candidates: seedKOReaderCandidates(2)}
 	c, snapshots := newKOReaderTaskRig(t, store)
