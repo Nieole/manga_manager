@@ -17,18 +17,9 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
-	"manga-manager/internal/storageio"
 )
 
 func newTestService(t *testing.T, matchMode string) (*Service, database.Store, string) {
-	t.Helper()
-	return newTestServiceWithStorage(t, matchMode, storageio.NewScheduler(), nil)
-}
-
-// newTestServiceWithStorage 额外接管存储侧：调度器由用例新建（包级实例会让用例经由按卷计数的
-// 限流器互相污染），tune 可按书树的根改写存储策略，让「读盘先取**存储令牌**」这条路径在用例里
-// 真的走到。
-func newTestServiceWithStorage(t *testing.T, matchMode string, sched *storageio.Scheduler, tune func(cfg *config.Config, rootDir string)) (*Service, database.Store, string) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -46,13 +37,39 @@ func newTestServiceWithStorage(t *testing.T, matchMode string, sched *storageio.
 	cfg := &config.Config{}
 	cfg.Database.Path = dbPath
 	cfg.KOReader.MatchMode = matchMode
-	if tune != nil {
-		tune(cfg, tempDir)
-	}
 	config.NormalizeConfig(cfg)
 
-	manager := config.NewManager(cfg)
-	return NewService(store, manager, diskwork.NewRunner(manager.Snapshot, sched)), store, tempDir
+	return NewService(store, config.NewManager(cfg)), store, tempDir
+}
+
+// fakeTaskHandle 是 TaskHandle 的手写假体：批循环干活所需的三样资格全在这里，用例据此
+// 单独摆布其中任何一样。生产实现是**任务句柄**，它的闸门与令牌语义由 internal/taskrun
+// 与 internal/diskwork 自己的用例守，本包不重测。
+type fakeTaskHandle struct {
+	// diskErr 非 nil 时 Disk 直接回绝、闭包一步不执行——那正是**暂停闸门**或**存储令牌**
+	// 把一本书挡在门外的样子。
+	diskErr error
+
+	// advances 记下每次**计数推进**报到的 current，works 记下每一次经手的**磁盘作业**。
+	advances []int
+	works    []diskwork.Work
+}
+
+func (h *fakeTaskHandle) Advance(current, _ int) {
+	h.advances = append(h.advances, current)
+}
+
+// Checkpoint 照生产闸门的语义只答取消：未暂停时闸门返回的就是上下文错误。
+func (h *fakeTaskHandle) Checkpoint(ctx context.Context) error {
+	return ctx.Err()
+}
+
+func (h *fakeTaskHandle) Disk(_ context.Context, work diskwork.Work, fn func() error) error {
+	h.works = append(h.works, work)
+	if h.diskErr != nil {
+		return h.diskErr
+	}
+	return fn()
 }
 
 func seedServiceBook(t *testing.T, store database.Store, rootDir, libraryName, seriesName, bookName string) (database.Library, database.Book) {
@@ -142,7 +159,7 @@ func TestRebuildBookIdentitiesProcessesAllBatches(t *testing.T) {
 		}
 	}
 
-	updated, total, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 2}, nil)
+	updated, total, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 2}, &fakeTaskHandle{})
 	if err != nil {
 		t.Fatalf("rebuild identities failed: %v", err)
 	}
@@ -164,7 +181,7 @@ func TestRebuildBookIdentitiesUsesPathIndexesInFilePathMode(t *testing.T) {
 	lib, book := seedServiceBook(t, store, rootDir, "Library", "Parent/Series", "Volume01.cbz")
 	_ = lib
 
-	updated, total, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 1}, nil)
+	updated, total, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 1}, &fakeTaskHandle{})
 	if err != nil {
 		t.Fatalf("rebuild identities failed: %v", err)
 	}
@@ -527,7 +544,7 @@ func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
 	// 走一次真实的进度上报，确认管理员的数据没有被改写。
 	// 先建立书籍指纹索引：CreateBook 不写 path_fingerprint，不跑这一步的话下面的上报
 	// 匹配不到任何书，applyBookProgress 根本不会被调用——两条断言就成了永远为真的空断言。
-	if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, nil); err != nil {
+	if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, &fakeTaskHandle{}); err != nil {
 		t.Fatalf("RebuildBookIdentities: %v", err)
 	}
 

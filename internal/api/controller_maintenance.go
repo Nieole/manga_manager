@@ -318,6 +318,18 @@ func reportHashProgress(tp *taskrun.Handle, current, total int, code string, met
 	tp.MergeParams(taskIOMetricsParams(metrics))
 }
 
+// hashingFrameHandle 是低优先级哈希回填批循环收下的**任务句柄**，分工同
+// koreaderFingerprintHandle：只有**计数推进**换成上面那一帧，其余能力由内嵌的句柄原样白拿。
+type hashingFrameHandle struct {
+	*taskrun.Handle
+	// code 是这个任务的文案码。帧的其余部分与文件身份重建同形，只有它一处不同。
+	code string
+}
+
+func (h hashingFrameHandle) Advance(current, total int) {
+	reportHashProgress(h.Handle, current, total, h.code, taskIOMetricsFrom(h.IOMetrics()))
+}
+
 func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, progress func(current, total int, metrics taskIOMetrics)) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
@@ -418,9 +430,8 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 	}
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
-		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap, func(current, total int, metrics taskIOMetrics) {
-			reportHashProgress(tp, current, total, "task.msg.book_hash_backfill.progress", metrics)
-		})
+		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap,
+			hashingFrameHandle{Handle: tp, code: "task.msg.book_hash_backfill.progress"})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -444,21 +455,15 @@ func (c *Controller) chainBookHashBackfill(reason string) {
 //
 // 匹配模式钉死在二进制哈希，不跟着配置走：这个任务由**资料库扫描**收尾时按「缺全量哈希的书有
 // 几本」发起，声明里报的也是这一档，跑到一半配置被改不该让它改口径去补路径指纹。
-func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, batchGap time.Duration, progress func(current, total int, metrics taskIOMetrics)) (int, int, error) {
+func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, batchGap time.Duration, task koreader.TaskHandle) (int, int, error) {
 	if limit <= 0 {
 		limit = lowPriorityBookHashBatchSize
 	}
-	metrics := taskIOMetrics{}
 	return c.koreader.RebuildBookIdentities(ctx, koreader.RebuildOptions{
-		BatchSize:      limit,
-		BatchGap:       batchGap,
-		MatchMode:      config.KOReaderMatchModeBinaryHash,
-		AbsorbDiskWork: metrics.absorbHashedFile,
-	}, func(current, total int) {
-		if progress != nil {
-			progress(current, total, metrics)
-		}
-	})
+		BatchSize: limit,
+		BatchGap:  batchGap,
+		MatchMode: config.KOReaderMatchModeBinaryHash,
+	}, task)
 }
 
 func (c *Controller) rebuildFileIdentities(w http.ResponseWriter, r *http.Request) {

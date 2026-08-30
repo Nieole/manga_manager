@@ -118,14 +118,15 @@ func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMod
 	config.NormalizeConfig(cfg)
 	manager := config.NewManager(cfg)
 
+	// 引擎交给任务体的**任务句柄**要能发起**磁盘作业**：二进制哈希模式下每本书都经它读。
 	// 调度器新建而非取包级实例：包级实例会让用例经由按卷计数的限流器互相污染。
-	diskWork := diskwork.NewRunner(manager.Snapshot, storageio.NewScheduler())
+	e.diskWork = diskwork.NewRunner(manager.Snapshot, storageio.NewScheduler())
 
 	return &Controller{
 		taskEngine: e,
 		store:      store,
 		config:     manager,
-		koreader:   ksvc.NewService(store, manager, diskWork),
+		koreader:   ksvc.NewService(store, manager),
 	}, snapshots
 }
 

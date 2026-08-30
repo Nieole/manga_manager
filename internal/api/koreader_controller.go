@@ -740,6 +740,44 @@ func holdingStepCount(frame taskrun.Frame) taskrun.Frame {
 	return frame
 }
 
+// koreaderFingerprintHandle 是**指纹**重建批循环收下的**任务句柄**：过**暂停闸门**与发起
+// **磁盘作业**由内嵌的句柄原样白拿，只有**计数推进**换成本包的帧构造——批循环报两个数字，
+// i18n 码与**阶段**留在这一侧（遮蔽内嵌方法的写法同 proposalDB.ExecTx）。
+type koreaderFingerprintHandle struct {
+	*taskrun.Handle
+	// holdStepCount 为真时摘掉这一帧的计数推进，理由见 holdingStepCount。
+	holdStepCount bool
+}
+
+// Advance 遮蔽内嵌句柄的同名方法：批循环只认收窄后的这个形状。
+// 读 IO 实况与批循环写它同在任务体这一条 goroutine 上，而句柄本身已整体加锁。
+func (h koreaderFingerprintHandle) Advance(current, total int) {
+	metrics := taskIOMetricsFrom(h.IOMetrics())
+	frame := koreaderFingerprintFrame(current, total, metrics)
+	if h.holdStepCount {
+		frame = holdingStepCount(frame)
+	}
+	h.Report(frame)
+	// IO 参数走的是另一条通道（存储 IO 面板按参数名读），只能单独报一次。
+	h.MergeParams(taskIOMetricsParams(metrics))
+}
+
+// koreaderReconcileHandle 是进度对账批循环收下的任务句柄，分工同 koreaderFingerprintHandle。
+// 对账一次盘都不读，因此它的帧里没有 IO 实况。
+type koreaderReconcileHandle struct {
+	*taskrun.Handle
+	// holdStepCount 为真时摘掉这一帧的计数推进，理由见 holdingStepCount。
+	holdStepCount bool
+}
+
+func (h koreaderReconcileHandle) Advance(current, total int) {
+	frame := koreaderReconcileFrame(current, total)
+	if h.holdStepCount {
+		frame = holdingStepCount(frame)
+	}
+	h.Report(frame)
+}
+
 // launchRebuildBookHashesTask 是书籍**指纹**重建任务的启动点，走引擎的启动入口。
 func (c *Controller) launchRebuildBookHashesTask() error {
 	spec := TaskSpec{
@@ -756,13 +794,8 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 	}
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
-		metrics := taskIOMetrics{}
-		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize, AbsorbDiskWork: metrics.absorbHashedFile}
-		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, func(current, total int) {
-			tp.Report(koreaderFingerprintFrame(current, total, metrics))
-			// IO 参数走的是另一条通道（存储 IO 面板按参数名读），只能单独报一次。
-			tp.MergeParams(taskIOMetricsParams(metrics))
-		})
+		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
+		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, koreaderFingerprintHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -789,9 +822,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	}
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
-		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, func(current, total int) {
-			tp.Report(koreaderReconcileFrame(current, total))
-		})
+		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, koreaderReconcileHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -826,12 +857,9 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
-		metrics := taskIOMetrics{}
-		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize, AbsorbDiskWork: metrics.absorbHashedFile}
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts, func(current, total int) {
-			tp.Report(holdingStepCount(koreaderFingerprintFrame(current, total, metrics)))
-			tp.MergeParams(taskIOMetricsParams(metrics))
-		})
+		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
+		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts,
+			koreaderFingerprintHandle{Handle: tp, holdStepCount: true})
 		if err != nil {
 			return taskFailure("task.msg.refresh_koreader_matching.rebuild_failed", err), err
 		}
@@ -845,9 +873,8 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 			Code:    "task.msg.refresh_koreader_matching.reconcile_start",
 			Params:  map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)},
 		})
-		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, func(current, total int) {
-			tp.Report(holdingStepCount(koreaderReconcileFrame(current, total)))
-		})
+		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize,
+			koreaderReconcileHandle{Handle: tp, holdStepCount: true})
 		if err != nil {
 			return taskFailure("task.msg.refresh_koreader_matching.reconcile_failed", err), err
 		}

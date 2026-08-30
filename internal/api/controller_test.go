@@ -3624,23 +3624,19 @@ func TestRunBackfillFullHashesLowPriorityBackfillsFileHash(t *testing.T) {
 		t.Fatalf("write book file failed: %v", err)
 	}
 
-	var progressCalls int
-	var lastMetrics taskIOMetrics
-	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, func(current, total int, metrics taskIOMetrics) {
-		progressCalls++
-		lastMetrics = metrics
-	})
+	task := newRecordingTaskHandle(controller.diskWork)
+	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, task)
 	if err != nil {
 		t.Fatalf("runBackfillFullHashesLowPriority failed: %v", err)
 	}
 	if updated != 1 || total != 1 {
 		t.Fatalf("expected one full hash update, got updated=%d total=%d", updated, total)
 	}
-	if progressCalls == 0 {
+	if task.advances == 0 {
 		t.Fatal("expected progress callback")
 	}
-	if lastMetrics.HashedFiles != 1 {
-		t.Fatalf("expected one hashed file metric, got %+v", lastMetrics)
+	if task.lastIO.HashedFiles != 1 {
+		t.Fatalf("expected one hashed file metric, got %+v", task.lastIO)
 	}
 
 	got, err := store.GetBook(context.Background(), book.ID)

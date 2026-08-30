@@ -116,9 +116,36 @@ func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.
 	// 两处哈希回填走**磁盘作业**入口。调度器**必须**新建而不能用包级实例：后者按卷计数，
 	// 用例之间会经它互相污染。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
-	// 全量哈希回填走的是 KOReader 那套**指纹**重建，两者共用同一个仓储与同一个磁盘作业入口。
-	c.koreader = ksvc.NewService(store, manager, c.diskWork)
+	// 全量哈希回填走的是 KOReader 那套**指纹**重建，两者共用同一个仓储。
+	c.koreader = ksvc.NewService(store, manager)
+	// 引擎交给任务体的**任务句柄**要能发起磁盘作业：全量哈希回填的每一本书都经它读。
+	e.diskWork = c.diskWork
 	return c, snapshots, clock
+}
+
+// recordingTaskHandle 是两处哈希回填的批循环收下的**任务句柄**的用例替身：上报的三条通道都
+// 接空，只记下**计数推进**来过几次以及那一刻的 IO 实况；**磁盘作业**交给内嵌的真句柄，
+// 「已哈希文件数」这条计数规则因此在用例里真的走了一遍。
+type recordingTaskHandle struct {
+	*taskrun.Handle
+	advances int
+	lastIO   taskrun.IOMetrics
+}
+
+func (h *recordingTaskHandle) Advance(current, total int) {
+	h.advances++
+	h.lastIO = h.IOMetrics()
+}
+
+// newRecordingTaskHandle 造一个不挂在任何任务上的句柄：它不经启动入口，因此写不进任务表，
+// 上报去向空处；给那些只关心批循环本身、不关心上报的用例用。
+func newRecordingTaskHandle(disk *diskwork.Runner) *recordingTaskHandle {
+	return &recordingTaskHandle{Handle: taskrun.New(
+		func(taskrun.Frame) {},
+		func(map[string]string) {},
+		func(map[string]int64, map[string]string) {},
+		disk,
+	)}
 }
 
 // TestRebuildIndexNamesTheFailedIndex 守两步索引重灌各自的失败文案码：只报一句「重建索引失败」
@@ -324,7 +351,7 @@ func TestBackfillFullHashesPinsBinaryHashMode(t *testing.T) {
 		cfg.KOReader.MatchMode = config.KOReaderMatchModeFilePath
 	})
 
-	updated, total, err := c.runBackfillFullHashesLowPriority(context.Background(), 500, 0, nil)
+	updated, total, err := c.runBackfillFullHashesLowPriority(context.Background(), 500, 0, newRecordingTaskHandle(c.diskWork))
 	if err != nil {
 		t.Fatalf("回填返回 %v, want nil", err)
 	}

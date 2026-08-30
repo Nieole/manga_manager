@@ -58,6 +58,9 @@ func windowSteppingClock() func() time.Time {
 }
 
 // newBackgroundTestEngine 造一个后台能力可控的引擎：run 决定任务体何时、乃至是否执行。
+//
+// 末位的**磁盘作业**入口留 nil：多数用例的任务体一次盘都不读。要读盘的用例自行把 e.diskWork
+// 装上（见 newMaintenanceRig、newKOReaderTaskRigWithMode），否则任务体会在闸门放行之后 panic。
 func newBackgroundTestEngine(run func(func())) (*taskEngine, func() []TaskStatus) {
 	var mu sync.Mutex
 	var published []TaskStatus
@@ -69,7 +72,6 @@ func newBackgroundTestEngine(run func(func())) (*taskEngine, func() []TaskStatus
 		mu.Lock()
 		defer mu.Unlock()
 		published = append(published, task)
-		// 末位的**磁盘作业**入口留 nil：本包的用例不发起磁盘作业，那条契约由 taskrun 的用例守。
 	}, nil, run, nil)
 	return e, func() []TaskStatus {
 		mu.Lock()

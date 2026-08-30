@@ -17,7 +17,6 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/storageio"
-	"manga-manager/internal/taskcontrol"
 )
 
 // kosync 进度载荷各字段的长度上限。设备侧本就只会推送文件路径/百分比串/设备名，
@@ -43,8 +42,6 @@ var (
 type Service struct {
 	store database.Store
 	cfg   *config.Manager
-	// diskWork 执行本包唯一一处**磁盘作业**：书籍**指纹**重建逐本读完整个文件。
-	diskWork *diskwork.Runner
 }
 
 type Credentials struct {
@@ -66,10 +63,8 @@ type SyncResult struct {
 	BookID  *int64
 }
 
-// NewService 构造 KOReader 同步服务。diskWork 不得为 nil：书籍**指纹**重建要逐本读完整个
-// 文件，那是一次**磁盘作业**，绕开它就等于绕开暂停闸门与存储令牌。
-func NewService(store database.Store, cfg *config.Manager, diskWork *diskwork.Runner) *Service {
-	return &Service{store: store, cfg: cfg, diskWork: diskWork}
+func NewService(store database.Store, cfg *config.Manager) *Service {
+	return &Service{store: store, cfg: cfg}
 }
 
 // RegisterDevice 实现 kosync /users/create 设备自助注册。KOReader 客户端提交的 password
@@ -386,8 +381,23 @@ func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReade
 	return record, nil
 }
 
-// RebuildOptions 调节一次**指纹**重建。零值即「按当前配置的匹配模式、一批 500 本、批间不停顿、
-// 不上报限流实况」。
+// TaskHandle 是两个批循环干活所需的资格，由发起这次重建/对账的一方交出——它是那一方的
+// **任务句柄**收窄到本包真正用得上的三样：报**计数推进**、在可中断点过**暂停闸门**、
+// 以及发起**磁盘作业**（**指纹**重建逐本读完整个文件）。别的上报面本包一概够不着，
+// 因为批循环不知道自己在为哪个任务跑、也不该知道。
+//
+// 声明在这里而不是 import 句柄所在的包：本包说的是「批循环需要什么」，谁来满足由调用方决定，
+// 结构化满足即可（同 external.Store）。
+//
+// Advance 只报两个计数，不带展示文案：用户可见文字由调用方按语种渲染，本包渲染的话
+// 英文用户会看到中文（同 external.Manager.ScanSession）。
+type TaskHandle interface {
+	Advance(current, total int)
+	Checkpoint(ctx context.Context) error
+	Disk(ctx context.Context, work diskwork.Work, fn func() error) error
+}
+
+// RebuildOptions 调节一次**指纹**重建。零值即「按当前配置的匹配模式、一批 500 本、批间不停顿」。
 type RebuildOptions struct {
 	// BatchSize 是一批取几本；非正时取 500。
 	BatchSize int
@@ -397,8 +407,6 @@ type RebuildOptions struct {
 	// MatchMode 钉住这次重建按哪种模式补身份；留空表示读当前配置。发起时已按某一种模式盘算过
 	// 缺口的调用方钉住它，免得任务跑到一半配置被改、口径跟着换。
 	MatchMode string
-	// AbsorbDiskWork 收下每本读盘在限流上的实况，由调用方折进自己的任务指标；可为 nil。
-	AbsorbDiskWork func(diskwork.Stats)
 }
 
 // RebuildBookIdentities 回填缺**指纹**的书。二进制哈希模式下每本要读完整个文件，那是一次
@@ -406,14 +414,12 @@ type RebuildOptions struct {
 //
 // 指纹算不出来只跳过这一本、推进分页游标；中止只由磁盘作业入口返回的错误——闸门与令牌的错误
 // ——决定。游标停住即死循环：批次按 id > afterID 切，坏书排在末尾时同一本会被永远切回来。
-func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions, progress func(current, total int)) (int, int, error) {
+//
+// task 不得为 nil：过闸门与发起磁盘作业都经它，没有兜底的空实现可用。
+func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions, task TaskHandle) (int, int, error) {
 	limit := opts.BatchSize
 	if limit <= 0 {
 		limit = 500
-	}
-	absorbDiskWork := opts.AbsorbDiskWork
-	if absorbDiskWork == nil {
-		absorbDiskWork = func(diskwork.Stats) {}
 	}
 	matchMode := strings.TrimSpace(opts.MatchMode)
 	if matchMode == "" {
@@ -428,7 +434,7 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions
 	updated := 0
 	var afterID int64
 	for {
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := task.Checkpoint(ctx); err != nil {
 			return updated, total, err
 		}
 		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchMode, afterID, limit)
@@ -440,18 +446,18 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions
 		}
 
 		for _, book := range books {
-			if err := taskcontrol.Wait(ctx); err != nil {
+			if err := task.Checkpoint(ctx); err != nil {
 				return updated, total, err
 			}
 			params := database.UpdateBookIdentityParams{ID: book.ID}
 			if matchMode == config.KOReaderMatchModeBinaryHash {
 				var fileHash string
 				var hashErr error
-				stats, err := s.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
+				// 闭包只捕获自己的错误：算不出指纹不该中止整个回填。
+				err := task.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
 					fileHash, hashErr = FingerprintFileContext(ctx, book.Path)
 					return nil
 				})
-				absorbDiskWork(stats)
 				if err != nil {
 					return updated, total, err
 				}
@@ -472,13 +478,11 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions
 
 			updated++
 			afterID = book.ID
-			if progress != nil {
-				progress(updated, total)
-			}
+			task.Advance(updated, total)
 		}
 
 		if opts.BatchGap > 0 {
-			if err := taskcontrol.Wait(ctx); err != nil {
+			if err := task.Checkpoint(ctx); err != nil {
 				return updated, total, err
 			}
 			timer := time.NewTimer(opts.BatchGap)
@@ -495,7 +499,9 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions
 	return updated, total, nil
 }
 
-func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress func(current, total int)) (int, int, error) {
+// ReconcileProgress 给尚未匹配到书的进度记录补上归属。它一次盘都不读，只用到 task 的
+// **计数推进**与**暂停闸门**；task 不得为 nil。
+func (s *Service) ReconcileProgress(ctx context.Context, limit int, task TaskHandle) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -509,7 +515,7 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 	processed := 0
 	var afterID int64
 	for {
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := task.Checkpoint(ctx); err != nil {
 			return updated, total, err
 		}
 		items, err := s.store.ListUnmatchedKOReaderProgressBatch(ctx, afterID, limit)
@@ -521,7 +527,7 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 		}
 
 		for _, item := range items {
-			if err := taskcontrol.Wait(ctx); err != nil {
+			if err := task.Checkpoint(ctx); err != nil {
 				return updated, total, err
 			}
 			matchConfig := s.currentMatchConfig()
@@ -539,9 +545,7 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 			}
 			processed++
 			afterID = item.ID
-			if progress != nil {
-				progress(processed, total)
-			}
+			task.Advance(processed, total)
 		}
 	}
 	return updated, total, nil

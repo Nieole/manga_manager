@@ -5,6 +5,6 @@
 //
 // 边界：HTTP 路由与编解码、任务的定义与生命周期属于 internal/api，SQL 属于 internal/database，
 // 匹配模式读自 internal/config，扫描时给书写指纹的是 internal/scanner（它调用本包的指纹函数）；
-// 本包不定义任务，只在 RebuildBookIdentities、ReconcileProgress 的批循环里过暂停闸门；
-// RebuildBookIdentities 逐本读整个文件，那是一次**磁盘作业**，经 internal/diskwork 取令牌。
+// 本包不定义任务：RebuildBookIdentities、ReconcileProgress 的批循环过**暂停闸门**、发起
+// **磁盘作业**（前者逐本读整个文件）都经调用方交来的 TaskHandle，本包不自己持有这两样能力。
 package koreader

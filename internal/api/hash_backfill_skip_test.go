@@ -27,7 +27,7 @@ func TestHashBackfillSkipsUnreadableBookAndAdvancesCursor(t *testing.T) {
 		{
 			name: "全量哈希",
 			run: func(ctx context.Context, c *Controller) (int, int, error) {
-				return c.runBackfillFullHashesLowPriority(ctx, 500, 0, nil)
+				return c.runBackfillFullHashesLowPriority(ctx, 500, 0, newRecordingTaskHandle(c.diskWork))
 			},
 		},
 	}
