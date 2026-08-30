@@ -302,17 +302,16 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 // 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 taskrun.Handle.Report）。
 // IO 参数走的是另一条通道（存储 IO 面板按参数名读，见 taskArchiveOpenRate），只能单独一次。
 func reportHashProgress(tp *taskrun.Handle, current, total int, code string, handleIO taskrun.IOMetrics) {
-	metrics := taskIOMetricsFrom(handleIO)
 	tp.Report(taskrun.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "hashing",
 		Code:    code,
 		Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
-		Metrics: metrics.frameMetrics(),
+		Metrics: taskIOFrameMetrics(handleIO),
 		Labels: map[string]string{
-			"storage_profile": metrics.StorageProfile,
-			"volume_key":      metrics.VolumeKey,
+			"storage_profile": handleIO.StorageProfile,
+			"volume_key":      handleIO.VolumeKey,
 		},
 	})
 	tp.MergeParams(taskIOMetricsParams(handleIO))

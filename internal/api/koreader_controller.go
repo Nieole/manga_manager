@@ -705,8 +705,7 @@ func koreaderMatchMetadata(cfg config.Config) map[string]string {
 // **路径**匹配模式下这个任务一次盘都不读，两项恒为空，而标签是有一个显示一个——写进去等于
 // 把「没有这回事」显示成「实况为空」。IO 那几项指标同样恒为零，但面板只显示大于零的指标。
 func koreaderFingerprintFrame(current, total int, handleIO taskrun.IOMetrics) taskrun.Frame {
-	metrics := taskIOMetricsFrom(handleIO)
-	frameMetrics := metrics.frameMetrics()
+	frameMetrics := taskIOFrameMetrics(handleIO)
 	frameMetrics["processed_books"] = int64(current)
 	return taskrun.Frame{
 		Current: &current,

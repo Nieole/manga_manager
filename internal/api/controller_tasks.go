@@ -1,5 +1,6 @@
 // 本文件是任务子域的 HTTP 层与装配层：任务列表/清理/重试/暂停/恢复/取消六个端点、
-// 任务重试注册表（taskType -> 重启函数），以及任务面板上报的指标参数与有效并发数推导。
+// 任务重试注册表（taskType -> 重启函数），以及任务面板上报的 IO 实况（帧指标与任务参数两条通道）
+// 与有效并发数推导。
 //
 // 引擎自身的可变状态与状态机在 task_engine.go，TaskStatus 的纯转换函数在 task_model.go；
 // 本文件只经 c.taskEngine 的方法操作任务表，出现 taskEngine.mutex 即说明状态逻辑漏到了这里。
@@ -153,18 +154,29 @@ func minPositive(values ...int) int {
 	return limit
 }
 
+// taskIOFrameMetrics 是**任务句柄**的 IO 实况在**一帧**里的那几个键。
+// reportHashProgress 与 koreaderFingerprintFrame 共用一份，键名不会各自漂移。
+func taskIOFrameMetrics(handleIO taskrun.IOMetrics) map[string]int64 {
+	return map[string]int64{
+		"hashed_files": handleIO.HashedFiles,
+		"io_wait_ms":   handleIO.IOWaitMillis,
+		"paused_ms":    handleIO.PausedMillis,
+	}
+}
+
+// taskIOMetricsParams 是同一份实况在**任务参数**那条通道里的形状：存储 IO 面板按参数名读它。
+// 空的档位与卷键滤掉不写，理由见 koreaderFingerprintFrame。
 func taskIOMetricsParams(handleIO taskrun.IOMetrics) map[string]string {
-	metrics := taskIOMetricsFrom(handleIO)
 	params := map[string]string{
-		"io_wait_ms":   strconv.FormatInt(metrics.IOWaitMillis, 10),
-		"paused_ms":    strconv.FormatInt(metrics.PausedMillis, 10),
-		"hashed_files": strconv.FormatInt(metrics.HashedFiles, 10),
+		"io_wait_ms":   strconv.FormatInt(handleIO.IOWaitMillis, 10),
+		"paused_ms":    strconv.FormatInt(handleIO.PausedMillis, 10),
+		"hashed_files": strconv.FormatInt(handleIO.HashedFiles, 10),
 	}
-	if metrics.StorageProfile != "" {
-		params["storage_profile"] = metrics.StorageProfile
+	if handleIO.StorageProfile != "" {
+		params["storage_profile"] = handleIO.StorageProfile
 	}
-	if metrics.VolumeKey != "" {
-		params["volume_key"] = metrics.VolumeKey
+	if handleIO.VolumeKey != "" {
+		params["volume_key"] = handleIO.VolumeKey
 	}
 	return params
 }

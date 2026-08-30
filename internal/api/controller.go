@@ -33,7 +33,6 @@ import (
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
-	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -197,29 +196,6 @@ const (
 	lowPriorityBookHashBatchGap  = 100 * time.Millisecond
 	dashboardStatsCacheTTL       = 30 * time.Second
 )
-
-type taskIOMetrics struct {
-	StorageProfile string
-	VolumeKey      string
-	IOWaitMillis   int64
-	PausedMillis   int64
-	HashedFiles    int64
-}
-
-// taskIOMetricsFrom 把**任务句柄**自己吸收到的 IO 实况翻成本包这一份。两者字段一一对应，
-// 直接转换即可；改动其中一边的字段会在这里当场编译不过，正是要的效果。
-func taskIOMetricsFrom(handleIO taskrun.IOMetrics) taskIOMetrics {
-	return taskIOMetrics(handleIO)
-}
-
-// frameMetrics 是 IO 指标在**一帧**里的那几个键。两处哈希上报共用一份，键名不会各自漂移。
-func (m *taskIOMetrics) frameMetrics() map[string]int64 {
-	return map[string]int64{
-		"hashed_files": m.HashedFiles,
-		"io_wait_ms":   m.IOWaitMillis,
-		"paused_ms":    m.PausedMillis,
-	}
-}
 
 // controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
 // 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
