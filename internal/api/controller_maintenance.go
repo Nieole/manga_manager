@@ -106,9 +106,6 @@ func (c *Controller) runGlobalScan(ctx context.Context, tp *taskrun.Handle, forc
 		if err := tp.Checkpoint(ctx); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		var observer scanner.ScanObserver
 		if observerFor != nil {
 			observer = observerFor(lib, total)
