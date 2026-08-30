@@ -38,6 +38,8 @@ func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Con
 	// 回写走**磁盘作业**入口。调度器**必须**新建而不能用包级实例：后者按卷计数，
 	// 用例之间会经它互相污染。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
+	// 引擎交给任务体的**任务句柄**要能发起磁盘作业：回写的每一本书都经它写。
+	e.diskWork = c.diskWork
 	return c, snapshots
 }
 

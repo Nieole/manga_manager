@@ -13,7 +13,6 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
-	"manga-manager/internal/taskcontrol"
 	"manga-manager/internal/taskrun"
 	"net/http"
 	"os"
@@ -96,14 +95,15 @@ func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
 // observerFor 为每个资料库要一个**扫描观察者**；返回 nil 即该库这次扫描不属于任何任务。
 // 调用它本身就是库切换的边界——没有第二条「现在换库了」的通知，两者一旦分家就会有
 // 「观察者已经在收报文、界面上还是上一个库名」的窗口。
-func (c *Controller) runGlobalScan(ctx context.Context, force bool, ignoreFormatFilter bool, observerFor func(lib database.Library, total int) scanner.ScanObserver) error {
+// tp 是发起这次扫描的任务的**任务句柄**，库与库之间的可中断点经它过**暂停闸门**；不得为 nil。
+func (c *Controller) runGlobalScan(ctx context.Context, tp *taskrun.Handle, force bool, ignoreFormatFilter bool, observerFor func(lib database.Library, total int) scanner.ScanObserver) error {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		return err
 	}
 	total := len(libs)
 	for _, lib := range libs {
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := tp.Checkpoint(ctx); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
@@ -201,7 +201,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		if err := c.clearThumbnailDir(thumbDir); err != nil {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := tp.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
@@ -212,7 +212,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cover_index_failed", err), err
 		}
 		tp.Phase("reading_metadata", "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil)
-		if err := c.runGlobalScan(ctx, true, true, /* 重建缩略图必须看得见全部已入库的书 */
+		if err := c.runGlobalScan(ctx, tp, true, true, /* 重建缩略图必须看得见全部已入库的书 */
 			c.beginRebuildThumbLibrary); err != nil {
 			return TaskResult{}, err
 		}
@@ -287,9 +287,8 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 	}
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
-		updated, total, err := c.runRebuildFileIdentities(ctx, 500, func(current, total int, metrics taskIOMetrics) {
-			reportHashProgress(tp, current, total, "task.msg.rebuild_file_identities.progress", metrics)
-		})
+		updated, total, err := c.runRebuildFileIdentities(ctx, 500,
+			hashingFrameHandle{Handle: tp, code: "task.msg.rebuild_file_identities.progress"})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -302,7 +301,8 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 // 文件身份重建与低优先级哈希回填除文案码外完全同形，共用一份实现，免得两处各自漂移。
 // 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 taskrun.Handle.Report）。
 // IO 参数走的是另一条通道（存储 IO 面板按参数名读，见 taskArchiveOpenRate），只能单独一次。
-func reportHashProgress(tp *taskrun.Handle, current, total int, code string, metrics taskIOMetrics) {
+func reportHashProgress(tp *taskrun.Handle, current, total int, code string, handleIO taskrun.IOMetrics) {
+	metrics := taskIOMetricsFrom(handleIO)
 	tp.Report(taskrun.Frame{
 		Current: &current,
 		Total:   &total,
@@ -315,22 +315,27 @@ func reportHashProgress(tp *taskrun.Handle, current, total int, code string, met
 			"volume_key":      metrics.VolumeKey,
 		},
 	})
-	tp.MergeParams(taskIOMetricsParams(metrics))
+	tp.MergeParams(taskIOMetricsParams(handleIO))
 }
 
-// hashingFrameHandle 是低优先级哈希回填批循环收下的**任务句柄**，分工同
-// koreaderFingerprintHandle：只有**计数推进**换成上面那一帧，其余能力由内嵌的句柄原样白拿。
+// hashingFrameHandle 是两处哈希回填的批循环共同收下的**任务句柄**，分工同
+// koreaderFingerprintHandle：只有**计数推进**换成 reportHashProgress 那一帧，
+// 其余能力由内嵌的句柄原样白拿。
 type hashingFrameHandle struct {
 	*taskrun.Handle
-	// code 是这个任务的文案码。帧的其余部分与文件身份重建同形，只有它一处不同。
+	// code 是这个任务的文案码。两处的帧除它之外同形，因此它是构造期唯一要填的差异。
 	code string
 }
 
 func (h hashingFrameHandle) Advance(current, total int) {
-	reportHashProgress(h.Handle, current, total, h.code, taskIOMetricsFrom(h.IOMetrics()))
+	reportHashProgress(h.Handle, current, total, h.code, h.IOMetrics())
 }
 
-func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, progress func(current, total int, metrics taskIOMetrics)) (int, int, error) {
+// runRebuildFileIdentities 逐批补齐缺 quick_hash 的书。它与 RebuildBookIdentities 同形，
+// 干活所需的三样资格因此共用那一份窄接口：过**暂停闸门**、发起**磁盘作业**、报**计数推进**。
+//
+// task 不得为 nil：闸门与磁盘作业都经它，没有兜底的空实现可用。
+func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, task koreader.TaskHandle) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -341,10 +346,9 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 
 	total := int(missingCount)
 	updated := 0
-	metrics := taskIOMetrics{}
 	var afterID int64
 	for {
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := task.Checkpoint(ctx); err != nil {
 			return updated, total, err
 		}
 		books, err := c.store.ListBooksMissingQuickHashBatch(ctx, afterID, limit)
@@ -357,18 +361,16 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 
 		for _, book := range books {
 			// 最干净的**磁盘作业**形状：取令牌 → 读一遍文件 → 立刻归还。闭包只捕获自己的错误，
-			// 因为算不出指纹不该中止整个回填；中止只由 Do 返回的闸门与令牌错误决定。
+			// 因为算不出指纹不该中止整个回填；中止只由句柄返回的闸门与令牌错误决定。
+			// 这次作业的实况由句柄自己吸收，「已哈希文件数」也由它按「闭包真的跑了」计数。
 			var quickHash string
 			var hashErr error
-			stats, err := c.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
+			if err := task.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
 				quickHash, hashErr = koreader.FingerprintQuickFile(book.Path)
 				return nil
-			})
-			metrics.absorbDiskWork(stats)
-			if err != nil {
+			}); err != nil {
 				return updated, total, err
 			}
-			metrics.HashedFiles++
 			if hashErr != nil {
 				slog.Warn("Failed to quick-fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
 				afterID = book.ID
@@ -383,9 +385,7 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, pr
 
 			updated++
 			afterID = book.ID
-			if progress != nil {
-				progress(updated, total, metrics)
-			}
+			task.Advance(updated, total)
 		}
 	}
 	return updated, total, nil

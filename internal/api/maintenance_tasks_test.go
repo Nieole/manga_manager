@@ -267,7 +267,7 @@ func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 	const key = "rebuild_file_identities"
 	progress := seedTask(t, c.taskEngine, taskSeed{Key: key, Type: key, CanCancel: true, CanPause: true})
 
-	metrics := taskIOMetrics{StorageProfile: "hdd_external", VolumeKey: "/srv", IOWaitMillis: 120, PausedMillis: 30, HashedFiles: 7}
+	metrics := taskrun.IOMetrics{StorageProfile: "hdd_external", VolumeKey: "/srv", IOWaitMillis: 120, PausedMillis: 30, HashedFiles: 7}
 	before := publishedCountFor(snapshots(), key)
 	reportHashProgress(progress, 7, 40, "task.msg.rebuild_file_identities.progress", metrics)
 

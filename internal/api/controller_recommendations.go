@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
-	"manga-manager/internal/taskcontrol"
 	"manga-manager/internal/taskrun"
 	"net/http"
 	"strconv"
@@ -201,7 +200,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		if len(seriesRows) == 0 {
 			return TaskResult{Code: "task.msg.ai_grouping.all_already_grouped"}, nil
 		}
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := tp.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 

@@ -3600,7 +3600,7 @@ func TestRunRebuildFileIdentitiesBackfillsQuickHash(t *testing.T) {
 		t.Fatalf("write book file failed: %v", err)
 	}
 
-	updated, total, err := controller.runRebuildFileIdentities(context.Background(), 500, nil)
+	updated, total, err := controller.runRebuildFileIdentities(context.Background(), 500, newRecordingTaskHandle(controller.diskWork))
 	if err != nil {
 		t.Fatalf("runRebuildFileIdentities failed: %v", err)
 	}

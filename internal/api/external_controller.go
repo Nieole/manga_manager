@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"manga-manager/internal/external"
-	"manga-manager/internal/taskcontrol"
 	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
@@ -311,7 +310,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		for index, op := range plan.Operations {
 			// 非取消错误一律视为失败：**暂停闸门**今天只返回 nil 或 ctx.Err()，而任务上下文无
 			// deadline，因此这与「只认取消」等价。给任务上下文加超时会让这条等价失效。
-			if err := taskcontrol.Wait(ctx); err != nil {
+			if err := tp.Checkpoint(ctx); err != nil {
 				return TaskResult{}, err
 			}
 			// 帧报的是**已完成**数，因此在拷贝之前报：单本几百 MB 要拷几分钟，

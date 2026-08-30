@@ -21,7 +21,7 @@ func TestHashBackfillSkipsUnreadableBookAndAdvancesCursor(t *testing.T) {
 		{
 			name: "快速哈希",
 			run: func(ctx context.Context, c *Controller) (int, int, error) {
-				return c.runRebuildFileIdentities(ctx, 500, nil)
+				return c.runRebuildFileIdentities(ctx, 500, newRecordingTaskHandle(c.diskWork))
 			},
 		},
 		{

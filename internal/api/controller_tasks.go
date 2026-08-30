@@ -20,6 +20,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -152,7 +153,8 @@ func minPositive(values ...int) int {
 	return limit
 }
 
-func taskIOMetricsParams(metrics taskIOMetrics) map[string]string {
+func taskIOMetricsParams(handleIO taskrun.IOMetrics) map[string]string {
+	metrics := taskIOMetricsFrom(handleIO)
 	params := map[string]string{
 		"io_wait_ms":   strconv.FormatInt(metrics.IOWaitMillis, 10),
 		"paused_ms":    strconv.FormatInt(metrics.PausedMillis, 10),

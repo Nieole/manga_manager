@@ -704,7 +704,8 @@ func koreaderMatchMetadata(cfg config.Config) map[string]string {
 // 档位与卷键不进帧的**标签**，只走**任务参数**那条通道（`taskIOMetricsParams` 会把空值滤掉）：
 // **路径**匹配模式下这个任务一次盘都不读，两项恒为空，而标签是有一个显示一个——写进去等于
 // 把「没有这回事」显示成「实况为空」。IO 那几项指标同样恒为零，但面板只显示大于零的指标。
-func koreaderFingerprintFrame(current, total int, metrics taskIOMetrics) taskrun.Frame {
+func koreaderFingerprintFrame(current, total int, handleIO taskrun.IOMetrics) taskrun.Frame {
+	metrics := taskIOMetricsFrom(handleIO)
 	frameMetrics := metrics.frameMetrics()
 	frameMetrics["processed_books"] = int64(current)
 	return taskrun.Frame{
@@ -752,14 +753,14 @@ type koreaderFingerprintHandle struct {
 // Advance 遮蔽内嵌句柄的同名方法：批循环只认收窄后的这个形状。
 // 读 IO 实况与批循环写它同在任务体这一条 goroutine 上，而句柄本身已整体加锁。
 func (h koreaderFingerprintHandle) Advance(current, total int) {
-	metrics := taskIOMetricsFrom(h.IOMetrics())
-	frame := koreaderFingerprintFrame(current, total, metrics)
+	handleIO := h.IOMetrics()
+	frame := koreaderFingerprintFrame(current, total, handleIO)
 	if h.holdStepCount {
 		frame = holdingStepCount(frame)
 	}
 	h.Report(frame)
 	// IO 参数走的是另一条通道（存储 IO 面板按参数名读），只能单独报一次。
-	h.MergeParams(taskIOMetricsParams(metrics))
+	h.MergeParams(taskIOMetricsParams(handleIO))
 }
 
 // koreaderReconcileHandle 是进度对账批循环收下的任务句柄，分工同 koreaderFingerprintHandle。

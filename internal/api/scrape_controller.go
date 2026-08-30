@@ -12,7 +12,6 @@ import (
 
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/proposal"
-	"manga-manager/internal/taskcontrol"
 	"manga-manager/internal/taskrun"
 )
 
@@ -408,7 +407,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, prov
 	tp.Report(m.frame(0, "collecting_series", "task.msg.scrape.collecting_series", ""))
 
 	for i, entry := range entries {
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := tp.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		slog.Info(logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
@@ -441,7 +440,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, prov
 		}
 
 		tp.Report(m.frame(i, "queueing_review", "task.msg.scrape.queueing_review", entry.Name))
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := tp.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		queued, err := c.proposals.Queue(ctx, series, result, providerName, entry.Name, proposal.QueueOptions{})
@@ -463,7 +462,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, prov
 		tp.Report(m.frame(i+1, "rate_limited_wait", "task.msg.scrape.rate_limited_wait", entry.Name))
 
 		// 速率限制
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := tp.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		select {

@@ -261,11 +261,13 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 				continue
 			}
 
-			// 走**磁盘作业**入口：归档回写是重 IO（逐本解压重压），不受调度会让阅读器取页明显卡顿。
-			// 用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，共用同一档并发上限。
-			// 闭包只捕获自己的错误——回写失败是这一本书的结局，中止只由 Do 返回的闸门错误决定。
+			// 以这个任务的名义发起**磁盘作业**：归档回写是重 IO（逐本解压重压），不受调度会让
+			// 阅读器取页明显卡顿。用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，
+			// 共用同一档并发上限。闭包只捕获自己的错误——回写失败是这一本书的结局，中止只由句柄
+			// 返回的闸门错误决定。
+			// 实况由句柄吸收，但这个任务不报 IO 指标：上报是任务体的选择，这一处没有选它。
 			var writeErr error
-			if _, err := c.diskWork.Do(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
+			if err := tp.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
 				writeErr = parser.WriteComicInfoIntoArchive(book.Path, data)
 				return nil
 			}); err != nil {

@@ -53,7 +53,8 @@ type Controller struct {
 	stats   *statsCache
 	scanner *scanner.Scanner
 	config  *config.Manager
-	// diskWork 执行任务体的**磁盘作业**：闸门、策略、上限、令牌与观测都收在它里面。
+	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
+	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**任务句柄**。
 	diskWork   *diskwork.Runner
 	koreader   *koreader.Service
 	external   *external.Manager
@@ -203,25 +204,6 @@ type taskIOMetrics struct {
 	IOWaitMillis   int64
 	PausedMillis   int64
 	HashedFiles    int64
-}
-
-// absorbDiskWork 把一次**磁盘作业**的实况折进任务的 IO 指标：等待与暂停累加，档位与卷键取**最后
-// 一次**——一批书可以跨资料库跨卷，这两项报的是最近那一次作业落在哪一档、哪块盘上。
-// 接收者为 nil 时直接返回，于是取用点上不必再守一次。
-func (m *taskIOMetrics) absorbDiskWork(stats diskwork.Stats) {
-	if m == nil {
-		return
-	}
-	m.IOWaitMillis += stats.Wait.Milliseconds()
-	m.PausedMillis += stats.PausedWait.Milliseconds()
-	// 只认有值的那一次：闸门拦下的作业根本没解析策略，交回的是零值 Stats，照抄会把「没有实况」
-	// 写成「实况为空」，抹掉上一次作业真实报出的那一档。
-	if stats.StorageProfile != "" {
-		m.StorageProfile = stats.StorageProfile
-	}
-	if stats.VolumeKey != "" {
-		m.VolumeKey = stats.VolumeKey
-	}
 }
 
 // taskIOMetricsFrom 把**任务句柄**自己吸收到的 IO 实况翻成本包这一份。两者字段一一对应，
