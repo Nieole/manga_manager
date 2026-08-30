@@ -73,6 +73,13 @@ func seedTransferSeries(t *testing.T, store database.Store, lib database.Library
 	return ids
 }
 
+// discardScanHandle 是 TaskHandle 的手写假体：这里只要会话被扫成 ready 态，扫描报出的
+// **计数推进**没人观察，收下即丢。生产实现是**任务句柄**，那两个数字翻成一帧长什么样
+// 由 api 那一侧的用例守，本包不重测。
+type discardScanHandle struct{}
+
+func (discardScanHandle) Advance(int, int) {}
+
 func newReadyTransferSession(t *testing.T, m *Manager, store database.Store, lib database.Library) string {
 	t.Helper()
 	external := t.TempDir()
@@ -80,7 +87,7 @@ func newReadyTransferSession(t *testing.T, m *Manager, store database.Store, lib
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if _, err := m.ScanSession(context.Background(), snap.SessionID, nil); err != nil {
+	if _, err := m.ScanSession(context.Background(), snap.SessionID, discardScanHandle{}); err != nil {
 		t.Fatalf("ScanSession: %v", err)
 	}
 	return snap.SessionID

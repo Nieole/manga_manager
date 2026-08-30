@@ -389,8 +389,7 @@ func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReade
 // 声明在这里而不是 import 句柄所在的包：本包说的是「批循环需要什么」，谁来满足由调用方决定，
 // 结构化满足即可（同 external.Store）。
 //
-// Advance 只报两个计数，不带展示文案：用户可见文字由调用方按语种渲染，本包渲染的话
-// 英文用户会看到中文（同 external.Manager.ScanSession）。
+// Advance 只报两个计数、不带展示文案，理由见 external.TaskHandle。
 type TaskHandle interface {
 	Advance(current, total int)
 	Checkpoint(ctx context.Context) error

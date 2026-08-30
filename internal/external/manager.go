@@ -271,9 +271,25 @@ func (m *Manager) GetSeriesCoverage(libraryID int64, sessionID string, seriesIDs
 	return items, nil
 }
 
-// ScanSession 遍历外部路径并与本库书目对账。progress 只报两个计数，不带展示文案：
-// 用户可见文字由调用方按语种渲染，本包渲染的话英文用户会看到中文。
-func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress func(current, total int)) (SessionSnapshot, error) {
+// TaskHandle 是传输扫描上报进度所需的资格，由发起这次扫描的一方交出——它是那一方的
+// **任务句柄**收窄到本包真正用得上的一样：报**计数推进**。
+//
+// 只有这一个方法：本包不发起**磁盘作业**，包内也没有可中断点——传输循环那一处**暂停闸门**
+// 与文件复制都在调用方那一侧。
+//
+// 声明在这里而不是 import 句柄所在的包，理由同 Store：本包说的是「扫描需要什么」，
+// 谁来满足由调用方决定，结构化满足即可。
+//
+// Advance 只报两个计数，不带展示文案：用户可见文字由调用方按语种渲染，本包渲染的话
+// 英文用户会看到中文。
+type TaskHandle interface {
+	Advance(current, total int)
+}
+
+// ScanSession 遍历外部路径并与本库书目对账。
+//
+// task 不得为 nil：每对完一个文件都经它报一次**计数推进**，没有兜底的空实现可用。
+func (m *Manager) ScanSession(ctx context.Context, sessionID string, task TaskHandle) (SessionSnapshot, error) {
 	m.mu.Lock()
 	m.pruneLocked(time.Now())
 	s, ok := m.sessions[sessionID]
@@ -377,9 +393,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 		}
 		m.mu.Unlock()
 
-		if progress != nil {
-			progress(index+1, total)
-		}
+		task.Advance(index+1, total)
 	}
 
 	m.mu.Lock()

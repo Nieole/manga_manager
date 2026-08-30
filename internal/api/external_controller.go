@@ -223,6 +223,25 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// externalScanHandle 是**外部库**传输扫描收下的**任务句柄**：只有**计数推进**换成本包的
+// 帧构造，扫描报两个数字，i18n 码与**阶段**留在这一侧（遮蔽内嵌方法的写法同 proposalDB.ExecTx）。
+type externalScanHandle struct {
+	*taskrun.Handle
+}
+
+// Advance 遮蔽内嵌句柄的同名方法：扫描只认收窄后的这个形状。
+// 一份报文一整帧：计数、指标与占位参数同时变，拆开报会被投递水位撕断。
+func (h externalScanHandle) Advance(current, total int) {
+	h.Report(taskrun.Frame{
+		Current: &current,
+		Total:   &total,
+		Phase:   "discovering",
+		Code:    "task.msg.scan_external_library.progress",
+		Params:  map[string]string{"count": strconv.Itoa(current)},
+		Metrics: map[string]int64{"scanned_files": int64(current)},
+	})
+}
+
 // launchExternalLibraryScanTask 起**外部库**扫描任务。**作用域**显示名取自资料库，
 // 取不到就留空——会话本身不依赖它，为一次读库失败挡下整个扫描不划算。
 func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) error {
@@ -240,17 +259,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
-		snapshot, err := c.external.ScanSession(ctx, sessionID, func(current, total int) {
-			// 一份报文一整帧：计数、指标与占位参数同时变，拆开报会被投递水位撕断。
-			tp.Report(taskrun.Frame{
-				Current: &current,
-				Total:   &total,
-				Phase:   "discovering",
-				Code:    "task.msg.scan_external_library.progress",
-				Params:  map[string]string{"count": strconv.Itoa(current)},
-				Metrics: map[string]int64{"scanned_files": int64(current)},
-			})
-		})
+		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
 		}

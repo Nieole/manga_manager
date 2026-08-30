@@ -100,6 +100,12 @@ func newExternalRig(t *testing.T, books int, now func() time.Time, run func(func
 	}
 }
 
+// discardScanHandle 是 external.TaskHandle 的手写假体：readySession 里那次扫描不挂在任何
+// 任务上，报出的**计数推进**没人观察，收下即丢。真适配器怎么翻帧由本文件的扫描用例守。
+type discardScanHandle struct{}
+
+func (discardScanHandle) Advance(int, int) {}
+
 // readySession 建一个会话并扫成 ready 态——传输的规划阶段只认 ready。
 func (r *externalRig) readySession(t *testing.T) string {
 	t.Helper()
@@ -107,7 +113,7 @@ func (r *externalRig) readySession(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("建外部库会话: %v", err)
 	}
-	if _, err := r.c.external.ScanSession(context.Background(), snap.SessionID, nil); err != nil {
+	if _, err := r.c.external.ScanSession(context.Background(), snap.SessionID, discardScanHandle{}); err != nil {
 		t.Fatalf("扫描外部库会话: %v", err)
 	}
 	return snap.SessionID
