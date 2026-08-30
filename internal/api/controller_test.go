@@ -1933,7 +1933,8 @@ func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateSeries %s failed: %v", name, err)
 		}
-		if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET updated_at = ? WHERE id = ?`, time.Now().Add(time.Duration(len(name))*time.Minute), series.ID); err != nil {
+		// 时间列按库内存储文本写入，与 CURRENT_TIMESTAMP 一致；绑 time.Time 会落成另一种写法。
+		if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET updated_at = ? WHERE id = ?`, time.Now().UTC().Add(time.Duration(len(name))*time.Minute).Format("2006-01-02 15:04:05"), series.ID); err != nil {
 			t.Fatalf("update series %s failed: %v", name, err)
 		}
 	}
