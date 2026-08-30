@@ -170,25 +170,28 @@ func smartCollectionOrderClause(filter SmartCollectionFilter) string {
 	if dir != "ASC" && dir != "DESC" {
 		dir = "ASC"
 	}
+	// 末位的 s.id 让排序成为全序：同名系列在 name 之后再无区分键时，LIMIT/OFFSET 翻页的
+	// 行序不再由查询计划决定，页与页之间不会重复或漏掉条目。与主列表
+	// seriesSearchOffsetOrderClause 同一惯例——tie-break 跟随最后一个内容键的方向。
 	switch field {
 	case "rating":
-		return fmt.Sprintf("s.rating %s, s.name ASC", dir)
+		return fmt.Sprintf("s.rating %s, s.name ASC, s.id ASC", dir)
 	case "books":
-		return fmt.Sprintf("s.book_count %s, s.name ASC", dir)
+		return fmt.Sprintf("s.book_count %s, s.name ASC, s.id ASC", dir)
 	case "volumes":
-		return fmt.Sprintf("s.volume_count %s, s.name ASC", dir)
+		return fmt.Sprintf("s.volume_count %s, s.name ASC, s.id ASC", dir)
 	case "pages":
-		return fmt.Sprintf("s.total_pages %s, s.name ASC", dir)
+		return fmt.Sprintf("s.total_pages %s, s.name ASC, s.id ASC", dir)
 	case "read":
-		return fmt.Sprintf("read_count %s, s.name ASC", dir)
+		return fmt.Sprintf("read_count %s, s.name ASC, s.id ASC", dir)
 	case "created":
-		return fmt.Sprintf("s.created_at %s, s.name ASC", dir)
+		return fmt.Sprintf("s.created_at %s, s.name ASC, s.id ASC", dir)
 	case "updated":
-		return fmt.Sprintf("s.updated_at %s, s.name ASC", dir)
+		return fmt.Sprintf("s.updated_at %s, s.name ASC, s.id ASC", dir)
 	case "favorite":
-		return fmt.Sprintf("s.is_favorite %s, s.name ASC", dir)
+		return fmt.Sprintf("s.is_favorite %s, s.name ASC, s.id ASC", dir)
 	default:
-		return fmt.Sprintf("s.name %s", dir)
+		return fmt.Sprintf("s.name %s, s.id %s", dir, dir)
 	}
 }
 

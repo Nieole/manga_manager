@@ -109,7 +109,7 @@ SELECT
 FROM series s
 LEFT JOIN series_stats ss ON ss.series_id = s.id
 WHERE s.library_id = sqlc.arg(library_id)
-ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE, s.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: CountRecentAddedSeries :one
@@ -136,7 +136,7 @@ FROM series s
 LEFT JOIN series_stats ss ON ss.series_id = s.id
 WHERE CAST(sqlc.arg(library_id) AS INTEGER) = 0
    OR s.library_id = CAST(sqlc.arg(library_id) AS INTEGER)
-ORDER BY s.created_at DESC, s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+ORDER BY s.created_at DESC, s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC, s.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: CountMihonSeries :one
@@ -174,7 +174,7 @@ WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg
     OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
     OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
   )
-ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+ORDER BY COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC, s.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListMihonSeriesByUpdated :many
@@ -202,7 +202,7 @@ WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg
     OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
     OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
   )
-ORDER BY s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+ORDER BY s.updated_at DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC, s.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ListMihonSeriesByBooks :many
@@ -230,7 +230,7 @@ WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR s.library_id = CAST(sqlc.arg
     OR instr(lower(s.name), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
     OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
   )
-ORDER BY s.book_count DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+ORDER BY s.book_count DESC, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC, s.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: GetMihonSeries :one
@@ -432,7 +432,7 @@ WHERE mr.status = 'pending'
     OR instr(lower(COALESCE(s.title, '')), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
     OR instr(lower(mr.source_query), lower(CAST(sqlc.arg(query) AS TEXT))) > 0
   )
-ORDER BY mr.confidence ASC, mr.created_at ASC
+ORDER BY mr.confidence ASC, mr.created_at ASC, mr.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: ResolvePendingMetadataReview :execrows
@@ -790,7 +790,7 @@ FROM ai_grouping_reviews agr
 JOIN libraries l ON l.id = agr.library_id
 WHERE (CAST(sqlc.arg(library_id) AS INTEGER) = 0 OR agr.library_id = CAST(sqlc.arg(library_id) AS INTEGER))
   AND (CAST(sqlc.arg(status) AS TEXT) = '' OR agr.status = CAST(sqlc.arg(status) AS TEXT))
-ORDER BY agr.created_at DESC
+ORDER BY agr.created_at DESC, agr.id DESC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: CountAIGroupingReviews :one
@@ -1032,7 +1032,7 @@ SELECT
 FROM reading_list_items rli
 JOIN series s ON s.id = rli.series_id
 WHERE rli.reading_list_id = sqlc.arg(reading_list_id)
-ORDER BY rli.sort_order, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+ORDER BY rli.sort_order, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE, s.id ASC
 LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
 
 -- name: AddReadingListItem :one
@@ -1197,7 +1197,7 @@ SELECT
 FROM collection_series cs
 JOIN series s ON s.id = cs.series_id
 WHERE cs.collection_id = sqlc.arg(collection_id)
-ORDER BY cs.sort_order, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE
+ORDER BY cs.sort_order, COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE, s.id ASC
 LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_value);
 
 -- name: ListForwardSeriesRelations :many
