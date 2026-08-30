@@ -19,7 +19,7 @@ import (
 // 引擎仍经它唯一的 seam（newTaskEngine）构造，扫描事件转译处不碰其余任何 Controller 字段，
 // 因此这里不需要数据库、配置管理器或扫描器。
 func newRebuildThumbTestController(clock *fakeClock) (*Controller, func() []TaskStatus) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 	e.now = clock.Now
 	return &Controller{taskEngine: e, rebuildThumbAgg: newRebuildThumbAggregator()}, snapshots
 }

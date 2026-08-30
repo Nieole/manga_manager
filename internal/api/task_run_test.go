@@ -51,7 +51,7 @@ func TestRunSettlesByBodyError(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
 			if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -96,7 +96,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
 			tc.result.Params = map[string]string{"written": "3"}
@@ -120,7 +120,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 // TestRunKeepsSpecCodeWhenResultCodeEmpty 钉住零值语义：`TaskResult{}` 表示「用声明里的默认码」，
 // 而不是「把文案清空」。绝大多数任务体走的正是这条路。
 func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -142,7 +142,7 @@ func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
 // 槽位闸门同步、任务体异步。启动入口返回时任务已在列表里且任务体尚未开跑，HTTP 层才能立即返回 202。
 func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 	var deferred []func()
-	e, snapshots := newBackgroundTestEngine(func(fn func()) { deferred = append(deferred, fn) })
+	e, snapshots := newBackgroundTestEngine(func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
 	bodyRan := false
@@ -177,7 +177,7 @@ func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 func TestRunRejectsDuplicateActiveKey(t *testing.T) {
 	// 后台能力只登记不执行：第一个任务因此一直停在 running，占着这个任务键。
 	var handedOff int
-	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ })
+	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -206,7 +206,7 @@ func TestRunRejectsDuplicateActiveKey(t *testing.T) {
 // 同一任务键不得再次启动，否则新旧两个任务体会同时在跑。
 func TestRunRejectsWhileCancelling(t *testing.T) {
 	var deferred []func()
-	e, _ := newBackgroundTestEngine(func(fn func()) { deferred = append(deferred, fn) })
+	e, _ := newBackgroundTestEngine(func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -243,7 +243,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, _ := newBackgroundTestEngine(runTaskBodySynchronously)
+			e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
 			if err := e.Run(specForTest(key), tc.body); err != nil {
@@ -266,7 +266,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 // TestRunPanicStillMarksTaskFailed 钉住启动入口没有把 panic 兜底吃掉：任务体在收尾之前 panic 时，
 // 任务仍必须落到失败态，而不是停在 running 让那个任务键恒定返回 409。
 func TestRunPanicStillMarksTaskFailed(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -289,7 +289,7 @@ func TestRunPanicStillMarksTaskFailed(t *testing.T) {
 // 还会被首帧刚写下的节流水位吞掉。
 func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	// 后台能力只登记不执行：观测的是任务**诞生那一刻**的首帧，任务体跑不跑无关。
-	e, snapshots := newBackgroundTestEngine(func(func()) {})
+	e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
 
 	const key = "scan_library_7"
 	spec := specForTest(key)
@@ -329,7 +329,7 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 // TestRunLeavesLimitUnsetWhenSpecOmitsIt 钉住零值语义：没有并发上限可报的任务（多数维护任务如此）
 // 不该凭空多出一份全零的上限，否则任务面板会显示一组「0 并发」的假数据。
 func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "rebuild_index"
 	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -347,7 +347,7 @@ func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
 // 「做完了多少」，**阶段**只回答「在做什么」，条目名/指标/标签各管各的字段，谁都不许越界改别人的。
 func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 	e.now = clock.Now
 
 	const key = "scan_library_1"
@@ -393,7 +393,7 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 // TestTaskProgressIgnoredAfterTerminal 钉住**任务句柄**的失效边界：任务已进入**终态**之后
 // 迟到的进度回调（扫描器的 goroutine 不在任务体调用栈上，晚一拍很常见）不得把它拽回运行中。
 func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	var handle *taskrun.Handle
@@ -417,7 +417,7 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 // 破了就是 taskEngine 符号 doc 写的那种 fatal error——runtime throw，拦不住。
 func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
 	// 后台能力只登记不执行：任务停在活动态，进度写得进去。
-	e, _ := newBackgroundTestEngine(func(func()) {})
+	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
 
 	metadata := map[string]string{"provider": "anilist"}
 	labels := map[string]string{"provider_name": "AniList"}
@@ -457,7 +457,7 @@ func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
 // 被**任务键**闸门挡下的那次启动一步都不得往前走。抢在闸门之前建句柄的话，第二次启动会把
 // 正在跑的那个任务的 ctx 与**暂停闸门**换成一份没人持有的，那个任务从此暂停不了也取消不了。
 func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
-	e, _ := newBackgroundTestEngine(func(func()) {})
+	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", CanCancel: true, CanPause: true})
@@ -480,7 +480,7 @@ func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
 // 任务中心把 pause_reason 渲染成一行「暂停原因：手动暂停」，而它对一条已经失败的任务毫无意义
 // ——用户看到的是一条自称「手动暂停」的失败任务。同一处的另外三个控制字段本就已经清掉了。
 func TestFailedTaskDropsPauseReason(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(func(func()) {})
+	e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})

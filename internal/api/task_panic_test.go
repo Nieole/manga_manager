@@ -12,7 +12,7 @@ import (
 )
 
 func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "rebuild_thumbnails"
 	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails", Total: 100})
@@ -37,7 +37,7 @@ func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {
 // TestTaskPanicSpeaksInMessageCode 守「消息词汇只有 i18n 码一种」在引擎自己下发的那句文案上
 // 也成立（理由见 taskPanicMessageCode）。破了，非英文用户在任务中心看到的是一句谁都翻译不了的话。
 func TestTaskPanicSpeaksInMessageCode(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "rebuild_thumbnails"
 	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails"})
@@ -56,7 +56,7 @@ func TestTaskPanicSpeaksInMessageCode(t *testing.T) {
 // TestTaskPanicReleasesKeyAndRuntime 断言 panic 之后任务键与运行时句柄都回到干净状态：
 // 同一任务键可以再次启动（这是上一条用例保护的行为的用户可见面），且运行时句柄不泄漏在内存里。
 func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
-	e, _ := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "rebuild_index"
 	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_index"})
@@ -79,7 +79,7 @@ func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
 func TestTaskBodyRunsThroughInjectedBackgroundCapability(t *testing.T) {
 	var handedOff int
 	// 这个后台能力登记了请求却不执行任务体，模拟「控制器已关闭，拒绝新任务」。
-	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ })
+	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10})
@@ -99,7 +99,7 @@ func TestTaskBodyRunsThroughInjectedBackgroundCapability(t *testing.T) {
 // 正常返回的任务一个字段都不该被它动过。这条与「引擎决定终态」并不冲突——那由启动入口
 // 包在任务体外侧的一层承担，而不是由这个 goroutine 启动器代劳，否则会双重收尾。
 func TestTaskGoroutineOnlyGuardsPanics(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10})

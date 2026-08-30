@@ -23,23 +23,23 @@ import (
 
 const comicInfoSeriesID = int64(7)
 
-// newComicInfoRig 拼出回写任务体要的那两样：任务引擎（仍经它唯一的 seam 构造）与配置。
+// newComicInfoRig 拼出回写任务体要的那几样：任务引擎（仍经它唯一的 seam 构造）、配置，
+// 以及引擎在构造期收下的**磁盘作业**入口。
 // 任务体不读数据库——系列、书目、标签与作者都由启动点从 HTTP 层带进来，因此这里没有存储替身。
 func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Controller, func() []TaskStatus) {
 	t.Helper()
-	e, snapshots := newBackgroundTestEngine(run)
-	e.now = now
-
 	cfg := &config.Config{}
 	cfg.Cache.Dir = t.TempDir()
 	config.NormalizeConfig(cfg)
 
-	c := &Controller{taskEngine: e, config: config.NewManager(cfg)}
-	// 回写走**磁盘作业**入口。调度器**必须**新建而不能用包级实例：后者按卷计数，
-	// 用例之间会经它互相污染。
+	c := &Controller{config: config.NewManager(cfg)}
+	// 回写走**磁盘作业**入口，引擎交给任务体的**任务句柄**用的是同一个：回写的每一本书都经它写。
+	// 调度器**必须**新建而不能用包级实例：后者按卷计数，用例之间会经它互相污染。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
-	// 引擎交给任务体的**任务句柄**要能发起磁盘作业：回写的每一本书都经它写。
-	e.diskWork = c.diskWork
+
+	e, snapshots := newBackgroundTestEngine(run, c.diskWork)
+	e.now = now
+	c.taskEngine = e
 	return c, snapshots
 }
 

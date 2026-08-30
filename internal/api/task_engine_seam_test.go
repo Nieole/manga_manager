@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"manga-manager/internal/diskwork"
 )
 
 // fakeClock 让节流的时序断言可控。固定 sleep 的用例既慢，又杀不掉
@@ -59,9 +61,9 @@ func windowSteppingClock() func() time.Time {
 
 // newBackgroundTestEngine 造一个后台能力可控的引擎：run 决定任务体何时、乃至是否执行。
 //
-// 末位的**磁盘作业**入口留 nil：多数用例的任务体一次盘都不读。要读盘的用例自行把 e.diskWork
-// 装上，否则任务体会在闸门放行之后 panic。
-func newBackgroundTestEngine(run func(func())) (*taskEngine, func() []TaskStatus) {
+// diskWork 是交给**任务句柄**的**磁盘作业**入口，与生产同样在构造期收下：多数用例的任务体一次盘
+// 都不读，传 nil 即可；要读盘的用例必须在这里交出真 runner，留 nil 的后果见 taskrun.New。
+func newBackgroundTestEngine(run func(func()), diskWork *diskwork.Runner) (*taskEngine, func() []TaskStatus) {
 	var mu sync.Mutex
 	var published []TaskStatus
 	e := newTaskEngine(nil, func(payload string) {
@@ -72,7 +74,7 @@ func newBackgroundTestEngine(run func(func())) (*taskEngine, func() []TaskStatus
 		mu.Lock()
 		defer mu.Unlock()
 		published = append(published, task)
-	}, nil, run, nil)
+	}, nil, run, diskWork)
 	return e, func() []TaskStatus {
 		mu.Lock()
 		defer mu.Unlock()

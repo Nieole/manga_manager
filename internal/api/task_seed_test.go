@@ -138,7 +138,7 @@ func seededTaskContext(t testing.TB, e *taskEngine, key string) context.Context 
 
 // TestSeedTaskGoesThroughTheTaskKeyGate 守卫脚手架没有绕开**任务键**闸门。
 func TestSeedTaskGoesThroughTheTaskKeyGate(t *testing.T) {
-	e, _ := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100})
@@ -157,7 +157,7 @@ func TestSeedTaskGoesThroughTheTaskKeyGate(t *testing.T) {
 // 暂停与取消才有 ctx 与**暂停闸门**可操作。漏掉这一步的话，消费方拿到的是一条 pause 一律 409 的假任务。
 func TestSeededActiveTaskIsControllable(t *testing.T) {
 	// 后台能力只登记不执行：播种之外的任何任务体都不该在本用例里跑起来。
-	e, _ := newBackgroundTestEngine(func(func()) {})
+	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
@@ -189,7 +189,7 @@ func TestSeedTaskLandsRequestedShape(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "scan_library_7"
 			seedTask(t, e, taskSeed{
@@ -222,7 +222,7 @@ func TestSeedTaskLandsRequestedShape(t *testing.T) {
 // TestSeedTaskRejectsUnknownTerminal 守卫拼错终态名不会被当成「留在活动态」静默放过——
 // 那会让消费方对着一条还在跑的任务断言它已经结束。
 func TestSeedTaskRejectsUnknownTerminal(t *testing.T) {
-	e, _ := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	if _, err := trySeedTask(e, taskSeed{Key: "scan_library_1", Type: "scan_library", Terminal: "done"}); err == nil {
 		t.Fatal("未知的终态名被静默接受了")

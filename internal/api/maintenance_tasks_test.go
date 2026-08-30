@@ -101,8 +101,6 @@ func (s *maintenanceStore) UpdateBookIdentity(_ context.Context, arg database.Up
 func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*Controller, func() []TaskStatus, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
-	e.now = clock.Now
 
 	cfg := &config.Config{}
 	cfg.Cache.Dir = t.TempDir()
@@ -112,14 +110,17 @@ func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.
 	config.NormalizeConfig(cfg)
 
 	manager := config.NewManager(cfg)
-	c := &Controller{taskEngine: e, store: store, config: manager}
-	// 两处哈希回填走**磁盘作业**入口。调度器**必须**新建而不能用包级实例：后者按卷计数，
+	c := &Controller{store: store, config: manager}
+	// 两处哈希回填走**磁盘作业**入口，引擎交给任务体的**任务句柄**用的是同一个：
+	// 全量哈希回填的每一本书都经它读。调度器**必须**新建而不能用包级实例：后者按卷计数，
 	// 用例之间会经它互相污染。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
 	// 全量哈希回填走的是 KOReader 那套**指纹**重建，两者共用同一个仓储。
 	c.koreader = ksvc.NewService(store, manager)
-	// 引擎交给任务体的**任务句柄**要能发起磁盘作业：全量哈希回填的每一本书都经它读。
-	e.diskWork = c.diskWork
+
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, c.diskWork)
+	e.now = clock.Now
+	c.taskEngine = e
 	return c, snapshots, clock
 }
 

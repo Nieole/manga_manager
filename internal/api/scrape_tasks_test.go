@@ -94,7 +94,7 @@ func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, 
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	provider.clock = clock
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 	e.now = clock.Now
 
 	cfg := &config.Config{}

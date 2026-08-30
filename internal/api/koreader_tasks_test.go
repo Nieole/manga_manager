@@ -108,8 +108,6 @@ func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMod
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	store.clock = clock
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously)
-	e.now = clock.Now
 
 	cfg := &config.Config{}
 	cfg.KOReader.Enabled = true
@@ -120,7 +118,10 @@ func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMod
 
 	// 引擎交给任务体的**任务句柄**要能发起**磁盘作业**：二进制哈希模式下每本书都经它读。
 	// 调度器新建而非取包级实例：包级实例会让用例经由按卷计数的限流器互相污染。
-	e.diskWork = diskwork.NewRunner(manager.Snapshot, storageio.NewScheduler())
+	diskWork := diskwork.NewRunner(manager.Snapshot, storageio.NewScheduler())
+
+	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, diskWork)
+	e.now = clock.Now
 
 	return &Controller{
 		taskEngine: e,
