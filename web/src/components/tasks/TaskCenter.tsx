@@ -296,7 +296,9 @@ function TaskProgressBar({ task }: { task: TaskStatus }) {
         <span>{task.current} / {task.total}</span>
         <span>{percent.toFixed(1)}%</span>
         <span>{formatRate(task.rate_per_minute || 0)}</span>
-        <span>ETA {formatDuration(task.eta_seconds)}</span>
+        {/* ETA 有没有由后端决定：它只算给**活动态**，任务停了就不发这个字段。
+            前端不得在这里自己按状态判一遍——两处判据一旦不同步，界面上就会出现一个后端根本没算的剩余时间。 */}
+        {task.eta_seconds !== undefined && <span>ETA {formatDuration(task.eta_seconds)}</span>}
       </div>
     </div>
   );

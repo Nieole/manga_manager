@@ -287,6 +287,21 @@ func (e *taskEngine) publishTaskStatusLocked(task TaskStatus) {
 	e.publish("task_progress:" + string(payload))
 }
 
+// ---- 写入 ----
+
+// writeTaskLocked 是任务表的**唯一写入出口**：就地重算调用方手里那份快照的派生字段，再落进
+// 任务表——调用方随后拿同一份去落盘与投递，三处因此恒为同一帧。调用方持有 mutex。
+//
+// 派生字段（百分比、速率、ETA）必须在这条出口上算，而不是靠每条写入路径各自记得算：
+// 漏掉一处不会有编译错误，后果是那条路径写出的那一帧带着上一帧的陈值。
+func (e *taskEngine) writeTaskLocked(task *TaskStatus) {
+	enrichTaskProgress(task)
+	if e.tasks == nil {
+		e.tasks = make(map[string]TaskStatus)
+	}
+	e.tasks[task.Key] = *task
+}
+
 // ---- 启动 ----
 
 // taskPanicMessageCode 是 panic 兜底下发的失败文案码。
@@ -333,7 +348,7 @@ func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
 	e.seq++
 	task.Sequence = e.seq
 
-	e.tasks[task.Key] = task
+	e.writeTaskLocked(&task)
 	e.pruneTasksLocked()
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
@@ -362,8 +377,8 @@ func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
+	decodeTaskParams(&task)
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskProgressLocked(task)
 }
@@ -398,8 +413,8 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
+	decodeTaskParams(&task)
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskProgressLocked(task)
 }
@@ -442,7 +457,7 @@ func (e *taskEngine) finalizeTask(key, status, code string, params map[string]st
 	task.FinishedAt = &now
 	e.seq++
 	task.Sequence = e.seq
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	delete(e.runtimes, key)
 	// 终态清掉水位：同名任务重跑时首帧必须无条件放行，否则会被上一轮的残留水位吞掉。
 	delete(e.publishGates, key)
@@ -473,7 +488,7 @@ func (e *taskEngine) failTask(key, code string, params map[string]string, taskEr
 	task.FinishedAt = &now
 	e.seq++
 	task.Sequence = e.seq
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	delete(e.runtimes, key)
 	// 终态清掉水位：同名任务重跑时首帧必须无条件放行，否则会被上一轮的残留水位吞掉。
 	delete(e.publishGates, key)
@@ -734,8 +749,7 @@ func (e *taskEngine) pause(key string) error {
 	task.UpdatedAt = now
 	e.seq++
 	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return nil
@@ -766,8 +780,7 @@ func (e *taskEngine) resume(key string) error {
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return nil
@@ -805,7 +818,7 @@ func (e *taskEngine) cancel(key string) error {
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return nil

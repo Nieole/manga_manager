@@ -142,9 +142,17 @@ func taskRecordFromStatus(task TaskStatus) database.TaskRecord {
 	}
 }
 
+// hydrateTaskStatusDerivedFields 是**从落盘记录读回**任务时的补全入口：先把编码进任务参数的
+// 展示字段解码回来，再重算进度派生字段。
 func hydrateTaskStatusDerivedFields(task *TaskStatus) {
+	decodeTaskParams(task)
+	enrichTaskProgress(task)
+}
+
+// decodeTaskParams 是 taskParamsWithDerivedFields 的逆：把编码进任务参数的展示字段解码回任务上。
+// 两处必须成对改——只加一侧不会有编译错误，后果是那个字段写得进库、读不回来。
+func decodeTaskParams(task *TaskStatus) {
 	if task == nil || task.Params == nil {
-		enrichTaskProgress(task)
 		return
 	}
 	task.Phase = firstNonEmptyTaskValue(task.Phase, task.Params["phase"])
@@ -186,7 +194,6 @@ func hydrateTaskStatusDerivedFields(task *TaskStatus) {
 			applyTaskLimitParam(task, strings.TrimPrefix(key, "limit."), value)
 		}
 	}
-	enrichTaskProgress(task)
 }
 
 func applyTaskLimitParam(task *TaskStatus, key, value string) {
@@ -287,10 +294,22 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 	return fallback
 }
 
+// enrichTaskProgress 按任务当前的计数与已耗时重算进度派生字段：百分比、速率、ETA。
+//
+// 三个字段一律先清空再算，不做累积：它总是在上一帧的快照上被调用，留着旧值就等于让这一帧
+// 带上一帧的数——终态那句自相矛盾的 `2 / 2` 配 `50.0%` 正是这样来的。
+//
+// ETA 只属于**活动态**。**终态**的任务不会再动，「预计剩余时间」无从谈起，显示出来会让用户
+// 以为它还在跑；对可重试的**中断**任务尤其误导。终态要看的是已经做完了多少（计数与百分比）
+// 与花了多久（详情面板的开始 / 结束时刻），这两样都不经 ETA 这条通道。
 func enrichTaskProgress(task *TaskStatus) {
 	if task == nil {
 		return
 	}
+	task.Percent = nil
+	task.RatePerMinute = 0
+	task.EtaSeconds = nil
+
 	if task.Total > 0 {
 		percent := float64(task.Current) * 100 / float64(task.Total)
 		if percent > 100 {
@@ -299,14 +318,15 @@ func enrichTaskProgress(task *TaskStatus) {
 		task.Percent = &percent
 	}
 	elapsed := time.Since(task.StartedAt).Seconds()
-	if task.Status != "running" && task.Status != "paused" && task.FinishedAt != nil {
+	if !taskIsActive(task.Status) && task.FinishedAt != nil {
 		elapsed = task.FinishedAt.Sub(task.StartedAt).Seconds()
 	}
-	if elapsed > 0 && task.Current > 0 {
-		task.RatePerMinute = float64(task.Current) * 60 / elapsed
-		if task.Total > task.Current {
-			eta := int64(float64(task.Total-task.Current) / task.RatePerMinute * 60)
-			task.EtaSeconds = &eta
-		}
+	if elapsed <= 0 || task.Current <= 0 {
+		return
+	}
+	task.RatePerMinute = float64(task.Current) * 60 / elapsed
+	if taskIsActive(task.Status) && task.Total > task.Current {
+		eta := int64(float64(task.Total-task.Current) / task.RatePerMinute * 60)
+		task.EtaSeconds = &eta
 	}
 }

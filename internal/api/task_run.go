@@ -260,8 +260,7 @@ func (e *taskEngine) applyTaskProgress(key string, frame taskrun.Frame) {
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskProgressLocked(task)
 }
