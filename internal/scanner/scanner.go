@@ -159,7 +159,7 @@ func (s *Scanner) endSeriesScan(seriesID int64) {
 type scanJob struct {
 	path     string
 	info     os.FileInfo
-	existing *bookScanSnapshot // 已入库快照（增量扫描时非 nil），用于 fast 档位保留旧的 page_count/cover_path
+	existing *bookScanSnapshot // 已入库快照（该路径已在库中时非 nil），用于 fast 档位保留旧的 page_count/cover_path
 }
 
 type scanMetrics struct {
@@ -500,9 +500,11 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 		formats = s.libraryScanFormats(ctx, libraryID)
 	}
 
-	// 增量扫描先加载已入库文件的修改时间和大小，未变化的归档可以跳过重读，降低大库重复扫描成本。
-	// 同一份清单还用于构建改名重连索引——强制扫描不吃增量跳过，但一样需要识别改名，
-	// 因此这条查询无论 opts.Force 与否都执行（每次扫描一条查询，相对随后要读的 N 个归档可忽略）。
+	// 先加载已入库文件的快照，它同时供三件事使用：按 mtime+size 跳过未变归档（只在非强制扫描下，
+	// 见下面遍历里那处独立守卫）、构建改名重连索引、以及 fast 档位保留已入库的页数与封面。
+	// 后两件强制扫描也需要，因此这份快照无论 opts.Force 与否都完整填充——强制扫描下留空，
+	// workerProcess 里那条保留分支就永远看不到旧值，一次强制 fast 扫描会清零整库页数、抹掉封面。
+	// 代价只有一条查询，相对随后要读的 N 个归档可忽略。
 	bookCache := make(map[string]bookScanSnapshot)
 
 	existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
@@ -510,10 +512,8 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 		slog.Warn("Failed to load existing books cache", "library_id", libraryID, "error", err)
 		return err
 	}
-	if !opts.Force {
-		for _, b := range existingBooks {
-			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
-		}
+	for _, b := range existingBooks {
+		bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 	}
 	renames := newRenameIndex(rehomeCandidatesFromLibraryRows(existingBooks))
 
@@ -649,13 +649,12 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 	formats := config.NewScanFormatSet(library.ScanFormats)
 
 	bookCache := make(map[string]bookScanSnapshot)
-	// 与 ScanLibrary 同理：这份清单同时供增量跳过与改名重连使用，强制扫描也需要后者。
+	// 与 ScanLibrary 同理：这份快照同时供增量跳过、改名重连与 fast 档位保留页数/封面使用，
+	// 后两者强制扫描也需要，所以无论 opts.Force 与否都完整填充。
 	var renames *renameIndex
 	if existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID); err == nil {
-		if !opts.Force {
-			for _, b := range existingBooks {
-				bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
-			}
+		for _, b := range existingBooks {
+			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 		}
 		renames = newRenameIndex(rehomeCandidatesFromBooks(existingBooks))
 	}
@@ -1093,8 +1092,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
 		CoverPath:      coverPath,
 	}
-	// fast 档位不开归档，pages 与 coverPath 恒空；增量扫描（有旧快照）时保留已入库的
-	// page_count/cover_path，避免 upsert 把变动书籍的页数/封面清零、封面被永久抹掉。
+	// fast 档位不开归档，pages 与 coverPath 恒空；只要这本书已入库（有旧快照）就保留它的
+	// page_count/cover_path，强制扫描同样如此——fast 档位既不开归档也不排封面任务，
+	// 一旦被 upsert 清零，后续增量扫描又因 mtime+size 未变而跳过，页数与封面永不自愈。
 	if !opts.Profile.opensArchive() && job.existing != nil {
 		if book.PageCount == 0 && job.existing.pageCount > 0 {
 			book.PageCount = job.existing.pageCount
