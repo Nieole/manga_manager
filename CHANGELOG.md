@@ -4,6 +4,25 @@
 
 ---
 
+### 🚧 未发布（KOReader 一开始同步，管理界面就整片 500）
+
+> 只要有任意一台 KOReader 设备成功推上第一条阅读进度，整个 KOReader 管理面就永久报错：设置页的
+> KOReader 面板、账号列表、连接中心三处同时白屏，对应 `GET /api/system/koreader`、
+> `GET /api/system/koreader/accounts`、`GET /api/system/client-connections` 三个接口一律 500。
+> 改配置的 `POST /api/system/koreader` 同样报「保存失败」——配置其实已经写进库里，只是它末尾复用
+> 读取接口回响应。触发条件是 `koreader_progress` 表里存在任意一行，同步本身自始至终正常工作。
+> 数据库结构与线上契约均未改动，升级无需额外步骤。
+
+#### 修复
+- **聚合出来的时间列按文本读回再解析。** SQLite 驱动只在结果列有声明类型（`DATETIME`）时才把库里
+  存的时间文本转成 `time.Time`，而账号列表的 `last_used_at` 与统计的 `latest_sync_at` 都是
+  `MAX(updated_at)` 包在标量子查询里算出来的——声明类型在表达式列上不存在，驱动原样返回字符串，
+  扫进 `sql.NullTime` 直接报 `unsupported Scan`，整个查询连同它服务的三个接口一起失败。
+  进度表为空时 `MAX(...)` 返回 NULL，`sql.NullTime` 收得下，所以此前一直看不出问题。现在这两列
+  与设备诊断的 `latest_sync_at` 一样，先按 `sql.NullString` 读回，再交给同一个时间解析函数。
+
+---
+
 ### 🚧 未发布（取消后台任务后，任务中心不再把进度显示成满格）
 
 > 取消一个后台任务，任务中心当场把它的进度写成满格：1000 本的资料库扫到第 30 本按下取消，界面显示

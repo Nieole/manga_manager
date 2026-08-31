@@ -72,6 +72,7 @@ func (q *Queries) ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, 
 	items := make([]KOReaderAccount, 0)
 	for rows.Next() {
 		var item KOReaderAccount
+		var lastUsedAt sql.NullString
 		if err := rows.Scan(
 			&item.ID,
 			&item.Username,
@@ -79,11 +80,12 @@ func (q *Queries) ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, 
 			&item.Enabled,
 			&item.CreatedAt,
 			&item.UpdatedAt,
-			&item.LastUsedAt,
+			&lastUsedAt,
 			&item.LatestError,
 		); err != nil {
 			return nil, err
 		}
+		item.LastUsedAt = parseSQLiteNullTime(lastUsedAt)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -213,6 +215,7 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 	`)
 
 	var item KOReaderStats
+	var latestSyncAt sql.NullString
 	err := row.Scan(
 		&item.Configured,
 		&item.HasPassword,
@@ -224,8 +227,9 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 		&item.HashedBooks,
 		&item.UnmatchedProgressCount,
 		&item.MatchedProgressCount,
-		&item.LatestSyncAt,
+		&latestSyncAt,
 	)
+	item.LatestSyncAt = parseSQLiteNullTime(latestSyncAt)
 	return item, err
 }
 
