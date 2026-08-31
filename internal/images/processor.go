@@ -299,7 +299,7 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		}
 		newContentType, err = encodeWebP(&buf, newImg, quality, false)
 	case "avif":
-		err = avif.Encode(&buf, newImg, avif.Options{Quality: opts.Quality})
+		err = avif.Encode(&buf, newImg, avifDeliveryOptions(opts.Quality))
 		newContentType = "image/avif"
 	default:
 		// Fallback everything else to JPEG to save space
@@ -316,6 +316,33 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	}
 
 	return buf.Bytes(), newContentType, nil
+}
+
+// avifEncodeSpeed 是 avif 编码档位：0 最慢、体积最小，10 最快、体积最大。必须显式赋值——
+// 库对 Quality 判 <=0 才回落默认，对 Speed 只判 <0，零值 0 会被当作「显式选了最慢档」。
+// 取 8 是耗时/体积曲线的拐点：从 10 降到 8，400px 封面体积省掉两成，代价是编码慢一个小几倍、
+// 仍在毫秒级；再往下降到 7 及以下，耗时逐档翻倍而体积只再省个位数百分比。缩略图每本书一张、
+// 批量生成，速度权重高于最后那点体积。
+const avifEncodeSpeed = 8
+
+// avifDeliveryOptions 组装直接交付客户端的 avif 编码参数（封面缩略图与阅读页图）。
+// 色度取 4:2:0：库默认值，同档位下比零值的 4:4:4 又小又快。
+func avifDeliveryOptions(quality int) avif.Options {
+	return avif.Options{
+		Quality:           quality,
+		Speed:             avifEncodeSpeed,
+		ChromaSubsampling: image.YCbCrSubsampleRatio420,
+	}
+}
+
+// avifIntermediateOptions 组装 AI 放大沙盒里中间态落盘的 avif 编码参数。这张图只喂给外部引擎、
+// 不外发，取满质量与 4:4:4 色度保住细节，不做交付路径的体积取舍。
+func avifIntermediateOptions() avif.Options {
+	return avif.Options{
+		Quality:           100,
+		Speed:             avifEncodeSpeed,
+		ChromaSubsampling: image.YCbCrSubsampleRatio444,
+	}
 }
 
 func decodeImage(data []byte, contentType string) (image.Image, string, error) {
@@ -435,7 +462,7 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 		} else if strings.Contains(contentType, "png") {
 			err = png.Encode(f, img)
 		} else if strings.Contains(contentType, "avif") {
-			err = avif.Encode(f, img, avif.Options{Quality: 100})
+			err = avif.Encode(f, img, avifIntermediateOptions())
 		} else {
 			// JPEG 情况，使用最高质量保存中间状态
 			err = jpeg.Encode(f, img, &jpeg.Options{Quality: 100})
