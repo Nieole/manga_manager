@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
 import type {
   Author,
@@ -56,41 +56,78 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
   const [continueInfo, setContinueInfo] = useState<SeriesContinue | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
-    if (!seriesId) return;
-    const res = await apiClient.get<SeriesContextResponse>(`/api/series/${seriesId}/context`);
-    const data = res.data;
-    setSeries(data.series);
-    setBooks(Array.isArray(data.books) ? data.books : []);
-    setTags(Array.isArray(data.tags) ? data.tags : []);
-    setAuthors(Array.isArray(data.authors) ? data.authors : []);
-    setLinks(Array.isArray(data.links) ? data.links : []);
-    setRelations(Array.isArray(data.relations) ? data.relations : []);
-    setMetadataReviews(Array.isArray(data.metadata_review?.reviews) ? data.metadata_review!.reviews : []);
-    setMetadataProvenance(Array.isArray(data.metadata_review?.provenance) ? data.metadata_review!.provenance : []);
-    setFailedTasks(Array.isArray(data.failed_tasks) ? data.failed_tasks : []);
-    setContinueInfo(data.continue ?? null);
-  }, [seriesId]);
+  // 取上下文的世代号：在关系图/合集/作品群里连点系列时，A 的 /context 还在飞就已经跳到了 B，
+  // A 的响应必须被丢弃。写内容、写错误、清 loading 三条路径都只认最新一次请求——否则地址栏是 B
+  // 而页面挂着 A 的书列表，用户在这页上做批量已读就把进度写到了 A 的书 id 上。
+  const latestRequestIDRef = useRef(0);
+  // 当前状态属于哪个系列。只能记在 ref 里：effect 里读 series 状态拿到的是上一轮渲染的闭包值，
+  // 切系列时它还是上一个系列的非空值。
+  const shownSeriesIdRef = useRef<string | undefined>(undefined);
+
+  const load = useCallback(
+    async (silent: boolean) => {
+      if (!seriesId) return;
+      const requestID = latestRequestIDRef.current + 1;
+      latestRequestIDRef.current = requestID;
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const res = await apiClient.get<SeriesContextResponse>(`/api/series/${seriesId}/context`);
+        if (requestID !== latestRequestIDRef.current) return;
+        const data = res.data;
+        setSeries(data.series);
+        setBooks(Array.isArray(data.books) ? data.books : []);
+        setTags(Array.isArray(data.tags) ? data.tags : []);
+        setAuthors(Array.isArray(data.authors) ? data.authors : []);
+        setLinks(Array.isArray(data.links) ? data.links : []);
+        setRelations(Array.isArray(data.relations) ? data.relations : []);
+        setMetadataReviews(Array.isArray(data.metadata_review?.reviews) ? data.metadata_review!.reviews : []);
+        setMetadataProvenance(Array.isArray(data.metadata_review?.provenance) ? data.metadata_review!.provenance : []);
+        setFailedTasks(Array.isArray(data.failed_tasks) ? data.failed_tasks : []);
+        setContinueInfo(data.continue ?? null);
+      } catch (err) {
+        if (requestID !== latestRequestIDRef.current) return;
+        console.error('Failed to load series context', err);
+        setError(getApiErrorMessage(err, ''));
+      } finally {
+        if (requestID === latestRequestIDRef.current) setLoading(false);
+      }
+    },
+    [seriesId],
+  );
+
+  // reload：写操作后的静默重取（不显示 loading）。
+  const reload = useCallback(() => load(true), [load]);
 
   useEffect(() => {
     if (!seriesId) return;
-    setLoading(!series && books.length === 0);
-    setError(null);
-    reload()
-      .catch((err) => { console.error('Failed to load series context', err); setError(getApiErrorMessage(err, '')); })
-      .finally(() => setLoading(false));
+    const switching = shownSeriesIdRef.current !== seriesId;
+    shownSeriesIdRef.current = seriesId;
+    if (switching) {
+      // 切系列时先清空上一个系列的内容：详情页的加载判据是 loading && !series，不清空就会在新
+      // 系列的上下文到达前继续渲染上一个系列的简介、书列表、标签与提案，且不给任何加载指示。
+      // 这一步同时关掉了 useSeriesEdit.save 的窗口——seriesId 已是 B 而 series 仍是 A 时保存，
+      // 会把 A 的 title/summary/tags 打到 PUT /api/series/info/{B}。
+      setSeries(null);
+      setBooks([]);
+      setTags([]);
+      setAuthors([]);
+      setLinks([]);
+      setRelations([]);
+      setMetadataReviews([]);
+      setMetadataProvenance([]);
+      setFailedTasks([]);
+      setContinueInfo(null);
+    }
+    // 同一系列的刷新（refreshTrigger 变化）保持静默，不闪加载态。
+    void load(!switching);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesId, refreshTrigger]);
 
   // retry：主数据加载失败后的重试入口，非静默重取（显示 loading、清除错误）。
   const retry = useCallback(() => {
-    if (!seriesId) return;
-    setLoading(true);
-    setError(null);
-    reload()
-      .catch((err) => { console.error('Failed to load series context', err); setError(getApiErrorMessage(err, '')); })
-      .finally(() => setLoading(false));
-  }, [reload, seriesId]);
+    void load(false);
+  }, [load]);
 
   return {
     loading,
