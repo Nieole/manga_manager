@@ -1,15 +1,19 @@
-// 本文件是业务回归测试，覆盖 Provider 对外错误的脱敏与截断。
-// 这些错误会被写进 HTTP 响应体（刮削失败提示、AI 推荐 500），属于面向用户的输出，
-// 因此「不夹带密钥」「不倾泻上游整段响应」是安全属性而非风格问题。
+// 本文件是业务回归测试，覆盖 Provider 交出上游失败时的脱敏与截断——错误串进 HTTP 响应体
+// （刮削失败提示、AI 推荐 500），日志行进 manga_manager.log。「不夹带密钥」是安全属性，
+// 「不倾泻上游整段响应」既是安全属性也是可用性属性：一行超长日志会打死日志查看端点。
 
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -127,5 +131,118 @@ func TestComicVineTreatsOKErrorFieldAsSuccess(t *testing.T) {
 	}
 	if len(results) != 0 || total != 0 {
 		t.Fatalf("expected an empty result set, got %d/%d", len(results), total)
+	}
+}
+
+// captureSlog 把包内的 slog 输出接到内存，返回读取已写行的取用函数。
+func captureSlog(t *testing.T) func() []string {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return func() []string {
+		return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	}
+}
+
+// upstreamErrorPageTransport 让 Provider 收到一页远超 bufio.Scanner 默认 64KB 上限的 HTML 错误页，
+// 这正是 CDN / WAF 拦截时的常态响应。
+func upstreamErrorPageTransport(body string) roundTripFunc {
+	return func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	}
+}
+
+// TestProviderLogsNeverEmitOversizedUpstreamBody 锁住制造侧：上游回一页超大 HTML 错误页时，
+// 落盘的那一行必须已经截断。未截断的行会让 /api/system/logs 在日志轮转之前一直读不出后面的内容，
+// 管理员恰好在最需要日志时看不到能解释这次失败的那几条。
+func TestProviderLogsNeverEmitOversizedUpstreamBody(t *testing.T) {
+	errorPage := "<html><body>" + strings.Repeat("<div>blocked by the edge gateway</div>", 4096) + "</body></html>"
+	if len(errorPage) <= 64*1024 {
+		t.Fatalf("用例数据没到 64KB（%d 字节），起不到复现作用", len(errorPage))
+	}
+
+	cases := []struct {
+		name   string
+		search func(rt roundTripFunc) error
+	}{
+		{"anilist", func(rt roundTripFunc) error {
+			_, _, err := newAniListWithTransport(rt).SearchMetadata(context.Background(), "berserk", 5, 0)
+			return err
+		}},
+		{"mangadex", func(rt roundTripFunc) error {
+			_, _, err := newMangaDexWithTransport(rt).SearchMetadata(context.Background(), "berserk", 5, 0)
+			return err
+		}},
+		{"bangumi", func(rt roundTripFunc) error {
+			p := NewBangumiProvider()
+			p.httpClient = &http.Client{Transport: rt}
+			_, _, err := p.SearchMetadata(context.Background(), "berserk", 5, 0)
+			return err
+		}},
+		{"myanimelist", func(rt roundTripFunc) error {
+			p := NewMyAnimeListProvider("client-id")
+			p.httpClient = &http.Client{Transport: rt}
+			_, _, err := p.SearchMetadata(context.Background(), "berserk", 5, 0)
+			return err
+		}},
+		{"comicvine", func(rt roundTripFunc) error {
+			p := NewComicVineProvider("cv-secret-token")
+			p.httpClient = &http.Client{Transport: rt}
+			_, _, err := p.SearchMetadata(context.Background(), "berserk", 5, 0)
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"：超长上游错误页不写成超长日志行", func(t *testing.T) {
+			lines := captureSlog(t)
+			err := tc.search(upstreamErrorPageTransport(errorPage))
+			if err == nil {
+				t.Fatal("上游回 400 时必须报错")
+			}
+
+			for _, line := range lines() {
+				if len(line) > maxUpstreamBodyInError*2 {
+					t.Fatalf("日志写出了 %d 字节的一行，日志端点读到它就会降级丢内容", len(line))
+				}
+			}
+			// 错误串与日志行共用同一份截断结果，标记必须两边都在。
+			if !strings.Contains(err.Error(), "…(truncated)") {
+				t.Fatalf("错误串没走统一出口的截断：%q", err.Error())
+			}
+		})
+	}
+}
+
+// TestUpstreamBodiesNeverReachSlogDirectly 是给将来新增 Provider 的护栏：包内不许把上游响应体
+// 直接拼进 slog，一律走 errors.go 的 logUpstreamFailure。命名与注释挡不住——本包五家 Provider
+// 的错误分支长得几乎一样，抄一处漏掉截断，日志端点就整个失效。
+func TestUpstreamBodiesNeverReachSlogDirectly(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("读取包目录失败: %v", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "errors.go" {
+			continue
+		}
+		content, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("读取 %s 失败: %v", name, err)
+		}
+		for i, line := range strings.Split(string(content), "\n") {
+			if strings.Contains(line, "slog.") && strings.Contains(line, "respBody") {
+				t.Errorf("%s:%d 把上游响应体直接拼进了 slog：改调 logUpstreamFailure，"+
+					"它会先截断再脱敏，并把同一份结果交回来拼错误串\n\t%s", name, i+1, strings.TrimSpace(line))
+			}
+		}
 	}
 }

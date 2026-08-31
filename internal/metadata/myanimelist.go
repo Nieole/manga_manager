@@ -178,8 +178,8 @@ func (m *MyAnimeListProvider) SearchMetadata(ctx context.Context, title string, 
 			continue
 		}
 
-		slog.Error("MyAnimeList API error", "status", status, "body", truncateUpstreamBody(respBody))
-		return nil, 0, fmt.Errorf("myanimelist: API returned status %d: %s", status, truncateUpstreamBody(respBody))
+		safeBody := logUpstreamFailure("MyAnimeList API error", status, respBody, "")
+		return nil, 0, fmt.Errorf("myanimelist: API returned status %d: %s", status, safeBody)
 	}
 
 	if len(result.Data) == 0 {

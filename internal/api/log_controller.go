@@ -2,18 +2,31 @@ package api
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"manga-manager/internal/logger"
 )
 
 // maxLogQueryLimit 限制单次日志查询返回条数上限，避免 ?limit=极大值 时按该值预分配打爆内存。
 const maxLogQueryLimit = 2000
+
+const (
+	// maxLogLineBytes 是单行日志读进内存的上限，超出的部分丢弃并加标记。
+	maxLogLineBytes = 16 * 1024
+	// logReadBufferBytes 是逐行读取的缓冲区大小，只影响读取批次，不构成行长上限。
+	logReadBufferBytes = 64 * 1024
+	// logLineTruncatedMarker 让被截断的行在页面上可辨认，而不是静默变短。
+	logLineTruncatedMarker = "…(line truncated by viewer)"
+)
 
 // 日志行解析用的正则预编译为包级变量，避免每行、每次请求重复编译。
 var (
@@ -94,10 +107,7 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 			"INFO":  0,
 		},
 	}
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
+	collect := func(line string) {
 		entry := parseLogLine(line)
 		level := strings.ToUpper(entry.Level)
 		if _, ok := summary.ByLevel[level]; ok {
@@ -105,29 +115,29 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if filterLevel != "ALL" && level != strings.ToUpper(filterLevel) {
-			continue
+			return
 		}
 		if searchQuery != "" {
 			raw := strings.ToLower(entry.Raw)
 			msg := strings.ToLower(entry.Msg)
 			if !strings.Contains(raw, searchQuery) && !strings.Contains(msg, searchQuery) {
-				continue
+				return
 			}
 		}
 		if taskKeyNeedle != "" && !strings.Contains(entry.Raw, taskKeyNeedle) {
-			continue
+			return
 		}
 
 		summary.Total++
 		if len(matchedLogs) == limit {
 			copy(matchedLogs, matchedLogs[1:])
 			matchedLogs[len(matchedLogs)-1] = entry
-			continue
+			return
 		}
 		matchedLogs = append(matchedLogs, entry)
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := forEachLogLine(file, collect); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to read log file")
 		return
 	}
@@ -141,6 +151,65 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		Items:   matchedLogs,
 		Summary: summary,
 	})
+}
+
+// forEachLogLine 逐行回调日志内容；超过 maxLogLineBytes 的行截断并标注后，继续读余下的行。
+//
+// 不用 bufio.Scanner：它遇到超长行会中止整趟扫描并把错误交给调用方，一行落盘的上游整页错误页
+// 就足以让日志端点在轮转前一直回 500——恰好是最需要看日志的时候。调大上限只是把悬崖挪远，
+// 而且修不了已经躺在文件里的那些行；所以这里选就地降级：坏的那一行降级，别的行照常读出来。
+func forEachLogLine(r io.Reader, visit func(line string)) error {
+	reader := bufio.NewReaderSize(r, logReadBufferBytes)
+	var line []byte
+	truncated := false
+
+	appendCapped := func(chunk []byte) {
+		if room := maxLogLineBytes - len(line); len(chunk) > room {
+			chunk = chunk[:room]
+			truncated = true
+		}
+		line = append(line, chunk...)
+	}
+	emit := func() {
+		text := string(line)
+		if truncated {
+			text = string(trimPartialRune(line)) + logLineTruncatedMarker
+		}
+		visit(text)
+		line = line[:0]
+		truncated = false
+	}
+
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		switch {
+		case err == nil:
+			appendCapped(bytes.TrimSuffix(bytes.TrimSuffix(chunk, []byte("\n")), []byte("\r")))
+			emit()
+		case errors.Is(err, bufio.ErrBufferFull):
+			appendCapped(chunk)
+		case errors.Is(err, io.EOF):
+			// 末行没有换行符时也要交出去。
+			if len(chunk) > 0 || len(line) > 0 {
+				appendCapped(chunk)
+				emit()
+			}
+			return nil
+		default:
+			return err
+		}
+	}
+}
+
+// trimPartialRune 去掉按字节截断后残留的半个 UTF-8 字符，最多回退 3 字节。
+func trimPartialRune(b []byte) []byte {
+	for i := 0; i < utf8.UTFMax-1 && len(b) > 0; i++ {
+		if r, size := utf8.DecodeLastRune(b); r != utf8.RuneError || size > 1 {
+			break
+		}
+		b = b[:len(b)-1]
+	}
+	return b
 }
 
 // 简单的 text handler parser

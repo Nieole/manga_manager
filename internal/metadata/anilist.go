@@ -220,8 +220,8 @@ func (a *AniListProvider) SearchMetadata(ctx context.Context, title string, limi
 			continue
 		}
 
-		slog.Error("AniList API error", "status", status, "body", string(respBody), "url", a.Endpoint)
-		return nil, 0, fmt.Errorf("anilist: API returned status %d: %s", status, truncateUpstreamBody(respBody))
+		safeBody := logUpstreamFailure("AniList API error", status, respBody, "", "url", a.Endpoint)
+		return nil, 0, fmt.Errorf("anilist: API returned status %d: %s", status, safeBody)
 	}
 
 	if len(result.Errors) > 0 {

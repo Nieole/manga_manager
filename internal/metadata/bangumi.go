@@ -235,8 +235,8 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 			continue
 		}
 
-		slog.Error("Bangumi API error", "status", status, "body", string(respBody), "url", apiUrl)
-		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, truncateUpstreamBody(respBody))
+		safeBody := logUpstreamFailure("Bangumi API error", status, respBody, "", "url", apiUrl)
+		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, safeBody)
 	}
 
 	if len(result.Data) == 0 {

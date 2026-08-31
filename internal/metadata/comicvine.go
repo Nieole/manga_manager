@@ -189,10 +189,9 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			continue
 		}
 
-		// 上游网关的错误页常把「被请求的 URI」原样回显，而这段串按 errors.go 的约定会写进
-		// HTTP 响应体交给用户看——不脱敏就等于把密钥从后端搬到了前端。
-		body := redactSecret(truncateUpstreamBody(respBody), c.apiKey)
-		slog.Error("Comic Vine API error", "status", status, "body", body)
+		// 上游网关的错误页常把「被请求的 URI」原样回显，而这段串既进日志又进 HTTP 响应体
+		// 交给用户看——不脱敏就等于把密钥从后端搬到了前端，所以要把 apiKey 交给出口去抹。
+		body := logUpstreamFailure("Comic Vine API error", status, respBody, c.apiKey)
 		return nil, 0, fmt.Errorf("comicvine: API returned status %d: %s", status, body)
 	}
 

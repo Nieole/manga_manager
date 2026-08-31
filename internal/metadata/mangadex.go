@@ -158,8 +158,8 @@ func (m *MangaDexProvider) SearchMetadata(ctx context.Context, title string, lim
 			continue
 		}
 
-		slog.Error("MangaDex API error", "status", status, "body", string(respBody), "url", apiURL)
-		return nil, 0, fmt.Errorf("mangadex: API returned status %d: %s", status, truncateUpstreamBody(respBody))
+		safeBody := logUpstreamFailure("MangaDex API error", status, respBody, "", "url", apiURL)
+		return nil, 0, fmt.Errorf("mangadex: API returned status %d: %s", status, safeBody)
 	}
 
 	if len(result.Data) == 0 {

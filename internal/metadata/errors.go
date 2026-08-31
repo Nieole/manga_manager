@@ -1,12 +1,13 @@
-// 本文件收拢元数据 Provider 对外错误的脱敏与截断：这些错误会写进 HTTP 响应体（刮削失败提示、
-// AI 推荐 500 等），是面向用户的输出而非日志——凡是可能夹带密钥或上游整段响应的地方都必须
-// 在这里处理干净。新增 Provider 时，transport 错误经 sanitizeTransportError 包装，
-// 非 2xx 响应体经 truncateUpstreamBody 截断后再进错误串。
+// 本文件收拢元数据 Provider 交出上游失败时的脱敏与截断。上游响应体有两个出口——写进 HTTP 响应体
+// 的错误串（刮削失败提示、AI 推荐 500）和写进日志的行——两者都可能夹带密钥或上游整段响应，
+// 必须在这里处理干净。新增 Provider 时：transport 错误经 sanitizeTransportError 包装；
+// 非 2xx 一律调 logUpstreamFailure，它同时产出日志行与可回显的错误串，不要自己拼 slog。
 
 package metadata
 
 import (
 	"errors"
+	"log/slog"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -45,6 +46,17 @@ func truncateUpstreamBody(body []byte) string {
 		cut = cut[:len(cut)-1]
 	}
 	return string(cut) + "…(truncated)"
+}
+
+// logUpstreamFailure 是「上游返回非 2xx」的唯一出口：写一条日志，并返回同一份可安全回显的
+// 响应体片段给调用方拼错误串——日志与错误串因此不可能再各用一套截断标准。
+//
+// 响应体必须先截断：日志文件是按行读的，一行未截断的整页 HTML 错误页落盘后，日志查看端点
+// 读到它就再也读不出后面的内容。secret 为空表示该 Provider 的凭据不在 URL 里。
+func logUpstreamFailure(msg string, status int, body []byte, secret string, attrs ...any) string {
+	safe := redactSecret(truncateUpstreamBody(body), secret)
+	slog.Error(msg, append([]any{"status", status, "body", safe}, attrs...)...)
+	return safe
 }
 
 // redactSecret 把 s 里出现的 secret 换成占位符，原文与 URL 转义两种形态都覆盖。
