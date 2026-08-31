@@ -682,6 +682,7 @@ export const messages: MessageCatalog = {
     'home.external.scanFirst': '请先扫描外部资源库',
     'home.external.stillScanning': '外部资源库仍在扫描中',
     'home.external.alreadyComplete': '所选系列已全部存在于外部资源库',
+    'home.external.statusUnavailable': '无法确认所选系列在外部资源库中的状态，请重试',
     'home.transfer.action': '传输到外部资源库',
     'home.transfer.submitting': '正在提交...',
     'home.transfer.title': '传输到外部资源库',

@@ -41,6 +41,7 @@ interface UseExternalLibraryResult {
   closeExternalDirectoryBrowser: () => void;
   chooseCurrentExternalDirectory: () => void;
   fetchExternalSeriesStatus: (sessionId?: string, ids?: number[]) => Promise<void>;
+  queryExternalSeriesStatus: (ids: number[]) => Promise<ExternalSeriesStatus[]>;
   startExternalTransfer: (
     seriesIds: number[],
     onSuccess: () => void,
@@ -133,6 +134,17 @@ export function useExternalLibrary({
     [libId],
   );
 
+  const requestSeriesStatus = useCallback(
+    async (sessionId: string, ids: number[]): Promise<ExternalSeriesStatus[]> => {
+      const res = await apiClient.get<ExternalSeriesStatus[]>(
+        `/api/libraries/${libId}/external-libraries/session/${sessionId}/series`,
+        { params: { ids: ids.join(','), _ts: Date.now() } },
+      );
+      return res.data || [];
+    },
+    [libId],
+  );
+
   const fetchExternalSeriesStatus = useCallback(
     async (sessionId?: string, ids: number[] = allSeriesIds) => {
       const sid = sessionId ?? externalSession?.session_id;
@@ -141,12 +153,9 @@ export function useExternalLibrary({
         return;
       }
       try {
-        const res = await apiClient.get<ExternalSeriesStatus[]>(
-          `/api/libraries/${libId}/external-libraries/session/${sid}/series`,
-          { params: { ids: ids.join(','), _ts: Date.now() } },
-        );
+        const items = await requestSeriesStatus(sid, ids);
         const next: Record<number, ExternalSeriesStatus> = {};
-        (res.data || []).forEach((item) => {
+        items.forEach((item) => {
           next[item.series_id] = item;
         });
         setExternalSeriesMap(next);
@@ -155,7 +164,20 @@ export function useExternalLibrary({
         setExternalSeriesMap({});
       }
     },
-    [libId, externalSession?.session_id, allSeriesIds],
+    [libId, externalSession?.session_id, allSeriesIds, requestSeriesStatus],
+  );
+
+  // 把覆盖结果交回调用方而不写进 externalSeriesMap：那张表是当前页卡片的数据源，
+  // 掺进别的页的系列会让「当前页外部命中情况」这条汇总算错。会话不可用时抛错，
+  // 调用方必须区分「问不到」与「问到了、结果是没有」。
+  const queryExternalSeriesStatus = useCallback(
+    async (ids: number[]): Promise<ExternalSeriesStatus[]> => {
+      const sid = externalSession?.session_id;
+      if (!libId || !sid) throw new Error('external library session unavailable');
+      if (ids.length === 0) return [];
+      return requestSeriesStatus(sid, ids);
+    },
+    [libId, externalSession?.session_id, requestSeriesStatus],
   );
 
   const startExternalLibraryScan = useCallback(async () => {
@@ -337,6 +359,7 @@ export function useExternalLibrary({
     closeExternalDirectoryBrowser,
     chooseCurrentExternalDirectory,
     fetchExternalSeriesStatus,
+    queryExternalSeriesStatus,
     startExternalTransfer,
   };
 }

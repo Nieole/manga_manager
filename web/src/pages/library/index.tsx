@@ -209,6 +209,7 @@ export default function LibraryPage() {
     externalSeriesMap: externalLib.externalSeriesMap,
     allSeries,
     selectedSeries: selection.selectedSeries,
+    queryExternalSeriesStatus: externalLib.queryExternalSeriesStatus,
     startExternalTransfer: externalLib.startExternalTransfer,
     clearSelection: selection.clearSelection,
     showError,

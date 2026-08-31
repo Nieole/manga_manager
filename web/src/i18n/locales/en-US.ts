@@ -682,6 +682,7 @@ export const messages: MessageCatalog = {
     'home.external.scanFirst': 'Scan the external library first',
     'home.external.stillScanning': 'The external library is still being scanned',
     'home.external.alreadyComplete': 'All selected series already exist in the external library',
+    'home.external.statusUnavailable': 'Could not check the selected series against the external library, please retry',
     'home.transfer.action': 'Transfer to external library',
     'home.transfer.submitting': 'Submitting...',
     'home.transfer.title': 'Transfer to external library',
