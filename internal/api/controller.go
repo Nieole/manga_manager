@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -28,11 +24,14 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/proposal"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
@@ -42,19 +41,23 @@ import (
 
 type Controller struct {
 	store database.Store
-	// imageCache 按**总字节**限流（见 image_memory_cache.go）。此前是按条数的 LRU，
-	// 256 条 × 4 MiB 单条上限 = 1 GiB 常驻上界，而它只是个加速缓存。
+	// imageCache 必须按**总字节**限流（见 image_memory_cache.go），不能按条数——
+	// 页图大小悬殊，按条数给不出稳定的内存上界，而它只是个加速缓存。
 	imageCache *imageMemoryCache
 	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
 	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
 	pageArchive        *pageArchiveCache
 	progressWriteCache *lru.Cache[int64, cachedProgressWrite]
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
-	stats      *statsCache
-	scanner    *scanner.Scanner
-	config     *config.Manager
+	stats   *statsCache
+	scanner *scanner.Scanner
+	config  *config.Manager
+	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
+	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**任务句柄**。
+	diskWork   *diskwork.Runner
 	koreader   *koreader.Service
 	external   *external.Manager
+	proposals  *proposal.Service
 	configPath string
 	watcher    *scanner.FileWatcher
 
@@ -103,9 +106,11 @@ type TaskStatus struct {
 	ScopeName string `json:"scope_name,omitempty"`
 	Status    string `json:"status"`
 	Message   string `json:"message"`
-	// MessageCode/MessageParams 承载可本地化的任务消息：后端只发稳定 i18n 键 + 占位参数，由前端按当前语言
-	// 渲染文案，避免在 Go 中散落面向用户的中文字面量。设置了 MessageCode 时 Message 置空；未迁移 i18n 的
-	// 旧调用点仍直接用 Message，前端按 message_code 优先、Message 兜底渲染，两者可共存以支持增量迁移。
+	// MessageCode/MessageParams 承载可本地化的任务消息：后端只发稳定 i18n 键 + 占位参数，由前端按当前
+	// 语言渲染，Go 里因此不出现面向用户的文案字面量。任务引擎写下的每一帧都走这条通道，Message 恒为空。
+	//
+	// Message 只剩一个来源：服务重启把活动态任务转成**中断**时直接写进落盘记录的那句已渲染文案。
+	// 前端按 message_code 优先、Message 作缺键兜底，因此设了码就必须清空 Message。
 	MessageCode    string            `json:"message_code,omitempty"`
 	MessageParams  map[string]string `json:"message_params,omitempty"`
 	Error          string            `json:"error,omitempty"`
@@ -192,14 +197,6 @@ const (
 	dashboardStatsCacheTTL       = 30 * time.Second
 )
 
-type taskIOMetrics struct {
-	StorageProfile string
-	VolumeKey      string
-	IOWaitMillis   int64
-	PausedMillis   int64
-	HashedFiles    int64
-}
-
 // controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
 // 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
 type controllerCacheSizes struct {
@@ -217,10 +214,8 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 // newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
 // 它不启动任何后台 goroutine，也不碰文件监听——那些属于「运行」而非「装配」，由 NewController 负责。
 //
-// 拆出这一层是因为白盒测试此前手工拼装 Controller，与 NewController 长期分叉：
-// 每加一个组件字段，测试构造器就漏一个，直到某个用例 nil panic 才被发现（franchiseRebuilder、
-// taskEngine.relaunchers、两个限流器、rebuildThumbAgg 都各栽过一次，代码里留下了一串
-// 「与 NewController 一致」的补丁注释）。现在两条路径共用同一份装配，这类分叉从结构上不再可能。
+// 白盒测试构造 Controller 必须调用这里，不得手工拼装字段：手工拼装在新增组件字段时容易漏掉，
+// 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
 func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
 	cache := newImageMemoryCache(sizes.imageBytes)
 	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
@@ -232,8 +227,8 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		progressWriteCache: progressWriteCache,
 		scanner:            scan,
 		config:             cfg,
-		koreader:           koreader.NewService(store, cfg),
 		external:           external.NewManager(store, 30*time.Minute),
+		proposals:          proposal.NewService(proposalDB{Store: store}),
 		configPath:         cfgPath,
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),
@@ -243,16 +238,19 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	}
 	if scan != nil {
 		scan.SetBatchCallback(c.handleScannerBatchEvent)
-		scan.SetScanMetricsCallback(c.handleScannerMetricsEvent)
-		scan.SetScanProgressCallback(c.handleScannerProgressEvent)
 	}
+
+	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
+	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.Default)
+
+	c.koreader = koreader.NewService(store, cfg)
 
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
-	// taskEngine 依赖 c 的 SSE 投递与生命周期信号，同样须在 c 构造完成后建立。
-	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone)
-	// 构建任务重试注册表：必须在任何任务创建（startTaskWithOptionsCore 会经 isRetryableTaskType 查表）之前完成。
+	// taskEngine 依赖 c 的 SSE 投递、生命周期信号与后台运行能力，同样须在 c 构造完成后建立。
+	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone, c.runBackground, c.diskWork)
+	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
 	return c
@@ -301,25 +299,6 @@ func (c *Controller) lifecycleDone() <-chan struct{} {
 	return c.done
 }
 
-// runBackgroundTask 与 runBackground 相同，但额外保证：goroutine 一旦 panic，
-// taskKey 对应的任务会被置为失败态。
-//
-// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。任务体 panic 时不会走到任何
-// finishTask/failTask，任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，
-// 于是那个 key 从此恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
-// 把 panic 转成一次显式失败，用户至少能看到原因并重试。
-func (c *Controller) runBackgroundTask(taskKey string, fn func()) {
-	c.runBackground(func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				slog.Error("Background task panicked", "task_key", taskKey, "panic", rec, "stack", string(debug.Stack()))
-				c.taskEngine.failTaskWithError(taskKey, "Background task panicked", fmt.Sprint(rec))
-			}
-		}()
-		fn()
-	})
-}
-
 func (c *Controller) runBackground(fn func()) {
 	c.lifecycleDone()
 	c.lifecycleMu.Lock()
@@ -332,8 +311,8 @@ func (c *Controller) runBackground(fn func()) {
 	go func() {
 		defer c.backgroundWG.Done()
 		// 后台任务的 panic 不经过 middleware.Recoverer（那只覆盖 HTTP handler goroutine），
-		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让该任务失败，服务继续可用。
-		// 任务型调用点请走 runBackgroundTask，它会额外把对应任务置为失败态。
+		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让服务继续可用。
+		// 任务体这一路另有兜底：引擎在 runTaskGoroutine 里把对应任务一并置为失败态。
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("Background task panicked", "panic", rec, "stack", string(debug.Stack()))
@@ -467,7 +446,7 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 	}
 	c.config.Replace(cfg)
 	// 与文件热重载走同一条 runtimecfg.Apply：重建 parser 池 / images 处理器并设置日志级别，使经 UI 保存的
-	// archive_pool_size / max_ai_concurrency 立即生效，而不再依赖文件监听回环（监听器失效时也能生效）。
+	// archive_pool_size / max_ai_concurrency 立即生效，不依赖文件监听回环（监听器失效时也能生效）。
 	if err := runtimecfg.Apply(cfg); err != nil {
 		return err
 	}
@@ -578,7 +557,7 @@ func (c *Controller) startDaemon() {
 				c.runBackground(func() {
 					id, path := lib.ID, lib.Path
 					defer c.purgeReadingPathCaches()
-					err := c.scanner.ScanLibrary(context.Background(), id, path, false)
+					err := c.scanner.ScanLibrary(context.Background(), id, path, false, nil)
 					// 「已有扫描在跑」不是故障：定时守护与手动扫描本就可能撞车，
 					// 下一个 tick 会再试，不必按错误刷屏。
 					if errors.Is(err, scanner.ErrScanAlreadyRunning) {
@@ -837,11 +816,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 }
 
 func (c *Controller) serveThumbnailImage(w http.ResponseWriter, r *http.Request) {
-	cfg := c.currentConfig()
-	thumbDir := filepath.Join(".", "data", "thumbnails")
-	if cfg.Cache.Dir != "" {
-		thumbDir = cfg.Cache.Dir
-	}
+	thumbDir := config.ThumbnailDir(c.currentConfig())
 	filename := chi.URLParam(r, "*")
 	fullPath := filepath.Join(thumbDir, filename)
 	w.Header().Set("Cache-Control", pageImageCacheControl)
@@ -1151,8 +1126,8 @@ func (c *Controller) applySeriesBooksReadStateTx(ctx context.Context, seriesID i
 	})
 }
 
-// applyBookReadStateTx 在事务内更新单本书的阅读状态，语义与旧的 updateBookReadState 一致
-// （已读=最大页码并记阅读活动，未读=清空进度），但使用事务绑定的原始 q 方法、不做逐书统计刷新。
+// applyBookReadStateTx 在事务内更新单本书的阅读状态（已读=最大页码并记阅读活动，未读=清空进度），
+// 使用事务绑定的原始 q 方法，不做逐书统计刷新。
 func applyBookReadStateTx(ctx context.Context, q *database.Queries, book database.Book, isRead bool) error {
 	page := int64(1)
 	validPage := false

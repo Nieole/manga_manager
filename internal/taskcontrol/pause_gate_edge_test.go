@@ -1,5 +1,6 @@
-// 业务说明：本文件补充 PauseGate 的边界回归：暂停→恢复→再暂停应重建 resume channel 并重新阻塞新等待者，
+// 本文件补充 PauseGate 的边界回归：暂停→恢复→再暂停应重建 resume channel 并重新阻塞新等待者，
 // 以及 nil ctx 在暂停期间的阻塞唤醒路径，保障长任务多轮暂停控制的正确性。
+
 package taskcontrol
 
 import (

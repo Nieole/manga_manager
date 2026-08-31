@@ -1,4 +1,4 @@
-// 业务说明：本文件由 controller.go 拆分而来，属于后端 API 层的搜索子域，负责全库/系列/图书的 SQLite FTS 搜索、结果合并、评分归一化与封面回填。
+// 本文件由 controller.go 拆分而来，属于后端 API 层的搜索子域，负责全库/系列/图书的 SQLite FTS 搜索、结果合并、评分归一化与封面回填。
 
 package api
 

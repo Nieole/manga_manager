@@ -1,11 +1,12 @@
 /**
- * 业务说明：本文件是应用外壳的后台任务气泡 hook，聚合任务进度气泡的状态、终态延时清理定时器、
+ * 本文件是应用外壳的后台任务气泡 hook，聚合任务进度气泡的状态、终态延时清理定时器、
  * 进度覆盖事件监听，以及 SSE 进度载荷的接入（ingest）与手动关闭/清理已完成的逻辑。
- * 维护时应关注：终态（完成/失败/取消）气泡的延时移除、message 与 message_code 的互斥、卸载时清空定时器。
+ * 维护时应关注：终态气泡的延时移除、message 与 message_code 的互斥、卸载时清空定时器。
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { TaskBubbleEntry } from '../SidebarTaskBubble';
+import { isTerminalTaskStatus } from '../../utils/taskStatus';
 
 interface TaskProgressPayload {
   key?: string;
@@ -20,14 +21,12 @@ interface TaskProgressPayload {
   scope_name?: string;
 }
 
-const isTerminal = (status: string) => status === 'completed' || status === 'failed' || status === 'canceled';
-
 export function useTaskBubbles() {
   const [entries, setEntries] = useState<Record<string, TaskBubbleEntry>>({});
   const cleanupTimers = useRef<Map<string, number>>(new Map());
 
   // ingestProgress 接入一条 SSE task_progress 载荷：新增/更新对应气泡，并为终态气泡安排延时移除
-  //（完成 8s、失败/取消 20s）；再次收到同 key 会先取消旧的延时定时器。
+  //（完成 8s、其余终态 20s）；再次收到同 key 会先取消旧的延时定时器。
   const ingestProgress = useCallback((progress: TaskProgressPayload) => {
     if (!progress.key) return;
     const key = progress.key;
@@ -50,7 +49,7 @@ export function useTaskBubbles() {
       clearTimeout(existingTimer);
       cleanupTimers.current.delete(key);
     }
-    if (isTerminal(entry.status)) {
+    if (isTerminalTaskStatus(entry.status)) {
       const timer = window.setTimeout(() => {
         setEntries((prev) => {
           if (!prev[key]) return prev;
@@ -82,7 +81,7 @@ export function useTaskBubbles() {
     setEntries((prev) => {
       const next: Record<string, TaskBubbleEntry> = {};
       for (const [key, entry] of Object.entries(prev)) {
-        if (!isTerminal(entry.status)) {
+        if (!isTerminalTaskStatus(entry.status)) {
           next[key] = entry;
         } else {
           const timer = cleanupTimers.current.get(key);

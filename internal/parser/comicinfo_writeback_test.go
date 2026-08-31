@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，覆盖 ComicInfo.xml 写回 zip/cbz 归档的行为。
+// 本文件是业务回归测试，覆盖 ComicInfo.xml 写回 zip/cbz 归档的行为。
 // 保护点：保留原有页条目、替换而非重复写入 ComicInfo、原子替换后归档仍可正常打开、rar/cbr 拒绝写入。
 
 package parser

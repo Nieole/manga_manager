@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
-// 它连接 sqlc 生成查询与上层领域服务，是资料库筛选、搜索同步和关系图谱的数据基础。
-// 维护时应保持 schema、查询定义、事务边界和迁移兼容，避免破坏既有用户数据。
-
 package database
 
 import (
@@ -76,6 +72,7 @@ func (q *Queries) ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, 
 	items := make([]KOReaderAccount, 0)
 	for rows.Next() {
 		var item KOReaderAccount
+		var lastUsedAt sql.NullString
 		if err := rows.Scan(
 			&item.ID,
 			&item.Username,
@@ -83,11 +80,12 @@ func (q *Queries) ListKOReaderAccounts(ctx context.Context) ([]KOReaderAccount, 
 			&item.Enabled,
 			&item.CreatedAt,
 			&item.UpdatedAt,
-			&item.LastUsedAt,
+			&lastUsedAt,
 			&item.LatestError,
 		); err != nil {
 			return nil, err
 		}
+		item.LastUsedAt = parseSQLiteNullTime(lastUsedAt)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -217,6 +215,7 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 	`)
 
 	var item KOReaderStats
+	var latestSyncAt sql.NullString
 	err := row.Scan(
 		&item.Configured,
 		&item.HasPassword,
@@ -228,8 +227,9 @@ func (q *Queries) GetKOReaderStats(ctx context.Context) (KOReaderStats, error) {
 		&item.HashedBooks,
 		&item.UnmatchedProgressCount,
 		&item.MatchedProgressCount,
-		&item.LatestSyncAt,
+		&latestSyncAt,
 	)
+	item.LatestSyncAt = parseSQLiteNullTime(latestSyncAt)
 	return item, err
 }
 
@@ -508,7 +508,7 @@ func (q *Queries) ListBooksMissingQuickHashBatch(ctx context.Context, afterID in
 // UpdateBookIdentity 回填 KOReader 匹配用的身份索引（内容哈希与路径指纹）。
 //
 // 刻意**不**刷新 books.updated_at：这四列是 KOReader 匹配用的内部索引，不构成
-// 「这本书变了」。此前无条件刷新的后果是，一次「重建 KOReader 索引」会把整库的
+// 「这本书变了」。若无条件刷新，一次「重建 KOReader 索引」会把整库的
 // books.updated_at 推到同一秒——三条健康报告查询的 `ORDER BY b.updated_at DESC`
 // 第一排序键随之全部相等，排序退化成按 id；前端封面 URL 上的 ?v=updated_at
 // 也会整库失效，等于让所有人重下一遍全部封面。
@@ -728,8 +728,8 @@ func (q *Queries) ListKOReaderDeviceConflicts(ctx context.Context, limit int) ([
 			'koreader_sync_events' AS source_table,
 			e.id AS source_id,
 			-- 事件行只有在同 (username, document) 上真的存在一条进度时才有 progress_id。
-			-- 此前这里回的是 e.id，而两张表的自增序列各自从 1 开始，于是「重置进度」
-			-- 会拿一个事件主键去删同号的进度记录——删掉的是另一台设备的阅读进度。
+			-- 这里必须回 p.id，不能回 e.id：两张表的自增序列各自从 1 开始，用 e.id 会让
+			-- 「重置进度」拿一个事件主键去删同号的进度记录——删掉的是另一台设备的阅读进度。
 			p.id AS progress_id,
 			'sync_error' AS type,
 			CASE WHEN e.status LIKE 'auth_failed%' THEN 'error' ELSE 'warning' END AS severity,

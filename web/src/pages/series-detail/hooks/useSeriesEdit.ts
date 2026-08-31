@@ -1,12 +1,6 @@
-/**
- * 业务说明：本文件是业务实现，属于前端系列详情页面，负责展示系列信息、卷册列表、元数据审核、关系维护和阅读入口。
- * 它把数据库中的书籍聚合、外部元数据和人工编辑结果组织成单个系列的业务视图。
- * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
- */
-
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../../api/client';
-import { getApiErrorMessage } from '../../../api/client';
+import { getApiErrorMessage, isAxiosError } from '../../../api/client';
 import type { Author, MetaTag, Series, SeriesLink } from '../types';
 
 
@@ -25,22 +19,39 @@ interface UseSeriesEditParams {
   tags: MetaTag[];
   authors: Author[];
   links: SeriesLink[];
+  metadataVersion: string | null;
   reload: () => Promise<void>;
   showToast: (message: string, level: 'success' | 'error') => void;
   t: (key: string, params?: Record<string, unknown>) => string;
 }
 
-export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, showToast, t }: UseSeriesEditParams) {
+export function useSeriesEdit({ seriesId, series, tags, authors, links, metadataVersion, reload, showToast, t }: UseSeriesEditParams) {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<SeriesEditForm>({});
   const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
   const [allTags, setAllTags] = useState<MetaTag[]>([]);
   const [allAuthors, setAllAuthors] = useState<Author[]>([]);
+  // hasConflict：最近一次保存被服务端以「编辑期间有人改过」为由拒绝。置上后表单原样留着，
+  // 用户确认后再点一次保存即以自己这份为准。
+  const [hasConflict, setHasConflict] = useState(false);
 
-  // 当 series / tags / authors / links 变更时重置表单
+  // 表单里这份内容属于哪个系列。只能记在 ref 里：effect 读状态拿到的是上一轮渲染的闭包值。
+  const formSeriesIdRef = useRef<number | null>(null);
+  // 表单这份内容是从哪个版本的服务端数据长出来的，保存时带回去做冲突检测。
+  // 它必须与表单内容同进同出：编辑期间的后台刷新不重置表单，也就不能把基线偷偷换成新版本——
+  // 换了就等于自动认领别人的改动，静默覆盖原样复发。
+  const formVersionRef = useRef<string | null>(null);
+
+  // 表单重置：非编辑态跟随服务端最新值，编辑态只在换了系列时才跟。
+  // 两条判据缺一不可——只看 seriesId，任一后台任务完成引发的静默重取都会换掉 series/tags/
+  // authors/links 的引用（内容可以一模一样），把用户没保存的输入顶掉；只看 isEditing，
+  // 编辑期间切到别的系列就会把上一个系列的内容留在框里，保存时打到新系列头上。
   useEffect(() => {
     if (!series) return;
-     
+    if (isEditing && formSeriesIdRef.current === series.id) return;
+    formSeriesIdRef.current = series.id;
+    formVersionRef.current = metadataVersion;
+    setHasConflict(false);
     setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
     setEditForm({
       title: series.title,
@@ -53,7 +64,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
       authorsInput: authors.map((author) => ({ name: author.name, role: author.role })),
       linksInput: links.map((link) => ({ name: link.name, url: link.url })),
     });
-  }, [series, tags, authors, links]);
+  }, [series, tags, authors, links, metadataVersion, isEditing]);
 
   // 进入编辑时再加载全量 tags / authors
   useEffect(() => {
@@ -117,10 +128,22 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
         tags: editForm.tagsInput || [],
         authors: editForm.authorsInput || [],
         links: editForm.linksInput || [],
+        expected_version: formVersionRef.current || '',
       });
+      setHasConflict(false);
       await reload();
       setIsEditing(false);
     } catch (err) {
+      // 409：编辑期间服务端被别的途径写过（刮削应用了提案、另一个标签页保存、另一个用户改了）。
+      // 弹窗与用户敲进去的内容一律不动——保存没成功，输入就不该消失；把服务端给的最新版本记为
+      // 新基线，用户看过提示后再点一次保存即以自己这份为准。
+      if (isAxiosError(err) && err.response?.status === 409) {
+        const current = err.response?.data?.current_version;
+        if (typeof current === 'string' && current) formVersionRef.current = current;
+        setHasConflict(true);
+        showToast(t('series.toast.saveConflict'), 'error');
+        return;
+      }
       console.error('Failed to update metadata', err);
       showToast(`${t('series.toast.saveFailed')}: ${getApiErrorMessage(err, t('series.toast.saveFailed'))}`, 'error');
     }
@@ -133,6 +156,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
     lockedFields,
     allTags,
     allAuthors,
+    hasConflict,
     toggleLock,
     onFormChange,
     save,

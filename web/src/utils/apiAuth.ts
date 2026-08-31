@@ -1,5 +1,5 @@
 /**
- * 业务说明：本文件是多用户 Cookie 会话鉴权的前端支撑层。会话令牌由后端以 HttpOnly Cookie 下发，
+ * 本文件是多用户 Cookie 会话鉴权的前端支撑层。会话令牌由后端以 HttpOnly Cookie 下发，
  * 前端不可读；改写类请求（POST/PUT/PATCH/DELETE）需在 X-CSRF-Token 头回传登录时拿到的 CSRF 令牌。
  * 所有 axios 请求统一 withCredentials 以携带会话 Cookie。CSRF 令牌仅存内存，由 AuthProvider 更新。
  * 维护要点：Cookie 同源自动携带，EventSource/<img>/下载这类无法自定义请求头的场景同样靠 Cookie。

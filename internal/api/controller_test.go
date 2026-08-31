@@ -1,6 +1,8 @@
-// 业务说明：本文件是业务回归测试，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
+// 守 api 层的对外契约：请求打进 handler、结果从真库读回，断言状态码与错误语义、响应字段的
+// 形状、写路径落库后的可见结果。这些契约破了，前端拿到的是形状对而含义错的 200。
+// 任务的进度与终态先进内存再异步刷盘，相关用例必须分「内存立即可见」与「刷盘后 DB 追上」两段断言，
+// 只查 DB 会把一次异步延迟误判成丢数据。
+// 全包共用的测试装配 newTestController 也在这里。
 
 package api
 
@@ -10,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -25,9 +28,11 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/proposal"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -252,6 +257,35 @@ func seedBookFixture(t testing.TB, store database.Store, rootDir, libName, serie
 	}
 
 	return lib, series, book
+}
+
+// seedBookArchivePages 为一本已入库的书写出归档，并把 books 表里的路径、体积、页数对齐到该文件。
+// 每一页的字节由调用方给定且各不相同：不带缩放/格式/画质参数的页图请求按原始字节透传，
+// 因此响应体可直接与写入的内容比对，用来判定服务端取的到底是第几页。
+func seedBookArchivePages(t testing.TB, controller *Controller, book database.Book, pageBodies ...[]byte) {
+	t.Helper()
+
+	files := make(map[string][]byte, len(pageBodies))
+	for i, body := range pageBodies {
+		files[fmt.Sprintf("%03d.png", i+1)] = body
+	}
+	if err := writeTestCBZ(book.Path, files); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	info, err := os.Stat(book.Path)
+	if err != nil {
+		t.Fatalf("stat archive failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(
+		`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+		book.Path,
+		info.Size(),
+		info.ModTime(),
+		len(pageBodies),
+		book.ID,
+	); err != nil {
+		t.Fatalf("update book archive metadata failed: %v", err)
+	}
 }
 
 func TestGetAndUpdateSystemConfig(t *testing.T) {
@@ -903,12 +937,10 @@ func TestPauseAndResumeStorageIO(t *testing.T) {
 func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startTask(taskKey, "scan_library", "scan", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
-		Scope:                  "library",
-		ID:                     42,
+	// 写这条扫描任务的资格来自任务体交出的**扫描观察者**，不是拼出来的任务键——
+	// 报文不带身份，交给谁就写给谁。
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1})
+	newTaskScanObserver(progress).Metrics(scanner.ScanMetricsReport{
 		StorageProfile:         config.StorageProfileHDDExternal,
 		VolumeKey:              "e:",
 		ArchiveOpenConcurrency: 1,
@@ -932,16 +964,16 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 
 func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	if !controller.taskEngine.startTask("rebuild_thumbnails", "rebuild_thumbnails", "running", 1) {
-		t.Fatal("expected thumbnail rebuild task to start")
-	}
-	if !controller.taskEngine.startTask("scan_library_42", "scan_library", "running", 1) {
-		t.Fatal("expected scan task to start")
-	}
+	// 写重建任务的资格来自任务体交给聚合器的**任务句柄**：聚合器据此为每个库造一个
+	// **扫描观察者**，交不出句柄时造不出观察者，报文就无处可落。
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
+	controller.initRebuildThumbAggregator(progress, 0)
+	t.Cleanup(controller.releaseRebuildThumbAggregator)
 
-	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
-		Scope:                "library",
-		ID:                   42,
+	// 重建逐库扫描，每个库一个观察者：跨库总量只能这样加出来，因为每次扫描只报自己那一个库。
+	libA := database.Library{ID: 42, Name: "A", Path: filepath.Join(t.TempDir(), "a")}
+	libB := database.Library{ID: 43, Name: "B", Path: filepath.Join(t.TempDir(), "b")}
+	reportA := scanner.ScanMetricsReport{
 		StorageProfile:       config.StorageProfileHDDExternal,
 		VolumeKey:            "e:",
 		OpenedArchives:       3,
@@ -949,10 +981,9 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		PausedMillis:         80,
 		ThumbnailWriteMillis: 40,
 		DurationMillis:       60000,
-	})
-	controller.handleScannerMetricsEvent(scanner.ScanMetricsReport{
-		Scope:                "library",
-		ID:                   43,
+	}
+	controller.beginRebuildThumbLibrary(libA, 2).Metrics(reportA)
+	controller.beginRebuildThumbLibrary(libB, 2).Metrics(scanner.ScanMetricsReport{
 		StorageProfile:       config.StorageProfileHDDExternal,
 		VolumeKey:            "e:",
 		OpenedArchives:       2,
@@ -961,6 +992,10 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		ThumbnailWriteMillis: 10,
 		DurationMillis:       30000,
 	})
+
+	// 存储 IO 面板的扫描速率读的是扫描任务自己的参数，与重建任务各写各的。
+	scanProgress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
+	newTaskScanObserver(scanProgress).Metrics(reportA)
 
 	controller.taskEngine.mutex.Lock()
 	task := controller.taskEngine.tasks["rebuild_thumbnails"]
@@ -1390,10 +1425,9 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 		t.Fatalf("insert relation failed: %v", err)
 	}
 
-	// 上面的 updateSeriesInfo 把 title/summary 锁了，而锁定字段不再入队（入队了也只会在
-	// apply 时被静默丢弃）。这里补一个未锁定的 publisher 提案，让本用例真正关心的
-	// 「系列上下文里带出待审记录」仍有东西可断言。
-	if _, _, _, err := controller.queueMetadataReview(context.Background(), info, &metadata.SeriesMetadata{
+	// 本用例先前经 updateSeriesInfo 锁了 title/summary，而锁定字段不入队（入队了也会在
+	// apply 时被丢弃）。补一个未锁定的 publisher 提案，「系列上下文带出待审记录」才有东西可断言。
+	if _, err := controller.proposals.Queue(context.Background(), info, &metadata.SeriesMetadata{
 		Provider:   "bangumi",
 		Title:      "Alpha Metadata",
 		Summary:    "Reviewed summary",
@@ -1401,15 +1435,15 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 		SourceID:   42,
 		SourceURL:  "https://bgm.tv/subject/42",
 		Confidence: 0.9,
-	}, "bangumi", "Alpha"); err != nil {
+	}, "bangumi", "Alpha", proposal.QueueOptions{}); err != nil {
 		t.Fatalf("queue metadata review failed: %v", err)
 	}
 
 	taskKey := "scan_series_" + strconv.FormatInt(series.ID, 10)
-	if !controller.taskEngine.startTask(taskKey, "scan_series", "scan series", 1) {
-		t.Fatal("expected scan series task to start")
-	}
-	controller.taskEngine.failTaskWithError(taskKey, "failed series scan", "archive error")
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: taskKey, Type: "scan_series", Total: 1,
+		Terminal: "failed", FailError: "archive error",
+	})
 
 	contextRec := httptest.NewRecorder()
 	controller.getSeriesContext(contextRec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
@@ -1929,7 +1963,8 @@ func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateSeries %s failed: %v", name, err)
 		}
-		if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET updated_at = ? WHERE id = ?`, time.Now().Add(time.Duration(len(name))*time.Minute), series.ID); err != nil {
+		// 时间列按库内存储文本写入，与 CURRENT_TIMESTAMP 一致；绑 time.Time 会落成另一种写法。
+		if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET updated_at = ? WHERE id = ?`, time.Now().UTC().Add(time.Duration(len(name))*time.Minute).Format("2006-01-02 15:04:05"), series.ID); err != nil {
 			t.Fatalf("update series %s failed: %v", name, err)
 		}
 	}
@@ -1974,8 +2009,8 @@ func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
 	}
 }
 
-// TestSearchSeriesPagedCapsLimit 验证超大 limit 被压到硬上限（maxSeriesPageLimit=200），
-// 防止单请求 limit=1000000 物化并 JSON 编码整库导致 OOM/超时。
+// TestSearchSeriesPagedCapsLimit 验证超大 limit 被压到 maxSeriesPageLimit，
+// 否则一个 limit=1000000 就能让单请求物化并 JSON 编码整库。
 func TestSearchSeriesPagedCapsLimit(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 10)
@@ -2120,18 +2155,14 @@ func TestTaskConflictHandlers(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-	if !controller.taskEngine.startTask("scan_series_"+strconv.FormatInt(series.ID, 10), "scan_series", "running", 1) {
-		t.Fatal("expected scan series task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_" + strconv.FormatInt(series.ID, 10), Type: "scan_series", Total: 1})
 	scanSeriesRec := httptest.NewRecorder()
 	controller.scanSeries(scanSeriesRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scan", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if scanSeriesRec.Code != http.StatusConflict {
 		t.Fatalf("expected duplicate scan series 409, got %d", scanSeriesRec.Code)
 	}
 
-	if !controller.taskEngine.startTask("cleanup_library_"+strconv.FormatInt(lib.ID, 10), "cleanup_library", "running", 1) {
-		t.Fatal("expected cleanup task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "cleanup_library_" + strconv.FormatInt(lib.ID, 10), Type: "cleanup_library", Total: 1})
 	cleanupRec := httptest.NewRecorder()
 	controller.cleanupLibrary(cleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/cleanup", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if cleanupRec.Code != http.StatusConflict {
@@ -2449,14 +2480,8 @@ func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("older", "scan_library", "older task", 1) {
-		t.Fatal("expected first task to start")
-	}
-	controller.taskEngine.finishTask("older", "done")
-
-	if !controller.taskEngine.startTask("newer", "rebuild_index", "newer task", 1) {
-		t.Fatal("expected second task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "older", Type: "scan_library", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "newer", Type: "rebuild_index", Total: 1})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
 	rec := httptest.NewRecorder()
@@ -2481,15 +2506,8 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 func TestListTasksSupportsStatusFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("failed_one", "scan_library", "failed task", 1) {
-		t.Fatal("expected failed task to start")
-	}
-	controller.taskEngine.failTask("failed_one", "boom")
-
-	if !controller.taskEngine.startTask("completed_one", "rebuild_index", "completed task", 1) {
-		t.Fatal("expected completed task to start")
-	}
-	controller.taskEngine.finishTask("completed_one", "done")
+	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Type: "scan_library", Total: 1, Terminal: "failed", FailError: "boom"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Type: "rebuild_index", Total: 1, Terminal: "completed"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?status=failed", nil)
 	rec := httptest.NewRecorder()
@@ -2511,15 +2529,8 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_12", "scan_series", "series 12", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_12", "done")
-
-	if !controller.taskEngine.startTask("scan_series_18", "scan_series", "series 18", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_18", "done")
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_12", Type: "scan_series", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_18", Type: "scan_series", Total: 1, Terminal: "completed"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=18", nil)
 	rec := httptest.NewRecorder()
@@ -2541,12 +2552,12 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_77", "scan_series", "series 77", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.setTaskMetadata("scan_series_77", map[string]string{"force": "true"}, "Series 77")
-	controller.taskEngine.failTaskWithError("scan_series_77", "failed series scan", "archive error")
-	// 进度/终态改为异步落盘（M42）：显式刷一次，模拟服务生命周期内的落盘/优雅关闭，再由新实例读回。
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: "scan_series_77", Type: "scan_series", Total: 1,
+		Metadata: map[string]string{"force": "true"}, ScopeName: "Series 77",
+		Terminal: "failed", FailError: "archive error",
+	})
+	// 进度与终态是异步落盘的：显式刷一次模拟优雅关闭，再由新实例读回。
 	controller.taskEngine.flushTaskPersist()
 
 	// 用同一份装配另起一个实例，模拟「进程重启后从库里读回任务」。
@@ -2640,15 +2651,8 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("completed_one", "rebuild_index", "completed task", 1) {
-		t.Fatal("expected completed task to start")
-	}
-	controller.taskEngine.finishTask("completed_one", "done")
-
-	if !controller.taskEngine.startTask("failed_one", "scan_library", "failed task", 1) {
-		t.Fatal("expected failed task to start")
-	}
-	controller.taskEngine.failTask("failed_one", "boom")
+	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Type: "rebuild_index", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Type: "scan_library", Total: 1, Terminal: "failed", FailError: "boom"})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=completed", nil)
 	rec := httptest.NewRecorder()
@@ -2673,21 +2677,10 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_10", "scan_series", "series 10", 1) {
-		t.Fatal("expected first task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_10", "done")
-
-	if !controller.taskEngine.startTask("scan_series_11", "scan_series", "series 11", 1) {
-		t.Fatal("expected second task to start")
-	}
-	controller.taskEngine.finishTask("scan_series_11", "done")
-
-	if !controller.taskEngine.startTask("scan_library_11", "scan_library", "library 11", 1) {
-		t.Fatal("expected third task to start")
-	}
-	controller.taskEngine.finishTask("scan_library_11", "done")
-	// 终态改为异步落盘（M42）：清理走 DeleteTasks 删 DB 记录，需先刷盘让已完成任务进入 DB 再清。
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_10", Type: "scan_series", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_11", Type: "scan_series", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_11", Type: "scan_library", Total: 1, Terminal: "completed"})
+	// 清理走 DeleteTasks 删 DB 记录，而终态是异步落盘的：先刷盘让已完成任务进了 DB 才删得掉。
 	controller.taskEngine.flushTaskPersist()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
@@ -2733,11 +2726,8 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startCancelableTask(taskKey, "scan_library", "running", 1) {
-		t.Fatal("expected task to start")
-	}
-	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
-	defer cleanup()
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1, CanCancel: true})
+	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -2765,20 +2755,16 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	if task.MessageCode != "task.msg.control.cancelling" {
 		t.Fatalf("expected cancelling message code, got code=%q message=%q", task.MessageCode, task.Message)
 	}
-	if task.Message != "" {
-		t.Fatalf("expected message cleared when code set, got %q", task.Message)
-	}
+	// 「设了码就清掉直接文案」这条互斥归 applyTaskMessage 管，由 TestTaskMessageCodeEmission 覆盖：
+	// 播下的任务从来就没有直接文案，在这里断言 Message 为空是一条永远不会红的假覆盖。
 }
 
 func TestPauseResumeTaskLifecycle(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
-		t.Fatal("expected task to start")
-	}
-	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
-	defer cleanup()
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -2929,24 +2915,28 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scrape_library_7"
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scrape", "running", 3) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.updateTaskDetails(taskKey, 1, 3, "写入审阅队列: Foo", "queueing_review", "Foo", map[string]int64{
-		"total_series":         3,
-		"processed_series":     1,
-		"success_count":        1,
-		"failed_count":         0,
-		"not_found_count":      0,
-		"queued_review_count":  1,
-		"provider_requests":    1,
-		"provider_errors":      0,
-		"rate_limited_wait_ms": 500,
-	}, map[string]string{
-		"provider":            "bangumi",
-		"provider_name":       "Bangumi",
-		"current_series_id":   "42",
-		"current_series_name": "Foo",
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scrape", Total: 3, CanCancel: true, CanPause: true})
+	progress.Advance(1, 3, "task.msg.scrape.queueing_review", map[string]string{"name": "Foo"})
+	progress.Phase("queueing_review", "", nil)
+	progress.Report(taskrun.Frame{
+		Item: "Foo",
+		Metrics: map[string]int64{
+			"total_series":         3,
+			"processed_series":     1,
+			"success_count":        1,
+			"failed_count":         0,
+			"not_found_count":      0,
+			"queued_review_count":  1,
+			"provider_requests":    1,
+			"provider_errors":      0,
+			"rate_limited_wait_ms": 500,
+		},
+		Labels: map[string]string{
+			"provider":            "bangumi",
+			"provider_name":       "Bangumi",
+			"current_series_id":   "42",
+			"current_series_name": "Foo",
+		},
 	})
 
 	controller.taskEngine.mutex.Lock()
@@ -3094,9 +3084,7 @@ func TestPauseTaskRejectsNonPausableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	if !controller.taskEngine.startTask(taskKey, "rebuild_index", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/pause", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3111,11 +3099,8 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	if !controller.taskEngine.startPausableCancelableTask(taskKey, "scan_library", "running", 10) {
-		t.Fatal("expected task to start")
-	}
-	ctx, cleanup := controller.taskEngine.newTaskContext(taskKey)
-	defer cleanup()
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3155,9 +3140,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	if !controller.taskEngine.startTask(taskKey, "rebuild_index", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/cancel", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3197,10 +3180,11 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_series_999", "scan_series", "failed series scan", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.failTask("scan_series_999", "failed")
+	const seededFailCode = "seed.scan_series.failed"
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: "scan_series_999", Type: "scan_series", Total: 1,
+		Terminal: "failed", TerminalCode: seededFailCode,
+	})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_series_999/retry", nil, "taskKey", "scan_series_999")
 	rec := httptest.NewRecorder()
@@ -3217,7 +3201,7 @@ func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	if task.Status == "running" {
 		t.Fatalf("expected retried task to finish quickly, got %+v", task)
 	}
-	if task.Message == "failed" {
+	if task.MessageCode == seededFailCode {
 		t.Fatalf("expected retried task to update message, got %+v", task)
 	}
 }
@@ -3242,9 +3226,7 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 		t.Fatalf("CreateLibrary failed: %v", err)
 	}
 
-	if !controller.taskEngine.startTask("scan_library_"+strconv.FormatInt(lib.ID, 10), "scan_library", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_" + strconv.FormatInt(lib.ID, 10), Type: "scan_library", Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/scan", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
@@ -3649,7 +3631,7 @@ func TestRunRebuildFileIdentitiesBackfillsQuickHash(t *testing.T) {
 		t.Fatalf("write book file failed: %v", err)
 	}
 
-	updated, total, err := controller.runRebuildFileIdentities(context.Background(), 500, nil)
+	updated, total, err := controller.runRebuildFileIdentities(context.Background(), 500, newRecordingTaskHandle(controller.diskWork))
 	if err != nil {
 		t.Fatalf("runRebuildFileIdentities failed: %v", err)
 	}
@@ -3673,23 +3655,19 @@ func TestRunBackfillFullHashesLowPriorityBackfillsFileHash(t *testing.T) {
 		t.Fatalf("write book file failed: %v", err)
 	}
 
-	var progressCalls int
-	var lastMetrics taskIOMetrics
-	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, func(current, total int, message string, metrics taskIOMetrics) {
-		progressCalls++
-		lastMetrics = metrics
-	})
+	task := newRecordingTaskHandle(controller.diskWork)
+	updated, total, err := controller.runBackfillFullHashesLowPriority(context.Background(), 2, 0, task)
 	if err != nil {
 		t.Fatalf("runBackfillFullHashesLowPriority failed: %v", err)
 	}
 	if updated != 1 || total != 1 {
 		t.Fatalf("expected one full hash update, got updated=%d total=%d", updated, total)
 	}
-	if progressCalls == 0 {
+	if task.advances == 0 {
 		t.Fatal("expected progress callback")
 	}
-	if lastMetrics.HashedFiles != 1 {
-		t.Fatalf("expected one hashed file metric, got %+v", lastMetrics)
+	if task.lastIO.HashedFiles != 1 {
+		t.Fatalf("expected one hashed file metric, got %+v", task.lastIO)
 	}
 
 	got, err := store.GetBook(context.Background(), book.ID)
@@ -3744,7 +3722,7 @@ func TestReadingBookmarksLifecycle(t *testing.T) {
 		t.Fatalf("expected bookmark delete 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
 
-	// 无会话上下文时 currentUserID 返回 0（单用户/历史数据口径），与 handler 写入侧一致。
+	// 无会话上下文时 currentUserID 返回 0（单用户部署的口径），与 handler 写入侧一致。
 	remaining, err := store.ListReadingBookmarks(context.Background(), database.ListReadingBookmarksParams{
 		UserID: 0,
 		BookID: book.ID,
@@ -3868,13 +3846,27 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 		t.Fatalf("unexpected source link: %s", links[0].Url)
 	}
 
-	review, err := store.GetMetadataReview(context.Background(), queued.ReviewID)
-	if err != nil {
-		t.Fatalf("GetMetadataReview failed: %v", err)
+	// 应用之后这条提案必须离开待裁决队列：留在里面，用户会看到一条已经写进系列的提案
+	// 还在等自己裁决，再点一次只会拿到 409。
+	afterRec := httptest.NewRecorder()
+	controller.listSeriesMetadataReview(afterRec, requestWithRouteParam(
+		http.MethodGet,
+		"/api/series/1/metadata-review",
+		nil,
+		"seriesId",
+		strconv.FormatInt(series.ID, 10),
+	))
+	if afterRec.Code != http.StatusOK {
+		t.Fatalf("expected metadata review list 200 after apply, got %d body=%s", afterRec.Code, afterRec.Body.String())
 	}
-	if review.Status != "applied" {
-		t.Fatalf("expected applied review status, got %+v", review)
+	var afterPayload metadataReviewResponse
+	if err := json.NewDecoder(afterRec.Body).Decode(&afterPayload); err != nil {
+		t.Fatalf("decode review list after apply failed: %v", err)
 	}
+	if len(afterPayload.Reviews) != 0 {
+		t.Fatalf("expected the applied review to leave the pending queue, got %+v", afterPayload.Reviews)
+	}
+
 	provenance, err := store.GetSeriesMetadataProvenance(context.Background(), series.ID)
 	if err != nil {
 		t.Fatalf("GetSeriesMetadataProvenance failed: %v", err)
@@ -3893,105 +3885,6 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 	}
 }
 
-func TestQueueMetadataReviewDeduplicatesPendingEquivalentContent(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
-	info, err := store.GetSeries(context.Background(), series.ID)
-	if err != nil {
-		t.Fatalf("GetSeries failed: %v", err)
-	}
-
-	result := &metadata.SeriesMetadata{
-		Provider:   "bangumi",
-		Title:      "Updated Title",
-		Summary:    "Updated summary",
-		Publisher:  "Kodansha",
-		Tags:       []string{"Action", "Drama"},
-		SourceID:   12345,
-		SourceURL:  "https://bgm.tv/subject/12345",
-		Confidence: 0.92,
-	}
-	firstReview, firstFields, _, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
-	if err != nil {
-		t.Fatalf("first queue metadata review failed: %v", err)
-	}
-	secondReview, secondFields, _, err := controller.queueMetadataReview(context.Background(), info, result, "bangumi", "Series")
-	if err != nil {
-		t.Fatalf("second queue metadata review failed: %v", err)
-	}
-	if secondReview.ID != firstReview.ID {
-		t.Fatalf("expected duplicate queue to reuse review %d, got %d", firstReview.ID, secondReview.ID)
-	}
-	if len(secondFields) != len(firstFields) {
-		t.Fatalf("expected duplicate queue to return existing fields, first=%d second=%d", len(firstFields), len(secondFields))
-	}
-
-	pending, err := store.ListPendingMetadataReviewsBySeries(context.Background(), series.ID)
-	if err != nil {
-		t.Fatalf("ListPendingMetadataReviewsBySeries failed: %v", err)
-	}
-	if len(pending) != 1 {
-		t.Fatalf("expected one pending review after duplicate queue, got %+v", pending)
-	}
-}
-
-// TestQueueMetadataReviewKeepsDistinctSourcesSeparate 验证：字段 diff 相同但来源条目（SourceID）
-// 不同的两次提交不会被去重复用，而是各自独立入队并保留自己的 source_url。
-// 复现 bug：选中第 3 条候选应用后，审核页超链接却指向第 1 条。
-func TestQueueMetadataReviewKeepsDistinctSourcesSeparate(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 10)
-	info, err := store.GetSeries(context.Background(), series.ID)
-	if err != nil {
-		t.Fatalf("GetSeries failed: %v", err)
-	}
-
-	// 两条候选的字段值完全一致，仅 SourceID/SourceURL 不同（同一作品的不同 Bangumi 条目）。
-	first := &metadata.SeriesMetadata{
-		Provider:  "bangumi",
-		Title:     "Same Title",
-		Summary:   "Same summary",
-		SourceID:  111,
-		SourceURL: "https://bgm.tv/subject/111",
-	}
-	third := &metadata.SeriesMetadata{
-		Provider:  "bangumi",
-		Title:     "Same Title",
-		Summary:   "Same summary",
-		SourceID:  333,
-		SourceURL: "https://bgm.tv/subject/333",
-	}
-
-	firstReview, _, firstIsNew, err := controller.queueMetadataReview(context.Background(), info, first, "bangumi", "Series")
-	if err != nil {
-		t.Fatalf("queue first review failed: %v", err)
-	}
-	if !firstIsNew {
-		t.Fatal("expected first review to be newly created")
-	}
-	thirdReview, _, thirdIsNew, err := controller.queueMetadataReview(context.Background(), info, third, "bangumi", "Series")
-	if err != nil {
-		t.Fatalf("queue third review failed: %v", err)
-	}
-	if !thirdIsNew {
-		t.Fatal("expected third review to be newly created, not deduplicated against the first")
-	}
-	if thirdReview.ID == firstReview.ID {
-		t.Fatalf("expected distinct source to create a new review, but reused id %d", firstReview.ID)
-	}
-	if thirdReview.SourceUrl != "https://bgm.tv/subject/333" {
-		t.Fatalf("expected third review to keep its own source_url, got %q", thirdReview.SourceUrl)
-	}
-
-	pending, err := store.ListPendingMetadataReviewsBySeries(context.Background(), series.ID)
-	if err != nil {
-		t.Fatalf("ListPendingMetadataReviewsBySeries failed: %v", err)
-	}
-	if len(pending) != 2 {
-		t.Fatalf("expected two pending reviews for distinct sources, got %d", len(pending))
-	}
-}
-
 func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, seriesA, _ := seedBookFixture(t, store, t.TempDir(), "LibA", "Series Alpha", "book-a.cbz", 10)
@@ -4007,7 +3900,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 		t.Fatalf("GetSeries A failed: %v", err)
 	}
 
-	reviewA, _, _, err := controller.queueMetadataReview(context.Background(), seriesA, &metadata.SeriesMetadata{
+	queuedA, err := controller.proposals.Queue(context.Background(), seriesA, &metadata.SeriesMetadata{
 		Title:      "External Title",
 		Publisher:  "External Publisher",
 		Summary:    "External summary",
@@ -4015,21 +3908,23 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 		SourceURL:  "https://example.test/a",
 		Provider:   "bangumi",
 		Confidence: 0.7,
-	}, "bangumi", "Series Alpha")
+	}, "bangumi", "Series Alpha", proposal.QueueOptions{})
 	if err != nil {
 		t.Fatalf("queue review A failed: %v", err)
 	}
-	reviewB, _, _, err := controller.queueMetadataReview(context.Background(), seriesB, &metadata.SeriesMetadata{
+	reviewA := queuedA.Proposal
+	queuedB, err := controller.proposals.Queue(context.Background(), seriesB, &metadata.SeriesMetadata{
 		Title:      "Beta Title",
 		Publisher:  "Beta Publisher",
 		SourceID:   2,
 		SourceURL:  "https://example.test/b",
 		Provider:   "bangumi",
 		Confidence: 0.8,
-	}, "bangumi", "Series Beta")
+	}, "bangumi", "Series Beta", proposal.QueueOptions{})
 	if err != nil {
 		t.Fatalf("queue review B failed: %v", err)
 	}
+	reviewB := queuedB.Proposal
 
 	listRec := httptest.NewRecorder()
 	controller.listMetadataReviewInbox(listRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
@@ -4090,12 +3985,34 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 	if rejectRec.Code != http.StatusOK {
 		t.Fatalf("expected bulk reject 200, got %d body=%s", rejectRec.Code, rejectRec.Body.String())
 	}
-	rejected, err := store.GetMetadataReview(context.Background(), reviewB.ID)
-	if err != nil {
-		t.Fatalf("GetMetadataReview B failed: %v", err)
+	var rejectResp metadataReviewBulkResponse
+	if err := json.NewDecoder(rejectRec.Body).Decode(&rejectResp); err != nil {
+		t.Fatalf("decode bulk reject failed: %v", err)
 	}
-	if rejected.Status != "rejected" {
-		t.Fatalf("expected review B rejected, got %+v", rejected)
+	if len(rejectResp.Rejected) != 1 || rejectResp.Rejected[0] != reviewB.ID || len(rejectResp.Failed) != 0 {
+		t.Fatalf("unexpected bulk reject response: %+v", rejectResp)
+	}
+	// 拒绝要同时做到两件事：不把提案值写进系列，且让它离开收件箱。只错一样，
+	// 用户都会以为自己按错了键。
+	updatedB, err := store.GetSeries(context.Background(), seriesB.ID)
+	if err != nil {
+		t.Fatalf("GetSeries B after bulk reject failed: %v", err)
+	}
+	if updatedB.Title.Valid || updatedB.Publisher.Valid {
+		t.Fatalf("expected reject not to write metadata, got title=%+v publisher=%+v", updatedB.Title, updatedB.Publisher)
+	}
+	afterRec := httptest.NewRecorder()
+	controller.listMetadataReviewInbox(afterRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
+	if afterRec.Code != http.StatusOK {
+		t.Fatalf("expected inbox list 200 after bulk actions, got %d body=%s", afterRec.Code, afterRec.Body.String())
+	}
+	var afterInbox metadataReviewInboxResponse
+	if err := json.NewDecoder(afterRec.Body).Decode(&afterInbox); err != nil {
+		t.Fatalf("decode inbox after bulk actions failed: %v", err)
+	}
+	// 只剩 A：它是部分应用，仍待处理；B 已被拒绝。
+	if afterInbox.Total != 1 || len(afterInbox.Items) != 1 || afterInbox.Items[0].ID != reviewA.ID {
+		t.Fatalf("expected only the partially applied review to remain pending, got %+v", afterInbox)
 	}
 }
 
@@ -4170,7 +4087,7 @@ func TestScrapeSeriesMetadataReturnsErrorForInvalidLLMEndpoint(t *testing.T) {
 	}
 }
 
-// --- 阶段 0 后端调整：上一本 / 系列续读 / 批量进度同步 ---
+// --- 上一本 / 系列续读 / 批量进度同步 ---
 
 func seedBookInSeries(t testing.TB, store database.Store, series database.Series, libraryID int64, name string, pageCount int64) database.Book {
 	t.Helper()
@@ -4593,13 +4510,10 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
-	if !controller.taskEngine.startTask("scan_library_5", "scan_library", "lib 5", 100) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.updateTask("scan_library_5", 42, 100, "processing")
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Type: "scan_library", Total: 100})
+	progress.Advance(42, 100, "", nil)
 
-	// 进度改为异步落盘（M42）：listTaskStatuses 应立即反映内存里的最新进度，
-	// 而不是尚未刷盘（此时为空/滞后）的 DB 记录。
+	// listTaskStatuses 必须立即反映内存里的最新进度，而不是尚未刷盘、还滞后的 DB 记录。
 	tasks, err := controller.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{})
 	if err != nil {
 		t.Fatalf("listTaskStatuses failed: %v", err)
@@ -4646,20 +4560,15 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	}
 
 	// 运行中的任务 -> 409
-	if !controller.taskEngine.startTask("scan_series_5", "scan_series", "running", 1) {
-		t.Fatal("expected task to start")
-	}
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Type: "scan_series", Total: 1})
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_series_5"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("running task: expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500；此前所有重试失败一律误报 409。
-	if !controller.taskEngine.startTask("scan_library_77777", "scan_library", "failed", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.failTask("scan_library_77777", "failed")
+	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500，不得混进 409。
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_77777", Type: "scan_library", Total: 1, Terminal: "failed"})
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_library_77777"))
 	if rec.Code != http.StatusInternalServerError {
@@ -4685,11 +4594,12 @@ func TestIsRetryableTaskTypeDerivedFromRegistry(t *testing.T) {
 func TestTaskMessageCodeEmission(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	// i18n 路径：finishTaskMsg 设置 message_code + message_params，并清空 Message。
-	if !controller.taskEngine.startTask("scan_library_9", "scan_library", "start", 1) {
-		t.Fatal("expected task to start")
-	}
-	controller.taskEngine.finishTaskMsg("scan_library_9", "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
+	// i18n 路径：**终态**文案落成 message_code + message_params，并清空 Message。
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: "scan_library_9", Type: "scan_library", Total: 1,
+		Terminal: "completed", TerminalCode: "task.msg.scan_library.complete",
+		TerminalParams: map[string]string{"name": "Lib A"},
+	})
 	controller.taskEngine.mutex.Lock()
 	coded := controller.taskEngine.tasks["scan_library_9"]
 	controller.taskEngine.mutex.Unlock()
@@ -4706,14 +4616,19 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 		t.Fatalf("expected status completed, got %q", coded.Status)
 	}
 
-	// 兼容路径：未迁移的 finishTask 仍直接设 Message，并清空 code（互斥）。
-	controller.taskEngine.startTask("scan_library_10", "scan_library", "start", 1)
-	controller.taskEngine.finishTask("scan_library_10", "直接文案")
-	controller.taskEngine.mutex.Lock()
-	legacy := controller.taskEngine.tasks["scan_library_10"]
-	controller.taskEngine.mutex.Unlock()
-	if legacy.Message != "直接文案" || legacy.MessageCode != "" {
-		t.Fatalf("legacy finishTask: want Message set & code empty, got msg=%q code=%q", legacy.Message, legacy.MessageCode)
+	// Message 与 MessageCode 的互斥是模型层纯函数的职责，不依赖任何引擎路径。
+	// 这里的 Message 取的是它今天唯一的来源形状——从**落盘记录**读回的一句已渲染文案。
+	restored := TaskStatus{Message: "任务因服务重启而中断，可重试"}
+	applyTaskMessage(&restored, "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
+	if restored.MessageCode != "task.msg.scan_library.complete" || restored.Message != "" {
+		t.Fatalf("消息码没有清掉落盘记录里那句直接文案：msg=%q code=%q", restored.Message, restored.MessageCode)
+	}
+
+	// 空码是无操作：一帧进度不带文案时不得把任务上已有的文案抹掉。
+	unchanged := TaskStatus{MessageCode: "task.msg.scan_library.complete", MessageParams: map[string]string{"name": "Lib A"}}
+	applyTaskMessage(&unchanged, "", nil)
+	if unchanged.MessageCode != "task.msg.scan_library.complete" || unchanged.MessageParams["name"] != "Lib A" {
+		t.Fatalf("空码把已有文案抹掉了：code=%q params=%v", unchanged.MessageCode, unchanged.MessageParams)
 	}
 }
 

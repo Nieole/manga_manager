@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于 KOReader 集成链路，负责识别设备阅读记录并与本地漫画阅读进度对齐。
-// 它把外部阅读器状态映射为应用内书籍、章节和页码进度，支撑跨设备继续阅读。
-// 维护时应关注指纹匹配、时间戳优先级、路径差异和重复同步的幂等性。
-
 package koreader
 
 import (
@@ -19,7 +15,8 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
-	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/diskwork"
+	"manga-manager/internal/storageio"
 )
 
 // kosync 进度载荷各字段的长度上限。设备侧本就只会推送文件路径/百分比串/设备名，
@@ -78,8 +75,8 @@ func (s *Service) RegisterDevice(ctx context.Context, username, passwordHash str
 	username = strings.TrimSpace(username)
 	passwordHash = NormalizeSyncKey(passwordHash)
 	// 这条路径未鉴权，写入的两个值直接落库且 username 进 UNIQUE 索引，所以先把形状卡死：
-	// kosync 协议里 password 就是 md5 十六进制串，IsValidSyncKey 正是该形状的既有描述
-	// （此前它只在测试里被引用，实际校验位一直空着，任意字符串都能被当作密钥存进去）。
+	// kosync 协议里 password 就是 md5 十六进制串，必须显式过 IsValidSyncKey——不校验的话
+	// 任意字符串都能被当作密钥存进去。
 	if username == "" || len(username) > maxRegisterUsernameLen || !IsValidSyncKey(passwordHash) {
 		slog.Warn("KOReader device registration rejected: malformed credentials",
 			// 不打印 username 原文：未鉴权输入不应原样进日志。
@@ -213,7 +210,7 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 }
 
 // validateProgressPayloadLengths 校验进度载荷各字段的长度。
-// 这些字段直接落库（document 还进 UNIQUE 索引），此前完全不限长，
+// 这些字段直接落库（document 还进 UNIQUE 索引），必须限长：不限长的话，
 // 一台被改造过的设备可以把单条记录撑到任意大小，反复推送即可撑爆数据库。
 func validateProgressPayloadLengths(payload ProgressPayload) error {
 	switch {
@@ -384,12 +381,50 @@ func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReade
 	return record, nil
 }
 
-func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
+// TaskHandle 是两个批循环干活所需的资格，由发起这次重建/对账的一方交出——它是那一方的
+// **任务句柄**收窄到本包真正用得上的三样：报**计数推进**、在可中断点过**暂停闸门**、
+// 以及发起**磁盘作业**（**指纹**重建逐本读完整个文件）。别的上报面本包一概够不着，
+// 因为批循环不知道自己在为哪个任务跑、也不该知道。
+//
+// 声明在这里而不是 import 句柄所在的包：本包说的是「批循环需要什么」，谁来满足由调用方决定，
+// 结构化满足即可（同 external.Store）。
+//
+// Advance 只报两个计数、不带展示文案，理由见 external.TaskHandle。
+type TaskHandle interface {
+	Advance(current, total int)
+	Checkpoint(ctx context.Context) error
+	Disk(ctx context.Context, work diskwork.Work, fn func() error) error
+}
+
+// RebuildOptions 调节一次**指纹**重建。零值即「按当前配置的匹配模式、一批 500 本、批间不停顿」。
+type RebuildOptions struct {
+	// BatchSize 是一批取几本；非正时取 500。
+	BatchSize int
+	// BatchGap 是每批之后的停顿，用来把后台回填压低到不与别的活抢盘；非正时不停。
+	// 停顿先过**暂停闸门**，且本身可被取消。
+	BatchGap time.Duration
+	// MatchMode 钉住这次重建按哪种模式补身份；留空表示读当前配置。发起时已按某一种模式盘算过
+	// 缺口的调用方钉住它，免得任务跑到一半配置被改、口径跟着换。
+	MatchMode string
+}
+
+// RebuildBookIdentities 回填缺**指纹**的书。二进制哈希模式下每本要读完整个文件，那是一次
+// **磁盘作业**；路径模式只拼字符串，一次盘都不读。
+//
+// 指纹算不出来只跳过这一本、推进分页游标；中止只由磁盘作业入口返回的错误——闸门与令牌的错误
+// ——决定。游标停住即死循环：批次按 id > afterID 切，坏书排在末尾时同一本会被永远切回来。
+//
+// task 不得为 nil：过闸门与发起磁盘作业都经它，没有兜底的空实现可用。
+func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions, task TaskHandle) (int, int, error) {
+	limit := opts.BatchSize
 	if limit <= 0 {
 		limit = 500
 	}
-	matchConfig := s.currentMatchConfig()
-	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchConfig.MatchMode)
+	matchMode := strings.TrimSpace(opts.MatchMode)
+	if matchMode == "" {
+		matchMode = s.currentMatchConfig().MatchMode
+	}
+	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchMode)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -398,10 +433,10 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 	updated := 0
 	var afterID int64
 	for {
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := task.Checkpoint(ctx); err != nil {
 			return updated, total, err
 		}
-		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchConfig.MatchMode, afterID, limit)
+		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchMode, afterID, limit)
 		if err != nil {
 			return updated, total, err
 		}
@@ -410,14 +445,23 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 		}
 
 		for _, book := range books {
-			if err := taskcontrol.Wait(ctx); err != nil {
+			if err := task.Checkpoint(ctx); err != nil {
 				return updated, total, err
 			}
 			params := database.UpdateBookIdentityParams{ID: book.ID}
-			if matchConfig.MatchMode == config.KOReaderMatchModeBinaryHash {
-				fileHash, err := FingerprintFileContext(ctx, book.Path)
+			if matchMode == config.KOReaderMatchModeBinaryHash {
+				var fileHash string
+				var hashErr error
+				// 闭包只捕获自己的错误：算不出指纹不该中止整个回填。
+				err := task.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
+					fileHash, hashErr = FingerprintFileContext(ctx, book.Path)
+					return nil
+				})
 				if err != nil {
-					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", err)
+					return updated, total, err
+				}
+				if hashErr != nil {
+					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
 					afterID = book.ID
 					continue
 				}
@@ -433,16 +477,30 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, limit int, progress
 
 			updated++
 			afterID = book.ID
-			if progress != nil {
-				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值。
-				progress(updated, total, "")
+			task.Advance(updated, total)
+		}
+
+		if opts.BatchGap > 0 {
+			if err := task.Checkpoint(ctx); err != nil {
+				return updated, total, err
+			}
+			timer := time.NewTimer(opts.BatchGap)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return updated, total, ctx.Err()
 			}
 		}
 	}
 	return updated, total, nil
 }
 
-func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress func(current, total int, message string)) (int, int, error) {
+// ReconcileProgress 给尚未匹配到书的进度记录补上归属。它一次盘都不读，只用到 task 的
+// **计数推进**与**暂停闸门**；task 不得为 nil。
+func (s *Service) ReconcileProgress(ctx context.Context, limit int, task TaskHandle) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -456,7 +514,7 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 	processed := 0
 	var afterID int64
 	for {
-		if err := taskcontrol.Wait(ctx); err != nil {
+		if err := task.Checkpoint(ctx); err != nil {
 			return updated, total, err
 		}
 		items, err := s.store.ListUnmatchedKOReaderProgressBatch(ctx, afterID, limit)
@@ -468,7 +526,7 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 		}
 
 		for _, item := range items {
-			if err := taskcontrol.Wait(ctx); err != nil {
+			if err := task.Checkpoint(ctx); err != nil {
 				return updated, total, err
 			}
 			matchConfig := s.currentMatchConfig()
@@ -486,10 +544,7 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, progress fun
 			}
 			processed++
 			afterID = item.ID
-			if progress != nil {
-				// 展示文案由上层按 message code 本地化渲染，这里只上报进度值。
-				progress(processed, total, "")
-			}
+			task.Advance(processed, total)
 		}
 	}
 	return updated, total, nil

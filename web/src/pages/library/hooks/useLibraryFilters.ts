@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DEFAULT_PAGE_SIZE } from '../types';
@@ -37,7 +31,7 @@ export interface SavedLibrarySettings {
   advanced?: AdvancedFilters;
 }
 
-interface UseLibraryFiltersResult {
+export interface UseLibraryFiltersResult {
   activeTag: string | null;
   activeAuthor: string | null;
   activeStatus: string | null;
@@ -49,6 +43,7 @@ interface UseLibraryFiltersResult {
   page: number;
   pageSize: number;
   settingsReady: boolean;
+  userFilterRevision: number;
   setActiveTag: (value: string | null) => void;
   setActiveAuthor: (value: string | null) => void;
   setActiveStatus: (value: string | null) => void;
@@ -87,8 +82,11 @@ function writeStoredSettings(libId: string, payload: SavedLibrarySettings) {
 }
 
 /**
- * useLibraryFilters：把过滤、排序、分页从 Home.tsx 抽出，并与服务端持久化、
- * URL query 同步。其余 UI 不再直接持有这部分 state。
+ * useLibraryFilters：过滤、排序、分页状态的唯一来源，与 URL query 及服务端持久化设置
+ * 同步；其余 UI 不应绕过它直接持有这部分 state。
+ *
+ * userFilterRevision 是「这次变化是用户改的」的判据：只有公开 setter 会让它自增，
+ * 水合与深链恢复走内部 setter，一律不动它。页码不是筛选，setPage 也不动它。
  */
 export function useLibraryFilters({ libId }: { libId: string | undefined }): UseLibraryFiltersResult {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -104,8 +102,27 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsReadyLibId, setSettingsReadyLibId] = useState<string | null>(null);
+  const [userFilterRevision, setUserFilterRevision] = useState(0);
   const lastWrittenSettings = useRef<string>('');
   const currentSettingsReady = settingsReady && settingsReadyLibId === libId;
+
+  // 公开给 UI 的 setter：先记一笔「这是用户改的」，再写状态。
+  const userSetters = useMemo(() => {
+    const markUserChange = <T,>(setter: (value: T) => void) => (value: T) => {
+      setUserFilterRevision((n) => n + 1);
+      setter(value);
+    };
+    return {
+      setActiveTag: markUserChange(setActiveTag),
+      setActiveAuthor: markUserChange(setActiveAuthor),
+      setActiveStatus: markUserChange(setActiveStatus),
+      setActiveLetter: markUserChange(setActiveLetter),
+      setSortByField: markUserChange(setSortByField),
+      setSortDir: markUserChange(setSortDir),
+      setKeyword: markUserChange(setKeyword),
+      setPageSize: markUserChange(setPageSize),
+    };
+  }, []);
 
   // 1. 进入或切库时：读 URL 优先，缺省再读服务端 saved settings
   useEffect(() => {
@@ -210,11 +227,13 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
   ]);
 
   const setAdvancedFilters = useCallback((patch: Partial<AdvancedFilters>) => {
+    setUserFilterRevision((n) => n + 1);
     setAdvanced((prev) => ({ ...prev, ...patch }));
     setPage(1);
   }, []);
 
   const resetAll = useCallback(() => {
+    setUserFilterRevision((n) => n + 1);
     setActiveTag(null);
     setActiveAuthor(null);
     setActiveStatus(null);
@@ -228,6 +247,7 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
   }, []);
 
   const applySnapshot = useCallback((snapshot: Partial<SavedLibrarySettings>) => {
+    setUserFilterRevision((n) => n + 1);
     if ('activeTag' in snapshot) setActiveTag(snapshot.activeTag ?? null);
     if ('activeAuthor' in snapshot) setActiveAuthor(snapshot.activeAuthor ?? null);
     if ('activeStatus' in snapshot) setActiveStatus(snapshot.activeStatus ?? null);
@@ -255,16 +275,10 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       page,
       pageSize,
       settingsReady: currentSettingsReady,
-      setActiveTag,
-      setActiveAuthor,
-      setActiveStatus,
-      setActiveLetter,
-      setSortByField,
-      setSortDir,
-      setKeyword,
+      userFilterRevision,
+      ...userSetters,
       setAdvancedFilters,
       setPage,
-      setPageSize,
       resetAll,
       applySnapshot,
     }),
@@ -280,6 +294,8 @@ export function useLibraryFilters({ libId }: { libId: string | undefined }): Use
       page,
       pageSize,
       currentSettingsReady, // 已含 settingsReady/settingsReadyLibId/libId 的派生结果，无需再单列后两者
+      userFilterRevision,
+      userSetters,
       setAdvancedFilters,
       resetAll,
       applySnapshot,

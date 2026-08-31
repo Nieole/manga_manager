@@ -1,5 +1,6 @@
-// 业务说明：本文件是 MyAnimeList Provider 的解析回归测试，验证 Client-ID 鉴权前置校验、limit 钳制、
+// 本文件是 MyAnimeList Provider 的解析回归测试，验证 Client-ID 鉴权前置校验、limit 钳制、
 // 作者姓名拼接与角色映射、状态映射、近似总数（含下一页 +1）计算，以及封面优先级。
+
 package metadata
 
 import (

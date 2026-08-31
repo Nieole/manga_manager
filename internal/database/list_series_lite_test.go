@@ -1,4 +1,4 @@
-// 业务说明：本文件回归测试 ListSeriesByLibraryLite —— 扫描对账 / 批量刮削使用的“去封面子查询”投影，
+// 本文件回归测试 ListSeriesByLibraryLite —— 扫描对账 / 批量刮削使用的“去封面子查询”投影，
 // 必须与完整版 ListSeriesByLibrary 返回同一批系列的相同自身列，仅 CoverPath 不同（Lite 恒为零值）。
 
 package database

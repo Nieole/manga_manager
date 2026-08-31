@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于数据库查询计划辅助工具，用于观察 SQL 索引命中和复杂查询执行路径。
-// 它支撑搜索、资料库筛选和统计接口的性能分析。
-// 维护时应确保输出能对应到 sqlc 查询和实际业务筛选条件。
-
 package main
 
 import (
@@ -151,7 +147,7 @@ func main() {
 		{
 			name:  "dashboard/stats-counts",
 			query: `SELECT (SELECT COUNT(*) FROM series), (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM books WHERE last_read_page > 0), (SELECT COALESCE(SUM(page_count), 0) FROM books), (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= ?)`,
-			// 下界改为传参：活动日期已统一为服务器本地日历日，不再用 SQLite 的 DATE('now')。
+			// 下界经参数传入而非写进 SQL：活动日期口径是服务器本地日历日，与 SQLite DATE('now') 的时区可能不一致。
 			args:     []any{time.Now().AddDate(0, 0, -7).Format("2006-01-02")},
 			expected: []string{"idx_books_read_progress_series", "idx_reading_activity_date"},
 		},

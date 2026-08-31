@@ -1,4 +1,4 @@
-// 业务说明：本文件是后端 HTTP API 层的回归测试，聚焦「阅读进度 / 阅读时长 / 个人系列短评 / 深度统计」
+// 本文件是后端 HTTP API 层的回归测试，聚焦「阅读进度 / 阅读时长 / 个人系列短评 / 深度统计」
 // 这几条每用户业务线的边界与双路径（uid==0 全局旧路径 vs uid>0 每用户路径），以及筛选参数解析、
 // 角色写权限、阅读协议 Basic 鉴权。测试直接调用处理器（注入 userCtxKey 模拟已登录会话）或经真实
 // chi 路由（authGate）验证中间件行为，断言真实用户可观察结果，而非实现细节。
@@ -301,6 +301,77 @@ func TestBulkSyncBookProgressInvalidPayload(t *testing.T) {
 	controller.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader([]byte(`{bad`))))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid payload want 400 got %d", rec.Code)
+	}
+}
+
+// ---- 页码夹取：单本与批量两条写入端点的共同边界 ----
+
+// TestBookProgressPageClampAcrossEndpoints 守「把用户报的页码夹进本书合法范围」这条边界：
+// 页数未知（page_count=0，快速扫描首扫的产物）时不得把页码夹成 1，页数已知时仍夹到上界，
+// 小于 1 的页码仍归一化为 1；同一份输入经单本端点与批量端点必须落库同一个页码。
+func TestBookProgressPageClampAcrossEndpoints(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		pageCount int64
+		page      int64
+		want      int64
+	}{
+		{"页数未知时页码原样写入", 0, 42, 42},
+		{"页数已知时夹到上界", 100, 999, 100},
+		{"页数已知时小于 1 的页码夹到 1", 100, 0, 1},
+		{"页数未知时小于 1 的页码同样夹到 1", 0, -5, 1},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			suffix := strconv.Itoa(i)
+			// 两条端点各用一本独立的书，避免同页节流与写入缓存互相干扰。
+			_, _, singleBook := seedBookFixture(t, store, rootDir, "LibSingle"+suffix, "Series", "01.cbz", tc.pageCount)
+			_, _, bulkBook := seedBookFixture(t, store, rootDir, "LibBulk"+suffix, "Series", "01.cbz", tc.pageCount)
+
+			body := []byte(`{"page":` + strconv.FormatInt(tc.page, 10) + `}`)
+			singleRec := httptest.NewRecorder()
+			controller.updateBookProgress(singleRec, requestWithRouteParam(
+				http.MethodPost, "/x", body, "bookId", strconv.FormatInt(singleBook.ID, 10)))
+			if singleRec.Code != http.StatusOK || statusOf(singleRec) != "Progress updated" {
+				t.Fatalf("单本端点 want 200/Progress updated, got %d/%q", singleRec.Code, statusOf(singleRec))
+			}
+
+			bulkBody, _ := json.Marshal(BulkSyncProgressRequest{Items: []BulkSyncProgressItem{
+				{BookID: bulkBook.ID, Page: tc.page},
+			}})
+			bulkRec := httptest.NewRecorder()
+			controller.bulkSyncBookProgress(bulkRec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(bulkBody)))
+			if bulkRec.Code != http.StatusOK {
+				t.Fatalf("批量端点 want 200 got %d", bulkRec.Code)
+			}
+			var bulkResp struct {
+				Updated int
+				Results []BulkSyncProgressResultItem
+			}
+			if err := json.NewDecoder(bulkRec.Body).Decode(&bulkResp); err != nil {
+				t.Fatalf("decode 批量响应: %v", err)
+			}
+			if bulkResp.Updated != 1 || len(bulkResp.Results) != 1 || bulkResp.Results[0].Page != tc.want {
+				t.Fatalf("批量端点回报页码 want %d got %+v", tc.want, bulkResp)
+			}
+
+			singleGot, _ := store.GetBook(ctx, singleBook.ID)
+			bulkGot, _ := store.GetBook(ctx, bulkBook.ID)
+			if !singleGot.LastReadPage.Valid || singleGot.LastReadPage.Int64 != tc.want {
+				t.Errorf("单本端点落库页码 want %d got %+v", tc.want, singleGot.LastReadPage)
+			}
+			if !bulkGot.LastReadPage.Valid || bulkGot.LastReadPage.Int64 != tc.want {
+				t.Errorf("批量端点落库页码 want %d got %+v", tc.want, bulkGot.LastReadPage)
+			}
+			if singleGot.LastReadPage.Int64 != bulkGot.LastReadPage.Int64 {
+				t.Errorf("同一份输入两条端点结果不一致：单本 %d 批量 %d",
+					singleGot.LastReadPage.Int64, bulkGot.LastReadPage.Int64)
+			}
+		})
 	}
 }
 
@@ -755,10 +826,8 @@ func TestOPDSProtocolBasicAuth(t *testing.T) {
 
 // TestReadingBookmarksPerUserIsolation 锁住书签的多用户隔离。
 //
-// reading_bookmarks 表原先没有 user_id，且唯一约束是 UNIQUE(book_id, page)：
-// 任意两个用户共享同一批书签，可以互相读取、覆盖笔记、甚至删除对方的记录——
-// 而书签笔记是私人内容。加 user_id 后唯一约束改为 (user_id, book_id, page)，
-// 两个用户才能各自给同一页加互不干扰的书签。
+// 唯一约束必须包含 user_id：否则任意两个用户共享同一批书签，能互相读取、覆盖笔记、
+// 甚至删除对方的记录——书签笔记是私人内容，不能被别的用户看到。
 func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 30)
@@ -787,8 +856,8 @@ func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 		return items
 	}
 
-	// 两个用户给同一本书的同一页加书签：旧的 UNIQUE(book_id, page) 会让第二次写入
-	// 变成覆盖，加了 user_id 之后应各存一条。
+	// 两个用户给同一本书的同一页加书签：UNIQUE 约束必须带 user_id，否则第二次写入
+	// 会覆盖第一次，两个用户只能存下一条。
 	if rec := upsert(userA, 5, "alice note"); rec.Code != http.StatusOK {
 		t.Fatalf("A upsert want 200 got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -825,8 +894,8 @@ func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 
 // TestRecommendationCacheIsPartitionedPerUser 锁住 AI 推荐的按用户分区。
 //
-// 推荐是基于该用户的阅读历史算出来的，此前缓存只按 locale 分区：所有人共用同一份
-// 结果——既没有个人化，也把彼此的阅读偏好互相泄露。
+// 推荐基于该用户的阅读历史算出，缓存键必须带上 user：仅按 locale 分区会让所有人
+// 共用同一份结果——既没有个人化，也把彼此的阅读偏好互相泄露。
 func TestRecommendationCacheIsPartitionedPerUser(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	userA := mkTestUser(t, store, "alice", database.RoleRegular)

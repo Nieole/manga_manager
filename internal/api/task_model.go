@@ -1,10 +1,8 @@
-// 业务说明：本文件是任务子域的**模型层**，只放纯函数——TaskStatus 与数据库 TaskRecord 之间的双向
-// 转换、派生字段（percent/rate/eta、phase/metrics/labels/limit 的 params 编解码）、消息码与直接消息的
-// 互斥规则，以及快照深拷贝。
-//
-// 这里的函数不碰任何共享状态、不加锁、不做 IO，因此可以被引擎（task_engine.go）与 HTTP 层
-// （controller_tasks.go）同时调用而无需考虑时序。改动时请保持这一性质：一旦某个函数需要读写
-// taskEngine 的字段，它就该搬到 task_engine.go 去。
+// 本文件是任务子域的**模型层**，只放纯函数——TaskStatus 与数据库 TaskRecord 之间的双向
+// 转换、派生字段（percent/rate/eta、phase/metrics/labels/limit 的 params 编解码）、消息码与
+// 直接消息的互斥规则，以及快照深拷贝。这里的函数不碰共享状态、不加锁、不做 IO，因此可被
+// 引擎（task_engine.go）与 HTTP 层（controller_tasks.go）同时调用而无需考虑时序；一旦某个
+// 函数需要读写 taskEngine 的字段，它就该搬到 task_engine.go 去。
 
 package api
 
@@ -46,25 +44,28 @@ func taskIsActive(status string) bool {
 	return status == "running" || status == "paused" || status == "cancelling"
 }
 
-// applyTaskMessage 在任务上设置显示消息，保证 Message 与 MessageCode 互斥（后设者胜）：
-// 传入 code 时走 i18n（记录 code+params、清空 Message），否则退回直接设置 Message（未迁移 i18n 的调用点）。
-func applyTaskMessage(task *TaskStatus, message, code string, params map[string]string) {
-	if code != "" {
-		task.MessageCode = code
-		task.MessageParams = params
-		task.Message = ""
+// applyTaskMessage 在任务上设置显示消息。消息词汇只有 i18n 码一种，因此它只收码与占位参数；
+// 空码是无操作，用于「这一帧不改文案」。
+//
+// 清空 Message 不是可省的防御：它与 MessageCode 必须互斥，理由见 TaskStatus.Message 的字段 doc。
+func applyTaskMessage(task *TaskStatus, code string, params map[string]string) {
+	if code == "" {
 		return
 	}
-	if message != "" {
-		task.Message = message
-		task.MessageCode = ""
-		task.MessageParams = nil
-	}
+	task.MessageCode = code
+	// 克隆而不是存下调用方那份：任务上的每个可变 map 都归引擎所有，没有例外——
+	// 「这几个归引擎、那个不归」是记不住的，而记错一次的后果见 taskEngine 的符号 doc。
+	task.MessageParams = cloneStringMap(params)
+	task.Message = ""
 }
 
-// cloneTaskStatus 返回 task 的深拷贝，逐一复制四个可变 map 字段。
+// cloneTaskStatus 返回 task 的深拷贝：**每一个**引用类型字段都要复制，不只是那几个 map。
 // 任何会让快照逃出 taskEngine.mutex 临界区的路径（异步落盘、HTTP 序列化、重试取值）都必须先克隆，
 // 否则调用方读到的是仍在被写入的活 map。
+//
+// 给 TaskStatus 加引用类型字段的人必须顺手加到这里——漏掉不会有编译错误，后果是那个字段
+// 在锁外被读、同时被持锁的进度回调写。EffectiveLimit 就是这样一个非 map 的引用字段
+// （hydrateTaskStatusDerivedFields 会经 applyTaskLimitParam 穿过这个指针写）。
 func cloneTaskStatus(task TaskStatus) TaskStatus {
 	task.MessageParams = cloneStringMap(task.MessageParams)
 	task.Labels = cloneStringMap(task.Labels)
@@ -75,6 +76,10 @@ func cloneTaskStatus(task TaskStatus) TaskStatus {
 			metrics[k] = v
 		}
 		task.Metrics = metrics
+	}
+	if task.EffectiveLimit != nil {
+		limits := *task.EffectiveLimit
+		task.EffectiveLimit = &limits
 	}
 	return task
 }
@@ -137,9 +142,17 @@ func taskRecordFromStatus(task TaskStatus) database.TaskRecord {
 	}
 }
 
+// hydrateTaskStatusDerivedFields 是**从落盘记录读回**任务时的补全入口：先把编码进任务参数的
+// 展示字段解码回来，再重算进度派生字段。
 func hydrateTaskStatusDerivedFields(task *TaskStatus) {
+	decodeTaskParams(task)
+	enrichTaskProgress(task)
+}
+
+// decodeTaskParams 是 taskParamsWithDerivedFields 的逆：把编码进任务参数的展示字段解码回任务上。
+// 两处必须成对改——只加一侧不会有编译错误，后果是那个字段写得进库、读不回来。
+func decodeTaskParams(task *TaskStatus) {
 	if task == nil || task.Params == nil {
-		enrichTaskProgress(task)
 		return
 	}
 	task.Phase = firstNonEmptyTaskValue(task.Phase, task.Params["phase"])
@@ -181,7 +194,6 @@ func hydrateTaskStatusDerivedFields(task *TaskStatus) {
 			applyTaskLimitParam(task, strings.TrimPrefix(key, "limit."), value)
 		}
 	}
-	enrichTaskProgress(task)
 }
 
 func applyTaskLimitParam(task *TaskStatus, key, value string) {
@@ -282,10 +294,24 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 	return fallback
 }
 
+// enrichTaskProgress 按任务当前的计数与已耗时重算进度派生字段：百分比、速率、ETA。
+//
+// 三个字段一律先清空再算，不做累积：它总是在上一帧的快照上被调用，留着旧值就等于让这一帧
+// 带上一帧的数——终态那句自相矛盾的 `2 / 2` 配 `50.0%` 正是这样来的。
+//
+// ETA 只属于**活动态**。**终态**的任务不会再动，「预计剩余时间」无从谈起，显示出来会让用户
+// 以为它还在跑；对可重试的**中断**任务尤其误导。终态要看的是已经做完了多少（计数与百分比）
+// 与花了多久（详情面板的开始 / 结束时刻），这两样都不经 ETA 这条通道。
+//
+// 速率只算给分母可信的状态，**中断**一个都不发，理由见函数内那道闸门。
 func enrichTaskProgress(task *TaskStatus) {
 	if task == nil {
 		return
 	}
+	task.Percent = nil
+	task.RatePerMinute = 0
+	task.EtaSeconds = nil
+
 	if task.Total > 0 {
 		percent := float64(task.Current) * 100 / float64(task.Total)
 		if percent > 100 {
@@ -293,15 +319,24 @@ func enrichTaskProgress(task *TaskStatus) {
 		}
 		task.Percent = &percent
 	}
+	// **中断**任务不发速率：它的 finished_at 是服务下次启动时由 MarkInterruptedTasks 批量盖的章，
+	// 不是任务停下的时刻，分母里因此整段停机时长都算成了在干活——停一夜再启动，一个跑了 10 分钟
+	// 的任务会被算成跑了 10 小时。库里也换不出第二个分母：那一笔 UPDATE 连 updated_at 一起盖成了
+	// 重启时刻，而任务究竟停在哪一秒，进程被 kill 的那一刻就没有任何地方记下过。
+	// 算不准的数宁可不发，也好过让用户照着一个编出来的速率判断这台机器快不快。
+	if task.Status == "interrupted" {
+		return
+	}
 	elapsed := time.Since(task.StartedAt).Seconds()
-	if task.Status != "running" && task.Status != "paused" && task.FinishedAt != nil {
+	if !taskIsActive(task.Status) && task.FinishedAt != nil {
 		elapsed = task.FinishedAt.Sub(task.StartedAt).Seconds()
 	}
-	if elapsed > 0 && task.Current > 0 {
-		task.RatePerMinute = float64(task.Current) * 60 / elapsed
-		if task.Total > task.Current {
-			eta := int64(float64(task.Total-task.Current) / task.RatePerMinute * 60)
-			task.EtaSeconds = &eta
-		}
+	if elapsed <= 0 || task.Current <= 0 {
+		return
+	}
+	task.RatePerMinute = float64(task.Current) * 60 / elapsed
+	if taskIsActive(task.Status) && task.Total > task.Current {
+		eta := int64(float64(task.Total-task.Current) / task.RatePerMinute * 60)
+		task.EtaSeconds = &eta
 	}
 }

@@ -1,4 +1,4 @@
-// 业务说明：本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「系列搜索与分页」子域。
+// 本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「系列搜索与分页」子域。
 // 它承载 FTS5 与子串回退双路径、offset/cursor 双分页、筛选条件拼装与游标编解码。
 // 维护时应保证 SQL 全部参数化、排序字段走白名单，并让新增排序同时覆盖 offset 与 cursor 两条路径。
 
@@ -15,6 +15,11 @@ import (
 	"strings"
 	"time"
 )
+
+// sqliteDatetimeLayout 是 series.created_at / updated_at 的库内存储文本格式：这两列只由
+// CURRENT_TIMESTAMP 写入，即 UTC、秒精度、无时区后缀。任何要与这两列比大小的查询参数都得按它
+// 绑定——SQLite 比的是文本，绑 time.Time 会被驱动写成另一种写法而比错。
+const sqliteDatetimeLayout = "2006-01-02 15:04:05"
 
 type SearchSeriesPagedRow struct {
 	Series
@@ -554,7 +559,7 @@ type SeriesListFilters struct {
 	MaxProgress *float64
 	// 仅保留最近 N 天内加入的系列；0 表示不限。
 	AddedWithinDays int
-	// UserID>0 时进度来源为该用户的 user_series_progress（多用户）；0 表示旧的全局 series_stats。
+	// UserID>0 时进度来源为该用户的 user_series_progress（多用户）；0 表示全局 series_stats。
 	// 不计入 hasAny()——它只切换进度来源，不构成过滤条件。
 	UserID int64
 }
@@ -700,7 +705,7 @@ func buildSeriesSearchQuery(libraryID int64, f SeriesListFilters) (baseQuery, pr
 	}
 
 	if f.AddedWithinDays > 0 {
-		cutoff := time.Now().UTC().AddDate(0, 0, -f.AddedWithinDays).Format("2006-01-02 15:04:05")
+		cutoff := time.Now().UTC().AddDate(0, 0, -f.AddedWithinDays).Format(sqliteDatetimeLayout)
 		filters = append(filters, `s.created_at >= ?`)
 		args = append(args, cutoff)
 	}
@@ -982,9 +987,7 @@ func seriesSearchSeekClause(s seriesSearchSort, cursor seriesCursorPayload) (str
 	value := interface{}(cursor.Value)
 	switch s.Field {
 	case "updated", "created":
-		if parsed, err := time.Parse(time.RFC3339Nano, cursor.Value); err == nil {
-			value = parsed
-		}
+		value = seriesDatetimeSeekValue(cursor.Value)
 	case "favorite", "books", "volumes", "pages":
 		if parsed, err := strconv.Atoi(cursor.Value); err == nil {
 			value = parsed
@@ -992,6 +995,16 @@ func seriesSearchSeekClause(s seriesSearchSort, cursor seriesCursorPayload) (str
 	}
 	return fmt.Sprintf(`(%s %s ? OR (%s = ? AND (s.name > ? OR (s.name = ? AND s.id > ?))))`, s.Expr, operator, s.Expr),
 		[]interface{}{value, value, cursor.Name, cursor.Name, cursor.ID}
+}
+
+// seriesDatetimeSeekValue 把游标里的时间值还原成 sqliteDatetimeLayout 文本，供键集边界谓词绑定。
+// 换成 time.Time 会让边界判错：倒序把边界行再发一遍，正序漏掉与边界同一秒的行。
+func seriesDatetimeSeekValue(raw string) interface{} {
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return raw
+	}
+	return parsed.UTC().Format(sqliteDatetimeLayout)
 }
 
 func encodeSeriesCursor(s seriesSearchSort, row SearchSeriesPagedRow) string {

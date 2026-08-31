@@ -1,17 +1,5 @@
-// 业务说明：本文件是配置文件的热重载监听器。
-//
-// 它此前是 cmd/server/main.go 里一个裸 `go watchConfig(...)`：没有句柄因而永远停不掉、
-// 不做校验因而坏值会直接生效、不做去抖因而一次保存会重载好几遍。搬到这里并给它一个类型，
-// 是为了让「什么时候重载、重载什么、什么时候停」这三件事有地方写下来。
-//
-// 三条设计约束，改动前请先读懂：
-//   - **监听目录而不是文件**。编辑器保存与本项目的原子写都是 rename 替换，
-//     直接 watch 文件在 Linux 上会因 inode 变化而永久失效（此后再也收不到事件）。
-//   - **重载只用 LoadConfigFile**，绝不能用 LoadConfig。后者在文件不存在时会生成默认配置
-//     并写回磁盘；而「先 rename 走再写新文件」的编辑器保存必然经过一个文件缺失的窗口，
-//     事件落在那里就会把用户的整份配置覆盖成默认值。
-//   - **校验只跑纯值域**（ValidateConfigValues）。触盘的深度校验可能在离线网络挂载上
-//     无限阻塞，而它跑在这个事件循环里——卡住它就等于连带卡死停机等待。
+// 本文件是配置文件的热重载监听器：目录事件经去抖合并后重载配置，坏值或文件短暂缺失都
+// 保留当前内存配置不动。
 
 package config
 
@@ -38,6 +26,12 @@ import (
 const configReloadDebounce = 500 * time.Millisecond
 
 // Watcher 监听配置文件变化并在其取值合法时重建派生资源。零值不可用，须经 StartWatcher 构造。
+//
+// 监听的是文件所在目录而非文件本身：编辑器保存与本项目的原子写都是 rename 替换，直接 watch
+// 文件在 Linux 上会因 inode 变化而永久失效。重载只走 LoadConfigFile，不得用 LoadConfig——
+// 后者在文件不存在时会生成默认配置并写回磁盘，而这条路径必然会撞上「先 rename 走再写新文件」
+// 的中间态。校验只跑纯值域（ValidateConfigValues）：触盘的深度校验可能在离线网络挂载上
+// 无限阻塞，而它跑在事件循环里，卡住就等于连带卡死停机等待。
 type Watcher struct {
 	path     string
 	manager  *Manager
@@ -158,7 +152,7 @@ func (w *Watcher) reload() {
 		return
 	}
 
-	// 只跑纯值域校验（见文件头注释）。不通过就整份拒绝：坏值会被下游在使用点实时读到，
+	// 只跑纯值域校验（契约见 Watcher 类型注释）。不通过就整份拒绝：坏值会被下游在使用点实时读到，
 	// 比如 thumbnail_format="gif" 会让缩略图立刻开始写出无法解码的文件。
 	if result := ValidateConfigValues(newCfg); !result.Valid {
 		slog.Error("Config hot-reload rejected by validation, keeping the current configuration",

@@ -1,19 +1,13 @@
 /**
  * @vitest-environment jsdom
  *
- * 业务说明：本文件守卫「换人之后，上一个用户的离线数据不会活到新会话里」。
- *
- * 清理此前只挂在显式登出上，而换人有四条路径，登出恰恰是共享设备上最少发生的那条
- * ——更常见的是上一个人直接关窗口。另外三条（登录/setup、刷新页面的状态探测、
- * 会话过期的 401）全都不经过登出。而新用户只要打开任意一个阅读器页面，
- * useReaderOffline 就会自动把队列里的进度同步上去：上一个人的阅读进度被写进了新账号。
- *
- * 书目索引也必须一起清：已下载的书页留在 Cache Storage 里，而 Service Worker 断网时
- * 直接从缓存命中，**不经过任何服务端鉴权**——不清索引，下一个用户就能在离线书架上
- * 看到并读完上一个人下载的书。
+ * 本文件守卫「换人之后，上一个用户的离线数据不会活到新会话里」：清理必须覆盖登录/setup、
+ * 刷新页面状态探测、会话过期 401、显式登出这四条换人路径，不能只挂在登出上——共享设备上
+ * 登出恰恰是最少发生的那条。书目索引必须跟队列一起清：Service Worker 断网时直接从缓存命中、
+ * 不经过服务端鉴权，不清索引就等于让下一个用户读到上一个人下载的书；缓存字节另做尽力清扫。
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { queueOfflineProgress, reconcileOfflineOwner } from './offlineReader';
 
@@ -32,7 +26,20 @@ beforeEach(() => {
 
 afterEach(() => {
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
+
+// 记下 caches.delete 收到的缓存名：换人时清扫字节走的就是它。
+function stubCacheStorage(): string[] {
+  const deleted: string[] = [];
+  vi.stubGlobal('caches', {
+    delete: async (name: string) => {
+      deleted.push(name);
+      return true;
+    },
+  });
+  return deleted;
+}
 
 describe('reconcileOfflineOwner', () => {
   it('换成另一个用户时清掉上一个人的队列与书目', () => {
@@ -46,7 +53,31 @@ describe('reconcileOfflineOwner', () => {
     expect(localStorage.getItem(OWNER_KEY)).toBe('2');
   });
 
+  it('换人时把已下载的缓存字节一并清扫掉', () => {
+    // 只清索引的话，别人下载的书页仍留在 Cache Storage 里——Service Worker 的离线回退
+    // 不经服务端鉴权，那些字节是这台设备上唯一还能泄露内容的东西。
+    const deleted = stubCacheStorage();
+    localStorage.setItem(OWNER_KEY, '1');
+    seedPreviousUserData();
+
+    expect(reconcileOfflineOwner(2)).toBe(true);
+
+    expect(deleted).toEqual(['manga-manager-offline-books-v1']);
+  });
+
+  it('登出时同样清扫缓存字节', () => {
+    const deleted = stubCacheStorage();
+    localStorage.setItem(OWNER_KEY, '1');
+    seedPreviousUserData();
+
+    reconcileOfflineOwner(null);
+
+    expect(deleted).toEqual(['manga-manager-offline-books-v1']);
+  });
+
   it('同一个用户再次登录不清自己的离线数据', () => {
+    // 每次刷新页面都会走一次对账，认成换人就等于每天把自己下载的书删一遍。
+    const deleted = stubCacheStorage();
     localStorage.setItem(OWNER_KEY, '1');
     seedPreviousUserData();
 
@@ -54,6 +85,7 @@ describe('reconcileOfflineOwner', () => {
 
     expect(Object.keys(JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}'))).toHaveLength(1);
     expect(Object.keys(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}'))).toHaveLength(1);
+    expect(deleted).toEqual([]);
   });
 
   it('升级后首次登录按当前用户认领，而不是把老数据删掉', () => {

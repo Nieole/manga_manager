@@ -1,6 +1,5 @@
-// 业务说明：本文件是业务实现，属于漫画库扫描链路，负责发现文件、建立书籍和系列记录、提取封面、同步索引并维护任务进度。
-// 它决定本地文件系统如何变成前端资料库、搜索结果和系列聚合视图。
-// 维护时应重点关注增量扫描、重命名/删除处理、元数据回填、SQLite FTS5 搜索索引同步和长任务取消。
+// 扫描主体：Scanner 的构造与配置快照、单库与单系列扫描的编排、同库并发拒绝、档位与
+// worker 数决策、指标与进度上报。目录遍历、改名重连各在同包的 walk.go 与 rehome.go。
 
 package scanner
 
@@ -24,6 +23,7 @@ import (
 	"manga-manager/internal/booksort"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/images"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/parser"
@@ -32,8 +32,10 @@ import (
 )
 
 type Scanner struct {
-	store       database.Store
-	config      *config.Manager
+	store  database.Store
+	config *config.Manager
+	// diskWork 执行扫描器的**磁盘作业**：闸门、策略、上限、令牌与观测都收在它里面。
+	diskWork    *diskwork.Runner
 	openArchive func(string) (parser.Archive, error)
 	coverOnce   sync.Once
 	coverQueue  chan coverJob
@@ -43,10 +45,11 @@ type Scanner struct {
 		libraries map[int64]struct{}
 		series    map[int64]struct{}
 	}
-	// 批量插入结束后的回调播送机制
+	// 批量插入结束后的回调播送机制。
+	//
+	// 它刻意仍是装配期注册的进程级回调，与**扫描观察者**分属两件事：这几条事件从入库批次
+	// 和封面 worker 两处发出，消费方是缓存失效与 SSE 广播，与「哪一次扫描」无关。
 	onBatchIngested func(action string)
-	onScanMetrics   func(ScanMetricsReport)
-	onScanProgress  func(ScanProgressReport)
 	// dirtyRefreshInterval 是系列读模型的节流刷新间隔。做成字段而不是常量，是为了让
 	// 回归测试能在毫秒级触发 ticker 分支——否则「刷新失败保留脏标记、下一次 tick 重试」
 	// 这条路径需要一次跑满 10 秒的扫描才能覆盖到。
@@ -65,6 +68,7 @@ func NewScanner(store database.Store, cfg *config.Manager) *Scanner {
 	}
 	s.active.libraries = make(map[int64]struct{})
 	s.active.series = make(map[int64]struct{})
+	s.diskWork = diskwork.NewRunner(s.currentConfig, storageio.Default)
 	return s
 }
 
@@ -73,12 +77,20 @@ func (s *Scanner) SetBatchCallback(cb func(string)) {
 	s.onBatchIngested = cb
 }
 
-func (s *Scanner) SetScanMetricsCallback(cb func(ScanMetricsReport)) {
-	s.onScanMetrics = cb
-}
-
-func (s *Scanner) SetScanProgressCallback(cb func(ScanProgressReport)) {
-	s.onScanProgress = cb
+// ScanObserver 是一次扫描把**计数推进**与收尾指标交给的对象，由发起方在调用扫描时交出。
+//
+// 「这份报文属于谁」因此由交出者回答，报文自己不带身份。传 nil 表示这次扫描不属于任何任务
+// （守护扫描、watcher 派生的扫描与建库后的首扫都是如此），此时两个方法都不会被调用。
+//
+// 它的寿命**超出**那次扫描调用：封面生成是异步的，ScanLibrary 返回之后封面队列仍会经同一个
+// 观察者推进 generated_covers。缩略图重建正靠这一段，因此不设撤销机制（见
+// docs/adr/0002-scan-observer-outlives-the-call.md）；扫描任务那一侧的迟到帧由任务引擎的
+// 终态守卫丢弃。实现方须自行保证并发安全——两个方法会被扫描 worker 与封面 worker 并发调用。
+type ScanObserver interface {
+	// Progress 报告一次扫描进行中的计数、**阶段**与当前条目。
+	Progress(ScanProgressReport)
+	// Metrics 报告一次扫描收尾时的全量指标，每次扫描恰好一次。
+	Metrics(ScanMetricsReport)
 }
 
 func (s *Scanner) currentConfig() config.Config {
@@ -147,7 +159,7 @@ func (s *Scanner) endSeriesScan(seriesID int64) {
 type scanJob struct {
 	path     string
 	info     os.FileInfo
-	existing *bookScanSnapshot // 已入库快照（增量扫描时非 nil），用于 fast 档位保留旧的 page_count/cover_path
+	existing *bookScanSnapshot // 已入库快照（该路径已在库中时非 nil），用于 fast 档位保留旧的 page_count/cover_path
 }
 
 type scanMetrics struct {
@@ -173,6 +185,20 @@ type scanMetrics struct {
 	thumbnailWriteMillis   atomic.Int64
 }
 
+// absorbDiskWork 把一次**磁盘作业**的等待与暂停耗时折进扫描指标。
+// 接收者为 nil 时直接返回，于是取用点上不必再守一次——不属于任何任务的扫描没有指标。
+func (m *scanMetrics) absorbDiskWork(stats diskwork.Stats) {
+	if m == nil {
+		return
+	}
+	if stats.Wait > 0 {
+		m.ioWaitMillis.Add(stats.Wait.Milliseconds())
+	}
+	if stats.PausedWait > 0 {
+		m.pausedMillis.Add(stats.PausedWait.Milliseconds())
+	}
+}
+
 type scanMetricsSnapshot struct {
 	discoveredArchives     int64
 	skippedArchives        int64
@@ -190,9 +216,10 @@ type scanMetricsSnapshot struct {
 	thumbnailWriteMillis   int64
 }
 
+// ScanMetricsReport 是一次扫描收尾时的全量指标。
+//
+// 它与 ScanProgressReport 都不带身份：一份报文属于哪次扫描，由收下它的**扫描观察者**回答。
 type ScanMetricsReport struct {
-	Scope                  string
-	ID                     int64
 	StorageProfile         string
 	VolumeKey              string
 	ArchiveOpenConcurrency int
@@ -215,8 +242,6 @@ type ScanMetricsReport struct {
 }
 
 type ScanProgressReport struct {
-	Scope       string
-	ID          int64
 	Phase       string
 	CurrentItem string
 	Current     int64
@@ -225,21 +250,19 @@ type ScanProgressReport struct {
 }
 
 type scanProgressReporter struct {
-	scope   string
-	id      int64
-	metrics *scanMetrics
-	cb      func(ScanProgressReport)
+	metrics  *scanMetrics
+	observer ScanObserver
 
 	mu       sync.Mutex
 	lastSent time.Time
 }
 
-func newScanProgressReporter(scope string, id int64, metrics *scanMetrics, cb func(ScanProgressReport)) *scanProgressReporter {
-	return &scanProgressReporter{scope: scope, id: id, metrics: metrics, cb: cb}
+func newScanProgressReporter(metrics *scanMetrics, observer ScanObserver) *scanProgressReporter {
+	return &scanProgressReporter{metrics: metrics, observer: observer}
 }
 
 func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
-	if r == nil || r.cb == nil {
+	if r == nil || r.observer == nil {
 		return
 	}
 	now := time.Now()
@@ -258,9 +281,7 @@ func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
 		current = snapshot.discoveredArchives
 		total = 0
 	}
-	r.cb(ScanProgressReport{
-		Scope:       r.scope,
-		ID:          r.id,
+	r.observer.Progress(ScanProgressReport{
 		Phase:       phase,
 		CurrentItem: currentItem,
 		Current:     current,
@@ -313,6 +334,11 @@ type bookScanSnapshot struct {
 	coverPath sql.NullString
 }
 
+// unchanged 判定磁盘上的这个文件与快照记下的完全一致。
+func (snap bookScanSnapshot) unchanged(info os.FileInfo) bool {
+	return snap.modTime.Equal(info.ModTime()) && snap.size == info.Size()
+}
+
 type ScanProfile string
 
 const (
@@ -335,10 +361,10 @@ func (s *Scanner) scanWorkerCount(cfg config.Config, rootPath string, opts ScanO
 	policy := config.ResolveStoragePolicy(cfg, rootPath)
 	limit := policy.IOPolicy.ScanConcurrency
 	if opts.Profile.opensArchive() {
-		limit = storageIOLimit(limit, policy.IOPolicy.ArchiveOpenConcurrency)
+		limit = minPositive(limit, policy.IOPolicy.ArchiveOpenConcurrency)
 	}
 	if opts.Profile.computesQuickHash() || opts.Profile.computesFullHash(cfg) {
-		limit = storageIOLimit(limit, policy.IOPolicy.HashConcurrency)
+		limit = minPositive(limit, policy.IOPolicy.HashConcurrency)
 	}
 	if limit > 0 && workers > limit {
 		workers = limit
@@ -349,7 +375,8 @@ func (s *Scanner) scanWorkerCount(cfg config.Config, rootPath string, opts ScanO
 	return workers
 }
 
-func storageIOLimit(values ...int) int {
+// minPositive 取诸项里最小的正值；全非正时返回 0，即不设上限。
+func minPositive(values ...int) int {
 	limit := 0
 	for _, value := range values {
 		if value <= 0 {
@@ -360,23 +387,6 @@ func storageIOLimit(values ...int) int {
 		}
 	}
 	return limit
-}
-
-func (s *Scanner) acquireStorageToken(ctx context.Context, policy config.ResolvedStoragePolicy, limit int, kind storageio.WorkKind) (func(), time.Duration, time.Duration, error) {
-	if limit <= 0 || strings.TrimSpace(policy.VolumeKey) == "" {
-		return func() {}, 0, 0, nil
-	}
-	lease, err := storageio.Default.Acquire(ctx, storageio.Request{
-		VolumeKey:        policy.VolumeKey,
-		Limit:            limit,
-		Kind:             kind,
-		PauseWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
-		IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
-	})
-	if err != nil {
-		return nil, lease.Wait, lease.PausedWait, err
-	}
-	return lease.Release, lease.Wait, lease.PausedWait, nil
 }
 
 func NormalizeScanProfile(raw string) ScanProfile {
@@ -406,6 +416,26 @@ func (p ScanProfile) computesQuickHash() bool {
 
 func (p ScanProfile) computesFullHash(cfg config.Config) bool {
 	return p == ScanProfileIdentity || p == ScanProfileRepair
+}
+
+// backfills 判定这个档位能给这份已入库快照补上它缺的数据——增量跳过的第二个判据。
+//
+// 「文件没变」只说明重读读不出**新**东西，不说明库里那份已经**齐**了：fast 档位不开归档，
+// 它首扫留下的书 page_count 为 0、cover_path 为空，而 mtime+size 与磁盘完全一致，
+// 只按文件没变就跳过的话，用户改回 metadata 档跑普通扫描，那本书照样被跳过，
+// 页数与封面只有强制扫描补得回来——进度百分比、读完判定、系列已读统计因此一直算不出来。
+//
+// 判据必须挂在**当前档位的能力**上，而不是「库里缺什么就重读」：fast 档位补不出页数与封面，
+// 缺着也该继续跳过，否则它退化成每次全量重读，这个档位随之失去意义。
+// 内容哈希不在此列——它由扫描收尾发起的低优先级哈希回填任务负责补。
+func (p ScanProfile) backfills(snap bookScanSnapshot) bool {
+	if p.opensArchive() && snap.pageCount <= 0 {
+		return true
+	}
+	if p.extractsMetadata() && (!snap.coverPath.Valid || snap.coverPath.String == "") {
+		return true
+	}
+	return false
 }
 
 type scanResult struct {
@@ -442,13 +472,10 @@ type coverJob struct {
 
 // ErrScanAlreadyRunning 表示同一资料库/系列上已有扫描在跑，本次调用被跳过。
 //
-// 此前这两处冲突时返回 nil，调用方无从区分「扫完了」和「压根没扫」：
-//   - 任务面板会在零点几秒内谎报「扫描完成」；
-//   - 更糟的是重建缩略图任务已经 RemoveAll 了整个缩略图目录并清空了 cover_path，
-//     却把被跳过的库当作成功——而增量扫描只比对 mtime+size、不检查封面是否缺失，
-//     那批封面从此不会自愈，必须人工再跑一次 force 扫描。
-//
-// 调用方应显式判定此错误：等待重试、或让任务以失败收尾并提示「该库正被其它扫描占用」。
+// 调用方必须显式判定此错误：等待重试，或让任务以失败收尾并提示「该库正被其它扫描占用」。
+// 把它当成功处理的代价——任务面板会在零点几秒内谎报「扫描完成」；更糟的是重建缩略图任务
+// 已经 RemoveAll 了整个缩略图目录并清空 cover_path，却把被跳过的库当作成功，用户于是面对
+// 一整库无封面的书，要等下一次扫描才重建（fast 档位补不出封面，那次得先改档位）。
 var ErrScanAlreadyRunning = errors.New("scanner: a scan is already running for this target")
 
 // ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
@@ -467,11 +494,17 @@ type LibraryScanOptions struct {
 }
 
 // ScanLibrary 按默认选项扫描整库（尊重库的 scan_formats）。
-func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
-	return s.ScanLibraryWithOptions(ctx, libraryID, rootPath, LibraryScanOptions{Force: force})
+//
+// observer 为 nil 表示这次扫描不属于任何任务，进度与指标无处可报。
+func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool, observer ScanObserver) error {
+	return s.ScanLibraryWithOptions(ctx, libraryID, rootPath, LibraryScanOptions{Force: force}, observer)
 }
 
-func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions) error {
+// ScanLibraryWithOptions 是整库扫描的完整入口。
+//
+// observer 刻意是位置参数而不是 LibraryScanOptions 的一个字段：它是协作方不是开关，
+// 而且结构体字段可以漏填——漏填与「故意不报进度」长得一模一样，都不会有编译错误。
+func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions, observer ScanObserver) error {
 	force := scanOpts.Force
 	if !s.beginLibraryScan(libraryID) {
 		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)
@@ -482,20 +515,21 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	opts := s.scanOptions(force)
 	started := time.Now()
 	metrics := &scanMetrics{}
-	progress := newScanProgressReporter("library", libraryID, metrics, s.onScanProgress)
+	progress := newScanProgressReporter(metrics, observer)
 	progress.publish("loading_existing_books", "", true)
 
-	// 库级格式过滤：libraries.scan_formats 此前前后端俱全却从没人读，用户勾了「只扫 cbz」
-	// 扫描器照样打开 rar/zip。这是**发现阶段**的过滤（决定导入哪些文件）；
-	// 已入库的书不受影响——CleanupLibrary 只按「文件是否还在磁盘上」删行，与格式无关。
+	// 库级格式过滤是**发现阶段**的过滤，只决定导入哪些文件；已入库的书不受影响——
+	// CleanupLibrary 只按「文件是否还在磁盘上」删行，与格式无关。
 	formats := config.ScanFormatSet{} // 零值 = 全部支持格式
 	if !scanOpts.IgnoreFormatFilter {
 		formats = s.libraryScanFormats(ctx, libraryID)
 	}
 
-	// 增量扫描先加载已入库文件的修改时间和大小，未变化的归档可以跳过重读，降低大库重复扫描成本。
-	// 同一份清单还用于构建改名重连索引——强制扫描不吃增量跳过，但一样需要识别改名，
-	// 所以这次查询不再受 opts.Force 控制（每次扫描一条查询，相对随后要读的 N 个归档可忽略）。
+	// 先加载已入库文件的快照，它同时供三件事使用：跳过既没变、本档位又补不出新数据的归档
+	// （只在非强制扫描下，见下面遍历里那处独立守卫）、构建改名重连索引、以及 fast 档位保留已入库的页数与封面。
+	// 后两件强制扫描也需要，因此这份快照无论 opts.Force 与否都完整填充——强制扫描下留空，
+	// workerProcess 里那条保留分支就永远看不到旧值，一次强制 fast 扫描会清零整库页数、抹掉封面。
+	// 代价只有一条查询，相对随后要读的 N 个归档可忽略。
 	bookCache := make(map[string]bookScanSnapshot)
 
 	existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
@@ -503,10 +537,8 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 		slog.Warn("Failed to load existing books cache", "library_id", libraryID, "error", err)
 		return err
 	}
-	if !opts.Force {
-		for _, b := range existingBooks {
-			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
-		}
+	for _, b := range existingBooks {
+		bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 	}
 	renames := newRenameIndex(rehomeCandidatesFromLibraryRows(existingBooks))
 
@@ -573,11 +605,10 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 				return nil
 			}
 
-			// 增量拦截：非强制扫描下检查修改时间
+			// 增量拦截：非强制扫描下，文件没变**且**本档位补不出这本书缺的数据，才跳过解析派发。
 			if !opts.Force {
 				if existing, exists := bookCache[path]; exists {
-					// 若存在同名记录且时间与大小精确吻合，跳过这本卷的解析派发
-					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
+					if existing.unchanged(info) && !opts.Profile.backfills(existing) {
 						metrics.skippedArchives.Add(1)
 						progress.publish("comparing", path, false)
 						return nil
@@ -609,13 +640,13 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr)
+	s.logScanCompleted("library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
 	return walkErr
 }
 
 // ScanSeries 扫描单一系列目录，将新的卷添加到数据库中
-func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) error {
+func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, observer ScanObserver) error {
 	if !s.beginSeriesScan(seriesID) {
 		slog.Info("Series scan skipped because another scan is already running", "series_id", seriesID)
 		return ErrScanAlreadyRunning
@@ -635,20 +666,19 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	opts := s.scanOptions(force)
 	started := time.Now()
 	metrics := &scanMetrics{}
-	progress := newScanProgressReporter("series", seriesID, metrics, s.onScanProgress)
+	progress := newScanProgressReporter(metrics, observer)
 	progress.publish("loading_existing_books", "", true)
 	// 与 ScanLibrary 同口径的格式过滤；library 行在上面已经取过，零额外查询。
 	// 系列扫描与库扫描必须同口径，否则「单系列重扫」会把库扫描刚过滤掉的文件重新灌进来。
 	formats := config.NewScanFormatSet(library.ScanFormats)
 
 	bookCache := make(map[string]bookScanSnapshot)
-	// 与 ScanLibrary 同理：这份清单同时供增量跳过与改名重连使用，强制扫描也需要后者。
+	// 与 ScanLibrary 同理：这份快照同时供增量跳过、改名重连与 fast 档位保留页数/封面使用，
+	// 后两者强制扫描也需要，所以无论 opts.Force 与否都完整填充。
 	var renames *renameIndex
 	if existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID); err == nil {
-		if !opts.Force {
-			for _, b := range existingBooks {
-				bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
-			}
+		for _, b := range existingBooks {
+			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 		}
 		renames = newRenameIndex(rehomeCandidatesFromBooks(existingBooks))
 	}
@@ -708,9 +738,10 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 				return nil
 			}
 
+			// 与 ScanLibrary 同口径的增量拦截，见 ScanProfile.backfills。
 			if !opts.Force {
 				if existing, exists := bookCache[path]; exists {
-					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
+					if existing.unchanged(info) && !opts.Profile.backfills(existing) {
 						metrics.skippedArchives.Add(1)
 						progress.publish("comparing", path, false)
 						return nil
@@ -742,7 +773,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool) er
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr)
+	s.logScanCompleted("series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
 	return walkErr
 }
@@ -886,7 +917,10 @@ func (s *Scanner) seriesHasSurvivingBook(ctx context.Context, seriesID int64) bo
 	return false
 }
 
-func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error) {
+// logScanCompleted 打一条收尾日志，并把全量指标交给本次扫描的**扫描观察者**。
+//
+// scope 与 id 只进日志属性：报文本身不带身份，观察者知道自己是谁。
+func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error, observer ScanObserver) {
 	snapshot := metrics.snapshot()
 	policy := config.ResolveStoragePolicy(s.currentConfig(), rootPath)
 	attrs := []any{
@@ -922,20 +956,18 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 	if err != nil {
 		attrs = append(attrs, "error", err)
 		slog.Warn("Scan completed with errors", attrs...)
-		s.publishScanMetrics(scope, id, policy, snapshot, duration)
+		publishScanMetrics(observer, policy, snapshot, duration)
 		return
 	}
 	slog.Info("Scan completed", attrs...)
-	s.publishScanMetrics(scope, id, policy, snapshot, duration)
+	publishScanMetrics(observer, policy, snapshot, duration)
 }
 
-func (s *Scanner) publishScanMetrics(scope string, id int64, policy config.ResolvedStoragePolicy, snapshot scanMetricsSnapshot, duration time.Duration) {
-	if s.onScanMetrics == nil {
+func publishScanMetrics(observer ScanObserver, policy config.ResolvedStoragePolicy, snapshot scanMetricsSnapshot, duration time.Duration) {
+	if observer == nil {
 		return
 	}
-	s.onScanMetrics(ScanMetricsReport{
-		Scope:                  scope,
-		ID:                     id,
+	observer.Metrics(ScanMetricsReport{
 		StorageProfile:         policy.StorageProfile,
 		VolumeKey:              policy.VolumeKey,
 		ArchiveOpenConcurrency: policy.IOPolicy.ArchiveOpenConcurrency,
@@ -969,56 +1001,48 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	}
 
 	cfg := s.currentConfig()
-	storagePolicy := config.ResolveStoragePolicy(cfg, rootPath)
-	var arc parser.Archive
 	var pages []parser.PageMetadata
-	closeArchive := func() {}
+	var cInfo *parser.ComicInfo
+	// 令牌覆盖归档 IO 的全程，又不越出它：闭包外那些活不碰这个归档，圈进来只会虚占归档打开的
+	// 并发额度；而令牌若拖到它们之后才还，同卷的指纹申领就要自我等待。
 	if opts.Profile.opensArchive() {
-		var err error
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return
-		}
 		progress.publish("reading_metadata", job.path, false)
-		releaseToken, waited, paused, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.ArchiveOpenConcurrency), storageio.WorkKindMetadataScan)
-		if err != nil {
-			return
-		}
-		if metrics != nil && waited > 0 {
-			metrics.ioWaitMillis.Add(waited.Milliseconds())
-		}
-		if metrics != nil && paused > 0 {
-			metrics.pausedMillis.Add(paused.Milliseconds())
-		}
-		arc, err = s.openArchive(job.path)
-		if err != nil {
-			releaseToken()
+		archiveWork := diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: job.path}
+		stats, err := s.diskWork.Do(ctx, archiveWork, func() error {
+			arc, err := s.openArchive(job.path)
+			if err != nil {
+				if metrics != nil {
+					metrics.failedArchives.Add(1)
+				}
+				slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
+				return err
+			}
+			defer arc.Close()
 			if metrics != nil {
-				metrics.failedArchives.Add(1)
+				metrics.openedArchives.Add(1)
 			}
-			slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
-			return
-		}
-		if metrics != nil {
-			metrics.openedArchives.Add(1)
-		}
-		progress.publish("reading_metadata", job.path, false)
-		closed := false
-		closeArchive = func() {
-			if closed {
-				return
-			}
-			closed = true
-			arc.Close()
-			releaseToken()
-		}
-		defer closeArchive()
+			progress.publish("reading_metadata", job.path, false)
 
-		pages, err = arc.GetPages()
-		if err != nil {
-			if metrics != nil {
-				metrics.failedArchives.Add(1)
+			pages, err = arc.GetPages()
+			if err != nil {
+				if metrics != nil {
+					metrics.failedArchives.Add(1)
+				}
+				slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
+				return err
 			}
-			slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
+
+			if opts.Profile.extractsMetadata() {
+				if xmlData, err := arc.ReadMetadataFile("ComicInfo.xml"); err == nil {
+					if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
+						cInfo = parsed
+					}
+				}
+			}
+			return nil
+		})
+		metrics.absorbDiskWork(stats)
+		if err != nil {
 			return
 		}
 	}
@@ -1081,18 +1105,6 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		slog.Warn("No pages found in archive to extract cover", "path", job.path)
 	}
 
-	// 尝试提取 ComicInfo.xml；归档读取完成后立即释放 IO token，避免后续 hash 再申请同盘 token 时自我等待。
-	var cInfo *parser.ComicInfo
-	if opts.Profile.extractsMetadata() && arc != nil {
-		xmlData, err := arc.ReadMetadataFile("ComicInfo.xml")
-		if err == nil {
-			if parsed, err := parser.ParseComicInfo(xmlData); err == nil {
-				cInfo = parsed
-			}
-		}
-	}
-	closeArchive()
-
 	book := database.UpsertBookByPathParams{
 		LibraryID:      libIDInt,
 		Name:           baseName,
@@ -1105,8 +1117,9 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
 		CoverPath:      coverPath,
 	}
-	// fast 档位不开归档，pages 与 coverPath 恒空；增量扫描（有旧快照）时保留已入库的
-	// page_count/cover_path，避免 upsert 把变动书籍的页数/封面清零、封面被永久抹掉。
+	// fast 档位不开归档，pages 与 coverPath 恒空；只要这本书已入库（有旧快照）就保留它的
+	// page_count/cover_path，强制扫描同样如此——fast 档位既不开归档也不排封面任务，
+	// 一旦被 upsert 清零，后续增量扫描又因 mtime+size 未变而跳过，页数与封面永不自愈。
 	if !opts.Profile.opensArchive() && job.existing != nil {
 		if book.PageCount == 0 && job.existing.pageCount > 0 {
 			book.PageCount = job.existing.pageCount
@@ -1115,59 +1128,49 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 			book.CoverPath = job.existing.coverPath
 		}
 	}
+	// 两处指纹都是最干净的**磁盘作业**形状：取令牌 → 读一遍文件 → 立刻归还。闭包只捕获自己的
+	// 错误，因为算不出指纹不该中止这本书；中止只由 Do 返回的闸门与令牌错误决定。
+	hashWork := diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: job.path}
+
 	var fileHash string
 	if opts.Profile.computesFullHash(cfg) {
-		var err error
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return
-		}
 		progress.publish("hashing", job.path, false)
-		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
-		if tokenErr != nil {
+		var hashErr error
+		stats, err := s.diskWork.Do(ctx, hashWork, func() error {
+			fileHash, hashErr = koreader.FingerprintFileContext(ctx, job.path)
+			return nil
+		})
+		metrics.absorbDiskWork(stats)
+		if err != nil {
 			return
 		}
-		if metrics != nil && waited > 0 {
-			metrics.ioWaitMillis.Add(waited.Milliseconds())
-		}
-		if metrics != nil && paused > 0 {
-			metrics.pausedMillis.Add(paused.Milliseconds())
-		}
-		fileHash, err = koreader.FingerprintFileContext(ctx, job.path)
-		releaseToken()
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
 		progress.publish("hashing", job.path, false)
-		if err != nil {
-			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
+		if hashErr != nil {
+			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}
 
 	var quickHash string
 	if opts.Profile.computesQuickHash() {
-		var err error
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return
-		}
 		progress.publish("hashing", job.path, false)
-		releaseToken, waited, paused, tokenErr := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ScanConcurrency, storagePolicy.IOPolicy.HashConcurrency), storageio.WorkKindIdentityHash)
-		if tokenErr != nil {
+		var hashErr error
+		stats, err := s.diskWork.Do(ctx, hashWork, func() error {
+			quickHash, hashErr = koreader.FingerprintQuickFile(job.path)
+			return nil
+		})
+		metrics.absorbDiskWork(stats)
+		if err != nil {
 			return
 		}
-		if metrics != nil && waited > 0 {
-			metrics.ioWaitMillis.Add(waited.Milliseconds())
-		}
-		if metrics != nil && paused > 0 {
-			metrics.pausedMillis.Add(paused.Milliseconds())
-		}
-		quickHash, err = koreader.FingerprintQuickFile(job.path)
-		releaseToken()
 		if metrics != nil {
 			metrics.hashedFiles.Add(1)
 		}
 		progress.publish("hashing", job.path, false)
-		if err != nil {
-			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", err, "scan_profile", opts.Profile)
+		if hashErr != nil {
+			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}
 
@@ -1201,22 +1204,15 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 	existingSeries, _ := s.store.ListSeriesByLibraryLite(ctx, libIDInt)
 	for _, series := range existingSeries {
 		seriesCache[series.Path] = series
-
-		lfMap := make(map[string]bool)
-		if series.LockedFields.Valid && series.LockedFields.String != "" {
-			for _, f := range strings.Split(series.LockedFields.String, ",") {
-				lfMap[strings.TrimSpace(f)] = true
-			}
-		}
-		lockedFieldsCache[series.ID] = lfMap
+		lockedFieldsCache[series.ID] = parseLockedFields(series.LockedFields)
 	}
 
 	var batch []scanResult
 	const batchSize = 100 // 每蓄满 100 卷漫画就开启一次写事务
 
-	// dirtySeries 累积整个扫描过程中被触及、待刷新读模型的系列。刷新改为节流（10s ticker）+ 扫描末尾兜底，
-	// 取代此前每批都对每个 touched 系列全量 UpdateSeriesStatistics + RefreshSeriesStats——跨多批的大系列由
-	// O(K²/batch)（每批重扫该系列已入库的全部书）降为按时间节流的有界次数，同时保留扫描中每 ~10s 的增量 UX。
+	// dirtySeries 累积整个扫描过程中被触及、待刷新读模型的系列。刷新按 10s ticker 节流 + 扫描末尾兜底：
+	// 不能改成每批都对每个 touched 系列全量 UpdateSeriesStatistics + RefreshSeriesStats——那样跨多批的大
+	// 系列每批都要重扫它已入库的全部书，退化成 O(K²/batch)。节流同时保留扫描中每 ~10s 的增量 UX。
 	dirtySeries := make(map[int64]bool)
 
 	flush := func() {
@@ -1253,7 +1249,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 
 				if !ok {
-					// 初次创建
+					// 初次创建：目录名既是 name 也是 title 的默认值，locked_fields 给一个默认锁。
+					// 这三样都只是这一行的**初值**，此后 locked_fields 归用户所有，扫描只读它。
 					createdSeries, err := q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
 						LibraryID:    libIDInt,
 						Name:         res.seriesName,
@@ -1275,18 +1272,21 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						continue
 					}
 					seriesID = createdSeries.ID
-					// 为了保持下文逻辑，我们塞一个临时的进去
-					seriesCache[res.seriesPath] = database.Series{ID: seriesID, Path: res.seriesPath}
+					// 缓存整行而不是只留 ID：同一次扫描里该系列的后续卷会走增补分支，
+					// 要在那里读到刚写下的默认标题与默认锁，而不是把它们冲成空。
+					seriesCache[res.seriesPath] = createdSeries
+					lockedFieldsCache[seriesID] = parseLockedFields(createdSeries.LockedFields)
 				} else {
 					// 已存在的系列，利用 UpsertSeriesByPath 去更新其累积统计和元数据（仅当有新元数据时增补）
 					if res.comicInfo != nil {
-						// 检查字段锁定机制
+						// 锁定字段是用户在系列详情页开合的开关，扫描只读不写：归档内嵌的
+						// ComicInfo 同样是外部来源，锁挡的就是它这一类。扫描若自己把锁置上，
+						// proposal.applyMetadata 的 !locked[field] 从此永不成立，用户为放行
+						// 刮削而做的解锁会被悄悄撤销。
 						locks := lockedFieldsCache[seriesID]
 						if locks == nil {
 							locks = make(map[string]bool)
 						}
-						// 系列名默认始终锁定，防止被外部刮削覆盖
-						locks["title"] = true
 
 						// 若被锁定则沿用旧有库中的数据，不被更新的 NULL 覆盖掉
 						getStr := func(field string, newVal string) sql.NullString {
@@ -1313,23 +1313,31 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 							return sql.NullFloat64{Float64: rating, Valid: rating > 0}
 						}
 
+						// 扫描能给 title 的唯一值就是目录名，而目录名已原样存在 name 列里：
+						// 库里一旦有 title，扫描就不带来任何新信息，原样留着——用户改过的标题
+						// 因此不被打回目录名。只有还没有 title 的系列才要目录名兜个默认值。
+						title := existingS.Title
+						if !locks["title"] && strings.TrimSpace(title.String) == "" {
+							title = sql.NullString{String: res.seriesName, Valid: true}
+						}
+
+						// UpsertSeriesByPath 的每一列都是 excluded 无条件覆盖，所以不动的列要原样传回。
 						_, _ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
-							LibraryID: libIDInt,
-							Name:      res.seriesName,
-							Path:      res.seriesPath,
-							Title:     sql.NullString{String: res.seriesName, Valid: true},
-							Summary:   getStr("summary", rSummary),
-							Publisher: getStr("publisher", rPublisher),
-							Status:    getStr("status", rStatus),
-							Rating:    getRating(),
-							Language:  getStr("language", rLang),
-							// LockedFields 这里应该保持原样，所以 Valid 设为 false 让 Upsert 判定或传旧值
-							// 因为我们的 Upsert 里会用 excluded.locked_fields 覆盖，为了不丢掉我们传回现有的锁。
-							LockedFields: sql.NullString{String: getKeys(locks), Valid: true},
+							LibraryID:    libIDInt,
+							Name:         res.seriesName,
+							Path:         res.seriesPath,
+							Title:        title,
+							Summary:      getStr("summary", rSummary),
+							Publisher:    getStr("publisher", rPublisher),
+							Status:       getStr("status", rStatus),
+							Rating:       getRating(),
+							Language:     getStr("language", rLang),
+							LockedFields: existingS.LockedFields,
 							VolumeCount:  existingS.VolumeCount,
 							BookCount:    existingS.BookCount,
 							TotalPages:   existingS.TotalPages,
-							NameInitial:  database.SeriesInitial(res.seriesName, res.seriesName),
+							// A-Z 索引跟着实际写入的标题走，不能按目录名另算一份。
+							NameInitial: database.SeriesInitialFromNullTitle(title, res.seriesName),
 						})
 					}
 				}
@@ -1405,14 +1413,14 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 
 			}
-			// 读模型刷新不再在批事务内逐系列全量重算（避免大系列被每批重扫成 O(K²)）；改为把 touched 系列
-			// 累积到 dirtySeries，交由 refreshDirtySeries 在 10s ticker 与扫描末尾节流刷新（见批成功分支与主循环）。
+			// 读模型刷新不放在批事务内：touched 系列累积到 dirtySeries，交由 refreshDirtySeries 在 10s ticker
+			// 与扫描末尾节流刷新。放进事务里逐系列全量重算会让大系列被每批重扫成 O(K²)。
 			return nil
 		})
 
 		if err != nil {
-			// 整批写事务失败会丢弃最多 batchSize 本书。此前静默丢弃、任务仍报成功；
-			// 现把丢弃数计入 failedArchives，使其在扫描完成日志与指标中可见。
+			// 整批写事务失败会丢弃最多 batchSize 本书。丢弃数必须计入 failedArchives，
+			// 否则任务会静默报成功，扫描完成日志与指标里看不出任何异常。
 			slog.Error("Batch ingest transaction failed, dropping batch", "book_count", len(batch), "error", err)
 			metrics.failedArchives.Add(int64(len(batch)))
 		} else {
@@ -1433,10 +1441,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 
 	// refreshDirtySeries 节流刷新累积的 touched 系列读模型（series 冗余统计列 + series_stats +
 	// 每用户聚合，见 RefreshSeriesDerivedData）。由 10s ticker 与扫描末尾调用，使任一系列在两次刷新
-	// 之间至少间隔一个 tick，取代此前每批一次的全量重算。
+	// 之间至少间隔一个 tick。
 	//
-	// **刷新失败时保留脏标记**：此前无论成败都 delete，于是扫描被取消或 DB 瞬时出错时，
-	// 那些系列的 book_count/total_pages 与读模型就永久停在旧值——没有任何后台自愈路径
+	// **刷新失败时保留脏标记**，不能改成无论成败都 delete：扫描被取消或 DB 瞬时出错时，
+	// 那些系列的 book_count/total_pages 与读模型会永久停在旧值——没有任何后台自愈路径
 	// （启动回填被 user_version 门控，api 侧也没有重算系列统计的维护任务），
 	// 只有该系列今后再次发生文件变动、或用户手动强制扫描，才会被纠正回来。
 	//
@@ -1528,20 +1536,22 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 	}
 }
 
-// 提取 locks 字典的所有 key 重组成字符串
-func getKeys(m map[string]bool) string {
-	var keys []string
-	for k := range m {
-		keys = append(keys, k)
+// parseLockedFields 把系列的 locked_fields 列展开成便于查询的集合。
+func parseLockedFields(lockedFields sql.NullString) map[string]bool {
+	locks := make(map[string]bool)
+	if !lockedFields.Valid || lockedFields.String == "" {
+		return locks
 	}
-	return strings.Join(keys, ",")
+	for _, f := range strings.Split(lockedFields.String, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			locks[f] = true
+		}
+	}
+	return locks
 }
 
 func thumbnailBaseDir(cfg config.Config) string {
-	if cfg.Cache.Dir != "" {
-		return cfg.Cache.Dir
-	}
-	return filepath.Join(".", "data", "thumbnails")
+	return config.ThumbnailDir(cfg)
 }
 
 func thumbnailSubDir(bookHash string) string {
@@ -1670,55 +1680,27 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	}
 }
 
+// slowThumbnailWrite 是缩略图这一趟慢得该被看见的阈值：落盘或等令牌任一超过它就留一条记录。
+const slowThumbnailWrite = 250 * time.Millisecond
+
 func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config, metrics *scanMetrics) (sql.NullString, error) {
 	if existing := existingThumbnailPath(cfg, candidate.bookHash); existing.Valid {
 		return existing, nil
 	}
 
-	storagePolicy := config.ResolveStoragePolicy(cfg, candidate.path)
-	releaseToken, waited, paused, err := s.acquireStorageToken(ctx, storagePolicy, storageIOLimit(storagePolicy.IOPolicy.ArchiveOpenConcurrency, storagePolicy.IOPolicy.CoverConcurrency), storageio.WorkKindCoverBuild)
-	if err != nil {
-		return sql.NullString{}, err
-	}
-	tokenReleased := false
-	releaseSourceToken := func() {
-		if tokenReleased {
-			return
+	// 令牌只覆盖归档 IO：紧随其后的图片转码是纯 CPU 的，圈进持有区间只会虚占归档打开的并发额度。
+	var pageData []byte
+	coverWork := diskwork.Work{Kind: storageio.WorkKindCoverBuild, Path: candidate.path}
+	stats, err := s.diskWork.Do(ctx, coverWork, func() error {
+		arc, err := s.openArchive(candidate.path)
+		if err != nil {
+			return err
 		}
-		tokenReleased = true
-		releaseToken()
-	}
-	defer releaseSourceToken()
-	if metrics != nil && waited > 0 {
-		metrics.ioWaitMillis.Add(waited.Milliseconds())
-	}
-	if metrics != nil && paused > 0 {
-		metrics.pausedMillis.Add(paused.Milliseconds())
-	}
-	if waited >= 250*time.Millisecond {
-		slog.Info("Queued thumbnail waited for storage IO token",
-			"path", candidate.path,
-			"storage_profile", storagePolicy.StorageProfile,
-			"volume_key", storagePolicy.VolumeKey,
-			"io_wait_ms", waited.Milliseconds(),
-		)
-	}
-
-	arc, err := s.openArchive(candidate.path)
-	if err != nil {
-		return sql.NullString{}, err
-	}
-
-	select {
-	case <-ctx.Done():
-		arc.Close()
-		return sql.NullString{}, ctx.Err()
-	default:
-	}
-
-	pageData, err := arc.ReadPage(candidate.pageName)
-	arc.Close()
-	releaseSourceToken()
+		defer arc.Close()
+		pageData, err = arc.ReadPage(candidate.pageName)
+		return err
+	})
+	metrics.absorbDiskWork(stats)
 	if err != nil {
 		return sql.NullString{}, err
 	}
@@ -1748,29 +1730,29 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 	thumbDir := filepath.Join(thumbnailBaseDir(cfg), subDir)
 	fileName := candidate.bookHash + extensionFromContentType(contentType, targetFormat)
 	fullPath := filepath.Join(thumbDir, fileName)
-	writeWait, writePaused, writeDuration, err := s.writeThumbnailFile(ctx, cfg, storagePolicy, candidate.path, thumbDir, fullPath, processed)
-	if metrics != nil {
-		if writeWait > 0 {
-			metrics.ioWaitMillis.Add(writeWait.Milliseconds())
-		}
-		if writePaused > 0 {
-			metrics.pausedMillis.Add(writePaused.Milliseconds())
-		}
-		if writeDuration > 0 {
-			metrics.thumbnailWriteMillis.Add(writeDuration.Milliseconds())
-		}
+	// 缓存目录常和藏书在同一块盘上转，却落不进任何资料库的路径前缀，故把藏书那一侧交给 PolicyFrom。
+	var writeDuration time.Duration
+	writeWork := diskwork.Work{Kind: storageio.WorkKindCacheWrite, Path: thumbDir, PolicyFrom: candidate.path}
+	writeStats, err := s.diskWork.Do(ctx, writeWork, func() error {
+		var err error
+		writeDuration, err = writeThumbnailFile(thumbDir, fullPath, processed)
+		return err
+	})
+	metrics.absorbDiskWork(writeStats)
+	if metrics != nil && writeDuration > 0 {
+		metrics.thumbnailWriteMillis.Add(writeDuration.Milliseconds())
 	}
 	if err != nil {
 		return sql.NullString{}, err
 	}
-	if writeDuration >= 250*time.Millisecond || writeWait >= 250*time.Millisecond {
+	if writeDuration >= slowThumbnailWrite || writeStats.Wait >= slowThumbnailWrite {
 		slog.Info("Queued thumbnail cache write completed",
 			"path", candidate.path,
 			"thumbnail_path", fullPath,
-			"storage_profile", storagePolicy.StorageProfile,
-			"volume_key", config.VolumeKey(fullPath),
-			"io_wait_ms", writeWait.Milliseconds(),
-			"paused_ms", writePaused.Milliseconds(),
+			"storage_profile", writeStats.StorageProfile,
+			"volume_key", writeStats.VolumeKey,
+			"io_wait_ms", writeStats.Wait.Milliseconds(),
+			"paused_ms", writeStats.PausedWait.Milliseconds(),
 			"thumbnail_write_ms", writeDuration.Milliseconds(),
 		)
 	}
@@ -1862,26 +1844,16 @@ func removeGeneratedThumbnail(cfg config.Config, relativePath string) {
 	_ = os.Remove(fullPath)
 }
 
-func (s *Scanner) writeThumbnailFile(ctx context.Context, cfg config.Config, sourcePolicy config.ResolvedStoragePolicy, sourcePath, thumbDir, fullPath string, data []byte) (time.Duration, time.Duration, time.Duration, error) {
-	writePolicy := config.ResolveStoragePolicy(cfg, thumbDir)
-	if config.SameVolume(sourcePath, thumbDir) {
-		writePolicy = sourcePolicy
-		writePolicy.VolumeKey = config.VolumeKey(thumbDir)
-	}
-	releaseToken, waited, paused, err := s.acquireStorageToken(ctx, writePolicy, writePolicy.IOPolicy.CoverConcurrency, storageio.WorkKindCacheWrite)
-	if err != nil {
-		return waited, paused, 0, err
-	}
-	defer releaseToken()
-
+// writeThumbnailFile 把缩略图落盘，返回落盘本身的耗时。等令牌与限流是调用方的事，这里只剩 IO。
+func writeThumbnailFile(thumbDir, fullPath string, data []byte) (time.Duration, error) {
 	started := time.Now()
 	if err := os.MkdirAll(thumbDir, 0755); err != nil {
-		return waited, paused, time.Since(started), err
+		return time.Since(started), err
 	}
 	if err := os.WriteFile(fullPath, data, 0644); err != nil {
-		return waited, paused, time.Since(started), err
+		return time.Since(started), err
 	}
-	return waited, paused, time.Since(started), nil
+	return time.Since(started), nil
 }
 
 func (s *Scanner) waitForCoverQueue(ctx context.Context) error {
@@ -1929,13 +1901,20 @@ func extensionFromContentType(contentType, fallbackFormat string) string {
 // CleanupThumbnails scans the thumbnails directory and removes any files
 // that are not referenced in the database (by books or series_stats).
 // It also cleans up empty subdirectories.
-func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current, total int, msg string)) error {
+//
+// config.NonThumbnailDirs 点名的子目录整棵跳过——它们落在缩略图目录内，却不是缩略图。
+// progressCb 只收计数：展示文案是调用方的事，扫描器不渲染用户可见文字。
+func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(deleted, scanned int)) error {
 	cfg := s.currentConfig()
 	thumbDir := thumbnailBaseDir(cfg)
+	skipDirs := make(map[string]bool)
+	for _, dir := range config.NonThumbnailDirs(cfg) {
+		skipDirs[dir] = true
+	}
 
-	// 流式收集被引用的封面路径。此前是两次 :many 查询各自把整库路径读进切片再折进 map，
-	// 那两份切片纯属中转（10 万本书要多分配一遍字符串与底层数组），且 DISTINCT 的去重
-	// 也是白付的——map 本来就去重。
+	// 流式收集被引用的封面路径，不要换回 :many 查询把整库路径先读进切片再折进 map：
+	// 那两份切片纯属中转（10 万本书要多分配一遍字符串与底层数组），DISTINCT 的去重也是
+	// 白付的——map 本来就去重。
 	//
 	// 注意 taskcontrol.Wait 必须放在遍历**之后**：回调期间数据库游标是开着的，
 	// 在里面等待暂停闸会把一个连接和一个 WAL 读快照一起挂住。
@@ -1978,13 +1957,16 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current
 		}
 
 		if d.IsDir() {
+			if skipDirs[filepath.Clean(path)] {
+				return filepath.SkipDir // 不是缩略图，整棵子树都不归这里清
+			}
 			dirsToDelete = append(dirsToDelete, path)
 			return nil
 		}
 
 		scannedFiles++
 		if scannedFiles%100 == 0 && progressCb != nil {
-			progressCb(deletedFiles, scannedFiles, fmt.Sprintf("已扫描 %d 个文件，删除 %d 个", scannedFiles, deletedFiles))
+			progressCb(deletedFiles, scannedFiles)
 		}
 
 		slashRelPath := filepath.ToSlash(relPath)
@@ -2007,7 +1989,7 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(current
 	}
 
 	if progressCb != nil {
-		progressCb(deletedFiles, scannedFiles, fmt.Sprintf("清理完成，共删除 %d 个冗余缩略图", deletedFiles))
+		progressCb(deletedFiles, scannedFiles)
 	}
 
 	return nil

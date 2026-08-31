@@ -1,12 +1,6 @@
-// 业务说明：本文件守卫外部库传输的规划阶段。
-//
-// 三个缺陷叠在同一段代码上：
-//   - 规划被完整跑两遍（HTTP handler 一遍只为决定回 200 还是 202，随后整个丢掉，
-//     后台任务再用同一份入参重算一遍）；
-//   - 规划内部逐 seriesID 查一次 `SELECT *`（books 表 24 列、含 summary 长文本），
-//     选几百个系列就是几百次往返，再乘以上面那个 2；
-//   - series_ids 不去重，`[7,7]` 会把系列 7 的每本书规划两遍——用户看到的 missing_books
-//     翻倍、任务进度条的分母也是错的，而且同一个文件会被拷两次。
+// 本文件守外部库传输的规划阶段：规划只能算一遍（HTTP handler 决定状态码之后，
+// 后台任务必须复用同一份结果而非重算）、按 series_id 批量查书而非逐个 SELECT *，
+// 且 series_ids 必须去重——否则 missing_books 与进度条分母会算错，同一文件也会被拷两次。
 
 package external
 
@@ -79,6 +73,13 @@ func seedTransferSeries(t *testing.T, store database.Store, lib database.Library
 	return ids
 }
 
+// discardScanHandle 是 TaskHandle 的手写假体：这里只要会话被扫成 ready 态，扫描报出的
+// **计数推进**没人观察，收下即丢。生产实现是**任务句柄**，那两个数字翻成一帧长什么样
+// 由 api 那一侧的用例守，本包不重测。
+type discardScanHandle struct{}
+
+func (discardScanHandle) Advance(int, int) {}
+
 func newReadyTransferSession(t *testing.T, m *Manager, store database.Store, lib database.Library) string {
 	t.Helper()
 	external := t.TempDir()
@@ -86,7 +87,7 @@ func newReadyTransferSession(t *testing.T, m *Manager, store database.Store, lib
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if _, err := m.ScanSession(context.Background(), snap.SessionID, nil); err != nil {
+	if _, err := m.ScanSession(context.Background(), snap.SessionID, discardScanHandle{}); err != nil {
 		t.Fatalf("ScanSession: %v", err)
 	}
 	return snap.SessionID

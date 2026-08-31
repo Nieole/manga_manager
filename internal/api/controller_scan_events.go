@@ -1,13 +1,18 @@
-// 业务说明：本文件由 controller.go 拆分而来，属于后端 API 层的扫描事件子域，负责处理扫描器批次/指标/进度回调，并驱动缩略图重建任务的聚合进度。
+// scanner 报文在 api 侧的落点：把批次事件翻成缓存失效与 SSE，把进度与指标翻成任务更新。
+//
+// 这里定义两个**扫描观察者**——发起扫描的一方交出哪一个，就决定了这次扫描的报文写到哪：
+// 资料库/系列扫描任务交出 taskScanObserver，「重建缩略图」逐库交出 rebuildThumbLibrary。
+// 无归属的扫描（守护扫描、watcher 派生、建库后首扫）交出 nil，报文无处可报。
 
 package api
 
 import (
-	"fmt"
-	"manga-manager/internal/database"
-	"manga-manager/internal/scanner"
 	"path/filepath"
 	"strconv"
+
+	"manga-manager/internal/database"
+	"manga-manager/internal/scanner"
+	"manga-manager/internal/taskrun"
 )
 
 func (c *Controller) handleScannerBatchEvent(action string) {
@@ -18,15 +23,29 @@ func (c *Controller) handleScannerBatchEvent(action string) {
 	c.PublishEvent(action)
 }
 
-func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport) {
-	taskKey := ""
-	switch report.Scope {
-	case "series":
-		taskKey = fmt.Sprintf("scan_series_%d", report.ID)
-	default:
-		taskKey = fmt.Sprintf("scan_library_%d", report.ID)
+// taskScanObserver 把一次扫描的报文写进它所属任务的**任务句柄**。
+//
+// 它只是句柄的一层翻译，不持有任何状态：谁有资格写这个任务，由「谁拿到了这个句柄」回答，
+// 与句柄本身的所有权模型一致（见 taskrun.Handle）。
+type taskScanObserver struct {
+	progress *taskrun.Handle
+}
+
+// newTaskScanObserver 把任务句柄包成一个扫描观察者；句柄为 nil 时返回 nil 接口值，
+// 于是「这次扫描不属于任何任务」在扫描器那边与其余无归属扫描是同一个形状。
+func newTaskScanObserver(progress *taskrun.Handle) scanner.ScanObserver {
+	if progress == nil {
+		return nil
 	}
-	c.taskEngine.mergeTaskParams(taskKey, map[string]string{
+	return &taskScanObserver{progress: progress}
+}
+
+func (o *taskScanObserver) Progress(report scanner.ScanProgressReport) {
+	o.progress.Report(scanProgressFrame(report))
+}
+
+func (o *taskScanObserver) Metrics(report scanner.ScanMetricsReport) {
+	o.progress.MergeParams(map[string]string{
 		"storage_profile":          report.StorageProfile,
 		"volume_key":               report.VolumeKey,
 		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
@@ -47,70 +66,43 @@ func (c *Controller) handleScannerMetricsEvent(report scanner.ScanMetricsReport)
 		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
 		"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
 	})
-	c.taskEngine.mergeTaskParams("rebuild_thumbnails", map[string]string{
-		"storage_profile":          report.StorageProfile,
-		"volume_key":               report.VolumeKey,
-		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
-		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
-	})
-	c.taskEngine.mergeRunningTaskMetricSums("rebuild_thumbnails", map[string]int64{
-		"discovered_archives": report.DiscoveredArchives,
-		"skipped_archives":    report.SkippedArchives,
-		"processed_archives":  report.ProcessedArchives,
-		"opened_archives":     report.OpenedArchives,
-		"hashed_files":        report.HashedFiles,
-		"queued_covers":       report.QueuedCovers,
-		"generated_covers":    report.GeneratedCovers,
-		"failed_archives":     report.FailedArchives,
-		"io_wait_ms":          report.IOWaitMillis,
-		"paused_ms":           report.PausedMillis,
-		"thumbnail_write_ms":  report.ThumbnailWriteMillis,
-		"duration_ms":         report.DurationMillis,
-	}, nil)
-	c.fixateRebuildThumbBaseline(report)
 }
 
-func (c *Controller) handleScannerProgressEvent(report scanner.ScanProgressReport) {
-	taskKey := ""
-	switch report.Scope {
-	case "series":
-		taskKey = fmt.Sprintf("scan_series_%d", report.ID)
-	default:
-		taskKey = fmt.Sprintf("scan_library_%d", report.ID)
-	}
+// scanProgressFrame 把扫描器的一份进度报文翻成**一帧**任务进度。
+//
+// 一份报文里计数、阶段、当前条目与指标同时变，只能整帧报（理由见 taskrun.Handle.Report）。
+func scanProgressFrame(report scanner.ScanProgressReport) taskrun.Frame {
 	metrics := make(map[string]int64, len(report.Metrics))
 	for key, value := range report.Metrics {
 		metrics[key] = value
 	}
 	current := int(report.Current)
 	total := int(report.Total)
-	code := "task.msg.scan.scanning"
-	var msgParams map[string]string
-	if report.CurrentItem != "" {
-		code = "task.msg.scan.scanning_item"
-		msgParams = map[string]string{"item": filepath.Base(report.CurrentItem)}
+	frame := taskrun.Frame{
+		Current: &current,
+		Total:   &total,
+		Phase:   report.Phase,
+		Item:    report.CurrentItem,
+		Code:    "task.msg.scan.scanning",
+		Metrics: metrics,
 	}
-	c.taskEngine.updateTaskDetailsMsg(taskKey, current, total, code, msgParams, report.Phase, report.CurrentItem, metrics, nil)
-
-	// 若正在执行缩略图重建，按全局视角同步 rebuild_thumbnails 任务进度
-	c.applyScannerProgressToRebuildThumbnails(report)
+	if report.CurrentItem != "" {
+		frame.Code = "task.msg.scan.scanning_item"
+		frame.Params = map[string]string{"item": filepath.Base(report.CurrentItem)}
+	}
+	return frame
 }
 
-func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.ScanProgressReport) {
-	if report.Scope != "library" {
+// Progress 把本库的一份进度报文并进跨库聚合，再按全局视角写一帧重建任务的进度。
+func (l *rebuildThumbLibrary) Progress(report scanner.ScanProgressReport) {
+	snap := l.absorbProgress(report)
+	if snap.Progress == nil {
 		return
 	}
-	snap := c.rebuildThumbAgg.applyProgress(report)
-	if !snap.Active {
-		return
-	}
-	merged := snap.Metrics
 	currentLibName := snap.CurrentLibName
-	currentLibPath := snap.CurrentLibPath
 	doneLibs := snap.DoneLibraries
 	totalLibs := snap.TotalLibraries
 
-	current, total := rebuildThumbProgressFromMetrics(merged)
 	phase := report.Phase
 	if phase == "" {
 		phase = "reading_metadata"
@@ -122,7 +114,7 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 	switch {
 	case phase == "queueing_covers" && displayName != "":
 		code = "task.msg.rebuild_thumbnails.generating_cover"
-		msgParams = map[string]string{"item": displayName, "generated": strconv.FormatInt(merged["generated_covers"], 10)}
+		msgParams = map[string]string{"item": displayName, "generated": strconv.FormatInt(snap.Metrics["generated_covers"], 10)}
 	case currentItem == "" && currentLibName != "":
 		code = "task.msg.rebuild_thumbnails.rebuilding_library_progress"
 		msgParams = map[string]string{"lib": currentLibName, "done": strconv.Itoa(doneLibs + 1), "total": strconv.Itoa(totalLibs)}
@@ -136,94 +128,136 @@ func (c *Controller) applyScannerProgressToRebuildThumbnails(report scanner.Scan
 		code = "task.msg.rebuild_thumbnails.rebuilding"
 	}
 	if currentItem == "" {
-		currentItem = currentLibPath
+		currentItem = snap.CurrentLibPath
 	}
-	labels := map[string]string{
-		"current_library": currentLibName,
-	}
-	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, phase, currentItem, merged, labels)
+	writeRebuildThumbProgress(snap, taskrun.Frame{
+		Phase:  phase,
+		Item:   currentItem,
+		Code:   code,
+		Params: msgParams,
+		Labels: map[string]string{"current_library": currentLibName},
+	})
 }
 
-func (c *Controller) initRebuildThumbAggregator(totalLibraries int) {
-	c.rebuildThumbAgg.begin(totalLibraries)
+// Metrics 在本库扫描主流程结束时定版它的指标，并把这份报文累加进重建任务。
+func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
+	snap := l.fixate(report)
+	if snap.Progress == nil {
+		return
+	}
+	// 先累加再写帧：帧里的指标是聚合器算出的绝对值，会按键覆盖同名项。反过来先写帧再累加，
+	// 增量就加在自己刚写下的绝对值上，任务面板上的指标凭空翻倍。
+	snap.Progress.AddMetrics(map[string]int64{
+		"discovered_archives": report.DiscoveredArchives,
+		"skipped_archives":    report.SkippedArchives,
+		"processed_archives":  report.ProcessedArchives,
+		"opened_archives":     report.OpenedArchives,
+		"hashed_files":        report.HashedFiles,
+		"queued_covers":       report.QueuedCovers,
+		"generated_covers":    report.GeneratedCovers,
+		"failed_archives":     report.FailedArchives,
+		"io_wait_ms":          report.IOWaitMillis,
+		"paused_ms":           report.PausedMillis,
+		"thumbnail_write_ms":  report.ThumbnailWriteMillis,
+		"duration_ms":         report.DurationMillis,
+	}, map[string]string{
+		"storage_profile":          report.StorageProfile,
+		"volume_key":               report.VolumeKey,
+		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
+		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
+	})
+
+	code := "task.msg.rebuild_thumbnails.rebuilding"
+	var msgParams map[string]string
+	if snap.TotalLibraries > 0 {
+		code = "task.msg.rebuild_thumbnails.libraries_completed"
+		msgParams = map[string]string{"done": strconv.Itoa(snap.DoneLibraries), "total": strconv.Itoa(snap.TotalLibraries)}
+	}
+	writeRebuildThumbProgress(snap, taskrun.Frame{
+		Phase:  "queueing_covers",
+		Code:   code,
+		Params: msgParams,
+	})
+}
+
+func (c *Controller) initRebuildThumbAggregator(progress *taskrun.Handle, totalLibraries int) {
+	c.rebuildThumbAgg.begin(progress, totalLibraries)
 }
 
 func (c *Controller) releaseRebuildThumbAggregator() {
 	c.rebuildThumbAgg.end()
 }
 
-// trackRebuildThumbLibraryProgress 在 runGlobalScan 的库切换边界更新聚合器，
-// current 是已完成库数（progress 回调 i 表示"开始第 i+1 个"，i+1 表示"完成第 i+1 个"）。
-func (c *Controller) trackRebuildThumbLibraryProgress(current, total int, lib database.Library) {
-	c.rebuildThumbAgg.trackLibrary(current, total, lib)
-}
-
-// fixateRebuildThumbBaseline 在某个库扫描"主流程"完成时被调用（cover queue 仍可能在异步中），
-// 此时把该库的最终 metrics 加到 baseline，并删除 perLibPending 中对应条目。
-// 注意：cover queue 异步阶段的 generatedCovers 增量会通过 progress 事件继续更新该库的 perLibPending，
-// 但因为我们已把 baseline 中累计了最终值，再次出现的 perLibPending 反映的是同一份 metrics 的最新值，
-// 这意味着会双计。为避免双计，fixate 后忽略后续 perLibPending（直到 release 或下次扫描）。
-func (c *Controller) fixateRebuildThumbBaseline(report scanner.ScanMetricsReport) {
-	if report.Scope != "library" {
-		return
+// beginRebuildThumbLibrary 是交给 runGlobalScan 的观察者工厂：开始一个资料库，
+// 返回这次扫描的**扫描观察者**；重建未在进行时返回 nil 接口值。
+func (c *Controller) beginRebuildThumbLibrary(lib database.Library, totalLibraries int) scanner.ScanObserver {
+	entry := c.rebuildThumbAgg.beginLibrary(lib, totalLibraries)
+	if entry == nil {
+		return nil
 	}
-	snap := c.rebuildThumbAgg.fixateLibrary(report)
-	if !snap.Active {
-		return
-	}
-	merged := snap.Metrics
-	totalLibs := snap.TotalLibraries
-	doneLibs := snap.DoneLibraries
-
-	current, total := rebuildThumbProgressFromMetrics(merged)
-	code := "task.msg.rebuild_thumbnails.rebuilding"
-	var msgParams map[string]string
-	if totalLibs > 0 {
-		code = "task.msg.rebuild_thumbnails.libraries_completed"
-		msgParams = map[string]string{"done": strconv.Itoa(doneLibs), "total": strconv.Itoa(totalLibs)}
-	}
-	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "queueing_covers", "", merged, nil)
+	c.refreshRebuildThumbTaskFromAggregator(lib)
+	return entry
 }
 
 // refreshRebuildThumbTaskFromAggregator 用聚合器中已记录的 metrics 立即刷新一次任务，
-// 用于在 runGlobalScan 库切换边界（无 progress 事件携带 metrics 的时机）保持任务消息和当前库标签同步。
+// 用于在库切换边界（此刻还没有任何本库报文携带 metrics）把任务消息与当前库标签同步过去。
 func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library) {
 	snap := c.rebuildThumbAgg.snapshot()
-	if !snap.Active {
+	if snap.Progress == nil {
 		return
 	}
-	merged := snap.Metrics
-	doneLibs := snap.DoneLibraries
-	totalLibs := snap.TotalLibraries
-
-	current, total := rebuildThumbProgressFromMetrics(merged)
 	code := "task.msg.rebuild_thumbnails.rebuilding_library"
 	msgParams := map[string]string{"lib": lib.Name}
-	if totalLibs > 0 {
+	if snap.TotalLibraries > 0 {
 		code = "task.msg.rebuild_thumbnails.rebuilding_library_progress"
-		msgParams = map[string]string{"lib": lib.Name, "done": strconv.Itoa(doneLibs + 1), "total": strconv.Itoa(totalLibs)}
+		msgParams = map[string]string{"lib": lib.Name, "done": strconv.Itoa(snap.DoneLibraries + 1), "total": strconv.Itoa(snap.TotalLibraries)}
 	}
-	labels := map[string]string{"current_library": lib.Name}
-	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, msgParams, "reading_metadata", lib.Path, merged, labels)
+	writeRebuildThumbProgress(snap, taskrun.Frame{
+		Phase:  "reading_metadata",
+		Item:   lib.Path,
+		Code:   code,
+		Params: msgParams,
+		Labels: map[string]string{"current_library": lib.Name},
+	})
 }
 
 // refreshRebuildThumbTaskMessage 在阶段切换（如等待封面队列收尾）时刷新任务消息和阶段，
-// 但保留聚合器累计的 current/total（避免被旧的占位 total 重置成 100%）。
+// 但保留聚合器累计的 current/total——用占位 total 覆盖会把进度条重置成 100%。
 func (c *Controller) refreshRebuildThumbTaskMessage(code string, params map[string]string, phase string) {
 	snap := c.rebuildThumbAgg.snapshot()
-	if !snap.Active {
+	if snap.Progress == nil {
 		return
 	}
-	merged := snap.Metrics
+	writeRebuildThumbProgress(snap, taskrun.Frame{
+		Phase:  phase,
+		Code:   code,
+		Params: params,
+	})
+}
 
-	current, total := rebuildThumbProgressFromMetrics(merged)
-	c.taskEngine.updateTaskDetailsMsg("rebuild_thumbnails", current, total, code, params, phase, "", merged, nil)
+// writeRebuildThumbProgress 把一份聚合快照连同本次事件的展示信息写成**一帧**任务进度：
+// 累计指标与两阶段计数由快照补齐，其余字段由调用方按本次事件填好。
+//
+// 外部写入点都走它，「一份快照怎么翻成一帧进度」因此只有一份实现。经 taskrun.Handle.Report
+// 一次报完，理由见那里——拆开报会撕帧。
+func writeRebuildThumbProgress(snap rebuildThumbSnapshot, frame taskrun.Frame) {
+	if snap.Progress == nil {
+		return
+	}
+	frame.Metrics = snap.Metrics
+	if current, total, known := rebuildThumbProgressFromMetrics(snap.Metrics); known {
+		frame.Current, frame.Total = &current, &total
+	}
+	snap.Progress.Report(frame)
 }
 
 // rebuildThumbProgressFromMetrics 把"重建缩略图"任务的进度展开成两阶段：
 // 归档处理 (processed+skipped/discovered) 和封面生成 (generated/queued)，分别贡献分子分母。
 // 这样归档全部入队时进度只走到 ~50%，cover queue 异步生成时进度继续推进，避免视觉上"过早 100%"。
-func rebuildThumbProgressFromMetrics(merged map[string]int64) (int, int) {
+//
+// 两阶段都还没有分母时返回 known=false：此刻一条**计数推进**也报不出来，调用方应当干脆不报，
+// 而不是把总数按 0 写下去。「别动总数」因此由「不调用计数推进」表达，不需要哨兵值。
+func rebuildThumbProgressFromMetrics(merged map[string]int64) (current int, total int, known bool) {
 	processedArchives := merged["processed_archives"] + merged["skipped_archives"]
 	discoveredArchives := merged["discovered_archives"]
 	if discoveredArchives < processedArchives {
@@ -234,13 +268,13 @@ func rebuildThumbProgressFromMetrics(merged map[string]int64) (int, int) {
 	if queuedCovers < generatedCovers {
 		queuedCovers = generatedCovers
 	}
-	current := int(processedArchives + generatedCovers)
-	total := int(discoveredArchives + queuedCovers)
+	current = int(processedArchives + generatedCovers)
+	total = int(discoveredArchives + queuedCovers)
 	if total < current {
 		total = current
 	}
 	if total <= 0 {
-		return current, -1
+		return 0, 0, false
 	}
-	return current, total
+	return current, total, true
 }

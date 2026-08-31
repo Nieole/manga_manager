@@ -1,5 +1,6 @@
-// 业务说明：本文件补充存储 IO 调度层的边界回归：卷键归一化/派生、非法请求短路、并发上限钳制（Limit=N）、
+// 本文件补充存储 IO 调度层的边界回归：卷键归一化/派生、非法请求短路、并发上限钳制（Limit=N）、
 // 幂等释放不使计数为负，验证多用户/多任务并发下限流与快照统计正确。
+
 package storageio
 
 import (
@@ -10,11 +11,15 @@ import (
 )
 
 func TestLimiterKeyNormalizesVolume(t *testing.T) {
-	// 卷键应 trim + 小写，并以 limit 拼接，保证同一物理卷不同大小写映射到同一限流桶前缀。
-	if got := limiterKey("  E: ", 3); got != "e:|3" {
-		t.Errorf("limiterKey = %q, want e:|3", got)
+	// 归一化只去首尾空白、保留大小写：卷键在本包里是不透明身份，折不折叠大小写由推导它的 config 定。
+	if got := normalizeVolumeKey("  /Volumes "); got != "/Volumes" {
+		t.Errorf("normalizeVolumeKey = %q, want /Volumes", got)
 	}
-	if got := limiterKey("D:", 1); got != "d:|1" {
+	// 限流桶键由已归一的卷键与 limit 拼成。
+	if got := limiterKey(normalizeVolumeKey("  E: "), 3); got != "E:|3" {
+		t.Errorf("limiterKey = %q, want E:|3", got)
+	}
+	if got := limiterKey("d:", 1); got != "d:|1" {
 		t.Errorf("limiterKey = %q, want d:|1", got)
 	}
 	// volumeFromLimiterKey 应取回卷键（末个 | 之前）。

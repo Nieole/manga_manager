@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
-// 它连接 sqlc 生成查询与上层领域服务，是资料库筛选、搜索同步和关系图谱的数据基础。
-// 维护时应保持 schema、查询定义、事务边界和迁移兼容，避免破坏既有用户数据。
-
 package database
 
 import (
@@ -63,6 +59,7 @@ type Store interface {
 	FindDuplicateBooks(ctx context.Context) ([]DuplicateBookRow, error)
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
+	MaxTaskSequence(ctx context.Context) (int64, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
 	GetHealthReport(ctx context.Context, filters HealthIssueFilters) (HealthReport, error)
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
@@ -260,8 +257,8 @@ func (s *SqlStore) ExecTx(ctx context.Context, fn func(*Queries) error) error {
 		// ctx 被取消时 database/sql 的 awaitDone 已经替我们回滚过，这里的 Rollback 必然返回
 		// ErrTxDone，属于正常收尾而非回滚失败，不该污染错误信息。
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			// 两个 %w 而不是 %v：上层要靠 errors.Is 认出原始错误（如 scrape 链路的
-			// errNoMetadataChanges），%v 拼接会把错误链拍平成字符串。
+			// 两个 %w 而不是 %v：上层要靠 errors.Is 认出 fn 返回的原始错误，
+			// %v 拼接会把错误链拍平成字符串。
 			return fmt.Errorf("tx err: %w, rb err: %w", err, rbErr)
 		}
 		return err

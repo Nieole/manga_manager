@@ -1,10 +1,12 @@
 /**
- * 业务说明：本文件是应用外壳的全局键盘快捷键 hook，统一处理搜索（⌘K / /）、快捷键面板（?）、
- * 侧栏折叠（[）、以及 g 前缀跳转（gh/gr/go/gc/gl/gs/gf）。在可编辑元素聚焦时不拦截按键。
- * 维护时应关注前缀超时清理、修饰键组合与目标可编辑判定。
+ * 本文件是应用外壳的全局键盘快捷键 hook，统一处理搜索（⌘K / /）、快捷键面板（?）、
+ * 侧栏折叠（[）、以及 g 前缀跳转（gh/gr/go/gc/gl/gs/gf）。可编辑元素聚焦时、以及有弹窗打开时
+ * （见 `modalStack`）都整体让位。维护时应关注前缀超时清理、修饰键组合与目标可编辑判定。
  */
 
 import { useEffect, useRef } from 'react';
+
+import { isAnyModalOpen } from '../ui/modalStack';
 
 interface LayoutShortcutHandlers {
   onOpenSearch: () => void;
@@ -38,6 +40,9 @@ export function useLayoutShortcuts(handlers: LayoutShortcutHandlers) {
     };
     const handler = (e: KeyboardEvent) => {
       const h = handlersRef.current;
+      // 弹窗打开时全局快捷键整体让位。弹窗里的焦点常停在按钮而非输入框上，
+      // 只判 isEditable 挡不住：按 / 会再叠一个搜索框，按 g s 会直接路由跳走、把弹窗留在新页面上。
+      if (isAnyModalOpen()) return;
       if (e.metaKey || e.ctrlKey || e.altKey) {
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
           e.preventDefault();
@@ -46,7 +51,9 @@ export function useLayoutShortcuts(handlers: LayoutShortcutHandlers) {
         return;
       }
       if (isEditable(e.target)) return;
-      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+      // ? 与 / 都只认 KeyboardEvent.key 给出的字符，不掺 shiftKey：key 给的是字符而非物理键，
+      // 用户真打出问号时 key 就是 ?；掺进 shiftKey 会把德语 QWERTZ 的 Shift+7 这类打出的 / 误判成 ?。
+      if (e.key === '?') {
         e.preventDefault();
         h.onToggleShortcuts();
         clearPrefix();

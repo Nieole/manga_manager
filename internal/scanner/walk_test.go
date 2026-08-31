@@ -1,10 +1,8 @@
-// 业务说明：本文件守卫扫描链路对符号链接的处理。
+// 守遍历对符号链接的处理：软链的系列目录必须被走进去，软链文件的 size/mtime 必须取自目标。
 //
-// 把外置盘上的系列目录软链进库根（多盘位 NAS 的常见组织方式）此前是完全无效的：
-// filepath.WalkDir 从不跟进软链，用户看到的是「扫描完成，0 本新增」，没有任何线索。
-// 另一半更隐蔽——软链的归档文件用 lstat 拿 size/mtime，而链接自身的 mtime 只在重建链接时
-// 才变，于是目标文件被替换后增量扫描永远判定「毫无变化」，页数/封面/内嵌元数据永久停留在
-// 第一次入库时的状态。
+// 前者失效，软链进库根的系列（多盘位 NAS 的常见组织方式）会被整棵跳过，用户只看到「0 本新增」；
+// 后者失效，目标文件被替换后增量扫描永远判定「毫无变化」，页数、封面、内嵌元数据停在首次入库。
+// 环、菱形、以及指回同库内真实目录的链另需只遍历一次，否则同一批文件会以两条路径入库，变成假的重复书。
 
 package scanner
 
@@ -237,7 +235,7 @@ func TestScanImportsSymlinkedSeriesDirectory(t *testing.T) {
 	}
 
 	s := newFormatTestScanner(t, store)
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 
@@ -282,5 +280,129 @@ func TestWatchRegistersSymlinkedDirectories(t *testing.T) {
 	fw.mu.Unlock()
 	if !watched {
 		t.Error("软链目录没有被监听 —— 扫描能看到、监听看不到，这类系列的改动永远不触发热重载")
+	}
+}
+
+// TestWalkVisitsInLibraryTargetOnce：软链指向**同一棵被遍历的树内**的真实目录时，
+// 那批文件只能被遍历一次，且报出的是真实目录那条路径。
+//
+// 按作者/按状态做二次组织时很容易建出这种链（<库根>/Alpha (link) -> <库根>/Series Alpha）。
+// 走两遍的后果是同一个物理文件以两条路径入库，变成两本书、两个系列，book_count 翻倍。
+// 留真实目录那条：软链是随手建的组织视图，删掉它不该让整个系列在下次扫描时消失。
+func TestWalkVisitsInLibraryTargetOnce(t *testing.T) {
+	requireSymlinks(t)
+
+	// 两个子测试只差链接名的字典序，用来确认留下来的那条路径与遍历顺序无关。
+	cases := []struct {
+		name string
+		link string
+	}{
+		{name: "链名排在真实目录之前", link: "Alpha (link)"},
+		{name: "链名排在真实目录之后", link: "zzz (link)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			real := filepath.Join(root, "Series Alpha")
+			if err := os.MkdirAll(real, 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(real, "Vol 01.cbz"), []byte("x"), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if err := os.Symlink(real, filepath.Join(root, tc.link)); err != nil {
+				t.Skipf("建不了软链：%v", err)
+			}
+
+			got := collectWalked(t, root)
+			want := []string{filepath.Join(real, "Vol 01.cbz")}
+			if len(got) != len(want) || got[0] != want[0] {
+				t.Fatalf("遍历到 %v，期望 %v —— 同一个物理文件被两条路径各走一遍，会入库成两本书、两个系列", got, want)
+			}
+		})
+	}
+}
+
+// TestWalkVisitsExternalTargetPerRoot：两个资料库各有一条软链指向同一个库外目录时，
+// 两次遍历都必须看到那批文件——文档鼓励的正是这种「软链指向外置盘」的用法。
+//
+// 去重集合的作用域是一次遍历，跨库不共享；两个库各自建立自己的藏书，谁也不吞掉谁。
+func TestWalkVisitsExternalTargetPerRoot(t *testing.T) {
+	requireSymlinks(t)
+
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "v1.cbz"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, name := range []string{"库一", "库二"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			link := filepath.Join(root, "Shared")
+			if err := os.Symlink(external, link); err != nil {
+				t.Skipf("建不了软链：%v", err)
+			}
+			got := collectWalked(t, root)
+			want := []string{filepath.Join(link, "v1.cbz")}
+			if len(got) != len(want) || got[0] != want[0] {
+				t.Fatalf("遍历到 %v，期望 %v —— 跨库去重会把第二个库的内容整个吞掉", got, want)
+			}
+		})
+	}
+}
+
+// TestScanSkipsInLibrarySymlinkToRealDirectory 是端到端判据：库内软链指向同库内的真实目录时，
+// 磁盘上的一个文件只能入库成一本书、一个系列。
+//
+// 重复入库会让去重、统计、阅读进度各算各的，book_count 也跟着翻倍。
+func TestScanSkipsInLibrarySymlinkToRealDirectory(t *testing.T) {
+	requireSymlinks(t)
+
+	_, store, lib, libraryPath := newScannerTestLibrary(t)
+	ctx := context.Background()
+
+	real := filepath.Join(libraryPath, "Series Alpha")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := writeScannerTestCBZ(filepath.Join(real, "Vol 01.cbz"),
+		map[string][]byte{"001.png": testPNG1x1}); err != nil {
+		t.Fatalf("write cbz: %v", err)
+	}
+	if err := os.Symlink(real, filepath.Join(libraryPath, "Alpha (link)")); err != nil {
+		t.Skipf("建不了软链：%v", err)
+	}
+
+	s := newFormatTestScanner(t, store)
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
+		t.Fatalf("ScanLibrary: %v", err)
+	}
+
+	books, err := store.ListBooksByLibrary(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("ListBooksByLibrary: %v", err)
+	}
+	if len(books) != 1 {
+		paths := make([]string, 0, len(books))
+		for _, b := range books {
+			paths = append(paths, b.Path)
+		}
+		t.Fatalf("入库 %d 本：%v —— 磁盘上只有 1 个文件，软链把它又走了一遍", len(books), paths)
+	}
+	if want := filepath.Join(real, "Vol 01.cbz"); books[0].Path != want {
+		t.Errorf("books.path = %q，期望真实目录那条 %q —— 记链接路径的话，用户删掉那条组织用的软链，整个系列就没了",
+			books[0].Path, want)
+	}
+
+	seriesList, err := store.ListSeriesByLibraryLite(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("ListSeriesByLibraryLite: %v", err)
+	}
+	if len(seriesList) != 1 {
+		paths := make([]string, 0, len(seriesList))
+		for _, se := range seriesList {
+			paths = append(paths, se.Path)
+		}
+		t.Fatalf("入库 %d 个系列：%v —— 同一部作品被拆成两个，book_count、去重与阅读进度各算各的",
+			len(seriesList), paths)
 	}
 }

@@ -1,5 +1,6 @@
-// 业务说明：本文件覆盖元数据聚合链路的共享基础设施与 Bangumi 解析：指数退避 backoffDelay、Retry-After 解析、
+// 本文件覆盖元数据聚合链路的共享基础设施与 Bangumi 解析：指数退避 backoffDelay、Retry-After 解析、
 // 可取消退避 sleepWithContext、infobox 出版商/作者抽取、Bangumi 标题优先与置信度，以及 locale/状态归一化。
+
 package metadata
 
 import (

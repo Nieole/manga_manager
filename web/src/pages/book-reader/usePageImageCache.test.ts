@@ -1,17 +1,11 @@
 /**
  * @vitest-environment jsdom
  *
- * 业务说明：本文件守卫阅读器页图缓存的 Object URL 生命周期。
+ * 守阅读器页图缓存的 Object URL 生命周期：createObjectURL 造出的 URL 不显式 revoke
+ * 就不会被回收，整本书读下来能积几百 MB 且不报错。三条防线都要覆盖：滑动窗口外的页、
+ * 清空缓存后迟到的响应、切书丢弃的整本缓存。
  *
- * 每张页图都是 URL.createObjectURL(blob) 造出来的：**不显式 revoke 就不会被回收**，
- * 整本书读下来能积几百 MB，而且没有任何报错——只是浏览器标签页越来越沉。
- * 这套代码里有三条防线，全都是「删了也不报错、只是静默漏」的那种：
- *   - 滑动窗口外的页要 revoke（不只是从 Map 里删掉）；
- *   - 清空缓存后**迟到**的响应要自我吊销，不能再写回缓存；
- *   - 切书时丢弃的整本缓存要逐个 revoke。
- *
- * jsdom 不实现 Object URL，所以用可观测的替身：liveObjectUrls 记还活着的，
- * revoked 记被吊销的——泄漏与否全靠它俩看出来。
+ * jsdom 不实现 Object URL，用 liveObjectUrls/revoked 两个替身表判断泄漏与否。
  */
 
 import { renderHook, act } from '@testing-library/react';

@@ -1,4 +1,4 @@
-// 业务说明：本文件守卫 IN (...) 展开的分批。
+// 本文件守卫 IN (...) 展开的分批。
 //
 // SQLite 的 SQLITE_MAX_VARIABLE_NUMBER 是 32766，超过就直接报 "too many SQL variables"。
 // 批量编辑与进度叠加的 ID 数量都由用户的选区决定，不分批意味着「选中三万多个系列」

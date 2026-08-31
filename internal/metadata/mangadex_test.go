@@ -1,5 +1,6 @@
-// 业务说明：本文件是 MangaDex Provider 的解析回归测试，验证多语言标题/别名取值、封面 URL 拼接、
+// 本文件是 MangaDex Provider 的解析回归测试，验证多语言标题/别名取值、封面 URL 拼接、
 // 标签与作者去重、册数解析、置信度计算，以及 firstLocalizedTitle / altTitleByLang / firstAltTitle 纯逻辑。
+
 package metadata
 
 import (

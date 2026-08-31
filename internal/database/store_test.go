@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
+// 本文件是业务回归测试，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
 // 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
 // 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
 
@@ -664,10 +664,12 @@ func TestSearchSeriesCursorSupportsKeysetSorts(t *testing.T) {
 		if name == "Gamma" || name == "Delta" {
 			favorite = 1
 		}
+		// 时间列按库内存储文本写入（见 sqliteDatetimeLayout）。直接绑 time.Time 会落成
+		// 生产中不存在的另一种写法，让 keyset 边界谓词在假数据上通过。
 		if _, err := store.(*SqlStore).db.ExecContext(ctx,
 			`UPDATE series SET created_at = ?, updated_at = ?, is_favorite = ? WHERE id = ?`,
-			createdBase.Add(time.Duration(idx)*time.Hour),
-			createdBase.Add(time.Duration(10-idx)*time.Hour),
+			createdBase.Add(time.Duration(idx)*time.Hour).Format(sqliteDatetimeLayout),
+			createdBase.Add(time.Duration(10-idx)*time.Hour).Format(sqliteDatetimeLayout),
 			favorite,
 			series.ID,
 		); err != nil {

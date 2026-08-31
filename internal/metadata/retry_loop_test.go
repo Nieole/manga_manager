@@ -1,19 +1,9 @@
-// 业务说明：本文件守卫「重试时请求被重建」这条不变量。
+// 本文件守卫「重试时请求被重建」这条不变量：POST 源的 body 是 bytes.Reader，读一次
+// 就空了，request 必须在循环内每轮重建，否则第二次请求带空 body 发出去，上游返回
+// 400，日志里只留一条「重试后仍失败」，看不出是 body 空了。
 //
-// 五个数据源的重试循环形状一致：429 或 5xx 且未超次数就退避重试。其中 Bangumi 与 AniList
-// 发的是 POST，body 是一个 bytes.Reader——**读一次就空了**。所以 request 必须在循环内
-// 每轮重建；把 http.NewRequestWithContext 提到循环外（一个看起来很自然的「优化」）
-// 会让第二次请求带着空 body 发出去，上游返回 400，而日志里只会留下一条
-// 「重试后仍失败」，看不出是 body 空了。
-//
-// 只覆盖这两个 POST 源是刻意的：另外三个走 GET、body 恒为 nil，
-// 「两次请求体相同」在它们身上是 0 == 0，一条恒等式，没有判别力。
-//
-// 注意两点：
-//   - provider 实例必须在**每个子测试内部**新建。建在表格行上再配 t.Parallel()
-//     会让多个子测试并发改写同一个 httpClient，CI 的 go test -race 必报 DATA RACE。
-//   - 不测「重试耗尽」：退避是 1+2+4 秒（base delay 是包级 const，注入不进去），
-//     那条路径要 7 秒，不值得拖慢整个套件。
+// provider 实例须在每个子测试内部新建，否则并发子测试共享 httpClient 会被 -race 判定
+// DATA RACE；不测「重试耗尽」——退避的 base delay 是包级 const 注入不进去，那条路径要 7 秒。
 
 package metadata
 
@@ -72,6 +62,8 @@ func (t *recordingTransport) recorded() []string {
 	return out
 }
 
+// 只覆盖 Bangumi/AniList 这两个 POST 源：另外三个走 GET、body 恒为 nil，
+// 「两次请求体相同」在它们身上是 0 == 0，没有判别力。
 func TestPostProvidersRebuildRequestOnRetry(t *testing.T) {
 	cases := []struct {
 		name string

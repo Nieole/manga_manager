@@ -1,16 +1,10 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 import { useCallback, useMemo, useState } from 'react';
 import { apiClient } from '../../../api/client';
 import type { Series } from '../types';
 
 interface UseLibrarySelectionParams {
   allSeries: Series[];
-  /** 操作完成后请求重新拉当前页 */
+  /** 操作完成后请求重取列表：无限滚动下选中项可能在前几屏，刷新范围由 useLibrarySeries 决定。 */
   onChanged: () => void;
   /** 错误时提示 */
   onError: (msg: string) => void;

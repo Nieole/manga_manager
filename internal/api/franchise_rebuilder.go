@@ -1,4 +1,4 @@
-// 业务说明：本文件把 franchise 合集重建的「合并式调度」从 Controller 上帝对象里抽成独立组件。
+// 本文件把 franchise 合集重建的「合并式调度」从 Controller 上帝对象里抽成独立组件。
 // franchiseRebuilder 只负责调度状态（是否在跑 / 是否有待处理请求），通过注入的 rebuild / runBackground
 // 回调与领域逻辑（RebuildFranchiseCollections）和生命周期（backgroundWG）解耦：并发触发时只合并成「至多
 // 再跑一轮」，避免每次系列关联增删改都各起一个全图重建 goroutine 争抢 SQLite 写锁。调度状态全程由 mu 保护。

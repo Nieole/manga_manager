@@ -1,23 +1,18 @@
-// 业务说明：本文件是后台任务引擎，持有任务子域的**全部可变状态**并独占其锁。
-//
-// 此前这些状态挂在 taskEngine 上、方法却挂在 Controller 上（`c.taskEngine.xxx` 出现 130+ 次），
-// 于是「谁能改任务表」这条边界在 17.9k 行的 api 包里没有任何结构约束——任何 Controller 方法都能
-// 顺手锁 mutex 改 tasks。现在状态与方法归一到同一个类型上：引擎只依赖三样外部能力（落盘用的 store、
-// 投递 SSE 的 publish、感知停机的 done），Controller 侧退化为 HTTP 层与领域重启函数的持有者。
-//
-// 并发约定：
-//   - 除 relaunchers（装配期写入，之后只读）外，全部字段由 mutex 保护。
-//   - 名字带 Locked 后缀的方法要求调用方已持锁；其余方法自行加解锁。
-//   - 任何要把 TaskStatus 带出临界区的路径（异步落盘、HTTP 序列化、重试取参）必须先 cloneTaskStatus，
-//     否则会与仍在持锁原地写 Metrics/Params 的进度回调撞成 `fatal error: concurrent map read and
-//     map write`——那是 runtime throw 而非 panic，recover 与 middleware.Recoverer 都拦不住。
+// 后台任务引擎的状态与生命周期：任务表、运行时句柄、异步落盘、SSE 投递与节流、淘汰、查询与控制。
+// 任务子域的全部可变状态归它所有，只依赖注入进来的外部能力——落盘的 store、投递 SSE 的 publish、
+// 感知停机的 done、开受停机管辖 goroutine 的 runBackground、执行**磁盘作业**的 diskWork。
+// Controller 不得直接触碰任务表。
+// 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
+
 package api
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,11 +20,12 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/taskcontrol"
 )
 
 // 任务控制（暂停/恢复/取消）与重试查找的哨兵错误。引擎只表达「为什么不行」，
-// 具体的 HTTP 状态码与英文文案由 controller_tasks.go 的映射表决定，避免引擎依赖传输层语义。
+// 具体的 HTTP 状态码与英文文案由 taskControlResponses 决定，避免引擎依赖传输层语义。
 var (
 	errTaskNotFound          = errors.New("task not found")
 	errTaskNotRunning        = errors.New("task is not running")
@@ -71,6 +67,13 @@ func (g taskPublishGate) suppresses(task TaskStatus, now time.Time, window time.
 }
 
 // taskEngine 是后台任务引擎：任务表、运行时句柄、序号、异步落盘的待写集合与唤醒信号，以及任务重试注册表。
+//
+// 并发约定：
+//   - 除 relaunchers（装配期写入，之后只读）外，全部字段由 mutex 保护。
+//   - 名字带 Locked 后缀的方法要求调用方已持锁；其余方法自行加解锁。
+//   - 任何要把 TaskStatus 带出临界区的路径（异步落盘、HTTP 序列化、重试取参）必须先 cloneTaskStatus，
+//     否则会与仍在持锁原地写 Metrics/Params 的进度回调撞成 `fatal error: concurrent map read and
+//     map write`——那是 runtime throw 而非 panic，recover 与 middleware.Recoverer 都拦不住。
 type taskEngine struct {
 	// ---- 外部依赖（装配期注入，之后只读）----
 
@@ -80,13 +83,23 @@ type taskEngine struct {
 	publish func(string)
 	// done 返回 Controller 的生命周期信号，落盘 goroutine 据此退出前做最后一次刷盘。
 	done func() <-chan struct{}
+	// runBackground 开一个受停机管辖的 goroutine（登记停机 WaitGroup、关闭后拒绝新任务）。
+	// 任务体必须经这项能力启动：外部替引擎开 goroutine 再反向伸手改任务表，会多套一层调度，
+	// 停机竞态下任务被静默丢弃、运行时句柄泄漏，且两处都不会有编译错误。
+	// 测试注入同步执行版本即可确定性地断言终态，不必等待真实 goroutine。
+	runBackground func(func())
+	// diskWork 是交给**任务句柄**的**磁盘作业**入口，留 nil 的后果见 taskrun.New。
+	// 不启动任务体的白盒测试即如此构造。
+	diskWork *diskwork.Runner
 
 	// ---- 受 mutex 保护的状态 ----
 
 	mutex    sync.Mutex
 	tasks    map[string]TaskStatus
 	runtimes map[string]*TaskRuntime
-	seq      int64
+	// seq 是任务的单调序号，也是任务中心的主排序键。装配期从库里已用掉的最大值接上（restoredTaskSequence），
+	// 因此跨重启单调——它是「最近活动」的唯一事实来源，时间列不是（见 database.SqlStore.ListTasks）。
+	seq int64
 	// persistPending 是待异步落盘的最新任务快照（按 key 合并）。进度更新只写内存 + 入此集合，
 	// 专用 goroutine（startTaskPersister）节流批量写 SQLite，避免在临界区内同步写库阻塞任务 API 与系列详情页。
 	// persistWake 在终态时唤醒该 goroutine 立即刷，缩短终态落库延迟（缓冲 1）。
@@ -114,20 +127,44 @@ func (e *taskEngine) clock() time.Time {
 	return time.Now()
 }
 
-func newTaskEngine(store database.Store, publish func(string), done func() <-chan struct{}) *taskEngine {
+func newTaskEngine(store database.Store, publish func(string), done func() <-chan struct{}, runBackground func(func()), diskWork *diskwork.Runner) *taskEngine {
 	return &taskEngine{
 		store:          store,
 		publish:        publish,
 		done:           done,
+		runBackground:  runBackground,
+		diskWork:       diskWork,
 		tasks:          make(map[string]TaskStatus),
 		runtimes:       make(map[string]*TaskRuntime),
+		seq:            restoredTaskSequence(store),
 		persistPending: make(map[string]TaskStatus),
 		persistWake:    make(chan struct{}, 1),
 		publishGates:   make(map[string]taskPublishGate),
 	}
 }
 
-// isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试，消除第二份硬编码清单。
+// restoredTaskSequence 取库里已用掉的最大任务序号，供新引擎接着往下发。
+//
+// 它放在构造期而不是某条启动路径上：序号从 0 重来不会有任何编译错误或运行时报错，只会让重启后
+// 新起的任务排在全部历史之后——而任务表没有行数上限（maxRetainedTasks 只裁内存表，DB 只有用户手动
+// 清理才删），一次大库扫描就能留下几千条，于是前端那一页 50 条里一个新任务都看不到。
+//
+// 纯内存引擎（store 为 nil）与读库失败都从 0 开始：这是降级不是失败，服务照常可用，
+// 代价只是任务中心的历史定序退回旧行为。
+func restoredTaskSequence(store database.Store) int64 {
+	if store == nil {
+		return 0
+	}
+	maxSequence, err := store.MaxTaskSequence(context.Background())
+	if err != nil {
+		slog.Warn("Failed to restore task sequence", "error", err)
+		return 0
+	}
+	return maxSequence
+}
+
+// isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试。
+// 「哪些类型可重试」不得另立第二份清单——两份清单一旦不同步，界面上的重试按钮会指向一个没人能重启的任务。
 func (e *taskEngine) isRetryableTaskType(taskType string) bool {
 	_, ok := e.relaunchers[taskType]
 	return ok
@@ -250,206 +287,75 @@ func (e *taskEngine) publishTaskStatusLocked(task TaskStatus) {
 	e.publish("task_progress:" + string(payload))
 }
 
-// ---- 启动 ----
+// ---- 写入 ----
 
-func (e *taskEngine) startTask(key, taskType, message string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, false, false)
-}
-
-func (e *taskEngine) startCancelableTask(key, taskType, message string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, false)
-}
-
-func (e *taskEngine) startPausableCancelableTask(key, taskType, message string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, message, "", nil, total, true, true)
-}
-
-// startTaskMsg 等是启动方法的 i18n 版：初始消息用稳定码 + 占位参数。
-func (e *taskEngine) startTaskMsg(key, taskType, code string, params map[string]string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, "", code, params, total, false, false)
-}
-
-func (e *taskEngine) startPausableCancelableTaskMsg(key, taskType, code string, params map[string]string, total int) bool {
-	return e.startTaskWithOptionsCore(key, taskType, "", code, params, total, true, true)
-}
-
-func (e *taskEngine) startTaskWithOptionsCore(key, taskType, message, code string, params map[string]string, total int, canCancel bool, canPause bool) bool {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
+// writeTaskLocked 是任务表的**唯一写入出口**：就地重算调用方手里那份快照的派生字段，再落进
+// 任务表——调用方随后拿同一份去落盘与投递，三处因此恒为同一帧。调用方持有 mutex。
+//
+// 派生字段（百分比、速率、ETA）必须在这条出口上算，而不是靠每条写入路径各自记得算：
+// 漏掉一处不会有编译错误，后果是那条路径写出的那一帧带着上一帧的陈值。
+func (e *taskEngine) writeTaskLocked(task *TaskStatus) {
+	enrichTaskProgress(task)
 	if e.tasks == nil {
 		e.tasks = make(map[string]TaskStatus)
 	}
+	e.tasks[task.Key] = *task
+}
 
-	if existing, ok := e.tasks[key]; ok && taskIsActive(existing.Status) {
+// ---- 启动 ----
+
+// taskPanicMessageCode 是 panic 兜底下发的失败文案码。
+//
+// panic 兜底是引擎唯一直接面向用户说话的地方，因此也必须只用 i18n 码：一句写死在这里的文案
+// 没有任何地方能翻译它，非英文用户看到的就是一句英文。panic 值本身另走 TaskStatus.Error，
+// 那是技术串、不面向翻译。
+const taskPanicMessageCode = "task.msg.control.panicked"
+
+// runTaskGoroutine 在受停机管辖的后台 goroutine 里执行任务体，并保证任务体一旦 panic，
+// key 对应的任务被置为失败态。
+//
+// 这条兜底是「活动任务不被 pruneTasksLocked 淘汰」的必要配套。panic 的任务体走不到 settleTask，
+// 任务将永远停在 running；而活动任务既不被淘汰、也不被 clearTasks 删除，于是那个任务键从此
+// 恒定返回 409「已在运行」——同类任务在进程重启前再也发不起来。
+// 把 panic 转成一次显式失败，用户至少能看到原因并重试。
+func (e *taskEngine) runTaskGoroutine(key string, fn func()) {
+	e.runBackground(func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("Background task panicked", "task_key", key, "panic", rec, "stack", string(debug.Stack()))
+				e.failTask(key, taskPanicMessageCode, nil, fmt.Sprint(rec))
+			}
+		}()
+		fn()
+	})
+}
+
+// admitTaskLocked 是新任务落地的**唯一**机制：过任务键闸门，然后编号、入表、裁剪、落盘、投递。
+// 调用方持有 mutex，并已把这个任务的全部字段填好（Sequence 与 Retryable 除外，由这里补）。
+//
+// 它与 claimTaskSlot 分家，是为了让「填字段」与「五步顺序」各在一处：后面这几步漏掉任何一步
+// 都不会有编译错误，而后果各不相同——漏投递则界面上任务不出现，漏落盘则重启后任务凭空消失，
+// 漏裁剪则任务表无限增长。
+func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
+	if e.tasks == nil {
+		e.tasks = make(map[string]TaskStatus)
+	}
+	if existing, ok := e.tasks[task.Key]; ok && taskIsActive(existing.Status) {
 		return false
 	}
 
-	now := time.Now()
+	task.Retryable = e.isRetryableTaskType(task.Type)
 	e.seq++
-	scope, scopeID := inferTaskScope(taskType, key)
-	task := TaskStatus{
-		Key:           key,
-		Type:          taskType,
-		Scope:         scope,
-		ScopeID:       scopeID,
-		Status:        "running",
-		Message:       message,
-		MessageCode:   code,
-		MessageParams: params,
-		Current:       0,
-		Total:         total,
-		CanCancel:     canCancel,
-		CanPause:      canPause,
-		Retryable:     e.isRetryableTaskType(taskType),
-		StartedAt:     now,
-		UpdatedAt:     now,
-		Sequence:      e.seq,
-	}
-	e.tasks[key] = task
+	task.Sequence = e.seq
+
+	e.writeTaskLocked(&task)
 	e.pruneTasksLocked()
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return true
 }
 
-// newTaskContext 为任务体建立可取消 + 可暂停的 ctx，并登记运行时句柄供暂停/恢复/取消接口操作。
-// 返回的 cleanup 必须在任务体退出时调用，否则运行时句柄会一直留在表里。
-func (e *taskEngine) newTaskContext(key string) (context.Context, func()) {
-	ctx, cancel := context.WithCancel(context.Background())
-	gate := taskcontrol.NewPauseGate()
-	taskCtx := taskcontrol.WithPauseGate(ctx, gate)
-
-	e.mutex.Lock()
-	if e.runtimes == nil {
-		e.runtimes = make(map[string]*TaskRuntime)
-	}
-	e.runtimes[key] = &TaskRuntime{
-		Context:   taskCtx,
-		Cancel:    cancel,
-		PauseGate: gate,
-		StartedAt: time.Now(),
-	}
-	e.mutex.Unlock()
-
-	cleanup := func() {
-		e.mutex.Lock()
-		delete(e.runtimes, key)
-		e.mutex.Unlock()
-	}
-
-	return taskCtx, cleanup
-}
-
 // ---- 进度更新 ----
-
-func (e *taskEngine) updateTask(key string, current, total int, message string) {
-	e.updateTaskCore(key, current, total, message, "", nil)
-}
-
-// updateTaskMsg 是 updateTask 的 i18n 版：只发稳定消息码 + 占位参数，由前端本地化渲染。
-func (e *taskEngine) updateTaskMsg(key string, current, total int, code string, params map[string]string) {
-	e.updateTaskCore(key, current, total, "", code, params)
-}
-
-func (e *taskEngine) updateTaskCore(key string, current, total int, message, code string, params map[string]string) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	task.Current = current
-	if total >= 0 {
-		task.Total = total
-	}
-	applyTaskMessage(&task, message, code, params)
-	task.UpdatedAt = time.Now()
-	e.seq++
-	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
-
-func (e *taskEngine) updateTaskDetails(key string, current, total int, message, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
-	e.updateTaskDetailsCore(key, current, total, message, "", nil, phase, currentItem, metrics, labels)
-}
-
-// updateTaskDetailsMsg 是 updateTaskDetails 的 i18n 版：消息改为稳定码 + 占位参数，其余（phase/currentItem/
-// metrics/labels）语义不变。
-func (e *taskEngine) updateTaskDetailsMsg(key string, current, total int, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
-	e.updateTaskDetailsCore(key, current, total, "", code, params, phase, currentItem, metrics, labels)
-}
-
-func (e *taskEngine) updateTaskDetailsCore(key string, current, total int, message, code string, params map[string]string, phase, currentItem string, metrics map[string]int64, labels map[string]string) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	if !taskIsActive(task.Status) {
-		return
-	}
-	task.Current = current
-	if total >= 0 {
-		task.Total = total
-	}
-	applyTaskMessage(&task, message, code, params)
-	if phase != "" {
-		task.Phase = phase
-	}
-	if currentItem != "" {
-		task.CurrentItem = currentItem
-	}
-	if len(metrics) > 0 {
-		if task.Metrics == nil {
-			task.Metrics = make(map[string]int64, len(metrics))
-		}
-		for k, v := range metrics {
-			task.Metrics[k] = v
-		}
-	}
-	if len(labels) > 0 {
-		if task.Labels == nil {
-			task.Labels = make(map[string]string, len(labels))
-		}
-		for k, v := range labels {
-			task.Labels[k] = v
-		}
-	}
-	task.UpdatedAt = time.Now()
-	e.seq++
-	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
-
-func (e *taskEngine) setTaskMetadata(key string, params map[string]string, scopeName string) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	task.Params = params
-	if strings.TrimSpace(scopeName) != "" {
-		task.ScopeName = scopeName
-	}
-	e.seq++
-	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
 
 func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	if len(params) == 0 {
@@ -471,8 +377,8 @@ func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
+	decodeTaskParams(&task)
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskProgressLocked(task)
 }
@@ -507,51 +413,22 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
-	e.persistTaskStatus(task)
-	e.publishTaskProgressLocked(task)
-}
-
-func (e *taskEngine) setTaskEffectiveLimit(key string, limit TaskLimits) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
-	task, ok := e.tasks[key]
-	if !ok {
-		return
-	}
-	task.EffectiveLimit = &limit
-	task.UpdatedAt = time.Now()
-	e.seq++
-	task.Sequence = e.seq
-	hydrateTaskStatusDerivedFields(&task)
-	e.tasks[key] = task
+	decodeTaskParams(&task)
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskProgressLocked(task)
 }
 
 // ---- 终态 ----
 
-func (e *taskEngine) finishTask(key, message string) {
-	e.completeTaskCore(key, "completed", message, "", nil)
-}
-
-// finishTaskMsg 是 finishTask 的 i18n 版：只发稳定消息码 + 占位参数。
-func (e *taskEngine) finishTaskMsg(key, code string, params map[string]string) {
-	e.completeTaskCore(key, "completed", "", code, params)
-}
-
-func (e *taskEngine) failTask(key, message string) {
-	e.failTaskCore(key, message, "", nil, message)
-}
-
-// completeTaskMsg 是 completeTask 的 i18n 版（多用于取消态等终态）。
-func (e *taskEngine) completeTaskMsg(key, status, code string, params map[string]string) {
-	e.completeTaskCore(key, status, "", code, params)
-}
-
-func (e *taskEngine) completeTaskCore(key, status, message, code string, params map[string]string) {
+// finalizeTask 把任务落成 status 指名的那个**终态**，失败态除外（那条走 failTask，
+// 它还要记下技术错误串）。
+//
+// 名字刻意不叫 complete：**完成**只是终态里的一个，**已取消**同样从这里写入。用「完成」命名
+// 会让读代码的人以为取消另有一条路径，进而去找一个不存在的函数——CONTEXT.md 点名要避开这处模糊。
+//
+// **计数推进**只在**完成**那一条上被补到总数。
+func (e *taskEngine) finalizeTask(key, status, code string, params map[string]string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -561,7 +438,7 @@ func (e *taskEngine) completeTaskCore(key, status, message, code string, params 
 	}
 	now := time.Now()
 	task.Status = status
-	applyTaskMessage(&task, message, code, params)
+	applyTaskMessage(&task, code, params)
 	if status != "failed" {
 		task.Error = ""
 	}
@@ -570,14 +447,17 @@ func (e *taskEngine) completeTaskCore(key, status, message, code string, params 
 	task.CanResume = false
 	task.PausedAt = nil
 	task.PauseReason = ""
-	if task.Total > 0 {
+	// 只有**完成**补齐计数：`rebuild_index`、`cleanup_library`、`ai_grouping` 这类任务把总数
+	// 声明成阶段数却从不推进计数，靠这一笔才显示成 1 / 1。**已取消**不跟着补——被取消掉的那些
+	// 条目一个都没处理，补上去这个数就答不出「做完了多少」，用户据此以为活已经干完。
+	if status == "completed" && task.Total > 0 {
 		task.Current = task.Total
 	}
 	task.UpdatedAt = now
 	task.FinishedAt = &now
 	e.seq++
 	task.Sequence = e.seq
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	delete(e.runtimes, key)
 	// 终态清掉水位：同名任务重跑时首帧必须无条件放行，否则会被上一轮的残留水位吞掉。
 	delete(e.publishGates, key)
@@ -585,16 +465,9 @@ func (e *taskEngine) completeTaskCore(key, status, message, code string, params 
 	e.publishTaskStatusLocked(task)
 }
 
-func (e *taskEngine) failTaskWithError(key, message, taskError string) {
-	e.failTaskCore(key, message, "", nil, taskError)
-}
-
-// failTaskErrMsg 是 failTaskWithError 的 i18n 版：显示消息用稳定码，taskError 保留原始技术错误串（诊断用，不翻译）。
-func (e *taskEngine) failTaskErrMsg(key, code string, params map[string]string, taskError string) {
-	e.failTaskCore(key, "", code, params, taskError)
-}
-
-func (e *taskEngine) failTaskCore(key, message, code string, params map[string]string, taskError string) {
+// failTask 把任务落成失败态。它与 finalizeTask 分家只为多带一个 taskError：
+// 那是给用户看排查线索用的技术错误串，与 code 指名的那句可翻译文案是两条通道。
+func (e *taskEngine) failTask(key, code string, params map[string]string, taskError string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -604,17 +477,18 @@ func (e *taskEngine) failTaskCore(key, message, code string, params map[string]s
 	}
 	now := time.Now()
 	task.Status = "failed"
-	applyTaskMessage(&task, message, code, params)
+	applyTaskMessage(&task, code, params)
 	task.Error = taskError
 	task.CanCancel = false
 	task.CanPause = false
 	task.CanResume = false
 	task.PausedAt = nil
+	task.PauseReason = ""
 	task.UpdatedAt = now
 	task.FinishedAt = &now
 	e.seq++
 	task.Sequence = e.seq
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	delete(e.runtimes, key)
 	// 终态清掉水位：同名任务重跑时首帧必须无条件放行，否则会被上一轮的残留水位吞掉。
 	delete(e.publishGates, key)
@@ -624,7 +498,7 @@ func (e *taskEngine) failTaskCore(key, message, code string, params map[string]s
 
 // pruneTasksLocked 把内存任务表裁到 maxRetainedTasks，**活动任务无条件保留**。
 //
-// 内存里的这份是活动任务的唯一可写副本：updateTaskCore 等一律「tasks[key] 查不到就 return」。
+// 内存里的这份是活动任务的唯一可写副本：applyTaskProgress 等一律「tasks[key] 查不到就 return」。
 // 一个仍在跑的任务被裁掉之后，它后续的全部进度、指标乃至终态更新都会静默失效，
 // 任务面板上永远停在最后一次进度、也再不会变成「完成」。
 //
@@ -654,7 +528,7 @@ func (e *taskEngine) pruneTasksLocked() {
 		return
 	}
 	if len(finished) > quota {
-		sortTaskStatusesByRecency(finished)
+		sortTaskStatusesByActivity(finished)
 		finished = finished[:quota]
 	}
 	for _, task := range finished {
@@ -663,10 +537,22 @@ func (e *taskEngine) pruneTasksLocked() {
 	e.tasks = next
 }
 
-// sortTaskStatusesByRecency 按「最近活动」降序排：序号优先，其后依次是更新时间、开始时间、key。
-// 淘汰与列表接口共用同一套定序，保证「被裁掉的」与「排在末尾的」是同一批。
-func sortTaskStatusesByRecency(items []TaskStatus) {
+// sortTaskStatusesByActivity 定序任务：**活动态**在前，其后按「最近活动」降序——
+// 序号优先，其后依次是更新时间、开始时间、key。
+//
+// 活动态优先不是展示偏好，而是可用性下限：序号只在有更新时才递增，一个长时间不上报进度的大库扫描
+// 会被后来的大量短任务超过；任务表又没有行数上限，而前端只取第一页 50 条。只按序号排的话，
+// 用户正等着看的那个任务恰好会掉出第一页——而它是唯一一个「还能变」的任务。
+//
+// 这里是任务中心顺序的唯一裁决处：DB 侧只按序号取候选历史（database.SqlStore.ListTasks），
+// 活动任务不靠那一页捞回来——内存里恒有一份（pruneTasksLocked 无条件保留）。
+// 淘汰与列表接口共用同一套定序，保证「被裁掉的」与「排在末尾的」是同一批；
+// 淘汰那边的输入已剔除活动任务，故首个比较键在那里是空转。
+func sortTaskStatusesByActivity(items []TaskStatus) {
 	sort.Slice(items, func(i, j int) bool {
+		if activeI, activeJ := taskIsActive(items[i].Status), taskIsActive(items[j].Status); activeI != activeJ {
+			return activeI
+		}
 		if items[i].Sequence == items[j].Sequence {
 			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
 				if items[i].StartedAt.Equal(items[j].StartedAt) {
@@ -682,7 +568,11 @@ func sortTaskStatusesByRecency(items []TaskStatus) {
 
 // ---- 查询 ----
 
-// listTaskStatuses 合并 DB 历史记录与内存中的活动任务，返回按最近活动降序排列的快照副本。
+// listTaskStatuses 合并 DB 历史记录与内存中的活动任务，返回定序后的快照副本
+// （**活动态**在前，其后按最近活动降序，见 sortTaskStatusesByActivity）。
+//
+// 限流在合并**之后**再截断：DB 那一页按序号取回最近的 Limit 条历史，内存里的活动任务补进来后重排，
+// 被截掉的只会是排在最末的历史。
 func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.TaskFilters) ([]TaskStatus, error) {
 	records, err := e.store.ListTasks(ctx, filters)
 	if err != nil {
@@ -696,8 +586,8 @@ func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.Task
 	seen := make(map[string]bool, len(records))
 	for _, record := range records {
 		task := taskStatusFromRecord(record)
-		// 进度改为异步落盘后，活动任务的内存快照比 DB 记录更新（DB 可能滞后最多一个落盘周期）。
-		// 同时存在于内存与 DB 时用内存版本，避免 API 返回被滞后的 DB 进度覆盖。
+		// 进度是异步落盘的，DB 记录最多滞后一个落盘周期。同时存在于内存与 DB 时必须取内存版本，
+		// 否则 API 返回的进度会被滞后的 DB 快照盖回去。
 		if memTask, ok := e.tasks[task.Key]; ok {
 			// 克隆：返回的切片会在 Unlock 之后由 listTasks 交给 json.Marshal 遍历，
 			// 而运行中的任务仍在持锁原地写 Metrics/Params，共享 map 会导致并发读写 fatal。
@@ -732,7 +622,7 @@ func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.Task
 	}
 	e.mutex.Unlock()
 
-	sortTaskStatusesByRecency(items)
+	sortTaskStatusesByActivity(items)
 	if filters.Limit > 0 && len(items) > filters.Limit {
 		items = items[:filters.Limit]
 	}
@@ -855,12 +745,11 @@ func (e *taskEngine) pause(key string) error {
 	task.CanResume = true
 	task.PausedAt = &now
 	task.PauseReason = "manual_pause"
-	applyTaskMessage(&task, "", "task.msg.control.paused", nil)
+	applyTaskMessage(&task, "task.msg.control.paused", nil)
 	task.UpdatedAt = now
 	e.seq++
 	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return nil
@@ -887,12 +776,11 @@ func (e *taskEngine) resume(key string) error {
 	task.CanResume = false
 	task.PausedAt = nil
 	task.PauseReason = ""
-	applyTaskMessage(&task, "", "task.msg.control.resumed", nil)
+	applyTaskMessage(&task, "task.msg.control.resumed", nil)
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	enrichTaskProgress(&task)
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return nil
@@ -926,11 +814,11 @@ func (e *taskEngine) cancel(key string) error {
 	task.CanPause = false
 	task.CanResume = false
 	task.Status = "cancelling"
-	applyTaskMessage(&task, "", "task.msg.control.cancelling", nil)
+	applyTaskMessage(&task, "task.msg.control.cancelling", nil)
 	task.UpdatedAt = time.Now()
 	e.seq++
 	task.Sequence = e.seq
-	e.tasks[key] = task
+	e.writeTaskLocked(&task)
 	e.persistTaskStatus(task)
 	e.publishTaskStatusLocked(task)
 	return nil

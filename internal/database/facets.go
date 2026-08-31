@@ -1,4 +1,4 @@
-// 业务说明：本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「标签/作者等分面查询」子域。
+// 本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「标签/作者等分面查询」子域。
 
 package database
 

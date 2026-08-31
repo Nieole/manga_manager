@@ -224,23 +224,7 @@ chmod 600 config.yaml
 
 ## 🤝 开发
 
-```bash
-# 前端开发
-cd web && npm run dev
-
-# 前端构建 / 检查 / 测试
-cd web && npm run build
-cd web && npm run lint
-cd web && npm run test   # vitest
-
-# 后端测试
-go test ./...
-
-# 重新生成前端接口契约(CI 会做漂移校验)
-go run ./cmd/tsgen
-```
-
-修改 `sql/query.sql` 或 `internal/database/schema.sql` 后,需运行 `sqlc generate` 重新生成 Go 绑定。更多约定见 [`AGENTS.md`](AGENTS.md),版本变更见 [`CHANGELOG.md`](CHANGELOG.md)。
+前端脚本见 `web/package.json`,整套发布式构建见 `build.sh`。开发约定、测试要求与生成物(sqlc 绑定、前端接口契约)的重建方式见 [`AGENTS.md`](AGENTS.md),版本变更见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 *Developed with ❤️ via AI-Pair.*

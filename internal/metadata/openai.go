@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于元数据聚合链路，负责从本地规则、外部站点和 AI Provider 获取漫画标题、简介、人物、标签与关系信息。
-// 它支撑系列详情、智能补全、关系图谱和搜索索引的内容质量。
-// 维护时应关注 Provider 契约、失败回退、限流、提示词稳定性和人工审核数据不被覆盖。
-
 package metadata
 
 import (
@@ -186,8 +182,8 @@ func (o *OpenAIProvider) FetchSeriesMetadata(ctx context.Context, title string) 
 	}
 
 	// 与 Ollama 保持同一契约：LLM 表示「不了解该作品」时返回 (nil, nil)，让调用方据此
-	// 判定「没找到」。此前这两个 Provider 在该情形下仍返回一个各字段全空的结构体，
-	// 于是批量刮削把幻觉空结果计为成功，并把一堆空提案塞进待审队列。
+	// 判定「没找到」。若改成返回一个各字段全空的结构体，批量刮削会把这个幻觉空结果计为
+	// 成功，并把空提案塞进待审队列。
 	if strings.TrimSpace(result.Title) == "" && strings.TrimSpace(result.Summary) == "" {
 		return nil, nil
 	}

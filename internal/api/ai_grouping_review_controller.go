@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -85,12 +81,9 @@ func aiGroupingParseSeriesIDs(raw string) []int64 {
 	return clean
 }
 
-// aiGroupingViewData 是渲染审核视图所需的预取数据。
-//
-// 引入它是为了消掉两层 N+1：列表接口每页 30 条审核，此前逐条查一次候选合集
-// （30 次），再对每个合集逐个查一次系列名（30 × 合集数，实测可到 150+ 次）。
-// 更糟的是那两处查询的错误都被 `_` 吞掉，DB 故障时接口照样返回 200，
-// 候选合集静默显示为空——用户会以为 AI 什么都没分出来。
+// aiGroupingViewData 是渲染审核视图所需的预取数据，避免按审核、按候选合集逐条查询
+// 拖出两层 N+1（页大小 × 每条的候选合集数），也避免两步查询各自的错误被吞掉——
+// 吞掉后 DB 故障时接口仍返回 200，候选合集会静默显示为空。
 type aiGroupingViewData struct {
 	collectionsByReview map[int64][]database.AiGroupingReviewCollection
 	seriesByID          map[int64]database.GetSeriesNamesByIDsRow
@@ -375,8 +368,8 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 	for _, row := range rows {
 		reviewIDs = append(reviewIDs, row.ID)
 	}
-	// 预取要么全成功要么整体报错：此前这两步的错误被 `_` 吞掉，DB 故障时接口返回 200
-	// 且候选合集全为空，用户会以为 AI 一个分组都没分出来。
+	// 预取要么全成功要么整体报错：两步查询的错误都不能被 `_` 吞掉，否则 DB 故障时
+	// 接口会返回 200 且候选合集全为空，用户会以为 AI 一个分组都没分出来。
 	data, err := loadAIGroupingViewData(r.Context(), c.store, reviewIDs)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load AI grouping review details")

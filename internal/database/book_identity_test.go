@@ -1,10 +1,9 @@
-// 业务说明：本文件守卫「KOReader 身份索引回填不会顶起 books.updated_at」。
+// 本文件守卫「KOReader 身份索引回填不会顶起 books.updated_at」。
 //
-// file_hash / quick_hash / path_fingerprint* 是 KOReader 匹配用的内部索引，不构成
-// 「这本书变了」。此前 UpdateBookIdentity 无条件 `updated_at = CURRENT_TIMESTAMP`，
-// 于是一次「重建 KOReader 索引」会把整库的 books.updated_at 推到同一秒：
-//   - 三条健康报告查询的 `ORDER BY b.updated_at DESC` 第一排序键全部相等，退化成按 id；
-//   - 前端封面 URL 上的 ?v=updated_at 整库失效，等于让所有人重下一遍全部封面。
+// file_hash / quick_hash / path_fingerprint* 是 KOReader 匹配用的内部索引，不构成「这本书变了」；
+// UpdateBookIdentity 不得无条件把 updated_at 刷成 CURRENT_TIMESTAMP，否则一次「重建 KOReader
+// 索引」会把整库的 books.updated_at 推到同一秒——健康报告 `ORDER BY updated_at DESC` 的排序键
+// 全部相等、退化成按 id，前端封面 URL 的 ?v=updated_at 也会整库失效。
 
 package database
 

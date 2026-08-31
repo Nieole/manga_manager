@@ -1,9 +1,8 @@
-// 业务说明：本文件是「文件改名后阅读进度不丢」这一业务承诺的回归测试。
+// 守「文件改名后阅读进度不丢」：改名前后 books.id 必须保持不变。
 //
-// 用户在文件管理器里把一卷漫画改个名，是再普通不过的操作；但扫描器以 books.path 作为唯一身份，
-// 改名会被识别成「旧书消失 + 新书出现」——旧行随后被 CleanupLibrary（watcher 在任何删除/改名后
-// 自动触发）连同 user_book_progress、书签、合集归属一起 CASCADE 删掉。这里的用例断言的是
-// **书籍主键在改名前后保持不变**，因为所有关联数据都挂在那个 id 上。
+// 阅读进度、书签、合集归属都以 books.id 为外键 ON DELETE CASCADE，而扫描器以 books.path 为
+// 身份——改名一旦被看成「旧书消失 + 新书出现」，旧行会被 CleanupLibrary 连同这些关联数据一起删掉。
+// 复制出来的副本则必须**不**被重连，否则用户会平白少一本书。
 
 package scanner
 
@@ -22,7 +21,7 @@ import (
 // scanOnceForRehome 跑一次非强制的整库扫描。
 func scanOnceForRehome(t *testing.T, s *Scanner, lib database.Library) {
 	t.Helper()
-	if err := s.ScanLibrary(context.Background(), lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(context.Background(), lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("scan library failed: %v", err)
 	}
 }
@@ -355,7 +354,7 @@ func TestSeriesScanRehomesRenamedBook(t *testing.T) {
 		t.Fatalf("rename failed: %v", err)
 	}
 
-	if err := s.ScanSeries(ctx, book.SeriesID, false); err != nil {
+	if err := s.ScanSeries(ctx, book.SeriesID, false, nil); err != nil {
 		t.Fatalf("scan series failed: %v", err)
 	}
 

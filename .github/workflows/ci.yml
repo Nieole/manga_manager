@@ -16,7 +16,7 @@ env:
   # 所有 action 现已原生 node24，这个开关是**安全网**而不是必需项：
   # 万一将来某次依赖升级又引入一个仍在 node20 的 action，它能让其继续跑在 node24 上，
   # 而不是等 GitHub 从 runner 上彻底移除 node20 那天 CI 突然全红。
-  # 它不会掩盖弃用告警——告警照样会打出来，正是靠它才发现有四个 action 还在 node20。
+  # 它不会掩盖弃用告警：告警照样会打出来。
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -74,6 +74,11 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
+
+      - name: Check documentation style
+        if: matrix.os == 'ubuntu-latest'
+        # 规范见 docs/agents/doc-style.md。包注释的存在性另由 golangci-lint 的 ST1000 强制。
+        run: ./scripts/check-doc-style.sh
 
       - name: Scan Go dependencies for vulnerabilities (govulncheck)
         if: matrix.os == 'ubuntu-latest'

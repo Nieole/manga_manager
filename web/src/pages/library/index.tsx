@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 
@@ -24,6 +18,7 @@ import { LibraryScrapeModal } from './LibraryScrapeModal';
 import { TransferConfirmModal } from './TransferConfirmModal';
 import { type PaginationMode, type Series, type ViewMode } from './types';
 import { useLibraryFilters, supportsCursorPagination, hasAdvancedFilters } from './hooks/useLibraryFilters';
+import { useResetPageOnFilterChange } from './hooks/useResetPageOnFilterChange';
 import { useScrapeProviders } from '../../hooks/useScrapeProviders';
 import { useLibrarySeries } from './hooks/useLibrarySeries';
 import { useLibrarySelection } from './hooks/useLibrarySelection';
@@ -31,6 +26,7 @@ import { useLibraryKeyboard } from './hooks/useLibraryKeyboard';
 import { useExternalLibrary } from './hooks/useExternalLibrary';
 import { useSeriesScraping } from './hooks/useSeriesScraping';
 import { useSmartFilters } from './hooks/useSmartFilters';
+import { smartFilterToSnapshot } from './hooks/smartFilterNormalize';
 import { useLibraryFilterOptions } from './hooks/useLibraryFilterOptions';
 import { useLibraryCardActions } from './hooks/useLibraryCardActions';
 import { useLibraryTransfer } from './hooks/useLibraryTransfer';
@@ -126,21 +122,9 @@ export default function LibraryPage() {
     keyword: debouncedKeyword,
     appendMode: paginationMode === 'infinite',
   });
-  const { allSeries, totalSeries, loading, error: seriesError, pageCursorMap, resetPagination, refetchCurrentPage, retry: retrySeries, patchSeries } = seriesData;
+  const { allSeries, totalSeries, loading, error: seriesError, pageCursorMap, resetPagination, refreshLoadedSeries, retry: retrySeries, patchSeries } = seriesData;
 
-  // 翻页：filter 或 keyword 变化时重置到第 1 页。
-  // 首次(设置/深链水合)那轮不重置——否则从 URL 恢复的 activeTag/advanced 会触发本效果、把深链里的 page=3 冲回第 1 页。
-  const didHydratePageResetRef = useRef(false);
-  useEffect(() => {
-    if (!settingsReady) return;
-    if (!didHydratePageResetRef.current) {
-      didHydratePageResetRef.current = true;
-      return;
-    }
-    setPage(1);
-    resetPagination();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTag, activeAuthor, activeStatus, activeLetter, advanced, sortByField, sortDir, pageSize, debouncedKeyword]);
+  useResetPageOnFilterChange(filters, resetPagination);
 
   // 切换分页模式时回到第 1 页：无限滚动应从头开始累积，避免带着分页模式的中间页码进入追加流。
   useEffect(() => {
@@ -153,7 +137,7 @@ export default function LibraryPage() {
   // ===== 选择 =====
   const selection = useLibrarySelection({
     allSeries: allSeries,
-    onChanged: refetchCurrentPage,
+    onChanged: refreshLoadedSeries,
     onError: showError,
   });
 
@@ -162,22 +146,13 @@ export default function LibraryPage() {
   const externalLib = useExternalLibrary({ libId, refreshTrigger, allSeriesIds, onError: showError });
 
   // ===== 智能筛选 =====
-  // 智能筛选保存的是一组业务视图快照，应用时必须重置关键字，避免“视图条件 + 临时搜索词”叠加后让用户误以为视图失效。
+  // 智能筛选保存的是一组业务视图快照：视图有哪些维度、怎么存怎么还原由 smartFilterNormalize 一侧回答，页面只负责接线与提示。
   const smartFilters = useSmartFilters({
     libId,
     onSaved: () => showToast(t('home.smartFilters.saved'), 'success'),
     onError: showError,
     onApplied: (filter) => {
-      applySnapshot({
-        activeTag: filter.activeTag,
-        activeAuthor: filter.activeAuthor,
-        activeStatus: filter.activeStatus,
-        activeLetter: filter.activeLetter,
-        keyword: '',
-        sortByField: filter.sortByField,
-        sortDir: filter.sortDir,
-        pageSize: filter.pageSize,
-      });
+      applySnapshot(smartFilterToSnapshot(filter));
       if (filter.id !== 'reset') {
         showToast(t('home.smartFilters.applied', { name: filter.name }), 'success');
       }
@@ -205,7 +180,7 @@ export default function LibraryPage() {
     isSelectionMode: selection.isSelectionMode,
     toggleSelectSeries: selection.toggleSelectSeries,
     patchSeries,
-    refetchCurrentPage,
+    refreshLoadedSeries,
     showError,
     showToast,
     t,
@@ -215,7 +190,7 @@ export default function LibraryPage() {
   const scraping = useSeriesScraping({
     onSuccess: () => {
       showToast(t('series.toast.metadataReviewQueued', { count: 0 }), 'success');
-      refetchCurrentPage();
+      refreshLoadedSeries();
     },
     onError: showError,
   });
@@ -234,6 +209,7 @@ export default function LibraryPage() {
     externalSeriesMap: externalLib.externalSeriesMap,
     allSeries,
     selectedSeries: selection.selectedSeries,
+    queryExternalSeriesStatus: externalLib.queryExternalSeriesStatus,
     startExternalTransfer: externalLib.startExternalTransfer,
     clearSelection: selection.clearSelection,
     showError,
@@ -320,6 +296,7 @@ export default function LibraryPage() {
             activeAuthor,
             activeStatus,
             activeLetter,
+            advanced,
             sortByField,
             sortDir,
             pageSize,
@@ -482,7 +459,7 @@ export default function LibraryPage() {
           onSuccess={(updated) => {
             showToast(t('bulkEdit.success', { count: updated }), 'success');
             selection.clearSelection();
-            refetchCurrentPage();
+            refreshLoadedSeries();
           }}
         />
       )}

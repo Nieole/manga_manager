@@ -1,12 +1,8 @@
 /**
- * 业务说明：本文件守卫「保存之后的刷新只覆盖刚保存的那一块」。
+ * 守「保存之后的刷新只覆盖刚保存的那一块」，「只保存本分区」的对偶：破了它，
+ * 保存动作会把**其他**分区没保存的草稿一并静默抹掉，侧边栏脏点也一起熄灭。
  *
- * 这是「只保存本分区」的对偶。少了它，保存动作会反过来把**其他**分区没保存的草稿
- * 静默抹掉、侧边栏的脏点也一起熄灭——方向比原缺陷安全（丢的是本地草稿不是写库），
- * 但同样没有任何提示。
- *
- * 这里把 fetchConfig 里那段合并规则原样抽出来测：它是一段纯逻辑，不值得为它渲染整个
- * SettingsProvider（那要 mock apiClient、LocaleProvider、ToastProvider 三层）。
+ * mergeAfterSave 复刻 fetchConfig 里的合并判定，纯逻辑测试，不渲染整个 SettingsProvider。
  */
 
 import { describe, expect, it } from 'vitest';
@@ -60,9 +56,8 @@ describe('保存后的合并规则', () => {
   });
 
   it('保存 KOReader 之后一个 config 分区都不动', () => {
-    // KOReader 的表单是独立 state，不在 config 草稿里。此前这条路径走的是无参
-    // fetchConfig()，于是「保存 KOReader」会把 library/media/ai 的草稿一起吞掉
-    // ——和分区保存是同一个缺陷、同一条代码路径，只是换了个按钮。
+    // KOReader 的表单是独立 state，不在 config 草稿里；保存 KOReader 不得吞掉
+    // library/media/ai 的草稿——与「只保存本分区」是同一条防护路径。
     const draft = draftWithLibraryEdit();
     const next = mergeAfterSave(draft, makeConfig(), 'koreader');
     expect(next).toBe(draft);

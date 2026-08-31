@@ -5,5 +5,8 @@ data
 .gocache_local
 .tmp
 .idea
-docs/
 config.yaml
+# storageiobench 的默认输出目录（生成物，非文档）
+docs/performance-baselines/
+# 在飞的工单与规格草稿，不是仓库交付物
+.scratch/

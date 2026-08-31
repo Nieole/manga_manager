@@ -1,4 +1,4 @@
-// 业务说明：本文件把 AI 阅读推荐的缓存从 Controller 上帝对象里抽成独立组件。recommendationCache 按 locale
+// 本文件把 AI 阅读推荐的缓存从 Controller 上帝对象里抽成独立组件。recommendationCache 按 locale
 // 缓存推荐结果并带 TTL（默认 24h），并用 singleflight 合并同一 locale 的并发冷缓存/刷新请求，使这些请求只
 // 触发一次 LLM 推理。Controller 仅持有 *recommendationCache 引用，取数/回填经其方法。
 

@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于 SQLite 数据访问层，负责把漫画库、系列、阅读进度、任务和元数据状态持久化为稳定数据模型。
-// 它连接 sqlc 生成查询与上层领域服务，是资料库筛选、搜索同步和关系图谱的数据基础。
-// 维护时应保持 schema、查询定义、事务边界和迁移兼容，避免破坏既有用户数据。
-
 package database
 
 import (
@@ -153,7 +149,7 @@ type KOReaderDeviceConflict struct {
 	//
 	// 必须显式带出来。这个列表是两张表的 UNION ALL，而两张表各自有独立的 AUTOINCREMENT
 	// 序列、都从 1 开始，所以同一个 id 同时是一条进度和一条事件的合法主键——不是理论可能，
-	// 是常态。此前只回一个裸整数，调用方无从判断它能不能喂给按进度主键操作的接口。
+	// 是常态，调用方仅凭裸整数无法判断这一行能否喂给按进度主键操作的接口（见 ProgressID）。
 	SourceTable string `json:"source_table"`
 	// SourceID 是该行在其来源表里的主键。要定位这一行必须 (SourceTable, SourceID) 一起看。
 	SourceID int64 `json:"source_id"`

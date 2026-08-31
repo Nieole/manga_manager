@@ -1,5 +1,6 @@
-// 业务说明：本文件是元数据聚合链路的共享测试工具，提供浮点近似比较与 HTTP mock 响应构造器，
+// 本文件是元数据聚合链路的共享测试工具，提供浮点近似比较与 HTTP mock 响应构造器，
 // 供各 Provider（AniList/MangaDex/MAL/ComicVine/Bangumi）的解析与置信度回归测试复用。
+
 package metadata
 
 import (

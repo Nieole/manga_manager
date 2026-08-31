@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端阅读器页面，负责呈现漫画页、阅读偏好、键盘/触控操作、进度同步和缓存体验。
- * 它直接承载用户阅读主流程，需要把后端页面 API、缩放模式和本地偏好组合成稳定交互。
- * 维护时应关注页面预加载、错误恢复、移动端布局、进度写回频率和快捷操作一致性。
- */
-
 import { CheckCircle2, Download, Loader2, Trash2, WifiOff } from 'lucide-react';
 import type { OfflineBookStatus } from './offlineReader';
 
@@ -91,7 +85,7 @@ export function OfflineReadingPanel({
             </button>
             <button
               onClick={onDeleteOfflineBook}
-              disabled={offlineDeleting || !offlineStatus}
+              disabled={offlineDeleting || offlineCaching || !offlineStatus}
               className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {offlineDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}

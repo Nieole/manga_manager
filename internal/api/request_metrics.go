@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -143,9 +139,8 @@ type RequestPerformanceInfo struct {
 
 type requestPerformanceInfoKey struct{}
 
-// requestDiagnosticsBuffer 是固定容量的环形缓冲。此前用切片 + 每次满时 copy 左移淘汰，
-// 稳态下每个请求都要在写锁内做 O(n) 的元素搬移（约 300×200B）；改为写指针取模的真环形缓冲后
-// record 为 O(1)，snapshot 仍返回 oldest-first 顺序（消费方依赖该顺序取最新/尾部）。
+// requestDiagnosticsBuffer 是固定容量的环形缓冲：写指针取模实现，record 必须是 O(1)；
+// snapshot 必须返回 oldest-first 顺序——消费方依赖该顺序取最新/尾部。
 type requestDiagnosticsBuffer struct {
 	mu    sync.RWMutex
 	limit int

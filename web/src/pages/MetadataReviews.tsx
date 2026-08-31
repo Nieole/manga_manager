@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于项目源码的一部分，负责支撑漫画管理器在资料库、阅读器、扫描、元数据或系统设置中的具体业务能力。
- * 它与相邻模块共同组成前后端业务链路，修改时需要结合调用方理解数据流和用户可见行为。
- * 维护时应关注输入输出契约、错误处理、状态同步和与既有业务语义的一致性。
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { getApiErrorMessage } from '../api/client';
@@ -12,6 +6,13 @@ import { CheckCircle2, ExternalLink, Filter, GitCompareArrows, Loader2, Search, 
 import type { MetadataReviewInboxItem, MetadataReviewInboxResponse } from './series-detail/types';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
+import {
+  accumulateBulkOutcome,
+  bulkToastSeverity,
+  emptyBulkOutcome,
+  mergeBulkOutcomes,
+  type MetadataBulkResponse,
+} from './metadataReviewBulk';
 
 interface LibraryOption {
   id: number | string;
@@ -195,41 +196,34 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   const clearMarks = () => setMarkedActions({});
 
   const postMetadataBulk = async (endpoint: string, ids: number[]) => {
-    let done = 0;
-    let partial = 0;
-    let skipped = 0;
-    let failed = 0;
+    let totals = emptyBulkOutcome();
     for (let index = 0; index < ids.length; index += 100) {
       const batch = ids.slice(index, index + 100);
-      const res = await apiClient.post(endpoint, { review_ids: batch, mode });
-      done += (res.data.applied?.length || 0) + (res.data.rejected?.length || 0);
-      // partial：写入了一部分提案，但整条审核仍留在收件箱里等着处理
-      //（fill_empty 模式筛掉的、或已被锁定的字段）。不能并进 done，
-      // 否则用户会以为这些条目已经消失了，刷新后又看到它们还在。
-      partial += res.data.partial?.length || 0;
-      skipped += res.data.skipped?.length || 0;
-      failed += res.data.failed?.length || 0;
+      const res = await apiClient.post<MetadataBulkResponse>(endpoint, { review_ids: batch, mode });
+      totals = accumulateBulkOutcome(totals, res.data);
     }
-    return { done, partial, skipped, failed };
+    return totals;
   };
 
   const runMarkedActions = async () => {
     if (markedCount === 0) return;
     setActing(true);
     try {
-      const empty = { done: 0, partial: 0, skipped: 0, failed: 0 };
-      const applied = applyIds.length > 0 ? await postMetadataBulk('/api/metadata/reviews/bulk-apply', applyIds) : empty;
-      const rejected = rejectIds.length > 0 ? await postMetadataBulk('/api/metadata/reviews/bulk-reject', rejectIds) : empty;
-      const failedCount = applied.failed + rejected.failed;
-      const skippedCount = applied.skipped + rejected.skipped;
-      const partialCount = applied.partial + rejected.partial;
+      const applied = applyIds.length > 0
+        ? await postMetadataBulk('/api/metadata/reviews/bulk-apply', applyIds)
+        : emptyBulkOutcome();
+      const rejected = rejectIds.length > 0
+        ? await postMetadataBulk('/api/metadata/reviews/bulk-reject', rejectIds)
+        : emptyBulkOutcome();
+      const combined = mergeBulkOutcomes(applied, rejected);
       showToast(t('reviewInbox.toast.markedApplied', {
         applied: applied.done,
         rejected: rejected.done,
-        partial: partialCount,
-        skipped: skippedCount,
-        failed: failedCount,
-      }), failedCount > 0 ? 'error' : 'success');
+        partial: combined.partial,
+        skipped: combined.skipped,
+        conflict: combined.conflict,
+        failed: combined.failed,
+      }), bulkToastSeverity(combined));
       setMarkedActions({});
       await loadReviews(true);
       onReviewChange?.();

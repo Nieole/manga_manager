@@ -1,13 +1,8 @@
-/**
- * 业务说明：本文件是业务实现，属于前端共享组件层，负责沉淀按钮、面板、列表、封面、进度和反馈等可复用 UI 片段。
- * 它让资料库、阅读器、设置和系列详情在视觉和交互上保持一致。
- * 维护时应关注组件职责边界、可访问性、主题变量、加载态和不同页面的复用语义。
- */
-
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
+import { isTopModal, popModal, pushModal, type ModalId } from './modalStack';
 
 type ModalSize = 'compact' | 'standard' | 'wide';
 type ModalPlacement = 'center' | 'top';
@@ -38,6 +33,12 @@ interface ModalShellProps {
 // 排除 tabindex="-1"：那是「可以用脚本聚焦、但不进 Tab 顺序」的约定。
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// 打开时优先把焦点放进第一个可输入控件。头部的关闭按钮在 DOM 里排在正文之前，
+// 直接取「第一个可聚焦元素」会让搜索弹窗、资料库表单一打开就聚在关闭按钮上，
+// 用户得先点一下输入框才能打字，按空格还会直接把弹窗关掉。
+const FIRST_FOCUS_SELECTOR =
+  'input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled])';
 
 const sizeClassMap: Record<ModalSize, string> = {
   compact: 'max-w-lg',
@@ -71,30 +72,53 @@ export function ModalShell({
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
 
+  // 用 ref 持有随每次渲染变化的入参，让下面那个 effect 只依赖 open。
+  // 调用方普遍传内联箭头（`onClose={() => setOpen(false)}`），把它放进依赖数组的话，
+  // 外壳每渲染一次 effect 就卸载重装一次：滚动锁被反复记错原值，焦点也会被重新抢回弹窗开头——
+  // 而弹窗里的输入框正是外壳 state，打字必然触发外壳渲染，于是打到一半焦点就飞了。
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const closeOnEscRef = useRef(closeOnEsc);
+  closeOnEscRef.current = closeOnEsc;
+
+  const modalIdRef = useRef<ModalId | null>(null);
+  modalIdRef.current ??= Symbol('ModalShell');
+  const modalId = modalIdRef.current;
+
   useEffect(() => {
     if (!open) return;
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    // 入栈同时锁住页面滚动；解锁由栈统一负责，见 modalStack。
+    pushModal(modalId);
 
     // 记住是谁打开的这个弹窗，关闭时把焦点还回去。
     // 不还的话，键盘用户关掉弹窗后焦点回到 <body>，下一次 Tab 要从整页开头重新走一遍。
     const previouslyFocused = document.activeElement as HTMLElement | null;
 
-    // 打开时把焦点移进弹窗。此前焦点仍留在背景里：读屏软件读的还是背后那一页，
-    // 键盘用户按 Tab 是在背景内容之间走，弹窗形同不存在。
+    // 打开时必须把焦点移进弹窗，否则读屏软件读的还是背景那一页，
+    // 键盘用户按 Tab 也是在背景内容之间走——弹窗形同不存在。
     const focusFirst = () => {
       const panel = panelRef.current;
       if (!panel) return;
-      const target = panel.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? panel;
+      // 焦点已经落在弹窗里就不动它：内容自带 autoFocus，或用户已经点进某个控件。
+      if (panel.contains(document.activeElement)) return;
+      const target =
+        panel.querySelector<HTMLElement>(FIRST_FOCUS_SELECTOR) ??
+        panel.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ??
+        panel;
       target.focus();
     };
     // 等一帧：内容可能是异步渲染的（懒加载的表单、Suspense 边界）。
     const raf = requestAnimationFrame(focusFirst);
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (closeOnEsc && event.key === 'Escape') {
-        onClose();
+      // 叠了多层时只有栈顶那层吃键盘：否则一次 Esc 会把所有层一起关掉，
+      // Tab 也会被下面那层的焦点陷阱拽回它自己的面板里。
+      if (!isTopModal(modalId)) return;
+      if (closeOnEscRef.current && event.key === 'Escape') {
+        // 拦住冒泡：Esc 已经被这层消费掉了，不该再传给快捷键面板一类装在 window 上的监听。
+        event.stopPropagation();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -130,14 +154,14 @@ export function ModalShell({
 
     return () => {
       cancelAnimationFrame(raf);
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
+      popModal(modalId);
       // 元素可能已随页面变化被卸载，isConnected 兜一下。
       if (previouslyFocused && previouslyFocused.isConnected) {
         previouslyFocused.focus();
       }
     };
-  }, [closeOnEsc, onClose, open]);
+  }, [modalId, open]);
 
   if (!open) return null;
 

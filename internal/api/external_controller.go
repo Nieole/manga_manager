@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -16,10 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"manga-manager/internal/external"
-	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -78,16 +73,15 @@ func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http
 		return
 	}
 
-	taskKey, started := c.launchExternalLibraryScanTask(libraryID, session.SessionID)
-	if !started {
+	if err := c.launchExternalLibraryScanTask(libraryID, session.SessionID); err != nil {
 		c.external.ClearSession(libraryID, session.SessionID)
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An external library scan is already running"})
+		writeTaskLaunchError(w, err, "An external library scan is already running", "Failed to start external library scan")
 		return
 	}
 
 	jsonResponse(w, http.StatusAccepted, map[string]any{
 		"session":  session,
-		"task_key": taskKey,
+		"task_key": externalLibraryScanTaskKey(libraryID, session.SessionID),
 	})
 }
 
@@ -213,12 +207,10 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// 把**已经算好的** plan 交给后台任务。此前这里只是为了拿 plan.MissingBooks 决定
-	// 回 200 还是 202，算完就整个丢掉，后台任务再用同一份入参重新规划一遍——
-	// 一次传输请求把 PrepareTransfer 完整跑两遍（含全部 DB 往返）。
-	taskKey, started := c.launchExternalLibraryTransferTask(libraryID, sessionID, plan)
-	if !started {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "An external library transfer is already running"})
+	// 把**已经算好的** plan 交给后台任务，不能让后台任务再用同一份入参重新规划一遍——
+	// 否则一次传输请求会把 PrepareTransfer（含全部 DB 往返）完整跑两遍。
+	if err := c.launchExternalLibraryTransferTask(libraryID, sessionID, plan); err != nil {
+		writeTaskLaunchError(w, err, "An external library transfer is already running", "Failed to start external library transfer")
 		return
 	}
 
@@ -227,98 +219,120 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		"series_count":   plan.SeriesCount,
 		"missing_books":  plan.MissingBooks,
 		"existing_books": plan.ExistingBooks,
-		"task_key":       taskKey,
+		"task_key":       externalLibraryTransferTaskKey(libraryID, sessionID),
 	})
 }
 
-func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) (string, bool) {
-	taskKey := externalLibraryScanTaskKey(libraryID, sessionID)
-	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scan_external_library", "task.msg.scan_external_library.start", nil, 0) {
-		return taskKey, false
-	}
+// externalScanHandle 是**外部库**传输扫描收下的**任务句柄**：只有**计数推进**换成本包的
+// 帧构造，扫描报两个数字，i18n 码与**阶段**留在这一侧（遮蔽内嵌方法的写法同 proposalDB.ExecTx）。
+type externalScanHandle struct {
+	*taskrun.Handle
+}
 
-	lib, err := c.store.GetLibrary(context.Background(), libraryID)
-	if err == nil {
-		c.taskEngine.setTaskMetadata(taskKey, map[string]string{"session_id": sessionID}, lib.Name)
-	}
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
+// Advance 遮蔽内嵌句柄的同名方法：扫描只认收窄后的这个形状。
+// 一份报文一整帧：计数、指标与占位参数同时变，拆开报会被投递水位撕断。
+func (h externalScanHandle) Advance(current, total int) {
+	h.Report(taskrun.Frame{
+		Current: &current,
+		Total:   &total,
+		Phase:   "discovering",
+		Code:    "task.msg.scan_external_library.progress",
+		Params:  map[string]string{"count": strconv.Itoa(current)},
+		Metrics: map[string]int64{"scanned_files": int64(current)},
+	})
+}
 
-	c.runBackgroundTask(taskKey, func() {
-		defer cleanupCancel()
-		var lastUpdate time.Time
-		snapshot, err := c.external.ScanSession(taskCtx, sessionID, func(current, total int, message string) {
-			now := time.Now()
-			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.taskEngine.updateTaskDetails(taskKey, current, total, message, "discovering", "", map[string]int64{
-					"scanned_files": int64(current),
-				}, nil)
-				lastUpdate = now
-			}
-		})
-		if errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.scan_external_library.cancelled", nil)
-			return
-		}
+// launchExternalLibraryScanTask 起**外部库**扫描任务。**作用域**显示名取自资料库，
+// 取不到就留空——会话本身不依赖它，为一次读库失败挡下整个扫描不划算。
+func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) error {
+	spec := TaskSpec{
+		Key:          externalLibraryScanTaskKey(libraryID, sessionID),
+		Type:         "scan_external_library",
+		StartCode:    "task.msg.scan_external_library.start",
+		CanCancel:    true,
+		CanPause:     true,
+		Metadata:     map[string]string{"session_id": sessionID},
+		CompleteCode: "task.msg.scan_external_library.complete",
+		CancelCode:   "task.msg.scan_external_library.cancelled",
+		FailCode:     "task.msg.scan_external_library.failed",
+	}
+	spec.ScopeName = c.libraryScopeName(libraryID)
+
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: tp})
 		if err != nil {
-			c.taskEngine.failTaskErrMsg(taskKey, "task.msg.scan_external_library.failed", nil, err.Error())
-			return
-		}
-		if snapshot.ScannedFiles > 0 {
-			c.taskEngine.updateTaskMsg(taskKey, snapshot.ScannedFiles, snapshot.ScannedFiles, "task.msg.scan_external_library.progress", map[string]string{"count": strconv.Itoa(snapshot.ScannedFiles)})
-			c.taskEngine.finishTaskMsg(taskKey, "task.msg.scan_external_library.complete", nil)
-		} else {
-			c.taskEngine.completeTaskMsg(taskKey, "completed", "task.msg.scan_external_library.complete_empty", nil)
+			return TaskResult{}, err
 		}
 		c.PublishEvent("refresh")
+		if snapshot.ScannedFiles == 0 {
+			return TaskResult{Code: "task.msg.scan_external_library.complete_empty"}, nil
+		}
+		return TaskResult{}, nil
 	})
-	return taskKey, true
 }
 
 // launchExternalLibraryTransferTask 用**调用方已经算好的** plan 起后台传输任务。
 // 传 plan 而不是 seriesIDs，是为了不让 PrepareTransfer 在一次请求里跑两遍。
-func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, plan external.TransferPlan) (string, bool) {
-	taskKey := externalLibraryTransferTaskKey(libraryID, sessionID)
-	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "transfer_external_library", "task.msg.transfer_external_library.start", nil, 0) {
-		return taskKey, false
-	}
-
-	lib, err := c.store.GetLibrary(context.Background(), libraryID)
-	if err == nil {
-		c.taskEngine.setTaskMetadata(taskKey, map[string]string{
+//
+// 逐条目只报一帧、文案码恒定，投递节奏因此完全由引擎水位决定：这两条同时成立才谈得上节流。
+// 一条通路上出现两个交替的文案码，水位每次都判「展示态变了」而放行，等于没有节流——
+// 全部命中「目标已存在」时循环会以系统调用的速度空转，投递把 SSE 客户端的缓冲挤爆、连接被断开。
+//
+// 代价要说清：水位只比对 status / phase / messageCode / message，因此逐条目帧的文案码恒定也
+// 意味着它换不到「展示态变了必须投递」那条豁免。上一本传得快、下一本是几百 MB 时，后者的开工帧
+// 若落进窗口内就会被吞，任务气泡在那几分钟里停在上一本书上。要堵死它得让水位比对 CurrentItem，
+// 而水位的判定规则不在本次改造范围内。
+//
+// 循环结束后补的那一帧不是可选的：终态不动指标，少了它 transferred_files 会永远停在倒数第二本上。
+func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, plan external.TransferPlan) error {
+	total := len(plan.Operations)
+	spec := TaskSpec{
+		Key:       externalLibraryTransferTaskKey(libraryID, sessionID),
+		Type:      "transfer_external_library",
+		StartCode: "task.msg.transfer_external_library.start",
+		Total:     total,
+		CanCancel: true,
+		CanPause:  true,
+		Metadata: map[string]string{
 			"session_id":   sessionID,
 			"series_count": strconv.Itoa(plan.SeriesCount),
-		}, lib.Name)
+		},
+		CompleteCode: "task.msg.transfer_external_library.complete",
+		CancelCode:   "task.msg.transfer_external_library.cancelled",
+		FailCode:     "task.msg.transfer_external_library.failed",
 	}
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
+	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	c.runBackgroundTask(taskKey, func() {
-		defer cleanupCancel()
-		if err := taskCtx.Err(); err != nil {
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
-			return
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+		if err := ctx.Err(); err != nil {
+			return TaskResult{}, err
 		}
-		if len(plan.Operations) == 0 {
-			c.taskEngine.finishTaskMsg(taskKey, "task.msg.transfer_external_library.all_exist", nil)
+		if total == 0 {
 			c.PublishEvent("refresh")
-			return
+			return TaskResult{Code: "task.msg.transfer_external_library.all_exist"}, nil
 		}
 
 		failures := make([]string, 0)
 		skipped := 0
 		createdDirs := make(map[string]struct{})
-		var lastUpdate time.Time
 		for index, op := range plan.Operations {
-			if err := taskcontrol.Wait(taskCtx); errors.Is(err, context.Canceled) {
-				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.transfer_external_library.cancelled", nil)
-				return
+			// 非取消错误一律视为失败：**暂停闸门**今天只返回 nil 或 ctx.Err()，而任务上下文无
+			// deadline，因此这与「只认取消」等价。给任务上下文加超时会让这条等价失效。
+			if err := tp.Checkpoint(ctx); err != nil {
+				return TaskResult{}, err
 			}
-			now := time.Now()
-			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.taskEngine.updateTaskDetailsMsg(taskKey, index, len(plan.Operations), "task.msg.transfer_external_library.transferring", map[string]string{"path": op.RelativePath}, "transferring_files", op.RelativePath, map[string]int64{
-					"transferred_files": int64(index),
-				}, nil)
-				lastUpdate = now
-			}
+			// 帧报的是**已完成**数，因此在拷贝之前报：单本几百 MB 要拷几分钟，
+			// 这段时间里用户要看到的是正在传的那本书，而不是上一本传完时的旧帧。
+			done := index
+			tp.Report(taskrun.Frame{
+				Current: &done,
+				Total:   &total,
+				Phase:   "transferring_files",
+				Item:    op.RelativePath,
+				Code:    "task.msg.transfer_external_library.transferring",
+				Params:  map[string]string{"path": op.RelativePath},
+				Metrics: map[string]int64{"transferred_files": int64(done)},
+			})
 			skippedCopy, err := copyFileToExternalLibrary(op.SourcePath, op.Destination, createdDirs)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", op.RelativePath, err))
@@ -331,28 +345,33 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			if skippedCopy {
 				skipped++
 			}
-			now = time.Now()
-			if now.Sub(lastUpdate) >= 500*time.Millisecond {
-				c.taskEngine.updateTaskDetailsMsg(taskKey, index+1, len(plan.Operations), "task.msg.transfer_external_library.progress", map[string]string{"done": strconv.Itoa(index + 1), "total": strconv.Itoa(len(plan.Operations))}, "transferring_files", op.RelativePath, map[string]int64{
-					"transferred_files": int64(index + 1),
-				}, nil)
-				lastUpdate = now
-			}
 		}
+		// 收尾这一帧的计数与指标回答的是两个问题：Current 是「走完了几本」（失败的也走过了），
+		// transferred_files 是「传成了几本」。
+		transferred := total - len(failures)
+		tp.Report(taskrun.Frame{
+			Current: &total,
+			Total:   &total,
+			Code:    "task.msg.transfer_external_library.progress",
+			Params:  map[string]string{"done": strconv.Itoa(transferred), "total": strconv.Itoa(total)},
+			Metrics: map[string]int64{"transferred_files": int64(transferred)},
+		})
+		c.PublishEvent("refresh")
 
 		if len(failures) > 0 {
-			c.taskEngine.failTaskErrMsg(taskKey,
-				"task.msg.transfer_external_library.complete_with_failures",
-				map[string]string{"success": strconv.Itoa(len(plan.Operations) - len(failures)), "failed": strconv.Itoa(len(failures))},
-				strings.Join(failures, "\n"))
-			c.PublishEvent("refresh")
-			return
+			return TaskResult{
+				Code: "task.msg.transfer_external_library.complete_with_failures",
+				Params: map[string]string{
+					"success": strconv.Itoa(total - len(failures)),
+					"failed":  strconv.Itoa(len(failures)),
+				},
+			}, errors.New(strings.Join(failures, "\n"))
 		}
-
-		c.taskEngine.finishTaskMsg(taskKey, "task.msg.transfer_external_library.complete", map[string]string{"added": strconv.Itoa(len(plan.Operations)), "existing": strconv.Itoa(plan.ExistingBooks + skipped)})
-		c.PublishEvent("refresh")
+		return TaskResult{Params: map[string]string{
+			"added":    strconv.Itoa(total),
+			"existing": strconv.Itoa(plan.ExistingBooks + skipped),
+		}}, nil
 	})
-	return taskKey, true
 }
 
 // copyFileToExternalLibrary 把一本书拷到外部库，返回「目标是否已存在（跳过）」。

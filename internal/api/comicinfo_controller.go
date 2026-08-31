@@ -1,18 +1,15 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/storageio"
-	"manga-manager/internal/taskcontrol"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -20,6 +17,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -212,50 +210,69 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 回写整个系列的归档要逐本解压重压，大系列可以跑到分钟级。此前这一切都在 HTTP 请求
-	// goroutine 里同步做：请求会一直挂着直到最后一本写完，中途无法取消、没有进度可看，
-	// 而且完全绕开了存储 IO 调度——阅读器取页会和它抢同一块盘。
-	//
-	// 改成后台任务：走 startTaskWithOptions 拿到取消能力，每本书前取一次 IO 令牌，
-	// 与扫描/哈希回填共用同一套卷级并发上限。
-	taskKey := fmt.Sprintf("write_comicinfo_series_%d", seriesID)
-	if !c.taskEngine.startCancelableTask(taskKey, "write_comicinfo", "正在写入 ComicInfo", len(books)) {
-		jsonError(w, http.StatusConflict, "ComicInfo write is already running for this series")
+	if err := c.launchWriteSeriesComicInfoTask(series, books, tags, authors); err != nil {
+		writeTaskLaunchError(w, err, "ComicInfo write is already running for this series", "Failed to start ComicInfo write")
 		return
 	}
-	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"series_id": strconv.FormatInt(seriesID, 10)}, series.Name)
-	taskCtx, cleanupCancel := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackgroundTask(taskKey, func() {
-		defer cleanupCancel()
+	jsonResponse(w, http.StatusAccepted, map[string]interface{}{
+		"status":   "started",
+		"task_key": writeComicInfoTaskKey(seriesID),
+		"total":    len(books),
+	})
+}
+
+// writeComicInfoTaskKey 拼回写任务的**任务键**。HTTP 层要把它回给前端，任务声明也要用它，
+// 因此它是两处共用的一份实现而不是各拼各的。
+func writeComicInfoTaskKey(seriesID int64) string {
+	return fmt.Sprintf("write_comicinfo_series_%d", seriesID)
+}
+
+// launchWriteSeriesComicInfoTask 是 ComicInfo 回写任务的启动点，走引擎的启动入口。
+//
+// 回写整个系列要逐本解压重压，大系列可以跑到分钟级，因此必须做成后台任务：同步做会让请求一直
+// 挂到最后一本写完、中途无法取消也看不到进度。它**可取消但不可暂停**——每本书都是一次原子替换，
+// 停在两本之间没有额外好处，而任务中心的暂停控件正是由 CanPause 决定的。
+//
+// 系列、书目、标签与作者由调用方备齐后传入：任务声明要一次性落地，其中的作用域显示名来自系列。
+func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, books []database.Book, tags []database.Tag, authors []database.Author) error {
+	spec := TaskSpec{
+		Key:          writeComicInfoTaskKey(series.ID),
+		Type:         "write_comicinfo",
+		StartCode:    "task.msg.write_comicinfo.start",
+		Total:        len(books),
+		CanCancel:    true,
+		Metadata:     map[string]string{"series_id": strconv.FormatInt(series.ID, 10)},
+		ScopeName:    series.Name,
+		CompleteCode: "task.msg.write_comicinfo.complete",
+		CancelCode:   "task.msg.write_comicinfo.cancelled",
+		FailCode:     "task.msg.write_comicinfo.failed",
+	}
+
+	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
-			if err := taskcontrol.Wait(taskCtx); err != nil {
-				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.control.cancelling", nil)
-				return
-			}
-			if taskCtx.Err() != nil {
-				c.taskEngine.completeTaskMsg(taskKey, "cancelled", "task.msg.control.cancelling", nil)
-				return
-			}
-
-			// 拿 IO 令牌：归档回写是重 IO（逐本解压重压），不受调度会让阅读器取页明显卡顿。
-			// 用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，共用同一档并发上限。
-			_, releaseToken, _, _, tokenErr := c.acquireTaskStorageToken(taskCtx, book.Path, storageio.WorkKindMetadataScan)
-			if tokenErr != nil {
-				failed++
-				continue
-			}
-
+			// 聚合与序列化是纯 CPU，留在**磁盘作业**之外：把它们夹进令牌的持有区间只会虚占这块盘
+			// 的归档打开额度。序列化失败与回写失败同属这一本书的失败计数。
 			info := buildComicInfoForBook(book, series, books, tags, authors)
 			data, marshalErr := parser.MarshalComicInfo(info)
 			if marshalErr != nil {
-				releaseToken()
 				failed++
 				continue
 			}
-			writeErr := parser.WriteComicInfoIntoArchive(book.Path, data)
-			releaseToken()
+
+			// 以这个任务的名义发起**磁盘作业**：归档回写是重 IO（逐本解压重压），不受调度会让
+			// 阅读器取页明显卡顿。用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，
+			// 共用同一档并发上限。闭包只捕获自己的错误——回写失败是这一本书的结局，中止只由句柄
+			// 返回的闸门错误决定。
+			// 实况由句柄吸收，但这个任务不报 IO 指标：上报是任务体的选择，这一处没有选它。
+			var writeErr error
+			if err := tp.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
+				writeErr = parser.WriteComicInfoIntoArchive(book.Path, data)
+				return nil
+			}); err != nil {
+				return TaskResult{}, err
+			}
 
 			switch {
 			case writeErr == nil:
@@ -267,17 +284,26 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 				failed++
 			}
 
-			c.taskEngine.updateTaskDetails(taskKey, i+1, len(books), "", "writing", book.Name, map[string]int64{
-				"written": int64(written), "skipped": int64(skipped), "failed": int64(failed),
-			}, nil)
+			// 计数、书名与三个结局计数同属这一本书，必须整帧报出：拆开报会被投递水位撕断，
+			// 撕开之后是什么样见 taskrun.Handle.Report。
+			current, total := i+1, len(books)
+			tp.Report(taskrun.Frame{
+				Current: &current,
+				Total:   &total,
+				Phase:   "writing",
+				Item:    book.Name,
+				Code:    "task.msg.write_comicinfo.progress",
+				Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
+				Metrics: map[string]int64{
+					"written": int64(written), "skipped": int64(skipped), "failed": int64(failed),
+				},
+			})
 		}
-		c.taskEngine.finishTask(taskKey, fmt.Sprintf("已写入 %d 本，跳过 %d 本，失败 %d 本", written, skipped, failed))
-	})
-
-	jsonResponse(w, http.StatusAccepted, map[string]interface{}{
-		"status":   "started",
-		"task_key": taskKey,
-		"total":    len(books),
+		return TaskResult{Params: map[string]string{
+			"written": strconv.Itoa(written),
+			"skipped": strconv.Itoa(skipped),
+			"failed":  strconv.Itoa(failed),
+		}}, nil
 	})
 }
 

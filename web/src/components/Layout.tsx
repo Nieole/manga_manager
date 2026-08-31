@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端共享组件层，负责沉淀按钮、面板、列表、封面、进度和反馈等可复用 UI 片段。
- * 它让资料库、阅读器、设置和系列详情在视觉和交互上保持一致。
- * 维护时应关注组件职责边界、可访问性、主题变量、加载态和不同页面的复用语义。
- */
-
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
@@ -50,16 +44,15 @@ const EMPTY_LIBRARY_FORM: LibraryFormValues = {
 
 export default function Layout() {
     // 资料库的增删改、扫描、AI 分组与系统设置在后端都是管理员专属（见 isRegularWritablePath：
-    // 普通账号的写权限只有阅读进度、书签与短评）。前端此前照样把这些入口渲染出来，
-    // 普通用户点了只会吃一个 403 再弹一句泛化的失败提示——看起来像系统坏了，而不是没权限。
+    // 普通账号的写权限只有阅读进度、书签与短评）。这些入口必须只对管理员渲染，否则普通用户
+    // 点了只会吃一个 403 再弹一句泛化的失败提示——看起来像系统坏了，而不是没权限。
     const { isAdmin } = useAuth();
     const { t } = useI18n();
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
     const [loading, setLoading] = useState(true);
-    // 侧栏资源库列表加载失败标记：替代此前 catch 只 console.error、失败后侧栏空白无提示的静默失败，
-    // 供渲染一个「加载失败 · 重试」入口。
+    // 侧栏资源库列表加载失败标记，用于渲染一个「加载失败 · 重试」入口。
     const [librariesError, setLibrariesError] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -230,9 +223,8 @@ export default function Layout() {
         apiClient.get('/api/libraries')
             .then(res => {
                 setLibraries(res.data);
-                // 这里曾在首页强制跳转到第一个资源库。那是 Dashboard 成为 index 路由之前的
-                // 遗留逻辑：现在 "/" 本身就是仪表盘，强制跳转会让它在刷新、书签、直接输入
-                // 地址这三种场景下全都不可达（进去就被弹走）。
+                // 不要在这里加「跳转到第一个资源库」的逻辑："/" 本身就是仪表盘，强制跳转
+                // 会让刷新、书签、直接输入地址这三种场景全都不可达（进去就被弹走）。
                 setLoading(false);
             })
             .catch(err => {
@@ -284,9 +276,8 @@ export default function Layout() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // 全站实时刷新：SSE 断线由 useServerEvents 指数退避重连。
-    // EventSource 只在网络层断开时自愈；服务端返回非 2xx（会话过期的 401、反代 502）会让它
-    // 进入 CLOSED 并永久停止重试，此前那种情况下刷新与任务气泡会静默死亡直到用户手动刷页。
+    // 全站实时刷新：SSE 断线由 useServerEvents 指数退避重连，因为 EventSource 只在网络层
+    // 断开时自愈——服务端返回非 2xx（会话过期的 401、反代 502）会让它进入 CLOSED 并永久停止重试。
     useServerEvents('/api/events', {
         onMessage: (data) => {
             if (data === 'refresh') {

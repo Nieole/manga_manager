@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端系列详情页面，负责展示系列信息、卷册列表、元数据审核、关系维护和阅读入口。
- * 它把数据库中的书籍聚合、外部元数据和人工编辑结果组织成单个系列的业务视图。
- * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
- */
-
 import { useCallback, useState } from 'react';
 import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
@@ -70,7 +64,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       setIsScraping(true);
       try {
         const res = await apiClient.post(`/api/series/${seriesId}/scrape`, { provider: providerKey });
-        // 依据后端稳定的 outcome 结果码决定提示级别并本地化文案，不再解析中文 message 内容。
+        // 依据后端稳定的 outcome 结果码决定提示级别并本地化文案，不解析 message 里的文本内容。
         const outcome = res.data.outcome as string | undefined;
         if (res.data.scraped || outcome === 'queued') {
           showToast(t('series.toast.metadataReviewQueued', { count: res.data.field_count ?? 0 }), 'success');

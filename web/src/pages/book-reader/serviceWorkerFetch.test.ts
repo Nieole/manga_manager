@@ -1,13 +1,10 @@
 /**
- * 业务说明：本文件守卫 Service Worker 的路由与缓存策略。
+ * 守 Service Worker 的路由与缓存策略：踩错任何一条都不报错、只静默改变行为——
+ * 实时接口缓存进去会让用户看到过期状态，阅读请求策略搞反会让已下载的书离线打不开，
+ * 激活时清理漏掉离线书缓存会把用户下载的整本书全删了。
  *
- * sw.js 决定「哪些请求断网时还能读」，而它踩错任何一条都不会报错、只会静默改变行为：
- * 把实时接口（任务、设置、SSE）缓存进去 → 用户看到过期状态；把阅读请求的策略搞反 →
- * 已下载的书离线打不开；激活时的旧缓存清理漏掉离线书缓存 → 一次版本升级把用户
- * 下载的整本书全删了。
- *
- * sw.js 是经典脚本、没有 export，import 不进来。但它顶层只做三次 self.addEventListener，
- * 所以注入 self/caches/fetch 三个全局执行一遍，就能把监听器逐个捞出来驱动。
+ * sw.js 无 export，测试靠注入 self/caches/fetch 三个全局跑一遍顶层代码，把
+ * addEventListener 注册的监听器逐个捞出来驱动。
  */
 
 import { readFileSync } from 'node:fs';
@@ -146,6 +143,18 @@ describe('Service Worker 的接管范围', () => {
     // 用户改过画质偏好之后重建的 URL 与缓存里的 query 不同，
     // 必须按页路径忽略 query 命中——否则离线读图会静默失败。
     const event = await dispatchFetch(req('https://app.test/api/pages/42/7?format=avif&q=60'));
+    await expect(event.responded).resolves.toBe('cached-bytes');
+  });
+
+  // 护栏而非红/绿判据：ignoreSearch 让这条在归一化落盘之前也是绿的。
+  // 它锁的是「下载侧按不带 query 的页路径落盘，离线读图仍然命中」——
+  // 归一化那一步若被改回带 query 落盘，这条不会红，但改坏 ignoreSearch 会。
+  it('页图按不带 query 的路径落盘时，带画质参数的读取仍能命中', async () => {
+    const offline = await (await loadOffline()).open();
+    await offline.put(req('https://app.test/api/pages/42/7'), 'cached-bytes');
+    sw.fetchMock.mockRejectedValue(new Error('offline'));
+
+    const event = await dispatchFetch(req('https://app.test/api/pages/42/7?format=webp&q=80'));
     await expect(event.responded).resolves.toBe('cached-bytes');
   });
 

@@ -1,6 +1,5 @@
-// 业务说明：本文件是业务实现，属于漫画库扫描链路，负责发现文件、建立书籍和系列记录、提取封面、同步索引并维护任务进度。
-// 它决定本地文件系统如何变成前端资料库、搜索结果和系列聚合视图。
-// 维护时应重点关注增量扫描、重命名/删除处理、元数据回填、SQLite FTS5 搜索索引同步和长任务取消。
+// 文件监听器：按资料库根递归注册 fsnotify、去抖后触发库扫描与 CleanupLibrary、
+// 把事件路径按分隔符边界判回所属资料库，并在停机时收回派生出去的后台工作。
 
 package scanner
 
@@ -35,13 +34,13 @@ type FileWatcher struct {
 	pendingCleanup map[int64]time.Time
 	stopCh         chan struct{}
 	stopOnce       sync.Once
-	// formats 是**按库**的归档格式集（libraryID -> 集合）。
-	// 此前是一份全局列表，于是库级 scan_formats 在监听侧同样形同虚设。
+	// formats 是**按库**的归档格式集（libraryID -> 集合）。共用一份全局列表会让库级
+	// scan_formats 在监听侧形同虚设。
 	formats map[int64]config.ScanFormatSet
 
-	// baseCtx 随 Stop 一起取消，watcher 派生的所有扫描/清理都挂在它下面。
-	// 此前这两处用的是 context.Background() 且以裸 goroutine 启动：既不可取消，
-	// 停机也不等待——优雅关闭返回之后它们仍在往一个即将关掉的 store 里写。
+	// baseCtx 随 Stop 一起取消，watcher 派生的所有扫描/清理都必须挂在它下面。挂到
+	// context.Background() 上的裸 goroutine 既不可取消、停机也不等待——优雅关闭返回
+	// 之后它们仍在往一个即将关掉的 store 里写。
 	baseCtx    context.Context
 	cancelBase context.CancelFunc
 	// inFlight 追踪派生出去的扫描/清理，Stop 会等它们退出。
@@ -74,10 +73,10 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 
 // pathUnderRoot 报告 child 是否位于 root 之内（含 child == root）。
 //
-// 此前用的是无分隔符的 strings.HasPrefix，于是 /data/manga2 的事件会被判成属于 /data/manga——
-// 两个前缀相同的兄弟目录库互相串台。事件循环与 handleRemoval 都是 `for ... range fw.libs` 后
-// 第一个命中就 break，而 Go 的 map 迭代顺序随机，所以受害的是哪个库每次都不一样：
-// 删除事件被记到错误的库上，真正该清理的库留下幽灵记录。
+// 判定必须落在路径分隔符边界上。无分隔符的 strings.HasPrefix 会把 /data/manga2 的事件判成属于
+// /data/manga，两个前缀相同的兄弟目录库互相串台；事件循环与 handleRemoval 都是
+// `for ... range fw.libs` 后第一个命中就 break，Go 的 map 迭代顺序又随机，受害的是哪个库每次
+// 都不一样——删除事件记到错误的库上，真正该清理的库留下幽灵记录。
 //
 // 用 filepath.Rel 而不是「补一个分隔符再 HasPrefix」，是因为它顺带处理了 . 与 .. 的规范化；
 // 跨盘符（Windows 的 C: 与 D:）时 Rel 返回错误而非 ".."，这里按「不在其内」处理，正确。
@@ -131,7 +130,7 @@ func (fw *FileWatcher) WatchLibrary(libraryID int64, path string, scanFormats st
 		slog.Info("File watcher started for library", "library_id", libraryID, "path", path,
 			"watched", report.Watched, "symlink_dirs", report.SymlinkDirs)
 	}
-	// 部分失败不再当作整体失败：能监听多少算多少，比整库不监听强得多。
+	// 部分失败按部分成功处理：能监听多少算多少，比整库不监听强得多。
 	// 只有一个目录都没能注册上才向调用方报错。
 	if report.Watched == 0 && report.AlreadyWatched == 0 && report.FirstErr != nil {
 		return report.FirstErr
@@ -186,6 +185,14 @@ func (fw *FileWatcher) handleRemoval(name string) {
 	for _, watchedPath := range toRemove {
 		_ = fw.watcher.Remove(watchedPath) // 忽略错误：Linux 删目录已自动回收内核 watch
 	}
+}
+
+// rescheduleCleanup 把一次清理放回排期，等下一个去抖窗口重新判断。
+// 用于同轮扫描失败时：此时删行有丢数据的风险，宁可让幽灵记录多留一会儿。
+func (fw *FileWatcher) rescheduleCleanup(libID int64) {
+	fw.mu.Lock()
+	fw.pendingCleanup[libID] = time.Now()
+	fw.mu.Unlock()
 }
 
 // Start 启动文件监控事件循环
@@ -266,12 +273,22 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 							}
 						}
 						if libPath != "" {
+							// 同一个库若同轮也到期了清理，把它接在这次扫描之后串行跑。改名一本书会产生
+							// Rename(旧名)+Create(新名) 两个事件，分别排期清理与扫描；清理只做 stat，
+							// 比要走完整棵树、末尾才写 RehomeBookPath 的扫描快得多，并发派发时必然抢在
+							// 改名重连之前把旧行当成"文件已消失"删掉，阅读进度、书签、合集归属、阅读清单
+							// 条目随 ON DELETE CASCADE 一起没。
+							cleanupAfterScan := false
+							if cleanupAt, ok := fw.pendingCleanup[libID]; ok && now.Sub(cleanupAt) >= 5*time.Second {
+								delete(fw.pendingCleanup, libID)
+								cleanupAfterScan = true
+							}
 							slog.Info("Hot reload triggered by file watcher", "library_id", libID)
 							if publishEvent != nil {
 								publishEvent("hot_reload:")
 							}
 							fw.inFlight.Add(1)
-							go func(id int64, path string) {
+							go func(id int64, path string, cleanup bool) {
 								defer fw.inFlight.Done()
 								err := fw.runScanLibrary(fw.baseCtx, id, path, false)
 								switch {
@@ -285,11 +302,24 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 								case err != nil:
 									slog.Error("Hot reload scan failed", "library_id", id, "error", err)
 								}
-							}(libID, libPath)
+								if !cleanup {
+									return
+								}
+								// 扫描没跑成就不能清理：改名重连可能还没发生，此刻删行就是丢数据。
+								// 重新排期，交给下一个去抖窗口——那时扫描多半已经成功，改名也已重连。
+								if err != nil {
+									fw.rescheduleCleanup(id)
+									return
+								}
+								if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
+									slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
+								}
+							}(libID, libPath, cleanupAfterScan)
 						}
 					}
 				}
-				// 去抖后触发库清理，清除删除/重命名遗留的幽灵记录。CleanupLibrary 自带根目录探测与
+				// 去抖后触发库清理，清除删除/重命名遗留的幽灵记录。走到这里的都是本轮没有扫描要跑的库
+				// ——同轮有扫描的已在上面被取走、接在扫描之后串行。CleanupLibrary 自带根目录探测与
 				// 占比熔断，存储离线时不会误删。
 				for libID, lastChange := range fw.pendingCleanup {
 					if now.Sub(lastChange) >= 5*time.Second {
@@ -328,7 +358,8 @@ func (fw *FileWatcher) runScanLibrary(ctx context.Context, libraryID int64, root
 	if fw.scanLibrary != nil {
 		return fw.scanLibrary(ctx, libraryID, rootPath, force)
 	}
-	return fw.scanner.ScanLibrary(ctx, libraryID, rootPath, force)
+	// watcher 派生的扫描不属于任何任务：它由文件系统事件触发，没有发起方可以承接进度。
+	return fw.scanner.ScanLibrary(ctx, libraryID, rootPath, force, nil)
 }
 
 func (fw *FileWatcher) runCleanupLibrary(ctx context.Context, libraryID int64) error {
@@ -373,14 +404,12 @@ func (r WatchReport) OK() bool {
 
 // watchRecursive 递归注册目录监听，**遇错继续**。
 //
-// 此前的实现把 WalkDir 的错误与 watcher.Add 的错误直接 return 出去，于是一个不可读的
-// 子目录（权限）或一次配额不足，会让 WalkDir 立刻中止——该目录之后的**整棵子树**
-// 静默失监，而唯一的调用方还只打了条 Warn。大库里这意味着用户以为开着热重载，
-// 实际上大半个库的改动永远不会被发现。
+// WalkDir 与 watcher.Add 的错误都不能直接 return 出去：一个不可读的子目录（权限）或一次配额
+// 不足就会让 WalkDir 立刻中止，该目录之后的**整棵子树**静默失监，而唯一的调用方只打一条 Warn。
+// 大库里这意味着用户以为开着热重载，实际上大半个库的改动永远不会被发现。
 //
-// 另一处更隐蔽：旧代码先把 path 记进 fw.watched，Add 失败才删。但事件循环里新建目录
-// 走的也是这个函数，`exists` 短路一旦命中就直接返回——所以只要有一瞬间记错了，
-// 那个目录就再也不会被重试注册。现在改成 **Add 成功之后才登记**。
+// 登记必须在 **Add 成功之后**。事件循环里新建目录走的也是这个函数，`exists` 短路一旦命中就
+// 直接返回——若先登记再按失败回删，只要有一瞬间记错，那个目录就再也不会被重试注册。
 func (fw *FileWatcher) watchRecursive(root string) WatchReport {
 	var report WatchReport
 	fail := func(err error) {

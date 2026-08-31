@@ -1,4 +1,4 @@
-// 业务说明：本文件把「短关键字搜索」接到 2-gram 辅助索引上。
+// 本文件把「短关键字搜索」接到 2-gram 辅助索引上。
 //
 // FTS5 的 trigram 分词器对 <3 字符的关键字不产生任何 token，于是中文用户搜两个字会回落到
 // 全表 instr 扫描——200k 书实测每次 204ms，而全局搜索是 books + series 两轮。
@@ -60,10 +60,10 @@ const seriesGramFilter = `s.id IN (SELECT rowid FROM series_gram_fts WHERE serie
 // bookGramFilter 是「书命中短关键字，或其所属系列命中」的 WHERE 片段，绑定两个参数。
 //
 // 写成**单个 IN + 子查询内 UNION**，而不是 `b.id IN (...) OR s.id IN (...)`：
-// 跨表的 OR（b.id 与 s.id 分属两张表）用不了 SQLite 的 OR-by-index 优化，外层仍会把
-// 整张 books 走一遍——实测那种写法只有 4x 提升，且在非选择性关键字（中文书名里极常见的
-// 「第X」「X卷」）下比原来的 instr 全表扫还慢一倍。UNION 形态实测外层是主键点查
-// （SEARCH b USING INTEGER PRIMARY KEY），选择性关键字约 330x，非选择性无退化。
+// 跨表的 OR（b.id 与 s.id 分属两张表）用不了 SQLite 的 OR-by-index 优化，外层仍要把
+// 整张 books 走一遍；在非选择性关键字（中文书名里极常见的「第X」「X卷」）下这个代价
+// 尤其明显。UNION 形态能让外层退化成主键点查（SEARCH b USING INTEGER PRIMARY KEY），
+// 选择性与非选择性关键字都不会退化。
 //
 // 这个形态与既有的 searchGlobalBooksFTS 结构完全同构，一致性也更好。
 const bookGramFilter = `b.id IN (

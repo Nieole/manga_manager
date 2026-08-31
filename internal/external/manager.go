@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于项目源码的一部分，负责支撑漫画管理器在资料库、阅读器、扫描、元数据或系统设置中的具体业务能力。
-// 它与相邻模块共同组成前后端业务链路，修改时需要结合调用方理解数据流和用户可见行为。
-// 维护时应关注输入输出契约、错误处理、状态同步和与既有业务语义的一致性。
-
 package external
 
 import (
@@ -21,14 +17,13 @@ import (
 
 // Store 是本包真正需要的那三个查询。
 //
-// 刻意**不**用 database.Store（277 个方法）：不是为了「解耦」——参数与返回值仍是
-// database 包里 sqlc 生成的类型，import 边一分不减——而是为了让一类具体的性能回归
-// 在编译期就写不出来。传输规划曾经是逐 seriesID 一次 SELECT *，几百个系列就是几百次
-// 往返；现在窄接口里根本没有 ListBooksBySeries，想写回去得先改这个声明，
-// 而那一步会被 code review 看见。
+// 刻意**不**用 database.Store：不是为了「解耦」——参数与返回值仍是 database 包里 sqlc
+// 生成的类型，import 边一分不减——而是让「逐 seriesID 一次 SELECT * 查系列书目」这类
+// N+1 性能回归在编译期就写不出来：窄接口里没有 ListBooksBySeries，想加回去得先改这个
+// 声明，这一步会被 code review 看见。
 //
-// 注意这个接口里没有 ExecTx：交出 *Queries 就等于把 171 个方法一并交出去，
-// 收窄就成了纯粹的表演。本包不需要事务，正好可以名副其实。
+// 接口里也没有 ExecTx：交出 *Queries 就等于把它的全部方法一并交出去，收窄就成了纯粹的
+// 表演。本包不需要事务，正好可以名副其实。
 type Store interface {
 	GetLibrary(ctx context.Context, id int64) (database.Library, error)
 	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]database.ExternalLibraryBookRow, error)
@@ -276,7 +271,25 @@ func (m *Manager) GetSeriesCoverage(libraryID int64, sessionID string, seriesIDs
 	return items, nil
 }
 
-func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress func(current, total int, message string)) (SessionSnapshot, error) {
+// TaskHandle 是传输扫描上报进度所需的资格，由发起这次扫描的一方交出——它是那一方的
+// **任务句柄**收窄到本包真正用得上的一样：报**计数推进**。
+//
+// 只有这一个方法：本包不发起**磁盘作业**，包内也没有可中断点——传输循环那一处**暂停闸门**
+// 与文件复制都在调用方那一侧。
+//
+// 声明在这里而不是 import 句柄所在的包，理由同 Store：本包说的是「扫描需要什么」，
+// 谁来满足由调用方决定，结构化满足即可。
+//
+// Advance 只报两个计数，不带展示文案：用户可见文字由调用方按语种渲染，本包渲染的话
+// 英文用户会看到中文。
+type TaskHandle interface {
+	Advance(current, total int)
+}
+
+// ScanSession 遍历外部路径并与本库书目对账。
+//
+// task 不得为 nil：每对完一个文件都经它报一次**计数推进**，没有兜底的空实现可用。
+func (m *Manager) ScanSession(ctx context.Context, sessionID string, task TaskHandle) (SessionSnapshot, error) {
 	m.mu.Lock()
 	m.pruneLocked(time.Now())
 	s, ok := m.sessions[sessionID]
@@ -380,9 +393,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, progress fu
 		}
 		m.mu.Unlock()
 
-		if progress != nil {
-			progress(index+1, total, fmt.Sprintf("已扫描 %d / %d 个外部资源文件", index+1, total))
-		}
+		task.Advance(index+1, total)
 	}
 
 	m.mu.Lock()
@@ -424,9 +435,9 @@ func (m *Manager) PrepareTransfer(ctx context.Context, libraryID int64, sessionI
 	ignoreExtension := s.IgnoreExtension
 	m.mu.Unlock()
 
-	// 先去重。此前直接 len(seriesIDs) 当 SeriesCount，循环里对每个元素无条件累加，
-	// 于是 series_ids:[7,7] 会把系列 7 的每本书规划两遍——missing_books 翻倍、
-	// Operations 里出现源与目标都相同的重复项，用户看到的数字和进度条分母都是错的。
+	// 先去重：seriesIDs 里若有重复（如 series_ids:[7,7]），会把系列 7 的每本书规划两遍
+	// ——missing_books 翻倍、Operations 里出现源与目标都相同的重复项，用户看到的数字和
+	// 进度条分母都是错的。
 	unique := make([]int64, 0, len(seriesIDs))
 	seen := make(map[int64]struct{}, len(seriesIDs))
 	for _, id := range seriesIDs {
@@ -438,8 +449,9 @@ func (m *Manager) PrepareTransfer(ctx context.Context, libraryID int64, sessionI
 	}
 
 	plan := TransferPlan{SeriesCount: len(unique)}
-	// 一次批量取齐所有系列的书。此前是逐 seriesID 一次 SELECT *（books 表 24 列、
-	// 含 summary 长文本），选中几百个系列就是几百次往返，而这段还要跑两遍（见 handler）。
+	// 一次批量取齐所有系列的书，避免逐 seriesID 一次 SELECT * 的 N+1（books 表列多、
+	// 含 summary 长文本）；调用方必须把这里算出的 plan 原样传下去，不得为图省事
+	// 再调一次 PrepareTransfer 重新规划——那等于把这整段 DB 往返再跑一遍。
 	books, err := m.store.ListExternalTransferBooksBySeries(ctx, unique)
 	if err != nil {
 		return TransferPlan{}, err

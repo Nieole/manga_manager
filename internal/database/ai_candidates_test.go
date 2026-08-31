@@ -1,4 +1,4 @@
-// 业务说明：本文件守卫 AI 候选采样的两条性质：不做全表随机排序、按当前用户判「已读过半」。
+// 本文件守卫 AI 候选采样的两条性质：不做全表随机排序、按当前用户判「已读过半」。
 
 package database
 
@@ -43,7 +43,7 @@ func seedCandidateSeries(t *testing.T, store *SqlStore, n int, booksPerSeries in
 	return lib, ids
 }
 
-// TestSampleCandidateSeriesUsesPrimaryKeyProbes 证明采样不再是「全表算随机数再排序」。
+// TestSampleCandidateSeriesUsesPrimaryKeyProbes 断言查询计划命中主键范围探针、没有排序物化。
 func TestSampleCandidateSeriesUsesPrimaryKeyProbes(t *testing.T) {
 	store := newExecTxTestStore(t)
 	seedCandidateSeries(t, store, 30, 2)
@@ -82,8 +82,8 @@ func explainPlanText(t *testing.T, store *SqlStore, query string, args ...interf
 
 // TestSampleCandidateSeriesRespectsUserProgress 是正确性那一半。
 //
-// 「排除已读过半」此前读的是 books.last_read_page —— 多用户改造后已停写的全局列，
-// 于是子查询恒为 0、条件恒真，读完的作品照样被推荐回来。
+// 「排除已读过半」必须按当前用户读取 user_book_progress，不得依赖 books.last_read_page——
+// 那是多用户改造后已停写的全局列，读它会让条件恒为真，读完的作品照样被推荐回来。
 func TestSampleCandidateSeriesRespectsUserProgress(t *testing.T) {
 	store := newExecTxTestStore(t)
 	ctx := context.Background()

@@ -86,10 +86,8 @@ describe('syncQueuedOfflineProgress', () => {
   const queue = (entries: Record<string, unknown>) => ls.setItem(KEY, JSON.stringify(entries));
   const remaining = () => Object.keys(JSON.parse(ls.getItem(KEY) || '{}'));
 
-  // 回归（bug: 离线进度回传缺 CSRF 头）：这两个端点是 POST，服务端 authGate 对改写类方法
-  // 强制校验 X-CSRF-Token。此前用裸 fetch 只发 Content-Type，于是所有排队的离线进度必然 403——
-  // 离线读完再联网，进度永远同步不回服务端，队列条目也因此永远删不掉。
-  // 现有用例只断言 body、不看请求头，正是这条缺陷长期没被发现的原因。
+  // 这两个端点是 POST，服务端 authGate 强制校验 X-CSRF-Token；请求头缺失会被拒绝，
+  // 离线进度就永远同步不回服务端。
   it('sends the CSRF token on both the bulk and the per-book sync requests', async () => {
     setCsrfToken('csrf-token-abc');
     queue({ '42': { bookId: '42', page: 5, updatedAt: '2020-01-01T00:00:00Z' } });

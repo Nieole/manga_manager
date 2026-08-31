@@ -1,10 +1,4 @@
 /**
- * 业务说明：本文件是业务实现，属于前端系列详情页面，负责展示系列信息、卷册列表、元数据审核、关系维护和阅读入口。
- * 它把数据库中的书籍聚合、外部元数据和人工编辑结果组织成单个系列的业务视图。
- * 维护时应关注编辑态与展示态同步、批量选择、关系变更后刷新和移动端信息密度。
- */
-
-/**
  * 业务流程：系列详情把系列主体、卷册、单本、元数据审核、关系编辑和继续阅读入口组织成单系列工作区。
  * 数据边界：卷选择最终要展开为书籍 ID，元数据候选要经过审核，关系变更要刷新图谱和侧栏状态。
  * 维护风险：编辑态与展示态如果不同步，会导致用户保存后仍看到旧标签、旧封面或旧关系。
@@ -73,11 +67,18 @@ export default function SeriesDetailPage() {
     localStorage.setItem('komga-volume-view-mode', mode);
   }, []);
 
-  const totalSelectableCount = volumes.length + standaloneBooks.length + ctx.books.length;
+  // 全选的范围等于页面此刻渲染的那批书：卷视图只渲染当前卷，全选就不能越出这一卷——
+  // 否则用户以为只标了这一卷，实际把整个系列都写成了已读，且页面上看不出来。
+  const selectableBookIds = useMemo(() => {
+    if (!activeVolumeName) return allBookIds;
+    return volumes.find((v) => v.name === activeVolumeName)?.books.map((b) => b.id) ?? [];
+  }, [activeVolumeName, volumes, allBookIds]);
+
   // 选择模型同时支持“选卷”和“选单本”，最终提交前统一展开成书籍 ID，保证批量已读、加入合集等操作只面向后端书籍契约。
   const selection = useSeriesSelection({
-    totalCount: totalSelectableCount,
-    collectAllIds: useCallback(() => allBookIds, [allBookIds]),
+    // 可选总数取全选实际会选中的那批书，两者必须同源，否则全选后 allSelected 仍为 false、按钮文案不翻转。
+    totalCount: selectableBookIds.length,
+    collectAllIds: useCallback(() => selectableBookIds, [selectableBookIds]),
     resetKey: seriesId, // 跳到别的系列时清空选择，避免批量操作写到上一个系列的书
   });
 
@@ -90,6 +91,7 @@ export default function SeriesDetailPage() {
     tags: ctx.tags,
     authors: ctx.authors,
     links: ctx.links,
+    metadataVersion: ctx.metadataVersion,
     reload: ctx.reload,
     showToast,
     t,
@@ -494,6 +496,7 @@ export default function SeriesDetailPage() {
         allAuthors={edit.allAuthors}
         editForm={edit.editForm}
         lockedFields={edit.lockedFields}
+        conflict={edit.hasConflict}
         onClose={() => edit.setIsEditing(false)}
         onSave={edit.save}
         onToggleLock={edit.toggleLock}

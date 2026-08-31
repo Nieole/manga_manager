@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
@@ -47,13 +43,10 @@ func (c *Controller) cacheImageMemory(key string, data []byte) {
 
 // pageImageCacheControl 是所有需要鉴权的图片端点（页图/封面/缩略图）的缓存策略。
 //
-// 此前一律下发 "public, max-age=31536000"：
-//   - public 允许共享缓存（企业代理、CDN）存下需要鉴权才能看的书页，
-//     换个用户走同一代理就可能直接命中；
-//   - 一年不回源意味着换封面、重建缩略图后旧图还会顶一年，而这些 URL 里
-//     没有内容版本令牌，没法靠改 URL 绕开。
-//
-// 改为 private + 必须回源验证：ETag 仍在，条件请求命中时返回 304，省下的带宽一样多。
+// 必须是 private + 必须回源验证，不能放宽成 public 长 max-age：public 允许共享缓存
+// （企业代理、CDN）替别的用户直接命中本该鉴权的页；这些 URL 又没有内容版本令牌，长
+// max-age 会让换封面、重建缩略图后旧图继续顶很久。ETag 仍在，条件请求命中时返回 304，
+// 省下的带宽与长 max-age 相同。
 const pageImageCacheControl = "private, max-age=0, must-revalidate"
 
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
@@ -310,9 +303,9 @@ func weakETag(value string) string {
 }
 
 // parsePositiveDimension 解析 w/h 这类尺寸查询参数。
-// 空串表示「未指定」，返回 0；非数字或负数视为非法输入，由调用方回 400。
-// 注意不能沿用「解析失败就当没传」的旧写法：?w=-1 在旧代码里会被 Atoi 成功解析成 -1，
-// 再经 uint(-1) 回绕成 18446744073709551615，直接把 resize 的目标画布撑爆。
+// 空串表示「未指定」，返回 0；非数字或负数视为非法输入，由调用方回 400——负值不能只当
+// 「没传」处理：转 uint 后会回绕成天文数字（如 uint(-1) = 18446744073709551615），
+// 直接把 resize 的目标画布撑爆。
 func parsePositiveDimension(raw string) (int, error) {
 	if strings.TrimSpace(raw) == "" {
 		return 0, nil
@@ -360,12 +353,7 @@ func pageImageTransformProfile(format, width, height, filter string, autoCrop bo
 }
 
 func (c *Controller) processedImageCacheDir() string {
-	baseDir := filepath.Join(".", "data", "page-cache")
-	cfg := c.currentConfig()
-	if cfg.Cache.Dir != "" {
-		baseDir = filepath.Join(cfg.Cache.Dir, "pages")
-	}
-	return baseDir
+	return config.PageCacheDir(c.currentConfig())
 }
 
 func (c *Controller) diskPageCacheEnabled(source bookPageSource) bool {
@@ -559,10 +547,9 @@ func (c *Controller) collectPageCacheStats() (pageCacheStatsResponse, error) {
 // enforcePageCacheBudget 在磁盘页缓存超过配置上限时，按最旧优先淘汰到低水位。
 // 由单个后台清道夫 goroutine 串行调用，无锁竞争、零请求路径开销。上限 <=0 表示不限，直接返回。
 //
-// 分两趟走，而不是一趟把所有条目都装进切片：
-// 稳态下缓存**不超标**（这是常态），此时第一趟只累加总大小、不留任何条目，直接早退。
-// 旧实现无论超不超标都先把整个目录的条目列表建出来——2 GiB 上限、每页几十到几百 KB，
-// 就是几千到几万个条目常驻在那一瞬间，纯属白付。
+// 分两趟走，而不是一趟把所有条目都装进切片：稳态下缓存**不超标**（这是常态），第一趟
+// 只累加总大小、不留任何条目，直接早退——2 GiB 上限、每页几十到几百 KB 就是几千到几万
+// 个条目，不能无条件先把完整列表建出来常驻内存。
 //
 // 超标时第二趟才收集淘汰候选，且只保留「最旧的那一批」而不是全部：
 // 用一个按 mtime 的大顶堆，堆内累计大小一旦够删就把最新的挤出去。
@@ -598,8 +585,8 @@ func (c *Controller) enforcePageCacheBudget() {
 
 	lowWater := maxBytes * 9 / 10 // 降到 90% 低水位，滞回避免每轮抖动
 	need := total - lowWater
-	// 多收 25% 的候选：删除可能失败（Windows 上正被读取的页文件 unlink 会失败），
-	// 旧实现靠「候选就是全部文件」兜底，这里靠这点余量兜底。
+	// 多收 25% 的候选做余量：删除可能失败（Windows 上正被读取的页文件 unlink 会失败），
+	// 候选只是「最旧的一批」而非全部文件，删除失败时没有更多候选可补。
 	need += need / 4
 
 	victims := collectOldestFiles(dir, need)
@@ -726,11 +713,7 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if coverPath != "" {
-		thumbDir := filepath.Join(".", "data", "thumbnails")
-		cfg := c.currentConfig()
-		if cfg.Cache.Dir != "" {
-			thumbDir = cfg.Cache.Dir
-		}
+		thumbDir := config.ThumbnailDir(c.currentConfig())
 
 		fullPath := filepath.Join(thumbDir, coverPath)
 		if info, err := os.Stat(fullPath); err == nil {

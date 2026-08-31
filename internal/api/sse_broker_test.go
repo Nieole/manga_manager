@@ -117,11 +117,9 @@ func TestSSERegistrationDoesNotBlockAfterShutdown(t *testing.T) {
 
 // TestSSEServeHTTPLeavesCORSToMiddleware 守卫 SSE 端点不自设 CORS 头。
 //
-// 这里曾硬写 Access-Control-Allow-Origin: *，覆盖掉 main.go 按 server.allowed_origins 计算出的
-// 白名单，等于给这一个端点单独开了个全放通的口子。而且它连功能都不对：会话是 Cookie 鉴权，
-// 带凭据的跨源请求在 ACAO 为 * 时被浏览器直接拒收。
-//
-// 缺陷本身已在批次 E 修掉，但当时没留下防线——这个用例就是那条防线：
+// Access-Control-Allow-Origin / Access-Control-Allow-Credentials 不得由这个端点自己写：自设会
+// 覆盖掉 main.go 按 server.allowed_origins 算出的白名单，等于单独开一个全放通的口子；而且它连
+// 功能都不对——会话是 Cookie 鉴权，带凭据的跨源请求在 ACAO 为 * 时会被浏览器直接拒收。
 // 同源的 EventSource 本就不需要 ACAO，CORS 该由中间件统一决定。
 func TestSSEServeHTTPLeavesCORSToMiddleware(t *testing.T) {
 	broker := newSSEBroker()

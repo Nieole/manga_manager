@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 // Null* 契约原语统一收敛到 api/contracts.ts（单一来源），此处再导出以保持既有 import 路径不变。
 export type { NullString, NullInt64, NullTime, NullFloat64 } from '../../api/contracts';
 import type { NullString, NullInt64, NullTime, NullFloat64 } from '../../api/contracts';
@@ -49,6 +43,12 @@ export interface NamedOption {
   name: string;
 }
 
+/**
+ * 一条保存下来的智能视图，与后端 smart_filters 表逐列对应（后端 snake_case，此处 camelCase）。
+ * readState/minRating/maxRating/minProgress/maxProgress/addedWithinDays 就是 AdvancedFilters 的六个维度，
+ * 平铺在这里而非嵌一层，是为了与后端 JSON 形状一一对齐；null 表示该维度不筛选。
+ * 视图的成员由这些条件推导而来，少存一维就是换了一个视图，故新增筛选维度时必须同时补进这里。
+ */
 export interface SavedSmartFilter {
   id: string;
   name: string;
@@ -56,6 +56,12 @@ export interface SavedSmartFilter {
   activeAuthor: string | null;
   activeStatus: string | null;
   activeLetter: string | null;
+  readState: string | null;
+  minRating: number | null;
+  maxRating: number | null;
+  minProgress: number | null;
+  maxProgress: number | null;
+  addedWithinDays: number | null;
   sortByField: string;
   sortDir: string;
   pageSize: number;

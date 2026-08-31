@@ -1,11 +1,7 @@
-// 业务说明：本文件收拢元数据 Provider 对外错误的脱敏与截断。
-//
-// 这些错误会一路传到 HTTP 层并被写进响应体（刮削失败提示、AI 推荐 500 等），
-// 因此它们是面向用户的输出，而不只是日志——凡是可能夹带密钥或上游整段响应的地方，
-// 都必须在这里先处理干净。
-//
-// 维护要点：新增 Provider 时，transport 错误一律经 sanitizeTransportError 包装，
-// 非 2xx 的上游响应体一律经 truncateUpstreamBody 截断后再进错误串。
+// 本文件收拢元数据 Provider 对外错误的脱敏与截断：这些错误会写进 HTTP 响应体（刮削失败提示、
+// AI 推荐 500 等），是面向用户的输出而非日志——凡是可能夹带密钥或上游整段响应的地方都必须
+// 在这里处理干净。新增 Provider 时，transport 错误经 sanitizeTransportError 包装，
+// 非 2xx 响应体经 truncateUpstreamBody 截断后再进错误串。
 
 package metadata
 

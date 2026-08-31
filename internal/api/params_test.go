@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，属于后端 HTTP API 层，验证分页与列表规模参数的边界钳制。
+// 本文件是业务回归测试，属于后端 HTTP API 层，验证分页与列表规模参数的边界钳制。
 // 它锁住「无上界分页导致 offset 溢出 / int32 截断」与「limit 无上限物化整库」两类缺陷。
 // 维护时应保证任何新增的分页端点都复用 params.go 的助手，并在此补上对应断言。
 
@@ -55,8 +55,8 @@ func TestClampPageAndOffset(t *testing.T) {
 	}
 }
 
-// TestPageOffsetNeverOverflows 锁住 offset 计算的安全性。
-// 旧代码写 int64((page-1)*limit)：乘法先在 int 里完成，超大 page 会溢出成负数，
+// TestPageOffsetNeverOverflows 锁住 offset 计算的安全性：
+// (page-1)*limit 的乘法不得落在 int 里完成，否则超大 page 会溢出成负数——
 // OPDS 侧拿负 start 去切片直接 panic，Mihon 侧经 int32 截断静默返回第一页。
 func TestPageOffsetNeverOverflows(t *testing.T) {
 	if got := pageOffset(maxPageNumber, maxListLimit); got < 0 {
@@ -100,7 +100,7 @@ func TestOpdsSliceBoundsStaysInRange(t *testing.T) {
 
 // TestOpdsPositiveQueryIntBoundsPage 确认「max<=0 表示不设上限」这一危险语义已被移除。
 //
-// 用 int64 上限附近的 page 值：旧实现会把它原样放行，随后 (page-1)*limit 在 int 里
+// page 必须被钳制在 maxPageNumber 内：放行 int64 上限附近的值，(page-1)*limit 会在 int 里
 // 溢出成负数，opdsSliceBounds 拿负 start 去切片 → runtime panic。攻击者只需一次
 // GET /opds/v1.2/recent?page=9223372036854775807 即可打挂协议端点。
 func TestOpdsPositiveQueryIntBoundsPage(t *testing.T) {
@@ -130,8 +130,8 @@ func TestPositiveQueryIntBoundsPage(t *testing.T) {
 	}
 }
 
-// TestRequestBodyLimitRejectsOversizedPayload 锁住全局请求体闸门。
-// 此前全站没有任何 body 上限，未鉴权的 /api/auth/login 可被单个巨型 JSON 打爆内存。
+// TestRequestBodyLimitRejectsOversizedPayload 锁住全局请求体闸门：
+// 未鉴权端点（如 /api/auth/login）必须有 body 上限，否则可被单个巨型 JSON 打爆内存。
 func TestRequestBodyLimitRejectsOversizedPayload(t *testing.T) {
 	var readErr error
 	handler := RequestBodyLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

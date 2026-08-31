@@ -1,5 +1,6 @@
-// 业务说明：本文件是 AniList Provider 的解析与置信度回归测试，验证 GraphQL 响应到 SeriesMetadata 的字段映射、
+// 本文件是 AniList Provider 的解析与置信度回归测试，验证 GraphQL 响应到 SeriesMetadata 的字段映射、
 // 标题多语言优先级、HTML 简介清洗、标签过滤、作者角色映射、状态/日期归一化与置信度计算。
+
 package metadata
 
 import (

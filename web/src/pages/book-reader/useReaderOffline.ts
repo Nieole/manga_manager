@@ -1,10 +1,4 @@
-/**
- * 业务说明：本文件是业务实现，属于前端阅读器页面，负责呈现漫画页、阅读偏好、键盘/触控操作、进度同步和缓存体验。
- * 它直接承载用户阅读主流程，需要把后端页面 API、缩放模式和本地偏好组合成稳定交互。
- * 维护时应关注页面预加载、错误恢复、移动端布局、进度写回频率和快捷操作一致性。
- */
-
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   cacheBookForOffline,
   deleteOfflineBook,
@@ -41,6 +35,9 @@ export function useReaderOffline({
   t,
 }: UseReaderOfflineOptions) {
   const offlineSupported = supportsOfflineReaderCache();
+  // 下载是异步的，期间用户可能已经翻到别的书。收尾时拿它比一比，
+  // 免得把上一本书的状态盖到当前这本上。
+  const activeBookIdRef = useRef(bookId);
   const [offlineStatus, setOfflineStatus] = useState<OfflineBookStatus | null>(null);
   const [offlineCaching, setOfflineCaching] = useState(false);
   const [offlineDeleting, setOfflineDeleting] = useState(false);
@@ -61,6 +58,10 @@ export function useReaderOffline({
       .catch(() => setOfflineStatus(null));
     setOfflineQueuedPage(getQueuedOfflineProgress(bookId)?.page ?? null);
   }, [bookId, offlineSupported]);
+
+  useEffect(() => {
+    activeBookIdRef.current = bookId;
+  }, [bookId]);
 
   useEffect(() => {
      
@@ -116,6 +117,9 @@ export function useReaderOffline({
       imageUrlForPage: (page) => getImageUrlForBook(bookId, page.number),
       onProgress: (cached) => setOfflineCachedPages(cached),
     }).then((status) => {
+      if (activeBookIdRef.current !== bookId) return;
+      // status 为 null 是「这次下载在收尾前被作废了」（用户删了这本书、或换了用户）：
+      // 照样落到 setOfflineStatus，界面回到「未缓存」，被删掉的书不会复活成已缓存。
       setOfflineStatus(status);
     }).catch((err) => {
       const message = err instanceof Error ? err.message : t('reader.offline.cacheFailed');

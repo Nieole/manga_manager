@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于存储 IO 调度层，负责协调扫描、封面提取和阅读器页面读取时的并发访问。
-// 它保护机械硬盘、网络盘或大归档场景下的吞吐与交互响应。
-// 维护时应关注任务优先级、暂停/恢复、队列公平性和取消后资源释放。
-
 package storageio
 
 import (
@@ -54,8 +50,8 @@ type Scheduler struct {
 	pauseableActive  map[string]int
 	backgroundPaused bool
 	// broadcast 是「广播 channel」：等待者在阻塞时捕获它并 select 于其上；释放槽位 / 恢复后台 等会关闭它
-	// 再换一个新 channel，从而一次性唤醒所有等待者立即重判条件。取代此前每 20ms 忙轮询——让被限流阻塞的
-	// 读页请求在槽位释放的瞬间被唤醒（消除最高 20ms 的额外取页延迟与周期性锁风暴）。
+	// 再换一个新 channel，从而一次性唤醒所有等待者立即重判条件，而不是固定周期轮询——
+	// 后者会让被限流阻塞的读页请求多等最多一个轮询周期，且周期性造成锁风暴。
 	broadcast chan struct{}
 }
 
@@ -111,7 +107,10 @@ func (s *Scheduler) idleWindowRemainingLocked(volumeKey string, idleDuration tim
 }
 
 func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
-	if req.Limit <= 0 || strings.TrimSpace(req.VolumeKey) == "" {
+	// 卷键的归一只发生在这一处：req 是值拷贝，改写后限流桶、读者、排队与快照共用同一个键，
+	// 快照归拢出的行因此必然对得上调用方传进来的那块盘。
+	req.VolumeKey = normalizeVolumeKey(req.VolumeKey)
+	if req.Limit <= 0 || req.VolumeKey == "" {
 		return Lease{}, nil
 	}
 	if ctx == nil {
@@ -348,7 +347,7 @@ func (s *Scheduler) snapshotPauseReasonLocked(volumeKey string) string {
 }
 
 func (s *Scheduler) volumeActiveLocked(volumeKey string) bool {
-	prefix := strings.ToLower(strings.TrimSpace(volumeKey)) + "|"
+	prefix := volumeKey + "|"
 	for key, limiter := range s.limiters {
 		if strings.HasPrefix(key, prefix) && limiter.used > 0 {
 			return true
@@ -375,8 +374,16 @@ func (s *Scheduler) readerStateLocked(volumeKey string) *readerState {
 	return state
 }
 
+// normalizeVolumeKey 是卷键进入本包的唯一入口加工：只去掉首尾空白。卷键在这里是一个不透明的身份，
+// 大小写归一属于推导它的 config.VolumeKey——只有那一层知道平台文件系统区不区分大小写；本包再折叠一次
+// 会让快照报出的卷键与用户配置里的那个对不上。
+func normalizeVolumeKey(volumeKey string) string {
+	return strings.TrimSpace(volumeKey)
+}
+
+// limiterKey 把已归一的卷键与并发上限拼成限流桶键：同卷不同上限是各自独立的桶。
 func limiterKey(volumeKey string, limit int) string {
-	return strings.ToLower(strings.TrimSpace(volumeKey)) + "|" + strconv.Itoa(limit)
+	return volumeKey + "|" + strconv.Itoa(limit)
 }
 
 func volumeFromLimiterKey(key string) string {

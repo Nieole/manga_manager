@@ -1,20 +1,19 @@
 /**
  * @vitest-environment jsdom
  *
- * 业务说明：本文件守卫「离线下载中途失败不会留下删不掉的孤儿缓存」。
- *
- * 下载是逐个 URL 串行 fetch + cache.put 的，任何一步失败就抛出。而书目索引此前是
- * **整个循环跑完之后**才写的：下到第 300/500 页断网时，300 份响应留在 Cache Storage 里，
- * 索引里却没有这本书——离线书架按索引渲染，于是这本书在界面上根本不存在。
- *
- * 字节本身并非删不掉（deleteOfflineBook 除了按索引里的 urls 清理，还会按路径前缀
- * 兜底扫一遍缓存），但用户没有任何入口去触发它：看不见的书点不了删除。
- * 唯一的出口是「清空全部」，连带把别的书一起删掉。
+ * 本文件守卫离线下载的收尾：索引随下载开始就写、收尾前先确认自己没被删除或换用户作废、
+ * 页图按不带 query 的页路径落盘。破了都不报错，只留下删不掉的孤儿字节、删了又复活却
+ * 读不了的书、以及改一次画质就翻一倍的计数与磁盘占用。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cacheBookForOffline, deleteOfflineBook, listOfflineBooks } from './offlineReader';
+import {
+  cacheBookForOffline,
+  deleteOfflineBook,
+  listOfflineBooks,
+  reconcileOfflineOwner,
+} from './offlineReader';
 
 const BOOKS_KEY = 'manga-manager:offline-books';
 
@@ -44,7 +43,11 @@ beforeEach(() => {
   // supportsOfflineReaderCache 同时看 window.caches 与 navigator.serviceWorker，两者都要备齐。
   vi.stubGlobal('caches', {
     open: async () => cache,
-    delete: async () => true,
+    // 真的清空字节：换用户与下载收尾并发时，这一条决定了残片看不看得见。
+    delete: async () => {
+      cache.entries.clear();
+      return true;
+    },
     has: async () => true,
     keys: async () => [],
     match: async () => undefined,
@@ -71,6 +74,17 @@ function stubFetch(okCount: number) {
   });
 }
 
+// interruptFetch 让每个请求都成功，并在第 at 个请求返回前插入一次并发操作。
+// 第 1–3 个是静态 URL（页清单、书籍信息、阅读器壳），之后才是逐页图。
+function interruptFetch(at: number, interrupt: () => Promise<void> | void) {
+  let seen = 0;
+  vi.stubGlobal('fetch', async () => {
+    seen += 1;
+    if (seen === at) await interrupt();
+    return { ok: true, status: 200, clone: () => ({}) } as unknown as Response;
+  });
+}
+
 const OPTIONS = {
   bookId: '42',
   title: '测试书',
@@ -78,6 +92,15 @@ const OPTIONS = {
   imageProfile: 'original',
   imageUrlForPage: (page: number) => `/api/pages/42/${page}`,
 };
+
+// 用户改过画质后重下的同一本书：路径一样，只是多了 query。
+const WEBP_OPTIONS = {
+  ...OPTIONS,
+  imageProfile: 'WEBP 80',
+  imageUrlForPage: (page: number) => `/api/pages/42/${page}?format=webp&q=80`,
+};
+
+const pageKeys = () => Array.from(cache.entries.keys()).filter((url) => url.includes('/api/pages/42/'));
 
 describe('cacheBookForOffline', () => {
   it('全部成功时记录完整的书目', async () => {
@@ -105,8 +128,8 @@ describe('cacheBookForOffline', () => {
     expect(listed[0].pageCount).toBe(5);
   });
 
-  // 这一条是护栏而不是红/绿判据：deleteOfflineBook 的路径前缀兜底让它在修复前也是绿的。
-  // 留着是为了锁住「删除要连字节一起清干净」——上面那两条负责证明「界面上看得见」。
+  // 护栏而非红/绿判据：deleteOfflineBook 的路径前缀兜底让这条用例在修复前也是绿的；
+  // 它锁的是「删除要连字节一起清干净」这条约束，不负责证明书在界面上看得见。
   it('中途失败留下的残片可以被单独删除且不留字节', async () => {
     stubFetch(5);
     await expect(cacheBookForOffline(OPTIONS)).rejects.toThrow();
@@ -129,5 +152,114 @@ describe('cacheBookForOffline', () => {
     expect(listed[0].cachedPages).toBe(0);
     await deleteOfflineBook('42');
     expect(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}')).toEqual({});
+  });
+});
+
+describe('下载收尾的作废检查', () => {
+  // 复现：已下载过的书改了画质再次「缓存本书」，下载进行中点删除。收尾若照旧写回索引，
+  // 用户删掉的书会复活成 100%，而删除时清掉的页清单与书籍信息不会再下一遍——
+  // 这本「已缓存」的书离线打开时拿不到页清单，读不了。
+  it('下载途中删除这本书，收尾不把它写回索引', async () => {
+    interruptFetch(5, () => deleteOfflineBook('42'));
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(status).toBeNull();
+    expect(await listOfflineBooks()).toEqual([]);
+    expect(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}')).toEqual({});
+  });
+
+  it('下载途中删除这本书，已落盘与后续写入的字节都不留残片', async () => {
+    interruptFetch(5, () => deleteOfflineBook('42'));
+
+    await cacheBookForOffline(OPTIONS);
+
+    // 索引里已经没有这本书了，字节再留着就是永远删不掉的占用。
+    expect(cache.entries.size).toBe(0);
+  });
+
+  // 换用户与下载收尾并发：reconcileOfflineOwner 清空索引并清扫字节之后，
+  // 在飞的下载不能把上一个用户的书重新写回这台设备。
+  it('下载途中换用户清空索引，收尾同样不复活这本书', async () => {
+    localStorage.setItem('manga-manager:offline-owner', '1');
+    interruptFetch(5, () => {
+      reconcileOfflineOwner(2);
+    });
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(status).toBeNull();
+    expect(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}')).toEqual({});
+    expect(cache.entries.size).toBe(0);
+  });
+
+  it('没有并发删除时正常收尾，书完整地留在书架上', async () => {
+    stubFetch(Infinity);
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(status?.cachedPages).toBe(5);
+    expect((await listOfflineBooks()).map((b) => b.bookId)).toEqual(['42']);
+    // 页清单、书籍信息、阅读器壳一个都不能少，否则离线打开时读不了。
+    const keys = Array.from(cache.entries.keys()).map((url) => new URL(url).pathname);
+    expect(keys).toContain('/api/pages/42');
+    expect(keys).toContain('/api/book-info/42');
+    expect(keys).toContain('/reader/42');
+  });
+});
+
+describe('改画质重下同一本书', () => {
+  // 复现：两套 URL 路径相同、query 不同，都算进同一本书的已缓存页数 → 进度条 200%。
+  // 而 Service Worker 读图对 /api/pages/ 忽略 query，第二套字节根本读不到，纯浪费配额。
+  it('重下不重复计数，也不翻倍占磁盘', async () => {
+    stubFetch(Infinity);
+    const first = await cacheBookForOffline(OPTIONS);
+    expect(first?.cachedPages).toBe(5);
+    const sizeAfterFirst = cache.entries.size;
+
+    const second = await cacheBookForOffline(WEBP_OPTIONS);
+
+    expect(second?.cachedPages).toBe(5);
+    expect(second?.imageProfile).toBe('WEBP 80');
+    expect(cache.entries.size).toBe(sizeAfterFirst);
+  });
+
+  it('页图按不带 query 的页路径落盘，与画质偏好解耦', async () => {
+    stubFetch(Infinity);
+
+    await cacheBookForOffline(WEBP_OPTIONS);
+
+    // 缓存键不带 query；带 query 的地址只用于发请求，好让用户拿到自己选的画质。
+    expect(pageKeys().map((url) => new URL(url).pathname).sort()).toEqual([
+      '/api/pages/42/1',
+      '/api/pages/42/2',
+      '/api/pages/42/3',
+      '/api/pages/42/4',
+      '/api/pages/42/5',
+    ]);
+    expect(pageKeys().some((url) => url.includes('?'))).toBe(false);
+  });
+
+  it('重下按用户选的画质发请求，落盘的是新画质的字节', async () => {
+    const requested: string[] = [];
+    vi.stubGlobal('fetch', async (input: Request | string) => {
+      requested.push(typeof input === 'string' ? input : input.url);
+      return { ok: true, status: 200, clone: () => ({}) } as unknown as Response;
+    });
+
+    await cacheBookForOffline(WEBP_OPTIONS);
+
+    expect(requested.filter((url) => url.includes('format=webp&q=80'))).toHaveLength(5);
+  });
+
+  it('重下清掉上一版遗留的带 query 页字节', async () => {
+    // 修复前下载的书在缓存里留着带 query 的键，光靠覆盖写清不掉，得靠重下时的清扫。
+    await cache.put(new Request('https://x.test/api/pages/42/1?format=webp&q=80'), {});
+    stubFetch(Infinity);
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(status?.cachedPages).toBe(5);
+    expect(pageKeys().some((url) => url.includes('?'))).toBe(false);
   });
 });

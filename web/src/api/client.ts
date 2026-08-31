@@ -1,5 +1,5 @@
 /**
- * 业务说明：本文件是前端 API 访问的共享客户端层，导出统一的 axios 实例（apiClient）与错误消息提取。
+ * 本文件是前端 API 访问的共享客户端层，导出统一的 axios 实例（apiClient）与错误消息提取。
  * 所有页面/hook 应通过 apiClient 发请求，而非直接 import axios，以便集中挂载鉴权拦截器、
  * 未来扩展响应错误归一化等横切逻辑（并可用 ESLint no-restricted-imports 约束）。
  * 维护时应保持与后端错误响应契约一致，以及“无令牌即无操作”的鉴权语义。
@@ -27,7 +27,7 @@ export const isAxiosError = axios.isAxiosError
 export const isCancel = axios.isCancel
 
 // getApiErrorMessage 从各类错误中提取用户可读消息：优先后端 { error } 字段，其次 axios/Error 的 message，
-// 最后回退到调用方给定的 fallback。此前该逻辑在 9 个文件中各有一份完全等价的副本，现统一至此。
+// 最后回退到调用方给定的 fallback。
 export function getApiErrorMessage(error: unknown, fallback: string): string {
   if (axios.isAxiosError(error)) return error.response?.data?.error || error.message || fallback
   if (error instanceof Error) return error.message

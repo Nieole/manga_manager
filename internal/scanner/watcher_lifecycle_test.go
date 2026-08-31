@@ -1,10 +1,8 @@
-// 业务说明：本文件守卫文件监听器派生出去的后台工作的生命周期与递归注册的容错。
+// 守监听器派生工作的生命周期与递归注册的容错，两者失效都是静默的。
 //
-// 两个缺陷都属于「静默」类：
-//   - watcher 去抖后触发的 ScanLibrary / CleanupLibrary 用 context.Background() + 裸 goroutine，
-//     既不可取消也不被停机追踪。优雅关闭返回之后它们还在往一个即将关掉的 store 里写。
-//   - watchRecursive 首个错误就中止整棵 WalkDir，一个不可读的子目录会让它之后的整片子树
-//     静默失监——用户以为热重载开着，实际大半个库的改动永远发现不了。
+// 去抖后触发的 ScanLibrary / CleanupLibrary 必须可取消并被 Stop 等待，否则优雅关闭返回之后
+// 它们还在往一个即将关掉的 store 里写。watchRecursive 遇到不可读的子目录必须继续，否则它之后
+// 的整片子树静默失监——用户以为热重载开着，实际大半个库的改动永远发现不了。
 
 package scanner
 
@@ -72,12 +70,17 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 		return ctx.Err()
 	}
 
-	const libID int64 = 1
+	// 扫描与清理分属两个库。同一个库的清理如今接在该库扫描之后串行（见
+	// TestCleanupWaitsForSameLibraryScan），而这里要验的是两类派发各自可取消、各自被 Stop
+	// 等待——得让它们同时在途，因此分开两个库。
+	const scanLibID int64 = 1
+	const cleanupLibID int64 = 2
 	past := time.Now().Add(-10 * time.Second) // 已越过 5 秒去抖阈值
 	fw.mu.Lock()
-	fw.libs[filepath.FromSlash("/data/manga")] = libID
-	fw.pending[libID] = past
-	fw.pendingCleanup[libID] = past
+	fw.libs[filepath.FromSlash("/data/manga")] = scanLibID
+	fw.libs[filepath.FromSlash("/data/manga-2")] = cleanupLibID
+	fw.pending[scanLibID] = past
+	fw.pendingCleanup[cleanupLibID] = past
 	fw.mu.Unlock()
 
 	fw.Start(nil)
@@ -141,7 +144,7 @@ func TestCleanupLibraryStopsOnCancelledContext(t *testing.T) {
 	if err := writeScannerTestCBZ(filepath.Join(dir, "v1.cbz"), map[string][]byte{"001.png": testPNG1x1}); err != nil {
 		t.Fatalf("write cbz: %v", err)
 	}
-	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false); err != nil {
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
 	}
 

@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端国际化资源层，负责维护中文、英文等界面文案和业务状态描述。
- * 它把后端状态、前端操作和领域术语转换为用户可理解的本地化文本。
- * 维护时应保证 key 稳定、占位符一致、业务术语统一，并避免修改造成页面缺文案。
- */
-
 type Translator = (key: string, params?: Record<string, string | number | boolean | null | undefined>, defaultValue?: string) => string;
 
 export interface TaskWithParams {
@@ -19,8 +13,8 @@ export interface TaskMessageSource {
 }
 
 /**
- * getTaskMessage 渲染任务的显示消息：后端迁移到 i18n 的任务会带稳定的 message_code + message_params，
- * 按当前语言渲染；尚未迁移的任务仍回退到后端直接下发的 message（再退到任务类型）。
+ * getTaskMessage 渲染任务的显示消息：后端每一帧都带稳定的 message_code + message_params，按当前语言渲染。
+ * message 只承载服务重启把任务转成中断时写进落盘记录的那句已渲染文案，因此只作缺键兜底（再退到任务类型）。
  */
 export function getTaskMessage(task: TaskMessageSource, t: Translator): string {
   if (task.message_code) {

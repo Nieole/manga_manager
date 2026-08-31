@@ -1,4 +1,4 @@
-// 业务说明：本文件由 controller.go 拆分而来，属于后端 API 层的看板统计子域，负责仪表盘结构/易变统计的缓存（失效/预热/分层加载）与看板、活跃热力图、最近阅读等只读接口。
+// 本文件由 controller.go 拆分而来，属于后端 API 层的看板统计子域，负责仪表盘结构/易变统计的缓存（失效/预热/分层加载）与看板、活跃热力图、最近阅读等只读接口。
 
 package api
 
@@ -179,7 +179,7 @@ func (c *Controller) getPeriodStats(w http.ResponseWriter, r *http.Request) {
 
 // getRecentReadAll 返回跨库的最近阅读记录（用于 Dashboard 首页）
 func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
-	// 与 /api/series/search 统一口径：此前这里没有上限。
+	// 与 /api/series/search 统一口径：limit 必须有上限，避免单请求拉出全部阅读记录。
 	limit := int64(queryLimit(r, "limit", 20, maxListLimit))
 
 	var (

@@ -1,38 +1,35 @@
-// 业务说明：本文件是业务回归测试，属于后台任务系统，验证任务快照跨临界区传递时的并发安全。
-// 它锁住「进度回调持锁写 map」与「落盘/序列化在锁外读同一 map」这条会导致进程 fatal 的路径。
-// 维护时应保持用例在 -race 下运行，并确保任何新的快照逃逸点都被覆盖。
+// 守「TaskStatus 快照跨出临界区之前必须先克隆」，新增的逃逸点也要在这里挂上。
+//
+// Params/Metrics/Labels/MessageParams 都是 map，结构体拷贝共享同一 map header：进度回调持锁原地
+// 写它们，而 flushTaskPersist 与 listTaskStatuses 交出去的快照都在锁外被遍历。共享一份就会撞成
+// `fatal error: concurrent map read and map write`——runtime throw，recover 拦不住，整个进程退出。
 
 package api
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/taskrun"
 )
 
-// TestTaskSnapshotsAreClonedAcrossCriticalSection 复现并锁住 P0 并发缺陷。
-//
-// TaskStatus 的 Params/Metrics/Labels/MessageParams 都是 map，结构体拷贝共享同一 map header。
-// 进度回调在持锁下原地写这些 map；而 flushTaskPersist（每 500ms）与 listTasks（HTTP 序列化）
-// 都在释放锁之后才遍历它们。共享 map 会让两者重叠，触发
-// `fatal error: concurrent map read and map write`——那是 runtime throw 而非 panic，
-// recover 与 middleware.Recoverer 都拦不住，整个进程直接退出。
-//
-// 本用例在 -race 下并发跑「进度更新」与「落盘 + 列表」，任何快照逃逸都会被检出。
+// TestTaskSnapshotsAreClonedAcrossCriticalSection 并发跑「进度更新」与「落盘 + 列表」，
+// 让写侧与读侧的窗口充分重叠。必须在 -race 下运行才有意义：不加检测器时，
+// 逃逸出去的共享 map 只是概率性地撞成 fatal，多数运行看起来是绿的。
 func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	const taskKey = "scan:library:1"
-	if !controller.taskEngine.startTask(taskKey, "library_scan", "scanning", 1000) {
-		t.Fatal("expected task to start")
-	}
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "library_scan", Total: 1000})
 
 	stop := make(chan struct{})
 	var writer, readers sync.WaitGroup
 
-	// 写侧：模拟扫描器的高频进度回调（真实场景每 250ms 一次，回填任务每本书两次）。
+	// 写侧：模拟扫描器的高频进度回调（真实场景每 250ms 一次，回填任务每本书两次——
+	// **任务句柄**一次、任务参数一次，两次都在锁内原地写同一批 map）。
 	// 持续到读侧跑完为止，保证读写窗口充分重叠。
 	writer.Add(1)
 	go func() {
@@ -43,9 +40,11 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 				return
 			default:
 			}
-			controller.taskEngine.updateTaskDetails(taskKey, i, 1000, "scanning", "phase", "item",
-				map[string]int64{"processed": int64(i)},
-				map[string]string{"library": "alpha"})
+			progress.Advance(i, 1000, "task.msg.scan_library.progress", map[string]string{"current": strconv.Itoa(i)})
+			progress.Report(taskrun.Frame{Item: "item"})
+			progress.Report(taskrun.Frame{Metrics: map[string]int64{"processed": int64(i)}})
+			progress.Report(taskrun.Frame{Labels: map[string]string{"library": "alpha"}})
+			controller.taskEngine.mergeTaskParams(taskKey, map[string]string{"library": "alpha"})
 		}
 	}()
 
@@ -86,5 +85,5 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	readers.Wait()
 	close(stop)
 	writer.Wait()
-	controller.taskEngine.finishTask(taskKey, "done")
+	settleSeededTask(controller.taskEngine, taskKey, nil)
 }

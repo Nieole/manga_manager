@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务回归测试，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
-
 package api
 
 import (
@@ -62,8 +58,8 @@ func TestExportSeriesComicInfoArchive(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	// 文件名同时给 ASCII 兜底与 RFC 5987 的 UTF-8 版本：中文标题此前只发 ASCII 版，
-	// 浏览器保存下来是乱码。UTF-8 版是百分号编码的，故按编码后的形式断言。
+	// 文件名必须同时给 ASCII 兜底与 RFC 5987 的 UTF-8 版本，否则中文标题浏览器保存下来是乱码。
+	// UTF-8 版是百分号编码的，故按编码后的形式断言。
 	contentDisposition := rec.Header().Get("Content-Disposition")
 	if !strings.Contains(contentDisposition, `filename="series-`) {
 		t.Fatalf("expected an ASCII filename fallback, got %q", contentDisposition)

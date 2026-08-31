@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildHeatmapCells, dayOfWeekFromDateStr, formatHeatmapMonthLabel, monthIndexFromDateStr } from './heatmap';
 
 describe('heatmap month labels', () => {
-  // 回归：月份取值必须只看日期串字面，不受运行时区影响（此前 new Date('2026-06-01').getMonth() 在负时区读成 5 月）。
+  // 月份取值必须只看日期串字面，不受运行时区影响：负时区下用 new Date(dateStr).getMonth() 解析会把月份读早一个月。
   it('reads the 0-based month straight from the date string, tz-independent', () => {
     expect(monthIndexFromDateStr('2026-06-01')).toBe(5); // June
     expect(monthIndexFromDateStr('2026-01-31')).toBe(0);

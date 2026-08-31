@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于前端资料库页面，负责漫画列表、筛选排序、批量操作、扫描入口和外部库状态展示。
- * 它是用户管理本地漫画资产的主工作台，需要同步 URL 状态、后端分页和本地交互状态。
- * 维护时应关注查询参数、选择状态、空结果提示、任务刷新和大列表渲染性能。
- */
-
 import { useCallback, useState } from 'react';
 
 import type { ExternalSeriesStatus, ExternalSession, Series } from '../types';
@@ -19,6 +13,8 @@ interface UseLibraryTransferParams {
   externalSeriesMap: Record<number, ExternalSeriesStatus>;
   allSeries: Series[];
   selectedSeries: number[];
+  /** 按 id 补查外部库覆盖；问不到时必须抛错，不能拿空结果冒充「外部库里没有」。 */
+  queryExternalSeriesStatus: (ids: number[]) => Promise<ExternalSeriesStatus[]>;
   startExternalTransfer: (seriesIds: number[], onSuccess: () => void) => Promise<void>;
   clearSelection: () => void;
   showError: (key: string) => void;
@@ -31,6 +27,7 @@ export function useLibraryTransfer({
   externalSeriesMap,
   allSeries,
   selectedSeries,
+  queryExternalSeriesStatus,
   startExternalTransfer,
   clearSelection,
   showError,
@@ -45,7 +42,7 @@ export function useLibraryTransfer({
     setPendingTransferSummary(null);
   }, []);
 
-  const requestTransfer = useCallback(() => {
+  const requestTransfer = useCallback(async () => {
     if (!externalSession?.session_id) {
       showError('home.external.scanFirst');
       return;
@@ -54,9 +51,26 @@ export function useLibraryTransfer({
       showError('home.external.stillScanning');
       return;
     }
+    // 选择是跨页保留的，externalSeriesMap 与 allSeries 却都只有当前页：不在覆盖表里的选中项
+    // 单独补查，已在表里的不重问——翻一页不会变成整份选择集的全量重查。
+    let coverage = externalSeriesMap;
+    const unresolvedIds = selectedSeries.filter((seriesId) => !coverage[seriesId]);
+    if (unresolvedIds.length > 0) {
+      try {
+        const fetched = await queryExternalSeriesStatus(unresolvedIds);
+        coverage = { ...externalSeriesMap };
+        fetched.forEach((item) => {
+          coverage[item.series_id] = item;
+        });
+      } catch (err) {
+        console.error('Failed to resolve external coverage for the selection', err);
+        showError('home.external.statusUnavailable');
+        return;
+      }
+    }
     const summary = selectedSeries.reduce<TransferSummary>(
       (acc, seriesId) => {
-        const status = externalSeriesMap[seriesId];
+        const status = coverage[seriesId];
         const total = status?.external_total_count ?? allSeries.find((item) => item.id === seriesId)?.actual_book_count ?? 0;
         const matched = status?.external_match_count ?? 0;
         acc.total += total;
@@ -66,13 +80,25 @@ export function useLibraryTransfer({
       },
       { total: 0, matched: 0, missing: 0 },
     );
-    if (summary.missing === 0) {
+    // missing === 0 只有在每个选中系列的覆盖都问到了的前提下才等于「已全部存在」。
+    // 状态未知时一律走确认框：宁可让用户确认一次，也不能因为信息不足就不执行操作还报成功。
+    const allResolved = selectedSeries.every((seriesId) => Boolean(coverage[seriesId]));
+    if (allResolved && summary.missing === 0) {
       showToast(t('home.external.alreadyComplete'), 'success');
       return;
     }
     setPendingTransferSummary(summary);
     setShowTransferConfirmModal(true);
-  }, [allSeries, externalSession, externalSeriesMap, selectedSeries, showError, showToast, t]);
+  }, [
+    allSeries,
+    externalSession,
+    externalSeriesMap,
+    queryExternalSeriesStatus,
+    selectedSeries,
+    showError,
+    showToast,
+    t,
+  ]);
 
   const confirmTransfer = useCallback(async () => {
     await startExternalTransfer(selectedSeries, () => {

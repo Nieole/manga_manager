@@ -1,7 +1,3 @@
-// 业务说明：本文件是业务实现，属于运行时配置管理层，负责读取、归一化和持久化漫画库、扫描、元数据、AI 和服务端选项。
-// 它是后端各服务共享配置的来源，影响扫描路径、外部库、图片缓存和前端设置页展示。
-// 维护时应避免直接修改配置副本，新增字段需要兼顾默认值、兼容迁移和前端表单含义。
-
 package config
 
 import (
@@ -137,10 +133,9 @@ func DefaultStorageIOPolicy(profile string) StorageIOPolicy {
 
 // ResolveStoragePolicy 为某个路径挑出生效的存储策略。
 //
-// 入参虽然是值传递，但 Config 里的切片仍指向调用方的底层数组——所以这里**必须**先深拷贝再归一化。
-// 此前直接 NormalizeLibraryStorageConfig(&cfg) 会把归一化结果写穿那层「副本」的假象，
-// 落到调用方（乃至 config.Manager 内部）持有的同一段内存上；而扫描时每个 worker 对每个文件
-// 都会调用本函数，于是一次纯读取的配置解析变成了并发写同一个数组。
+// 入参虽然是值传递，但 Config 里的切片仍指向调用方的底层数组——所以这里**必须**先深拷贝再归一化，
+// 否则归一化会把结果写穿那层「副本」的假象，落到调用方（乃至 config.Manager 内部）持有的同一段
+// 内存上；而扫描时每个 worker 对每个文件都会调用本函数，一次纯读取的配置解析就会变成并发写。
 func ResolveStoragePolicy(cfg Config, path string) ResolvedStoragePolicy {
 	cfg = CloneConfig(cfg)
 	NormalizeLibraryStorageConfig(&cfg)

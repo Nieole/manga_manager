@@ -1,25 +1,18 @@
-// 业务说明：本文件是业务实现，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它承载资料库浏览、阅读器取页、系列维护、任务进度、系统设置和静态资源缓存等对外业务契约。
-// 维护时应重点关注请求参数校验、错误语义、缓存头、并发任务状态和前后端字段兼容性。
-
 package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
-	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/proposal"
+	"manga-manager/internal/taskrun"
 )
 
 const scrapeRateLimitDelay = 500 * time.Millisecond
@@ -45,6 +38,21 @@ func scrapeFailedMsg(locale, providerName string, err error) string {
 		return fmt.Sprintf("%s scrape failed: %v", providerName, err)
 	}
 	return fmt.Sprintf("%s 刮削失败: %v", providerName, err)
+}
+
+// scrapeResultSourceURL 给出一条搜索结果的来源链接：数据源自己给了就用它，
+// 否则只有 Bangumi 能从条目 id 拼出可用的外链。
+func scrapeResultSourceURL(providerName string, result *metadata.SeriesMetadata) string {
+	if result == nil {
+		return ""
+	}
+	if strings.TrimSpace(result.SourceURL) != "" {
+		return strings.TrimSpace(result.SourceURL)
+	}
+	if result.SourceID > 0 && strings.EqualFold(providerName, "bangumi") {
+		return fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
+	}
+	return ""
 }
 
 // getProvider 根据名称返回对应的 Provider 实例
@@ -122,7 +130,7 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 		"rating":     result.Rating,
 		"tags":       result.Tags,
 		"source_id":  result.SourceID,
-		"source_url": metadataSourceURL(provider.Name(), result),
+		"source_url": scrapeResultSourceURL(provider.Name(), result),
 		"confidence": result.Confidence,
 	})
 }
@@ -202,28 +210,20 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 	// force=1 让用户能把「拒绝过的提案」重新加回队列。没有这个出口，一旦误拒就是死胡同：
 	// 之后每次刮削都会被去重挡下，同一份数据再也进不来。
 	forced := isTruthyParam(r.URL.Query().Get("force"))
-	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, &result, providerName, series.Name,
-		queueReviewOptions{IgnoreRejected: forced})
+	queued, err := c.proposals.Queue(r.Context(), series, &result, providerName, series.Name,
+		proposal.QueueOptions{IgnoreRejected: forced})
 	if err != nil {
-		if outcome, message, ok := queueOutcomeForError(err); ok {
-			jsonResponse(w, http.StatusOK, map[string]interface{}{
-				"success": true,
-				"queued":  false,
-				"outcome": outcome,
-				"message": message,
-			})
-			return
-		}
 		jsonError(w, http.StatusInternalServerError, "Failed to queue metadata review")
 		return
 	}
 
-	if !isNew {
+	if queued.Status != proposal.QueueQueued {
+		outcome, message := queueOutcomeForStatus(queued.Status)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"queued":  false,
-			"outcome": "duplicate_ignored",
-			"message": "待审核队列中已存在完全相同的记录，已为您忽略",
+			"outcome": outcome,
+			"message": message,
 		})
 		return
 	}
@@ -232,26 +232,30 @@ func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request
 		"success":     true,
 		"queued":      true,
 		"outcome":     "queued",
-		"review_id":   review.ID,
-		"field_count": len(fields),
+		"review_id":   queued.Proposal.ID,
+		"field_count": len(queued.Fields),
 		"series":      series,
 	})
 }
 
-// queueOutcomeForError 把入队时的「良性结果」哨兵折成给前端的 outcome 与文案。
+// queueOutcomeForStatus 把一次入队的**非新建**结局折成给前端的 outcome 与文案。
+// 新建成功不经这里——调用方各自组自己的成功响应。
 //
-// 这三种都不是故障：数据本来就一致、差异全被用户锁住、或这份提案此前已被拒绝。
-// 此前只识别 errNoMetadataChanges，另外两种一路落到 HTTP 500，用户看到「服务器错误」。
-func queueOutcomeForError(err error) (outcome, message string, ok bool) {
-	switch {
-	case errors.Is(err, errNoMetadataChanges):
-		return "no_changes", "所有数据与当前信息完全一致，无需更新", true
-	case errors.Is(err, errAllFieldsLocked):
-		return "all_locked", "有差异的字段都已被锁定，解锁后再试", true
-	case errors.Is(err, errMetadataReviewRejectedBefore):
-		return "rejected_before", "这份提案此前已被拒绝，已为您忽略；如需重新加入队列请使用强制刮削", true
+// 表必须穷举 proposal.QueueStatus 上除「已入队」外的每一个取值：漏掉的会回落成空 outcome，
+// 用户拿到的是一条 200 却与实情无关的兜底提示。
+func queueOutcomeForStatus(status proposal.QueueStatus) (outcome, message string) {
+	switch status {
+	case proposal.QueueReusedExisting:
+		return "duplicate_ignored", "待审核队列中已存在完全相同的记录，已为您忽略"
+	case proposal.QueueNoChanges:
+		return "no_changes", "所有数据与当前信息完全一致，无需更新"
+	case proposal.QueueAllFieldsLocked:
+		return "all_locked", "有差异的字段都已被锁定，解锁后再试"
+	case proposal.QueueRejectedBefore:
+		return "rejected_before", "这份提案此前已被拒绝，已为您忽略；如需重新加入队列请使用强制刮削"
+	default:
+		return "", ""
 	}
-	return "", "", false
 }
 
 // isTruthyParam 判定查询参数是否表示「是」。
@@ -261,181 +265,6 @@ func isTruthyParam(raw string) bool {
 		return true
 	}
 	return false
-}
-
-func (c *Controller) applyMetadataToSeries(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions) error {
-	return c.applyMetadataToSeriesWithHook(ctx, series, result, opts, nil)
-}
-
-// applyMetadataToSeriesWithHook 在同一事务内应用系列元数据，并可选在提交前执行 afterInTx（同事务）。
-// 元数据审阅 apply 借此把「写元数据」与「标记 review 已处理」并入同一事务，避免元数据已写但状态仍
-// pending 导致同一 review 被重复 apply。
-func (c *Controller) applyMetadataToSeriesWithHook(ctx context.Context, series database.Series, result *metadata.SeriesMetadata, opts metadataApplyOptions, afterInTx func(*database.Queries) error) error {
-	// 解析已锁定字段
-	lockedSet := metadataLockedFieldSet(series)
-	providerName := strings.TrimSpace(opts.ProviderName)
-
-	return c.store.ExecTx(ctx, func(q *database.Queries) error {
-		updateParams := database.UpdateSeriesMetadataParams{ID: series.ID}
-		appliedFields := make(map[string]string)
-		confidence := opts.Confidence
-		if confidence <= 0 {
-			confidence = metadataDefaultConfidence(opts.ProviderName)
-		}
-		reviewID := sql.NullInt64{}
-		if opts.ReviewID != nil {
-			reviewID = sql.NullInt64{Int64: *opts.ReviewID, Valid: true}
-		}
-
-		if !lockedSet["title"] && result.Title != "" {
-			updateParams.Title = sql.NullString{String: result.Title, Valid: true}
-			appliedFields["title"] = result.Title
-		} else {
-			updateParams.Title = series.Title
-		}
-
-		if !lockedSet["summary"] && result.Summary != "" {
-			updateParams.Summary = sql.NullString{String: result.Summary, Valid: true}
-			appliedFields["summary"] = result.Summary
-		} else {
-			updateParams.Summary = series.Summary
-		}
-
-		if !lockedSet["publisher"] && result.Publisher != "" {
-			updateParams.Publisher = sql.NullString{String: result.Publisher, Valid: true}
-			appliedFields["publisher"] = result.Publisher
-		} else {
-			updateParams.Publisher = series.Publisher
-		}
-
-		if !lockedSet["rating"] && result.Rating > 0 {
-			updateParams.Rating = sql.NullFloat64{Float64: result.Rating, Valid: true}
-			appliedFields["rating"] = fmt.Sprintf("%.1f", result.Rating)
-		} else {
-			updateParams.Rating = series.Rating
-		}
-
-		if !lockedSet["status"] && result.Status != "" {
-			status := metadata.NormalizeStatusCode(result.Status)
-			updateParams.Status = sql.NullString{String: status, Valid: true}
-			appliedFields["status"] = status
-		} else {
-			updateParams.Status = series.Status
-		}
-		updateParams.Language = series.Language
-		updateParams.LockedFields = series.LockedFields
-		updateParams.NameInitial = database.SeriesInitialFromNullTitle(updateParams.Title, series.Name)
-
-		_, err := q.UpdateSeriesMetadata(ctx, updateParams)
-		if err != nil {
-			return err
-		}
-
-		recordField := func(fieldName, value string) error {
-			if strings.TrimSpace(value) == "" {
-				return nil
-			}
-			_, err := q.UpsertSeriesMetadataProvenance(ctx, database.UpsertSeriesMetadataProvenanceParams{
-				SeriesID:   series.ID,
-				FieldName:  fieldName,
-				Value:      value,
-				Source:     providerName,
-				SourceUrl:  strings.TrimSpace(opts.SourceURL),
-				Confidence: confidence,
-				ReviewID:   reviewID,
-			})
-			return err
-		}
-
-		for _, fieldName := range []string{"title", "summary", "publisher", "status", "rating"} {
-			if err := recordField(fieldName, appliedFields[fieldName]); err != nil {
-				return err
-			}
-		}
-
-		// 标签
-		var tagValues []string
-		if !lockedSet["tags"] {
-			for _, tagName := range result.Tags {
-				tagName = strings.TrimSpace(tagName)
-				if tagName == "" {
-					continue
-				}
-				if inserted, err := q.UpsertTag(ctx, tagName); err == nil {
-					_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: series.ID, TagID: inserted.ID})
-				}
-				tagValues = append(tagValues, tagName)
-			}
-		}
-		if len(tagValues) > 0 {
-			sort.Strings(tagValues)
-			if err := recordField("tags", strings.Join(tagValues, " / ")); err != nil {
-				return err
-			}
-		}
-
-		// 作者
-		var authorEntries []string
-		if !lockedSet["authors"] && len(result.Authors) > 0 {
-			seen := make(map[string]struct{}, len(result.Authors))
-			for _, a := range result.Authors {
-				name := strings.TrimSpace(a.Name)
-				role := strings.TrimSpace(a.Role)
-				if name == "" {
-					continue
-				}
-				key := strings.ToLower(name + "|" + role)
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				seen[key] = struct{}{}
-				if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{Name: name, Role: role}); err == nil {
-					_ = q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: series.ID, AuthorID: inserted.ID})
-				}
-				authorEntries = append(authorEntries, metadataAuthorEntryString(name, role))
-			}
-		}
-		if len(authorEntries) > 0 {
-			sort.Strings(authorEntries)
-			if err := recordField("authors", strings.Join(authorEntries, " / ")); err != nil {
-				return err
-			}
-		}
-
-		// 来源链接：仅 Bangumi 提供 bgm.tv 外链。providerName 可能是 key（"bangumi"）
-		// 或显示名，统一用包含匹配，避免 LLM 显示名（如 "Ollama LLM"）被误判为可写外链。
-		if result.SourceID > 0 && strings.Contains(strings.ToLower(providerName), "bangumi") {
-			linkName := "Bangumi"
-			linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
-
-			existingLinks, _ := q.GetLinksForSeries(ctx, series.ID)
-			hasLink := false
-			for _, l := range existingLinks {
-				if l.Name == linkName {
-					hasLink = true
-					break
-				}
-			}
-			if !hasLink {
-				_, _ = q.LinkSeriesLink(ctx, database.LinkSeriesLinkParams{
-					SeriesID: series.ID,
-					Name:     linkName,
-					Url:      linkURL,
-				})
-				if err := recordField("source_link", linkURL); err != nil {
-					return err
-				}
-			}
-		}
-
-		if err := q.RefreshSeriesStats(ctx, series.ID); err != nil {
-			return err
-		}
-		if afterInTx != nil {
-			return afterInTx(q)
-		}
-		return nil
-	})
 }
 
 func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request) {
@@ -482,26 +311,19 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	review, fields, isNew, err := c.queueMetadataReviewWithOptions(r.Context(), series, result, provider.Name(), searchTitle,
-		queueReviewOptions{IgnoreRejected: isTruthyParam(r.URL.Query().Get("force"))})
+	queued, err := c.proposals.Queue(r.Context(), series, result, provider.Name(), searchTitle,
+		proposal.QueueOptions{IgnoreRejected: isTruthyParam(r.URL.Query().Get("force"))})
 	if err != nil {
-		if outcome, message, ok := queueOutcomeForError(err); ok {
-			jsonResponse(w, http.StatusOK, map[string]interface{}{
-				"scraped": false,
-				"outcome": outcome,
-				"message": fmt.Sprintf("从 %s 找到条目，但%s", provider.Name(), message),
-			})
-			return
-		}
 		jsonError(w, http.StatusInternalServerError, "Failed to save scraped metadata")
 		return
 	}
 
-	if !isNew {
+	if queued.Status != proposal.QueueQueued {
+		outcome, message := queueOutcomeForStatus(queued.Status)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"scraped": false,
-			"outcome": "duplicate_ignored",
-			"message": fmt.Sprintf("从 %s 找到条目，但待审核队列中已存在完全相同的记录，已为您忽略", provider.Name()),
+			"outcome": outcome,
+			"message": fmt.Sprintf("从 %s 找到条目，但%s", provider.Name(), message),
 		})
 		return
 	}
@@ -513,20 +335,19 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 		"message":     fmt.Sprintf("已将 %s 的『%s』加入审阅队列", provider.Name(), result.Title),
 		"series":      series,
 		"metadata":    result,
-		"review_id":   review.ID,
-		"field_count": len(fields),
+		"review_id":   queued.Proposal.ID,
+		"field_count": len(queued.Fields),
 	})
 }
 
-// 批量刮削所有系列的元数据
 // scrapeSeriesEntry 是刮削任务的最小工作单元（系列 id + 用于检索的名称）。
 type scrapeSeriesEntry struct {
 	ID   int64
 	Name string
 }
 
-// scrapeMetrics 聚合刮削任务的实时计数；toMap 生成任务进度指标，消除此前在两个刮削函数里各自
-// 重复 4 次的 9 键 map 字面量。
+// scrapeMetrics 聚合刮削任务的实时计数；toMap 转换成任务进度上报用的 map，
+// 全库/单库两条刮削路径共用同一份字段集，避免两处各自维护一份 map 字面量。
 type scrapeMetrics struct {
 	total            int
 	processed        int
@@ -553,31 +374,54 @@ func (m scrapeMetrics) toMap() map[string]int64 {
 	}
 }
 
-// runScrapeTask 是全库/单库两种批量刮削的共享执行体：对 entries 逐个请求 provider、写入元数据
-// 审阅队列、按速率限制推进，并持续上报进度与指标。cancelMsg/donePrefix/logMsg 承载两个入口的
-// 文案差异。bgCtx 必须已注入 locale；调用方负责 start/setTaskMetadata/cleanup 与 goroutine 调度。
-// 此前两个函数各有一份约 150 行的近乎逐行拷贝（且日志已发生漂移），此处统一到带完整日志的版本。
-func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, providerName, cancelCode, doneCode, logMsg string, provider metadata.Provider, entries []scrapeSeriesEntry) {
+// scrapeProviderLabels 是刮削任务在任务面板上的**刮削源**标签。整个任务期间不变，因此写进任务
+// 声明、首帧就带齐；随条目变化的那两个标签由任务体逐条补上（两条路都是按键合并）。
+func scrapeProviderLabels(providerKey, providerName string) map[string]string {
+	return map[string]string{"provider": providerKey, "provider_name": providerName}
+}
+
+// frame 把刮削任务的一次上报翻成**一帧**：**计数推进**、**阶段**、文案与指标同属一次事件，
+// 拆开报会被投递水位撕断（撕开的样子见 taskrun.Handle.Report）。
+// 系列名同时是当前条目与文案占位参数；收集阶段那一帧还没有条目，两处都留空。
+func (m scrapeMetrics) frame(current int, phase, code, seriesName string) taskrun.Frame {
+	total := m.total
+	frame := taskrun.Frame{Current: &current, Total: &total, Phase: phase, Code: code, Metrics: m.toMap()}
+	if seriesName != "" {
+		frame.Item = seriesName
+		frame.Params = map[string]string{"name": seriesName}
+	}
+	return frame
+}
+
+// runScrapeTask 是全库/单库两种批量刮削的共享任务体：对 entries 逐个请求 provider、写入元数据
+// 审阅队列、按速率限制推进，并经任务句柄上报每一帧。logMsg 承载两个入口的日志差异，
+// 终态文案的差异则由各自的任务声明承担。ctx 必须已注入 locale。
+// 两个入口必须共用这一份实现，分叉成两份各自维护会导致日志与进度上报互相漂移。
+//
+// 各个可中断点只把错误返回上去，由引擎裁决**终态**：取消落已取消，其余落失败。
+// 启动入口交下来的 ctx 没有 deadline，**暂停闸门**也只返回 nil 或 ctx.Err()，因此今天走不到
+// 失败那条；将来若给任务上下文加了超时，这条等价即失效。
+func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (TaskResult, error) {
+	providerName := provider.Name()
 	m := scrapeMetrics{total: len(entries)}
-	c.taskEngine.updateTaskDetailsMsg(taskKey, 0, m.total, "task.msg.scrape.collecting_series", nil, "collecting_series", "", m.toMap(), nil)
+	tp.Report(m.frame(0, "collecting_series", "task.msg.scrape.collecting_series", ""))
 
 	for i, entry := range entries {
-		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
-			return
+		if err := tp.Checkpoint(ctx); err != nil {
+			return TaskResult{}, err
 		}
 		slog.Info(logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
 
 		m.providerRequests++
 		m.processed = i
-		c.taskEngine.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.requesting_provider", map[string]string{"name": entry.Name}, "requesting_provider", entry.Name, m.toMap(), map[string]string{
-			"provider":            providerKey,
-			"provider_name":       providerName,
+		requesting := m.frame(i, "requesting_provider", "task.msg.scrape.requesting_provider", entry.Name)
+		requesting.Labels = map[string]string{
 			"current_series_id":   strconv.FormatInt(entry.ID, 10),
 			"current_series_name": entry.Name,
-		})
+		}
+		tp.Report(requesting)
 
-		result, err := provider.FetchSeriesMetadata(bgCtx, entry.Name)
+		result, err := provider.FetchSeriesMetadata(ctx, entry.Name)
 		if err != nil {
 			m.failed++
 			m.providerErrors++
@@ -590,48 +434,48 @@ func (c *Controller) runScrapeTask(bgCtx context.Context, taskKey, providerKey, 
 			continue
 		}
 
-		series, err := c.store.GetSeries(bgCtx, entry.ID)
+		series, err := c.store.GetSeries(ctx, entry.ID)
 		if err != nil {
 			continue
 		}
 
-		c.taskEngine.updateTaskDetailsMsg(taskKey, i, m.total, "task.msg.scrape.queueing_review", map[string]string{"name": entry.Name}, "queueing_review", entry.Name, m.toMap(), nil)
-		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
-			return
+		tp.Report(m.frame(i, "queueing_review", "task.msg.scrape.queueing_review", entry.Name))
+		if err := tp.Checkpoint(ctx); err != nil {
+			return TaskResult{}, err
 		}
-		if _, _, isNew, err := c.queueMetadataReview(bgCtx, series, result, providerName, entry.Name); err == nil {
-			m.success++
-			if isNew {
-				m.queuedReview++
-				slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
-			}
-		} else if _, _, benign := queueOutcomeForError(err); !benign {
-			// 「无变更」「差异全被锁」「此前已拒绝」都是正常结果，不该计入失败——
-			// 计进去会让一次完全正常的全库刮削在任务面板上报出一片红。
+		queued, err := c.proposals.Queue(ctx, series, result, providerName, entry.Name, proposal.QueueOptions{})
+		switch {
+		case err != nil:
 			m.failed++
 			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
+		case queued.Status == proposal.QueueQueued:
+			m.success++
+			m.queuedReview++
+			slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
+		case queued.Status == proposal.QueueReusedExisting:
+			m.success++
+		default:
+			// 「无变更」「差异全被锁」「此前已拒绝」都是正常结果，既不计成功也不计失败——
+			// 计进失败会让一次完全正常的全库刮削在任务面板上报出一片红。
 		}
 		m.processed = i + 1
-		c.taskEngine.updateTaskDetailsMsg(taskKey, i+1, m.total, "task.msg.scrape.rate_limited_wait", map[string]string{"name": entry.Name}, "rate_limited_wait", entry.Name, m.toMap(), nil)
+		tp.Report(m.frame(i+1, "rate_limited_wait", "task.msg.scrape.rate_limited_wait", entry.Name))
 
 		// 速率限制
-		if err := taskcontrol.Wait(bgCtx); errors.Is(err, context.Canceled) {
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
-			return
+		if err := tp.Checkpoint(ctx); err != nil {
+			return TaskResult{}, err
 		}
 		select {
 		case <-time.After(scrapeRateLimitDelay):
 			m.rateLimitedWait += scrapeRateLimitDelay
-		case <-bgCtx.Done():
-			c.taskEngine.completeTaskMsg(taskKey, "cancelled", cancelCode, nil)
-			return
+		case <-ctx.Done():
+			return TaskResult{}, ctx.Err()
 		}
 	}
 
-	slog.Info("Scrape task completed", "provider", providerName, "task_key", taskKey, "success_count", m.success, "total_count", m.total)
-	c.taskEngine.finishTaskMsg(taskKey, doneCode, map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)})
+	slog.Info("Scrape task completed", "provider", providerName, "success_count", m.success, "total_count", m.total)
 	c.PublishEvent("refresh")
+	return TaskResult{Params: map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)}}, nil
 }
 
 func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, providerKey string) error {
@@ -662,22 +506,27 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		return nil
 	}
 
-	totalCount := len(allSeries)
 	providerName := provider.Name()
-	taskKey := "scrape_all_series"
-	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.all_series.start", map[string]string{"provider": providerName}, totalCount) {
-		return errTaskAlreadyRunning
+	spec := TaskSpec{
+		Key:         "scrape_all_series",
+		Type:        "scrape",
+		StartCode:   "task.msg.scrape.all_series.start",
+		StartParams: map[string]string{"provider": providerName},
+		Total:       len(allSeries),
+		CanCancel:   true,
+		CanPause:    true,
+		// **重启函数** retryScrapeTask 只从这里读回刮削源；换成显示名重试就会回落到默认源。
+		Metadata:     map[string]string{"provider": providerKey},
+		Labels:       scrapeProviderLabels(providerKey, providerName),
+		ScopeName:    "全库",
+		CompleteCode: "task.msg.scrape.complete_all",
+		CancelCode:   "task.msg.scrape.cancelled_all",
+		FailCode:     "task.msg.scrape.failed_all",
 	}
-	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, "全库")
-	taskCtx, cleanup := c.taskEngine.newTaskContext(taskKey)
 
-	c.runBackgroundTask(taskKey, func() {
-		defer cleanup()
-		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
-			"task.msg.scrape.cancelled_all", "task.msg.scrape.complete_all", "Scraping series metadata", provider, allSeries)
+	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping series metadata", allSeries)
 	})
-
-	return nil
 }
 
 func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request) {
@@ -689,11 +538,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 	_ = json.NewDecoder(r.Body).Decode(&reqBody)
 
 	if err := c.launchBatchScrapeAllSeriesTask(ctx, reqBody.Provider); err != nil {
-		if strings.Contains(err.Error(), "task already running") {
-			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A batch scrape task is already running"})
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to list libraries")
+		writeTaskLaunchError(w, err, "A batch scrape task is already running", "Failed to list libraries")
 		return
 	}
 
@@ -705,7 +550,8 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// scrapeLibrary 批量刮削指定库的缺失元数据
+// launchLibraryScrapeTask 是单库刮削任务的启动点，走引擎的启动入口。
+// 它只收缺基础元数据的系列——已有简介或出版社的跳过，因此 entries 可能为空。
 func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int64, providerKey string) error {
 	provider := c.getProvider(providerKey)
 	locale := metadata.LocaleFromContext(ctx)
@@ -733,26 +579,30 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		return nil
 	}
 
-	totalCount := len(allSeries)
 	providerName := provider.Name()
-	taskKey := fmt.Sprintf("scrape_library_%d", libraryID)
-	if !c.taskEngine.startPausableCancelableTaskMsg(taskKey, "scrape", "task.msg.scrape.library.start", map[string]string{"provider": providerName}, totalCount) {
-		return errTaskAlreadyRunning
-	}
 	scopeName := ""
 	if lib, err := c.store.GetLibrary(ctx, libraryID); err == nil {
 		scopeName = lib.Name
 	}
-	c.taskEngine.setTaskMetadata(taskKey, map[string]string{"provider": providerKey, "label.provider": providerKey, "label.provider_name": providerName}, scopeName)
-	taskCtx, cleanup := c.taskEngine.newTaskContext(taskKey)
+	spec := TaskSpec{
+		Key:          fmt.Sprintf("scrape_library_%d", libraryID),
+		Type:         "scrape",
+		StartCode:    "task.msg.scrape.library.start",
+		StartParams:  map[string]string{"provider": providerName},
+		Total:        len(allSeries),
+		CanCancel:    true,
+		CanPause:     true,
+		Metadata:     map[string]string{"provider": providerKey},
+		Labels:       scrapeProviderLabels(providerKey, providerName),
+		ScopeName:    scopeName,
+		CompleteCode: "task.msg.scrape.complete_library",
+		CancelCode:   "task.msg.scrape.cancelled_library",
+		FailCode:     "task.msg.scrape.failed_library",
+	}
 
-	c.runBackgroundTask(taskKey, func() {
-		defer cleanup()
-		c.runScrapeTask(metadata.WithLocale(taskCtx, locale), taskKey, providerKey, providerName,
-			"task.msg.scrape.cancelled_library", "task.msg.scrape.complete_library", "Scraping library series metadata", provider, allSeries)
+	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping library series metadata", allSeries)
 	})
-
-	return nil
 }
 
 func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
@@ -769,11 +619,7 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&reqBody)
 
 	if err := c.launchLibraryScrapeTask(ctx, libraryID, reqBody.Provider); err != nil {
-		if strings.Contains(err.Error(), "task already running") {
-			jsonResponse(w, http.StatusConflict, map[string]string{"error": "A library scrape task is already running"})
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to list series in library")
+		writeTaskLaunchError(w, err, "A library scrape task is already running", "Failed to list series in library")
 		return
 	}
 

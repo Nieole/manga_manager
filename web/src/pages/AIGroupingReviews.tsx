@@ -1,9 +1,3 @@
-/**
- * 业务说明：本文件是业务实现，属于项目源码的一部分，负责支撑漫画管理器在资料库、阅读器、扫描、元数据或系统设置中的具体业务能力。
- * 它与相邻模块共同组成前后端业务链路，修改时需要结合调用方理解数据流和用户可见行为。
- * 维护时应关注输入输出契约、错误处理、状态同步和与既有业务语义的一致性。
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { getApiErrorMessage } from '../api/client';
@@ -264,6 +258,9 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
         applied,
         rejected,
         skipped: 0,
+        // AI 分组逐条提交，识别不出「已被别人处理过」这一类，因此恒为 0。
+        // 模板与元数据提案共用，缺参会在提示里留下一个空洞。
+        conflict: 0,
         failed,
       }), failed > 0 ? 'error' : 'success');
       setMarkedActions({});

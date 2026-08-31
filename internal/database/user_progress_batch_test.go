@@ -1,4 +1,4 @@
-// 业务说明：本文件是业务回归测试，覆盖每用户阅读进度(user_progress.go)的批量与迁移路径：
+// 本文件是业务回归测试，覆盖每用户阅读进度(user_progress.go)的批量与迁移路径：
 // SetUserBooksReadState(批量标记已读/未读，含 0 页书哨兵值)、GetUserBookProgressMap(批量取进度)、
 // ClearUserBookProgress(清除后聚合重算)、MigrateGlobalProgressToUser(幂等 + INSERT OR IGNORE 不覆盖已有)。
 // 每次写入后都要求派生 user_series_progress 聚合被正确刷新。
