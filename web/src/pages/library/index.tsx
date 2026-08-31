@@ -25,6 +25,7 @@ import { useLibraryKeyboard } from './hooks/useLibraryKeyboard';
 import { useExternalLibrary } from './hooks/useExternalLibrary';
 import { useSeriesScraping } from './hooks/useSeriesScraping';
 import { useSmartFilters } from './hooks/useSmartFilters';
+import { smartFilterToSnapshot } from './hooks/smartFilterNormalize';
 import { useLibraryFilterOptions } from './hooks/useLibraryFilterOptions';
 import { useLibraryCardActions } from './hooks/useLibraryCardActions';
 import { useLibraryTransfer } from './hooks/useLibraryTransfer';
@@ -156,22 +157,13 @@ export default function LibraryPage() {
   const externalLib = useExternalLibrary({ libId, refreshTrigger, allSeriesIds, onError: showError });
 
   // ===== 智能筛选 =====
-  // 智能筛选保存的是一组业务视图快照，应用时必须重置关键字，避免“视图条件 + 临时搜索词”叠加后让用户误以为视图失效。
+  // 智能筛选保存的是一组业务视图快照：视图有哪些维度、怎么存怎么还原由 smartFilterNormalize 一侧回答，页面只负责接线与提示。
   const smartFilters = useSmartFilters({
     libId,
     onSaved: () => showToast(t('home.smartFilters.saved'), 'success'),
     onError: showError,
     onApplied: (filter) => {
-      applySnapshot({
-        activeTag: filter.activeTag,
-        activeAuthor: filter.activeAuthor,
-        activeStatus: filter.activeStatus,
-        activeLetter: filter.activeLetter,
-        keyword: '',
-        sortByField: filter.sortByField,
-        sortDir: filter.sortDir,
-        pageSize: filter.pageSize,
-      });
+      applySnapshot(smartFilterToSnapshot(filter));
       if (filter.id !== 'reset') {
         showToast(t('home.smartFilters.applied', { name: filter.name }), 'success');
       }
@@ -314,6 +306,7 @@ export default function LibraryPage() {
             activeAuthor,
             activeStatus,
             activeLetter,
+            advanced,
             sortByField,
             sortDir,
             pageSize,

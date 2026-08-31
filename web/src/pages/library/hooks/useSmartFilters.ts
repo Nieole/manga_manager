@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../../api/client';
 import { DEFAULT_PAGE_SIZE, type SavedSmartFilter } from '../types';
-import { normalizeRemoteSmartFilter } from './smartFilterNormalize';
+import { EMPTY_ADVANCED_FILTERS, type AdvancedFilters } from './libraryFilterParams';
+import { normalizeRemoteSmartFilter, smartFilterRequestBody } from './smartFilterNormalize';
 
 interface UseSmartFiltersParams {
   libId: string | undefined;
@@ -10,11 +11,14 @@ interface UseSmartFiltersParams {
   onApplied: (filter: SavedSmartFilter) => void;
 }
 
+// 保存视图时要收下的当前筛选状态。advanced 与 active* 同等重要——它同样决定视图的成员，
+// 漏收就会存出一个条件比用户所见更宽的视图。
 interface CurrentFilterState {
   activeTag: string | null;
   activeAuthor: string | null;
   activeStatus: string | null;
   activeLetter: string | null;
+  advanced: AdvancedFilters;
   sortByField: string;
   sortDir: string;
   pageSize: number;
@@ -117,16 +121,7 @@ export function useSmartFilters({
         if (!migrated && legacyItems.length > 0) {
           await Promise.all(
             legacyItems.map((item) =>
-              apiClient.post(`/api/libraries/${libId}/smart-filters/`, {
-                name: item.name,
-                activeTag: item.activeTag,
-                activeAuthor: item.activeAuthor,
-                activeStatus: item.activeStatus,
-                activeLetter: item.activeLetter,
-                sortByField: item.sortByField,
-                sortDir: item.sortDir,
-                pageSize: item.pageSize,
-              }),
+              apiClient.post(`/api/libraries/${libId}/smart-filters/`, smartFilterRequestBody(item)),
             ),
           );
           localStorage.setItem(smartFilterMigrationKey(libId), 'true');
@@ -148,6 +143,7 @@ export function useSmartFilters({
     async (rawName: string, current: CurrentFilterState) => {
       if (!libId) return;
       const name = rawName.trim() || `Filter ${savedSmartFilters.length + 1}`;
+      const previous = savedSmartFilters;
       const filter: SavedSmartFilter = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name,
@@ -155,6 +151,7 @@ export function useSmartFilters({
         activeAuthor: current.activeAuthor,
         activeStatus: current.activeStatus,
         activeLetter: current.activeLetter,
+        ...current.advanced,
         sortByField: current.sortByField,
         sortDir: current.sortDir,
         pageSize: current.pageSize,
@@ -164,16 +161,10 @@ export function useSmartFilters({
         [filter, ...prev.filter((item) => item.name !== name)].slice(0, 20),
       );
       try {
-        const res = await apiClient.post<SavedSmartFilter>(`/api/libraries/${libId}/smart-filters/`, {
-          name: filter.name,
-          activeTag: filter.activeTag,
-          activeAuthor: filter.activeAuthor,
-          activeStatus: filter.activeStatus,
-          activeLetter: filter.activeLetter,
-          sortByField: filter.sortByField,
-          sortDir: filter.sortDir,
-          pageSize: filter.pageSize,
-        });
+        const res = await apiClient.post<SavedSmartFilter>(
+          `/api/libraries/${libId}/smart-filters/`,
+          smartFilterRequestBody(filter),
+        );
         const saved = normalizeRemoteSmartFilter(res.data);
         setSavedSmartFilters((current) => {
           const next = [saved, ...current.filter((item) => item.name !== saved.name)].slice(0, 20);
@@ -184,10 +175,13 @@ export function useSmartFilters({
         onSaved();
       } catch (err) {
         console.error('Failed to save smart filter', err);
+        // 与 deleteSmartFilter 一样要回滚乐观插入：留下的条目带的是客户端 id，后端并不认识它，
+        // 用户去删只会拿到 404，再被删除那侧的回滚原样放回来，只能刷新页面才消得掉。
+        setSavedSmartFilters(previous);
         onError('home.smartFilters.saveFailed');
       }
     },
-    [libId, savedSmartFilters.length, onSaved, onError],
+    [libId, savedSmartFilters, onSaved, onError],
   );
 
   const deleteSmartFilter = useCallback(
@@ -226,6 +220,7 @@ export function useSmartFilters({
       activeAuthor: null,
       activeStatus: null,
       activeLetter: null,
+      ...EMPTY_ADVANCED_FILTERS,
       sortByField: 'name',
       sortDir: 'asc',
       pageSize: DEFAULT_PAGE_SIZE,

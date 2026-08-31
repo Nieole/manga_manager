@@ -43,6 +43,12 @@ export interface NamedOption {
   name: string;
 }
 
+/**
+ * 一条保存下来的智能视图，与后端 smart_filters 表逐列对应（后端 snake_case，此处 camelCase）。
+ * readState/minRating/maxRating/minProgress/maxProgress/addedWithinDays 就是 AdvancedFilters 的六个维度，
+ * 平铺在这里而非嵌一层，是为了与后端 JSON 形状一一对齐；null 表示该维度不筛选。
+ * 视图的成员由这些条件推导而来，少存一维就是换了一个视图，故新增筛选维度时必须同时补进这里。
+ */
 export interface SavedSmartFilter {
   id: string;
   name: string;
@@ -50,6 +56,12 @@ export interface SavedSmartFilter {
   activeAuthor: string | null;
   activeStatus: string | null;
   activeLetter: string | null;
+  readState: string | null;
+  minRating: number | null;
+  maxRating: number | null;
+  minProgress: number | null;
+  maxProgress: number | null;
+  addedWithinDays: number | null;
   sortByField: string;
   sortDir: string;
   pageSize: number;
