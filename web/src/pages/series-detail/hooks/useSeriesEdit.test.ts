@@ -1,9 +1,9 @@
 /**
  * @vitest-environment jsdom
  *
- * 本文件守卫「编辑框里的内容归用户，其余时候归服务端」。
- * 后台任务一完成就会静默重取系列上下文并换掉 series/tags/authors/links 的引用；
- * 破了的话弹窗还开着、用户刚敲的简介与标签已被服务端版本悄悄顶掉，输入白丢。
+ * 本文件守卫「编辑框里的内容归用户」：后台刷新不得顶掉未保存的输入，保存必须带回表单长出来的
+ * 那个版本、被拒时输入原样留着。破了的话，用户刚敲的简介与标签被服务端版本悄悄顶掉，或版本跟着
+ * 后台刷新走、服务端查不出冲突，后写的照旧静默覆盖先写的。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +16,8 @@ import { useSeriesEdit } from './useSeriesEdit';
 
 // 服务端此刻的简介，用例可在两次取数之间改它，模拟刮削应用提案后值真的变了。
 let serverSummary = new Map<number, string>();
+// 服务端此刻的元数据版本，随内容一起变。
+let serverVersion = new Map<number, string>();
 
 function contextOf(seriesId: number): SeriesContextResponse {
   return {
@@ -33,6 +35,7 @@ function contextOf(seriesId: number): SeriesContextResponse {
     tags: [{ id: seriesId, name: `标签${seriesId}` }],
     authors: [{ id: seriesId, name: `作者${seriesId}`, role: 'author' }],
     links: [],
+    metadata_version: serverVersion.get(seriesId) ?? `v1-${seriesId}`,
   };
 }
 
@@ -51,7 +54,7 @@ async function flush() {
   });
 }
 
-function renderEditor(seriesId: string) {
+function renderEditor(seriesId: string, showToast: (message: string, level: 'success' | 'error') => void = vi.fn()) {
   return renderHook(
     ({ id, trigger }: { id: string; trigger: number }) => {
       const ctx = useSeriesContext({ seriesId: id, refreshTrigger: trigger });
@@ -61,8 +64,9 @@ function renderEditor(seriesId: string) {
         tags: ctx.tags,
         authors: ctx.authors,
         links: ctx.links,
+        metadataVersion: ctx.metadataVersion,
         reload: ctx.reload,
-        showToast: vi.fn(),
+        showToast,
         t: (key: string) => key,
       });
       return { ctx, edit };
@@ -73,6 +77,7 @@ function renderEditor(seriesId: string) {
 
 beforeEach(() => {
   serverSummary = new Map();
+  serverVersion = new Map();
   mockGet();
 });
 
@@ -137,5 +142,123 @@ describe('useSeriesEdit 表单重置', () => {
     expect(result.current.edit.editForm.summary?.String).toBe('系列2简介');
     expect(result.current.edit.editForm.tagsInput).toEqual(['标签2']);
     expect(result.current.edit.editForm.authorsInput).toEqual([{ name: '作者2', role: 'author' }]);
+  });
+});
+
+/** 造一个 axios 形状的 409，模拟服务端认出「编辑期间有人改过」。 */
+function conflictError(currentVersion: string) {
+  return Object.assign(new Error('Request failed with status code 409'), {
+    isAxiosError: true,
+    response: { status: 409, data: { error: 'conflict', current_version: currentVersion } },
+  });
+}
+
+describe('useSeriesEdit 并发保存', () => {
+  it('保存带回表单长出来的那个版本，编辑期间的后台刷新不改这个基线', async () => {
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never);
+    const { result, rerender } = renderEditor('1');
+    await flush();
+
+    act(() => {
+      result.current.edit.setIsEditing(true);
+    });
+    await flush();
+    act(() => {
+      result.current.edit.onFormChange('summary', '我写的简介');
+    });
+
+    // 编辑期间别人改了这个系列，后台刷新把上下文换成了新内容与新版本。
+    serverSummary.set(1, '别人写的简介');
+    serverVersion.set(1, 'v2-1');
+    rerender({ id: '1', trigger: 1 });
+    await flush();
+
+    await act(async () => {
+      await result.current.edit.save();
+    });
+
+    // 必须还是打开编辑器时那一版。跟着刷新走就等于替用户认领了别人的改动，
+    // 服务端查不出冲突，后写的照旧静默覆盖先写的。
+    expect(put.mock.calls[0][1]).toMatchObject({ expected_version: 'v1-1' });
+  });
+
+  it('服务端报冲突时保存不落地，弹窗与用户敲进去的内容原样留着', async () => {
+    vi.spyOn(apiClient, 'put').mockRejectedValue(conflictError('v2-1'));
+    const showToast = vi.fn();
+    const { result } = renderEditor('1', showToast);
+    await flush();
+
+    act(() => {
+      result.current.edit.setIsEditing(true);
+    });
+    await flush();
+    act(() => {
+      result.current.edit.onFormChange('summary', '用户敲了半天的简介');
+      result.current.edit.onFormChange('tagsInput', ['用户加的标签']);
+    });
+
+    await act(async () => {
+      await result.current.edit.save();
+    });
+
+    expect(result.current.edit.hasConflict).toBe(true);
+    expect(result.current.edit.isEditing).toBe(true);
+    expect(result.current.edit.editForm.summary?.String).toBe('用户敲了半天的简介');
+    expect(result.current.edit.editForm.tagsInput).toEqual(['用户加的标签']);
+    expect(showToast).toHaveBeenCalledWith('series.toast.saveConflict', 'error');
+  });
+
+  it('看过冲突提示后再存一次，以服务端最新版本为基线覆盖', async () => {
+    const put = vi
+      .spyOn(apiClient, 'put')
+      .mockRejectedValueOnce(conflictError('v2-1'))
+      .mockResolvedValue({ data: {} } as never);
+    const { result } = renderEditor('1');
+    await flush();
+
+    act(() => {
+      result.current.edit.setIsEditing(true);
+    });
+    await flush();
+    act(() => {
+      result.current.edit.onFormChange('summary', '我写的简介');
+    });
+
+    await act(async () => {
+      await result.current.edit.save();
+    });
+    expect(result.current.edit.hasConflict).toBe(true);
+
+    await act(async () => {
+      await result.current.edit.save();
+    });
+    await flush();
+
+    expect(put.mock.calls[1][1]).toMatchObject({ expected_version: 'v2-1', summary: '我写的简介' });
+    expect(result.current.edit.isEditing).toBe(false);
+    expect(result.current.edit.hasConflict).toBe(false);
+  });
+
+  it('没人插队时保存照常成功，不留冲突态', async () => {
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never);
+    const { result } = renderEditor('1');
+    await flush();
+
+    act(() => {
+      result.current.edit.setIsEditing(true);
+    });
+    await flush();
+    act(() => {
+      result.current.edit.onFormChange('summary', '我写的简介');
+    });
+
+    await act(async () => {
+      await result.current.edit.save();
+    });
+    await flush();
+
+    expect(put.mock.calls[0][1]).toMatchObject({ expected_version: 'v1-1', summary: '我写的简介' });
+    expect(result.current.edit.isEditing).toBe(false);
+    expect(result.current.edit.hasConflict).toBe(false);
   });
 });

@@ -30,6 +30,9 @@ export interface SeriesContextState {
   tags: MetaTag[];
   authors: Author[];
   links: SeriesLink[];
+  // metadataVersion 是本次取到的元数据版本，用户按下保存时原样带回，服务端据此判断编辑
+  // 期间有没有别的途径写过这个系列。系列未加载时为 null。
+  metadataVersion: string | null;
   relations: SeriesRelation[];
   metadataReviews: MetadataReview[];
   metadataProvenance: MetadataProvenance[];
@@ -49,6 +52,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
   const [tags, setTags] = useState<MetaTag[]>([]);
   const [authors, setAuthors] = useState<Author[]>([]);
   const [links, setLinks] = useState<SeriesLink[]>([]);
+  const [metadataVersion, setMetadataVersion] = useState<string | null>(null);
   const [relations, setRelations] = useState<SeriesRelation[]>([]);
   const [metadataReviews, setMetadataReviews] = useState<MetadataReview[]>([]);
   const [metadataProvenance, setMetadataProvenance] = useState<MetadataProvenance[]>([]);
@@ -80,6 +84,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
         setTags(Array.isArray(data.tags) ? data.tags : []);
         setAuthors(Array.isArray(data.authors) ? data.authors : []);
         setLinks(Array.isArray(data.links) ? data.links : []);
+        setMetadataVersion(data.metadata_version ?? null);
         setRelations(Array.isArray(data.relations) ? data.relations : []);
         setMetadataReviews(Array.isArray(data.metadata_review?.reviews) ? data.metadata_review!.reviews : []);
         setMetadataProvenance(Array.isArray(data.metadata_review?.provenance) ? data.metadata_review!.provenance : []);
@@ -113,6 +118,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
       setTags([]);
       setAuthors([]);
       setLinks([]);
+      setMetadataVersion(null);
       setRelations([]);
       setMetadataReviews([]);
       setMetadataProvenance([]);
@@ -138,6 +144,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
     tags,
     authors,
     links,
+    metadataVersion,
     relations,
     metadataReviews,
     metadataProvenance,

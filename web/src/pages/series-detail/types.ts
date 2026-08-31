@@ -208,4 +208,5 @@ export interface SeriesContextResponse {
   metadata_summary?: SeriesMetadataSummary;
   failed_tasks?: SeriesFailedTask[];
   continue?: SeriesContinue;
+  metadata_version?: string;
 }

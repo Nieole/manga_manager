@@ -91,6 +91,7 @@ export default function SeriesDetailPage() {
     tags: ctx.tags,
     authors: ctx.authors,
     links: ctx.links,
+    metadataVersion: ctx.metadataVersion,
     reload: ctx.reload,
     showToast,
     t,
@@ -495,6 +496,7 @@ export default function SeriesDetailPage() {
         allAuthors={edit.allAuthors}
         editForm={edit.editForm}
         lockedFields={edit.lockedFields}
+        conflict={edit.hasConflict}
         onClose={() => edit.setIsEditing(false)}
         onSave={edit.save}
         onToggleLock={edit.toggleLock}

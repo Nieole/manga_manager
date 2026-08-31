@@ -1,4 +1,4 @@
-import { Lock, Sparkles, Unlock, X } from 'lucide-react';
+import { AlertTriangle, Lock, Sparkles, Unlock, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Author, MetaTag, Series } from './types';
 import { SeriesCustomFieldsEditor } from './SeriesCustomFieldsEditor';
@@ -29,6 +29,9 @@ interface SeriesMetadataEditorModalProps {
     linksInput?: { name: string; url: string }[];
   };
   lockedFields: Set<string>;
+  // conflict：上一次保存被服务端以「编辑期间有人改过」为由拒绝。为真时弹窗给出提示，
+  // 保存按钮改成「仍要保存」——用户的输入还原样在框里，再点一次即以这一份为准。
+  conflict: boolean;
   onClose: () => void;
   onSave: () => void;
   onToggleLock: (field: string) => void;
@@ -41,6 +44,7 @@ export function SeriesMetadataEditorModal({
   allAuthors,
   editForm,
   lockedFields,
+  conflict,
   onClose,
   onSave,
   onToggleLock,
@@ -129,13 +133,21 @@ export function SeriesMetadataEditorModal({
       icon={<Sparkles className="h-5 w-5" />}
       size="standard"
       footer={
-        <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
-          <button onClick={onClose} className={modalGhostButtonClass}>
-            {t('modal.cancel')}
-          </button>
-          <button onClick={onSave} className={modalPrimaryButtonClass}>
-            {t('series.editor.save')}
-          </button>
+        <div className="space-y-3">
+          {conflict && (
+            <p className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{t('series.editor.conflictHint')}</span>
+            </p>
+          )}
+          <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
+            <button onClick={onClose} className={modalGhostButtonClass}>
+              {t('modal.cancel')}
+            </button>
+            <button onClick={onSave} className={modalPrimaryButtonClass}>
+              {conflict ? t('series.editor.saveAnyway') : t('series.editor.save')}
+            </button>
+          </div>
         </div>
       }
     >
