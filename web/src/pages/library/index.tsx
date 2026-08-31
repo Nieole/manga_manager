@@ -122,7 +122,7 @@ export default function LibraryPage() {
     keyword: debouncedKeyword,
     appendMode: paginationMode === 'infinite',
   });
-  const { allSeries, totalSeries, loading, error: seriesError, pageCursorMap, resetPagination, refetchCurrentPage, retry: retrySeries, patchSeries } = seriesData;
+  const { allSeries, totalSeries, loading, error: seriesError, pageCursorMap, resetPagination, refreshLoadedSeries, retry: retrySeries, patchSeries } = seriesData;
 
   useResetPageOnFilterChange(filters, resetPagination);
 
@@ -137,7 +137,7 @@ export default function LibraryPage() {
   // ===== 选择 =====
   const selection = useLibrarySelection({
     allSeries: allSeries,
-    onChanged: refetchCurrentPage,
+    onChanged: refreshLoadedSeries,
     onError: showError,
   });
 
@@ -180,7 +180,7 @@ export default function LibraryPage() {
     isSelectionMode: selection.isSelectionMode,
     toggleSelectSeries: selection.toggleSelectSeries,
     patchSeries,
-    refetchCurrentPage,
+    refreshLoadedSeries,
     showError,
     showToast,
     t,
@@ -190,7 +190,7 @@ export default function LibraryPage() {
   const scraping = useSeriesScraping({
     onSuccess: () => {
       showToast(t('series.toast.metadataReviewQueued', { count: 0 }), 'success');
-      refetchCurrentPage();
+      refreshLoadedSeries();
     },
     onError: showError,
   });
@@ -459,7 +459,7 @@ export default function LibraryPage() {
           onSuccess={(updated) => {
             showToast(t('bulkEdit.success', { count: updated }), 'success');
             selection.clearSelection();
-            refetchCurrentPage();
+            refreshLoadedSeries();
           }}
         />
       )}

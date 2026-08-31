@@ -4,7 +4,7 @@ import type { Series } from '../types';
 
 interface UseLibrarySelectionParams {
   allSeries: Series[];
-  /** 操作完成后请求重新拉当前页 */
+  /** 操作完成后请求重取列表：无限滚动下选中项可能在前几屏，刷新范围由 useLibrarySeries 决定。 */
   onChanged: () => void;
   /** 错误时提示 */
   onError: (msg: string) => void;

@@ -10,7 +10,7 @@ interface UseLibraryCardActionsParams {
   isSelectionMode: boolean;
   toggleSelectSeries: (id: number) => void;
   patchSeries: (id: number, patch: Partial<Series>) => void;
-  refetchCurrentPage: () => void;
+  refreshLoadedSeries: () => void;
   showError: (key: string) => void;
   showToast: (message: string, level: 'success' | 'error') => void;
   t: (key: string, params?: Record<string, unknown>) => string;
@@ -20,7 +20,7 @@ export function useLibraryCardActions({
   isSelectionMode,
   toggleSelectSeries,
   patchSeries,
-  refetchCurrentPage,
+  refreshLoadedSeries,
   showError,
   showToast,
   t,
@@ -62,14 +62,14 @@ export function useLibraryCardActions({
       try {
         await apiClient.post(`/api/series/${series.id}/rescan?force=true`);
         showToast(t('home.seriesRescanQueued'), 'success');
-        window.setTimeout(refetchCurrentPage, 3000);
+        window.setTimeout(refreshLoadedSeries, 3000);
       } catch (err) {
         showToast(`${t('home.seriesRescanFailed')}: ${getApiErrorMessage(err, t('home.seriesRescanFailed'))}`, 'error');
       } finally {
         setRescanningId(null);
       }
     },
-    [refetchCurrentPage, showToast, t],
+    [refreshLoadedSeries, showToast, t],
   );
 
   return {
