@@ -181,7 +181,9 @@ func (s *SqlStore) UpdateUserProfile(ctx context.Context, id int64, displayName,
 	return err
 }
 
-// DeleteUser 删除账户；ON DELETE CASCADE 会一并清掉其会话与（阶段2起）每用户进度。
+// DeleteUser 删除账户，其名下数据一并消失：会话与每用户进度/活动/短评走外键 ON DELETE CASCADE，
+// 书签与 KOReader 设备账号（含该账号的进度与同步事件）走 trg_users_ad_purge_owned 触发器——
+// 这两张表的 user_id 有 0 哨兵，挂不了真外键，见 migrate.go 上该触发器的说明。
 func (s *SqlStore) DeleteUser(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	return err

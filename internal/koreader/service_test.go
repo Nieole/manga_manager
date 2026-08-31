@@ -1,6 +1,7 @@
-// 守 KOReader 同步链路的三类不变量：密钥比对必须为常数时间且形态校验不能漏（否则密钥可被
+// 守 KOReader 同步链路的四类不变量：密钥比对必须为常数时间且形态校验不能漏（否则密钥可被
 // 侧信道试出，或任意字符串被当成密钥落库）；自助注册的账号归属不能靠猜（多用户站点下猜错
-// 会把别人的阅读进度写进错误账户）；进度载荷字段必须限长，否则被改造过的设备能撑爆数据库。
+// 会把别人的阅读进度写进错误账户）；进度载荷字段必须限长，否则被改造过的设备能撑爆数据库；
+// 进度投影失败必须在诊断页可见，否则设备侧一路收到 ok、进度却一条都没进来。
 
 package koreader
 
@@ -610,5 +611,61 @@ func TestRegisterDeviceBindsToSoleUserInSingleUserSite(t *testing.T) {
 	if userID != admin.ID {
 		t.Fatalf("单用户站点的自助注册账号 user_id=%d，期望 %d —— "+
 			"绝大多数部署会因此变成「进度谁也看不到」", userID, admin.ID)
+	}
+}
+
+// TestSaveProgressSurfacesApplyFailure 守「投影失败不得静默」：进度落不进站点用户时，
+// 设备侧仍按 kosync 语义收到 ok（规范记录本身已存下、重推也救不回来），但诊断页必须能看见它——
+// 否则用户以为同步正常，实际一条都没进来，这是最难排查的一类故障。
+func TestSaveProgressSurfacesApplyFailure(t *testing.T) {
+	service, store, rootDir := newTestService(t, "file_path")
+	ctx := context.Background()
+
+	_, book := seedServiceBook(t, store, rootDir, "Library A", "Series Alpha", "Volume01.cbz")
+	if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, &fakeTaskHandle{}); err != nil {
+		t.Fatalf("RebuildBookIdentities: %v", err)
+	}
+
+	account, err := store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{
+		Username: "kodev", SyncKey: "secret-key", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateKOReaderAccount: %v", err)
+	}
+	sqlStore, ok := store.(*database.SqlStore)
+	if !ok {
+		t.Fatalf("需要 *SqlStore 才能直查事件表，得到 %T", store)
+	}
+	// 把账号绑到一个不存在的站点用户上，模拟「每用户进度写入失败」的一般情形
+	// （外键失败、并发删库等）；用例守的是失败可见性，不是某一种具体成因。
+	if _, err := sqlStore.DB().ExecContext(ctx,
+		`UPDATE koreader_accounts SET user_id = 424242 WHERE id = ?`, account.ID); err != nil {
+		t.Fatalf("绑定死用户失败: %v", err)
+	}
+
+	res, err := service.SaveProgress(ctx, Credentials{Username: "kodev", Key: HashKey("secret-key")}, ProgressPayload{
+		Document:   "Series Alpha/Volume01.cbz",
+		Percentage: 1.0,
+		Progress:   "/body/DocFragment[32]",
+		Device:     "Kindle",
+		DeviceID:   "device-x",
+	})
+	if err != nil {
+		t.Fatalf("SaveProgress 失败: %v", err)
+	}
+	if !res.Matched {
+		t.Fatalf("上报没有匹配到书籍（%+v）—— 用例必须真的走到写进度的分支才有判别力", res)
+	}
+	if _, _, err := store.GetUserBookProgress(ctx, 424242, book.ID); err != nil {
+		t.Fatalf("GetUserBookProgress: %v", err)
+	}
+
+	// 诊断页把「状态不在 (ok, progress_regressed) 里」的事件当作该账号的最新错误展示。
+	failure, err := store.GetLatestKOReaderFailure(ctx)
+	if err != nil {
+		t.Fatalf("投影失败没有留下任何可见的同步事件，诊断页看不到这次静默失效: %v", err)
+	}
+	if failure.Username != "kodev" || failure.Document != "Series Alpha/Volume01.cbz" {
+		t.Fatalf("最新失败事件对不上这次上报: %+v", failure)
 	}
 }

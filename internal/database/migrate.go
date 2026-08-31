@@ -238,7 +238,25 @@ func Migrate(dbPath string) error {
 			INSERT INTO book_gram_fts(rowid, series_id, library_id, name, title)
 			VALUES (NEW.id, NEW.series_id, NEW.library_id, (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(NEW.name), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x), (SELECT group_concat(hex(substr(x.t, x.i, 2)), ' ') FROM (WITH RECURSIVE g(t,i) AS (SELECT lower(COALESCE(NEW.title, '')), 1 UNION ALL SELECT t, i+1 FROM g WHERE i < length(t)) SELECT t,i FROM g) x));
 		END`,
+		// 删号级联：reading_bookmarks.user_id 与 koreader_accounts.user_id 都挂不了指向 users 的外键，
+		// 因为两列的 0 都是有效哨兵（前者「尚未启用多用户」的历史书签，后者**未归属**的设备账号），
+		// 而 users 里不存在 id=0 的行——真外键会当场拒收这些值。触发器给出外键式的自动级联而不与哨兵冲突：
+		// users.id 由 AUTOINCREMENT 生成、恒 > 0，故 OLD.id 永远匹配不到哨兵行。
+		// KOReader 设备账号随用户一起**删除**而不是解绑成未归属：它是一份能通过鉴权的凭据，
+		// 删号必须一并吊销；解绑后设备仍能登录，其进度还会顺着 user_id=0 的回落路径写进全局进度。
+		// 账号的 koreader_progress / koreader_sync_events 按 username 挂靠、同样没有外键，
+		// 这里一并清掉，与 DeleteKOReaderAccount 的口径一致。
+		`CREATE TRIGGER IF NOT EXISTS trg_users_ad_purge_owned AFTER DELETE ON users BEGIN
+			DELETE FROM reading_bookmarks WHERE user_id = OLD.id;
+			DELETE FROM koreader_progress WHERE username IN (SELECT username FROM koreader_accounts WHERE user_id = OLD.id);
+			DELETE FROM koreader_sync_events WHERE username IN (SELECT username FROM koreader_accounts WHERE user_id = OLD.id);
+			DELETE FROM koreader_accounts WHERE user_id = OLD.id;
+		END`,
 	}); err != nil {
+		return err
+	}
+
+	if err := purgeOrphanUserScopedRows(db); err != nil {
 		return err
 	}
 
@@ -804,6 +822,22 @@ func migrateReadingBookmarksUserScope(db *sql.DB) error {
 		`ALTER TABLE reading_bookmarks_migrated RENAME TO reading_bookmarks`,
 		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_user_book ON reading_bookmarks(user_id, book_id, page)`,
+	})
+}
+
+// purgeOrphanUserScopedRows 清掉「主人已被删除」的每用户数据，补上 trg_users_ad_purge_owned 上线前的欠账。
+//
+// 孤儿书签只是永远读不到的垃圾（AUTOINCREMENT 不复用 id，不会泄漏给新账号），
+// 孤儿 KOReader 设备账号却是活的故障：它仍能通过鉴权，进度却因指向死用户而写不进去，
+// 设备侧还一路收到 ok。user_id = 0 是有效哨兵（历史全局书签 / 未归属设备账号），必须排除在外。
+// 每次启动重放：级联触发器在位时不会产生新孤儿，故此后恒为无操作。
+func purgeOrphanUserScopedRows(db *sql.DB) error {
+	const orphanAccounts = `SELECT username FROM koreader_accounts WHERE user_id != 0 AND user_id NOT IN (SELECT id FROM users)`
+	return execMigrationStatements(db, []string{
+		`DELETE FROM koreader_progress WHERE username IN (` + orphanAccounts + `)`,
+		`DELETE FROM koreader_sync_events WHERE username IN (` + orphanAccounts + `)`,
+		`DELETE FROM koreader_accounts WHERE user_id != 0 AND user_id NOT IN (SELECT id FROM users)`,
+		`DELETE FROM reading_bookmarks WHERE user_id != 0 AND user_id NOT IN (SELECT id FROM users)`,
 	})
 }
 

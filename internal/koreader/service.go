@@ -269,13 +269,14 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	var (
 		bookID    sql.NullInt64
 		matchedBy string
+		applyErr  error
 	)
 	matchConfig := s.currentMatchConfig()
 	documentKey := normalizeDocumentForMatch(payload.Document, matchConfig)
 	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
 		bookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 		matchedBy = match.MatchedBy
-		if applyErr := s.applyBookProgress(ctx, match, payload.Percentage, syncUserID); applyErr != nil {
+		if applyErr = s.applyBookProgress(ctx, match, payload.Percentage, syncUserID); applyErr != nil {
 			slog.Warn("Failed to project KOReader progress onto book", "book_id", match.BookID, "error", applyErr)
 		}
 	}
@@ -302,6 +303,14 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	if regressed {
 		status = "progress_regressed"
 		message = fmt.Sprintf("last-write-wins applied lower percentage %.4f (was %.4f) from device %q", payload.Percentage, existing.Percentage, payload.Device)
+	}
+	// 投影失败必须留下痕迹。设备侧仍按 kosync 语义收到 ok——规范记录已存下，重推也救不回来，
+	// 报错只会让设备无谓重试；但只写一条 slog.Warn 等于静默：用户看到同步成功，进度却一条都没进来。
+	// 状态不在 (ok, progress_regressed) 里的事件会被账户列表与设备诊断当作最新错误展示，
+	// 于是这次失败在界面上可见。它压过 progress_regressed：进度根本没落地，比落得偏低更值得报。
+	if applyErr != nil {
+		status = "progress_apply_failed"
+		message = fmt.Sprintf("progress matched book but could not be written: %v", applyErr)
 	}
 	_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
 		Direction: "push",
@@ -332,6 +341,7 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 		return database.KOReaderProgress{}, err
 	}
 
+	status, message := "ok", record.MatchedBy
 	if !record.BookID.Valid {
 		matchConfig := s.currentMatchConfig()
 		documentKey := normalizeDocumentForMatch(record.Document, matchConfig)
@@ -342,6 +352,11 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 			pullUserID, _ := s.store.GetKOReaderAccountUserID(ctx, record.Username)
 			if applyErr := s.applyBookProgress(ctx, match, record.Percentage, pullUserID); applyErr != nil {
 				slog.Warn("Failed to project KOReader pull progress onto book", "book_id", match.BookID, "error", applyErr)
+				// 与推送路径同理：拉取时补记的投影同样不能只留一条日志就算完。
+				status = "progress_apply_failed"
+				message = fmt.Sprintf("progress matched book but could not be written: %v", applyErr)
+			} else {
+				message = record.MatchedBy
 			}
 		}
 	}
@@ -351,8 +366,8 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 		Username:  creds.Username,
 		Document:  record.Document,
 		BookID:    record.BookID,
-		Status:    "ok",
-		Message:   record.MatchedBy,
+		Status:    status,
+		Message:   message,
 	})
 
 	return record, nil

@@ -694,3 +694,93 @@ func TestMigrateDropsMetadataReviewFieldStatusColumn(t *testing.T) {
 		}
 	})
 }
+
+// TestMigrateCleansUpOrphanUserScopedRows 守老库的升级路径：本次修复之前删掉的账号，
+// 其书签与 KOReader 设备账号还留在库里（后者会让设备一直「同步成功」却写不进任何进度）。
+// 升级必须把这些孤儿清掉、把级联触发器补上，同时不动 user_id=0 的哨兵数据与在世用户的数据。
+func TestMigrateCleansUpOrphanUserScopedRows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orphan.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("初次建库失败: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+	// 退回修复前的形态：拆掉触发器，再删号——于是留下与线上老库一样的孤儿。
+	if _, err := db.Exec(`
+		DROP TRIGGER IF EXISTS trg_users_ad_purge_owned;
+		INSERT INTO libraries (id, name, path, scan_interval, scan_formats) VALUES (1, 'Lib', '/lib', 60, 'cbz');
+		INSERT INTO series (id, library_id, name, path, name_initial) VALUES (1, 1, 'S', '/lib/S', 'S');
+		INSERT INTO books (id, series_id, library_id, name, path, size, file_modified_at)
+			VALUES (1, 1, 1, 'b.cbz', '/lib/S/b.cbz', 1, CURRENT_TIMESTAMP);
+		INSERT INTO users (id, username, password_hash) VALUES (1, 'dead', 'h'), (2, 'alive', 'h');
+		INSERT INTO reading_bookmarks (user_id, book_id, page, note) VALUES (1, 1, 1, 'dead'), (2, 1, 2, 'alive'), (0, 1, 3, 'legacy');
+		INSERT INTO koreader_accounts (username, sync_key, enabled, user_id)
+			VALUES ('kodev-dead', 'k', TRUE, 1), ('kodev-alive', 'k', TRUE, 2), ('kodev-orphan', 'k', TRUE, 0);
+		INSERT INTO koreader_progress (username, document, progress, percentage)
+			VALUES ('kodev-dead', 'd', '/p', 0.5), ('kodev-alive', 'd', '/p', 0.5);
+		INSERT INTO koreader_sync_events (direction, username, document, status) VALUES ('push', 'kodev-dead', 'd', 'ok');
+		DELETE FROM users WHERE id = 1;
+	`); err != nil {
+		t.Fatalf("造老库孤儿数据失败: %v", err)
+	}
+	_ = db.Close()
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("升级失败: %v", err)
+	}
+
+	db, err = sql.Open("sqlite", sqliteDSN(dbPath))
+	if err != nil {
+		t.Fatalf("reopen db failed: %v", err)
+	}
+	defer db.Close()
+	count := func(query string) int64 {
+		t.Helper()
+		var n int64
+		if err := db.QueryRow(query).Scan(&n); err != nil {
+			t.Fatalf("count %q: %v", query, err)
+		}
+		return n
+	}
+
+	if n := count(`SELECT COUNT(*) FROM reading_bookmarks WHERE user_id = 1`); n != 0 {
+		t.Errorf("升级后死用户的书签仍残留 %d 条", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM koreader_accounts WHERE username = 'kodev-dead'`); n != 0 {
+		t.Errorf("升级后仍有 %d 个 KOReader 账号指向死用户", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM koreader_progress WHERE username = 'kodev-dead'`); n != 0 {
+		t.Errorf("死账号的 koreader_progress 残留 %d 条", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM koreader_sync_events WHERE username = 'kodev-dead'`); n != 0 {
+		t.Errorf("死账号的 koreader_sync_events 残留 %d 条", n)
+	}
+
+	// 反向判据：在世用户与 user_id=0 的哨兵数据都不能被顺手清掉。
+	if n := count(`SELECT COUNT(*) FROM reading_bookmarks WHERE user_id = 2`); n != 1 {
+		t.Errorf("在世用户的书签 %d 条，应为 1", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM reading_bookmarks WHERE user_id = 0`); n != 1 {
+		t.Errorf("user_id=0 的历史书签 %d 条，应为 1", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM koreader_accounts WHERE username IN ('kodev-alive', 'kodev-orphan')`); n != 2 {
+		t.Errorf("在世用户与未归属的 KOReader 账号只剩 %d 个，应为 2", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM koreader_progress WHERE username = 'kodev-alive'`); n != 1 {
+		t.Errorf("在世账号的进度 %d 条，应为 1", n)
+	}
+
+	// 触发器已补回：升级后再删号，级联当场生效，不必等下次启动。
+	if _, err := db.Exec(`DELETE FROM users WHERE id = 2`); err != nil {
+		t.Fatalf("删除在世用户失败: %v", err)
+	}
+	if n := count(`SELECT COUNT(*) FROM reading_bookmarks WHERE user_id = 2`); n != 0 {
+		t.Errorf("升级后删号仍残留 %d 条书签，级联触发器没补上", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM koreader_accounts WHERE username = 'kodev-alive'`); n != 0 {
+		t.Errorf("升级后删号仍残留 %d 个 KOReader 账号，级联触发器没补上", n)
+	}
+}
