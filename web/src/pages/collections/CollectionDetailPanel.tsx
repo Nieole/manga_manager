@@ -1,11 +1,12 @@
 /**
  * 本文件是前端合集页面右栏详情组件，展示当前选中合集的标题、来源、编辑/快照入口，
  * 以及其系列成员网格（手工合集可移除成员，点击封面进入系列详情）。
+ * 作品群是推导出来的，只读：能看能进，不给改名与移除成员的入口。
  * 维护时应关注选中为空时的占位、手工与智能合集操作入口的差异。
  */
 
 import { Pencil, Camera, BookOpen, X, Search } from 'lucide-react';
-import type { Collection, CollectionSeriesItem, TFunc } from './types';
+import { isReadOnlyCollection, type Collection, type CollectionSeriesItem, type TFunc } from './types';
 
 interface CollectionDetailPanelProps {
   selected: Collection | null;
@@ -38,6 +39,7 @@ export function CollectionDetailPanel({
   t,
 }: CollectionDetailPanelProps) {
   const partiallyLoaded = seriesItems.length < seriesTotal;
+  const readOnly = isReadOnlyCollection(selected);
   return (
     <div className="lg:col-span-2">
       {selected ? (
@@ -48,7 +50,10 @@ export function CollectionDetailPanel({
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold text-white">{selected.name}</h2>
                   <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-gray-400">{t(`collections.source.${selected.source_type || 'manual'}`)}</span>
-                  {selected.kind === 'collection' && (
+                  {readOnly && (
+                    <span title={t('collections.readOnlyHint')} className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300">{t('collections.readOnly')}</span>
+                  )}
+                  {selected.kind === 'collection' && !readOnly && (
                     <button
                       onClick={onEditCollection}
                       className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors"
@@ -100,9 +105,11 @@ export function CollectionDetailPanel({
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-gray-700"><BookOpen className="w-8 h-8" /></div>
                       )}
-                      {selected.kind === 'collection' && (
+                      {selected.kind === 'collection' && !readOnly && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onRemoveSeries(item.series_id); }}
+                          title={t('common.remove')}
+                          aria-label={t('common.remove')}
                           className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-white/60 hover:text-red-400 hover:bg-red-900/80 opacity-0 group-hover:opacity-100 transition-all"
                         >
                           <X className="w-3 h-3" />

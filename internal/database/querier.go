@@ -116,6 +116,10 @@ type Querier interface {
 	ListCollectionSeries(ctx context.Context, collectionID int64) ([]ListCollectionSeriesRow, error)
 	ListCollectionSeriesIDs(ctx context.Context, collectionID int64) ([]int64, error)
 	ListCollectionViews(ctx context.Context) ([]ListCollectionViewsRow, error)
+	// This list feeds the "add these series to a collection" picker, so system_franchise rows are
+	// excluded: a franchise is derived from series relations and any hand-added member is silently
+	// dropped by the next rebuild. The collections page lists franchises via ListCollectionViews,
+	// which deliberately does not filter.
 	ListCollectionsWithSeriesCount(ctx context.Context) ([]ListCollectionsWithSeriesCountRow, error)
 	ListExternalLibraryBooks(ctx context.Context, libraryID int64) ([]ListExternalLibraryBooksRow, error)
 	ListExternalTransferBooksBySeries(ctx context.Context, seriesIds []int64) ([]ListExternalTransferBooksBySeriesRow, error)

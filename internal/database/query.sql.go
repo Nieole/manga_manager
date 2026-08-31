@@ -3108,6 +3108,7 @@ SELECT
     c.created_at, c.updated_at,
     (SELECT COUNT(*) FROM collection_series cs WHERE cs.collection_id = c.id) AS series_count
 FROM collections c
+WHERE c.source_type != 'system_franchise'
 ORDER BY c.sort_order, c.name
 `
 
@@ -3124,6 +3125,10 @@ type ListCollectionsWithSeriesCountRow struct {
 	SeriesCount    int64          `json:"series_count"`
 }
 
+// This list feeds the "add these series to a collection" picker, so system_franchise rows are
+// excluded: a franchise is derived from series relations and any hand-added member is silently
+// dropped by the next rebuild. The collections page lists franchises via ListCollectionViews,
+// which deliberately does not filter.
 func (q *Queries) ListCollectionsWithSeriesCount(ctx context.Context) ([]ListCollectionsWithSeriesCountRow, error) {
 	rows, err := q.db.QueryContext(ctx, listCollectionsWithSeriesCount)
 	if err != nil {

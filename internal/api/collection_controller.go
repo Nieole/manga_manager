@@ -38,7 +38,39 @@ type CollectionSeriesItem struct {
 	AddedAt    time.Time      `json:"added_at"`
 }
 
-// listCollections 返回所有合集
+// franchiseCollectionSourceType 是作品群合集在 collections.source_type 里的取值。
+const franchiseCollectionSourceType = "system_franchise"
+
+// derivedCollectionSourceType 判断这个来源的合集是否「推导出来、由重建流程持有」。
+// 只有作品群属于这一类：它由系列关系的连通分量推导，每次重建都按稳定键 upsert 并把
+// 不属于连通分量的成员删掉，人工改动一律被静默覆盖。smart_snapshot 与 ai_grouping
+// 是一次性固化的产物，落地后归用户所有、没有任何流程会回头覆盖，因此不在此列。
+func derivedCollectionSourceType(sourceType string) bool {
+	return sourceType == franchiseCollectionSourceType
+}
+
+// writableCollection 载入合集并挡下对推导型合集的人工写入，是这条不变量的唯一执行点
+// ——把合集从列表里过滤掉只是收走了入口，直接调 API 仍然改得到。
+// 第二个返回值为 false 时响应已写出，调用方直接 return。
+func (c *Controller) writableCollection(w http.ResponseWriter, r *http.Request, id int64) (database.GetStaticCollectionViewRow, bool) {
+	view, err := c.store.GetStaticCollectionView(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Collection not found")
+			return view, false
+		}
+		jsonError(w, http.StatusInternalServerError, "Failed to load collection")
+		return view, false
+	}
+	if derivedCollectionSourceType(view.SourceType) {
+		// 403 而非 409：这不是可以重试的状态冲突，这个合集对人工写入永远关闭。
+		jsonError(w, http.StatusForbidden, "Franchise collections are derived from series relations and cannot be edited")
+		return view, false
+	}
+	return view, true
+}
+
+// listCollections 返回可人工编辑的合集。作品群不在其中——见 ListCollectionsWithSeriesCount。
 func (c *Controller) listCollections(w http.ResponseWriter, r *http.Request) {
 	rows, err := c.store.ListCollectionsWithSeriesCount(r.Context())
 	if err != nil {
@@ -99,6 +131,9 @@ func (c *Controller) deleteCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
+	if _, ok := c.writableCollection(w, r, id); !ok {
+		return
+	}
 	// 检查影响行数：不存在的资源返回 200 会让前端把「这个合集早就没了」当成删除成功，
 	// 列表刷新后它却还在（因为压根不是同一个 id），用户只会觉得功能时灵时不灵。
 	affected, err := c.store.DeleteCollection(r.Context(), id)
@@ -125,6 +160,13 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
+	// collections.name 上没有数据库级唯一约束（重名由应用层判定），所以必须显式查一次；
+	// 同一次载入顺带挡下作品群这类推导型合集——它的名字会被重建的 upsert 覆盖回去。
+	// 与快照固化路径共用同一判定，保证「哪里都不许出现两个同名合集」。
+	current, ok := c.writableCollection(w, r, id)
+	if !ok {
+		return
+	}
 	var req UpdateCollectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
@@ -135,17 +177,6 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		jsonError(w, http.StatusBadRequest, "Name is required")
-		return
-	}
-	// collections.name 上没有数据库级唯一约束（重名由应用层判定），所以必须显式查一次。
-	// 与快照固化路径共用同一判定，保证「哪里都不许出现两个同名合集」。
-	current, err := c.store.GetStaticCollectionView(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Collection not found")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to load collection")
 		return
 	}
 	if !strings.EqualFold(strings.TrimSpace(current.Name), name) {
@@ -209,6 +240,9 @@ func (c *Controller) addSeriesToCollection(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
+	if _, ok := c.writableCollection(w, r, id); !ok {
+		return
+	}
 	var req AddSeriesToCollectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.SeriesIDs) == 0 {
 		jsonError(w, http.StatusBadRequest, "series_ids is required")
@@ -259,6 +293,9 @@ func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.R
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
+		return
+	}
+	if _, ok := c.writableCollection(w, r, collectionID); !ok {
 		return
 	}
 

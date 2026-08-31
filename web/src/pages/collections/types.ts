@@ -68,3 +68,12 @@ export interface SmartCollectionSnapshotPreview {
 
 // 合集页各子组件共用的翻译函数签名（LocaleProvider 的 t 兼容此形状）。
 export type TFunc = (key: string, vars?: Record<string, unknown>) => string;
+
+// 作品群合集在后端 collections.source_type 里的取值。
+export const FRANCHISE_SOURCE_TYPE = 'system_franchise';
+
+// 作品群由系列关系推导而来，只能看不能改：写入端点一律回 403，界面上就不该给出编辑入口。
+// 它仍然列在合集页里——「这个系列的相关作品」是有价值的浏览视角，隐藏掉等于丢功能。
+export function isReadOnlyCollection(c: Pick<Collection, 'source_type'> | null | undefined): boolean {
+  return c?.source_type === FRANCHISE_SOURCE_TYPE;
+}

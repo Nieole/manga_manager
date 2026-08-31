@@ -1074,11 +1074,16 @@ LEFT JOIN series_stats ss ON ss.series_id = s.id
 WHERE s.id IN (sqlc.slice(ids));
 
 -- name: ListCollectionsWithSeriesCount :many
+-- This list feeds the "add these series to a collection" picker, so system_franchise rows are
+-- excluded: a franchise is derived from series relations and any hand-added member is silently
+-- dropped by the next rebuild. The collections page lists franchises via ListCollectionViews,
+-- which deliberately does not filter.
 SELECT
     c.id, c.name, c.description, c.cover_url, c.sort_order, c.source_type, c.source_review_id,
     c.created_at, c.updated_at,
     (SELECT COUNT(*) FROM collection_series cs WHERE cs.collection_id = c.id) AS series_count
 FROM collections c
+WHERE c.source_type != 'system_franchise'
 ORDER BY c.sort_order, c.name;
 
 -- name: CreateSimpleCollection :one

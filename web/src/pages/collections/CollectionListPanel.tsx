@@ -1,12 +1,13 @@
 /**
  * 本文件是前端合集页面左栏列表组件，负责按「全部/手工/智能」分页签过滤展示合集列表、
  * 高亮选中项、并在悬停时提供删除入口。智能合集额外展示其筛选条件芯片。
+ * 作品群是推导出来的，只列出不给删除入口。
  * 维护时应关注选中态与父组件的同步、删除确认交由父组件处理。
  */
 
 import { FolderHeart, SlidersHorizontal, Trash2, ChevronRight } from 'lucide-react';
 import { SmartFilterChips } from './SmartFilterChips';
-import type { Collection, TFunc } from './types';
+import { isReadOnlyCollection, type Collection, type TFunc } from './types';
 
 interface CollectionListPanelProps {
   collections: Collection[];
@@ -90,9 +91,11 @@ export function CollectionListPanel({
               {c.kind === 'smart' && <SmartFilterChips collection={c} t={t} />}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              {c.kind === 'collection' && (
+              {c.kind === 'collection' && !isReadOnlyCollection(c) && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onRequestDeleteCollection(c); }}
+                  title={t('common.delete')}
+                  aria-label={t('common.delete')}
                   className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition opacity-0 group-hover:opacity-100"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -101,6 +104,8 @@ export function CollectionListPanel({
               {c.kind === 'smart' && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onRequestDeleteSmart(c); }}
+                  title={t('common.delete')}
+                  aria-label={t('common.delete')}
                   className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition opacity-0 group-hover:opacity-100"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
