@@ -1179,14 +1179,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 	existingSeries, _ := s.store.ListSeriesByLibraryLite(ctx, libIDInt)
 	for _, series := range existingSeries {
 		seriesCache[series.Path] = series
-
-		lfMap := make(map[string]bool)
-		if series.LockedFields.Valid && series.LockedFields.String != "" {
-			for _, f := range strings.Split(series.LockedFields.String, ",") {
-				lfMap[strings.TrimSpace(f)] = true
-			}
-		}
-		lockedFieldsCache[series.ID] = lfMap
+		lockedFieldsCache[series.ID] = parseLockedFields(series.LockedFields)
 	}
 
 	var batch []scanResult
@@ -1231,7 +1224,8 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 
 				if !ok {
-					// 初次创建
+					// 初次创建：目录名既是 name 也是 title 的默认值，locked_fields 给一个默认锁。
+					// 这三样都只是这一行的**初值**，此后 locked_fields 归用户所有，扫描只读它。
 					createdSeries, err := q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
 						LibraryID:    libIDInt,
 						Name:         res.seriesName,
@@ -1253,18 +1247,21 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						continue
 					}
 					seriesID = createdSeries.ID
-					// 为了保持下文逻辑，我们塞一个临时的进去
-					seriesCache[res.seriesPath] = database.Series{ID: seriesID, Path: res.seriesPath}
+					// 缓存整行而不是只留 ID：同一次扫描里该系列的后续卷会走增补分支，
+					// 要在那里读到刚写下的默认标题与默认锁，而不是把它们冲成空。
+					seriesCache[res.seriesPath] = createdSeries
+					lockedFieldsCache[seriesID] = parseLockedFields(createdSeries.LockedFields)
 				} else {
 					// 已存在的系列，利用 UpsertSeriesByPath 去更新其累积统计和元数据（仅当有新元数据时增补）
 					if res.comicInfo != nil {
-						// 检查字段锁定机制
+						// 锁定字段是用户在系列详情页开合的开关，扫描只读不写：归档内嵌的
+						// ComicInfo 同样是外部来源，锁挡的就是它这一类。扫描若自己把锁置上，
+						// proposal.applyMetadata 的 !locked[field] 从此永不成立，用户为放行
+						// 刮削而做的解锁会被悄悄撤销。
 						locks := lockedFieldsCache[seriesID]
 						if locks == nil {
 							locks = make(map[string]bool)
 						}
-						// 系列名默认始终锁定，防止被外部刮削覆盖
-						locks["title"] = true
 
 						// 若被锁定则沿用旧有库中的数据，不被更新的 NULL 覆盖掉
 						getStr := func(field string, newVal string) sql.NullString {
@@ -1291,23 +1288,31 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 							return sql.NullFloat64{Float64: rating, Valid: rating > 0}
 						}
 
+						// 扫描能给 title 的唯一值就是目录名，而目录名已原样存在 name 列里：
+						// 库里一旦有 title，扫描就不带来任何新信息，原样留着——用户改过的标题
+						// 因此不被打回目录名。只有还没有 title 的系列才要目录名兜个默认值。
+						title := existingS.Title
+						if !locks["title"] && strings.TrimSpace(title.String) == "" {
+							title = sql.NullString{String: res.seriesName, Valid: true}
+						}
+
+						// UpsertSeriesByPath 的每一列都是 excluded 无条件覆盖，所以不动的列要原样传回。
 						_, _ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
-							LibraryID: libIDInt,
-							Name:      res.seriesName,
-							Path:      res.seriesPath,
-							Title:     sql.NullString{String: res.seriesName, Valid: true},
-							Summary:   getStr("summary", rSummary),
-							Publisher: getStr("publisher", rPublisher),
-							Status:    getStr("status", rStatus),
-							Rating:    getRating(),
-							Language:  getStr("language", rLang),
-							// LockedFields 这里应该保持原样，所以 Valid 设为 false 让 Upsert 判定或传旧值
-							// 因为我们的 Upsert 里会用 excluded.locked_fields 覆盖，为了不丢掉我们传回现有的锁。
-							LockedFields: sql.NullString{String: getKeys(locks), Valid: true},
+							LibraryID:    libIDInt,
+							Name:         res.seriesName,
+							Path:         res.seriesPath,
+							Title:        title,
+							Summary:      getStr("summary", rSummary),
+							Publisher:    getStr("publisher", rPublisher),
+							Status:       getStr("status", rStatus),
+							Rating:       getRating(),
+							Language:     getStr("language", rLang),
+							LockedFields: existingS.LockedFields,
 							VolumeCount:  existingS.VolumeCount,
 							BookCount:    existingS.BookCount,
 							TotalPages:   existingS.TotalPages,
-							NameInitial:  database.SeriesInitial(res.seriesName, res.seriesName),
+							// A-Z 索引跟着实际写入的标题走，不能按目录名另算一份。
+							NameInitial: database.SeriesInitialFromNullTitle(title, res.seriesName),
 						})
 					}
 				}
@@ -1506,13 +1511,18 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 	}
 }
 
-// 提取 locks 字典的所有 key 重组成字符串
-func getKeys(m map[string]bool) string {
-	var keys []string
-	for k := range m {
-		keys = append(keys, k)
+// parseLockedFields 把系列的 locked_fields 列展开成便于查询的集合。
+func parseLockedFields(lockedFields sql.NullString) map[string]bool {
+	locks := make(map[string]bool)
+	if !lockedFields.Valid || lockedFields.String == "" {
+		return locks
 	}
-	return strings.Join(keys, ",")
+	for _, f := range strings.Split(lockedFields.String, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			locks[f] = true
+		}
+	}
+	return locks
 }
 
 func thumbnailBaseDir(cfg config.Config) string {
