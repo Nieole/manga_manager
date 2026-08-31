@@ -34,8 +34,8 @@ type RarArchive struct {
 	rr     *rardecode.ReadCloser // 持久游标；nil 表示未打开
 	atEOF  bool                  // 游标已扫到 EOF
 	seen   map[string]bool       // 当前游标已途经的条目名（用于判断目标是否在游标之后）
-	// cache 只保留「图片页」与显式读取过的目标条目的字节。途经的非图片条目（封面缩略图、
-	// 元数据、说明文本等）一律跳过不解压——否则一次未命中的 ComicInfo.xml 探测就会把整卷解一遍。
+	// cache 只保留「图片页」与显式读取过的目标条目的字节。阅读前滚途经的非图片条目（元数据、
+	// 说明文本等）一律跳过不解压：它们不是顺序阅读的下一批目标，解出来纯占内存预算。
 	cache      map[string][]byte
 	cacheOrder []string // FIFO 淘汰顺序
 	cacheBytes int
@@ -148,28 +148,49 @@ func (r *RarArchive) readPageLocked(name string, reopened bool) ([]byte, error) 
 
 // readMetadataLocked 以宽松匹配（大小写不敏感 + 任意层级）查找元数据文件。
 func (r *RarArchive) readMetadataLocked(name string) ([]byte, error) {
-	// 缓存里可能已有（前滚时按原名缓存），先按宽松规则扫一遍。
+	// 缓存里可能已有（阅读前滚时按原名缓存，或上一次探测存下），先按宽松规则扫一遍。
 	for cached, data := range r.cache {
 		if matchesArchiveEntry(cached, name, true) {
 			return append([]byte(nil), data...), nil
 		}
 	}
-	if err := r.reopenLocked(); err != nil {
-		return nil, err
-	}
-	data, found, err := r.advanceLooseLocked(name)
+	entry, data, found, err := r.probeMetadataLocked(name)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, fmt.Errorf("parser: metadata file %q not found", name)
 	}
+	r.cachePutLocked(entry, data)
 	return append([]byte(nil), data...), nil
 }
 
-// advanceLooseLocked 与 advanceLocked 同义，但目标名按宽松规则匹配。
-func (r *RarArchive) advanceLooseLocked(target string) ([]byte, bool, error) {
-	return r.advanceWithMatch(target, true)
+// probeMetadataLocked 单开一个临时 reader 找元数据条目，只解压命中的那一个：途经条目由 rr.Next() 零解压跳过。
+// 与 advanceLocked 的分工即「为什么打开这个归档」——探测只要那一个条目，故既不预取图片页，也不动阅读会话的
+// 游标（扫描期每卷都会探测一次 ComicInfo.xml，走会话游标会把整卷解压一遍并把正在阅读的游标打回开头）。
+func (r *RarArchive) probeMetadataLocked(target string) (name string, data []byte, found bool, err error) {
+	rr, err := rardecode.OpenReader(r.path)
+	if err != nil {
+		return "", nil, false, err
+	}
+	defer rr.Close()
+	for {
+		header, nextErr := rr.Next()
+		if nextErr == io.EOF {
+			return "", nil, false, nil
+		}
+		if nextErr != nil {
+			return "", nil, false, nextErr
+		}
+		if header.IsDir || !matchesArchiveEntry(header.Name, target, true) {
+			continue
+		}
+		b, readErr := readEntryLimited(rr, header.UnPackedSize, header.Name)
+		if readErr != nil {
+			return "", nil, false, readErr
+		}
+		return header.Name, b, true, nil
+	}
 }
 
 // matchesArchiveEntry 判定归档条目名是否命中目标。
@@ -185,12 +206,9 @@ func matchesArchiveEntry(entryName, target string, loose bool) bool {
 	return strings.EqualFold(path.Base(entryName), target)
 }
 
-// advanceLocked 前滚游标，把途经条目的字节读入缓存，直到遇到 target（返回其字节）或 EOF（found=false）。
+// advanceLocked 前滚游标，把途经的图片页读入缓存，直到遇到 target（返回其字节）或 EOF（found=false）。
+// 只服务阅读取页：预取是顺序阅读的下一批目标，元数据探测另走 probeMetadataLocked。
 func (r *RarArchive) advanceLocked(target string) (data []byte, found bool, err error) {
-	return r.advanceWithMatch(target, false)
-}
-
-func (r *RarArchive) advanceWithMatch(target string, looseTarget bool) (data []byte, found bool, err error) {
 	if r.rr == nil {
 		if err := r.reopenLocked(); err != nil {
 			return nil, false, err
@@ -208,10 +226,9 @@ func (r *RarArchive) advanceWithMatch(target string, looseTarget bool) (data []b
 		if header.IsDir {
 			continue
 		}
-		isTarget := matchesArchiveEntry(header.Name, target, looseTarget)
+		isTarget := matchesArchiveEntry(header.Name, target, false)
 		// 只对目标条目和图片页解字节：rr.Next() 本身会零解压跳到下一个条目头，
-		// 所以途经的非图片条目直接跳过即可，否则一次未命中的 ComicInfo.xml 探测
-		// （扫描期每卷都会做）就会把整卷 CBR 解压一遍。
+		// 所以途经的非图片条目直接跳过即可。
 		if !isTarget && !isCacheablePage(header.Name) {
 			r.seen[header.Name] = true
 			continue

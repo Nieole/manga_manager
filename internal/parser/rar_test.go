@@ -1,6 +1,6 @@
 // 本文件用已提交的 RAR 夹具（testdata/*.cbr，由 rar 一次性生成）回归 cbr/rar 阅读路径。
 // 夹具是二进制、只读，CI 无需任何 rar 工具即可用纯 Go 的 rardecode 读取；覆盖过滤 / 自然排序 / 精确读页 /
-// 元数据读取，以及会话缓存下的顺序 / 随机 / 反向跳读 / 并发读取正确性。
+// 元数据读取与探测的解压范围，以及会话缓存下的顺序 / 随机 / 反向跳读 / 并发读取正确性。
 
 package parser
 
@@ -196,4 +196,131 @@ func BenchmarkRarSequentialReadAllPages(b *testing.B) {
 		}
 		arc.Close()
 	}
+}
+
+// cachedEntryNames 快照会话缓存中已解压的条目名（按读入顺序），用作「哪些条目被解压了」的结构化判据——
+// 比耗时阈值稳：与机器性能无关。
+func cachedEntryNames(t *testing.T, arc Archive) []string {
+	t.Helper()
+	ra, ok := arc.(*RarArchive)
+	if !ok {
+		t.Fatalf("archive is %T, want *RarArchive", arc)
+	}
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+	return append([]string(nil), ra.cacheOrder...)
+}
+
+// seenEntryNames 快照当前游标已途经的条目名，用作「游标有没有被打回开头」的判据（重开会清空该集合）。
+func seenEntryNames(t *testing.T, arc Archive) map[string]bool {
+	t.Helper()
+	ra, ok := arc.(*RarArchive)
+	if !ok {
+		t.Fatalf("archive is %T, want *RarArchive", arc)
+	}
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+	seen := make(map[string]bool, len(ra.seen))
+	for name := range ra.seen {
+		seen[name] = true
+	}
+	return seen
+}
+
+func equalNames(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestRarArchiveMetadataProbeDoesNotDecompressPages 锁定「为什么打开这个归档」的区分：元数据探测只解压命中的
+// 那一个条目，阅读取页仍预取并缓存途经图片页。夹具 vol.cbr 的物理条目序为
+// 1.jpg / 2.jpg / 10.jpg / cover.jpg / .hidden.jpg / readme.txt / ComicInfo.xml。
+func TestRarArchiveMetadataProbeDoesNotDecompressPages(t *testing.T) {
+	t.Run("探测命中时只解压命中的那一个条目", func(t *testing.T) {
+		arc, err := OpenArchive(testRarPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer arc.Close()
+
+		got, err := arc.ReadMetadataFile("ComicInfo.xml")
+		if err != nil || string(got) != "<ComicInfo/>" {
+			t.Fatalf("ReadMetadataFile(ComicInfo.xml) = %q,%v", got, err)
+		}
+		if cached := cachedEntryNames(t, arc); !equalNames(cached, []string{"ComicInfo.xml"}) {
+			t.Fatalf("元数据探测后被解压缓存的条目 = %v, want [ComicInfo.xml]（图片页不应被顺带解压）", cached)
+		}
+	})
+
+	t.Run("探测未命中时不解压任何条目", func(t *testing.T) {
+		arc, err := OpenArchive(testRarPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer arc.Close()
+
+		if _, err := arc.ReadMetadataFile("NoSuchInfo.xml"); err == nil {
+			t.Fatal("expected error probing missing metadata file")
+		}
+		if cached := cachedEntryNames(t, arc); len(cached) != 0 {
+			t.Fatalf("未命中的元数据探测后被解压缓存的条目 = %v, want []（整卷不应被解压）", cached)
+		}
+	})
+
+	t.Run("阅读路径仍预取并缓存途经图片页", func(t *testing.T) {
+		arc, err := OpenArchive(testRarPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer arc.Close()
+
+		if got, err := arc.ReadPage("10.jpg"); err != nil || string(got) != "j10" {
+			t.Fatalf("ReadPage(10.jpg) = %q,%v", got, err)
+		}
+		// 前滚途中的图片页要留在缓存里，下一页才是 O(1)——这是会话缓存存在的理由，不能被本次修复改没。
+		if cached := cachedEntryNames(t, arc); !equalNames(cached, []string{"1.jpg", "2.jpg", "10.jpg"}) {
+			t.Fatalf("读页后被缓存的条目 = %v, want [1.jpg 2.jpg 10.jpg]（阅读路径的预取不得退化）", cached)
+		}
+	})
+
+	t.Run("探测元数据不打回阅读游标", func(t *testing.T) {
+		arc, err := OpenArchive(testRarPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer arc.Close()
+
+		if _, err := arc.ReadPage("2.jpg"); err != nil {
+			t.Fatalf("ReadPage(2.jpg): %v", err)
+		}
+		before := seenEntryNames(t, arc)
+		if !before["1.jpg"] || !before["2.jpg"] {
+			t.Fatalf("读页后游标已途经的条目 = %v, want 含 1.jpg 与 2.jpg", before)
+		}
+		if _, err := arc.ReadMetadataFile("ComicInfo.xml"); err != nil {
+			t.Fatalf("ReadMetadataFile: %v", err)
+		}
+		// 判据取「集合完全不变」而不是「仍含读过的页」：旧实现把游标打回开头后又一路扫到末尾的
+		// ComicInfo.xml，途中会把读过的页重新记为已途经，只查包含关系看不出游标动过。
+		after := seenEntryNames(t, arc)
+		if len(after) != len(before) {
+			t.Fatalf("元数据探测后游标已途经的条目 = %v, want 与探测前一致 %v（探测不应动阅读会话的游标）", after, before)
+		}
+		for name := range before {
+			if !after[name] {
+				t.Fatalf("元数据探测后游标已途经的条目 = %v, want 与探测前一致 %v（探测不应动阅读会话的游标）", after, before)
+			}
+		}
+		// 游标未动，后续续读仍要正确。
+		if got, err := arc.ReadPage("10.jpg"); err != nil || string(got) != "j10" {
+			t.Fatalf("探测后 ReadPage(10.jpg) = %q,%v", got, err)
+		}
+	})
 }
