@@ -24,6 +24,7 @@ var targets = []reflect.Type{
 	reflect.TypeOf(config.ValidationIssue{}),
 	reflect.TypeOf(config.ValidationResult{}),
 	reflect.TypeOf(api.SystemCapabilitiesResponse{}),
+	reflect.TypeOf(api.StorageFailureResponse{}),
 }
 
 // nullTypes 记录 sql.Null* 到 contracts.ts 导出名的映射；用到哪些就 import 哪些。

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, isAxiosError } from '../../api/client';
+import { storageFailureMessageFromError } from '../../api/storageFailure';
 import type { ReaderBookCache } from './usePageImageCache';
 import type { Page, ReaderBookInfo } from './types';
 
@@ -9,7 +10,7 @@ interface UseReaderBookDataOptions {
     current: string | null;
   };
   tRef: {
-    current: (key: string) => string;
+    current: (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
   };
   getBookCache: (bookId: string) => ReaderBookCache;
   setCachedPageImageUrls: (urls: Record<number, string>) => void;
@@ -43,7 +44,11 @@ export function useReaderBookData({
 
   const pagesBelongToCurrentBook = Boolean(bookId && bookId === pagesBookId);
   const activePages = pagesBelongToCurrentBook ? pages : [];
-  const readerLoading = loading || Boolean(bookId && !pagesBelongToCurrentBook);
+  // 有 loadError 就必须退出加载态：失败路径上 pagesBookId 永远补不上，
+  // 少了这个前置条件 readerLoading 会恒为 true，而两套主题都先判 readerLoading 再判
+  // loadError——用户看到的就是永远转不完的圈（全屏深色底，即「黑屏」），
+  // 错误界面与 reader.error.* 那几条词条一次也渲染不到。
+  const readerLoading = !loadError && (loading || Boolean(bookId && !pagesBelongToCurrentBook));
 
   const fetchPagesForBook = useCallback((targetBookId: string) => {
     const cache = getBookCache(targetBookId);
@@ -174,9 +179,13 @@ export function useReaderBookData({
     }).catch((err) => {
       if (cancelled || currentBookIdRef.current !== targetBookId) return;
       console.error('Failed to load book data', err);
-      const message = isAxiosError(err)
-        ? err.response?.data?.error || err.message || tRef.current('reader.error.loadFailed')
-        : tRef.current('reader.error.loadFailed');
+      // 存储失败（盘掉了 / 文件没了 / 归档打不开）有分类，能说出该去做什么；
+      // 其余错误才退回后端的 error 字段与通用文案。
+      const storageMessage = storageFailureMessageFromError(err, tRef.current);
+      const message = storageMessage
+        ?? (isAxiosError(err)
+          ? err.response?.data?.error || err.message || tRef.current('reader.error.loadFailed')
+          : tRef.current('reader.error.loadFailed'));
       setLoadError(message);
       setLoading(false);
     });

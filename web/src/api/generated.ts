@@ -74,3 +74,12 @@ export interface SystemCapabilitiesResponse {
   supported_llm_api_modes: string[];
 }
 
+export interface StorageFailureResponse {
+  error: string;
+  reason: string;
+  library_id: number;
+  library_name: string;
+  library_path: string;
+  path: string;
+}
+

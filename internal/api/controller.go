@@ -1175,7 +1175,7 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 
 	pagesInfo, err := c.listBookArchivePages(ctx, book)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
+		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromBook(book), err), "list_pages")
 		return
 	}
 

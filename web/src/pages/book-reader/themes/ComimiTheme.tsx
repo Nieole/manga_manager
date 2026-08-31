@@ -2,6 +2,7 @@ import React, { useMemo, useCallback } from 'react';
 import { MangaViewer } from '@yui540/comimi-react';
 import type { ReaderThemeProps } from '../ReaderThemeProps';
 import { ReaderSettingsDrawer } from '../ReaderSettingsDrawer';
+import { ReaderErrorState } from '../ReaderStateViews';
 import { Settings, ArrowLeft } from 'lucide-react';
 
 interface ComimiPageSourceContext {
@@ -75,14 +76,16 @@ export function ComimiTheme(props: ReaderThemeProps) {
     }
 
     if (loadError) {
+        // 与 BaseTheme 共用同一块错误面板：两套主题给的诊断信息必须一样，
+        // 否则换个主题就少半条线索（这里原本只有一行未翻译的 "Error:"）。
         return (
-            <div className="absolute inset-0 bg-komgaDark flex items-center justify-center text-red-500">
-                <div className="flex flex-col items-center">
-                    <span className="mb-4 text-xl">Error: {loadError}</span>
-                    <button onClick={handleBackToSeries} className="bg-gray-800 px-4 py-2 rounded-sm hover:bg-gray-700 text-white">
-                        {t('reader.backToSeries')}
-                    </button>
-                </div>
+            <div className="absolute inset-0 bg-komgaDark">
+                <ReaderErrorState
+                    t={t}
+                    message={loadError}
+                    onRetry={() => window.location.reload()}
+                    onBackToSeries={handleBackToSeries}
+                />
             </div>
         );
     }

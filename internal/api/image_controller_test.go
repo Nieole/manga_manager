@@ -191,8 +191,10 @@ func TestServePageImage(t *testing.T) {
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
 		controller.servePageImage(rec, req)
-		if rec.Code != http.StatusInternalServerError {
-			t.Fatalf("expected invalid archive 500, got %d", rec.Code)
+		// 归档还没写出来、而资料库根目录在，属于「单文件缺失」。
+		// 分类与状态码的完整契约在 storage_diagnosis_test.go。
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected missing archive 404, got %d", rec.Code)
 		}
 
 		archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
@@ -452,9 +454,11 @@ func TestServePageImage(t *testing.T) {
 			_ = os.Rename(missingPath, archivePath)
 		})
 
+		// 归档被改名走了：请求必须回源到磁盘并失败（若命中磁盘缓存就会是 200）。
+		// 失败形态是「单文件缺失」的 404——正是这一条把「盘掉了」与「这本没了」分开。
 		rec = httptest.NewRecorder()
 		controller.servePageImage(rec, req)
-		if rec.Code != http.StatusInternalServerError {
+		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected disabled disk cache to miss and require archive, got %d body=%s", rec.Code, rec.Body.String())
 		}
 	})

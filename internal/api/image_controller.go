@@ -158,6 +158,9 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		contentType string
 		status      int // 0 表示成功，否则为要返回的 HTTP 错误码
 		message     string
+		// failure 非空时改由 writeStorageFailure 下发：读不到字节的失败要带上分类与资料库线索，
+		// 而不是一句状态码加短语。它与 status/message 互斥。
+		failure *storageFailure
 	}
 	resAny, _, _ := c.pageTranscodeGroup.Do(cacheKey, func() (any, error) {
 		// 二次检查内存缓存：可能有另一个 leader 刚把它填好。
@@ -189,12 +192,14 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			if errors.Is(err, sql.ErrNoRows) || (pageNumber > source.PageCount && source.PageCount > 0) {
 				return &pageServeResult{status: http.StatusNotFound, message: "Page not found"}, nil
 			}
-			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read pages"}, nil
+			failure := c.diagnoseStorageFailure(workCtx, storageTargetFromSource(source), err)
+			return &pageServeResult{failure: &failure}, nil
 		}
 
 		archiver, releaseArchive, err := parser.GetArchiveFromPool(source.Path)
 		if err != nil {
-			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read internal archive"}, nil
+			failure := c.diagnoseStorageFailure(workCtx, storageTargetFromSource(source), err)
+			return &pageServeResult{failure: &failure}, nil
 		}
 		// 借用期间池不会真正关闭该句柄，避免读到一半被 LRU 淘汰而抽走文件描述符。
 		defer releaseArchive()
@@ -202,7 +207,8 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 
 		data, err := archiver.ReadPage(pageInfo.Name)
 		if err != nil {
-			return &pageServeResult{status: http.StatusInternalServerError, message: "Failed to read physical page data"}, nil
+			failure := c.diagnoseStorageFailure(workCtx, storageTargetFromSource(source), err)
+			return &pageServeResult{failure: &failure}, nil
 		}
 		readerLease.Release()
 
@@ -256,6 +262,10 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	})
 
 	res := resAny.(*pageServeResult)
+	if res.failure != nil {
+		writeStorageFailure(w, *res.failure, "page_image")
+		return
+	}
 	if res.status != 0 {
 		jsonError(w, res.status, res.message)
 		return
@@ -763,7 +773,8 @@ func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	book, err := c.store.GetBook(r.Context(), bookID)
+	ctx := r.Context()
+	book, err := c.store.GetBook(ctx, bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book entity not found")
 		return
@@ -771,14 +782,17 @@ func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 
 	file, err := os.Open(book.Path)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "Book file missing")
+		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromBook(book), err), "download_book")
 		return
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil || info.IsDir() {
-		jsonError(w, http.StatusNotFound, "Book file missing")
+		if err == nil {
+			err = fmt.Errorf("book path is a directory: %s", book.Path)
+		}
+		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromBook(book), err), "download_book")
 		return
 	}
 

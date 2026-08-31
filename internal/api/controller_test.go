@@ -2080,10 +2080,12 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 		t.Fatalf("expected missing book 404, got %d", pagesMissingRec.Code)
 	}
 
+	// 这本书的归档还没落盘、而资料库根目录在，属于「单文件缺失」而非服务器内部错误。
+	// 分类与状态码的完整契约在 storage_diagnosis_test.go。
 	pagesErrorRec := httptest.NewRecorder()
 	controller.getPagesByBook(pagesErrorRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
-	if pagesErrorRec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected invalid archive 500, got %d", pagesErrorRec.Code)
+	if pagesErrorRec.Code != http.StatusNotFound {
+		t.Fatalf("expected missing archive 404, got %d", pagesErrorRec.Code)
 	}
 
 	archivePath := filepath.Join(rootDir, "Library A", "Series Alpha", "Alpha 01.cbz")
