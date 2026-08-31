@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 )
 
 func TestPathUnderRoot(t *testing.T) {
@@ -77,7 +76,7 @@ func TestHandleRemovalSchedulesOnlyOwningLibrary(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		fw.mu.Lock()
 		fw.libs = map[string]int64{rootA: libA, rootB: libB}
-		fw.pendingCleanup = map[int64]time.Time{}
+		fw.pendingCleanup = map[int64]cleanupSchedule{}
 		fw.mu.Unlock()
 
 		fw.handleRemoval(victim)
@@ -115,7 +114,7 @@ func TestHandleRemovalSchedulesAllContainingLibraries(t *testing.T) {
 		filepath.FromSlash("/data"):       outer,
 		filepath.FromSlash("/data/manga"): inner,
 	}
-	fw.pendingCleanup = map[int64]time.Time{}
+	fw.pendingCleanup = map[int64]cleanupSchedule{}
 	fw.mu.Unlock()
 
 	fw.handleRemoval(filepath.FromSlash("/data/manga/series/vol1.cbz"))

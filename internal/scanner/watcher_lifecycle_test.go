@@ -80,7 +80,7 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 	fw.libs[filepath.FromSlash("/data/manga")] = scanLibID
 	fw.libs[filepath.FromSlash("/data/manga-2")] = cleanupLibID
 	fw.pending[scanLibID] = past
-	fw.pendingCleanup[cleanupLibID] = past
+	fw.pendingCleanup[cleanupLibID] = cleanupSchedule{firstEvent: past, lastEvent: past}
 	fw.mu.Unlock()
 
 	fw.Start(nil)

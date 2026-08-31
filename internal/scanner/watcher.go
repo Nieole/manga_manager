@@ -1,5 +1,6 @@
 // 文件监听器：按资料库根递归注册 fsnotify、去抖后触发库扫描与 CleanupLibrary、
 // 把事件路径按分隔符边界判回所属资料库，并在停机时收回派生出去的后台工作。
+// 清理只在该库的改名重连已了结时才敢跑（见 rehomeUnsettledLocked），否则就是丢阅读进度。
 
 package scanner
 
@@ -26,14 +27,18 @@ type FileWatcher struct {
 	scanner *Scanner
 	watcher *fsnotify.Watcher
 	mu      sync.Mutex
-	// debounce: 同一库目录在 5 秒内只触发一次扫描
+	// pending: 文件变动后按库排期，去抖（watcherTimings.scanDebounce）后触发一次增量扫描
 	pending map[int64]time.Time
 	libs    map[string]int64 // path -> libraryID
 	watched map[string]struct{}
-	// pendingCleanup: 检测到删除/重命名后按库排期，去抖后触发 CleanupLibrary 清除幽灵记录
-	pendingCleanup map[int64]time.Time
-	stopCh         chan struct{}
-	stopOnce       sync.Once
+	// pendingCleanup: 检测到删除/重命名后按库排期，去抖后触发 CleanupLibrary 清除幽灵记录。
+	// 一条清理只在该库「没有未了结的改名重连」时才敢跑，见 rehomeUnsettledLocked。
+	pendingCleanup map[int64]cleanupSchedule
+	// scansInFlight: 本 watcher 已派发、尚未返回的库扫描数（按库）。改名重连是扫描**末尾**
+	// 才写的，扫描还在飞就等于重连还没落地，此时清理会把旧行当成「文件已消失」删掉。
+	scansInFlight map[int64]int
+	stopCh        chan struct{}
+	stopOnce      sync.Once
 	// formats 是**按库**的归档格式集（libraryID -> 集合）。共用一份全局列表会让库级
 	// scan_formats 在监听侧形同虚设。
 	formats map[int64]config.ScanFormatSet
@@ -46,9 +51,59 @@ type FileWatcher struct {
 	// inFlight 追踪派生出去的扫描/清理，Stop 会等它们退出。
 	inFlight sync.WaitGroup
 
-	// scanLibrary / cleanupLibrary 供测试注入桩；生产留 nil 时走 fw.scanner。
+	// scanLibrary / cleanupLibrary / libraryScanRunning 供测试注入桩；生产留 nil 时走 fw.scanner。
 	scanLibrary    func(ctx context.Context, libraryID int64, rootPath string, force bool) error
 	cleanupLibrary func(ctx context.Context, libraryID int64) error
+	// libraryScanRunning 报告该库此刻是否有扫描在跑，含**别处**发起的（任务面板的「扫描资料库」）。
+	// scansInFlight 只看得见本 watcher 派发的那些，而任何一次扫描的重连都写在末尾。
+	libraryScanRunning func(libraryID int64) bool
+
+	// timings 是事件循环的节拍与去抖参数，测试调小它以便在秒内跑完时序用例。
+	timings watcherTimings
+}
+
+// cleanupSchedule 是一次库清理的排期。两个时刻各答一个问题：lastEvent 答「去抖窗口到了没」，
+// firstEvent 答「最多还能再推迟多久」——推迟上限必须从**第一个**删除/重命名事件起算，
+// 否则持续不断的删除会把 lastEvent 一直往后推，上限永远触发不了。
+type cleanupSchedule struct {
+	firstEvent time.Time
+	lastEvent  time.Time
+}
+
+// due 报告这条清理本轮是否该被处理：去抖窗口已过，或已经等过了推迟上限。
+func (c cleanupSchedule) due(now time.Time, t watcherTimings) bool {
+	return now.Sub(c.lastEvent) >= t.cleanupDebounce || c.overdue(now, t)
+}
+
+// overdue 报告这条清理是否已等过推迟上限。它是让扫描**越过自己的去抖窗口**提前派发的唯一理由。
+func (c cleanupSchedule) overdue(now time.Time, t watcherTimings) bool {
+	return now.Sub(c.firstEvent) >= t.cleanupMaxDeferral
+}
+
+// watcherTimings 是去抖判定用到的四个时长。
+type watcherTimings struct {
+	// tick 是去抖判定的轮询周期。
+	tick time.Duration
+	// scanDebounce 是最后一次文件变动之后、触发扫描之前的静默期。
+	scanDebounce time.Duration
+	// cleanupDebounce 是最后一次删除/重命名之后、触发库清理之前的静默期。
+	cleanupDebounce time.Duration
+	// cleanupMaxDeferral 是一条清理从首个删除/重命名事件起最多被推迟多久。
+	//
+	// 清理要等「该库没有未了结的改名重连」，而持续写入的库里扫描的去抖窗口一直后移，
+	// 这个条件可以永远不成立——删掉的书就永远以幽灵记录挂在库里。等过上限之后不再干等，
+	// 改为主动为该库派发一次扫描、把清理接在它之后串行：安全性不变（清理仍在一次**成功**的
+	// 扫描之后），代价只是这次扫描可能读到一个还在拷贝中的半成品归档，下一次扫描自愈。
+	cleanupMaxDeferral time.Duration
+}
+
+func defaultWatcherTimings() watcherTimings {
+	return watcherTimings{
+		tick:               2 * time.Second,
+		scanDebounce:       5 * time.Second,
+		cleanupDebounce:    5 * time.Second,
+		cleanupMaxDeferral: 2 * time.Minute,
+	}
 }
 
 func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
@@ -57,18 +112,24 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &FileWatcher{
+	fw := &FileWatcher{
 		scanner:        s,
 		watcher:        w,
 		pending:        make(map[int64]time.Time),
 		formats:        make(map[int64]config.ScanFormatSet),
 		libs:           make(map[string]int64),
 		watched:        make(map[string]struct{}),
-		pendingCleanup: make(map[int64]time.Time),
+		pendingCleanup: make(map[int64]cleanupSchedule),
+		scansInFlight:  make(map[int64]int),
 		stopCh:         make(chan struct{}),
 		baseCtx:        ctx,
 		cancelBase:     cancel,
-	}, nil
+		timings:        defaultWatcherTimings(),
+	}
+	if s != nil {
+		fw.libraryScanRunning = s.libraryScanActive
+	}
+	return fw, nil
 }
 
 // pathUnderRoot 报告 child 是否位于 root 之内（含 child == root）。
@@ -175,9 +236,10 @@ func (fw *FileWatcher) handleRemoval(name string) {
 	// 嵌套库（一个库的根在另一个库之内）共享同一棵子树，两边都需要清理幽灵记录；
 	// 而 break 加上 map 的随机迭代顺序，等于随机挑一个库来清、另一个永远漏掉。
 	// CleanupLibrary 本身幂等且自带熔断，重复排期是安全的。
+	now := time.Now()
 	for libPath, libID := range fw.libs {
 		if pathUnderRoot(name, libPath) {
-			fw.pendingCleanup[libID] = time.Now()
+			fw.scheduleCleanupLocked(libID, now)
 		}
 	}
 	fw.mu.Unlock()
@@ -187,18 +249,166 @@ func (fw *FileWatcher) handleRemoval(name string) {
 	}
 }
 
-// rescheduleCleanup 把一次清理放回排期，等下一个去抖窗口重新判断。
-// 用于同轮扫描失败时：此时删行有丢数据的风险，宁可让幽灵记录多留一会儿。
-func (fw *FileWatcher) rescheduleCleanup(libID int64) {
+// scheduleCleanupLocked 排期（或续期）一条库清理。调用方须持有 fw.mu。
+// firstEvent 只在这条排期首次建立时写：它是推迟上限的起算点，续期不该把它往后推。
+func (fw *FileWatcher) scheduleCleanupLocked(libID int64, now time.Time) {
+	sched := fw.pendingCleanup[libID]
+	if sched.firstEvent.IsZero() {
+		sched.firstEvent = now
+	}
+	sched.lastEvent = now
+	fw.pendingCleanup[libID] = sched
+}
+
+// requeueCleanupAfterFailedScan 在同轮扫描没跑成时把清理放回排期，并**同时**重新排期一次扫描。
+//
+// 清理只有跟在一次成功的扫描之后才安全。只放回清理而不放回扫描，下一个去抖窗口会因为
+// 「这个库没有排期中的扫描」而判定安全并直接删行——那正是改名重连还没发生的时刻。
+// 两个时刻都重置为现在：推迟上限是用来打破「去抖窗口一直后移」这个死结的，
+// 而扫描失败是另一回事，按正常去抖节奏重试即可，不该退化成每个 tick 顶一次扫描。
+func (fw *FileWatcher) requeueCleanupAfterFailedScan(libID int64) {
 	fw.mu.Lock()
-	fw.pendingCleanup[libID] = time.Now()
+	now := time.Now()
+	fw.pendingCleanup[libID] = cleanupSchedule{firstEvent: now, lastEvent: now}
+	fw.pending[libID] = now
 	fw.mu.Unlock()
+}
+
+// rehomeUnsettledLocked 报告该库此刻是否还有**未了结的改名重连**，非空即为「清理必须继续等」的理由。
+// 调用方须持有 fw.mu。
+//
+// 「安全」的实质不是「本轮有没有扫描要跑」，而是「这个库当前有没有改名还没被重连上」。
+// 三条信号缺一不可，因为它们各自只看得见一段时间：
+//
+//   - pending 里还挂着这个库 —— 有文件变动排了扫描但还没派发。改名的 Create(新名) 半边一定会
+//     排一次扫描，所以「排了但去抖窗口还没到」正是改名待重连的时刻。光靠「本轮有没有扫描要跑」
+//     判不出这一条：持续写入（一边改名一边往库里拷新书）会让扫描的窗口一直后移，两条排期就此分叉。
+//   - 本 watcher 有已派发未返回的该库扫描 —— 重连是扫描末尾才写的，扫描没返回就不算落地。
+//   - 别处发起的扫描正在跑 —— 任务面板的「扫描资料库」同样在末尾写重连。
+func (fw *FileWatcher) rehomeUnsettledLocked(libID int64) string {
+	if _, ok := fw.pending[libID]; ok {
+		return "scan_pending"
+	}
+	if fw.scansInFlight[libID] > 0 {
+		return "scan_in_flight"
+	}
+	if fw.libraryScanRunning != nil && fw.libraryScanRunning(libID) {
+		return "scan_running_elsewhere"
+	}
+	return ""
+}
+
+// libraryPathLocked 反查库根路径，查不到返回空串。调用方须持有 fw.mu。
+func (fw *FileWatcher) libraryPathLocked(libID int64) string {
+	for p, id := range fw.libs {
+		if id == libID {
+			return p
+		}
+	}
+	return ""
+}
+
+// scanFinished 记一次派发出去的扫描已返回。
+func (fw *FileWatcher) scanFinished(libID int64) {
+	fw.mu.Lock()
+	if fw.scansInFlight[libID] <= 1 {
+		delete(fw.scansInFlight, libID)
+	} else {
+		fw.scansInFlight[libID]--
+	}
+	fw.mu.Unlock()
+}
+
+// dispatchDueLocked 派发本轮到期的扫描与清理。调用方须持有 fw.mu。
+func (fw *FileWatcher) dispatchDueLocked(now time.Time, publishEvent func(string)) {
+	for libID, lastChange := range fw.pending {
+		// 去抖：最后一次文件变动距今超过 scanDebounce 才触发扫描。例外是该库有一条清理
+		// 已经等过了推迟上限——那条清理必须跟在一次扫描之后才敢跑，而持续写入会让这个
+		// 窗口一直后移，只能由它反过来把扫描顶出去（见 cleanupMaxDeferral）。
+		sched, hasCleanup := fw.pendingCleanup[libID]
+		forcedByCleanup := hasCleanup && sched.overdue(now, fw.timings)
+		if now.Sub(lastChange) < fw.timings.scanDebounce && !forcedByCleanup {
+			continue
+		}
+		delete(fw.pending, libID)
+		libPath := fw.libraryPathLocked(libID)
+		if libPath == "" {
+			continue
+		}
+		// 同一个库若也有一条到期的清理，把它接在这次扫描之后串行跑。改名一本书会产生
+		// Rename(旧名)+Create(新名) 两个事件，分别排期清理与扫描；清理只做 stat，
+		// 比要走完整棵树、末尾才写 RehomeBookPath 的扫描快得多，并发派发时必然抢在
+		// 改名重连之前把旧行当成"文件已消失"删掉，阅读进度、书签、合集归属、阅读清单
+		// 条目随 ON DELETE CASCADE 一起没。
+		cleanupAfterScan := hasCleanup && sched.due(now, fw.timings)
+		if cleanupAfterScan {
+			delete(fw.pendingCleanup, libID)
+		}
+		slog.Info("Hot reload triggered by file watcher", "library_id", libID, "forced_by_cleanup", forcedByCleanup)
+		if publishEvent != nil {
+			publishEvent("hot_reload:")
+		}
+		fw.scansInFlight[libID]++
+		fw.inFlight.Add(1)
+		go func(id int64, path string, cleanup bool) {
+			defer fw.inFlight.Done()
+			// 计数在**清理之后**才归零：多留这一会儿只会让别的清理更保守地多等一轮。
+			defer fw.scanFinished(id)
+			err := fw.runScanLibrary(fw.baseCtx, id, path, false)
+			switch {
+			case errors.Is(err, context.Canceled):
+				// 停机取消，不是故障。
+
+			case errors.Is(err, ErrScanAlreadyRunning):
+				// 文件变更去抖后触发的扫描与在跑的扫描撞车属正常情况：
+				// 正在跑的那次本就会看到这批新文件，无需重试也不必报错。
+				slog.Info("Hot reload scan skipped, another scan is in progress", "library_id", id)
+			case err != nil:
+				slog.Error("Hot reload scan failed", "library_id", id, "error", err)
+			}
+			if !cleanup {
+				return
+			}
+			// 扫描没跑成就不能清理：改名重连可能还没发生，此刻删行就是丢数据。
+			// 连同扫描一起重新排期，交给下一个去抖窗口。
+			if err != nil {
+				fw.requeueCleanupAfterFailedScan(id)
+				return
+			}
+			if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
+			}
+		}(libID, libPath, cleanupAfterScan)
+	}
+
+	// 去抖后单独触发库清理，清除删除/重命名遗留的幽灵记录。同轮有扫描的已在上面被取走、
+	// 接在扫描之后串行；走到这里的还必须再过一道闸：该库不能有未了结的改名重连。
+	// CleanupLibrary 自带根目录探测与占比熔断，存储离线时不会误删。
+	for libID, sched := range fw.pendingCleanup {
+		if !sched.due(now, fw.timings) {
+			continue
+		}
+		if reason := fw.rehomeUnsettledLocked(libID); reason != "" {
+			// 留在排期里，时间戳原样不动：下一轮再判。什么时候能跑得看闸何时放开——
+			// 在飞的扫描必然结束；排期中的扫描则由 cleanupMaxDeferral 兜底顶出去。
+			slog.Debug("Watcher-triggered cleanup deferred", "library_id", libID, "reason", reason)
+			continue
+		}
+		delete(fw.pendingCleanup, libID)
+		fw.inFlight.Add(1)
+		go func(id int64) {
+			defer fw.inFlight.Done()
+			if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
+			}
+		}(libID)
+	}
 }
 
 // Start 启动文件监控事件循环
 func (fw *FileWatcher) Start(publishEvent func(string)) {
 	go func() {
-		debounceTimer := time.NewTicker(2 * time.Second)
+		debounceTimer := time.NewTicker(fw.timings.tick)
 		defer debounceTimer.Stop()
 
 		for {
@@ -259,80 +469,7 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 
 			case <-debounceTimer.C:
 				fw.mu.Lock()
-				now := time.Now()
-				for libID, lastChange := range fw.pending {
-					// 防抖 5 秒：最后一次文件变动距今超过 5 秒才触发扫描
-					if now.Sub(lastChange) >= 5*time.Second {
-						delete(fw.pending, libID)
-						// 找到库路径
-						var libPath string
-						for p, id := range fw.libs {
-							if id == libID {
-								libPath = p
-								break
-							}
-						}
-						if libPath != "" {
-							// 同一个库若同轮也到期了清理，把它接在这次扫描之后串行跑。改名一本书会产生
-							// Rename(旧名)+Create(新名) 两个事件，分别排期清理与扫描；清理只做 stat，
-							// 比要走完整棵树、末尾才写 RehomeBookPath 的扫描快得多，并发派发时必然抢在
-							// 改名重连之前把旧行当成"文件已消失"删掉，阅读进度、书签、合集归属、阅读清单
-							// 条目随 ON DELETE CASCADE 一起没。
-							cleanupAfterScan := false
-							if cleanupAt, ok := fw.pendingCleanup[libID]; ok && now.Sub(cleanupAt) >= 5*time.Second {
-								delete(fw.pendingCleanup, libID)
-								cleanupAfterScan = true
-							}
-							slog.Info("Hot reload triggered by file watcher", "library_id", libID)
-							if publishEvent != nil {
-								publishEvent("hot_reload:")
-							}
-							fw.inFlight.Add(1)
-							go func(id int64, path string, cleanup bool) {
-								defer fw.inFlight.Done()
-								err := fw.runScanLibrary(fw.baseCtx, id, path, false)
-								switch {
-								case errors.Is(err, context.Canceled):
-									// 停机取消，不是故障。
-
-								case errors.Is(err, ErrScanAlreadyRunning):
-									// 文件变更去抖后触发的扫描与在跑的扫描撞车属正常情况：
-									// 正在跑的那次本就会看到这批新文件，无需重试也不必报错。
-									slog.Info("Hot reload scan skipped, another scan is in progress", "library_id", id)
-								case err != nil:
-									slog.Error("Hot reload scan failed", "library_id", id, "error", err)
-								}
-								if !cleanup {
-									return
-								}
-								// 扫描没跑成就不能清理：改名重连可能还没发生，此刻删行就是丢数据。
-								// 重新排期，交给下一个去抖窗口——那时扫描多半已经成功，改名也已重连。
-								if err != nil {
-									fw.rescheduleCleanup(id)
-									return
-								}
-								if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
-									slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
-								}
-							}(libID, libPath, cleanupAfterScan)
-						}
-					}
-				}
-				// 去抖后触发库清理，清除删除/重命名遗留的幽灵记录。走到这里的都是本轮没有扫描要跑的库
-				// ——同轮有扫描的已在上面被取走、接在扫描之后串行。CleanupLibrary 自带根目录探测与
-				// 占比熔断，存储离线时不会误删。
-				for libID, lastChange := range fw.pendingCleanup {
-					if now.Sub(lastChange) >= 5*time.Second {
-						delete(fw.pendingCleanup, libID)
-						fw.inFlight.Add(1)
-						go func(id int64) {
-							defer fw.inFlight.Done()
-							if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
-								slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
-							}
-						}(libID)
-					}
-				}
+				fw.dispatchDueLocked(time.Now(), publishEvent)
 				fw.mu.Unlock()
 			}
 		}

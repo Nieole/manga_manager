@@ -134,6 +134,15 @@ func (s *Scanner) beginLibraryScan(libraryID int64) bool {
 	return true
 }
 
+// libraryScanActive 报告该库此刻是否有整库扫描在跑，**不区分发起方**。
+// 文件监听器用它决定敢不敢清理：任何一次扫描的改名重连都写在末尾，扫描没结束就等于重连没落地。
+func (s *Scanner) libraryScanActive(libraryID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.active.libraries[libraryID]
+	return ok
+}
+
 func (s *Scanner) endLibraryScan(libraryID int64) {
 	s.mu.Lock()
 	delete(s.active.libraries, libraryID)
