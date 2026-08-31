@@ -27,7 +27,8 @@ import (
 
 const (
 	sessionCookieName = "mm_session"
-	// 会话有效期 30 天，滑动续期；为避免每请求写库，仅在距上次活跃超过 sessionTouchAfter 时续期。
+	// 会话有效期 30 天，滑动续期：距上次活跃超过 sessionTouchAfter 才续，服务端 expires_at 与
+	// 浏览器 Cookie 同一节奏一起推后（见 authGate），二者分叉就等于续期对客户端是哑的。
 	sessionTTL        = 30 * 24 * time.Hour
 	sessionTouchAfter = time.Hour
 	minPasswordLen    = 8
@@ -384,8 +385,14 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.password_change_required"))
 			return
 		}
+		// 滑动续期：推后服务端 expires_at 的同时，必须用同一个令牌、同一套属性把 Cookie 重下发，
+		// 否则浏览器那份 Max-Age 永远停在登录那一刻，天天在用的用户仍会在第 30 天被踢下线。
+		// 落库失败就不下发：客户端比服务端活得久只会把无声失效换成更迷惑的失效。
 		if now.Sub(sess.LastSeenAt) > sessionTouchAfter {
-			_ = c.store.TouchSession(r.Context(), sess.ID, now, now.Add(sessionTTL))
+			expires := now.Add(sessionTTL)
+			if err := c.store.TouchSession(r.Context(), sess.ID, now, expires); err == nil {
+				c.setSessionCookie(w, r, cookie.Value, expires)
+			}
 		}
 		ctx := context.WithValue(r.Context(), userCtxKey, user)
 		ctx = context.WithValue(ctx, sessionCtxKey, sess)
