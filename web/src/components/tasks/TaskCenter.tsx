@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Activity, ChevronDown, ExternalLink, FileText, Pause, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
+import { isActiveTaskStatus } from '../../utils/taskStatus';
 
 // TaskLimits / TaskStatus 由 cmd/tsgen 从 Go 后端响应结构体生成（单一事实源，见 api/generated.ts），
 // 此处再导出以保持既有 import 路径不变；本组件本地用到的 TaskStatus 另行 import。
@@ -33,8 +34,6 @@ interface TaskCenterProps {
   onOpenTaskTarget?: (task: TaskStatus) => void;
   onViewTaskLogs?: (task: TaskStatus) => void;
 }
-
-const activeStatuses = ['running', 'paused', 'cancelling'];
 
 const taskMetricKeys = [
   'processed_archives',
@@ -156,7 +155,7 @@ function hasInlineTelemetry(task: TaskStatus) {
 function TaskSummaryStrip({ tasks, backgroundPaused }: { tasks: TaskStatus[]; backgroundPaused?: boolean }) {
   const { t } = useI18n();
   const items = [
-    [t('settings.maintenance.activeTasks'), tasks.filter((task) => activeStatuses.includes(task.status)).length],
+    [t('settings.maintenance.activeTasks'), tasks.filter((task) => isActiveTaskStatus(task.status)).length],
     [t('settings.maintenance.pausedTasks'), tasks.filter((task) => task.status === 'paused').length],
     [t('settings.maintenance.failedTasks'), tasks.filter((task) => task.status === 'failed').length],
     [t('logs.metric.completedTasks'), tasks.filter((task) => task.status === 'completed').length],
@@ -319,13 +318,13 @@ function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: TaskSt
           {t('settings.maintenance.resumeTask')}
         </button>
       )}
-      {task.can_cancel && activeStatuses.includes(task.status) && (
+      {task.can_cancel && isActiveTaskStatus(task.status) && (
         <button type="button" onClick={() => onTaskAction(task, 'cancel')} disabled={taskActionKey === `${task.key}:cancel` || task.status === 'cancelling'} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50">
           <XCircle className="h-3.5 w-3.5" />
           {t('common.cancel')}
         </button>
       )}
-      {task.retryable && !activeStatuses.includes(task.status) && (
+      {task.retryable && !isActiveTaskStatus(task.status) && (
         <button type="button" onClick={() => onTaskAction(task, 'retry')} disabled={taskActionKey === `${task.key}:retry`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-50">
           <RotateCcw className={`h-3.5 w-3.5 ${taskActionKey === `${task.key}:retry` ? 'animate-spin' : ''}`} />
           {t('common.retry')}

@@ -6,9 +6,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, Loader2, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleAlert, Loader2, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskMessage } from '../i18n/task';
+import { isActiveTaskStatus, isTerminalTaskStatus } from '../utils/taskStatus';
 
 export interface TaskBubbleEntry {
   key: string;
@@ -31,12 +32,13 @@ interface TaskBubbleProps {
 }
 
 /**
- * 业务注释：statusIcon 是前端共享组件层，负责复用跨页面交互、反馈、布局和选择状态的页面、组件或工具入口，负责把领域状态转换为用户可操作的界面行为。
- * 调整时应同时检查加载态、空态、错误态、主题适配和调用方传入的业务语义。
+ * statusIcon 把任务状态画成一眼可辨的收尾方式：转圈只留给活动态，
+ * 中断另给警示色——它不是失败，任务体没出错，只是没跑完，可重试。
  */
 function statusIcon(status: string) {
   if (status === 'completed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />;
-  if (status === 'failed' || status === 'canceled') return <XCircle className="h-3.5 w-3.5 text-red-400" />;
+  if (status === 'interrupted') return <CircleAlert className="h-3.5 w-3.5 text-amber-400" />;
+  if (isTerminalTaskStatus(status)) return <XCircle className="h-3.5 w-3.5 text-red-400" />;
   return <Loader2 className="h-3.5 w-3.5 text-komgaPrimary animate-spin" />;
 }
 
@@ -61,14 +63,14 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
 
   const sorted = useMemo(() => {
     return [...tasks].sort((a, b) => {
-      const ra = a.status === 'running' || a.status === 'paused' ? 0 : 1;
-      const rb = b.status === 'running' || b.status === 'paused' ? 0 : 1;
+      const ra = isActiveTaskStatus(a.status) ? 0 : 1;
+      const rb = isActiveTaskStatus(b.status) ? 0 : 1;
       if (ra !== rb) return ra - rb;
       return b.updatedAt - a.updatedAt;
     });
   }, [tasks]);
 
-  const runningCount = sorted.filter((t) => t.status === 'running' || t.status === 'paused').length;
+  const runningCount = sorted.filter((t) => isActiveTaskStatus(t.status)).length;
   const finishedCount = sorted.length - runningCount;
   const primary = sorted[0];
 
@@ -110,7 +112,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
           <ul className="divide-y divide-gray-800">
             {sorted.map((task) => {
               const percent = progressPercent(task);
-              const finished = task.status === 'completed' || task.status === 'failed' || task.status === 'canceled';
+              const finished = isTerminalTaskStatus(task.status);
               return (
                 <li key={task.key} className="flex flex-col gap-1 px-3 py-2 hover:bg-gray-900/50">
                   <div className="flex items-center justify-between gap-2">
