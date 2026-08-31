@@ -295,9 +295,11 @@ function TaskProgressBar({ task }: { task: TaskStatus }) {
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/45">
         <span>{task.current} / {task.total}</span>
         <span>{percent.toFixed(1)}%</span>
-        <span>{formatRate(task.rate_per_minute || 0)}</span>
-        {/* ETA 有没有由后端决定：它只算给**活动态**，任务停了就不发这个字段。
-            前端不得在这里自己按状态判一遍——两处判据一旦不同步，界面上就会出现一个后端根本没算的剩余时间。 */}
+        {/* 速率与 ETA 有没有，都由后端决定：ETA 只算给**活动态**；速率只算给分母可信的状态，
+            **中断**任务停在哪一秒没有任何地方记下过，后端因此不发。缺了就整个不显示——
+            `0/min` 是另一种谎，它看着像「一分钟一条都没跑」。
+            前端不得在这里自己按状态判一遍：两处判据一旦不同步，界面上就会出现一个后端根本没算的数。 */}
+        {task.rate_per_minute !== undefined && <span>{formatRate(task.rate_per_minute)}</span>}
         {task.eta_seconds !== undefined && <span>ETA {formatDuration(task.eta_seconds)}</span>}
       </div>
     </div>

@@ -302,6 +302,8 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 // ETA 只属于**活动态**。**终态**的任务不会再动，「预计剩余时间」无从谈起，显示出来会让用户
 // 以为它还在跑；对可重试的**中断**任务尤其误导。终态要看的是已经做完了多少（计数与百分比）
 // 与花了多久（详情面板的开始 / 结束时刻），这两样都不经 ETA 这条通道。
+//
+// 速率只算给分母可信的状态，**中断**一个都不发，理由见函数内那道闸门。
 func enrichTaskProgress(task *TaskStatus) {
 	if task == nil {
 		return
@@ -316,6 +318,14 @@ func enrichTaskProgress(task *TaskStatus) {
 			percent = 100
 		}
 		task.Percent = &percent
+	}
+	// **中断**任务不发速率：它的 finished_at 是服务下次启动时由 MarkInterruptedTasks 批量盖的章，
+	// 不是任务停下的时刻，分母里因此整段停机时长都算成了在干活——停一夜再启动，一个跑了 10 分钟
+	// 的任务会被算成跑了 10 小时。库里也换不出第二个分母：那一笔 UPDATE 连 updated_at 一起盖成了
+	// 重启时刻，而任务究竟停在哪一秒，进程被 kill 的那一刻就没有任何地方记下过。
+	// 算不准的数宁可不发，也好过让用户照着一个编出来的速率判断这台机器快不快。
+	if task.Status == "interrupted" {
+		return
 	}
 	elapsed := time.Since(task.StartedAt).Seconds()
 	if !taskIsActive(task.Status) && task.FinishedAt != nil {
