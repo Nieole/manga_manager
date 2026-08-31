@@ -97,7 +97,9 @@ type taskEngine struct {
 	mutex    sync.Mutex
 	tasks    map[string]TaskStatus
 	runtimes map[string]*TaskRuntime
-	seq      int64
+	// seq 是任务的单调序号，也是任务中心的主排序键。装配期从库里已用掉的最大值接上（restoredTaskSequence），
+	// 因此跨重启单调——它是「最近活动」的唯一事实来源，时间列不是（见 database.SqlStore.ListTasks）。
+	seq int64
 	// persistPending 是待异步落盘的最新任务快照（按 key 合并）。进度更新只写内存 + 入此集合，
 	// 专用 goroutine（startTaskPersister）节流批量写 SQLite，避免在临界区内同步写库阻塞任务 API 与系列详情页。
 	// persistWake 在终态时唤醒该 goroutine 立即刷，缩短终态落库延迟（缓冲 1）。
@@ -134,10 +136,31 @@ func newTaskEngine(store database.Store, publish func(string), done func() <-cha
 		diskWork:       diskWork,
 		tasks:          make(map[string]TaskStatus),
 		runtimes:       make(map[string]*TaskRuntime),
+		seq:            restoredTaskSequence(store),
 		persistPending: make(map[string]TaskStatus),
 		persistWake:    make(chan struct{}, 1),
 		publishGates:   make(map[string]taskPublishGate),
 	}
+}
+
+// restoredTaskSequence 取库里已用掉的最大任务序号，供新引擎接着往下发。
+//
+// 它放在构造期而不是某条启动路径上：序号从 0 重来不会有任何编译错误或运行时报错，只会让重启后
+// 新起的任务排在全部历史之后——而任务表没有行数上限（maxRetainedTasks 只裁内存表，DB 只有用户手动
+// 清理才删），一次大库扫描就能留下几千条，于是前端那一页 50 条里一个新任务都看不到。
+//
+// 纯内存引擎（store 为 nil）与读库失败都从 0 开始：这是降级不是失败，服务照常可用，
+// 代价只是任务中心的历史定序退回旧行为。
+func restoredTaskSequence(store database.Store) int64 {
+	if store == nil {
+		return 0
+	}
+	maxSequence, err := store.MaxTaskSequence(context.Background())
+	if err != nil {
+		slog.Warn("Failed to restore task sequence", "error", err)
+		return 0
+	}
+	return maxSequence
 }
 
 // isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试。
@@ -485,7 +508,7 @@ func (e *taskEngine) pruneTasksLocked() {
 		return
 	}
 	if len(finished) > quota {
-		sortTaskStatusesByRecency(finished)
+		sortTaskStatusesByActivity(finished)
 		finished = finished[:quota]
 	}
 	for _, task := range finished {
@@ -494,10 +517,22 @@ func (e *taskEngine) pruneTasksLocked() {
 	e.tasks = next
 }
 
-// sortTaskStatusesByRecency 按「最近活动」降序排：序号优先，其后依次是更新时间、开始时间、key。
-// 淘汰与列表接口共用同一套定序，保证「被裁掉的」与「排在末尾的」是同一批。
-func sortTaskStatusesByRecency(items []TaskStatus) {
+// sortTaskStatusesByActivity 定序任务：**活动态**在前，其后按「最近活动」降序——
+// 序号优先，其后依次是更新时间、开始时间、key。
+//
+// 活动态优先不是展示偏好，而是可用性下限：序号只在有更新时才递增，一个长时间不上报进度的大库扫描
+// 会被后来的大量短任务超过；任务表又没有行数上限，而前端只取第一页 50 条。只按序号排的话，
+// 用户正等着看的那个任务恰好会掉出第一页——而它是唯一一个「还能变」的任务。
+//
+// 这里是任务中心顺序的唯一裁决处：DB 侧只按序号取候选历史（database.SqlStore.ListTasks），
+// 活动任务不靠那一页捞回来——内存里恒有一份（pruneTasksLocked 无条件保留）。
+// 淘汰与列表接口共用同一套定序，保证「被裁掉的」与「排在末尾的」是同一批；
+// 淘汰那边的输入已剔除活动任务，故首个比较键在那里是空转。
+func sortTaskStatusesByActivity(items []TaskStatus) {
 	sort.Slice(items, func(i, j int) bool {
+		if activeI, activeJ := taskIsActive(items[i].Status), taskIsActive(items[j].Status); activeI != activeJ {
+			return activeI
+		}
 		if items[i].Sequence == items[j].Sequence {
 			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
 				if items[i].StartedAt.Equal(items[j].StartedAt) {
@@ -513,7 +548,11 @@ func sortTaskStatusesByRecency(items []TaskStatus) {
 
 // ---- 查询 ----
 
-// listTaskStatuses 合并 DB 历史记录与内存中的活动任务，返回按最近活动降序排列的快照副本。
+// listTaskStatuses 合并 DB 历史记录与内存中的活动任务，返回定序后的快照副本
+// （**活动态**在前，其后按最近活动降序，见 sortTaskStatusesByActivity）。
+//
+// 限流在合并**之后**再截断：DB 那一页按序号取回最近的 Limit 条历史，内存里的活动任务补进来后重排，
+// 被截掉的只会是排在最末的历史。
 func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.TaskFilters) ([]TaskStatus, error) {
 	records, err := e.store.ListTasks(ctx, filters)
 	if err != nil {
@@ -563,7 +602,7 @@ func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.Task
 	}
 	e.mutex.Unlock()
 
-	sortTaskStatusesByRecency(items)
+	sortTaskStatusesByActivity(items)
 	if filters.Limit > 0 && len(items) > filters.Limit {
 		items = items[:filters.Limit]
 	}

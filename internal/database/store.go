@@ -59,6 +59,7 @@ type Store interface {
 	FindDuplicateBooks(ctx context.Context) ([]DuplicateBookRow, error)
 	UpsertTask(ctx context.Context, task TaskRecord) error
 	ListTasks(ctx context.Context, filters TaskFilters) ([]TaskRecord, error)
+	MaxTaskSequence(ctx context.Context) (int64, error)
 	DeleteTasks(ctx context.Context, filters TaskFilters) (int64, error)
 	GetHealthReport(ctx context.Context, filters HealthIssueFilters) (HealthReport, error)
 	GetKOReaderSettings(ctx context.Context) (KOReaderSettings, error)
