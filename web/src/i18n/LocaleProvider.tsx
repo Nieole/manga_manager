@@ -63,11 +63,48 @@ export function getClientLocale(): AppLocale {
   return normalizeAppLocale(window.navigator.language);
 }
 
-function fillTemplate(template: string, params?: TranslationParams) {
-  if (!params) {
+// 复数形态按 `one=…|other=…` 写进词条值：段名是 Intl.PluralRules 的分类名，段序无关，
+// 分类由 `count` 参数在当前语言下算出——不是「等于 1 取单数」，换成有 few/many 的语言也成立。
+const PLURAL_FORM_PREFIX = /^(zero|one|two|few|many|other)=/;
+const pluralRulesByLocale = new Map<AppLocale, Intl.PluralRules>();
+
+function pluralRulesFor(locale: AppLocale) {
+  let rules = pluralRulesByLocale.get(locale);
+  if (!rules) {
+    rules = new Intl.PluralRules(locale);
+    pluralRulesByLocale.set(locale, rules);
+  }
+  return rules;
+}
+
+// 没有 `|`、或有任一段缺分类前缀的模板都原样返回：中文这类无复数变化的语言写单一形态即可，
+// 含字面 `|` 的文案也不会被误拆。
+function selectPluralForm(locale: AppLocale, template: string, params?: TranslationParams) {
+  if (!template.includes('|')) {
     return template;
   }
-  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, key: string) => {
+  const forms: Array<{ category: string; text: string }> = [];
+  for (const segment of template.split('|')) {
+    const prefix = PLURAL_FORM_PREFIX.exec(segment);
+    if (!prefix) {
+      return template;
+    }
+    forms.push({ category: prefix[1], text: segment.slice(prefix[0].length) });
+  }
+  const count = Number(params?.count);
+  const category = Number.isFinite(count) ? pluralRulesFor(locale).select(count) : 'other';
+  const picked = forms.find((form) => form.category === category)
+    ?? forms.find((form) => form.category === 'other')
+    ?? forms[0];
+  return picked.text;
+}
+
+function fillTemplate(locale: AppLocale, template: string, params?: TranslationParams) {
+  const form = selectPluralForm(locale, template, params);
+  if (!params) {
+    return form;
+  }
+  return form.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, key: string) => {
     const value = params[key.trim()];
     return value == null ? '' : String(value);
   });
@@ -166,7 +203,7 @@ export function LocaleProvider({
       // 缺 key 时优先用显式 defaultValue（供动态 key 或尚未落词条的场景兜底），
       // 再退回 key 本身，避免把原始 key 直接暴露给用户。
       const template = currentMessages[key] ?? defaultMessages[key] ?? defaultValue ?? key;
-      return fillTemplate(template, params);
+      return fillTemplate(locale, template, params);
     };
 
     const formatDateTime = (
@@ -234,5 +271,5 @@ export function useI18n() {
 }
 
 export function translateInLocale(locale: AppLocale, key: string, params?: TranslationParams) {
-  return fillTemplate(getTemplate(locale, key), params);
+  return fillTemplate(locale, getTemplate(locale, key), params);
 }
