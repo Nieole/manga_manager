@@ -15,9 +15,15 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # typescript 单独走：typescript-eslint 的 peer 上限至今是 <6.1.0，把 TS 7 放进组里会让
+      # 整组 npm install 报 ERESOLVE 装不上，另外十几项跟着一起卡住（#20、#23 都是这么废掉的）。
+      # 摘出去之后它自己那条 PR 仍会红，但不再连累其余依赖成组升级。
+      # typescript-eslint 支持 TS 7 之后删掉这行即可。
       npm-dependencies:
         patterns:
           - "*"
+        exclude-patterns:
+          - "typescript"
   - package-ecosystem: github-actions
     directory: /
     schedule:
