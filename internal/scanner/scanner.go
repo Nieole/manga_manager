@@ -334,6 +334,11 @@ type bookScanSnapshot struct {
 	coverPath sql.NullString
 }
 
+// unchanged 判定磁盘上的这个文件与快照记下的完全一致。
+func (snap bookScanSnapshot) unchanged(info os.FileInfo) bool {
+	return snap.modTime.Equal(info.ModTime()) && snap.size == info.Size()
+}
+
 type ScanProfile string
 
 const (
@@ -413,6 +418,26 @@ func (p ScanProfile) computesFullHash(cfg config.Config) bool {
 	return p == ScanProfileIdentity || p == ScanProfileRepair
 }
 
+// backfills 判定这个档位能给这份已入库快照补上它缺的数据——增量跳过的第二个判据。
+//
+// 「文件没变」只说明重读读不出**新**东西，不说明库里那份已经**齐**了：fast 档位不开归档，
+// 它首扫留下的书 page_count 为 0、cover_path 为空，而 mtime+size 与磁盘完全一致，
+// 只按文件没变就跳过的话，用户改回 metadata 档跑普通扫描，那本书照样被跳过，
+// 页数与封面只有强制扫描补得回来——进度百分比、读完判定、系列已读统计因此一直算不出来。
+//
+// 判据必须挂在**当前档位的能力**上，而不是「库里缺什么就重读」：fast 档位补不出页数与封面，
+// 缺着也该继续跳过，否则它退化成每次全量重读，这个档位随之失去意义。
+// 内容哈希不在此列——它由扫描收尾发起的低优先级哈希回填任务负责补。
+func (p ScanProfile) backfills(snap bookScanSnapshot) bool {
+	if p.opensArchive() && snap.pageCount <= 0 {
+		return true
+	}
+	if p.extractsMetadata() && (!snap.coverPath.Valid || snap.coverPath.String == "") {
+		return true
+	}
+	return false
+}
+
 type scanResult struct {
 	seriesName           string
 	seriesPath           string
@@ -449,8 +474,8 @@ type coverJob struct {
 //
 // 调用方必须显式判定此错误：等待重试，或让任务以失败收尾并提示「该库正被其它扫描占用」。
 // 把它当成功处理的代价——任务面板会在零点几秒内谎报「扫描完成」；更糟的是重建缩略图任务
-// 已经 RemoveAll 了整个缩略图目录并清空 cover_path，却把被跳过的库当作成功，而增量扫描只比对
-// mtime+size、不检查封面是否缺失，那批封面从此不会自愈，必须人工再跑一次 force 扫描。
+// 已经 RemoveAll 了整个缩略图目录并清空 cover_path，却把被跳过的库当作成功，用户于是面对
+// 一整库无封面的书，要等下一次扫描才重建（fast 档位补不出封面，那次得先改档位）。
 var ErrScanAlreadyRunning = errors.New("scanner: a scan is already running for this target")
 
 // ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
@@ -500,8 +525,8 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 		formats = s.libraryScanFormats(ctx, libraryID)
 	}
 
-	// 先加载已入库文件的快照，它同时供三件事使用：按 mtime+size 跳过未变归档（只在非强制扫描下，
-	// 见下面遍历里那处独立守卫）、构建改名重连索引、以及 fast 档位保留已入库的页数与封面。
+	// 先加载已入库文件的快照，它同时供三件事使用：跳过既没变、本档位又补不出新数据的归档
+	// （只在非强制扫描下，见下面遍历里那处独立守卫）、构建改名重连索引、以及 fast 档位保留已入库的页数与封面。
 	// 后两件强制扫描也需要，因此这份快照无论 opts.Force 与否都完整填充——强制扫描下留空，
 	// workerProcess 里那条保留分支就永远看不到旧值，一次强制 fast 扫描会清零整库页数、抹掉封面。
 	// 代价只有一条查询，相对随后要读的 N 个归档可忽略。
@@ -580,11 +605,10 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 				return nil
 			}
 
-			// 增量拦截：非强制扫描下检查修改时间
+			// 增量拦截：非强制扫描下，文件没变**且**本档位补不出这本书缺的数据，才跳过解析派发。
 			if !opts.Force {
 				if existing, exists := bookCache[path]; exists {
-					// 若存在同名记录且时间与大小精确吻合，跳过这本卷的解析派发
-					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
+					if existing.unchanged(info) && !opts.Profile.backfills(existing) {
 						metrics.skippedArchives.Add(1)
 						progress.publish("comparing", path, false)
 						return nil
@@ -714,9 +738,10 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 				return nil
 			}
 
+			// 与 ScanLibrary 同口径的增量拦截，见 ScanProfile.backfills。
 			if !opts.Force {
 				if existing, exists := bookCache[path]; exists {
-					if existing.modTime.Equal(info.ModTime()) && existing.size == info.Size() {
+					if existing.unchanged(info) && !opts.Profile.backfills(existing) {
 						metrics.skippedArchives.Add(1)
 						progress.publish("comparing", path, false)
 						return nil
