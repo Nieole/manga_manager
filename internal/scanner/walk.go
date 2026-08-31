@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxSymlinkWalkDepth 限制软链的嵌套层数。
@@ -27,25 +28,53 @@ const maxSymlinkWalkDepth = 16
 // visited 每次调用现建，作用域只到这一趟遍历：两个资料库各自软链到同一块外置盘的同一个
 // 目录时，两趟遍历互不相干，谁也不会把对方的内容吞掉。
 func walkDirFollowingSymlinks(root string, fn fs.WalkDirFunc) error {
-	visited := make(map[string]struct{})
+	visited := make(map[string][]string)
 	return walkFollow(root, fn, visited, 0)
+}
+
+// dirClaimKey 把一条目录路径折成 visited 的**桶键**，另外交回解析后的路径。
+//
+// 先用 EvalSymlinks 解析软链，再折叠大小写。EvalSymlinks 逐段解析但保留调用方写的大小写：
+// 链目标写作 "series alpha"、真实目录名为 "Series Alpha" 时它给出两个不相等的字符串，
+// Windows 上盘符大小写（D:\ 与 d:\）同理，折叠一并盖住。解析失败时退回原路径。
+// 折叠只用来分桶、不用来判等——大小写敏感的文件系统上 /Data 与 /data 是两个不同目录。
+func dirClaimKey(dir string) (key, resolved string) {
+	resolved = dir
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		resolved = r
+	}
+	return strings.ToLower(resolved), resolved
 }
 
 // claimDir 给目录登记一笔，返回它是不是第一次被走到。
 //
-// 身份取 filepath.EvalSymlinks 解析出的真实路径，而不是 inode/设备号：后者要 syscall.Stat_t 的
-// Dev/Ino，在 Windows 上没有对应物，而 build.sh 要交叉编译到 Windows。
-// 解析失败时退回原路径，至少还能防住自引用。
-func claimDir(dir string, visited map[string]struct{}) bool {
-	key := dir
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		key = resolved
+// 身份是「同一个目录」这件事本身：同桶的候选逐个用 os.SameFile 定夺，它在大小写敏感与不敏感的
+// 文件系统上都答得对，也不像 syscall.Stat_t 的 Dev/Ino 那样是 Unix-only（build.sh 要交叉编译
+// 到 Windows）。线性比对只发生在桶内，而只有互为别名或只差大小写的路径才会同桶，几万个目录的
+// 库里桶长仍是 1；os.Stat 也因此只在同桶时才做。取不到属性（目录已消失、不可读）时退回字符串
+// 判等，宁可多走一趟也不误合并。
+func claimDir(dir string, visited map[string][]string) bool {
+	key, resolved := dirClaimKey(dir)
+	for _, seen := range visited[key] {
+		if seen == resolved || sameDir(seen, resolved) {
+			return false
+		}
 	}
-	if _, seen := visited[key]; seen {
+	visited[key] = append(visited[key], resolved)
+	return true
+}
+
+// sameDir 报告两条路径是不是同一个目录。
+func sameDir(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
 		return false
 	}
-	visited[key] = struct{}{}
-	return true
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
 }
 
 // walkFollow 遍历 dir 这一棵，本层的软链目录攒下来、等本层走完再跟进。
@@ -57,7 +86,7 @@ func claimDir(dir string, visited map[string]struct{}) bool {
 //
 // 这个次序也定死了两条路径都通时留下来的是**真实目录**那条，与链接名的字典序无关：
 // 软链是随手建的组织视图，用户删掉它不该让整个系列在下次扫描时消失。
-func walkFollow(dir string, fn fs.WalkDirFunc, visited map[string]struct{}, depth int) error {
+func walkFollow(dir string, fn fs.WalkDirFunc, visited map[string][]string, depth int) error {
 	if !claimDir(dir, visited) {
 		return nil
 	}

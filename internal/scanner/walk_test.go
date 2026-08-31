@@ -292,13 +292,17 @@ func TestWatchRegistersSymlinkedDirectories(t *testing.T) {
 func TestWalkVisitsInLibraryTargetOnce(t *testing.T) {
 	requireSymlinks(t)
 
-	// 两个子测试只差链接名的字典序，用来确认留下来的那条路径与遍历顺序无关。
+	// 前两个子测试只差链接名的字典序，用来确认留下来的那条路径与遍历顺序无关；
+	// 第三个把链目标写成另一种大小写——大小写不敏感的文件系统上它仍指向同一个目录。
 	cases := []struct {
 		name string
 		link string
+		// target 是写进软链里的目标目录名，留空表示照抄真实目录的写法。
+		target string
 	}{
 		{name: "链名排在真实目录之前", link: "Alpha (link)"},
 		{name: "链名排在真实目录之后", link: "zzz (link)"},
+		{name: "链目标与真实目录的大小写不同", link: "Alpha (link)", target: "series alpha"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -310,8 +314,15 @@ func TestWalkVisitsInLibraryTargetOnce(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(real, "Vol 01.cbz"), []byte("x"), 0o644); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			if err := os.Symlink(real, filepath.Join(root, tc.link)); err != nil {
+			target := real
+			if tc.target != "" {
+				target = filepath.Join(root, tc.target)
+			}
+			if err := os.Symlink(target, filepath.Join(root, tc.link)); err != nil {
 				t.Skipf("建不了软链：%v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, tc.link)); err != nil {
+				t.Skipf("文件系统大小写敏感，%q 在这里是断链：%v", tc.target, err)
 			}
 
 			got := collectWalked(t, root)
@@ -357,6 +368,21 @@ func TestWalkVisitsExternalTargetPerRoot(t *testing.T) {
 func TestScanSkipsInLibrarySymlinkToRealDirectory(t *testing.T) {
 	requireSymlinks(t)
 
+	// target 是写进软链里的目标目录名，留空表示照抄真实目录的写法。
+	cases := []struct{ name, target string }{
+		{name: "链目标与真实目录写法相同"},
+		{name: "链目标与真实目录的大小写不同", target: "series alpha"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { scanInLibrarySymlinkOnce(t, tc.target) })
+	}
+}
+
+// scanInLibrarySymlinkOnce 建一个「真实系列目录 + 指回它的库内软链」的库，扫完断言只入库一本书、
+// 一个系列，且路径是真实目录那条。target 非空时软链按该写法指向真实目录。
+func scanInLibrarySymlinkOnce(t *testing.T, target string) {
+	t.Helper()
+
 	_, store, lib, libraryPath := newScannerTestLibrary(t)
 	ctx := context.Background()
 
@@ -368,8 +394,16 @@ func TestScanSkipsInLibrarySymlinkToRealDirectory(t *testing.T) {
 		map[string][]byte{"001.png": testPNG1x1}); err != nil {
 		t.Fatalf("write cbz: %v", err)
 	}
-	if err := os.Symlink(real, filepath.Join(libraryPath, "Alpha (link)")); err != nil {
+	linkTarget := real
+	if target != "" {
+		linkTarget = filepath.Join(libraryPath, target)
+	}
+	link := filepath.Join(libraryPath, "Alpha (link)")
+	if err := os.Symlink(linkTarget, link); err != nil {
 		t.Skipf("建不了软链：%v", err)
+	}
+	if _, err := os.Stat(link); err != nil {
+		t.Skipf("文件系统大小写敏感，%q 在这里是断链：%v", target, err)
 	}
 
 	s := newFormatTestScanner(t, store)
@@ -404,5 +438,31 @@ func TestScanSkipsInLibrarySymlinkToRealDirectory(t *testing.T) {
 		}
 		t.Fatalf("入库 %d 个系列：%v —— 同一部作品被拆成两个，book_count、去重与阅读进度各算各的",
 			len(seriesList), paths)
+	}
+}
+
+// TestClaimDirKeepsDistinctDirsInSameBucket 是反向判据：折叠大小写只用来分桶，不能用来判等。
+//
+// 大小写敏感的文件系统上 /Data 与 /data 是两个不同的目录（很常见的两个挂载点），折叠后同桶。
+// 若同桶就算同一个，第二棵会被整个跳过——那是漏扫一整棵树，比重复入库更难被发现。
+// 这里手工把另一个真实目录塞进同一个桶，因此不依赖运行环境的文件系统是否大小写敏感。
+func TestClaimDirKeepsDistinctDirsInSameBucket(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+
+	visited := make(map[string][]string)
+	if !claimDir(first, visited) {
+		t.Fatal("第一个目录就没登记上")
+	}
+	// 显式制造桶冲突：把 first 挂到 second 的桶键上，等价于两条只差大小写的路径撞在一起。
+	firstKey, _ := dirClaimKey(first)
+	secondKey, _ := dirClaimKey(second)
+	visited[secondKey] = append(visited[secondKey], visited[firstKey]...)
+
+	if !claimDir(second, visited) {
+		t.Fatal("两个不同的真实目录被折叠成同一个 —— 大小写敏感的文件系统上会漏扫一整棵树")
+	}
+	if claimDir(first, visited) {
+		t.Fatal("同一个目录被登记了两次 —— 去重落空，同一批文件会以两条路径入库")
 	}
 }
