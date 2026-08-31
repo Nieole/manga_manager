@@ -43,6 +43,9 @@ export interface OfflineReaderStorageStats {
 
 interface OfflineBookMeta extends OfflineBookStatus {
   urls: string[];
+  // downloadToken 标记「这条索引属于哪一次下载」。下载收尾前比对它，就能认出自己是否
+  // 已被作废——用户删了这本书、换用户清空了索引、或另一次下载接管了它。
+  downloadToken?: string;
 }
 
 export interface QueuedProgress {
@@ -96,6 +99,31 @@ function pagePathPrefix(bookId: string) {
   return `/api/pages/${bookId}/`;
 }
 
+// pageImageCacheKey 把页图地址归一化成不带 query 的绝对地址。
+//
+// 一页对应一份字节，真相来源是页路径而不是完整 URL：query 里只有画质、格式、滤镜这些
+// 渲染选项，同一页的不同渲染彼此可替代，Service Worker 读图时正是按 ignoreSearch 命中的。
+// 带 query 落盘就会让同一页存下多份互不可达的字节：计数按页路径去重、读取只取其中一份，
+// 多出来的那些永远读不到，纯占磁盘。请求仍按原地址发，用户拿到的是自己选的画质。
+function pageImageCacheKey(url: string) {
+  const absolute = new URL(url, window.location.origin);
+  absolute.search = '';
+  absolute.hash = '';
+  return absolute.toString();
+}
+
+// belongsToBook 判断一个缓存键是不是这本书的字节（页图、页清单、书籍信息、阅读器壳）。
+function belongsToBook(url: string, bookId: string) {
+  try {
+    return new URL(url).pathname.startsWith(pagePathPrefix(bookId))
+      || samePath(url, `/api/pages/${bookId}`)
+      || samePath(url, `/api/book-info/${bookId}`)
+      || samePath(url, `/reader/${bookId}`);
+  } catch {
+    return false;
+  }
+}
+
 export function supportsOfflineReaderCache() {
   return typeof window !== 'undefined' && 'caches' in window && 'serviceWorker' in navigator;
 }
@@ -131,19 +159,23 @@ export async function getOfflineBookStatus(bookId: string): Promise<OfflineBookS
 
   const cache = await caches.open(OFFLINE_BOOK_CACHE);
   const keys = await cache.keys();
-  const cachedPages = keys.filter((request) => {
+  // 按页路径去重：同一页若因旧版本遗留了多个带 query 的键，它仍只算一页已缓存，
+  // 否则改过几次画质的书会报出超过总页数的进度。
+  const cachedPagePaths = new Set<string>();
+  for (const request of keys) {
     try {
-      return new URL(request.url).pathname.startsWith(pagePathPrefix(bookId));
+      const path = new URL(request.url).pathname;
+      if (path.startsWith(pagePathPrefix(bookId))) cachedPagePaths.add(path);
     } catch {
-      return false;
+      // 解析不了的键不是这本书的页。
     }
-  }).length;
+  }
 
   return {
     bookId,
     title: meta.title,
     pageCount: meta.pageCount,
-    cachedPages,
+    cachedPages: cachedPagePaths.size,
     cachedAt: meta.cachedAt,
     imageProfile: meta.imageProfile,
   };
@@ -185,6 +217,31 @@ export async function getOfflineReaderStorageStats(): Promise<OfflineReaderStora
   };
 }
 
+// downloadSequence 只用于让同一会话里先后发起的下载拿到互不相同的令牌。
+let downloadSequence = 0;
+
+function nextDownloadToken() {
+  downloadSequence += 1;
+  return `${Math.random().toString(36).slice(2)}-${downloadSequence}`;
+}
+
+// stillOwnsDownload 回答「这次下载还算数吗」。索引里这本书的令牌被换掉或整条不见了，
+// 就说明它已被作废：用户删了这本书、换用户清空了索引、或另一次下载接管了它。
+function stillOwnsDownload(bookId: string, token: string) {
+  return readBookMeta()[bookId]?.downloadToken === token;
+}
+
+// abandonDownload 丢弃一次已被作废的下载，把它写下的字节清掉。
+//
+// 只清自己写的、且当前索引没有认领的键：另一次下载接管这本书时，同名的键归它，
+// 删掉就等于把别人下好的页挖走。
+async function abandonDownload(cache: Cache, bookId: string, writtenKeys: string[]) {
+  const claimed = new Set(readBookMeta()[bookId]?.urls ?? []);
+  await Promise.all(writtenKeys.filter((key) => !claimed.has(key)).map((key) => cache.delete(key)));
+}
+
+// cacheBookForOffline 把一本书整份下载到离线缓存。返回 null 表示这次下载在收尾前已被作废
+// （删除、换用户或另一次下载接管），调用方应当据此认为这本书不在本机，而不是把它显示成已缓存。
 export async function cacheBookForOffline({
   bookId,
   title,
@@ -192,19 +249,23 @@ export async function cacheBookForOffline({
   imageProfile,
   imageUrlForPage,
   onProgress,
-}: CacheOfflineBookOptions): Promise<OfflineBookStatus> {
+}: CacheOfflineBookOptions): Promise<OfflineBookStatus | null> {
   if (!supportsOfflineReaderCache()) {
     throw new Error('Offline reader cache is not supported by this browser.');
   }
 
   const cache = await caches.open(OFFLINE_BOOK_CACHE);
-  const staticUrls = [
+  // 静态三件套：页清单、书籍信息、阅读器壳。缺任何一件，离线打开时都进不到阅读界面。
+  const downloads = [
     `/api/pages/${bookId}`,
     `/api/book-info/${bookId}`,
     `/reader/${bookId}`,
-  ];
-  const pageUrls = pages.map(imageUrlForPage);
-  const urls = [...staticUrls, ...pageUrls];
+  ].map((url) => ({ requestUrl: url, cacheKey: absoluteURL(url), isPage: false }));
+  for (const page of pages) {
+    const requestUrl = imageUrlForPage(page);
+    downloads.push({ requestUrl, cacheKey: pageImageCacheKey(requestUrl), isPage: true });
+  }
+  const cacheKeys = downloads.map((item) => item.cacheKey);
   let cachedPages = 0;
 
   // 必须先登记索引再下载：若反过来，下载中途断网时已缓存的响应留在 Cache Storage 里，
@@ -212,6 +273,7 @@ export async function cacheBookForOffline({
   // 的 urls 清理），用户只剩「清空全部」这一个出口。先写索引后，中途失败留下的是一本
   // 「未完成」的书：看得见、能单独删、能重下。
   const startedAt = new Date().toISOString();
+  const token = nextDownloadToken();
   const pendingMeta = readBookMeta();
   pendingMeta[bookId] = {
     bookId,
@@ -220,23 +282,49 @@ export async function cacheBookForOffline({
     cachedPages: 0,
     cachedAt: startedAt,
     imageProfile,
-    // 整份 URL 列表先记全：删除按它清理，没下到的那些 cache.delete 返回 false，无副作用。
-    urls: urls.map(absoluteURL),
+    // 整份键列表先记全：删除按它清理，没下到的那些 cache.delete 返回 false，无副作用。
+    urls: cacheKeys,
+    downloadToken: token,
   };
   writeBookMeta(pendingMeta);
 
-  for (const url of urls) {
-    const request = new Request(absoluteURL(url), { credentials: 'same-origin' });
-    const response = await fetch(request);
-    if (!response.ok) {
-      throw new Error(`Failed to cache ${url}: ${response.status}`);
+  const written: string[] = [];
+  try {
+    for (const item of downloads) {
+      // 每下一件之前先确认自己还算数：用户一删就立刻停手，省下剩余流量。
+      if (!stillOwnsDownload(bookId, token)) {
+        await abandonDownload(cache, bookId, written);
+        return null;
+      }
+      const response = await fetch(new Request(absoluteURL(item.requestUrl), { credentials: 'same-origin' }));
+      if (!response.ok) {
+        throw new Error(`Failed to cache ${item.requestUrl}: ${response.status}`);
+      }
+      await cache.put(new Request(item.cacheKey, { credentials: 'same-origin' }), response.clone());
+      written.push(item.cacheKey);
+      if (item.isPage) {
+        cachedPages += 1;
+        onProgress?.(cachedPages, pages.length);
+      }
     }
-    await cache.put(request, response.clone());
-    if (pageUrls.includes(url)) {
-      cachedPages += 1;
-      onProgress?.(cachedPages, pages.length);
+  } catch (err) {
+    // 作废与下载失败可能同时发生（删除清掉字节，正在飞的请求随后失败）。
+    // 先按作废处置：留一本没人认领的半成品比留一堆孤儿字节更糟。
+    if (!stillOwnsDownload(bookId, token)) {
+      await abandonDownload(cache, bookId, written);
+      return null;
     }
+    throw err;
   }
+
+  if (!stillOwnsDownload(bookId, token)) {
+    await abandonDownload(cache, bookId, written);
+    return null;
+  }
+
+  // 清掉这本书名下不属于本次下载的键：旧版本按带 query 的地址落盘的页图靠覆盖写清不掉，
+  // 页数变少后多出来的页同理。留着它们就是读不到又删不掉的占用。
+  await pruneStaleBookEntries(cache, bookId, new Set(cacheKeys));
 
   // 全部落盘后把计数补齐（cachedAt 沿用开始时刻，离线书架按它排序）。
   const allMeta = readBookMeta();
@@ -253,6 +341,15 @@ export async function cacheBookForOffline({
   };
 }
 
+async function pruneStaleBookEntries(cache: Cache, bookId: string, keep: Set<string>) {
+  const keys = await cache.keys();
+  await Promise.all(keys.map((request) => (
+    belongsToBook(request.url, bookId) && !keep.has(request.url)
+      ? cache.delete(request)
+      : Promise.resolve(false)
+  )));
+}
+
 export async function deleteOfflineBook(bookId: string) {
   if (!supportsOfflineReaderCache()) return;
   const cache = await caches.open(OFFLINE_BOOK_CACHE);
@@ -262,23 +359,11 @@ export async function deleteOfflineBook(bookId: string) {
     await Promise.all(meta.urls.map((url) => cache.delete(url)));
   }
 
+  // 再按路径兜底扫一遍：索引里的 urls 可能是旧版本写下的形态，只删它会漏掉字节。
   const keys = await cache.keys();
-  await Promise.all(keys.map((request) => {
-    try {
-      const url = new URL(request.url);
-      if (
-        url.pathname.startsWith(pagePathPrefix(bookId)) ||
-        samePath(request.url, `/api/pages/${bookId}`) ||
-        samePath(request.url, `/api/book-info/${bookId}`) ||
-        samePath(request.url, `/reader/${bookId}`)
-      ) {
-        return cache.delete(request);
-      }
-    } catch {
-      return Promise.resolve(false);
-    }
-    return Promise.resolve(false);
-  }));
+  await Promise.all(keys.map((request) => (
+    belongsToBook(request.url, bookId) ? cache.delete(request) : Promise.resolve(false)
+  )));
 
   delete allMeta[bookId];
   writeBookMeta(allMeta);

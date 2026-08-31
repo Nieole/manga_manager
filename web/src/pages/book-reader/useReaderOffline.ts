@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   cacheBookForOffline,
   deleteOfflineBook,
@@ -35,6 +35,9 @@ export function useReaderOffline({
   t,
 }: UseReaderOfflineOptions) {
   const offlineSupported = supportsOfflineReaderCache();
+  // 下载是异步的，期间用户可能已经翻到别的书。收尾时拿它比一比，
+  // 免得把上一本书的状态盖到当前这本上。
+  const activeBookIdRef = useRef(bookId);
   const [offlineStatus, setOfflineStatus] = useState<OfflineBookStatus | null>(null);
   const [offlineCaching, setOfflineCaching] = useState(false);
   const [offlineDeleting, setOfflineDeleting] = useState(false);
@@ -55,6 +58,10 @@ export function useReaderOffline({
       .catch(() => setOfflineStatus(null));
     setOfflineQueuedPage(getQueuedOfflineProgress(bookId)?.page ?? null);
   }, [bookId, offlineSupported]);
+
+  useEffect(() => {
+    activeBookIdRef.current = bookId;
+  }, [bookId]);
 
   useEffect(() => {
      
@@ -110,6 +117,9 @@ export function useReaderOffline({
       imageUrlForPage: (page) => getImageUrlForBook(bookId, page.number),
       onProgress: (cached) => setOfflineCachedPages(cached),
     }).then((status) => {
+      if (activeBookIdRef.current !== bookId) return;
+      // status 为 null 是「这次下载在收尾前被作废了」（用户删了这本书、或换了用户）：
+      // 照样落到 setOfflineStatus，界面回到「未缓存」，被删掉的书不会复活成已缓存。
       setOfflineStatus(status);
     }).catch((err) => {
       const message = err instanceof Error ? err.message : t('reader.offline.cacheFailed');

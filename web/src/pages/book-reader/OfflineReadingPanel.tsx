@@ -85,7 +85,7 @@ export function OfflineReadingPanel({
             </button>
             <button
               onClick={onDeleteOfflineBook}
-              disabled={offlineDeleting || !offlineStatus}
+              disabled={offlineDeleting || offlineCaching || !offlineStatus}
               className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {offlineDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}

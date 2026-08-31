@@ -146,6 +146,18 @@ describe('Service Worker 的接管范围', () => {
     await expect(event.responded).resolves.toBe('cached-bytes');
   });
 
+  // 护栏而非红/绿判据：ignoreSearch 让这条在归一化落盘之前也是绿的。
+  // 它锁的是「下载侧按不带 query 的页路径落盘，离线读图仍然命中」——
+  // 归一化那一步若被改回带 query 落盘，这条不会红，但改坏 ignoreSearch 会。
+  it('页图按不带 query 的路径落盘时，带画质参数的读取仍能命中', async () => {
+    const offline = await (await loadOffline()).open();
+    await offline.put(req('https://app.test/api/pages/42/7'), 'cached-bytes');
+    sw.fetchMock.mockRejectedValue(new Error('offline'));
+
+    const event = await dispatchFetch(req('https://app.test/api/pages/42/7?format=webp&q=80'));
+    await expect(event.responded).resolves.toBe('cached-bytes');
+  });
+
   it('book-info 只做精确匹配，不放宽 query', async () => {
     const offline = await (await loadOffline()).open();
     await offline.put(req('https://app.test/api/book-info/42?v=1'), 'cached-info');
