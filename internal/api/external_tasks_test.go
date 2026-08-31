@@ -163,7 +163,7 @@ func TestExternalTransferProgressObeysEngineWaterLevelOnly(t *testing.T) {
 // TestExternalTransferClosingFrameSurvivesThrottle 守「文案跃迁即使在窗口内也必须投递」这条
 // 水位规则在本路径上成立：收尾那一帧换了文案码，因此哪怕时钟一动不动也得出去。
 //
-// 它同时是「传输文件」这个指标的落点——终态只把 Current 拉到 Total，不动指标。
+// 它同时是「传输文件」这个指标的落点——终态不动指标。
 func TestExternalTransferClosingFrameSurvivesThrottle(t *testing.T) {
 	rig := newExternalRig(t, 3, frozenClock(), runTaskBodySynchronously)
 	sessionID := rig.readySession(t)

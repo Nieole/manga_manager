@@ -411,6 +411,8 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 //
 // 名字刻意不叫 complete：**完成**只是终态里的一个，**已取消**同样从这里写入。用「完成」命名
 // 会让读代码的人以为取消另有一条路径，进而去找一个不存在的函数——CONTEXT.md 点名要避开这处模糊。
+//
+// **计数推进**只在**完成**那一条上被补到总数。
 func (e *taskEngine) finalizeTask(key, status, code string, params map[string]string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
@@ -430,7 +432,10 @@ func (e *taskEngine) finalizeTask(key, status, code string, params map[string]st
 	task.CanResume = false
 	task.PausedAt = nil
 	task.PauseReason = ""
-	if task.Total > 0 {
+	// 只有**完成**补齐计数：`rebuild_index`、`cleanup_library`、`ai_grouping` 这类任务把总数
+	// 声明成阶段数却从不推进计数，靠这一笔才显示成 1 / 1。**已取消**不跟着补——被取消掉的那些
+	// 条目一个都没处理，补上去这个数就答不出「做完了多少」，用户据此以为活已经干完。
+	if status == "completed" && task.Total > 0 {
 		task.Current = task.Total
 	}
 	task.UpdatedAt = now

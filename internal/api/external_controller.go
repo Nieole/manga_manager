@@ -283,8 +283,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 // 若落进窗口内就会被吞，任务气泡在那几分钟里停在上一本书上。要堵死它得让水位比对 CurrentItem，
 // 而水位的判定规则不在本次改造范围内。
 //
-// 循环结束后补的那一帧不是可选的：终态只把 Current 拉到 Total、不动指标，少了它
-// transferred_files 会永远停在倒数第二本上。
+// 循环结束后补的那一帧不是可选的：终态不动指标，少了它 transferred_files 会永远停在倒数第二本上。
 func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, plan external.TransferPlan) error {
 	total := len(plan.Operations)
 	spec := TaskSpec{
