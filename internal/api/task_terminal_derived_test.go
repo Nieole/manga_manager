@@ -109,6 +109,7 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 
 			const key = "scan_library_1"
 			handle := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 1000, CanCancel: true, CanPause: true})
+			backdateTaskStart(e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
 			if err := tc.control(e, key); err != nil {
@@ -204,6 +205,7 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 
 			const key = "scan_library_1"
 			handle := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 1000, CanCancel: true, CanPause: true})
+			backdateTaskStart(e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
 			if err := tc.control(e, key); err != nil {
@@ -235,6 +237,7 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 
 			const key = "refresh_koreader_matching"
 			handle := seedTask(t, e, taskSeed{Key: key, Type: "refresh_koreader_matching", Total: 1000, CanCancel: true})
+			backdateTaskStart(e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
 			settleSeededTask(e, key, tc.bodyErr)
@@ -248,4 +251,21 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 			}
 		})
 	}
+}
+
+// backdateTaskStart 把已播种任务的开始时刻往前挪，给派生字段一个确定的分母。
+//
+// 不挪的话，分母是「播种到上报」之间的真实间隔：macOS/Linux 上是微秒级正数，而 Windows 的
+// 时钟粒度约 15.6ms，同一个时间片内 time.Since 返回 0，enrichTaskProgress 的 elapsed <= 0
+// 守卫会把速率与 ETA 一并掐掉——用例于是在 Windows 上红、在别处绿。真实任务从启动到上报进度
+// 远不止一个时间片，这道守卫本身是对的，该确定下来的是用例的分母。
+func backdateTaskStart(e *taskEngine, key string, d time.Duration) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	task, ok := e.tasks[key]
+	if !ok {
+		return
+	}
+	task.StartedAt = task.StartedAt.Add(-d)
+	e.tasks[key] = task
 }
