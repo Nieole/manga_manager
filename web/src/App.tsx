@@ -1,10 +1,11 @@
-import { Suspense, lazy, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useRef, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import { useAuth } from './auth/AuthProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthGate } from './auth/AuthGate';
+import { useToast } from './components/ToastProvider';
 import { useI18n } from './i18n/LocaleProvider';
 
 const Home = lazy(() => import('./pages/library'));
@@ -62,13 +63,25 @@ function withRouteFallback(element: ReactNode) {
   );
 }
 
-// RequireAdmin 是路由级的管理员守卫。
+// RequireAdmin 是路由级的管理员守卫，套在「整屏都靠管理端点」的页面上（设置、任务与日志）。
 //
-// 隐藏入口只挡住了「点得到」的路径，直接输 URL 或用旧书签仍会进到设置页——
-// 那里的每个接口都是管理员专属，普通用户看到的是一屏加载失败，像系统坏了。
-// 这里直接把他们送回首页；真正的权限判定仍在后端，这层只负责别让界面自相矛盾。
+// 隐藏入口只挡住了「点得到」的路径，直接输 URL 或用旧书签仍会进去——那里的每个接口在后端
+// 都归 isAdminOnlyPath 管，普通用户看到的是一屏加载失败，像系统坏了。这里把他们送回首页，
+// 并明说是权限问题：只跳转不吭声，用户只会以为链接坏了。
+// 真正的权限判定仍在后端，这层只负责别让界面自相矛盾。
 function RequireAdmin({ children }: { children: ReactNode }) {
   const { isAdmin } = useAuth();
+  const { showToast } = useToast();
+  const { t } = useI18n();
+  // StrictMode 下挂载期 effect 会跑两次，不记一笔就会弹出两条一模一样的提示。
+  const notified = useRef(false);
+
+  useEffect(() => {
+    if (isAdmin || notified.current) return;
+    notified.current = true;
+    showToast(t('auth.adminOnly.toast'), 'error');
+  }, [isAdmin, showToast, t]);
+
   if (!isAdmin) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
@@ -91,8 +104,8 @@ function App() {
           <Route path="collections" element={withRouteFallback(<Collections />)} />
           {/* 整理工作台 */}
           <Route path="organize" element={withRouteFallback(<Organize />)} />
-          {/* 任务与日志（合并自 BackgroundTasks + Logs） */}
-          <Route path="ops" element={withRouteFallback(<Ops />)} />
+          {/* 任务与日志（合并自 BackgroundTasks + Logs）：整屏四个接口全在 /api/system/ 下 */}
+          <Route path="ops" element={<RequireAdmin>{withRouteFallback(<Ops />)}</RequireAdmin>} />
           {/* 向后兼容旧路由 */}
           <Route path="organize/tasks" element={<Navigate to="/ops?tab=tasks" replace />} />
           <Route path="logs" element={<Navigate to="/ops?tab=logs" replace />} />

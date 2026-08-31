@@ -31,6 +31,7 @@ export const messages: MessageCatalog = {
     'auth.changePassword.success': '密码已修改。',
     'auth.role.admin': '管理员',
     'auth.role.regular': '普通用户',
+    'auth.adminOnly.toast': '这个页面仅管理员可用，已带你回到首页。',
     'settings.nav.users': '用户管理',
     'settingsUsers.title': '用户管理',
     'settingsUsers.description': '创建与管理站点账户。管理员拥有全部权限；普通用户只能浏览并记录自己的阅读进度。',

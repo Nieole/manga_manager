@@ -44,8 +44,9 @@ const EMPTY_LIBRARY_FORM: LibraryFormValues = {
 
 export default function Layout() {
     // 资料库的增删改、扫描、AI 分组与系统设置在后端都是管理员专属（见 isRegularWritablePath：
-    // 普通账号的写权限只有阅读进度、书签与短评）。这些入口必须只对管理员渲染，否则普通用户
-    // 点了只会吃一个 403 再弹一句泛化的失败提示——看起来像系统坏了，而不是没权限。
+    // 普通账号的写权限只有阅读进度、书签与短评）；任务与日志更连读都要管理员（见 isAdminOnlyPath：
+    // /api/system/ 整片划归管理员）。这些入口必须只对管理员渲染，否则普通用户点了只会吃一个
+    // 403 再弹一句泛化的失败提示，或者整屏加载失败——看起来像系统坏了，而不是没权限。
     const { isAdmin } = useAuth();
     const { t } = useI18n();
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
@@ -247,17 +248,22 @@ export default function Layout() {
         } catch {
             // ignore invalid local storage
         }
-        apiClient.get('/api/system/capabilities')
-            .then((res) => {
-                if (res.data?.default_scan_formats) {
-                    setSupportedScanFormats(res.data.default_scan_formats);
-                    // 两张表单的格式都跟着后端声明的默认集合走（保持原行为）。
-                    // 这个效应只在挂载时跑一次，用户还来不及输入，覆盖是安全的。
-                    addForm.setScanFormats(res.data.default_scan_formats);
-                    editForm.setScanFormats(res.data.default_scan_formats);
-                }
-            })
-            .catch(() => { });
+        // 扫描格式的默认集合只喂给资料库表单，而建库/改库本身是管理员专属。普通用户问这条
+        // 只会吃一个 403（后端把 /api/system/ 整片划归管理员），每次加载都白报一次错。
+        // Layout 在 AuthGate 放行之后才挂载，此刻角色已定，挂载时判一次即可。
+        if (isAdmin) {
+            apiClient.get('/api/system/capabilities')
+                .then((res) => {
+                    if (res.data?.default_scan_formats) {
+                        setSupportedScanFormats(res.data.default_scan_formats);
+                        // 两张表单的格式都跟着后端声明的默认集合走（保持原行为）。
+                        // 这个效应只在挂载时跑一次，用户还来不及输入，覆盖是安全的。
+                        addForm.setScanFormats(res.data.default_scan_formats);
+                        editForm.setScanFormats(res.data.default_scan_formats);
+                    }
+                })
+                .catch(() => { });
+        }
 
         const openAddLibrary = () => setShowAddModal(true);
         const openEditLibrary = (event: Event) => {
@@ -570,7 +576,9 @@ export default function Layout() {
                             />
                         </SidebarGroup>
 
-                        {/* 4. 系统 */}
+                        {/* 4. 系统：两页都是整屏管理端点，整组只对管理员出现——
+                            只藏链接会给普通用户留下一个点开空无一物的分组。 */}
+                        {isAdmin && (
                         <SidebarGroup
                             label={t('layout.sidebar.groupSystem')}
                             collapsed={isDesktopSidebarCollapsed}
@@ -587,7 +595,6 @@ export default function Layout() {
                                 matcher={(p) => p.startsWith('/ops') || p === '/logs' || p === '/organize/tasks'}
                                 onClick={() => setIsSidebarOpen(false)}
                             />
-                            {isAdmin && (
                             <SidebarLink
                                 to="/settings"
                                 icon={<SettingsIcon className="w-4 h-4 shrink-0" />}
@@ -597,8 +604,8 @@ export default function Layout() {
                                 matcher={(p) => p.startsWith('/settings')}
                                 onClick={() => setIsSidebarOpen(false)}
                             />
-                            )}
                         </SidebarGroup>
+                        )}
 
                         {/* 分割线 */}
                         <div className="border-t border-gray-800/60 my-2 mx-3"></div>

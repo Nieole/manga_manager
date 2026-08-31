@@ -4,6 +4,7 @@ import { apiClient } from '../api/client';
 import { BookOpen, ChevronDown, ChevronRight, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
+import { useAuth } from '../auth/AuthProvider';
 import { DuplicatesPanel } from '../components/DuplicatesPanel';
 
 interface LibraryOption {
@@ -78,6 +79,10 @@ function severityClass(severity: string) {
 }
 
 export default function Organize() {
+  // 健康报告本身普通用户读得到，修复动作一律读不到：刮削与重扫是管理员写，重建文件身份与
+  // KOReader 对账更在 /api/system/ 下（后端 isAdminOnlyPath）。按钮因此只对管理员渲染——
+  // 留着它们，普通用户点一下换回一句泛化的失败提示，看着像系统坏了。
+  const { isAdmin } = useAuth();
   const { t, formatNumber } = useI18n();
   const navigate = useNavigate();
   const [libraries, setLibraries] = useState<LibraryOption[]>([]);
@@ -221,11 +226,12 @@ export default function Organize() {
   };
 
   const canRunAction = (issue: HealthIssue) =>
-    issue.type === 'missing_metadata' ||
-    issue.type === 'empty_pages' ||
-    issue.type === 'missing_cover' ||
-    issue.type === 'missing_quick_hash' ||
-    issue.type === 'unmatched_koreader';
+    isAdmin &&
+    (issue.type === 'missing_metadata' ||
+      issue.type === 'empty_pages' ||
+      issue.type === 'missing_cover' ||
+      issue.type === 'missing_quick_hash' ||
+      issue.type === 'unmatched_koreader');
 
   const rebuildFileIdentities = async () => {
     setActionKey('rebuild_file_identities');
@@ -353,6 +359,7 @@ export default function Organize() {
               <h2 className="mt-1 text-sm font-semibold text-white">{t('organize.identity.title')}</h2>
               <p className="mt-1 text-xs leading-relaxed text-gray-500">{t('organize.identity.description')}</p>
             </div>
+            {isAdmin && (
             <button
               onClick={rebuildFileIdentities}
               disabled={actionKey === 'rebuild_file_identities'}
@@ -361,6 +368,7 @@ export default function Organize() {
               <RefreshCw className={`h-3.5 w-3.5 ${actionKey === 'rebuild_file_identities' ? 'animate-spin' : ''}`} />
               {t('organize.identity.rebuild')}
             </button>
+            )}
             <div className="grid gap-2">
               <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/1 px-3 py-2">
                 <span className="text-[11px] text-gray-500">{t('organize.identity.missingQuickHash')}</span>
@@ -445,7 +453,7 @@ export default function Organize() {
 
                       {/* 行尾悬浮动作组 */}
                       <div className="flex shrink-0 flex-wrap gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        {issue.last_task_key && (
+                        {isAdmin && issue.last_task_key && (
                           <button
                             onClick={() => navigate(`/ops?tab=logs&task_key=${encodeURIComponent(issue.last_task_key!)}`)}
                             className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-1.5 text-xs text-cyan-200/90 hover:bg-cyan-500/15 transition-colors"
@@ -486,7 +494,8 @@ export default function Organize() {
         </div>
       </div>
 
-      <DuplicatesPanel />
+      {/* 去重面板通篇是「挑出来删」：移除走 POST /api/books/remove，普通用户一律被拒。 */}
+      {isAdmin && <DuplicatesPanel />}
     </div>
   );
 }

@@ -31,6 +31,7 @@ export const messages: MessageCatalog = {
     'auth.changePassword.success': 'Password changed.',
     'auth.role.admin': 'Administrator',
     'auth.role.regular': 'Regular user',
+    'auth.adminOnly.toast': 'That page is for administrators only. Back to the home page.',
     'settings.nav.users': 'Users',
     'settingsUsers.title': 'Users',
     'settingsUsers.description': 'Create and manage site accounts. Admins have full control; regular users can only browse and track their own reading progress.',
