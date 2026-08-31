@@ -1,8 +1,9 @@
 /**
  * @vitest-environment jsdom
  *
- * 守「靠管理端点撑起来的页面，普通用户既看不见入口，也进不去路由」：任务与日志、设置两屏
- * 要的接口全落在后端 isAdminOnlyPath 里，漏一道守卫就是整屏 403，看着像系统坏了而不是没权限。
+ * 守「整屏都是管理动作的页面，普通用户既看不见入口，也进不去路由」：任务与日志、设置两屏要的
+ * 接口全落在后端 isAdminOnlyPath 里，审核中心整屏只有裁决提案这一件事——采纳与驳回同样只给
+ * 管理员。漏一道守卫就是整屏 403 或一排点了必失败的按钮，看着像系统坏了而不是没权限。
  * 判据必须问真的 App 路由表与真的 Layout 侧栏——复刻一份守卫逻辑来测，等于不测。
  */
 
@@ -38,6 +39,7 @@ vi.mock('../api/client', () => ({
 vi.mock('../pages/Dashboard', () => ({ default: () => <div>home-page</div> }));
 vi.mock('../pages/Ops', () => ({ default: () => <div>ops-page</div> }));
 vi.mock('../pages/Settings', () => ({ default: () => <div>settings-page</div> }));
+vi.mock('../pages/ReviewCenter', () => ({ default: () => <div>reviews-page</div> }));
 
 // jsdom 没有 EventSource；Layout 挂载即订阅 SSE，不替它整棵树都渲染不出来。
 class FakeEventSource {
@@ -106,6 +108,7 @@ describe('管理端点撑起来的页面', () => {
 
     expect(sidebarLink('任务与日志')).toHaveLength(0);
     expect(sidebarLink('系统设置')).toHaveLength(0);
+    expect(sidebarLink('待办审核')).toHaveLength(0);
     // 「系统」分组整组消失：只藏链接的话，普通用户会剩下一个点开空无一物的分组。
     expect(screen.queryByRole('button', { name: '系统' })).toBeNull();
     // 反向判据：普通入口照旧在，别把侧栏整个关掉。
@@ -128,6 +131,15 @@ describe('管理端点撑起来的页面', () => {
 
     expect(await screen.findByText('home-page')).toBeTruthy();
     expect(screen.queryByText('ops-page')).toBeNull();
+  });
+
+  it('普通用户直接输 /reviews 会被送回首页，并被告知这是管理员页面', async () => {
+    mockApi('regular');
+    renderApp('/reviews');
+
+    expect(await screen.findByText('home-page')).toBeTruthy();
+    expect(screen.queryByText('reviews-page')).toBeNull();
+    expect(await screen.findByText(zhCN['auth.adminOnly.toast'] as string)).toBeTruthy();
   });
 
   it('普通用户直接输 /settings 会被送回首页', async () => {
@@ -155,10 +167,15 @@ describe('管理端点撑起来的页面', () => {
     expect(await screen.findByText('ops-page')).toBeTruthy();
     expect(sidebarLink('任务与日志').length).toBeGreaterThan(0);
     expect(sidebarLink('系统设置').length).toBeGreaterThan(0);
+    expect(sidebarLink('待办审核').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: '系统' })).toBeTruthy();
 
     cleanup();
     renderApp('/settings');
     expect(await screen.findByText('settings-page')).toBeTruthy();
+
+    cleanup();
+    renderApp('/reviews');
+    expect(await screen.findByText('reviews-page')).toBeTruthy();
   });
 });

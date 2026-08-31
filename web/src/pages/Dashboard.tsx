@@ -200,8 +200,8 @@ export default function Dashboard() {
                 <h1 className="text-2xl font-bold text-white tracking-tight">{t('dashboard.title')}</h1>
             </div>
 
-            {/* 待审核提示行（仅有挂起项时显示） */}
-            {reviewPending > 0 && (
+            {/* 待审核提示行（仅有挂起项时显示）。审核中心是管理员专属，别把普通用户往守卫上送 */}
+            {reviewPending > 0 && isAdmin && (
                 <button
                     type="button"
                     onClick={() => navigate('/reviews')}

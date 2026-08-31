@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { BrowserRouter } from 'react-router-dom';
 
 import { apiClient } from '../../api/client';
+import { AuthProvider } from '../../auth/AuthProvider';
 import { LocaleProvider } from '../../i18n/LocaleProvider';
 import { messages as zhCN } from '../../i18n/locales/zh-CN';
 import Collections from './index';
@@ -42,8 +43,17 @@ function member(id: number, name: string) {
   return { series_id: id, series_name: name, cover_path: { String: '', Valid: false }, book_count: 1 };
 }
 
+// 合集页的管理动作按 isAdmin 决定渲不渲染，本文件守的不是权限，故一律以管理员登录。
+const ADMIN_STATUS = {
+  setup_required: false,
+  authenticated: true,
+  csrf_token: 'csrf',
+  user: { id: 1, username: 'admin', role: 'admin', display_name: 'admin', must_change_password: false },
+};
+
 function mockApi() {
   vi.spyOn(apiClient, 'get').mockImplementation(((url: string) => {
+    if (url.startsWith('/api/auth/status')) return Promise.resolve({ data: ADMIN_STATUS });
     if (url === '/api/collection-views') {
       return Promise.resolve({ data: [FRANCHISE_VIEW, MANUAL_VIEW] });
     }
@@ -73,7 +83,9 @@ function renderPage() {
   return render(
     <BrowserRouter>
       <LocaleProvider initialLocale="zh-CN" initialMessages={zhCN} fallbackMessages={zhCN}>
-        <Collections />
+        <AuthProvider>
+          <Collections />
+        </AuthProvider>
       </LocaleProvider>
     </BrowserRouter>,
   );

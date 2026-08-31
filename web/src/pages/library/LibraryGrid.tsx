@@ -14,6 +14,8 @@ interface LibraryGridProps {
   scrapeMenuOpenId: number | null;
   externalSeriesMap: Record<number, ExternalSeriesStatus>;
   externalSessionActive: boolean;
+  // 透传给卡片：刮削、重扫与收藏在后端都是管理员专属。
+  canManage: boolean;
   hasMore: boolean;
   paginationMode: 'paged' | 'infinite';
   viewMode: ViewMode;
@@ -37,6 +39,7 @@ export function LibraryGrid({
   scrapeMenuOpenId,
   externalSeriesMap,
   externalSessionActive,
+  canManage,
   hasMore,
   paginationMode,
   viewMode,
@@ -107,6 +110,7 @@ export function LibraryGrid({
             viewMode={viewMode}
             externalStatus={externalSeriesMap[s.id]}
             externalSessionActive={externalSessionActive}
+            canManage={canManage}
             onCardClick={onCardClick}
             onToggleFavorite={onToggleFavorite}
             onRescan={onRescan}

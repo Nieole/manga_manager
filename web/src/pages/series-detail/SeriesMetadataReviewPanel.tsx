@@ -1,5 +1,10 @@
+/**
+ * 系列元数据提案面板。采纳与驳回在后端都要管理员，普通用户只看得到提案内容与来源。
+ */
+
 import { CheckCircle2, ExternalLink, GitCompareArrows, ShieldCheck, XCircle } from 'lucide-react';
 import type { MetadataProvenance, MetadataReview } from './types';
+import { useAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
 
 interface SeriesMetadataReviewPanelProps {
@@ -23,6 +28,7 @@ export function SeriesMetadataReviewPanel({
   onReject,
 }: SeriesMetadataReviewPanelProps) {
   const { t, formatDateTime } = useI18n();
+  const { isAdmin } = useAuth();
 
   if (reviews.length === 0 && provenance.length === 0) return null;
 
@@ -71,24 +77,26 @@ export function SeriesMetadataReviewPanel({
                     </a>
                   )}
                 </div>
-                <div className="flex shrink-0 gap-2">
-                  <button
-                    onClick={() => onReject(review.id)}
-                    disabled={busyReviewId === review.id}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-200 transition-colors hover:bg-red-500/15 disabled:opacity-50"
-                  >
-                    <XCircle className="h-4 w-4" />
-                    {t('series.metadataReview.reject')}
-                  </button>
-                  <button
-                    onClick={() => onApply(review.id)}
-                    disabled={busyReviewId === review.id}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-3 py-2 text-sm font-semibold text-white shadow-lg shadow-komgaPrimary/20 transition-colors hover:bg-komgaPrimaryHover disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    {t('series.metadataReview.apply')}
-                  </button>
-                </div>
+                {isAdmin && (
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => onReject(review.id)}
+                      disabled={busyReviewId === review.id}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-200 transition-colors hover:bg-red-500/15 disabled:opacity-50"
+                    >
+                      <XCircle className="h-4 w-4" />
+                      {t('series.metadataReview.reject')}
+                    </button>
+                    <button
+                      onClick={() => onApply(review.id)}
+                      disabled={busyReviewId === review.id}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-3 py-2 text-sm font-semibold text-white shadow-lg shadow-komgaPrimary/20 transition-colors hover:bg-komgaPrimaryHover disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      {t('series.metadataReview.apply')}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 grid gap-3">

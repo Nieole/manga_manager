@@ -1,7 +1,7 @@
 /**
  * 本文件是前端合集页面左栏列表组件，负责按「全部/手工/智能」分页签过滤展示合集列表、
  * 高亮选中项、并在悬停时提供删除入口。智能合集额外展示其筛选条件芯片。
- * 作品群是推导出来的，只列出不给删除入口。
+ * 作品群是推导出来的，只列出不给删除入口；删除在后端要管理员，普通用户同样只列出。
  * 维护时应关注选中态与父组件的同步、删除确认交由父组件处理。
  */
 
@@ -17,6 +17,8 @@ interface CollectionListPanelProps {
   onSelect: (c: Collection) => void;
   onRequestDeleteCollection: (c: Collection) => void;
   onRequestDeleteSmart: (c: Collection) => void;
+  // canManage 为假时不给任何删除入口：合集与智能书架的删除在后端都是管理员专属。
+  canManage: boolean;
   t: TFunc;
 }
 
@@ -28,6 +30,7 @@ export function CollectionListPanel({
   onSelect,
   onRequestDeleteCollection,
   onRequestDeleteSmart,
+  canManage,
   t,
 }: CollectionListPanelProps) {
   const filtered = collections.filter((c) =>
@@ -91,7 +94,7 @@ export function CollectionListPanel({
               {c.kind === 'smart' && <SmartFilterChips collection={c} t={t} />}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              {c.kind === 'collection' && !isReadOnlyCollection(c) && (
+              {canManage && c.kind === 'collection' && !isReadOnlyCollection(c) && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onRequestDeleteCollection(c); }}
                   title={t('common.delete')}
@@ -101,7 +104,7 @@ export function CollectionListPanel({
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
-              {c.kind === 'smart' && (
+              {canManage && c.kind === 'smart' && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onRequestDeleteSmart(c); }}
                   title={t('common.delete')}

@@ -5,6 +5,7 @@ import type { VolumeBookEntry } from './useReaderSiblings';
 import { downloadBookFile } from '../../utils/download';
 import { setBookCoverFromPage } from '../../utils/cover';
 import { getApiErrorMessage } from '../../api/client';
+import { useAuth } from '../../auth/AuthProvider';
 import { useToast } from '../../components/ToastProvider';
 
 type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
@@ -71,6 +72,8 @@ export function ReaderTopBar({
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [settingCover, setSettingCover] = useState(false);
   const { showToast } = useToast();
+  // 把当前页设为封面写的是 POST /api/books/{id}/cover，后端只放行管理员；书签、进度与下载不受此限。
+  const { isAdmin } = useAuth();
 
   const handleSetCover = async () => {
     if (currentBookId === null) return;
@@ -155,7 +158,7 @@ export function ReaderTopBar({
             )}
           </>
         )}
-        {currentBookId !== null && (
+        {currentBookId !== null && isAdmin && (
           <button
             onClick={handleSetCover}
             disabled={settingCover}

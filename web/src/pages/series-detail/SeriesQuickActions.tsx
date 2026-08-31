@@ -1,4 +1,10 @@
+/**
+ * 系列详情页顶部的快捷动作条。除导出 ComicInfo 外每一项后端都要管理员，故只对管理员渲染。
+ */
+
 import { Download, Edit, FileDown, FolderHeart, FolderOpen, RefreshCw, Save } from 'lucide-react';
+import { Fragment, type ReactElement } from 'react';
+import { useAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
 import type { ScrapeProvider } from '../../hooks/useScrapeProviders';
 
@@ -36,60 +42,57 @@ export function SeriesQuickActions({
   isScraping,
 }: SeriesQuickActionsProps) {
   const { t } = useI18n();
+  const { isAdmin } = useAuth();
 
-  return (
-    <div className="flex items-center border border-white/10 rounded-xl shadow-xs bg-komgaSurface/80 backdrop-blur-md">
-      <button
-        onClick={onEdit}
-        className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors rounded-l-xl"
-        title={t('series.header.editMetadata')}
-      >
+  const btn = 'p-2 text-gray-200 transition-colors first:rounded-l-xl last:rounded-r-xl';
+
+  // 动作条按「留下来的项」拼装：分隔线若写死在按钮之间，隐藏管理动作就会在两端留下悬空竖线，
+  // 圆角也会落在一个已经不存在的按钮上。导出是 GET，普通用户可用，其余在后端都要管理员。
+  const items: ReactElement[] = [];
+  if (isAdmin) {
+    items.push(
+      <button key="edit" onClick={onEdit} className={`${btn} hover:text-white hover:bg-white/10`} title={t('series.header.editMetadata')}>
         <Edit className="w-4 h-4 m-0.5" />
-      </button>
-      <div className="w-px h-5 bg-white/10 mx-1" />
-      <button
-        onClick={onAddToCollection}
-        className="p-2 text-gray-200 hover:text-white hover:bg-white/10 transition-colors"
-        title={t('series.header.addToCollection')}
-      >
+      </button>,
+      <button key="collection" onClick={onAddToCollection} className={`${btn} hover:text-white hover:bg-white/10`} title={t('series.header.addToCollection')}>
         <FolderHeart className="w-4 h-4 m-0.5" />
-      </button>
-      <div className="w-px h-5 bg-white/10 mx-1" />
-      <button
-        onClick={onExportComicInfo}
-        className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors"
-        title={t('series.header.exportComicInfo')}
-      >
-        <FileDown className="w-4 h-4 m-0.5" />
-      </button>
-      <div className="w-px h-5 bg-white/10 mx-1" />
-      <button
-        onClick={onWriteComicInfo}
-        className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors"
-        title={t('series.header.writeComicInfo')}
-      >
+      </button>,
+    );
+  }
+  items.push(
+    <button
+      key="export"
+      onClick={onExportComicInfo}
+      className={`${btn} hover:text-komgaPrimary hover:bg-komgaPrimary/10`}
+      title={t('series.header.exportComicInfo')}
+    >
+      <FileDown className="w-4 h-4 m-0.5" />
+    </button>,
+  );
+  if (isAdmin) {
+    items.push(
+      <button key="write" onClick={onWriteComicInfo} className={`${btn} hover:text-komgaPrimary hover:bg-komgaPrimary/10`} title={t('series.header.writeComicInfo')}>
         <Save className="w-4 h-4 m-0.5" />
-      </button>
-      <div className="w-px h-5 bg-white/10 mx-1" />
+      </button>,
       <button
+        key="open-dir"
         onClick={onOpenDirectory}
         disabled={isOpeningDirectory}
-        className="p-2 text-gray-200 hover:text-komgaPrimary hover:bg-komgaPrimary/10 transition-colors disabled:opacity-50"
+        className={`${btn} hover:text-komgaPrimary hover:bg-komgaPrimary/10 disabled:opacity-50`}
         title={t('series.header.openDirectory')}
       >
         <FolderOpen className={`w-4 h-4 m-0.5 ${isOpeningDirectory ? 'animate-pulse text-komgaPrimary' : ''}`} />
-      </button>
-      <div className="w-px h-5 bg-white/10 mx-1" />
+      </button>,
       <button
+        key="rescan"
         onClick={onRescan}
         disabled={isRescanning}
-        className="p-2 text-gray-200 hover:text-komgaSecondary hover:bg-komgaSecondary/10 transition-colors disabled:opacity-50"
+        className={`${btn} hover:text-komgaSecondary hover:bg-komgaSecondary/10 disabled:opacity-50`}
         title={t('series.header.rescan')}
       >
         <RefreshCw className={`w-4 h-4 m-0.5 ${isRescanning ? 'animate-spin text-komgaSecondary' : ''}`} />
-      </button>
-      <div className="w-px h-5 bg-white/10 mx-1" />
-      <div className="relative flex">
+      </button>,
+      <div key="scrape" className="relative flex">
         <button
           onClick={onToggleScrapeMenu}
           disabled={isScraping}
@@ -128,7 +131,18 @@ export function SeriesQuickActions({
             </div>
           </>
         )}
-      </div>
+      </div>,
+    );
+  }
+
+  return (
+    <div className="flex items-center border border-white/10 rounded-xl shadow-xs bg-komgaSurface/80 backdrop-blur-md">
+      {items.map((item, index) => (
+        <Fragment key={item.key}>
+          {index > 0 && <div className="w-px h-5 bg-white/10 mx-1" />}
+          {item}
+        </Fragment>
+      ))}
     </div>
   );
 }

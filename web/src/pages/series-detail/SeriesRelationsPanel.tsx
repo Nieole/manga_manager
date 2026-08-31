@@ -1,6 +1,11 @@
+/**
+ * 系列关系面板。关系的增删改在后端都要管理员，普通用户只留下一份可跳转的只读关系列表。
+ */
+
 import { Link } from 'react-router-dom';
 import { GitBranch, Link2, Plus, Trash2, X } from 'lucide-react';
 import type { SeriesRelation, SeriesRelationCandidate } from './types';
+import { useAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
 
 interface SeriesRelationsPanelProps {
@@ -46,6 +51,7 @@ export function SeriesRelationsPanel({
   onDeleteRelation,
 }: SeriesRelationsPanelProps) {
   const { t } = useI18n();
+  const { isAdmin } = useAuth();
   const selectedTarget = candidates.find((item) => item.id === selectedTargetId) || null;
 
   return (
@@ -72,113 +78,124 @@ export function SeriesRelationsPanel({
                 className="inline-flex items-center gap-2 px-3 py-2 text-sm text-gray-100 hover:bg-komgaPrimary/10 hover:text-white"
               >
                 <Link2 className="h-4 w-4 text-komgaPrimary" />
-                <select
-                  value={relation.relation_type}
-                  onChange={(e) => onUpdateRelation(relation, e.target.value)}
-                  onClick={(e) => e.preventDefault()}
-                  className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-gray-300 outline-hidden hover:bg-white/10"
-                >
-                  {RELATION_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {t(relationLabelKey(type))}
-                    </option>
-                  ))}
-                </select>
+                {isAdmin ? (
+                  <select
+                    value={relation.relation_type}
+                    onChange={(e) => onUpdateRelation(relation, e.target.value)}
+                    onClick={(e) => e.preventDefault()}
+                    className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-gray-300 outline-hidden hover:bg-white/10"
+                  >
+                    {RELATION_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {t(relationLabelKey(type))}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  // 关系类型对普通用户是纯展示：看得见是哪一种，但不给改。
+                  <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-gray-300">
+                    {t(relationLabelKey(relation.relation_type))}
+                  </span>
+                )}
                 <span className="font-medium">{relation.target_series_name}</span>
               </Link>
-              <button
-                onClick={() => onDeleteRelation(relation)}
-                className="self-stretch border-l border-white/10 px-2 text-gray-500 hover:bg-red-500/10 hover:text-red-300"
-                title={t('series.relations.delete')}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => onDeleteRelation(relation)}
+                  className="self-stretch border-l border-white/10 px-2 text-gray-500 hover:bg-red-500/10 hover:text-red-300"
+                  title={t('series.relations.delete')}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ))}
         </div>
       ) : (
         <div className="mb-5 rounded-xl border border-dashed border-white/10 bg-gray-950/30 px-4 py-5 text-sm text-gray-400">
-          {t('series.relations.empty')}
+          {t(isAdmin ? 'series.relations.empty' : 'series.relations.emptyReadOnly')}
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-[160px_1fr_auto]">
-        <select
-          value={relationType}
-          onChange={(event) => onRelationTypeChange(event.target.value)}
-          className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-hidden focus:border-komgaPrimary"
-        >
-          {RELATION_TYPES.map((type) => (
-            <option key={type} value={type}>
-              {t(relationLabelKey(type))}
-            </option>
-          ))}
-        </select>
+      {isAdmin && (
+        <div className="grid gap-3 md:grid-cols-[160px_1fr_auto]">
+          <select
+            value={relationType}
+            onChange={(event) => onRelationTypeChange(event.target.value)}
+            className="rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-hidden focus:border-komgaPrimary"
+          >
+            {RELATION_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {t(relationLabelKey(type))}
+              </option>
+            ))}
+          </select>
 
-        <div className="relative">
-          <input
-            value={relationSearch}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={t('series.relations.searchPlaceholder')}
-            className="w-full rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-hidden focus:border-komgaPrimary"
-          />
-          {selectedTarget && (
-            <button
-              onClick={() => onSelectTarget(0)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1 text-gray-500 hover:bg-white/10 hover:text-white"
-              title={t('common.clear')}
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-          {!selectedTarget && relationSearch.trim() && (
-            <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-80 overflow-y-auto rounded-xl border border-white/10 bg-gray-950 shadow-2xl">
-              {isLoadingCandidates ? (
-                <div className="px-4 py-4 text-sm text-gray-500">{t('common.loading')}</div>
-              ) : candidates.length > 0 ? (
-                candidates.map((candidate) => {
-                  const displayTitle = candidate.title?.Valid ? candidate.title.String : candidate.name;
-                  const hasAlias = candidate.title?.Valid && candidate.title.String !== candidate.name;
-                  const coverUrl = candidate.cover_path?.Valid ? `/api/thumbnails/${candidate.cover_path.String}` : null;
-                  return (
-                    <button
-                      key={candidate.id}
-                      onClick={() => onSelectTarget(candidate.id)}
-                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-komgaPrimary/10 border-b border-white/5 last:border-b-0"
-                    >
-                      <div className="h-12 w-9 shrink-0 overflow-hidden rounded-md border border-white/10 bg-gray-900">
-                        {coverUrl ? (
-                          <img src={coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-gray-700 text-xs">?</div>
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-gray-100">{displayTitle}</p>
-                        {hasAlias && (
-                          <p className="truncate text-xs text-gray-500">{candidate.name}</p>
-                        )}
-                      </div>
-                      <span className="shrink-0 text-xs text-gray-600">#{candidate.id}</span>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="px-4 py-4 text-sm text-gray-500">{t('series.relations.noCandidates')}</div>
-              )}
-            </div>
-          )}
+          <div className="relative">
+            <input
+              value={relationSearch}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={t('series.relations.searchPlaceholder')}
+              className="w-full rounded-xl border border-white/10 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-hidden focus:border-komgaPrimary"
+            />
+            {selectedTarget && (
+              <button
+                onClick={() => onSelectTarget(0)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1 text-gray-500 hover:bg-white/10 hover:text-white"
+                title={t('common.clear')}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+            {!selectedTarget && relationSearch.trim() && (
+              <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-80 overflow-y-auto rounded-xl border border-white/10 bg-gray-950 shadow-2xl">
+                {isLoadingCandidates ? (
+                  <div className="px-4 py-4 text-sm text-gray-500">{t('common.loading')}</div>
+                ) : candidates.length > 0 ? (
+                  candidates.map((candidate) => {
+                    const displayTitle = candidate.title?.Valid ? candidate.title.String : candidate.name;
+                    const hasAlias = candidate.title?.Valid && candidate.title.String !== candidate.name;
+                    const coverUrl = candidate.cover_path?.Valid ? `/api/thumbnails/${candidate.cover_path.String}` : null;
+                    return (
+                      <button
+                        key={candidate.id}
+                        onClick={() => onSelectTarget(candidate.id)}
+                        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-komgaPrimary/10 border-b border-white/5 last:border-b-0"
+                      >
+                        <div className="h-12 w-9 shrink-0 overflow-hidden rounded-md border border-white/10 bg-gray-900">
+                          {coverUrl ? (
+                            <img src={coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-gray-700 text-xs">?</div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-gray-100">{displayTitle}</p>
+                          {hasAlias && (
+                            <p className="truncate text-xs text-gray-500">{candidate.name}</p>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-xs text-gray-600">#{candidate.id}</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="px-4 py-4 text-sm text-gray-500">{t('series.relations.noCandidates')}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={onAddRelation}
+            disabled={!selectedTargetId || isAdding}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-komgaPrimary/20 hover:bg-komgaPrimaryHover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+            {isAdding ? t('common.saving') : t('series.relations.add')}
+          </button>
         </div>
-
-        <button
-          onClick={onAddRelation}
-          disabled={!selectedTargetId || isAdding}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-komgaPrimary px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-komgaPrimary/20 hover:bg-komgaPrimaryHover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Plus className="h-4 w-4" />
-          {isAdding ? t('common.saving') : t('series.relations.add')}
-        </button>
-      </div>
+      )}
     </section>
   );
 }

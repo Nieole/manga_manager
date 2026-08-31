@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, BookOpen, ListOrdered, Pencil, Play, Plus, Search, 
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalTextareaClass } from '../components/ui/modalStyles';
+import { useAuth } from '../auth/AuthProvider';
 import { useI18n } from '../i18n/LocaleProvider';
 import type { SearchHit } from '../components/layout/types';
 
@@ -32,6 +33,9 @@ interface ReadingListItem {
 
 export default function ReadingLists() {
   const { t } = useI18n();
+  // 阅读清单是站点级数据（表里没有 user_id），增删改与排序在后端一律要管理员；浏览与「继续阅读」
+  // 是读操作，普通用户照旧。
+  const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [lists, setLists] = useState<ReadingList[]>([]);
   const [selected, setSelected] = useState<ReadingList | null>(null);
@@ -185,10 +189,12 @@ export default function ReadingLists() {
             <p className="text-sm text-gray-500">{t('readingLists.subtitle')}</p>
           </div>
         </div>
-        <button onClick={openCreate} className="flex items-center gap-2 rounded-lg bg-komgaPrimary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-komgaPrimaryHover">
-          <Plus className="h-4 w-4" />
-          {t('readingLists.create')}
-        </button>
+        {isAdmin && (
+          <button onClick={openCreate} className="flex items-center gap-2 rounded-lg bg-komgaPrimary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-komgaPrimaryHover">
+            <Plus className="h-4 w-4" />
+            {t('readingLists.create')}
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -236,16 +242,19 @@ export default function ReadingLists() {
                     <h2 className="text-xl font-semibold text-white">{selected.name}</h2>
                     {selected.description && <p className="mt-1 text-sm text-gray-500">{selected.description}</p>}
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={openEdit} className="rounded-lg border border-gray-700 p-2 text-gray-300 hover:text-white" title={t('common.edit')}>
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button onClick={() => setPendingDelete(selected)} className="rounded-lg border border-red-900/50 p-2 text-red-300 hover:bg-red-950/40" title={t('common.delete')}>
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+                  {isAdmin && (
+                    <div className="flex gap-2">
+                      <button onClick={openEdit} className="rounded-lg border border-gray-700 p-2 text-gray-300 hover:text-white" title={t('common.edit')}>
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => setPendingDelete(selected)} className="rounded-lg border border-red-900/50 p-2 text-red-300 hover:bg-red-950/40" title={t('common.delete')}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
+                {isAdmin && (
                 <div className="relative mt-5">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-500" />
                   <input
@@ -265,6 +274,7 @@ export default function ReadingLists() {
                     </div>
                   )}
                 </div>
+                )}
               </div>
 
               {items.length === 0 ? (
@@ -304,9 +314,13 @@ export default function ReadingLists() {
                               <Play className="h-3 w-3" />
                               {t('readingLists.readNext')}
                             </button>
-                            <button onClick={() => reorder(index, -1)} disabled={index === 0} className="rounded-lg border border-gray-800 p-1.5 text-gray-400 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button>
-                            <button onClick={() => reorder(index, 1)} disabled={index === items.length - 1} className="rounded-lg border border-gray-800 p-1.5 text-gray-400 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button>
-                            <button onClick={() => removeItem(item)} className="rounded-lg border border-red-900/50 p-1.5 text-red-300"><X className="h-3.5 w-3.5" /></button>
+                            {isAdmin && (
+                              <>
+                                <button onClick={() => reorder(index, -1)} disabled={index === 0} className="rounded-lg border border-gray-800 p-1.5 text-gray-400 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button>
+                                <button onClick={() => reorder(index, 1)} disabled={index === items.length - 1} className="rounded-lg border border-gray-800 p-1.5 text-gray-400 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button>
+                                <button onClick={() => removeItem(item)} className="rounded-lg border border-red-900/50 p-1.5 text-red-300"><X className="h-3.5 w-3.5" /></button>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>

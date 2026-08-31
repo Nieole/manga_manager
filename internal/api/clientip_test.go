@@ -115,3 +115,50 @@ func TestPasswordChangeGateAllowsOnlySelfServiceEndpoints(t *testing.T) {
 		}
 	}
 }
+
+// TestRegularWritablePathsAreOnlyPerUserWrites 锁住「哪些写操作不需要管理员」这条线。
+//
+// 前端按它决定系列详情、资料库、合集等页面上的动作渲不渲染给普通用户；这条线一旦漂移而前端
+// 不跟，用户看到的就是一排点下去吃 403 的按钮。名字里带 favorite / collection / reading-list
+// 的都不是每用户数据——那几张表没有 user_id，写的是站点级共享内容。
+func TestRegularWritablePathsAreOnlyPerUserWrites(t *testing.T) {
+	perUser := []string{
+		"/api/books/1/progress",
+		"/api/books/1/reading-time",
+		"/api/books/1/bookmarks",
+		"/api/books/bulk-progress",
+		"/api/series/bulk-progress",
+		"/api/series/1/review",
+	}
+	for _, p := range perUser {
+		if !isRegularWritablePath(p) {
+			t.Fatalf("%s is a per-user write and must stay open to regular users", p)
+		}
+	}
+	adminOnlyWrites := []string{
+		"/api/series/info/1",
+		"/api/series/1/rescan",
+		"/api/series/1/scrape",
+		"/api/series/1/scrape-apply",
+		"/api/series/1/open-dir",
+		"/api/series/1/comicinfo",
+		"/api/series/1/custom-fields",
+		"/api/series/1/relations",
+		"/api/relations/1",
+		"/api/series/bulk-update",
+		"/api/series/bulk-edit",
+		"/api/books/1/comicinfo",
+		"/api/books/1/cover",
+		"/api/books/1/cover/upload",
+		"/api/metadata/reviews/1/apply",
+		"/api/metadata/reviews/1/reject",
+		"/api/collections/1/series",
+		"/api/reading-lists/1/items",
+		"/api/smart-filters/1",
+	}
+	for _, p := range adminOnlyWrites {
+		if isRegularWritablePath(p) {
+			t.Fatalf("%s writes site-wide state and must stay admin-only", p)
+		}
+	}
+}

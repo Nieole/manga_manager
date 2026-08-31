@@ -1,7 +1,7 @@
 /**
  * 本文件是前端合集页面右栏详情组件，展示当前选中合集的标题、来源、编辑/快照入口，
  * 以及其系列成员网格（手工合集可移除成员，点击封面进入系列详情）。
- * 作品群是推导出来的，只读：能看能进，不给改名与移除成员的入口。
+ * 作品群是推导出来的，只读：能看能进，不给改名与移除成员的入口；改写在后端要管理员，普通用户同样只看。
  * 维护时应关注选中为空时的占位、手工与智能合集操作入口的差异。
  */
 
@@ -21,6 +21,8 @@ interface CollectionDetailPanelProps {
   onOpenSnapshot: () => void;
   onRemoveSeries: (seriesId: number) => void;
   onOpenSeries: (seriesId: number) => void;
+  // canManage 为假时整栏退成只读：合集的改名、快照与成员增删在后端都是管理员专属。
+  canManage: boolean;
   t: TFunc;
 }
 
@@ -36,10 +38,12 @@ export function CollectionDetailPanel({
   onOpenSnapshot,
   onRemoveSeries,
   onOpenSeries,
+  canManage,
   t,
 }: CollectionDetailPanelProps) {
   const partiallyLoaded = seriesItems.length < seriesTotal;
   const readOnly = isReadOnlyCollection(selected);
+  const canEdit = canManage && !readOnly;
   return (
     <div className="lg:col-span-2">
       {selected ? (
@@ -53,7 +57,7 @@ export function CollectionDetailPanel({
                   {readOnly && (
                     <span title={t('collections.readOnlyHint')} className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300">{t('collections.readOnly')}</span>
                   )}
-                  {selected.kind === 'collection' && !readOnly && (
+                  {selected.kind === 'collection' && canEdit && (
                     <button
                       onClick={onEditCollection}
                       className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors"
@@ -62,7 +66,7 @@ export function CollectionDetailPanel({
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                   )}
-                  {selected.kind === 'smart' && (
+                  {selected.kind === 'smart' && canManage && (
                     <>
                       <button onClick={onOpenSmartEdit} className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors" title={t('common.edit')}>
                         <Pencil className="w-3.5 h-3.5" />
@@ -105,7 +109,7 @@ export function CollectionDetailPanel({
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-gray-700"><BookOpen className="w-8 h-8" /></div>
                       )}
-                      {selected.kind === 'collection' && !readOnly && (
+                      {selected.kind === 'collection' && canEdit && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onRemoveSeries(item.series_id); }}
                           title={t('common.remove')}

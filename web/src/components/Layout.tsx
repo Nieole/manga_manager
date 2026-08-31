@@ -565,6 +565,8 @@ export default function Layout() {
                                 pathname={location.pathname}
                                 onClick={() => setIsSidebarOpen(false)}
                             />
+                            {/* 审核收件箱整屏只有裁决提案这一件事，后端全要管理员 */}
+                            {isAdmin && (
                             <SidebarLink
                                 to="/reviews"
                                 icon={<GitCompareArrows className="w-4 h-4 shrink-0" />}
@@ -574,6 +576,7 @@ export default function Layout() {
                                 matcher={(p) => p.startsWith('/reviews') || p === '/metadata-reviews' || p === '/ai-grouping-reviews'}
                                 onClick={() => setIsSidebarOpen(false)}
                             />
+                            )}
                         </SidebarGroup>
 
                         {/* 4. 系统：两页都是整屏管理端点，整组只对管理员出现——

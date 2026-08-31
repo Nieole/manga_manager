@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../api/client';
 import { FolderHeart, Plus } from 'lucide-react';
+import { useAuth } from '../../auth/AuthProvider';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useI18n } from '../../i18n/LocaleProvider';
 import type {
@@ -23,6 +24,9 @@ import { SnapshotModal } from './SnapshotModal';
 
 export default function Collections() {
   const { t } = useI18n();
+  // 合集与智能书架是站点级数据（表里没有 user_id），新建、改名、删除、快照与成员增删在后端
+  // 一律要管理员；浏览是读操作，普通用户照旧。
+  const { isAdmin } = useAuth();
   const [collections, setCollections] = useState<Collection[]>([]);
   const [selected, setSelected] = useState<Collection | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -241,13 +245,15 @@ export default function Collections() {
           <FolderHeart className="w-7 h-7 text-komgaPrimary" />
           <h1 className="text-2xl font-bold text-white tracking-tight">{t('collections.title')}</h1>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded-lg transition-colors text-sm font-medium"
-        >
-          <Plus className="w-4 h-4" />
-          {t('collections.create')}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-komgaPrimary hover:bg-komgaPrimaryHover text-white rounded-lg transition-colors text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" />
+            {t('collections.create')}
+          </button>
+        )}
       </div>
 
       <CreateCollectionModal
@@ -361,6 +367,7 @@ export default function Collections() {
           onSelect={selectCollection}
           onRequestDeleteCollection={setPendingDeleteCollection}
           onRequestDeleteSmart={setPendingDeleteSmart}
+          canManage={isAdmin}
           t={t}
         />
 
@@ -381,6 +388,7 @@ export default function Collections() {
           onOpenSnapshot={openSnapshot}
           onRemoveSeries={handleRemoveSeries}
           onOpenSeries={(seriesId) => navigate(`/series/${seriesId}`)}
+          canManage={isAdmin}
           t={t}
         />
       </div>

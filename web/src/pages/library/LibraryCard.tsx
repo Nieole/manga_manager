@@ -23,6 +23,9 @@ interface LibraryCardProps {
   scrapeProviders?: ScrapeProvider[];
   externalStatus?: ExternalSeriesStatus;
   externalSessionActive: boolean;
+  // canManage 为假时不渲染刮削/重扫/收藏：三者在后端都是管理员专属（收藏写的是 series 表的
+  // is_favorite，是站点级标记而非每用户收藏）。已收藏仍以一个静态心形标出来，只是点不动。
+  canManage: boolean;
   /** 长按 / 右键打开操作面板（暂未实现，预留） */
   onLongPress?: (series: Series) => void;
 }
@@ -48,6 +51,7 @@ export const LibraryCard = memo(function LibraryCard({
   scrapeProviders,
   externalStatus,
   externalSessionActive,
+  canManage,
   onLongPress,
 }: LibraryCardProps) {
   const { t, formatNumber } = useI18n();
@@ -200,7 +204,12 @@ export const LibraryCard = memo(function LibraryCard({
             </div>
           )}
         </div>
-        {!isSelectionMode && (
+        {!isSelectionMode && !canManage && s.is_favorite && (
+          <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/20 p-1.5 text-red-500">
+            <Heart className="h-3.5 w-3.5 fill-current" />
+          </span>
+        )}
+        {!isSelectionMode && canManage && (
           <div className="relative flex shrink-0 items-center gap-1.5">
             <button
               onClick={(e) => {
@@ -295,7 +304,12 @@ export const LibraryCard = memo(function LibraryCard({
             ★ {s.rating.Float64.toFixed(1)}
           </span>
         )}
-        {!isSelectionMode && (
+        {!isSelectionMode && !canManage && s.is_favorite && (
+          <span className="ml-auto rounded-full border border-red-500/40 bg-red-500/20 p-1.5 text-red-500 shadow-md backdrop-blur-sm">
+            <Heart className="w-3.5 h-3.5 fill-current" />
+          </span>
+        )}
+        {!isSelectionMode && canManage && (
           <div className="flex gap-1.5 ml-auto pointer-events-auto">
             <div className="relative">
               <button

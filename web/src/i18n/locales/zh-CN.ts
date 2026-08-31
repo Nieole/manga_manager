@@ -1063,6 +1063,7 @@ export const messages: MessageCatalog = {
     'series.relations.description': '维护前传、续作、外传和同宇宙关系，方便按真实阅读顺序跳转。',
     'series.relations.count': '{{count}} 个关联',
     'series.relations.empty': '暂未维护相关系列。可以从当前资源库中搜索并添加续作、前传或外传。',
+    'series.relations.emptyReadOnly': '暂未维护相关系列。',
     'series.relations.searchPlaceholder': '搜索要关联的系列',
     'series.relations.noCandidates': '没有可添加的候选系列',
     'series.relations.add': '添加关联',

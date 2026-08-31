@@ -63,7 +63,7 @@ function withRouteFallback(element: ReactNode) {
   );
 }
 
-// RequireAdmin 是路由级的管理员守卫，套在「整屏都靠管理端点」的页面上（设置、任务与日志）。
+// RequireAdmin 是路由级的管理员守卫，套在「整屏都是管理动作」的页面上（设置、任务与日志、审核中心）。
 //
 // 隐藏入口只挡住了「点得到」的路径，直接输 URL 或用旧书签仍会进去——那里的每个接口在后端
 // 都归 isAdminOnlyPath 管，普通用户看到的是一屏加载失败，像系统坏了。这里把他们送回首页，
@@ -109,8 +109,8 @@ function App() {
           {/* 向后兼容旧路由 */}
           <Route path="organize/tasks" element={<Navigate to="/ops?tab=tasks" replace />} />
           <Route path="logs" element={<Navigate to="/ops?tab=logs" replace />} />
-          {/* 审核中心（合并元数据审核 + AI 分组审核） */}
-          <Route path="reviews" element={withRouteFallback(<ReviewCenter />)} />
+          {/* 审核中心（合并元数据审核 + AI 分组审核）：整屏只有裁决提案这一件事，全要管理员 */}
+          <Route path="reviews" element={<RequireAdmin>{withRouteFallback(<ReviewCenter />)}</RequireAdmin>} />
           {/* 向后兼容旧路由 */}
           <Route path="metadata-reviews" element={<Navigate to="/reviews?tab=metadata" replace />} />
           <Route path="ai-grouping-reviews" element={<Navigate to="/reviews?tab=ai-grouping" replace />} />

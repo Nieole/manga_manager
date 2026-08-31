@@ -9,10 +9,12 @@ interface LibrarySavedViewsProps {
   onSave: (name: string) => void;
   onApply: (view: SavedSmartFilter) => void;
   onDelete: (id: string) => void;
+  // canManage 为假时只留下「套用」：智能视图存在 libraries/{id}/smart-filters 下，存与删都要管理员。
+  canManage: boolean;
   onExpand?: () => void;
 }
 
-export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDelete, onExpand }: LibrarySavedViewsProps) {
+export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDelete, onExpand, canManage }: LibrarySavedViewsProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -52,6 +54,7 @@ export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDele
 
       {open && (
         <div className="mt-3 space-y-3">
+          {canManage && (
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={draftName}
@@ -72,6 +75,7 @@ export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDele
               {t('home.smartFilters.save')}
             </button>
           </div>
+          )}
           {views.length === 0 ? (
             <p className="text-xs text-gray-500">{t('home.smartFilters.empty')}</p>
           ) : (
@@ -87,6 +91,7 @@ export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDele
                   >
                     {view.name}
                   </button>
+                  {canManage && (
                   <button
                     onClick={() => onDelete(view.id)}
                     className="rounded-sm p-1 text-gray-500 hover:bg-red-500/10 hover:text-red-400"
@@ -94,6 +99,7 @@ export function LibrarySavedViews({ views, hasAnyFilter, onSave, onApply, onDele
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
+                  )}
                 </li>
               ))}
             </ul>

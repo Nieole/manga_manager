@@ -12,6 +12,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { BrowserRouter, Route, Routes, useParams } from 'react-router-dom';
 
 import { apiClient } from '../../api/client';
+import { AuthProvider } from '../../auth/AuthProvider';
 import { LocaleProvider } from '../../i18n/LocaleProvider';
 import { messages as zhCN } from '../../i18n/locales/zh-CN';
 import { ToastProvider } from '../../components/ToastProvider';
@@ -65,8 +66,16 @@ const CONTEXT: SeriesContextResponse = {
 };
 
 // 资料库列表的检索接口只用来让筛选状态活起来，卡片本身由用例直接给定。
+// 详情页与资料库卡片上的动作按 isAdmin 决定渲不渲染，本文件守的是导航，故一律以管理员登录。
 function mockApi() {
+  const admin = {
+    setup_required: false,
+    authenticated: true,
+    csrf_token: 'csrf',
+    user: { id: 1, username: 'admin', role: 'admin', display_name: 'admin', must_change_password: false },
+  };
   vi.spyOn(apiClient, 'get').mockImplementation(((url: string) => {
+    if (url.startsWith('/api/auth/status')) return Promise.resolve({ data: admin });
     if (url.includes('/context')) return Promise.resolve({ data: CONTEXT });
     if (url.includes('/api/series/search')) {
       return Promise.resolve({ data: { items: [CARD_SERIES], total: 1, next_cursor: '' } });
@@ -110,6 +119,7 @@ function LibraryRoute() {
       onCloseScrapeMenu={() => {}}
       onChooseScrapeProvider={() => {}}
       externalSessionActive={false}
+      canManage
     />
   );
 }
@@ -121,10 +131,12 @@ function renderApp(entry: string) {
     <LocaleProvider initialLocale="zh-CN" initialMessages={zhCN} fallbackMessages={zhCN}>
       <ToastProvider>
         <BrowserRouter>
-          <Routes>
-            <Route path="/library/:libId" element={<LibraryRoute />} />
-            <Route path="/series/:seriesId" element={<SeriesDetailPage />} />
-          </Routes>
+          <AuthProvider>
+            <Routes>
+              <Route path="/library/:libId" element={<LibraryRoute />} />
+              <Route path="/series/:seriesId" element={<SeriesDetailPage />} />
+            </Routes>
+          </AuthProvider>
         </BrowserRouter>
       </ToastProvider>
     </LocaleProvider>,

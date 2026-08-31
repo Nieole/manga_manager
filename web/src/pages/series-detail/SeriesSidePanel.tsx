@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, GitCompareArrows, Loader2, RefreshCw, Repeat2, X } from 'lucide-react';
 import type { MetadataProvenance, MetadataReview, SeriesFailedTask, SeriesRelation, SeriesRelationCandidate } from './types';
+import { useAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { SeriesRelationsPanel } from './SeriesRelationsPanel';
 import { SeriesMetadataReviewPanel } from './SeriesMetadataReviewPanel';
@@ -44,6 +45,9 @@ interface SeriesSidePanelProps {
 
 export function SeriesSidePanel(props: SeriesSidePanelProps) {
   const { t, formatDateTime } = useI18n();
+  // 重试落在 POST /api/system/tasks/{key}/retry，整片 /api/system/ 后端都只给管理员；
+  // 失败任务本身是只读信息，仍留给普通用户看。
+  const { isAdmin } = useAuth();
 
   const counts = {
     relations: props.relations.length,
@@ -212,7 +216,7 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
                       {task.error && <p className="mt-2 text-sm text-red-100/80">{task.error}</p>}
                       <div className="mt-3 flex items-center justify-between text-xs">
                         <span className="text-red-100/40">{formatDateTime(task.updated_at)}</span>
-                        {task.retryable && (
+                        {task.retryable && isAdmin && (
                           <button
                             type="button"
                             onClick={() => props.onRetryFailedTask(task.key)}

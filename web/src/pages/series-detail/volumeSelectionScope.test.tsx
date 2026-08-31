@@ -12,6 +12,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { apiClient } from '../../api/client';
+import { AuthProvider } from '../../auth/AuthProvider';
 import { LocaleProvider } from '../../i18n/LocaleProvider';
 import { messages as zhCN } from '../../i18n/locales/zh-CN';
 import { ToastProvider } from '../../components/ToastProvider';
@@ -54,9 +55,18 @@ const CONTEXT: SeriesContextResponse = {
   links: [],
 };
 
+// 页面上的动作按 isAdmin 决定渲不渲染，本文件守的是选择范围，故一律以管理员登录。
 function mockApi() {
-  vi.spyOn(apiClient, 'get').mockImplementation(((url: string) =>
-    Promise.resolve({ data: url.endsWith('/context') ? CONTEXT : [] })) as never);
+  const admin = {
+    setup_required: false,
+    authenticated: true,
+    csrf_token: 'csrf',
+    user: { id: 1, username: 'admin', role: 'admin', display_name: 'admin', must_change_password: false },
+  };
+  vi.spyOn(apiClient, 'get').mockImplementation(((url: string) => {
+    if (url.startsWith('/api/auth/status')) return Promise.resolve({ data: admin });
+    return Promise.resolve({ data: url.endsWith('/context') ? CONTEXT : [] });
+  }) as never);
   return vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} } as never);
 }
 
@@ -66,9 +76,11 @@ async function renderPage(search: string) {
     <LocaleProvider initialLocale="zh-CN" initialMessages={zhCN} fallbackMessages={zhCN}>
       <ToastProvider>
         <MemoryRouter initialEntries={[`/series/1${search}`]}>
-          <Routes>
-            <Route path="/series/:seriesId" element={<SeriesDetailPage />} />
-          </Routes>
+          <AuthProvider>
+            <Routes>
+              <Route path="/series/:seriesId" element={<SeriesDetailPage />} />
+            </Routes>
+          </AuthProvider>
         </MemoryRouter>
       </ToastProvider>
     </LocaleProvider>,

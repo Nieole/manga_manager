@@ -6,6 +6,7 @@ import { useI18n } from '../../i18n/LocaleProvider';
 import { downloadBookFile } from '../../utils/download';
 import { uploadBookCover } from '../../utils/cover';
 import { getApiErrorMessage } from '../../api/client';
+import { useAuth } from '../../auth/AuthProvider';
 import { useToast } from '../../components/ToastProvider';
 
 interface SeriesBookCardProps {
@@ -31,6 +32,9 @@ export function SeriesBookCard({
 }: SeriesBookCardProps) {
   const { t } = useI18n();
   const { showToast } = useToast();
+  // 写回归档与上传封面在后端都是管理员专属（POST /api/books/{id}/comicinfo、/cover/upload）；
+  // 导出、下载与复制识别码是读操作，普通用户照旧。快捷已读走每用户的进度端点，不受此限。
+  const { isAdmin } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [coverBust, setCoverBust] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -151,28 +155,32 @@ export function SeriesBookCard({
                   >
                     {t('series.book.exportComicInfo')}
                   </button>
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setMenuOpen(false);
-                      onWriteComicInfo(book);
-                    }}
-                    className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
-                  >
-                    {t('series.book.writeComicInfo')}
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setMenuOpen(false);
-                      coverInputRef.current?.click();
-                    }}
-                    className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
-                  >
-                    {t('series.book.uploadCover')}
-                  </button>
+                  {isAdmin && (
+                    <>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setMenuOpen(false);
+                          onWriteComicInfo(book);
+                        }}
+                        className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
+                      >
+                        {t('series.book.writeComicInfo')}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setMenuOpen(false);
+                          coverInputRef.current?.click();
+                        }}
+                        className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
+                      >
+                        {t('series.book.uploadCover')}
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={(e) => {
                       e.preventDefault();
@@ -201,18 +209,20 @@ export function SeriesBookCard({
           </div>
         )}
 
-        <input
-          ref={coverInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            void handleCoverUpload(file);
-          }}
-        />
+        {isAdmin && (
+          <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              void handleCoverUpload(file);
+            }}
+          />
+        )}
         {showResumeBadge && (
           <div className="absolute right-2 bottom-2 z-20 px-2 py-0.5 rounded-md bg-gray-950/70 border border-white/10 text-[11px] font-semibold text-amber-200">
             {readPage}/{book.page_count}

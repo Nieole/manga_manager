@@ -304,6 +304,7 @@ export default function LibraryPage() {
         onApply={smartFilters.applySmartFilter}
         onDelete={smartFilters.deleteSmartFilter}
         onExpand={smartFilters.ensureLoaded}
+        canManage={isAdmin}
       />
 
       <LibraryFilterBar
@@ -365,6 +366,7 @@ export default function LibraryPage() {
         onCloseScrapeMenu={handleCloseScrapeMenu}
         onChooseScrapeProvider={handleChooseScrapeProvider}
         scrapeProviders={scrapeProviders}
+        canManage={isAdmin}
         onLoadMore={() => {
           if (paginationMode === 'infinite' && page < totalPages) setPage(page + 1);
         }}
@@ -413,6 +415,7 @@ export default function LibraryPage() {
         onMarkRead={() => selection.bulkProgress(true)}
         onMarkUnread={() => selection.bulkProgress(false)}
         onTransfer={transfer.requestTransfer}
+        canManage={isAdmin}
       />
 
       <ExternalLibraryDrawer

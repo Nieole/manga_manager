@@ -16,6 +16,9 @@ interface LibrarySelectionBarProps {
   onMarkRead: () => void;
   onMarkUnread: () => void;
   onTransfer: () => void;
+  // canManage 为假时只留下标为已读/未读：那两条走每用户的进度端点，其余（收藏、加入合集、
+  // 批量编辑、传输）在后端都是管理员专属。
+  canManage: boolean;
 }
 
 export function LibrarySelectionBar({
@@ -32,6 +35,7 @@ export function LibrarySelectionBar({
   onMarkRead,
   onMarkUnread,
   onTransfer,
+  canManage,
 }: LibrarySelectionBarProps) {
   const { t } = useI18n();
   const countLabel = (
@@ -43,7 +47,7 @@ export function LibrarySelectionBar({
     </>
   );
 
-  const actions: SelectionBarAction[] = [
+  const adminActions: SelectionBarAction[] = [
     {
       key: 'fav',
       variant: 'danger',
@@ -71,6 +75,9 @@ export function LibrarySelectionBar({
       label: t('home.selection.bulkEdit'),
       onClick: onBulkEdit,
     },
+  ];
+
+  const everyoneActions: SelectionBarAction[] = [
     {
       key: 'read',
       variant: 'success',
@@ -87,6 +94,9 @@ export function LibrarySelectionBar({
       onClick: onMarkUnread,
       disabled: bulkProgressUpdating !== null,
     },
+  ];
+
+  const transferAction: SelectionBarAction[] = [
     {
       key: 'transfer',
       variant: 'info',
@@ -96,6 +106,8 @@ export function LibrarySelectionBar({
       disabled: startingTransfer || !externalReady,
     },
   ];
+
+  const actions = canManage ? [...adminActions, ...everyoneActions, ...transferAction] : everyoneActions;
 
   return <SelectionBar visible={visible} count={count} countLabel={countLabel} actions={actions} />;
 }

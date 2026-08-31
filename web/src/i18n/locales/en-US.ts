@@ -1063,6 +1063,7 @@ export const messages: MessageCatalog = {
     'series.relations.description': 'Maintain prequel, sequel, spinoff, and same-universe links for real reading-order navigation.',
     'series.relations.count': '{{count}} relations',
     'series.relations.empty': 'No related series yet. Search this library to add sequels, prequels, or spinoffs.',
+    'series.relations.emptyReadOnly': 'No related series yet.',
     'series.relations.searchPlaceholder': 'Search series to link',
     'series.relations.noCandidates': 'No addable candidate series',
     'series.relations.add': 'Add relation',
