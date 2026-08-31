@@ -8,8 +8,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -50,29 +48,15 @@ type UserSeriesReview struct {
 
 // ---- 每用户每日活动 ----
 
-// ActivityDayKey 返回 t 所在的**本地**日历日（YYYY-MM-DD）。
-//
-// 活动日期须取本地日历日，不用 SQLite 的 DATE('now')（那是 UTC 日历日）：这里的 date 列要与
-// last_read_at（本地墙钟串）同口径，否则跨时区场景下年度回顾里「读完的书」与「翻过的页」
-// 会被计入不同年份，同一次阅读被劈成两截。用户看到的「今天读了多少」本来就该按他所在的那一天算。
-func ActivityDayKey(t time.Time) string {
-	return t.Format("2006-01-02")
-}
-
-// ActivityDayKeyBefore 返回距 t 若干天之前的本地日历日，供「近 N 天」这类范围查询做下界。
-func ActivityDayKeyBefore(t time.Time, days int) string {
-	return ActivityDayKey(t.AddDate(0, 0, -days))
-}
-
 // LogUserReadingActivity 记录某用户当天在某书翻读的页数（pages_read 取 MAX，语义同旧全局表）。
 func (s *SqlStore) LogUserReadingActivity(ctx context.Context, userID, bookID, pages int64) error {
-	// 日期在 Go 侧按本地时区算好再传参，不用 DATE('now')（那是 UTC，见 ActivityDayKey 的注释）。
+	// 日期在 Go 侧按本地日历日算好再传参，不用 DATE('now')（那是 UTC，见 TodayDayKey）。
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_reading_activity (user_id, book_id, date, pages_read)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(user_id, book_id, date) DO UPDATE SET
 		   pages_read = MAX(user_reading_activity.pages_read, excluded.pages_read)`,
-		userID, bookID, ActivityDayKey(time.Now()), pages)
+		userID, bookID, TodayDayKey(), pages)
 	return err
 }
 
@@ -113,7 +97,7 @@ func (s *SqlStore) GetUserReadingStreak(ctx context.Context, userID int64) (curr
 		if err := rows.Scan(&ds); err != nil {
 			return 0, 0, err
 		}
-		if t, e := time.Parse("2006-01-02", ds); e == nil {
+		if t, ok := ParseDayKey(ds); ok {
 			days = append(days, t)
 		}
 	}
@@ -139,7 +123,9 @@ func (s *SqlStore) GetUserReadingStreak(ctx context.Context, userID int64) (curr
 	}
 
 	// 当前连续：末次活动须是今天或昨天，否则连续为 0。
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	// 「今天」必须与写入侧同取本地日历日（见 TodayDayKey）：改取 UTC 日历日的话，
+	// 本地日领先 UTC 日时 gap 会是 -24h、落后时会是 48h，两侧都被判成断档，当前连续恒为 0。
+	today, _ := ParseDayKey(TodayDayKey())
 	last := days[len(days)-1]
 	gap := today.Sub(last)
 	if gap != 0 && gap != 24*time.Hour {
@@ -177,7 +163,7 @@ func (s *SqlStore) AddUserBookReadingTime(ctx context.Context, userID, bookID, s
 			 VALUES (?, ?, ?, 0, ?)
 			 ON CONFLICT(user_id, book_id, date) DO UPDATE SET
 			   read_seconds = read_seconds + excluded.read_seconds`,
-			userID, bookID, ActivityDayKey(time.Now()), seconds)
+			userID, bookID, TodayDayKey(), seconds)
 		return err
 	})
 }
@@ -223,19 +209,13 @@ func (s *SqlStore) GetUserBookReadingTimeTop(ctx context.Context, userID int64, 
 // GetUserPeriodStats 聚合某用户在指定年（month=0）或年月的阅读回顾。
 func (s *SqlStore) GetUserPeriodStats(ctx context.Context, userID int64, year, month int) (UserPeriodStats, error) {
 	var stats UserPeriodStats
-	// 期间匹配改用左闭右开的日期区间 [lowerBound, upperBound)，取代 strftime()/substr() 包裹列。
+	// 期间匹配用左闭右开的日期区间 [lowerBound, upperBound)，不用 strftime()/substr() 包裹列。
 	// date 列是零填充的 'YYYY-MM-DD'（字典序即时间序）；last_read_at 由 Go time.Time 经 modernc 驱动以
 	// t.String() 落库（"2026-07-05 22:31:16... +0800 CST"，strftime/date 无法解析），但其前缀恒为
-	// "YYYY-MM-DD"，故对二者做字符串区间比较等价于原先的前缀相等，且能让 (user_id, date) /
+	// "YYYY-MM-DD"，故对二者做字符串区间比较等价于前缀相等，且能让 (user_id, date) /
 	// (user_id, last_read_at) 复合索引做 range-scan，而非 seek 到 user_id 后全历史逐行求值函数。
-	lower := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
-	upper := lower.AddDate(1, 0, 0)
-	if month > 0 {
-		lower = time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-		upper = lower.AddDate(0, 1, 0)
-	}
-	lowerBound := lower.Format("2006-01-02")
-	upperBound := upper.Format("2006-01-02")
+	// year/month 由调用方给定，其「本年/本月」默认值须取自 CurrentPeriod，不得自行按 UTC 算。
+	lowerBound, upperBound := PeriodDayKeys(year, month)
 
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(pages_read),0), COALESCE(SUM(read_seconds),0),
@@ -359,20 +339,4 @@ func (s *SqlStore) GetUserTopReadingTags(ctx context.Context, userID, limit int6
 		items = append(items, i)
 	}
 	return items, rows.Err()
-}
-
-// HeatmapSinceDate 把既有的 offsetClause（形如 "-112 days"）换算成本地日历日下界。
-//
-// 保留字符串入参是为了不改调用方签名；解析失败时退回 112 天，与前端热力图的默认窗口一致。
-// 之所以不继续把它交给 SQLite 的 DATE('now', ?)，是因为那样下界按 UTC 算、
-// 而表里的 date 现在是本地日历日，跨时区部署下窗口会整体错开一天。
-func HeatmapSinceDate(offsetClause string) string {
-	days := 112
-	fields := strings.Fields(strings.TrimSpace(offsetClause))
-	if len(fields) > 0 {
-		if n, err := strconv.Atoi(strings.TrimPrefix(fields[0], "-")); err == nil && n > 0 {
-			days = n
-		}
-	}
-	return ActivityDayKeyBefore(time.Now(), days)
 }

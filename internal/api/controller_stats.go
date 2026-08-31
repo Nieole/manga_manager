@@ -156,7 +156,9 @@ func (c *Controller) getPeriodStats(w http.ResponseWriter, r *http.Request) {
 	year, _ := strconv.Atoi(r.URL.Query().Get("year"))
 	month, _ := strconv.Atoi(r.URL.Query().Get("month"))
 	if year <= 0 {
-		year = time.Now().UTC().Year()
+		// 默认期取服务器本地日历（database.CurrentPeriod），与活动日期同口径：
+		// 按 UTC 取年份的话，UTC+N 的元旦凌晨、UTC-N 的除夕深夜会拿到错的那一年。
+		year, _ = database.CurrentPeriod()
 	}
 	if month < 0 || month > 12 {
 		month = 0

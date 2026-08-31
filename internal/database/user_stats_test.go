@@ -5,8 +5,10 @@ import (
 	"time"
 )
 
+// dayStr 返回距今 offset 天的**本地**日历日（offset 为负表示过去），与写入侧 ActivityDayKey 同口径。
+// 取 UTC 日历日会与被测函数一起错，两边互相掩盖，读取侧的口径 bug 就报不出红。
 func dayStr(offset int) string {
-	return time.Now().UTC().AddDate(0, 0, offset).Format("2006-01-02")
+	return ActivityDayKeyBefore(calendarNow(), -offset)
 }
 
 func TestUserReadingStreak(t *testing.T) {
@@ -58,6 +60,8 @@ func TestUserReadingStreak(t *testing.T) {
 }
 
 func TestUserBookReadingTime(t *testing.T) {
+	// 钉住时钟：写入按本地日历日，若跑在本地跨月/跨年的那几个小时里，用真实时钟取「本月」会漏掉刚写的行。
+	pinCalendar(t, time.Date(2026, 9, 1, 3, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)))
 	store := newStoreForTest(t)
 	ctx, _, _, book1, book2 := seedUserProgressFixture(t, store)
 	u := mkUser(t, ctx, store, "alice", RoleAdmin)
@@ -89,7 +93,8 @@ func TestUserBookReadingTime(t *testing.T) {
 	}
 
 	// 阅读时长也累加到当天活动（供回顾按期统计）。
-	stats, err := store.GetUserPeriodStats(ctx, u, time.Now().UTC().Year(), int(time.Now().UTC().Month()))
+	curYear, curMonth := CurrentPeriod()
+	stats, err := store.GetUserPeriodStats(ctx, u, curYear, curMonth)
 	if err != nil {
 		t.Fatalf("period: %v", err)
 	}
@@ -98,18 +103,17 @@ func TestUserBookReadingTime(t *testing.T) {
 	}
 
 	// 读完一本（page_count=20）后，回顾的「读完本数」应为 1（验证 books_completed 用 substr 而非无法解析的 strftime）。
-	if err := store.SetUserBookProgress(ctx, u, book1, 20, time.Now()); err != nil {
+	if err := store.SetUserBookProgress(ctx, u, book1, 20, calendarNow()); err != nil {
 		t.Fatalf("complete book1: %v", err)
 	}
-	now := time.Now()
-	monthStats, err := store.GetUserPeriodStats(ctx, u, now.Year(), int(now.Month()))
+	monthStats, err := store.GetUserPeriodStats(ctx, u, curYear, curMonth)
 	if err != nil {
 		t.Fatalf("month period: %v", err)
 	}
 	if monthStats.BooksCompleted != 1 {
 		t.Fatalf("month books_completed want 1 got %d", monthStats.BooksCompleted)
 	}
-	yearStats, err := store.GetUserPeriodStats(ctx, u, now.Year(), 0)
+	yearStats, err := store.GetUserPeriodStats(ctx, u, curYear, 0)
 	if err != nil {
 		t.Fatalf("year period: %v", err)
 	}
@@ -118,7 +122,7 @@ func TestUserBookReadingTime(t *testing.T) {
 	}
 
 	// 跨期隔离：本年读完的书不得漏入上一年，也不得漏入非当月（守护 last_read_at 区间改写的上下界）。
-	prevYear, err := store.GetUserPeriodStats(ctx, u, now.Year()-1, 0)
+	prevYear, err := store.GetUserPeriodStats(ctx, u, curYear-1, 0)
 	if err != nil {
 		t.Fatalf("prev year period: %v", err)
 	}
@@ -126,10 +130,10 @@ func TestUserBookReadingTime(t *testing.T) {
 		t.Fatalf("prev-year books_completed want 0 got %d", prevYear.BooksCompleted)
 	}
 	otherMonth := 1
-	if int(now.Month()) == otherMonth {
+	if curMonth == otherMonth {
 		otherMonth = 2
 	}
-	otherMonthStats, err := store.GetUserPeriodStats(ctx, u, now.Year(), otherMonth)
+	otherMonthStats, err := store.GetUserPeriodStats(ctx, u, curYear, otherMonth)
 	if err != nil {
 		t.Fatalf("other month period: %v", err)
 	}

@@ -1,8 +1,7 @@
 /**
- * 活动热力图的月份标签工具。热力图格子的日期串是 UTC（与后端 DATE('now') 一致），
- * 取月份必须直接按日期串的字面年月构造本地日期，不能用 new Date(dateStr).getMonth() 解析——
- * 该解析把 'YYYY-MM-DD' 当 UTC 午夜，在负时区（如纽约 UTC-5）会把本地月份读早一个月，
- * 导致月份表头错位一列。
+ * 活动热力图的日期工具。格子日期是**本地**日历日，与后端记录活动日期的口径一致（见 Go 侧 database.ActivityDayKey）；
+ * 网格内部的日期算术挂在 UTC 上，只当不受夏令时干扰的日历坐标用。
+ * 日期串一律按字面年月日处理，不能交给 new Date(dateStr) 解析——那会当成 UTC 午夜，负时区下月份读早一个月。
  */
 
 // monthIndexFromDateStr 从 'YYYY-MM-DD' 直接取 0 基月份（与时区无关）。
@@ -29,11 +28,11 @@ export interface HeatmapCell {
 
 // buildHeatmapCells 生成「从今天往前 totalDays 天、起点对齐到周一」的日期网格。
 //
-// 日期串与星期几必须出自同一套日历（UTC），不能日期串取 toISOString 而行位置取本地 getDay()：
-// 当本地时刻跨过 UTC 日界（UTC+8 当地 08:00 之后、UTC-5 当地 19:00 之后）时，两者会读出
-// 不同的一天，整张网格相对星期标签错开一行，用户看到自己的阅读记录落在错误的星期几上。
+// 终点取**本地**今天：后端把阅读记在本地日历日，若按 UTC 今天收尾，UTC+8 当地 00:00–08:00
+// 读的书在网格上没有格子可落。终点定下后网格一律用 UTC 坐标推进，日期串与星期几才出自同一套日历——
+// 两者若分取本地与 UTC，本地时刻跨过 UTC 日界时整张网格会相对星期标签错开一行。
 export function buildHeatmapCells(totalDays: number, now: Date = new Date()): HeatmapCell[] {
-  const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const end = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   const dayMs = 24 * 60 * 60 * 1000;
 
   let start = end - (totalDays - 1) * dayMs;

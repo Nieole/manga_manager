@@ -88,13 +88,31 @@ describe('热力图日期网格', () => {
     });
   }
 
-  it('起点对齐到周一，终点是今天', () => {
+  it('起点对齐到周一', () => {
     process.env.TZ = 'Asia/Shanghai';
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-28T17:00:00Z'));
 
-    const cells = buildHeatmapCells(28);
-    expect(cells[0].dayOfWeek).toBe(1);
-    expect(cells[cells.length - 1].date).toBe('2026-07-28');
+    expect(buildHeatmapCells(28)[0].dayOfWeek).toBe(1);
   });
+
+  // 终点必须是本地今天：后端把阅读记在本地日历日，按 UTC 今天收尾时
+  // UTC+8 当地 00:00-08:00（与 UTC-5 当地 19:00 之后）读的书没有格子可落。
+  const endCases = [
+    { name: 'UTC+8 当地已跨到次日', tz: 'Asia/Shanghai', at: '2026-07-28T17:00:00Z', want: '2026-07-29' },
+    { name: 'UTC-5 当地还停在前一日', tz: 'America/New_York', at: '2026-07-30T01:00:00Z', want: '2026-07-29' },
+    { name: 'UTC 本身', tz: 'UTC', at: '2026-07-29T12:00:00Z', want: '2026-07-29' },
+    { name: 'UTC+8 跨年：当地已是元旦', tz: 'Asia/Shanghai', at: '2026-12-31T20:00:00Z', want: '2027-01-01' },
+  ];
+
+  for (const tc of endCases) {
+    it(`${tc.name}：终点是本地今天`, () => {
+      process.env.TZ = tc.tz;
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(tc.at));
+
+      const cells = buildHeatmapCells(28);
+      expect(cells[cells.length - 1].date).toBe(tc.want);
+    });
+  }
 });

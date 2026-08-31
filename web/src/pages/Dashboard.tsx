@@ -507,8 +507,8 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
         'bg-komgaPrimary',          // 4: 极多
     ];
 
-    // 日期网格全程用 UTC 日历（与后端 DATE('now') 同口径），不可与本地时区混用——
-    // 日期串与行位置一旦分别取自不同时区来源，本地时刻跨过 UTC 日界时整张网格会错开一行。
+    // 日期网格的日期串是本地日历日，与后端活动日期同口径（见 buildHeatmapCells）；
+    // 这里只做取数与着色，不得再自行按时区推算日期。
     const cells = buildHeatmapCells(TOTAL_DAYS).map((cell) => ({
         ...cell,
         count: activityMap.get(cell.date) || 0,
