@@ -23,15 +23,24 @@ const requests: string[] = [];
 const lastQuery = () => requests[requests.length - 1] ?? '';
 const pageOf = (query: string) => new URLSearchParams(query).get('page');
 const requestedPages = () => requests.map(pageOf);
+// 请求序列里「带着别的排序算出来的游标」的那些条：游标串的排序前缀与本次请求的 sortBy 对不上。
+const staleCursorRequests = () =>
+  requests.filter((query) => {
+    const params = new URLSearchParams(query);
+    const cursor = params.get('cursor');
+    return cursor !== null && cursor.split('.')[0] !== params.get('sortBy');
+  });
 
-// 复刻后端 /api/series/search 的分页形状：next_cursor 由本次请求的页码推出，
-// 于是「翻到第 3 页」拿到的就是第 2 页响应给出的 cur-3，与真实游标链一致。
+// 复刻后端 /api/series/search 的分页形状：next_cursor 由本次请求的排序与页码推出，
+// 于是「name_asc 下翻到第 3 页」拿到的就是 name_asc.cur-3，与真实游标链一致——
+// 真实游标载荷里同样带 sort_by，后端据它判定游标是否属于本次请求的排序。
 function mockSeriesSearch() {
   vi.spyOn(apiClient, 'get').mockImplementation((async (url: string) => {
     const query = url.replace('/api/series/search?', '');
     requests.push(query);
-    const page = Number(new URLSearchParams(query).get('page') || '1');
-    return { data: { items: [], total: 100, next_cursor: `cur-${page + 1}` } };
+    const params = new URLSearchParams(query);
+    const page = Number(params.get('page') || '1');
+    return { data: { items: [], total: 100, next_cursor: `${params.get('sortBy')}.cur-${page + 1}` } };
   }) as never);
 }
 
@@ -136,13 +145,32 @@ describe('资料库页码重置守卫', () => {
     await settle();
     act(() => result.current.filters.setPage(3));
     await settle();
-    expect(lastQuery()).toContain('cursor=cur-3');
+    expect(lastQuery()).toContain('cursor=name_asc.cur-3');
 
     act(() => result.current.filters.setSortByField('updated'));
     await settle();
 
     expect(lastQuery()).toContain('sortBy=updated_asc');
     expect(lastQuery()).not.toContain('cursor=');
+    expect(pageOf(lastQuery())).toBe('1');
+  });
+
+  it('改排序那一轮的整条请求序列里都没有旧排序的游标', async () => {
+    const { result } = renderLibrary('/library/7010');
+    await settle();
+    act(() => result.current.filters.setPage(2));
+    await settle();
+    act(() => result.current.filters.setPage(3));
+    await settle();
+    expect(lastQuery()).toContain('cursor=name_asc.cur-3');
+
+    requests.length = 0;
+    act(() => result.current.filters.setSortByField('created'));
+    await settle();
+
+    // 判据落在整条序列上而不只是最后一条：页码重置生效前还有一轮取数，
+    // 它手里只有 name_asc 的游标，把它发给 created_asc 就是后端要拒的那次 400。
+    expect(staleCursorRequests()).toEqual([]);
     expect(pageOf(lastQuery())).toBe('1');
   });
 

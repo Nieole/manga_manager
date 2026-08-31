@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
 import { type AxiosResponse } from 'axios';
 import {
@@ -32,6 +32,7 @@ interface UseLibrarySeriesResult {
   loading: boolean;
   // error 为最近一次取列表失败的可读消息（成功后清空）；供页面渲染错误条 + 重试入口。
   error: string | null;
+  // 当前查询作用域下已知的「第 N 页起点游标」；排序或筛选一变即为空——旧作用域的游标对新查询无效。
   pageCursorMap: Record<number, string>;
   resetPagination: () => void;
   // 数据变更后的静默重取，覆盖范围与屏幕上显示的范围一致：无限滚动是已累积的全部页，分页模式是当前页。
@@ -41,6 +42,9 @@ interface UseLibrarySeriesResult {
 }
 
 const inflightSeriesSearchRequests = new Map<string, Promise<AxiosResponse<SeriesSearchResponse>>>();
+
+// 作用域对不上时统一返回同一个空表，避免每次渲染换引用。
+const NO_CURSORS: Record<number, string> = {};
 
 function requestSeriesSearch(query: string) {
   const existing = inflightSeriesSearchRequests.get(query);
@@ -80,7 +84,10 @@ export function useLibrarySeries({
   const [totalSeries, setTotalSeries] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pageCursorMap, setPageCursorMap] = useState<Record<number, string>>({});
+  const [cursorCache, setCursorCache] = useState<{ scope: string; cursors: Record<number, string> }>({
+    scope: '',
+    cursors: NO_CURSORS,
+  });
   const lastLoadedPageRef = useRef(1);
   const latestRequestIDRef = useRef(0);
 
@@ -120,6 +127,11 @@ export function useLibrarySeries({
       keyword,
     ],
   );
+
+  // 游标的作用域是「除页码外的整套查询条件」：换排序、换筛选、换每页数量都会让缓存里的游标失效。
+  // 缓存连同作用域一起存，作用域一变就自然读不到旧游标——不依赖任何 effect 谁先谁后。
+  const cursorScope = useMemo(() => buildSearchQuery(0, ''), [buildSearchQuery]);
+  const pageCursorMap = cursorCache.scope === cursorScope ? cursorCache.cursors : NO_CURSORS;
 
   const fetchPage = useCallback(
     (pageNumber: number, silent = false) => {
@@ -161,7 +173,16 @@ export function useLibrarySeries({
             setTotalSeries(total);
           }
           if (res.data.next_cursor && supportsCursorPagination(sortByField)) {
-            setPageCursorMap((prev) => ({ ...prev, [pageNumber + 1]: res.data.next_cursor as string }));
+            const nextCursor = res.data.next_cursor;
+            // 闭包里的 cursorScope 是发这次请求时的作用域：与缓存里的对不上就另起一张表，
+            // 免得把这条游标混进别的作用域。
+            setCursorCache((prev) => ({
+              scope: cursorScope,
+              cursors:
+                prev.scope === cursorScope
+                  ? { ...prev.cursors, [pageNumber + 1]: nextCursor }
+                  : { [pageNumber + 1]: nextCursor },
+            }));
           }
           lastLoadedPageRef.current = pageNumber;
         })
@@ -174,7 +195,7 @@ export function useLibrarySeries({
           if (requestID === latestRequestIDRef.current) setLoading(false);
         });
     },
-    [libId, sortByField, pageCursorMap, appendMode, buildSearchQuery],
+    [libId, sortByField, pageCursorMap, cursorScope, appendMode, buildSearchQuery],
   );
 
   /**
@@ -231,7 +252,7 @@ export function useLibrarySeries({
   ]);
 
   const resetPagination = useCallback(() => {
-    setPageCursorMap({});
+    setCursorCache({ scope: '', cursors: NO_CURSORS });
     lastLoadedPageRef.current = 1;
   }, []);
 

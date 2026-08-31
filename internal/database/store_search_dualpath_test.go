@@ -8,6 +8,8 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -217,23 +219,14 @@ func TestSearchSeriesPagedOffsetPaginationAndCount(t *testing.T) {
 	}
 }
 
-// TestSearchSeriesCursorErrorPaths 覆盖游标分页的三条错误路径：不支持的排序、非法游标串、排序不匹配。
+// TestSearchSeriesCursorErrorPaths 覆盖游标分页的错误分类：客户端游标不可用的四条路径都要带
+// ErrSeriesCursorUnusable（调用方据此降级到 offset），服务端故障则必须不带、照旧上报。
 func TestSearchSeriesCursorErrorPaths(t *testing.T) {
 	store := newStoreForTest(t)
 	ctx := context.Background()
 	libID, _ := seedFilterLibrary(t, ctx, store)
 
-	// 不支持游标的排序（rating 非 keyset 字段）应报错。
-	if _, _, _, err := store.SearchSeriesCursor(ctx, libID, SeriesListFilters{}, 2, "rating_desc", ""); err == nil {
-		t.Fatal("expected error for unsupported cursor sort")
-	}
-
-	// 非法游标串（非 base64）应报错。
-	if _, _, _, err := store.SearchSeriesCursor(ctx, libID, SeriesListFilters{}, 2, "name_asc", "!!!not-base64!!!"); err == nil {
-		t.Fatal("expected decode error for malformed cursor")
-	}
-
-	// 用 name_asc 生成的游标喂给 created_asc 请求应报「排序不匹配」。
+	// 用 name_asc 生成一个真游标，它只属于 name_asc。
 	firstPage, _, err := store.SearchSeriesPaged(ctx, libID, SeriesListFilters{}, 2, 0, "name_asc")
 	if err != nil {
 		t.Fatalf("first page: %v", err)
@@ -245,9 +238,39 @@ func TestSearchSeriesCursorErrorPaths(t *testing.T) {
 	if cursor == "" {
 		t.Fatal("expected non-empty name cursor")
 	}
-	if _, _, _, err := store.SearchSeriesCursor(ctx, libID, SeriesListFilters{}, 2, "created_asc", cursor); err == nil {
-		t.Fatal("expected sort-mismatch error")
+
+	for _, tc := range []struct {
+		name   string
+		sortBy string
+		cursor string
+	}{
+		// rating 非 keyset 字段，这条排序根本没有游标可言。
+		{"排序不支持游标", "rating_desc", ""},
+		{"游标串不是 base64", "name_asc", "!!!not-base64!!!"},
+		{"base64 里不是 JSON", "name_asc", base64.RawURLEncoding.EncodeToString([]byte("hello"))},
+		{"排序与游标对不上", "created_asc", cursor},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := store.SearchSeriesCursor(ctx, libID, SeriesListFilters{}, 2, tc.sortBy, tc.cursor)
+			if !errors.Is(err, ErrSeriesCursorUnusable) {
+				t.Fatalf("want ErrSeriesCursorUnusable, got %v", err)
+			}
+		})
 	}
+
+	t.Run("服务端故障不被当成过期游标吞掉", func(t *testing.T) {
+		broken := newStoreForTest(t)
+		if err := broken.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+		_, _, _, err := broken.SearchSeriesCursor(ctx, libID, SeriesListFilters{}, 2, "name_asc", cursor)
+		if err == nil {
+			t.Fatal("want an error from the closed database")
+		}
+		if errors.Is(err, ErrSeriesCursorUnusable) {
+			t.Fatalf("服务端故障不该带游标降级标记: %v", err)
+		}
+	})
 }
 
 // TestSearchSeriesCursorPerUserFullTraversal 验证 UserID>0（每用户进度来源）下游标分页能正确

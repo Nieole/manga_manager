@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -52,6 +53,11 @@ type seriesSearchSort struct {
 	Dir   string
 	Expr  string
 }
+
+// ErrSeriesCursorUnusable 标记「这个游标用不了」：排序已换、串坏了、载荷不合法，或该排序根本
+// 不支持游标。四者都只说明客户端手里的游标过期或无效，调用方应忽略游标改走 offset 分页，
+// 而不是让整个请求失败。真正的服务端故障（SQL 执行、扫描行）不带这个标记。
+var ErrSeriesCursorUnusable = errors.New("series cursor unusable")
 
 type seriesCursorPayload struct {
 	SortBy string `json:"sort_by"`
@@ -129,7 +135,7 @@ func (s *SqlStore) SearchSeriesPaged(ctx context.Context, libraryID int64, f Ser
 func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, f SeriesListFilters, limit int32, sortBy, cursor string) ([]SearchSeriesPagedRow, string, bool, error) {
 	sortSpec := parseSeriesSearchSort(sortBy)
 	if !sortSpec.supportsCursor() {
-		return nil, "", false, fmt.Errorf("sort %q does not support cursor pagination", sortBy)
+		return nil, "", false, fmt.Errorf("%w: sort %q does not support cursor pagination", ErrSeriesCursorUnusable, sortBy)
 	}
 	if limit <= 0 {
 		limit = 50
@@ -145,7 +151,7 @@ func (s *SqlStore) SearchSeriesCursor(ctx context.Context, libraryID int64, f Se
 			return nil, "", false, err
 		}
 		if payload.SortBy != seriesSearchSortKey(sortSpec) {
-			return nil, "", false, fmt.Errorf("cursor sort %q does not match request sort %q", payload.SortBy, seriesSearchSortKey(sortSpec))
+			return nil, "", false, fmt.Errorf("%w: cursor sort %q does not match request sort %q", ErrSeriesCursorUnusable, payload.SortBy, seriesSearchSortKey(sortSpec))
 		}
 		seekClause, seekArgs := seriesSearchSeekClause(sortSpec, payload)
 		if seekClause != "" {
@@ -1048,13 +1054,13 @@ func decodeSeriesCursor(cursor string) (seriesCursorPayload, error) {
 	var payload seriesCursorPayload
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
-		return payload, err
+		return payload, fmt.Errorf("%w: base64: %v", ErrSeriesCursorUnusable, err)
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return payload, err
+		return payload, fmt.Errorf("%w: json: %v", ErrSeriesCursorUnusable, err)
 	}
 	if payload.SortBy == "" || payload.ID <= 0 {
-		return payload, fmt.Errorf("invalid series cursor")
+		return payload, fmt.Errorf("%w: missing sort key or invalid id", ErrSeriesCursorUnusable)
 	}
 	return payload, nil
 }
