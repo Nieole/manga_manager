@@ -353,12 +353,7 @@ func pageImageTransformProfile(format, width, height, filter string, autoCrop bo
 }
 
 func (c *Controller) processedImageCacheDir() string {
-	baseDir := filepath.Join(".", "data", "page-cache")
-	cfg := c.currentConfig()
-	if cfg.Cache.Dir != "" {
-		baseDir = filepath.Join(cfg.Cache.Dir, "pages")
-	}
-	return baseDir
+	return config.PageCacheDir(c.currentConfig())
 }
 
 func (c *Controller) diskPageCacheEnabled(source bookPageSource) bool {
@@ -718,11 +713,7 @@ func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if coverPath != "" {
-		thumbDir := filepath.Join(".", "data", "thumbnails")
-		cfg := c.currentConfig()
-		if cfg.Cache.Dir != "" {
-			thumbDir = cfg.Cache.Dir
-		}
+		thumbDir := config.ThumbnailDir(c.currentConfig())
 
 		fullPath := filepath.Join(thumbDir, coverPath)
 		if info, err := os.Stat(fullPath); err == nil {

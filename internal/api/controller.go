@@ -816,11 +816,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 }
 
 func (c *Controller) serveThumbnailImage(w http.ResponseWriter, r *http.Request) {
-	cfg := c.currentConfig()
-	thumbDir := filepath.Join(".", "data", "thumbnails")
-	if cfg.Cache.Dir != "" {
-		thumbDir = cfg.Cache.Dir
-	}
+	thumbDir := config.ThumbnailDir(c.currentConfig())
 	filename := chi.URLParam(r, "*")
 	fullPath := filepath.Join(thumbDir, filename)
 	w.Header().Set("Cache-Control", pageImageCacheControl)

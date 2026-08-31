@@ -1526,10 +1526,7 @@ func parseLockedFields(lockedFields sql.NullString) map[string]bool {
 }
 
 func thumbnailBaseDir(cfg config.Config) string {
-	if cfg.Cache.Dir != "" {
-		return cfg.Cache.Dir
-	}
-	return filepath.Join(".", "data", "thumbnails")
+	return config.ThumbnailDir(cfg)
 }
 
 func thumbnailSubDir(bookHash string) string {
@@ -1880,10 +1877,15 @@ func extensionFromContentType(contentType, fallbackFormat string) string {
 // that are not referenced in the database (by books or series_stats).
 // It also cleans up empty subdirectories.
 //
+// config.NonThumbnailDirs 点名的子目录整棵跳过——它们落在缩略图目录内，却不是缩略图。
 // progressCb 只收计数：展示文案是调用方的事，扫描器不渲染用户可见文字。
 func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(deleted, scanned int)) error {
 	cfg := s.currentConfig()
 	thumbDir := thumbnailBaseDir(cfg)
+	skipDirs := make(map[string]bool)
+	for _, dir := range config.NonThumbnailDirs(cfg) {
+		skipDirs[dir] = true
+	}
 
 	// 流式收集被引用的封面路径，不要换回 :many 查询把整库路径先读进切片再折进 map：
 	// 那两份切片纯属中转（10 万本书要多分配一遍字符串与底层数组），DISTINCT 的去重也是
@@ -1930,6 +1932,9 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(deleted
 		}
 
 		if d.IsDir() {
+			if skipDirs[filepath.Clean(path)] {
+				return filepath.SkipDir // 不是缩略图，整棵子树都不归这里清
+			}
 			dirsToDelete = append(dirsToDelete, path)
 			return nil
 		}

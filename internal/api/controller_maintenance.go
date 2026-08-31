@@ -48,13 +48,13 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 	wg.Wait()
 }
 
-// clearThumbnailDir 清空缩略图目录，但保留页图磁盘缓存子目录。
-//
-// 缩略图目录就是 cache.dir 本身，而页图磁盘缓存在 <cache.dir>/pages/ 下，二者必须分开清：
-// 直接 os.RemoveAll(cache.dir) 会连页图缓存一并抹掉，用户只想修封面，代价却是之后
-// 每一页都要重新解码转码一遍。
+// clearThumbnailDir 清空缩略图目录，但保留 config.NonThumbnailDirs 点名的那些子目录
+// ——缩略图目录与页图磁盘缓存共用一个根，直接 os.RemoveAll 会越界，理由见那里。
 func (c *Controller) clearThumbnailDir(thumbDir string) error {
-	pageCacheDir := filepath.Clean(c.processedImageCacheDir())
+	keep := make(map[string]bool)
+	for _, dir := range config.NonThumbnailDirs(c.currentConfig()) {
+		keep[dir] = true
+	}
 
 	entries, err := os.ReadDir(thumbDir)
 	if err != nil {
@@ -65,8 +65,8 @@ func (c *Controller) clearThumbnailDir(thumbDir string) error {
 	}
 	for _, entry := range entries {
 		full := filepath.Join(thumbDir, entry.Name())
-		if entry.IsDir() && filepath.Clean(full) == pageCacheDir {
-			continue // 页图缓存与缩略图无关，别误伤
+		if entry.IsDir() && keep[filepath.Clean(full)] {
+			continue
 		}
 		if err := os.RemoveAll(full); err != nil {
 			return err
@@ -167,10 +167,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 func (c *Controller) launchRebuildThumbnailsTask() error {
 	cfg := c.currentConfig()
 	policy := config.ResolveStoragePolicy(cfg, "")
-	thumbDir := filepath.Join(".", "data", "thumbnails")
-	if cfg.Cache.Dir != "" {
-		thumbDir = cfg.Cache.Dir
-	}
+	thumbDir := config.ThumbnailDir(cfg)
 
 	spec := TaskSpec{
 		Key:       "rebuild_thumbnails",
