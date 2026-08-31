@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { apiClient } from '../../../api/client';
 import type { MetaTag, SearchResult, Series as DetailSeries } from '../../series-detail/types';
 import type { Series } from '../types';
@@ -45,6 +45,10 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
   const [scrapeCurrentTags, setScrapeCurrentTags] = useState<MetaTag[]>([]);
   const [scrapeLockedFields, setScrapeLockedFields] = useState<Set<string>>(new Set());
   const [scrapeMenuOpenId, setScrapeMenuOpenId] = useState<number | null>(null);
+  // 取候选的世代号，startScrape 与 reSearch 共用：只有最新一次取到的结果可以写进弹窗状态。
+  // 资料库页只禁用发起刮削的那张卡片，A 的请求在飞时用户仍可对 B 再点一次；A 迟到的响应
+  // 若写了进来，弹窗就指向 B 而候选与对比列是 A 的，用户应用后会给 B 生成一条属于 A 的提案。
+  const latestRequestIDRef = useRef(0);
 
   const closeScrapeModal = useCallback(() => {
     setShowScrapeModal(false);
@@ -56,6 +60,8 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
 
   const startScrape = useCallback(
     async (series: Series, providerKey: string) => {
+      const requestID = latestRequestIDRef.current + 1;
+      latestRequestIDRef.current = requestID;
       setScrapeMenuOpenId(null);
       setScrapingSeries(series);
       setScrapeProvider(providerKey);
@@ -69,6 +75,7 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
             `/api/series/${series.id}/scrape-search?provider=${providerKey}&q=${encodeURIComponent(series.title?.Valid ? series.title.String : series.name)}&offset=0`,
           ),
         ]);
+        if (requestID !== latestRequestIDRef.current) return;
         setScrapeSeriesDetail(seriesRes.data);
         setScrapeCurrentTags(tagsRes.data || []);
         // locked_fields 已包含在 series 详情里（逗号分隔），与详情页解析方式一致，
@@ -81,10 +88,11 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
         setScrapeOffset(0);
         setShowScrapeModal(true);
       } catch (err) {
+        if (requestID !== latestRequestIDRef.current) return;
         console.error('Failed to start scrape', err);
         onError('series.toast.scrapeFailed');
       } finally {
-        setIsScraping(false);
+        if (requestID === latestRequestIDRef.current) setIsScraping(false);
       }
     },
     [onError],
@@ -93,19 +101,23 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
   const reSearch = useCallback(
     async (offset = 0) => {
       if (!scrapingSeries) return;
+      const requestID = latestRequestIDRef.current + 1;
+      latestRequestIDRef.current = requestID;
       setIsScraping(true);
       try {
         const res = await apiClient.get<{ results?: SearchResult[]; total?: number }>(
           `/api/series/${scrapingSeries.id}/scrape-search?provider=${scrapeProvider}&q=${encodeURIComponent(scrapeModalSearchQuery)}&offset=${offset}`,
         );
+        if (requestID !== latestRequestIDRef.current) return;
         setScrapeSearchResults(res.data?.results || []);
         setScrapeTotal(res.data?.total || 0);
         setScrapeOffset(offset);
       } catch (err) {
+        if (requestID !== latestRequestIDRef.current) return;
         console.error('Re-search failed', err);
         onError('series.toast.scrapeFailed');
       } finally {
-        setIsScraping(false);
+        if (requestID === latestRequestIDRef.current) setIsScraping(false);
       }
     },
     [scrapingSeries, scrapeProvider, scrapeModalSearchQuery, onError],
@@ -120,8 +132,8 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
           `/api/series/${scrapingSeries.id}/scrape-apply?provider=${scrapeProvider}`,
           metadata,
         );
-        // 后端可能因多种原因不入队（queued=false），按 outcome 给出各自的原因，
-        // 而不是一律说「队列里已有相同记录」——那对「此前已拒绝」和「字段全被锁」都是错的。
+        // 不入队（queued=false）的原因必须按 outcome 分别提示：已被拒绝过、字段全被锁、无变更，
+        // 都不能笼统说成「队列里已有相同记录」。
         if (res.data?.queued === false) {
           const outcome = res.data?.outcome;
           if (outcome === 'rejected_before') {
