@@ -108,6 +108,22 @@ function writeBookMeta(meta: Record<string, OfflineBookMeta>) {
   writeJSON(OFFLINE_BOOKS_KEY, meta);
 }
 
+// hasOfflineOwner 回答「这台设备上有没有人登录过并认领了本地的离线数据」。
+export function hasOfflineOwner(): boolean {
+  try {
+    return localStorage.getItem(OFFLINE_OWNER_KEY) !== null;
+  } catch {
+    // localStorage 不可用（隐私模式/配额）：认不出归属，一律当作没有。
+    return false;
+  }
+}
+
+// isOfflineBookDownloaded 回答「书目索引里有没有这本书」。索引归当前 owner 所有——
+// reconcileOfflineOwner 换人时把它整份清空，所以这同时是「这本书是不是当前这个人下载的」。
+export function isOfflineBookDownloaded(bookId: string): boolean {
+  return Object.prototype.hasOwnProperty.call(readBookMeta(), bookId);
+}
+
 export async function getOfflineBookStatus(bookId: string): Promise<OfflineBookStatus | null> {
   if (!supportsOfflineReaderCache()) return null;
   const meta = readBookMeta()[bookId];
@@ -320,10 +336,10 @@ export function clearQueuedOfflineProgress() {
 // 打开任意一个阅读器页面，useReaderOffline 就会自动把队列里的进度同步上去，
 // 于是上一个人的阅读进度被写进了新账号。
 //
-// 书目索引（OFFLINE_BOOKS_KEY）也要一起清：已下载的书页留在 Cache Storage 里，
-// 而 Service Worker 在断网时是直接从缓存命中的，**不经过任何服务端鉴权**——
-// 不清索引，下一个用户就能在离线书架上看到并读完上一个人下载的书。
-// 字节本身留作孤儿，仍可由离线书架的「清空全部」按缓存名整体删除。
+// 书目索引（OFFLINE_BOOKS_KEY）与缓存字节都要一起清：Service Worker 在断网时是直接从
+// Cache Storage 命中的，**不经过任何服务端鉴权**。索引是隔离的判定点——离线放行按它逐本认，
+// 见 isOfflineBookDownloaded，清它是同步的、必然生效；字节的删除是尽力而为的清扫，
+// 把别人下载的内容从这台设备上抹掉。
 export function reconcileOfflineOwner(userId: number | null): boolean {
   // 不给初值：try 里必然赋值，catch 里直接 return，那个 null 读不到。
   let previous: string | null;
@@ -342,6 +358,7 @@ export function reconcileOfflineOwner(userId: number | null): boolean {
     }
     clearQueuedOfflineProgress();
     writeBookMeta({});
+    dropOfflineBookBytes();
     return previous !== null;
   }
 
@@ -358,7 +375,21 @@ export function reconcileOfflineOwner(userId: number | null): boolean {
 
   clearQueuedOfflineProgress();
   writeBookMeta({});
+  dropOfflineBookBytes();
   return true;
+}
+
+// dropOfflineBookBytes 尽力删掉整份离线书缓存，把上一个人下载的内容从这台设备上抹掉。
+//
+// 只是清扫，不是隔离本身：删除是异步的，浏览器不支持 Cache Storage、页面在删完前关掉、
+// 配额层报错都会让字节留下。隔离由书目索引（同步清空）与按索引逐本放行的路由判据保证。
+function dropOfflineBookBytes() {
+  try {
+    if (typeof caches === 'undefined') return;
+    void caches.delete(OFFLINE_BOOK_CACHE).catch(() => {});
+  } catch {
+    // 忽略：清扫失败不影响索引已经清空这件事。
+  }
 }
 
 export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncResult> {
