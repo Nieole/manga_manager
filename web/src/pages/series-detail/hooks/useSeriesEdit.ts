@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 import type { Author, MetaTag, Series, SeriesLink } from '../types';
@@ -31,10 +31,17 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
   const [allTags, setAllTags] = useState<MetaTag[]>([]);
   const [allAuthors, setAllAuthors] = useState<Author[]>([]);
 
-  // 当 series / tags / authors / links 变更时重置表单
+  // 表单里这份内容属于哪个系列。只能记在 ref 里：effect 读状态拿到的是上一轮渲染的闭包值。
+  const formSeriesIdRef = useRef<number | null>(null);
+
+  // 表单重置：非编辑态跟随服务端最新值，编辑态只在换了系列时才跟。
+  // 两条判据缺一不可——只看 seriesId，任一后台任务完成引发的静默重取都会换掉 series/tags/
+  // authors/links 的引用（内容可以一模一样），把用户没保存的输入顶掉；只看 isEditing，
+  // 编辑期间切到别的系列就会把上一个系列的内容留在框里，保存时打到新系列头上。
   useEffect(() => {
     if (!series) return;
-     
+    if (isEditing && formSeriesIdRef.current === series.id) return;
+    formSeriesIdRef.current = series.id;
     setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
     setEditForm({
       title: series.title,
@@ -47,7 +54,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, reload, 
       authorsInput: authors.map((author) => ({ name: author.name, role: author.role })),
       linksInput: links.map((link) => ({ name: link.name, url: link.url })),
     });
-  }, [series, tags, authors, links]);
+  }, [series, tags, authors, links, isEditing]);
 
   // 进入编辑时再加载全量 tags / authors
   useEffect(() => {
