@@ -413,19 +413,37 @@ export function clearQueuedOfflineProgress() {
   writeQueuedProgress({});
 }
 
+// dropOfflineData 清掉本机的离线残留：待回传队列、书目索引、缓存字节。
+//
+// 三样都要清：Service Worker 在断网时是直接从 Cache Storage 命中的，**不经过任何服务端鉴权**。
+// 索引是隔离的判定点——离线放行按它逐本认，见 isOfflineBookDownloaded，清它是同步的、必然生效；
+// 字节的删除是尽力而为的清扫，把内容从这台设备上抹掉。
+function dropOfflineData() {
+  clearQueuedOfflineProgress();
+  writeBookMeta({});
+  dropOfflineBookBytes();
+}
+
+// releaseOfflineOwner 交还这台设备：用户显式登出时把本机离线残留整份清掉。
+//
+// 只有登出走这里。会话过期（后端答未登录 / 401）与断网都不是「我要离开这台设备」，
+// 那时用户还是同一个人，清了就是删他自己的书和进度，见 AuthProvider。
+export function releaseOfflineOwner(): void {
+  try {
+    localStorage.removeItem(OFFLINE_OWNER_KEY);
+  } catch {
+    // 忽略：清不掉标记不影响下面的清理。
+  }
+  dropOfflineData();
+}
+
 // reconcileOfflineOwner 对账「这台设备上的离线数据属于谁」，换人时清掉上一个人的残留。
-// 返回是否真的清理过。
+// 返回是否真的清理过。判定点是「谁登进来了」，参数因此不收「没有用户」。
 //
-// 为什么不能只挂在 logout 上：换人有四条路径，只有一条是显式登出。login/setup 直接建立
-// 新会话、刷新页面走状态探测、会话过期走 401 拦截——三条都不经过 logout。而新用户只要
-// 打开任意一个阅读器页面，useReaderOffline 就会自动把队列里的进度同步上去，
-// 于是上一个人的阅读进度被写进了新账号。
-//
-// 书目索引（OFFLINE_BOOKS_KEY）与缓存字节都要一起清：Service Worker 在断网时是直接从
-// Cache Storage 命中的，**不经过任何服务端鉴权**。索引是隔离的判定点——离线放行按它逐本认，
-// 见 isOfflineBookDownloaded，清它是同步的、必然生效；字节的删除是尽力而为的清扫，
-// 把别人下载的内容从这台设备上抹掉。
-export function reconcileOfflineOwner(userId: number | null): boolean {
+// 为什么不能只挂在 logout 上：换人有三条路径不经过登出——login/setup 直接建立新会话、
+// 刷新页面走状态探测、共享设备上上一个人直接关窗口。而新用户只要打开任意一个阅读器页面，
+// useReaderOffline 就会自动把队列里的进度同步上去，于是上一个人的阅读进度被写进了新账号。
+export function reconcileOfflineOwner(userId: number): boolean {
   // 不给初值：try 里必然赋值，catch 里直接 return，那个 null 读不到。
   let previous: string | null;
   try {
@@ -433,18 +451,6 @@ export function reconcileOfflineOwner(userId: number | null): boolean {
   } catch {
     // localStorage 不可用（隐私模式/配额）：无从对账，也无从泄露，直接放行。
     return false;
-  }
-
-  if (userId === null) {
-    try {
-      localStorage.removeItem(OFFLINE_OWNER_KEY);
-    } catch {
-      // 忽略：清不掉标记不影响下面的清理。
-    }
-    clearQueuedOfflineProgress();
-    writeBookMeta({});
-    dropOfflineBookBytes();
-    return previous !== null;
   }
 
   const next = String(userId);
@@ -458,9 +464,7 @@ export function reconcileOfflineOwner(userId: number | null): boolean {
   // 否则所有老用户升级后会平白丢一次离线书目。
   if (previous === null || previous === next) return false;
 
-  clearQueuedOfflineProgress();
-  writeBookMeta({});
-  dropOfflineBookBytes();
+  dropOfflineData();
   return true;
 }
 

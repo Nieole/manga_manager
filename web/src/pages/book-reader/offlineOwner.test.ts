@@ -1,15 +1,15 @@
 /**
  * @vitest-environment jsdom
  *
- * 本文件守卫「换人之后，上一个用户的离线数据不会活到新会话里」：清理必须覆盖登录/setup、
- * 刷新页面状态探测、会话过期 401、显式登出这四条换人路径，不能只挂在登出上——共享设备上
- * 登出恰恰是最少发生的那条。书目索引必须跟队列一起清：Service Worker 断网时直接从缓存命中、
- * 不经过服务端鉴权，不清索引就等于让下一个用户读到上一个人下载的书；缓存字节另做尽力清扫。
+ * 本文件守卫「换人之后，上一个用户的离线数据不会活到新会话里」：清理按登进来的人对账，覆盖
+ * 登录/setup、刷新页面状态探测与显式登出，不能只挂在登出上——共享设备上登出恰恰是最少发生
+ * 的那条。书目索引必须跟队列一起清：Service Worker 断网时直接从缓存命中、不经过服务端鉴权，
+ * 不清索引就等于让下一个用户读到上一个人下载的书；缓存字节另做尽力清扫。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { queueOfflineProgress, reconcileOfflineOwner } from './offlineReader';
+import { queueOfflineProgress, reconcileOfflineOwner, releaseOfflineOwner } from './offlineReader';
 
 const PROGRESS_KEY = 'manga-manager:offline-progress';
 const BOOKS_KEY = 'manga-manager:offline-books';
@@ -65,16 +65,6 @@ describe('reconcileOfflineOwner', () => {
     expect(deleted).toEqual(['manga-manager-offline-books-v1']);
   });
 
-  it('登出时同样清扫缓存字节', () => {
-    const deleted = stubCacheStorage();
-    localStorage.setItem(OWNER_KEY, '1');
-    seedPreviousUserData();
-
-    reconcileOfflineOwner(null);
-
-    expect(deleted).toEqual(['manga-manager-offline-books-v1']);
-  });
-
   it('同一个用户再次登录不清自己的离线数据', () => {
     // 每次刷新页面都会走一次对账，认成换人就等于每天把自己下载的书删一遍。
     const deleted = stubCacheStorage();
@@ -97,12 +87,24 @@ describe('reconcileOfflineOwner', () => {
     expect(Object.keys(JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}'))).toHaveLength(1);
     expect(localStorage.getItem(OWNER_KEY)).toBe('1');
   });
+});
 
-  it('登出/会话过期（userId 为空）一律清空', () => {
+describe('releaseOfflineOwner', () => {
+  it('登出时同样清扫缓存字节', () => {
+    const deleted = stubCacheStorage();
     localStorage.setItem(OWNER_KEY, '1');
     seedPreviousUserData();
 
-    expect(reconcileOfflineOwner(null)).toBe(true);
+    releaseOfflineOwner();
+
+    expect(deleted).toEqual(['manga-manager-offline-books-v1']);
+  });
+
+  it('显式登出把 owner 标记、队列与书目一并交还', () => {
+    localStorage.setItem(OWNER_KEY, '1');
+    seedPreviousUserData();
+
+    releaseOfflineOwner();
 
     expect(JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}')).toEqual({});
     expect(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}')).toEqual({});

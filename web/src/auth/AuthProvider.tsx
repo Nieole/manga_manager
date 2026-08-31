@@ -8,7 +8,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiClient, getApiErrorMessage, isAxiosError } from '../api/client';
-import { reconcileOfflineOwner } from '../pages/book-reader/offlineReader';
+import { reconcileOfflineOwner, releaseOfflineOwner, syncQueuedOfflineProgress } from '../pages/book-reader/offlineReader';
 import { isBackendUnreachable } from './offlineAccess';
 import { setCsrfToken } from '../utils/apiAuth';
 
@@ -76,14 +76,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCsrfToken(data.csrf_token ?? '');
         setUser(data.user);
       } else {
-        reconcileOfflineOwner(null);
+        // 后端答「未登录」是会话过期或被踢：30 天到期、管理员重置密码、他在别的设备上改了
+        // 密码，都从这条路回来。用户还是同一个人，只是要重新登录，本机的离线书目、缓存字节
+        // 与还没回传的进度队列一概不动——清了就是删他自己的数据，且没有恢复路径。
+        // 换人隔离由 reconcileOfflineOwner 在「谁登进来了」那一刻兜住，不靠「此刻没人登录」。
         setCsrfToken('');
         setUser(null);
       }
     } catch (error) {
       // 状态探测失败：一律按未登录处理，但要分清是谁答的。连不上后端（断网、后端不在）时
       // 登录页同样打不开，AuthGate 据此放行离线可读的那几条路由；后端答了错误码则不放行。
-      // 这里刻意不做 reconcileOfflineOwner(null)：断网不是换人，清了等于把用户自己的离线书目删掉。
+      // 同样不碰本机离线数据：断网不是换人，清了等于把用户自己的离线书目删掉。
       setBackendUnreachable(isBackendUnreachable(error));
       setUser(null);
     } finally {
@@ -104,7 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isAxiosError(error) && error.response?.status === 401) {
           const url = error.config?.url ?? '';
           if (!url.includes('/api/auth/login') && !url.includes('/api/auth/status')) {
-            reconcileOfflineOwner(null);
+            // 与状态探测答「未登录」同一件事：这次会话被拒，不是换了人，本机离线数据不动。
             setCsrfToken('');
             setUser(null);
             // 收到 401 说明后端就在那儿并且拒绝了这次会话，不是断网。
@@ -144,6 +147,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applySession]);
 
   const logout = useCallback(async () => {
+    // 先尽力把待回传的进度传上去：登出这一刻会话仍然有效，是队列最后一次能上行的机会。
+    // 传不掉的（断网时登出）随后照清——留着它，下一个在这台设备上登录的人会被
+    // useReaderOffline 自动把它当成自己的进度传上去，那比丢几页更糟。
+    try {
+      await syncQueuedOfflineProgress();
+    } catch {
+      // 回传失败不拦着登出。
+    }
     try {
       await apiClient.post('/api/auth/logout');
     } catch {
@@ -151,13 +162,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setCsrfToken('');
     setUser(null);
-    // 清掉本地的离线阅读残留（待同步队列 + 书目索引）。
-    //
-    // 注意这只是四条「换人」路径中的一条，而且是最不常发生的一条——共享设备上更常见的是
-    // 上一个人直接关窗口。另外三条（登录/刷新/会话过期）在 applySession、refresh
-    // 与 401 拦截器里各自对账，见 reconcileOfflineOwner。
+    // 登出是「我要离开这台设备」的明确表态，本机离线残留整份交还。三条不经过登出的换人路径
+    //（登录/setup、刷新页面状态探测、上一个人直接关窗口）由 reconcileOfflineOwner 对账。
     try {
-      reconcileOfflineOwner(null);
+      releaseOfflineOwner();
     } catch {
       // localStorage 不可用（隐私模式/配额）时忽略：登出本身不应因此失败。
     }

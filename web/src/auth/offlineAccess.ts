@@ -23,6 +23,10 @@ const READER_PATH = /^\/reader\/([^/]+)\/?$/;
 // 逐本认而不是认「这台设备上有人下过东西」：书 id 是可枚举的小整数，认设备等于把 /reader/1
 // 到 /reader/999 全部放开。没有 owner 标记则一律不放行——没人在这台设备上登录过，
 // 就没有属于谁的离线数据可读。
+//
+// 判据只看本机，从不看会话是否有效：会话过期后照样放行，放出的仍是这台设备上这个 owner
+// 自己下载的那些字节，与会话过期前完全一样，没有多放出任何东西。真正的另一个用户要读到
+// 东西必须先登录，那一刻 reconcileOfflineOwner 就把上一个人的索引清空了。
 export function isOfflineReadableRoute(pathname: string): boolean {
   if (!hasOfflineOwner()) return false;
   if (pathname === '/offline' || pathname === '/offline/') return true;
