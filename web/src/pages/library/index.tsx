@@ -18,6 +18,7 @@ import { LibraryScrapeModal } from './LibraryScrapeModal';
 import { TransferConfirmModal } from './TransferConfirmModal';
 import { type PaginationMode, type Series, type ViewMode } from './types';
 import { useLibraryFilters, supportsCursorPagination, hasAdvancedFilters } from './hooks/useLibraryFilters';
+import { useResetPageOnFilterChange } from './hooks/useResetPageOnFilterChange';
 import { useScrapeProviders } from '../../hooks/useScrapeProviders';
 import { useLibrarySeries } from './hooks/useLibrarySeries';
 import { useLibrarySelection } from './hooks/useLibrarySelection';
@@ -123,19 +124,7 @@ export default function LibraryPage() {
   });
   const { allSeries, totalSeries, loading, error: seriesError, pageCursorMap, resetPagination, refetchCurrentPage, retry: retrySeries, patchSeries } = seriesData;
 
-  // 翻页：filter 或 keyword 变化时重置到第 1 页。
-  // 首次(设置/深链水合)那轮不重置——否则从 URL 恢复的 activeTag/advanced 会触发本效果、把深链里的 page=3 冲回第 1 页。
-  const didHydratePageResetRef = useRef(false);
-  useEffect(() => {
-    if (!settingsReady) return;
-    if (!didHydratePageResetRef.current) {
-      didHydratePageResetRef.current = true;
-      return;
-    }
-    setPage(1);
-    resetPagination();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTag, activeAuthor, activeStatus, activeLetter, advanced, sortByField, sortDir, pageSize, debouncedKeyword]);
+  useResetPageOnFilterChange(filters, resetPagination);
 
   // 切换分页模式时回到第 1 页：无限滚动应从头开始累积，避免带着分页模式的中间页码进入追加流。
   useEffect(() => {
