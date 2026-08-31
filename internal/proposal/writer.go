@@ -23,9 +23,17 @@ type applyOptions struct {
 	Confidence   float64
 	// ProposalID 把这次写入挂到发起它的提案上，构成审计链。人工编辑那条路径没有提案，留空。
 	ProposalID *int64
+	// WrittenFields 是本次写入负责的字段名。tags 与 authors 是整体替换的集合，只有列在
+	// 这里时才清空重建：把「本次没在写它」当成「提案说它是空的」，一次只补空的部分应用
+	// 就会顺手清空系列的全部标签。
+	WrittenFields map[string]bool
 }
 
 // applyMetadata 把 result 写进 series，跳过 series 上已锁定的字段。
+//
+// 标量字段按「非空即覆盖」写，tags 与 authors 则是整体替换：写完之后系列上的这两个集合
+// 等于提案值，提案里没有的标签与署名错误的作者随之消失。只补不删的话，「去掉某个标签」
+// 这类建议永远不生效，而系列的当前值也永远追不上提案值，同一条提案会被反复生成。
 //
 // 锁在这里再判一次是有意为之：调用方筛过的是**提案字段行**，而 result 可以来自任何地方，
 // 写入器不该指望上游一定筛干净——被外部源悄悄抹掉用户手工改过的值是这一条防线的对象。
@@ -109,15 +117,30 @@ func applyMetadata(ctx context.Context, q Queries, series database.Series, resul
 		}
 	}
 
+	// 关联表的写入错误一律向上返回让 ExecTx 回滚：吞掉的话，标签没落库、沿革却记下了、
+	// 整条提案照样被 CAS 成已应用，三处说法互相矛盾且事后无从分辨。
 	var tagValues []string
-	if !locked["tags"] {
+	if opts.WrittenFields["tags"] && !locked["tags"] {
+		if err := q.ClearSeriesTags(ctx, series.ID); err != nil {
+			return err
+		}
+		seen := make(map[string]struct{}, len(result.Tags))
 		for _, tagName := range result.Tags {
 			tagName = strings.TrimSpace(tagName)
 			if tagName == "" {
 				continue
 			}
-			if inserted, err := q.UpsertTag(ctx, tagName); err == nil {
-				_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: series.ID, TagID: inserted.ID})
+			// 按落库口径（tags.name 唯一）去重，沿革那串文本才与系列的真实内容逐字一致。
+			if _, ok := seen[tagName]; ok {
+				continue
+			}
+			seen[tagName] = struct{}{}
+			inserted, err := q.UpsertTag(ctx, tagName)
+			if err != nil {
+				return err
+			}
+			if err := q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: series.ID, TagID: inserted.ID}); err != nil {
+				return err
 			}
 			tagValues = append(tagValues, tagName)
 		}
@@ -130,7 +153,10 @@ func applyMetadata(ctx context.Context, q Queries, series database.Series, resul
 	}
 
 	var authorEntries []string
-	if !locked["authors"] && len(result.Authors) > 0 {
+	if opts.WrittenFields["authors"] && !locked["authors"] {
+		if err := q.ClearSeriesAuthors(ctx, series.ID); err != nil {
+			return err
+		}
 		seen := make(map[string]struct{}, len(result.Authors))
 		for _, a := range result.Authors {
 			name := strings.TrimSpace(a.Name)
@@ -143,8 +169,12 @@ func applyMetadata(ctx context.Context, q Queries, series database.Series, resul
 				continue
 			}
 			seen[key] = struct{}{}
-			if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{Name: name, Role: role}); err == nil {
-				_ = q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: series.ID, AuthorID: inserted.ID})
+			inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{Name: name, Role: role})
+			if err != nil {
+				return err
+			}
+			if err := q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: series.ID, AuthorID: inserted.ID}); err != nil {
+				return err
 			}
 			authorEntries = append(authorEntries, authorEntryString(name, role))
 		}
@@ -162,7 +192,10 @@ func applyMetadata(ctx context.Context, q Queries, series database.Series, resul
 		linkName := "Bangumi"
 		linkURL := fmt.Sprintf("https://bgm.tv/subject/%d", result.SourceID)
 
-		existingLinks, _ := q.GetLinksForSeries(ctx, series.ID)
+		existingLinks, err := q.GetLinksForSeries(ctx, series.ID)
+		if err != nil {
+			return err
+		}
 		hasLink := false
 		for _, l := range existingLinks {
 			if l.Name == linkName {
@@ -171,11 +204,13 @@ func applyMetadata(ctx context.Context, q Queries, series database.Series, resul
 			}
 		}
 		if !hasLink {
-			_, _ = q.LinkSeriesLink(ctx, database.LinkSeriesLinkParams{
+			if _, err := q.LinkSeriesLink(ctx, database.LinkSeriesLinkParams{
 				SeriesID: series.ID,
 				Name:     linkName,
 				Url:      linkURL,
-			})
+			}); err != nil {
+				return err
+			}
 			if err := recordField("source_link", linkURL); err != nil {
 				return err
 			}

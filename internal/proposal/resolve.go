@@ -146,6 +146,9 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 			SourceURL:    proposal.SourceUrl,
 			Confidence:   proposal.Confidence,
 			ProposalID:   &proposal.ID,
+			// 交出的是本次真正参与写入的字段名：写入器据此判断该不该整体替换 tags/authors，
+			// 「本次没在写它」与「提案说它是空的」因此不会被混为一谈。
+			WrittenFields: appliedNames,
 		}); err != nil {
 			return err
 		}

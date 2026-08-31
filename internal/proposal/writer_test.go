@@ -14,9 +14,16 @@ import (
 )
 
 // writeMetadata 在一次事务里调用写入器，与生产上的调用形态一致（裁决与写入同事务）。
+// opts 没给 WrittenFields 时按 result 里有值的集合字段补上——生产上交出的正是这一份。
 func writeMetadata(t *testing.T, store database.Store, series database.Series, result *metadata.SeriesMetadata, opts applyOptions) {
 	t.Helper()
 	ctx := context.Background()
+	if opts.WrittenFields == nil {
+		opts.WrittenFields = map[string]bool{
+			"tags":    len(result.Tags) > 0,
+			"authors": len(result.Authors) > 0,
+		}
+	}
 	db := testDB{Store: store}
 	if err := db.ExecTx(ctx, func(q Queries) error {
 		return applyMetadata(ctx, q, series, result, opts)

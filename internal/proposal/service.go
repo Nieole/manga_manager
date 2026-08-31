@@ -32,8 +32,10 @@ type Queries interface {
 	// 应用一条提案时对系列的写入
 	UpdateSeriesMetadata(ctx context.Context, arg database.UpdateSeriesMetadataParams) (database.Series, error)
 	UpsertSeriesMetadataProvenance(ctx context.Context, arg database.UpsertSeriesMetadataProvenanceParams) (database.SeriesMetadataProvenance, error)
+	ClearSeriesTags(ctx context.Context, seriesID int64) error
 	UpsertTag(ctx context.Context, name string) (database.Tag, error)
 	LinkSeriesTag(ctx context.Context, arg database.LinkSeriesTagParams) error
+	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
 	UpsertAuthor(ctx context.Context, arg database.UpsertAuthorParams) (database.Author, error)
 	LinkSeriesAuthor(ctx context.Context, arg database.LinkSeriesAuthorParams) error
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]database.SeriesLink, error)
