@@ -14,7 +14,7 @@ interface LibraryCardProps {
   scrapeMenuOpen: boolean;
   /** 视图密度：grid（大图，默认）/ compact（紧凑，隐藏简介）/ list（横向信息行） */
   viewMode?: ViewMode;
-  onCardClick: (series: Series) => void; // 多选 / 默认导航
+  onCardClick: (series: Series) => void; // 多选模式下切换选中；普通导航由卡片自身的 <Link> 完成
   onToggleFavorite: (event: React.MouseEvent, series: Series) => void;
   onRescan: (event: React.MouseEvent, series: Series) => void;
   onOpenScrapeMenu: (series: Series) => void;
@@ -106,13 +106,13 @@ export const LibraryCard = memo(function LibraryCard({
       : 'border-gray-800 hover:border-komgaPrimary/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-komgaPrimary/10'
   } transition-all duration-300 cursor-pointer block h-fit ${scrapeMenuOpen ? 'z-100' : 'hover:z-40'} ${pressing ? 'scale-[0.98]' : ''}`;
 
+  // 普通点击一律交给外层 <Link>：它负责压历史、也负责放行 Ctrl/中键的「新标签打开」。
+  // 这里若再走一次程序化导航，一次点击会压两条历史条目，浏览器后退和详情页的
+  // 「返回资源库」都得按两次才动。多选模式才拦下默认导航，改成切换选中。
   const handleClick = (event: React.MouseEvent) => {
-    if (isSelectionMode) {
-      event.preventDefault();
-      onCardClick(s);
-    } else {
-      onCardClick(s);
-    }
+    if (!isSelectionMode) return;
+    event.preventDefault();
+    onCardClick(s);
   };
 
   const startLongPress = () => {

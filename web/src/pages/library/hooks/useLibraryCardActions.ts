@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 
@@ -7,7 +6,6 @@ import type { Series } from '../types';
 
 
 interface UseLibraryCardActionsParams {
-  isSelectionMode: boolean;
   toggleSelectSeries: (id: number) => void;
   patchSeries: (id: number, patch: Partial<Series>) => void;
   refreshLoadedSeries: () => void;
@@ -17,7 +15,6 @@ interface UseLibraryCardActionsParams {
 }
 
 export function useLibraryCardActions({
-  isSelectionMode,
   toggleSelectSeries,
   patchSeries,
   refreshLoadedSeries,
@@ -25,18 +22,14 @@ export function useLibraryCardActions({
   showToast,
   t,
 }: UseLibraryCardActionsParams) {
-  const navigate = useNavigate();
   const [rescanningId, setRescanningId] = useState<number | null>(null);
 
+  // 只管多选：进详情由卡片自身的 <Link> 导航，这里再 navigate 一次会把历史栈压成两条。
   const handleCardClick = useCallback(
     (series: Series) => {
-      if (isSelectionMode) {
-        toggleSelectSeries(series.id);
-      } else {
-        navigate(`/series/${series.id}`);
-      }
+      toggleSelectSeries(series.id);
     },
-    [isSelectionMode, navigate, toggleSelectSeries],
+    [toggleSelectSeries],
   );
 
   const handleToggleFavorite = useCallback(

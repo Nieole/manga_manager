@@ -177,7 +177,6 @@ export default function LibraryPage() {
 
   // ===== 卡片操作 =====
   const { rescanningId, handleCardClick, handleToggleFavorite, handleRescanSeries } = useLibraryCardActions({
-    isSelectionMode: selection.isSelectionMode,
     toggleSelectSeries: selection.toggleSelectSeries,
     patchSeries,
     refreshLoadedSeries,

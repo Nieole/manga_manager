@@ -121,14 +121,12 @@ export default function SeriesDetailPage() {
     return b ? `/api/covers/${b.id}` : null;
   }, [ctx.books]);
 
+  // 按钮写着「返回资源库」，落点就由 library_id 直接算出，不回退一步：上一页未必是资料库
+  // （搜索结果、关系图、合集、继续阅读都能进到这里），历史栈深几条也不是本页能担保的事。
+  // 资料库的筛选、排序、页码由 useLibraryFilters 从 URL 与 library:{id}:settings 恢复，
+  // 因此直达 /library/{id} 不会丢掉用户之前的浏览状态。系列还没加载出来时才退回首页。
   const handleBack = useCallback(() => {
-    if (window.history.state && window.history.state.idx > 0) {
-      navigate(-1);
-    } else if (ctx.series?.library_id) {
-      navigate(`/library/${ctx.series.library_id}`);
-    } else {
-      navigate('/');
-    }
+    navigate(ctx.series?.library_id ? `/library/${ctx.series.library_id}` : '/');
   }, [navigate, ctx.series]);
 
   // 批量操作前把卷选择和单本选择去重合并，避免同一本既被卷选中又被单独选中时重复写进度。
