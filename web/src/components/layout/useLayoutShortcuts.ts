@@ -51,7 +51,9 @@ export function useLayoutShortcuts(handlers: LayoutShortcutHandlers) {
         return;
       }
       if (isEditable(e.target)) return;
-      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+      // ? 与 / 都只认 KeyboardEvent.key 给出的字符，不掺 shiftKey：key 给的是字符而非物理键，
+      // 用户真打出问号时 key 就是 ?；掺进 shiftKey 会把德语 QWERTZ 的 Shift+7 这类打出的 / 误判成 ?。
+      if (e.key === '?') {
         e.preventDefault();
         h.onToggleShortcuts();
         clearPrefix();
