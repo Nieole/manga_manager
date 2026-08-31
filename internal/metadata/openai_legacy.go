@@ -144,7 +144,7 @@ func (o *OpenAILegacyProvider) FetchSeriesMetadata(ctx context.Context, title st
 	if strings.TrimSpace(meta.Title) == "" && strings.TrimSpace(meta.Summary) == "" {
 		return nil, nil
 	}
-	meta.Status = NormalizeStatusCode(meta.Status)
+	meta.Status = sourceStatusCode(meta.Status)
 	meta.Provider = o.Name()
 
 	return &meta, nil

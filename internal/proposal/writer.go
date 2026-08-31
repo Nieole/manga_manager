@@ -81,7 +81,7 @@ func applyMetadata(ctx context.Context, q Queries, series database.Series, resul
 	}
 
 	if !locked["status"] && result.Status != "" {
-		status := metadata.NormalizeStatusCode(result.Status)
+		status := metadata.StatusCodeOrUnknown(result.Status)
 		updateParams.Status = sql.NullString{String: status, Valid: true}
 		appliedFields["status"] = status
 	} else {

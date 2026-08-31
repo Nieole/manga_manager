@@ -120,7 +120,7 @@ func (o *OllamaProvider) FetchSeriesMetadata(ctx context.Context, title string) 
 		Title:      result.Title,
 		Summary:    result.Summary,
 		Publisher:  result.Publisher,
-		Status:     NormalizeStatusCode(result.Status),
+		Status:     sourceStatusCode(result.Status),
 		Tags:       result.Tags,
 		Rating:     result.Rating,
 		Confidence: result.Confidence,

@@ -175,11 +175,12 @@ func TestBangumiConvertTitleAndConfidence(t *testing.T) {
 	assertMetaFloat(t, "Confidence(sparse)", ms.Confidence, 0.78)
 }
 
-func TestNormalizeStatusCode(t *testing.T) {
+func TestStatusCodeOrUnknown(t *testing.T) {
 	cases := map[string]string{
 		"ongoing":     "ongoing",
 		"publishing":  "ongoing",
 		"Serializing": "ongoing", // 大小写无关
+		"on-hiatus":   "hiatus",  // 分隔符无关
 		"completed":   "completed",
 		"finished":    "completed",
 		"hiatus":      "hiatus",
@@ -188,15 +189,17 @@ func TestNormalizeStatusCode(t *testing.T) {
 		"canceled":    "cancelled",
 		"dropped":     "cancelled",
 		"连载中":         "ongoing",
+		"連載中":         "ongoing",
 		"已完结":         "completed",
 		"休刊中":         "hiatus",
 		"已放弃":         "cancelled",
-		"":            "unknown",
-		"gibberish":   "unknown",
+		// 写入端的兜底：调用方已经决定要写这个字段，认不出也得落一个合法编码。
+		"":          "unknown",
+		"gibberish": "unknown",
 	}
 	for in, want := range cases {
-		if got := NormalizeStatusCode(in); got != want {
-			t.Errorf("NormalizeStatusCode(%q) = %q, want %q", in, got, want)
+		if got := StatusCodeOrUnknown(in); got != want {
+			t.Errorf("StatusCodeOrUnknown(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
