@@ -11,6 +11,7 @@ import type {
   CollectionSeriesItem,
   SmartCollectionSeriesItem,
   SmartCollectionSeriesResponse,
+  SmartFilter,
 } from './types';
 
 // 智能书架没回显每页条数时的兜底，与后端 defaultSmartCollectionPageLimit 一致。
@@ -46,10 +47,10 @@ export interface UseCollectionSeriesResult {
 
 /**
  * useCollectionSeries 供合集页右栏使用。
- * onSmartFilterLoaded 把响应里的筛选定义回灌给选中项——智能书架的筛选字段只在这个响应里。
+ * onSmartFilterLoaded 把响应里的筛选定义回灌给选中项，让右栏读到的定义与左栏列表保持一致。
  */
 export function useCollectionSeries(
-  onSmartFilterLoaded: (viewID: string, filter: Collection) => void,
+  onSmartFilterLoaded: (viewID: string, filter: SmartFilter) => void,
 ): UseCollectionSeriesResult {
   const [items, setItems] = useState<CollectionSeriesItem[]>([]);
   const [total, setTotal] = useState(0);

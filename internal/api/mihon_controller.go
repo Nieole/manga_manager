@@ -615,7 +615,7 @@ func mihonSeriesFromDetailRow(row database.GetMihonSeriesRow) MihonSeriesRespons
 
 func mihonCollectionFromView(view CollectionView) MihonCollectionResponse {
 	return MihonCollectionResponse{
-		ID:             view.ID,
+		ID:             view.ViewID,
 		NumericID:      view.NumericID,
 		Kind:           view.Kind,
 		Name:           view.Name,

@@ -13,20 +13,23 @@ import (
 	"manga-manager/internal/database"
 )
 
+// CollectionView 是合集页左栏的一个列表项，手工合集与智能书架共用。
+// 两者的差异全部收在 SmartFilter 里：它只在智能书架上出现，手工合集的 JSON 一个筛选字段都不多带。
 type CollectionView struct {
-	ID             string    `json:"id"`
-	NumericID      int64     `json:"numeric_id"`
-	Kind           string    `json:"kind"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	LibraryID      *int64    `json:"library_id,omitempty"`
-	LibraryName    string    `json:"library_name,omitempty"`
-	SeriesCount    int       `json:"series_count"`
-	SourceType     string    `json:"source_type"`
-	SourceReviewID *int64    `json:"source_review_id,omitempty"`
-	SortOrder      int       `json:"sort_order"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ViewID         string       `json:"view_id"`
+	NumericID      int64        `json:"numeric_id"`
+	Kind           string       `json:"kind"`
+	Name           string       `json:"name"`
+	Description    string       `json:"description"`
+	LibraryID      *int64       `json:"library_id,omitempty"`
+	LibraryName    string       `json:"library_name,omitempty"`
+	SeriesCount    int          `json:"series_count"`
+	SourceType     string       `json:"source_type"`
+	SourceReviewID *int64       `json:"source_review_id,omitempty"`
+	SortOrder      int          `json:"sort_order"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
+	SmartFilter    *SmartFilter `json:"smart_filter,omitempty"`
 }
 
 type snapshotSmartCollectionRequest struct {
@@ -126,7 +129,7 @@ func (c *Controller) loadCollectionViews(ctx context.Context, userID int64) ([]C
 	for _, row := range rows {
 		viewID, _ := row.ViewID.(string)
 		item := CollectionView{
-			ID:          viewID,
+			ViewID:      viewID,
 			NumericID:   row.ID,
 			Kind:        row.Kind,
 			Name:        row.Name,
@@ -140,11 +143,14 @@ func (c *Controller) loadCollectionViews(ctx context.Context, userID int64) ([]C
 		}
 		if row.Kind == "smart" {
 			if raw, ok := smartFilters[row.ID]; ok {
-				count, cerr := c.store.CountSmartCollectionSeries(ctx, smartCollectionFilterFrom(smartFilterFromDB(raw), userID))
+				filter := smartFilterFromDB(raw)
+				count, cerr := c.store.CountSmartCollectionSeries(ctx, smartCollectionFilterFrom(filter, userID))
 				if cerr != nil {
 					return nil, cerr
 				}
 				item.SeriesCount = count
+				// 左栏靠这份定义渲染筛选芯片；description 里那串拼接文本不是给界面读的。
+				item.SmartFilter = &filter
 			}
 		}
 		if row.LibraryID.Valid {
@@ -177,7 +183,7 @@ func (c *Controller) loadStaticCollectionSeries(ctx context.Context, collectionI
 		UpdatedAt:   row.UpdatedAt.Time,
 	}
 	if id, ok := row.ViewID.(string); ok {
-		view.ID = id
+		view.ViewID = id
 	}
 	if row.SourceReviewID.Valid {
 		value := row.SourceReviewID.Int64

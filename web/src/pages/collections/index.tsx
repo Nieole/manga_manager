@@ -14,6 +14,7 @@ import { useI18n } from '../../i18n/LocaleProvider';
 import type {
   Collection,
   SmartCollectionSnapshotPreview,
+  SmartFilter,
 } from './types';
 import { useCollectionSeries } from './useCollectionSeries';
 import { CollectionListPanel } from './CollectionListPanel';
@@ -73,14 +74,9 @@ export default function Collections() {
 
   useEffect(() => { fetchCollections(); }, []);
 
-  // 智能书架的筛选字段只在成员响应里回来；仍要认准是当前选中的那一个才回灌。
-  const applySmartFilter = useCallback((viewID: string, filter: Collection) => {
-    setSelected((current) => current?.view_id === viewID ? {
-      ...current,
-      ...filter,
-      id: Number(filter.id),
-      numeric_id: Number(filter.id),
-    } as Collection : current);
+  // 成员响应里回显的筛选定义比左栏列表新（用户可能刚在别处改过），认准是当前选中的那一个才回灌。
+  const applySmartFilter = useCallback((viewID: string, filter: SmartFilter) => {
+    setSelected((current) => current?.view_id === viewID ? { ...current, smart_filter: filter } : current);
   }, []);
 
   const series = useCollectionSeries(applySmartFilter);
@@ -92,26 +88,27 @@ export default function Collections() {
 
   const openSmartEdit = () => {
     if (!selected || selected.kind !== 'smart') return;
+    const filter = selected.smart_filter;
     setSmartName(selected.name);
-    setSmartTag(selected.activeTag || '');
-    setSmartAuthor(selected.activeAuthor || '');
-    setSmartStatus(selected.activeStatus || '');
-    setSmartLetter(selected.activeLetter || '');
-    setSmartReadState(selected.readState || '');
-    setSmartMinRating(selected.minRating != null ? String(selected.minRating) : '');
-    setSmartMaxRating(selected.maxRating != null ? String(selected.maxRating) : '');
-    setSmartMinProgress(selected.minProgress != null ? String(selected.minProgress) : '');
-    setSmartMaxProgress(selected.maxProgress != null ? String(selected.maxProgress) : '');
-    setSmartAddedWithinDays(selected.addedWithinDays != null ? String(selected.addedWithinDays) : '');
-    setSmartSortBy(selected.sortByField || 'name');
-    setSmartSortDir(selected.sortDir || 'asc');
-    setSmartPageSize(selected.pageSize || 30);
+    setSmartTag(filter?.activeTag || '');
+    setSmartAuthor(filter?.activeAuthor || '');
+    setSmartStatus(filter?.activeStatus || '');
+    setSmartLetter(filter?.activeLetter || '');
+    setSmartReadState(filter?.readState || '');
+    setSmartMinRating(filter?.minRating != null ? String(filter.minRating) : '');
+    setSmartMaxRating(filter?.maxRating != null ? String(filter.maxRating) : '');
+    setSmartMinProgress(filter?.minProgress != null ? String(filter.minProgress) : '');
+    setSmartMaxProgress(filter?.maxProgress != null ? String(filter.maxProgress) : '');
+    setSmartAddedWithinDays(filter?.addedWithinDays != null ? String(filter.addedWithinDays) : '');
+    setSmartSortBy(filter?.sortByField || 'name');
+    setSmartSortDir(filter?.sortDir || 'asc');
+    setSmartPageSize(filter?.pageSize || 30);
     setShowSmartEdit(true);
   };
 
   const submitSmartEdit = () => {
     if (!selected || selected.kind !== 'smart' || !smartName.trim()) return;
-    apiClient.put(`/api/smart-filters/${selected.numeric_id}`, {
+    apiClient.put<SmartFilter>(`/api/smart-filters/${selected.numeric_id}`, {
       name: smartName,
       activeTag: smartTag || null,
       activeAuthor: smartAuthor || null,
@@ -128,12 +125,12 @@ export default function Collections() {
       pageSize: smartPageSize,
     }).then((res) => {
       setShowSmartEdit(false);
-      const updated = {
+      const updated: Collection = {
         ...selected,
-        ...res.data,
         name: res.data.name,
         numeric_id: Number(res.data.id),
         id: Number(res.data.id),
+        smart_filter: res.data,
       };
       setSelected(updated);
       fetchCollections();

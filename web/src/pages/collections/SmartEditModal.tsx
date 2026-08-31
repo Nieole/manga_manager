@@ -7,7 +7,7 @@
 import { SlidersHorizontal } from 'lucide-react';
 import { ModalShell } from '../../components/ui/ModalShell';
 import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass } from '../../components/ui/modalStyles';
-import type { TFunc } from './types';
+import { SMART_SORT_FIELDS, type TFunc } from './types';
 
 export interface SmartEditValues {
   name: string;
@@ -86,7 +86,7 @@ export function SmartEditModal({ open, onClose, onSubmit, values, set, t }: Smar
         <input type="number" min="0" max="100" step="1" value={values.maxProgress} onChange={(e) => set.setMaxProgress(e.target.value)} placeholder={t('collections.maxProgressPlaceholder')} className={modalInputClass} />
         <input type="number" min="1" max="3650" step="1" value={values.addedWithinDays} onChange={(e) => set.setAddedWithinDays(e.target.value)} placeholder={t('collections.addedWithinDaysPlaceholder')} className={modalInputClass} />
         <select value={values.sortBy} onChange={(e) => set.setSortBy(e.target.value)} className={modalInputClass}>
-          {['name', 'created', 'updated', 'rating', 'volumes', 'books', 'pages', 'read', 'favorite'].map((field) => <option key={field} value={field}>{t(`home.toolbar.sort.${field}`)}</option>)}
+          {SMART_SORT_FIELDS.map((field) => <option key={field} value={field}>{t(`home.toolbar.sort.${field}`)}</option>)}
         </select>
         <select value={values.sortDir} onChange={(e) => set.setSortDir(e.target.value)} className={modalInputClass}>
           <option value="asc">{t('home.smartFilters.dir.asc')}</option>

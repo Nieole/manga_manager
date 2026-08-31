@@ -4,6 +4,30 @@
  * 维护时应保持字段与后端 /api/collection-views、/api/collections、/api/smart-filters 响应一致。
  */
 
+// 智能书架的筛选定义，与后端 api.SmartFilter 同形。前端只有这一处表示：
+// 左栏列表项的 smart_filter 与书架成员响应的 filter 都是它，芯片与编辑表单也都读它。
+export interface SmartFilter {
+  id: number;
+  library_id: number;
+  name: string;
+  activeTag?: string | null;
+  activeAuthor?: string | null;
+  activeStatus?: string | null;
+  activeLetter?: string | null;
+  readState?: string | null;
+  minRating?: number | null;
+  maxRating?: number | null;
+  minProgress?: number | null;
+  maxProgress?: number | null;
+  addedWithinDays?: number | null;
+  sortByField: string;
+  sortDir: string;
+  pageSize: number;
+}
+
+// 后端认可的九个排序取值（api.normalizeSmartFilterRequest），是编辑表单选项与芯片词条的共同依据。
+export const SMART_SORT_FIELDS = ['name', 'created', 'updated', 'rating', 'volumes', 'books', 'pages', 'read', 'favorite'] as const;
+
 export interface Collection {
   view_id: string;
   kind: 'collection' | 'smart';
@@ -16,19 +40,8 @@ export interface Collection {
   source_review_id?: number;
   created_at: string;
   library_id?: number;
-  activeTag?: string | null;
-  activeAuthor?: string | null;
-  activeStatus?: string | null;
-  activeLetter?: string | null;
-  readState?: string | null;
-  minRating?: number | null;
-  maxRating?: number | null;
-  minProgress?: number | null;
-  maxProgress?: number | null;
-  addedWithinDays?: number | null;
-  sortByField?: string;
-  sortDir?: string;
-  pageSize?: number;
+  // 智能书架专属：手工合集没有这一项。
+  smart_filter?: SmartFilter | null;
 }
 
 export interface CollectionSeriesItem {
@@ -53,7 +66,7 @@ export interface SmartCollectionSeriesResponse {
   total: number;
   limit: number;
   offset: number;
-  filter: Collection;
+  filter: SmartFilter;
 }
 
 export interface SmartCollectionSnapshotPreview {
