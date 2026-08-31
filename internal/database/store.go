@@ -141,6 +141,7 @@ type Store interface {
 	// 深度统计（第 6 项）——见 user_stats.go。
 	LogUserReadingActivity(ctx context.Context, userID, bookID, pages int64) error
 	GetUserActivityHeatmap(ctx context.Context, userID int64, offsetClause string) ([]ActivityDay, error)
+	GetUserActiveDays(ctx context.Context, userID int64, days int) (int, error)
 	GetUserReadingStreak(ctx context.Context, userID int64) (current, longest int, err error)
 	AddUserBookReadingTime(ctx context.Context, userID, bookID, seconds int64) error
 	GetUserTotalReadingTime(ctx context.Context, userID int64) (int64, error)

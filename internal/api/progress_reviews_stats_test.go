@@ -917,3 +917,120 @@ func TestRecommendationCacheIsPartitionedPerUser(t *testing.T) {
 		t.Fatalf("locale partition leaked, got %+v", got)
 	}
 }
+
+// TestDashboardActiveDaysIsPerUser 锁住看板「近 7 天活跃天数」的按用户拆分。
+//
+// active_days_7 与它正下方的活动热力图必须同源：热力图早已按用户拆（user_reading_activity），
+// 而这个数若仍读全局 reading_activity，新用户的面板会写着「近 7 天活跃 N 天」但热力图一格不亮——
+// 那个 N 是别人的阅读活跃度，属于跨用户泄露。
+func TestDashboardActiveDaysIsPerUser(t *testing.T) {
+	// fetchStats 取某用户（u 为 nil 表示未启用多用户）的看板统计。
+	fetchStats := func(t *testing.T, c *Controller, u *database.User) database.DashboardStats {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/stats/dashboard", nil)
+		if u != nil {
+			req = withUserContext(req, *u)
+		}
+		rec := httptest.NewRecorder()
+		c.getDashboardStats(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("dashboard stats want 200 got %d: %s", rec.Code, rec.Body.String())
+		}
+		var stats database.DashboardStats
+		if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+			t.Fatalf("decode dashboard stats: %v", err)
+		}
+		return stats
+	}
+	// fetchHeatmap 取某用户（u 为 nil 表示未启用多用户）的活动热力数据。
+	fetchHeatmap := func(t *testing.T, c *Controller, u *database.User) []database.ActivityDay {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/stats/activity?weeks=16", nil)
+		if u != nil {
+			req = withUserContext(req, *u)
+		}
+		rec := httptest.NewRecorder()
+		c.getActivityHeatmap(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("activity heatmap want 200 got %d: %s", rec.Code, rec.Body.String())
+		}
+		var days []database.ActivityDay
+		if err := json.Unmarshal(rec.Body.Bytes(), &days); err != nil {
+			t.Fatalf("decode heatmap: %v", err)
+		}
+		return days
+	}
+	// readPage 以某用户（u 为 nil 表示未启用多用户）的身份上报一次阅读进度，落下当天活动。
+	readPage := func(t *testing.T, c *Controller, u *database.User, bookID int64, page int) {
+		t.Helper()
+		req := requestWithRouteParam(http.MethodPost, "/api/books/progress",
+			[]byte(`{"page":`+strconv.Itoa(page)+`}`), "bookId", strconv.FormatInt(bookID, 10))
+		if u != nil {
+			req = withUserContext(req, *u)
+		}
+		rec := httptest.NewRecorder()
+		c.updateBookProgress(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update progress want 200 got %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	t.Run("多用户下 A 的活跃不出现在 B 的面板", func(t *testing.T) {
+		controller, store, _, _ := newTestController(t)
+		_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 30)
+		userA := mkTestUser(t, store, "alice", database.RoleRegular)
+		userB := mkTestUser(t, store, "bob", database.RoleRegular)
+
+		readPage(t, controller, &userA, book.ID, 5)
+
+		if got := fetchStats(t, controller, &userA).ActiveDays7; got != 1 {
+			t.Fatalf("A 自己读过，active_days_7 want 1 got %d", got)
+		}
+		if got := fetchStats(t, controller, &userB).ActiveDays7; got != 0 {
+			t.Fatalf("B 一页没读，active_days_7 must be 0, got %d（泄露了 A 的活跃）", got)
+		}
+		// 已读书本数同为每用户字段，一并锁住，防止回归时只修其一。
+		if got := fetchStats(t, controller, &userB).ReadBooks; got != 0 {
+			t.Fatalf("B 的 read_books want 0 got %d", got)
+		}
+	})
+
+	t.Run("未启用多用户时仍报全局活跃天数", func(t *testing.T) {
+		controller, store, _, _ := newTestController(t)
+		_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 30)
+
+		readPage(t, controller, nil, book.ID, 5)
+
+		stats := fetchStats(t, controller, nil)
+		if stats.ActiveDays7 != 1 {
+			t.Fatalf("单用户部署 active_days_7 want 1 got %d（每用户拆分不得让全局路径退化）", stats.ActiveDays7)
+		}
+		if stats.ReadBooks != 1 {
+			t.Fatalf("单用户部署 read_books want 1 got %d", stats.ReadBooks)
+		}
+	})
+
+	t.Run("活跃天数与热力图口径一致", func(t *testing.T) {
+		controller, store, _, _ := newTestController(t)
+		_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 30)
+		userA := mkTestUser(t, store, "alice", database.RoleRegular)
+		userB := mkTestUser(t, store, "bob", database.RoleRegular)
+
+		readPage(t, controller, &userA, book.ID, 7)
+
+		// 同一份数据两处必须对得上：热力图里落在近 7 天窗口内的天数 == active_days_7。
+		// 窗口下界统一取 database.DayKeyDaysAgo（activity_calendar 的服务器本地日历日口径）。
+		since := database.DayKeyDaysAgo(7)
+		for _, u := range []database.User{userA, userB} {
+			days := 0
+			for _, d := range fetchHeatmap(t, controller, &u) {
+				if d.Date >= since {
+					days++
+				}
+			}
+			if got := fetchStats(t, controller, &u).ActiveDays7; got != days {
+				t.Fatalf("用户 %s 的 active_days_7=%d 与热力图近 7 天的 %d 天对不上", u.Username, got, days)
+			}
+		}
+	})
+}

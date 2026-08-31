@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// dashboardActiveDaysWindow 是 active_days_7 的回看天数，全局与每用户两条路径共用，保证口径一致。
+const dashboardActiveDaysWindow = 7
+
 func cloneDashboardStats(stats *database.DashboardStats) *database.DashboardStats {
 	if stats == nil {
 		return nil
@@ -44,8 +47,9 @@ func (c *Controller) warmDashboardStatsCacheAsync(reason string) {
 	})
 }
 
-// getDashboardStats 返回统计看板数据。结构性统计（系列/书/页总数）与近 7 日活跃天数为全局缓存；
-// 已读书本数（read_books）按当前用户改写（每用户进度）。活动热力图本阶段仍为全局。
+// getDashboardStats 返回统计看板数据。库级统计（系列/书/页总数、各库体积）本就是全局的，直接用共享缓存；
+// 阅读类统计（read_books / active_days_7）是每用户的，登录后按当前用户改写——共享缓存只存全局值，
+// 每用户值不能进那份缓存，否则会被别的用户读到。
 func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stats, err := c.stats.loadDashboard(ctx, c.store)
@@ -57,6 +61,9 @@ func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
 	if uid := c.currentUserID(r); uid > 0 {
 		if n, e := c.store.GetUserReadBooksCount(ctx, uid); e == nil {
 			stats.ReadBooks = int(n)
+		}
+		if n, e := c.store.GetUserActiveDays(ctx, uid, dashboardActiveDaysWindow); e == nil {
+			stats.ActiveDays7 = n
 		}
 	}
 	jsonResponse(w, http.StatusOK, stats)

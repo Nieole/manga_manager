@@ -27,12 +27,15 @@ type DashboardStructuralStats struct {
 }
 
 // DashboardVolatileStats 是随阅读进度高频变化的统计，查询均走索引/时间窗口，代价低。
+// 两个字段都是**全局**值，只作为未启用多用户时的口径；多用户下调用方须按当前用户改写
+// （GetUserReadBooksCount / GetUserActiveDays），否则会把别人的阅读情况显示给当前用户。
 type DashboardVolatileStats struct {
 	ReadBooks   int
 	ActiveDays7 int
 }
 
-// GetDashboardStats 一次性拿到全局统计看板所需的聚合数据（组合结构性+阅读类统计）
+// GetDashboardStats 一次性拿到全局统计看板所需的聚合数据（组合结构性+阅读类统计）。
+// 其中阅读类两项（ReadBooks/ActiveDays7）是全局值，多用户下须由调用方按当前用户改写。
 func (s *SqlStore) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
 	structural, err := s.GetDashboardStructuralStats(ctx)
 	if err != nil {
@@ -89,7 +92,8 @@ func (s *SqlStore) GetDashboardStructuralStats(ctx context.Context) (*DashboardS
 	return &stats, nil
 }
 
-// GetDashboardVolatileStats 计算随阅读进度高频变化的统计，均走索引/时间窗口，代价低。
+// GetDashboardVolatileStats 计算随阅读进度高频变化的全局统计，均走索引/时间窗口，代价低。
+// 近 7 天窗口的下界取 DayKeyDaysAgo（服务器本地日历日），与每用户版 GetUserActiveDays 同口径。
 func (s *SqlStore) GetDashboardVolatileStats(ctx context.Context) (*DashboardVolatileStats, error) {
 	var stats DashboardVolatileStats
 	err := s.db.QueryRowContext(ctx, `

@@ -82,6 +82,22 @@ func (s *SqlStore) GetUserActivityHeatmap(ctx context.Context, userID int64, off
 	return out, rows.Err()
 }
 
+// GetUserActiveDays 返回某用户近 days 天内有阅读行为的天数，是看板 active_days_7 的每用户版。
+//
+// 数据源与活动热力图同为 user_reading_activity：两者在界面上是同一块（数字印在热力图标题下方），
+// 一处按用户拆、另一处读全局的话，新用户会看到一个自己热力图上根本不存在的天数。
+// 窗口下界取 DayKeyDaysAgo（服务器本地日历日），与写入侧 ActivityDayKey 同口径。
+func (s *SqlStore) GetUserActiveDays(ctx context.Context, userID int64, days int) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT date) FROM user_reading_activity WHERE user_id = ? AND date >= ?`,
+		userID, DayKeyDaysAgo(days)).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // GetUserReadingStreak 返回某用户的当前连续阅读天数与历史最长连续天数（基于有活动的日期）。
 // 当前连续天数：从今天或昨天起向前连续的天数（昨天有读、今天还没读，连续未中断）。
 func (s *SqlStore) GetUserReadingStreak(ctx context.Context, userID int64) (current, longest int, err error) {

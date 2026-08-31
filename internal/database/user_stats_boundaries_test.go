@@ -1,6 +1,7 @@
 // 本文件是业务回归测试，覆盖深度统计(user_stats.go)的边界：连续阅读天数在单日/仅昨日/
-// 重复日期/历史最长 run/空数据等边界下的 current 与 longest 计算，以及年度回顾 vs 月度回顾的时间分桶
-// （strftime 年/月前缀），确保未来对 streak Go 侧算法或分桶 SQL 的改动不会悄悄改变统计口径。
+// 重复日期/历史最长 run/空数据等边界下的 current 与 longest 计算，近 7 天活跃天数的窗口下界与按用户隔离，
+// 以及年度回顾 vs 月度回顾的时间分桶（strftime 年/月前缀），确保未来对读取侧算法或 SQL 的改动
+// 不会悄悄改变统计口径。
 
 package database
 
@@ -117,4 +118,43 @@ func TestUserPeriodStatsYearVsMonthBucketing(t *testing.T) {
 	if empty.Pages != 0 || empty.ActiveDays != 0 || empty.BooksTouched != 0 || len(empty.TopSeries) != 0 {
 		t.Fatalf("2026-12 should be empty, got %+v", empty)
 	}
+}
+
+// TestGetUserActiveDaysWindowAndIsolation 锁住「近 N 天活跃天数」的窗口下界与按用户隔离。
+//
+// 这个数印在活动热力图标题下方，两者必须同源同窗口：读全局表就会把别人的活跃度算进当前用户的面板。
+func TestGetUserActiveDaysWindowAndIsolation(t *testing.T) {
+	store := newStoreForTest(t)
+	ctx, _, _, book1, book2 := seedUserProgressFixture(t, store)
+	uA := mkUser(t, ctx, store, "alice", RoleRegular)
+	uB := mkUser(t, ctx, store, "bob", RoleRegular)
+
+	assertDays := func(userID int64, want int) {
+		t.Helper()
+		got, err := store.GetUserActiveDays(ctx, userID, 7)
+		if err != nil {
+			t.Fatalf("GetUserActiveDays(%d): %v", userID, err)
+		}
+		if got != want {
+			t.Fatalf("user %d active days = %d want %d", userID, got, want)
+		}
+	}
+
+	// 无活动：0。
+	assertDays(uA, 0)
+
+	// 窗口下界与 DayKeyDaysAgo(7) 一致：第 7 天在窗内，第 8 天在窗外。
+	insertActivity(t, ctx, store, uA, book1, dayStr(0), 5)
+	insertActivity(t, ctx, store, uA, book1, dayStr(-7), 5)
+	insertActivity(t, ctx, store, uA, book1, dayStr(-8), 5)
+	assertDays(uA, 2)
+
+	// 同一天多本书折叠成一天，不虚增。
+	insertActivity(t, ctx, store, uA, book2, dayStr(0), 3)
+	assertDays(uA, 2)
+
+	// B 只有自己的那一天：A 的活跃不得计入 B。
+	insertActivity(t, ctx, store, uB, book1, dayStr(-3), 4)
+	assertDays(uB, 1)
+	assertDays(uA, 2)
 }
