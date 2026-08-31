@@ -4,7 +4,7 @@
  * 维护时应关注状态与各子组件的受控同步、操作后刷新，以及手工/智能合集的行为差异。
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../api/client';
 import { FolderHeart, Plus } from 'lucide-react';
@@ -12,10 +12,9 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useI18n } from '../../i18n/LocaleProvider';
 import type {
   Collection,
-  CollectionSeriesItem,
-  SmartCollectionSeriesResponse,
   SmartCollectionSnapshotPreview,
 } from './types';
+import { useCollectionSeries } from './useCollectionSeries';
 import { CollectionListPanel } from './CollectionListPanel';
 import { CollectionDetailPanel } from './CollectionDetailPanel';
 import { CreateCollectionModal, EditCollectionModal } from './CollectionFormModals';
@@ -26,7 +25,6 @@ export default function Collections() {
   const { t } = useI18n();
   const [collections, setCollections] = useState<Collection[]>([]);
   const [selected, setSelected] = useState<Collection | null>(null);
-  const [seriesItems, setSeriesItems] = useState<CollectionSeriesItem[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
@@ -71,30 +69,21 @@ export default function Collections() {
 
   useEffect(() => { fetchCollections(); }, []);
 
+  // 智能书架的筛选字段只在成员响应里回来；仍要认准是当前选中的那一个才回灌。
+  const applySmartFilter = useCallback((viewID: string, filter: Collection) => {
+    setSelected((current) => current?.view_id === viewID ? {
+      ...current,
+      ...filter,
+      id: Number(filter.id),
+      numeric_id: Number(filter.id),
+    } as Collection : current);
+  }, []);
+
+  const series = useCollectionSeries(applySmartFilter);
+
   const selectCollection = (c: Collection) => {
     setSelected(c);
-    const request = c.kind === 'smart'
-      ? apiClient.get<SmartCollectionSeriesResponse>(`/api/collection-views/smart/${c.numeric_id}/series`)
-      : apiClient.get(`/api/collections/${c.numeric_id}/series`);
-    request.then(res => {
-      if (c.kind === 'smart') {
-        const payload = res.data as SmartCollectionSeriesResponse;
-        setSeriesItems((payload.items || []).map((item) => ({
-          series_id: item.id,
-          series_name: item.title?.Valid ? item.title.String : item.name,
-          cover_path: item.cover_path || { String: '', Valid: false },
-          book_count: item.actual_book_count ?? item.book_count ?? 0,
-        })));
-        setSelected((current) => current?.view_id === c.view_id ? {
-          ...current,
-          ...payload.filter,
-          id: Number(payload.filter.id),
-          numeric_id: Number(payload.filter.id),
-        } as Collection : current);
-        return;
-      }
-      setSeriesItems(res.data || []);
-    });
+    series.open(c);
   };
 
   const openSmartEdit = () => {
@@ -152,7 +141,7 @@ export default function Collections() {
     apiClient.delete(`/api/smart-filters/${item.numeric_id}`).then(() => {
       if (selected?.view_id === item.view_id) {
         setSelected(null);
-        setSeriesItems([]);
+        series.clear();
       }
       fetchCollections();
     });
@@ -222,7 +211,7 @@ export default function Collections() {
     apiClient.delete(`/api/collections/${id}`).then(() => {
       if (selected?.id === id) {
         setSelected(null);
-        setSeriesItems([]);
+        series.clear();
       }
       fetchCollections();
     });
@@ -231,7 +220,7 @@ export default function Collections() {
   const handleRemoveSeries = (seriesId: number) => {
     if (!selected || selected.kind !== 'collection') return;
     apiClient.delete(`/api/collections/${selected.numeric_id}/series/${seriesId}`).then(() => {
-      setSeriesItems(prev => prev.filter(s => s.series_id !== seriesId));
+      series.removeSeries(seriesId);
       fetchCollections();
     });
   };
@@ -377,7 +366,11 @@ export default function Collections() {
 
         <CollectionDetailPanel
           selected={selected}
-          seriesItems={seriesItems}
+          seriesItems={series.items}
+          seriesTotal={series.total}
+          hasMore={series.hasMore}
+          loading={series.loading}
+          onLoadMore={series.loadMore}
           onEditCollection={() => {
             if (!selected) return;
             setEditName(selected.name);

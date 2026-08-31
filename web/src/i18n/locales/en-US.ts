@@ -355,6 +355,8 @@ export const messages: MessageCatalog = {
     'collections.noSeries': 'This collection has no series yet',
     'collections.noSeriesHint': 'Add series to this collection from the library view',
     'collections.pickLeft': 'Select a collection on the left to view its contents',
+    'collections.loadedOfTotal': 'Loaded {{loaded}} of {{total}} series',
+    'collections.loadMore': 'Load more',
     'collections.source.manual': 'Manual',
     'collections.source.ai_grouping': 'AI grouping',
     'collections.source.smart_filter': 'Smart collection',

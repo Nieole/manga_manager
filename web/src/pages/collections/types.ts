@@ -49,7 +49,10 @@ export interface SmartCollectionSeriesItem {
 
 export interface SmartCollectionSeriesResponse {
   items: SmartCollectionSeriesItem[];
+  // total 是命中总数，items 只是其中一页；limit/offset 是这一页的实际口径，回显供继续往后取。
   total: number;
+  limit: number;
+  offset: number;
   filter: Collection;
 }
 

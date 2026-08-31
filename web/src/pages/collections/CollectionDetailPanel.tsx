@@ -10,6 +10,11 @@ import type { Collection, CollectionSeriesItem, TFunc } from './types';
 interface CollectionDetailPanelProps {
   selected: Collection | null;
   seriesItems: CollectionSeriesItem[];
+  // 命中总数，不是当前已加载条数——智能书架分页加载，两者在加载完之前并不相等。
+  seriesTotal: number;
+  hasMore: boolean;
+  loading: boolean;
+  onLoadMore: () => void;
   onEditCollection: () => void;
   onOpenSmartEdit: () => void;
   onOpenSnapshot: () => void;
@@ -21,6 +26,10 @@ interface CollectionDetailPanelProps {
 export function CollectionDetailPanel({
   selected,
   seriesItems,
+  seriesTotal,
+  hasMore,
+  loading,
+  onLoadMore,
   onEditCollection,
   onOpenSmartEdit,
   onOpenSnapshot,
@@ -28,6 +37,7 @@ export function CollectionDetailPanel({
   onOpenSeries,
   t,
 }: CollectionDetailPanelProps) {
+  const partiallyLoaded = seriesItems.length < seriesTotal;
   return (
     <div className="lg:col-span-2">
       {selected ? (
@@ -60,11 +70,19 @@ export function CollectionDetailPanel({
                 </div>
                 {selected.description && <p className="text-xs text-gray-500 mt-1">{selected.description}</p>}
               </div>
-              <span className="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">{t('common.seriesCount', { count: seriesItems.length })}</span>
+              <span className="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">
+                {partiallyLoaded
+                  ? t('collections.loadedOfTotal', { loaded: seriesItems.length, total: seriesTotal })
+                  : t('common.seriesCount', { count: seriesTotal })}
+              </span>
             </div>
           </div>
 
-          {seriesItems.length === 0 ? (
+          {loading && seriesItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-komgaPrimary" />
+            </div>
+          ) : seriesItems.length === 0 ? (
             <div className="text-center py-20 text-gray-600">
               <BookOpen className="w-10 h-10 mx-auto mb-3 opacity-40" />
               <p className="text-sm">{t('collections.noSeries')}</p>
@@ -96,6 +114,18 @@ export function CollectionDetailPanel({
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {hasMore && (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={onLoadMore}
+                className="rounded-lg border border-gray-700 px-4 py-2 text-xs text-gray-300 transition-colors hover:border-komgaPrimary hover:text-komgaPrimary"
+              >
+                {t('collections.loadMore')}
+              </button>
             </div>
           )}
         </div>

@@ -74,6 +74,11 @@ type collectionSeriesListItem struct {
 }
 
 const (
+	// 智能书架成员端点的每页条数上下限，与书架配置里的 page_size 是两回事：
+	// 后者只是「这个书架默认一页装几个」，前者是端点自己对单次响应体量的保护。
+	defaultSmartCollectionPageLimit = 30
+	maxSmartCollectionPageLimit     = 100
+
 	defaultSmartSnapshotLimit        = 1000
 	maxSmartSnapshotLimit            = 1000
 	defaultSmartSnapshotPreviewLimit = 12
@@ -243,6 +248,12 @@ func smartCollectionFilterFrom(filter SmartFilter, userID int64) database.SmartC
 	}
 }
 
+// getSmartCollectionSeries 返回智能书架当前命中的成员的一页。
+//
+// total 恒为全量命中数，与左栏计数同源；命中数大于一页时，调用方靠响应里回显的
+// limit/offset 继续往后取，而不是指望一次拿全——书架可能命中几万个系列。
+// 书架配置里的 page_size 在这里只是「不指定时用哪个每页大小」的默认值，
+// 单次响应的体量上限由端点自己的 maxSmartCollectionPageLimit 说了算。
 func (c *Controller) getSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
 	filterID, err := parseID(r, "filterId")
 	if err != nil {
@@ -259,13 +270,10 @@ func (c *Controller) getSmartCollectionSeries(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	limit := filter.PageSize
+	limit := smartCollectionPageLimit(filter.PageSize)
 	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil {
-			switch parsed {
-			case 30, 50, 100:
-				limit = parsed
-			}
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = smartCollectionPageLimit(parsed)
 		}
 	}
 	offset := 0
@@ -456,6 +464,17 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 		"total":        total,
 		"truncated":    total > len(rows),
 	})
+}
+
+// smartCollectionPageLimit 把「想要的每页条数」夹进端点允许的区间。
+func smartCollectionPageLimit(want int) int {
+	if want <= 0 {
+		return defaultSmartCollectionPageLimit
+	}
+	if want > maxSmartCollectionPageLimit {
+		return maxSmartCollectionPageLimit
+	}
+	return want
 }
 
 func normalizeSmartSnapshotLimit(limit int) int {

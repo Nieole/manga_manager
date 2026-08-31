@@ -355,6 +355,8 @@ export const messages: MessageCatalog = {
     'collections.noSeries': '合集暂无系列',
     'collections.noSeriesHint': '在资源库中将系列添加到此合集',
     'collections.pickLeft': '选择左侧合集查看内容',
+    'collections.loadedOfTotal': '已加载 {{loaded}} / 共 {{total}} 个系列',
+    'collections.loadMore': '加载更多',
     'collections.source.manual': '手工',
     'collections.source.ai_grouping': 'AI 分组',
     'collections.source.smart_filter': '智能合集',
