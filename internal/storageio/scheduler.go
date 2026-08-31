@@ -107,7 +107,10 @@ func (s *Scheduler) idleWindowRemainingLocked(volumeKey string, idleDuration tim
 }
 
 func (s *Scheduler) Acquire(ctx context.Context, req Request) (Lease, error) {
-	if req.Limit <= 0 || strings.TrimSpace(req.VolumeKey) == "" {
+	// 卷键的归一只发生在这一处：req 是值拷贝，改写后限流桶、读者、排队与快照共用同一个键，
+	// 快照归拢出的行因此必然对得上调用方传进来的那块盘。
+	req.VolumeKey = normalizeVolumeKey(req.VolumeKey)
+	if req.Limit <= 0 || req.VolumeKey == "" {
 		return Lease{}, nil
 	}
 	if ctx == nil {
@@ -344,7 +347,7 @@ func (s *Scheduler) snapshotPauseReasonLocked(volumeKey string) string {
 }
 
 func (s *Scheduler) volumeActiveLocked(volumeKey string) bool {
-	prefix := strings.ToLower(strings.TrimSpace(volumeKey)) + "|"
+	prefix := volumeKey + "|"
 	for key, limiter := range s.limiters {
 		if strings.HasPrefix(key, prefix) && limiter.used > 0 {
 			return true
@@ -371,8 +374,16 @@ func (s *Scheduler) readerStateLocked(volumeKey string) *readerState {
 	return state
 }
 
+// normalizeVolumeKey 是卷键进入本包的唯一入口加工：只去掉首尾空白。卷键在这里是一个不透明的身份，
+// 大小写归一属于推导它的 config.VolumeKey——只有那一层知道平台文件系统区不区分大小写；本包再折叠一次
+// 会让快照报出的卷键与用户配置里的那个对不上。
+func normalizeVolumeKey(volumeKey string) string {
+	return strings.TrimSpace(volumeKey)
+}
+
+// limiterKey 把已归一的卷键与并发上限拼成限流桶键：同卷不同上限是各自独立的桶。
 func limiterKey(volumeKey string, limit int) string {
-	return strings.ToLower(strings.TrimSpace(volumeKey)) + "|" + strconv.Itoa(limit)
+	return volumeKey + "|" + strconv.Itoa(limit)
 }
 
 func volumeFromLimiterKey(key string) string {
