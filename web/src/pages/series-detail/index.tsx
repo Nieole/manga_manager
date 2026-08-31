@@ -67,11 +67,18 @@ export default function SeriesDetailPage() {
     localStorage.setItem('komga-volume-view-mode', mode);
   }, []);
 
-  const totalSelectableCount = volumes.length + standaloneBooks.length + ctx.books.length;
+  // 全选的范围等于页面此刻渲染的那批书：卷视图只渲染当前卷，全选就不能越出这一卷——
+  // 否则用户以为只标了这一卷，实际把整个系列都写成了已读，且页面上看不出来。
+  const selectableBookIds = useMemo(() => {
+    if (!activeVolumeName) return allBookIds;
+    return volumes.find((v) => v.name === activeVolumeName)?.books.map((b) => b.id) ?? [];
+  }, [activeVolumeName, volumes, allBookIds]);
+
   // 选择模型同时支持“选卷”和“选单本”，最终提交前统一展开成书籍 ID，保证批量已读、加入合集等操作只面向后端书籍契约。
   const selection = useSeriesSelection({
-    totalCount: totalSelectableCount,
-    collectAllIds: useCallback(() => allBookIds, [allBookIds]),
+    // 可选总数取全选实际会选中的那批书，两者必须同源，否则全选后 allSelected 仍为 false、按钮文案不翻转。
+    totalCount: selectableBookIds.length,
+    collectAllIds: useCallback(() => selectableBookIds, [selectableBookIds]),
     resetKey: seriesId, // 跳到别的系列时清空选择，避免批量操作写到上一个系列的书
   });
 
