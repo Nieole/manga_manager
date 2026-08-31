@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -368,6 +369,121 @@ func TestOPDSPageStreamingRoute(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected negative OPDS page number 400, got %d", rec.Code)
 	}
+}
+
+func opdsBookEntry(t *testing.T, feed OPDSFeed, bookID int64) OPDSEntry {
+	t.Helper()
+	wanted := fmt.Sprintf("urn:manga-manager:opds:book:%d", bookID)
+	for _, entry := range feed.Entries {
+		if entry.ID == wanted {
+			return entry
+		}
+	}
+	t.Fatalf("feed 里没有书 %d 的条目: %+v", bookID, feed.Entries)
+	return OPDSEntry{}
+}
+
+// opdsFirstPageJPEGHref 取书目条目里那条「首页 JPEG」获取链接。同一个 rel 下有两条获取链接，
+// 整卷下载的 type 是归档自身的 MIME，只有首页预览恒为 image/jpeg。
+func opdsFirstPageJPEGHref(t *testing.T, feed OPDSFeed, bookID int64) string {
+	t.Helper()
+	for _, link := range opdsBookEntry(t, feed, bookID).Links {
+		if link.Rel == "http://opds-spec.org/acquisition" && link.Type == "image/jpeg" {
+			return link.Href
+		}
+	}
+	t.Fatalf("书 %d 的条目里没有首页 JPEG 链接", bookID)
+	return ""
+}
+
+// TestOPDSFirstPageAcquisitionLink 守书目 feed 里「首页 JPEG」获取链接的下标口径：它与 PSE 流式
+// 路由共用 /books/{bookId}/pages/{pageNumber}，而该路由按 OPDS-PSE 的 0 基取页，因此链接必须写成
+// pages/0。写成 1 基会让不支持 PSE 的旧客户端把第 2 页当封面，单页书则直接 404。
+func TestOPDSFirstPageAcquisitionLink(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, twoPageBook := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 2)
+	seedBookArchivePages(t, controller, twoPageBook, []byte("PAGE-ONE"), []byte("PAGE-TWO"))
+
+	singlePageBook, err := store.CreateBook(context.Background(), database.CreateBookParams{
+		SeriesID:       series.ID,
+		LibraryID:      twoPageBook.LibraryID,
+		Name:           "Alpha 02.cbz",
+		Path:           filepath.Join(filepath.Dir(twoPageBook.Path), "Alpha 02.cbz"),
+		Size:           1024,
+		FileModifiedAt: time.Now(),
+		Title:          sql.NullString{String: "Alpha 02", Valid: true},
+		PageCount:      1,
+	})
+	if err != nil {
+		t.Fatalf("CreateBook failed: %v", err)
+	}
+	seedBookArchivePages(t, controller, singlePageBook, []byte("ONLY-PAGE"))
+
+	cfg := controller.currentConfig()
+	cfg.Protocols.OPDS.Enabled = true
+	controller.config.Replace(&cfg)
+	router := chi.NewRouter()
+	controller.SetupOPDSRoutes(router)
+
+	feedRec := httptest.NewRecorder()
+	router.ServeHTTP(feedRec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/series/"+strconv.FormatInt(series.ID, 10), nil))
+	if feedRec.Code != http.StatusOK {
+		t.Fatalf("expected series feed 200, got %d body=%s", feedRec.Code, feedRec.Body.String())
+	}
+	var feed OPDSFeed
+	if err := xml.Unmarshal(feedRec.Body.Bytes(), &feed); err != nil {
+		t.Fatalf("decode series feed failed: %v", err)
+	}
+
+	// 页图请求走真实路由，链接从 feed 里原样取出：口径撞车正是发生在「feed 写的下标」与
+	// 「路由认的下标」之间，任一端单独断言都看不出来。
+	fetch := func(t *testing.T, href string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, href, nil))
+		return rec
+	}
+
+	t.Run("首页链接取到的是第一页", func(t *testing.T) {
+		href := opdsFirstPageJPEGHref(t, feed, twoPageBook.ID)
+		rec := fetch(t, href)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("首页链接 %s 期望 200，得到 %d body=%s", href, rec.Code, rec.Body.String())
+		}
+		if rec.Body.String() != "PAGE-ONE" {
+			t.Fatalf("首页链接 %s 取到的不是第一页: body=%q", href, rec.Body.String())
+		}
+	})
+
+	t.Run("单页书的首页链接不是 404", func(t *testing.T) {
+		href := opdsFirstPageJPEGHref(t, feed, singlePageBook.ID)
+		rec := fetch(t, href)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("单页书首页链接 %s 期望 200，得到 %d body=%s", href, rec.Code, rec.Body.String())
+		}
+		if rec.Body.String() != "ONLY-PAGE" {
+			t.Fatalf("单页书首页链接 %s 取到的不是那唯一一页: body=%q", href, rec.Body.String())
+		}
+	})
+
+	t.Run("PSE 分页模板仍按 0 基取页", func(t *testing.T) {
+		stream := findOPDSLink(opdsBookEntry(t, feed, twoPageBook.ID).Links, opdsPSEStreamRel)
+		if stream == nil {
+			t.Fatal("书目 feed 里缺少 PSE 流式链接")
+		}
+		// 去掉模板里的 format/w 占位参数：不带这些参数时页图按原始字节透传，比对得出页序。
+		base, _, _ := strings.Cut(stream.Href, "?")
+		for _, tc := range []struct{ pageNumber, want string }{{"0", "PAGE-ONE"}, {"1", "PAGE-TWO"}} {
+			href := strings.Replace(base, "{pageNumber}", tc.pageNumber, 1)
+			rec := fetch(t, href)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("PSE 链接 %s 期望 200，得到 %d body=%s", href, rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() != tc.want {
+				t.Fatalf("PSE 下标 %s 取错页: want %q, got %q", tc.pageNumber, tc.want, rec.Body.String())
+			}
+		}
+	})
 }
 
 func TestOPDSCollectionFeeds(t *testing.T) {

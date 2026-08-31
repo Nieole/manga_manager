@@ -304,3 +304,45 @@ func TestMihonAPIRejectsInvalidIDs(t *testing.T) {
 		t.Fatalf("expected invalid book 400, got %d", pagesRec.Code)
 	}
 }
+
+// TestMihonPageIndexIsOneBased 守 Mihon 侧的页码口径：`mihonBookPages` 下发的 index 与图片地址
+// 都是 1 基，而页图路由直接挂 servePageImage，取页同样按 1 基。OPDS 侧另有一套 0 基口径（PSE），
+// 这条用例把 Mihon 这一端钉死，防止哪天为对齐 OPDS 而把两边改成同一个数。
+func TestMihonPageIndexIsOneBased(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 2)
+	seedBookArchivePages(t, controller, book, []byte("PAGE-ONE"), []byte("PAGE-TWO"))
+
+	cfg := controller.currentConfig()
+	cfg.Protocols.Mihon.Enabled = true
+	controller.config.Replace(&cfg)
+	router := chi.NewRouter()
+	router.Route("/api", func(r chi.Router) {
+		controller.setupMihonRoutes(r)
+	})
+
+	pagesRec := httptest.NewRecorder()
+	router.ServeHTTP(pagesRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/books/"+strconv.FormatInt(book.ID, 10)+"/pages", nil))
+	if pagesRec.Code != http.StatusOK {
+		t.Fatalf("expected pages 200, got %d body=%s", pagesRec.Code, pagesRec.Body.String())
+	}
+	var pages []MihonPageResponse
+	if err := json.NewDecoder(pagesRec.Body).Decode(&pages); err != nil {
+		t.Fatalf("decode pages failed: %v", err)
+	}
+	if len(pages) != 2 || pages[0].Index != 1 || pages[1].Index != 2 {
+		t.Fatalf("页清单的下标不是 1 基: %+v", pages)
+	}
+
+	// 下发的图片地址原样取回：清单说这是第一页，取到的就必须是第一页。
+	for i, want := range []string{"PAGE-ONE", "PAGE-TWO"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, pages[i].ImageURL, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("页图链接 %s 期望 200，得到 %d body=%s", pages[i].ImageURL, rec.Code, rec.Body.String())
+		}
+		if rec.Body.String() != want {
+			t.Fatalf("页图链接 %s 取错页: want %q, got %q", pages[i].ImageURL, want, rec.Body.String())
+		}
+	}
+}

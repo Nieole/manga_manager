@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -256,6 +257,35 @@ func seedBookFixture(t testing.TB, store database.Store, rootDir, libName, serie
 	}
 
 	return lib, series, book
+}
+
+// seedBookArchivePages 为一本已入库的书写出归档，并把 books 表里的路径、体积、页数对齐到该文件。
+// 每一页的字节由调用方给定且各不相同：不带缩放/格式/画质参数的页图请求按原始字节透传，
+// 因此响应体可直接与写入的内容比对，用来判定服务端取的到底是第几页。
+func seedBookArchivePages(t testing.TB, controller *Controller, book database.Book, pageBodies ...[]byte) {
+	t.Helper()
+
+	files := make(map[string][]byte, len(pageBodies))
+	for i, body := range pageBodies {
+		files[fmt.Sprintf("%03d.png", i+1)] = body
+	}
+	if err := writeTestCBZ(book.Path, files); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	info, err := os.Stat(book.Path)
+	if err != nil {
+		t.Fatalf("stat archive failed: %v", err)
+	}
+	if _, err := controller.store.(*database.SqlStore).DB().Exec(
+		`UPDATE books SET path = ?, size = ?, file_modified_at = ?, page_count = ? WHERE id = ?`,
+		book.Path,
+		info.Size(),
+		info.ModTime(),
+		len(pageBodies),
+		book.ID,
+	); err != nil {
+		t.Fatalf("update book archive metadata failed: %v", err)
+	}
 }
 
 func TestGetAndUpdateSystemConfig(t *testing.T) {

@@ -385,20 +385,38 @@ func opdsPaginationLinks(base string, page, limit, total int) []OPDSLink {
 	return links
 }
 
+// OPDS 页图路由 `/books/{bookId}/pages/{pageNumber}` 的页码是 OPDS-PSE 的 0 基下标，而服务端取页
+// （servePageImageByNumber）是 1 基。两套口径只在这三个符号里换算：feed 写死的页链接经
+// opdsPageImageHref，PSE 客户端自填页码的模板经 opdsPageImageHrefTemplate，收到的请求经
+// opdsImagePageNumber。别处不得再对这个路由的页码写 ±1，也不得直接拼页码字面量。
+const opdsFirstPageNumber = 0
+
+func opdsPageImageHref(bookID, opdsPageNumber int64) string {
+	return fmt.Sprintf("%s/books/%d/pages/%d", opdsResourceBase, bookID, opdsPageNumber)
+}
+
+func opdsPageImageHrefTemplate(bookID int64) string {
+	return fmt.Sprintf("%s/books/%d/pages/{pageNumber}?format=jpeg&w={maxWidth}", opdsResourceBase, bookID)
+}
+
+func opdsImagePageNumber(opdsPageNumber int64) int64 {
+	return opdsPageNumber + 1
+}
+
 func opdsBookAcquisitionLinks(bookID, pageCount int64, lastReadPage sql.NullInt64, bookPath string) []OPDSLink {
 	links := []OPDSLink{
 		// 整卷下载：非 PSE 的桌面/传统 OPDS 客户端据此拉取原始 CBZ/CBR/PDF 整包；type 反映真实归档
 		// MIME（下载路由本身再以权威 Content-Type 下发）。放在首位，令整卷下载成为主获取项。
 		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf(opdsResourceBase+"/books/%d/file", bookID), Type: bookDownloadContentType(bookPath)},
-		// 首页 JPEG：作为封面/预览补充，保留历史行为，兼容只取第一页的旧客户端。
-		{Rel: "http://opds-spec.org/acquisition", Href: fmt.Sprintf(opdsResourceBase+"/books/%d/pages/1", bookID), Type: "image/jpeg"},
+		// 首页 JPEG：作为封面/预览补充，兼容只取第一页的旧客户端。页号走本路由的 0 基口径。
+		{Rel: "http://opds-spec.org/acquisition", Href: opdsPageImageHref(bookID, opdsFirstPageNumber), Type: "image/jpeg"},
 	}
 	if pageCount <= 0 {
 		return links
 	}
 	stream := OPDSLink{
 		Rel:      opdsPSEStreamRel,
-		Href:     fmt.Sprintf("/opds/v1.2/books/%d/pages/{pageNumber}?format=jpeg&w={maxWidth}", bookID),
+		Href:     opdsPageImageHrefTemplate(bookID),
 		Type:     "image/jpeg",
 		Count:    pageCount,
 		PSECount: pageCount,
@@ -1005,7 +1023,7 @@ func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request)
 		jsonError(w, http.StatusBadRequest, "Invalid page number")
 		return
 	}
-	c.servePageImageByNumber(w, r, bookID, pageNumber+1)
+	c.servePageImageByNumber(w, r, bookID, opdsImagePageNumber(pageNumber))
 }
 
 func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
