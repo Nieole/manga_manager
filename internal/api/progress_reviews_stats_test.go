@@ -304,6 +304,77 @@ func TestBulkSyncBookProgressInvalidPayload(t *testing.T) {
 	}
 }
 
+// ---- 页码夹取：单本与批量两条写入端点的共同边界 ----
+
+// TestBookProgressPageClampAcrossEndpoints 守「把用户报的页码夹进本书合法范围」这条边界：
+// 页数未知（page_count=0，快速扫描首扫的产物）时不得把页码夹成 1，页数已知时仍夹到上界，
+// 小于 1 的页码仍归一化为 1；同一份输入经单本端点与批量端点必须落库同一个页码。
+func TestBookProgressPageClampAcrossEndpoints(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		pageCount int64
+		page      int64
+		want      int64
+	}{
+		{"页数未知时页码原样写入", 0, 42, 42},
+		{"页数已知时夹到上界", 100, 999, 100},
+		{"页数已知时小于 1 的页码夹到 1", 100, 0, 1},
+		{"页数未知时小于 1 的页码同样夹到 1", 0, -5, 1},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			suffix := strconv.Itoa(i)
+			// 两条端点各用一本独立的书，避免同页节流与写入缓存互相干扰。
+			_, _, singleBook := seedBookFixture(t, store, rootDir, "LibSingle"+suffix, "Series", "01.cbz", tc.pageCount)
+			_, _, bulkBook := seedBookFixture(t, store, rootDir, "LibBulk"+suffix, "Series", "01.cbz", tc.pageCount)
+
+			body := []byte(`{"page":` + strconv.FormatInt(tc.page, 10) + `}`)
+			singleRec := httptest.NewRecorder()
+			controller.updateBookProgress(singleRec, requestWithRouteParam(
+				http.MethodPost, "/x", body, "bookId", strconv.FormatInt(singleBook.ID, 10)))
+			if singleRec.Code != http.StatusOK || statusOf(singleRec) != "Progress updated" {
+				t.Fatalf("单本端点 want 200/Progress updated, got %d/%q", singleRec.Code, statusOf(singleRec))
+			}
+
+			bulkBody, _ := json.Marshal(BulkSyncProgressRequest{Items: []BulkSyncProgressItem{
+				{BookID: bulkBook.ID, Page: tc.page},
+			}})
+			bulkRec := httptest.NewRecorder()
+			controller.bulkSyncBookProgress(bulkRec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(bulkBody)))
+			if bulkRec.Code != http.StatusOK {
+				t.Fatalf("批量端点 want 200 got %d", bulkRec.Code)
+			}
+			var bulkResp struct {
+				Updated int
+				Results []BulkSyncProgressResultItem
+			}
+			if err := json.NewDecoder(bulkRec.Body).Decode(&bulkResp); err != nil {
+				t.Fatalf("decode 批量响应: %v", err)
+			}
+			if bulkResp.Updated != 1 || len(bulkResp.Results) != 1 || bulkResp.Results[0].Page != tc.want {
+				t.Fatalf("批量端点回报页码 want %d got %+v", tc.want, bulkResp)
+			}
+
+			singleGot, _ := store.GetBook(ctx, singleBook.ID)
+			bulkGot, _ := store.GetBook(ctx, bulkBook.ID)
+			if !singleGot.LastReadPage.Valid || singleGot.LastReadPage.Int64 != tc.want {
+				t.Errorf("单本端点落库页码 want %d got %+v", tc.want, singleGot.LastReadPage)
+			}
+			if !bulkGot.LastReadPage.Valid || bulkGot.LastReadPage.Int64 != tc.want {
+				t.Errorf("批量端点落库页码 want %d got %+v", tc.want, bulkGot.LastReadPage)
+			}
+			if singleGot.LastReadPage.Int64 != bulkGot.LastReadPage.Int64 {
+				t.Errorf("同一份输入两条端点结果不一致：单本 %d 批量 %d",
+					singleGot.LastReadPage.Int64, bulkGot.LastReadPage.Int64)
+			}
+		})
+	}
+}
+
 // ---- addBookReadingTime：uid==0 空操作 / 秒数封顶 / 缺书优雅 200 / 非法入参 ----
 
 func TestAddBookReadingTimeBehavior(t *testing.T) {

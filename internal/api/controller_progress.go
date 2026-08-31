@@ -94,6 +94,18 @@ type cachedProgressWrite struct {
 	updatedAt time.Time
 }
 
+// clampPageToBook 把用户报上来的页码夹进这本书的合法范围。page_count 为 0 表示页数未知
+// （快速扫描不开归档，首扫即得 0），此时只保证下界，不把页码夹成 1。
+func clampPageToBook(page, pageCount int64) int64 {
+	if page < 1 {
+		return 1
+	}
+	if pageCount > 0 && page > pageCount {
+		return pageCount
+	}
+	return page
+}
+
 func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	bookID, err := parseID(r, "bookId")
@@ -127,13 +139,7 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	validPage := req.Page
-	if validPage > book.PageCount {
-		validPage = book.PageCount
-	}
-	if validPage < 1 {
-		validPage = 1
-	}
+	validPage := clampPageToBook(req.Page, book.PageCount)
 
 	// 取当前用户对本书的既有进度（uid==0 时退回全局 books 列，保持旧行为与既有测试）。
 	previousPage, previousAt := c.bookProgressFor(ctx, uid, book)
@@ -352,13 +358,7 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		validPage := item.Page
-		if validPage <= 0 {
-			validPage = 1
-		}
-		if book.PageCount > 0 && validPage > book.PageCount {
-			validPage = book.PageCount
-		}
+		validPage := clampPageToBook(item.Page, book.PageCount)
 
 		// updated_at 冲突解决：若客户端时间戳 < 数据库 last_read_at，认为本地数据已陈旧，跳过。
 		// 没有 updated_at 时按顺序覆盖（与单本 updateBookProgress 行为一致）。取当前用户的既有进度做冲突解决。
@@ -483,13 +483,7 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusNotFound, "Book not found")
 		return
 	}
-	page := req.Page
-	if page < 1 {
-		page = 1
-	}
-	if book.PageCount > 0 && page > book.PageCount {
-		page = book.PageCount
-	}
+	page := clampPageToBook(req.Page, book.PageCount)
 
 	item, err := c.store.UpsertReadingBookmark(r.Context(), database.UpsertReadingBookmarkParams{
 		UserID: c.currentUserID(r),
