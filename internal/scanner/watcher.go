@@ -187,6 +187,14 @@ func (fw *FileWatcher) handleRemoval(name string) {
 	}
 }
 
+// rescheduleCleanup 把一次清理放回排期，等下一个去抖窗口重新判断。
+// 用于同轮扫描失败时：此时删行有丢数据的风险，宁可让幽灵记录多留一会儿。
+func (fw *FileWatcher) rescheduleCleanup(libID int64) {
+	fw.mu.Lock()
+	fw.pendingCleanup[libID] = time.Now()
+	fw.mu.Unlock()
+}
+
 // Start 启动文件监控事件循环
 func (fw *FileWatcher) Start(publishEvent func(string)) {
 	go func() {
@@ -265,12 +273,22 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 							}
 						}
 						if libPath != "" {
+							// 同一个库若同轮也到期了清理，把它接在这次扫描之后串行跑。改名一本书会产生
+							// Rename(旧名)+Create(新名) 两个事件，分别排期清理与扫描；清理只做 stat，
+							// 比要走完整棵树、末尾才写 RehomeBookPath 的扫描快得多，并发派发时必然抢在
+							// 改名重连之前把旧行当成"文件已消失"删掉，阅读进度、书签、合集归属、阅读清单
+							// 条目随 ON DELETE CASCADE 一起没。
+							cleanupAfterScan := false
+							if cleanupAt, ok := fw.pendingCleanup[libID]; ok && now.Sub(cleanupAt) >= 5*time.Second {
+								delete(fw.pendingCleanup, libID)
+								cleanupAfterScan = true
+							}
 							slog.Info("Hot reload triggered by file watcher", "library_id", libID)
 							if publishEvent != nil {
 								publishEvent("hot_reload:")
 							}
 							fw.inFlight.Add(1)
-							go func(id int64, path string) {
+							go func(id int64, path string, cleanup bool) {
 								defer fw.inFlight.Done()
 								err := fw.runScanLibrary(fw.baseCtx, id, path, false)
 								switch {
@@ -284,11 +302,24 @@ func (fw *FileWatcher) Start(publishEvent func(string)) {
 								case err != nil:
 									slog.Error("Hot reload scan failed", "library_id", id, "error", err)
 								}
-							}(libID, libPath)
+								if !cleanup {
+									return
+								}
+								// 扫描没跑成就不能清理：改名重连可能还没发生，此刻删行就是丢数据。
+								// 重新排期，交给下一个去抖窗口——那时扫描多半已经成功，改名也已重连。
+								if err != nil {
+									fw.rescheduleCleanup(id)
+									return
+								}
+								if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
+									slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
+								}
+							}(libID, libPath, cleanupAfterScan)
 						}
 					}
 				}
-				// 去抖后触发库清理，清除删除/重命名遗留的幽灵记录。CleanupLibrary 自带根目录探测与
+				// 去抖后触发库清理，清除删除/重命名遗留的幽灵记录。走到这里的都是本轮没有扫描要跑的库
+				// ——同轮有扫描的已在上面被取走、接在扫描之后串行。CleanupLibrary 自带根目录探测与
 				// 占比熔断，存储离线时不会误删。
 				for libID, lastChange := range fw.pendingCleanup {
 					if now.Sub(lastChange) >= 5*time.Second {

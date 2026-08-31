@@ -70,12 +70,17 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 		return ctx.Err()
 	}
 
-	const libID int64 = 1
+	// 扫描与清理分属两个库。同一个库的清理如今接在该库扫描之后串行（见
+	// TestCleanupWaitsForSameLibraryScan），而这里要验的是两类派发各自可取消、各自被 Stop
+	// 等待——得让它们同时在途，因此分开两个库。
+	const scanLibID int64 = 1
+	const cleanupLibID int64 = 2
 	past := time.Now().Add(-10 * time.Second) // 已越过 5 秒去抖阈值
 	fw.mu.Lock()
-	fw.libs[filepath.FromSlash("/data/manga")] = libID
-	fw.pending[libID] = past
-	fw.pendingCleanup[libID] = past
+	fw.libs[filepath.FromSlash("/data/manga")] = scanLibID
+	fw.libs[filepath.FromSlash("/data/manga-2")] = cleanupLibID
+	fw.pending[scanLibID] = past
+	fw.pendingCleanup[cleanupLibID] = past
 	fw.mu.Unlock()
 
 	fw.Start(nil)
