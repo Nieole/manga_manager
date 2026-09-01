@@ -397,7 +397,7 @@ export const messages: MessageCatalog = {
     'collections.snapshotPreview.total': '当前命中',
     'collections.snapshotPreview.create': '将创建',
     'collections.snapshotPreview.limit': '上限',
-    'collections.snapshotPreview.nameConflict': '已经存在同名合集。仍可继续创建快照，但它会作为独立合集出现。',
+    'collections.snapshotPreview.nameConflict': '已经存在同名合集，换个名字才能固化——直接提交会被拒绝。',
     'collections.snapshotPreview.truncated': '只会把前 {{count}} 个命中系列复制到这个快照。',
     'collections.snapshotPreview.sample': '预览系列',
     'collections.snapshotPreview.empty': '当前智能合集没有命中系列，无法创建快照。',

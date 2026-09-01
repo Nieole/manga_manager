@@ -177,6 +177,12 @@ export default function Collections() {
     return () => window.clearTimeout(timer);
   }, [selected, showSnapshot, snapshotName, snapshotDesc]);
 
+  // 后端对重名判 409（不区分大小写、且已裁掉首尾空白）。弹窗保持打开，用户改个名字就能重试。
+  const reportSaveError = (err: unknown) => {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    showToast(status === 409 ? t('collections.nameConflict') : getApiErrorMessage(err, t('collections.saveFailed')), 'error');
+  };
+
   const submitSnapshot = () => {
     if (!selected || selected.kind !== 'smart' || !snapshotName.trim()) return;
     if (snapshotPreview && snapshotPreview.snapshot_count <= 0) return;
@@ -186,13 +192,7 @@ export default function Collections() {
     }).then(() => {
       setShowSnapshot(false);
       fetchCollections();
-    });
-  };
-
-  // 后端对重名判 409（不区分大小写、且已裁掉首尾空白）。弹窗保持打开，用户改个名字就能重试。
-  const reportSaveError = (err: unknown) => {
-    const status = (err as { response?: { status?: number } })?.response?.status;
-    showToast(status === 409 ? t('collections.nameConflict') : getApiErrorMessage(err, t('collections.saveFailed')), 'error');
+    }).catch(reportSaveError);
   };
 
   const handleCreate = () => {

@@ -42,7 +42,7 @@ type CollectionSeriesItem struct {
 const franchiseCollectionSourceType = "system_franchise"
 
 // errCollectionNameTaken 表示事务内查到了同名合集。它只在事务里产生——事务外的查重直接用
-// collectionNameExists——由建号与 AI 分组应用两条写入路径共用，一律转成 409。
+// collectionNameExists——由建号、智能书架固化与 AI 分组应用三条写入路径共用，一律转成 409。
 var errCollectionNameTaken = errors.New("collection name already exists")
 
 // derivedCollectionSourceType 判断这个来源的合集是否「推导出来、由重建流程持有」。

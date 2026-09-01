@@ -404,7 +404,7 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		name = filter.Name
+		name = strings.TrimSpace(filter.Name)
 	}
 	description := strings.TrimSpace(req.Description)
 	if description == "" {
@@ -423,18 +423,18 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// 重名校验：写入前必须再次检查并拦下 name_conflict，不能只在 preview 端点提示——
-	// 否则用户可能明知冲突仍确认提交，得到两个同名合集，列表里根本分不清哪个是哪个。
-	if conflict, err := c.collectionNameExists(r.Context(), name); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to check collection name")
-		return
-	} else if conflict {
-		jsonError(w, http.StatusConflict, "A collection with this name already exists")
-		return
-	}
-
+	// 重名校验落在事务内，与建号、AI 分组应用同口径：preview 端点那份提示只是建议性的，
+	// 用户可能明知冲突仍确认提交，得到两个同名合集，列表里根本分不清哪个是哪个。
+	// store 的 DSN 带 _txlock=immediate，BeginTx 即取写锁，并发的固化与建号因此被串行化；
+	// collections.name 上没有唯一约束兜底，这道串行化就是这条不变量在固化入口的全部保障。
 	var createdID int64
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
+		switch _, err := q.CollectionNameExists(r.Context(), name); {
+		case err == nil:
+			return errCollectionNameTaken
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
 		created, err := q.CreateCollection(r.Context(), database.CreateCollectionParams{
 			Name:           name,
 			Description:    sql.NullString{String: description, Valid: description != ""},
@@ -458,6 +458,10 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 		createdID = created.ID
 		return nil
 	})
+	if errors.Is(err, errCollectionNameTaken) {
+		jsonError(w, http.StatusConflict, "A collection with this name already exists")
+		return
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to snapshot smart collection")
 		return

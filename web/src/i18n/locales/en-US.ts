@@ -397,7 +397,7 @@ export const messages: MessageCatalog = {
     'collections.snapshotPreview.total': 'Matched',
     'collections.snapshotPreview.create': 'Will create',
     'collections.snapshotPreview.limit': 'Limit',
-    'collections.snapshotPreview.nameConflict': 'A collection with this name already exists. The snapshot can still be created, but it will appear as a separate collection.',
+    'collections.snapshotPreview.nameConflict': 'A collection with this name already exists. Pick another name: submitting as is will be rejected.',
     'collections.snapshotPreview.truncated': 'Only the first {{count}} matched series will be copied into this snapshot.',
     'collections.snapshotPreview.sample': 'Preview series',
     'collections.snapshotPreview.empty': 'This smart collection currently has no matching series, so it cannot be snapshotted.',
