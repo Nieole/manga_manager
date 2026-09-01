@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   cacheBookForOffline,
+  deleteAllOfflineBooks,
   deleteOfflineBook,
   listOfflineBooks,
   reconcileOfflineOwner,
@@ -83,6 +84,23 @@ function interruptFetch(at: number, interrupt: () => Promise<void> | void) {
     if (seen === at) await interrupt();
     return { ok: true, status: 200, clone: () => ({}) } as unknown as Response;
   });
+}
+
+// interruptCacheKeys 让 cache.keys() 在第 at 次调用返回前插入一次并发操作，且只插一次。
+// 收尾阶段的两次 keys 分别是清扫旧键与读回状态，把删除放进这两段 await 里，作废窗口就是
+// 确定性的，不必靠计时赛跑；只插一次也让并发操作自己调 keys 时不至于递归回来。
+function interruptCacheKeys(at: number, interrupt: () => Promise<void> | void) {
+  const original = cache.keys.bind(cache);
+  let seen = 0;
+  let fired = false;
+  cache.keys = async () => {
+    seen += 1;
+    if (seen === at && !fired) {
+      fired = true;
+      await interrupt();
+    }
+    return original();
+  };
 }
 
 const OPTIONS = {
@@ -261,5 +279,80 @@ describe('改画质重下同一本书', () => {
 
     expect(status?.cachedPages).toBe(5);
     expect(pageKeys().some((url) => url.includes('?'))).toBe(false);
+  });
+});
+
+describe('收尾阶段的作废窗口', () => {
+  // 复现：收尾先清扫旧键（一整段 await），再无条件把索引写回去。用户在这段 await 里删掉
+  // 这本书，那句写回就把整条记录连同 urls 与令牌一起复活——字节已经被清掉了，
+  // 书架上于是留下一本看着已下好、点开却读不到的僵尸书。
+  it('清扫旧键期间删除这本书，索引里不复活', async () => {
+    stubFetch(Infinity);
+    interruptCacheKeys(1, () => deleteOfflineBook('42'));
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}')).toEqual({});
+    expect(await listOfflineBooks()).toEqual([]);
+    expect(status).toBeNull();
+    expect(cache.entries.size).toBe(0);
+  });
+
+  // 清空全部同样落在这个窗口里：deleteAllOfflineBooks 把索引写成 {} 之后，
+  // 收尾那句照样往里塞回一条。
+  it('清扫旧键期间清空全部离线书，索引里同样不复活', async () => {
+    stubFetch(Infinity);
+    interruptCacheKeys(1, () => deleteAllOfflineBooks());
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}')).toEqual({});
+    expect(status).toBeNull();
+    expect(cache.entries.size).toBe(0);
+  });
+
+  // 写回之后还有一段 await：读回状态。这中间被删掉的话，索引里已经没有这本书了，
+  // 再把状态交出去，阅读器就会照它把这本书显示成还在本机。
+  it('读回状态期间删除这本书，不把它报成一本还在本机的书', async () => {
+    stubFetch(Infinity);
+    interruptCacheKeys(2, () => deleteOfflineBook('42'));
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(status).toBeNull();
+    expect(JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}')).toEqual({});
+  });
+
+  // 清扫本身也在窗口里：它按本次下载的键列表保留、删掉这本书名下的其余键。但页图的缓存键
+  // 经 pageImageCacheKey 去掉了 query，而画质、格式、滤镜、自动裁切全都只落在 query 上
+  // （见 getImageUrlForBook），所以换个画质重下同一本书得到的是同一批键——被作废的那次
+  // 清扫保留的正是新下载写下的那些，挖不走新下载的页。
+  it('清扫不会挖走并发重下（换画质）刚写下的页', async () => {
+    stubFetch(Infinity);
+    interruptCacheKeys(1, async () => {
+      await deleteOfflineBook('42');
+      await cacheBookForOffline(WEBP_OPTIONS);
+    });
+
+    const stale = await cacheBookForOffline(OPTIONS);
+
+    expect(stale).toBeNull();
+    const stored = JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}');
+    expect(stored['42'].imageProfile).toBe('WEBP 80');
+    expect((await listOfflineBooks())[0].cachedPages).toBe(5);
+    expect(cache.entries.size).toBe(8);
+  });
+
+  // 反向判据：没有并发删除时，收尾照旧把计数补齐，书完整地落库并出现在书架上。
+  it('没有并发删除时收尾照常落库，书完整地出现在书架上', async () => {
+    stubFetch(Infinity);
+
+    const status = await cacheBookForOffline(OPTIONS);
+
+    expect(status?.cachedPages).toBe(5);
+    const stored = JSON.parse(localStorage.getItem(BOOKS_KEY) || '{}');
+    expect(stored['42'].cachedPages).toBe(5);
+    expect(stored['42'].urls).toHaveLength(8);
+    expect((await listOfflineBooks()).map((b) => b.bookId)).toEqual(['42']);
   });
 });

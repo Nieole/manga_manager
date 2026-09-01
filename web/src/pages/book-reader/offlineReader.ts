@@ -240,8 +240,8 @@ async function abandonDownload(cache: Cache, bookId: string, writtenKeys: string
   await Promise.all(writtenKeys.filter((key) => !claimed.has(key)).map((key) => cache.delete(key)));
 }
 
-// cacheBookForOffline 把一本书整份下载到离线缓存。返回 null 表示这次下载在收尾前已被作废
-// （删除、换用户或另一次下载接管），调用方应当据此认为这本书不在本机，而不是把它显示成已缓存。
+// cacheBookForOffline 把一本书整份下载到离线缓存。返回 null 表示这次下载在收尾完成前已被
+// 作废（删除、换用户或另一次下载接管），调用方应当据此认为这本书不在本机，而不是显示成已缓存。
 export async function cacheBookForOffline({
   bookId,
   title,
@@ -327,18 +327,28 @@ export async function cacheBookForOffline({
   await pruneStaleBookEntries(cache, bookId, new Set(cacheKeys));
 
   // 全部落盘后把计数补齐（cachedAt 沿用开始时刻，离线书架按它排序）。
+  //
+  // 改的必须是**当前索引里仍带着自己令牌的那条**，而不是整条 pendingMeta 覆盖回去：
+  // 上面那段清扫是一整段 await，用户在里面删掉这本书或清空全部，光靠再补一次归属检查
+  // 也挡不住——检查与写回之间还隔着一次 readBookMeta。读、判、写连成一段没有 await 的
+  // 同步动作才没有窗口，否则删掉的书会连同 urls 与令牌一起复活成一本读不了的僵尸书。
   const allMeta = readBookMeta();
-  allMeta[bookId] = { ...pendingMeta[bookId], cachedPages };
+  const owned = allMeta[bookId];
+  if (owned?.downloadToken !== token) {
+    await abandonDownload(cache, bookId, written);
+    return null;
+  }
+  allMeta[bookId] = { ...owned, cachedPages };
   writeBookMeta(allMeta);
 
-  return await getOfflineBookStatus(bookId) ?? {
-    bookId,
-    title,
-    pageCount: pages.length,
-    cachedPages,
-    cachedAt: startedAt,
-    imageProfile,
-  };
+  // 读回状态同样横跨一段 await。这中间被作废就不能再交出状态——调用方会照它把这本书
+  // 显示成还在本机，而索引里已经没有它了。
+  const status = await getOfflineBookStatus(bookId);
+  if (!status || !stillOwnsDownload(bookId, token)) {
+    await abandonDownload(cache, bookId, written);
+    return null;
+  }
+  return status;
 }
 
 async function pruneStaleBookEntries(cache: Cache, bookId: string, keep: Set<string>) {
