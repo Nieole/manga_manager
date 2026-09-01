@@ -5584,7 +5584,7 @@ func (q *Queries) RehomeBookPath(ctx context.Context, arg RehomeBookPathParams) 
 	return result.RowsAffected()
 }
 
-const removeReadingListItem = `-- name: RemoveReadingListItem :exec
+const removeReadingListItem = `-- name: RemoveReadingListItem :execrows
 DELETE FROM reading_list_items WHERE reading_list_id = ? AND id = ?
 `
 
@@ -5593,9 +5593,14 @@ type RemoveReadingListItemParams struct {
 	ID            int64 `json:"id"`
 }
 
-func (q *Queries) RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error {
-	_, err := q.db.ExecContext(ctx, removeReadingListItem, arg.ReadingListID, arg.ID)
-	return err
+// Reports affected rows: 0 means the item id is not in this list, which the caller
+// turns into 404 rather than claiming a delete that never happened.
+func (q *Queries) RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, removeReadingListItem, arg.ReadingListID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const removeSeriesFromCollection = `-- name: RemoveSeriesFromCollection :execrows
@@ -5860,7 +5865,7 @@ func (q *Queries) UpdateReadingList(ctx context.Context, arg UpdateReadingListPa
 	return i, err
 }
 
-const updateReadingListItemSortOrder = `-- name: UpdateReadingListItemSortOrder :exec
+const updateReadingListItemSortOrder = `-- name: UpdateReadingListItemSortOrder :execrows
 UPDATE reading_list_items
 SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
 WHERE reading_list_id = ? AND id = ?
@@ -5872,9 +5877,14 @@ type UpdateReadingListItemSortOrderParams struct {
 	ID            int64 `json:"id"`
 }
 
-func (q *Queries) UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) error {
-	_, err := q.db.ExecContext(ctx, updateReadingListItemSortOrder, arg.SortOrder, arg.ReadingListID, arg.ID)
-	return err
+// Reports affected rows: 0 means the item id is not in this list, so the caller can
+// roll the whole reorder back instead of storing a half-applied order.
+func (q *Queries) UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateReadingListItemSortOrder, arg.SortOrder, arg.ReadingListID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateSeriesFavorite = `-- name: UpdateSeriesFavorite :exec

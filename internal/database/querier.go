@@ -174,7 +174,9 @@ type Querier interface {
 	RefreshSeriesCover(ctx context.Context, id int64) error
 	RefreshSeriesStats(ctx context.Context, id int64) error
 	RehomeBookPath(ctx context.Context, arg RehomeBookPathParams) (int64, error)
-	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) error
+	// Reports affected rows: 0 means the item id is not in this list, which the caller
+	// turns into 404 rather than claiming a delete that never happened.
+	RemoveReadingListItem(ctx context.Context, arg RemoveReadingListItemParams) (int64, error)
 	RemoveSeriesFromCollection(ctx context.Context, arg RemoveSeriesFromCollectionParams) (int64, error)
 	ResolvePendingMetadataReview(ctx context.Context, arg ResolvePendingMetadataReviewParams) (int64, error)
 	SeriesExistsByID(ctx context.Context, id int64) (int64, error)
@@ -186,7 +188,9 @@ type Querier interface {
 	UpdateCollectionDetails(ctx context.Context, arg UpdateCollectionDetailsParams) error
 	UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (Library, error)
 	UpdateReadingList(ctx context.Context, arg UpdateReadingListParams) (ReadingList, error)
-	UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) error
+	// Reports affected rows: 0 means the item id is not in this list, so the caller can
+	// roll the whole reorder back instead of storing a half-applied order.
+	UpdateReadingListItemSortOrder(ctx context.Context, arg UpdateReadingListItemSortOrderParams) (int64, error)
 	UpdateSeriesFavorite(ctx context.Context, arg UpdateSeriesFavoriteParams) error
 	UpdateSeriesInitial(ctx context.Context, arg UpdateSeriesInitialParams) error
 	UpdateSeriesMetadata(ctx context.Context, arg UpdateSeriesMetadataParams) (Series, error)

@@ -169,3 +169,161 @@ func TestReadingListValidation(t *testing.T) {
 func jsonBody(raw string) *strings.Reader {
 	return strings.NewReader(raw)
 }
+
+// TestReadingListMissingTargetReturnsNotFound 锁定「目标不存在」在增/删/排三个入口的同一口径：
+// 一律 404，而不是 500（把客户端传错的 id 当成服务端故障）或 200（谎称改动已保存）。
+func TestReadingListMissingTargetReturnsNotFound(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	list, err := store.CreateReadingList(context.Background(), database.CreateReadingListParams{Name: "Order", Description: ""})
+	if err != nil {
+		t.Fatalf("CreateReadingList failed: %v", err)
+	}
+	other, err := store.CreateReadingList(context.Background(), database.CreateReadingListParams{Name: "Other", Description: ""})
+	if err != nil {
+		t.Fatalf("CreateReadingList other failed: %v", err)
+	}
+	otherItem, err := store.AddReadingListItem(context.Background(), database.AddReadingListItemParams{
+		ReadingListID: other.ID,
+		SeriesID:      series.ID,
+		Note:          "",
+	})
+	if err != nil {
+		t.Fatalf("AddReadingListItem failed: %v", err)
+	}
+
+	t.Run("清单不存在时新增条目返回 404 而不是外键兜底的 500", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/999999/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "listId", "999999"))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected missing list 404, got %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("删除不存在的条目返回 404 而不是谎称删除成功", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/999999", nil, map[string]string{
+			"listId": strconv.FormatInt(list.ID, 10),
+			"itemId": "999999",
+		}))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected missing item 404, got %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("删除别的清单的条目返回 404 且不误删", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
+			"listId": strconv.FormatInt(list.ID, 10),
+			"itemId": strconv.FormatInt(otherItem.ID, 10),
+		}))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected cross-list remove 404, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		remaining, err := store.ListReadingListItems(context.Background(), other.ID)
+		if err != nil {
+			t.Fatalf("ListReadingListItems failed: %v", err)
+		}
+		if len(remaining) != 1 {
+			t.Fatalf("expected other list untouched, got %+v", remaining)
+		}
+	})
+
+	t.Run("重排混进不属于本清单的条目返回 404 且整批回滚", func(t *testing.T) {
+		mine, err := store.AddReadingListItem(context.Background(), database.AddReadingListItemParams{
+			ReadingListID: list.ID,
+			SeriesID:      series.ID,
+			Note:          "",
+		})
+		if err != nil {
+			t.Fatalf("AddReadingListItem mine failed: %v", err)
+		}
+		before := readingListItemSortOrder(t, store, list.ID, mine.ID)
+		rec := httptest.NewRecorder()
+		body := []byte(`{"item_ids":[` + strconv.FormatInt(otherItem.ID, 10) + `,` + strconv.FormatInt(mine.ID, 10) + `]}`)
+		controller.reorderReadingListItems(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", body, "listId", strconv.FormatInt(list.ID, 10)))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected foreign item 404, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		if after := readingListItemSortOrder(t, store, list.ID, mine.ID); after != before {
+			t.Fatalf("expected rollback to keep sort_order %d, got %d", before, after)
+		}
+	})
+}
+
+// TestReadingListNormalItemFlowStillWorks 是上面那组 404 口径的反向判据：合法的增、删、
+// 以及只覆盖清单一部分条目的重排（并发新增会让前端手里的快照少一条）都必须照常成功。
+func TestReadingListNormalItemFlowStillWorks(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	_, seriesA, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+	_, seriesB, _ := seedBookFixture(t, store, rootDir, "Library B", "Series Beta", "Beta 01.cbz", 10)
+	_, seriesC, _ := seedBookFixture(t, store, rootDir, "Library C", "Series Gamma", "Gamma 01.cbz", 8)
+	list, err := store.CreateReadingList(context.Background(), database.CreateReadingListParams{Name: "Order", Description: ""})
+	if err != nil {
+		t.Fatalf("CreateReadingList failed: %v", err)
+	}
+
+	added := make([]database.ReadingListItem, 0, 3)
+	for _, series := range []database.Series{seriesA, seriesB, seriesC} {
+		rec := httptest.NewRecorder()
+		controller.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "listId", strconv.FormatInt(list.ID, 10)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected add 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		var item database.ReadingListItem
+		if err := json.NewDecoder(rec.Body).Decode(&item); err != nil {
+			t.Fatalf("decode added item failed: %v", err)
+		}
+		added = append(added, item)
+	}
+
+	t.Run("只重排前两条时未送到的条目保留原序", func(t *testing.T) {
+		untouched := readingListItemSortOrder(t, store, list.ID, added[2].ID)
+		rec := httptest.NewRecorder()
+		body := []byte(`{"item_ids":[` + strconv.FormatInt(added[1].ID, 10) + `,` + strconv.FormatInt(added[0].ID, 10) + `]}`)
+		controller.reorderReadingListItems(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", body, "listId", strconv.FormatInt(list.ID, 10)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected partial reorder 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := readingListItemSortOrder(t, store, list.ID, added[1].ID); got != 10 {
+			t.Fatalf("expected first submitted item sort_order 10, got %d", got)
+		}
+		if got := readingListItemSortOrder(t, store, list.ID, added[2].ID); got != untouched {
+			t.Fatalf("expected untouched item to keep sort_order %d, got %d", untouched, got)
+		}
+	})
+
+	t.Run("删除本清单里真实存在的条目仍返回 200", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		controller.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
+			"listId": strconv.FormatInt(list.ID, 10),
+			"itemId": strconv.FormatInt(added[0].ID, 10),
+		}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected remove 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+		items, err := store.ListReadingListItems(context.Background(), list.ID)
+		if err != nil {
+			t.Fatalf("ListReadingListItems failed: %v", err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("expected two remaining items, got %+v", items)
+		}
+	})
+}
+
+// readingListItemSortOrder 取一条阅读列表条目当前的 sort_order，供重排回滚断言比对。
+func readingListItemSortOrder(t *testing.T, store database.Store, listID, itemID int64) int64 {
+	t.Helper()
+	items, err := store.ListReadingListItems(context.Background(), listID)
+	if err != nil {
+		t.Fatalf("ListReadingListItems failed: %v", err)
+	}
+	for _, item := range items {
+		if item.ID == itemID {
+			return item.SortOrder
+		}
+	}
+	t.Fatalf("reading list item %d not found in list %d", itemID, listID)
+	return 0
+}

@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiClient, isCancel } from '../api/client';
+import { apiClient, getApiErrorMessage, isCancel } from '../api/client';
 import { ArrowDown, ArrowUp, BookOpen, ListOrdered, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalTextareaClass } from '../components/ui/modalStyles';
 import { useAuth } from '../auth/AuthProvider';
 import { useI18n } from '../i18n/LocaleProvider';
+import { useToast } from '../components/ToastProvider';
 import type { SearchHit } from '../components/layout/types';
 
 interface ReadingList {
@@ -33,6 +34,7 @@ interface ReadingListItem {
 
 export default function ReadingLists() {
   const { t } = useI18n();
+  const { showToast } = useToast();
   // 阅读清单是站点级数据（表里没有 user_id），增删改与排序在后端一律要管理员；浏览与「继续阅读」
   // 是读操作，普通用户照旧。
   const { isAdmin } = useAuth();
@@ -154,25 +156,38 @@ export default function ReadingLists() {
     }).then((res) => {
       setItems(res.data || []);
       loadLists();
+    }).catch((error) => {
+      showToast(getApiErrorMessage(error, t('readingLists.toast.addFailed')), 'error');
     });
   };
 
+  // 后端对「条目不在这个清单里」返回 404，所以这里不能再无条件把它从列表里划掉：
+  // 划掉再刷新它又回来，正是要修的那种「时灵时不灵」。失败时留在原位并报错。
   const removeItem = (item: ReadingListItem) => {
     if (!selected) return;
     apiClient.delete(`/api/reading-lists/${selected.id}/items/${item.id}`).then(() => {
       setItems((prev) => prev.filter((entry) => entry.id !== item.id));
       loadLists();
+    }).catch((error) => {
+      showToast(getApiErrorMessage(error, t('readingLists.toast.removeFailed')), 'error');
     });
   };
 
+  // 乐观换位后若后端整批回滚（列表里混进了别的清单的条目），必须把顺序退回去，
+  // 否则界面显示的是一个没存下来的排序。
   const reorder = (index: number, direction: -1 | 1) => {
     if (!selected) return;
     const nextIndex = index + direction;
     if (nextIndex < 0 || nextIndex >= items.length) return;
+    const previous = items;
     const next = [...items];
     [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
     setItems(next);
-    apiClient.post(`/api/reading-lists/${selected.id}/items/reorder`, { item_ids: next.map((item) => item.id) });
+    apiClient.post(`/api/reading-lists/${selected.id}/items/reorder`, { item_ids: next.map((item) => item.id) })
+      .catch((error) => {
+        setItems(previous);
+        showToast(getApiErrorMessage(error, t('readingLists.toast.reorderFailed')), 'error');
+      });
   };
 
   if (loading) {

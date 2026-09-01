@@ -1053,10 +1053,14 @@ ON CONFLICT(reading_list_id, series_id) DO UPDATE SET
     updated_at = CURRENT_TIMESTAMP
 RETURNING *;
 
--- name: RemoveReadingListItem :exec
+-- Reports affected rows: 0 means the item id is not in this list, which the caller
+-- turns into 404 rather than claiming a delete that never happened.
+-- name: RemoveReadingListItem :execrows
 DELETE FROM reading_list_items WHERE reading_list_id = ? AND id = ?;
 
--- name: UpdateReadingListItemSortOrder :exec
+-- Reports affected rows: 0 means the item id is not in this list, so the caller can
+-- roll the whole reorder back instead of storing a half-applied order.
+-- name: UpdateReadingListItemSortOrder :execrows
 UPDATE reading_list_items
 SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
 WHERE reading_list_id = ? AND id = ?;
