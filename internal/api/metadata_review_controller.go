@@ -194,16 +194,24 @@ func metadataReviewInboxRowToView(row database.ListPendingMetadataReviewInboxRow
 		AppliedAt:   row.AppliedAt,
 		RejectedAt:  row.RejectedAt,
 	}
-	return metadataReviewInboxItemView{
+	view := metadataReviewInboxItemView{
 		metadataReviewView: metadataReviewToView(review, fields),
 		LibraryID:          row.LibraryID,
 		LibraryName:        row.LibraryName,
 		SeriesName:         row.SeriesName,
 		SeriesTitle:        row.SeriesTitle,
 		CoverBookID:        row.CoverBookID,
-		FieldCount:         row.FieldCount,
-		LockedFieldCount:   row.LockedFieldCount,
 	}
+	// 两个计数都数眼前这批字段视图，不另取一份：列表的徽章与展开后 diff 面板上的锁标记
+	// 出自同一个响应体，各算各的就会自相矛盾——徽章恒为 0，用户事前看不出哪些提案有锁，
+	// 批量应用后才收到一串 locked_skipped。
+	view.FieldCount = int64(len(view.Fields))
+	for _, field := range view.Fields {
+		if field.Locked {
+			view.LockedFieldCount++
+		}
+	}
+	return view
 }
 
 func provenanceToView(row database.SeriesMetadataProvenance) metadataProvenanceView {

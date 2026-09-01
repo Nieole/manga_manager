@@ -391,6 +391,10 @@ WHERE mr.status = 'pending'
   );
 
 -- name: ListPendingMetadataReviewInbox :many
+-- Field tallies are NOT computed here: a proposal's lock state follows the series'
+-- current locked_fields (carried out as series_locked_fields), not the per-row
+-- snapshot, so the badge counts are derived in Go from the same fields the diff
+-- panel renders.
 SELECT
     mr.id,
     mr.series_id,
@@ -417,9 +421,7 @@ SELECT
         WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
         ORDER BY b.sort_number, b.name
         LIMIT 1
-    ), 0) AS INTEGER) as cover_book_id,
-    CAST((SELECT COUNT(*) FROM metadata_review_fields f WHERE f.review_id = mr.id) AS INTEGER) as field_count,
-    CAST((SELECT COUNT(*) FROM metadata_review_fields f WHERE f.review_id = mr.id AND f.locked = TRUE) AS INTEGER) as locked_field_count
+    ), 0) AS INTEGER) as cover_book_id
 FROM metadata_reviews mr
 JOIN series s ON s.id = mr.series_id
 JOIN libraries l ON l.id = s.library_id

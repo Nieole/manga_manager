@@ -1,13 +1,13 @@
-// 本文件守锁定字段在 api 侧的两处传输语义：单条应用全被锁时的响应形状，
-// 以及模块算好的锁定标志确实落到了系列详情的响应里。
+// 本文件守锁定字段在 api 侧的传输语义：单条应用全被锁时的响应形状、锁定标志落到系列详情
+// 的响应里、收件箱的徽章数与同一响应里的锁标记数一致——三处错的后果一样，用户看不出某个
+// 字段写不进去，点了应用才被静默丢弃。
 //
-// 锁徽章没送到前端，用户会以为某个字段能被应用，点下去却被静默丢弃。
-// 「锁定标志按当前锁定集算」这条规则本身、应用时按锁过滤、入队侧对锁的处置，
-// 都归 internal/proposal 的用例。
+// 规则本身、应用时按锁过滤、入队侧对锁的处置，都归 internal/proposal 的用例。
 
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -117,4 +117,108 @@ func TestReviewViewCarriesLockBadgeToResponse(t *testing.T) {
 	if !found {
 		t.Fatal("待裁决字段里找不到 publisher")
 	}
+}
+
+// inboxPage 取一页收件箱，并按真实响应体解码——徽章数与锁标记必须出自同一份 JSON。
+func inboxPage(t *testing.T, controller *Controller) metadataReviewInboxResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	controller.listMetadataReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/inbox", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("收件箱 HTTP %d：%s", rec.Code, rec.Body.String())
+	}
+	var page metadataReviewInboxResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("解析收件箱响应: %v", err)
+	}
+	return page
+}
+
+// lockedBadges 数 diff 面板上会画出锁标记的字段。
+func lockedBadges(fields []metadataReviewFieldView) int64 {
+	var count int64
+	for _, field := range fields {
+		if field.Locked {
+			count++
+		}
+	}
+	return count
+}
+
+// seedInboxProposal 建一个系列、入队一条七字段提案，随后按 lock 加锁（空串即不加锁）。
+func seedInboxProposal(t *testing.T, controller *Controller, store database.Store, lock string) database.MetadataReview {
+	t.Helper()
+	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series Alpha", "a.cbz", 10)
+	queued, err := controller.proposals.Queue(context.Background(), series, fullScrapeResult(), "bangumi", "Alpha", proposal.QueueOptions{})
+	if err != nil || queued.Status != proposal.QueueQueued {
+		t.Fatalf("入队：status=%q err=%v", queued.Status, err)
+	}
+	if lock != "" {
+		// 入队之后才加锁：字段行上的快照仍是 false。
+		lockSeriesFields(t, store, series.ID, lock)
+	}
+	return queued.Proposal
+}
+
+// TestInboxLockedFieldCountMatchesLockBadges：收件箱徽章的数与同一响应里的锁标记数一致。
+//
+// 两个数出自同一个响应体却各算各的，用户在列表上看不出哪些提案有锁，批量应用后收到一串
+// locked_skipped，事前完全无从预判。
+func TestInboxLockedFieldCountMatchesLockBadges(t *testing.T) {
+	t.Run("入队后新增的锁也算进徽章", func(t *testing.T) {
+		controller, store, _, _ := newTestController(t)
+		seedInboxProposal(t, controller, store, "publisher,summary")
+
+		page := inboxPage(t, controller)
+		if len(page.Items) != 1 {
+			t.Fatalf("收件箱有 %d 条，期望 1 条", len(page.Items))
+		}
+		item := page.Items[0]
+		if badges := lockedBadges(item.Fields); item.LockedFieldCount != badges {
+			t.Errorf("徽章数 locked_field_count=%d，同一响应里的锁标记有 %d 个 —— "+
+				"列表看不出这条提案里有被锁的字段", item.LockedFieldCount, badges)
+		}
+		if item.LockedFieldCount != 2 {
+			t.Errorf("locked_field_count=%d，期望 2（publisher 与 summary）", item.LockedFieldCount)
+		}
+	})
+
+	t.Run("无锁定字段时徽章不出现", func(t *testing.T) {
+		controller, store, _, _ := newTestController(t)
+		seedInboxProposal(t, controller, store, "")
+
+		item := inboxPage(t, controller).Items[0]
+		if item.LockedFieldCount != 0 {
+			t.Errorf("locked_field_count=%d，期望 0 —— 没有锁的提案不该挂琥珀色徽章", item.LockedFieldCount)
+		}
+		if badges := lockedBadges(item.Fields); badges != 0 {
+			t.Errorf("diff 面板画了 %d 个锁标记，期望 0", badges)
+		}
+	})
+
+	t.Run("批量应用的 locked_skipped 与事前显示的数对得上", func(t *testing.T) {
+		controller, store, _, _ := newTestController(t)
+		review := seedInboxProposal(t, controller, store, "title,summary,publisher,status,rating,tags,authors")
+
+		item := inboxPage(t, controller).Items[0]
+		if item.LockedFieldCount != item.FieldCount {
+			t.Fatalf("locked_field_count=%d、field_count=%d，全锁的提案两者应当相等 —— "+
+				"用户事前看不出这条提案一个字段也写不进去", item.LockedFieldCount, item.FieldCount)
+		}
+
+		body, _ := json.Marshal(metadataReviewBulkRequest{ReviewIDs: []int64{review.ID}, Mode: "all"})
+		rec := httptest.NewRecorder()
+		controller.bulkApplyMetadataReviews(rec, httptest.NewRequest(http.MethodPost, "/bulk-apply", bytes.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("批量应用 HTTP %d：%s", rec.Code, rec.Body.String())
+		}
+		var resp metadataReviewBulkResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("解析批量应用响应: %v", err)
+		}
+		if len(resp.Skipped) != 1 || resp.Skipped[0] != review.ID {
+			t.Fatalf("skipped=%v，期望只有提案 %d —— 事前的徽章数预示的正是这个结果",
+				resp.Skipped, review.ID)
+		}
+	})
 }

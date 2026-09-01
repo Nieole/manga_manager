@@ -140,6 +140,10 @@ type Querier interface {
 	ListMihonSeriesByBooks(ctx context.Context, arg ListMihonSeriesByBooksParams) ([]ListMihonSeriesByBooksRow, error)
 	ListMihonSeriesByUpdated(ctx context.Context, arg ListMihonSeriesByUpdatedParams) ([]ListMihonSeriesByUpdatedRow, error)
 	ListOPDSLibrarySeriesPaged(ctx context.Context, arg ListOPDSLibrarySeriesPagedParams) ([]ListOPDSLibrarySeriesPagedRow, error)
+	// Field tallies are NOT computed here: a proposal's lock state follows the series'
+	// current locked_fields (carried out as series_locked_fields), not the per-row
+	// snapshot, so the badge counts are derived in Go from the same fields the diff
+	// panel renders.
 	ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error)
 	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error)
 	ListReadingBookmarks(ctx context.Context, arg ListReadingBookmarksParams) ([]ReadingBookmark, error)

@@ -265,6 +265,9 @@ CREATE TABLE IF NOT EXISTS metadata_review_fields (
     confidence REAL NOT NULL DEFAULT 0,
     source TEXT NOT NULL DEFAULT '',
     source_url TEXT NOT NULL DEFAULT '',
+    -- 入队那一刻的锁定快照，只留历史行的 TRUE：锁归用户，锁定字段根本不入队，
+    -- 新行因此恒为 FALSE。别拿它数「这条提案有几个锁定字段」——那要按系列的
+    -- 当前 series.locked_fields 算，口径在 internal/proposal 的 Field.Locked。
     locked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
