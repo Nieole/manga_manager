@@ -18,6 +18,8 @@ import { useSeriesEdit } from './useSeriesEdit';
 let serverSummary = new Map<number, string>();
 // 服务端此刻的元数据版本，随内容一起变。
 let serverVersion = new Map<number, string>();
+// 这些系列的上下文里没有元数据版本：详情载入降级、旧后端、将来某个新入口忘了带都是这个形状。
+let versionMissing = new Set<number>();
 
 function contextOf(seriesId: number): SeriesContextResponse {
   return {
@@ -35,7 +37,7 @@ function contextOf(seriesId: number): SeriesContextResponse {
     tags: [{ id: seriesId, name: `标签${seriesId}` }],
     authors: [{ id: seriesId, name: `作者${seriesId}`, role: 'author' }],
     links: [],
-    metadata_version: serverVersion.get(seriesId) ?? `v1-${seriesId}`,
+    metadata_version: versionMissing.has(seriesId) ? undefined : (serverVersion.get(seriesId) ?? `v1-${seriesId}`),
   };
 }
 
@@ -78,6 +80,7 @@ function renderEditor(seriesId: string, showToast: (message: string, level: 'suc
 beforeEach(() => {
   serverSummary = new Map();
   serverVersion = new Map();
+  versionMissing = new Set();
   mockGet();
 });
 
@@ -237,6 +240,34 @@ describe('useSeriesEdit 并发保存', () => {
     expect(put.mock.calls[1][1]).toMatchObject({ expected_version: 'v2-1', summary: '我写的简介' });
     expect(result.current.edit.isEditing).toBe(false);
     expect(result.current.edit.hasConflict).toBe(false);
+  });
+
+  it('拿不到元数据版本时不保存，请求根本不发出去', async () => {
+    // 带空版本发出去，服务端就跳过并发校验、后写的静默覆盖先写的，界面上那句「有人改过了」
+    // 再也不会出现——用户以为自己受着保护。拿不到版本就不让存，把失效摆到明面上。
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never);
+    const showToast = vi.fn();
+    versionMissing.add(1);
+    const { result } = renderEditor('1', showToast);
+    await flush();
+
+    act(() => {
+      result.current.edit.setIsEditing(true);
+    });
+    await flush();
+    act(() => {
+      result.current.edit.onFormChange('summary', '我写的简介');
+    });
+
+    await act(async () => {
+      await result.current.edit.save();
+    });
+
+    expect(put).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith('series.toast.saveNoVersion', 'error');
+    // 保存没成功，编辑态与用户敲进去的内容都得留着。
+    expect(result.current.edit.isEditing).toBe(true);
+    expect(result.current.edit.editForm.summary?.String).toBe('我写的简介');
   });
 
   it('没人插队时保存照常成功，不留冲突态', async () => {

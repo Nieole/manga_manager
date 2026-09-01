@@ -274,8 +274,11 @@ type UpdateSeriesRequest struct {
 	// ExpectedVersion 是用户开始编辑时手里那份元数据的版本（见 seriesMetadataVersion）。
 	// 服务端此刻的版本与它不符，说明编辑期间有别的途径写过这个系列，保存被拒而不是照写不误——
 	// 这份请求是「先清空再重建」的全量替换，照写会把别人新加的标签、作者、链接整批抹掉。
-	// 留空表示调用方不参与并发控制（脚本、旧客户端），服务端不做检查，行为与从前一致。
-	ExpectedVersion string `json:"expected_version"`
+	//
+	// 它是三态的，所以用指针：字段缺席表示调用方明示不参与并发控制（脚本、旧客户端），
+	// 服务端不做检查，行为与从前一致；带了字段就必须带真版本，空串一律 400。空串只会来自
+	// 「本该带版本却没拿到」的调用方，放行等于把防护栏静默关掉，用户还以为自己受着保护。
+	ExpectedVersion *string `json:"expected_version"`
 }
 
 // errSeriesMetadataConflict 由事务体抛出、由 updateSeriesInfo 翻成 409；用哨兵值是因为
@@ -294,6 +297,10 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
+	if req.ExpectedVersion != nil && strings.TrimSpace(*req.ExpectedVersion) == "" {
+		jsonError(w, http.StatusBadRequest, "expected_version must not be empty; omit the field to opt out of concurrency checks")
+		return
+	}
 
 	currentSeries, err := c.store.GetSeries(r.Context(), seriesID)
 	if err != nil {
@@ -307,12 +314,12 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		// 版本校验必须在事务内：放在事务外时两个并发保存会双双读到同一个旧版本、双双通过检查，
 		// 检测就只是把窗口变窄而没有关掉。DSN 上的 _txlock=immediate 让 BeginTx 即取写锁，
 		// 后到的那次事务是在前一次提交之后才读到版本的。
-		if req.ExpectedVersion != "" {
+		if req.ExpectedVersion != nil {
 			version, err := loadSeriesMetadataVersion(r.Context(), q, seriesID)
 			if err != nil {
 				return err
 			}
-			if version != req.ExpectedVersion {
+			if version != *req.ExpectedVersion {
 				currentVersion = version
 				return errSeriesMetadataConflict
 			}
@@ -372,16 +379,20 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if req.Links != nil {
-			_ = q.ClearSeriesLinks(r.Context(), seriesID)
+			if err := q.ClearSeriesLinks(r.Context(), seriesID); err != nil {
+				return err
+			}
 			for _, link := range req.Links {
 				if strings.TrimSpace(link.Name) == "" || strings.TrimSpace(link.Url) == "" {
 					continue
 				}
-				_, _ = q.LinkSeriesLink(r.Context(), database.LinkSeriesLinkParams{
+				if _, err := q.LinkSeriesLink(r.Context(), database.LinkSeriesLinkParams{
 					SeriesID: seriesID,
 					Name:     link.Name,
 					Url:      link.Url,
-				})
+				}); err != nil {
+					return err
+				}
 			}
 		}
 

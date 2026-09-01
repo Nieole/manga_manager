@@ -168,10 +168,40 @@ func TestUpdateSeriesInfoConcurrentEditConflict(t *testing.T) {
 		}
 	})
 
+	t.Run("带空版本的保存被拒，校验不被静默关掉", func(t *testing.T) {
+		controller, store, _, rootDir := newTestController(t)
+		_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
+
+		// 这一版内容是别人写的，用户手里那份版本还没拿到。
+		if code, _ := putSeriesInfo(t, controller, series.ID, `{
+			"title":"别人写的标题","locked_fields":"","tags":[],"authors":[],"links":[]
+		}`); code != http.StatusOK {
+			t.Fatalf("expected the seeding save to succeed, got %d", code)
+		}
+
+		// 空串不是「不参与并发控制」，是「本该带版本却没拿到」——详情载入失败、时序没赶上、
+		// 新入口忘了带都会走到这里。放行等于把防护栏静默关掉，用户还以为自己受着保护。
+		code, _ := putSeriesInfo(t, controller, series.ID, `{
+			"title":"我写的标题","locked_fields":"","tags":[],"authors":[],"links":[],
+			"expected_version":""
+		}`)
+		if code != http.StatusBadRequest {
+			t.Fatalf("expected 400 on an empty expected_version, got %d", code)
+		}
+		saved, err := store.GetSeries(t.Context(), series.ID)
+		if err != nil {
+			t.Fatalf("GetSeries failed: %v", err)
+		}
+		if saved.Title.String != "别人写的标题" {
+			t.Fatalf("the rejected save still landed: %q", saved.Title.String)
+		}
+	})
+
 	t.Run("不带版本的调用按旧行为放行", func(t *testing.T) {
 		controller, store, _, rootDir := newTestController(t)
 		_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
+		// 反向判据：字段整个缺席仍是明示的「不参与并发控制」，脚本与旧客户端照旧放行。
 		code, _ := putSeriesInfo(t, controller, series.ID, `{
 			"title":"脚本写的标题",
 			"locked_fields":"",

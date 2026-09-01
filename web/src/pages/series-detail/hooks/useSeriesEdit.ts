@@ -116,6 +116,13 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
 
   const save = useCallback(async () => {
     if (!series || !seriesId) return;
+    // 没拿到版本就不保存。带空串发出去，服务端只能当成「调用方不参与并发控制」而跳过校验，
+    // 「有人改过了」的提示再也不会出现——用户以为自己受着保护，后写的却在静默覆盖先写的。
+    const expectedVersion = formVersionRef.current;
+    if (!expectedVersion) {
+      showToast(t('series.toast.saveNoVersion'), 'error');
+      return;
+    }
     try {
       await apiClient.put(`/api/series/info/${seriesId}`, {
         title: editForm.title?.String || '',
@@ -128,7 +135,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
         tags: editForm.tagsInput || [],
         authors: editForm.authorsInput || [],
         links: editForm.linksInput || [],
-        expected_version: formVersionRef.current || '',
+        expected_version: expectedVersion,
       });
       setHasConflict(false);
       await reload();

@@ -737,6 +737,7 @@ export const messages: MessageCatalog = {
     'series.toast.retryTaskFailed': '任务重试失败',
     'series.toast.saveFailed': '保存失败',
     'series.toast.saveConflict': '有人在你编辑期间改过这个系列，未保存；你的输入还在',
+    'series.toast.saveNoVersion': '拿不到这个系列的元数据版本，暂时不能保存；请刷新页面后重试',
     'series.toast.addedToCollection': '已成功添加到合集',
     'series.toast.relationAdded': '系列关系已添加',
     'series.toast.relationAddFailed': '添加系列关系失败',
