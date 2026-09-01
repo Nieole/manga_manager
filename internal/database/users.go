@@ -103,8 +103,8 @@ func (s *SqlStore) FirstAdminUserID(ctx context.Context) (int64, error) {
 	return id, err
 }
 
-// CreateUser 新建账户。用户名大小写不敏感冲突由调用方先行 GetUserByUsername 预检，
-// 这里再以 UNIQUE 约束兜底并翻译成 ErrUsernameTaken。
+// CreateUser 新建账户。用户名按字节判重（users.username 的 UNIQUE 约束是唯一判据，调用方无须预检），
+// 冲突在这里翻译成 ErrUsernameTaken。`Alice` 与 `alice` 因此是两个独立账户，见 docs/adr/0003。
 func (s *SqlStore) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	role := arg.Role
 	if role != RoleAdmin {
@@ -135,7 +135,9 @@ func (s *SqlStore) GetUserByID(ctx context.Context, id int64) (User, error) {
 	return u, err
 }
 
-// GetUserByUsername 按用户名（精确匹配）查账户，未找到返回 ErrUserNotFound。
+// GetUserByUsername 按用户名查账户，未找到返回 ErrUserNotFound。
+// 匹配按字节精确进行，与 users.username 的唯一性判据同一把尺子——两者分叉时，
+// 一次查询可能命中多个仅大小写不同的账户，登录就会落到其中任意一个头上。
 func (s *SqlStore) GetUserByUsername(ctx context.Context, username string) (User, error) {
 	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE username = ?`, username))
 	if errors.Is(err, sql.ErrNoRows) {

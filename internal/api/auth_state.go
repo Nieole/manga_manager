@@ -68,6 +68,9 @@ func basicAuthCacheKey(username, password string) string {
 }
 
 // lookupBasicAuth 返回该凭据对应的用户 id；未命中或已过期返回 ok=false。
+//
+// 命中与未命中同样是快慢两条路，但它不泄露账户是否存在：条目只在校验**成功**之后写入，
+// 凭据不对的请求永远命中不了，能靠它变快的人手上已经握着正确口令。
 func (a *authState) lookupBasicAuth(username, password string, now time.Time) (int64, bool) {
 	if a == nil {
 		return 0, false

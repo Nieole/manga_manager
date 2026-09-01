@@ -81,13 +81,59 @@ func hashSessionID(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// passwordHashCost 是本服务生成口令哈希统一使用的 bcrypt cost。
+// dummyPasswordHash 也按它生成——cost 一旦分叉，两条分支的开销差只是换了个形状。
+const passwordHashCost = bcrypt.DefaultCost
+
 func hashPassword(pw string) (string, error) {
-	b, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	b, err := bcrypt.GenerateFromPassword([]byte(pw), passwordHashCost)
 	return string(b), err
 }
 
+// dummyPasswordHash 是账户不存在时参与比对的占位哈希：进程启动时按随机口令与 passwordHashCost
+// 现算，因此格式合法、cost 与真实账户一致，又不可能与任何真实口令相符。
+// 不写成源码里的常量，是为了让它与 passwordHashCost 没有分叉的余地。
+var dummyPasswordHash = newDummyPasswordHash()
+
+func newDummyPasswordHash() string {
+	pw := make([]byte, 32)
+	if _, err := rand.Read(pw); err != nil {
+		// 占位哈希不承担保密职责，它只需要格式合法、cost 对得上。
+		pw = []byte("manga-manager placeholder credential")
+	}
+	h, _ := bcrypt.GenerateFromPassword(pw, passwordHashCost)
+	return string(h)
+}
+
+// bcryptCompare 是口令比对的唯一出口。抽成变量是为了让测试能查「某条分支究竟跑没跑一次 KDF、
+// 跑的是不是同一个 cost」——这件事从耗时上只能抖着量，从调用参数上却是确定的。
+var bcryptCompare = bcrypt.CompareHashAndPassword
+
 func verifyPassword(hash, pw string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
+	return bcryptCompare([]byte(hash), []byte(pw)) == nil
+}
+
+// authenticateUser 按用户名+口令取回账户，是全部「拿用户名换会话」入口的唯一口令校验路径。
+//
+// 用户名不存在与口令错误在返回值与**开销**上都不可区分：账户查不到时改用 dummyPasswordHash
+// 走完同一次 bcrypt。空哈希格式非法，bcrypt 会在做任何 KDF 之前就返回，两条分支的耗时因此差
+// 一个数量级——bcrypt 慢是故意的，正因为慢，这个缺口才明显。
+func (c *Controller) authenticateUser(ctx context.Context, username, password string) (database.User, bool) {
+	user, err := c.store.GetUserByUsername(ctx, username)
+	if err != nil {
+		user = database.User{}
+	}
+	hash := user.PasswordHash
+	if hash == "" {
+		hash = dummyPasswordHash
+	}
+	// 比对必须先于错误判断：写成 `err != nil || !verifyPassword(...)` 的话，|| 的短路会让
+	// 「用户名不存在」这条分支一次 KDF 都不跑，缺口原样长回来。
+	matched := verifyPassword(hash, password)
+	if err != nil || !matched {
+		return database.User{}, false
+	}
+	return user, true
 }
 
 // sessionCookieSecure 决定会话 Cookie 是否带 Secure 标志。
@@ -189,8 +235,8 @@ func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, passwor
 	if uid, ok := c.auth.lookupBasicAuth(username, password, now); ok {
 		return uid, true
 	}
-	user, err := c.store.GetUserByUsername(ctx, username)
-	if err != nil || !verifyPassword(user.PasswordHash, password) {
+	user, ok := c.authenticateUser(ctx, username, password)
+	if !ok {
 		return 0, false
 	}
 	c.auth.rememberBasicAuth(username, password, user.ID, now)
@@ -562,13 +608,15 @@ func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := strings.TrimSpace(req.Username)
-	userKey := "user:" + strings.ToLower(username)
+	// 失败计数按**精确**用户名分桶，与账户身份同一把尺子（users.username 按字节判重）。
+	// 桶键折叠大小写会把两个独立账户算作一个：对着其中一个连续失败，另一个跟着被锁在门外。
+	userKey := "user:" + username
 	if d, locked := c.auth.loginLimiter.retryAfter(userKey); locked {
 		respondTooManyAttempts(w, r, d)
 		return
 	}
-	user, err := c.store.GetUserByUsername(ctx, username)
-	if err != nil || !verifyPassword(user.PasswordHash, req.Password) {
+	user, ok := c.authenticateUser(ctx, username, req.Password)
+	if !ok {
 		// 同时对来源 IP 与目标用户名计失败：前者挡单机横扫多账户，后者挡分布式打单账户。
 		c.auth.loginLimiter.recordFailure(ipKey)
 		c.auth.loginLimiter.recordFailure(userKey)

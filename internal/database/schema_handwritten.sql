@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS series_custom_fields (
 -- password_hash stores a bcrypt digest, never plaintext. must_change_password is set when an admin creates
 -- an account, forcing a password change on first login. The first admin inherits the old global reading
 -- progress and KOReader accounts (see migration logic).
+-- username is byte-exact everywhere (default BINARY collation): 'Alice' and 'alice' are two separate
+-- accounts, and every lookup plus every rate-limit bucket key must use that same ruler. Do not switch
+-- this to COLLATE NOCASE before reading docs/adr/0003: on a database that already holds such a pair the
+-- unique index refuses to build, and a failed migration means the server does not start at all.
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
