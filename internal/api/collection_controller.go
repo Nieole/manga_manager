@@ -41,6 +41,10 @@ type CollectionSeriesItem struct {
 // franchiseCollectionSourceType 是作品群合集在 collections.source_type 里的取值。
 const franchiseCollectionSourceType = "system_franchise"
 
+// errCollectionNameTaken 表示事务内查到了同名合集。它只在事务里产生——事务外的查重直接用
+// collectionNameExists——由建号与 AI 分组应用两条写入路径共用，一律转成 409。
+var errCollectionNameTaken = errors.New("collection name already exists")
+
 // derivedCollectionSourceType 判断这个来源的合集是否「推导出来、由重建流程持有」。
 // 只有作品群属于这一类：它由系列关系的连通分量推导，每次重建都按稳定键 upsert 并把
 // 不属于连通分量的成员删掉，人工改动一律被静默覆盖。smart_snapshot 与 ai_grouping
@@ -105,23 +109,50 @@ type CreateCollectionRequest struct {
 	Description string `json:"description"`
 }
 
-// createCollection 创建一个新合集
+// createCollection 创建一个新合集。名称与重命名、快照固化、AI 分组应用同口径：先去首尾空白
+// 再判空并查重，否则 "   " 会建出一个在列表里看不出名字的合集，" 科幻" 与 "科幻" 会并存成两条。
 func (c *Controller) createCollection(w http.ResponseWriter, r *http.Request) {
 	var req CreateCollectionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
 		jsonError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
-	id, err := c.store.CreateSimpleCollection(r.Context(), database.CreateSimpleCollectionParams{
-		Name:        req.Name,
-		Description: nullStringFromString(req.Description),
+	// 查重与插入放进同一个事务：store 的 DSN 带 _txlock=immediate，BeginTx 即取写锁，
+	// 因此两个并发建号请求会被串行化，不会各自读到「不存在」再各插一条同名合集。
+	// collections.name 上没有唯一约束兜底，这道串行化就是这条不变量在建号入口的全部保障。
+	var id int64
+	err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
+		switch _, err := q.CollectionNameExists(r.Context(), name); {
+		case err == nil:
+			return errCollectionNameTaken
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+		created, err := q.CreateSimpleCollection(r.Context(), database.CreateSimpleCollectionParams{
+			Name:        name,
+			Description: nullStringFromString(strings.TrimSpace(req.Description)),
+		})
+		if err != nil {
+			return err
+		}
+		id = created
+		return nil
 	})
+	if errors.Is(err, errCollectionNameTaken) {
+		jsonError(w, http.StatusConflict, "A collection with this name already exists")
+		return
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to create collection")
 		return
 	}
-	jsonResponse(w, http.StatusCreated, map[string]interface{}{"id": id, "name": req.Name})
+	jsonResponse(w, http.StatusCreated, map[string]interface{}{"id": id, "name": name})
 }
 
 // deleteCollection 删除合集
@@ -193,7 +224,7 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 
 	if err := c.store.UpdateCollectionDetails(r.Context(), database.UpdateCollectionDetailsParams{
 		Name:        name,
-		Description: nullStringFromString(req.Description),
+		Description: nullStringFromString(strings.TrimSpace(req.Description)),
 		ID:          id,
 	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to update collection")

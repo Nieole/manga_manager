@@ -6,11 +6,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiClient } from '../../api/client';
+import { apiClient, getApiErrorMessage } from '../../api/client';
 import { FolderHeart, Plus } from 'lucide-react';
 import { useAuth } from '../../auth/AuthProvider';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useI18n } from '../../i18n/LocaleProvider';
+import { useToast } from '../../components/ToastProvider';
 import type {
   Collection,
   SmartCollectionSnapshotPreview,
@@ -25,6 +26,7 @@ import { SnapshotModal } from './SnapshotModal';
 
 export default function Collections() {
   const { t } = useI18n();
+  const { showToast } = useToast();
   // 合集与智能书架是站点级数据（表里没有 user_id），新建、改名、删除、快照与成员增删在后端
   // 一律要管理员；浏览是读操作，普通用户照旧。
   const { isAdmin } = useAuth();
@@ -187,6 +189,12 @@ export default function Collections() {
     });
   };
 
+  // 后端对重名判 409（不区分大小写、且已裁掉首尾空白）。弹窗保持打开，用户改个名字就能重试。
+  const reportSaveError = (err: unknown) => {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    showToast(status === 409 ? t('collections.nameConflict') : getApiErrorMessage(err, t('collections.saveFailed')), 'error');
+  };
+
   const handleCreate = () => {
     if (!newName.trim()) return;
     apiClient.post('/api/collections/', { name: newName, description: newDesc }).then(() => {
@@ -194,7 +202,7 @@ export default function Collections() {
       setNewDesc('');
       setShowCreate(false);
       fetchCollections();
-    });
+    }).catch(reportSaveError);
   };
 
   const handleEditSubmit = () => {
@@ -203,9 +211,9 @@ export default function Collections() {
     apiClient.put(`/api/collections/${selected.numeric_id}`, { name: editName, description: editDesc }).then(() => {
       setShowEdit(false);
       // Update selected locally
-      setSelected({ ...selected, name: editName, description: editDesc });
+      setSelected({ ...selected, name: editName.trim(), description: editDesc.trim() });
       fetchCollections();
-    });
+    }).catch(reportSaveError);
   };
 
   const handleDelete = (id: number) => {

@@ -347,6 +347,8 @@ export const messages: MessageCatalog = {
     'collections.editSubmit': 'Save Changes',
     'collections.editDescription': 'Modify the collection name or description.',
     'collections.namePlaceholder': 'Collection name',
+    'collections.nameConflict': 'A collection with this name already exists (case-insensitive). Pick another name.',
+    'collections.saveFailed': 'Failed to save collection',
     'collections.descriptionPlaceholder': 'Description (optional)',
     'collections.deleteTitle': 'Delete collection',
     'collections.deleteDescription': 'Delete collection "{{name}}"? This removes the collection itself, but not the original files.',

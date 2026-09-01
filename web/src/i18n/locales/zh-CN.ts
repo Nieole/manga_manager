@@ -347,6 +347,8 @@ export const messages: MessageCatalog = {
     'collections.editSubmit': '保存修改',
     'collections.editDescription': '修改合集的名称或描述信息。',
     'collections.namePlaceholder': '合集名称',
+    'collections.nameConflict': '已经有同名合集了（不区分大小写），换个名字吧。',
+    'collections.saveFailed': '保存合集失败',
     'collections.descriptionPlaceholder': '描述（可选）',
     'collections.deleteTitle': '删除合集',
     'collections.deleteDescription': '确定要删除合集「{{name}}」吗？这个操作会移除合集本身，但不会删除原始漫画文件。',

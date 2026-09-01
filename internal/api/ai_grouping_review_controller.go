@@ -499,6 +499,10 @@ func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *h
 		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
 		return
 	}
+	if errors.Is(err, errCollectionNameTaken) {
+		jsonError(w, http.StatusConflict, "A collection with this name already exists")
+		return
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review collection")
 		return
@@ -551,6 +555,10 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusConflict, "AI grouping review is not pending")
 		return
 	}
+	if errors.Is(err, errCollectionNameTaken) {
+		jsonError(w, http.StatusConflict, "A collection with this name already exists")
+		return
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review")
 		return
@@ -591,11 +599,21 @@ func (c *Controller) applyAIGroupingReviewCollectionTx(ctx context.Context, revi
 
 func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database.Queries, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
 	seriesIDs := aiGroupingParseSeriesIDs(collection.SeriesIds)
-	if strings.TrimSpace(collection.Name) == "" || len(seriesIDs) == 0 {
+	name := strings.TrimSpace(collection.Name)
+	if name == "" || len(seriesIDs) == 0 {
 		return 0, sql.ErrNoRows
 	}
+	// 候选合集名由 AI 给出，同样受「哪里都不许出现两个同名合集」约束：查重落在事务内的 SQL 上，
+	// 因此整批应用时先建的那几条也算数——同一批里两条同名候选，第二条就在这里被挡下。
+	// 撞名不是能重试的瞬时状态，用户得先改名或驳回这条候选，因此整批回滚。
+	switch _, err := q.CollectionNameExists(ctx, name); {
+	case err == nil:
+		return 0, errCollectionNameTaken
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, err
+	}
 	created, err := q.CreateCollection(ctx, database.CreateCollectionParams{
-		Name:           strings.TrimSpace(collection.Name),
+		Name:           name,
 		Description:    sql.NullString{String: strings.TrimSpace(collection.Description), Valid: strings.TrimSpace(collection.Description) != ""},
 		SourceType:     "ai_grouping",
 		SourceReviewID: sql.NullInt64{Int64: review.ID, Valid: true},
