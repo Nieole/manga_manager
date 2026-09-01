@@ -508,9 +508,6 @@ func TestGeneratedConfigIsOwnerOnly(t *testing.T) {
 
 	const ownerOnly os.FileMode = 0o600
 
-	// createDefaultConfig 会无条件 os.MkdirAll("./data")，是相对 cwd 的；
-	// 不切目录会在 internal/config/ 下拉出一个 data 目录。
-	t.Chdir(t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	if _, err := LoadConfig(path); err != nil {
@@ -596,4 +593,115 @@ func TestResolveStoragePolicyDoesNotMutateInput(t *testing.T) {
 	if got := cfg.Library.StoragePolicies[0]; got != before {
 		t.Fatalf("ResolveStoragePolicy 改写了调用方的 StoragePolicies：%+v -> %+v", before, got)
 	}
+}
+
+// TestLoadConfigCreatesConfigParentDir 守卫「首次启动时 -config 指向父目录尚不存在的位置，
+// 也能生成默认配置」这一不变式，并盯住它不得在当前工作目录留下多余的 data/。
+// 容器卷子路径与 /etc/manga/config.yaml 这类部署方式都会撞上这个场景。
+func TestLoadConfigCreatesConfigParentDir(t *testing.T) {
+	t.Run("父目录不存在时自动补建并生成默认配置", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		dir := filepath.Join(t.TempDir(), "etc", "manga")
+		path := filepath.Join(dir, "config.yaml")
+
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("LoadConfig 应补建配置目录后成功生成默认配置，却失败：%v", err)
+		}
+		if cfg == nil {
+			t.Fatalf("LoadConfig 返回了 nil 配置")
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("默认配置文件未落盘：%v", err)
+		}
+		// 生成的配置必须能被原样读回，否则「首启即可用」只是假象。
+		if _, err := LoadConfigFile(path); err != nil {
+			t.Fatalf("生成的默认配置读不回来：%v", err)
+		}
+		// 目录里装的是明文密钥文件（0600），补建出来的父目录要配套只给属主。
+		if runtime.GOOS != "windows" {
+			info, err := os.Stat(dir)
+			if err != nil {
+				t.Fatalf("stat 新建的配置目录：%v", err)
+			}
+			if got := info.Mode().Perm(); got != 0o700 {
+				t.Fatalf("新建的配置目录权限 = %04o, want 0700", got)
+			}
+		}
+	})
+
+	t.Run("生成默认配置不在当前工作目录留下 data 目录", func(t *testing.T) {
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		path := filepath.Join(t.TempDir(), "vol", "config.yaml")
+
+		if _, err := LoadConfig(path); err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		entries, err := os.ReadDir(cwd)
+		if err != nil {
+			t.Fatalf("读工作目录：%v", err)
+		}
+		for _, entry := range entries {
+			t.Fatalf("生成默认配置不应在工作目录留下任何东西，却出现了 %q", entry.Name())
+		}
+	})
+
+	t.Run("配置目录建不出来时报出人话", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("windows 走 ACL，去掉写权限位不会让 MkdirAll 失败")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("root 绕过目录权限检查，造不出建目录失败")
+		}
+		t.Chdir(t.TempDir())
+		readonly := filepath.Join(t.TempDir(), "readonly")
+		if err := os.Mkdir(readonly, 0o500); err != nil {
+			t.Fatalf("建只读父目录：%v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(readonly, 0o700) })
+		missing := filepath.Join(readonly, "manga")
+		path := filepath.Join(missing, "config.yaml")
+
+		_, err := LoadConfig(path)
+		if err == nil {
+			t.Fatalf("配置目录建不出来时 LoadConfig 应报错")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, missing) {
+			t.Fatalf("错误信息应指出建不出来的配置目录，实际为：%v", msg)
+		}
+		if strings.Contains(msg, ".tmp-") {
+			t.Fatalf("错误信息不应只甩出一个原子写临时文件名：%v", msg)
+		}
+	})
+
+	t.Run("父目录已存在的既有首启路径不退化", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		before, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat 配置目录：%v", err)
+		}
+
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.Server.Port != 8080 || cfg.Database.Path == "" || cfg.Cache.Dir == "" {
+			t.Fatalf("默认配置内容不对：%+v", cfg)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("默认配置文件未落盘：%v", err)
+		}
+		// 已存在的目录权限不得被改写：那会波及用户自己摆好的 /etc 之类共享目录。
+		after, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat 配置目录：%v", err)
+		}
+		if before.Mode().Perm() != after.Mode().Perm() {
+			t.Fatalf("既有配置目录权限被改写：%04o -> %04o", before.Mode().Perm(), after.Mode().Perm())
+		}
+	})
 }

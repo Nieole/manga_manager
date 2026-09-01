@@ -25,6 +25,13 @@ import (
 // 需要用户在设置页保存一次，或按 README 手动 chmod 600。
 const ConfigFilePerm os.FileMode = 0o600
 
+// ConfigDirPerm 是自动补建配置目录时的权限：仅属主可进入。
+//
+// 目录里装的正是 ConfigFilePerm(0600) 那份含明文密钥的 config.yaml，父目录若对全体可读
+// 可进入，本机任意用户至少能枚举到它、也能在其中留下自己的文件。目录已存在时 MkdirAll
+// 不改权限，所以这只影响我们新建的那一层，不会去动用户自己摆好的 /etc 之类共享目录。
+const ConfigDirPerm os.FileMode = 0o700
+
 // AtomicWriteFile 原子写文件：先写入同目录临时文件再 rename 覆盖目标，避免写入过程中崩溃/断电
 // 留下半截配置文件（半截 YAML 会让下次启动解析失败且无自愈路径）。os.Rename 在 Windows 上也会
 // 原子替换已存在文件。
@@ -292,14 +299,18 @@ func createDefaultConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll("./data", 0755); err != nil {
-		return nil, err
+	// 建的只有配置文件自己的父目录：-config 可以指向容器卷子路径或 /etc/manga/config.yaml 这类
+	// 尚不存在的位置，父目录缺失时 AtomicWriteFile 在建同目录临时文件那一步就失败。数据目录不归
+	// 这里建——它由 database.path / cache.dir 决定，在 cwd 下写死一个 ./data 只会留下没人用的空目录。
+	configDir := filepath.Dir(path)
+	if err := os.MkdirAll(configDir, ConfigDirPerm); err != nil {
+		return nil, fmt.Errorf("配置目录 %s 不存在且无法创建: %w", configDir, err)
 	}
 
 	// 首次生成就按仅属主可读写落盘：此刻密钥还是空的，但用户随后会在设置页填进来，
 	// 那时权限位已经定型（persistConfig 用的是同一个常量），没有补救窗口。
 	if err := AtomicWriteFile(path, data, ConfigFilePerm); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("写入默认配置 %s 失败: %w", path, err)
 	}
 
 	return cfg, nil

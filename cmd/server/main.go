@@ -96,6 +96,15 @@ func main() {
 		slog.Warn("Config hot-reload disabled", "path", resolvedConfigPath, "error", watchErr)
 	}
 
+	// 数据目录按 database.path 的真实取值创建，而不是在 cwd 下写死一个 ./data：该路径可为绝对
+	// 路径，且 sqlite 只会打开文件、不会补建目录，父目录缺失时首启会以一句 "unable to open
+	// database file (14)" 退出。
+	dbDir := filepath.Dir(cfg.Database.Path)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		slog.Error("数据库目录不存在且无法创建", "dir", dbDir, "error", err)
+		os.Exit(1)
+	}
+
 	if err := database.Migrate(cfg.Database.Path); err != nil {
 		slog.Error("Failed to migrate database schema", "error", err)
 		os.Exit(1)
