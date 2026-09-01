@@ -127,6 +127,71 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 	fw.Stop() // 幂等：重复 Stop 不该 panic（close of closed channel）
 }
 
+// TestStopClosesDispatchBeforeWaiting 钉住 Stop 与事件循环之间的同步口径：inFlight 的两处
+// Add 都在 dispatchDueLocked 里由 fw.mu 罩着，Stop 必须先经**同一把锁**把派发关掉再 Wait。
+// 少了这一步，计数归零的瞬间事件循环还能重新加人——Stop 于是可能在派出去的扫描仍在跑时返回
+// （-race 把它报成 Add/Wait 数据竞争，CI 正是带 -race 跑的）。
+func TestStopClosesDispatchBeforeWaiting(t *testing.T) {
+	const libID int64 = 1
+	libPath := filepath.FromSlash("/data/manga")
+
+	t.Run("Stop 之后事件循环不再派活", func(t *testing.T) {
+		fw := newLifecycleWatcher(t)
+		var dispatched atomic.Int64
+		fw.scanLibrary = func(context.Context, int64, string, bool) error {
+			dispatched.Add(1)
+			return nil
+		}
+		fw.cleanupLibrary = func(context.Context, int64) error {
+			dispatched.Add(1)
+			return nil
+		}
+
+		fw.Stop()
+
+		// 直接撞派发点：闸已落下，两处 Add 都不该再执行。
+		past := time.Now().Add(-time.Hour)
+		fw.mu.Lock()
+		fw.libs[libPath] = libID
+		fw.pending[libID] = past
+		fw.pendingCleanup[libID] = cleanupSchedule{firstEvent: past, lastEvent: past}
+		fw.dispatchDueLocked(time.Now(), nil)
+		fw.mu.Unlock()
+		fw.inFlight.Wait()
+
+		if n := dispatched.Load(); n != 0 {
+			t.Fatalf("Stop 之后仍派出了 %d 份工作：闸没落下，Wait 就等不住新加进来的人", n)
+		}
+	})
+
+	t.Run("反复起停不与派发抢 inFlight", func(t *testing.T) {
+		// 节拍压到毫秒级、扫描桩故意慢过一个 tick，让 Stop 大概率撞在「inFlight 刚归零、
+		// 下一轮又要加人」的那个窗口上。缺同步时几十轮之内必被 -race 抓到。
+		for i := 0; i < 60; i++ {
+			fw := newLifecycleWatcher(t)
+			fw.timings = watcherTimings{
+				tick:               2 * time.Millisecond,
+				scanDebounce:       time.Millisecond,
+				cleanupDebounce:    time.Millisecond,
+				cleanupMaxDeferral: time.Hour,
+			}
+			fw.scanLibrary = func(context.Context, int64, string, bool) error {
+				time.Sleep(time.Millisecond)
+				return nil
+			}
+			fw.mu.Lock()
+			fw.libs[libPath] = libID
+			fw.mu.Unlock()
+
+			stopWriting := keepWriting(fw, libID)
+			fw.Start(nil)
+			time.Sleep(10 * time.Millisecond)
+			fw.Stop()
+			stopWriting()
+		}
+	})
+}
+
 // TestCleanupLibraryStopsOnCancelledContext 证明取消能真正打断 CleanupLibrary。
 //
 // 只断言「不再往下删」：取消在这里只可能造成**少删**——seriesHasSurvivingBook 出错

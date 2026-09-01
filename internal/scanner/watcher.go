@@ -39,6 +39,10 @@ type FileWatcher struct {
 	scansInFlight map[int64]int
 	stopCh        chan struct{}
 	stopOnce      sync.Once
+	// stopping 由 fw.mu 保护，置上之后 dispatchDueLocked 不再往 inFlight 里加人。它是
+	// Stop 的 Wait 与事件循环的 Add 之间唯一的序——没有它，inFlight 会在计数归零的瞬间
+	// 被重新加人，Stop 可能在刚派出去的工作仍在跑时就返回。
+	stopping bool
 	// formats 是**按库**的归档格式集（libraryID -> 集合）。共用一份全局列表会让库级
 	// scan_formats 在监听侧形同虚设。
 	formats map[int64]config.ScanFormatSet
@@ -321,6 +325,11 @@ func (fw *FileWatcher) scanFinished(libID int64) {
 
 // dispatchDueLocked 派发本轮到期的扫描与清理。调用方须持有 fw.mu。
 func (fw *FileWatcher) dispatchDueLocked(now time.Time, publishEvent func(string)) {
+	// 停机已经开始：此刻派出去的工作只会拿着已取消的 baseCtx 立刻返回，而那次 Add 会与
+	// Stop 的 Wait 撞在一起。见 stopping。
+	if fw.stopping {
+		return
+	}
 	for libID, lastChange := range fw.pending {
 		// 去抖：最后一次文件变动距今超过 scanDebounce 才触发扫描。例外是该库有一条清理
 		// 已经等过了推迟上限——那条清理必须跟在一次扫描之后才敢跑，而持续写入会让这个
@@ -487,6 +496,11 @@ func (fw *FileWatcher) Stop() {
 		fw.cancelBase()
 		_ = fw.watcher.Close()
 	})
+	// 先与事件循环在 fw.mu 上握一次手再 Wait：拿到锁即证明没有派发正在进行，stopping
+	// 置上之后也不会再有。close(stopCh) 单独做不到这件事——select 仍可能先挑中 ticker。
+	fw.mu.Lock()
+	fw.stopping = true
+	fw.mu.Unlock()
 	fw.inFlight.Wait()
 }
 
