@@ -32,11 +32,14 @@ const (
 )
 
 var (
-	ErrUnauthorized      = errors.New("unauthorized")
-	ErrForbidden         = errors.New("forbidden")
-	ErrAlreadyConfigured = errors.New("account already configured")
-	ErrAccountNotFound   = errors.New("account not found")
-	ErrProgressNotFound  = errors.New("progress not found")
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
+	// ErrPasswordChangeRequired：同步账户绑定的站点账号尚未完成首登改密，该账号名下的
+	// 同步一并停用，直到用户在网页端改密。
+	ErrPasswordChangeRequired = errors.New("site password change required")
+	ErrAlreadyConfigured      = errors.New("account already configured")
+	ErrAccountNotFound        = errors.New("account not found")
+	ErrProgressNotFound       = errors.New("progress not found")
 )
 
 type Service struct {
@@ -201,12 +204,39 @@ func (s *Service) Authenticate(ctx context.Context, creds Credentials) (database
 		)
 		return database.KOReaderAccount{}, ErrUnauthorized
 	}
+	if err := s.ensureBoundUserActivated(ctx, creds.Username); err != nil {
+		slog.Warn("KOReader authenticate rejected: bound site user must change its password",
+			"username", creds.Username,
+			"account_id", account.ID,
+		)
+		return database.KOReaderAccount{}, err
+	}
 	slog.Info("KOReader authenticate succeeded",
 		"username", creds.Username,
 		"account_id", account.ID,
 		"client_key_prefix", keyPreview(creds.Key),
 	)
 	return account, nil
+}
+
+// ensureBoundUserActivated 拦下绑定到「尚未完成首登改密」站点账号的同步账户。
+//
+// 这条链路的凭据是账户自己的 sync_key，不是站点口令，所以站点口令那类绕过在这里不成立；
+// 但进度会写进绑定站点账号名下（见 SaveProgress 的 syncUserID），账号未激活时这条链路
+// 同样不该可用——否则强制改密只在浏览器一侧成立。
+//
+// 只有「查得到且待改密」才拒：未绑定站点账号（user_id=0）的自助注册账户进度回落全局，
+// 不归属任何账号；绑定悬空（站点账号已删）与查库出错都不属于本约束，维持原有行为。
+func (s *Service) ensureBoundUserActivated(ctx context.Context, username string) error {
+	userID, err := s.store.GetKOReaderAccountUserID(ctx, username)
+	if err != nil || userID <= 0 {
+		return nil
+	}
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err == nil && user.MustChangePassword {
+		return ErrPasswordChangeRequired
+	}
+	return nil
 }
 
 // validateProgressPayloadLengths 校验进度载荷各字段的长度。

@@ -34,7 +34,7 @@ export const messages: MessageCatalog = {
     'auth.adminOnly.toast': 'That page is for administrators only. Back to the home page.',
     'settings.nav.users': 'Users',
     'settingsUsers.title': 'Users',
-    'settingsUsers.description': 'Create and manage site accounts. Admins have full control; regular users can only browse and track their own reading progress.',
+    'settingsUsers.description': 'Create and manage site accounts. Admins have full control; regular users can only browse and track their own reading progress. An account still pending its first-login password change cannot use OPDS, Mihon or KOReader either — change the password in the web UI first.',
     'settingsUsers.loadFailed': 'Failed to load users',
     'settingsUsers.create': 'Create user',
     'settingsUsers.createTitle': 'New account',

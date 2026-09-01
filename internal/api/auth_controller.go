@@ -1,8 +1,8 @@
 // 本文件是站点多用户鉴权的 HTTP 层，实现「强制登录 + 首次建管理员 + 角色」这条主线。
 // 采用服务端会话（Cookie session）+ 同步器式 CSRF 令牌：cookie 存不可读的随机会话令牌，
 // DB 存其 SHA-256；改写类请求需在 X-CSRF-Token 头回传会话绑定的 CSRF 令牌。角色分 admin（全权）
-// 与 regular（只读浏览 + 记录本人进度/书签/短评）。authGate 是全 /api 组统一的鉴权中间件。
-// 维护要点：密码只经 bcrypt；Claude 不代填密码——初始密码由管理员设置、用户首登改密（must_change_password）。
+// 与 regular（只读浏览 + 记录本人进度/书签/短评）。两个入口：authGate 守 /api 组，requireBasicAuth
+// 守阅读协议；强制改密（must_change_password）两边同口径全拒。密码只经 bcrypt，Claude 不代填。
 
 package api
 
@@ -197,8 +197,25 @@ func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, passwor
 	return user.ID, true
 }
 
+// basicAuthChallenge 是协议侧的默认 WWW-Authenticate 值。
+const basicAuthChallenge = `Basic realm="manga-manager"`
+
+// basicAuthChallengePasswordChange 把「先去网页端改密」这条原因写进 realm。
+// 多数 Basic 客户端不显示响应体、只显示 realm，realm 因此是这条拒绝唯一的可见解释；
+// 头字段按 ASCII 写，避免阅读器把 UTF-8 realm 渲染成乱码。
+const basicAuthChallengePasswordChange = `Basic realm="manga-manager: change your initial password in the web UI first"`
+
+// respondPasswordChangeRequired 应答「口令正确、但账号尚未完成首登改密」。
+// 用 401 而非 403：客户端会重新索要凭据，用户在网页端改密后把新口令填进去就恢复了；
+// 403 在阅读器上表现为一条死路，且不带可显示的解释。
+func respondPasswordChangeRequired(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("WWW-Authenticate", basicAuthChallengePasswordChange)
+	jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.password_change_required"))
+}
+
 // requireBasicAuth 是阅读协议（OPDS/Mihon）的 HTTP Basic 鉴权中间件：校验站点用户名+密码，
 // 成功则把用户写入请求上下文（供 currentUserID 与每用户进度取用），失败返回 401 + WWW-Authenticate。
+// 强制改密与 authGate 同口径：未完成首登改密的账号在这里读写一并拒绝。
 // 站点尚无账户时（首启）直通，避免锁死初始化前的协议访问。
 func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,14 +232,20 @@ func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 		if username, password, ok := r.BasicAuth(); ok {
 			if uid, valid := c.resolveBasicAuthUser(r.Context(), username, password); valid {
 				if user, err := c.store.GetUserByID(r.Context(), uid); err == nil {
+					// 口令是对的，先清掉该 IP 的失败计数：否则一台按分钟轮询的阅读器会把自己
+					// 关进锁定期，用户改完密码回来照样吃 429。
 					c.auth.basicAuthLimiter.recordSuccess(ipKey)
+					if user.MustChangePassword {
+						respondPasswordChangeRequired(w, r)
+						return
+					}
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, user)))
 					return
 				}
 			}
 		}
 		c.auth.basicAuthLimiter.recordFailure(ipKey)
-		w.Header().Set("WWW-Authenticate", `Basic realm="manga-manager"`)
+		w.Header().Set("WWW-Authenticate", basicAuthChallenge)
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 	})
 }

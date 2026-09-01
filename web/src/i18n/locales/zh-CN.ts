@@ -34,7 +34,7 @@ export const messages: MessageCatalog = {
     'auth.adminOnly.toast': '这个页面仅管理员可用，已带你回到首页。',
     'settings.nav.users': '用户管理',
     'settingsUsers.title': '用户管理',
-    'settingsUsers.description': '创建与管理站点账户。管理员拥有全部权限；普通用户只能浏览并记录自己的阅读进度。',
+    'settingsUsers.description': '创建与管理站点账户。管理员拥有全部权限；普通用户只能浏览并记录自己的阅读进度。待首次登录改密的账号在 OPDS / Mihon / KOReader 上同样不可用，需先到网页端改密。',
     'settingsUsers.loadFailed': '加载用户失败',
     'settingsUsers.create': '创建用户',
     'settingsUsers.createTitle': '新建账户',

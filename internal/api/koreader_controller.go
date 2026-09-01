@@ -1049,7 +1049,7 @@ func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request)
 		switch {
 		case errors.Is(err, ksvc.ErrProgressNotFound):
 			writeKOReaderJSON(w, r, http.StatusNotFound, map[string]string{"message": "Not found"})
-		case errors.Is(err, ksvc.ErrForbidden), errors.Is(err, ksvc.ErrUnauthorized):
+		case errors.Is(err, ksvc.ErrForbidden), errors.Is(err, ksvc.ErrUnauthorized), errors.Is(err, ksvc.ErrPasswordChangeRequired):
 			c.logKOReaderAuthFailure(r.Context(), creds, document, err)
 			writeKOReaderAuthError(w, r, err)
 		default:
@@ -1088,6 +1088,12 @@ func writeKOReaderJSON(w http.ResponseWriter, r *http.Request, status int, data 
 
 func writeKOReaderAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ksvc.ErrPasswordChangeRequired):
+		// kosync 没有「换个凭据重试」的语义，401 只会让设备反复重试；403 + 一句可照做的
+		// message 是这条拒绝在设备侧仅有的解释通道。
+		writeKOReaderJSON(w, r, http.StatusForbidden, map[string]string{
+			"message": "Change your initial password in the web UI before syncing",
+		})
 	case errors.Is(err, ksvc.ErrUnauthorized):
 		writeKOReaderJSON(w, r, http.StatusUnauthorized, map[string]string{"message": "Unauthorized"})
 	case errors.Is(err, ksvc.ErrForbidden):
@@ -1106,6 +1112,10 @@ func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Cred
 	case errors.Is(err, ksvc.ErrUnauthorized):
 		status = "auth_failed_invalid_key"
 		message = "Unauthorized"
+	case errors.Is(err, ksvc.ErrPasswordChangeRequired):
+		// 设备侧只看得到一个 403，管理员这边必须能查到原因，否则表现就是「某台设备忽然不同步了」。
+		status = "auth_failed_password_change_required"
+		message = "该账户绑定的站点账号尚未完成首登改密，其同步已暂停"
 	default:
 		return
 	}
