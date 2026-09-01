@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -13,6 +14,10 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
 )
+
+// errAIGroupingCollectionPreempted 表示这条候选合集在本次加载与写入之间已被别人处理掉了。
+// 它只在包内用于触发整体回滚，对外一律表达为 409——与前置检查发现的是同一件事。
+var errAIGroupingCollectionPreempted = errors.New("ai grouping review collection is no longer pending")
 
 type aiGroupingReviewSeriesView struct {
 	ID    int64  `json:"id"`
@@ -490,6 +495,10 @@ func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *h
 		return
 	}
 	createdID, err := c.applyAIGroupingReviewCollectionTx(r.Context(), review, collection)
+	if errors.Is(err, errAIGroupingCollectionPreempted) {
+		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
+		return
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review collection")
 		return
@@ -536,6 +545,12 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 		}
 		return finalizeAIGroupingReviewStatus(r.Context(), q, review.ID)
 	})
+	// 批量入口与单条入口共用同一道 CAS，因此也共用同一个结局：只要有一条候选合集在加载之后
+	// 被别人处理掉，整批回滚报 409，用户刷新后重来即可——绝不容忍「部分提交 + 重复合集」。
+	if errors.Is(err, errAIGroupingCollectionPreempted) {
+		jsonError(w, http.StatusConflict, "AI grouping review is not pending")
+		return
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review")
 		return
@@ -555,6 +570,9 @@ func (c *Controller) applyAIGroupingReviewCollectionTx(ctx context.Context, revi
 		if err != nil {
 			return err
 		}
+		// 先记下 id 再判收尾：应用最后一条候选合集会走进下面的提前 return，
+		// 而那恰恰是最常见的形态（只有一条候选合集的审核），漏掉就永远报不出新建合集。
+		createdID = id
 		pending, err := q.CountPendingAIGroupingReviewCollections(ctx, review.ID)
 		if err != nil {
 			return err
@@ -562,10 +580,13 @@ func (c *Controller) applyAIGroupingReviewCollectionTx(ctx context.Context, revi
 		if pending == 0 {
 			return finalizeAIGroupingReviewStatus(ctx, q, review.ID)
 		}
-		createdID = id
 		return nil
 	})
-	return createdID, err
+	if err != nil {
+		// 事务已整体回滚，那个 id 指向的合集并不存在。
+		return 0, err
+	}
+	return createdID, nil
 }
 
 func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database.Queries, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
@@ -593,11 +614,19 @@ func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database
 	if err := q.TouchCollection(ctx, created.ID); err != nil {
 		return 0, err
 	}
-	if err := q.MarkAIGroupingReviewCollectionApplied(ctx, database.MarkAIGroupingReviewCollectionAppliedParams{
+	// 同一事务内把候选合集从待应用 CAS 到已应用：建合集与状态推进原子，否则两个都读到
+	// 待应用旧快照的请求会各建一个同名合集，先建的那个还会被后写的 created_collection_id 顶掉。
+	// 守卫必须落在事务内的 SQL 上——调用方的前置检查读到的是事务外的快照，随时可能过期。
+	rows, err := q.MarkAIGroupingReviewCollectionApplied(ctx, database.MarkAIGroupingReviewCollectionAppliedParams{
 		CreatedCollectionID: sql.NullInt64{Int64: created.ID, Valid: true},
 		ID:                  collection.ID,
-	}); err != nil {
+	})
+	if err != nil {
 		return 0, err
+	}
+	if rows == 0 {
+		// 刚建的合集与成员随事务整体撤销。
+		return 0, errAIGroupingCollectionPreempted
 	}
 	return created.ID, nil
 }

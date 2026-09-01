@@ -5353,12 +5353,13 @@ func (q *Queries) LogReadingActivity(ctx context.Context, arg LogReadingActivity
 	return err
 }
 
-const markAIGroupingReviewCollectionApplied = `-- name: MarkAIGroupingReviewCollectionApplied :exec
+const markAIGroupingReviewCollectionApplied = `-- name: MarkAIGroupingReviewCollectionApplied :execrows
 UPDATE ai_grouping_review_collections
 SET status = 'applied',
     created_collection_id = ?1,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?2
+  AND status = 'pending'
 `
 
 type MarkAIGroupingReviewCollectionAppliedParams struct {
@@ -5366,9 +5367,14 @@ type MarkAIGroupingReviewCollectionAppliedParams struct {
 	ID                  int64         `json:"id"`
 }
 
-func (q *Queries) MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) error {
-	_, err := q.db.ExecContext(ctx, markAIGroupingReviewCollectionApplied, arg.CreatedCollectionID, arg.ID)
-	return err
+// Terminal-state CAS: callers must roll back when it affects 0 rows, otherwise two
+// requests holding the same pending snapshot each build a collection out of this row.
+func (q *Queries) MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markAIGroupingReviewCollectionApplied, arg.CreatedCollectionID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const markAIGroupingReviewCollectionRejected = `-- name: MarkAIGroupingReviewCollectionRejected :exec

@@ -830,12 +830,15 @@ SET status = sqlc.arg(status),
 WHERE id = sqlc.arg(id)
 RETURNING *;
 
--- name: MarkAIGroupingReviewCollectionApplied :exec
+-- Terminal-state CAS: callers must roll back when it affects 0 rows, otherwise two
+-- requests holding the same pending snapshot each build a collection out of this row.
+-- name: MarkAIGroupingReviewCollectionApplied :execrows
 UPDATE ai_grouping_review_collections
 SET status = 'applied',
     created_collection_id = sqlc.arg(created_collection_id),
     updated_at = CURRENT_TIMESTAMP
-WHERE id = sqlc.arg(id);
+WHERE id = sqlc.arg(id)
+  AND status = 'pending';
 
 -- name: MarkAIGroupingReviewCollectionRejected :exec
 UPDATE ai_grouping_review_collections

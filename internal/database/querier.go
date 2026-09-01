@@ -165,7 +165,9 @@ type Querier interface {
 	ListSmartFiltersByLibrary(ctx context.Context, libraryID int64) ([]SmartFilter, error)
 	ListStaticCollectionSeriesPaged(ctx context.Context, arg ListStaticCollectionSeriesPagedParams) ([]ListStaticCollectionSeriesPagedRow, error)
 	LogReadingActivity(ctx context.Context, arg LogReadingActivityParams) error
-	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) error
+	// Terminal-state CAS: callers must roll back when it affects 0 rows, otherwise two
+	// requests holding the same pending snapshot each build a collection out of this row.
+	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) (int64, error)
 	MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error
 	MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error
 	MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error)
