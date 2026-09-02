@@ -99,12 +99,6 @@ func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	books, err := c.store.ListBooksBySeries(r.Context(), book.SeriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to list series books")
-		return
-	}
-
 	tags, err := c.store.GetTagsForSeries(r.Context(), book.SeriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get series tags")
@@ -117,7 +111,7 @@ func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	info := buildComicInfoForBook(book, series, books, tags, authors)
+	info := buildComicInfoForBook(book, series, tags, authors)
 	data, err := parser.MarshalComicInfo(info)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to export ComicInfo")
@@ -132,8 +126,8 @@ func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request)
 	_, _ = w.Write(data)
 }
 
-// writeBookComicInfo 把单本书的 ComicInfo.xml 写回其 cbz/zip 归档（原子替换、不备份）。
-// rar/cbr 无法写入，返回 415；这是修改用户原始文件的敏感操作，由前端二次确认后触发。
+// writeBookComicInfo 把单本书的 ComicInfo.xml 合并写回其 cbz/zip 归档（原子替换、不备份）。
+// rar/cbr 与无法安全合并的原文档都返回 415；这是修改用户原始文件的敏感操作，由前端二次确认后触发。
 func (c *Controller) writeBookComicInfo(w http.ResponseWriter, r *http.Request) {
 	bookID, err := strconv.ParseInt(chi.URLParam(r, "bookId"), 10, 64)
 	if err != nil || bookID <= 0 {
@@ -156,15 +150,13 @@ func (c *Controller) writeBookComicInfo(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusInternalServerError, "Failed to build ComicInfo")
 		return
 	}
-	data, err := parser.MarshalComicInfo(info)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to build ComicInfo")
-		return
-	}
-
-	if err := parser.WriteComicInfoIntoArchive(book.Path, data); err != nil {
+	if err := parser.WriteComicInfoIntoArchive(book.Path, info); err != nil {
 		if errors.Is(err, parser.ErrArchiveNotWritable) {
 			jsonError(w, http.StatusUnsupportedMediaType, apiText(requestLocale(r), "comicinfo.write.unsupported"))
+			return
+		}
+		if errors.Is(err, parser.ErrComicInfoNotMergeable) {
+			jsonError(w, http.StatusUnsupportedMediaType, apiText(requestLocale(r), "comicinfo.write.not_mergeable"))
 			return
 		}
 		slog.Error("write ComicInfo into archive failed", "book_id", bookID, "path", book.Path, "error", err)
@@ -252,14 +244,8 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
-			// 聚合与序列化是纯 CPU，留在**磁盘作业**之外：把它们夹进令牌的持有区间只会虚占这块盘
-			// 的归档打开额度。序列化失败与回写失败同属这一本书的失败计数。
-			info := buildComicInfoForBook(book, series, books, tags, authors)
-			data, marshalErr := parser.MarshalComicInfo(info)
-			if marshalErr != nil {
-				failed++
-				continue
-			}
+			// 聚合是纯 CPU，留在**磁盘作业**之外：把它夹进令牌的持有区间只会虚占这块盘的归档打开额度。
+			info := buildComicInfoForBook(book, series, tags, authors)
 
 			// 以这个任务的名义发起**磁盘作业**：归档回写是重 IO（逐本解压重压），不受调度会让
 			// 阅读器取页明显卡顿。用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，
@@ -268,7 +254,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 			// 实况由句柄吸收，但这个任务不报 IO 指标：上报是任务体的选择，这一处没有选它。
 			var writeErr error
 			if err := tp.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
-				writeErr = parser.WriteComicInfoIntoArchive(book.Path, data)
+				writeErr = parser.WriteComicInfoIntoArchive(book.Path, info)
 				return nil
 			}); err != nil {
 				return TaskResult{}, err
@@ -277,7 +263,8 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 			switch {
 			case writeErr == nil:
 				written++
-			case errors.Is(writeErr, parser.ErrArchiveNotWritable):
+			case errors.Is(writeErr, parser.ErrArchiveNotWritable), errors.Is(writeErr, parser.ErrComicInfoNotMergeable):
+				// 无法安全合并的原文档与不可写的格式同属「这本书写不了」，都按跳过计，不算失败。
 				skipped++
 			default:
 				slog.Error("write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", writeErr)
@@ -313,10 +300,6 @@ func (c *Controller) buildBookComicInfo(r *http.Request, book database.Book) (pa
 	if err != nil {
 		return parser.ComicInfo{}, err
 	}
-	books, err := c.store.ListBooksBySeries(r.Context(), book.SeriesID)
-	if err != nil {
-		return parser.ComicInfo{}, err
-	}
 	tags, err := c.store.GetTagsForSeries(r.Context(), book.SeriesID)
 	if err != nil {
 		return parser.ComicInfo{}, err
@@ -325,7 +308,7 @@ func (c *Controller) buildBookComicInfo(r *http.Request, book database.Book) (pa
 	if err != nil {
 		return parser.ComicInfo{}, err
 	}
-	return buildComicInfoForBook(book, series, books, tags, authors), nil
+	return buildComicInfoForBook(book, series, tags, authors), nil
 }
 
 func buildSeriesComicInfoArchive(series database.Series, books []database.Book, tags []database.Tag, authors []database.Author) ([]byte, error) {
@@ -334,7 +317,7 @@ func buildSeriesComicInfoArchive(series database.Series, books []database.Book, 
 	seen := make(map[string]int, len(books))
 
 	for _, book := range books {
-		info := buildComicInfoForBook(book, series, books, tags, authors)
+		info := buildComicInfoForBook(book, series, tags, authors)
 		data, err := parser.MarshalComicInfo(info)
 		if err != nil {
 			_ = writer.Close()
@@ -363,14 +346,19 @@ func buildSeriesComicInfoArchive(series database.Series, books []database.Book, 
 	return buffer.Bytes(), nil
 }
 
-func buildComicInfoForBook(book database.Book, series database.Series, books []database.Book, tags []database.Tag, authors []database.Author) parser.ComicInfo {
+// buildComicInfoForBook 从库里聚合出一本书的 ComicInfo。
+//
+// 留空的字段表示本项目对它没有可写的内容，回写时会保留归档原值——因此这里**不填 Count**：
+// ComicRack 的 Count 是「本系列共几卷」，而本项目只知道「资料库里收了几卷」，
+// 用户只收藏 3 卷时填 3 会把原本正确的 20 改错。往用户文件里写一个我们并不知道的数字，
+// 比不写更糟。同理，Manga / Web / Rating 本项目取不到值，留空即由归档原值兜住。
+func buildComicInfoForBook(book database.Book, series database.Series, tags []database.Tag, authors []database.Author) parser.ComicInfo {
 	info := parser.ComicInfo{
 		Title:       firstNonEmpty(nullString(book.Title), book.Name),
 		Series:      firstNonEmpty(nullString(series.Title), series.Name),
 		Summary:     firstNonEmpty(nullString(book.Summary), nullString(series.Summary)),
 		Number:      firstNonEmpty(nullString(book.Number), formatNullableFloat(book.SortNumber)),
 		Volume:      book.Volume,
-		Count:       parser.LenientInt(len(books)),
 		Publisher:   nullString(series.Publisher),
 		Genre:       joinTagNames(tags),
 		LanguageISO: nullString(series.Language),

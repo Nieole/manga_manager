@@ -223,11 +223,7 @@ func TestWriteComicInfoEndToEnd(t *testing.T) {
 	path := filepath.Join(dir, "vol01.cbz")
 	writeTestCBZ(t, path, map[string]string{"001.jpg": "a", "002.jpg": "b"})
 
-	xmlData, err := MarshalComicInfo(ComicInfo{Series: "MySeries", Number: "7", PageCount: 2})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if err := WriteComicInfoIntoArchive(path, xmlData); err != nil {
+	if err := WriteComicInfoIntoArchive(path, ComicInfo{Series: "MySeries", Number: "7", PageCount: 2}); err != nil {
 		t.Fatalf("write comicinfo: %v", err)
 	}
 
@@ -265,7 +261,7 @@ func TestWriteComicInfoRejectsUnknownExtension(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not a zip"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	if err := WriteComicInfoIntoArchive(path, []byte("<ComicInfo/>")); !errors.Is(err, ErrArchiveNotWritable) {
+	if err := WriteComicInfoIntoArchive(path, ComicInfo{}); !errors.Is(err, ErrArchiveNotWritable) {
 		t.Fatalf("expected ErrArchiveNotWritable for .7z, got %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -59,19 +60,19 @@ func TestWriteComicInfoIntoArchiveAddsAndReplaces(t *testing.T) {
 	path := filepath.Join(dir, "vol01.cbz")
 	writeTestCBZ(t, path, map[string]string{"001.jpg": "imgdata"})
 
-	if err := WriteComicInfoIntoArchive(path, []byte("<ComicInfo>v1</ComicInfo>")); err != nil {
+	if err := WriteComicInfoIntoArchive(path, ComicInfo{Series: "v1"}); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 	entries := readArchiveEntries(t, path)
 	if entries["001.jpg"] != "imgdata" {
 		t.Fatalf("page entry not preserved: %q", entries["001.jpg"])
 	}
-	if entries["ComicInfo.xml"] != "<ComicInfo>v1</ComicInfo>" {
+	if !strings.Contains(entries["ComicInfo.xml"], "<Series>v1</Series>") {
 		t.Fatalf("ComicInfo not written: %q", entries["ComicInfo.xml"])
 	}
 
 	// 二次写入应替换而非重复。
-	if err := WriteComicInfoIntoArchive(path, []byte("<ComicInfo>v2</ComicInfo>")); err != nil {
+	if err := WriteComicInfoIntoArchive(path, ComicInfo{Series: "v2"}); err != nil {
 		t.Fatalf("second write: %v", err)
 	}
 	r, err := zip.OpenReader(path)
@@ -96,7 +97,7 @@ func TestWriteComicInfoIntoArchiveRejectsRar(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not a real rar"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	err := WriteComicInfoIntoArchive(path, []byte("<ComicInfo/>"))
+	err := WriteComicInfoIntoArchive(path, ComicInfo{Series: "s"})
 	if !errors.Is(err, ErrArchiveNotWritable) {
 		t.Fatalf("expected ErrArchiveNotWritable, got %v", err)
 	}

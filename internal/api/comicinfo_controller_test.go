@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -39,8 +40,13 @@ func TestExportBookComicInfo(t *testing.T) {
 	if info.Title != "Book Title" || info.Series != "Display Series" || info.Summary != "Book summary" {
 		t.Fatalf("unexpected title/series/summary: %+v", info)
 	}
-	if info.Number != "1" || info.Volume != "1" || info.Count != 2 || info.PageCount != 188 {
+	if info.Number != "1" || info.Volume != "1" || info.PageCount != 188 {
 		t.Fatalf("unexpected book fields: %+v", info)
+	}
+	// Count 是 ComicRack 的「本系列共几卷」，本项目只知道资料库里收了几卷，两者不是一回事。
+	// 拿库里的卷数冒充它会把用户原本正确的数字改错，因此这个字段一个字都不写。
+	if strings.Contains(rec.Body.String(), "<Count>") {
+		t.Fatalf("不该导出 Count: %s", rec.Body.String())
 	}
 	if info.Publisher != "Publisher" || info.Genre != "冒险" || info.Writer != "Writer A" || info.LanguageISO != "zh" {
 		t.Fatalf("unexpected metadata fields: %+v", info)
@@ -93,8 +99,11 @@ func TestExportSeriesComicInfoArchive(t *testing.T) {
 	if err := xml.Unmarshal(payload, &info); err != nil {
 		t.Fatalf("unmarshal zipped ComicInfo failed: %v", err)
 	}
-	if info.Series != "Display Series" || info.Count != 2 || info.Writer != "Writer A" {
+	if info.Series != "Display Series" || info.Writer != "Writer A" {
 		t.Fatalf("unexpected zipped ComicInfo: %+v", info)
+	}
+	if strings.Contains(string(payload), "<Count>") {
+		t.Fatalf("不该导出 Count: %s", payload)
 	}
 }
 
@@ -113,6 +122,93 @@ func TestExportSeriesComicInfoArchiveRejectsInvalidSeriesID(t *testing.T) {
 	controller.exportSeriesComicInfoArchive(rec, requestWithRouteParam(http.MethodGet, "/api/series/bad/comicinfo.zip", nil, "seriesId", "bad"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+// taggedArchiveComicInfo 是 ComicTagger 打过标的真实形状：本项目建模的字段之外，
+// 还带着出版日期、其余署名、阅读方向与分级——这些本项目既不显示也不给编辑。
+const taggedArchiveComicInfo = `<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo>
+  <Title>旧标题</Title>
+  <Count>20</Count>
+  <Year>1995</Year>
+  <Month>2</Month>
+  <Inker>某上墨</Inker>
+  <CoverArtist>某封面</CoverArtist>
+  <Web>https://example.com/x</Web>
+  <Manga>YesAndRightToLeft</Manga>
+  <AgeRating>Mature 17+</AgeRating>
+  <Notes>Tagged with ComicTagger</Notes>
+</ComicInfo>`
+
+// TestWriteBookComicInfoMergesInsteadOfReplacing 守的是回写端到端不丢字段：从库里聚合、
+// 到落进用户原始归档的整条链路上，本项目不建模的字段必须一个不少地活下来。
+// 破了就是用户换个软件反而丢标——而回写是原子替换、不留备份。
+func TestWriteBookComicInfoMergesInsteadOfReplacing(t *testing.T) {
+	controller, _, book := seedComicInfoFixture(t)
+
+	if err := os.MkdirAll(filepath.Dir(book.Path), 0o755); err != nil {
+		t.Fatalf("造系列目录失败: %v", err)
+	}
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for name, content := range map[string]string{"001.jpg": "page", "ComicInfo.xml": taggedArchiveComicInfo} {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatalf("造归档条目失败: %v", err)
+		}
+		if _, err := entry.Write([]byte(content)); err != nil {
+			t.Fatalf("写归档条目失败: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("收尾归档失败: %v", err)
+	}
+	if err := os.WriteFile(book.Path, buffer.Bytes(), 0o644); err != nil {
+		t.Fatalf("落盘归档失败: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	controller.writeBookComicInfo(rec, requestWithRouteParam(http.MethodPost, "/api/books/1/comicinfo", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	reader, err := zip.OpenReader(book.Path)
+	if err != nil {
+		t.Fatalf("重开归档失败: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+	var written string
+	for _, entry := range reader.File {
+		if !strings.EqualFold(entry.Name, "ComicInfo.xml") {
+			continue
+		}
+		rc, err := entry.Open()
+		if err != nil {
+			t.Fatalf("打开 ComicInfo.xml 失败: %v", err)
+		}
+		payload, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("读 ComicInfo.xml 失败: %v", err)
+		}
+		written = string(payload)
+	}
+
+	for _, want := range []string{
+		"<Year>1995</Year>", "<Month>2</Month>", "<Inker>某上墨</Inker>",
+		"<CoverArtist>某封面</CoverArtist>", "<Web>https://example.com/x</Web>",
+		"<Manga>YesAndRightToLeft</Manga>", "<AgeRating>Mature 17+</AgeRating>",
+		"<Notes>Tagged with ComicTagger</Notes>",
+		// 本系列共几卷是归档自己的数据，本项目改不动它。
+		"<Count>20</Count>",
+		// 本项目管的字段按库里的值更新。
+		"<Title>Book Title</Title>", "<Series>Display Series</Series>", "<Writer>Writer A</Writer>",
+	} {
+		if !strings.Contains(written, want) {
+			t.Errorf("回写后应含 %s，实得:\n%s", want, written)
+		}
 	}
 }
 

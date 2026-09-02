@@ -1,6 +1,6 @@
-// 本文件属于漫画文件解析层，负责把 ComicInfo.xml 元数据写回 zip/cbz 归档。
-// 收藏者精心刮削/修订的元数据可选择烧进自己的归档文件，提升数据可迁移性（换软件也带得走）。
-// 维护时应关注：仅支持可写的 zip/cbz（rar/cbr 无写库）、原子替换避免损坏原文件、Windows 下重命名前必须先关闭源句柄。
+// 把 ComicInfo.xml 元数据写回 zip/cbz 归档：读出归档里原有的那份、合并、原子替换。
+// 维护时应关注：仅支持可写的 zip/cbz（rar/cbr 无写库）、原子替换避免损坏原文件、
+// Windows 下重命名前必须先关闭源句柄。合并规则见 MergeComicInfoXML。
 
 package parser
 
@@ -16,13 +16,24 @@ import (
 // ErrArchiveNotWritable 表示归档格式不支持写入（如 rar/cbr）。调用方据此给出可读提示。
 var ErrArchiveNotWritable = errors.New("archive format does not support writing ComicInfo")
 
+// maxComicInfoMergeBytes 是合并基底的读取上限。ComicInfo.xml 是几 KB 的东西，
+// 上限拦的是把整卷伪装成 ComicInfo.xml 的畸形归档，避免解压炸弹撑爆内存。
+const maxComicInfoMergeBytes = 8 << 20
+
 // comicInfoEntryName 是归档内标准的内嵌元数据文件名。
 const comicInfoEntryName = "ComicInfo.xml"
 
-// WriteComicInfoIntoArchive 把 ComicInfo.xml 写入（或替换）zip/cbz 归档。
+// comicInfoRootName 是 ComicInfo.xml 的根元素名。
+const comicInfoRootName = "ComicInfo"
+
+// WriteComicInfoIntoArchive 把 info 合并进归档里已有的 ComicInfo.xml（没有就新建）。
+//
+// info 里为空的字段保留归档原值，本项目不建模的字段原样不动——回写不可逆也不备份，
+// 整份重建会把用户用别的工具打好的标一次性抹掉。合并规则见 MergeComicInfoXML。
 // 采用“同目录临时文件 + 原子 rename 覆盖”，中途失败不损坏原文件。
-// 仅支持 .zip / .cbz —— .rar / .cbr 返回 ErrArchiveNotWritable（Go 无 rar 写库）。
-func WriteComicInfoIntoArchive(archivePath string, xmlData []byte) error {
+// 仅支持 .zip / .cbz —— .rar / .cbr 返回 ErrArchiveNotWritable（Go 无 rar 写库）；
+// 原有的 ComicInfo.xml 无法安全改写时返回 ErrComicInfoNotMergeable，归档保持原样。
+func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
 	ext := strings.ToLower(filepath.Ext(archivePath))
 	if ext != ".zip" && ext != ".cbz" {
 		return ErrArchiveNotWritable
@@ -44,8 +55,13 @@ func WriteComicInfoIntoArchive(archivePath string, xmlData []byte) error {
 	// 先记下原文件权限：os.CreateTemp 建出来的是 0600，直接 rename 覆盖会把归档变成
 	// 仅属主可读，其他账号（媒体服务器、家庭共享）从此打不开这本书。
 	var originalMode os.FileMode = 0o644
-	if info, statErr := os.Stat(archivePath); statErr == nil {
-		originalMode = info.Mode().Perm()
+	if stat, statErr := os.Stat(archivePath); statErr == nil {
+		originalMode = stat.Mode().Perm()
+	}
+
+	xmlData, err := mergeArchiveComicInfo(reader, info)
+	if err != nil {
+		return err
 	}
 
 	dir := filepath.Dir(archivePath)
@@ -116,6 +132,29 @@ func WriteComicInfoIntoArchive(archivePath string, xmlData []byte) error {
 	EvictArchiveFromPool(archivePath)
 	committed = true
 	return nil
+}
+
+// mergeArchiveComicInfo 读出归档里已有的 ComicInfo.xml 并把 info 合并进去。
+// 归档里没有这个条目、或条目读不出来时按新文档处理：读不出的条目本来也带不出任何字段，
+// 拿它当合并基底只会把写入整个挡掉。
+func mergeArchiveComicInfo(reader *zip.ReadCloser, info ComicInfo) ([]byte, error) {
+	var original []byte
+	for _, f := range reader.File {
+		if !strings.EqualFold(f.Name, comicInfoEntryName) {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			break
+		}
+		data, err := io.ReadAll(io.LimitReader(rc, maxComicInfoMergeBytes))
+		_ = rc.Close()
+		if err == nil {
+			original = data
+		}
+		break
+	}
+	return MergeComicInfoXML(original, info)
 }
 
 // copyZipEntry 把源归档中的一个条目搬到目标 writer，保留其头部（名称/压缩方法/时间等）。
