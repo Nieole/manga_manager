@@ -15,6 +15,9 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"manga-manager/internal/config"
+	"manga-manager/internal/database"
 )
 
 func requireSymlinks(t *testing.T) {
@@ -451,7 +454,7 @@ func TestClaimDirKeepsDistinctDirsInSameBucket(t *testing.T) {
 	second := t.TempDir()
 
 	visited := make(map[string][]string)
-	if !claimDir(first, visited) {
+	if _, ok := claimDir(first, visited); !ok {
 		t.Fatal("第一个目录就没登记上")
 	}
 	// 显式制造桶冲突：把 first 挂到 second 的桶键上，等价于两条只差大小写的路径撞在一起。
@@ -459,10 +462,270 @@ func TestClaimDirKeepsDistinctDirsInSameBucket(t *testing.T) {
 	secondKey, _ := dirClaimKey(second)
 	visited[secondKey] = append(visited[secondKey], visited[firstKey]...)
 
-	if !claimDir(second, visited) {
+	if _, ok := claimDir(second, visited); !ok {
 		t.Fatal("两个不同的真实目录被折叠成同一个 —— 大小写敏感的文件系统上会漏扫一整棵树")
 	}
-	if claimDir(first, visited) {
+	if _, ok := claimDir(first, visited); ok {
 		t.Fatal("同一个目录被登记了两次 —— 去重落空，同一批文件会以两条路径入库")
+	}
+}
+
+// TestWalkFollowsSymlinkedRoot：遍历的起点自身是软链时必须照样下降到底。
+//
+// 「资料库根是软链」（迁移后原地留链）与「系列目录是软链」都会走到这里。
+// 走不进去时 fn 一次也不被调用而 walkErr 为 nil，扫描当作成功收尾：
+// 用户看到「扫描完成」，指标 discovered_archives=0，一本书都不入库。
+func TestWalkFollowsSymlinkedRoot(t *testing.T) {
+	requireSymlinks(t)
+
+	cases := []struct {
+		name string
+		// hops 是起点到真实目录之间套了几层软链。
+		hops int
+	}{
+		{name: "起点是一层软链", hops: 1},
+		{name: "起点是套了两层的软链", hops: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			real := filepath.Join(base, "real")
+			if err := os.MkdirAll(filepath.Join(real, "Series Alpha"), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			// 根下散装归档与子目录里的归档各放一个：前者验证根这一层被枚举，后者验证真的下降了。
+			for _, rel := range []string{"Loose.cbz", filepath.Join("Series Alpha", "Vol 01.cbz")} {
+				if err := os.WriteFile(filepath.Join(real, rel), []byte("x"), 0o644); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			}
+			root := real
+			for i := 0; i < tc.hops; i++ {
+				link := filepath.Join(base, "hop"+string(rune('0'+i)))
+				if err := os.Symlink(root, link); err != nil {
+					t.Skipf("建不了软链：%v", err)
+				}
+				root = link
+			}
+
+			got := collectWalked(t, root)
+			want := []string{
+				filepath.Join(root, "Loose.cbz"),
+				filepath.Join(root, "Series Alpha", "Vol 01.cbz"),
+			}
+			sort.Strings(want)
+			if len(got) != len(want) {
+				t.Fatalf("遍历到 %v，期望 %v —— 一个文件都走不到，扫描却报成功收尾", got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("遍历到 %v，期望 %v —— 报出的路径必须落在起点这一侧，"+
+						"否则这些书会归属到库外", got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestWalkVisitsRootOnceWhenSymlinkPointsBackAtRoot 是修「起点是软链」时的反向判据。
+//
+// 「起点先解链再登记」与「起点干脆不登记、留给跟进那一次」都能让上一条用例变绿，
+// 但后者会让指回起点的软链重新被跟进：同一批文件以两条路径入库，变成两本书、两个系列。
+func TestWalkVisitsRootOnceWhenSymlinkPointsBackAtRoot(t *testing.T) {
+	requireSymlinks(t)
+
+	cases := []struct {
+		name string
+		// linkRel 是指回库根的那条软链放在库根下的哪个位置。
+		linkRel string
+	}{
+		{name: "库根下直接指回库根", linkRel: "self"},
+		{name: "子目录里指回库根", linkRel: filepath.Join("Series Alpha", "up")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "Series Alpha"), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			// 库根散装归档是判据的关键：子目录那层还有自己的登记兜着，
+			// 起点重复走一遍只在根这一层直接现形。
+			for _, rel := range []string{"Loose.cbz", filepath.Join("Series Alpha", "Vol 01.cbz")} {
+				if err := os.WriteFile(filepath.Join(root, rel), []byte("x"), 0o644); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			}
+			if err := os.Symlink(root, filepath.Join(root, tc.linkRel)); err != nil {
+				t.Skipf("建不了软链：%v", err)
+			}
+
+			got := collectWalked(t, root)
+			want := []string{
+				filepath.Join(root, "Loose.cbz"),
+				filepath.Join(root, "Series Alpha", "Vol 01.cbz"),
+			}
+			sort.Strings(want)
+			if len(got) != len(want) {
+				t.Fatalf("遍历到 %v，期望 %v —— 起点被指回它的软链又走了一遍，"+
+					"同一批文件会以两条路径入库", got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("遍历到 %v，期望 %v", got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestScanImportsFromSymlinkedLibraryRoot 是端到端判据：库根填成软链时藏书必须照常可见。
+//
+// 建库校验用 os.Stat（跟进软链）判定是目录，所以这种库建得起来；遍历走不进去时扫描仍报
+// 「完成」，用户面对的是一个内容静默不可见的库。
+func TestScanImportsFromSymlinkedLibraryRoot(t *testing.T) {
+	requireSymlinks(t)
+
+	rootDir, store, _, _ := newScannerTestLibrary(t)
+	ctx := context.Background()
+
+	real := filepath.Join(rootDir, "real-library")
+	seriesDir := filepath.Join(real, "Series Beta")
+	if err := os.MkdirAll(seriesDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := writeScannerTestCBZ(filepath.Join(seriesDir, "Vol 01.cbz"),
+		map[string][]byte{"001.png": testPNG1x1}); err != nil {
+		t.Fatalf("write cbz: %v", err)
+	}
+	link := filepath.Join(rootDir, "linked-library")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("建不了软链：%v", err)
+	}
+
+	lib, err := store.CreateLibrary(ctx, database.CreateLibraryParams{
+		Name:                "Linked",
+		Path:                link,
+		ScanMode:            "none",
+		KoreaderSyncEnabled: true,
+		ScanInterval:        60,
+		ScanFormats:         config.DefaultScanFormatsCSV,
+	})
+	if err != nil {
+		t.Fatalf("create library: %v", err)
+	}
+
+	s := newFormatTestScanner(t, store)
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
+		t.Fatalf("ScanLibrary: %v", err)
+	}
+
+	books, err := store.ListBooksByLibrary(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("ListBooksByLibrary: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("软链库根下入库 %d 本，期望 1 本 —— 用户只会看到「扫描完成，0 本新增」", len(books))
+	}
+	if want := filepath.Join(link, "Series Beta", "Vol 01.cbz"); books[0].Path != want {
+		t.Errorf("books.path = %q，期望库根这一侧的 %q —— 记真实路径会让这本书归属到库外，"+
+			"删库与清理都定位不到它", books[0].Path, want)
+	}
+}
+
+// TestScanSeriesFollowsSymlinkedSeriesDirectory 是端到端判据：系列目录是软链时，
+// 系列详情页的「重新扫描该系列」必须看得见新增的书。
+//
+// 单系列扫描的起点就是 series.Path，它是软链时遍历一层都不下降，用户永远看到「0 本新增」。
+func TestScanSeriesFollowsSymlinkedSeriesDirectory(t *testing.T) {
+	requireSymlinks(t)
+
+	_, store, lib, libraryPath := newScannerTestLibrary(t)
+	ctx := context.Background()
+
+	external := t.TempDir()
+	if err := writeScannerTestCBZ(filepath.Join(external, "Vol 01.cbz"),
+		map[string][]byte{"001.png": testPNG1x1}); err != nil {
+		t.Fatalf("write cbz: %v", err)
+	}
+	link := filepath.Join(libraryPath, "External Series")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("建不了软链：%v", err)
+	}
+
+	s := newFormatTestScanner(t, store)
+	if err := s.ScanLibrary(ctx, lib.ID, lib.Path, false, nil); err != nil {
+		t.Fatalf("ScanLibrary: %v", err)
+	}
+	books, err := store.ListBooksByLibrary(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("ListBooksByLibrary: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("整库扫描先要看到 1 本，实际 %d 本", len(books))
+	}
+	seriesList, err := store.ListSeriesByLibraryLite(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("ListSeriesByLibraryLite: %v", err)
+	}
+	if len(seriesList) != 1 {
+		t.Fatalf("整库扫描先要看到 1 个系列，实际 %d 个", len(seriesList))
+	}
+
+	// 软链目标里新增一本，然后只重扫这个系列。
+	if err := writeScannerTestCBZ(filepath.Join(external, "Vol 02.cbz"),
+		map[string][]byte{"001.png": testPNG1x1}); err != nil {
+		t.Fatalf("write cbz: %v", err)
+	}
+	if err := s.ScanSeries(ctx, seriesList[0].ID, false, nil); err != nil {
+		t.Fatalf("ScanSeries: %v", err)
+	}
+
+	books, err = store.ListBooksByLibrary(ctx, lib.ID)
+	if err != nil {
+		t.Fatalf("ListBooksByLibrary: %v", err)
+	}
+	if len(books) != 2 {
+		t.Fatalf("单系列扫描后入库 %d 本，期望 2 本 —— 软链的系列目录上「重新扫描该系列」永远 0 本新增",
+			len(books))
+	}
+}
+
+// TestWatchRegistersSymlinkedLibraryRoot：库根是软链时监听器必须注册到目录。
+//
+// 一个目录都没注册上时 WatchLibrary 还不报错（report.FirstErr 为 nil），
+// 用户以为热重载开着，实际整库的改动永远不会被发现。
+func TestWatchRegistersSymlinkedLibraryRoot(t *testing.T) {
+	requireSymlinks(t)
+
+	fw := newLifecycleWatcher(t)
+	t.Cleanup(fw.Stop)
+
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "Series Alpha"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	link := filepath.Join(base, "linked")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("建不了软链：%v", err)
+	}
+
+	report := fw.watchRecursive(link)
+	if !report.OK() {
+		t.Fatalf("注册报告不该判为失败：%+v", report)
+	}
+	if report.Total != 2 || report.Watched != 2 {
+		t.Fatalf("Total=%d Watched=%d，期望 2/2（库根 + 系列目录）—— "+
+			"一个目录都没注册上时 WatchLibrary 还不报错，整库静默失监", report.Total, report.Watched)
+	}
+	if report.SymlinkDirs != 1 {
+		t.Errorf("SymlinkDirs = %d, want 1（库根自己那条）—— 记账契约要求软链目录单独可见",
+			report.SymlinkDirs)
+	}
+	fw.mu.Lock()
+	_, watched := fw.watched[link]
+	fw.mu.Unlock()
+	if !watched {
+		t.Error("软链的库根没有被监听 —— 库根下新增/删除的系列永远不触发热重载")
 	}
 }

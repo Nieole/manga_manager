@@ -46,22 +46,22 @@ func dirClaimKey(dir string) (key, resolved string) {
 	return strings.ToLower(resolved), resolved
 }
 
-// claimDir 给目录登记一笔，返回它是不是第一次被走到。
+// claimDir 给目录登记一笔，交回解析后的路径与「它是不是第一次被走到」。
 //
 // 身份是「同一个目录」这件事本身：同桶的候选逐个用 os.SameFile 定夺，它在大小写敏感与不敏感的
 // 文件系统上都答得对，也不像 syscall.Stat_t 的 Dev/Ino 那样是 Unix-only（build.sh 要交叉编译
 // 到 Windows）。线性比对只发生在桶内，而只有互为别名或只差大小写的路径才会同桶，几万个目录的
 // 库里桶长仍是 1；os.Stat 也因此只在同桶时才做。取不到属性（目录已消失、不可读）时退回字符串
 // 判等，宁可多走一趟也不误合并。
-func claimDir(dir string, visited map[string][]string) bool {
+func claimDir(dir string, visited map[string][]string) (resolved string, claimed bool) {
 	key, resolved := dirClaimKey(dir)
 	for _, seen := range visited[key] {
 		if seen == resolved || sameDir(seen, resolved) {
-			return false
+			return resolved, false
 		}
 	}
 	visited[key] = append(visited[key], resolved)
-	return true
+	return resolved, true
 }
 
 // sameDir 报告两条路径是不是同一个目录。
@@ -87,20 +87,33 @@ func sameDir(a, b string) bool {
 // 这个次序也定死了两条路径都通时留下来的是**真实目录**那条，与链接名的字典序无关：
 // 软链是随手建的组织视图，用户删掉它不该让整个系列在下次扫描时消失。
 func walkFollow(dir string, fn fs.WalkDirFunc, visited map[string][]string, depth int) error {
-	if !claimDir(dir, visited) {
+	walkRoot, claimed := claimDir(dir, visited)
+	if !claimed {
 		return nil
 	}
 
+	// 交给 WalkDir 的必须是**解析后**的路径。dir 自身是软链时（软链的资料库根、软链的系列
+	// 目录）WalkDir 对它也只做 lstat，d.IsDir() 为 false，一层都不下降；回调里那次跟进又会
+	// 撞上上面这笔登记而直接返回，于是 fn 一次都不被调用、遍历还报成功。报出去的 path 改写回
+	// dir 这一侧：调用方要靠它判库归属、派生系列目录、写 books.path。
+	//
+	// 登记的仍是解析后的路径，所以指回 dir 的软链照旧被挡在去重集合外，不会走第二遍。
+	if walkRoot != dir {
+		fn = rewriteWalkPrefix(fn, walkRoot, dir)
+	}
+
 	var pendingLinks []string
-	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d == nil {
 			return fn(path, d, err)
 		}
 		if d.Type()&fs.ModeSymlink == 0 {
-			if d.IsDir() && path != dir && !claimDir(path, visited) {
-				// 这一棵已经从别的路径走过了（例如本次遍历更早跟进的某条软链就指向它）。
-				// 不报给 fn：报了就是第二条入库路径。
-				return filepath.SkipDir
+			if d.IsDir() && path != walkRoot {
+				if _, ok := claimDir(path, visited); !ok {
+					// 这一棵已经从别的路径走过了（例如本次遍历更早跟进的某条软链就指向它）。
+					// 不报给 fn：报了就是第二条入库路径。
+					return filepath.SkipDir
+				}
 			}
 			return fn(path, d, nil)
 		}
