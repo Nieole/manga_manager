@@ -1,8 +1,8 @@
-// 本文件守读通路的两条规则：字段的锁定标志按系列的**当前**锁定集算，以及一批提案的
-// 字段行只换来一次查询。
+// 本文件守读通路的三条规则：字段的当前值与锁定标志都按系列**此刻**的状态算，
+// 以及一批提案的字段行只换来一次查询。
 //
-// 锁定标志算错，用户会以为某个字段能被应用，点下去却在写入时被静默丢弃；字段行逐条取
-// 则是一个系列有几条待裁决提案、就多几次查询的 N+1。
+// 算错，用户会看到一个「当前值：(空)」却在应用时被跳过的字段、或一个挂着锁徽章却被照写
+// 的字段；字段行逐条取则是一个系列有几条待裁决提案、就多几次查询的 N+1。
 
 package proposal
 
@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/metadata"
 )
 
 // countingFieldRowDB 统计批量字段行查询被调了几次。不是行为替身：底下仍是同一个真库，
@@ -221,5 +222,79 @@ func TestPendingCountCountsOnlyPending(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("拒绝一条之后计数仍是 %d，期望 1 —— 角标不会随裁决动作下降", count)
+	}
+}
+
+// TestReadShowsCurrentSeriesValueNotQueueSnapshot：diff 面板上的「当前值」按系列此刻的值算。
+//
+// 摆的是入队瞬间的快照，用户在这之后的手工编辑就全看不见：一个已经填好的字段仍显示
+// 「当前值：(空)」，而「只填空字段」会跳过它——展示与行为对不上，用户无从判断点下去会发生什么。
+func TestReadShowsCurrentSeriesValueNotQueueSnapshot(t *testing.T) {
+	// 七个字段各摆一个入队之后才有的值，收件箱那条通路漏取一列就会露馅。
+	want := map[string]string{
+		"title":     "用户改的标题",
+		"summary":   "用户自己写的简介",
+		"publisher": "用户填的出版社",
+		"status":    "completed",
+		"rating":    "3.5",
+		"tags":      "kept-tag",
+		"authors":   "Kept Author (story)",
+	}
+
+	cases := []struct {
+		name   string
+		fields func(t *testing.T, svc *Service, seriesID int64) []Field
+	}{
+		{
+			name: "按系列列出",
+			fields: func(t *testing.T, svc *Service, seriesID int64) []Field {
+				listed, err := svc.ListBySeries(context.Background(), seriesID)
+				if err != nil {
+					t.Fatalf("ListBySeries: %v", err)
+				}
+				if len(listed.Proposals) != 1 {
+					t.Fatalf("列出 %d 条待裁决提案，期望 1 条", len(listed.Proposals))
+				}
+				return listed.Proposals[0].Fields
+			},
+		},
+		{
+			name: "收件箱",
+			fields: func(t *testing.T, svc *Service, seriesID int64) []Field {
+				page, err := svc.Inbox(context.Background(), InboxQuery{Limit: 30})
+				if err != nil {
+					t.Fatalf("Inbox: %v", err)
+				}
+				if len(page.Items) != 1 {
+					t.Fatalf("收件箱有 %d 条，期望 1 条", len(page.Items))
+				}
+				return page.Items[0].Fields
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store := newTestService(t)
+			series := seedSeries(t, store, "Lib", "Series Alpha")
+			seedProposal(t, svc, series, fullResult())
+
+			// 入队之后用户在详情页改了一轮。
+			series.Title = nullString("用户改的标题")
+			series.Summary = nullString("用户自己写的简介")
+			series.Publisher = nullString("用户填的出版社")
+			series.Status = nullString("completed")
+			series.Rating = nullFloat(3.5)
+			updateSeries(t, store, series)
+			seedTags(t, store, series.ID, "kept-tag")
+			seedAuthors(t, store, series.ID, metadata.SeriesAuthor{Name: "Kept Author", Role: "story"})
+
+			for _, field := range tc.fields(t, svc, series.ID) {
+				if got := field.Current; got != want[field.Name] {
+					t.Errorf("字段 %q 的当前值 = %q，期望 %q —— 展示的是入队瞬间的快照",
+						field.Name, got, want[field.Name])
+				}
+			}
+		})
 	}
 }

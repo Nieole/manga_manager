@@ -2825,6 +2825,53 @@ func (q *Queries) ListAIGroupingReviews(ctx context.Context, arg ListAIGroupingR
 	return items, nil
 }
 
+const listAuthorsBySeriesIDs = `-- name: ListAuthorsBySeriesIDs :many
+SELECT sa.series_id, a.name, a.role
+FROM series_authors sa
+JOIN authors a ON a.id = sa.author_id
+WHERE sa.series_id IN (/*SLICE:series_ids*/?)
+ORDER BY sa.series_id, a.role, a.name
+`
+
+type ListAuthorsBySeriesIDsRow struct {
+	SeriesID int64  `json:"series_id"`
+	Name     string `json:"name"`
+	Role     string `json:"role"`
+}
+
+func (q *Queries) ListAuthorsBySeriesIDs(ctx context.Context, seriesIds []int64) ([]ListAuthorsBySeriesIDsRow, error) {
+	query := listAuthorsBySeriesIDs
+	var queryParams []interface{}
+	if len(seriesIds) > 0 {
+		for _, v := range seriesIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:series_ids*/?", strings.Repeat(",?", len(seriesIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:series_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAuthorsBySeriesIDsRow
+	for rows.Next() {
+		var i ListAuthorsBySeriesIDsRow
+		if err := rows.Scan(&i.SeriesID, &i.Name, &i.Role); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBooksByLibrary = `-- name: ListBooksByLibrary :many
 SELECT id, path, file_modified_at, size, page_count, cover_path, file_hash, quick_hash FROM books WHERE library_id = ?
 `
@@ -4317,6 +4364,10 @@ SELECT
     l.name as library_name,
     s.name as series_name,
     COALESCE(s.title, '') as series_title,
+    COALESCE(s.summary, '') as series_summary,
+    COALESCE(s.publisher, '') as series_publisher,
+    COALESCE(s.status, '') as series_status,
+    CAST(COALESCE(s.rating, 0) AS REAL) as series_rating,
     COALESCE(s.locked_fields, '') as series_locked_fields,
     CAST(COALESCE((
         SELECT b.id
@@ -4368,6 +4419,10 @@ type ListPendingMetadataReviewInboxRow struct {
 	LibraryName        string       `json:"library_name"`
 	SeriesName         string       `json:"series_name"`
 	SeriesTitle        string       `json:"series_title"`
+	SeriesSummary      string       `json:"series_summary"`
+	SeriesPublisher    string       `json:"series_publisher"`
+	SeriesStatus       string       `json:"series_status"`
+	SeriesRating       float64      `json:"series_rating"`
 	SeriesLockedFields string       `json:"series_locked_fields"`
 	CoverBookID        int64        `json:"cover_book_id"`
 }
@@ -4410,6 +4465,10 @@ func (q *Queries) ListPendingMetadataReviewInbox(ctx context.Context, arg ListPe
 			&i.LibraryName,
 			&i.SeriesName,
 			&i.SeriesTitle,
+			&i.SeriesSummary,
+			&i.SeriesPublisher,
+			&i.SeriesStatus,
+			&i.SeriesRating,
 			&i.SeriesLockedFields,
 			&i.CoverBookID,
 		); err != nil {
@@ -5322,6 +5381,54 @@ func (q *Queries) ListStaticCollectionSeriesPaged(ctx context.Context, arg ListS
 			&i.TotalPages,
 			&i.CoverPath,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTagsBySeriesIDs = `-- name: ListTagsBySeriesIDs :many
+SELECT st.series_id, t.name
+FROM series_tags st
+JOIN tags t ON t.id = st.tag_id
+WHERE st.series_id IN (/*SLICE:series_ids*/?)
+ORDER BY st.series_id, t.name
+`
+
+type ListTagsBySeriesIDsRow struct {
+	SeriesID int64  `json:"series_id"`
+	Name     string `json:"name"`
+}
+
+// Series-scoped tag names for a batch of series: the review inbox renders one page of
+// proposals spanning many series, and per-series lookups would be an N+1.
+func (q *Queries) ListTagsBySeriesIDs(ctx context.Context, seriesIds []int64) ([]ListTagsBySeriesIDsRow, error) {
+	query := listTagsBySeriesIDs
+	var queryParams []interface{}
+	if len(seriesIds) > 0 {
+		for _, v := range seriesIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:series_ids*/?", strings.Repeat(",?", len(seriesIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:series_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTagsBySeriesIDsRow
+	for rows.Next() {
+		var i ListTagsBySeriesIDsRow
+		if err := rows.Scan(&i.SeriesID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

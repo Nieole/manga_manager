@@ -104,3 +104,36 @@ func TestBuildFieldDraftsStatusFromLLMScrape(t *testing.T) {
 		})
 	}
 }
+
+// TestCurrentFieldValuesCoversEveryDraftField：入队产出的每个字段，都要能在 currentFieldValues
+// 里查到它的当前值。
+//
+// 漏掉一个，裁决会把它当成空的——「只填空字段」照写不误，把用户已有的值覆盖掉；
+// 收件箱那格也会一直显示「当前值：(空)」。
+func TestCurrentFieldValuesCoversEveryDraftField(t *testing.T) {
+	series := database.Series{ID: 1, Name: "Series Alpha"}
+	result := &metadata.SeriesMetadata{
+		Title:     "Scraped Title",
+		Summary:   "Scraped summary",
+		Publisher: "Scraped Publisher",
+		Status:    "ongoing",
+		Rating:    4.5,
+		Tags:      []string{"action"},
+		Authors:   []metadata.SeriesAuthor{{Name: "Someone", Role: "story"}},
+	}
+
+	drafts, _ := buildFieldDrafts(series, nil, nil, result, 0.9)
+	if len(drafts) != 7 {
+		t.Fatalf("产出 %d 个字段提案，期望 7 个 —— 用例需要覆盖全部字段", len(drafts))
+	}
+	current := currentFieldValues(series, nil, nil)
+	for _, draft := range drafts {
+		if _, ok := current[draft.Name]; !ok {
+			t.Errorf("字段 %q 在 currentFieldValues 里没有当前值 —— 裁决会把它当成空的", draft.Name)
+		}
+		if draft.Current != current[draft.Name] {
+			t.Errorf("字段 %q 入队写下的当前值 %q 与 currentFieldValues 的 %q 不一致 —— 「当前值」出现了第二个口径",
+				draft.Name, draft.Current, current[draft.Name])
+		}
+	}
+}

@@ -414,6 +414,10 @@ SELECT
     l.name as library_name,
     s.name as series_name,
     COALESCE(s.title, '') as series_title,
+    COALESCE(s.summary, '') as series_summary,
+    COALESCE(s.publisher, '') as series_publisher,
+    COALESCE(s.status, '') as series_status,
+    CAST(COALESCE(s.rating, 0) AS REAL) as series_rating,
     COALESCE(s.locked_fields, '') as series_locked_fields,
     CAST(COALESCE((
         SELECT b.id
@@ -676,6 +680,22 @@ INSERT OR IGNORE INTO series_authors (series_id, author_id) VALUES (?, ?);
 SELECT a.* FROM authors a
 JOIN series_authors sa ON a.id = sa.author_id
 WHERE sa.series_id = ? ORDER BY a.role, a.name;
+
+-- name: ListTagsBySeriesIDs :many
+-- Series-scoped tag names for a batch of series: the review inbox renders one page of
+-- proposals spanning many series, and per-series lookups would be an N+1.
+SELECT st.series_id, t.name
+FROM series_tags st
+JOIN tags t ON t.id = st.tag_id
+WHERE st.series_id IN (sqlc.slice('series_ids'))
+ORDER BY st.series_id, t.name;
+
+-- name: ListAuthorsBySeriesIDs :many
+SELECT sa.series_id, a.name, a.role
+FROM series_authors sa
+JOIN authors a ON a.id = sa.author_id
+WHERE sa.series_id IN (sqlc.slice('series_ids'))
+ORDER BY sa.series_id, a.role, a.name;
 
 -- name: ClearSeriesTags :exec
 DELETE FROM series_tags WHERE series_id = ?;

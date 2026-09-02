@@ -111,6 +111,7 @@ type Querier interface {
 	ListAIGroupingReviewCollections(ctx context.Context, reviewID int64) ([]AiGroupingReviewCollection, error)
 	ListAIGroupingReviewCollectionsByReviews(ctx context.Context, reviewIds []int64) ([]AiGroupingReviewCollection, error)
 	ListAIGroupingReviews(ctx context.Context, arg ListAIGroupingReviewsParams) ([]ListAIGroupingReviewsRow, error)
+	ListAuthorsBySeriesIDs(ctx context.Context, seriesIds []int64) ([]ListAuthorsBySeriesIDsRow, error)
 	ListBooksByLibrary(ctx context.Context, libraryID int64) ([]ListBooksByLibraryRow, error)
 	ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error)
 	ListCollectionSeries(ctx context.Context, collectionID int64) ([]ListCollectionSeriesRow, error)
@@ -164,6 +165,9 @@ type Querier interface {
 	ListSmartFilters(ctx context.Context) ([]SmartFilter, error)
 	ListSmartFiltersByLibrary(ctx context.Context, libraryID int64) ([]SmartFilter, error)
 	ListStaticCollectionSeriesPaged(ctx context.Context, arg ListStaticCollectionSeriesPagedParams) ([]ListStaticCollectionSeriesPagedRow, error)
+	// Series-scoped tag names for a batch of series: the review inbox renders one page of
+	// proposals spanning many series, and per-series lookups would be an N+1.
+	ListTagsBySeriesIDs(ctx context.Context, seriesIds []int64) ([]ListTagsBySeriesIDsRow, error)
 	LogReadingActivity(ctx context.Context, arg LogReadingActivityParams) error
 	// Terminal-state CAS: callers must roll back when it affects 0 rows, otherwise two
 	// requests holding the same pending snapshot each build a collection out of this row.

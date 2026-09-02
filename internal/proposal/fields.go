@@ -25,43 +25,44 @@ type fieldDraft struct {
 // 后者用来把「全被锁住」与「本来就没差异」两种结果区分开。
 func buildFieldDrafts(series database.Series, tags []database.Tag, authors []database.Author, result *metadata.SeriesMetadata, confidence float64) ([]fieldDraft, int) {
 	locked := lockedFieldSet(series)
+	current := currentFieldValues(series, tags, authors)
 
 	drafts := []fieldDraft{
 		{
 			Name:     "title",
-			Current:  seriesDisplayTitle(series),
+			Current:  current["title"],
 			Proposed: strings.TrimSpace(result.Title),
 		},
 		{
 			Name:     "summary",
-			Current:  nullText(series.Summary),
+			Current:  current["summary"],
 			Proposed: strings.TrimSpace(result.Summary),
 		},
 		{
 			Name:     "publisher",
-			Current:  nullText(series.Publisher),
+			Current:  current["publisher"],
 			Proposed: strings.TrimSpace(result.Publisher),
 		},
 		{
 			Name:    "status",
-			Current: nullText(series.Status),
+			Current: current["status"],
 			// 用 Optional 版：数据源没给状态时提案留空，由下游的「空提案不入队」逻辑丢弃。
 			// 折成 "unknown" 会让不提供状态的数据源每次刮削都提议把已有的正确状态改成 unknown。
 			Proposed: optionalStatus(result.Status),
 		},
 		{
 			Name:     "rating",
-			Current:  nullNumber(series.Rating),
+			Current:  current["rating"],
 			Proposed: formatNumber(result.Rating),
 		},
 		{
 			Name:     "tags",
-			Current:  joinTags(tags),
+			Current:  current["tags"],
 			Proposed: joinProposedTags(result.Tags),
 		},
 		{
 			Name:     "authors",
-			Current:  joinAuthors(authors),
+			Current:  current["authors"],
 			Proposed: joinProposedAuthors(result.Authors),
 		},
 	}
@@ -90,6 +91,25 @@ func buildFieldDrafts(series database.Series, tags []database.Tag, authors []dat
 		changes = append(changes, draft)
 	}
 	return changes, lockedSkipped
+}
+
+// currentFieldValues 给出系列此刻各字段的规范文本，键是提案的字段名。
+//
+// 「当前值」在本包只有这一个定义：入队时写进字段行的快照、裁决时判「空不空」、读通路上
+// 展示给用户的那一格，都从这里取。分头各算一份的话，同一个字段会在三处给出不同的说法。
+//
+// 集合字段折成同一种文本：系列上还挂着成员时它非空，而写入是整体替换——把提案写进去
+// 等于删掉这些成员，「只填空字段」因此必须把它当作已经有值。
+func currentFieldValues(series database.Series, tags []database.Tag, authors []database.Author) map[string]string {
+	return map[string]string{
+		"title":     seriesDisplayTitle(series),
+		"summary":   nullText(series.Summary),
+		"publisher": nullText(series.Publisher),
+		"status":    nullText(series.Status),
+		"rating":    nullNumber(series.Rating),
+		"tags":      joinTags(tags),
+		"authors":   joinAuthors(authors),
+	}
 }
 
 func lockedFieldSet(series database.Series) map[string]bool {

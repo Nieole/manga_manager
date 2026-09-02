@@ -1,5 +1,5 @@
 // 本文件是提案的裁决通路：应用与拒绝。调用方交出提案 id 与模式，拿回一个已分类的结局；
-// 「读提案 / 判待裁决 / 读字段行 / 按模式筛 / 读系列 / 按当前锁定集过滤 / 写入 / 推终态」
+// 「读提案 / 判待裁决 / 读字段行 / 读系列当前状态 / 按模式筛 / 按当前锁定集过滤 / 写入 / 推终态」
 // 这一串只在这里写一遍——单条入口与批量入口共用它，两处不可能再对同一种结局给出不同分类。
 
 package proposal
@@ -21,7 +21,8 @@ type ApplyMode string
 const (
 	// ApplyModeAll 应用提案里的全部字段。
 	ApplyModeAll ApplyMode = "all"
-	// ApplyModeFillEmpty 只补当前值为空的字段，不覆盖系列上已有的数据。
+	// ApplyModeFillEmpty 只补系列**此刻**仍为空的字段，不覆盖系列上已有的数据。
+	// tags 与 authors 整体替换，系列上还挂着成员就算有数据，本模式一律跳过。
 	ApplyModeFillEmpty ApplyMode = "fill_empty"
 )
 
@@ -98,10 +99,6 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	selected := fieldsForMode(all, mode)
-	if len(selected) == 0 {
-		return ApplyResult{Status: ApplyNoChanges, SeriesID: proposal.SeriesID}, nil
-	}
 
 	series, err := s.db.GetSeries(ctx, proposal.SeriesID)
 	if err != nil {
@@ -112,6 +109,21 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 		}
 		return ApplyResult{}, err
 	}
+	// 系列的当前值必须在按模式筛之前读出来：fill_empty 判的是「此刻还空着吗」。
+	// 集合字段一并读，它们的「空」同样只能由系列此刻挂着的成员回答。
+	tags, err := s.db.GetTagsForSeries(ctx, series.ID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	authors, err := s.db.GetAuthorsForSeries(ctx, series.ID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	selected := fieldsForMode(all, mode, currentFieldValues(series, tags, authors))
+	if len(selected) == 0 {
+		return ApplyResult{Status: ApplyNoChanges, SeriesID: proposal.SeriesID}, nil
+	}
+
 	// 入队之后用户又给字段加了锁：写入器内部本来就会跳过它们，但那是静默的——整条提案
 	// 照样被关单，用户看不出哪些提案没被写进去。在这里先筛一遍，全被筛光时明确报
 	// ApplyLockedSkipped，让调用方给出「去解锁」这条可行动的提示。
@@ -154,8 +166,8 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 		}
 		if partial {
 			// 只应用了一部分：删掉已写入的字段行，让提案带着剩下的字段继续待裁决。
-			// 删行而不是留着，是因为它们的 current_value 已经过时——留下会在收件箱里
-			// 陈列一个「当前值 → 提案值」都相同的假 diff。剩余字段没被动过，快照仍然有效。
+			// 删行而不是留着，是因为它们的提案值已经写进系列了——留下会在收件箱里
+			// 陈列一个「当前值 → 提案值」完全相同的假 diff。
 			// 提案保持待裁决也让下一轮刮削的去重签名能自然命中它。
 			//
 			// 这条分支没有终态 CAS：提案本来就要留在待裁决，没有状态可推进。代价是
@@ -237,14 +249,19 @@ func isPending(status string) bool {
 	return strings.EqualFold(strings.TrimSpace(status), "pending")
 }
 
-// fieldsForMode 按本次模式筛出参与写入的字段行。
-func fieldsForMode(fields []database.MetadataReviewField, mode ApplyMode) []database.MetadataReviewField {
+// fieldsForMode 按本次模式筛出参与写入的字段行。current 是系列**此刻**各字段的规范文本，
+// 由 currentFieldValues 给出。
+//
+// 判据落在 current 而不是字段行上的 CurrentValue：后者是入队瞬间的快照，用户事后手工填过、
+// 或同一批里前一条提案刚写进去，它就已经过时，照它筛会把「只填空字段」变成覆盖。
+// 与锁定集同一个口径——两者都按系列的当前状态重算，不认入队时的快照。
+func fieldsForMode(fields []database.MetadataReviewField, mode ApplyMode, current map[string]string) []database.MetadataReviewField {
 	if mode != ApplyModeFillEmpty {
 		return fields
 	}
 	filtered := make([]database.MetadataReviewField, 0, len(fields))
 	for _, field := range fields {
-		if strings.TrimSpace(field.CurrentValue) == "" {
+		if strings.TrimSpace(current[field.FieldName]) == "" {
 			filtered = append(filtered, field)
 		}
 	}

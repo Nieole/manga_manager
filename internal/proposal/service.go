@@ -43,7 +43,7 @@ type Queries interface {
 	RefreshSeriesStats(ctx context.Context, id int64) error
 }
 
-// Database 是本包可用的数据库能力：事务外只列读路径要用的那些、裁决前要加载的三样，
+// Database 是本包可用的数据库能力：事务外只列读路径要用的那些、裁决前要加载的那几样，
 // 加上拒绝那一条自成原子的 CAS；其余写入一律经 ExecTx——fn 内的写入要么整体生效，
 // 要么整体回滚。
 //
@@ -57,11 +57,16 @@ type Queries interface {
 // 把加载一并塞进事务只会让它变成一段永远撞不上、也测不出来的死代码。
 type Database interface {
 	GetSeries(ctx context.Context, id int64) (database.Series, error)
+	// 集合字段的当前值只有这两条能回答：裁决前要判它们此刻空不空，读通路要展示它们。
+	GetTagsForSeries(ctx context.Context, seriesID int64) ([]database.Tag, error)
+	GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]database.Author, error)
 	GetMetadataReview(ctx context.Context, id int64) (database.MetadataReview, error)
 	ListMetadataReviewFieldsByReviews(ctx context.Context, reviewIDs []int64) ([]database.MetadataReviewField, error)
 	ResolvePendingMetadataReview(ctx context.Context, arg database.ResolvePendingMetadataReviewParams) (int64, error)
 
 	// 读路径
+	ListTagsBySeriesIDs(ctx context.Context, seriesIDs []int64) ([]database.ListTagsBySeriesIDsRow, error)
+	ListAuthorsBySeriesIDs(ctx context.Context, seriesIDs []int64) ([]database.ListAuthorsBySeriesIDsRow, error)
 	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]database.MetadataReview, error)
 	GetSeriesMetadataProvenance(ctx context.Context, seriesID int64) ([]database.SeriesMetadataProvenance, error)
 	ListPendingMetadataReviewInbox(ctx context.Context, arg database.ListPendingMetadataReviewInboxParams) ([]database.ListPendingMetadataReviewInboxRow, error)

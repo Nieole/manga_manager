@@ -9,15 +9,16 @@ package proposal
 
 import (
 	"context"
+	"database/sql"
 
 	"manga-manager/internal/database"
 )
 
 // Field 是一条提案里的一个字段。
 //
-// Locked 是**终值**：已经按系列的当前锁定集算过，不是字段行上那个入队瞬间的快照。
-// 这是一条裁决规则而不是渲染细节——「先入队、后加锁」的行快照恒为 false，照它渲染的话
-// 界面上就没有锁徽章，用户点了应用，该字段却在写入时被静默丢弃。
+// Current 与 Locked 都是**终值**：按系列此刻的状态算出来，不是字段行上那两个入队瞬间的
+// 快照。这是裁决规则而不是渲染细节，展示与裁决必须同一个口径——照快照渲染，用户会看到
+// 一个「当前值：(空)」却在应用时被跳过的字段，或是一个挂着锁徽章却被照写的字段。
 type Field struct {
 	Name       string
 	Current    string
@@ -66,12 +67,21 @@ type InboxPage struct {
 
 // ListBySeries 返回一个系列上的待裁决提案与来源沿革。
 func (s *Service) ListBySeries(ctx context.Context, seriesID int64) (SeriesProposals, error) {
-	// 取一次系列只为拿当前锁定集：字段的锁定标志按它算，不按行上的快照。
+	// 取一次系列与它的两个集合：字段的当前值与锁定标志都按它们算，不按行上的快照。
 	series, err := s.db.GetSeries(ctx, seriesID)
 	if err != nil {
 		return SeriesProposals{}, err
 	}
+	tags, err := s.db.GetTagsForSeries(ctx, seriesID)
+	if err != nil {
+		return SeriesProposals{}, err
+	}
+	authors, err := s.db.GetAuthorsForSeries(ctx, seriesID)
+	if err != nil {
+		return SeriesProposals{}, err
+	}
 	locked := lockedFieldSet(series)
+	current := currentFieldValues(series, tags, authors)
 
 	rows, err := s.db.ListPendingMetadataReviewsBySeries(ctx, seriesID)
 	if err != nil {
@@ -98,7 +108,7 @@ func (s *Service) ListBySeries(ctx context.Context, seriesID int64) (SeriesPropo
 	for _, row := range rows {
 		out.Proposals = append(out.Proposals, Proposal{
 			Row:    row,
-			Fields: toFields(fieldRows[row.ID], locked),
+			Fields: toFields(fieldRows[row.ID], locked, current),
 		})
 	}
 	return out, nil
@@ -106,7 +116,7 @@ func (s *Service) ListBySeries(ctx context.Context, seriesID int64) (SeriesPropo
 
 // Inbox 返回一页待裁决提案与过滤后的总数。
 //
-// 锁定集逐行各算各的：一页里的提案跨多个系列，共用一份会把别的系列的锁串过来。
+// 锁定集与当前值都逐行各算各的：一页里的提案跨多个系列，共用一份会把别的系列的值串过来。
 func (s *Service) Inbox(ctx context.Context, query InboxQuery) (InboxPage, error) {
 	total, err := s.db.CountPendingMetadataReviewInbox(ctx, database.CountPendingMetadataReviewInboxParams{
 		LibraryID: query.LibraryID,
@@ -137,17 +147,81 @@ func (s *Service) Inbox(ctx context.Context, query InboxQuery) (InboxPage, error
 		return InboxPage{}, err
 	}
 
+	tags, authors, err := s.collectionsBySeries(ctx, seriesIDsOf(rows))
+	if err != nil {
+		return InboxPage{}, err
+	}
+
 	page := InboxPage{
 		Items: make([]InboxItem, 0, len(rows)),
 		Total: total,
 	}
 	for _, row := range rows {
+		current := currentFieldValues(seriesFromInboxRow(row), tags[row.SeriesID], authors[row.SeriesID])
 		page.Items = append(page.Items, InboxItem{
 			Row:    row,
-			Fields: toFields(fieldRows[row.ID], parseLockedFields(row.SeriesLockedFields)),
+			Fields: toFields(fieldRows[row.ID], parseLockedFields(row.SeriesLockedFields), current),
 		})
 	}
 	return page, nil
+}
+
+// seriesIDsOf 给出这一页涉及的系列 id，去重。
+func seriesIDsOf(rows []database.ListPendingMetadataReviewInboxRow) []int64 {
+	seen := make(map[int64]struct{}, len(rows))
+	ids := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.SeriesID]; ok {
+			continue
+		}
+		seen[row.SeriesID] = struct{}{}
+		ids = append(ids, row.SeriesID)
+	}
+	return ids
+}
+
+// collectionsBySeries 一次取回这批系列的标签与作者并按系列分组。
+// 逐个系列去取就是一页有几个系列、就多几倍查询的 N+1，而收件箱一页可达上百条。
+func (s *Service) collectionsBySeries(ctx context.Context, seriesIDs []int64) (map[int64][]database.Tag, map[int64][]database.Author, error) {
+	tags := map[int64][]database.Tag{}
+	authors := map[int64][]database.Author{}
+	if len(seriesIDs) == 0 {
+		// 空列表被 sqlc 拼成 IN (NULL)，能查、只是白跑两次往返。
+		return tags, authors, nil
+	}
+	tagRows, err := s.db.ListTagsBySeriesIDs(ctx, seriesIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, row := range tagRows {
+		tags[row.SeriesID] = append(tags[row.SeriesID], database.Tag{Name: row.Name})
+	}
+	authorRows, err := s.db.ListAuthorsBySeriesIDs(ctx, seriesIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, row := range authorRows {
+		authors[row.SeriesID] = append(authors[row.SeriesID], database.Author{Name: row.Name, Role: row.Role})
+	}
+	return tags, authors, nil
+}
+
+// seriesFromInboxRow 把收件箱那一行上的系列列折回 database.Series。
+// 只有算当前值用得到的那几列有值——收件箱查询也只取这几列，别处不要拿它当一整行系列用。
+func seriesFromInboxRow(row database.ListPendingMetadataReviewInboxRow) database.Series {
+	return database.Series{
+		ID:        row.SeriesID,
+		Name:      row.SeriesName,
+		Title:     nullIfEmpty(row.SeriesTitle),
+		Summary:   nullIfEmpty(row.SeriesSummary),
+		Publisher: nullIfEmpty(row.SeriesPublisher),
+		Status:    nullIfEmpty(row.SeriesStatus),
+		Rating:    sql.NullFloat64{Float64: row.SeriesRating, Valid: row.SeriesRating > 0},
+	}
+}
+
+func nullIfEmpty(value string) sql.NullString {
+	return sql.NullString{String: value, Valid: value != ""}
 }
 
 // PendingCount 回答「全库有多少条待裁决提案」，供审核中心的角标取数。
@@ -181,13 +255,14 @@ func groupFieldRows(rows []database.MetadataReviewField, proposalCount int) map[
 	return grouped
 }
 
-// toFields 把字段行折成对外的 Field，锁定标志按 locked（系列的**当前**锁定集）算出终值。
-func toFields(rows []database.MetadataReviewField, locked map[string]bool) []Field {
+// toFields 把字段行折成对外的 Field，当前值与锁定标志按系列此刻的状态（current 与 locked）
+// 算出终值。两者都不取行上的快照：那是入队瞬间的样子，用户后来的编辑与解锁都不在里面。
+func toFields(rows []database.MetadataReviewField, locked map[string]bool, current map[string]string) []Field {
 	fields := make([]Field, 0, len(rows))
 	for _, row := range rows {
 		fields = append(fields, Field{
 			Name:       row.FieldName,
-			Current:    row.CurrentValue,
+			Current:    current[row.FieldName],
 			Proposed:   row.ProposedValue,
 			Confidence: row.Confidence,
 			// 与行上的快照取或而不是直接覆盖：入队早就把锁定字段筛掉了，新行的快照恒为
