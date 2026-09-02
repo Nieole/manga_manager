@@ -301,6 +301,13 @@ func Migrate(dbPath string) error {
 	// 尝试执行，忽略错误因为有些数据库可能原本就没有 auto_scan
 	_, _ = db.Exec(`UPDATE libraries SET scan_mode = 'interval' WHERE auto_scan = 1 AND scan_mode = 'none'`)
 
+	// 提案字段行上的 locked 只是入队瞬间的快照，锁定与否一律按系列的当前 locked_fields 算；
+	// 锁定字段根本不入队，这一列因此恒为 0。老库里可能留着 1，清掉——留着它，下一个读到
+	// 的人会把陈旧数据当成一条裁决规则。语句幂等，代价与待裁决提案的字段行数同阶。
+	if _, err := db.Exec(`UPDATE metadata_review_fields SET locked = 0 WHERE locked != 0`); err != nil {
+		return err
+	}
+
 	// 记录本次已迁移到的 schema 版本，使下次启动跳过昂贵的全量回填。
 	if needFullBackfill {
 		if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {

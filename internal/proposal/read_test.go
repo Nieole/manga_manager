@@ -225,6 +225,76 @@ func TestPendingCountCountsOnlyPending(t *testing.T) {
 	}
 }
 
+// markFieldRowLocked 把字段行上的 locked 快照直改成 1，复现老库遗留的那种行。
+// 生产上写不出这种行——锁定字段不入队，新行的快照恒为 0。
+func markFieldRowLocked(t *testing.T, store database.Store, proposalID int64, fieldName string) {
+	t.Helper()
+	sqlStore, ok := store.(*database.SqlStore)
+	if !ok {
+		t.Fatalf("需要 *SqlStore 才能直改行，得到 %T", store)
+	}
+	res, err := sqlStore.DB().Exec(
+		`UPDATE metadata_review_fields SET locked = 1 WHERE review_id = ? AND field_name = ?`,
+		proposalID, fieldName)
+	if err != nil {
+		t.Fatalf("直改 locked: %v", err)
+	}
+	if rows, err := res.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("改到 %d 行（err=%v），期望 1 行", rows, err)
+	}
+}
+
+// TestReadIgnoresStaleRowLockSnapshot：行上遗留的 locked=1 是陈旧数据，读通路不认它。
+//
+// 认它就会与裁决那边分成两个口径：字段挂着锁徽章、也被算进徽章计数，用户以为点应用
+// 不会动它，点下去它却被写进了系列。用户把该字段解锁之后，徽章还会一直挂着。
+func TestReadIgnoresStaleRowLockSnapshot(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+	series := seedSeries(t, store, "Lib", "Series Alpha")
+	queued := seedProposal(t, svc, series, fullResult())
+	markFieldRowLocked(t, store, queued.ID, "publisher")
+
+	listed, err := svc.ListBySeries(ctx, series.ID)
+	if err != nil {
+		t.Fatalf("ListBySeries: %v", err)
+	}
+	if len(listed.Proposals) != 1 {
+		t.Fatalf("列出 %d 条待裁决提案，期望 1 条", len(listed.Proposals))
+	}
+	if field := fieldByName(t, listed.Proposals[0].Fields, "publisher"); field.Locked {
+		t.Error("系列详情页给 publisher 挂了锁徽章 —— 它不在系列的锁定集里，应用会照写")
+	}
+
+	page, err := svc.Inbox(ctx, InboxQuery{Limit: 30})
+	if err != nil {
+		t.Fatalf("Inbox: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("收件箱有 %d 条，期望 1 条", len(page.Items))
+	}
+	if field := fieldByName(t, page.Items[0].Fields, "publisher"); field.Locked {
+		t.Error("收件箱给 publisher 挂了锁徽章 —— 徽章计数也会把它算进去")
+	}
+
+	// 同口径的另一半：应用确实会把它写进系列。
+	res, err := svc.Apply(ctx, queued.ID, ApplyModeAll)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Status != ApplyApplied {
+		t.Fatalf("Status = %q，期望 %q", res.Status, ApplyApplied)
+	}
+	updated, err := store.GetSeries(ctx, series.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if updated.Publisher.String != "Scraped Publisher" {
+		t.Errorf("publisher = %q —— 展示说锁着、应用却照写，两处口径不一致",
+			updated.Publisher.String)
+	}
+}
+
 // TestReadShowsCurrentSeriesValueNotQueueSnapshot：diff 面板上的「当前值」按系列此刻的值算。
 //
 // 摆的是入队瞬间的快照，用户在这之后的手工编辑就全看不见：一个已经填好的字段仍显示

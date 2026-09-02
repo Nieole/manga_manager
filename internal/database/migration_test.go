@@ -784,3 +784,54 @@ func TestMigrateCleansUpOrphanUserScopedRows(t *testing.T) {
 		t.Errorf("升级后删号仍残留 %d 个 KOReader 账号，级联触发器没补上", n)
 	}
 }
+
+// TestMigrateClearsStaleFieldLockSnapshots 守「提案字段行上的 locked 恒为 0」对老库也成立。
+//
+// 锁定与否只认系列当前的 locked_fields，锁定字段根本不入队。老库里可能留着 locked=1 的行：
+// 留着它，下一个读到的人会把这份陈旧数据当成一条裁决规则，于是收件箱说「锁着」、应用却照写。
+func TestMigrateClearsStaleFieldLockSnapshots(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := db.Exec(legacyMetadataReviewSchema); err != nil {
+		t.Fatalf("建旧表失败: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO metadata_review_fields (review_id, field_name, proposed_value, locked, status)
+		VALUES (1, 'publisher', 'External Publisher', 1, 'pending')`); err != nil {
+		t.Fatalf("播种遗留的 locked=1 行失败: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// 跑两次：这条清理每次启动都会执行，必须幂等。
+	for i := 1; i <= 2; i++ {
+		if err := Migrate(dbPath); err != nil {
+			t.Fatalf("第 %d 次 Migrate 失败: %v", i, err)
+		}
+	}
+
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db.Close()
+
+	var stale int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM metadata_review_fields WHERE locked != 0`).Scan(&stale); err != nil {
+		t.Fatalf("读回 locked: %v", err)
+	}
+	if stale != 0 {
+		t.Errorf("还剩 %d 行带着 locked=1 —— 陈旧快照会被当成裁决规则", stale)
+	}
+	var proposed string
+	if err := db.QueryRow(
+		`SELECT proposed_value FROM metadata_review_fields WHERE field_name = 'publisher'`).Scan(&proposed); err != nil {
+		t.Fatalf("原有行读不回来了: %v", err)
+	}
+	if proposed != "External Publisher" {
+		t.Errorf("清理顺手改坏了行数据：proposed=%q", proposed)
+	}
+}

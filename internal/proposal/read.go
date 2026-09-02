@@ -265,9 +265,10 @@ func toFields(rows []database.MetadataReviewField, locked map[string]bool, curre
 			Current:    current[row.FieldName],
 			Proposed:   row.ProposedValue,
 			Confidence: row.Confidence,
-			// 与行上的快照取或而不是直接覆盖：入队早就把锁定字段筛掉了，新行的快照恒为
-			// false，但更早的行里可能留着 true。锁只会让一个字段更不可写，取或不会放行。
-			Locked:    row.Locked || locked[row.FieldName],
+			// 只认系列的当前锁定集，不看行上那个入队瞬间的快照——裁决那边也只认它。
+			// 与快照取或的话，老库里遗留的 locked=1 会让用户看到一个「锁着」的字段，
+			// 点应用却照写不误；而用户把它解锁之后，徽章还会一直挂着。
+			Locked:    locked[row.FieldName],
 			Source:    row.Source,
 			SourceURL: row.SourceUrl,
 		})
