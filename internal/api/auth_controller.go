@@ -259,41 +259,78 @@ func respondPasswordChangeRequired(w http.ResponseWriter, r *http.Request) {
 	jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.password_change_required"))
 }
 
+// 协议侧失败分桶的三把键。用户名按**字节**精确拼进键，与账户身份同一把尺子（users.username
+// 按字节判重）；折叠大小写会把两个独立账户算进同一格。分隔符取 \x00：用户名里出现不了它，
+// 换成可打印字符则两个不同的 (IP, 用户名) 能拼出同一个键。
+func basicIPKey(ip string) string { return "basic-ip:" + ip }
+
+func basicDeviceKey(ip, username string) string { return "basic-dev:" + ip + "\x00" + username }
+
+func basicUserKey(username string) string { return "basic-user:" + username }
+
 // requireBasicAuth 是阅读协议（OPDS/Mihon）的 HTTP Basic 鉴权中间件：校验站点用户名+密码，
 // 成功则把用户写入请求上下文（供 currentUserID 与每用户进度取用），失败返回 401 + WWW-Authenticate。
 // 强制改密与 authGate 同口径：未完成首登改密的账号在这里读写一并拒绝。
 // 站点尚无账户时（首启）直通，避免锁死初始化前的协议访问。
+//
+// 失败限流分三格，缺任何一格都会让站点口令在这条路上变成无限次可猜的：
+//   - IP 闸门挡「同一台机器轮换用户名烧 bcrypt」，成功不清零；
+//   - (IP, 用户名) 格挡单机爆破，也让「一台设备存着过期口令」只锁它自己，不连坐同一出口 IP
+//     后面的其它家庭成员；
+//   - 用户名格跨 IP 生效，挡换 IP 打同一个账号。
+//
+// 用户名格与网页登录的用户名桶**刻意分开**：协议客户端会拿保存的旧口令自动重试，共用就意味着
+// 用户自己的阅读器能把他锁在网页端门外——而网页端正是他唯一能改回口令的地方。
 func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !c.usersExist(r.Context()) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// 按 IP 的失败限流：锁定期内直接 429，避免攻击者用错误凭据反复触发昂贵的 bcrypt（CPU-DoS）。
-		ipKey := "basic:" + c.clientIP(r)
-		if d, locked := c.auth.basicAuthLimiter.retryAfter(ipKey); locked {
+		ip := c.clientIP(r)
+		if d, locked := c.auth.basicIPLimiter.retryAfter(basicIPKey(ip)); locked {
 			respondTooManyAttempts(w, r, d)
 			return
 		}
-		if username, password, ok := r.BasicAuth(); ok {
-			if uid, valid := c.resolveBasicAuthUser(r.Context(), username, password); valid {
-				if user, err := c.store.GetUserByID(r.Context(), uid); err == nil {
-					// 口令是对的，先清掉该 IP 的失败计数：否则一台按分钟轮询的阅读器会把自己
-					// 关进锁定期，用户改完密码回来照样吃 429。
-					c.auth.basicAuthLimiter.recordSuccess(ipKey)
-					if user.MustChangePassword {
-						respondPasswordChangeRequired(w, r)
-						return
-					}
-					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, user)))
-					return
-				}
+		username, password, ok := r.BasicAuth()
+		if !ok || username == "" || password == "" {
+			// 没带可用凭据的请求一次 KDF 都不跑，不该计进任何一格：HTTP Basic 本就是
+			// 「先吃一个 401、再带凭据重试」，把它计成失败等于把协议自身的握手当成攻击。
+			c.respondBasicAuthChallenge(w, r)
+			return
+		}
+		deviceKey, userKey := basicDeviceKey(ip, username), basicUserKey(username)
+		for _, key := range []string{deviceKey, userKey} {
+			if d, locked := c.auth.basicAuthLimiter.retryAfter(key); locked {
+				respondTooManyAttempts(w, r, d)
+				return
 			}
 		}
-		c.auth.basicAuthLimiter.recordFailure(ipKey)
-		w.Header().Set("WWW-Authenticate", basicAuthChallenge)
-		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
+		if uid, valid := c.resolveBasicAuthUser(r.Context(), username, password); valid {
+			if user, err := c.store.GetUserByID(r.Context(), uid); err == nil {
+				// 口令是对的，清掉这次成功**证明了的**那两格：这台设备为这个账号存的口令是新的，
+				// 这个账号也确实没在被猜。共享的 IP 闸门不在此列——见 attemptLimiter.recordSuccess。
+				c.auth.basicAuthLimiter.recordSuccess(deviceKey)
+				c.auth.basicAuthLimiter.recordSuccess(userKey)
+				if user.MustChangePassword {
+					respondPasswordChangeRequired(w, r)
+					return
+				}
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, user)))
+				return
+			}
+		}
+		c.auth.basicIPLimiter.recordFailure(basicIPKey(ip))
+		c.auth.basicAuthLimiter.recordFailure(deviceKey)
+		c.auth.basicAuthLimiter.recordFailure(userKey)
+		c.respondBasicAuthChallenge(w, r)
 	})
+}
+
+// respondBasicAuthChallenge 应答「请（重新）出示凭据」。
+func (c *Controller) respondBasicAuthChallenge(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("WWW-Authenticate", basicAuthChallenge)
+	jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 }
 
 // ---- 中间件 ----

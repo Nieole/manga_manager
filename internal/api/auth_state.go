@@ -35,16 +35,25 @@ type authState struct {
 	basicAuthCache sync.Map
 
 	loginLimiter *attemptLimiter
-	// basicAuthLimiter 限流阅读协议 Basic 鉴权的失败尝试，兼作 bcrypt 的 CPU-DoS 防护。
+	// basicAuthLimiter 装阅读协议 Basic 鉴权里**成功即清零**的那两种桶（键前缀区分，见
+	// basicDeviceKey 与 basicUserKey）：一格是「这台设备为这个账号存的口令」，
+	// 一格是「这个账号正在被猜」。两者都只被同一个用户名的成功清掉。
 	basicAuthLimiter *attemptLimiter
+	// basicIPLimiter 是协议侧 bcrypt 的 CPU-DoS 闸门，只按来源 IP 计且**成功永不清零**——
+	// 否则手握任意一个有效账号的人只要穿插一条自己的正确凭据就能把闸门一直擦干净。
+	basicIPLimiter *attemptLimiter
 }
 
 func newAuthState() *authState {
 	return &authState{
 		// 登录：15 分钟窗口内累计 5 次失败即锁定，基础 1 分钟、指数退避、封顶 15 分钟。
 		loginLimiter: newAttemptLimiter(5, 15*time.Minute, time.Minute, 15*time.Minute),
-		// 协议 Basic：更宽松些（客户端每次请求都带凭据），5 分钟窗口内 10 次失败锁定，封顶 10 分钟。
+		// 协议 Basic：比网页登录宽松（客户端每次请求都带凭据，改密后还会拿旧口令自动重试），
+		// 5 分钟窗口内 10 次失败锁定，封顶 10 分钟。
 		basicAuthLimiter: newAttemptLimiter(10, 5*time.Minute, 30*time.Second, 10*time.Minute),
+		// IP 闸门只在「同一 IP 上轮换用户名」时才吃得到：每一格 (IP, 用户名) 早在 10 次就被上面
+		// 那把尺子拦下，正常家庭出口要 6 个账号同时存着过期口令才够得到 60 次。
+		basicIPLimiter: newAttemptLimiter(60, 5*time.Minute, 30*time.Second, 10*time.Minute),
 	}
 }
 

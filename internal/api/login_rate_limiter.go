@@ -90,7 +90,11 @@ func (l *attemptLimiter) recordFailure(key string) {
 	}
 }
 
-// recordSuccess 成功后清除该 key 的失败记录。
+// recordSuccess 清除该 key 的失败记录。
+//
+// 调用方只能清「这次成功证明了的」那个 key。一次成功证明的是某个主体拿对了自己的口令，
+// 清一个共享桶（例如整条来源 IP）会把同桶里其他主体的失败一并抹掉——攻击者手上只要有
+// 任意一个有效账号，穿插一条自己的正确凭据就能让别人的失败计数永远归零。
 func (l *attemptLimiter) recordSuccess(key string) {
 	l.mu.Lock()
 	delete(l.entries, key)
