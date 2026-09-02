@@ -17,7 +17,7 @@ func TestSSEBrokerDeliversPublishedEventToClient(t *testing.T) {
 	defer close(done)
 
 	client := make(chan string, 4)
-	b.newClients <- client // 阻塞至 broker 完成注册
+	b.newClients <- sseSubscriber{ch: client} // 阻塞至 broker 完成注册
 
 	b.publish("hello")
 
@@ -52,7 +52,7 @@ func TestSSEShutdownReleasesInFlightConnections(t *testing.T) {
 
 	finished := make(chan struct{})
 	go func() {
-		broker.serveHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/events", nil))
+		broker.serveHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/events", nil), false)
 		close(finished)
 	}()
 
@@ -78,7 +78,7 @@ func TestSSEMainLoopExitsOnShutdown(t *testing.T) {
 
 	// 无缓冲 channel：这一步返回时，broker 的单 goroutine 已把该客户端登记完毕。
 	client := make(chan string, 1)
-	broker.newClients <- client
+	broker.newClients <- sseSubscriber{ch: client}
 
 	broker.publish("hello")
 	select {
@@ -104,7 +104,7 @@ func TestSSERegistrationDoesNotBlockAfterShutdown(t *testing.T) {
 
 	finished := make(chan struct{})
 	go func() {
-		broker.serveHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/events", nil))
+		broker.serveHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/events", nil), false)
 		close(finished)
 	}()
 
@@ -126,7 +126,7 @@ func TestSSEServeHTTPLeavesCORSToMiddleware(t *testing.T) {
 	broker.closeClients() // 不启动 run 循环：serveHTTP 会立刻返回，只留下它写的响应头
 
 	rec := httptest.NewRecorder()
-	broker.serveHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	broker.serveHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil), false)
 
 	for _, header := range []string{
 		"Access-Control-Allow-Origin",

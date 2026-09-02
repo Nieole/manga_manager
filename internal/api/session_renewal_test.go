@@ -204,7 +204,7 @@ func TestSessionSlidingRenewalReissuesCookie(t *testing.T) {
 		ageSession(t, store, login.Value, 10*24*time.Hour)
 		c.sse.closeClients() // 让 serveHTTP 写完响应头即返回，不必真挂一条长连接
 
-		resp := serveThroughGate(c, http.HandlerFunc(c.sse.serveHTTP), authedRequest(http.MethodGet, "/api/events", login))
+		resp := serveThroughGate(c, http.HandlerFunc(c.serveEvents), authedRequest(http.MethodGet, "/api/events", login))
 		if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 			t.Fatalf("Content-Type = %q, want text/event-stream", got)
 		}

@@ -12,22 +12,37 @@ import (
 )
 
 type sseBroker struct {
+	// clients 的值是该订阅者是不是管理员，决定它能收到哪一档事件（见 sseEvent）。
 	clients        map[chan string]bool
-	newClients     chan chan string
+	newClients     chan sseSubscriber
 	defunctClients chan chan string
-	messages       chan string
+	messages       chan sseEvent
 	// shutdown 在服务开始停机时关闭，让在途的 serveHTTP 立刻返回。
 	// 没有它，任何开着页面的浏览器标签都会让 srv.Shutdown 一直等到 20 秒超时——
 	// SSE 是长连接，Shutdown 的「排空在途请求」对它永远不会自然完成。
 	shutdown chan struct{}
 }
 
+// sseSubscriber 是一次订阅登记：投递通道加上该订阅者的角色。
+type sseSubscriber struct {
+	ch    chan string
+	admin bool
+}
+
+// sseEvent 是一帧待广播事件。adminOnly 的帧只投给管理员订阅者：任务快照带着作用域显示名、
+// 任务参数与失败原因（里面是宿主机绝对路径），而任务列表接口对普通用户是 403——
+// 事件流不按同一把尺子过滤，那条 403 就等于没有。
+type sseEvent struct {
+	data      string
+	adminOnly bool
+}
+
 func newSSEBroker() *sseBroker {
 	return &sseBroker{
 		clients:        make(map[chan string]bool),
-		newClients:     make(chan chan string),
+		newClients:     make(chan sseSubscriber),
 		defunctClients: make(chan chan string),
-		messages:       make(chan string, 64),
+		messages:       make(chan sseEvent, 64),
 		shutdown:       make(chan struct{}),
 	}
 }
@@ -54,16 +69,19 @@ func (b *sseBroker) run(done <-chan struct{}) {
 		case <-done:
 			return
 		case s := <-b.newClients:
-			b.clients[s] = true
+			b.clients[s.ch] = s.admin
 		case s := <-b.defunctClients:
 			if _, ok := b.clients[s]; ok {
 				delete(b.clients, s)
 				close(s)
 			}
 		case msg := <-b.messages:
-			for s := range b.clients {
+			for s, admin := range b.clients {
+				if msg.adminOnly && !admin {
+					continue
+				}
 				select {
-				case s <- msg:
+				case s <- msg.data:
 				default:
 					// 客户端 buffer 已满（默认 64 条），说明该消费者卡死或网络背压。
 					// 主动断开它的 channel，serveHTTP 会在下一轮 select 收到关闭信号并退出，
@@ -77,20 +95,32 @@ func (b *sseBroker) run(done <-chan struct{}) {
 	}
 }
 
-// publish 非阻塞投递事件（buffer 满则丢弃）。供 Scanner / FileWatcher 等外部经 Controller.PublishEvent 调用。
+// publish 非阻塞投递一帧所有角色都能看的事件。供 Scanner / FileWatcher 等外部经
+// Controller.PublishEvent 调用。载荷带宿主机路径或任务细节的事件必须走 publishAdmin。
 func (b *sseBroker) publish(event string) {
+	b.enqueue(sseEvent{data: event})
+}
+
+// publishAdmin 非阻塞投递一帧只给管理员看的事件（任务快照走这条）。
+func (b *sseBroker) publishAdmin(event string) {
+	b.enqueue(sseEvent{data: event, adminOnly: true})
+}
+
+// enqueue 是两条投递入口共用的出口（buffer 满则丢弃并告警）。
+func (b *sseBroker) enqueue(event sseEvent) {
 	if b == nil || b.messages == nil {
 		return
 	}
 	select {
 	case b.messages <- event:
 	default:
-		slog.Warn("SSE broker channel full, dropping event", "event_prefix", eventPrefix(event))
+		slog.Warn("SSE broker channel full, dropping event", "event_prefix", eventPrefix(event.data))
 	}
 }
 
 // serveHTTP 为单个 SSE 客户端流式推送事件：注册通道、监听断开、发送心跳。
-func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request) {
+// admin 决定这条连接能不能收到 adminOnly 的帧，由调用方按请求上下文里的当前用户判定。
+func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request, admin bool) {
 	// 设置 SSE 需要响应头
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -113,7 +143,7 @@ func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// 裸写会永久阻塞住这个请求 goroutine，因此必须同时监听停机信号。
 	messageChan := make(chan string, 64)
 	select {
-	case b.newClients <- messageChan:
+	case b.newClients <- sseSubscriber{ch: messageChan, admin: admin}:
 	case <-b.shutdown:
 		return
 	}

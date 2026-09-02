@@ -249,7 +249,9 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
 	// taskEngine 依赖 c 的 SSE 投递、生命周期信号与后台运行能力，同样须在 c 构造完成后建立。
-	c.taskEngine = newTaskEngine(store, c.sse.publish, c.lifecycleDone, c.runBackground, c.diskWork)
+	// 任务快照只投给管理员：它带着作用域显示名、任务参数与失败原因，与任务列表接口
+	// （对普通用户 403）是同一份数据，两条路口径不同就等于那条 403 不存在。
+	c.taskEngine = newTaskEngine(store, c.sse.publishAdmin, c.lifecycleDone, c.runBackground, c.diskWork)
 	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTaskType 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
@@ -581,6 +583,16 @@ func (c *Controller) PublishEvent(event string) {
 	c.sse.publish(event)
 }
 
+// serveEvents 是 /api/events 的处理器：按当前用户的角色决定这条订阅能收到哪一档事件。
+//
+// 整条端点不设成管理员专属，是因为普通用户界面依赖它——刷新帧是「管理员扫完库，我这边的列表
+// 自己更新」的唯一通道；关掉它等于拿一个泄露换一个功能故障，还会让前端订阅一个必然 401 的端点。
+// 取不到用户（首启尚无账户）时按普通用户处理，宁可少发不可错发。
+func (c *Controller) serveEvents(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	c.sse.serveHTTP(w, r, ok && user.IsAdmin())
+}
+
 // eventPrefix 截取事件前缀用于日志，避免输出整段 JSON
 func eventPrefix(event string) string {
 	if i := strings.IndexByte(event, ':'); i >= 0 {
@@ -613,7 +625,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/users/{userId}/password", c.resetUserPassword)
 		r.Delete("/users/{userId}", c.deleteUser)
 
-		r.Get("/events", c.sse.serveHTTP)
+		r.Get("/events", c.serveEvents)
 		r.Get("/search", c.searchBooks)
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
