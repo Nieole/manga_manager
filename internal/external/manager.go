@@ -42,9 +42,38 @@ var (
 
 // pathsOverlap 报告两个路径是否有包含关系（含相等）。
 //
-// 与 scanner 的 pathUnderRoot 同口径：用 filepath.Rel 而不是补分隔符再 HasPrefix，
-// 顺带处理了 . 与 .. 的规范化；Windows 上文件系统大小写不敏感，先归一化再比。
+// 字面与解链后各判一次，任一成立即算重叠。外部库路径填成符号链接是常态
+// （/mnt/external、macOS 的 /tmp、NAS 挂载点），只比字面就会放行一条目标落在库根内的
+// 链接，传出去的副本物理落在库根里，下一次扫描把它们收编成重复书籍。字面那次也不能省：
+// 库内一条指向库外的链同样在扫描的遍历范围里，仍然会被收编。
+//
+// 解链失败（路径还不存在、权限不足、Windows 上的某些路径）时只剩字面那次比对——
+// 「填一个待创建的目录」是正常情形，不该因为解不开而报错。
 func pathsOverlap(a, b string) bool {
+	if pathsOverlapLiteral(a, b) {
+		return true
+	}
+	ra, rb := resolveSymlinksBestEffort(a), resolveSymlinksBestEffort(b)
+	if ra == a && rb == b {
+		return false
+	}
+	return pathsOverlapLiteral(ra, rb)
+}
+
+// resolveSymlinksBestEffort 解开路径上的软链，解不开就原样交回。
+// 与 scanner 的 dirClaimKey 同口径：两侧都把「同一个目录」理解成解链之后的那一个。
+func resolveSymlinksBestEffort(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
+// pathsOverlapLiteral 按字面比对包含关系。
+//
+// 用 filepath.Rel 而不是补分隔符再 HasPrefix，顺带处理了 . 与 .. 的规范化；
+// Windows 上文件系统大小写不敏感，先归一化再比。
+func pathsOverlapLiteral(a, b string) bool {
 	if runtime.GOOS == "windows" {
 		a = strings.ToLower(a)
 		b = strings.ToLower(b)

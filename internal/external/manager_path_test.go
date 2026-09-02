@@ -7,6 +7,7 @@ package external
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -71,6 +72,50 @@ func TestCreateSessionRejectsUnsafeExternalPaths(t *testing.T) {
 	})
 }
 
+// TestCreateSessionResolvesSymlinkedExternalPath 守「解链之后再判重叠」。
+//
+// 外部库路径填成符号链接是常态（/mnt/external、macOS 的 /tmp、NAS 挂载点），只比字面路径
+// 时目标落在库根内的链接会被放行，传出去的副本物理落在库根里，下一次扫描把它们收编成
+// 重复书籍。反向也要守住：指向库外的链接必须照常可用，误杀它比漏判更常见。
+func TestCreateSessionResolvesSymlinkedExternalPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 建软链需要特权")
+	}
+	store, lib, root := newExternalTestStore(t)
+	m := NewManager(store, time.Hour)
+	ctx := context.Background()
+
+	inside := filepath.Join(lib.Path, "backup")
+	outside := filepath.Join(root, "outside")
+	for _, dir := range []string{inside, outside} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		target string
+		want   error
+	}{
+		{name: "指向库内子目录的软链被拒", target: inside, want: ErrExternalPathInsideLibrary},
+		{name: "指向库根本身的软链被拒", target: lib.Path, want: ErrExternalPathInsideLibrary},
+		{name: "指向库外目录的软链正常可用", target: outside, want: nil},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			link := filepath.Join(root, fmt.Sprintf("link-%d", i))
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Skipf("建不了软链：%v", err)
+			}
+			_, err := m.CreateSession(ctx, lib.ID, link, false)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("CreateSession(软链 -> %q) = %v，期望 %v", tc.target, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestPathsOverlapAllowsVolumeRootsOnWindows 钉住「不要误杀 Windows 卷根」。
 //
 // 「整块外接盘 / NAS 根目录当外部库」是这个功能的头号用法。filepath.Dir("D:\\")
@@ -87,6 +132,9 @@ func TestVolumeRootIsNotTreatedAsFilesystemRoot(t *testing.T) {
 }
 
 // TestPathsOverlap 单测重叠判定本身。
+//
+// 表里的路径都不存在于磁盘上，因此这张表同时钉住「解不开链就退回字面比对」：
+// 「填一个待创建的目录」是正常情形，不该因为 EvalSymlinks 失败而报错或改判。
 func TestPathsOverlap(t *testing.T) {
 	cases := []struct {
 		a, b string
