@@ -4,6 +4,8 @@
  * 守卫进度条那行只显示后端真算出来的速率：**中断**任务的速率后端不发（它停在哪一秒没有
  * 任何地方记下过），界面就整个不显示这一项，而不是回落成 `0/min`——那看着像「一分钟一条
  * 都没跑」，是另一种谎。活动态与其余终态照常显示。
+ *
+ * 同一条底线也管着总数未知的那种任务：不定进度条只属于还在动的任务，停了还在跑动画同样是谎。
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -68,5 +70,23 @@ describe('任务中心的处理速率', () => {
     ]);
     expect(screen.queryAllByText(/\/min$/)).toHaveLength(1);
     expect(screen.getByText('60/min')).toBeTruthy();
+  });
+});
+
+describe('总数未知的任务的不定进度条', () => {
+  // 总数未知时进度条给不出任何数字，它唯一说的话就是「还在动」。
+  const indeterminate = () => document.querySelectorAll('.animate-pulse');
+
+  it('活动态才画那条来回跑的进度条', () => {
+    renderTasks([makeTask({ status: 'running', total: 0, percent: undefined })]);
+    expect(indeterminate()).toHaveLength(1);
+  });
+
+  it('收尾之后不再跑动画', () => {
+    for (const status of ['completed', 'cancelled', 'failed', 'interrupted']) {
+      cleanup();
+      renderTasks([makeTask({ status, total: 0, percent: undefined, rate_per_minute: undefined })]);
+      expect(indeterminate(), `${status} 的任务还在跑不定进度条动画`).toHaveLength(0);
+    }
   });
 });

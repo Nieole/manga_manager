@@ -280,6 +280,11 @@ function TaskFilters({
 function TaskProgressBar({ task }: { task: TaskStatus }) {
   const percent = taskProgressPercent(task);
   if (task.total <= 0) {
+    // 总数未知：只有还在动的任务才画那条来回跑的不定进度条。停了的任务画它，看着像还在跑，
+    // 而这条进度条一个数字都答不出——它连「做完了多少」都不知道。
+    if (!isActiveTaskStatus(task.status)) {
+      return null;
+    }
     return (
       <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
         <div className="h-full w-1/3 animate-pulse rounded-full bg-komgaPrimary/80" />
