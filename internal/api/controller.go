@@ -884,6 +884,11 @@ func jsonError(w http.ResponseWriter, status int, message string) {
 	jsonResponse(w, status, map[string]string{"error": message})
 }
 
+// getLibraries 返回资料库列表。整条端点对已登录用户开放——普通用户的侧栏、仪表盘与整理页
+// 都靠它拿 id 与 name。但 path 是**宿主机绝对路径**，只有管理员的编辑弹窗用得到（新建/编辑
+// 资料库本就是管理写），普通用户界面一处都不读，因此按角色裁掉：字段留着但置空，
+// 前端契约不变。取不到用户（首启尚无账户、直接调处理器的单元测试）时按普通用户处理，
+// 宁可少发不可错发——与 serveEvents 同口径。
 func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libs, err := c.store.ListLibraries(ctx)
@@ -894,6 +899,11 @@ func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 
 	if libs == nil {
 		libs = []database.Library{} // 保证 JSON 数组非 null
+	}
+	if user, ok := userFromContext(ctx); !ok || !user.IsAdmin() {
+		for i := range libs {
+			libs[i].Path = ""
+		}
 	}
 	jsonResponse(w, http.StatusOK, libs)
 }
