@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
@@ -43,9 +43,18 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const [taskTypeFilter, setTaskTypeFilter] = useState('ALL');
   const [taskScopeIdFilter, setTaskScopeIdFilter] = useState('');
   const [taskQuery, setTaskQuery] = useState('');
+  // 两个文本框（搜索、目标 ID）都配了回车与「查询」按钮，本意就是打完再查。已提交的那一份
+  // 单独存：绑到请求参数上的是它，不是正在打的字。否则每敲一个字符发一次 /api/system/tasks，
+  // 且 fetchTasks 的身份跟着变，15s 轮询的定时器被反复重建，打字期间永远不到点。
+  const [appliedTaskQuery, setAppliedTaskQuery] = useState('');
+  const [appliedTaskScopeId, setAppliedTaskScopeId] = useState('');
+  // 提交同一份条件时也要重取一次，靠它把 effect 推一下。
+  const [taskReloadToken, setTaskReloadToken] = useState(0);
   const [storageIO, setStorageIO] = useState<StorageIODiagnostics | null>(null);
+  const taskRequestIDRef = useRef(0);
   const { showToast } = useToast();
 
+  // taskFilters 是输入框的当前值（含还没提交的半截关键词）。
   const taskFilters = useMemo<TaskCenterFilters>(() => ({
     status: taskStatusFilter,
     scope: taskScopeFilter,
@@ -54,16 +63,25 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     query: taskQuery,
   }), [taskQuery, taskScopeFilter, taskScopeIdFilter, taskStatusFilter, taskTypeFilter]);
 
+  // SSE 增量帧按**已提交**的条件判去留：与列表里那批任务是同一把尺子。
+  const appliedTaskFilters = useMemo<TaskCenterFilters>(() => ({
+    status: taskStatusFilter,
+    scope: taskScopeFilter,
+    type: taskTypeFilter,
+    scopeId: appliedTaskScopeId,
+    query: appliedTaskQuery,
+  }), [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, taskStatusFilter, taskTypeFilter]);
+
   const buildTaskParams = useCallback((status?: string) => {
     const params = new URLSearchParams({ limit: '50' });
     if (status) params.set('status', status);
     if (!status && taskStatusFilter !== 'ALL') params.set('status', taskStatusFilter);
     if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
     if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
-    if (taskScopeIdFilter.trim()) params.set('scope_id', taskScopeIdFilter.trim());
-    if (taskQuery.trim()) params.set('q', taskQuery.trim());
+    if (appliedTaskScopeId.trim()) params.set('scope_id', appliedTaskScopeId.trim());
+    if (appliedTaskQuery.trim()) params.set('q', appliedTaskQuery.trim());
     return params;
-  }, [taskQuery, taskScopeFilter, taskScopeIdFilter, taskStatusFilter, taskTypeFilter]);
+  }, [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, taskStatusFilter, taskTypeFilter]);
 
   const fetchStorageIO = useCallback(async () => {
     try {
@@ -75,9 +93,13 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   }, []);
 
   const fetchTasks = useCallback(async () => {
+    // 世代号对不上就整份丢弃：慢网下先发的响应后到，不能盖掉按新条件取回的那一份。
+    const requestID = taskRequestIDRef.current + 1;
+    taskRequestIDRef.current = requestID;
     setLoadingTasks(true);
     try {
       const res = await apiClient.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`);
+      if (requestID !== taskRequestIDRef.current) return;
       const items = Array.isArray(res.data) ? res.data : [];
       const seen = new Set<string>();
       setTasks(items.filter((task) => {
@@ -86,17 +108,25 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
         return true;
       }).slice(0, 50));
     } catch (error) {
+      if (requestID !== taskRequestIDRef.current) return;
       console.error(error);
       showToast(t('settings.maintenance.taskCenterLoadFailed'), 'error');
     } finally {
-      setLoadingTasks(false);
+      if (requestID === taskRequestIDRef.current) setLoadingTasks(false);
     }
   }, [buildTaskParams, showToast, t]);
+
+  // 回车 / 「查询」/「刷新」都走这里：把输入框里的内容提交为生效条件，并重取一次。
+  const applyTaskFilters = useCallback(() => {
+    setAppliedTaskQuery(taskQuery);
+    setAppliedTaskScopeId(taskScopeIdFilter);
+    setTaskReloadToken((token) => token + 1);
+  }, [taskQuery, taskScopeIdFilter]);
 
   useEffect(() => {
     fetchTasks();
     fetchStorageIO();
-  }, [fetchStorageIO, fetchTasks]);
+  }, [fetchStorageIO, fetchTasks, taskReloadToken]);
 
   useEffect(() => {
     // 复用 Layout 中已挂载的全局 EventSource：它接收 task_progress 后会
@@ -106,11 +136,11 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
       const task = (event as CustomEvent<TaskStatus>).detail;
       if (!task || typeof task !== 'object') return;
       setTasks((prev) => {
-        const matchesStatus = taskFilters.status === 'ALL' || task.status === taskFilters.status;
-        const matchesScope = taskFilters.scope === 'ALL' || task.scope === taskFilters.scope;
-        const matchesType = taskFilters.type === 'ALL' || task.type === taskFilters.type;
-        const matchesScopeId = !taskFilters.scopeId.trim() || String(task.scope_id || '') === taskFilters.scopeId.trim();
-        const q = taskFilters.query.trim().toLowerCase();
+        const matchesStatus = appliedTaskFilters.status === 'ALL' || task.status === appliedTaskFilters.status;
+        const matchesScope = appliedTaskFilters.scope === 'ALL' || task.scope === appliedTaskFilters.scope;
+        const matchesType = appliedTaskFilters.type === 'ALL' || task.type === appliedTaskFilters.type;
+        const matchesScopeId = !appliedTaskFilters.scopeId.trim() || String(task.scope_id || '') === appliedTaskFilters.scopeId.trim();
+        const q = appliedTaskFilters.query.trim().toLowerCase();
         const matchesQuery = !q || [
           task.key,
           task.type,
@@ -129,7 +159,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     };
     window.addEventListener('manga-manager:task-progress', handler as EventListener);
     return () => window.removeEventListener('manga-manager:task-progress', handler as EventListener);
-  }, [taskFilters]);
+  }, [appliedTaskFilters]);
 
   useEffect(() => {
     const poll = window.setInterval(() => {
@@ -177,7 +207,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
       if (useCurrentFilters) {
         if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
         if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
-        if (taskScopeIdFilter.trim()) params.set('scope_id', taskScopeIdFilter.trim());
+        if (appliedTaskScopeId.trim()) params.set('scope_id', appliedTaskScopeId.trim());
       }
       await apiClient.delete(`/api/system/tasks?${params.toString()}`);
       await fetchTasks();
@@ -212,7 +242,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
           <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-400">{t('organize.tasks.description')}</p>
         </div>
         <button
-          onClick={fetchTasks}
+          onClick={applyTaskFilters}
           disabled={loadingTasks}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-900 px-4 py-2.5 text-sm text-gray-200 transition-all hover:bg-gray-800 active:scale-95 disabled:opacity-60"
         >
@@ -230,7 +260,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
         filters={taskFilters}
         typeOptions={TASK_TYPE_OPTIONS}
         currentFilterCanClear={currentTaskFilterCanClear}
-        onRefresh={fetchTasks}
+        onRefresh={applyTaskFilters}
         onTaskAction={runTaskAction}
         onFilterChange={updateTaskFilters}
         onClearTasks={clearTasks}

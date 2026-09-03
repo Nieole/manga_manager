@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, Info, RefreshCw, Search, Terminal } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { apiClient, getApiErrorMessage } from '../api/client';
@@ -55,21 +55,31 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
   const [error, setError] = useState<string | null>(null);
   const [filterLevel, setFilterLevel] = useState('ALL');
   const [query, setQuery] = useState('');
+  // 搜索框配了回车与刷新按钮，本意就是打完再查。已提交的那一份单独存：绑到请求参数上的是它，
+  // 不是正在打的字——否则每敲一个字符发一次 limit=300 的日志查询。
+  const [appliedQuery, setAppliedQuery] = useState('');
+  // 提交同一份关键词时也要重取一次，靠它把 effect 推一下。
+  const [reloadToken, setReloadToken] = useState(0);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [performance, setPerformance] = useState<LogsPerformanceSummary | null>(null);
+  const requestIDRef = useRef(0);
 
   const fetchData = useCallback(async () => {
+    // 世代号对不上就整份丢弃：慢网下先发的响应后到，不能盖掉按新条件取回的那一份。
+    const requestID = requestIDRef.current + 1;
+    requestIDRef.current = requestID;
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({ limit: '300', level: filterLevel });
-      if (query) params.set('q', query);
+      if (appliedQuery) params.set('q', appliedQuery);
       if (taskKey) params.set('task_key', taskKey);
       // 走 apiClient 而非裸 fetch：后者绕过 401 全局登出与 locale 头。
       const [logsResp, perfResp] = await Promise.all([
         apiClient.get<LogsResponse>(`/api/system/logs?${params.toString()}`),
         apiClient.get('/api/system/performance').catch(() => null),
       ]);
+      if (requestID !== requestIDRef.current) return;
 
       const logsData = logsResp.data;
       setLogs(logsData.items || []);
@@ -79,15 +89,22 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
         setPerformance(perfResp.data);
       }
     } catch (err) {
+      if (requestID !== requestIDRef.current) return;
       setError(getApiErrorMessage(err, t('logs.error.unknown')));
     } finally {
-      setLoading(false);
+      if (requestID === requestIDRef.current) setLoading(false);
     }
-  }, [filterLevel, query, taskKey, t]);
+  }, [appliedQuery, filterLevel, taskKey, t]);
+
+  // 回车与刷新按钮都走这里：把输入框里的关键词提交为生效条件，并重取一次。
+  const applyQuery = useCallback(() => {
+    setAppliedQuery(query);
+    setReloadToken((token) => token + 1);
+  }, [query]);
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+  }, [fetchData, reloadToken]);
 
   const copyRawLog = async (raw: string, index: number) => {
     try {
@@ -114,7 +131,7 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && fetchData()}
+              onKeyDown={(e) => e.key === 'Enter' && applyQuery()}
               placeholder={t('logs.searchPlaceholder')}
               className="w-full sm:w-64 rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2 text-sm text-white focus:outline-hidden focus:ring-2 focus:ring-komgaPrimary/40"
             />
@@ -131,7 +148,7 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
             <option value="INFO">{t('logs.level.info')}</option>
           </select>
           <button
-            onClick={fetchData}
+            onClick={applyQuery}
             disabled={loading}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-komgaPrimary px-4 py-2 text-sm text-gray-950 font-medium hover:bg-komgaPrimaryHover disabled:opacity-60 transition-colors"
           >
