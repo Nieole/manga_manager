@@ -123,8 +123,8 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 			}
 			return c.launchAIGroupingTask(id, locale)
 		},
-		"rebuild_book_hashes": func(ctx context.Context, _ TaskStatus) error {
-			return c.launchRebuildBookHashesTask()
+		"rebuild_book_hashes": func(ctx context.Context, task TaskStatus) error {
+			return c.retryRebuildBookHashesTask(task)
 		},
 		"rebuild_file_identities": func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRebuildFileIdentitiesTask()
@@ -135,6 +135,28 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 		"refresh_koreader_matching": func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRefreshKOReaderMatchingTask()
 		},
+	}
+}
+
+// retryRebuildBookHashesTask 把 rebuild_book_hashes 这个任务类型按**任务键**分回它自己那条启动点。
+//
+// 注册表按类型分发，而这个类型下有两条键：前台重建由用户在维护页发起，低优先级回填由**资料库扫描**
+// 收尾串联，后者压低批次、批间停顿、匹配模式钉死二进制哈希。只按类型重启的话，用户对回填按下的
+// 重试会起出一条前台档的同名任务——大批次、无停顿，正是回填刻意避开的抢盘跑法，而原来那条仍停在
+// 终态一动不动。刮削那个类型同样是一类多键，分发口径与它一致。
+func (c *Controller) retryRebuildBookHashesTask(task TaskStatus) error {
+	switch task.Key {
+	case lowPriorityBookHashTaskKey:
+		// 发起理由是这条键的原始入参，重试要沿用而不是另编一个。
+		reason := ""
+		if task.Params != nil {
+			reason = task.Params["reason"]
+		}
+		return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(reason, "manual_retry"))
+	case rebuildBookHashesTaskKey:
+		return c.launchRebuildBookHashesTask()
+	default:
+		return fmt.Errorf("unsupported book hash rebuild retry target %q", task.Key)
 	}
 }
 
@@ -289,7 +311,9 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "Failed to load task")
 		return
 	}
-	if task.Status == "running" {
+	// 判据是**活动态**而不只是运行中：**取消中**与**已暂停**同样占着运行槽位，此时重启等于让同一件事
+	// 跑两遍。下游启动入口的**任务键**闸门只在重启函数回到同一条键时才兜得住，一类多键的类型上兜不住。
+	if taskIsActive(task.Status) {
 		jsonError(w, http.StatusConflict, "Task is already running")
 		return
 	}

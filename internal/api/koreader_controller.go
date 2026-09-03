@@ -781,7 +781,7 @@ func (h koreaderReconcileHandle) Advance(current, total int) {
 // launchRebuildBookHashesTask 是书籍**指纹**重建任务的启动点，走引擎的启动入口。
 func (c *Controller) launchRebuildBookHashesTask() error {
 	spec := TaskSpec{
-		Key:          "rebuild_book_hashes",
+		Key:          rebuildBookHashesTaskKey,
 		Type:         "rebuild_book_hashes",
 		StartCode:    "task.msg.koreader_rebuild_hashes.start",
 		CanCancel:    true,

@@ -191,6 +191,10 @@ type SearchHit struct {
 const maxRetainedTasks = 200
 
 const (
+	// rebuildBookHashesTaskKey 与 lowPriorityBookHashTaskKey 是 rebuild_book_hashes 这个任务类型
+	// 下的两条**任务键**：前者是用户在维护页发起的前台重建，后者是**资料库扫描**收尾串联的低优先级
+	// 回填。两者的**重启函数**必须按键分回各自那一条，见 retryRebuildBookHashesTask。
+	rebuildBookHashesTaskKey     = "rebuild_book_hashes"
 	lowPriorityBookHashTaskKey   = "background_book_hash_backfill"
 	lowPriorityBookHashBatchSize = 32
 	lowPriorityBookHashBatchGap  = 100 * time.Millisecond
