@@ -23,6 +23,14 @@ interface UseReaderOfflineOptions {
   t: (key: string) => string;
 }
 
+// dropKey 摘掉一格，键不在就原样返回——省一次无谓的重渲染。
+function dropKey<T>(table: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in table)) return table;
+  const next = { ...table };
+  delete next[key];
+  return next;
+}
+
 export function useReaderOffline({
   bookId,
   bookTitle,
@@ -39,12 +47,22 @@ export function useReaderOffline({
   // 免得把上一本书的状态盖到当前这本上。
   const activeBookIdRef = useRef(bookId);
   const [offlineStatus, setOfflineStatus] = useState<OfflineBookStatus | null>(null);
-  const [offlineCaching, setOfflineCaching] = useState(false);
-  const [offlineDeleting, setOfflineDeleting] = useState(false);
-  const [offlineCachedPages, setOfflineCachedPages] = useState(0);
-  const [offlineCacheError, setOfflineCacheError] = useState<string | null>(null);
+  // 下载与删除按 bookId 分格存，而不是各存一份单值。
+  //
+  // cacheBookForOffline 在用户翻到下一本之后仍会跑完，这是有意的——用户点「缓存本书」要的
+  // 就是它下完，而翻到末页会自动换书。既然下载跨书存活，「哪本在下、下到第几页、哪本失败了」
+  // 就得跟着 bookId 走：单值状态会把上一本的进度与错误挂到新书的面板上，还把两个按钮一起
+  // 锁死；而换书时把它清掉是另一种撒谎——后台明明还在下，切回来却写着「没在下载」。
+  const [offlineCachingPages, setOfflineCachingPages] = useState<Record<string, number>>({});
+  const [offlineDeletingBooks, setOfflineDeletingBooks] = useState<Record<string, true>>({});
+  const [offlineCacheErrors, setOfflineCacheErrors] = useState<Record<string, string>>({});
   const [offlineQueuedPage, setOfflineQueuedPage] = useState<number | null>(null);
   const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine);
+
+  const offlineCaching = bookId ? bookId in offlineCachingPages : false;
+  const offlineDeleting = bookId ? bookId in offlineDeletingBooks : false;
+  const offlineCachedPages = bookId ? offlineCachingPages[bookId] ?? 0 : 0;
+  const offlineCacheError = bookId ? offlineCacheErrors[bookId] ?? null : null;
 
   const refreshOfflineStatus = useCallback(() => {
     if (!bookId || !offlineSupported) {
@@ -53,9 +71,17 @@ export function useReaderOffline({
       return;
     }
 
+    // 读回状态同样横跨一段 await：A→B→A 快切时，先发的那次可能后回来，
+    // 落到 setOfflineStatus 就成了拿别的书的状态覆盖当前这本。
     getOfflineBookStatus(bookId)
-      .then(setOfflineStatus)
-      .catch(() => setOfflineStatus(null));
+      .then((status) => {
+        if (activeBookIdRef.current !== bookId) return;
+        setOfflineStatus(status);
+      })
+      .catch(() => {
+        if (activeBookIdRef.current !== bookId) return;
+        setOfflineStatus(null);
+      });
     setOfflineQueuedPage(getQueuedOfflineProgress(bookId)?.page ?? null);
   }, [bookId, offlineSupported]);
 
@@ -99,10 +125,12 @@ export function useReaderOffline({
 
   const cacheBookOffline = useCallback(() => {
     if (!bookId || pages.length === 0) return;
+    // 把这一本固定在闭包里：下面每个回调都可能在用户换书之后才跑，
+    // 它们该写的是发起时那本书的那一格，而不是当时正在读的那本。
+    const targetBookId = bookId;
 
-    setOfflineCaching(true);
-    setOfflineCacheError(null);
-    setOfflineCachedPages(0);
+    setOfflineCachingPages((prev) => ({ ...prev, [targetBookId]: 0 }));
+    setOfflineCacheErrors((prev) => dropKey(prev, targetBookId));
     const imageProfile = [
       readerImageFormat === 'original' ? t('reader.networkOriginal') : `${readerImageFormat.toUpperCase()} ${readerImageQuality}`,
       imageFilter !== 'none' ? imageFilter : '',
@@ -110,38 +138,44 @@ export function useReaderOffline({
     ].filter(Boolean).join(' · ');
 
     cacheBookForOffline({
-      bookId,
+      bookId: targetBookId,
       title: bookTitle || t('reader.offline.untitled'),
       pages,
       imageProfile,
-      imageUrlForPage: (page) => getImageUrlForBook(bookId, page.number),
-      onProgress: (cached) => setOfflineCachedPages(cached),
+      imageUrlForPage: (page) => getImageUrlForBook(targetBookId, page.number),
+      // 只在这一格还在时才补写：收尾已经把它摘掉的话，进度会把一本下完的书重新挂回「正在缓存」。
+      onProgress: (cached) => setOfflineCachingPages((prev) => (
+        targetBookId in prev ? { ...prev, [targetBookId]: cached } : prev
+      )),
     }).then((status) => {
-      if (activeBookIdRef.current !== bookId) return;
+      if (activeBookIdRef.current !== targetBookId) return;
       // status 为 null 是「这次下载在收尾前被作废了」（用户删了这本书、或换了用户）：
       // 照样落到 setOfflineStatus，界面回到「未缓存」，被删掉的书不会复活成已缓存。
       setOfflineStatus(status);
     }).catch((err) => {
       const message = err instanceof Error ? err.message : t('reader.offline.cacheFailed');
-      setOfflineCacheError(message);
+      setOfflineCacheErrors((prev) => ({ ...prev, [targetBookId]: message }));
     }).finally(() => {
-      setOfflineCaching(false);
-      setOfflineCachedPages(0);
+      setOfflineCachingPages((prev) => dropKey(prev, targetBookId));
     });
   }, [autoCrop, bookId, bookTitle, getImageUrlForBook, imageFilter, pages, readerImageFormat, readerImageQuality, t]);
 
   const deleteBookOffline = useCallback(() => {
     if (!bookId) return;
+    const targetBookId = bookId;
 
-    setOfflineDeleting(true);
-    setOfflineCacheError(null);
-    deleteOfflineBook(bookId)
-      .then(() => setOfflineStatus(null))
+    setOfflineDeletingBooks((prev) => ({ ...prev, [targetBookId]: true }));
+    setOfflineCacheErrors((prev) => dropKey(prev, targetBookId));
+    deleteOfflineBook(targetBookId)
+      .then(() => {
+        if (activeBookIdRef.current !== targetBookId) return;
+        setOfflineStatus(null);
+      })
       .catch((err) => {
         const message = err instanceof Error ? err.message : t('reader.offline.deleteFailed');
-        setOfflineCacheError(message);
+        setOfflineCacheErrors((prev) => ({ ...prev, [targetBookId]: message }));
       })
-      .finally(() => setOfflineDeleting(false));
+      .finally(() => setOfflineDeletingBooks((prev) => dropKey(prev, targetBookId)));
   }, [bookId, t]);
 
   return {
