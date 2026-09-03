@@ -912,6 +912,7 @@ export const messages: MessageCatalog = {
     'offlineShelf.listCount': '{{count}} 本',
     'offlineShelf.emptyTitle': '还没有离线书籍',
     'offlineShelf.emptyDescription': '进入任意书籍阅读器，在设置面板中使用“缓存本书”后，它会出现在这里。',
+    'offlineShelf.orphanBytes': '本机还留着 {{size}} 的离线字节，但没有任何一本书认领它们。点上方的“清空离线缓存”即可回收。',
     'offlineShelf.bookPages': '{{cached}} / {{total}} 页',
     'offlineShelf.cachedAt': '缓存于 {{time}}',
     'offlineShelf.openReader': '打开阅读器',

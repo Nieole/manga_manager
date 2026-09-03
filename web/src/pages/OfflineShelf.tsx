@@ -138,6 +138,10 @@ export default function OfflineShelf() {
   const quotaPercent = stats?.storageQuota && stats.storageQuota > 0
     ? Math.min(100, Math.round(((stats.storageUsage ?? 0) / stats.storageQuota) * 100))
     : 0;
+  // 回收入口的判据是**盘上实际还占着多少**，不是书目条数：索引里一本都没有而字节仍在，
+  // 正是最需要清空的那种局面，按 books.length 判会把唯一的出口锁死，用户只剩显式登出可走。
+  const cacheBytes = stats?.cacheBytes ?? 0;
+  const hasOrphanBytes = books.length === 0 && cacheBytes > 0;
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -167,7 +171,7 @@ export default function OfflineShelf() {
           <button
             type="button"
             onClick={handleClearAll}
-            disabled={clearingAll || books.length === 0}
+            disabled={clearingAll || (books.length === 0 && cacheBytes === 0)}
             className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
           >
             {clearingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -318,6 +322,11 @@ export default function OfflineShelf() {
             <HardDriveDownload className="h-10 w-10 text-gray-600" />
             <p className="mt-3 text-sm font-medium text-white">{t('offlineShelf.emptyTitle')}</p>
             <p className="mt-2 max-w-md text-sm leading-6 text-gray-500">{t('offlineShelf.emptyDescription')}</p>
+            {hasOrphanBytes && (
+              <p className="mt-3 max-w-md text-sm leading-6 text-amber-500">
+                {t('offlineShelf.orphanBytes', { size: formatBytes(cacheBytes) })}
+              </p>
+            )}
           </div>
         ) : (
           <div className="grid gap-3 px-4 py-4 lg:grid-cols-2">
@@ -352,7 +361,7 @@ export default function OfflineShelf() {
                     <button
                       type="button"
                       onClick={() => handleDeleteBook(book.bookId)}
-                      disabled={deletingId === book.bookId}
+                      disabled={deletingId !== null}
                       className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-50 transition-colors"
                     >
                       {deletingId === book.bookId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}

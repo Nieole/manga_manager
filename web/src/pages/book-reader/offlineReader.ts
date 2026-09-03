@@ -363,11 +363,10 @@ async function pruneStaleBookEntries(cache: Cache, bookId: string, keep: Set<str
 export async function deleteOfflineBook(bookId: string) {
   if (!supportsOfflineReaderCache()) return;
   const cache = await caches.open(OFFLINE_BOOK_CACHE);
-  const allMeta = readBookMeta();
-  const meta = allMeta[bookId];
-  if (meta) {
-    await Promise.all(meta.urls.map((url) => cache.delete(url)));
-  }
+  // 只取这本书的键，不留整份索引快照：下面几段 await 里别的书可能被删掉、也可能刚下载完，
+  // 拿旧快照收尾就会把它们的改动整份盖掉。
+  const urls = readBookMeta()[bookId]?.urls ?? [];
+  await Promise.all(urls.map((url) => cache.delete(url)));
 
   // 再按路径兜底扫一遍：索引里的 urls 可能是旧版本写下的形态，只删它会漏掉字节。
   const keys = await cache.keys();
@@ -375,6 +374,11 @@ export async function deleteOfflineBook(bookId: string) {
     belongsToBook(request.url, bookId) ? cache.delete(request) : Promise.resolve(false)
   )));
 
+  // 先删字节、后摘索引，且读、删、写连成一段没有 await 的同步动作——与 cacheBookForOffline
+  // 的收尾同一条口径。顺序不能反：先摘索引的话，字节删到一半失败就留下索引说没有、盘上还在
+  // 的孤儿，那时这本书在书架上已经看不见，单本删除再也够不着它；反过来只是「删了一半」，
+  // 书还留在书架上，用户能再点一次。
+  const allMeta = readBookMeta();
   delete allMeta[bookId];
   writeBookMeta(allMeta);
 }

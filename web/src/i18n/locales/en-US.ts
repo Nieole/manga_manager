@@ -912,6 +912,7 @@ export const messages: MessageCatalog = {
     'offlineShelf.listCount': '{{count}} books',
     'offlineShelf.emptyTitle': 'No offline books yet',
     'offlineShelf.emptyDescription': 'Open any book reader and use “Cache book” in the settings panel. Cached books will appear here.',
+    'offlineShelf.orphanBytes': 'This device still holds {{size}} of offline data that no book claims. Use “Clear offline cache” above to reclaim it.',
     'offlineShelf.bookPages': '{{cached}} / {{total}} pages',
     'offlineShelf.cachedAt': 'Cached at {{time}}',
     'offlineShelf.openReader': 'Open reader',
