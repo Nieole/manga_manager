@@ -1,6 +1,7 @@
 // 守**派生字段**跟得上刚写进任务表的那一帧：percent 由当帧计数算出，ETA 只属于**活动态**，
-// 速率只算给分母可信的那些状态。破了的表现是终态任务显示上一帧的陈值（`2 / 2` 配 `50.0%`）、
-// 一个已经停了的任务还挂着「预计剩余时间」，以及**中断**任务的速率被整段停机时长稀释。
+// 速率只算给分母可信的那些状态、且分母里不含任务没在干活的那些时段。破了的表现是终态任务显示
+// 上一帧的陈值（`2 / 2` 配 `50.0%`）、一个已经停了的任务还挂着「预计剩余时间」、**中断**任务的
+// 速率被整段停机时长稀释，以及**暂停**过的任务被那段等人回来的时间稀释。
 
 package api
 
@@ -187,7 +188,8 @@ func TestInterruptedTaskOmitsRate(t *testing.T) {
 }
 
 // TestTaskRateSurvivesEveryStatusButInterrupted 守住那道收敛只掐掉**中断**一种：另外六种状态的
-// 分母都是真的——活动态量到此刻，其余三种终态由引擎在任务体返回的那一刻盖上 finished_at。
+// 分母都还原得出来——活动态量到此刻，其余三种终态由引擎在任务体返回的那一刻盖上 finished_at，
+// 而其中的**暂停**时长引擎逐段记下过，扣掉即可（见 TestPausedTimeStaysOutOfTheRateDenominator）。
 func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 	activeCases := []struct {
 		name    string
@@ -247,7 +249,7 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 				t.Fatalf("任务状态为 %q, want %q", task.Status, tc.status)
 			}
 			if task.RatePerMinute <= 0 {
-				t.Fatalf("终态 %q 没带速率 —— 它的 finished_at 是引擎当场盖的，分母是真的", task.Status)
+				t.Fatalf("终态 %q 没带速率 —— 它的起止时刻都是引擎当场盖的，分母还原得出来", task.Status)
 			}
 		})
 	}
@@ -268,4 +270,113 @@ func backdateTaskStart(e *taskEngine, key string, d time.Duration) {
 	}
 	task.StartedAt = task.StartedAt.Add(-d)
 	e.tasks[key] = task
+}
+
+// backdateTaskPause 模拟「这次暂停已经持续了 d」：把暂停开始时刻往前挪，同时把任务开始时刻挪
+// 同样的距离——暂停的这段时间里墙上时钟一样在走，两处只挪一处就等于凭空多出或少掉一段时长。
+func backdateTaskPause(t *testing.T, e *taskEngine, key string, d time.Duration) {
+	t.Helper()
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	task, ok := e.tasks[key]
+	if !ok || task.PausedAt == nil {
+		t.Fatalf("任务 %q 不在暂停中，挪不动暂停开始时刻", key)
+		return
+	}
+	pausedAt := task.PausedAt.Add(-d)
+	task.PausedAt = &pausedAt
+	task.StartedAt = task.StartedAt.Add(-d)
+	e.tasks[key] = task
+}
+
+// TestPausedTimeStaysOutOfTheRateDenominator 钉住**暂停**时长不进速率与 ETA 的分母。
+//
+// 用户暂停一小时去吃饭，任务一条都没多处理、也一条都没少处理，回来时的速率却掉到十四分之一、
+// ETA 从两个多小时变成十八小时——这个数会让用户以为这台机器慢得离谱，进而去动一堆并发设置。
+// 与**中断**那条的区别在于分母有得换：暂停的起止时刻引擎自己写下过，累加起来扣掉即可。
+func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
+	// 任务真干了 10 分钟处理 600 条：真实速率 60/min，剩下 9400 条的真实 ETA 是 9400 秒。
+	const (
+		workedFor   = 10 * time.Minute
+		pausedFor   = time.Hour
+		wantRate    = 60.0
+		wantEta     = int64(9400)
+		rateEpsilon = 1.0
+		etaEpsilon  = int64(120)
+	)
+
+	cases := []struct {
+		name       string
+		wantStatus string
+		wantEta    bool
+		// after 在暂停被挪长之后执行，决定任务停在哪个状态上收场。
+		after func(t *testing.T, e *taskEngine, key string)
+	}{
+		{
+			name:       "恢复之后照常在跑",
+			wantStatus: "running",
+			wantEta:    true,
+			after: func(t *testing.T, e *taskEngine, key string) {
+				if err := e.resume(key); err != nil {
+					t.Fatalf("恢复失败: %v", err)
+				}
+			},
+		},
+		{
+			name:       "恢复之后被取消",
+			wantStatus: "cancelled",
+			after: func(t *testing.T, e *taskEngine, key string) {
+				if err := e.resume(key); err != nil {
+					t.Fatalf("恢复失败: %v", err)
+				}
+				settleSeededTask(e, key, context.Canceled)
+			},
+		},
+		{
+			name:       "暂停中直接取消",
+			wantStatus: "cancelled",
+			after: func(t *testing.T, e *taskEngine, key string) {
+				if err := e.cancel(key); err != nil {
+					t.Fatalf("取消失败: %v", err)
+				}
+				settleSeededTask(e, key, context.Canceled)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 后台能力只登记不执行：任务体何时收尾由用例自己决定。
+			e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+
+			const key = "scan_library_1"
+			handle := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10000, CanCancel: true, CanPause: true})
+			backdateTaskStart(e, key, workedFor)
+			current := 600
+			handle.Report(taskrun.Frame{Current: &current})
+			if err := e.pause(key); err != nil {
+				t.Fatalf("暂停失败: %v", err)
+			}
+			backdateTaskPause(t, e, key, pausedFor)
+			tc.after(t, e, key)
+
+			task := lastPublishedTask(t, snapshots(), key)
+			if task.Status != tc.wantStatus {
+				t.Fatalf("任务状态为 %q, want %q", task.Status, tc.wantStatus)
+			}
+			if diff := task.RatePerMinute - wantRate; diff > rateEpsilon || diff < -rateEpsilon {
+				t.Fatalf("暂停 %v 之后速率为 %.2f/min, want %.0f/min —— 那一小时一条都没处理，却被算成了在干活",
+					pausedFor, task.RatePerMinute, wantRate)
+			}
+			if !tc.wantEta {
+				return
+			}
+			if task.EtaSeconds == nil {
+				t.Fatal("活动态没带 ETA —— 用户看不到还要等多久")
+			}
+			if diff := *task.EtaSeconds - wantEta; diff > etaEpsilon || diff < -etaEpsilon {
+				t.Fatalf("暂停 %v 之后 ETA 为 %d 秒, want 约 %d 秒", pausedFor, *task.EtaSeconds, wantEta)
+			}
+		})
+	}
 }

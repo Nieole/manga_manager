@@ -170,6 +170,11 @@ func decodeTaskParams(task *TaskStatus) {
 			task.PausedAt = &parsed
 		}
 	}
+	if raw := strings.TrimSpace(task.Params["control_paused_ms"]); task.ControlPausedMillis == 0 && raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			task.ControlPausedMillis = parsed
+		}
+	}
 
 	for key, value := range task.Params {
 		switch {
@@ -260,6 +265,9 @@ func taskParamsWithDerivedFields(task TaskStatus) map[string]string {
 	if task.PausedAt != nil {
 		params["paused_at"] = task.PausedAt.Format(time.RFC3339Nano)
 	}
+	if task.ControlPausedMillis > 0 {
+		params["control_paused_ms"] = strconv.FormatInt(task.ControlPausedMillis, 10)
+	}
 	for key, value := range task.Metrics {
 		params["metric."+key] = strconv.FormatInt(value, 10)
 	}
@@ -303,7 +311,9 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 // 以为它还在跑；对可重试的**中断**任务尤其误导。终态要看的是已经做完了多少（计数与百分比）
 // 与花了多久（详情面板的开始 / 结束时刻），这两样都不经 ETA 这条通道。
 //
-// 速率只算给分母可信的状态，**中断**一个都不发，理由见函数内那道闸门。
+// 速率只算给分母可信的状态，**中断**一个都不发，理由见函数内那道闸门。分母里还要扣掉**暂停**：
+// 那几段时间里任务一条都没处理，引擎逐段记下过（TaskStatus.ControlPausedMillis），不扣的话
+// 一次午饭时长的暂停就能把速率打到七分之一，并一路带进终态。
 func enrichTaskProgress(task *TaskStatus) {
 	if task == nil {
 		return
@@ -327,16 +337,34 @@ func enrichTaskProgress(task *TaskStatus) {
 	if task.Status == "interrupted" {
 		return
 	}
-	elapsed := time.Since(task.StartedAt).Seconds()
+	now := time.Now()
+	elapsed := now.Sub(task.StartedAt)
 	if !taskIsActive(task.Status) && task.FinishedAt != nil {
-		elapsed = task.FinishedAt.Sub(task.StartedAt).Seconds()
+		elapsed = task.FinishedAt.Sub(task.StartedAt)
 	}
-	if elapsed <= 0 || task.Current <= 0 {
+	// 扣掉**暂停**：那段时间里任务一条都没处理，留在分母里等于把「等用户回来」算成了在干活。
+	elapsed -= taskPausedSoFar(*task, now)
+	seconds := elapsed.Seconds()
+	if seconds <= 0 || task.Current <= 0 {
 		return
 	}
-	task.RatePerMinute = float64(task.Current) * 60 / elapsed
+	task.RatePerMinute = float64(task.Current) * 60 / seconds
 	if taskIsActive(task.Status) && task.Total > task.Current {
 		eta := int64(float64(task.Total-task.Current) / task.RatePerMinute * 60)
 		task.EtaSeconds = &eta
 	}
+}
+
+// taskPausedSoFar 返回这个任务至今的暂停总时长：已经折进累计的那些，加上此刻仍在进行的这一次。
+//
+// 仍在进行的那一段只在**已暂停**下计入：**取消中**的任务已被放行、正在收尾，它的 PausedAt
+// 由 cancel 那一刻折进累计后清掉；**终态**同理由收尾清掉。
+func taskPausedSoFar(task TaskStatus, now time.Time) time.Duration {
+	total := time.Duration(task.ControlPausedMillis) * time.Millisecond
+	if task.Status == "paused" && task.PausedAt != nil {
+		if ongoing := now.Sub(*task.PausedAt); ongoing > 0 {
+			total += ongoing
+		}
+	}
+	return total
 }

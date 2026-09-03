@@ -111,30 +111,38 @@ type TaskStatus struct {
 	//
 	// Message 只剩一个来源：服务重启把活动态任务转成**中断**时直接写进落盘记录的那句已渲染文案。
 	// 前端按 message_code 优先、Message 作缺键兜底，因此设了码就必须清空 Message。
-	MessageCode    string            `json:"message_code,omitempty"`
-	MessageParams  map[string]string `json:"message_params,omitempty"`
-	Error          string            `json:"error,omitempty"`
-	Current        int               `json:"current"`
-	Total          int               `json:"total"`
-	Percent        *float64          `json:"percent,omitempty"`
-	RatePerMinute  float64           `json:"rate_per_minute,omitempty"`
-	EtaSeconds     *int64            `json:"eta_seconds,omitempty"`
-	CanCancel      bool              `json:"can_cancel"`
-	CanPause       bool              `json:"can_pause"`
-	CanResume      bool              `json:"can_resume"`
-	Retryable      bool              `json:"retryable"`
-	PausedAt       *time.Time        `json:"paused_at,omitempty"`
-	PauseReason    string            `json:"pause_reason,omitempty"`
-	Phase          string            `json:"phase,omitempty"`
-	CurrentItem    string            `json:"current_item,omitempty"`
-	EffectiveLimit *TaskLimits       `json:"effective_limit,omitempty"`
-	Metrics        map[string]int64  `json:"metrics,omitempty"`
-	Labels         map[string]string `json:"labels,omitempty"`
-	Params         map[string]string `json:"params,omitempty"`
-	StartedAt      time.Time         `json:"started_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
-	FinishedAt     *time.Time        `json:"finished_at,omitempty"`
-	Sequence       int64             `json:"-"`
+	MessageCode   string            `json:"message_code,omitempty"`
+	MessageParams map[string]string `json:"message_params,omitempty"`
+	Error         string            `json:"error,omitempty"`
+	Current       int               `json:"current"`
+	Total         int               `json:"total"`
+	Percent       *float64          `json:"percent,omitempty"`
+	RatePerMinute float64           `json:"rate_per_minute,omitempty"`
+	EtaSeconds    *int64            `json:"eta_seconds,omitempty"`
+	CanCancel     bool              `json:"can_cancel"`
+	CanPause      bool              `json:"can_pause"`
+	CanResume     bool              `json:"can_resume"`
+	Retryable     bool              `json:"retryable"`
+	PausedAt      *time.Time        `json:"paused_at,omitempty"`
+	PauseReason   string            `json:"pause_reason,omitempty"`
+	// ControlPausedMillis 是这个任务至今在**已暂停**里待过的累计毫秒数，由引擎在每次离开暂停
+	// （恢复、取消、收尾）时把那一段折进来。它只有一个用途：从速率与 ETA 的分母里扣掉——
+	// 暂停期间任务一条都没处理，把那段时长算成在干活会让两个数一路失真到终态。
+	//
+	// 它与任务参数里的 `paused_ms` 不是一回事：那个是**磁盘作业**为阅读让路而等掉的时长，
+	// 期间任务本身仍在跑。累计只属于这一轮任务——重试是另一次启动，分母从新的开始时刻重新计。
+	// 不进 JSON：前端不显示它，落盘与读回走任务参数 `control_paused_ms`。
+	ControlPausedMillis int64             `json:"-"`
+	Phase               string            `json:"phase,omitempty"`
+	CurrentItem         string            `json:"current_item,omitempty"`
+	EffectiveLimit      *TaskLimits       `json:"effective_limit,omitempty"`
+	Metrics             map[string]int64  `json:"metrics,omitempty"`
+	Labels              map[string]string `json:"labels,omitempty"`
+	Params              map[string]string `json:"params,omitempty"`
+	StartedAt           time.Time         `json:"started_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
+	FinishedAt          *time.Time        `json:"finished_at,omitempty"`
+	Sequence            int64             `json:"-"`
 }
 
 type TaskRuntime struct {

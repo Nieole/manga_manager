@@ -419,6 +419,21 @@ func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[strin
 	e.publishTaskProgressLocked(task)
 }
 
+// absorbTaskPauseLocked 把「这一次暂停」折进累计暂停时长并清掉暂停起点，供离开**已暂停**的每条
+// 出口调用：恢复、取消，以及暂停中直接收尾。调用方持有 mutex。
+//
+// 累计值本身只有一个消费者——速率与 ETA 的分母（见 taskPausedSoFar）。少调一处不会有编译错误，
+// 后果是那条出口之后的分母里凭空多出一段没人干活的时间，任务看起来慢了几倍。
+func absorbTaskPauseLocked(task *TaskStatus, now time.Time) {
+	if task.PausedAt == nil {
+		return
+	}
+	if paused := now.Sub(*task.PausedAt); paused > 0 {
+		task.ControlPausedMillis += paused.Milliseconds()
+	}
+	task.PausedAt = nil
+}
+
 // ---- 终态 ----
 
 // finalizeTask 把任务落成 status 指名的那个**终态**，失败态除外（那条走 failTask，
@@ -445,7 +460,7 @@ func (e *taskEngine) finalizeTask(key, status, code string, params map[string]st
 	task.CanCancel = false
 	task.CanPause = false
 	task.CanResume = false
-	task.PausedAt = nil
+	absorbTaskPauseLocked(&task, now)
 	task.PauseReason = ""
 	// 只有**完成**补齐计数：`rebuild_index`、`cleanup_library`、`ai_grouping` 这类任务把总数
 	// 声明成阶段数却从不推进计数，靠这一笔才显示成 1 / 1。**已取消**不跟着补——被取消掉的那些
@@ -482,7 +497,7 @@ func (e *taskEngine) failTask(key, code string, params map[string]string, taskEr
 	task.CanCancel = false
 	task.CanPause = false
 	task.CanResume = false
-	task.PausedAt = nil
+	absorbTaskPauseLocked(&task, now)
 	task.PauseReason = ""
 	task.UpdatedAt = now
 	task.FinishedAt = &now
@@ -770,14 +785,15 @@ func (e *taskEngine) resume(key string) error {
 	if runtime == nil || runtime.PauseGate == nil {
 		return errTaskGateUnavailable
 	}
+	now := time.Now()
 	runtime.PauseGate.Resume()
 	task.Status = "running"
 	task.CanPause = true
 	task.CanResume = false
-	task.PausedAt = nil
+	absorbTaskPauseLocked(&task, now)
 	task.PauseReason = ""
 	applyTaskMessage(&task, "task.msg.control.resumed", nil)
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = now
 	e.seq++
 	task.Sequence = e.seq
 	e.writeTaskLocked(&task)
@@ -805,6 +821,7 @@ func (e *taskEngine) cancel(key string) error {
 		return errTaskCancelUnavailable
 	}
 
+	now := time.Now()
 	runtime.Cancel()
 	// 一并放行暂停闸门：暂停中的任务卡在 gate 上，只 Cancel 不 Resume 会让它永远收不到取消信号。
 	if runtime.PauseGate != nil {
@@ -814,8 +831,12 @@ func (e *taskEngine) cancel(key string) error {
 	task.CanPause = false
 	task.CanResume = false
 	task.Status = "cancelling"
+	// 闸门刚被放行，这次暂停到此为止：不在这里结账的话，从暂停直接取消的任务会把整段暂停
+	// 留在分母里，一路带进**已取消**那一帧。
+	absorbTaskPauseLocked(&task, now)
+	task.PauseReason = ""
 	applyTaskMessage(&task, "task.msg.control.cancelling", nil)
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = now
 	e.seq++
 	task.Sequence = e.seq
 	e.writeTaskLocked(&task)
