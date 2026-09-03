@@ -175,6 +175,9 @@ CREATE TABLE IF NOT EXISTS books (
     sort_number REAL,
     page_count INTEGER NOT NULL DEFAULT 0,
     cover_path TEXT,
+    -- cover_locked 为真表示 cover_path 是用户自己指定的（书这一侧的锁定字段）：
+    -- 扫描入库一律不得改写它，只有「设为封面 / 上传封面」置位、缩略图重建复位。
+    cover_locked BOOLEAN NOT NULL DEFAULT FALSE,
     last_read_page INTEGER,
     last_read_at DATETIME,
     file_hash TEXT,

@@ -202,7 +202,27 @@ type Querier interface {
 	UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error
 	UpdateSmartFilter(ctx context.Context, arg UpdateSmartFilterParams) (SmartFilter, error)
 	UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Author, error)
+	// Scan ingest overwrite policy, shared by the two upserts below.
+	//
+	// A scan may only write what it actually read this pass; everything else stays as the row has it.
+	// page_count and cover_path are the two columns a scan only learns by opening the archive, so they
+	// move to whichever upsert the caller picks -- the choice of query IS the "did I open the archive"
+	// flag (sqlc drops bind parameters inside ON CONFLICT DO UPDATE, so it cannot be a parameter).
+	// Keep the two column lists below in sync: they differ only in those two columns.
+	//
+	// books.cover_locked marks a cover the user picked (the book-side locked field). No scan may
+	// overwrite it and no scan ever sets it: only "set as cover" / "upload cover" lock, only the
+	// thumbnail rebuild unlocks.
+	// For a scan that opened the archive: what it read is authoritative, including a page_count of 0
+	// (the archive really has no pages) and an empty cover_path (the thumbnail is queued right after).
+	// The one exception is a locked cover, which stays with the user.
 	UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error)
+	// For a scan that did NOT open the archive (fast profile): it knows nothing about pages or cover,
+	// so the stored ones survive. Clearing them here would be permanent -- that profile queues no
+	// thumbnail either, and later incremental scans skip the book because mtime+size did not change.
+	// Renamed books land here too: rehoming moves the old row onto the new path first, so the
+	// ON CONFLICT(path) below hits that very row.
+	UpsertBookByPathKeepingPagesAndCover(ctx context.Context, arg UpsertBookByPathKeepingPagesAndCoverParams) (Book, error)
 	UpsertFranchiseCollection(ctx context.Context, arg UpsertFranchiseCollectionParams) (Collection, error)
 	UpsertReadingBookmark(ctx context.Context, arg UpsertReadingBookmarkParams) (ReadingBookmark, error)
 	UpsertSeriesByPath(ctx context.Context, arg UpsertSeriesByPathParams) (Series, error)

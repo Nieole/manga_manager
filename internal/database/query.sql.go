@@ -66,8 +66,8 @@ func (q *Queries) AddSeriesToCollection(ctx context.Context, arg AddSeriesToColl
 }
 
 const clearAllBookCoverPaths = `-- name: ClearAllBookCoverPaths :exec
-UPDATE books SET cover_path = NULL, updated_at = CURRENT_TIMESTAMP
-WHERE cover_path IS NOT NULL AND cover_path != ''
+UPDATE books SET cover_path = NULL, cover_locked = FALSE, updated_at = CURRENT_TIMESTAMP
+WHERE (cover_path IS NOT NULL AND cover_path != '') OR cover_locked
 `
 
 func (q *Queries) ClearAllBookCoverPaths(ctx context.Context) error {
@@ -466,7 +466,7 @@ INSERT INTO books (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
 `
 
 type CreateBookParams struct {
@@ -517,6 +517,7 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		&i.SortNumber,
 		&i.PageCount,
 		&i.CoverPath,
+		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
 		&i.FileHash,
@@ -1286,7 +1287,7 @@ func (q *Queries) GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Au
 }
 
 const getBook = `-- name: GetBook :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE id = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
@@ -1307,6 +1308,7 @@ func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
 		&i.SortNumber,
 		&i.PageCount,
 		&i.CoverPath,
+		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
 		&i.FileHash,
@@ -1321,7 +1323,7 @@ func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
 }
 
 const getBookByPath = `-- name: GetBookByPath :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE path = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE path = ? LIMIT 1
 `
 
 func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) {
@@ -1342,6 +1344,7 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 		&i.SortNumber,
 		&i.PageCount,
 		&i.CoverPath,
+		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
 		&i.FileHash,
@@ -1720,7 +1723,7 @@ func (q *Queries) GetMihonSeries(ctx context.Context, id int64) (GetMihonSeriesR
 }
 
 const getNextBookInSeries = `-- name: GetNextBookInSeries :one
-SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.last_read_page, nb.last_read_at, nb.file_hash, nb.quick_hash, nb.path_fingerprint, nb.path_fingerprint_no_ext, nb.filename_fingerprint, nb.created_at, nb.updated_at FROM books nb
+SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.cover_locked, nb.last_read_page, nb.last_read_at, nb.file_hash, nb.quick_hash, nb.path_fingerprint, nb.path_fingerprint_no_ext, nb.filename_fingerprint, nb.created_at, nb.updated_at FROM books nb
 INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
 WHERE 
    (nb.volume > cb.volume)
@@ -1748,6 +1751,7 @@ func (q *Queries) GetNextBookInSeries(ctx context.Context, id int64) (Book, erro
 		&i.SortNumber,
 		&i.PageCount,
 		&i.CoverPath,
+		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
 		&i.FileHash,
@@ -2920,7 +2924,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]Li
 }
 
 const listBooksBySeries = `-- name: ListBooksBySeries :many
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE series_id = ? ORDER BY volume, sort_number, name
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE series_id = ? ORDER BY volume, sort_number, name
 `
 
 func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error) {
@@ -2947,6 +2951,7 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book
 			&i.SortNumber,
 			&i.PageCount,
 			&i.CoverPath,
+			&i.CoverLocked,
 			&i.LastReadPage,
 			&i.LastReadAt,
 			&i.FileHash,
@@ -6236,6 +6241,7 @@ func (q *Queries) UpsertAuthor(ctx context.Context, arg UpsertAuthorParams) (Aut
 }
 
 const upsertBookByPath = `-- name: UpsertBookByPath :one
+
 INSERT INTO books (
     series_id, library_id, name, path, size, file_modified_at, 
     volume, title, summary, number, sort_number, page_count, cover_path
@@ -6254,9 +6260,9 @@ ON CONFLICT(path) DO UPDATE SET
     number = excluded.number,
     sort_number = excluded.sort_number,
     page_count = excluded.page_count,
-    cover_path = excluded.cover_path,
+    cover_path = CASE WHEN books.cover_locked THEN books.cover_path ELSE excluded.cover_path END,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
 `
 
 type UpsertBookByPathParams struct {
@@ -6275,6 +6281,20 @@ type UpsertBookByPathParams struct {
 	CoverPath      sql.NullString  `json:"cover_path"`
 }
 
+// Scan ingest overwrite policy, shared by the two upserts below.
+//
+// A scan may only write what it actually read this pass; everything else stays as the row has it.
+// page_count and cover_path are the two columns a scan only learns by opening the archive, so they
+// move to whichever upsert the caller picks -- the choice of query IS the "did I open the archive"
+// flag (sqlc drops bind parameters inside ON CONFLICT DO UPDATE, so it cannot be a parameter).
+// Keep the two column lists below in sync: they differ only in those two columns.
+//
+// books.cover_locked marks a cover the user picked (the book-side locked field). No scan may
+// overwrite it and no scan ever sets it: only "set as cover" / "upload cover" lock, only the
+// thumbnail rebuild unlocks.
+// For a scan that opened the archive: what it read is authoritative, including a page_count of 0
+// (the archive really has no pages) and an empty cover_path (the thumbnail is queued right after).
+// The one exception is a locked cover, which stays with the user.
 func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathParams) (Book, error) {
 	row := q.db.QueryRowContext(ctx, upsertBookByPath,
 		arg.SeriesID,
@@ -6307,6 +6327,96 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 		&i.SortNumber,
 		&i.PageCount,
 		&i.CoverPath,
+		&i.CoverLocked,
+		&i.LastReadPage,
+		&i.LastReadAt,
+		&i.FileHash,
+		&i.QuickHash,
+		&i.PathFingerprint,
+		&i.PathFingerprintNoExt,
+		&i.FilenameFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertBookByPathKeepingPagesAndCover = `-- name: UpsertBookByPathKeepingPagesAndCover :one
+INSERT INTO books (
+    series_id, library_id, name, path, size, file_modified_at, 
+    volume, title, summary, number, sort_number, page_count, cover_path
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+ON CONFLICT(path) DO UPDATE SET
+    series_id = excluded.series_id,
+    library_id = excluded.library_id,
+    name = excluded.name,
+    size = excluded.size,
+    file_modified_at = excluded.file_modified_at,
+    volume = excluded.volume,
+    title = excluded.title,
+    summary = excluded.summary,
+    number = excluded.number,
+    sort_number = excluded.sort_number,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
+`
+
+type UpsertBookByPathKeepingPagesAndCoverParams struct {
+	SeriesID       int64           `json:"series_id"`
+	LibraryID      int64           `json:"library_id"`
+	Name           string          `json:"name"`
+	Path           string          `json:"path"`
+	Size           int64           `json:"size"`
+	FileModifiedAt time.Time       `json:"file_modified_at"`
+	Volume         string          `json:"volume"`
+	Title          sql.NullString  `json:"title"`
+	Summary        sql.NullString  `json:"summary"`
+	Number         sql.NullString  `json:"number"`
+	SortNumber     sql.NullFloat64 `json:"sort_number"`
+	PageCount      int64           `json:"page_count"`
+	CoverPath      sql.NullString  `json:"cover_path"`
+}
+
+// For a scan that did NOT open the archive (fast profile): it knows nothing about pages or cover,
+// so the stored ones survive. Clearing them here would be permanent -- that profile queues no
+// thumbnail either, and later incremental scans skip the book because mtime+size did not change.
+// Renamed books land here too: rehoming moves the old row onto the new path first, so the
+// ON CONFLICT(path) below hits that very row.
+func (q *Queries) UpsertBookByPathKeepingPagesAndCover(ctx context.Context, arg UpsertBookByPathKeepingPagesAndCoverParams) (Book, error) {
+	row := q.db.QueryRowContext(ctx, upsertBookByPathKeepingPagesAndCover,
+		arg.SeriesID,
+		arg.LibraryID,
+		arg.Name,
+		arg.Path,
+		arg.Size,
+		arg.FileModifiedAt,
+		arg.Volume,
+		arg.Title,
+		arg.Summary,
+		arg.Number,
+		arg.SortNumber,
+		arg.PageCount,
+		arg.CoverPath,
+	)
+	var i Book
+	err := row.Scan(
+		&i.ID,
+		&i.SeriesID,
+		&i.LibraryID,
+		&i.Name,
+		&i.Path,
+		&i.Size,
+		&i.FileModifiedAt,
+		&i.Volume,
+		&i.Title,
+		&i.Summary,
+		&i.Number,
+		&i.SortNumber,
+		&i.PageCount,
+		&i.CoverPath,
+		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
 		&i.FileHash,

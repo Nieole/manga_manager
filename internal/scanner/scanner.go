@@ -166,9 +166,8 @@ func (s *Scanner) endSeriesScan(seriesID int64) {
 }
 
 type scanJob struct {
-	path     string
-	info     os.FileInfo
-	existing *bookScanSnapshot // 已入库快照（该路径已在库中时非 nil），用于 fast 档位保留旧的 page_count/cover_path
+	path string
+	info os.FileInfo
 }
 
 type scanMetrics struct {
@@ -448,9 +447,14 @@ func (p ScanProfile) backfills(snap bookScanSnapshot) bool {
 }
 
 type scanResult struct {
-	seriesName           string
-	seriesPath           string
-	book                 database.UpsertBookByPathParams
+	seriesName string
+	seriesPath string
+	book       database.UpsertBookByPathParams
+	// openedArchive 记下这一趟到底开没开归档，决定入库时用哪个 upsert：只有开过的那趟
+	// 才有权改写 page_count 与 cover_path，fast 档位读不出它们，库里那份就是最好的一份。
+	// 判据必须跟着这份结果走，不能在入库侧回头问档位——同一次扫描里两者本就一致，
+	// 但把它挂在结果上，「这个值是读出来的还是空的」才在一处说清。
+	openedArchive        bool
 	coverCandidate       *coverCandidate
 	comicInfo            *parser.ComicInfo
 	fileHash             string
@@ -534,11 +538,9 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 		formats = s.libraryScanFormats(ctx, libraryID)
 	}
 
-	// 先加载已入库文件的快照，它同时供三件事使用：跳过既没变、本档位又补不出新数据的归档
-	// （只在非强制扫描下，见下面遍历里那处独立守卫）、构建改名重连索引、以及 fast 档位保留已入库的页数与封面。
-	// 后两件强制扫描也需要，因此这份快照无论 opts.Force 与否都完整填充——强制扫描下留空，
-	// workerProcess 里那条保留分支就永远看不到旧值，一次强制 fast 扫描会清零整库页数、抹掉封面。
-	// 代价只有一条查询，相对随后要读的 N 个归档可忽略。
+	// 先加载已入库文件的快照，它供两件事：跳过既没变、本档位又补不出新数据的归档
+	// （只在非强制扫描下，见下面遍历里那处独立守卫），以及构建改名重连索引。
+	// 「fast 档位别把页数与封面清零」不在这里——那由入库侧挑哪个 upsert 决定，见 sql/query.sql。
 	bookCache := make(map[string]bookScanSnapshot)
 
 	existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
@@ -625,12 +627,8 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 				}
 			}
 
-			var existing *bookScanSnapshot
-			if snap, ok := bookCache[path]; ok {
-				existing = &snap
-			}
 			select {
-			case jobs <- scanJob{path: path, info: info, existing: existing}:
+			case jobs <- scanJob{path: path, info: info}:
 				metrics.processedArchives.Add(1)
 				progress.publish("reading_metadata", path, false)
 			case <-ctx.Done():
@@ -682,8 +680,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 	formats := config.NewScanFormatSet(library.ScanFormats)
 
 	bookCache := make(map[string]bookScanSnapshot)
-	// 与 ScanLibrary 同理：这份快照同时供增量跳过、改名重连与 fast 档位保留页数/封面使用，
-	// 后两者强制扫描也需要，所以无论 opts.Force 与否都完整填充。
+	// 与 ScanLibrary 同口径：这份快照供增量跳过与改名重连两件事。
 	var renames *renameIndex
 	if existingBooks, err := s.store.ListBooksBySeries(ctx, seriesID); err == nil {
 		for _, b := range existingBooks {
@@ -758,12 +755,8 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 				}
 			}
 
-			var existing *bookScanSnapshot
-			if snap, ok := bookCache[path]; ok {
-				existing = &snap
-			}
 			select {
-			case jobs <- scanJob{path: path, info: info, existing: existing}:
+			case jobs <- scanJob{path: path, info: info}:
 				metrics.processedArchives.Add(1)
 				progress.publish("reading_metadata", path, false)
 			case <-ctx.Done():
@@ -1126,17 +1119,6 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		SortNumber:     sql.NullFloat64{Float64: sortNumber, Valid: true},
 		CoverPath:      coverPath,
 	}
-	// fast 档位不开归档，pages 与 coverPath 恒空；只要这本书已入库（有旧快照）就保留它的
-	// page_count/cover_path，强制扫描同样如此——fast 档位既不开归档也不排封面任务，
-	// 一旦被 upsert 清零，后续增量扫描又因 mtime+size 未变而跳过，页数与封面永不自愈。
-	if !opts.Profile.opensArchive() && job.existing != nil {
-		if book.PageCount == 0 && job.existing.pageCount > 0 {
-			book.PageCount = job.existing.pageCount
-		}
-		if (!book.CoverPath.Valid || book.CoverPath.String == "") && job.existing.coverPath.Valid && job.existing.coverPath.String != "" {
-			book.CoverPath = job.existing.coverPath
-		}
-	}
 	// 两处指纹都是最干净的**磁盘作业**形状：取令牌 → 读一遍文件 → 立刻归还。闭包只捕获自己的
 	// 错误，因为算不出指纹不该中止这本书；中止只由 Do 返回的闸门与令牌错误决定。
 	hashWork := diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: job.path}
@@ -1187,6 +1169,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		seriesName:           seriesName,
 		seriesPath:           seriesPath,
 		book:                 book,
+		openedArchive:        opts.Profile.opensArchive(),
 		coverCandidate:       coverHint,
 		comicInfo:            cInfo,
 		fileHash:             fileHash,
@@ -1394,8 +1377,16 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					}
 				}
 
-				// 使用 Upsert 模式：同路径书籍只更新元数据，保留 last_read_page / last_read_at，返回带主键的对象
-				actualBook, err := q.UpsertBookByPath(ctx, res.book)
+				// 同路径的书只更新元数据，保留 last_read_page / last_read_at，返回带主键的对象。
+				// 两个 upsert 的差别只在 page_count 与 cover_path 该不该被这一趟改写，语义见 sql/query.sql。
+				var actualBook database.Book
+				var err error
+				if res.openedArchive {
+					actualBook, err = q.UpsertBookByPath(ctx, res.book)
+				} else {
+					actualBook, err = q.UpsertBookByPathKeepingPagesAndCover(ctx,
+						database.UpsertBookByPathKeepingPagesAndCoverParams(res.book))
+				}
 				if err != nil {
 					slog.Error("Failed to upsert book", "path", res.book.Path, "error", err)
 					continue
@@ -1768,7 +1759,7 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 	return sql.NullString{String: filepath.ToSlash(filepath.Join(subDir, fileName)), Valid: true}, nil
 }
 
-// SetBookCoverFromPage 用书内指定页(1-based)重建封面并无条件更新 cover_path，随后刷新系列统计。
+// SetBookCoverFromPage 用书内指定页(1-based)重建封面并落到 cover_path，随后刷新系列统计。
 // GetPages() 已按自然阅读顺序排序，故第 N 页即 pages[N-1]。返回新的相对封面路径。
 func (s *Scanner) SetBookCoverFromPage(ctx context.Context, book database.Book, pageNumber int) (string, error) {
 	arc, err := s.openArchive(book.Path)
@@ -1796,7 +1787,10 @@ func (s *Scanner) SetBookCoverFromImage(ctx context.Context, book database.Book,
 	return s.applyCustomCover(ctx, book, imageData, mediaType)
 }
 
-// applyCustomCover 把给定图片处理成内容寻址的缩略图写盘，无条件更新 cover_path 并刷新系列统计。
+// applyCustomCover 把给定图片处理成内容寻址的缩略图写盘，更新 cover_path 并刷新系列统计。
+//
+// 它经 SetBookCover 一并置上封面锁：自动缩略图按 sha1(path|mtime|size) 命名、这里按图片内容命名，
+// 两个名字永不相等，扫描因此认不出「这张是人设的」——认不出就会在下一次强制扫描里改回自动封面。
 func (s *Scanner) applyCustomCover(ctx context.Context, book database.Book, imageData []byte, mediaType string) (string, error) {
 	cfg := s.currentConfig()
 	relPath, err := s.writeCoverThumbnail(cfg, imageData, mediaType)

@@ -59,6 +59,7 @@ type Book struct {
 	SortNumber           sql.NullFloat64 `json:"sort_number"`
 	PageCount            int64           `json:"page_count"`
 	CoverPath            sql.NullString  `json:"cover_path"`
+	CoverLocked          bool            `json:"cover_locked"`
 	LastReadPage         sql.NullInt64   `json:"last_read_page"`
 	LastReadAt           sql.NullTime    `json:"last_read_at"`
 	FileHash             sql.NullString  `json:"file_hash"`

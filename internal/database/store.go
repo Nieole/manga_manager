@@ -365,8 +365,11 @@ func (s *SqlStore) ReplaceSeriesCustomFields(ctx context.Context, seriesID int64
 }
 
 // SetBookCover 无条件更新书籍封面路径（与只在缺失时写入的 SetBookCoverIfMissing 不同），供“设为封面 / 上传封面”使用。
+//
+// 它同时置上 cover_locked：这张封面从此归用户，扫描入库不得再改写它（见 sql/query.sql 的两个书籍 upsert）。
+// 自动封面走 SetBookCoverIfMissing，那条路径不置锁。
 func (s *SqlStore) SetBookCover(ctx context.Context, bookID int64, coverPath string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE books SET cover_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, coverPath, bookID)
+	_, err := s.db.ExecContext(ctx, `UPDATE books SET cover_path = ?, cover_locked = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, coverPath, bookID)
 	return err
 }
 

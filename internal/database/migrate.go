@@ -73,6 +73,7 @@ func Migrate(dbPath string) error {
 		{table: "books", name: "number", definition: "TEXT"},
 		{table: "books", name: "sort_number", definition: "REAL"},
 		{table: "books", name: "cover_path", definition: "TEXT"},
+		{table: "books", name: "cover_locked", definition: "BOOLEAN NOT NULL DEFAULT FALSE"},
 		{table: "books", name: "last_read_page", definition: "INTEGER"},
 		{table: "books", name: "last_read_at", definition: "DATETIME"},
 		{table: "series", name: "title", definition: "TEXT"},

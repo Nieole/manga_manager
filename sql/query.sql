@@ -291,7 +291,22 @@ DELETE FROM books WHERE path = ?;
 
 
 
+-- Scan ingest overwrite policy, shared by the two upserts below.
+--
+-- A scan may only write what it actually read this pass; everything else stays as the row has it.
+-- page_count and cover_path are the two columns a scan only learns by opening the archive, so they
+-- move to whichever upsert the caller picks -- the choice of query IS the "did I open the archive"
+-- flag (sqlc drops bind parameters inside ON CONFLICT DO UPDATE, so it cannot be a parameter).
+-- Keep the two column lists below in sync: they differ only in those two columns.
+--
+-- books.cover_locked marks a cover the user picked (the book-side locked field). No scan may
+-- overwrite it and no scan ever sets it: only "set as cover" / "upload cover" lock, only the
+-- thumbnail rebuild unlocks.
+
 -- name: UpsertBookByPath :one
+-- For a scan that opened the archive: what it read is authoritative, including a page_count of 0
+-- (the archive really has no pages) and an empty cover_path (the thumbnail is queued right after).
+-- The one exception is a locked cover, which stays with the user.
 INSERT INTO books (
     series_id, library_id, name, path, size, file_modified_at, 
     volume, title, summary, number, sort_number, page_count, cover_path
@@ -310,7 +325,33 @@ ON CONFLICT(path) DO UPDATE SET
     number = excluded.number,
     sort_number = excluded.sort_number,
     page_count = excluded.page_count,
-    cover_path = excluded.cover_path,
+    cover_path = CASE WHEN books.cover_locked THEN books.cover_path ELSE excluded.cover_path END,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING *;
+
+-- name: UpsertBookByPathKeepingPagesAndCover :one
+-- For a scan that did NOT open the archive (fast profile): it knows nothing about pages or cover,
+-- so the stored ones survive. Clearing them here would be permanent -- that profile queues no
+-- thumbnail either, and later incremental scans skip the book because mtime+size did not change.
+-- Renamed books land here too: rehoming moves the old row onto the new path first, so the
+-- ON CONFLICT(path) below hits that very row.
+INSERT INTO books (
+    series_id, library_id, name, path, size, file_modified_at, 
+    volume, title, summary, number, sort_number, page_count, cover_path
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+ON CONFLICT(path) DO UPDATE SET
+    series_id = excluded.series_id,
+    library_id = excluded.library_id,
+    name = excluded.name,
+    size = excluded.size,
+    file_modified_at = excluded.file_modified_at,
+    volume = excluded.volume,
+    title = excluded.title,
+    summary = excluded.summary,
+    number = excluded.number,
+    sort_number = excluded.sort_number,
     updated_at = CURRENT_TIMESTAMP
 RETURNING *;
 
@@ -1341,8 +1382,8 @@ RETURNING id, library_id, name, active_tag, active_author, active_status, active
 DELETE FROM smart_filters WHERE id = ?;
 
 -- name: ClearAllBookCoverPaths :exec
-UPDATE books SET cover_path = NULL, updated_at = CURRENT_TIMESTAMP
-WHERE cover_path IS NOT NULL AND cover_path != '';
+UPDATE books SET cover_path = NULL, cover_locked = FALSE, updated_at = CURRENT_TIMESTAMP
+WHERE (cover_path IS NOT NULL AND cover_path != '') OR cover_locked;
 
 -- name: ClearAllSeriesStatsCoverPaths :exec
 UPDATE series_stats SET cover_path = '' WHERE cover_path != '';

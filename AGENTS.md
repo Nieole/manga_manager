@@ -25,6 +25,11 @@ Add or update `_test.go` files in the touched backend package, following the exi
 
 > **sqlc 必须在 PowerShell（或 cmd）里运行，不要用 Git Bash / MSYS。** `sqlc generate` 会向 stderr 打印一批 `mismatched input ...` 诊断——这些是非致命噪音，sqlc 会自行恢复并正常生成。在 PowerShell 下命令退出码为 0、产物与仓库一致；但在 Git Bash 下经 scoop shim 调用会返回**假的退出码 1**，看起来像“管线坏了”，其实文件没问题。判断 sqlc 是否成功以 PowerShell 的退出码和 `git status`（有无产物 diff）为准。
 
+> **`sql/query.sql` 只能写 ASCII，注释也是。** sqlc 替换 `sqlc.arg()` 用的是字节偏移，文件里一旦出现中文，
+> 从那里往后的每条查询都会被切错位置，报出一屏 `mismatched input` 并**整份生成失败**（退出码 1、产物无变化）。
+> 中文说明写到调用侧的 Go 文档里。另外 sqlc 看不见 `ON CONFLICT ... DO UPDATE SET` 里的绑定参数：写在那儿的
+> `?` 或 `sqlc.arg()` 会被静默丢掉、一个参数都不绑，运行期才炸——那里要分支就拆成两条查询。
+
 ## Commit & Pull Request Guidelines
 Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short imperative summaries. Keep commits scoped to one change set. For user-visible changes, update `CHANGELOG.md` in the same batch. Pull requests should describe the behavior change, list verification commands run, and include screenshots for UI work.
 
