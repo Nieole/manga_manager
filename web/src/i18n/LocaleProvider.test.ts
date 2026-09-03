@@ -171,7 +171,7 @@ describe('复数模板：英文按 Intl.PluralRules 选形态', () => {
     expect(translateInLocale('en-US', 'dashboard.activity.summary', { count: 1 })).toBe('Active 1 day in the last 7');
     expect(translateInLocale('en-US', 'metadataReviews.fieldCount', { count: 1 })).toBe('1 field');
     expect(translateInLocale('en-US', 'home.toolbar.resultCount', { count: 1 })).toBe('1 result in this library');
-    expect(translateInLocale('en-US', 'taskBubble.running', { count: 1 })).toBe('1 task running');
+    expect(translateInLocale('en-US', 'taskBubble.summary.active', { count: 1 })).toBe('1 active task');
   });
 
   it('count=0 与 count>1 时英文用复数', () => {
@@ -180,7 +180,7 @@ describe('复数模板：英文按 Intl.PluralRules 选形态', () => {
     expect(translateInLocale('en-US', 'settings.validationIssues', { count: 0 })).toBe('0 issues need attention');
     expect(translateInLocale('en-US', 'settings.validationIssues', { count: 3 })).toBe('3 issues need attention');
     expect(translateInLocale('en-US', 'stats.streak.days', { count: 7 })).toBe('7 days');
-    expect(translateInLocale('en-US', 'taskBubble.running', { count: 2 })).toBe('2 tasks running');
+    expect(translateInLocale('en-US', 'taskBubble.summary.active', { count: 2 })).toBe('2 active tasks');
   });
 
   it('中文不受影响：同一条词条在任何计数下都是单一形态', () => {
@@ -188,7 +188,7 @@ describe('复数模板：英文按 Intl.PluralRules 选形态', () => {
     expect(translateInLocale('zh-CN', 'series.content.bookCount', { count: 1 })).toBe('1 话');
     expect(translateInLocale('zh-CN', 'series.content.bookCount', { count: 2 })).toBe('2 话');
     expect(translateInLocale('zh-CN', 'settings.validationIssues', { count: 1 })).toBe('存在 1 个待修正项');
-    expect(translateInLocale('zh-CN', 'taskBubble.running', { count: 1 })).toBe('1 个任务进行中');
+    expect(translateInLocale('zh-CN', 'taskBubble.summary.active', { count: 1 })).toBe('1 个活动任务');
   });
 });
 

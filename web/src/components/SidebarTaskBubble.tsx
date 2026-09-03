@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, CircleAlert, Loader2, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleAlert, Loader2, PauseCircle, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskMessage } from '../i18n/task';
 import { isActiveTaskStatus, isTerminalTaskStatus } from '../utils/taskStatus';
@@ -32,14 +32,40 @@ interface TaskBubbleProps {
 }
 
 /**
- * statusIcon 把任务状态画成一眼可辨的收尾方式：转圈只留给活动态，
- * 中断另给警示色——它不是失败，任务体没出错，只是没跑完，可重试。
+ * statusIcon 把任务状态画成一眼可辨的收尾方式：转圈只留给还在推进的任务，
+ * 已暂停改画暂停符（它占着槽位但没在动），中断另给警示色——它不是失败，可重试。
  */
-function statusIcon(status: string) {
-  if (status === 'completed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />;
-  if (status === 'interrupted') return <CircleAlert className="h-3.5 w-3.5 text-amber-400" />;
-  if (isTerminalTaskStatus(status)) return <XCircle className="h-3.5 w-3.5 text-red-400" />;
-  return <Loader2 className="h-3.5 w-3.5 text-komgaPrimary animate-spin" />;
+function statusIcon(status: string, size = 'h-3.5 w-3.5') {
+  if (status === 'completed') return <CheckCircle2 className={`${size} text-emerald-400`} />;
+  if (status === 'interrupted') return <CircleAlert className={`${size} text-amber-400`} />;
+  if (isTerminalTaskStatus(status)) return <XCircle className={`${size} text-red-400`} />;
+  if (status === 'paused') return <PauseCircle className={`${size} text-amber-400`} />;
+  return <Loader2 className={`${size} text-komgaPrimary animate-spin`} />;
+}
+
+/**
+ * 终态收口的严重度次序：失败最该被看见，「完成」排最后——它只是四种终态之一，
+ * 混着失败时用它作结论等于把出错藏起来。
+ */
+const TERMINAL_SUMMARY_ORDER = ['failed', 'interrupted', 'cancelled', 'completed'] as const;
+
+/**
+ * summarizeStatus 给折叠条选一个代表状态：还有活动态任务就代表活动态（它们占着运行槽位，
+ * 是用户在等的），否则按严重度从剩下的终态里挑一个；活动态里没有推进中的（全被暂停）时画暂停符。
+ */
+function summarizeStatus(tasks: TaskBubbleEntry[]) {
+  const active = tasks.filter((task) => isActiveTaskStatus(task.status));
+  if (active.length > 0) {
+    const advancing = active.some((task) => task.status !== 'paused');
+    return { kind: 'active' as const, status: advancing ? 'running' : 'paused', count: active.length };
+  }
+  for (const status of TERMINAL_SUMMARY_ORDER) {
+    const count = tasks.filter((task) => task.status === status).length;
+    if (count > 0) {
+      return { kind: 'terminal' as const, status, count };
+    }
+  }
+  return null;
 }
 
 /**
@@ -70,8 +96,9 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
     });
   }, [tasks]);
 
-  const runningCount = sorted.filter((t) => isActiveTaskStatus(t.status)).length;
-  const finishedCount = sorted.length - runningCount;
+  const summary = useMemo(() => summarizeStatus(sorted), [sorted]);
+  const activeCount = summary?.kind === 'active' ? summary.count : 0;
+  const finishedCount = sorted.length - sorted.filter((t) => isActiveTaskStatus(t.status)).length;
   const primary = sorted[0];
 
   useEffect(() => {
@@ -171,22 +198,19 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
         className="w-full flex items-center gap-3 rounded-2xl border border-gray-700 bg-gray-900/95 px-3 py-2.5 shadow-xl backdrop-blur-sm hover:border-komgaPrimary/40 transition"
       >
         <div className="relative shrink-0">
-          {runningCount > 0 ? (
-            <Loader2 className="h-4 w-4 text-komgaPrimary animate-spin" />
-          ) : (
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-          )}
-          {runningCount > 0 && (
+          {summary && statusIcon(summary.status, 'h-4 w-4')}
+          {activeCount > 0 && (
             <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-komgaPrimary text-white text-[9px] font-bold flex items-center justify-center px-1">
-              {runningCount}
+              {activeCount}
             </span>
           )}
         </div>
         <div className="flex-1 min-w-0 text-left">
           <p className="text-[11px] font-semibold text-white truncate">
-            {runningCount > 0
-              ? t('taskBubble.running', { count: runningCount })
-              : t('taskBubble.allDone')}
+            {summary &&
+              (summary.kind === 'active'
+                ? t('taskBubble.summary.active', { count: summary.count })
+                : t(`taskBubble.summary.${summary.status}`, { count: summary.count }))}
           </p>
           {primary && (
             <p className="text-[10px] text-gray-500 truncate">{getTaskMessage(primary, t)}</p>
