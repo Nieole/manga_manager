@@ -1181,6 +1181,7 @@ export const messages: MessageCatalog = {
     'reader.scaleFitHeightShort': '等高',
     'reader.scaleFitWidthShort': '等宽',
     'reader.scaleFitScreenShort': '适屏',
+    'reader.filter.needsScaling': '原始尺寸不缩放页图，重采样滤镜在这一档下不起作用；换成适应宽度、适应高度或适应屏幕后生效。',
     'reader.filter.raw': '原始图像 (Raw / 无处理)',
     'reader.filter.nearest': '相邻像素法 (Nearest / Pixelated)',
     'reader.filter.average': '平均像素法 (Average)',

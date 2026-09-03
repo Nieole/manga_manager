@@ -63,7 +63,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup(bookId = '42') {
+function setup(bookId = '42', overrides: Partial<Parameters<typeof usePageImageCache>[0]> = {}) {
   const currentBookIdRef = createRef<string | null>() as { current: string | null };
   currentBookIdRef.current = bookId;
   return renderHook(() =>
@@ -75,7 +75,10 @@ function setup(bookId = '42') {
       autoCrop: false,
       readerImageFormat: 'webp',
       readerImageQuality: 80,
+      targetWidth: 0,
+      targetHeight: 0,
       currentBookIdRef,
+      ...overrides,
     }),
   );
 }
@@ -88,6 +91,28 @@ async function settleFirst() {
     await Promise.resolve();
   });
 }
+
+describe('页图地址带不带目标尺寸', () => {
+  it('重采样滤镜下发档位与 fit=inside，服务端才有得可做', () => {
+    const { result } = setup('42', { imageFilter: 'lanczos3', targetWidth: 1280, targetHeight: 1024 });
+    expect(result.current.getImageUrlForBook('42', 7))
+      .toBe('/api/pages/42/7?filter=lanczos3&w=1280&h=1024&fit=inside&format=webp&q=80');
+  });
+
+  it('原始尺寸模式（档位为 0）不发尺寸，滤镜因此退回空操作', () => {
+    const { result } = setup('42', { imageFilter: 'lanczos3' });
+    expect(result.current.getImageUrlForBook('42', 7)).toBe('/api/pages/42/7?filter=lanczos3&format=webp&q=80');
+  });
+
+  it('纯 CSS 的滤镜与 AI 放大那条支路都不受影响', () => {
+    const css = setup('42', { imageFilter: 'bilinear', targetWidth: 1280 });
+    expect(css.result.current.getImageUrlForBook('42', 7)).toBe('/api/pages/42/7?format=webp&q=80');
+
+    const ai = setup('42', { imageFilter: 'waifu2x', targetWidth: 1280 });
+    expect(ai.result.current.getImageUrlForBook('42', 7))
+      .toBe('/api/pages/42/7?filter=waifu2x&w2x_scale=2&w2x_noise=1&w2x_format=png&format=webp&q=80');
+  });
+});
 
 describe('页图缓存的 Object URL 生命周期', () => {
   it('滑动窗口外的页要被 revoke，而不只是从 Map 里删掉', async () => {

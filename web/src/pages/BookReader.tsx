@@ -24,6 +24,7 @@ import { useReaderProgressIndicator } from './book-reader/useReaderProgressIndic
 import { useReaderReadingTime } from './book-reader/useReaderReadingTime';
 import { computeReaderBack } from './book-reader/readerNavigation';
 import { useReaderSiblings } from './book-reader/useReaderSiblings';
+import { useReaderTargetSize } from './book-reader/useReaderTargetSize';
 import { useI18n } from '../i18n/LocaleProvider';
 
 export default function BookReader() {
@@ -94,6 +95,9 @@ export default function BookReader() {
     const [hoverPage, setHoverPage] = useState<number | null>(null);
     const [hoverX, setHoverX] = useState(0);
     const currentBookIdRef = useRef<string | null>(bookId ?? null);
+    // 重采样滤镜是缩放的插值核：不把显示尺寸下发给服务端，六个滤镜就都是空操作。
+    // 档位化 + 防抖收在这个 hook 里，阅读器只拿结果。
+    const readerTarget = useReaderTargetSize({ readMode, scaleMode, doublePage });
     // 图片缓存 hook 负责把同一本书、同一套图像参数下的 Object URL 生命周期管住。
     // 阅读器只声明“当前窗口需要哪些页”，释放策略由 hook 统一处理，防止长时间阅读后浏览器内存持续增长。
     const {
@@ -117,6 +121,8 @@ export default function BookReader() {
         autoCrop,
         readerImageFormat,
         readerImageQuality,
+        targetWidth: readerTarget.width,
+        targetHeight: readerTarget.height,
         currentBookIdRef,
     });
     // 书籍数据 hook 是后端阅读接口的入口：先拿页清单和书籍信息，再根据当前书籍身份更新系列跳转、下一卷和标题。

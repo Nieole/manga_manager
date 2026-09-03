@@ -55,7 +55,7 @@ const pageImageCacheControl = "private, max-age=0, must-revalidate"
 // 这版代码会转出什么字节」。转码链一旦被修成产出不同字节，存量条目就是错的，而磁盘缓存、
 // 内存 LRU 与浏览器（ETag 由缓存键导出）都不会自行失效。改动转码结果时必须递增本值：
 // 新键一律未命中、重算一次，旧文件由 enforcePageCacheBudget 按最旧优先回收。
-const pageImageCacheEpoch = "v2"
+const pageImageCacheEpoch = "v3"
 
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
@@ -90,6 +90,9 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	heightStr := r.URL.Query().Get("h")
 	filter := normalizeServerImageFilter(r.URL.Query().Get("filter"))
 	autoCrop := r.URL.Query().Get("auto_crop") == "true"
+	// fit=inside 把 w/h 当作「框」：等比缩到框内，不拉伸也不放大。阅读器的适应模式发的是它，
+	// 封面与缩略图不发，仍按画布精确缩放。
+	fitInside := r.URL.Query().Get("fit") == "inside"
 
 	// 目标尺寸必须在进入缓存/转码路径之前校验：这两个值最终会变成 resize 的目标画布，
 	// 负值经 uint() 转换会回绕成天文数字、超大值直接申请数 GB 缓冲，任一都能让进程 OOM。
@@ -104,16 +107,22 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusBadRequest, "Requested image size exceeds limits")
 		return
 	}
+	// 档位化：客户端按容器尺寸算出的值仍是外部输入，逐像素照单全收会让同一页在每个窗口宽度上
+	// 各留一份缓存条目。取整到档位后，缓存键与转码结果一起收敛到每本书有限几档。
+	reqWidth = images.SnapTargetDimension(reqWidth)
+	reqHeight = images.SnapTargetDimension(reqHeight)
 
 	// 构建缓存 Key：包含所有会改变最终图像字节的处理参数，防止切换滤镜、画质、放大参数后复用旧图。
 	// 同时引入文件修改时间和大小，避免归档被覆盖或 ID 复用时浏览器继续命中旧 ETag。
 	w2xScaleStr := r.URL.Query().Get("w2x_scale")
 	w2xNoiseStr := r.URL.Query().Get("w2x_noise")
 	w2xFormatStr := r.URL.Query().Get("w2x_format")
-	transform := pageImageTransformProfile(format, widthStr, heightStr, filter, autoCrop, w2xScaleStr, w2xNoiseStr, w2xFormatStr)
-	cacheKey := fmt.Sprintf("%s-%d-%d-%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t",
+	// 缓存键与转码 profile 都记档位化之后的尺寸：w=1100 与 w=1250 落到同一档，就该命中同一份缓存。
+	widthKey, heightKey := strconv.Itoa(reqWidth), strconv.Itoa(reqHeight)
+	transform := pageImageTransformProfile(format, widthKey, heightKey, filter, autoCrop, fitInside, w2xScaleStr, w2xNoiseStr, w2xFormatStr)
+	cacheKey := fmt.Sprintf("%s-%d-%d-%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t-%t",
 		pageImageCacheEpoch, bookID, pageNumber, source.FileModifiedAt.UnixNano(), source.Size,
-		widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr, autoCrop)
+		widthKey, heightKey, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr, autoCrop, fitInside)
 	// 图片资源不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，否则浏览器无法命中缓存。
 	w.Header().Del("Vary")
 	etag := weakETag(cacheKey)
@@ -128,7 +137,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	// 只有派生图像才进入内存/磁盘缓存；原始页图可能很大，直接缓存会挤占阅读器长会话内存。
 	// 滤镜是否算派生按 images.FilterChangesPixels 判——只给滤镜不给尺寸时转码链会原样透传，
 	// 缓存下来的就是整张原始页图。
-	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || images.FilterChangesPixels(filter, reqWidth, reqHeight) || autoCrop
+	isThumbnailReq := reqWidth > 0 || reqHeight > 0 || format != "" || qualityStr != "" || images.FilterChangesPixels(filter, reqWidth, reqHeight) || autoCrop
 	rawPassthrough := !isThumbnailReq && w2xScaleStr == "" && w2xNoiseStr == "" && w2xFormatStr == ""
 	diskPageCacheEnabled := c.diskPageCacheEnabled(source)
 	if isThumbnailReq {
@@ -231,6 +240,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 			Waifu2xScale:  2,      // 缺省使用引擎默认2倍
 			Waifu2xNoise:  0,      // 缺省使用引擎默认0阶降噪
 			Waifu2xFormat: "webp", // 控制引擎默认采用 webp 挤压体积
+			FitInside:     fitInside,
 		}
 		// 读取前端传入的 Waifu2x 参数；这些值已经进入缓存键，处理结果可以被安全复用。
 		if w2xScaleStr != "" {
@@ -349,13 +359,17 @@ func normalizeServerImageFilter(filter string) string {
 	}
 }
 
-func pageImageTransformProfile(format, width, height, filter string, autoCrop bool, w2xScale, w2xNoise, w2xFormat string) string {
+func pageImageTransformProfile(format, width, height, filter string, autoCrop, fitInside bool, w2xScale, w2xNoise, w2xFormat string) string {
 	parts := make([]string, 0, 6)
 	if format != "" {
 		parts = append(parts, "format:"+format)
 	}
-	if width != "" || height != "" {
-		parts = append(parts, "resize:"+width+"x"+height)
+	if width != "0" || height != "0" {
+		resize := "resize:" + width + "x" + height
+		if fitInside {
+			resize += ":inside"
+		}
+		parts = append(parts, resize)
 	}
 	if filter != "" {
 		parts = append(parts, "filter:"+filter)

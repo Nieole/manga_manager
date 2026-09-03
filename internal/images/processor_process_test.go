@@ -132,6 +132,90 @@ func TestProcessImageFilterAppliesWhenResizing(t *testing.T) {
 	}
 }
 
+// TestProcessImageFitInsidePreservesAspect 守「框」这条语义：阅读器的适应模式给的是容器这个框，
+// 缩出来的页必须等比装进去，而不是被拉成框的形状。
+func TestProcessImageFitInsidePreservesAspect(t *testing.T) {
+	src := makeTestPNG(t, 600, 900)
+	out, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 512, Height: 512, FitInside: true, Filter: "lanczos3", Format: "png"})
+	if err != nil {
+		t.Fatalf("ProcessImage fit-inside failed: %v", err)
+	}
+	if w, h, _ := decodeConfigDims(t, out); w != 341 || h != 512 {
+		t.Fatalf("expected 341x512 inside a 512x512 box, got %dx%d", w, h)
+	}
+
+	// 不设 FitInside 时仍是「画布」语义：封面与缩略图靠它精确出图。
+	exact, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 512, Height: 512, Filter: "lanczos3", Format: "png"})
+	if err != nil {
+		t.Fatalf("ProcessImage exact resize failed: %v", err)
+	}
+	if w, h, _ := decodeConfigDims(t, exact); w != 512 || h != 512 {
+		t.Fatalf("expected exact 512x512 without FitInside, got %dx%d", w, h)
+	}
+}
+
+// TestProcessImageFitInsideDoesNotUpscale 守「不放大」：框比源图大时不该编出一张放大的图，
+// 那只是白付编码与带宽，浏览器自己放大的结果一模一样。
+func TestProcessImageFitInsideDoesNotUpscale(t *testing.T) {
+	src := makeTestPNG(t, 200, 300)
+	out, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 2048, Height: 2048, FitInside: true, Filter: "lanczos3", Format: "png"})
+	if err != nil {
+		t.Fatalf("ProcessImage failed: %v", err)
+	}
+	if w, h, _ := decodeConfigDims(t, out); w != 200 || h != 300 {
+		t.Fatalf("expected source size kept, got %dx%d", w, h)
+	}
+}
+
+// TestProcessImageImagingFiltersWithSingleDimension 守 bspline / catmullrom 只给一条边时不出空图。
+//
+// imaging.Fit 对任一边 <= 0 直接返回 &image.NRGBA{}——阅读器的「适应宽度 / 适应高度」正好只给
+// 一条边，缺了 fitBox 这一步，这两个滤镜交给用户的是整页空白。
+func TestProcessImageImagingFiltersWithSingleDimension(t *testing.T) {
+	src := avifTestSource(t, 600, 900)
+	for _, filter := range []string{"bspline", "catmullrom"} {
+		t.Run(filter+"/width only", func(t *testing.T) {
+			out, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 256, Filter: filter, Format: "png"})
+			if err != nil {
+				t.Fatalf("ProcessImage failed: %v", err)
+			}
+			if w, h, _ := decodeConfigDims(t, out); w != 256 || h != 384 {
+				t.Fatalf("expected 256x384, got %dx%d", w, h)
+			}
+		})
+		t.Run(filter+"/height only", func(t *testing.T) {
+			out, _, err := ProcessImage(src, "image/png", ProcessOptions{Height: 300, Filter: filter, Format: "png"})
+			if err != nil {
+				t.Fatalf("ProcessImage failed: %v", err)
+			}
+			if w, h, _ := decodeConfigDims(t, out); w != 200 || h != 300 {
+				t.Fatalf("expected 200x300, got %dx%d", w, h)
+			}
+		})
+	}
+}
+
+// TestSnapTargetDimension 守档位闸：尺寸由客户端算出，服务端不能只信前端已经取过整。
+func TestSnapTargetDimension(t *testing.T) {
+	cases := map[int]int{
+		0:    0,
+		1:    ReaderSizeStep,
+		256:  256,
+		257:  512,
+		1100: 1280,
+		1250: 1280,
+		1280: 1280,
+		1400: 1536,
+		3072: MaxReaderDimension,
+		7000: MaxReaderDimension,
+	}
+	for in, want := range cases {
+		if got := SnapTargetDimension(in); got != want {
+			t.Errorf("SnapTargetDimension(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
 func TestFilterChangesPixels(t *testing.T) {
 	cases := []struct {
 		filter        string

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import { BookmarkPanel } from './BookmarkPanel';
 import { OfflineReadingPanel } from './OfflineReadingPanel';
 import type { OfflineBookStatus } from './offlineReader';
+import { isResamplingFilter } from './readerImageSizing';
 import type { ImageFilter, ReaderImageFormat, ReaderTheme, ReadDirection, ReadingBookmark, ReadMode, ScaleMode } from './types';
 
 type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
@@ -286,6 +287,10 @@ export function ReaderSettingsDrawer({
                 <option value="waifu2x">{t('reader.filter.waifu2x')}</option>
                 <option value="realcugan">{t('reader.filter.realcugan')}</option>
               </select>
+
+              {scaleMode === 'original' && isResamplingFilter(imageFilter) && (
+                <p className="mb-2 text-[11px] leading-5 text-amber-500/90">{t('reader.filter.needsScaling')}</p>
+              )}
 
               <button
                 className={`w-full py-2 rounded-sm text-xs transition font-medium border ${autoCrop ? 'bg-komgaPrimary/20 border-komgaPrimary text-komgaPrimary shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'}`}

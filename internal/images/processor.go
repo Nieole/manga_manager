@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,9 @@ type ProcessOptions struct {
 	Waifu2xNoise  int    // Waifu2x 的降噪等级 / RealCUGAN 的噪点抑制强度
 	Waifu2xFormat string // 降噪外设输出格式 webp/png/jpg
 	AutoCrop      bool   // 是否自动裁切白边
+	// FitInside 把 Width/Height 解释成「框」而不是「画布」：等比缩到框内，不拉伸也不放大。
+	// 阅读器的适应模式要的就是这个语义；封面与缩略图不设它，仍按画布精确缩放。
+	FitInside bool
 }
 
 // 图片解码内存保护阈值：超过硬上限视为解码炸弹直接拒绝，超过告警阈值仅记录。
@@ -107,6 +111,29 @@ func ValidateTargetDimensions(width, height int) error {
 		return fmt.Errorf("target area too large: %dx%d (%d pixels)", width, height, area)
 	}
 	return nil
+}
+
+// 阅读器页图的目标尺寸档位。尺寸由客户端按容器算出，逐像素照单全收会让同一页在每个窗口
+// 宽度上各留一份缓存；向上取整到步长的倍数后，一本书只会落在有限几档上。
+const (
+	// ReaderSizeStep 是档位步长。图略大于显示尺寸，浏览器再做一次小幅缩小，画质损失可忽略——
+	// 决定画质的是「原图 → 档位」这一大步。
+	ReaderSizeStep = 256
+	// MaxReaderDimension 是阅读器单边档位上限，比 MaxTargetDimension 严得多：超出显示需要的
+	// 部分只是白付编码与带宽，4K 屏叠上 DPR 也不该把一页拉成巨图。
+	MaxReaderDimension = 3072
+)
+
+// SnapTargetDimension 把目标尺寸向上取整到 ReaderSizeStep 的倍数并夹到 MaxReaderDimension。
+// 前端已经按同一套档位发请求，服务端仍要再夹一次——尺寸是外部输入，不能只信前端。
+func SnapTargetDimension(value int) int {
+	if value <= 0 {
+		return 0
+	}
+	if value >= MaxReaderDimension {
+		return MaxReaderDimension
+	}
+	return ((value + ReaderSizeStep - 1) / ReaderSizeStep) * ReaderSizeStep
 }
 
 // normalizeWaifu2xFormat 把用户可控的输出格式收敛到白名单。
@@ -261,11 +288,12 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	}
 
 	if targetWidth > 0 || targetHeight > 0 {
+		boxWidth, boxHeight := fitBox(newImg.Bounds(), int(targetWidth), int(targetHeight))
 		switch opts.Filter {
 		case "bspline":
-			newImg = imaging.Fit(newImg, int(targetWidth), int(targetHeight), imaging.BSpline)
+			newImg = imaging.Fit(newImg, boxWidth, boxHeight, imaging.BSpline)
 		case "catmullrom":
-			newImg = imaging.Fit(newImg, int(targetWidth), int(targetHeight), imaging.CatmullRom)
+			newImg = imaging.Fit(newImg, boxWidth, boxHeight, imaging.CatmullRom)
 		default:
 			var interp = resize.Bilinear
 			switch opts.Filter {
@@ -280,7 +308,11 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 			case "nearest":
 				interp = resize.NearestNeighbor
 			}
-			newImg = resize.Resize(targetWidth, targetHeight, newImg, interp)
+			if opts.FitInside {
+				newImg = resize.Thumbnail(uint(boxWidth), uint(boxHeight), newImg, interp)
+			} else {
+				newImg = resize.Resize(targetWidth, targetHeight, newImg, interp)
+			}
 		}
 	}
 
@@ -638,6 +670,28 @@ func isBackgroundColor(c color.Color, bgR, bgG, bgB uint32) bool {
 	}
 
 	return diff(r, bgR) < threshold && diff(g, bgG) < threshold && diff(b, bgB) < threshold
+}
+
+// fitBox 把只给了一条边的目标尺寸补成一个完整的框，另一条边按源图纵横比推出。
+//
+// imaging.Fit 对任一边 <= 0 直接返回空图——阅读器的「适应宽度/高度」只给一条边，
+// 补不出框时 bspline 与 catmullrom 交出的是整页空白。补齐后 Fit 缩出的结果与
+// 「等比缩到该边」等价，两个滤镜与 resize 那一支的语义因此对齐。
+//
+// 推出来的那条边额外放宽 1 像素：Fit 按纵横比挑约束边，框恰好同比例时取整误差会让
+// 调用方给的那条边少 1 像素；放宽后约束边一定是给定的那条，输出尺寸精确等于请求值。
+func fitBox(bounds image.Rectangle, width, height int) (int, int) {
+	srcW, srcH := bounds.Dx(), bounds.Dy()
+	if srcW <= 0 || srcH <= 0 || (width > 0 && height > 0) {
+		return width, height
+	}
+	if width > 0 {
+		return width, int(math.Ceil(float64(width)*float64(srcH)/float64(srcW))) + 1
+	}
+	if height > 0 {
+		return int(math.Ceil(float64(height)*float64(srcW)/float64(srcH))) + 1, height
+	}
+	return width, height
 }
 
 // flattenImage 把图像归一化成一张起点在 (0,0)、行间无空隙的新画布，消除编码器对 Bounds.Min

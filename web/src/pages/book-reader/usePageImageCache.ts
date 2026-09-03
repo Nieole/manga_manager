@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { isResamplingFilter } from './readerImageSizing';
 import type { ImageFilter, Page, ReaderBookInfo, ReaderImageFormat } from './types';
 
 interface PageImageRequest {
@@ -35,6 +36,9 @@ interface UsePageImageCacheOptions {
   autoCrop: boolean;
   readerImageFormat: ReaderImageFormat;
   readerImageQuality: number;
+  // 重采样滤镜要下发的目标尺寸档位，0 表示这条边不作约束。见 readerImageSizing。
+  targetWidth: number;
+  targetHeight: number;
   currentBookIdRef: React.MutableRefObject<string | null>;
 }
 
@@ -46,6 +50,8 @@ export function usePageImageCache({
   autoCrop,
   readerImageFormat,
   readerImageQuality,
+  targetWidth,
+  targetHeight,
   currentBookIdRef,
 }: UsePageImageCacheOptions) {
   const [cachedPageImageUrls, setCachedPageImageUrls] = useState<Record<number, string>>({});
@@ -60,6 +66,8 @@ export function usePageImageCache({
     autoCrop ? 'crop' : 'no-crop',
     readerImageFormat,
     readerImageQuality,
+    targetWidth,
+    targetHeight,
   ].join('|');
 
   const getBookCache = useCallback((targetBookId: string) => {
@@ -79,6 +87,12 @@ export function usePageImageCache({
         params.set('w2x_scale', String(w2xScale));
         params.set('w2x_noise', String(w2xNoise));
         params.set('w2x_format', w2xFormat);
+      } else if (isResamplingFilter(imageFilter) && (targetWidth > 0 || targetHeight > 0)) {
+        // 重采样滤镜是缩放的插值核：只给核不给尺寸，服务端无事可做，六项选下来画面逐字节相同。
+        // fit=inside 让服务端把这两条边当成框——等比缩进去，不拉伸也不放大。
+        if (targetWidth > 0) params.set('w', String(targetWidth));
+        if (targetHeight > 0) params.set('h', String(targetHeight));
+        params.set('fit', 'inside');
       }
     }
     if (autoCrop) {
@@ -90,7 +104,7 @@ export function usePageImageCache({
     }
     const query = params.toString();
     return `/api/pages/${targetBookId}/${pageNum}${query ? `?${query}` : ''}`;
-  }, [autoCrop, imageFilter, readerImageFormat, readerImageQuality, w2xFormat, w2xNoise, w2xScale]);
+  }, [autoCrop, imageFilter, readerImageFormat, readerImageQuality, targetHeight, targetWidth, w2xFormat, w2xNoise, w2xScale]);
 
   const getImageUrl = useCallback((bookId: string | undefined, pageNum: number) => {
     return getImageUrlForBook(bookId ?? '', pageNum);

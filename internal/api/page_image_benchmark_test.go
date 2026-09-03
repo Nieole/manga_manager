@@ -61,6 +61,48 @@ func BenchmarkServePageImage_RawConsecutivePages(b *testing.B) {
 	}
 }
 
+// benchmarkReaderPage 把同一页反复取出来，每轮先清掉内存 LRU，量的是冷缓存下的真实转码开销。
+// 线上命中缓存的那些请求不付这笔钱，但每个新档位的第一次访问都要付。
+func benchmarkReaderPage(b *testing.B, entryName string, source []byte, query string) {
+	controller, bookID := seedReaderPageBook(b, entryName, source)
+	fetchReaderPage(b, controller, bookID, query) // 预热归档句柄与页清单
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		controller.imageCache.Purge()
+		b.StartTimer()
+		fetchReaderPage(b, controller, bookID, query)
+	}
+}
+
+// BenchmarkServePageImage_RawPassthrough 是基线：不带尺寸时整页原始字节直接透传。
+func BenchmarkServePageImage_RawPassthrough(b *testing.B) {
+	benchmarkReaderPage(b, "001.png", readerPagePNG(b, 1600, 2300), "")
+}
+
+// BenchmarkServePageImage_FilterWithoutSize 是修好之前那条路：有核无尺寸，同样透传。
+func BenchmarkServePageImage_FilterWithoutSize(b *testing.B) {
+	benchmarkReaderPage(b, "001.png", readerPagePNG(b, 1600, 2300), "?filter=lanczos3")
+}
+
+// BenchmarkServePageImage_ResampledPNG 是新增成本：解码 + Lanczos3 重采样 + PNG 重编码。
+// PNG 是最贵的一档，阅读器默认「原始格式」时 PNG 页图走的就是这条。
+func BenchmarkServePageImage_ResampledPNG(b *testing.B) {
+	benchmarkReaderPage(b, "001.png", readerPagePNG(b, 1600, 2300), "?w=1280&fit=inside&filter=lanczos3")
+}
+
+// BenchmarkServePageImage_RawPassthroughJPEG 是 JPEG 页的基线，与下面那条配对读。
+func BenchmarkServePageImage_RawPassthroughJPEG(b *testing.B) {
+	benchmarkReaderPage(b, "001.jpg", readerPageJPEG(b, 1600, 2300), "")
+}
+
+// BenchmarkServePageImage_ResampledJPEG 是常见的另一档：JPEG 源，重编码比 PNG 便宜得多。
+func BenchmarkServePageImage_ResampledJPEG(b *testing.B) {
+	benchmarkReaderPage(b, "001.jpg", readerPageJPEG(b, 1600, 2300), "?w=1280&fit=inside&filter=lanczos3")
+}
+
 func BenchmarkGetPagesByBook_WithManifestCache(b *testing.B) {
 	controller, store, _, rootDir := newTestController(b)
 	_, _, book := seedBookFixture(b, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 50)

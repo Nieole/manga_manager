@@ -1181,6 +1181,7 @@ export const messages: MessageCatalog = {
     'reader.scaleFitHeightShort': 'Height',
     'reader.scaleFitWidthShort': 'Width',
     'reader.scaleFitScreenShort': 'Screen',
+    'reader.filter.needsScaling': 'Original size does not scale the page, so resampling filters do nothing here. Switch to fit width, fit height, or fit screen to use them.',
     'reader.filter.raw': 'Original image (Raw / no processing)',
     'reader.filter.nearest': 'Nearest (pixelated)',
     'reader.filter.average': 'Average',
