@@ -19,6 +19,10 @@ import (
 // 它只在包内用于触发整体回滚，对外一律表达为 409——与前置检查发现的是同一件事。
 var errAIGroupingCollectionPreempted = errors.New("ai grouping review collection is no longer pending")
 
+// errAIGroupingCollectionSeriesGone 表示这条候选合集点名的系列已全部从库里删除，建不出任何东西。
+// 它不是能重试的瞬时状态，用户只能驳回这条候选，因此对外表达为 409。
+var errAIGroupingCollectionSeriesGone = errors.New("ai grouping review collection has no surviving series")
+
 type aiGroupingReviewSeriesView struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"name"`
@@ -84,6 +88,29 @@ func aiGroupingParseSeriesIDs(raw string) []int64 {
 		clean = append(clean, id)
 	}
 	return clean
+}
+
+// aiGroupingLiveSeriesIDs 按给定顺序滤掉库里已不存在的系列。查询与写入必须在同一个事务里，
+// 否则中间被删掉的系列仍会撞上外键。
+func aiGroupingLiveSeriesIDs(ctx context.Context, q database.Querier, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := q.GetSeriesNamesByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	alive := make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		alive[row.ID] = struct{}{}
+	}
+	live := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := alive[id]; ok {
+			live = append(live, id)
+		}
+	}
+	return live, nil
 }
 
 // aiGroupingViewData 是渲染审核视图所需的预取数据，避免按审核、按候选合集逐条查询
@@ -172,15 +199,23 @@ func (d aiGroupingViewData) seriesViews(ids []int64) []aiGroupingReviewSeriesVie
 }
 
 func aiGroupingReviewCollectionToView(data aiGroupingViewData, row database.AiGroupingReviewCollection) aiGroupingReviewCollectionView {
-	ids := aiGroupingParseSeriesIDs(row.SeriesIds)
+	// series_ids、series 与 series_count 三者必须讲同一件事：只讲还在库里的系列。
+	// 存储里的裸 ID 与 series_count 记的是 AI 提的那一份，其中已被删除的系列用户无从操作：
+	// 照抄出去，界面会写着「2 个系列」却只列出 1 个，编辑草稿还会把那个既看不见
+	// 也点不掉的悬空 ID 原样写回去。
+	series := data.seriesViews(aiGroupingParseSeriesIDs(row.SeriesIds))
+	ids := make([]int64, 0, len(series))
+	for _, item := range series {
+		ids = append(ids, item.ID)
+	}
 	view := aiGroupingReviewCollectionView{
 		ID:          row.ID,
 		ReviewID:    row.ReviewID,
 		Name:        row.Name,
 		Description: strings.TrimSpace(row.Description),
 		SeriesIDs:   ids,
-		Series:      data.seriesViews(ids),
-		SeriesCount: row.SeriesCount,
+		Series:      series,
+		SeriesCount: int64(len(series)),
 		Status:      row.Status,
 	}
 	if row.CreatedCollectionID.Valid {
@@ -499,6 +534,10 @@ func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *h
 		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
 		return
 	}
+	if errors.Is(err, errAIGroupingCollectionSeriesGone) {
+		jsonError(w, http.StatusConflict, apiText(requestLocale(r), "ai_grouping.collection.series_gone"))
+		return
+	}
 	if errors.Is(err, errCollectionNameTaken) {
 		jsonError(w, http.StatusConflict, "A collection with this name already exists")
 		return
@@ -537,15 +576,31 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	applied := 0
+	skipped := 0
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
 		for _, item := range collections {
 			if item.Status != "pending" {
 				continue
 			}
-			if _, err := applyAIGroupingReviewCollectionWithQueries(r.Context(), q, review, item); err != nil {
+			switch _, err := applyAIGroupingReviewCollectionWithQueries(r.Context(), q, review, item); {
+			case errors.Is(err, errAIGroupingCollectionSeriesGone):
+				// 系列全被删掉的候选建不出合集，但这不是同一审核里其他候选的错：跳过它自己，
+				// 别人照建。它留在待应用，等用户驳回——系统不替用户裁决。
+				skipped++
+			case err != nil:
 				return err
+			default:
+				applied++
 			}
-			applied++
+		}
+		// 跳过的那些还占着待应用，此时收尾会把审核落定成已应用/已拒绝，
+		// 界面随即禁掉它们的编辑与驳回，用户再也处置不了。
+		pending, err := q.CountPendingAIGroupingReviewCollections(r.Context(), review.ID)
+		if err != nil {
+			return err
+		}
+		if pending > 0 {
+			return nil
 		}
 		return finalizeAIGroupingReviewStatus(r.Context(), q, review.ID)
 	})
@@ -563,11 +618,17 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review")
 		return
 	}
+	// 一条都没建出来时不能报成功：这一整批没有任何写入，说清缘由比让用户以为合集已经建好强。
+	if applied == 0 && skipped > 0 {
+		jsonError(w, http.StatusConflict, apiText(requestLocale(r), "ai_grouping.collection.series_gone"))
+		return
+	}
 	c.PublishEvent("refresh")
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"review_id":   reviewID,
 		"collections": applied,
+		"skipped":     skipped,
 	})
 }
 
@@ -602,6 +663,16 @@ func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database
 	name := strings.TrimSpace(collection.Name)
 	if name == "" || len(seriesIDs) == 0 {
 		return 0, sql.ErrNoRows
+	}
+	// 悬空 ID 一律跳过，与读侧口径一致：审核入队之后系列可能被重扫清理掉，而 series_ids
+	// 是一串裸 ID、没有外键。照原样插进 collection_series 会撞 series 外键——
+	// INSERT OR IGNORE 不抑制外键错误，整个事务回滚，用户只看到一句「服务器错误」。
+	seriesIDs, err := aiGroupingLiveSeriesIDs(ctx, q, seriesIDs)
+	if err != nil {
+		return 0, err
+	}
+	if len(seriesIDs) == 0 {
+		return 0, errAIGroupingCollectionSeriesGone
 	}
 	// 候选合集名由 AI 给出，同样受「哪里都不许出现两个同名合集」约束：查重落在事务内的 SQL 上，
 	// 因此整批应用时先建的那几条也算数——同一批里两条同名候选，第二条就在这里被挡下。

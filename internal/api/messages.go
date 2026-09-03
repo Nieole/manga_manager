@@ -56,6 +56,8 @@ var apiMessages = map[string]map[string]string{
 		"auth.cannot_delete_self":       "不能删除当前登录的账户。",
 
 		"review.rating_range": "评分需在 0 到 5 之间。",
+
+		"ai_grouping.collection.series_gone": "这条候选合集里的系列都已从库中删除，建不出合集，请驳回它。",
 	},
 	"en-US": {
 		"auth.token_required":              "A valid access token is required",
@@ -111,6 +113,8 @@ var apiMessages = map[string]map[string]string{
 		"auth.cannot_delete_self":       "You cannot delete the account you are signed in with.",
 
 		"review.rating_range": "Rating must be between 0 and 5.",
+
+		"ai_grouping.collection.series_gone": "Every series in this proposed collection has been deleted from the library, so nothing can be created — reject it.",
 	},
 }
 
