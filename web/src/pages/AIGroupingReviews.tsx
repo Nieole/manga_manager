@@ -76,6 +76,14 @@ function displaySeriesName(series: AIGroupingReviewSeries) {
   return series.title || series.name;
 }
 
+// settledReviewStatus 复刻后端的收尾规则：待审核的审核单在最后一条候选合集被处置后落定，
+// 只要有一条被应用就算已应用。逐条处置的结果由此就地补进列表，不必把列表重置成第一页。
+function settledReviewStatus(review: AIGroupingReview, collections: AIGroupingReviewCollection[]) {
+  if (review.status !== 'pending') return review.status;
+  if (collections.some((item) => item.status === 'pending')) return 'pending';
+  return collections.some((item) => item.status === 'applied') ? 'applied' : 'rejected';
+}
+
 interface AIGroupingReviewsProps {
   embedded?: boolean;
   onReviewChange?: () => void;
@@ -175,6 +183,42 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
         setLoading(false);
         setLoadingMore(false);
       }
+    }
+  }, [libraryId, showToast, status, t]);
+
+  // 一条审核里有多个候选合集，用户逐个处置。处置完一条就把列表重置成第一页，等于把滚动
+  // 累积的几十条踹回第一屏、右栏跳回队首，用户得重新滚回原处——因此这里只就地更新：
+  // patchCollection 落被处置的那一条，refreshLoadedReviews 顺带把已加载的那几页刷新一遍。
+  const patchCollection = useCallback((reviewID: number, collectionID: number, patch: Partial<AIGroupingReviewCollection>) => {
+    setItems((current) => current.map((review) => {
+      if (review.id !== reviewID) return review;
+      const collections = review.collections.map((item) => (item.id === collectionID ? { ...item, ...patch } : item));
+      return { ...review, collections, status: settledReviewStatus(review, collections) };
+    }));
+  }, []);
+
+  // refreshLoadedReviews 重取第 1..N 页并按 id 就地更新：不追加、不删除，条数、顺序与选中项
+  // 都不变。刚落定的那条审核会因此掉出「待审核」筛选、不在重取结果里，它保留 patchCollection
+  // 落下的状态。它会被后发的请求作废，但从不作废别人——与滚动加载抢同一个世代号会把加载态卡死。
+  const refreshLoadedReviews = useCallback(async () => {
+    const loaded = itemsLengthRef.current;
+    if (loaded === 0) return;
+    const requestSeq = requestSeqRef.current;
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: Math.ceil(loaded / limit) }, (_, index) => apiClient.get<AIGroupingReviewsResponse>('/api/ai-grouping/reviews', {
+          params: { library_id: libraryId, status, limit, offset: index * limit },
+        })),
+      );
+      if (requestSeq !== requestSeqRef.current) return;
+      const incoming = new Map<number, AIGroupingReview>();
+      for (const res of responses) {
+        for (const item of res.data.items || []) incoming.set(item.id, item);
+      }
+      setItems((current) => current.map((item) => incoming.get(item.id) ?? item));
+      setTotal(responses[0]?.data.total ?? 0);
+    } catch (err: unknown) {
+      showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.loadFailed')), 'error');
     }
   }, [libraryId, showToast, status, t]);
 
@@ -278,15 +322,17 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
       const res = await apiClient.post(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}/${action}`);
       if (action === 'apply') {
         showToast(t('aiGroupingReviews.toast.collectionApplied', { id: res.data.created_collection_id || '' }));
+        patchCollection(review.id, collection.id, { status: 'applied', created_collection_id: res.data.created_collection_id });
       } else {
         showToast(t('aiGroupingReviews.toast.collectionRejected'));
+        patchCollection(review.id, collection.id, { status: 'rejected' });
       }
       setEditingDrafts((current) => {
         const next = { ...current };
         delete next[collection.id];
         return next;
       });
-      await loadReviews(true);
+      await refreshLoadedReviews();
       onReviewChange?.();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
@@ -329,14 +375,15 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     if (!draft || !draft.name.trim() || draft.seriesIds.length === 0) return;
     setActingKey(`collection:${collection.id}:save`);
     try {
-      await apiClient.put(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}`, {
+      const res = await apiClient.put<AIGroupingReviewCollection>(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}`, {
         name: draft.name,
         description: draft.description,
         series_ids: draft.seriesIds,
       });
       showToast(t('aiGroupingReviews.toast.collectionUpdated'));
       cancelEdit(collection.id);
-      await loadReviews(true);
+      patchCollection(review.id, collection.id, res.data);
+      await refreshLoadedReviews();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.actionFailed')), 'error');
     } finally {
