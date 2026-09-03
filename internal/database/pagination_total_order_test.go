@@ -51,24 +51,96 @@ func TestPagedQueriesOrderByTotalOrder(t *testing.T) {
 	t.Logf("已检查 %d 条分页查询", checked)
 }
 
-// TestHandWrittenPagedOrderClausesAreTotalOrder 覆盖不经 sqlc、在 Go 里拼出来的两处分页排序。
-func TestHandWrittenPagedOrderClausesAreTotalOrder(t *testing.T) {
-	fields := []string{"name", "rating", "books", "volumes", "pages", "read", "created", "updated", "favorite", ""}
-	dirs := []string{"asc", "desc"}
-
-	for _, field := range fields {
-		for _, dir := range dirs {
-			smart := smartCollectionOrderClause(SmartCollectionFilter{SortByField: field, SortDir: dir})
-			if !sqlUniqueTailPattern.MatchString(strings.TrimSpace(smart)) {
-				t.Errorf("智能书架 sort=%q dir=%q 的 ORDER BY 不是全序：%s", field, dir, smart)
+// pagedOrderClauseBuilders 是「ORDER BY 由 Go 函数拼出来、SQL 里只留一个 %s」的分页查询。
+// 这些站点在源码扫描里看不到真实排序键，只能反过来把每种入参下拼出的子句都过一遍。
+// 新增同类查询必须登记到这里，否则 TestHandWrittenPagedQueriesAreTotalOrder 会因数量对不上而红。
+var pagedOrderClauseBuilders = map[string]func() []string{
+	"智能书架": func() []string {
+		out := make([]string, 0)
+		for _, field := range seriesSortFieldsForOrderGuard {
+			for _, dir := range []string{"asc", "desc"} {
+				out = append(out, smartCollectionOrderClause(SmartCollectionFilter{SortByField: field, SortDir: dir}))
 			}
+		}
+		return out
+	},
+	"资料库列表": func() []string {
+		out := make([]string, 0)
+		for _, field := range seriesSortFieldsForOrderGuard {
+			for _, dir := range []string{"asc", "desc"} {
+				out = append(out, seriesSearchOffsetOrderClause(parseSeriesSearchSort(fmt.Sprintf("%s_%s", field, dir))))
+			}
+		}
+		return out
+	},
+}
 
-			offset := seriesSearchOffsetOrderClause(parseSeriesSearchSort(fmt.Sprintf("%s_%s", field, dir)))
-			if !sqlUniqueTailPattern.MatchString(strings.TrimSpace(offset)) {
-				t.Errorf("资料库列表 sort=%q dir=%q 的 ORDER BY 不是全序：%s", field, dir, offset)
+var seriesSortFieldsForOrderGuard = []string{"name", "rating", "books", "volumes", "pages", "read", "created", "updated", "favorite", ""}
+
+var (
+	pagedLimitOffsetPattern = regexp.MustCompile(`(?i)LIMIT\s+\?\s+OFFSET\s+\?`)
+	sqlOrderByHeadPattern   = regexp.MustCompile(`(?i)ORDER BY`)
+)
+
+// TestHandWrittenPagedQueriesAreTotalOrder 覆盖不经 sqlc、在 Go 里拼出来的**全部**分页排序。
+//
+// 做法是扫源码而不是列举已知查询：包里每一处 `LIMIT ? OFFSET ?` 都被找出来，取它前面最近的
+// 一条 ORDER BY，要求末位是唯一列。ORDER BY 整条是 `%s`（由 Go 函数拼）的那些站点没法在源码里
+// 判断，改为要求它们的数量与 pagedOrderClauseBuilders 登记数一致，再逐一过子句——新增一处却
+// 不登记就会在这里红。取「最近的一条 ORDER BY」在子查询自带排序时会看错对象，届时把那条查询
+// 改成由 pagedOrderClauseBuilders 登记即可。
+func TestHandWrittenPagedQueriesAreTotalOrder(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir failed: %v", err)
+	}
+
+	sites, builderSites := 0, 0
+	for _, entry := range entries {
+		name := entry.Name()
+		// query.sql.go 由 sqlc 从 sql/query.sql 生成，那份源文件已由 TestPagedQueriesOrderByTotalOrder 守着。
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "query.sql.go" {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s failed: %v", name, err)
+		}
+		src := string(raw)
+		for _, loc := range pagedLimitOffsetPattern.FindAllStringIndex(src, -1) {
+			sites++
+			heads := sqlOrderByHeadPattern.FindAllStringIndex(src[:loc[0]], -1)
+			if heads == nil {
+				t.Errorf("%s 的第 %d 处分页前面找不到 ORDER BY，行序完全由查询计划决定", name, sites)
+				continue
+			}
+			clause := strings.TrimSpace(src[heads[len(heads)-1][1]:loc[0]])
+			if clause == "%s" {
+				builderSites++
+				continue
+			}
+			lines := strings.Split(clause, "\n")
+			tail := strings.TrimSpace(lines[len(lines)-1])
+			if !sqlUniqueTailPattern.MatchString(tail) {
+				t.Errorf("%s 里的手写分页 ORDER BY 不是全序（末位不是唯一列）：%s", name, tail)
 			}
 		}
 	}
+
+	if sites == 0 {
+		t.Fatal("没扫到任何手写分页查询，测试自身失效了")
+	}
+	if builderSites != len(pagedOrderClauseBuilders) {
+		t.Fatalf("有 %d 处分页的 ORDER BY 由 Go 拼出，但 pagedOrderClauseBuilders 只登记了 %d 处：新增的那处没人检查它的末位唯一键", builderSites, len(pagedOrderClauseBuilders))
+	}
+	for label, build := range pagedOrderClauseBuilders {
+		for _, clause := range build() {
+			if !sqlUniqueTailPattern.MatchString(strings.TrimSpace(clause)) {
+				t.Errorf("%s 拼出的 ORDER BY 不是全序：%s", label, clause)
+			}
+		}
+	}
+	t.Logf("已检查 %d 处手写分页（其中 %d 处的排序由 Go 拼出）", sites, builderSites)
 }
 
 // TestSmartCollectionPagingSurvivesFullTies 让一批系列在排序键与名称上完全平局——此时只剩 s.id

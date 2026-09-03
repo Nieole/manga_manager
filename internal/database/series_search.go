@@ -283,7 +283,8 @@ func (s *SqlStore) searchProtocolSeriesFTS(ctx context.Context, keyword string, 
 				ELSE 2
 			END,
 			m.rank ASC,
-			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC,
+			s.id ASC
 		LIMIT ? OFFSET ?
 	`, match, keyword, keyword, keyword, keyword, limit, offset)
 	if err != nil {
@@ -329,7 +330,8 @@ func (s *SqlStore) searchProtocolSeriesSubstring(ctx context.Context, keyword st
 				WHEN instr(lower(s.name), lower(?)) > 0 OR instr(lower(COALESCE(s.title, '')), lower(?)) > 0 THEN 1
 				ELSE 2
 			END,
-			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC
+			COALESCE(NULLIF(s.title, ''), s.name) COLLATE NOCASE ASC,
+			s.id ASC
 		LIMIT ? OFFSET ?
 	`, keyword, keyword, keyword, keyword, keyword, keyword, keyword, limit, offset)
 	if err != nil {
