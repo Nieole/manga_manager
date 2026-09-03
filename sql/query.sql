@@ -1539,10 +1539,22 @@ ON CONFLICT(key) DO UPDATE SET
     sequence = excluded.sequence;
 
 -- name: MarkInterruptedTasks :execrows
+-- The params filter drops the last active frame's display state; what stays and
+-- why is documented on the caller (api.Controller.recoverInterruptedTasks).
 UPDATE tasks
 SET status = 'interrupted',
     message = ?,
     error = ?,
+    can_cancel = FALSE,
+    params = CASE
+        WHEN json_valid(params) THEN (
+            SELECT json_group_object(entry.key, entry.value)
+            FROM json_each(tasks.params) AS entry
+            WHERE entry.key NOT IN ('message_code', 'pause_reason', 'paused_at', 'can_pause', 'can_resume')
+              AND entry.key NOT LIKE 'msgparam.%'
+        )
+        ELSE params
+    END,
     updated_at = CURRENT_TIMESTAMP,
     finished_at = CURRENT_TIMESTAMP
 WHERE status IN ('running', 'paused', 'cancelling');

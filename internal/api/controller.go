@@ -351,6 +351,19 @@ func (c *Controller) Close() {
 	c.backgroundWG.Wait()
 }
 
+// recoverInterruptedTasks 把上次运行留下的**活动态**任务转成**中断**：任务体随进程一起没了，
+// 库里那行却还停在活动态。它必须在装配期跑，早于任何新任务落地。
+//
+// 转态同时要清掉上一轮的展示态，那是**中断**唯一说得出口的一句话的前提：
+//   - `message_code` 与 `msgparam.*`：前端码优先，留着的话「任务因服务重启而中断，可重试」
+//     一次都不会出现，用户看到的是任务停下前那句「已暂停」或「正在扫描 vol01.zip」。
+//     它同时破了 TaskStatus.Message 字段 doc 写死的互斥——设了码就必须清空 Message。
+//   - `pause_reason`、`paused_at`、`can_pause`、`can_resume` 与 can_cancel 列：中断的任务已经
+//     不占运行槽位，暂停与恢复都无从谈起，详情面板却会照着渲染出「暂停原因：手动暂停」。
+//
+// 其余任务参数一概留着：**中断**是可重试的终态，用户要看它断在哪（进度、**阶段**、当前条目与
+// 累计指标），**重启函数**要读回原始入参（force、locale、provider、match_mode 这些）。
+// 一并清掉的话，重试会静默回落到默认参数——那不是重试，是另起一个任务。
 func (c *Controller) recoverInterruptedTasks() {
 	if c.store == nil {
 		return
