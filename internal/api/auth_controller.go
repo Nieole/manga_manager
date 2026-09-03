@@ -630,6 +630,16 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 // login 校验用户名口令，成功则建会话下发 cookie。带按 IP + 用户名的失败暴破限流。
+//
+// 成功时把 IP 桶也清零，与协议侧（requireBasicAuth）刻意不同，这里不照抄它那三格：
+//   - 口令猜测由用户名桶（5 次 / 15 分钟，跨 IP 生效）封住，清 IP 桶动不了它；
+//   - 剩下的只是「持有效账号者轮换用户名烧 bcrypt」这条 CPU-DoS，而**成功登录本身不限流、
+//     每次也跑一遍 bcrypt**，同一个人直接反复登录就能无上限地烧，绕这一圈换不来更多算力；
+//   - 反过来，照协议侧加一格「成功永不清零的 IP 闸门」必须把阈值抬到很高才不误伤——网页登录
+//     是用户改回口令的唯一入口，一个出口 IP 后面几个人接连打错就把所有人锁在门外，
+//     而抬高阈值恰恰放宽了当下这条 5 次 / 15 分钟的单 IP 撒网防护。
+//
+// 结论：现状是有意为之。要动它得先给成功登录也套上限流，那是另一件事。
 func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ipKey := "ip:" + c.clientIP(r)
