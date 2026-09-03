@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  *
- * 守「返回资源库」一步到位。两条前提缺一不可：一次卡片点击只压一条历史（卡片是 <Link>，
+ * 守「返回资料库」一步到位。两条前提缺一不可：一次卡片点击只压一条历史（卡片是 <Link>，
  * onClick 再 navigate 一次就得按两下），落点由 library_id 直接算出（回退一步在搜索、
  * 关系图等入口会去到别处）。用 BrowserRouter 而非 MemoryRouter——被守的正是历史条目数。
  */
@@ -147,7 +147,8 @@ function renderApp(entry: string) {
 const historyIndex = () => (window.history.state as { idx?: number } | null)?.idx ?? 0;
 
 const clickCard = () => fireEvent.click(screen.getByRole('link', { name: new RegExp(SERIES_NAME) }));
-const clickBack = () => fireEvent.click(screen.getByRole('button', { name: '返回资源库' }));
+const clickBack = () =>
+  fireEvent.click(screen.getByRole('button', { name: zhCN['series.header.backToLibrary'] }));
 
 // 详情页的书籍要等 /context 落地才渲染，用它当「已经站在详情页」的判据。
 const waitForDetailPage = () => screen.findByRole('button', { name: '进入批量选择' });
@@ -168,7 +169,7 @@ beforeEach(() => {
   mockApi();
 });
 
-describe('系列详情的返回资源库', () => {
+describe('系列详情的返回资料库', () => {
   it('点一张资料库卡片只压一条历史条目', async () => {
     renderApp(`/library/${LIBRARY_ID}`);
     const before = historyIndex();

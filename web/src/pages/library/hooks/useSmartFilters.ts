@@ -109,7 +109,7 @@ export function useSmartFilters({
   }, [libId]);
 
   // ensureLoaded：在用户真正展开"智能筛选视图"面板时再去拉服务端列表
-  // 同一资源库同一会话内只会调用一次（StrictMode 双倍 effect 也只触发一次远端请求）
+  // 同一资料库同一会话内只会调用一次（StrictMode 双倍 effect 也只触发一次远端请求）
   const ensureLoaded = useCallback(() => {
     if (!libId) return;
     if (loadedLibIdRef.current === libId) return;

@@ -112,7 +112,7 @@ export const LibraryCard = memo(function LibraryCard({
 
   // 普通点击一律交给外层 <Link>：它负责压历史、也负责放行 Ctrl/中键的「新标签打开」。
   // 这里若再走一次程序化导航，一次点击会压两条历史条目，浏览器后退和详情页的
-  // 「返回资源库」都得按两次才动。多选模式才拦下默认导航，改成切换选中。
+  // 「返回资料库」都得按两次才动。多选模式才拦下默认导航，改成切换选中。
   const handleClick = (event: React.MouseEvent) => {
     if (!isSelectionMode) return;
     event.preventDefault();

@@ -74,7 +74,7 @@ export default function Dashboard() {
         let active = true;
         Promise.all([
             // 每个请求各自兜底，避免任一失败 reject 整个 Promise.all：
-            // 否则 dashboard 统计接口一失败，libraries 就不会被设置，UI 会误显示“没有资源库”的新手引导页。
+            // 否则 dashboard 统计接口一失败，libraries 就不会被设置，UI 会误显示“没有资料库”的新手引导页。
             apiClient.get('/api/stats/dashboard').catch(() => ({ data: null })),
             apiClient.get('/api/libraries').catch(() => ({ data: [] })),
             apiClient.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),

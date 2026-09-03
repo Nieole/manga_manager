@@ -3,7 +3,7 @@ import { computeReaderBack } from './readerNavigation';
 
 describe('computeReaderBack', () => {
   // 回归：从系列页(站内)进入阅读器后，返回必须走浏览器回退(navigate -1)而不是再 push 一个系列页——
-  // 否则「阅读器→返回→系列页→再返回」会退回到阅读器而非资源库。
+  // 否则「阅读器→返回→系列页→再返回」会退回到阅读器而非资料库。
   it('goes back through history when there is in-app history (the reported bug fix)', () => {
     expect(computeReaderBack({ seriesId: 123, hasInAppHistory: true })).toEqual({ kind: 'history' });
   });

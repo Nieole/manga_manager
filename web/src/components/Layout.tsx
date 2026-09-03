@@ -53,7 +53,7 @@ export default function Layout() {
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
     const [loading, setLoading] = useState(true);
-    // 侧栏资源库列表加载失败标记，用于渲染一个「加载失败 · 重试」入口。
+    // 侧栏资料库列表加载失败标记，用于渲染一个「加载失败 · 重试」入口。
     const [librariesError, setLibrariesError] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -94,7 +94,7 @@ export default function Layout() {
     };
     const addForm = useLibraryForm(EMPTY_LIBRARY_FORM);
 
-    // 编辑资源库状态
+    // 编辑资料库状态
     const [showEditModal, setShowEditModal] = useState(false);
     const [editLibId, setEditLibId] = useState("");
     const editForm = useLibraryForm(EMPTY_LIBRARY_FORM);
@@ -224,7 +224,7 @@ export default function Layout() {
         apiClient.get('/api/libraries')
             .then(res => {
                 setLibraries(res.data);
-                // 不要在这里加「跳转到第一个资源库」的逻辑："/" 本身就是仪表盘，强制跳转
+                // 不要在这里加「跳转到第一个资料库」的逻辑："/" 本身就是仪表盘，强制跳转
                 // 会让刷新、书签、直接输入地址这三种场景全都不可达（进去就被弹走）。
                 setLoading(false);
             })
@@ -289,7 +289,7 @@ export default function Layout() {
             if (data === 'refresh') {
                 // 仅递增刷新信号通知当前活跃的子页面重新拉取数据。
                 // 不调用 fetchLibraries()：避免闭包捕获过期路由状态导致页面跳转，
-                // 且侧边栏资源库列表无需因扫描而刷新。
+                // 且侧边栏资料库列表无需因扫描而刷新。
                 setRefreshTrigger((prev) => prev + 1);
             } else if (data.startsWith('task_progress:')) {
                 try {
@@ -613,7 +613,7 @@ export default function Layout() {
                         {/* 分割线 */}
                         <div className="border-t border-gray-800/60 my-2 mx-3"></div>
 
-                        {/* 资源库列表 */}
+                        {/* 资料库列表 */}
                         <div className="space-y-1">
                             {!isDesktopSidebarCollapsed ? (
                                 <div className="flex items-center justify-between px-3 py-2 text-xs font-bold tracking-wider text-amber-400 uppercase rounded-lg hover:bg-gray-800/40 transition-colors group">

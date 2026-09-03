@@ -27,7 +27,7 @@ const VARIANT_CLASS: Record<NonNullable<SelectionBarAction['variant']>, string> 
 
 /**
  * SelectionBar：底部居中悬浮的批量操作栏。在多选场景与活跃选区数 > 0 时显示。
- * 提取自 Home.tsx，资源库 / 系列详情 / 阅读列表均可复用。
+ * 提取自 Home.tsx，资料库 / 系列详情 / 阅读列表均可复用。
  */
 export function SelectionBar({ visible, count, countLabel, actions }: SelectionBarProps) {
   if (!visible || count === 0) return null;

@@ -7,7 +7,7 @@
 
 import { DEFAULT_PAGE_SIZE } from '../types';
 
-// AdvancedFilters 对齐智能合集的筛选维度：阅读状态 / 评分区间 / 进度区间 / 加入天数。
+// AdvancedFilters 对齐智能书架的筛选维度：阅读状态 / 评分区间 / 进度区间 / 加入天数。
 // null 表示该维度不筛选。收成单一对象以减少 hook 的 state 数量与穿透面。
 export interface AdvancedFilters {
   readState: string | null; // 'unread' | 'reading' | 'completed' | null

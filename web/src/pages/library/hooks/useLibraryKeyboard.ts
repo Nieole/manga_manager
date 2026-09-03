@@ -12,7 +12,7 @@ interface UseLibraryKeyboardParams {
 }
 
 /**
- * useLibraryKeyboard：资源库页面全局快捷键。仅在文档焦点不在输入控件上、且没有弹窗打开时生效。
+ * useLibraryKeyboard：资料库页面全局快捷键。仅在文档焦点不在输入控件上、且没有弹窗打开时生效。
  *   /  → 聚焦搜索
  *   g  → 跳到第一页
  *   G  → 跳到最后一页（shift+g）
