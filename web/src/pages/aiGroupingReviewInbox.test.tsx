@@ -145,12 +145,21 @@ class FakeIntersectionObserver {
   root = null;
   rootMargin = '';
   thresholds: number[] = [];
+  private callback: IntersectionObserverCallback;
   constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback;
     observerCallbacks.push(callback);
   }
   observe() {}
   unobserve() {}
-  disconnect() {}
+  // 摘掉自己那份回调：组件每次重渲染都会换一个 observer，只增不减的话数组末尾可能是
+  // 已经被丢弃的那一个，触发它什么也不会发生——这正是这条用例在慢机器上偶发变红的原因。
+  disconnect() {
+    const at = observerCallbacks.indexOf(this.callback);
+    if (at >= 0) {
+      observerCallbacks.splice(at, 1);
+    }
+  }
   takeRecords(): IntersectionObserverEntry[] {
     return [];
   }
@@ -166,10 +175,14 @@ function activeReviewTitle(container: HTMLElement) {
   return container.querySelector('h2')?.textContent ?? '';
 }
 
+// scrollForMore 让哨兵进入视口。触发所有仍存活的 observer 而不只是最后一个：
+// 哪一个绑在当前这次渲染的哨兵上取决于渲染时序，挑一个就会看机器快慢的脸色。
 async function scrollForMore() {
-  const notify = observerCallbacks[observerCallbacks.length - 1];
+  const live = [...observerCallbacks];
   await act(async () => {
-    notify([{ isIntersecting: true } as IntersectionObserverEntry], null as never);
+    live.forEach((notify) => {
+      notify([{ isIntersecting: true } as IntersectionObserverEntry], null as never);
+    });
   });
 }
 

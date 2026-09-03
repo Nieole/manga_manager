@@ -32,19 +32,25 @@ func ActivityDayKey(t time.Time) string {
 	return t.Format(dayKeyLayout)
 }
 
-// LocalWallClock 把一个时刻搬到服务器本地时区，是外部报上来的时刻落库前的归一入口。
+// LocalWallClock 把一个时刻搬到日历口径所在的时区，是外部报上来的时刻落库前的归一入口。
 //
 // 时刻列由驱动以 t.String() 写成文本，带的是**入参自己的**时区偏移，而 last_read_at 的每一处
 // 排序与期间筛选都对该文本做 SQL 比较（见 GetUserPeriodStats）。同一列里混进别的时区就整列比错：
 // 离线补传的 updated_at 是 ISO 8601、恒为 UTC，UTC+8 的服务器上原样落库会比在线写入早算 8 小时。
 //
-// 已在本地时区的值原样返回：time.Now() 的 Location 就是 time.Local，因此既有写入的文本一个字节
-// 都不变（含 t.String() 的单调钟后缀），新旧行之间的文本比较不受影响。
+// 目标时区取自 calendarNow 而不是 time.Local：日历日（ActivityDayKey / CurrentPeriod）是按
+// calendarNow 交出的那个时刻的时区算的，两处必须同源，否则 last_read_at 的日期前缀会与 date 列
+// 落在不同的一天——这正是本函数要消除的那种分裂。生产中 calendarNow 就是 time.Now，其 Location
+// 即 time.Local，因此行为与只认 time.Local 时逐字节相同。
+//
+// 已在该时区的值原样返回，既有写入的文本一个字节都不变（含 t.String() 的单调钟后缀），
+// 新旧行之间的文本比较不受影响。
 func LocalWallClock(t time.Time) time.Time {
-	if t.Location() == time.Local {
+	zone := calendarNow().Location()
+	if t.Location() == zone {
 		return t
 	}
-	return t.In(time.Local)
+	return t.In(zone)
 }
 
 // ActivityDayKeyBefore 返回距 t 若干天之前的本地日历日，供「近 N 天」这类范围查询做下界。
