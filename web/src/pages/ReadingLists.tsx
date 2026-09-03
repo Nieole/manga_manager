@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient, getApiErrorMessage, isCancel } from '../api/client';
 import { ArrowDown, ArrowUp, BookOpen, ListOrdered, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
@@ -51,6 +51,8 @@ export default function ReadingLists() {
   const [seriesQuery, setSeriesQuery] = useState('');
   const [seriesResults, setSeriesResults] = useState<SearchHit[]>([]);
   const [listProgress, setListProgress] = useState<Record<number, { read: number; total: number }>>({});
+  // 右栏取数的世代号：只有最新一次的响应能落到界面上。
+  const itemsRequestIDRef = useRef(0);
 
   const loadLists = () => {
     setLoading(true);
@@ -69,11 +71,17 @@ export default function ReadingLists() {
 
   useEffect(() => {
     if (!selected) {
+      itemsRequestIDRef.current += 1;
       queueMicrotask(() => setItems([]));
       return;
     }
+    // 世代号对不上就整份丢弃：慢网下先发的响应后到，不能盖掉用户已经切过去的清单
+    // ——右栏会显示上一个清单的系列，标题却是新清单的。与合集页右栏同一形状。
+    const requestID = itemsRequestIDRef.current + 1;
+    itemsRequestIDRef.current = requestID;
     apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`)
       .then((res) => {
+        if (requestID !== itemsRequestIDRef.current) return;
         const next = res.data || [];
         setItems(next);
         const aggregate = next.reduce(
@@ -149,11 +157,14 @@ export default function ReadingLists() {
     if (!selected) return;
     const id = Number((hit.id || hit.fields?.id || '').replace('s_', ''));
     if (!id) return;
+    // 这条重取也整份覆盖右栏，同样要认世代号：加完这一步用户可能已经切走了。
+    const requestID = itemsRequestIDRef.current;
     apiClient.post(`/api/reading-lists/${selected.id}/items`, { series_id: id }).then(() => {
       setSeriesQuery('');
       setSeriesResults([]);
       return apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`);
     }).then((res) => {
+      if (requestID !== itemsRequestIDRef.current) return;
       setItems(res.data || []);
       loadLists();
     }).catch((error) => {

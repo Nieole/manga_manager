@@ -110,27 +110,29 @@ export function useReaderSiblings({
     return () => { cancelled = true; };
   }, [bookId, loading]);
 
+  // lastSeriesFetchRef 兼作「已经为哪个系列取过上下文」的标记与世代号：
+  // 响应回来时它若已换成别的系列，说明用户已经翻去了另一个系列，这份整个丢掉。
+  // 失败时必须把它退回 null——留着的话，一次网络抖动就让同一系列内换书永不重取，
+  // allInVolume 恒空，顶栏的章节列表按钮就此消失，且没有任何报错。
   useEffect(() => {
     const seriesId = seriesIdRef.current;
-    if (!seriesId || loading) return undefined;
-    if (lastSeriesFetchRef.current === seriesId) return undefined;
+    if (!seriesId || loading) return;
+    if (lastSeriesFetchRef.current === seriesId) return;
     lastSeriesFetchRef.current = seriesId;
-    let cancelled = false;
 
     apiClient.get<SeriesContextLite>(`/api/series/${seriesId}/context`)
       .then((res) => {
-        if (cancelled) return;
+        if (lastSeriesFetchRef.current !== seriesId) return;
         const books = Array.isArray(res.data?.books) ? res.data.books : [];
         setContextBooks(books);
         setContextSeriesId(seriesId);
       })
       .catch((err) => {
-        if (cancelled) return;
+        if (lastSeriesFetchRef.current !== seriesId) return;
+        lastSeriesFetchRef.current = null;
         console.error('Failed to load series context for siblings', err);
         setContextBooks([]);
       });
-
-    return () => { cancelled = true; };
   }, [seriesIdRef, bookId, loading]);
 
   const allInVolume = useMemo(() => {
