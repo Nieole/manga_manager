@@ -153,6 +153,22 @@ func formatMatchesContentType(format, contentType string) bool {
 	return f != "" && strings.Contains(strings.ToLower(contentType), f)
 }
 
+// FilterChangesPixels 判断滤镜在给定目标尺寸下是否真会改动像素。
+//
+// 除 AI 放大（waifu2x/realcugan/ncnn）外，滤镜只是重采样用的插值核：目标尺寸为空时
+// resize.Resize 与 imaging.Fit 都原样返回输入图，为它解一次码再编一次码是白付 CPU，
+// 还丢掉了原始字节透传。HTTP 层用同一判据决定请求是否产出派生图（是否值得进缓存）。
+func FilterChangesPixels(filter string, width, height int) bool {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case "":
+		return false
+	case "waifu2x", "realcugan", "ncnn":
+		return true
+	default:
+		return width > 0 || height > 0
+	}
+}
+
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
 	// 目标尺寸闸门（第二道防线，HTTP 层已先校验一次）：负值经 uint() 转换会变成天文数字，
 	// 超大值会让 resize 直接申请数 GB 缓冲。必须在解码之前拒绝，否则白白解一次图。
@@ -171,7 +187,8 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 
 	// 如果没有任何缩放/滤镜/质量/裁切需求，且目标格式未指定或与源格式一致，直接透传原始字节，
 	// 避免「源已是目标格式（如 format=webp 而源就是 webp）」仍白白解码 + 重编码一次（且可能损质）。
-	if opts.Width == 0 && opts.Height == 0 && opts.Filter == "" && opts.Quality == 0 && !opts.AutoCrop {
+	// 只给滤镜不给尺寸也算「无需求」——见 FilterChangesPixels。
+	if opts.Width == 0 && opts.Height == 0 && !FilterChangesPixels(opts.Filter, opts.Width, opts.Height) && opts.Quality == 0 && !opts.AutoCrop {
 		if opts.Format == "" || formatMatchesContentType(opts.Format, contentType) {
 			return data, contentType, nil
 		}
@@ -207,14 +224,10 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		newImg = flattenImage(newImg)
 	}
 
+	// 目标尺寸只认调用方给的值，为空时不得补成源尺寸：同尺寸重采样在 resize 与 imaging
+	// 里都是恒等操作，补上去只是让重采样空转一趟，白付一次解码与重编码。
 	targetWidth := uint(opts.Width)
 	targetHeight := uint(opts.Height)
-
-	// 如果前端要求了滤镜但没有缩放，强制按照原始大小执行一次采样插值洗流
-	if (opts.Filter != "" && opts.Filter != "nearest" && opts.Filter != "average" && opts.Filter != "bilinear") && targetWidth == 0 && targetHeight == 0 {
-		targetWidth = uint(newImg.Bounds().Dx())
-		targetHeight = uint(newImg.Bounds().Dy())
-	}
 
 	// 针对 Waifu2x / realcugan / ncnn 这种需要外部挂载文件系统的超分辨率算法单独开一条短路通道
 	if opts.Filter == "waifu2x" || opts.Filter == "realcugan" || opts.Filter == "ncnn" {
@@ -627,34 +640,71 @@ func isBackgroundColor(c color.Color, bgR, bgG, bgB uint32) bool {
 	return diff(r, bgR) < threshold && diff(g, bgG) < threshold && diff(b, bgB) < threshold
 }
 
-// flattenImage 将可能带有偏移坐标（SubImage 产生）的图像归一化
-// 强制将图像绘制到一个起始坐标为 (0,0) 且内存排布完全紧凑的新 Canvas 中
-// 从而消除编码器在处理 Stride 或 Bounds.Min 时的兼容性问题（防花屏）
+// flattenImage 把图像归一化成一张起点在 (0,0)、行间无空隙的新画布，消除编码器对 Bounds.Min
+// 与 Stride 的兼容性问题（防花屏）。
+//
+// 裁切产生的 SubImage 会继承**父图**的 Stride，而按 Pix 整段直读的编码器（avif 对
+// *image.RGBA 就是这么走的）按「Stride 等于一行的字节数」解释缓冲，逐行错位读出整页花屏。
+// 判据因此必须同时看起点与步长：裁切框左上角恰好落在 (0,0) 时起点是干净的，步长却不是。
 func flattenImage(img image.Image) image.Image {
 	if img == nil {
 		return nil
 	}
 
 	bounds := img.Bounds()
-	// 如果已经是标准 (0,0) 起始，通常不需要重绘，但在处理裁切图时，为保险起见建议总是重绘以优化 Stride
-	if bounds.Min.X == 0 && bounds.Min.Y == 0 {
+	// 起点在原点且行间紧凑的图不必重绘。没发生裁切时这是常态，整图拷贝白付。
+	if bounds.Min.X == 0 && bounds.Min.Y == 0 && hasCompactRows(img) {
 		return img
 	}
 
-	width := bounds.Dx()
-	height := bounds.Dy()
-
-	// 根据原始图像是否有 Alpha 通道选择合适的画布类型
+	// 画布类型按源选：非预乘的源留在 NRGBA，免掉 alpha 预乘往返的精度损失；其余一律 RGBA——
+	// image/draw 只对 *image.RGBA 目标备了 YCbCr 与 RGBA 的整行快路径，换成 NRGBA 会掉进
+	// 逐像素装箱的通用路径，一张漫画页就是几百万次分配。
+	rect := image.Rect(0, 0, bounds.Dx(), bounds.Dy())
 	var canvas draw.Image
 	switch img.(type) {
-	case *image.NRGBA, *image.RGBA:
-		canvas = image.NewNRGBA(image.Rect(0, 0, width, height))
+	case *image.NRGBA, *image.NRGBA64:
+		canvas = image.NewNRGBA(rect)
 	default:
-		// 默认使用 NRGBA 以获得更好的通用性和 Alpha 处理
-		canvas = image.NewNRGBA(image.Rect(0, 0, width, height))
+		canvas = image.NewRGBA(rect)
 	}
-
-	// 执行重绘，将内容平移至 (0,0)
 	draw.Draw(canvas, canvas.Bounds(), img, bounds.Min, draw.Src)
 	return canvas
+}
+
+// hasCompactRows 判断像素缓冲是否按行紧凑排布，即 Stride 恰好等于一行的字节数。
+//
+// 只认标准库里带 Pix/Stride 的具体类型——编码器的「按 Pix 整段直读」快路径也只认这些，
+// 其它实现（含自定义 image.Image）只会被逐像素读取，一律当作已归一化。
+// YCbCr 系只看 YStride：起点已在原点时 YStride 紧凑等价于子图宽度就是父图宽度，
+// 色度平面的步长随之也是紧凑的。
+func hasCompactRows(img image.Image) bool {
+	switch m := img.(type) {
+	case *image.RGBA:
+		return m.Stride == 4*m.Rect.Dx()
+	case *image.NRGBA:
+		return m.Stride == 4*m.Rect.Dx()
+	case *image.RGBA64:
+		return m.Stride == 8*m.Rect.Dx()
+	case *image.NRGBA64:
+		return m.Stride == 8*m.Rect.Dx()
+	case *image.Gray:
+		return m.Stride == m.Rect.Dx()
+	case *image.Gray16:
+		return m.Stride == 2*m.Rect.Dx()
+	case *image.Alpha:
+		return m.Stride == m.Rect.Dx()
+	case *image.Alpha16:
+		return m.Stride == 2*m.Rect.Dx()
+	case *image.CMYK:
+		return m.Stride == 4*m.Rect.Dx()
+	case *image.Paletted:
+		return m.Stride == m.Rect.Dx()
+	case *image.YCbCr:
+		return m.YStride == m.Rect.Dx()
+	case *image.NYCbCrA:
+		return m.YStride == m.Rect.Dx() && m.AStride == m.Rect.Dx()
+	default:
+		return true
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"testing"
 )
@@ -52,6 +53,64 @@ func BenchmarkProcessImageAutoCropPNG(b *testing.B) {
 			b.Fatalf("unexpected output: bytes=%d content_type=%s", len(data), contentType)
 		}
 	}
+}
+
+// BenchmarkProcessImageAutoCropAtOrigin 盯住裁切框左上角落在 (0,0) 的那条路径：
+// 此时子图起点干净、Stride 却仍是父图的，归一化必须发生，而归一化就是一次整图拷贝。
+func BenchmarkProcessImageAutoCropAtOrigin(b *testing.B) {
+	source := cropAtOriginPNG(b, 900, 1300, 60)
+	opts := ProcessOptions{
+		AutoCrop: true,
+		Format:   "png",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		data, contentType, err := ProcessImage(source, "image/png", opts)
+		if err != nil {
+			b.Fatalf("process image failed: %v", err)
+		}
+		if len(data) == 0 || contentType != "image/png" {
+			b.Fatalf("unexpected output: bytes=%d content_type=%s", len(data), contentType)
+		}
+	}
+}
+
+// BenchmarkProcessImageAutoCropJPEG 是裁边路径上最贵的一档：JPEG 解出 *image.YCbCr，
+// 归一化的画布类型选错就会掉进 image/draw 的逐像素通用路径，一页几百万次分配。
+func BenchmarkProcessImageAutoCropJPEG(b *testing.B) {
+	source := benchmarkJPEG(b, 900, 1300)
+	opts := ProcessOptions{
+		AutoCrop: true,
+		Quality:  85,
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		data, contentType, err := ProcessImage(source, "image/jpeg", opts)
+		if err != nil {
+			b.Fatalf("process image failed: %v", err)
+		}
+		if len(data) == 0 || contentType != "image/jpeg" {
+			b.Fatalf("unexpected output: bytes=%d content_type=%s", len(data), contentType)
+		}
+	}
+}
+
+func benchmarkJPEG(b *testing.B, width, height int) []byte {
+	b.Helper()
+
+	decoded, _, err := image.Decode(bytes.NewReader(benchmarkPNG(b, width, height)))
+	if err != nil {
+		b.Fatalf("decode benchmark source failed: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, decoded, &jpeg.Options{Quality: 90}); err != nil {
+		b.Fatalf("encode source jpeg failed: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func benchmarkPNG(b *testing.B, width, height int) []byte {

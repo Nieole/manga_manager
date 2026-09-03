@@ -86,6 +86,75 @@ func TestProcessImageReencodesWhenFormatDiffers(t *testing.T) {
 	}
 }
 
+// ---- 滤镜在没有目标尺寸时是空转 ----
+
+// TestProcessImageFilterWithoutResizePassesThrough 守「不假装干活」这条不变量。
+//
+// 阅读器按 CSS 把图缩到容器，从不下发 w/h，服务端因此不知道该缩到多大。此时重采样滤镜
+// 没有任何可做的事——resize 与 imaging 在目标尺寸等于源尺寸时都原样返回。破了的表现是
+// 每页白付一次完整解码 + 重编码，还丢掉原始字节透传，而画面与不选滤镜逐字节相同。
+func TestProcessImageFilterWithoutResizePassesThrough(t *testing.T) {
+	// 用 JPEG 源：重编码一定会改变字节，透传与否分得开。
+	src := makeTestJPEG(t, 64, 64)
+	for _, filter := range []string{"lanczos3", "bicubic", "mitchell", "lanczos2", "bspline", "catmullrom"} {
+		t.Run(filter, func(t *testing.T) {
+			out, ct, err := ProcessImage(src, "image/jpeg", ProcessOptions{Filter: filter})
+			if err != nil {
+				t.Fatalf("ProcessImage failed: %v", err)
+			}
+			if ct != "image/jpeg" {
+				t.Fatalf("expected content type unchanged, got %s", ct)
+			}
+			if !bytes.Equal(out, src) {
+				t.Fatalf("filter %s 没有目标尺寸时必须透传原始字节，实际拿到重编码结果（%d 字节，源 %d 字节）", filter, len(out), len(src))
+			}
+		})
+	}
+}
+
+// TestProcessImageFilterAppliesWhenResizing 守住另一半：给了目标尺寸，滤镜就必须真的生效。
+func TestProcessImageFilterAppliesWhenResizing(t *testing.T) {
+	// 源图带高频花纹，否则平滑渐变经不同插值核可能落到同一批像素上。
+	src := avifTestSource(t, 64, 64)
+	lanczos, _, err := ProcessImage(src, "image/png", ProcessOptions{Filter: "lanczos3", Width: 37, Format: "png"})
+	if err != nil {
+		t.Fatalf("ProcessImage lanczos3 failed: %v", err)
+	}
+	bilinear, _, err := ProcessImage(src, "image/png", ProcessOptions{Filter: "bilinear", Width: 37, Format: "png"})
+	if err != nil {
+		t.Fatalf("ProcessImage bilinear failed: %v", err)
+	}
+	if bytes.Equal(lanczos, bilinear) {
+		t.Fatal("lanczos3 与 bilinear 缩到同一尺寸不应得到相同字节——滤镜没有生效")
+	}
+	if w, _, _ := decodeConfigDims(t, lanczos); w != 37 {
+		t.Fatalf("expected width 37, got %d", w)
+	}
+}
+
+func TestFilterChangesPixels(t *testing.T) {
+	cases := []struct {
+		filter        string
+		width, height int
+		want          bool
+	}{
+		{"", 0, 0, false},
+		{"", 200, 0, false},
+		{"lanczos3", 0, 0, false},  // 无尺寸 → 恒等重采样
+		{"lanczos3", 200, 0, true}, // 有尺寸 → 真缩放
+		{"catmullrom", 0, 300, true},
+		{" LANCZOS3 ", 0, 0, false}, // 大小写与空白无关
+		{"waifu2x", 0, 0, true},     // AI 放大不需要目标尺寸也会改像素
+		{"realcugan", 0, 0, true},
+		{"ncnn", 0, 0, true},
+	}
+	for _, tc := range cases {
+		if got := FilterChangesPixels(tc.filter, tc.width, tc.height); got != tc.want {
+			t.Errorf("FilterChangesPixels(%q,%d,%d)=%v want %v", tc.filter, tc.width, tc.height, got, tc.want)
+		}
+	}
+}
+
 // ---- 缩放尺寸 ----
 
 func TestProcessImageResizeExactDimensions(t *testing.T) {

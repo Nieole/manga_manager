@@ -49,6 +49,14 @@ func (c *Controller) cacheImageMemory(key string, data []byte) {
 // 省下的带宽与长 max-age 相同。
 const pageImageCacheControl = "private, max-age=0, must-revalidate"
 
+// pageImageCacheEpoch 是派生图缓存键里的转码结果版本号。
+//
+// 缓存键其余部分只描述**请求**（尺寸、格式、滤镜、归档 mtime 与大小），描述不了「同样的请求
+// 这版代码会转出什么字节」。转码链一旦被修成产出不同字节，存量条目就是错的，而磁盘缓存、
+// 内存 LRU 与浏览器（ETag 由缓存键导出）都不会自行失效。改动转码结果时必须递增本值：
+// 新键一律未命中、重算一次，旧文件由 enforcePageCacheBudget 按最旧优先回收。
+const pageImageCacheEpoch = "v2"
+
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
@@ -103,8 +111,8 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	w2xNoiseStr := r.URL.Query().Get("w2x_noise")
 	w2xFormatStr := r.URL.Query().Get("w2x_format")
 	transform := pageImageTransformProfile(format, widthStr, heightStr, filter, autoCrop, w2xScaleStr, w2xNoiseStr, w2xFormatStr)
-	cacheKey := fmt.Sprintf("%d-%d-%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t",
-		bookID, pageNumber, source.FileModifiedAt.UnixNano(), source.Size,
+	cacheKey := fmt.Sprintf("%s-%d-%d-%d-%d-%s-%s-%s-%s-%s-%s-%s-%s-%t",
+		pageImageCacheEpoch, bookID, pageNumber, source.FileModifiedAt.UnixNano(), source.Size,
 		widthStr, heightStr, format, qualityStr, filter, w2xScaleStr, w2xNoiseStr, w2xFormatStr, autoCrop)
 	// 图片资源不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，否则浏览器无法命中缓存。
 	w.Header().Del("Vary")
@@ -118,7 +126,9 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 只有派生图像才进入内存/磁盘缓存；原始页图可能很大，直接缓存会挤占阅读器长会话内存。
-	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || (filter != "" && filter != "nearest" && filter != "average" && filter != "bilinear") || autoCrop
+	// 滤镜是否算派生按 images.FilterChangesPixels 判——只给滤镜不给尺寸时转码链会原样透传，
+	// 缓存下来的就是整张原始页图。
+	isThumbnailReq := widthStr != "" || heightStr != "" || format != "" || qualityStr != "" || images.FilterChangesPixels(filter, reqWidth, reqHeight) || autoCrop
 	rawPassthrough := !isThumbnailReq && w2xScaleStr == "" && w2xNoiseStr == "" && w2xFormatStr == ""
 	diskPageCacheEnabled := c.diskPageCacheEnabled(source)
 	if isThumbnailReq {
