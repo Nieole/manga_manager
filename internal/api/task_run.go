@@ -112,7 +112,7 @@ func (e *taskEngine) newTaskHandle(key string) *taskrun.Handle {
 		func(frame taskrun.Frame) { e.applyTaskProgress(key, frame) },
 		func(params map[string]string) { e.mergeTaskParams(key, params) },
 		func(increments map[string]int64, params map[string]string) {
-			e.mergeRunningTaskMetricSums(key, increments, params)
+			e.mergeActiveTaskMetricSums(key, increments, params)
 		},
 		e.diskWork,
 	)

@@ -411,6 +411,77 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 	}
 }
 
+// TestTaskHandleChannelsShareOneAdmissionRule 钉住**任务句柄**三条写入通道认同一条判据：
+// **活动态**写得进、**终态**写不进。
+//
+// 三条判据各写各的时，漏的是**取消中**与**暂停中**那两格上的**累加值**（io_wait_ms、paused_ms、
+// hashed_files）——它们不像整帧那样每次都带全量当前值，丢一次就永远补不回来。
+func TestTaskHandleChannelsShareOneAdmissionRule(t *testing.T) {
+	channels := []struct {
+		name  string
+		write func(h *taskrun.Handle)
+		// landed 回答这条通道的写入有没有落到任务上。
+		landed func(task TaskStatus) bool
+	}{
+		{
+			name:   "整帧上报",
+			write:  func(h *taskrun.Handle) { h.Phase("hashing", "progress.hashing", nil) },
+			landed: func(task TaskStatus) bool { return task.Phase == "hashing" },
+		},
+		{
+			name:   "设任务参数",
+			write:  func(h *taskrun.Handle) { h.MergeParams(map[string]string{"volume_key": "C:"}) },
+			landed: func(task TaskStatus) bool { return task.Params["volume_key"] == "C:" },
+		},
+		{
+			name:   "加指标",
+			write:  func(h *taskrun.Handle) { h.AddMetrics(map[string]int64{"io_wait_ms": 120}, nil) },
+			landed: func(task TaskStatus) bool { return task.Metrics["io_wait_ms"] == 120 },
+		},
+	}
+	states := []struct {
+		name       string
+		wantLanded bool
+		// reach 把播下的任务带到这个状态上。
+		reach func(t *testing.T, e *taskEngine, key string)
+	}{
+		{"运行中", true, func(*testing.T, *taskEngine, string) {}},
+		{"已暂停", true, func(t *testing.T, e *taskEngine, key string) {
+			if err := e.pause(key); err != nil {
+				t.Fatalf("暂停失败: %v", err)
+			}
+		}},
+		{"取消中", true, func(t *testing.T, e *taskEngine, key string) {
+			if err := e.cancel(key); err != nil {
+				t.Fatalf("取消失败: %v", err)
+			}
+		}},
+		{"已取消", false, func(t *testing.T, e *taskEngine, key string) {
+			settleSeededTask(e, key, context.Canceled)
+		}},
+	}
+
+	for _, channel := range channels {
+		for _, state := range states {
+			t.Run(channel.name+"/"+state.name, func(t *testing.T) {
+				// 后台能力只登记不执行：任务体一旦跑起来就会收尾，活动态无从观察。
+				e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+
+				const key = "rebuild_thumbnails"
+				handle := seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails", Total: 10, CanCancel: true, CanPause: true})
+				state.reach(t, e, key)
+				channel.write(handle)
+
+				task := lastPublishedTask(t, snapshots(), key)
+				if landed := channel.landed(task); landed != state.wantLanded {
+					t.Fatalf("%q 通道在 %q 上落地=%v, want %v —— 三条通道必须认同一条判据：%+v",
+						channel.name, state.name, landed, state.wantLanded, task)
+				}
+			})
+		}
+	}
+}
+
 // TestTaskMapsAreOwnedByTheEngine 钉住「任务上的每个可变 map 都归引擎所有」这条约定：
 // 无论 map 是随任务声明进来的，还是随某一帧进来的，引擎都不得存下调用方那一份。
 //

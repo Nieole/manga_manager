@@ -357,6 +357,10 @@ func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
 
 // ---- 进度更新 ----
 
+// mergeTaskParams 是**任务句柄**三条写入通道里的「设**任务参数**」那条。
+//
+// 判据与另外两条一致，都是**活动态**：**扫描观察者**活得比那次扫描调用久，一份迟到的报文
+// 落在已收尾的任务上，会把它的序号推到任务中心最前、再投递一帧已经作废的展示态。
 func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	if len(params) == 0 {
 		return
@@ -365,7 +369,7 @@ func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	defer e.mutex.Unlock()
 
 	task, ok := e.tasks[key]
-	if !ok {
+	if !ok || !taskIsActive(task.Status) {
 		return
 	}
 	if task.Params == nil {
@@ -383,12 +387,18 @@ func (e *taskEngine) mergeTaskParams(key string, params map[string]string) {
 	e.publishTaskProgressLocked(task)
 }
 
-func (e *taskEngine) mergeRunningTaskMetricSums(key string, increments map[string]int64, params map[string]string) {
+// mergeActiveTaskMetricSums 是三条写入通道里的「加指标」那条：报文只覆盖全局的一部分
+// （逐资料库的扫描指标），全局总量只能在这里累加得出。
+//
+// 判据必须是**活动态**而不是运行中：**暂停中**与**取消中**的任务体仍在收尾，此刻丢掉的是
+// io_wait_ms / paused_ms / hashed_files 这些**累加值**——它们不像整帧那样带着全量当前值，
+// 丢一次就永远补不回来，任务面板上的吞吐量从此少一截。
+func (e *taskEngine) mergeActiveTaskMetricSums(key string, increments map[string]int64, params map[string]string) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
 	task, ok := e.tasks[key]
-	if !ok || task.Status != "running" {
+	if !ok || !taskIsActive(task.Status) {
 		return
 	}
 	if task.Params == nil {
