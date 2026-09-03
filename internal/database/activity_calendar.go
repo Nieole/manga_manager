@@ -1,6 +1,6 @@
-// 阅读活动的日历口径：本系统的「一天」一律是**服务器 time.Local 的日历日**。
-// 写入（活动日期）与读取（连续天数的今天、回顾期的年月界、近 N 天窗口的下界）都必须经本文件取日期；
-// 任何一处自行取 UTC 日历日，跨零点的那几个小时里两侧就会错开一天。
+// 时间的本地口径：本系统的「一天」一律是**服务器 time.Local 的日历日**，落库的时刻列一律是本地墙钟。
+// 写入（活动日期、last_read_at）与读取（连续天数的今天、回顾期的年月界、近 N 天窗口的下界）
+// 都必须经本文件；任何一处自行取 UTC，跨零点的那几个小时里两侧就会错开一天。
 
 package database
 
@@ -30,6 +30,21 @@ var calendarNow = time.Now
 // 要按用户所在时区记账，得先给账号加时区并让写入侧带上它，那是另一件事。
 func ActivityDayKey(t time.Time) string {
 	return t.Format(dayKeyLayout)
+}
+
+// LocalWallClock 把一个时刻搬到服务器本地时区，是外部报上来的时刻落库前的归一入口。
+//
+// 时刻列由驱动以 t.String() 写成文本，带的是**入参自己的**时区偏移，而 last_read_at 的每一处
+// 排序与期间筛选都对该文本做 SQL 比较（见 GetUserPeriodStats）。同一列里混进别的时区就整列比错：
+// 离线补传的 updated_at 是 ISO 8601、恒为 UTC，UTC+8 的服务器上原样落库会比在线写入早算 8 小时。
+//
+// 已在本地时区的值原样返回：time.Now() 的 Location 就是 time.Local，因此既有写入的文本一个字节
+// 都不变（含 t.String() 的单调钟后缀），新旧行之间的文本比较不受影响。
+func LocalWallClock(t time.Time) time.Time {
+	if t.Location() == time.Local {
+		return t
+	}
+	return t.In(time.Local)
 }
 
 // ActivityDayKeyBefore 返回距 t 若干天之前的本地日历日，供「近 N 天」这类范围查询做下界。

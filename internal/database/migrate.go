@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Migrate 供启动时执行迁移
@@ -295,6 +296,10 @@ func Migrate(dbPath string) error {
 	}
 
 	if err := migrateLegacyKOReaderAccounts(db); err != nil {
+		return err
+	}
+
+	if err := normalizeForeignZoneLastReadAt(db); err != nil {
 		return err
 	}
 
@@ -916,4 +921,98 @@ func dropColumnIfExists(db *sql.DB, table, column string) error {
 	}
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, column))
 	return err
+}
+
+// storedTimeLayout 是驱动写时刻列用的文本格式：DSN 没设 _time_format，走默认的 time.Time.String()。
+const storedTimeLayout = "2006-01-02 15:04:05.999999999 -0700 MST"
+
+// normalizeForeignZoneLastReadAt 把存量里以别的时区落库的 last_read_at 改写成本地墙钟。
+//
+// 库里有一批 last_read_at 是客户端 ISO 8601（恒为 UTC）的原样文本，与在线写入的本地墙钟混在
+// 同一列，而所有排序与期间筛选都对该列做文本比较（见 LocalWallClock）。新写入由 LocalWallClock
+// 挡住，这里改的是这批行——不改的话「继续阅读」会一直停在更早的那一卷。
+//
+// 判据是「文本里没有 t.String() 的单调钟后缀 m=」：生产里每一处 last_read_at 都由 time.Now()
+// 派生、必带该后缀，而 JSON 解出来的时刻不带。真正跑在 UTC 的服务器不会被改坏——它的行同样带
+// 后缀而不入选，即便入选，改写结果与原文逐字相同、下面的相等判断也会跳过。
+//
+// 不挂在 user_version 门控后面：那道门会连带触发 FTS 全量重建等随库规模线性增长的回填，
+// 而这里的代价只与「读过的书」成正比。选出 0 行时即为无操作。
+func normalizeForeignZoneLastReadAt(db *sql.DB) error {
+	ctx := context.Background()
+	users := make(map[int64]struct{})
+	if err := rewriteForeignZoneColumn(ctx, db,
+		`SELECT user_id, rowid, CAST(last_read_at AS TEXT) FROM user_book_progress
+		 WHERE last_read_at IS NOT NULL AND last_read_at NOT LIKE '% m=%'`,
+		`UPDATE user_book_progress SET last_read_at = ? WHERE rowid = ?`,
+		users); err != nil {
+		return err
+	}
+	series := make(map[int64]struct{})
+	if err := rewriteForeignZoneColumn(ctx, db,
+		`SELECT series_id, rowid, CAST(last_read_at AS TEXT) FROM books
+		 WHERE last_read_at IS NOT NULL AND last_read_at NOT LIKE '% m=%'`,
+		`UPDATE books SET last_read_at = ? WHERE rowid = ?`,
+		series); err != nil {
+		return err
+	}
+
+	// 派生聚合（user_series_progress / series_stats）存的是基表文本的副本，基表改了必须重算，
+	// 否则「继续阅读」仍读到旧值。改动行数为 0 时这两个循环不执行。
+	for userID := range users {
+		if _, err := db.ExecContext(ctx, refreshUserSeriesProgressAllStmt, userID); err != nil {
+			return err
+		}
+	}
+	queries := New(db)
+	for seriesID := range series {
+		if err := queries.RefreshSeriesStats(ctx, seriesID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rewriteForeignZoneColumn 按 selectStmt 取出 (ownerID, rowid, 时刻文本)，把能解析且不在本地时区的
+// 经 updateStmt（参数为「新值, rowid」）改写回去，并把改动过的 ownerID 记进 owners 供调用方刷新派生聚合。
+// 解析不了的（例如 CURRENT_TIMESTAMP 写下的无时区文本）原样留下：它不是这里要修的那类行。
+func rewriteForeignZoneColumn(ctx context.Context, db *sql.DB, selectStmt, updateStmt string, owners map[int64]struct{}) error {
+	type pending struct {
+		ownerID int64
+		rowID   int64
+		at      time.Time
+	}
+	rows, err := db.QueryContext(ctx, selectStmt)
+	if err != nil {
+		return err
+	}
+	var todo []pending
+	for rows.Next() {
+		var ownerID, rowID int64
+		var raw string
+		if err := rows.Scan(&ownerID, &rowID, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		parsed, err := time.Parse(storedTimeLayout, raw)
+		if err != nil {
+			continue
+		}
+		local := parsed.In(time.Local)
+		if local.String() == raw {
+			continue
+		}
+		todo = append(todo, pending{ownerID: ownerID, rowID: rowID, at: local})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range todo {
+		if _, err := db.ExecContext(ctx, updateStmt, item.at, item.rowID); err != nil {
+			return err
+		}
+		owners[item.ownerID] = struct{}{}
+	}
+	return nil
 }

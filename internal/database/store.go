@@ -691,7 +691,12 @@ func (s *SqlStore) DeleteBookByPath(ctx context.Context, path string) error {
 	return nil
 }
 
+// UpdateBookProgress 写全局（未启用多用户 / KOReader 未关联账户）的书进度。
+// LastReadAt 可能来自客户端（离线补传的 updated_at 是 UTC），落库前归一到本地墙钟，见 LocalWallClock。
 func (s *SqlStore) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
+	if arg.LastReadAt.Valid {
+		arg.LastReadAt.Time = LocalWallClock(arg.LastReadAt.Time)
+	}
 	if err := s.Queries.UpdateBookProgress(ctx, arg); err != nil {
 		return err
 	}
