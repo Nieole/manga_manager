@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"manga-manager/internal/taskstore"
 )
 
 // Migrate 供启动时执行迁移
@@ -311,6 +313,13 @@ func Migrate(dbPath string) error {
 	// 锁定字段根本不入队，这一列因此恒为 0。老库里可能留着 1，清掉——留着它，下一个读到
 	// 的人会把陈旧数据当成一条裁决规则。语句幂等，代价与待裁决提案的字段行数同阶。
 	if _, err := db.Exec(`UPDATE metadata_review_fields SET locked = 0 WHERE locked != 0`); err != nil {
+		return err
+	}
+
+	// 任务与运行的表由 taskstore 自己定义并建起：那套 schema 连同它的两条准入索引都归它，
+	// 这里只负责在同一次迁移里放行。它不带全量回填，因此不推 currentSchemaVersion——
+	// 那个版本号门控的是随库规模线性增长的重算，为几张空表推一次会让每个存量库白算一遍。
+	if err := taskstore.Migrate(db); err != nil {
 		return err
 	}
 

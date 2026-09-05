@@ -22,7 +22,7 @@
 - **选项：** A 单开一张 `run_labels`（推荐，与「五类语义各回各家」一致，读回时不必按前缀分拣）｜
   B 并进 `run_args`，靠键前缀区分，代价是那张表重新混进两类语义——这正是 `params` 堆的成因｜
   C 判定标签属于展示态、升为 `runs` 的定长真列，代价是加一个标签要改 schema
-- **不处理会怎样：** 端口已按「标签自成一路」声明。票 06 若并进 `run_args`，改的是适配器一侧，
+- **不处理会怎样：** 票 06 已按 A 落地：`run_labels` 单开一张。改成 B 只动适配器一侧，
   领域端口不动；但两类语义会重新同居一个命名空间。
 - **状态：** open
 
@@ -88,4 +88,82 @@
 - **选项：** A 等两个新包都落地后一次性补进去（推荐，一次改动补齐两个名字）｜
   B 每建一个包就改一次，代价是共享文件在批次里被反复碰
 - **不处理会怎样：** 清单少两个包名，新来的 agent 得自己 `ls internal/` 才知道它们存在。
+- **状态：** open
+
+## D9 · 票 06 · 身份表在过渡期不能叫 `tasks`
+
+- **问：** 规格的表形状把身份表写作 `tasks`，而旧引擎那张同名表此刻仍在被读写，
+  票 07 的验收还要求它「并存但不再被写入，也未被删除」。同一个库里两张同名表不可能并存，
+  改名旧表会当场打断正在跑的旧引擎。本票因此把身份表建作 `task_identities`。
+- **选项：** A 票 08 丢弃旧表时顺手 `ALTER TABLE task_identities RENAME TO tasks`（推荐，
+  最终名字与规格、ADR 0004 与领域类型 `task.Task` 对齐；SQLite 会一并改写 `runs` 上那条外键引用）｜
+  B 永久留作 `task_identities`，代价是库里的表名与规格的表形状对不上
+- **不处理会怎样：** 票 08 不做这一步就等于选了 B。表形状、四列唯一约束与两条部分唯一索引
+  在两种选择下完全一样，改的只是一个名字。
+- **状态：** open
+
+## D10 · 票 06 · i18n 占位参数落成 `runs` 的一列，还是自己一张侧表
+
+- **问：** 规格写「i18n 占位参数随 `message_code` 落在 `runs` 上」，而 `Run.MessageParams` 是一张
+  `map[string]string`，表形状里没有给它列。本票落成 `runs.message_params` 一列，内容是 JSON 对象。
+- **选项：** A 落成 `runs` 的一列（推荐，与 `message_code` 同行整份改写，进度帧的热路径上不多两条语句；
+  它不是 ADR 0004 否掉的那个堆——那个堆挤着五类语义且指标不可聚合，这一列只装一类且从不参与查询）｜
+  B 单开 `run_message_params(run_id, key, value)`，与另外四张侧表同形，代价是每次文案变化都要
+  先删后插，而那是逐条目进度在走的路
+- **不处理会怎样：** 已按 A 落地。改成 B 只动 `taskstore` 一侧，领域端口不变。
+- **状态：** open
+
+## D11 · 票 06 · 时间列存 epoch 毫秒而不是 `DATETIME` 文本
+
+- **问：** 新表的每一个时刻都存整数毫秒，与仓里既有表的 `DATETIME` 文本列不同。
+  理由是保留裁剪的 DELETE 与聚合查询都要拿时间列做比较，而本仓已经吃过「两个写入方写出两种文本
+  格式、SQLite 比的却是文本」的亏。
+- **选项：** A 存整数毫秒（推荐，比较与聚合没有歧义，也不必再为时区与格式各写一个规范化函数）｜
+  B 与既有表一致存文本，由 `taskstore` 保证只有一个写入方、只用一种格式，代价是那条保证没有任何
+  机制守着
+- **不处理会怎样：** 已按 A 落地。代价是直接用 sqlite CLI 翻这几张表时要自己换算时刻。
+- **状态：** open
+
+## D12 · 票 06 · 新表不推 `currentSchemaVersion`
+
+- **问：** 建表语句是幂等的 `CREATE TABLE IF NOT EXISTS`，不带任何回填，因此本票没有把
+  `internal/database` 的 `currentSchemaVersion` 加一——那个版本号门控的是随库规模线性增长的全量重算
+  （系列首字母、统计、标签计数、来源、FTS 重建），为几张空表推一次会让每个存量库白算一遍。
+- **选项：** A 不推，靠幂等 DDL 每次启动重放（推荐，与 KOReader 账号、书签用户隔离那两次的做法一致，
+  也与那个常量自己的注释一致：「新增需要全量回填的 schema 变更时才 +1」）｜
+  B 推一版当作 schema 变更的记号，代价是全体存量库在升级后的首启多跑一轮全量回填
+- **不处理会怎样：** 已按 A 落地。票 08 丢弃旧表时若要推版本，那是它自己的决定，与本票无关。
+- **状态：** open
+
+## D13 · 票 06 · 侧表只有写入面，入参与上限的读回还没有去处
+
+- **问：** 端口对四张键值侧表只声明了写入（`MergeRunArgs` / `MergeRunLabels` / `SetRunMetrics` /
+  `AddRunMetrics` / `SaveRunLimits`），没有任何读回。而**重启函数**要读回原始入参、运行详情页要读回
+  标签与当时生效的上限。D7 记的是**运行事件**那一半，这是键值侧表这一半。
+- **选项：** A 等票 07（重启入参）与票 16/17（详情页）各自按真正要的形状往端口上加（推荐，
+  读取面的形状由消费方决定）｜ B 本票就把四个读取方法加上，代价是端口多出一批没有调用方的方法
+- **不处理会怎样：** 已按 A 落地：`taskstore` 今天只实现端口声明的写入面，聚合查询另有
+  `AverageRunDuration` 与 `SumRunMetrics` 两个本包自己的方法。
+- **状态：** open
+
+## D14 · 票 06 · `AGENTS.md` 说 SQL 来源只有 `sql/query.sql` 与 `schema.sql`
+
+- **问：** `AGENTS.md` 的 Project Structure 一节写着「SQL sources are in `sql/query.sql` and
+  `internal/database/schema.sql`」，而任务与运行那几张表的 DDL 在 `internal/taskstore/schema.go` 的
+  Go 字符串里（放进 `schema.sql` 会让 sqlc 生成一批与领域类型重名的模型）。这是共享文件，
+  本票按隔离纪律没有动它。D8 记的是包清单缺项，这是 SQL 来源那一句。
+- **选项：** A 与 D8 一并补进 `AGENTS.md`（推荐，同一节、同一次改动）｜
+  B 把 DDL 挪进 `schema_handwritten.sql`，代价是表结构与它的迁移分居两个包
+- **不处理会怎样：** 照那句话去找表的人找不到 `runs`，得先 `grep CREATE TABLE`。
+- **状态：** open
+
+## D15 · 票 06 · `internal/database` 反过来依赖 `internal/taskstore`
+
+- **问：** 新表的建表语句由 `database.Migrate` 调 `taskstore.Migrate` 落地，于是 `database` 依赖了
+  `taskstore`，而仓内其余方向都是别人依赖 `database`。挂在这里是因为 `Migrate(dbPath)` 是全仓唯一的
+  迁移入口，挂别处就得靠每个调用方记得再调一次，而 `internal/database` 自己的用例也拿不到新表。
+- **选项：** A 留在 `database.Migrate`（推荐，迁移只有一个入口，忘不掉）｜
+  B 由装配期（`cmd/server`）依次调两个 Migrate，`database` 因此不认识 `taskstore`，
+  代价是新增入口时要记得补第二条调用，且 `internal/database` 的用例里没有新表
+- **不处理会怎样：** 已按 A 落地。票 07 接线时若把 `taskstore` 的构造挪进装配期，可以顺便重看这条。
 - **状态：** open

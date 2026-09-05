@@ -6,7 +6,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 表形状（形状来自本次盘问，故内联；不含类型细节与索引全集）
 
@@ -51,12 +51,12 @@ run_args      run_id, key, value
 
 ## 验收
 
-- [ ] 六张新表建起，迁移经 `user_version` 落地，旧 `tasks` 表未被改动
-- [ ] 两条部分唯一索引各有一条用例证明它拒绝了第二条
-- [ ] 级联删除有用例；保留 DELETE 的选中集合有用例，含「活动态与排队中不被选中」
-- [ ] 聚合查询有用例
-- [ ] 排序主键是序号，不是时间列
-- [ ] 用例对真 SQLite 跑（临时目录建库），先例见 `internal/database` 既有用例
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] 若改动 `sql/query.sql` 或 schema，已在 PowerShell 下重跑 `sqlc generate` 并确认产物一致
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] 六张新表建起，迁移经 `user_version` 落地，旧 `tasks` 表未被改动
+- [x] 两条部分唯一索引各有一条用例证明它拒绝了第二条
+- [x] 级联删除有用例；保留 DELETE 的选中集合有用例，含「活动态与排队中不被选中」
+- [x] 聚合查询有用例
+- [x] 排序主键是序号，不是时间列
+- [x] 用例对真 SQLite 跑（临时目录建库），先例见 `internal/database` 既有用例
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] 若改动 `sql/query.sql` 或 schema，已在 PowerShell 下重跑 `sqlc generate` 并确认产物一致
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
