@@ -612,55 +612,61 @@ func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.Task
 	if err != nil {
 		return nil, err
 	}
-	e.mutex.Lock()
-	if e.tasks == nil {
-		e.tasks = make(map[string]TaskStatus)
-	}
-	items := make([]TaskStatus, 0, len(records)+len(e.tasks))
-	seen := make(map[string]bool, len(records))
+	merged := make(map[string]TaskStatus, len(records))
 	for _, record := range records {
-		task := taskStatusFromRecord(record)
-		// 进度是异步落盘的，DB 记录最多滞后一个落盘周期。同时存在于内存与 DB 时必须取内存版本，
-		// 否则 API 返回的进度会被滞后的 DB 快照盖回去。
-		if memTask, ok := e.tasks[task.Key]; ok {
-			// 克隆：返回的切片会在 Unlock 之后由 listTasks 交给 json.Marshal 遍历，
-			// 而运行中的任务仍在持锁原地写 Metrics/Params，共享 map 会导致并发读写 fatal。
-			task = cloneTaskStatus(memTask)
-		}
-		items = append(items, task)
-		seen[task.Key] = true
+		merged[record.Key] = taskStatusFromRecord(record)
 	}
-	for _, task := range e.tasks {
-		if seen[task.Key] {
-			continue
-		}
-		if filters.Status != "" && task.Status != filters.Status {
-			continue
-		}
-		if filters.Scope != "" && task.Scope != filters.Scope {
-			continue
-		}
-		if filters.Type != "" && task.Type != filters.Type {
-			continue
-		}
-		if filters.ScopeID != nil && (task.ScopeID == nil || *task.ScopeID != *filters.ScopeID) {
-			continue
-		}
-		if filters.Query != "" {
-			haystack := strings.ToLower(task.Key + " " + task.Message + " " + task.Error)
-			if !strings.Contains(haystack, strings.ToLower(filters.Query)) {
-				continue
-			}
-		}
-		items = append(items, cloneTaskStatus(task))
+
+	e.mutex.Lock()
+	// 进度是异步落盘的，DB 记录最多滞后一个落盘周期。同时存在于内存与 DB 时必须取内存版本，
+	// 否则 API 返回的进度会被滞后的 DB 快照盖回去。
+	// 克隆：返回的切片会在 Unlock 之后由 listTasks 交给 json.Marshal 遍历，
+	// 而运行中的任务仍在持锁原地写 Metrics/Params，共享 map 会导致并发读写 fatal。
+	for key, task := range e.tasks {
+		merged[key] = cloneTaskStatus(task)
 	}
 	e.mutex.Unlock()
+
+	// 谓词判在合并**之后**，因此只有这一处：DB 那一页由 SQL 过滤，而内存版盖上去之后状态可能已经
+	// 不满足筛选条件（库里那行还是 running，内存里已经完成）。两支各判一遍的话，
+	// 新增一条筛选条件只补一处不会有编译错误，后果是筛选对其中一支静默失效。
+	items := make([]TaskStatus, 0, len(merged))
+	for _, task := range merged {
+		if !taskMatchesFilters(task, filters) {
+			continue
+		}
+		items = append(items, task)
+	}
 
 	sortTaskStatusesByActivity(items)
 	if filters.Limit > 0 && len(items) > filters.Limit {
 		items = items[:filters.Limit]
 	}
 	return items, nil
+}
+
+// taskMatchesFilters 是任务列表五条筛选谓词的**唯一**实现，DB 记录与内存快照合并之后统一判一次。
+// 关键词与 SQL 侧同口径：键、消息、错误串接起来做大小写无关的子串匹配。
+func taskMatchesFilters(task TaskStatus, filters database.TaskFilters) bool {
+	if filters.Status != "" && task.Status != filters.Status {
+		return false
+	}
+	if filters.Scope != "" && task.Scope != filters.Scope {
+		return false
+	}
+	if filters.Type != "" && task.Type != filters.Type {
+		return false
+	}
+	if filters.ScopeID != nil && (task.ScopeID == nil || *task.ScopeID != *filters.ScopeID) {
+		return false
+	}
+	if filters.Query != "" {
+		haystack := strings.ToLower(task.Key + " " + task.Message + " " + task.Error)
+		if !strings.Contains(haystack, strings.ToLower(filters.Query)) {
+			return false
+		}
+	}
+	return true
 }
 
 // latestTaskByTypes 返回给定类型中最近更新的那个任务的**副本**；无匹配返回 nil。
