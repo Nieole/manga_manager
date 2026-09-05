@@ -15,7 +15,7 @@
 
 **Blocked by:** 无
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 为什么是这五个
 
@@ -88,16 +88,16 @@
 
 ## 验收
 
-- [ ] 五个任务的 `TaskSpec` 不再带 `Limits`；资料库扫描与重扫两处逐字不变
-- [ ] `taskLimitsForPath` 的 `force` 形参与那句 `if profile == ScanProfileRepair { force = true }`
+- [x] 五个任务的 `TaskSpec` 不再带 `Limits`；资料库扫描与重扫两处逐字不变
+- [x] `taskLimitsForPath` 的 `force` 形参与那句 `if profile == ScanProfileRepair { force = true }`
       一并消失
-- [ ] 全仓只剩一份「起点 → 两次收窄 → 与配置 worker 数取小」的公式，api 调用它而不是重抄
-- [ ] `TaskLimits` 结构体无字段增删；`go run ./cmd/tsgen` 无漂移；`web/` 一行不改
-- [ ] 上述四组用例按「会变红的既有用例」一节各自处置；新增/改写的用例**不得只压外置硬盘档**
+- [x] 全仓只剩一份「起点 → 两次收窄 → 与配置 worker 数取小」的公式，api 调用它而不是重抄
+- [x] `TaskLimits` 结构体无字段增删；`go run ./cmd/tsgen` 无漂移；`web/` 一行不改
+- [x] 上述四组用例按「会变红的既有用例」一节各自处置；新增/改写的用例**不得只压外置硬盘档**
       ——那一档四项并发全为一，两份公式在它上面恒等，是唯一测不出分歧的一档
-- [ ] `CHANGELOG.md` 记一条对外行为变更：五个任务不再显示并发徽章，因为那个数从来不管它们
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] `CHANGELOG.md` 记一条对外行为变更：五个任务不再显示并发徽章，因为那个数从来不管它们
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
 
 ## 出处
 

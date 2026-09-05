@@ -8,3 +8,5 @@ data
 config.yaml
 # storageiobench 的默认输出目录（生成物，非文档）
 docs/performance-baselines/
+# Agent worktree 宿主目录（隔离并行派工时创建的仓库副本）
+.claude/
