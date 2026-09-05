@@ -109,7 +109,7 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 		}
 		return ApplyResult{}, err
 	}
-	// 系列的当前值必须在按模式筛之前读出来：fill_empty 判的是「此刻还空着吗」。
+	// 系列的存值必须在按模式筛之前读出来：fill_empty 判的是「此刻还空着吗」。
 	// 集合字段一并读，它们的「空」同样只能由系列此刻挂着的成员回答。
 	tags, err := s.db.GetTagsForSeries(ctx, series.ID)
 	if err != nil {
@@ -119,7 +119,7 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	selected := fieldsForMode(all, mode, currentFieldValues(series, tags, authors))
+	selected := fieldsForMode(all, mode, storedFieldValues(series, tags, authors))
 	if len(selected) == 0 {
 		return ApplyResult{Status: ApplyNoChanges, SeriesID: proposal.SeriesID}, nil
 	}
@@ -249,19 +249,21 @@ func isPending(status string) bool {
 	return strings.EqualFold(strings.TrimSpace(status), "pending")
 }
 
-// fieldsForMode 按本次模式筛出参与写入的字段行。current 是系列**此刻**各字段的规范文本，
-// 由 currentFieldValues 给出。
+// fieldsForMode 按本次模式筛出参与写入的字段行。stored 是系列**此刻**各字段存下来的规范
+// 文本，由 storedFieldValues 给出。
 //
-// 判据落在 current 而不是字段行上的 CurrentValue：后者是入队瞬间的快照，用户事后手工填过、
+// 判据落在 stored 而不是字段行上的 CurrentValue：后者是入队瞬间的快照，用户事后手工填过、
 // 或同一批里前一条提案刚写进去，它就已经过时，照它筛会把「只填空字段」变成覆盖。
 // 与锁定集同一个口径——两者都按系列的当前状态重算，不认入队时的快照。
-func fieldsForMode(fields []database.MetadataReviewField, mode ApplyMode, current map[string]string) []database.MetadataReviewField {
+//
+// 也不取展示口径的 currentFieldValues：那份 title 会回落到目录名，一律非空。
+func fieldsForMode(fields []database.MetadataReviewField, mode ApplyMode, stored map[string]string) []database.MetadataReviewField {
 	if mode != ApplyModeFillEmpty {
 		return fields
 	}
 	filtered := make([]database.MetadataReviewField, 0, len(fields))
 	for _, field := range fields {
-		if strings.TrimSpace(current[field.FieldName]) == "" {
+		if strings.TrimSpace(stored[field.FieldName]) == "" {
 			filtered = append(filtered, field)
 		}
 	}

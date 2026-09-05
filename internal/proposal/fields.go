@@ -93,10 +93,11 @@ func buildFieldDrafts(series database.Series, tags []database.Tag, authors []dat
 	return changes, lockedSkipped
 }
 
-// currentFieldValues 给出系列此刻各字段的规范文本，键是提案的字段名。
+// currentFieldValues 给出系列此刻**看上去**是什么，键是提案的字段名。
 //
-// 「当前值」在本包只有这一个定义：入队时写进字段行的快照、裁决时判「空不空」、读通路上
-// 展示给用户的那一格，都从这里取。分头各算一份的话，同一个字段会在三处给出不同的说法。
+// 「当前值」在本包只有这一个定义：入队时与提案值比差异、写进字段行的快照、读通路上展示
+// 给用户的那一格，都从这里取。分头各算一份的话，同一个字段会在三处给出不同的说法。
+// 判「空不空」用的是另一个口径，见 storedFieldValues。
 //
 // 集合字段折成同一种文本：系列上还挂着成员时它非空，而写入是整体替换——把提案写进去
 // 等于删掉这些成员，「只填空字段」因此必须把它当作已经有值。
@@ -110,6 +111,17 @@ func currentFieldValues(series database.Series, tags []database.Tag, authors []d
 		"tags":      joinTags(tags),
 		"authors":   joinAuthors(authors),
 	}
+}
+
+// storedFieldValues 给出系列此刻各字段**存下来的**规范文本，是「只填空字段」判空的唯一口径。
+//
+// 与 currentFieldValues 只差 title：那边为了展示会在 title 列为空时回落到系列名，而系列名
+// 是扫描给的目录名、不是任何人填过的标题。拿回落值判空，title 就恒为非空——几乎每条刮削
+// 提案都含 title，于是这个模式写完其余字段后总留下 title 挂在收件箱里，再点只得 no_changes。
+func storedFieldValues(series database.Series, tags []database.Tag, authors []database.Author) map[string]string {
+	values := currentFieldValues(series, tags, authors)
+	values["title"] = nullText(series.Title)
+	return values
 }
 
 func lockedFieldSet(series database.Series) map[string]bool {

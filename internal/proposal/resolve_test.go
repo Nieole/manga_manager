@@ -30,7 +30,7 @@ func (d *preemptingDB) ExecTx(ctx context.Context, fn func(Queries) error) error
 	return d.Database.ExecTx(ctx, fn)
 }
 
-// partialResult 是一份「title 有当前值、summary/publisher 当前为空」的刮削结果：
+// partialResult 是一份提案 title / summary / publisher 的刮削结果：配上 seedTitledSeries，
 // fill_empty 会写后两个、筛掉 title，正是部分应用的形态。
 func partialResult() *metadata.SeriesMetadata {
 	return &metadata.SeriesMetadata{
@@ -42,6 +42,15 @@ func partialResult() *metadata.SeriesMetadata {
 		SourceURL:  "https://bgm.tv/subject/7",
 		Confidence: 0.8,
 	}
+}
+
+// seedTitledSeries 建一个 title 列已经填过的系列。
+// 只靠目录名不够：「只填空字段」判空只认 title 列，目录名是展示用的回落。
+func seedTitledSeries(t *testing.T, store database.Store, libName, seriesName, title string) database.Series {
+	t.Helper()
+	series := seedSeries(t, store, libName, seriesName)
+	series.Title = nullString(title)
+	return updateSeries(t, store, series)
 }
 
 // seedProposal 入队一条提案并返回它。
@@ -119,7 +128,7 @@ func TestApplyWritesEveryFieldAndClosesProposal(t *testing.T) {
 func TestApplyFillEmptyKeepsUnappliedFields(t *testing.T) {
 	svc, store := newTestService(t)
 	ctx := context.Background()
-	series := seedSeries(t, store, "Lib", "Series Alpha")
+	series := seedTitledSeries(t, store, "Lib", "Series Alpha", "Hand Written Title")
 	proposal := seedProposal(t, svc, series, partialResult())
 
 	res, err := svc.Apply(ctx, proposal.ID, ApplyModeFillEmpty)
@@ -156,8 +165,8 @@ func TestApplyFillEmptyKeepsUnappliedFields(t *testing.T) {
 		t.Errorf("当前值为空的字段没有写入：summary=%q publisher=%q",
 			updated.Summary.String, updated.Publisher.String)
 	}
-	if updated.Title.Valid {
-		t.Errorf("fill_empty 写了当前值非空的 title：%q", updated.Title.String)
+	if updated.Title.String != "Hand Written Title" {
+		t.Errorf("fill_empty 写了系列上已有的 title：%q", updated.Title.String)
 	}
 }
 
@@ -167,7 +176,7 @@ func TestApplyFillEmptyKeepsUnappliedFields(t *testing.T) {
 func TestApplyClosesProposalOnceNothingRemains(t *testing.T) {
 	svc, store := newTestService(t)
 	ctx := context.Background()
-	series := seedSeries(t, store, "Lib", "Series Alpha")
+	series := seedTitledSeries(t, store, "Lib", "Series Alpha", "Hand Written Title")
 	proposal := seedProposal(t, svc, series, partialResult())
 
 	if res, err := svc.Apply(ctx, proposal.ID, ApplyModeFillEmpty); err != nil || res.Status != ApplyPartial {
@@ -294,7 +303,7 @@ func TestApplyReportsAllFieldsLockedWhenEverythingIsFiltered(t *testing.T) {
 func TestApplyReportsNoChangesWhenModeFiltersEverything(t *testing.T) {
 	svc, store := newTestService(t)
 	ctx := context.Background()
-	series := seedSeries(t, store, "Lib", "Series Alpha")
+	series := seedTitledSeries(t, store, "Lib", "Series Alpha", "Hand Written Title")
 	series.Summary = nullString("Existing summary")
 	series.Publisher = nullString("Existing publisher")
 	series = updateSeries(t, store, series)

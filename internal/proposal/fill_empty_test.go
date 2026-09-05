@@ -143,3 +143,83 @@ func TestApplyFillEmptyTreatsCollectionMembersAsFilled(t *testing.T) {
 		})
 	}
 }
+
+// TestApplyFillEmptyJudgesTitleByColumnNotDirectoryName 钉住 title 的「空」：只看 series.title 列。
+//
+// 展示用的目录名回落若参与判空，title 恒为非空：几乎每条刮削提案都含 title，于是默认模式
+// 写完其余字段后只留下 title 以 partial 挂在收件箱，再点一次得 no_changes——这条提案再也清不掉。
+func TestApplyFillEmptyJudgesTitleByColumnNotDirectoryName(t *testing.T) {
+	cases := []struct {
+		name string
+		// arrange 在入队之前摆出系列的状态。
+		arrange func(t *testing.T, store database.Store, series database.Series)
+		// wantTitle 是应用之后 series.title 列该有的值；空串表示这一列仍不该被写。
+		wantTitle   string
+		wantStatus  ApplyStatus
+		wantPending bool
+	}{
+		{
+			name:        "系列没填标题，只有扫描给的目录名",
+			arrange:     func(*testing.T, database.Store, database.Series) {},
+			wantTitle:   "Scraped Title",
+			wantStatus:  ApplyApplied,
+			wantPending: false,
+		},
+		{
+			name: "用户自己填过标题",
+			arrange: func(t *testing.T, store database.Store, series database.Series) {
+				series.Title = nullString("Hand Written Title")
+				updateSeries(t, store, series)
+			},
+			wantTitle:   "Hand Written Title",
+			wantStatus:  ApplyPartial,
+			wantPending: true,
+		},
+		{
+			name: "用户锁定 title 就是要保住目录名",
+			arrange: func(t *testing.T, store database.Store, series database.Series) {
+				lockFields(t, store, series, "title")
+			},
+			wantTitle:   "",
+			wantStatus:  ApplyApplied,
+			wantPending: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store := newTestService(t)
+			ctx := context.Background()
+			series := seedSeries(t, store, "Lib", "Series Alpha")
+			tc.arrange(t, store, series)
+			current, err := store.GetSeries(ctx, series.ID)
+			if err != nil {
+				t.Fatalf("GetSeries: %v", err)
+			}
+			queued := seedProposal(t, svc, current, fullResult())
+
+			res, err := svc.Apply(ctx, queued.ID, ApplyModeFillEmpty)
+			if err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if res.Status != tc.wantStatus {
+				t.Errorf("结局 = %q，期望 %q（剩余字段 %v）", res.Status, tc.wantStatus, res.Remaining)
+			}
+
+			updated, err := store.GetSeries(ctx, series.ID)
+			if err != nil {
+				t.Fatalf("GetSeries: %v", err)
+			}
+			if updated.Title.String != tc.wantTitle {
+				t.Errorf("系列的 title 列 = %q，期望 %q", updated.Title.String, tc.wantTitle)
+			}
+
+			status, _, _ := proposalStatus(t, store, queued.ID)
+			pending := status == "pending"
+			if pending != tc.wantPending {
+				t.Errorf("提案状态 = %q（待裁决=%v），期望待裁决=%v —— 留在收件箱里的提案必须还有能写的字段，"+
+					"否则用户再点一次只会拿到 no_changes，这条提案永远清不掉", status, pending, tc.wantPending)
+			}
+		})
+	}
+}
