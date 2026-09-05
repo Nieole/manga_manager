@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -162,20 +161,6 @@ func (c *Controller) retryRebuildBookHashesTask(task TaskStatus) error {
 
 // ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----
 
-// minPositive 取诸项里最小的正值；全非正时返回 0，即不设上限。
-func minPositive(values ...int) int {
-	limit := 0
-	for _, value := range values {
-		if value <= 0 {
-			continue
-		}
-		if limit == 0 || value < limit {
-			limit = value
-		}
-	}
-	return limit
-}
-
 // taskIOFrameMetrics 是**任务句柄**的 IO 实况在**一帧**里的那几个键。
 // reportHashProgress 与 koreaderFingerprintFrame 共用一份，键名不会各自漂移。
 func taskIOFrameMetrics(handleIO taskrun.IOMetrics) map[string]int64 {
@@ -203,36 +188,19 @@ func taskIOMetricsParams(handleIO taskrun.IOMetrics) map[string]string {
 	return params
 }
 
-func (c *Controller) taskLimitsForPath(path string, force bool) TaskLimits {
+// taskLimitsForPath 拼出任务面板上那块并发徽章：这条路径上的存储画像，加上 scanner.WorkerCount
+// 在它上面给出的 worker 数。
+//
+// 入参必须是一条**真的会被扫**的库路径，否则报出来的数字没有对应的实物——只有扫描任务调它，
+// 别的后台任务受**磁盘作业**按工种裁定的上限约束，与扫描 worker 数无关。
+func (c *Controller) taskLimitsForPath(path string) TaskLimits {
 	cfg := c.currentConfig()
 	profile := scanner.NormalizeScanProfile(cfg.Scanner.ScanProfile)
-	if profile == scanner.ScanProfileRepair {
-		force = true
-	}
-	_ = force
 	policy := config.ResolveStoragePolicy(cfg, path)
-	workers := cfg.Scanner.Workers
-	if workers <= 0 {
-		workers = runtime.NumCPU() * 2
-	}
-	limit := policy.IOPolicy.ScanConcurrency
-	if profile != scanner.ScanProfileFast {
-		limit = minPositive(limit, policy.IOPolicy.ArchiveOpenConcurrency)
-	}
-	if profile == scanner.ScanProfileIdentity || profile == scanner.ScanProfileRepair {
-		limit = minPositive(limit, policy.IOPolicy.HashConcurrency)
-	}
-	effectiveWorkers := workers
-	if limit > 0 && effectiveWorkers > limit {
-		effectiveWorkers = limit
-	}
-	if effectiveWorkers < 1 {
-		effectiveWorkers = 1
-	}
 	return TaskLimits{
 		ScanProfile:                string(profile),
 		ScannerWorkersConfigured:   cfg.Scanner.Workers,
-		ScannerWorkersEffective:    effectiveWorkers,
+		ScannerWorkersEffective:    scanner.WorkerCount(cfg, path, scanner.ScanOptions{Profile: profile}),
 		StorageProfile:             policy.StorageProfile,
 		VolumeKey:                  policy.VolumeKey,
 		ScanConcurrency:            policy.IOPolicy.ScanConcurrency,

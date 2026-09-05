@@ -84,18 +84,74 @@ func TestScanLibraryReturnsContextCancelled(t *testing.T) {
 	}
 }
 
-func TestScanWorkerCountUsesExternalHDDPolicy(t *testing.T) {
+func TestWorkerCountUsesExternalHDDPolicy(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Scanner.Workers = 16
 	cfg.Scanner.ScanProfile = config.ScanProfileMetadata
 	cfg.Library.StorageProfile = config.StorageProfileHDDExternal
 	config.NormalizeConfig(&cfg)
 
-	s := NewScanner(nil, config.NewManager(&cfg))
-	workers := s.scanWorkerCount(cfg, `E:\Manga`, ScanOptions{Profile: ScanProfileMetadata})
+	workers := WorkerCount(cfg, `E:\Manga`, ScanOptions{Profile: ScanProfileMetadata})
 
 	if workers != 1 {
 		t.Fatalf("expected external HDD metadata scan to use one worker, got %d", workers)
+	}
+}
+
+// newWorkerCountPolicyConfig 摆一档四项并发**各不相同**的存储策略。
+//
+// 外置硬盘那一档四项全为一，收窄与否都得一，测不出哪一步在起作用；三项各异才看得出档位一路加码时
+// worker 数逐级收窄。custom 档保留显式填入的正值（见 config.NormalizeStorageIOPolicy）。
+func newWorkerCountPolicyConfig(t *testing.T, workers int) (config.Config, string) {
+	t.Helper()
+	libraryPath := t.TempDir()
+	cfg := config.Config{}
+	cfg.Scanner.Workers = workers
+	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{
+		Path:           libraryPath,
+		StorageProfile: config.StorageProfileCustom,
+		IOPolicy: config.StorageIOPolicy{
+			ScanConcurrency:        8,
+			ArchiveOpenConcurrency: 4,
+			HashConcurrency:        2,
+			CoverConcurrency:       6,
+		},
+	}}
+	config.NormalizeConfig(&cfg)
+	return cfg, libraryPath
+}
+
+// TestWorkerCountNarrowsPerProfile 守两次收窄各自生效：开归档的档位与归档打开并发取小，
+// 还要算哈希的再与哈希并发取小。封面并发不参与，它归磁盘作业管。
+func TestWorkerCountNarrowsPerProfile(t *testing.T) {
+	cfg, libraryPath := newWorkerCountPolicyConfig(t, 16)
+
+	cases := []struct {
+		profile ScanProfile
+		want    int
+		why     string
+	}{
+		{ScanProfileFast, 8, "不开归档，只受扫描并发约束"},
+		{ScanProfileMetadata, 4, "开归档，与归档打开并发取小"},
+		{ScanProfileIdentity, 2, "还要算哈希，再与哈希并发取小"},
+		{ScanProfileRepair, 2, "同 identity"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.profile), func(t *testing.T) {
+			if got := WorkerCount(cfg, libraryPath, ScanOptions{Profile: tc.profile}); got != tc.want {
+				t.Fatalf("worker 数为 %d, want %d（%s）", got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestWorkerCountKeepsConfiguredWorkersBelowLimit 守收尾那一步：配置的 worker 数本就比上限小时
+// 以它为准，上限不会把它抬上去。
+func TestWorkerCountKeepsConfiguredWorkersBelowLimit(t *testing.T) {
+	cfg, libraryPath := newWorkerCountPolicyConfig(t, 3)
+
+	if got := WorkerCount(cfg, libraryPath, ScanOptions{Profile: ScanProfileFast}); got != 3 {
+		t.Fatalf("worker 数为 %d, want 3——配置值比上限小时应以配置值为准", got)
 	}
 }
 

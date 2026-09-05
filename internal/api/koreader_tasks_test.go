@@ -269,17 +269,18 @@ func TestRefreshMatchingWalksBothPhases(t *testing.T) {
 
 // TestKOReaderTasksCarryMatchConfigMetadata 守三个任务诞生那一刻就带齐匹配配置：任务面板按
 // match_mode 与 path_ignore_extension 渲染「路径索引 / 二进制哈希索引」那块标签，缺一个键就
-// 回落到默认标签，用户看到的索引类型是错的。并发上限那一列的有无同样按转换前的样子。
+// 回落到默认标签，用户看到的索引类型是错的。
+//
+// 三个任务都不报并发上限：它们逐本顺序读，没有哪个并发上限管得住，报出来的数字没有对应的实物。
 func TestKOReaderTasksCarryMatchConfigMetadata(t *testing.T) {
 	cases := []struct {
-		name      string
-		key       string
-		launch    func(*Controller) error
-		wantLimit bool
+		name   string
+		key    string
+		launch func(*Controller) error
 	}{
-		{"指纹重建", "rebuild_book_hashes", (*Controller).launchRebuildBookHashesTask, true},
-		{"进度对账", "reconcile_koreader_progress", (*Controller).launchReconcileKOReaderProgressTask, false},
-		{"匹配刷新", "refresh_koreader_matching", (*Controller).launchRefreshKOReaderMatchingTask, true},
+		{"指纹重建", "rebuild_book_hashes", (*Controller).launchRebuildBookHashesTask},
+		{"进度对账", "reconcile_koreader_progress", (*Controller).launchReconcileKOReaderProgressTask},
+		{"匹配刷新", "refresh_koreader_matching", (*Controller).launchRefreshKOReaderMatchingTask},
 	}
 
 	for _, tc := range cases {
@@ -294,8 +295,8 @@ func TestKOReaderTasksCarryMatchConfigMetadata(t *testing.T) {
 			if first.Params["match_mode"] != config.KOReaderMatchModeFilePath || first.Params["path_ignore_extension"] != "true" {
 				t.Fatalf("首帧的匹配配置元数据为 %v", first.Params)
 			}
-			if (first.EffectiveLimit != nil) != tc.wantLimit {
-				t.Fatalf("首帧的并发上限存在性为 %v, want %v", first.EffectiveLimit != nil, tc.wantLimit)
+			if first.EffectiveLimit != nil {
+				t.Fatalf("KOReader 任务不报并发上限，却带出一份：%+v", first.EffectiveLimit)
 			}
 		})
 	}

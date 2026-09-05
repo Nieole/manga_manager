@@ -298,7 +298,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 			"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
 			"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
 		},
-		Limits:       c.taskLimitsForPath(lib.Path, force),
+		Limits:       c.taskLimitsForPath(lib.Path),
 		CompleteCode: "task.msg.scan_library.complete",
 		CancelCode:   "task.msg.scan_library.cancelled",
 		FailCode:     "task.msg.scan_library.failed",
@@ -364,7 +364,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 		}
 		if lib, libErr := c.store.GetLibrary(context.Background(), series.LibraryID); libErr == nil {
 			storagePolicy = config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
-			limits = c.taskLimitsForPath(lib.Path, force)
+			limits = c.taskLimitsForPath(lib.Path)
 		}
 	}
 

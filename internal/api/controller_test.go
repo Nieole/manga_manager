@@ -2897,7 +2897,7 @@ func TestScanTaskEffectiveLimitsUseExternalHDDPolicy(t *testing.T) {
 	config.NormalizeConfig(&cfg)
 	controller.config.Replace(&cfg)
 
-	limit := controller.taskLimitsForPath(libraryPath, true)
+	limit := controller.taskLimitsForPath(libraryPath)
 	if limit.ScanProfile != string(scanner.ScanProfileIdentity) {
 		t.Fatalf("expected identity scan profile, got %+v", limit)
 	}
@@ -2912,6 +2912,65 @@ func TestScanTaskEffectiveLimitsUseExternalHDDPolicy(t *testing.T) {
 	}
 	if !limit.PauseBackgroundWhenReading || !limit.IdleOnlyHeavyTasks || !limit.DisableSameDiskPageCache {
 		t.Fatalf("expected external HDD pause/cache flags, got %+v", limit)
+	}
+}
+
+// TestScanTaskEffectiveLimitsFollowScannedPath 守这块徽章跟着**被扫的那条路径**走：按库策略生效，
+// 而不是全局默认那一份。传空路径就只能拿到全局默认——那正是那五个任务报出错数的成因。
+//
+// 夹具刻意避开外置硬盘那一档：那一档四项并发全为一，按库与全局算出来一样，分不出跟没跟路径走。
+// 收窄到几由 scanner.TestWorkerCountNarrowsPerProfile 守，这里不复述那张表。
+func TestScanTaskEffectiveLimitsFollowScannedPath(t *testing.T) {
+	controller, _, _, tempDir := newTestController(t)
+	libraryPath := filepath.Join(tempDir, "custom", "library-a")
+
+	applyProfile := func(t *testing.T, profile scanner.ScanProfile) config.Config {
+		t.Helper()
+		cfg := controller.config.Snapshot()
+		cfg.Scanner.Workers = 16
+		cfg.Scanner.ScanProfile = string(profile)
+		// 全局默认不设限；只有这条库路径上挂着一份收得很紧的策略。
+		cfg.Library.StorageProfile = config.StorageProfileSSD
+		cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{
+			{
+				Path:           libraryPath,
+				StorageProfile: config.StorageProfileCustom,
+				IOPolicy: config.StorageIOPolicy{
+					ScanConcurrency:        8,
+					ArchiveOpenConcurrency: 4,
+					CoverConcurrency:       6,
+					HashConcurrency:        2,
+				},
+			},
+		}
+		config.NormalizeConfig(&cfg)
+		controller.config.Replace(&cfg)
+		return cfg
+	}
+
+	cfg := applyProfile(t, scanner.ScanProfileMetadata)
+	onPath := controller.taskLimitsForPath(libraryPath)
+	if onPath.StorageProfile != config.StorageProfileCustom || onPath.ArchiveOpenConcurrency != 4 {
+		t.Fatalf("按库策略没生效：%+v", onPath)
+	}
+	if want := scanner.WorkerCount(cfg, libraryPath, scanner.ScanOptions{Profile: scanner.ScanProfileMetadata}); onPath.ScannerWorkersEffective != want {
+		t.Fatalf("面板报 %d，扫描器起 %d", onPath.ScannerWorkersEffective, want)
+	}
+
+	globalDefault := controller.taskLimitsForPath("")
+	if globalDefault.ScannerWorkersEffective == onPath.ScannerWorkersEffective {
+		t.Fatalf("空路径与库路径报出同一个数 %d —— 徽章没跟着被扫的路径走", onPath.ScannerWorkersEffective)
+	}
+
+	// 档位是从配置里取的，不是钉死的：加码到 identity 之后哈希并发这一步开始收窄，数字必须更小。
+	applyProfile(t, scanner.ScanProfileIdentity)
+	identity := controller.taskLimitsForPath(libraryPath)
+	if identity.ScanProfile != string(scanner.ScanProfileIdentity) {
+		t.Fatalf("档位没跟着配置走：%+v", identity)
+	}
+	if identity.ScannerWorkersEffective >= onPath.ScannerWorkersEffective {
+		t.Fatalf("identity 报 %d，metadata 报 %d —— 哈希那一步没收窄，档位多半没传下去",
+			identity.ScannerWorkersEffective, onPath.ScannerWorkersEffective)
 	}
 }
 

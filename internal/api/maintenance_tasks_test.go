@@ -298,8 +298,8 @@ func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 	}
 }
 
-// TestRebuildFileIdentitiesCompletesWithCounts 走完一遍文件身份重建：任务声明首帧带齐元数据与
-// 并发上限，逐本进度经句柄落地，**完成**文案带上 updated / total 两个占位参数。
+// TestRebuildFileIdentitiesCompletesWithCounts 走完一遍文件身份重建：任务声明首帧带齐元数据、
+// 不带并发上限，逐本进度经句柄落地，**完成**文案带上 updated / total 两个占位参数。
 func TestRebuildFileIdentitiesCompletesWithCounts(t *testing.T) {
 	store := &maintenanceStore{candidates: seedIdentityCandidates(t, 2)}
 	c, snapshots, _ := newMaintenanceRig(t, store)
@@ -312,8 +312,8 @@ func TestRebuildFileIdentitiesCompletesWithCounts(t *testing.T) {
 	if first.Params["profile"] != "quick_hash" {
 		t.Fatalf("首帧没带上元数据：%v", first.Params)
 	}
-	if first.EffectiveLimit == nil {
-		t.Fatal("首帧没带上并发上限 —— 任务面板上会缺一块")
+	if first.EffectiveLimit != nil {
+		t.Fatalf("文件身份重建是顺序循环，不该报并发上限——面板上那块徽章没有对应的实物：%+v", first.EffectiveLimit)
 	}
 	if len(store.updated) != 2 {
 		t.Fatalf("落库了 %d 本书的身份, want 2", len(store.updated))

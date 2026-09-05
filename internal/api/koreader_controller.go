@@ -787,7 +787,6 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 		CanCancel:    true,
 		CanPause:     true,
 		Metadata:     koreaderMatchMetadata(c.currentConfig()),
-		Limits:       c.taskLimitsForPath("", true),
 		CompleteCode: "task.msg.koreader_rebuild_hashes.complete",
 		CancelCode:   "task.msg.koreader_rebuild_hashes.cancelled",
 		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
@@ -805,9 +804,8 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 
 // launchReconcileKOReaderProgressTask 是 KOReader 进度对账任务的启动点，走引擎的启动入口。
 //
-// 三个任务里只有它不报并发上限：另外两个要逐本读书文件算指纹，taskLimitsForPath 给出的正是
-// 那条路径上的上限，而对账只重算已落库记录的归属。零值的 Limits 表示「没有上限可报」，
-// 不是「上限为 0」——后者会在任务面板上多出一组假数据（见 TaskSpec.Limits）。
+// 它只重算已落库记录的归属，不读书文件，没有哪个并发上限管得住它，因此 Limits 留零值
+// （零值的语义见 TaskSpec.Limits）。
 func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	spec := TaskSpec{
 		Key:          "reconcile_koreader_progress",
@@ -849,7 +847,6 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		CanCancel:    true,
 		CanPause:     true,
 		Metadata:     koreaderMatchMetadata(c.currentConfig()),
-		Limits:       c.taskLimitsForPath("", true),
 		CompleteCode: "task.msg.refresh_koreader_matching.complete",
 		CancelCode:   "task.msg.refresh_koreader_matching.cancelled",
 		FailCode:     "task.msg.refresh_koreader_matching.failed",

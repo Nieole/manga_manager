@@ -361,7 +361,11 @@ type ScanOptions struct {
 	Profile ScanProfile
 }
 
-func (s *Scanner) scanWorkerCount(cfg config.Config, rootPath string, opts ScanOptions) int {
+// WorkerCount 回答「用这份配置扫这条路径，解析工作池会起几个 worker」，是这个数的唯一出处。
+//
+// 导出是因为任务面板要报它：面板报的必须**就是**扫描器会起的那个数，因此调本函数而不是照着
+// 复述一遍公式。复述的那份在收窄判据改口径时不会跟着变，而两边都不报错、没有用例会红。
+func WorkerCount(cfg config.Config, rootPath string, opts ScanOptions) int {
 	workers := cfg.Scanner.Workers
 	if workers <= 0 {
 		workers = runtime.NumCPU() * 2
@@ -561,7 +565,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	// 第 2 阶段：解析工作池。
 	// 并发数受全局 worker 配置与存储 IO 策略共同约束，避免网络盘、机械盘或大归档场景下拖慢阅读器。
 	cfg := s.currentConfig()
-	numWorkers := s.scanWorkerCount(cfg, rootPath, opts)
+	numWorkers := WorkerCount(cfg, rootPath, opts)
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -694,7 +698,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 
 	var wg sync.WaitGroup
 	cfg := s.currentConfig()
-	numWorkers := s.scanWorkerCount(cfg, library.Path, opts)
+	numWorkers := WorkerCount(cfg, library.Path, opts)
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
