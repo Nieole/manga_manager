@@ -1703,7 +1703,7 @@ export const messages: MessageCatalog = {
     'settings.connections.group.catalog': 'Catalog endpoints',
     'settings.connections.group.catalogDescription': 'Use these for library discovery, series search, and base catalog browsing.',
     'settings.connections.group.collections': 'Collection endpoints',
-    'settings.connections.group.collectionsDescription': 'Jump directly into manual collections, AI collections, smart snapshots, and dynamic smart collections.',
+    'settings.connections.group.collectionsDescription': 'Jump directly into manual collections, AI collections, smart snapshots, and smart collections.',
     'settings.connections.group.sync': 'Sync endpoints',
     'settings.connections.group.syncDescription': 'Use these for reading progress sync and device-side state updates.',
     'settings.connections.group.count': 'one={{count}} endpoint|other={{count}} endpoints',
