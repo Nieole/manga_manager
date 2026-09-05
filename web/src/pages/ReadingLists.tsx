@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient, getApiErrorMessage, isCancel } from '../api/client';
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import { ArrowDown, ArrowUp, BookOpen, ListOrdered, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
 import { ModalShell } from '../components/ui/ModalShell';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -52,7 +53,7 @@ export default function ReadingLists() {
   const [seriesResults, setSeriesResults] = useState<SearchHit[]>([]);
   const [listProgress, setListProgress] = useState<Record<number, { read: number; total: number }>>({});
   // 右栏取数的世代号：只有最新一次的响应能落到界面上。
-  const itemsRequestIDRef = useRef(0);
+  const itemsRequest = useLatestRequest();
 
   const loadLists = () => {
     setLoading(true);
@@ -71,30 +72,36 @@ export default function ReadingLists() {
 
   useEffect(() => {
     if (!selected) {
-      itemsRequestIDRef.current += 1;
+      itemsRequest.invalidate();
       queueMicrotask(() => setItems([]));
       return;
     }
-    // 世代号对不上就整份丢弃：慢网下先发的响应后到，不能盖掉用户已经切过去的清单
-    // ——右栏会显示上一个清单的系列，标题却是新清单的。与合集页右栏同一形状。
-    const requestID = itemsRequestIDRef.current + 1;
-    itemsRequestIDRef.current = requestID;
-    apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`)
-      .then((res) => {
-        if (requestID !== itemsRequestIDRef.current) return;
-        const next = res.data || [];
-        setItems(next);
-        const aggregate = next.reduce(
-          (acc, item) => {
-            acc.read += item.read_books || 0;
-            acc.total += item.total_books || item.book_count || 0;
-            return acc;
-          },
-          { read: 0, total: 0 },
-        );
-        setListProgress((prev) => ({ ...prev, [selected.id]: aggregate }));
-      });
-  }, [selected]);
+    // 切清单先清空右栏，再按世代号收响应：留着上一个清单的系列、标题却是新清单的，用户分辨不出来。
+    // 失败同样要认世代号——落到空列表加一条报错，而不是把旧成员冒充成新清单的成员。
+    setItems([]);
+    void itemsRequest.run(
+      () => apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`),
+      {
+        onSuccess: (res) => {
+          const next = res.data || [];
+          setItems(next);
+          const aggregate = next.reduce(
+            (acc, item) => {
+              acc.read += item.read_books || 0;
+              acc.total += item.total_books || item.book_count || 0;
+              return acc;
+            },
+            { read: 0, total: 0 },
+          );
+          setListProgress((prev) => ({ ...prev, [selected.id]: aggregate }));
+        },
+        onError: (error) => {
+          setItems([]);
+          showToast(getApiErrorMessage(error, t('readingLists.toast.loadFailed')), 'error');
+        },
+      },
+    );
+  }, [selected, itemsRequest, showToast, t]);
 
   useEffect(() => {
     const query = seriesQuery.trim();
@@ -157,19 +164,24 @@ export default function ReadingLists() {
     if (!selected) return;
     const id = Number((hit.id || hit.fields?.id || '').replace('s_', ''));
     if (!id) return;
-    // 这条重取也整份覆盖右栏，同样要认世代号：加完这一步用户可能已经切走了。
-    const requestID = itemsRequestIDRef.current;
-    apiClient.post(`/api/reading-lists/${selected.id}/items`, { series_id: id }).then(() => {
-      setSeriesQuery('');
-      setSeriesResults([]);
-      return apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`);
-    }).then((res) => {
-      if (requestID !== itemsRequestIDRef.current) return;
-      setItems(res.data || []);
-      loadLists();
-    }).catch((error) => {
-      showToast(getApiErrorMessage(error, t('readingLists.toast.addFailed')), 'error');
-    });
+    // 这条重取也整份覆盖右栏，同样要认世代号：加完这一步用户可能已经切走了。用 follow 而不是 run
+    // ——它该被后发的切换作废，却不该反过来作废右栏正在取的那一份。
+    void itemsRequest.follow(
+      () => apiClient.post(`/api/reading-lists/${selected.id}/items`, { series_id: id }).then(() => {
+        setSeriesQuery('');
+        setSeriesResults([]);
+        return apiClient.get<ReadingListItem[]>(`/api/reading-lists/${selected.id}/items`);
+      }),
+      {
+        onSuccess: (res) => {
+          setItems(res.data || []);
+          loadLists();
+        },
+        onError: (error) => {
+          showToast(getApiErrorMessage(error, t('readingLists.toast.addFailed')), 'error');
+        },
+      },
+    );
   };
 
   // 后端对「条目不在这个清单里」返回 404，所以这里不能再无条件把它从列表里划掉：

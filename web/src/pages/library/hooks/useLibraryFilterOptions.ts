@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../api/client';
+import { useLatestRequest } from '../../../hooks/useLatestRequest';
 
 import type { NamedOption } from '../types';
 
@@ -18,6 +19,10 @@ export function useLibraryFilterOptions({ activeTag, activeAuthor }: UseLibraryF
   const [allAuthors, setAllAuthors] = useState<NamedOption[]>([]);
   const [filterOptionsLoaded, setFilterOptionsLoaded] = useState(false);
   const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
+  // 标签与作者的联想各记一个世代号：只有 250 毫秒防抖挡不住在途请求，慢网下先发的响应后到，
+  // 下拉里列的就是上一次输入的候选。两条链路互不作废。
+  const tagRequest = useLatestRequest();
+  const authorRequest = useLatestRequest();
 
   const loadFilterOptions = useCallback(() => {
     if (filterOptionsLoaded || filterOptionsLoading) return;
@@ -49,15 +54,18 @@ export function useLibraryFilterOptions({ activeTag, activeAuthor }: UseLibraryF
       const params = new URLSearchParams();
       params.set('limit', query ? '50' : '30');
       if (query) params.set('q', query);
-      apiClient
-        .get<NamedOption[]>(`/api/tags/search?${params.toString()}`)
-        .then((res) => {
-          const items = Array.isArray(res.data) ? res.data : [];
-          setAllTags(includeActiveOption(items, activeTag));
-        })
-        .catch((err) => console.error('Failed to search tags', err));
+      void tagRequest.run(
+        () => apiClient.get<NamedOption[]>(`/api/tags/search?${params.toString()}`),
+        {
+          onSuccess: (res) => {
+            const items = Array.isArray(res.data) ? res.data : [];
+            setAllTags(includeActiveOption(items, activeTag));
+          },
+          onError: (err) => console.error('Failed to search tags', err),
+        },
+      );
     },
-    [activeTag],
+    [activeTag, tagRequest],
   );
 
   const searchAuthorOptions = useCallback(
@@ -65,15 +73,18 @@ export function useLibraryFilterOptions({ activeTag, activeAuthor }: UseLibraryF
       const params = new URLSearchParams();
       params.set('limit', query ? '50' : '30');
       if (query) params.set('q', query);
-      apiClient
-        .get<NamedOption[]>(`/api/authors/search?${params.toString()}`)
-        .then((res) => {
-          const items = Array.isArray(res.data) ? res.data : [];
-          setAllAuthors(includeActiveOption(items, activeAuthor));
-        })
-        .catch((err) => console.error('Failed to search authors', err));
+      void authorRequest.run(
+        () => apiClient.get<NamedOption[]>(`/api/authors/search?${params.toString()}`),
+        {
+          onSuccess: (res) => {
+            const items = Array.isArray(res.data) ? res.data : [];
+            setAllAuthors(includeActiveOption(items, activeAuthor));
+          },
+          onError: (err) => console.error('Failed to search authors', err),
+        },
+      );
     },
-    [activeAuthor],
+    [activeAuthor, authorRequest],
   );
 
   return {

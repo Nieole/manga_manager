@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import { getApiErrorMessage } from '../api/client';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, ExternalLink, Filter, GitCompareArrows, Loader2, Search, ShieldCheck, XCircle } from 'lucide-react';
@@ -71,7 +72,7 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   const itemsLengthRef = useRef(0);
   const hasMoreRef = useRef(true);
   const requestBusyRef = useRef(false);
-  const requestSeqRef = useRef(0);
+  const reviewsRequest = useLatestRequest();
 
   const limit = 30;
   const providers = useMemo(() => Array.from(new Set(items.map((item) => item.provider).filter(Boolean))).sort(), [items]);
@@ -90,6 +91,8 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
     hasMoreRef.current = hasMore;
   }, [hasMore, items.length]);
 
+  // 三条路径都认世代号：失败那条尤其要认。旧条件的请求失败时无条件清空列表，会把新条件已经
+  // 取回并渲染出来的那份整份抹掉，界面退回「当前没有待审核的元数据」。清空只对当前世代做。
   const loadReviews = useCallback(async (reset = false) => {
     if (!reset && requestBusyRef.current) return [];
     if (reset) {
@@ -98,12 +101,10 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
       if (!hasMoreRef.current) return [];
       setLoadingMore(true);
     }
-    const requestSeq = requestSeqRef.current + 1;
-    requestSeqRef.current = requestSeq;
     requestBusyRef.current = true;
-    try {
-      const offset = reset ? 0 : itemsLengthRef.current;
-      const res = await apiClient.get<MetadataReviewInboxResponse>('/api/metadata/reviews', {
+    const offset = reset ? 0 : itemsLengthRef.current;
+    const payload = await reviewsRequest.run(
+      () => apiClient.get<MetadataReviewInboxResponse>('/api/metadata/reviews', {
         params: {
           library_id: libraryId,
           provider,
@@ -111,32 +112,34 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
           limit,
           offset,
         },
-      });
-      const nextItems = res.data.items || [];
-      if (requestSeq !== requestSeqRef.current) return [];
-      setItems((current) => reset ? nextItems : [...current, ...nextItems.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setTotal(res.data.total || 0);
-      setActiveReviewId((current) => {
-        if (!reset && current != null) return current;
-        if (current != null && nextItems.some((item) => item.id === current)) return current;
-        return nextItems[0]?.id ?? null;
-      });
-      return nextItems;
-    } catch (err: unknown) {
-      showToast(getApiErrorMessage(err, t('metadataReviews.toast.loadFailed')), 'error');
-      if (reset) {
-        setItems([]);
-        setTotal(0);
-      }
-      return [];
-    } finally {
-      if (requestSeq === requestSeqRef.current) {
-        requestBusyRef.current = false;
-        setLoading(false);
-        setLoadingMore(false);
-      }
-    }
-  }, [appliedQuery, libraryId, provider, showToast, t]);
+      }).then((res) => res.data),
+      {
+        onSuccess: (data) => {
+          const nextItems = data.items || [];
+          setItems((current) => reset ? nextItems : [...current, ...nextItems.filter((item) => !current.some((existing) => existing.id === item.id))]);
+          setTotal(data.total || 0);
+          setActiveReviewId((current) => {
+            if (!reset && current != null) return current;
+            if (current != null && nextItems.some((item) => item.id === current)) return current;
+            return nextItems[0]?.id ?? null;
+          });
+        },
+        onError: (err) => {
+          showToast(getApiErrorMessage(err, t('metadataReviews.toast.loadFailed')), 'error');
+          if (reset) {
+            setItems([]);
+            setTotal(0);
+          }
+        },
+        onSettled: () => {
+          requestBusyRef.current = false;
+          setLoading(false);
+          setLoadingMore(false);
+        },
+      },
+    );
+    return payload?.items || [];
+  }, [appliedQuery, libraryId, provider, reviewsRequest, showToast, t]);
 
   useEffect(() => {
     setMarkedActions({});

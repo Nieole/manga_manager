@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient, getApiErrorMessage } from '../../api/client';
+import { useLatestRequest } from '../../hooks/useLatestRequest';
 import { FolderHeart, Plus } from 'lucide-react';
 import { useAuth } from '../../auth/AuthProvider';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -63,6 +64,7 @@ export default function Collections() {
   const [pendingDeleteSmart, setPendingDeleteSmart] = useState<Collection | null>(null);
   const [kindTab, setKindTab] = useState<'all' | 'manual' | 'smart'>('all');
   const navigate = useNavigate();
+  const snapshotPreviewRequest = useLatestRequest();
 
   const fetchCollections = () => {
     apiClient.get('/api/collection-views').then(res => {
@@ -158,24 +160,28 @@ export default function Collections() {
     setShowSnapshot(true);
   };
 
+  // 防抖只清得掉还没发出的定时器，清不掉已经发出的那一份：接着改名字，先发的预览后到就盖掉新的，
+  // 转圈也被它提前关掉。发出去的这份因此也要认世代号。
   useEffect(() => {
     if (!showSnapshot || !selected || selected.kind !== 'smart') return;
     const timer = window.setTimeout(() => {
       setSnapshotPreviewLoading(true);
-      apiClient.get<SmartCollectionSnapshotPreview>(`/api/collection-views/smart/${selected.numeric_id}/snapshot-preview`, {
-        params: {
-          name: snapshotName,
-          description: snapshotDesc,
-          preview_limit: 8,
+      void snapshotPreviewRequest.run(
+        () => apiClient.get<SmartCollectionSnapshotPreview>(`/api/collection-views/smart/${selected.numeric_id}/snapshot-preview`, {
+          params: {
+            name: snapshotName,
+            description: snapshotDesc,
+            preview_limit: 8,
+          },
+        }),
+        {
+          onSuccess: (res) => setSnapshotPreview(res.data),
+          onSettled: () => setSnapshotPreviewLoading(false),
         },
-      }).then((res) => {
-        setSnapshotPreview(res.data);
-      }).finally(() => {
-        setSnapshotPreviewLoading(false);
-      });
+      );
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [selected, showSnapshot, snapshotName, snapshotDesc]);
+  }, [selected, showSnapshot, snapshotName, snapshotDesc, snapshotPreviewRequest]);
 
   // 后端对重名判 409（不区分大小写、且已裁掉首尾空白）。弹窗保持打开，用户改个名字就能重试。
   const reportSaveError = (err: unknown) => {

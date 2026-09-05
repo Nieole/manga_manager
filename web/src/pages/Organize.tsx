@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import { BookOpen, ChevronDown, ChevronRight, Fingerprint, FileQuestion, ImageOff, Library, ListChecks, RefreshCw, Search, ShieldAlert, Tags } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
@@ -94,28 +95,37 @@ export default function Organize() {
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [severityExpanded, setSeverityExpanded] = useState<Record<string, boolean>>({ error: true, warn: true, info: false });
   const { showToast } = useToast();
+  const reportRequest = useLatestRequest();
 
   const fetchReport = async () => {
     setLoading(true);
-    try {
-      const params = new URLSearchParams({ limit: '80' });
-      if (libraryId !== 'ALL') params.set('library_id', libraryId);
-      const [librariesRes, reportRes] = await Promise.all([
+    const params = new URLSearchParams({ limit: '80' });
+    if (libraryId !== 'ALL') params.set('library_id', libraryId);
+    await reportRequest.run(
+      () => Promise.all([
         apiClient.get<LibraryOption[]>('/api/libraries').catch(() => ({ data: [] as LibraryOption[] })),
         apiClient.get<HealthReport>(`/api/health/report?${params.toString()}`),
-      ]);
-      setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
-      setReport(reportRes.data);
-    } catch (error) {
-      console.error(error);
-      showToast(t('organize.toast.loadFailed'), 'error');
-    } finally {
-      setLoading(false);
-    }
+      ]),
+      {
+        onSuccess: ([librariesRes, reportRes]) => {
+          setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
+          setReport(reportRes.data);
+        },
+        onError: (error) => {
+          console.error(error);
+          showToast(t('organize.toast.loadFailed'), 'error');
+        },
+        onSettled: () => setLoading(false),
+      },
+    );
   };
 
+  // 换库先把上一个库的报告丢掉，取回来的那一份还要认世代号：慢网下连切两个库，先发的响应后到
+  // 会盖掉界面——下拉框写着甲库，列表列的是乙库的问题。失败不清空，可见性/聚焦触发的重取失败时
+  // 当前库那份仍然是真的。
   useEffect(() => {
-    fetchReport();
+    setReport(null);
+    void fetchReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
 

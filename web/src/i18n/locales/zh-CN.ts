@@ -434,6 +434,7 @@ export const messages: MessageCatalog = {
     'readingLists.readNext': '阅读下一本',
     'readingLists.deleteTitle': '删除阅读清单',
     'readingLists.deleteDescription': '确定要删除阅读清单「{{name}}」吗？这不会删除原始漫画文件。',
+    'readingLists.toast.loadFailed': '加载阅读清单成员失败',
     'readingLists.toast.addFailed': '加入阅读清单失败',
     'readingLists.toast.removeFailed': '从阅读清单移除失败',
     'readingLists.toast.reorderFailed': '保存阅读清单顺序失败',

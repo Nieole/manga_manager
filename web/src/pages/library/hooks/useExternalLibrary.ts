@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../api/client';
+import { useLatestRequest } from '../../../hooks/useLatestRequest';
 import type { BrowseDirEntry, BrowseDrive } from '../../../components/layout/types';
 import {
   type ExternalSession,
@@ -69,6 +70,7 @@ export function useExternalLibrary({
   const [externalBrowseCurrent, setExternalBrowseCurrent] = useState('');
   const [externalBrowseParent, setExternalBrowseParent] = useState('');
   const [externalBrowseDrives, setExternalBrowseDrives] = useState<BrowseDrive[]>([]);
+  const sessionRequest = useLatestRequest();
 
   // 1. 初始化：localStorage 读取
   useEffect(() => {
@@ -92,13 +94,15 @@ export function useExternalLibrary({
     localStorage.setItem(IGNORE_EXT_KEY, externalIgnoreExtension ? 'true' : 'false');
   }, [externalIgnoreExtension]);
 
-  // 2. 切库时清掉外部会话
+  // 2. 切库时清掉外部会话，并作废在飞的会话请求——1.5 秒一次的轮询响应回来时库可能已经换了，
+  // 落回去就是把上一个库的外部会话装进新库的抽屉。
   useEffect(() => {
+    sessionRequest.invalidate();
     setExternalSession(null);
     setExternalSeriesMap({});
     setExternalScanTaskKey(null);
     setExternalTransferTaskKey(null);
-  }, [libId]);
+  }, [libId, sessionRequest]);
 
   const setExternalIgnoreExtension = useCallback((value: boolean) => {
     setExternalIgnoreExtensionState(value);
@@ -117,21 +121,23 @@ export function useExternalLibrary({
   const fetchExternalSession = useCallback(
     async (sessionId: string | undefined): Promise<ExternalSession | null> => {
       if (!libId || !sessionId) return null;
-      try {
-        const res = await apiClient.get<ExternalSession>(
+      const session = await sessionRequest.run(
+        () => apiClient.get<ExternalSession>(
           `/api/libraries/${libId}/external-libraries/session/${sessionId}`,
           { params: { _ts: Date.now() } },
-        );
-        setExternalSession(res.data);
-        return res.data;
-      } catch (err) {
-        console.error('Failed to fetch external session', err);
-        setExternalSession(null);
-        setExternalSeriesMap({});
-        return null;
-      }
+        ).then((res) => res.data),
+        {
+          onSuccess: (data) => setExternalSession(data),
+          onError: (err) => {
+            console.error('Failed to fetch external session', err);
+            setExternalSession(null);
+            setExternalSeriesMap({});
+          },
+        },
+      );
+      return session ?? null;
     },
-    [libId],
+    [libId, sessionRequest],
   );
 
   const requestSeriesStatus = useCallback(

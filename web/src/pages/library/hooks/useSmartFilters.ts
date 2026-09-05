@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../../api/client';
+import { useLatestRequest } from '../../../hooks/useLatestRequest';
 import { DEFAULT_PAGE_SIZE, type SavedSmartFilter } from '../types';
 import { EMPTY_ADVANCED_FILTERS, type AdvancedFilters } from './libraryFilterParams';
 import { normalizeRemoteSmartFilter, smartFilterRequestBody } from './smartFilterNormalize';
@@ -94,9 +95,12 @@ export function useSmartFilters({
 }: UseSmartFiltersParams): UseSmartFiltersResult {
   const [savedSmartFilters, setSavedSmartFilters] = useState<SavedSmartFilter[]>([]);
   const loadedLibIdRef = useRef<string | null>(null);
+  const listRequest = useLatestRequest();
 
-  // 切库或挂载：仅用 localStorage 缓存即时填充，不发任何网络请求
+  // 切库或挂载：仅用 localStorage 缓存即时填充，不发任何网络请求。
+  // 同时作废在飞的远端请求——路由是 library/:libId，组件不卸载，甲库的响应回来照样会写进乙库的面板。
   useEffect(() => {
+    listRequest.invalidate();
     if (!libId) {
        
       setSavedSmartFilters([]);
@@ -106,16 +110,16 @@ export function useSmartFilters({
      
     setSavedSmartFilters(readCachedSmartFilters(libId));
     loadedLibIdRef.current = null;
-  }, [libId]);
+  }, [libId, listRequest]);
 
-  // ensureLoaded：在用户真正展开"智能筛选视图"面板时再去拉服务端列表
-  // 同一资料库同一会话内只会调用一次（StrictMode 双倍 effect 也只触发一次远端请求）
+  // ensureLoaded：在用户真正展开"智能筛选视图"面板时再去拉服务端列表。
+  // 「只跑一次」按资料库各记一次（loadedLibIdRef 存的是库 id，切库即重置），响应还要再过一道世代号。
   const ensureLoaded = useCallback(() => {
     if (!libId) return;
     if (loadedLibIdRef.current === libId) return;
     loadedLibIdRef.current = libId;
-    (async () => {
-      try {
+    void listRequest.run(
+      async () => {
         const legacyItems = readSavedSmartFilters(libId);
         const migrated = localStorage.getItem(smartFilterMigrationKey(libId)) === 'true';
         if (!migrated && legacyItems.length > 0) {
@@ -128,16 +132,21 @@ export function useSmartFilters({
         }
 
         const res = await apiClient.get<SavedSmartFilter[]>(`/api/libraries/${libId}/smart-filters/`);
-        const normalized = (res.data || []).map(normalizeRemoteSmartFilter);
-        setSavedSmartFilters(normalized);
-        writeCachedSmartFilters(libId, normalized);
-      } catch (err) {
-        console.error('Failed to load smart filters', err);
-        loadedLibIdRef.current = null;
-        setSavedSmartFilters(readSavedSmartFilters(libId));
-      }
-    })();
-  }, [libId]);
+        return (res.data || []).map(normalizeRemoteSmartFilter);
+      },
+      {
+        onSuccess: (normalized) => {
+          setSavedSmartFilters(normalized);
+          writeCachedSmartFilters(libId, normalized);
+        },
+        onError: (err) => {
+          console.error('Failed to load smart filters', err);
+          loadedLibIdRef.current = null;
+          setSavedSmartFilters(readSavedSmartFilters(libId));
+        },
+      },
+    );
+  }, [libId, listRequest]);
 
   const saveSmartFilter = useCallback(
     async (rawName: string, current: CurrentFilterState) => {

@@ -434,6 +434,7 @@ export const messages: MessageCatalog = {
     'readingLists.readNext': 'Read next',
     'readingLists.deleteTitle': 'Delete reading list',
     'readingLists.deleteDescription': 'Delete reading list "{{name}}"? This does not delete original manga files.',
+    'readingLists.toast.loadFailed': 'Failed to load reading list items',
     'readingLists.toast.addFailed': 'Failed to add to reading list',
     'readingLists.toast.removeFailed': 'Failed to remove from reading list',
     'readingLists.toast.reorderFailed': 'Failed to save reading list order',

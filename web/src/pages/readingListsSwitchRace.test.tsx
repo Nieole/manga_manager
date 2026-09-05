@@ -2,11 +2,12 @@
  * @vitest-environment jsdom
  *
  * 守阅读清单右栏的世代号：慢网下连点两个清单时，先发的响应后到，不能盖掉用户已经切过去的
- * 那一个——否则标题写着新清单，底下列的却是上一个清单的系列。
+ * 那一个——否则标题写着新清单，底下列的却是上一个清单的系列。失败路径同理：取不到成员要落到
+ * 空列表加一条报错，不能把上一个清单的系列原样留在那儿冒充新清单的成员。
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import { LocaleProvider } from '../i18n/LocaleProvider';
@@ -91,11 +92,35 @@ describe('阅读清单切换取数', () => {
     fireEvent.click(screen.getByText('清单乙'));
     await waitFor(() => expect(screen.getByText('乙的系列')).toBeTruthy());
 
-    releaseA!();
     // 迟到的甲响应必须整份丢弃：右栏还是乙的成员。
-    await waitFor(() => expect(mocks.get).toHaveBeenCalledWith('/api/reading-lists/2/items'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await act(async () => { releaseA!(); });
     expect(screen.queryByText('甲的系列')).toBeNull();
     expect(screen.getByText('乙的系列')).toBeTruthy();
+  });
+
+  it('切过去的清单成员取失败时，右栏清空并报错，而不是留着上一个清单的系列', async () => {
+    let rejectB: ((error: unknown) => void) | null = null;
+    mocks.get.mockImplementation((url: string) => {
+      if (url === '/api/reading-lists/') return Promise.resolve({ data: [LIST_A, LIST_B] });
+      if (url === '/api/reading-lists/1/items') return Promise.resolve({ data: [item(1, '甲的系列')] });
+      if (url === '/api/reading-lists/2/items') {
+        return new Promise((_resolve, reject) => {
+          rejectB = (error: unknown) => reject(error);
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    renderPage();
+    // 首屏自动选中甲，成员正常列出来。
+    await waitFor(() => expect(screen.getByText('甲的系列')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('清单乙'));
+    await waitFor(() => expect(rejectB).not.toBeNull());
+    await act(async () => { rejectB!(new Error('network down')); });
+
+    // 标题已经是乙清单了，底下就不能再是甲清单的系列；失败要有一条看得见的报错。
+    expect(screen.queryByText('甲的系列')).toBeNull();
+    expect(screen.getByText('加载阅读清单成员失败')).toBeTruthy();
   });
 });

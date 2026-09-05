@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import { getApiErrorMessage } from '../api/client';
 import { Link, useOutletContext } from 'react-router-dom';
 import { CheckCircle2, Filter, Layers3, Loader2, Pencil, Save, Sparkles, X, XCircle } from 'lucide-react';
@@ -121,7 +122,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
   const itemsLengthRef = useRef(0);
   const hasMoreRef = useRef(true);
   const requestBusyRef = useRef(false);
-  const requestSeqRef = useRef(0);
+  const reviewsRequest = useLatestRequest();
 
   const limit = 20;
   const activeReview = useMemo(
@@ -139,6 +140,8 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     hasMoreRef.current = hasMore;
   }, [hasMore, items.length]);
 
+  // 三条路径都认世代号：失败那条尤其要认。旧筛选的请求失败时无条件清空列表，会把新筛选已经
+  // 取回并渲染出来的那份整份抹掉，界面退回「当前没有待审核的分组提案」。清空只对当前世代做。
   const loadReviews = useCallback(async (reset = false) => {
     if (!reset && requestBusyRef.current) return [];
     if (reset) {
@@ -147,44 +150,44 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
       if (!hasMoreRef.current) return [];
       setLoadingMore(true);
     }
-    const requestSeq = requestSeqRef.current + 1;
-    requestSeqRef.current = requestSeq;
     requestBusyRef.current = true;
-    try {
-      const offset = reset ? 0 : itemsLengthRef.current;
-      const res = await apiClient.get<AIGroupingReviewsResponse>('/api/ai-grouping/reviews', {
+    const offset = reset ? 0 : itemsLengthRef.current;
+    const payload = await reviewsRequest.run(
+      () => apiClient.get<AIGroupingReviewsResponse>('/api/ai-grouping/reviews', {
         params: {
           library_id: libraryId,
           status,
           limit,
           offset,
         },
-      });
-      const nextItems = res.data.items || [];
-      if (requestSeq !== requestSeqRef.current) return [];
-      setItems((current) => reset ? nextItems : [...current, ...nextItems.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setTotal(res.data.total || 0);
-      setActiveReviewId((current) => {
-        if (!reset && current != null) return current;
-        if (current != null && nextItems.some((item) => item.id === current)) return current;
-        return nextItems[0]?.id ?? null;
-      });
-      return nextItems;
-    } catch (err: unknown) {
-      showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.loadFailed')), 'error');
-      if (reset) {
-        setItems([]);
-        setTotal(0);
-      }
-      return [];
-    } finally {
-      if (requestSeq === requestSeqRef.current) {
-        requestBusyRef.current = false;
-        setLoading(false);
-        setLoadingMore(false);
-      }
-    }
-  }, [libraryId, showToast, status, t]);
+      }).then((res) => res.data),
+      {
+        onSuccess: (data) => {
+          const nextItems = data.items || [];
+          setItems((current) => reset ? nextItems : [...current, ...nextItems.filter((item) => !current.some((existing) => existing.id === item.id))]);
+          setTotal(data.total || 0);
+          setActiveReviewId((current) => {
+            if (!reset && current != null) return current;
+            if (current != null && nextItems.some((item) => item.id === current)) return current;
+            return nextItems[0]?.id ?? null;
+          });
+        },
+        onError: (err) => {
+          showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.loadFailed')), 'error');
+          if (reset) {
+            setItems([]);
+            setTotal(0);
+          }
+        },
+        onSettled: () => {
+          requestBusyRef.current = false;
+          setLoading(false);
+          setLoadingMore(false);
+        },
+      },
+    );
+    return payload?.items || [];
+  }, [libraryId, reviewsRequest, showToast, status, t]);
 
   // 一条审核里有多个候选合集，用户逐个处置。处置完一条就把列表重置成第一页，等于把滚动
   // 累积的几十条踹回第一屏、右栏跳回队首，用户得重新滚回原处——因此这里只就地更新：
@@ -203,24 +206,27 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
   const refreshLoadedReviews = useCallback(async () => {
     const loaded = itemsLengthRef.current;
     if (loaded === 0) return;
-    const requestSeq = requestSeqRef.current;
-    try {
-      const responses = await Promise.all(
+    await reviewsRequest.follow(
+      () => Promise.all(
         Array.from({ length: Math.ceil(loaded / limit) }, (_, index) => apiClient.get<AIGroupingReviewsResponse>('/api/ai-grouping/reviews', {
           params: { library_id: libraryId, status, limit, offset: index * limit },
         })),
-      );
-      if (requestSeq !== requestSeqRef.current) return;
-      const incoming = new Map<number, AIGroupingReview>();
-      for (const res of responses) {
-        for (const item of res.data.items || []) incoming.set(item.id, item);
-      }
-      setItems((current) => current.map((item) => incoming.get(item.id) ?? item));
-      setTotal(responses[0]?.data.total ?? 0);
-    } catch (err: unknown) {
-      showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.loadFailed')), 'error');
-    }
-  }, [libraryId, showToast, status, t]);
+      ),
+      {
+        onSuccess: (responses) => {
+          const incoming = new Map<number, AIGroupingReview>();
+          for (const res of responses) {
+            for (const item of res.data.items || []) incoming.set(item.id, item);
+          }
+          setItems((current) => current.map((item) => incoming.get(item.id) ?? item));
+          setTotal(responses[0]?.data.total ?? 0);
+        },
+        onError: (err) => {
+          showToast(getApiErrorMessage(err, t('aiGroupingReviews.toast.loadFailed')), 'error');
+        },
+      },
+    );
+  }, [libraryId, reviewsRequest, showToast, status, t]);
 
   useEffect(() => {
     setMarkedActions({});
