@@ -187,21 +187,30 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 			return nil
 		}
 
+		// 时刻由用例给、每一拍也由用例自己驱动：不起事件循环，就不存在「刷新窗口的协程被饿着、
+		// 墙钟却照走」这回事——判据于是只看派发逻辑，不看机器快慢。
+		now := time.Unix(1700000000, 0)
 		fw.mu.Lock()
 		fw.libs[libPath] = libID
-		fw.pendingCleanup[libID] = cleanupSchedule{firstEvent: time.Now().Add(-time.Second), lastEvent: time.Now().Add(-time.Second)} // Rename(旧名) 排的清理，早已到期
-		fw.pending[libID] = time.Now()                                                                                                // Create/Write 排的扫描，窗口刚被刷新
+		fw.pendingCleanup[libID] = cleanupSchedule{firstEvent: now.Add(-time.Second), lastEvent: now.Add(-time.Second)} // Rename(旧名) 排的清理，早已到期
 		fw.mu.Unlock()
-
-		fw.Start(nil)
 		t.Cleanup(fw.Stop)
-		stopWriting := keepWriting(fw, libID)
-		defer stopWriting()
 
+		// 一边改名一边往库里拷新书：每一拍都有新的写入把扫描的去抖窗口顶到当前，它永远不到期。
+		for range 25 {
+			now = now.Add(fw.timings.tick)
+			fw.mu.Lock()
+			fw.pending[libID] = now
+			fw.dispatchDueLocked(now, nil)
+			fw.mu.Unlock()
+		}
+
+		// Stop 等派出去的活儿退出：清理只要被派发过，此刻它一定已经落进 channel。
+		fw.Stop()
 		select {
 		case <-cleanupStarted:
 			t.Fatal("扫描还排着队没跑、改名尚未重连，清理就单独派发了：旧行连同阅读进度会被删掉")
-		case <-time.After(500 * time.Millisecond): // 25 个 tick
+		default:
 		}
 	})
 
