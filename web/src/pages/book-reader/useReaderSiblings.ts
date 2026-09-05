@@ -119,6 +119,10 @@ export function useReaderSiblings({
     if (!seriesId || loading) return;
     if (lastSeriesFetchRef.current === seriesId) return;
     lastSeriesFetchRef.current = seriesId;
+    // 上一个系列的书必须当场丢掉，不能留到新上下文回来才换：两个系列都有「第 1 卷」时（极常见）
+    // 交集非空，顶栏的卷内章节列表整段请求期间都亮着，点进去跳到另一个系列的书。
+    setContextBooks([]);
+    setContextSeriesId(null);
 
     apiClient.get<SeriesContextLite>(`/api/series/${seriesId}/context`)
       .then((res) => {

@@ -103,7 +103,6 @@ export default function BookReader() {
     const {
         cachedPageImageUrls,
         setCachedPageImageUrls,
-        imageOptionsKey,
         getBookCache,
         getImageUrlForBook,
         getImageUrl,
@@ -306,11 +305,9 @@ export default function BookReader() {
         forcedVisible: showSettings || showHelp,
     });
 
-    // 当书籍或图像处理参数变化时，预加载去重缓存需要重新开始计算。
-    useEffect(() => {
-        clearAllPageImageCaches();
-    }, [imageOptionsKey, clearAllPageImageCaches]);
-
+    // 取图参数变化时的作废由 usePageImageCache 在取缓存那一刻自己完成。页面这一层再挂一条清空
+    // effect 会与预热 effect 抢跑，清在后就把当前页刚发出的请求判成迟到，页面停在转圈上；
+    // 下面这一条只管卸载。
     useEffect(() => {
         return () => clearAllPageImageCaches();
     }, [clearAllPageImageCaches]);

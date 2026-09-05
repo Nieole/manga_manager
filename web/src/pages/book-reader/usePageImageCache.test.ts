@@ -1,9 +1,9 @@
 /**
  * @vitest-environment jsdom
  *
- * 守阅读器页图缓存的 Object URL 生命周期：createObjectURL 造出的 URL 不显式 revoke
- * 就不会被回收，整本书读下来能积几百 MB 且不报错。三条防线都要覆盖：滑动窗口外的页、
- * 清空缓存后迟到的响应、切书丢弃的整本缓存。
+ * 守阅读器页图缓存的两条不变量：一是 Object URL 的生命周期，createObjectURL 造出的 URL 不显式
+ * revoke 就不会被回收，整本书读下来能积几百 MB 且不报错；二是缓存的身份等同于请求地址，作废与否
+ * 只看地址变没变，代际按书各算——两者任一破了，当前页会停在转圈上，只有手动翻页才恢复。
  *
  * jsdom 不实现 Object URL，用 liveObjectUrls/revoked 两个替身表判断泄漏与否。
  */
@@ -81,6 +81,29 @@ function setup(bookId = '42', overrides: Partial<Parameters<typeof usePageImageC
       ...overrides,
     }),
   );
+}
+
+type CacheOptions = Parameters<typeof usePageImageCache>[0];
+
+// setupRerenderable 把取图参数交给 rerender，好模拟拖窗口跨档这类「参数换了一套」的动作。
+function setupRerenderable(initialProps: Partial<CacheOptions>) {
+  const currentBookIdRef = createRef<string | null>() as { current: string | null };
+  currentBookIdRef.current = '42';
+  return renderHook((props: Partial<CacheOptions>) =>
+    usePageImageCache({
+      imageFilter: 'none',
+      w2xScale: 2,
+      w2xNoise: 1,
+      w2xFormat: 'png',
+      autoCrop: false,
+      readerImageFormat: 'webp',
+      readerImageQuality: 80,
+      targetWidth: 0,
+      targetHeight: 0,
+      currentBookIdRef,
+      ...props,
+    }),
+  { initialProps });
 }
 
 // settle 让最早的那个在途请求成功返回。
@@ -210,5 +233,47 @@ describe('页图缓存的 Object URL 生命周期', () => {
     });
     // 失败留在表里的话，这一页在本次阅读中永远加载不出来了。
     expect(pending).toHaveLength(1);
+  });
+});
+
+describe('取图参数变化时的作废', () => {
+  it('参数没进请求地址就不作废：白清一轮换不来任何一个新地址', async () => {
+    // 非重采样滤镜下目标尺寸不写进地址。转屏、拖窗口跨档、切适应模式都只动这两个数。
+    const { result, rerender } = setupRerenderable({ imageFilter: 'none', targetWidth: 1024 });
+    await act(async () => {
+      void result.current.ensurePageImageLoaded('42', 1);
+    });
+    await settleFirst();
+    expect(result.current.cachedPageImageUrls[1]).toBe('blob:mock/1');
+
+    rerender({ imageFilter: 'none', targetWidth: 1536 });
+    act(() => {
+      result.current.getBookCache('42');
+    });
+
+    expect(result.current.cachedPageImageUrls[1]).toBe('blob:mock/1');
+    expect(revoked).toEqual([]);
+    expect(pending).toHaveLength(0);
+  });
+
+  it('另一本书的作废不得把这本在途的请求判成迟到', async () => {
+    const { result, rerender } = setupRerenderable({ imageFilter: 'lanczos3', targetWidth: 1024 });
+    act(() => {
+      result.current.getBookCache('77');
+    });
+    await act(async () => {
+      void result.current.ensurePageImageLoaded('42', 1);
+    });
+
+    // 拖窗口跨档，地址真的换了；随后预加载下一本会先取到那本书的缓存，把它整份作废。
+    rerender({ imageFilter: 'lanczos3', targetWidth: 1536 });
+    act(() => {
+      result.current.getBookCache('77');
+    });
+    await settleFirst();
+
+    // 代际共用一个计数器时，这里当前页的图会被当成迟到响应丢掉，而此后没有任何依赖再变化——
+    // 用户看到的就是当前页永久转圈，后面几页反而有图。
+    expect(result.current.cachedPageImageUrls[1]).toBe('blob:mock/1');
   });
 });
