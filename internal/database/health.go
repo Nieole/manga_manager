@@ -110,7 +110,8 @@ type scopeKey struct {
 
 // lastTaskKeysForScopes 批量取每个 (scope, scope_id) 下最近一次任务的 key。
 //
-// 用窗口函数在一条 SQL 里分组取最新，避免 N 次单行查询。
+// 用窗口函数在一条 SQL 里分组取最新，避免 N 次单行查询。排序末位跟 ListTasks 一致收在
+// sequence 与主键 key 上：updated_at 只有秒精度，同一秒内的多条任务少了它就由查询计划挑一行。
 // scopeKey 数量由调用方去重后传入，通常在几十到上千之间；这里按批切分占位符，
 // 免得撞上 SQLite 的变量数上限（32766）。
 func (s *SqlStore) lastTaskKeysForScopes(ctx context.Context, wanted map[scopeKey]struct{}) (map[scopeKey]string, error) {
@@ -140,7 +141,7 @@ func (s *SqlStore) lastTaskKeysForScopes(ctx context.Context, wanted map[scopeKe
 		query := `
 			SELECT scope, scope_id, key FROM (
 				SELECT scope, scope_id, key,
-					ROW_NUMBER() OVER (PARTITION BY scope, scope_id ORDER BY updated_at DESC) AS rn
+					ROW_NUMBER() OVER (PARTITION BY scope, scope_id ORDER BY updated_at DESC, sequence DESC, key DESC) AS rn
 				FROM tasks
 				WHERE ` + strings.Join(conditions, " OR ") + `
 			) WHERE rn = 1`

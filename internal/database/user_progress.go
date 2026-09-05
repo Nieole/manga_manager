@@ -328,11 +328,15 @@ func (s *SqlStore) GetUserRecentReadAll(ctx context.Context, userID, limit int64
 }
 
 // GetUserRecentReadSeries 是 GetRecentReadSeries 的每用户版本（某库内按最近阅读排序的系列）。
+//
+// 窗口排序的末位 book_id 不能省：把整个系列标记为已读时整批共用一个时间戳，少了它，
+// 「这个系列最近读的是哪一本」由查询计划挑一行，与 user_series_progress.last_read_book_id
+// （按同一对键取最近一条）指向不同的书。
 func (s *SqlStore) GetUserRecentReadSeries(ctx context.Context, userID, libraryID, limit int64) ([]GetRecentReadSeriesRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RankedBooks AS (
 			SELECT b.series_id, b.id AS book_id, ubp.last_read_at, ubp.last_read_page,
-				ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY ubp.last_read_at DESC) as rn
+				ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY ubp.last_read_at DESC, ubp.book_id DESC) as rn
 			FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
 			WHERE ubp.user_id = ? AND ubp.last_read_at IS NOT NULL AND b.library_id = ?
 		)
@@ -342,7 +346,7 @@ func (s *SqlStore) GetUserRecentReadSeries(ctx context.Context, userID, libraryI
 		FROM series s
 		JOIN RankedBooks rb ON s.id = rb.series_id AND rb.rn = 1
 		WHERE s.library_id = ?
-		ORDER BY rb.last_read_at DESC
+		ORDER BY rb.last_read_at DESC, s.id ASC
 		LIMIT ?`, userID, libraryID, libraryID, limit)
 	if err != nil {
 		return nil, err

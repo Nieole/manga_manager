@@ -777,7 +777,7 @@ WITH RankedBooks AS (
         b.id AS book_id,
         b.last_read_at,
         b.last_read_page,
-        ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY b.last_read_at DESC) as rn
+        ROW_NUMBER() OVER(PARTITION BY b.series_id ORDER BY b.last_read_at DESC, b.id DESC) as rn
     FROM books b
     WHERE b.last_read_at IS NOT NULL AND b.library_id = ?
 )
@@ -790,7 +790,7 @@ SELECT
 FROM series s
 JOIN RankedBooks rb ON s.id = rb.series_id AND rb.rn = 1
 WHERE s.library_id = ?
-ORDER BY rb.last_read_at DESC
+ORDER BY rb.last_read_at DESC, s.id ASC
 LIMIT ?;
 
 -- name: UpdateSeriesFavorite :exec

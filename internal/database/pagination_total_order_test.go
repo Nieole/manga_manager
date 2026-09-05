@@ -212,3 +212,93 @@ func TestSmartCollectionPagingSurvivesFullTies(t *testing.T) {
 		}
 	}
 }
+
+// 窗口函数取 rn = 1 就是「按这个排序取最靠前的一条」，与分页同样要求 ORDER BY 是全序：少了
+// 末位唯一键，平局行由查询计划挑一行，同一个问题的两套实现于是各说各话。
+//
+// 末位允许的唯一键逐个登记——「在分区内唯一」静态判不出来，只能由人写在这里：
+// id 是各表主键，book_id 在 user_book_progress 的一个用户下每本书至多一行，key 是 tasks 的主键。
+var (
+	sqlWindowFuncPattern       = regexp.MustCompile(`(?i)\b(?:ROW_NUMBER|RANK|DENSE_RANK)\s*\(\s*\)\s*OVER\b`)
+	sqlWindowUniqueTailPattern = regexp.MustCompile(`(?i)(?:^|[\s.])(?:id|book_id|key)\s+(?:ASC|DESC)\s*$`)
+)
+
+// windowOrderByClause 取 OVER(...) 括号内 ORDER BY 之后的部分，压成一行；没有 ORDER BY 时 ok=false。
+// after 是紧跟 OVER 关键字之后的源码。
+func windowOrderByClause(after string) (string, bool) {
+	open := strings.IndexByte(after, '(')
+	if open < 0 {
+		return "", false
+	}
+	depth, end := 0, -1
+	for i := open; i < len(after) && end < 0; i++ {
+		switch after[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				end = i
+			}
+		}
+	}
+	if end < 0 {
+		return "", false
+	}
+	body := after[open+1 : end]
+	head := sqlOrderByHeadPattern.FindStringIndex(body)
+	if head == nil {
+		return "", false
+	}
+	return strings.Join(strings.Fields(body[head[1]:]), " "), true
+}
+
+// TestWindowFunctionOrderByTotalOrder 扫过 sql/query.sql 与包内手写 SQL 里的每一个窗口函数，
+// 要求其 ORDER BY 以唯一键收尾。
+//
+// 分页守卫看不见这种形状：它扫的是 `LIMIT ? OFFSET ?`，而这些查询只有 `LIMIT ?`；就算扫到了，
+// 「取最近的一条 ORDER BY」也只会看到外层排序，看不到藏在子查询窗口里的那一条。
+func TestWindowFunctionOrderByTotalOrder(t *testing.T) {
+	sources := map[string]string{}
+	raw, err := os.ReadFile("../../sql/query.sql")
+	if err != nil {
+		t.Fatalf("read sql/query.sql failed: %v", err)
+	}
+	sources["sql/query.sql"] = string(raw)
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir failed: %v", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		// query.sql.go 由 sqlc 从 sql/query.sql 生成，那份源文件已经在上面扫过了。
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "query.sql.go" {
+			continue
+		}
+		content, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s failed: %v", name, err)
+		}
+		sources[name] = string(content)
+	}
+
+	sites := 0
+	for name, src := range sources {
+		for _, loc := range sqlWindowFuncPattern.FindAllStringIndex(src, -1) {
+			sites++
+			clause, ok := windowOrderByClause(src[loc[1]:])
+			if !ok {
+				t.Errorf("%s 里有个窗口函数没有 ORDER BY，取到哪一行完全由查询计划决定", name)
+				continue
+			}
+			if !sqlWindowUniqueTailPattern.MatchString(clause) {
+				t.Errorf("%s 里的窗口 ORDER BY 不是全序（末位不是唯一键）：%s", name, clause)
+			}
+		}
+	}
+	if sites == 0 {
+		t.Fatal("没扫到任何窗口函数，测试自身失效了")
+	}
+	t.Logf("已检查 %d 处窗口函数排序", sites)
+}
