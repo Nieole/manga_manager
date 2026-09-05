@@ -97,6 +97,11 @@ type taskEngine struct {
 	mutex    sync.Mutex
 	tasks    map[string]TaskStatus
 	runtimes map[string]*TaskRuntime
+	// persistMutex 把「异步落盘」与「清除任务」串成一条，两者都在 mutex 之外调用 store。
+	// flushTaskPersist 在 mutex 内把待写集合换出去、在锁外逐条 UpsertTask，clear 的 DeleteTasks
+	// 插在这中间时，删掉的行会被随后那笔 UpsertTask 复活——待写集合里的 delete 够不着已经换出去的那批。
+	// 嵌套顺序恒为 persistMutex → mutex，反过来拿会死锁。
+	persistMutex sync.Mutex
 	// seq 是任务的单调序号，也是任务中心的主排序键。装配期从库里已用掉的最大值接上（restoredTaskSequence），
 	// 因此跨重启单调——它是「最近活动」的唯一事实来源，时间列不是（见 database.SqlStore.ListTasks）。
 	seq int64
@@ -227,10 +232,14 @@ func (e *taskEngine) startTaskPersister() {
 }
 
 // flushTaskPersist 在锁内取出并清空待落盘集合，再在锁外逐个 UpsertTask（避免持锁写库）。
+// 整个过程持有 persistMutex：这一批已经不在待写集合里，clear 只能靠这把锁等它写完再删。
 func (e *taskEngine) flushTaskPersist() {
 	if e.store == nil {
 		return
 	}
+	e.persistMutex.Lock()
+	defer e.persistMutex.Unlock()
+
 	e.mutex.Lock()
 	if len(e.persistPending) == 0 {
 		e.mutex.Unlock()
@@ -715,40 +724,55 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (TaskStat
 // ---- 控制：清理 / 暂停 / 恢复 / 取消 / 停机 ----
 
 // clear 按过滤条件删除 DB 中的任务记录，并同步清掉内存中对应的**非活动态**任务，返回删除的 DB 行数。
+//
+// 两步的顺序是**先内存、后库**：内存与待写集合的清空不依赖库，而删库要经 persistMutex 等一批
+// 在途落盘写完，那段等待不该压着任务表的锁——进度回调与任务列表都要它。
+// 删库排在最后还让「删掉的行不会再被写回来」成立：等待期间在途那批已经写完，此后再无该任务键的快照。
+// 删库失败时内存那份已经清掉，但清的都是**终态**任务，库里那行还在，任务列表照常列得出来。
 func (e *taskEngine) clear(ctx context.Context, filters database.TaskFilters) (int64, error) {
-	removed, err := e.store.DeleteTasks(ctx, filters)
-	if err != nil {
-		return 0, err
-	}
-
 	e.mutex.Lock()
-	defer e.mutex.Unlock()
 	if e.tasks == nil {
 		e.tasks = make(map[string]TaskStatus)
 	}
 	for key, task := range e.tasks {
-		if filters.Status != "" && task.Status != filters.Status {
-			continue
-		}
-		if filters.Scope != "" && task.Scope != filters.Scope {
-			continue
-		}
-		if filters.Type != "" && task.Type != filters.Type {
-			continue
-		}
-		if filters.ScopeID != nil && (task.ScopeID == nil || *task.ScopeID != *filters.ScopeID) {
-			continue
-		}
-		// paused / cancelling 与 running 一样，内存里这份是唯一可写副本：删掉之后
-		// resume 会变成 404，而任务体仍卡在 PauseGate 上永远等不到放行。
-		if taskIsActive(task.Status) {
+		if !taskMatchesClearFilters(task, filters) {
 			continue
 		}
 		delete(e.tasks, key)
 		// 同步清掉待落盘快照：否则异步落盘 goroutine 会把刚被 DeleteTasks 删掉的任务重新 UpsertTask 复活。
 		delete(e.persistPending, key)
 	}
-	return removed, nil
+	e.mutex.Unlock()
+
+	// 与异步落盘串行：一批快照已被换出待写集合、正在锁外逐条 UpsertTask，此刻删掉的行会被它们写回来。
+	e.persistMutex.Lock()
+	defer e.persistMutex.Unlock()
+	return e.store.DeleteTasks(ctx, filters)
+}
+
+// taskMatchesClearFilters 判断内存里这条任务是否该被这次清除带走。
+//
+// 它与列表的 taskMatchesFilters 是两套谓词，不能合并：清除多一条**活动态**豁免，
+// 且不认关键词——`clearTasks` 把 Query 清空正是因为「按搜索词删除」不可预期。
+// paused / cancelling 与 running 一样，内存里这份是唯一可写副本：删掉之后 resume 会变成 404，
+// 而任务体仍卡在**暂停闸门**上永远等不到放行。
+func taskMatchesClearFilters(task TaskStatus, filters database.TaskFilters) bool {
+	if taskIsActive(task.Status) {
+		return false
+	}
+	if filters.Status != "" && task.Status != filters.Status {
+		return false
+	}
+	if filters.Scope != "" && task.Scope != filters.Scope {
+		return false
+	}
+	if filters.Type != "" && task.Type != filters.Type {
+		return false
+	}
+	if filters.ScopeID != nil && (task.ScopeID == nil || *task.ScopeID != *filters.ScopeID) {
+		return false
+	}
+	return true
 }
 
 func (e *taskEngine) pause(key string) error {
