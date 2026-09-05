@@ -127,31 +127,45 @@ func (z *ZipArchive) ReadPage(name string) ([]byte, error) {
 
 // ReadMetadataFile 查找并读取归档内的元数据文件（目前只有 ComicInfo.xml）。
 //
-// 匹配语义刻意比 ReadPage 宽松：大小写不敏感、允许位于任意层级（根目录优先）。
-// 真实归档里 comicinfo.xml、ComicInfo.XML、Scans/ComicInfo.xml 都很常见，而写回侧
-// （comicinfo_writeback.go）本来就用 EqualFold 匹配——读侧要求精确全名会造成
-// 「读不到但能写」的语义分叉：内嵌元数据被静默漏读，用户却看不出原因。
+// 匹配语义刻意比 ReadPage 宽松：按 basename 大小写不敏感命中、允许位于任意层级——真实归档里
+// comicinfo.xml、ComicInfo.XML、Scans/ComicInfo.xml 都很常见。多条命中时选哪一条由
+// pickZipMetadataEntry 定，回写侧必须共用它：两侧选中不同条目，回写就会在别处另建一份，
+// 读侧仍取原先那条，用户看到的于是不是刚写进去的元数据。
 func (z *ZipArchive) ReadMetadataFile(name string) ([]byte, error) {
 	z.mu.RLock()
 	defer z.mu.RUnlock()
 
-	var fallback *zip.File
-	for _, f := range z.reader.File {
-		if !strings.EqualFold(path.Base(f.Name), name) {
-			continue
-		}
-		// 根目录命中优先；子目录里的先记下来作为兜底。
-		if !strings.ContainsRune(f.Name, '/') {
-			return readZipEntry(f)
-		}
-		if fallback == nil {
-			fallback = f
-		}
-	}
-	if fallback != nil {
-		return readZipEntry(fallback)
+	if f := pickZipMetadataEntry(z.reader.File, name); f != nil {
+		return readZipEntry(f)
 	}
 	return nil, fmt.Errorf("parser: metadata file %q not found", name)
+}
+
+// pickZipMetadataEntry 选出归档里代表元数据文件 name 的那一条，没有命中时返回 nil。
+//
+// 「这本书的 ComicInfo 是哪一条」全包只有这一个答案：读取与回写都从这里拿，
+// 否则回写会写到读侧不看的位置上，用户的元数据在他自己的视角里就凭空消失了。
+func pickZipMetadataEntry(files []*zip.File, name string) *zip.File {
+	var best *zip.File
+	for _, f := range files {
+		if f.FileInfo().IsDir() || !strings.EqualFold(path.Base(f.Name), name) {
+			continue
+		}
+		if best == nil || metadataEntryPrecedes(f.Name, best.Name) {
+			best = f
+		}
+	}
+	return best
+}
+
+// metadataEntryPrecedes 给多条命中定序：层级浅的优先（因此根目录那条总是胜出），同层按名字字典序。
+// 判据不得依赖归档里的条目顺序——同一份归档换个工具重打包顺序就变了，选中的条目会跟着变。
+func metadataEntryPrecedes(a, b string) bool {
+	depthA, depthB := strings.Count(a, "/"), strings.Count(b, "/")
+	if depthA != depthB {
+		return depthA < depthB
+	}
+	return a < b
 }
 
 // readZipEntry 打开并读取一个 zip 条目（带解压炸弹上限）。

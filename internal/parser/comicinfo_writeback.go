@@ -30,6 +30,8 @@ const comicInfoRootName = "ComicInfo"
 //
 // info 里为空的字段保留归档原值，本项目不建模的字段原样不动——回写不可逆也不备份，
 // 整份重建会把用户用别的工具打好的标一次性抹掉。合并规则见 MergeComicInfoXML。
+// 合并基底由 pickZipMetadataEntry 选出，新内容写回基底所在的路径——可能在子目录里；归档里一条都
+// 没有时才新建在根目录。其余同名条目原样留下，不删也不改。
 // 采用“同目录临时文件 + 原子 rename 覆盖”，中途失败不损坏原文件。
 // 仅支持 .zip / .cbz —— .rar / .cbr 返回 ErrArchiveNotWritable（Go 无 rar 写库）；
 // 原有的 ComicInfo.xml 无法安全改写时返回 ErrComicInfoNotMergeable，归档保持原样。
@@ -59,7 +61,8 @@ func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
 		originalMode = stat.Mode().Perm()
 	}
 
-	xmlData, err := mergeArchiveComicInfo(reader, info)
+	base := pickZipMetadataEntry(reader.File, comicInfoEntryName)
+	xmlData, err := mergeArchiveComicInfo(base, info)
 	if err != nil {
 		return err
 	}
@@ -79,9 +82,11 @@ func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
 	}()
 
 	zw := zip.NewWriter(tmp)
-	// 复制原有条目，跳过任何已存在的 ComicInfo.xml（将被新内容替换）。
+	// 复制原有条目，只跳过合并基底那一条——它由下面的新内容原地取代。
+	// 别处的同名条目留着：本包没有依据判定它是这本书的元数据还是随卷附带的别的东西，
+	// 而回写就地改写、不留备份，删错了拿不回来。
 	for _, f := range reader.File {
-		if strings.EqualFold(f.Name, comicInfoEntryName) {
+		if f == base {
 			continue
 		}
 		if err := copyZipEntry(zw, f); err != nil {
@@ -90,8 +95,13 @@ func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
 		}
 	}
 
-	// 写入新的 ComicInfo.xml（根目录，Deflate 压缩）。
-	header := &zip.FileHeader{Name: comicInfoEntryName, Method: zip.Deflate}
+	// 写入新的 ComicInfo.xml（Deflate 压缩）。路径必须与基底一致，否则归档里会多出一份，
+	// 而读侧仍按自己的判据挑，挑中的可能是没被合并的那条。
+	targetName := comicInfoEntryName
+	if base != nil {
+		targetName = base.Name
+	}
+	header := &zip.FileHeader{Name: targetName, Method: zip.Deflate}
 	header.SetMode(0o644)
 	entry, err := zw.CreateHeader(header)
 	if err != nil {
@@ -134,25 +144,19 @@ func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
 	return nil
 }
 
-// mergeArchiveComicInfo 读出归档里已有的 ComicInfo.xml 并把 info 合并进去。
-// 归档里没有这个条目、或条目读不出来时按新文档处理：读不出的条目本来也带不出任何字段，
+// mergeArchiveComicInfo 读出基底条目的内容并把 info 合并进去。
+// base 为 nil、或条目读不出来时按新文档处理：读不出的条目本来也带不出任何字段，
 // 拿它当合并基底只会把写入整个挡掉。
-func mergeArchiveComicInfo(reader *zip.ReadCloser, info ComicInfo) ([]byte, error) {
+func mergeArchiveComicInfo(base *zip.File, info ComicInfo) ([]byte, error) {
 	var original []byte
-	for _, f := range reader.File {
-		if !strings.EqualFold(f.Name, comicInfoEntryName) {
-			continue
+	if base != nil {
+		if rc, err := base.Open(); err == nil {
+			data, readErr := io.ReadAll(io.LimitReader(rc, maxComicInfoMergeBytes))
+			_ = rc.Close()
+			if readErr == nil {
+				original = data
+			}
 		}
-		rc, err := f.Open()
-		if err != nil {
-			break
-		}
-		data, err := io.ReadAll(io.LimitReader(rc, maxComicInfoMergeBytes))
-		_ = rc.Close()
-		if err == nil {
-			original = data
-		}
-		break
 	}
 	return MergeComicInfoXML(original, info)
 }

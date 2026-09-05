@@ -292,8 +292,9 @@ func (r *RarArchive) cachePutLocked(name string, data []byte) {
 	r.cacheBytes += len(data)
 }
 
-// ReadMetadataFile 与 zip 侧保持同一匹配语义：大小写不敏感、允许任意层级。
-// RAR 是前向只读流，无法先枚举再挑选，故在前滚过程中用宽松比较判定目标。
+// ReadMetadataFile 的命中判据与 zip 侧一致：basename 大小写不敏感、允许任意层级。
+// 多条命中时取流里的第一条，而非 zip 侧的浅层优先——RAR 是前向只读流，无法先枚举再挑选。
+// 这点差异只决定读到哪一份：rar/cbr 不可写，不存在读写各挑一条而写岔的风险。
 func (r *RarArchive) ReadMetadataFile(name string) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
