@@ -55,7 +55,7 @@ const pageImageCacheControl = "private, max-age=0, must-revalidate"
 // 这版代码会转出什么字节」。转码链一旦被修成产出不同字节，存量条目就是错的，而磁盘缓存、
 // 内存 LRU 与浏览器（ETag 由缓存键导出）都不会自行失效。改动转码结果时必须递增本值：
 // 新键一律未命中、重算一次，旧文件由 enforcePageCacheBudget 按最旧优先回收。
-const pageImageCacheEpoch = "v3"
+const pageImageCacheEpoch = "v4"
 
 func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
@@ -134,11 +134,9 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 只有派生图像才进入内存/磁盘缓存；原始页图可能很大，直接缓存会挤占阅读器长会话内存。
-	// 滤镜是否算派生按 images.FilterChangesPixels 判——只给滤镜不给尺寸时转码链会原样透传，
-	// 缓存下来的就是整张原始页图。
+	// isThumbnailReq 判的是「这个请求值不值得去翻缓存」，只看参数、不看字节。真正能不能写缓存要等
+	// 转码链回话（见下面的 derived）：参数要求了加工，不等于加工真的发生了。
 	isThumbnailReq := reqWidth > 0 || reqHeight > 0 || format != "" || qualityStr != "" || images.FilterChangesPixels(filter, reqWidth, reqHeight) || autoCrop
-	rawPassthrough := !isThumbnailReq && w2xScaleStr == "" && w2xNoiseStr == "" && w2xFormatStr == ""
 	diskPageCacheEnabled := c.diskPageCacheEnabled(source)
 	if isThumbnailReq {
 		if cachedData, ok := c.imageCache.Get(cacheKey); ok {
@@ -175,8 +173,13 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	type pageServeResult struct {
 		data        []byte
 		contentType string
-		status      int // 0 表示成功，否则为要返回的 HTTP 错误码
-		message     string
+		// derived 为真表示这份字节是真按请求参数加工出来的产物。只有它才可以进缓存、
+		// 才可以拿请求参数导出的 ETag 当身份——透传与各种回退都不是。
+		derived bool
+		// fallback 非空表示交付的不是请求许诺的东西，值是原因（没上的 AI 滤镜名，或 process-error）。
+		fallback string
+		status   int // 0 表示成功，否则为要返回的 HTTP 错误码
+		message  string
 		// failure 非空时改由 writeStorageFailure 下发：读不到字节的失败要带上分类与资料库线索，
 		// 而不是一句状态码加短语。它与 status/message 互斥。
 		failure *storageFailure
@@ -185,7 +188,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		// 二次检查内存缓存：可能有另一个 leader 刚把它填好。
 		if isThumbnailReq {
 			if cached, ok := c.imageCache.Get(cacheKey); ok {
-				return &pageServeResult{data: cached, contentType: detectImageContentType(cached)}, nil
+				return &pageServeResult{data: cached, contentType: detectImageContentType(cached), derived: true}, nil
 			}
 		}
 		// 与发起请求的客户端取消解耦：single-flight 下某个客户端断开不应让所有等待者的转码失败。
@@ -263,22 +266,34 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		opts.Width = reqWidth
 		opts.Height = reqHeight
 
-		finalData, finalContentType, err := images.ProcessImage(data, pageInfo.MediaType, opts)
+		outcome, err := images.ProcessImageDetailed(data, pageInfo.MediaType, opts)
 		if err != nil {
 			// 处理失败时回退原始字节，且不写缓存：否则会把未处理的回退结果当已处理产物持久缓存，
 			// 让后续请求（含临时错误恢复后）永远拿到未处理的图，形成缓存污染。
 			slog.Warn("Image process error, fallback to raw source", "error", err)
-			finalData = data
-			finalContentType = pageInfo.MediaType
-		} else if isThumbnailReq {
-			c.cacheImageMemory(cacheKey, finalData)
+			return &pageServeResult{data: data, contentType: pageInfo.MediaType, fallback: "process-error"}, nil
+		}
+		// 只有真按请求参数加工出来的产物才进缓存。透传存下来是整页原图的副本，白占内存与磁盘；
+		// AI 引擎缺席时存下来的更是「按 AI 键存的非 AI 图」——用户后来把引擎装好也再换不掉。
+		derived := isThumbnailReq && !outcome.Passthrough && outcome.SkippedFilter == ""
+		if derived {
+			c.cacheImageMemory(cacheKey, outcome.Data)
 			if diskPageCacheEnabled {
-				if werr := c.writeDiskImageCache(cacheKey, finalData, finalContentType); werr != nil {
+				if werr := c.writeDiskImageCache(cacheKey, outcome.Data, outcome.ContentType); werr != nil {
 					slog.Warn("Failed to write processed page disk cache", "error", werr)
 				}
 			}
 		}
-		return &pageServeResult{data: finalData, contentType: finalContentType}, nil
+		if outcome.SkippedFilter != "" {
+			slog.Warn("Page image delivered without the requested AI filter",
+				"book_id", bookID, "page", pageNumber, "filter", outcome.SkippedFilter)
+		}
+		return &pageServeResult{
+			data:        outcome.Data,
+			contentType: outcome.ContentType,
+			derived:     derived,
+			fallback:    outcome.SkippedFilter,
+		}, nil
 	})
 
 	res := resAny.(*pageServeResult)
@@ -293,19 +308,35 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	finalData := res.data
 	finalContentType := res.contentType
 
-	w.Header().Set("Content-Type", finalContentType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(finalData)))
+	// 身份跟着实际产物走，不跟着请求参数走。回退产物同样的请求下次可能给出别的字节（引擎装好了、
+	// 临时错误恢复了），拿请求参数导出的 ETag 当身份会让浏览器一直 304，那一页永远换不掉。
+	responseETag := etag
+	if res.fallback != "" {
+		responseETag = weakETag(cacheKey + "|fallback:" + res.fallback)
+		w.Header().Set("X-Image-Fallback", res.fallback)
+	}
 
 	// Cache control for performant client-side static assets
 	// In production read this from config or context
 	w.Header().Set("Cache-Control", pageImageCacheControl)
-	w.Header().Set("ETag", etag)
+	w.Header().Set("ETag", responseETag)
 
 	cacheSource := "raw"
-	if isThumbnailReq {
+	if res.derived {
 		cacheSource = "processed"
 	}
-	annotatePageImageDiagnostics(ctx, false, false, rawPassthrough, isThumbnailReq)
+	annotatePageImageDiagnostics(ctx, false, false, !res.derived, res.derived)
+
+	// 回退分支的身份到这里才算得出来，因此条件请求要在出图之后再判一次：活已经干过，
+	// 至少别把整页字节再发一遍。
+	if r.Header.Get("If-None-Match") == responseETag {
+		annotatePageImageRequest(ctx, bookID, pageNumber, true, "client", transform)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	w.Header().Set("Content-Type", finalContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(finalData)))
 	annotatePageImageRequest(ctx, bookID, pageNumber, false, cacheSource, transform)
 	c.logPageImageServed(bookID, pageNumber, cacheSource, finalContentType, len(finalData), time.Since(started), format, filter, autoCrop)
 	w.Write(finalData)

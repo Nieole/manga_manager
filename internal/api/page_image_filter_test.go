@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -216,5 +217,143 @@ func TestReaderFitInsidePreservesAspect(t *testing.T) {
 	}
 	if fmt.Sprintf("%dx%d", cfg.Width, cfg.Height) == "512x512" {
 		t.Fatal("页被拉伸成了正方形")
+	}
+}
+
+// callReaderPage 取第一页并把整个响应交出来：第一条要看的是状态码、ETag 与回退头，不只是响应体。
+func callReaderPage(t testing.TB, controller *Controller, bookID int64, query, ifNoneMatch string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := requestWithRouteParam(http.MethodGet, "/api/pages/1/1"+query, nil, "bookId", strconv.FormatInt(bookID, 10))
+	req = withRouteParam(req, "pageNumber", "1")
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
+	rec := httptest.NewRecorder()
+	controller.servePageImage(rec, req)
+	return rec
+}
+
+// writeFakeAIEngine 造一个假的 ncnn 家族引擎。execWaifu2x 只要求「绝对路径 + 常规文件」，
+// 因此一个可执行脚本足以走完真实的子进程链路：engineBody 决定它是跑挂还是产出放大图。
+func writeFakeAIEngine(t *testing.T, dir, name, engineBody string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(engineBody), 0o755); err != nil {
+		t.Fatalf("write fake engine %s: %v", name, err)
+	}
+	return path
+}
+
+// TestReaderAIFallbackDoesNotPinPageToUnupscaled 是第一条的验收判据，跑的就是用户那条时间线：
+// 引擎不可用时先看一页，把引擎装好之后，同一页必须真的换成放大过的图。
+//
+// 破了的表现是服务端把「没放大却又被重新有损编码过」的结果按 AI 的缓存键写进内存 LRU 与磁盘缓存，
+// ETag 又由同一个键导出——浏览器直接 304，引擎装好也再换不掉那一张。
+func TestReaderAIFallbackDoesNotPinPageToUnupscaled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("假引擎是 sh 脚本")
+	}
+	source := readerPageJPEG(t, 120, 168)
+	controller, bookID := seedReaderPageBook(t, "001.jpg", source)
+	// 磁盘缓存必须开着：第一条的污染正是落在它上面。
+	cfg := controller.currentConfig()
+	cfg.Cache.PageDiskCacheEnabled = true
+	controller.config.Replace(&cfg)
+
+	engineDir := t.TempDir()
+	upscaledPath := filepath.Join(engineDir, "upscaled.png")
+	upscaled := readerPagePNG(t, 240, 336)
+	if err := os.WriteFile(upscaledPath, upscaled, 0o644); err != nil {
+		t.Fatalf("write fake engine output: %v", err)
+	}
+	broken := writeFakeAIEngine(t, engineDir, "broken-engine", "#!/bin/sh\nexit 1\n")
+	working := writeFakeAIEngine(t, engineDir, "working-engine",
+		"#!/bin/sh\nout=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then out=\"$2\"; fi\n  shift\ndone\ncp '"+upscaledPath+"' \"$out\"\n")
+
+	const query = "?filter=waifu2x&w2x_scale=2&w2x_noise=0&w2x_format=png"
+
+	cfg = controller.currentConfig()
+	cfg.Scanner.Waifu2xPath = broken
+	controller.config.Replace(&cfg)
+
+	degraded := callReaderPage(t, controller, bookID, query, "")
+	if degraded.Code != http.StatusOK {
+		t.Fatalf("引擎缺席不该让整页失败，got %d body=%s", degraded.Code, degraded.Body.String())
+	}
+	if !bytes.Equal(degraded.Body.Bytes(), source) {
+		t.Fatalf("没放大成就该交出源字节，实际拿到 %d 字节（源 %d 字节）——白丢了一次有损重编码",
+			degraded.Body.Len(), len(source))
+	}
+	if got := degraded.Header().Get("X-Image-Fallback"); got != "waifu2x" {
+		t.Fatalf("交付的不是用户点的那张图，响应必须说出来，X-Image-Fallback=%q", got)
+	}
+	stats, err := controller.collectPageCacheStats()
+	if err != nil {
+		t.Fatalf("collect page cache stats: %v", err)
+	}
+	if stats.FileCount != 0 {
+		t.Fatalf("没放大的结果不得按 AI 缓存键落盘，磁盘缓存里出现了 %d 个文件", stats.FileCount)
+	}
+	degradedETag := degraded.Header().Get("ETag")
+	if degradedETag == "" {
+		t.Fatal("expected ETag on degraded response")
+	}
+
+	// 用户把引擎装好了：同一个地址、带上上一次的 ETag，必须重新取一次并换成放大后的图。
+	cfg = controller.currentConfig()
+	cfg.Scanner.Waifu2xPath = working
+	controller.config.Replace(&cfg)
+
+	recovered := callReaderPage(t, controller, bookID, query, degradedETag)
+	if recovered.Code != http.StatusOK {
+		t.Fatalf("引擎装好之后必须重新出图，却拿到 %d——旧 ETag 把这一页钉死在没放大的那张上", recovered.Code)
+	}
+	if !bytes.Equal(recovered.Body.Bytes(), upscaled) {
+		t.Fatalf("引擎装好之后应拿到放大后的图，实际 %d 字节（放大图 %d 字节，源 %d 字节）",
+			recovered.Body.Len(), len(upscaled), len(source))
+	}
+	if got := recovered.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("w2x_format=png 时 Content-Type 应为 image/png，got %q", got)
+	}
+	if recovered.Header().Get("X-Image-Fallback") != "" {
+		t.Fatal("这一次是真放大，不该再报回退")
+	}
+}
+
+// TestReaderTargetBiggerThanSourceKeepsSourceBytes 是第二条的验收判据。
+//
+// 高分屏 + 适应宽度会取到 2048 或 3072 档，而漫画页原宽通常小得多。这一档下缩放库不放大，
+// 六个插值核本就无从生效；破了的表现是服务端仍按 format 重编码一次，用户挨个选一遍逐字节相同，
+// 却每页白丢一次画质、白付一次完整解码 + 编码，还把整页大小的文件写进磁盘缓存。
+func TestReaderTargetBiggerThanSourceKeepsSourceBytes(t *testing.T) {
+	source := readerPageJPEG(t, 300, 420)
+	controller, bookID := seedReaderPageBook(t, "001.jpg", source)
+	cfg := controller.currentConfig()
+	cfg.Cache.PageDiskCacheEnabled = true
+	controller.config.Replace(&cfg)
+
+	// 三种适应模式各下发哪几条边：适应宽度只发宽、适应高度只发高、适应屏幕两条边一起发。
+	boxes := []string{"?w=3072&fit=inside", "?h=3072&fit=inside", "?w=2048&h=2048&fit=inside"}
+	for _, filter := range []string{"lanczos3", "bicubic", "mitchell", "lanczos2", "bspline", "catmullrom"} {
+		for _, box := range boxes {
+			body := fetchReaderPage(t, controller, bookID, box+"&filter="+filter)
+			if !bytes.Equal(body, source) {
+				t.Fatalf("%s&filter=%s：框装得下源图，重采样是恒等操作，必须透传源字节，实际拿到 %d 字节（源 %d 字节）",
+					box, filter, len(body), len(source))
+			}
+		}
+	}
+
+	stats, err := controller.collectPageCacheStats()
+	if err != nil {
+		t.Fatalf("collect page cache stats: %v", err)
+	}
+	if stats.FileCount != 0 {
+		t.Fatalf("透传的整页原图不该写进磁盘缓存，实际 %d 个文件 %d 字节", stats.FileCount, stats.FileSize)
+	}
+
+	// 反面：框缩得进源图时六个核仍要各干各的活，这条短路不能把 f9141d9 的成果吃回去。
+	if body := fetchReaderPage(t, controller, bookID, "?w=256&fit=inside&filter=lanczos3"); bytes.Equal(body, source) {
+		t.Fatal("w=256 缩得进 300 宽的源图，必须真的重采样")
 	}
 }

@@ -368,7 +368,9 @@ func TestServePageImage(t *testing.T) {
 		); err != nil {
 			t.Fatalf("update book archive metadata failed: %v", err)
 		}
-		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
+		// 源是 PNG，故意要 JPEG：只有真产出了派生图才进缓存，format=png 那种「目标格式与源一致」
+		// 的请求会原样透传，透传的整页原图不入缓存。
+		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=jpeg", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
 		controller.servePageImage(rec, req)

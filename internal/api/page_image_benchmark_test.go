@@ -103,6 +103,17 @@ func BenchmarkServePageImage_ResampledJPEG(b *testing.B) {
 	benchmarkReaderPage(b, "001.jpg", readerPageJPEG(b, 1600, 2300), "?w=1280&fit=inside&filter=lanczos3")
 }
 
+// BenchmarkServePageImage_TargetLargerThanSource 量的是「档位够不着源图」那一档：框装得下 1600 宽的
+// 页，缩放库不放大，整条管线因此跳过、按原始字节透传。高分屏叠 DPR 后适应宽度常年落在这一档。
+func BenchmarkServePageImage_TargetLargerThanSource(b *testing.B) {
+	benchmarkReaderPage(b, "001.png", readerPagePNG(b, 1600, 2300), "?w=3072&fit=inside&filter=lanczos3")
+}
+
+// BenchmarkServePageImage_TargetLargerThanSourceJPEG 是同一档的 JPEG 源，与上面配对读。
+func BenchmarkServePageImage_TargetLargerThanSourceJPEG(b *testing.B) {
+	benchmarkReaderPage(b, "001.jpg", readerPageJPEG(b, 1600, 2300), "?w=3072&fit=inside&filter=lanczos3")
+}
+
 func BenchmarkGetPagesByBook_WithManifestCache(b *testing.B) {
 	controller, store, _, rootDir := newTestController(b)
 	_, _, book := seedBookFixture(b, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 50)

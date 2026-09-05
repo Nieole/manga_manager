@@ -10,6 +10,8 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -547,5 +549,147 @@ func TestNormalizeWaifu2xParams(t *testing.T) {
 		if got := normalizeWaifu2xNoise(in); got != want {
 			t.Fatalf("normalizeWaifu2xNoise(%d) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+// ---- AI 放大不可用时不得冒充成功 ----
+
+// brokenAIEngine 造一个「看着装了、其实跑不起来」的引擎：绝对路径 + 常规文件，过得了
+// execWaifu2x 的路径加固，真去执行必失败。引擎没装、不在 PATH、Vulkan 初始化炸掉、
+// 子进程报错，对 ProcessImage 都收敛成这一种结果。
+func brokenAIEngine(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "broken-engine")
+	if err := os.WriteFile(path, []byte("not an executable"), 0o644); err != nil {
+		t.Fatalf("write broken engine: %v", err)
+	}
+	return path
+}
+
+// TestProcessImageAIFailureDoesNotFakeUpscale 守第一条不变量：AI 放大没做成必须说出来。
+//
+// 破了的表现是悄悄换成 lanczos3 走完剩下的管线、返回 err == nil：交给用户的是一张没放大、
+// 却又被重新有损编码过的图，而调用方以为它就是 AI 产物，按 AI 的缓存键持久化下来。
+func TestProcessImageAIFailureDoesNotFakeUpscale(t *testing.T) {
+	engine := brokenAIEngine(t)
+	// JPEG 源：任何重编码都会改变字节，透传与否分得开。
+	src := makeTestJPEG(t, 64, 64)
+
+	cases := []struct {
+		name string
+		opts ProcessOptions
+	}{
+		{"waifu2x", ProcessOptions{Filter: "waifu2x", Waifu2xPath: engine}},
+		{"realcugan", ProcessOptions{Filter: "realcugan", RealCuganPath: engine}},
+		{"ncnn", ProcessOptions{Filter: "ncnn", Waifu2xPath: engine}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := ProcessImageDetailed(src, "image/jpeg", tc.opts)
+			if err != nil {
+				t.Fatalf("引擎缺席不该让整页失败：%v", err)
+			}
+			if out.SkippedFilter != tc.opts.Filter {
+				t.Fatalf("没做成的滤镜必须报出来，SkippedFilter=%q want %q", out.SkippedFilter, tc.opts.Filter)
+			}
+			if !out.Passthrough || !bytes.Equal(out.Data, src) {
+				t.Fatalf("没放大成就该交出源字节，实际 %d 字节（源 %d 字节，passthrough=%v）",
+					len(out.Data), len(src), out.Passthrough)
+			}
+			if out.ContentType != "image/jpeg" {
+				t.Fatalf("透传时 Content-Type 应保持源格式，got %s", out.ContentType)
+			}
+		})
+	}
+
+	// 用户显式点的格式/质量与滤镜不是一回事：AI 那一步塌了，这些活照做，但这一趟仍然不算 AI 产物。
+	t.Run("explicit format still applies", func(t *testing.T) {
+		out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{Filter: "waifu2x", Waifu2xPath: engine, Format: "png"})
+		if err != nil {
+			t.Fatalf("ProcessImageDetailed failed: %v", err)
+		}
+		if out.SkippedFilter != "waifu2x" {
+			t.Fatalf("AI 没做成仍要报出来，SkippedFilter=%q", out.SkippedFilter)
+		}
+		if out.Passthrough || out.ContentType != "image/png" {
+			t.Fatalf("显式要的 format=png 仍要落实，got ct=%s passthrough=%v", out.ContentType, out.Passthrough)
+		}
+	})
+}
+
+// ---- 档位够不着源图时整条管线要跳过 ----
+
+// TestProcessImageFitInsideNoOpPassesThrough 守第二条不变量。
+//
+// 高分屏取到 2048/3072 档而漫画页原宽小得多：框装得下源图，缩放库不放大，六个插值核本就
+// 无从生效。破了的表现是仍按 format 重编码一次——用户挨个选一遍逐字节相同，还每页白丢一次
+// 画质、白付一次完整解码 + 编码。
+func TestProcessImageFitInsideNoOpPassesThrough(t *testing.T) {
+	src := makeTestJPEG(t, 160, 230)
+	boxes := []struct {
+		name          string
+		width, height int
+	}{
+		{"width only", 3072, 0},
+		{"height only", 0, 3072},
+		{"both sides", 2048, 2048},
+	}
+	for _, filter := range []string{"lanczos3", "bicubic", "mitchell", "lanczos2", "bspline", "catmullrom"} {
+		for _, box := range boxes {
+			t.Run(filter+"/"+box.name, func(t *testing.T) {
+				out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{
+					Width: box.width, Height: box.height, FitInside: true, Filter: filter,
+				})
+				if err != nil {
+					t.Fatalf("ProcessImageDetailed failed: %v", err)
+				}
+				if !out.Passthrough || !bytes.Equal(out.Data, src) {
+					t.Fatalf("框装得下源图，重采样是恒等操作，必须透传源字节，实际 %d 字节（源 %d 字节，passthrough=%v）",
+						len(out.Data), len(src), out.Passthrough)
+				}
+			})
+		}
+		// 反面：框缩得进源图时这个核仍要真的干活，短路不能把 f9141d9 的成果吃回去。
+		t.Run(filter+"/box fits inside source", func(t *testing.T) {
+			out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{Width: 96, FitInside: true, Filter: filter})
+			if err != nil {
+				t.Fatalf("ProcessImageDetailed failed: %v", err)
+			}
+			if out.Passthrough || bytes.Equal(out.Data, src) {
+				t.Fatalf("滤镜 %s：框缩得进源图时必须真的重采样", filter)
+			}
+			if w, _, _ := decodeConfigDims(t, out.Data); w != 96 {
+				t.Fatalf("滤镜 %s 期望缩到宽 96，实际 %d", filter, w)
+			}
+		})
+	}
+
+	// 用户显式点的 format 与滤镜不是一回事：缩放没得做，格式转换仍要做。
+	t.Run("explicit format still applies", func(t *testing.T) {
+		out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{
+			Width: 3072, FitInside: true, Filter: "lanczos3", Format: "png",
+		})
+		if err != nil {
+			t.Fatalf("ProcessImageDetailed failed: %v", err)
+		}
+		if out.Passthrough || out.ContentType != "image/png" {
+			t.Fatalf("显式要的 format=png 仍要落实，got ct=%s passthrough=%v", out.ContentType, out.Passthrough)
+		}
+	})
+}
+
+// TestProcessImageCanvasResizeStillUpscales 守隔离边界：封面与缩略图不带 fit=inside，走的是
+// 「画布」语义——目标尺寸就是输出尺寸，比源图大也照样放大。上面那条短路只认「框」语义。
+func TestProcessImageCanvasResizeStillUpscales(t *testing.T) {
+	src := makeTestPNG(t, 100, 150)
+	out, err := ProcessImageDetailed(src, "image/png", ProcessOptions{Width: 400, Quality: 82, Format: "jpeg"})
+	if err != nil {
+		t.Fatalf("ProcessImageDetailed failed: %v", err)
+	}
+	if out.Passthrough {
+		t.Fatal("画布语义下放大是真操作，不该被当成无操作")
+	}
+	if w, h, _ := decodeConfigDims(t, out.Data); w != 400 || h != 600 {
+		t.Fatalf("expected upscaled 400x600 cover, got %dx%d", w, h)
 	}
 }

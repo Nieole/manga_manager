@@ -184,23 +184,90 @@ func formatMatchesContentType(format, contentType string) bool {
 //
 // 除 AI 放大（waifu2x/realcugan/ncnn）外，滤镜只是重采样用的插值核：目标尺寸为空时
 // resize.Resize 与 imaging.Fit 都原样返回输入图，为它解一次码再编一次码是白付 CPU，
-// 还丢掉了原始字节透传。HTTP 层用同一判据决定请求是否产出派生图（是否值得进缓存）。
+// 还丢掉了原始字节透传。它只看参数、看不到源图，因此只答得了「这个请求值不值得去翻缓存」；
+// 「加工有没有真的发生」由 ProcessOutcome 回答。
 func FilterChangesPixels(filter string, width, height int) bool {
-	switch strings.ToLower(strings.TrimSpace(filter)) {
-	case "":
+	if isAIFilter(filter) {
+		return true
+	}
+	if strings.TrimSpace(filter) == "" {
 		return false
+	}
+	return width > 0 || height > 0
+}
+
+// isAIFilter 判断滤镜走不走外部超分引擎那条短路。
+func isAIFilter(filter string) bool {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
 	case "waifu2x", "realcugan", "ncnn":
 		return true
 	default:
-		return width > 0 || height > 0
+		return false
 	}
 }
 
+// resizeChangesPixels 判断请求的目标尺寸落在这张源图上是否真会改动像素。
+// srcW/srcH 为 0 表示源尺寸尚未读出，此时一律按「会改」处理。
+//
+// FitInside 是「框」语义（阅读器的适应模式）：框装得下源图就不放大，重采样退化成恒等操作——
+// 高分屏取到 2048/3072 档而漫画页原宽只有 1600 上下，正是这一档。不带 FitInside 是「画布」
+// 语义（封面与缩略图）：目标尺寸就是输出尺寸，比源图大也照样放大，只有与源完全相等才是恒等。
+func resizeChangesPixels(opts ProcessOptions, srcW, srcH int) bool {
+	if opts.Width <= 0 && opts.Height <= 0 {
+		return false
+	}
+	if srcW <= 0 || srcH <= 0 {
+		return true
+	}
+	if opts.FitInside {
+		return (opts.Width > 0 && opts.Width < srcW) || (opts.Height > 0 && opts.Height < srcH)
+	}
+	switch {
+	case opts.Width > 0 && opts.Height > 0:
+		return opts.Width != srcW || opts.Height != srcH
+	case opts.Width > 0:
+		return opts.Width != srcW
+	default:
+		return opts.Height != srcH
+	}
+}
+
+// transformIsNoOp 判断这次请求根本产不出派生图：滤镜、尺寸、格式、质量、裁切一件都落不到实处。
+// 此时必须交出源字节——解一次码再编一次码只是白丢一次画质、白付一整页的 CPU。
+func transformIsNoOp(opts ProcessOptions, contentType string, srcW, srcH int) bool {
+	if opts.Quality != 0 || opts.AutoCrop || isAIFilter(opts.Filter) {
+		return false
+	}
+	if resizeChangesPixels(opts, srcW, srcH) {
+		return false
+	}
+	return opts.Format == "" || formatMatchesContentType(opts.Format, contentType)
+}
+
+// ProcessOutcome 说明这一趟处理实际交出了什么，供调用方判断这份字节能不能按请求参数缓存。
+type ProcessOutcome struct {
+	Data        []byte
+	ContentType string
+	// Passthrough 为真表示交出的就是入参那份源字节：这次请求没有可做的像素改动。
+	Passthrough bool
+	// SkippedFilter 非空时是那个没能应用的 AI 滤镜名——引擎不可用或跑挂了。交付的不是用户点的
+	// 那张图，因此这份字节不能按请求参数进任何缓存，身份也不能由请求参数导出。
+	SkippedFilter string
+}
+
+// ProcessImage 是只关心字节的窄接口（封面与缩略图走它）。
+// 需要判断产物能不能缓存的调用方用 ProcessImageDetailed。
 func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
+	out, err := ProcessImageDetailed(data, contentType, opts)
+	return out.Data, out.ContentType, err
+}
+
+// ProcessImageDetailed 在字节之外交出「实际做了什么」，见 ProcessOutcome。
+func ProcessImageDetailed(data []byte, contentType string, opts ProcessOptions) (ProcessOutcome, error) {
 	// 目标尺寸闸门（第二道防线，HTTP 层已先校验一次）：负值经 uint() 转换会变成天文数字，
 	// 超大值会让 resize 直接申请数 GB 缓冲。必须在解码之前拒绝，否则白白解一次图。
 	if err := ValidateTargetDimensions(opts.Width, opts.Height); err != nil {
-		return nil, "", fmt.Errorf("invalid target size: %w", err)
+		return ProcessOutcome{}, fmt.Errorf("invalid target size: %w", err)
 	}
 
 	// AI 放大参数白名单。这三个值来自 HTTP 查询串（w2x_scale / w2x_noise / w2x_format），
@@ -212,22 +279,21 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	opts.Waifu2xScale = normalizeWaifu2xScale(opts.Waifu2xScale)
 	opts.Waifu2xNoise = normalizeWaifu2xNoise(opts.Waifu2xNoise)
 
-	// 如果没有任何缩放/滤镜/质量/裁切需求，且目标格式未指定或与源格式一致，直接透传原始字节，
-	// 避免「源已是目标格式（如 format=webp 而源就是 webp）」仍白白解码 + 重编码一次（且可能损质）。
-	// 只给滤镜不给尺寸也算「无需求」——见 FilterChangesPixels。
-	if opts.Width == 0 && opts.Height == 0 && !FilterChangesPixels(opts.Filter, opts.Width, opts.Height) && opts.Quality == 0 && !opts.AutoCrop {
-		if opts.Format == "" || formatMatchesContentType(opts.Format, contentType) {
-			return data, contentType, nil
-		}
+	// 第一道透传闸：连源尺寸都不用读就能判定的无操作请求（没有任何加工需求，或目标格式与源一致）。
+	// 摆在解码预检之前，超大页图的原样下发才不会被解码炸弹闸误伤。
+	if transformIsNoOp(opts, contentType, 0, 0) {
+		return ProcessOutcome{Data: data, ContentType: contentType, Passthrough: true}, nil
 	}
 
 	// 预检图片尺寸而不完全解码，据此拦截解码炸弹：小体积压缩文件可声明极大画布，
 	// 完全解码会瞬间耗尽内存。用 int64 计算面积避免超大尺寸相乘时溢出。
+	srcWidth, srcHeight := 0, 0
 	readerConfig := bytes.NewReader(data)
 	if config, _, err := image.DecodeConfig(readerConfig); err == nil {
+		srcWidth, srcHeight = config.Width, config.Height
 		area := int64(config.Width) * int64(config.Height)
 		if area > maxDecodePixels {
-			return nil, "", fmt.Errorf("image too large to process safely: %dx%d (%d pixels)", config.Width, config.Height, area)
+			return ProcessOutcome{}, fmt.Errorf("image too large to process safely: %dx%d (%d pixels)", config.Width, config.Height, area)
 		}
 		if area > largeImageWarnPixels {
 			// 大图（如 5000x5000+）在小型服务器上解码开销较高，记录以便排障，但仍尝试处理。
@@ -235,9 +301,14 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		}
 	}
 
+	// 第二道透传闸：读出源尺寸才认得出的无操作——框装得下源图，缩放库不放大，六个插值核无从生效。
+	if transformIsNoOp(opts, contentType, srcWidth, srcHeight) {
+		return ProcessOutcome{Data: data, ContentType: contentType, Passthrough: true}, nil
+	}
+
 	img, _, err := decodeImage(data, contentType)
 	if err != nil {
-		return nil, "", fmt.Errorf("decode image err: %w", err)
+		return ProcessOutcome{}, fmt.Errorf("decode image err: %w", err)
 	}
 
 	var newImg = img
@@ -257,24 +328,32 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	targetHeight := uint(opts.Height)
 
 	// 针对 Waifu2x / realcugan / ncnn 这种需要外部挂载文件系统的超分辨率算法单独开一条短路通道
-	if opts.Filter == "waifu2x" || opts.Filter == "realcugan" || opts.Filter == "ncnn" {
-		outData, err := execWaifu2x(newImg, data, contentType, opts)
-		if err == nil {
+	var skippedFilter string
+	if isAIFilter(opts.Filter) {
+		outData, aiErr := execWaifu2x(newImg, data, contentType, opts)
+		if aiErr == nil {
 			// 直接返回加工好的 原始字节数组
 			// 为了防止前端不认识，强制重置 contentType
-			contentType := "image/png"
+			outType := "image/png"
 			if opts.Waifu2xFormat != "" {
 				if opts.Waifu2xFormat == "jpg" || opts.Waifu2xFormat == "jpeg" {
-					contentType = "image/jpeg"
+					outType = "image/jpeg"
 				} else {
-					contentType = "image/" + opts.Waifu2xFormat
+					outType = "image/" + opts.Waifu2xFormat
 				}
 			}
-			return outData, contentType, nil
+			return ProcessOutcome{Data: outData, ContentType: outType}, nil
 		}
-		// 如果 waifu2x 执行失败，退回到下面原生的 Lanczos 软算逻辑
-		slog.Warn("Waifu2x execution failed. Falling back to Lanczos3.", "error", err)
+		// 引擎没装、不在 PATH、或跑挂了。这一步没做成必须报到调用方：它据此拒绝把这份字节按 AI 的
+		// 缓存键存下来，否则用户后来把引擎装好，看过的页会永远停在没放大的那一张。
+		slog.Warn("AI upscaling unavailable, delivering without it", "filter", opts.Filter, "error", aiErr)
+		skippedFilter = opts.Filter
+		// 余下的活按用户显式要的来（格式、质量、裁切、尺寸）；一件都不剩就交出源字节，
+		// 不拿一次有损重编码冒充放大结果。
 		opts.Filter = "lanczos3"
+		if transformIsNoOp(opts, contentType, srcWidth, srcHeight) {
+			return ProcessOutcome{Data: data, ContentType: contentType, Passthrough: true, SkippedFilter: skippedFilter}, nil
+		}
 	}
 
 	// 软件缩放 + 编码是纯 CPU 工作，用信号量把并发封顶到核数，避免阅读器预取/多用户并发时 CPU 过载抖动。
@@ -287,7 +366,9 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 		defer func() { <-sw }()
 	}
 
-	if targetWidth > 0 || targetHeight > 0 {
+	// 按裁切后的实际画布判一次：框装得下就整条跳过，省下一次全画幅重采样（imaging.Fit 在这一档
+	// 是一次整图 Clone，resize.Thumbnail 是原样返回，两条都只是白付内存与 CPU）。
+	if resizeChangesPixels(opts, newImg.Bounds().Dx(), newImg.Bounds().Dy()) {
 		boxWidth, boxHeight := fitBox(newImg.Bounds(), int(targetWidth), int(targetHeight))
 		switch opts.Filter {
 		case "bspline":
@@ -357,10 +438,10 @@ func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte,
 	}
 
 	if err != nil {
-		return nil, "", fmt.Errorf("encode image err: %w", err)
+		return ProcessOutcome{}, fmt.Errorf("encode image err: %w", err)
 	}
 
-	return buf.Bytes(), newContentType, nil
+	return ProcessOutcome{Data: buf.Bytes(), ContentType: newContentType, SkippedFilter: skippedFilter}, nil
 }
 
 // avifEncodeSpeed 是 avif 编码档位：0 最慢、体积最小，10 最快、体积最大。必须显式赋值——
