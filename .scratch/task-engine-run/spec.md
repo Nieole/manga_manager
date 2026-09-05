@@ -1,6 +1,6 @@
 # Spec: 把任务启动仪式收进任务引擎
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 

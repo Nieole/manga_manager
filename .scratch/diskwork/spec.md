@@ -1,6 +1,6 @@
 # Spec: 把一次磁盘作业收进一个模块
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 

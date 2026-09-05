@@ -1,6 +1,6 @@
 # Spec: 任务体干活的资格收进一个句柄
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 

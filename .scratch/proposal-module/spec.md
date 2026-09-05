@@ -1,6 +1,6 @@
 # Spec: 把提案裁决抽成模块
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 
