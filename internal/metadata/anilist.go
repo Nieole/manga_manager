@@ -170,7 +170,7 @@ func (a *AniListProvider) SearchMetadata(ctx context.Context, title string, limi
 		return nil, 0, fmt.Errorf("anilist: failed to marshal request: %w", err)
 	}
 
-	slog.Info("AniList search request (POST)", "url", a.Endpoint, "search", title, "page", page, "perPage", limit)
+	slog.InfoContext(ctx, "AniList search request (POST)", "url", a.Endpoint, "search", title, "page", page, "perPage", limit)
 
 	// 有限次指数退避重试：仅对 429 与 5xx 重试，尊重 Retry-After（AniList 通常缺省时用退避）；退避可被 context 取消打断。
 	var result anilistGraphQLResponse
@@ -213,14 +213,14 @@ func (a *AniListProvider) SearchMetadata(ctx context.Context, title string, limi
 			if wait > bangumiRetryMaxDelay {
 				wait = bangumiRetryMaxDelay
 			}
-			slog.Warn("AniList API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String(), "url", a.Endpoint)
+			slog.WarnContext(ctx, "AniList API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String(), "url", a.Endpoint)
 			if werr := sleepWithContext(ctx, wait); werr != nil {
 				return nil, 0, werr
 			}
 			continue
 		}
 
-		safeBody := logUpstreamFailure("AniList API error", status, respBody, "", "url", a.Endpoint)
+		safeBody := logUpstreamFailure(ctx, "AniList API error", status, respBody, "", "url", a.Endpoint)
 		return nil, 0, fmt.Errorf("anilist: API returned status %d: %s", status, safeBody)
 	}
 

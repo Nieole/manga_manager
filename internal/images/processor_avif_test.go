@@ -6,6 +6,7 @@ package images
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -109,7 +110,7 @@ func TestProcessImageAvifThumbnailStaysFast(t *testing.T) {
 	baseline := time.Since(baseStart)
 
 	start := time.Now()
-	out, contentType, err := ProcessImage(source, "image/png", ProcessOptions{Width: 400, Quality: 82, Format: "avif"})
+	out, contentType, err := ProcessImage(context.Background(), source, "image/png", ProcessOptions{Width: 400, Quality: 82, Format: "avif"})
 	if err != nil {
 		t.Fatalf("ProcessImage avif 失败: %v", err)
 	}

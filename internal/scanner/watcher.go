@@ -574,7 +574,7 @@ func (fw *FileWatcher) watchRecursive(root string) WatchReport {
 		}
 	}
 
-	_ = walkDirFollowingSymlinks(root, func(path string, d fs.DirEntry, err error) error {
+	_ = walkDirFollowingSymlinks(context.Background(), root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if d == nil {
 				// 连根都 lstat 不了，这一趟什么也没遍历到。

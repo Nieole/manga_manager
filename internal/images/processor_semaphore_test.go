@@ -5,6 +5,7 @@ package images
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -52,7 +53,7 @@ func TestProcessImageConcurrentSoftwareEncodesComplete(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out, ct, err := ProcessImage(src, "image/png", ProcessOptions{Width: 24, Height: 24, Format: "jpeg"})
+			out, ct, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 24, Height: 24, Format: "jpeg"})
 			if err != nil {
 				errs <- err
 				return

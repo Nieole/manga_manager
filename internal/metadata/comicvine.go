@@ -132,7 +132,7 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 	encodedQuery := query.Encode()
 	safeURL := c.endpoint() + "?" + encodedQuery
 
-	slog.Info("Comic Vine search request", "query", title, "limit", limit, "offset", offset)
+	slog.InfoContext(ctx, "Comic Vine search request", "query", title, "limit", limit, "offset", offset)
 
 	// 有限次指数退避重试：仅对 429 与 5xx 重试，尊重 Retry-After；退避可被 context 取消打断。
 	var result comicvineSearchResponse
@@ -182,7 +182,7 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 			if wait > comicvineRetryMaxDelay {
 				wait = comicvineRetryMaxDelay
 			}
-			slog.Warn("Comic Vine API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String())
+			slog.WarnContext(ctx, "Comic Vine API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String())
 			if werr := sleepWithContext(ctx, wait); werr != nil {
 				return nil, 0, werr
 			}
@@ -191,7 +191,7 @@ func (c *ComicVineProvider) SearchMetadata(ctx context.Context, title string, li
 
 		// 上游网关的错误页常把「被请求的 URI」原样回显，而这段串既进日志又进 HTTP 响应体
 		// 交给用户看——不脱敏就等于把密钥从后端搬到了前端，所以要把 apiKey 交给出口去抹。
-		body := logUpstreamFailure("Comic Vine API error", status, respBody, c.apiKey)
+		body := logUpstreamFailure(ctx, "Comic Vine API error", status, respBody, c.apiKey)
 		return nil, 0, fmt.Errorf("comicvine: API returned status %d: %s", status, body)
 	}
 

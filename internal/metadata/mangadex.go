@@ -109,7 +109,7 @@ func (m *MangaDexProvider) SearchMetadata(ctx context.Context, title string, lim
 
 	apiURL := m.BaseURL + "/manga?" + q.Encode()
 
-	slog.Info("MangaDex search request", "url", apiURL, "title", title, "limit", limit, "offset", offset)
+	slog.InfoContext(ctx, "MangaDex search request", "url", apiURL, "title", title, "limit", limit, "offset", offset)
 
 	// 有限次指数退避重试：仅对 429 与 5xx 重试，尊重 Retry-After；退避可被 context 取消打断。
 	var result mangadexSearchResult
@@ -151,14 +151,14 @@ func (m *MangaDexProvider) SearchMetadata(ctx context.Context, title string, lim
 			if wait > bangumiRetryMaxDelay {
 				wait = bangumiRetryMaxDelay
 			}
-			slog.Warn("MangaDex API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String(), "url", apiURL)
+			slog.WarnContext(ctx, "MangaDex API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String(), "url", apiURL)
 			if werr := sleepWithContext(ctx, wait); werr != nil {
 				return nil, 0, werr
 			}
 			continue
 		}
 
-		safeBody := logUpstreamFailure("MangaDex API error", status, respBody, "", "url", apiURL)
+		safeBody := logUpstreamFailure(ctx, "MangaDex API error", status, respBody, "", "url", apiURL)
 		return nil, 0, fmt.Errorf("mangadex: API returned status %d: %s", status, safeBody)
 	}
 

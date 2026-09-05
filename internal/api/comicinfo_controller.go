@@ -266,7 +266,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 				// 无法安全合并的原文档与不可写的格式同属「这本书写不了」，都按跳过计，不算失败。
 				skipped++
 			default:
-				slog.Error("write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", writeErr)
+				slog.ErrorContext(ctx, "write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", writeErr)
 				failed++
 			}
 

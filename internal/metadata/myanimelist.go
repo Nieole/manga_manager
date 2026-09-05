@@ -130,7 +130,7 @@ func (m *MyAnimeListProvider) SearchMetadata(ctx context.Context, title string, 
 	query.Set("fields", "id,title,main_picture,synopsis,mean,genres,authors{first_name,last_name},num_volumes,status,start_date")
 	apiURL := malAPIEndpoint + "?" + query.Encode()
 
-	slog.Info("MyAnimeList search request", "keyword", title, "limit", limit, "offset", offset)
+	slog.InfoContext(ctx, "MyAnimeList search request", "keyword", title, "limit", limit, "offset", offset)
 
 	// 有限次指数退避重试：仅对 429 与 5xx 重试，尊重 Retry-After；退避可被 context 取消打断。
 	var result malSearchResult
@@ -171,14 +171,14 @@ func (m *MyAnimeListProvider) SearchMetadata(ctx context.Context, title string, 
 			if wait > malMaxDelay {
 				wait = malMaxDelay
 			}
-			slog.Warn("MyAnimeList API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String())
+			slog.WarnContext(ctx, "MyAnimeList API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String())
 			if werr := sleepWithContext(ctx, wait); werr != nil {
 				return nil, 0, werr
 			}
 			continue
 		}
 
-		safeBody := logUpstreamFailure("MyAnimeList API error", status, respBody, "")
+		safeBody := logUpstreamFailure(ctx, "MyAnimeList API error", status, respBody, "")
 		return nil, 0, fmt.Errorf("myanimelist: API returned status %d: %s", status, safeBody)
 	}
 

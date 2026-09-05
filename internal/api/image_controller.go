@@ -266,7 +266,7 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 		opts.Width = reqWidth
 		opts.Height = reqHeight
 
-		outcome, err := images.ProcessImageDetailed(data, pageInfo.MediaType, opts)
+		outcome, err := images.ProcessImageDetailed(workCtx, data, pageInfo.MediaType, opts)
 		if err != nil {
 			// 处理失败时回退原始字节，且不写缓存：否则会把未处理的回退结果当已处理产物持久缓存，
 			// 让后续请求（含临时错误恢复后）永远拿到未处理的图，形成缓存污染。

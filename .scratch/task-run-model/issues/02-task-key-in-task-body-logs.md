@@ -27,9 +27,14 @@
 
 ## 验收
 
-- [ ] 任务 ctx 携带任务键，日志 handler 从 ctx 取出并附加为属性
+- [x] 任务 ctx 携带任务键，日志 handler 从 ctx 取出并附加为属性
 - [ ] 资料库扫描、重建缩略图、刮削三类任务体跑出的日志均带 `task_key`，且调用点未改动
-- [ ] 一次失败的资料库扫描之后，按该任务键过滤日志能拿到非空结果，有一条用例守着
-- [ ] 无归属的扫描（守护 / watcher / 首扫）日志不带任务键，这是本票的已知边界而非缺陷
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] 一次失败的资料库扫描之后，按该任务键过滤日志能拿到非空结果，有一条用例守着
+- [x] 无归属的扫描（守护 / watcher / 首扫）日志不带任务键，这是本票的已知边界而非缺陷
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+
+未勾的那条两个半句都不成立，见挂账 D4 与 D5。「调用点未改动」做不到：Go 的 slog 包级函数交给
+handler 的是 `context.Background()`，任务键要落到日志上，调用点必须改成 `slog.InfoContext(ctx, …)`
+一族。「均带」也还差几行：`internal/database`（本轮归并行 agent）、`internal/parser`（要把 ctx
+穿进归档接口）上的那几处仍不带。

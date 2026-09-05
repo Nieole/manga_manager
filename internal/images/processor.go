@@ -2,6 +2,7 @@ package images
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/draw"
@@ -257,13 +258,15 @@ type ProcessOutcome struct {
 
 // ProcessImage 是只关心字节的窄接口（封面与缩略图走它）。
 // 需要判断产物能不能缓存的调用方用 ProcessImageDetailed。
-func ProcessImage(data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
-	out, err := ProcessImageDetailed(data, contentType, opts)
+//
+// ctx 只承载日志属性，不参与取消：转码是一趟不可中断的 CPU 活，本包一次都不看 ctx.Err()。
+func ProcessImage(ctx context.Context, data []byte, contentType string, opts ProcessOptions) ([]byte, string, error) {
+	out, err := ProcessImageDetailed(ctx, data, contentType, opts)
 	return out.Data, out.ContentType, err
 }
 
 // ProcessImageDetailed 在字节之外交出「实际做了什么」，见 ProcessOutcome。
-func ProcessImageDetailed(data []byte, contentType string, opts ProcessOptions) (ProcessOutcome, error) {
+func ProcessImageDetailed(ctx context.Context, data []byte, contentType string, opts ProcessOptions) (ProcessOutcome, error) {
 	// 目标尺寸闸门（第二道防线，HTTP 层已先校验一次）：负值经 uint() 转换会变成天文数字，
 	// 超大值会让 resize 直接申请数 GB 缓冲。必须在解码之前拒绝，否则白白解一次图。
 	if err := ValidateTargetDimensions(opts.Width, opts.Height); err != nil {
@@ -297,7 +300,7 @@ func ProcessImageDetailed(data []byte, contentType string, opts ProcessOptions) 
 		}
 		if area > largeImageWarnPixels {
 			// 大图（如 5000x5000+）在小型服务器上解码开销较高，记录以便排障，但仍尝试处理。
-			slog.Warn("Large image detected", "width", config.Width, "height", config.Height, "area", area)
+			slog.WarnContext(ctx, "Large image detected", "width", config.Width, "height", config.Height, "area", area)
 		}
 	}
 
@@ -330,7 +333,7 @@ func ProcessImageDetailed(data []byte, contentType string, opts ProcessOptions) 
 	// 针对 Waifu2x / realcugan / ncnn 这种需要外部挂载文件系统的超分辨率算法单独开一条短路通道
 	var skippedFilter string
 	if isAIFilter(opts.Filter) {
-		outData, aiErr := execWaifu2x(newImg, data, contentType, opts)
+		outData, aiErr := execWaifu2x(ctx, newImg, data, contentType, opts)
 		if aiErr == nil {
 			// 直接返回加工好的 原始字节数组
 			// 为了防止前端不认识，强制重置 contentType
@@ -346,7 +349,7 @@ func ProcessImageDetailed(data []byte, contentType string, opts ProcessOptions) 
 		}
 		// 引擎没装、不在 PATH、或跑挂了。这一步没做成必须报到调用方：它据此拒绝把这份字节按 AI 的
 		// 缓存键存下来，否则用户后来把引擎装好，看过的页会永远停在没放大的那一张。
-		slog.Warn("AI upscaling unavailable, delivering without it", "filter", opts.Filter, "error", aiErr)
+		slog.WarnContext(ctx, "AI upscaling unavailable, delivering without it", "filter", opts.Filter, "error", aiErr)
 		skippedFilter = opts.Filter
 		// 余下的活按用户显式要的来（格式、质量、裁切、尺寸）；一件都不剩就交出源字节，
 		// 不拿一次有损重编码冒充放大结果。
@@ -482,7 +485,7 @@ func decodeImage(data []byte, contentType string) (image.Image, string, error) {
 }
 
 // execWaifu2x 封闭处理 Waifu2x 外部二进制引擎挂载调用、零担内存置换及事后清理
-func execWaifu2x(img image.Image, rawData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
+func execWaifu2x(ctx context.Context, img image.Image, rawData []byte, contentType string, opts ProcessOptions) ([]byte, error) {
 	// 获取信号量锁 (Semaphore Acquire)
 	// 如果由于读页并发过高，此处会阻塞协程直到前序 AI 任务完成。
 	// 把 channel 快照进 sem，确保 acquire 与 release 用的是同一个 channel，
@@ -511,11 +514,11 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 	if customPath != "" {
 		switch info, err := os.Stat(customPath); {
 		case !filepath.IsAbs(customPath):
-			slog.Warn("Ignoring non-absolute custom engine path (security hardening)", "custom_path", customPath)
+			slog.WarnContext(ctx, "Ignoring non-absolute custom engine path (security hardening)", "custom_path", customPath)
 		case err != nil:
-			slog.Warn("Custom engine path specified but not accessible", "custom_path", customPath, "error", err)
+			slog.WarnContext(ctx, "Custom engine path specified but not accessible", "custom_path", customPath, "error", err)
 		case info.IsDir():
-			slog.Warn("Ignoring custom engine path pointing to a directory", "custom_path", customPath)
+			slog.WarnContext(ctx, "Ignoring custom engine path pointing to a directory", "custom_path", customPath)
 		default:
 			execPath = customPath
 		}
@@ -632,7 +635,7 @@ func execWaifu2x(img image.Image, rawData []byte, contentType string, opts Proce
 	if err != nil {
 		return nil, fmt.Errorf("%s execution failed: %v, output: %s", binName, err, string(output))
 	}
-	slog.Info("AI upscaling execution successful", "engine", binName, "output_snippet", string(output[:min(len(output), 100)]))
+	slog.InfoContext(ctx, "AI upscaling execution successful", "engine", binName, "output_snippet", string(output[:min(len(output), 100)]))
 
 	// 读取处理完毕的磁盘输出图
 	processedData, err := os.ReadFile(outPath)

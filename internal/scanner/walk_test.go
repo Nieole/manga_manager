@@ -31,7 +31,7 @@ func requireSymlinks(t *testing.T) {
 func collectWalked(t *testing.T, root string) []string {
 	t.Helper()
 	var got []string
-	err := walkDirFollowingSymlinks(root, func(path string, d fs.DirEntry, err error) error {
+	err := walkDirFollowingSymlinks(context.Background(), root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -112,7 +112,7 @@ func TestWalkUsesSymlinkTargetInfo(t *testing.T) {
 
 	var gotSize int64 = -1
 	var gotMod time.Time
-	err := walkDirFollowingSymlinks(root, func(path string, d fs.DirEntry, err error) error {
+	err := walkDirFollowingSymlinks(context.Background(), root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}

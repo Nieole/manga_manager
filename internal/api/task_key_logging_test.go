@@ -1,0 +1,173 @@
+// 守「查看日志」按钮点开有内容：任务体沿途的日志经任务 ctx 自动带上**任务键**，按它过滤拿得到非空结果。
+// 破了的表现是那个按钮对绝大多数任务返回空列表——而这正是它在本票之前的样子。
+// 另一半是边界：不属于任何任务的扫描（守护 / watcher / 首扫）日志不带任务键，那是对的。
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"manga-manager/internal/database"
+	"manga-manager/internal/logger"
+	"manga-manager/internal/scanner"
+	"manga-manager/internal/taskrun"
+)
+
+// scanFailingStore 让资料库扫描在「加载已入库文件快照」那一步失败。
+//
+// 挑这一步是因为它在扫描器内部、而且返回错误就直接中止整次扫描：任务因此真的以**失败**收尾，
+// 同时那条 slog.WarnContext 是从任务体深处而不是启动点发出的——本票要守的正是这段路。
+type scanFailingStore struct {
+	database.Store
+	err error
+}
+
+func (s scanFailingStore) ListBooksByLibrary(context.Context, int64) ([]database.ListBooksByLibraryRow, error) {
+	return nil, s.err
+}
+
+// captureLogsInto 把全局 logger 接到 path，用与生产同一层 ctx handler 包着，用完还原。
+//
+// 不调 logger.Init：它会把包级的日志文件路径钉在这个用例的临时目录上，之后同包别的用例
+// 读到的就是一个已被删掉的路径。查看接口在没有 Init 时按数据目录推导，正好落到这里。
+func captureLogsInto(t *testing.T, path string) {
+	t.Helper()
+
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("建日志文件失败: %v", err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+
+	previous := slog.Default()
+	slog.SetDefault(slog.New(logger.NewContextHandler(
+		slog.NewTextHandler(file, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+}
+
+// newScanFailureRig 装一个「扫描必定失败」的控制器：任务体同步执行，日志落到查看接口会读的那个文件。
+func newScanFailureRig(t *testing.T) (*Controller, string) {
+	t.Helper()
+
+	controller, store, _, _ := newTestController(t)
+	controller.taskEngine.runBackground = runTaskBodySynchronously
+	controller.scanner = scanner.NewScanner(
+		scanFailingStore{Store: store, err: errors.New("library rows unreadable")},
+		controller.config,
+	)
+
+	logPath := filepath.Join(filepath.Dir(controller.currentConfig().Database.Path), "manga_manager.log")
+	captureLogsInto(t, logPath)
+
+	return controller, logPath
+}
+
+// queryLogsByTaskKey 走查看接口按任务键过滤，口径与「查看日志」按钮完全一致。
+func queryLogsByTaskKey(t *testing.T, controller *Controller, taskKey string) LogsResponse {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/logs?level=ALL&task_key="+taskKey, nil)
+	rec := httptest.NewRecorder()
+	controller.getSystemLogs(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("日志接口返回 %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response LogsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("解析日志响应失败: %v", err)
+	}
+	return response
+}
+
+func TestFailedLibraryScanLogsAreFilterableByTaskKey(t *testing.T) {
+	controller, _ := newScanFailureRig(t)
+
+	lib := database.Library{ID: 7, Name: "Main", Path: filepath.Join(t.TempDir(), "main")}
+	if err := controller.launchLibraryScanTask(lib, true); err != nil {
+		t.Fatalf("启动资料库扫描失败: %v", err)
+	}
+
+	const key = "scan_library_7"
+	controller.taskEngine.mutex.Lock()
+	status := controller.taskEngine.tasks[key].Status
+	controller.taskEngine.mutex.Unlock()
+	if status != "failed" {
+		t.Fatalf("扫描任务终态为 %q, want failed —— 这个用例要守的是一次**失败**的扫描", status)
+	}
+
+	response := queryLogsByTaskKey(t, controller, key)
+	if len(response.Items) == 0 {
+		t.Fatal("按任务键过滤日志得到空列表：「查看日志」按钮点开还是没有内容")
+	}
+	for _, item := range response.Items {
+		if !strings.Contains(item.Raw, logger.TaskKeyAttr+"="+key) {
+			t.Fatalf("过滤结果里混进了不带该任务键的行: %q", item.Raw)
+		}
+	}
+}
+
+// TestUnattributedLibraryScanLogsCarryNoTaskKey 守本票的已知边界：守护扫描、watcher 派生扫描与
+// 建库首扫今天不属于任何任务，它们的 ctx 里没有任务键，日志因此不带——同一段扫描器代码，
+// 带不带只由跑在谁的 ctx 上决定。
+func TestUnattributedLibraryScanLogsCarryNoTaskKey(t *testing.T) {
+	controller, logPath := newScanFailureRig(t)
+
+	err := controller.scanner.ScanLibrary(context.Background(), 7, filepath.Join(t.TempDir(), "main"), true, nil)
+	if err == nil {
+		t.Fatal("这次扫描本该失败")
+	}
+
+	written, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("读日志文件失败: %v", readErr)
+	}
+	if !strings.Contains(string(written), "Failed to load existing books cache") {
+		t.Fatalf("扫描失败那条日志没落盘，用例什么也没守到:\n%s", written)
+	}
+	if strings.Contains(string(written), logger.TaskKeyAttr+"=") {
+		t.Fatalf("无归属的扫描日志带上了任务键:\n%s", written)
+	}
+}
+
+// TestTaskBodyContextCarriesTaskKey 守启动入口那一下：任务体拿到的 ctx 带着自己的**任务键**。
+// 它是三类任务共用的那一处——任务体沿途每一行带 ctx 的日志都从这里取键，掉了就全都不带。
+func TestTaskBodyContextCarriesTaskKey(t *testing.T) {
+	cases := []struct {
+		name     string
+		identity TaskIdentity
+		key      string
+	}{
+		{"资料库扫描", libraryTask("scan_library", 1, variantSole), "scan_library_1"},
+		{"重建缩略图", systemTask("rebuild_thumbnails", variantSole), "rebuild_thumbnails"},
+		{"刮削", libraryTask("scrape", 2, variantScrapeOneLibrary), "scrape_library_2"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+
+			var seen string
+			err := engine.Run(tc.identity, TaskSpec{Key: tc.key}, func(ctx context.Context, _ *taskrun.Handle) (TaskResult, error) {
+				seen = logger.TaskKeyFrom(ctx)
+				return TaskResult{}, nil
+			})
+			if err != nil {
+				t.Fatalf("启动入口返回了 %v，应为 nil", err)
+			}
+			if seen != tc.key {
+				t.Fatalf("任务体的 ctx 里任务键为 %q, want %q", seen, tc.key)
+			}
+		})
+	}
+}

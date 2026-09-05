@@ -6,6 +6,7 @@ package images
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -25,7 +26,7 @@ func BenchmarkProcessImageResizeWebP(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data, contentType, err := ProcessImage(source, "image/png", opts)
+		data, contentType, err := ProcessImage(context.Background(), source, "image/png", opts)
 		if err != nil {
 			b.Fatalf("process image failed: %v", err)
 		}
@@ -45,7 +46,7 @@ func BenchmarkProcessImageAutoCropPNG(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data, contentType, err := ProcessImage(source, "image/png", opts)
+		data, contentType, err := ProcessImage(context.Background(), source, "image/png", opts)
 		if err != nil {
 			b.Fatalf("process image failed: %v", err)
 		}
@@ -67,7 +68,7 @@ func BenchmarkProcessImageAutoCropAtOrigin(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data, contentType, err := ProcessImage(source, "image/png", opts)
+		data, contentType, err := ProcessImage(context.Background(), source, "image/png", opts)
 		if err != nil {
 			b.Fatalf("process image failed: %v", err)
 		}
@@ -89,7 +90,7 @@ func BenchmarkProcessImageAutoCropJPEG(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data, contentType, err := ProcessImage(source, "image/jpeg", opts)
+		data, contentType, err := ProcessImage(context.Background(), source, "image/jpeg", opts)
 		if err != nil {
 			b.Fatalf("process image failed: %v", err)
 		}

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/logger"
 	"manga-manager/internal/taskrun"
 	"net/http"
 	"os"
@@ -316,7 +317,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 			return TaskResult{}, err
 		}
 		c.warmDashboardStatsCacheAsync("scan_library_completed")
-		c.chainBookHashBackfill("scan_library")
+		c.chainBookHashBackfill(ctx, "scan_library")
 		return TaskResult{Params: map[string]string{"name": lib.Name}}, nil
 	})
 }
@@ -395,12 +396,12 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 				c.invalidateDashboardStatsCache("scan_series_cancelled")
 				return TaskResult{Params: idParams}, err
 			}
-			slog.Error("ScanSeries Failed", "seriesId", seriesID, "error", err)
+			slog.ErrorContext(ctx, "ScanSeries Failed", "seriesId", seriesID, "error", err)
 			c.invalidateDashboardStatsCache("scan_series_failed")
 			return TaskResult{}, err
 		}
 		c.warmDashboardStatsCacheAsync("scan_series_completed")
-		c.chainBookHashBackfill("scan_series")
+		c.chainBookHashBackfill(ctx, "scan_series")
 		return TaskResult{Params: idParams}, nil
 	})
 }
@@ -462,12 +463,14 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
 		FailCode:     "task.msg.cleanup_library.failed",
 	}
 
-	return c.taskEngine.Run(libraryTask("cleanup_library", libraryID, variantSole), spec, func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("cleanup_library", libraryID, variantSole), spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		tp.Phase("scanning_records", "task.msg.cleanup_library.scanning_records", idParams)
-		// 刻意不用任务体的 ctx：本任务不可取消，而停机会取消所有任务 ctx——用了它，
+		// 刻意不用任务体 ctx 的**取消**能力：本任务不可取消，而停机会取消所有任务 ctx——用了它，
 		// 一次关服就会把这个没人取消过的任务写成**已取消**。改动前先读本函数的 doc。
-		if err := c.scanner.CleanupLibrary(context.Background(), libraryID); err != nil {
-			slog.Error("Failed to cleanup library", "library_id", libraryID, "error", err)
+		// 只把它携带的**任务键**转移到这条不可取消的 ctx 上，否则这个任务跑出的日志按任务键一条也过滤不到。
+		cleanupCtx := logger.WithTaskKey(context.Background(), logger.TaskKeyFrom(taskCtx))
+		if err := c.scanner.CleanupLibrary(cleanupCtx, libraryID); err != nil {
+			slog.ErrorContext(cleanupCtx, "Failed to cleanup library", "library_id", libraryID, "error", err)
 			return TaskResult{}, err
 		}
 		return TaskResult{Params: idParams}, nil

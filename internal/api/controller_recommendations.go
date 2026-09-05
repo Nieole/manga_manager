@@ -189,12 +189,12 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 			// 取消是用户按的，不是故障：无条件记 ERROR 的话，每按一次取消日志里就多出
 			// 一串看着像故障的 "context canceled"。下面两处同理。
 			if !errors.Is(err, context.Canceled) {
-				slog.Error("Failed to fetch series for grouping", "library_id", libID, "error", err)
+				slog.ErrorContext(ctx, "Failed to fetch series for grouping", "library_id", libID, "error", err)
 			}
 			return taskFailure("task.msg.ai_grouping.fail_db_fetch", err), err
 		}
 
-		slog.Info("AI grouping: fetched candidate series", "library_id", libID, "count", len(seriesRows))
+		slog.InfoContext(ctx, "AI grouping: fetched candidate series", "library_id", libID, "count", len(seriesRows))
 
 		if len(seriesRows) == 0 {
 			return TaskResult{Code: "task.msg.ai_grouping.all_already_grouped"}, nil
@@ -232,7 +232,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		collections, err := provider.GenerateGrouping(ctx, candidates)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				slog.Error("Failed to generate grouping", "library_id", libID, "error", err)
+				slog.ErrorContext(ctx, "Failed to generate grouping", "library_id", libID, "error", err)
 			}
 			return TaskResult{}, err
 		}
@@ -246,7 +246,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		review, reviewCollections, err := c.createAIGroupingReview(ctx, libID, provider.Name(), candidates, collections)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				slog.Error("Failed to create AI grouping review", "library_id", libID, "error", err)
+				slog.ErrorContext(ctx, "Failed to create AI grouping review", "library_id", libID, "error", err)
 			}
 			return taskFailure("task.msg.ai_grouping.fail_create_review", err), err
 		}

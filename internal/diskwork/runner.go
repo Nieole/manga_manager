@@ -76,7 +76,7 @@ func (r *Runner) Do(ctx context.Context, w Work, fn func() error) (Stats, error)
 	stats.PausedWait = lease.PausedWait
 	// 先记日志再判错：等了很久最终被取消的申领，正是这条观测要治的场景。
 	if lease.Wait >= slowAcquireThreshold {
-		slog.Info("Disk work waited for storage IO token",
+		slog.InfoContext(ctx, "Disk work waited for storage IO token",
 			"work_kind", string(w.Kind),
 			"path", w.Path,
 			"storage_profile", policy.StorageProfile,

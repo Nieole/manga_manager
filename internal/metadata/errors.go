@@ -6,6 +6,7 @@
 package metadata
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -53,9 +54,9 @@ func truncateUpstreamBody(body []byte) string {
 //
 // 响应体必须先截断：日志文件是按行读的，一行未截断的整页 HTML 错误页落盘后，日志查看端点
 // 读到它就再也读不出后面的内容。secret 为空表示该 Provider 的凭据不在 URL 里。
-func logUpstreamFailure(msg string, status int, body []byte, secret string, attrs ...any) string {
+func logUpstreamFailure(ctx context.Context, msg string, status int, body []byte, secret string, attrs ...any) string {
 	safe := redactSecret(truncateUpstreamBody(body), secret)
-	slog.Error(msg, append([]any{"status", status, "body", safe}, attrs...)...)
+	slog.ErrorContext(ctx, msg, append([]any{"status", status, "body", safe}, attrs...)...)
 	return safe
 }
 

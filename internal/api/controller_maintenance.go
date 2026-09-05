@@ -30,7 +30,7 @@ import (
 func (c *Controller) triggerGlobalScan(ctx context.Context) {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
-		slog.Error("Global scan aborted: failed to list libraries", "error", err)
+		slog.ErrorContext(ctx, "Global scan aborted: failed to list libraries", "error", err)
 		return
 	}
 
@@ -41,7 +41,7 @@ func (c *Controller) triggerGlobalScan(ctx context.Context) {
 			defer wg.Done()
 			defer c.purgeReadingPathCaches()
 			if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true, nil); err != nil {
-				slog.Error("Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
+				slog.ErrorContext(ctx, "Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
 			}
 		}(lib)
 	}
@@ -359,7 +359,7 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, ta
 				return updated, total, err
 			}
 			if hashErr != nil {
-				slog.Warn("Failed to quick-fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
+				slog.WarnContext(ctx, "Failed to quick-fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
 				afterID = book.ID
 				continue
 			}
@@ -428,10 +428,12 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 //
 // 「同类任务已在运行」在这里不记日志——回填跑得久，连着扫两个资料库时后一次必然撞上它，
 // 记下来只是噪音。其余错误要记：数不清缺口是真出了问题，而调用方是任务体，没有别的地方能报。
-func (c *Controller) chainBookHashBackfill(reason string) {
+//
+// ctx 是那个任务体的，只用来把它的**任务键**带到这条日志上；串起来的回填本身另起一份 ctx。
+func (c *Controller) chainBookHashBackfill(ctx context.Context, reason string) {
 	err := c.launchLowPriorityBookHashBackfillTask(reason)
 	if err != nil && !errors.Is(err, errTaskAlreadyRunning) {
-		slog.Warn("Background book hash backfill not started", "reason", reason, "error", err)
+		slog.WarnContext(ctx, "Background book hash backfill not started", "reason", reason, "error", err)
 	}
 }
 

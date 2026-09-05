@@ -6,6 +6,7 @@ package images
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/draw"
@@ -211,7 +212,7 @@ func TestProcessImageAutoCropToAvifKeepsPixels(t *testing.T) {
 	source := cropAtOriginPNG(t, w, h, border)
 	truth := gradientImage(w-border, h-border)
 
-	out, contentType, err := ProcessImage(source, "image/png", ProcessOptions{AutoCrop: true, Format: "avif", Quality: 90})
+	out, contentType, err := ProcessImage(context.Background(), source, "image/png", ProcessOptions{AutoCrop: true, Format: "avif", Quality: 90})
 	if err != nil {
 		t.Fatalf("ProcessImage 失败: %v", err)
 	}

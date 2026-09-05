@@ -410,7 +410,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, prov
 		if err := tp.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
-		slog.Info(logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
+		slog.InfoContext(ctx, logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
 
 		m.providerRequests++
 		m.processed = i
@@ -425,12 +425,12 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, prov
 		if err != nil {
 			m.failed++
 			m.providerErrors++
-			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
+			slog.WarnContext(ctx, "Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 			continue
 		}
 		if result == nil {
 			m.notFound++
-			slog.Info("Entry not found by provider", "provider", providerName, "series_name", entry.Name)
+			slog.InfoContext(ctx, "Entry not found by provider", "provider", providerName, "series_name", entry.Name)
 			continue
 		}
 
@@ -447,11 +447,11 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, prov
 		switch {
 		case err != nil:
 			m.failed++
-			slog.Warn("Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
+			slog.WarnContext(ctx, "Scraping failed for series", "provider", providerName, "series_name", entry.Name, "error", err)
 		case queued.Status == proposal.QueueQueued:
 			m.success++
 			m.queuedReview++
-			slog.Info("Queued metadata review", "provider", providerName, "series_title", result.Title)
+			slog.InfoContext(ctx, "Queued metadata review", "provider", providerName, "series_title", result.Title)
 		case queued.Status == proposal.QueueReusedExisting:
 			m.success++
 		default:
@@ -473,7 +473,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *taskrun.Handle, prov
 		}
 	}
 
-	slog.Info("Scrape task completed", "provider", providerName, "success_count", m.success, "total_count", m.total)
+	slog.InfoContext(ctx, "Scrape task completed", "provider", providerName, "success_count", m.success, "total_count", m.total)
 	c.PublishEvent("refresh")
 	return TaskResult{Params: map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)}}, nil
 }

@@ -185,7 +185,7 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 	apiUrl := fmt.Sprintf("%s/v0/search/subjects?limit=%d&offset=%d",
 		b.ClientURL, limit, offset)
 
-	slog.Info("Bangumi search request (POST)", "url", apiUrl, "keyword", title, "limit", limit, "offset", offset)
+	slog.InfoContext(ctx, "Bangumi search request (POST)", "url", apiUrl, "keyword", title, "limit", limit, "offset", offset)
 
 	// 有限次指数退避重试：仅对 429 与 5xx 重试，尊重 Retry-After；退避可被 context 取消打断。
 	// body 为 bytes.Reader，每次重试都必须重建 request。
@@ -228,14 +228,14 @@ func (b *BangumiProvider) SearchMetadata(ctx context.Context, title string, limi
 			if wait > bangumiRetryMaxDelay {
 				wait = bangumiRetryMaxDelay
 			}
-			slog.Warn("Bangumi API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String(), "url", apiUrl)
+			slog.WarnContext(ctx, "Bangumi API throttled, backing off", "status", status, "attempt", attempt+1, "wait", wait.String(), "url", apiUrl)
 			if werr := sleepWithContext(ctx, wait); werr != nil {
 				return nil, 0, werr
 			}
 			continue
 		}
 
-		safeBody := logUpstreamFailure("Bangumi API error", status, respBody, "", "url", apiUrl)
+		safeBody := logUpstreamFailure(ctx, "Bangumi API error", status, respBody, "", "url", apiUrl)
 		return nil, 0, fmt.Errorf("bangumi: API returned status %d: %s", status, safeBody)
 	}
 

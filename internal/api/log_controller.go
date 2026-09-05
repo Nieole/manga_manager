@@ -75,7 +75,7 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	taskKeyFilter := strings.TrimSpace(r.URL.Query().Get("task_key"))
 	taskKeyNeedle := ""
 	if taskKeyFilter != "" {
-		taskKeyNeedle = "task_key=" + taskKeyFilter
+		taskKeyNeedle = logger.TaskKeyAttr + "=" + taskKeyFilter
 	}
 
 	// 优先使用 logger 实际写入的日志文件路径，避免查看侧与写入侧依据不同来源推导而分叉。

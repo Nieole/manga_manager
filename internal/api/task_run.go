@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"manga-manager/internal/logger"
 	"manga-manager/internal/taskcontrol"
 	"manga-manager/internal/taskrun"
 )
@@ -231,15 +232,18 @@ func (e *taskEngine) claimTaskSlot(identity TaskIdentity, spec TaskSpec) (contex
 	return taskCtx, release, true
 }
 
-// newTaskRuntimeLocked 为任务体建立可取消 + 可暂停的 ctx，并登记**运行时句柄**供暂停/恢复/取消
-// 接口操作。调用方持有 mutex。
+// newTaskRuntimeLocked 为任务体建立可取消 + 可暂停 + 带**任务键**的 ctx，并登记**运行时句柄**
+// 供暂停/恢复/取消接口操作。调用方持有 mutex。
 //
 // 它只被 claimTaskSlot 调用，因此「拿得到一份**运行时句柄**」等价于「刚刚成功申领到一个任务槽位」。
 // 单独暴露出去就等于开了一条给任意任务键凭空造句柄的路，包括那些根本没有任务行的键。
+//
+// 任务键进 ctx 是「查看日志」按钮的写入侧：日志 handler 从 ctx 里把它取出来附成属性，
+// 于是任务体沿途每一行带 ctx 的日志都自动带上它，不必在调用点手写。
 func (e *taskEngine) newTaskRuntimeLocked(key string, startedAt time.Time) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	gate := taskcontrol.NewPauseGate()
-	taskCtx := taskcontrol.WithPauseGate(ctx, gate)
+	taskCtx := logger.WithTaskKey(taskcontrol.WithPauseGate(ctx, gate), key)
 
 	runtime := &TaskRuntime{
 		Context:   taskCtx,

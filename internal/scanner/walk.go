@@ -7,6 +7,7 @@
 package scanner
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -27,9 +28,12 @@ const maxSymlinkWalkDepth = 16
 //
 // visited 每次调用现建，作用域只到这一趟遍历：两个资料库各自软链到同一块外置盘的同一个
 // 目录时，两趟遍历互不相干，谁也不会把对方的内容吞掉。
-func walkDirFollowingSymlinks(root string, fn fs.WalkDirFunc) error {
+//
+// ctx 只承载日志属性，不参与取消：本函数一次都不看 ctx.Err()，何时收手由 fn 的返回值决定
+// ——扫描器正是在它那个回调里判取消的。
+func walkDirFollowingSymlinks(ctx context.Context, root string, fn fs.WalkDirFunc) error {
 	visited := make(map[string][]string)
-	return walkFollow(root, fn, visited, 0)
+	return walkFollow(ctx, root, fn, visited, 0)
 }
 
 // dirClaimKey 把一条目录路径折成 visited 的**桶键**，另外交回解析后的路径。
@@ -86,7 +90,7 @@ func sameDir(a, b string) bool {
 //
 // 这个次序也定死了两条路径都通时留下来的是**真实目录**那条，与链接名的字典序无关：
 // 软链是随手建的组织视图，用户删掉它不该让整个系列在下次扫描时消失。
-func walkFollow(dir string, fn fs.WalkDirFunc, visited map[string][]string, depth int) error {
+func walkFollow(ctx context.Context, dir string, fn fs.WalkDirFunc, visited map[string][]string, depth int) error {
 	walkRoot, claimed := claimDir(dir, visited)
 	if !claimed {
 		return nil
@@ -122,7 +126,7 @@ func walkFollow(dir string, fn fs.WalkDirFunc, visited map[string][]string, dept
 		if statErr != nil {
 			// 断链：目标不存在或不可达，谁也读不了它。跳过而不是报错——
 			// 库里留着一个失效链接是很常见的，不该让整次扫描看起来出了故障。
-			slog.Debug("Skipping broken symlink", "path", path, "error", statErr)
+			slog.DebugContext(ctx, "Skipping broken symlink", "path", path, "error", statErr)
 			return nil
 		}
 
@@ -141,7 +145,7 @@ func walkFollow(dir string, fn fs.WalkDirFunc, visited map[string][]string, dept
 
 	for _, link := range pendingLinks {
 		if depth >= maxSymlinkWalkDepth {
-			slog.Warn("Symlink nesting too deep, not descending",
+			slog.WarnContext(ctx, "Symlink nesting too deep, not descending",
 				"path", link, "max_depth", maxSymlinkWalkDepth)
 			continue
 		}
@@ -151,10 +155,10 @@ func walkFollow(dir string, fn fs.WalkDirFunc, visited map[string][]string, dept
 		// 再次判定为软链而原地打转。改写前缀把报出去的 path 拉回链接这一侧。
 		realTarget, evalErr := filepath.EvalSymlinks(link)
 		if evalErr != nil {
-			slog.Warn("Cannot resolve symlinked directory", "path", link, "error", evalErr)
+			slog.WarnContext(ctx, "Cannot resolve symlinked directory", "path", link, "error", evalErr)
 			continue
 		}
-		if err := walkFollow(realTarget, rewriteWalkPrefix(fn, realTarget, link), visited, depth+1); err != nil {
+		if err := walkFollow(ctx, realTarget, rewriteWalkPrefix(fn, realTarget, link), visited, depth+1); err != nil {
 			return err
 		}
 	}

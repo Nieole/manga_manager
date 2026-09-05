@@ -64,7 +64,7 @@ func Init(logDir, level string) error {
 		Level:     levelVar,
 		AddSource: false,
 	}
-	handler := slog.NewTextHandler(multiLog, opts)
+	handler := NewContextHandler(slog.NewTextHandler(multiLog, opts))
 	logger := slog.New(handler)
 
 	// 全局接管：覆盖标准库 slog 以及古板裸 log 包默认行为

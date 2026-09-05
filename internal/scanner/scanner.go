@@ -117,7 +117,7 @@ func (s *Scanner) scanOptions(force bool) ScanOptions {
 func (s *Scanner) libraryScanFormats(ctx context.Context, libraryID int64) config.ScanFormatSet {
 	lib, err := s.store.GetLibrary(ctx, libraryID)
 	if err != nil {
-		slog.Warn("Failed to load library scan formats, falling back to all supported formats",
+		slog.WarnContext(ctx, "Failed to load library scan formats, falling back to all supported formats",
 			"library_id", libraryID, "error", err)
 		return config.ScanFormatSet{}
 	}
@@ -524,7 +524,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions, observer ScanObserver) error {
 	force := scanOpts.Force
 	if !s.beginLibraryScan(libraryID) {
-		slog.Info("Library scan skipped because another scan is already running", "library_id", libraryID)
+		slog.InfoContext(ctx, "Library scan skipped because another scan is already running", "library_id", libraryID)
 		return ErrScanAlreadyRunning
 	}
 	defer s.endLibraryScan(libraryID)
@@ -549,7 +549,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 
 	existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
 	if err != nil {
-		slog.Warn("Failed to load existing books cache", "library_id", libraryID, "error", err)
+		slog.WarnContext(ctx, "Failed to load existing books cache", "library_id", libraryID, "error", err)
 		return err
 	}
 	for _, b := range existingBooks {
@@ -589,7 +589,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	// WalkDir 只负责识别候选漫画归档并投递任务，不打开归档内容，确保发现阶段可以快速响应暂停和取消。
 	var walkErr error
 	progress.publish("discovering", rootPath, true)
-	walkErr = walkDirFollowingSymlinks(rootPath, func(path string, d fs.DirEntry, err error) error {
+	walkErr = walkDirFollowingSymlinks(ctx, rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
@@ -597,7 +597,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 			return ctxErr
 		}
 		if err != nil {
-			slog.Warn("Error accessing path", "path", path, "error", err)
+			slog.WarnContext(ctx, "Error accessing path", "path", path, "error", err)
 			return nil
 		}
 
@@ -651,7 +651,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr, observer)
+	s.logScanCompleted(ctx, "library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
 	return walkErr
 }
@@ -659,7 +659,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 // ScanSeries 扫描单一系列目录，将新的卷添加到数据库中
 func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, observer ScanObserver) error {
 	if !s.beginSeriesScan(seriesID) {
-		slog.Info("Series scan skipped because another scan is already running", "series_id", seriesID)
+		slog.InfoContext(ctx, "Series scan skipped because another scan is already running", "series_id", seriesID)
 		return ErrScanAlreadyRunning
 	}
 	defer s.endSeriesScan(seriesID)
@@ -718,7 +718,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 
 	var walkErr error
 	progress.publish("discovering", series.Path, true)
-	walkErr = walkDirFollowingSymlinks(series.Path, func(path string, d fs.DirEntry, err error) error {
+	walkErr = walkDirFollowingSymlinks(ctx, series.Path, func(path string, d fs.DirEntry, err error) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
@@ -726,7 +726,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 			return ctxErr
 		}
 		if err != nil {
-			slog.Warn("Error accessing path", "path", path, "error", err)
+			slog.WarnContext(ctx, "Error accessing path", "path", path, "error", err)
 			return nil
 		}
 		if d.IsDir() {
@@ -779,7 +779,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 	if walkErr == nil {
 		walkErr = ctx.Err()
 	}
-	s.logScanCompleted("series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr, observer)
+	s.logScanCompleted(ctx, "series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
 	return walkErr
 }
@@ -828,12 +828,12 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 		if _, statErr := os.Stat(series.Path); statErr == nil {
 			continue
 		} else if !os.IsNotExist(statErr) {
-			slog.Warn("Skipping series with ambiguous stat error during cleanup",
+			slog.WarnContext(ctx, "Skipping series with ambiguous stat error during cleanup",
 				"series_id", series.ID, "path", series.Path, "error", statErr)
 			continue
 		}
 		if s.seriesHasSurvivingBook(ctx, series.ID) {
-			slog.Debug("Series directory missing but books still on disk; treating as virtual series",
+			slog.DebugContext(ctx, "Series directory missing but books still on disk; treating as virtual series",
 				"series_id", series.ID, "path", series.Path)
 			continue
 		}
@@ -851,9 +851,9 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		slog.Info("Removing missing series", "series_id", series.ID, "path", series.Path)
+		slog.InfoContext(ctx, "Removing missing series", "series_id", series.ID, "path", series.Path)
 		if err := s.store.DeleteSeries(ctx, series.ID); err != nil {
-			slog.Error("Failed to delete series", "series_id", series.ID, "error", err)
+			slog.ErrorContext(ctx, "Failed to delete series", "series_id", series.ID, "error", err)
 			continue
 		}
 		removedSeries[series.ID] = true
@@ -875,13 +875,13 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 		for _, book := range books {
 			if _, statErr := os.Stat(book.Path); statErr != nil {
 				if os.IsNotExist(statErr) {
-					slog.Info("Removing missing book", "book_id", book.ID, "path", book.Path)
+					slog.InfoContext(ctx, "Removing missing book", "book_id", book.ID, "path", book.Path)
 					if err := s.store.DeleteBook(ctx, book.ID); err != nil {
-						slog.Error("Failed to delete book", "book_id", book.ID, "error", err)
+						slog.ErrorContext(ctx, "Failed to delete book", "book_id", book.ID, "error", err)
 					}
 					booksChanged = true
 				} else {
-					slog.Warn("Skipping book with ambiguous stat error during cleanup",
+					slog.WarnContext(ctx, "Skipping book with ambiguous stat error during cleanup",
 						"book_id", book.ID, "path", book.Path, "error", statErr)
 				}
 			}
@@ -897,7 +897,7 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 		}
 	}
 
-	slog.Info("Library cleanup completed", "library_id", libraryID, "removed_series", len(removedSeries))
+	slog.InfoContext(ctx, "Library cleanup completed", "library_id", libraryID, "removed_series", len(removedSeries))
 	return nil
 }
 
@@ -908,7 +908,7 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 func (s *Scanner) seriesHasSurvivingBook(ctx context.Context, seriesID int64) bool {
 	books, err := s.store.ListBooksBySeries(ctx, seriesID)
 	if err != nil {
-		slog.Warn("Failed to list books while confirming series removal; keeping series",
+		slog.WarnContext(ctx, "Failed to list books while confirming series removal; keeping series",
 			"series_id", seriesID, "error", err)
 		return true
 	}
@@ -926,7 +926,7 @@ func (s *Scanner) seriesHasSurvivingBook(ctx context.Context, seriesID int64) bo
 // logScanCompleted 打一条收尾日志，并把全量指标交给本次扫描的**扫描观察者**。
 //
 // scope 与 id 只进日志属性：报文本身不带身份，观察者知道自己是谁。
-func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error, observer ScanObserver) {
+func (s *Scanner) logScanCompleted(ctx context.Context, scope string, id int64, rootPath string, opts ScanOptions, metrics *scanMetrics, duration time.Duration, err error, observer ScanObserver) {
 	snapshot := metrics.snapshot()
 	policy := config.ResolveStoragePolicy(s.currentConfig(), rootPath)
 	attrs := []any{
@@ -961,11 +961,11 @@ func (s *Scanner) logScanCompleted(scope string, id int64, rootPath string, opts
 	}
 	if err != nil {
 		attrs = append(attrs, "error", err)
-		slog.Warn("Scan completed with errors", attrs...)
+		slog.WarnContext(ctx, "Scan completed with errors", attrs...)
 		publishScanMetrics(observer, policy, snapshot, duration)
 		return
 	}
-	slog.Info("Scan completed", attrs...)
+	slog.InfoContext(ctx, "Scan completed", attrs...)
 	publishScanMetrics(observer, policy, snapshot, duration)
 }
 
@@ -1020,7 +1020,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 				if metrics != nil {
 					metrics.failedArchives.Add(1)
 				}
-				slog.Warn("Failed to open archive (may be corrupted)", "path", job.path, "error", err)
+				slog.WarnContext(ctx, "Failed to open archive (may be corrupted)", "path", job.path, "error", err)
 				return err
 			}
 			defer arc.Close()
@@ -1034,7 +1034,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 				if metrics != nil {
 					metrics.failedArchives.Add(1)
 				}
-				slog.Warn("Failed to scan pages inside archive", "path", job.path, "error", err)
+				slog.WarnContext(ctx, "Failed to scan pages inside archive", "path", job.path, "error", err)
 				return err
 			}
 
@@ -1108,7 +1108,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 			}
 		}
 	} else if opts.Profile.extractsMetadata() {
-		slog.Warn("No pages found in archive to extract cover", "path", job.path)
+		slog.WarnContext(ctx, "No pages found in archive to extract cover", "path", job.path)
 	}
 
 	book := database.UpsertBookByPathParams{
@@ -1144,7 +1144,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		}
 		progress.publish("hashing", job.path, false)
 		if hashErr != nil {
-			slog.Warn("Failed to compute book binary fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
+			slog.WarnContext(ctx, "Failed to compute book binary fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}
 
@@ -1165,7 +1165,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		}
 		progress.publish("hashing", job.path, false)
 		if hashErr != nil {
-			slog.Warn("Failed to compute quick book fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
+			slog.WarnContext(ctx, "Failed to compute quick book fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}
 
@@ -1264,7 +1264,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						NameInitial:  database.SeriesInitial(res.seriesName, res.seriesName),
 					})
 					if err != nil {
-						slog.Error("Failed to create/upsert series", "series_name", res.seriesName, "error", err)
+						slog.ErrorContext(ctx, "Failed to create/upsert series", "series_name", res.seriesName, "error", err)
 						continue
 					}
 					seriesID = createdSeries.ID
@@ -1369,13 +1369,13 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					})
 					switch {
 					case err != nil:
-						slog.Warn("Failed to rehome renamed book", "book_id", res.rehome.bookID,
+						slog.WarnContext(ctx, "Failed to rehome renamed book", "book_id", res.rehome.bookID,
 							"old_path", res.rehome.oldPath, "new_path", res.book.Path, "error", err)
 					case affected == 0:
-						slog.Info("Skipped rehoming renamed book because the row moved concurrently",
+						slog.InfoContext(ctx, "Skipped rehoming renamed book because the row moved concurrently",
 							"book_id", res.rehome.bookID, "old_path", res.rehome.oldPath)
 					default:
-						slog.Info("Rehomed renamed book", "book_id", res.rehome.bookID,
+						slog.InfoContext(ctx, "Rehomed renamed book", "book_id", res.rehome.bookID,
 							"old_path", res.rehome.oldPath, "new_path", res.book.Path, "match", res.rehome.reason)
 						metrics.rehomedBooks.Add(1)
 					}
@@ -1392,7 +1392,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 						database.UpsertBookByPathKeepingPagesAndCoverParams(res.book))
 				}
 				if err != nil {
-					slog.Error("Failed to upsert book", "path", res.book.Path, "error", err)
+					slog.ErrorContext(ctx, "Failed to upsert book", "path", res.book.Path, "error", err)
 					continue
 				}
 				if err := q.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
@@ -1402,7 +1402,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					PathFingerprint:      res.pathFingerprint,
 					PathFingerprintNoExt: res.pathFingerprintNoExt,
 				}); err != nil {
-					slog.Warn("Failed to update book identity", "book_id", actualBook.ID, "path", actualBook.Path, "error", err)
+					slog.WarnContext(ctx, "Failed to update book identity", "book_id", actualBook.ID, "path", actualBook.Path, "error", err)
 				}
 				if res.coverCandidate != nil && (!actualBook.CoverPath.Valid || actualBook.CoverPath.String == "") {
 					coverJobs = append(coverJobs, coverJob{
@@ -1425,10 +1425,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		if err != nil {
 			// 整批写事务失败会丢弃最多 batchSize 本书。丢弃数必须计入 failedArchives，
 			// 否则任务会静默报成功，扫描完成日志与指标里看不出任何异常。
-			slog.Error("Batch ingest transaction failed, dropping batch", "book_count", len(batch), "error", err)
+			slog.ErrorContext(ctx, "Batch ingest transaction failed, dropping batch", "book_count", len(batch), "error", err)
 			metrics.failedArchives.Add(int64(len(batch)))
 		} else {
-			slog.Info("Successfully ingested batch", "book_count", len(batch))
+			slog.InfoContext(ctx, "Successfully ingested batch", "book_count", len(batch))
 			// 累积本批 touched 系列，待 refreshDirtySeries 节流刷新（不在批事务内逐系列全量重算）。
 			for sid := range updatedSeriesIDs {
 				dirtySeries[sid] = true
@@ -1462,7 +1462,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			if err := s.store.RefreshSeriesDerivedData(refreshCtx, sid); err != nil {
 				if !warnedSeries[sid] {
 					warnedSeries[sid] = true
-					slog.Warn("Failed to refresh series derived data, keeping it dirty for a later retry",
+					slog.WarnContext(refreshCtx, "Failed to refresh series derived data, keeping it dirty for a later retry",
 						"series_id", sid, "err", err)
 				}
 				continue
@@ -1497,7 +1497,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 		if remaining := len(dirtySeries); remaining > 0 {
 			// 这些系列的统计会一直不准，直到它们再次被扫描到。必须让它可见。
 			metrics.staleSeriesStats.Add(int64(remaining))
-			slog.Error("Scan finished with stale series statistics",
+			slog.ErrorContext(ctx, "Scan finished with stale series statistics",
 				"stale_series", remaining,
 				"hint", "these series keep outdated book_count/total_pages until they are scanned again")
 		}
@@ -1643,7 +1643,7 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	cfg := s.currentConfig()
 	coverPath, err := s.generateBookThumbnail(ctx, job.candidate, cfg, job.metrics)
 	if err != nil {
-		slog.Warn("Failed to generate queued thumbnail", "book_id", job.bookID, "path", job.candidate.path, "error", err)
+		slog.WarnContext(ctx, "Failed to generate queued thumbnail", "book_id", job.bookID, "path", job.candidate.path, "error", err)
 		return
 	}
 	if !coverPath.Valid || coverPath.String == "" {
@@ -1656,7 +1656,7 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	})
 	if err != nil {
 		removeGeneratedThumbnail(cfg, coverPath.String)
-		slog.Warn("Failed to update queued thumbnail cover path", "book_id", job.bookID, "error", err)
+		slog.WarnContext(ctx, "Failed to update queued thumbnail cover path", "book_id", job.bookID, "error", err)
 		return
 	}
 	if rowsAffected == 0 {
@@ -1677,7 +1677,7 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	//
 	// 其余统计由入库侧的 dirtySeries 节流刷新负责（见 ingestResults），职责不重叠。
 	if err := s.store.RefreshSeriesCover(ctx, job.seriesID); err != nil {
-		slog.Warn("Failed to refresh series cover after queued thumbnail", "series_id", job.seriesID, "error", err)
+		slog.WarnContext(ctx, "Failed to refresh series cover after queued thumbnail", "series_id", job.seriesID, "error", err)
 	}
 	if s.onBatchIngested != nil {
 		s.onBatchIngested("thumbnail_updated")
@@ -1714,12 +1714,12 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 		targetFormat = "webp"
 	}
 
-	processed, contentType, err := images.ProcessImage(pageData, candidate.mediaType, images.ProcessOptions{
+	processed, contentType, err := images.ProcessImage(ctx, pageData, candidate.mediaType, images.ProcessOptions{
 		Width: 400, Quality: 82, Format: targetFormat,
 	})
 	if err != nil || len(processed) == 0 {
-		slog.Warn("Primary thumbnail format generation failed, falling back to jpeg", "format", targetFormat, "path", candidate.path, "error", err)
-		processed, contentType, err = images.ProcessImage(pageData, candidate.mediaType, images.ProcessOptions{
+		slog.WarnContext(ctx, "Primary thumbnail format generation failed, falling back to jpeg", "format", targetFormat, "path", candidate.path, "error", err)
+		processed, contentType, err = images.ProcessImage(ctx, pageData, candidate.mediaType, images.ProcessOptions{
 			Width: 400, Quality: 82, Format: "jpeg",
 		})
 		if err != nil {
@@ -1750,7 +1750,7 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 		return sql.NullString{}, err
 	}
 	if writeDuration >= slowThumbnailWrite || writeStats.Wait >= slowThumbnailWrite {
-		slog.Info("Queued thumbnail cache write completed",
+		slog.InfoContext(ctx, "Queued thumbnail cache write completed",
 			"path", candidate.path,
 			"thumbnail_path", fullPath,
 			"storage_profile", writeStats.StorageProfile,
@@ -1797,7 +1797,7 @@ func (s *Scanner) SetBookCoverFromImage(ctx context.Context, book database.Book,
 // 两个名字永不相等，扫描因此认不出「这张是人设的」——认不出就会在下一次强制扫描里改回自动封面。
 func (s *Scanner) applyCustomCover(ctx context.Context, book database.Book, imageData []byte, mediaType string) (string, error) {
 	cfg := s.currentConfig()
-	relPath, err := s.writeCoverThumbnail(cfg, imageData, mediaType)
+	relPath, err := s.writeCoverThumbnail(ctx, cfg, imageData, mediaType)
 	if err != nil {
 		return "", err
 	}
@@ -1806,21 +1806,21 @@ func (s *Scanner) applyCustomCover(ctx context.Context, book database.Book, imag
 		return "", err
 	}
 	if err := s.store.RefreshSeriesStats(ctx, book.SeriesID); err != nil {
-		slog.Warn("refresh series stats after custom cover failed", "series_id", book.SeriesID, "error", err)
+		slog.WarnContext(ctx, "refresh series stats after custom cover failed", "series_id", book.SeriesID, "error", err)
 	}
 	return relPath, nil
 }
 
 // writeCoverThumbnail 把原始图片处理成 400px 缩略图，用内容 SHA1 命名（与扫描封面同一目录方案），
 // 内容寻址天然去重且能刷新浏览器缓存。返回相对路径（<2字符子目录>/<hash>.<ext>）。
-func (s *Scanner) writeCoverThumbnail(cfg config.Config, imageData []byte, mediaType string) (string, error) {
+func (s *Scanner) writeCoverThumbnail(ctx context.Context, cfg config.Config, imageData []byte, mediaType string) (string, error) {
 	targetFormat := cfg.Scanner.ThumbnailFormat
 	if targetFormat == "" {
 		targetFormat = "webp"
 	}
-	processed, contentType, err := images.ProcessImage(imageData, mediaType, images.ProcessOptions{Width: 400, Quality: 82, Format: targetFormat})
+	processed, contentType, err := images.ProcessImage(ctx, imageData, mediaType, images.ProcessOptions{Width: 400, Quality: 82, Format: targetFormat})
 	if err != nil || len(processed) == 0 {
-		processed, contentType, err = images.ProcessImage(imageData, mediaType, images.ProcessOptions{Width: 400, Quality: 82, Format: "jpeg"})
+		processed, contentType, err = images.ProcessImage(ctx, imageData, mediaType, images.ProcessOptions{Width: 400, Quality: 82, Format: "jpeg"})
 		if err != nil {
 			return "", err
 		}

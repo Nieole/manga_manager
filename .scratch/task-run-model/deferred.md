@@ -33,3 +33,41 @@
   用例静默换轨——它们不会变红，只会不再守着原来那条）｜ B 默认系统级，churn 小得多
 - **不处理会怎样：** 已按 A 落地；代价是本票 diff 里测试改动占了大头。
 - **状态：** pending
+
+## D4 · 票 02 · 任务体路径上的日志调用形状
+
+- **问：** 票据的边界写着「不要为此改任何一处 `slog.Info/Warn/Error` 的调用形状」，但 Go 的 slog
+  包级函数把 `context.Background()` 传给 handler——ctx 里的任务键因此永远到不了 `Handle`。要让
+  handler 读得到，调用点必须改成 `slog.InfoContext(ctx, …)` 一族。同一条边界的另一句
+  （「scanner 的日志在跑在任务 ctx 上时同样应当带上，守护/watcher/首扫那几条路径仍不带」）
+  反过来要求调用点认 ctx：同一段代码带不带只由跑在谁的 ctx 上决定，只有带 ctx 的调用做得到。
+- **选项：** A 三类任务走到的日志改成带 ctx 的形式（已落地）｜ B 全仓一次改齐，让「写日志用带 ctx
+  的调用」成为无例外的仓内惯例｜ C 放弃 ctx 通道，改用 goroutine 局部存储读当前任务键——Go 没有
+  官方支持，只能靠解析 `runtime.Stack` 或 `//go:linkname`，而且扫描器的 worker 是子 goroutine、
+  继承不到
+- **已按 A 改到的地方：** `internal/scanner`（扫描三阶段、封面 worker、软链遍历、收尾指标行）、
+  `internal/metadata`（各 Provider 的搜索与上游失败）、`internal/images`（转码告警）、
+  `internal/diskwork`（等令牌等太久那条）与 `internal/api` 的任务体。**其中两处不只服务任务**：
+  `images.ProcessImage` / `ProcessImageDetailed` 是导出签名，前台阅读取页也从那儿走（那条路径
+  永远取不到任务键，只是跟着改了形参）；`metadata` 各 Provider 的 `SearchMetadata` 同时服务
+  交互式搜索端点。
+- **不处理会怎样：** 已按 A 落地，代价是仓里两种调用形状并存：任务走到的认 ctx、请求处理与后台
+  常驻那些不认。新写的日志落在哪一侧没有编译期约束，写错的后果是那一行在「查看日志」里过滤不到
+  ——不会变红，只会少一行。
+- **状态：** pending
+
+## D5 · 票 02 · 还有哪些日志没盖到，以及惯例该写在哪
+
+- **问：** 按 D4 的 A 改完之后，仍有几处走在任务里却不带任务键的日志：`internal/database`
+  （系列统计刷新的告警）、`internal/parser`（RAR 前滚跳过、ComicInfo 非 UTF-8 编码声明）与
+  `internal/koreader`（书籍指纹重建、进度对账那几个任务体）。第一个本轮整包归并行 agent
+  （票 06），碰不得；第二个要把 ctx 穿进 `Archiver` 接口与 `ParseComicInfo`，是另一场重构；
+  第三个不在本票点名的三类任务里。另外 D4 定下的调用形状惯例今天没有归属，它该进 `AGENTS.md`
+  的「Coding Style」，而本轮两条线都被禁止动那个文件。
+- **选项：** A 都先欠着，惯例也先欠着（已落地）｜ B 票 06 合流后补 `internal/database`，
+  `internal/koreader` 顺手改（都是现成的 ctx 形参），`internal/parser` 单开一票｜
+  C 只补 `AGENTS.md` 的惯例条目，代码欠着
+- **不处理会怎样：** 那几行在「查看日志」按任务键过滤时看不到——按钮有内容了，但漏掉的正是
+  「系列统计没刷上」「归档里有一条读不出来」这类排障时最想看的行。惯例没有归属则靠这份挂账与
+  `internal/logger` 的符号 doc 传递。
+- **状态：** pending

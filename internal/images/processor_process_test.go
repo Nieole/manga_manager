@@ -5,6 +5,7 @@ package images
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"hash/crc32"
 	"image"
@@ -45,7 +46,7 @@ func decodeConfigDims(t *testing.T, data []byte) (int, int, string) {
 
 func TestProcessImagePassthroughWhenNoOps(t *testing.T) {
 	src := makeTestPNG(t, 16, 16)
-	out, ct, err := ProcessImage(src, "image/png", ProcessOptions{})
+	out, ct, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{})
 	if err != nil {
 		t.Fatalf("ProcessImage passthrough failed: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestProcessImagePassthroughWhenNoOps(t *testing.T) {
 func TestProcessImagePassthroughWhenFormatMatches(t *testing.T) {
 	src := makeTestPNG(t, 16, 16)
 	// format=png 与源 image/png 一致，且无其它加工 → 透传。
-	out, ct, err := ProcessImage(src, "image/png", ProcessOptions{Format: "png"})
+	out, ct, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage failed: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestProcessImagePassthroughWhenFormatMatches(t *testing.T) {
 func TestProcessImageReencodesWhenFormatDiffers(t *testing.T) {
 	src := makeTestPNG(t, 16, 16)
 	// format=jpeg 与源 png 不一致 → 必须解码重编码，不能透传。
-	out, ct, err := ProcessImage(src, "image/png", ProcessOptions{Format: "jpeg"})
+	out, ct, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Format: "jpeg"})
 	if err != nil {
 		t.Fatalf("ProcessImage failed: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestProcessImageFilterWithoutResizePassesThrough(t *testing.T) {
 	src := makeTestJPEG(t, 64, 64)
 	for _, filter := range []string{"lanczos3", "bicubic", "mitchell", "lanczos2", "bspline", "catmullrom"} {
 		t.Run(filter, func(t *testing.T) {
-			out, ct, err := ProcessImage(src, "image/jpeg", ProcessOptions{Filter: filter})
+			out, ct, err := ProcessImage(context.Background(), src, "image/jpeg", ProcessOptions{Filter: filter})
 			if err != nil {
 				t.Fatalf("ProcessImage failed: %v", err)
 			}
@@ -118,11 +119,11 @@ func TestProcessImageFilterWithoutResizePassesThrough(t *testing.T) {
 func TestProcessImageFilterAppliesWhenResizing(t *testing.T) {
 	// 源图带高频花纹，否则平滑渐变经不同插值核可能落到同一批像素上。
 	src := avifTestSource(t, 64, 64)
-	lanczos, _, err := ProcessImage(src, "image/png", ProcessOptions{Filter: "lanczos3", Width: 37, Format: "png"})
+	lanczos, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Filter: "lanczos3", Width: 37, Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage lanczos3 failed: %v", err)
 	}
-	bilinear, _, err := ProcessImage(src, "image/png", ProcessOptions{Filter: "bilinear", Width: 37, Format: "png"})
+	bilinear, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Filter: "bilinear", Width: 37, Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage bilinear failed: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestProcessImageFilterAppliesWhenResizing(t *testing.T) {
 // 缩出来的页必须等比装进去，而不是被拉成框的形状。
 func TestProcessImageFitInsidePreservesAspect(t *testing.T) {
 	src := makeTestPNG(t, 600, 900)
-	out, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 512, Height: 512, FitInside: true, Filter: "lanczos3", Format: "png"})
+	out, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 512, Height: 512, FitInside: true, Filter: "lanczos3", Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage fit-inside failed: %v", err)
 	}
@@ -147,7 +148,7 @@ func TestProcessImageFitInsidePreservesAspect(t *testing.T) {
 	}
 
 	// 不设 FitInside 时仍是「画布」语义：封面与缩略图靠它精确出图。
-	exact, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 512, Height: 512, Filter: "lanczos3", Format: "png"})
+	exact, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 512, Height: 512, Filter: "lanczos3", Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage exact resize failed: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestProcessImageFitInsidePreservesAspect(t *testing.T) {
 // 那只是白付编码与带宽，浏览器自己放大的结果一模一样。
 func TestProcessImageFitInsideDoesNotUpscale(t *testing.T) {
 	src := makeTestPNG(t, 200, 300)
-	out, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 2048, Height: 2048, FitInside: true, Filter: "lanczos3", Format: "png"})
+	out, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 2048, Height: 2048, FitInside: true, Filter: "lanczos3", Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage failed: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestProcessImageImagingFiltersWithSingleDimension(t *testing.T) {
 	src := avifTestSource(t, 600, 900)
 	for _, filter := range []string{"bspline", "catmullrom"} {
 		t.Run(filter+"/width only", func(t *testing.T) {
-			out, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 256, Filter: filter, Format: "png"})
+			out, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 256, Filter: filter, Format: "png"})
 			if err != nil {
 				t.Fatalf("ProcessImage failed: %v", err)
 			}
@@ -186,7 +187,7 @@ func TestProcessImageImagingFiltersWithSingleDimension(t *testing.T) {
 			}
 		})
 		t.Run(filter+"/height only", func(t *testing.T) {
-			out, _, err := ProcessImage(src, "image/png", ProcessOptions{Height: 300, Filter: filter, Format: "png"})
+			out, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Height: 300, Filter: filter, Format: "png"})
 			if err != nil {
 				t.Fatalf("ProcessImage failed: %v", err)
 			}
@@ -245,7 +246,7 @@ func TestFilterChangesPixels(t *testing.T) {
 
 func TestProcessImageResizeExactDimensions(t *testing.T) {
 	src := makeTestPNG(t, 64, 64)
-	out, ct, err := ProcessImage(src, "image/png", ProcessOptions{Width: 32, Height: 48, Format: "png"})
+	out, ct, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 32, Height: 48, Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage failed: %v", err)
 	}
@@ -261,7 +262,7 @@ func TestProcessImageResizeExactDimensions(t *testing.T) {
 func TestProcessImageResizeWidthOnlyPreservesAspect(t *testing.T) {
 	src := makeTestPNG(t, 64, 64)
 	// 只给宽度，高度=0 → 保持纵横比缩放 → 32x32。
-	out, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 32, Format: "png"})
+	out, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 32, Format: "png"})
 	if err != nil {
 		t.Fatalf("ProcessImage failed: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestProcessImageFormatInheritance(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out, ct, err := ProcessImage(tc.src, tc.srcCT, ProcessOptions{Width: 20, Height: 20})
+			out, ct, err := ProcessImage(context.Background(), tc.src, tc.srcCT, ProcessOptions{Width: 20, Height: 20})
 			if err != nil {
 				t.Fatalf("ProcessImage failed: %v", err)
 			}
@@ -303,7 +304,7 @@ func TestProcessImageFormatInheritance(t *testing.T) {
 
 func TestProcessImageEncodesWebP(t *testing.T) {
 	src := makeTestPNG(t, 24, 24)
-	out, ct, err := ProcessImage(src, "image/png", ProcessOptions{Width: 12, Height: 12, Format: "webp", Quality: 80})
+	out, ct, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 12, Height: 12, Format: "webp", Quality: 80})
 	if err != nil {
 		t.Fatalf("ProcessImage webp failed: %v", err)
 	}
@@ -315,7 +316,7 @@ func TestProcessImageEncodesWebP(t *testing.T) {
 // ---- 错误路径 ----
 
 func TestProcessImageErrorOnNonImage(t *testing.T) {
-	_, _, err := ProcessImage([]byte("definitely not an image payload"), "text/plain", ProcessOptions{Width: 10, Height: 10})
+	_, _, err := ProcessImage(context.Background(), []byte("definitely not an image payload"), "text/plain", ProcessOptions{Width: 10, Height: 10})
 	if err == nil {
 		t.Fatal("expected decode error for non-image input")
 	}
@@ -358,7 +359,7 @@ func TestProcessImageRejectsDecodeBomb(t *testing.T) {
 	if cfg.Width != 20000 || cfg.Height != 20000 {
 		t.Fatalf("expected 20000x20000 header, got %dx%d", cfg.Width, cfg.Height)
 	}
-	_, _, perr := ProcessImage(bomb, "image/png", ProcessOptions{Width: 100, Height: 100})
+	_, _, perr := ProcessImage(context.Background(), bomb, "image/png", ProcessOptions{Width: 100, Height: 100})
 	if perr == nil {
 		t.Fatal("expected decode-bomb rejection")
 	}
@@ -495,7 +496,7 @@ func TestProcessImageRejectsUnsafeTargetDimensions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: tc.width, Height: tc.height}); err == nil {
+			if _, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: tc.width, Height: tc.height}); err == nil {
 				t.Fatalf("expected ProcessImage to reject %dx%d", tc.width, tc.height)
 			}
 		})
@@ -504,7 +505,7 @@ func TestProcessImageRejectsUnsafeTargetDimensions(t *testing.T) {
 
 func TestProcessImageAcceptsReasonableTargetDimensions(t *testing.T) {
 	src := makeTestPNG(t, 8, 8)
-	if _, _, err := ProcessImage(src, "image/png", ProcessOptions{Width: 4, Height: 4}); err != nil {
+	if _, _, err := ProcessImage(context.Background(), src, "image/png", ProcessOptions{Width: 4, Height: 4}); err != nil {
 		t.Fatalf("expected ordinary resize to succeed, got %v", err)
 	}
 }
@@ -585,7 +586,7 @@ func TestProcessImageAIFailureDoesNotFakeUpscale(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := ProcessImageDetailed(src, "image/jpeg", tc.opts)
+			out, err := ProcessImageDetailed(context.Background(), src, "image/jpeg", tc.opts)
 			if err != nil {
 				t.Fatalf("引擎缺席不该让整页失败：%v", err)
 			}
@@ -604,7 +605,7 @@ func TestProcessImageAIFailureDoesNotFakeUpscale(t *testing.T) {
 
 	// 用户显式点的格式/质量与滤镜不是一回事：AI 那一步塌了，这些活照做，但这一趟仍然不算 AI 产物。
 	t.Run("explicit format still applies", func(t *testing.T) {
-		out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{Filter: "waifu2x", Waifu2xPath: engine, Format: "png"})
+		out, err := ProcessImageDetailed(context.Background(), src, "image/jpeg", ProcessOptions{Filter: "waifu2x", Waifu2xPath: engine, Format: "png"})
 		if err != nil {
 			t.Fatalf("ProcessImageDetailed failed: %v", err)
 		}
@@ -637,7 +638,7 @@ func TestProcessImageFitInsideNoOpPassesThrough(t *testing.T) {
 	for _, filter := range []string{"lanczos3", "bicubic", "mitchell", "lanczos2", "bspline", "catmullrom"} {
 		for _, box := range boxes {
 			t.Run(filter+"/"+box.name, func(t *testing.T) {
-				out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{
+				out, err := ProcessImageDetailed(context.Background(), src, "image/jpeg", ProcessOptions{
 					Width: box.width, Height: box.height, FitInside: true, Filter: filter,
 				})
 				if err != nil {
@@ -651,7 +652,7 @@ func TestProcessImageFitInsideNoOpPassesThrough(t *testing.T) {
 		}
 		// 反面：框缩得进源图时这个核仍要真的干活，短路不能把 f9141d9 的成果吃回去。
 		t.Run(filter+"/box fits inside source", func(t *testing.T) {
-			out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{Width: 96, FitInside: true, Filter: filter})
+			out, err := ProcessImageDetailed(context.Background(), src, "image/jpeg", ProcessOptions{Width: 96, FitInside: true, Filter: filter})
 			if err != nil {
 				t.Fatalf("ProcessImageDetailed failed: %v", err)
 			}
@@ -666,7 +667,7 @@ func TestProcessImageFitInsideNoOpPassesThrough(t *testing.T) {
 
 	// 用户显式点的 format 与滤镜不是一回事：缩放没得做，格式转换仍要做。
 	t.Run("explicit format still applies", func(t *testing.T) {
-		out, err := ProcessImageDetailed(src, "image/jpeg", ProcessOptions{
+		out, err := ProcessImageDetailed(context.Background(), src, "image/jpeg", ProcessOptions{
 			Width: 3072, FitInside: true, Filter: "lanczos3", Format: "png",
 		})
 		if err != nil {
@@ -682,7 +683,7 @@ func TestProcessImageFitInsideNoOpPassesThrough(t *testing.T) {
 // 「画布」语义——目标尺寸就是输出尺寸，比源图大也照样放大。上面那条短路只认「框」语义。
 func TestProcessImageCanvasResizeStillUpscales(t *testing.T) {
 	src := makeTestPNG(t, 100, 150)
-	out, err := ProcessImageDetailed(src, "image/png", ProcessOptions{Width: 400, Quality: 82, Format: "jpeg"})
+	out, err := ProcessImageDetailed(context.Background(), src, "image/png", ProcessOptions{Width: 400, Quality: 82, Format: "jpeg"})
 	if err != nil {
 		t.Fatalf("ProcessImageDetailed failed: %v", err)
 	}
