@@ -509,13 +509,12 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 	providerName := provider.Name()
 	spec := TaskSpec{
 		Key:         "scrape_all_series",
-		Type:        "scrape",
 		StartCode:   "task.msg.scrape.all_series.start",
 		StartParams: map[string]string{"provider": providerName},
 		Total:       len(allSeries),
 		CanCancel:   true,
 		CanPause:    true,
-		// **重启函数** retryScrapeTask 只从这里读回刮削源；换成显示名重试就会回落到默认源。
+		// **重启函数**只从这里读回刮削源；换成显示名重试就会回落到默认源。
 		Metadata:     map[string]string{"provider": providerKey},
 		Labels:       scrapeProviderLabels(providerKey, providerName),
 		ScopeName:    "全库",
@@ -524,7 +523,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		FailCode:     "task.msg.scrape.failed_all",
 	}
 
-	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping series metadata", allSeries)
 	})
 }
@@ -586,7 +585,6 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 	}
 	spec := TaskSpec{
 		Key:          fmt.Sprintf("scrape_library_%d", libraryID),
-		Type:         "scrape",
 		StartCode:    "task.msg.scrape.library.start",
 		StartParams:  map[string]string{"provider": providerName},
 		Total:        len(allSeries),
@@ -600,7 +598,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		FailCode:     "task.msg.scrape.failed_library",
 	}
 
-	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping library series metadata", allSeries)
 	})
 }
@@ -629,20 +627,4 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 		"message":  fmt.Sprintf("资源库批量刮削(%s)已异步启动，任务已加入后台队列", provider.Name()),
 		"provider": provider.Name(),
 	})
-}
-
-func (c *Controller) retryScrapeTask(task TaskStatus) error {
-	provider := ""
-	if task.Params != nil {
-		provider = task.Params["provider"]
-	}
-
-	switch {
-	case task.Key == "scrape_all_series":
-		return c.launchBatchScrapeAllSeriesTask(context.Background(), provider)
-	case strings.HasPrefix(task.Key, "scrape_library_") && task.ScopeID != nil:
-		return c.launchLibraryScrapeTask(context.Background(), *task.ScopeID, provider)
-	default:
-		return fmt.Errorf("unsupported scrape retry target")
-	}
 }

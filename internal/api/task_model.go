@@ -14,30 +14,6 @@ import (
 	"manga-manager/internal/database"
 )
 
-// inferTaskScope 从任务类型与 key 推断作用域（system/library/series）及其 id。
-// key 的约定是 "<动作>_<对象>_<id>"，末段能解析成整数时即为 scope id。
-func inferTaskScope(taskType, key string) (string, *int64) {
-	scope := "system"
-	switch {
-	case strings.Contains(taskType, "library"):
-		scope = "library"
-	case strings.Contains(taskType, "series"):
-		scope = "series"
-	}
-
-	parts := strings.Split(key, "_")
-	if len(parts) == 0 {
-		return scope, nil
-	}
-
-	last := parts[len(parts)-1]
-	id, err := strconv.ParseInt(last, 10, 64)
-	if err != nil {
-		return scope, nil
-	}
-	return scope, &id
-}
-
 // taskIsActive 判断任务是否处于「仍在占用运行槽位」的状态。
 // cancelling 也算活动态：取消已请求但任务体尚未收尾，此时不应允许同 key 再次启动。
 func taskIsActive(status string) bool {
@@ -159,6 +135,7 @@ func decodeTaskParams(task *TaskStatus) {
 	task.CurrentItem = firstNonEmptyTaskValue(task.CurrentItem, task.Params["current_item"])
 	task.PauseReason = firstNonEmptyTaskValue(task.PauseReason, task.Params["pause_reason"])
 	task.MessageCode = firstNonEmptyTaskValue(task.MessageCode, task.Params["message_code"])
+	task.Variant = TaskVariant(firstNonEmptyTaskValue(string(task.Variant), task.Params["variant"]))
 	if raw := strings.TrimSpace(task.Params["can_pause"]); raw != "" {
 		task.CanPause, _ = strconv.ParseBool(raw)
 	}
@@ -251,6 +228,11 @@ func taskParamsWithDerivedFields(task TaskStatus) map[string]string {
 			params[key] = value
 		}
 	}
+	// **变体**是身份四要素里唯一没有落盘列的那项，只能随任务参数走：**重启函数**按（类型，变体）
+	// 分发，而**中断**任务重启之后只剩库里那一行，读不回变体就分发不到它自己那条跑法。
+	// 早于这条约定写下的行没有这个键，读回是 variantSole；重试资格因此不照抄落盘那一列，
+	// 由 taskStatusFromRecordLive 按当前注册表重算。
+	put("variant", string(task.Variant))
 	put("phase", task.Phase)
 	put("current_item", task.CurrentItem)
 	put("pause_reason", task.PauseReason)

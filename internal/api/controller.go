@@ -99,13 +99,17 @@ type Controller struct {
 }
 
 type TaskStatus struct {
-	Key       string `json:"key"`
-	Type      string `json:"type"`
-	Scope     string `json:"scope"`
-	ScopeID   *int64 `json:"scope_id,omitempty"`
-	ScopeName string `json:"scope_name,omitempty"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
+	Key     string `json:"key"`
+	Type    string `json:"type"`
+	Scope   string `json:"scope"`
+	ScopeID *int64 `json:"scope_id,omitempty"`
+	// Variant 是身份四要素的第四项（见 TaskIdentity），引擎用它把**重启函数**按（类型，变体）分发。
+	// 它与另外三项一样进 JSON：四要素分两处走的话，任何按快照判身份的地方都要再从别处补一项。
+	// 落盘与读回则走任务参数 `variant`——老表没有这一列。
+	Variant   TaskVariant `json:"variant,omitempty"`
+	ScopeName string      `json:"scope_name,omitempty"`
+	Status    string      `json:"status"`
+	Message   string      `json:"message"`
 	// MessageCode/MessageParams 承载可本地化的任务消息：后端只发稳定 i18n 键 + 占位参数，由前端按当前
 	// 语言渲染，Go 里因此不出现面向用户的文案字面量。任务引擎写下的每一帧都走这条通道，Message 恒为空。
 	//
@@ -200,8 +204,8 @@ const maxRetainedTasks = 200
 
 const (
 	// rebuildBookHashesTaskKey 与 lowPriorityBookHashTaskKey 是 rebuild_book_hashes 这个任务类型
-	// 下的两条**任务键**：前者是用户在维护页发起的前台重建，后者是**资料库扫描**收尾串联的低优先级
-	// 回填。两者的**重启函数**必须按键分回各自那一条，见 retryRebuildBookHashesTask。
+	// 下两个**变体**的**任务键**：前者是用户在维护页发起的前台重建，后者是**资料库扫描**收尾串联的
+	// 低优先级回填。键只管寻址，分回哪一条跑法由变体决定，见 buildTaskRelaunchers。
 	rebuildBookHashesTaskKey     = "rebuild_book_hashes"
 	lowPriorityBookHashTaskKey   = "background_book_hash_backfill"
 	lowPriorityBookHashBatchSize = 32
@@ -264,7 +268,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// 任务快照只投给管理员：它带着作用域显示名、任务参数与失败原因，与任务列表接口
 	// （对普通用户 403）是同一份数据，两条路口径不同就等于那条 403 不存在。
 	c.taskEngine = newTaskEngine(store, c.sse.publishAdmin, c.lifecycleDone, c.runBackground, c.diskWork)
-	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTaskType 查表）之前完成。
+	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTask 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
 	return c

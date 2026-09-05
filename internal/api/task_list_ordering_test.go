@@ -60,7 +60,7 @@ func seedFinishedHistory(t *testing.T, c *Controller, n int) {
 	t.Helper()
 	for i := range n {
 		seedTask(t, c.taskEngine, taskSeed{
-			Key: fmt.Sprintf("scan_series_%d", i), Type: "scan_series", Total: 1, Terminal: "completed",
+			Key: fmt.Sprintf("scan_series_%d", i), Identity: seriesTask("scan_series", int64(i), variantSole), Total: 1, Terminal: "completed",
 		})
 	}
 }
@@ -82,8 +82,8 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 		seedFinishedHistory(t, controller, taskCenterPageSize+10)
 
 		reloaded := restartController(t, controller, store, tempDir)
-		seedTask(t, reloaded.taskEngine, taskSeed{Key: "rebuild_index", Type: "rebuild_index", Total: 1, Terminal: "completed"})
-		seedTask(t, reloaded.taskEngine, taskSeed{Key: "scan_library_7", Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+		seedTask(t, reloaded.taskEngine, taskSeed{Key: "rebuild_index", Identity: systemTask("rebuild_index", variantSole), Total: 1, Terminal: "completed"})
+		seedTask(t, reloaded.taskEngine, taskSeed{Key: "scan_library_7", Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
 		keys := taskCenterFirstPage(t, reloaded)
 		for _, want := range []string{"scan_library_7", "rebuild_index"} {
@@ -97,7 +97,7 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 		controller, _, _, _ := newTestController(t)
 
 		const activeKey = "scan_library_7"
-		seedTask(t, controller.taskEngine, taskSeed{Key: activeKey, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+		seedTask(t, controller.taskEngine, taskSeed{Key: activeKey, Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 		// 活动任务先启动，序号因此最小；之后大量短任务跑完。真实场景是大库扫描的哈希阶段
 		// 长时间不上报进度，被后来的短任务全部超过。
 		seedFinishedHistory(t, controller, taskCenterPageSize+10)
@@ -113,7 +113,7 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 		controller, store, _, tempDir := newTestController(t)
 		seedFinishedHistory(t, controller, taskCenterPageSize+10)
 		reloaded := restartController(t, controller, store, tempDir)
-		seedTask(t, reloaded.taskEngine, taskSeed{Key: "scan_library_7", Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+		seedTask(t, reloaded.taskEngine, taskSeed{Key: "scan_library_7", Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
 		keys := taskCenterFirstPage(t, reloaded)
 		// 历史部分应当是最近完成的那批，且相对顺序为倒序（scan_series_59, 58, ...）。

@@ -121,10 +121,10 @@ func TestWriteComicInfoDeclarationLandsWhole(t *testing.T) {
 	if task.Params["series_id"] != "7" || task.ScopeName != "Series A" {
 		t.Fatalf("首帧没带齐元数据与作用域名：params=%v scopeName=%q", task.Params, task.ScopeName)
 	}
-	// **作用域**由任务类型与任务键推导：类型里没有 series 二字，于是这个任务是**系统**作用域、
-	// 却带着系列 id。这个组合看着别扭，但改它会挪动这个任务在任务中心的挂点，不得顺手改。
-	if task.Scope != "system" || task.ScopeID == nil || *task.ScopeID != comicInfoSeriesID {
-		t.Fatalf("作用域推导为 %q / %v, want system + %d", task.Scope, task.ScopeID, comicInfoSeriesID)
+	// **作用域**由启动点声明：回写作用在一个系列上，因此它是系列级任务。判成别的作用域不会有
+	// 任何报错，只是这个系列的任务列表里看不到它。
+	if task.Scope != taskScopeSeries || task.ScopeID == nil || *task.ScopeID != comicInfoSeriesID {
+		t.Fatalf("作用域为 %q / %v, want series + %d", task.Scope, task.ScopeID, comicInfoSeriesID)
 	}
 	if !task.CanCancel || task.CanPause {
 		t.Fatalf("控制能力为 cancel=%v pause=%v, want 可取消、不可暂停", task.CanCancel, task.CanPause)

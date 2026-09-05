@@ -66,7 +66,7 @@ func TestClearIsNotUndoneByInFlightPersist(t *testing.T) {
 			engine := newTaskEngine(hooked, nil, nil, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_7"
-			seedTask(t, engine, taskSeed{Key: key, Type: "scan_library", Total: 1, Terminal: "completed"})
+			seedTask(t, engine, taskSeed{Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 1, Terminal: "completed"})
 
 			var (
 				once     sync.Once

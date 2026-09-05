@@ -40,7 +40,7 @@ func TestTerminalTaskDerivedFieldsFollowFinalCount(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "refresh_koreader_matching"
-			handle := seedTask(t, e, taskSeed{Key: key, Type: "refresh_koreader_matching", Total: tc.total, CanCancel: true})
+			handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("refresh_koreader_matching", variantSole), Total: tc.total, CanCancel: true})
 			current := tc.reported
 			handle.Report(taskrun.Frame{Current: &current})
 			settleSeededTask(e, key, tc.bodyErr)
@@ -109,7 +109,7 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
 
 			const key = "scan_library_1"
-			handle := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 1000, CanCancel: true, CanPause: true})
+			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 1000, CanCancel: true, CanPause: true})
 			backdateTaskStart(e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
@@ -206,7 +206,7 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
 
 			const key = "scan_library_1"
-			handle := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 1000, CanCancel: true, CanPause: true})
+			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 1000, CanCancel: true, CanPause: true})
 			backdateTaskStart(e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
@@ -238,7 +238,7 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "refresh_koreader_matching"
-			handle := seedTask(t, e, taskSeed{Key: key, Type: "refresh_koreader_matching", Total: 1000, CanCancel: true})
+			handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("refresh_koreader_matching", variantSole), Total: 1000, CanCancel: true})
 			backdateTaskStart(e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
@@ -350,7 +350,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
 
 			const key = "scan_library_1"
-			handle := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10000, CanCancel: true, CanPause: true})
+			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10000, CanCancel: true, CanPause: true})
 			backdateTaskStart(e, key, workedFor)
 			current := 600
 			handle.Report(taskrun.Frame{Current: &current})

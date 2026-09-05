@@ -19,7 +19,7 @@ import (
 func floodFinishedTasks(t *testing.T, engine *taskEngine, n int) {
 	t.Helper()
 	for i := range n {
-		seedTask(t, engine, taskSeed{Key: fmt.Sprintf("filler_%d", i), Type: "filler", Total: 1, Terminal: "completed"})
+		seedTask(t, engine, taskSeed{Key: fmt.Sprintf("filler_%d", i), Identity: systemTask("filler", variantSole), Total: 1, Terminal: "completed"})
 	}
 }
 
@@ -31,13 +31,13 @@ func TestPruneKeepsActiveTasks(t *testing.T) {
 		{
 			name: "running 任务不被淘汰",
 			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
-				return seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+				return seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 			},
 		},
 		{
 			name: "paused 任务不被淘汰",
 			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
-				progress := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+				progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 				if err := e.pause(key); err != nil {
 					t.Fatalf("pause: %v", err)
 				}
@@ -90,7 +90,7 @@ func TestClearTasksKeepsPausedTask(t *testing.T) {
 	engine := controller.taskEngine
 
 	const key = "scan_library_7"
-	seedTask(t, engine, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+	seedTask(t, engine, taskSeed{Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 	if err := engine.pause(key); err != nil {
 		t.Fatalf("pause: %v", err)
 	}

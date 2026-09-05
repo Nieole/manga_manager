@@ -167,7 +167,6 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 
 	spec := TaskSpec{
 		Key:       fmt.Sprintf("ai_grouping_library_%d", libID),
-		Type:      "ai_grouping",
 		StartCode: "task.msg.ai_grouping.start",
 		Total:     1,
 		CanCancel: true,
@@ -181,7 +180,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		FailCode:     "task.msg.ai_grouping.fail_generate",
 	}
 
-	return c.taskEngine.Run(spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		ctx := metadata.WithLocale(taskCtx, locale)
 
 		tp.Phase("collecting_series", "task.msg.ai_grouping.collecting_series", nil)

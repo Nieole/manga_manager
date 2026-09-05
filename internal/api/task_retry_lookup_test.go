@@ -16,22 +16,21 @@ import (
 )
 
 // upsertHistoricTaskRecord 只往库里落一条历史任务，不碰内存表——重启之后的现场就是这样：
-// 任务只剩库里那一行。作用域与生产同源，由任务类型与任务键推出。
-func upsertHistoricTaskRecord(t *testing.T, store database.Store, key, taskType, status string, sequence int64) {
+// 任务只剩库里那一行。**身份**与生产同源：调用方把它整份交进来，落盘记录照抄。
+func upsertHistoricTaskRecord(t *testing.T, store database.Store, key string, identity TaskIdentity, status string, sequence int64) {
 	t.Helper()
-	scope, scopeID := inferTaskScope(taskType, key)
 	now := time.Now()
 	if err := store.UpsertTask(context.Background(), database.TaskRecord{
 		Key:        key,
-		Type:       taskType,
-		Scope:      scope,
-		ScopeID:    scopeID,
+		Type:       identity.taskType,
+		Scope:      identity.scope,
+		ScopeID:    identity.scopeID,
 		Status:     status,
 		Message:    "任务因服务重启而中断，可重试",
 		Retryable:  true,
 		Current:    3,
 		Total:      10,
-		Params:     map[string]string{"force": "true"},
+		Params:     map[string]string{"force": "true", "variant": string(identity.variant)},
 		StartedAt:  now.Add(-time.Hour),
 		UpdatedAt:  now,
 		FinishedAt: &now,
@@ -47,16 +46,20 @@ func TestRetrySnapshotFindsTaskCrowdedOutByKinKeys(t *testing.T) {
 	cases := []struct {
 		name     string
 		key      string
-		taskType string
-		kin      func(int) string
+		identity TaskIdentity
+		kin      func(int) (string, TaskIdentity)
 	}{
 		{
-			name: "系列扫描", key: "scan_series_1", taskType: "scan_series",
-			kin: func(i int) string { return fmt.Sprintf("scan_series_1%d", i) },
+			name: "系列扫描", key: "scan_series_1", identity: seriesTask("scan_series", 1, variantSole),
+			kin: func(i int) (string, TaskIdentity) {
+				return fmt.Sprintf("scan_series_1%d", i), seriesTask("scan_series", int64(10+i), variantSole)
+			},
 		},
 		{
-			name: "资料库清理", key: "cleanup_library_2", taskType: "cleanup_library",
-			kin: func(i int) string { return fmt.Sprintf("cleanup_library_2%d", i) },
+			name: "资料库清理", key: "cleanup_library_2", identity: libraryTask("cleanup_library", 2, variantSole),
+			kin: func(i int) (string, TaskIdentity) {
+				return fmt.Sprintf("cleanup_library_2%d", i), libraryTask("cleanup_library", int64(20+i), variantSole)
+			},
 		},
 	}
 
@@ -65,10 +68,11 @@ func TestRetrySnapshotFindsTaskCrowdedOutByKinKeys(t *testing.T) {
 			controller, store, _, _ := newTestController(t)
 
 			// 目标：重启时被转成**中断**的那条，序号最旧。
-			upsertHistoricTaskRecord(t, store, tc.key, tc.taskType, "interrupted", 1)
+			upsertHistoricTaskRecord(t, store, tc.key, tc.identity, "interrupted", 1)
 			// 同族键各占一行、序号都比它新：按序号倒序取时先取到的全是它们。
 			for i := range 30 {
-				upsertHistoricTaskRecord(t, store, tc.kin(i), tc.taskType, "interrupted", int64(i+2))
+				kinKey, kinIdentity := tc.kin(i)
+				upsertHistoricTaskRecord(t, store, kinKey, kinIdentity, "interrupted", int64(i+2))
 			}
 
 			task, err := controller.taskEngine.snapshotForRetry(context.Background(), tc.key)
@@ -90,8 +94,8 @@ func TestRetrySnapshotPrefersMemoryOverStore(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
 	const key = "scan_library_7"
-	upsertHistoricTaskRecord(t, store, key, "scan_library", "failed", 1)
-	seedTask(t, controller.taskEngine, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true})
+	upsertHistoricTaskRecord(t, store, key, libraryTask("scan_library", 7, variantSole), "failed", 1)
+	seedTask(t, controller.taskEngine, taskSeed{Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true})
 
 	task, err := controller.taskEngine.snapshotForRetry(context.Background(), key)
 	if err != nil {

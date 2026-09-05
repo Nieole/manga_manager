@@ -14,17 +14,17 @@ import (
 	"manga-manager/internal/taskrun"
 )
 
-// taskSeed 描述一条要播下的任务。零值即「系统**作用域**、不可取消不可暂停、停在运行中」。
-//
-// 作用域本身不在这里：它由 Type 与 Key 推导（inferTaskScope），播种与生产同源——
-// 想要某个作用域，挑相应的任务类型与任务键即可。
+// taskSeed 描述一条要播下的任务。零值即「不可取消不可暂停、停在运行中」。
 //
 // 前半段字段刻意平铺而不是内嵌 TaskSpec：内嵌能保证任务声明加字段时播种自动跟上，代价是
 // 每个播种点都要多写一层 `TaskSpec{...}`，而播种点有几十处，可读性是这里更值钱的东西。
 // 代价则是 TaskSpec 新增字段时本结构不会有编译错误提醒——加字段的人要顺手看一眼这里。
 type taskSeed struct {
-	Key  string
-	Type string
+	Key string
+
+	// Identity 是这条任务的**身份**，与生产同源：播种也得把四要素说全，谁都不从**任务键**反解。
+	// 它没有可用的零值——不填就播下一条类型为空串的任务，消费方会以别的理由变红。
+	Identity TaskIdentity
 
 	Total     int
 	CanCancel bool
@@ -85,7 +85,6 @@ func trySeedTask(e *taskEngine, seed taskSeed) (*taskrun.Handle, error) {
 
 	spec := TaskSpec{
 		Key:         seed.Key,
-		Type:        seed.Type,
 		StartCode:   seed.StartCode,
 		StartParams: seed.StartParams,
 		Total:       seed.Total,
@@ -103,7 +102,7 @@ func trySeedTask(e *taskEngine, seed taskSeed) (*taskrun.Handle, error) {
 	defer func() { e.runBackground = restore }()
 	e.runBackground = func(fn func()) { body = fn }
 
-	if err := e.Run(spec, func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(seed.Identity, spec, func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return result, bodyErr
 	}); err != nil {
 		return nil, err
@@ -141,14 +140,14 @@ func TestSeedTaskGoesThroughTheTaskKeyGate(t *testing.T) {
 	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100})
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100})
 
-	if _, err := trySeedTask(e, taskSeed{Key: key, Type: "scan_library"}); !errors.Is(err, errTaskAlreadyRunning) {
+	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); !errors.Is(err, errTaskAlreadyRunning) {
 		t.Fatalf("同键重复播种返回 %v, want errTaskAlreadyRunning —— 脚手架绕过了闸门，整片测试就此失去这条覆盖", err)
 	}
 
 	settleSeededTask(e, key, nil)
-	if _, err := trySeedTask(e, taskSeed{Key: key, Type: "scan_library"}); err != nil {
+	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); err != nil {
 		t.Fatalf("落定终态之后同一任务键播不下去了: %v", err)
 	}
 }
@@ -160,7 +159,7 @@ func TestSeededActiveTaskIsControllable(t *testing.T) {
 	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
 
 	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
 	if err := e.pause(key); err != nil {
 		t.Fatalf("暂停播下的任务失败: %v", err)
@@ -193,7 +192,7 @@ func TestSeedTaskLandsRequestedShape(t *testing.T) {
 
 			const key = "scan_library_7"
 			seedTask(t, e, taskSeed{
-				Key: key, Type: "scan_library", Total: 100,
+				Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100,
 				CanCancel: true, CanPause: true,
 				ScopeName: "Main", Metadata: map[string]string{"force": "true"},
 				Terminal: tc.terminal, FailError: "archive error",
@@ -224,7 +223,7 @@ func TestSeedTaskLandsRequestedShape(t *testing.T) {
 func TestSeedTaskRejectsUnknownTerminal(t *testing.T) {
 	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
-	if _, err := trySeedTask(e, taskSeed{Key: "scan_library_1", Type: "scan_library", Terminal: "done"}); err == nil {
+	if _, err := trySeedTask(e, taskSeed{Key: "scan_library_1", Identity: libraryTask("scan_library", 1, variantSole), Terminal: "done"}); err == nil {
 		t.Fatal("未知的终态名被静默接受了")
 	}
 }

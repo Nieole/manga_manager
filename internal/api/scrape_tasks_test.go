@@ -107,26 +107,60 @@ func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, 
 	return c, snapshots
 }
 
-// scrapeScopes 是两条刮削路径的全部差异：启动方式、**任务键**、**作用域**显示名与三条终态文案码。
-// 每条用例都按它跑两遍——这批任务的形状本就是「同一个任务体、两套作用域文案」。
+// scrapeScopes 是两条刮削路径的全部差异：启动方式、**任务键**、**变体**、**作用域**显示名
+// 与三条终态文案码。每条用例都按它跑两遍——这批任务的形状本就是「同一个任务体、两套作用域文案」。
 var scrapeScopes = []struct {
 	name         string
 	key          string
+	variant      TaskVariant
+	scope        string
+	scopeID      *int64
 	scopeName    string
 	launch       func(*Controller) error
 	completeCode string
 	cancelCode   string
 }{
 	{
-		name: "全库", key: "scrape_all_series", scopeName: "全库",
+		name: "全库", key: "scrape_all_series", variant: variantScrapeAllLibraries,
+		scope: taskScopeSystem, scopeName: "全库",
 		launch:       func(c *Controller) error { return c.launchBatchScrapeAllSeriesTask(context.Background(), "test") },
 		completeCode: "task.msg.scrape.complete_all", cancelCode: "task.msg.scrape.cancelled_all",
 	},
 	{
-		name: "单库", key: "scrape_library_7", scopeName: "Library A",
+		name: "单库", key: "scrape_library_7", variant: variantScrapeOneLibrary,
+		scope: taskScopeLibrary, scopeID: int64Ptr(7), scopeName: "Library A",
 		launch:       func(c *Controller) error { return c.launchLibraryScrapeTask(context.Background(), 7, "test") },
 		completeCode: "task.msg.scrape.complete_library", cancelCode: "task.msg.scrape.cancelled_library",
 	},
+}
+
+// TestScrapeDeclaresItsScopeAndVariant 守两条刮削路径各自声明了自己的**作用域**与**变体**：
+// 全库那条挂在系统上，单库那条挂在它那个库上。两项判错都不会有任何报错——作用域错了是那个库的
+// 任务列表里看不到它，变体错了是重试跑成另一条路径。
+func TestScrapeDeclaresItsScopeAndVariant(t *testing.T) {
+	for _, tc := range scrapeScopes {
+		t.Run(tc.name, func(t *testing.T) {
+			c, snapshots := newScrapeTaskRig(t, &scrapeTestProvider{})
+
+			if err := tc.launch(c); err != nil {
+				t.Fatalf("启动刮削失败: %v", err)
+			}
+
+			task := firstPublishedTask(t, snapshots(), tc.key)
+			if task.Scope != tc.scope {
+				t.Fatalf("作用域为 %q, want %q —— 这个库的任务列表里看不到它", task.Scope, tc.scope)
+			}
+			switch {
+			case tc.scopeID == nil && task.ScopeID != nil:
+				t.Fatalf("作用域 id 为 %v, want 无", *task.ScopeID)
+			case tc.scopeID != nil && (task.ScopeID == nil || *task.ScopeID != *tc.scopeID):
+				t.Fatalf("作用域 id 为 %v, want %d", task.ScopeID, *tc.scopeID)
+			}
+			if task.Variant != tc.variant {
+				t.Fatalf("变体为 %q, want %q —— 重试会分发到另一条路径", task.Variant, tc.variant)
+			}
+		})
+	}
 }
 
 // TestScrapeCompletionCodeSplitsByScope 守**完成**文案码按作用域分岔，且成功计数由占位参数承载
@@ -242,6 +276,9 @@ func TestScrapeFrameIsPublishedWhole(t *testing.T) {
 
 // TestScrapeRetryReadsProviderFromTaskParams 守**重启函数**这条自有的重试路径：它不是简单转发
 // 启动方法，而要先从终态任务的参数里读回刮削源。读丢了不会有编译错误，后果是重试静默换成默认源。
+//
+// 它同时守住这个类型的两个**变体**各自注册了自己的重启函数：只按类型注册的话，注册表里两条
+// 只剩一条，另一条作用域的重试会跑成另一套跑法。
 func TestScrapeRetryReadsProviderFromTaskParams(t *testing.T) {
 	for _, tc := range scrapeScopes {
 		t.Run(tc.name, func(t *testing.T) {
@@ -256,7 +293,11 @@ func TestScrapeRetryReadsProviderFromTaskParams(t *testing.T) {
 				t.Fatalf("重试之前任务停在 %q, want completed", done.Status)
 			}
 
-			if err := c.retryScrapeTask(done); err != nil {
+			relaunch, ok := c.buildTaskRelaunchers()[taskDispatchKey{Type: "scrape", Variant: tc.variant}]
+			if !ok {
+				t.Fatalf("注册表里没有 scrape/%q 的重启函数 —— 这条作用域的重试按钮点下去是 400", tc.variant)
+			}
+			if err := relaunch(context.Background(), done); err != nil {
 				t.Fatalf("重试刮削失败: %v", err)
 			}
 

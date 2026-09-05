@@ -230,7 +230,6 @@ func writeComicInfoTaskKey(seriesID int64) string {
 func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, books []database.Book, tags []database.Tag, authors []database.Author) error {
 	spec := TaskSpec{
 		Key:          writeComicInfoTaskKey(series.ID),
-		Type:         "write_comicinfo",
 		StartCode:    "task.msg.write_comicinfo.start",
 		Total:        len(books),
 		CanCancel:    true,
@@ -241,7 +240,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 		FailCode:     "task.msg.write_comicinfo.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(seriesTask("write_comicinfo", series.ID, variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
 			// 聚合是纯 CPU，留在**磁盘作业**之外：把它夹进令牌的持有区间只会虚占这块盘的归档打开额度。

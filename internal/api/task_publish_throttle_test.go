@@ -34,7 +34,7 @@ func TestTaskProgressPublishThrottle(t *testing.T) {
 	e, published := newThrottleTestEngine(clock)
 
 	const key = "rebuild_file_identities"
-	progress := seedTask(t, e, taskSeed{Key: key, Type: "rebuild_file_identities", Total: 1000})
+	progress := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_file_identities", variantSole), Total: 1000})
 	startCount := len(*published)
 	if startCount != 1 {
 		t.Fatalf("启动应当投递 1 条，实际 %d", startCount)
@@ -80,7 +80,7 @@ func TestTaskProgressPublishesOnDisplayChange(t *testing.T) {
 	e, published := newThrottleTestEngine(clock)
 
 	const key = "rebuild_thumbnails"
-	progress := seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails", Total: 100})
+	progress := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 100})
 	base := len(*published)
 
 	// 同一毫秒内连发三帧，但每帧的 phase 都不同：三帧都必须放行。
@@ -111,7 +111,7 @@ func TestTerminalAndControlPublishesAreNeverThrottled(t *testing.T) {
 			e, published := newThrottleTestEngine(clock)
 
 			const key = "scan_library_1"
-			progress := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+			progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 			// 先把水位顶到「刚刚发布过」的状态。
 			progress.Phase("scanning", "", nil)
 			before := len(*published)
@@ -131,7 +131,7 @@ func TestPublishGateClearedOnTerminal(t *testing.T) {
 	e, published := newThrottleTestEngine(clock)
 
 	const key = "scan_library_1"
-	progress := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100})
+	progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100})
 	progress.Phase("scanning", "", nil)
 	settleSeededTask(e, key, nil)
 
@@ -144,7 +144,7 @@ func TestPublishGateClearedOnTerminal(t *testing.T) {
 
 	// 时钟不动，同 key 重跑：首帧必须放行。
 	before := len(*published)
-	rerun := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 100})
+	rerun := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100})
 	rerun.Phase("scanning", "", nil)
 	if got := len(*published) - before; got != 2 {
 		t.Fatalf("重跑的启动 + 首帧应投递 2 条，实际 %d", got)
@@ -161,7 +161,7 @@ func TestTaskProgressThrottleIsSlidingWindow(t *testing.T) {
 	e, published := newThrottleTestEngine(clock)
 
 	const key = "rebuild_book_hashes"
-	progress := seedTask(t, e, taskSeed{Key: key, Type: "rebuild_book_hashes", Total: 10000})
+	progress := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_book_hashes", variantHashRebuildForeground), Total: 10000})
 	base := len(*published)
 
 	// 模拟 1 秒钟内以 10ms 的间隔持续回调（100Hz，接近真实的哈希回填速率）。

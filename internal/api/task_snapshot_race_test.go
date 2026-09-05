@@ -23,7 +23,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	const taskKey = "scan:library:1"
-	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "library_scan", Total: 1000})
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("library_scan", variantSole), Total: 1000})
 
 	stop := make(chan struct{})
 	var writer, readers sync.WaitGroup

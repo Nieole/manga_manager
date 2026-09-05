@@ -25,9 +25,20 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// taskRelauncher 用原任务的 scope/params 重新发起一个同类型任务。返回 errTaskAlreadyRunning 表示
-// 同类任务已在运行（映射为 409），返回其它错误视为内部错误（映射为 500）。
+// taskRelauncher 用原任务的作用域与任务参数重新发起同一个任务。返回 errTaskAlreadyRunning 表示
+// 同一任务已在运行（映射为 409），返回其它错误视为内部错误（映射为 500）。
 type taskRelauncher func(ctx context.Context, task TaskStatus) error
+
+// taskDispatchKey 是**重启函数**注册表的键：身份四要素里决定「怎么跑」的那两项。
+//
+// 只按类型分发不够：一个类型下的两个**变体**跑法不同（书哈希重建的前台档与低优先级回填、
+// 刮削的全库与单库），按类型分发会把回填重启成前台档——大批次、无停顿，正是回填刻意避开的
+// 抢盘跑法，而原来那条仍停在终态。作用域与作用域 id 不进这个键：它们是重启函数从任务快照上
+// 读回的**入参**（哪个库、哪个系列），不是挑哪一个重启函数的依据。
+type taskDispatchKey struct {
+	Type    string
+	Variant TaskVariant
+}
 
 // errTaskAlreadyRunning 是重试时"同类任务已在运行"的哨兵错误。
 var errTaskAlreadyRunning = errors.New("task already running")
@@ -57,8 +68,18 @@ func (c *Controller) libraryScopeName(libraryID int64) string {
 	return lib.Name
 }
 
-// buildTaskRelaunchers 注册各任务类型 -> 重启函数，是重试分发与"可重试类型"的唯一事实来源。
-func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
+// taskParam 读一个**任务参数**，缺了给空串。**重启函数**靠它读回原始入参：一个任务重试时
+// 除了作用域就只剩这些参数，读丢了不会有编译错误，后果是重试静默换了跑法（换成默认刮削源、
+// 换个语种、丢掉发起理由）。
+func taskParam(task TaskStatus, key string) string {
+	if task.Params == nil {
+		return ""
+	}
+	return task.Params[key]
+}
+
+// buildTaskRelaunchers 注册（类型，**变体**）-> 重启函数，是重试分发与「可重试」的唯一事实来源。
+func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
 	libraryID := func(task TaskStatus) (int64, error) {
 		if task.ScopeID == nil {
 			return 0, fmt.Errorf("task %q missing library id", task.Key)
@@ -66,10 +87,10 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 		return *task.ScopeID, nil
 	}
 	forceParam := func(task TaskStatus) bool {
-		return task.Params != nil && task.Params["force"] == "true"
+		return taskParam(task, "force") == "true"
 	}
-	return map[string]taskRelauncher{
-		"scan_library": func(ctx context.Context, task TaskStatus) error {
+	return map[taskDispatchKey]taskRelauncher{
+		{Type: "scan_library", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
@@ -82,80 +103,60 @@ func (c *Controller) buildTaskRelaunchers() map[string]taskRelauncher {
 			// 不必再把一个布尔值转换回哨兵错误。
 			return c.launchLibraryScanTask(lib, forceParam(task))
 		},
-		"scan_series": func(ctx context.Context, task TaskStatus) error {
+		{Type: "scan_series", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
 			if task.ScopeID == nil {
 				return fmt.Errorf("task %q missing series id", task.Key)
 			}
 			return c.launchSeriesScanTask(*task.ScopeID, forceParam(task))
 		},
-		"cleanup_library": func(ctx context.Context, task TaskStatus) error {
+		{Type: "cleanup_library", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
 			}
 			return c.launchCleanupLibraryTask(id)
 		},
-		"rebuild_index": func(ctx context.Context, _ TaskStatus) error {
+		{Type: "rebuild_index", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRebuildIndexTask()
 		},
-		"rebuild_thumbnails": func(ctx context.Context, _ TaskStatus) error {
+		{Type: "rebuild_thumbnails", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRebuildThumbnailsTask()
 		},
-		"scrape": func(ctx context.Context, task TaskStatus) error {
-			return c.retryScrapeTask(task)
+		{Type: "scrape", Variant: variantScrapeAllLibraries}: func(ctx context.Context, task TaskStatus) error {
+			return c.launchBatchScrapeAllSeriesTask(ctx, taskParam(task, "provider"))
 		},
-		"ai_grouping": func(ctx context.Context, task TaskStatus) error {
+		{Type: "scrape", Variant: variantScrapeOneLibrary}: func(ctx context.Context, task TaskStatus) error {
+			id, err := libraryID(task)
+			if err != nil {
+				return err
+			}
+			return c.launchLibraryScrapeTask(ctx, id, taskParam(task, "provider"))
+		},
+		{Type: "ai_grouping", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
 			}
 			// locale 优先取任务持久化的原始值，其次取本次重试请求的语言（ctx 注入），最后回退 zh-CN。
-			locale := ""
-			if task.Params != nil {
-				locale = task.Params["locale"]
-			}
-			if locale == "" {
-				locale = metadata.LocaleFromContext(ctx)
-			}
-			if locale == "" {
-				locale = "zh-CN"
-			}
-			return c.launchAIGroupingTask(id, locale)
+			locale := firstNonEmptyTaskValue(taskParam(task, "locale"), metadata.LocaleFromContext(ctx))
+			return c.launchAIGroupingTask(id, firstNonEmptyTaskValue(locale, "zh-CN"))
 		},
-		"rebuild_book_hashes": func(ctx context.Context, task TaskStatus) error {
-			return c.retryRebuildBookHashesTask(task)
+		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: func(ctx context.Context, _ TaskStatus) error {
+			return c.launchRebuildBookHashesTask()
 		},
-		"rebuild_file_identities": func(ctx context.Context, _ TaskStatus) error {
+		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: func(ctx context.Context, task TaskStatus) error {
+			// 发起理由是这个变体的原始入参，重试要沿用而不是另编一个。
+			return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(taskParam(task, "reason"), "manual_retry"))
+		},
+		{Type: "rebuild_file_identities", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRebuildFileIdentitiesTask()
 		},
-		"reconcile_koreader_progress": func(ctx context.Context, _ TaskStatus) error {
+		{Type: "reconcile_koreader_progress", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
 			return c.launchReconcileKOReaderProgressTask()
 		},
-		"refresh_koreader_matching": func(ctx context.Context, _ TaskStatus) error {
+		{Type: "refresh_koreader_matching", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
 			return c.launchRefreshKOReaderMatchingTask()
 		},
-	}
-}
-
-// retryRebuildBookHashesTask 把 rebuild_book_hashes 这个任务类型按**任务键**分回它自己那条启动点。
-//
-// 注册表按类型分发，而这个类型下有两条键：前台重建由用户在维护页发起，低优先级回填由**资料库扫描**
-// 收尾串联，后者压低批次、批间停顿、匹配模式钉死二进制哈希。只按类型重启的话，用户对回填按下的
-// 重试会起出一条前台档的同名任务——大批次、无停顿，正是回填刻意避开的抢盘跑法，而原来那条仍停在
-// 终态一动不动。刮削那个类型同样是一类多键，分发口径与它一致。
-func (c *Controller) retryRebuildBookHashesTask(task TaskStatus) error {
-	switch task.Key {
-	case lowPriorityBookHashTaskKey:
-		// 发起理由是这条键的原始入参，重试要沿用而不是另编一个。
-		reason := ""
-		if task.Params != nil {
-			reason = task.Params["reason"]
-		}
-		return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(reason, "manual_retry"))
-	case rebuildBookHashesTaskKey:
-		return c.launchRebuildBookHashesTask()
-	default:
-		return fmt.Errorf("unsupported book hash rebuild retry target %q", task.Key)
 	}
 }
 
@@ -290,7 +291,7 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	relaunch, ok := c.taskEngine.relauncherFor(task.Type)
+	relaunch, ok := c.taskEngine.relauncherFor(task.Type, task.Variant)
 	if !ok {
 		jsonError(w, http.StatusBadRequest, "Unsupported retry type")
 		return

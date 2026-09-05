@@ -15,7 +15,7 @@ func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "rebuild_thumbnails"
-	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails", Total: 100})
+	seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 100})
 
 	e.runTaskGoroutine(key, func() { panic("boom") })
 
@@ -40,7 +40,7 @@ func TestTaskPanicSpeaksInMessageCode(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "rebuild_thumbnails"
-	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails"})
+	seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole)})
 
 	e.runTaskGoroutine(key, func() { panic("boom") })
 
@@ -59,7 +59,7 @@ func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
 	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "rebuild_index"
-	seedTask(t, e, taskSeed{Key: key, Type: "rebuild_index"})
+	seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_index", variantSole)})
 	e.runTaskGoroutine(key, func() { panic("boom") })
 
 	e.mutex.Lock()
@@ -69,7 +69,7 @@ func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
 		t.Fatal("panic 后运行时句柄仍留在表里 —— 每个 panic 的任务都会泄漏一份 ctx 与暂停闸门")
 	}
 
-	if _, err := trySeedTask(e, taskSeed{Key: key, Type: "rebuild_index"}); err != nil {
+	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: systemTask("rebuild_index", variantSole)}); err != nil {
 		t.Fatalf("panic 之后同一任务键再也起不来（%v）—— 用户要重启进程才能重试", err)
 	}
 }
@@ -82,7 +82,7 @@ func TestTaskBodyRunsThroughInjectedBackgroundCapability(t *testing.T) {
 	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10})
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10})
 
 	bodyRan := false
 	e.runTaskGoroutine(key, func() { bodyRan = true })
@@ -102,7 +102,7 @@ func TestTaskGoroutineOnlyGuardsPanics(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10})
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10})
 	e.runTaskGoroutine(key, func() {})
 
 	if task := lastPublishedTask(t, snapshots(), key); task.Status != "running" {

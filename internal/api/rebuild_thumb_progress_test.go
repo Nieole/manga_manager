@@ -40,7 +40,7 @@ const rebuildThumbTestKey = "rebuild_thumbnails"
 func seedRebuildThumbTask(t *testing.T, c *Controller) *taskrun.Handle {
 	t.Helper()
 	return seedTask(t, c.taskEngine, taskSeed{
-		Key: rebuildThumbTestKey, Type: "rebuild_thumbnails",
+		Key: rebuildThumbTestKey, Identity: systemTask("rebuild_thumbnails", variantSole),
 		StartCode: "task.msg.rebuild_thumbnails.start",
 		CanCancel: true, CanPause: true,
 	})
@@ -244,7 +244,7 @@ func TestRebuildThumbCountsHoldStillBeforeAnyDenominator(t *testing.T) {
 	c, snapshots := newRebuildThumbTestController(clock)
 
 	progress := seedTask(t, c.taskEngine, taskSeed{
-		Key: rebuildThumbTestKey, Type: "rebuild_thumbnails", Total: 120,
+		Key: rebuildThumbTestKey, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 120,
 		CanCancel: true, CanPause: true,
 	})
 	c.initRebuildThumbAggregator(progress, 1)

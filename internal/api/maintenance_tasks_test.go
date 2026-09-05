@@ -266,7 +266,7 @@ func TestCleanupThumbnailsReportsPhaseThenCounts(t *testing.T) {
 func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 	c, snapshots, clock := newMaintenanceRig(t, &maintenanceStore{})
 	const key = "rebuild_file_identities"
-	progress := seedTask(t, c.taskEngine, taskSeed{Key: key, Type: key, CanCancel: true, CanPause: true})
+	progress := seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: systemTask(key, variantSole), CanCancel: true, CanPause: true})
 
 	metrics := taskrun.IOMetrics{StorageProfile: "hdd_external", VolumeKey: "/srv", IOWaitMillis: 120, PausedMillis: 30, HashedFiles: 7}
 	before := publishedCountFor(snapshots(), key)
@@ -379,7 +379,7 @@ func TestHashBackfillStartsFromInsideATaskBody(t *testing.T) {
 	c.config = config.NewManager(&cfg)
 
 	var chainErr error
-	if err := c.taskEngine.Run(TaskSpec{Key: "scan_library_1", Type: "scan_library"}, func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), TaskSpec{Key: "scan_library_1"}, func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		chainErr = c.launchLowPriorityBookHashBackfillTask("scan_library")
 		return TaskResult{}, nil
 	}); err != nil {

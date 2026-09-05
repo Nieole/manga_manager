@@ -16,13 +16,77 @@ import (
 	"manga-manager/internal/taskrun"
 )
 
-// TaskSpec 是一份任务声明：「这是一个什么任务」的完整描述，一次性交给引擎。
+// TaskVariant 是**变体**：同一类工作在同一个作用域上的第二个身份。
+//
+// 它是独立类型而不是 string，为的是让身份构造函数里那两个都叫「一串字符」的位置——任务类型与
+// 变体——接反时有编译错误。
+type TaskVariant string
+
+const (
+	// variantSole 是「这个类型在一个作用域上只有一个身份」。它是一次显式声明，不是省略：
+	// 身份四要素没有「不填」这个选项，见 TaskIdentity。
+	variantSole TaskVariant = ""
+
+	// 书哈希重建的两个变体：前台重建大批次、无停顿；低优先级回填压低批次、批间停顿、
+	// 匹配模式钉死二进制哈希。**重启函数**按（类型，变体）分发，两条跑法因此各自重启回自己。
+	variantHashRebuildForeground TaskVariant = "foreground"
+	variantHashRebuildBackfill   TaskVariant = "low_priority_backfill"
+
+	// 刮削的两个变体：全库那条挂在系统作用域，单库那条带库作用域。
+	variantScrapeAllLibraries TaskVariant = "all_libraries"
+	variantScrapeOneLibrary   TaskVariant = "one_library"
+)
+
+// 任务的三个**作用域**。它们同时是落盘记录 scope 列的取值与任务列表的筛选值。
+const (
+	taskScopeSystem  = "system"
+	taskScopeLibrary = "library"
+	taskScopeSeries  = "series"
+)
+
+// TaskIdentity 是一个任务的**身份**：类型、**作用域**、作用域 id 与**变体**四项唯一确定它。
+// 四项由启动点声明，引擎不推导其中任何一项——包括不从**任务键**的字符串里反解作用域。
+//
+// 字段不导出，因此建它只有 systemTask / libraryTask / seriesTask 三条路。三者都把四项收成
+// 位置参数，少填一项是**编译错误**：结构体字面量漏一个字段只会得到零值，而一个默默判成系统级、
+// 或默默丢掉作用域 id 的任务不会有任何报错，只会挂在任务中心里错的那个作用域下。
+type TaskIdentity struct {
+	taskType string
+	scope    string
+	scopeID  *int64
+	variant  TaskVariant
+}
+
+// systemTask 声明一个系统级任务的身份。
+func systemTask(taskType string, variant TaskVariant) TaskIdentity {
+	return TaskIdentity{taskType: taskType, scope: taskScopeSystem, variant: variant}
+}
+
+// libraryTask 声明一个资料库级任务的身份。
+//
+// 作用域 id 是位置参数而不是一个可以留 nil 的字段：库级任务没有「不知道是哪个库」这种状态，
+// 启动点调它的那一刻手里就握着 lib.ID。
+func libraryTask(taskType string, libraryID int64, variant TaskVariant) TaskIdentity {
+	return TaskIdentity{taskType: taskType, scope: taskScopeLibrary, scopeID: &libraryID, variant: variant}
+}
+
+// seriesTask 声明一个系列级任务的身份，作用域 id 的道理同 libraryTask。
+func seriesTask(taskType string, seriesID int64, variant TaskVariant) TaskIdentity {
+	return TaskIdentity{taskType: taskType, scope: taskScopeSeries, scopeID: &seriesID, variant: variant}
+}
+
+// TaskSpec 是一份任务声明：「这个任务怎么跑、怎么显示」的完整描述，与身份一起一次性交给引擎。
+//
+// 身份不在这里而是启动入口的**第一个位置参数**（TaskIdentity）：它是一份声明里唯一「漏了就必须
+// 有编译错误」的部分，而结构体字面量漏一个字段只会得到零值——那等于把从任务键反解作用域的猜测
+// 换了个地方接着猜。
 //
 // 整份声明必须原子落地。拆成启动之后的多次补写，会留下一个「任务已经出现在列表里、却还没有
 // 作用域名」的窗口——那是任务列表接口能观察到的，而补写的那几帧还会被首帧刚写下的节流水位吞掉。
 type TaskSpec struct {
-	Key  string
-	Type string
+	// Key 是这个任务的**任务键**：日志、URL 与六个控制端点都按它寻址，也是落盘记录的主键。
+	// 它由启动点自己拼，与身份的四项**不互相推导**——身份不从它反解，它也不由身份生成。
+	Key string
 
 	// StartCode 与 StartParams 是起始文案的 i18n 码与占位参数。消息词汇只有 i18n 码一种。
 	//
@@ -78,15 +142,15 @@ func taskFailure(code string, err error) TaskResult {
 	return TaskResult{Code: code}
 }
 
-// Run 是启动一个后台任务的唯一入口。
+// Run 是启动一个后台任务的唯一入口：一份**身份**、一份任务声明、一个任务体。
 //
 // 返回 nil 表示已启动；返回 errTaskAlreadyRunning 表示同一**任务键**已有**活动态**任务
 // （含**取消中**），此时任务体一步都不会执行。
 //
 // 刻意保留的不变量：槽位闸门**同步**执行、任务体**异步**执行。Run 返回时任务已在列表里、
 // 而任务体尚未开跑，HTTP 层才能立即返回 202 而不被任务体阻塞。
-func (e *taskEngine) Run(spec TaskSpec, fn func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error)) error {
-	taskCtx, releaseRuntime, claimed := e.claimTaskSlot(spec)
+func (e *taskEngine) Run(identity TaskIdentity, spec TaskSpec, fn func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error)) error {
+	taskCtx, releaseRuntime, claimed := e.claimTaskSlot(identity, spec)
 	if !claimed {
 		return errTaskAlreadyRunning
 	}
@@ -131,14 +195,14 @@ func (e *taskEngine) newTaskHandle(key string) *taskrun.Handle {
 // 共享同一个 map header 迟早撞成 taskEngine 符号 doc 里写的那种 fatal error。
 //
 // 返回的 release 必须在任务体退出时调用，否则句柄会一直留在表里。
-func (e *taskEngine) claimTaskSlot(spec TaskSpec) (context.Context, func(), bool) {
+func (e *taskEngine) claimTaskSlot(identity TaskIdentity, spec TaskSpec) (context.Context, func(), bool) {
 	now := time.Now()
-	scope, scopeID := inferTaskScope(spec.Type, spec.Key)
 	task := TaskStatus{
 		Key:           spec.Key,
-		Type:          spec.Type,
-		Scope:         scope,
-		ScopeID:       scopeID,
+		Type:          identity.taskType,
+		Scope:         identity.scope,
+		ScopeID:       identity.scopeID,
+		Variant:       identity.variant,
 		Status:        "running",
 		MessageCode:   spec.StartCode,
 		MessageParams: cloneStringMap(spec.StartParams),

@@ -247,7 +247,6 @@ func (h externalScanHandle) Advance(current, total int) {
 func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) error {
 	spec := TaskSpec{
 		Key:          externalLibraryScanTaskKey(libraryID, sessionID),
-		Type:         "scan_external_library",
 		StartCode:    "task.msg.scan_external_library.start",
 		CanCancel:    true,
 		CanPause:     true,
@@ -258,7 +257,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
@@ -288,7 +287,6 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	total := len(plan.Operations)
 	spec := TaskSpec{
 		Key:       externalLibraryTransferTaskKey(libraryID, sessionID),
-		Type:      "transfer_external_library",
 		StartCode: "task.msg.transfer_external_library.start",
 		Total:     total,
 		CanCancel: true,
@@ -303,7 +301,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		if err := ctx.Err(); err != nil {
 			return TaskResult{}, err
 		}

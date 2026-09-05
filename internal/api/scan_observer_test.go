@@ -23,12 +23,12 @@ func newScanEventsTestController(clock *fakeClock) (*Controller, func() []TaskSt
 }
 
 // startedScanRig 造一条「扫描任务已启动、观察者已交出」的现场，即多数用例的起点。
-func startedScanRig(t *testing.T, key, taskType string) (scanner.ScanObserver, func() []TaskStatus, *fakeClock) {
+func startedScanRig(t *testing.T, key string, identity TaskIdentity) (scanner.ScanObserver, func() []TaskStatus, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	c, snapshots := newScanEventsTestController(clock)
 	progress := seedTask(t, c.taskEngine, taskSeed{
-		Key: key, Type: taskType, CanCancel: true, CanPause: true,
+		Key: key, Identity: identity, CanCancel: true, CanPause: true,
 	})
 	return newTaskScanObserver(progress), snapshots, clock
 }
@@ -38,7 +38,7 @@ func startedScanRig(t *testing.T, key, taskType string) (scanner.ScanObserver, f
 //
 // 驱动用的是扫描器真正会调的那两个方法——报文里没有身份，那一侧没有任何办法拼出任务键。
 func TestScanProgressFlowsThroughHandedOverObserver(t *testing.T) {
-	observer, snapshots, _ := startedScanRig(t, "scan_series_42", "scan_series")
+	observer, snapshots, _ := startedScanRig(t, "scan_series_42", seriesTask("scan_series", 42, variantSole))
 
 	observer.Progress(scanner.ScanProgressReport{
 		Phase:       "reading_metadata",
@@ -66,7 +66,7 @@ func TestScanProgressFlowsThroughHandedOverObserver(t *testing.T) {
 // TestScanMetricsFlowThroughHandedOverObserver 守扫描收尾的那份指标报文落进**任务参数**——
 // 存储 IO 面板按参数名读它们（见 taskArchiveOpenRate），走错通道会让面板永远是空的。
 func TestScanMetricsFlowThroughHandedOverObserver(t *testing.T) {
-	observer, snapshots, _ := startedScanRig(t, "scan_library_7", "scan_library")
+	observer, snapshots, _ := startedScanRig(t, "scan_library_7", libraryTask("scan_library", 7, variantSole))
 
 	observer.Metrics(scanner.ScanMetricsReport{
 		StorageProfile: "hdd_external",
@@ -96,7 +96,7 @@ func TestScanObserverIsNilWithoutHandle(t *testing.T) {
 // TestScanFramesArePublishedWholeAndOnce 守一份扫描器报文只投递一条载荷，且那条载荷内部自洽。
 // 拆成几次报就会破——投递水位放行其中一条中间态、又吞掉后面补齐的那条。
 func TestScanFramesArePublishedWholeAndOnce(t *testing.T) {
-	observer, snapshots, clock := startedScanRig(t, "scan_library_7", "scan_library")
+	observer, snapshots, clock := startedScanRig(t, "scan_library_7", libraryTask("scan_library", 7, variantSole))
 
 	for i := 1; i <= 4; i++ {
 		clock.advance(taskProgressPublishInterval + 50*time.Millisecond)

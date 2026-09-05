@@ -78,7 +78,7 @@ func TestResumeTaskRejectsRunningTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1, CanCancel: true, CanPause: true})
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1, CanCancel: true, CanPause: true})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/resume", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()

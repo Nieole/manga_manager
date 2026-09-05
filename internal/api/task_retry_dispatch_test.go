@@ -1,6 +1,6 @@
-// 守**重启函数**把任务重启回它自己那条**任务键**，以及重试准入认的是**活动态**而不只是运行中。
+// 守**重启函数**把任务重启回它自己那条跑法，以及重试准入认的是**活动态**而不只是运行中。
 //
-// 一个任务类型下可以有多个任务键（哈希重建有前台与低优先级回填两条），按类型分发会把回填
+// 一个任务类型下可以有多个**变体**（哈希重建有前台与低优先级回填两个），只按类型分发会把回填
 // 重启成前台档：原来那条仍停在终态，任务中心里多出一条同名任务，用的是它刻意避开的抢盘跑法。
 
 package api
@@ -14,7 +14,7 @@ import (
 )
 
 // newHashRebuildRetryRig 拼出重试哈希重建所需的那几样：维护任务的装配 + 重试注册表 + 打开的
-// KOReader 二进制哈希档（两条键的前置条件都看它）。
+// KOReader 二进制哈希档（两个变体的前置条件都看它）。
 //
 // 注册表在生产由 newControllerCore 填，而这套装配只建任务引擎，因此要在这里补上——
 // 任务的 Retryable 在落地那一刻由注册表派生，它必须先于播种就位。
@@ -37,11 +37,12 @@ func retryTaskByKey(t *testing.T, c *Controller, key string) *httptest.ResponseR
 	return rec
 }
 
-// TestRetryRestartsTheSameTaskKey 钉住同一个任务类型下的每条任务键各自重启回自己。
-func TestRetryRestartsTheSameTaskKey(t *testing.T) {
+// TestRetryRestartsTheSameVariant 钉住同一个任务类型下的每个**变体**各自重启回自己。
+func TestRetryRestartsTheSameVariant(t *testing.T) {
 	cases := []struct {
 		name       string
 		key        string
+		variant    TaskVariant
 		otherKey   string
 		wantCode   string
 		wantParams map[string]string
@@ -49,14 +50,16 @@ func TestRetryRestartsTheSameTaskKey(t *testing.T) {
 		{
 			name:     "低优先级回填重试回低优先级回填",
 			key:      lowPriorityBookHashTaskKey,
+			variant:  variantHashRebuildBackfill,
 			otherKey: rebuildBookHashesTaskKey,
 			wantCode: "task.msg.book_hash_backfill.complete",
-			// 档位与匹配模式是这条键的全部意义：批次压低、匹配模式钉死二进制哈希。
+			// 档位与匹配模式是这个变体的全部意义：批次压低、匹配模式钉死二进制哈希。
 			wantParams: map[string]string{"profile": "full_hash_low_priority", "match_mode": config.KOReaderMatchModeBinaryHash},
 		},
 		{
 			name:     "前台重建重试回前台重建",
 			key:      rebuildBookHashesTaskKey,
+			variant:  variantHashRebuildForeground,
 			otherKey: lowPriorityBookHashTaskKey,
 			wantCode: "task.msg.koreader_rebuild_hashes.complete",
 		},
@@ -68,7 +71,7 @@ func TestRetryRestartsTheSameTaskKey(t *testing.T) {
 
 			const seededFailCode = "seed.hash_rebuild.failed"
 			seedTask(t, c.taskEngine, taskSeed{
-				Key: tc.key, Type: "rebuild_book_hashes", Total: 1,
+				Key: tc.key, Identity: systemTask("rebuild_book_hashes", tc.variant), Total: 1,
 				Metadata: map[string]string{"reason": "scan_library"},
 				Terminal: "failed", TerminalCode: seededFailCode,
 			})
@@ -119,7 +122,7 @@ func TestRetryRejectsActiveTask(t *testing.T) {
 			c.taskEngine.runBackground = func(func()) {}
 
 			key := lowPriorityBookHashTaskKey
-			seedTask(t, c.taskEngine, taskSeed{Key: key, Type: "rebuild_book_hashes", Total: 1, CanCancel: true, CanPause: true})
+			seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: systemTask("rebuild_book_hashes", variantHashRebuildBackfill), Total: 1, CanCancel: true, CanPause: true})
 			if err := tc.control(c.taskEngine, key); err != nil {
 				t.Fatalf("把任务转入 %q 失败: %v", tc.status, err)
 			}

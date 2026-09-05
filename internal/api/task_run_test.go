@@ -16,12 +16,18 @@ import (
 	"manga-manager/internal/taskrun"
 )
 
+// identityForTest 造一份最小可用的**身份**，与 specForTest 那把任务键 `scan_library_1` 相配。
+// 本文件守的是启动入口本身（终态裁决、任务键闸门、句柄归还），身份四要素怎么落到任务上
+// 由 TestRunLandsWholeSpecAtBirth 单独守。
+func identityForTest() TaskIdentity {
+	return libraryTask("scan_library", 1, variantSole)
+}
+
 // specForTest 造一份最小可用的任务声明：三条终态分支各有自己的默认文案码，
 // 用例据此分辨引擎选了哪条分支。
 func specForTest(key string) TaskSpec {
 	return TaskSpec{
 		Key:          key,
-		Type:         "scan_library",
 		StartCode:    "spec.start",
 		StartParams:  map[string]string{"name": "Main"},
 		Total:        10,
@@ -54,7 +60,7 @@ func TestRunSettlesByBodyError(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
-			if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+			if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 				return TaskResult{}, tc.bodyErr
 			}); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -100,7 +106,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 
 			const key = "scan_library_1"
 			tc.result.Params = map[string]string{"written": "3"}
-			if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+			if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 				return tc.result, tc.bodyErr
 			}); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -123,7 +129,7 @@ func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return TaskResult{Params: map[string]string{"name": "Main"}}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -146,7 +152,7 @@ func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 
 	const key = "scan_library_1"
 	bodyRan := false
-	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		bodyRan = true
 		return TaskResult{}, nil
 	}); err != nil {
@@ -180,14 +186,14 @@ func TestRunRejectsDuplicateActiveKey(t *testing.T) {
 	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("第一次启动返回了 %v，应为 nil", err)
 	}
 
 	secondBodyRan := false
-	err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		secondBodyRan = true
 		return TaskResult{}, nil
 	})
@@ -209,7 +215,7 @@ func TestRunRejectsWhileCancelling(t *testing.T) {
 	e, _ := newBackgroundTestEngine(func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("第一次启动返回了 %v，应为 nil", err)
@@ -218,7 +224,7 @@ func TestRunRejectsWhileCancelling(t *testing.T) {
 		t.Fatalf("取消失败: %v", err)
 	}
 
-	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); !errors.Is(err, errTaskAlreadyRunning) {
 		t.Fatalf("取消中的任务键被再次启动，返回 %v, want errTaskAlreadyRunning", err)
@@ -246,7 +252,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 			e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
-			if err := e.Run(specForTest(key), tc.body); err != nil {
+			if err := e.Run(identityForTest(), specForTest(key), tc.body); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
 			}
 
@@ -256,7 +262,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 			if leaked != 0 {
 				t.Fatalf("退出路径「%s」上残留了 %d 个运行时句柄", tc.name, leaked)
 			}
-			if err := e.Run(specForTest(key), tc.body); err != nil {
+			if err := e.Run(identityForTest(), specForTest(key), tc.body); err != nil {
 				t.Fatalf("退出路径「%s」之后同一任务键再也起不来：%v", tc.name, err)
 			}
 		})
@@ -269,7 +275,7 @@ func TestRunPanicStillMarksTaskFailed(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		panic("boom")
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -296,7 +302,7 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	spec.ScopeName = "Main Library"
 	spec.Metadata = map[string]string{"force": "true", "scan_profile": "balanced"}
 	spec.Limits = TaskLimits{ScanProfile: "balanced", ScanConcurrency: 4}
-	if err := e.Run(spec, func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(libraryTask("scan_library", 7, variantSole), spec, func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -305,6 +311,11 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	task := firstPublishedTask(t, snapshots(), key)
 	if task.Status != "running" {
 		t.Fatalf("首帧状态为 %q, want running", task.Status)
+	}
+	// 身份四要素在首帧上就已落全，且没有一项是从任务键反解来的。
+	if task.Type != "scan_library" || task.Scope != taskScopeLibrary || task.ScopeID == nil || *task.ScopeID != 7 || task.Variant != variantSole {
+		t.Fatalf("首帧的身份为 type=%q scope=%q id=%v variant=%q, want scan_library/library/7/空变体",
+			task.Type, task.Scope, task.ScopeID, task.Variant)
 	}
 	if task.ScopeName != "Main Library" {
 		t.Fatalf("首帧就没有作用域名（%q）—— 任务会先以无名的形态出现在列表里", task.ScopeName)
@@ -331,8 +342,8 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
-	const key = "rebuild_index"
-	if err := e.Run(specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	const key = "scan_library_1"
+	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -351,7 +362,7 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	e.now = clock.Now
 
 	const key = "scan_library_1"
-	if err := e.Run(specForTest(key), func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		tp.Advance(3, 20, "progress.scanning", map[string]string{"current": "3"})
 		if task := lastPublishedTask(t, snapshots(), key); task.Current != 3 || task.Total != 20 || task.Phase != "" {
 			t.Fatalf("计数推进之后 current=%d total=%d phase=%q，它不该碰阶段", task.Current, task.Total, task.Phase)
@@ -397,7 +408,7 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 
 	const key = "scan_library_1"
 	var handle *taskrun.Handle
-	if err := e.Run(specForTest(key), func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), specForTest(key), func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		handle = tp
 		return TaskResult{}, nil
 	}); err != nil {
@@ -468,7 +479,7 @@ func TestTaskHandleChannelsShareOneAdmissionRule(t *testing.T) {
 				e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
 
 				const key = "rebuild_thumbnails"
-				handle := seedTask(t, e, taskSeed{Key: key, Type: "rebuild_thumbnails", Total: 10, CanCancel: true, CanPause: true})
+				handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 10, CanCancel: true, CanPause: true})
 				state.reach(t, e, key)
 				channel.write(handle)
 
@@ -494,7 +505,7 @@ func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
 	labels := map[string]string{"provider_name": "AniList"}
 	startParams := map[string]string{"name": "Main"}
 	handle := seedTask(t, e, taskSeed{
-		Key: "scan_library_1", Type: "scan_library",
+		Key: "scan_library_1", Identity: libraryTask("scan_library", 1, variantSole),
 		Metadata: metadata, Labels: labels,
 		StartCode: "spec.start", StartParams: startParams,
 	})
@@ -531,10 +542,10 @@ func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
 	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
 
 	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", CanCancel: true, CanPause: true})
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true})
 	running := seededTaskContext(t, e, key)
 
-	if _, err := trySeedTask(e, taskSeed{Key: key, Type: "scan_library", CanCancel: true, CanPause: true}); !errors.Is(err, errTaskAlreadyRunning) {
+	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true}); !errors.Is(err, errTaskAlreadyRunning) {
 		t.Fatalf("同键第二次启动返回 %v, want errTaskAlreadyRunning", err)
 	}
 
@@ -554,7 +565,7 @@ func TestFailedTaskDropsPauseReason(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
 
 	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10, CanCancel: true, CanPause: true})
 	if err := e.pause(key); err != nil {
 		t.Fatalf("暂停失败: %v", err)
 	}

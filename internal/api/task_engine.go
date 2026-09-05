@@ -110,10 +110,10 @@ type taskEngine struct {
 	persistPending map[string]TaskStatus
 	persistWake    chan struct{}
 
-	// relaunchers 是任务重试的注册表（taskType -> 重启函数），也是「可重试类型」的唯一事实来源。
+	// relaunchers 是任务重试的注册表（(类型, **变体**) -> 重启函数），也是「可重试」的唯一事实来源。
 	// 在 newControllerCore 中一次性填好（重启函数要调 Controller 的领域方法，故由 Controller 构建），
 	// 此后只读，不需要持锁。
-	relaunchers map[string]taskRelauncher
+	relaunchers map[taskDispatchKey]taskRelauncher
 
 	// publishGates 记录每个任务上次投递进度的时刻与展示态，用于节流逐条目进度（见 taskPublishGate）。
 	publishGates map[string]taskPublishGate
@@ -167,16 +167,28 @@ func restoredTaskSequence(store database.Store) int64 {
 	return maxSequence
 }
 
-// isRetryableTaskType 由注册表派生：注册了 relauncher 的类型即可重试。
-// 「哪些类型可重试」不得另立第二份清单——两份清单一旦不同步，界面上的重试按钮会指向一个没人能重启的任务。
-func (e *taskEngine) isRetryableTaskType(taskType string) bool {
-	_, ok := e.relaunchers[taskType]
+// taskStatusFromRecordLive 把一条落盘记录读成任务快照，并按**当前**的注册表重算它可不可重试。
+//
+// 落盘的 retryable 列是上一个进程按它那时的注册表算出来的，重算是因为它可能已经不成立：
+// 注册表的键含**变体**，而变体只随任务参数落盘，早于这条约定写下的行读回来是空变体。
+// 照抄那一列的话，任务中心会给这些行画上重试按钮，点下去落进「不支持的重试类型」。
+// Retryable 的唯一事实来源始终是注册表——落盘那一列是它的缓存，不是第二份清单。
+func (e *taskEngine) taskStatusFromRecordLive(record database.TaskRecord) TaskStatus {
+	task := taskStatusFromRecord(record)
+	task.Retryable = e.isRetryableTask(task.Type, task.Variant)
+	return task
+}
+
+// isRetryableTask 由注册表派生：注册了 relauncher 的（类型，**变体**）即可重试。
+// 「哪些可重试」不得另立第二份清单——两份清单一旦不同步，界面上的重试按钮会指向一个没人能重启的任务。
+func (e *taskEngine) isRetryableTask(taskType string, variant TaskVariant) bool {
+	_, ok := e.relaunchers[taskDispatchKey{Type: taskType, Variant: variant}]
 	return ok
 }
 
-// relauncherFor 返回该任务类型的重启函数；未注册即不可重试。
-func (e *taskEngine) relauncherFor(taskType string) (taskRelauncher, bool) {
-	relaunch, ok := e.relaunchers[taskType]
+// relauncherFor 返回这个（类型，**变体**）的重启函数；未注册即不可重试。
+func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRelauncher, bool) {
+	relaunch, ok := e.relaunchers[taskDispatchKey{Type: taskType, Variant: variant}]
 	return relaunch, ok
 }
 
@@ -352,7 +364,7 @@ func (e *taskEngine) admitTaskLocked(task TaskStatus) bool {
 		return false
 	}
 
-	task.Retryable = e.isRetryableTaskType(task.Type)
+	task.Retryable = e.isRetryableTask(task.Type, task.Variant)
 	e.seq++
 	task.Sequence = e.seq
 
@@ -613,7 +625,7 @@ func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.Task
 	}
 	merged := make(map[string]TaskStatus, len(records))
 	for _, record := range records {
-		merged[record.Key] = taskStatusFromRecord(record)
+		merged[record.Key] = e.taskStatusFromRecordLive(record)
 	}
 
 	e.mutex.Lock()
@@ -720,7 +732,7 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (TaskStat
 	}
 	for _, record := range records {
 		if record.Key == key {
-			return taskStatusFromRecord(record), nil
+			return e.taskStatusFromRecordLive(record), nil
 		}
 	}
 	return TaskStatus{}, errTaskNotFound

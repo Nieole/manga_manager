@@ -586,7 +586,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 
 	failedTasks, err := c.taskEngine.listTaskStatuses(ctx, database.TaskFilters{
 		Status:  "failed",
-		Scope:   "series",
+		Scope:   taskScopeSeries,
 		ScopeID: &seriesID,
 		Limit:   5,
 	})

@@ -5,7 +5,7 @@
 
 **Blocked by:** 无 —— 可立即开始
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 今天在猜什么
 
@@ -37,11 +37,11 @@
 
 ## 验收
 
-- [ ] 任务声明带类型、作用域、作用域 id 与变体四项，漏填有编译错误
-- [ ] `inferTaskScope` 已删除，全仓无第二处从任务键推导作用域
-- [ ] 书哈希重建的按键 switch 已删除，重启函数按（类型，变体）分发
-- [ ] 外部库扫描与传输的作用域与作用域 id 正确，有一条用例守着（今天是错的）
-- [ ] 低优先级回填的重试仍回到回填那条跑法，既有用例继续绿
-- [ ] 既有的作用域筛选与重试分发用例全部继续绿
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] 任务声明带类型、作用域、作用域 id 与变体四项，漏填有编译错误
+- [x] `inferTaskScope` 已删除，全仓无第二处从任务键推导作用域
+- [x] 书哈希重建的按键 switch 已删除，重启函数按（类型，变体）分发
+- [x] 外部库扫描与传输的作用域与作用域 id 正确，有一条用例守着（今天是错的）
+- [x] 低优先级回填的重试仍回到回填那条跑法，既有用例继续绿
+- [x] 既有的作用域筛选与重试分发用例全部继续绿
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过

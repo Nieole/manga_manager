@@ -43,7 +43,7 @@ func TestTaskListFiltersApplyToMemoryOverride(t *testing.T) {
 				t.Fatalf("落一条历史任务失败: %v", err)
 			}
 			// 内存里是同一条键新起的那次：正在跑，没有错误。
-			seedTask(t, controller.taskEngine, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+			seedTask(t, controller.taskEngine, taskSeed{Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
 			items, err := controller.taskEngine.listTaskStatuses(context.Background(), tc.filters)
 			if err != nil {

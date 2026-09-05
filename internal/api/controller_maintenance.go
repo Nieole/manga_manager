@@ -129,7 +129,6 @@ func (c *Controller) runGlobalScan(ctx context.Context, tp *taskrun.Handle, forc
 func (c *Controller) launchRebuildIndexTask() error {
 	spec := TaskSpec{
 		Key:          "rebuild_index",
-		Type:         "rebuild_index",
 		StartCode:    "task.msg.rebuild_index.start",
 		Total:        1,
 		CompleteCode: "task.msg.rebuild_index.complete",
@@ -137,7 +136,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 		FailCode:     "task.msg.rebuild_index.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, _ *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), spec, func(ctx context.Context, _ *taskrun.Handle) (TaskResult, error) {
 		if err := c.store.RebuildSeriesSearchIndex(ctx); err != nil {
 			return taskFailure("task.msg.rebuild_index.series_failed", err), err
 		}
@@ -171,7 +170,6 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 
 	spec := TaskSpec{
 		Key:       "rebuild_thumbnails",
-		Type:      "rebuild_thumbnails",
 		StartCode: "task.msg.rebuild_thumbnails.start",
 		CanCancel: true,
 		CanPause:  true,
@@ -186,7 +184,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		FailCode:     "task.msg.rebuild_thumbnails.failed",
 	}
 
-	if err := c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		c.initRebuildThumbAggregator(tp, 0)
 		defer c.releaseRebuildThumbAggregator()
 
@@ -234,7 +232,6 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 func (c *Controller) launchCleanupThumbnailsTask() error {
 	spec := TaskSpec{
 		Key:          "cleanup_thumbnails",
-		Type:         "cleanup_thumbnails",
 		StartCode:    "task.msg.cleanup_thumbnails.start",
 		CanCancel:    true,
 		CanPause:     true,
@@ -243,7 +240,7 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
 		tp.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
 		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
@@ -268,7 +265,6 @@ func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
 	spec := TaskSpec{
 		Key:          "rebuild_file_identities",
-		Type:         "rebuild_file_identities",
 		StartCode:    "task.msg.rebuild_file_identities.start",
 		CanCancel:    true,
 		CanPause:     true,
@@ -278,7 +274,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		updated, total, err := c.runRebuildFileIdentities(ctx, 500,
 			hashingFrameHandle{Handle: tp, code: "task.msg.rebuild_file_identities.progress"})
 		if err != nil {
@@ -404,7 +400,6 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 
 	spec := TaskSpec{
 		Key:       lowPriorityBookHashTaskKey,
-		Type:      "rebuild_book_hashes",
 		StartCode: "task.msg.book_hash_backfill.start",
 		Total:     int(missingCount),
 		CanCancel: true,
@@ -419,7 +414,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 		FailCode:     "task.msg.book_hash_backfill.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap,
 			hashingFrameHandle{Handle: tp, code: "task.msg.book_hash_backfill.progress"})
 		if err != nil {

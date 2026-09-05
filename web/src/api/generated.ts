@@ -24,6 +24,7 @@ export interface TaskStatus {
   type: string;
   scope: string;
   scope_id?: number;
+  variant?: string;
   scope_name?: string;
   status: string;
   message: string;

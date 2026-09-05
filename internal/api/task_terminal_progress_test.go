@@ -39,7 +39,7 @@ func TestTerminalStateAdvanceCount(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
-			handle := seedTask(t, e, taskSeed{Key: key, Type: "scan_library", Total: tc.total, CanCancel: true})
+			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: tc.total, CanCancel: true})
 			if tc.reported != noAdvance {
 				current := tc.reported
 				handle.Report(taskrun.Frame{Current: &current})

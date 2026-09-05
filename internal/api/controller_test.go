@@ -941,7 +941,7 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	taskKey := "scan_library_42"
 	// 写这条扫描任务的资格来自任务体交出的**扫描观察者**，不是拼出来的任务键——
 	// 报文不带身份，交给谁就写给谁。
-	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1})
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 1})
 	newTaskScanObserver(progress).Metrics(scanner.ScanMetricsReport{
 		StorageProfile:         config.StorageProfileHDDExternal,
 		VolumeKey:              "e:",
@@ -968,7 +968,7 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	// 写重建任务的资格来自任务体交给聚合器的**任务句柄**：聚合器据此为每个库造一个
 	// **扫描观察者**，交不出句柄时造不出观察者，报文就无处可落。
-	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Type: "rebuild_thumbnails", Total: 1})
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Identity: systemTask("rebuild_thumbnails", variantSole), Total: 1})
 	controller.initRebuildThumbAggregator(progress, 0)
 	t.Cleanup(controller.releaseRebuildThumbAggregator)
 
@@ -996,7 +996,7 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	})
 
 	// 存储 IO 面板的扫描速率读的是扫描任务自己的参数，与重建任务各写各的。
-	scanProgress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Type: "scan_library", Total: 1})
+	scanProgress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Identity: libraryTask("scan_library", 42, variantSole), Total: 1})
 	newTaskScanObserver(scanProgress).Metrics(reportA)
 
 	controller.taskEngine.mutex.Lock()
@@ -1443,7 +1443,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 
 	taskKey := "scan_series_" + strconv.FormatInt(series.ID, 10)
 	seedTask(t, controller.taskEngine, taskSeed{
-		Key: taskKey, Type: "scan_series", Total: 1,
+		Key: taskKey, Identity: seriesTask("scan_series", series.ID, variantSole), Total: 1,
 		Terminal: "failed", FailError: "archive error",
 	})
 
@@ -2159,14 +2159,14 @@ func TestTaskConflictHandlers(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_" + strconv.FormatInt(series.ID, 10), Type: "scan_series", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_" + strconv.FormatInt(series.ID, 10), Identity: seriesTask("scan_series", series.ID, variantSole), Total: 1})
 	scanSeriesRec := httptest.NewRecorder()
 	controller.scanSeries(scanSeriesRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scan", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if scanSeriesRec.Code != http.StatusConflict {
 		t.Fatalf("expected duplicate scan series 409, got %d", scanSeriesRec.Code)
 	}
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "cleanup_library_" + strconv.FormatInt(lib.ID, 10), Type: "cleanup_library", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "cleanup_library_" + strconv.FormatInt(lib.ID, 10), Identity: libraryTask("cleanup_library", lib.ID, variantSole), Total: 1})
 	cleanupRec := httptest.NewRecorder()
 	controller.cleanupLibrary(cleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/cleanup", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if cleanupRec.Code != http.StatusConflict {
@@ -2484,8 +2484,8 @@ func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "older", Type: "scan_library", Total: 1, Terminal: "completed"})
-	seedTask(t, controller.taskEngine, taskSeed{Key: "newer", Type: "rebuild_index", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "older", Identity: libraryTask("scan_library", 1, variantSole), Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "newer", Identity: systemTask("rebuild_index", variantSole), Total: 1})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
 	rec := httptest.NewRecorder()
@@ -2510,8 +2510,8 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 func TestListTasksSupportsStatusFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Type: "scan_library", Total: 1, Terminal: "failed", FailError: "boom"})
-	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Type: "rebuild_index", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Identity: libraryTask("scan_library", 1, variantSole), Total: 1, Terminal: "failed", FailError: "boom"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Identity: systemTask("rebuild_index", variantSole), Total: 1, Terminal: "completed"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?status=failed", nil)
 	rec := httptest.NewRecorder()
@@ -2533,8 +2533,8 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_12", Type: "scan_series", Total: 1, Terminal: "completed"})
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_18", Type: "scan_series", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_12", Identity: seriesTask("scan_series", 12, variantSole), Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_18", Identity: seriesTask("scan_series", 18, variantSole), Total: 1, Terminal: "completed"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=18", nil)
 	rec := httptest.NewRecorder()
@@ -2557,7 +2557,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 
 	seedTask(t, controller.taskEngine, taskSeed{
-		Key: "scan_series_77", Type: "scan_series", Total: 1,
+		Key: "scan_series_77", Identity: seriesTask("scan_series", 77, variantSole), Total: 1,
 		Metadata: map[string]string{"force": "true"}, ScopeName: "Series 77",
 		Terminal: "failed", FailError: "archive error",
 	})
@@ -2655,8 +2655,8 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Type: "rebuild_index", Total: 1, Terminal: "completed"})
-	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Type: "scan_library", Total: 1, Terminal: "failed", FailError: "boom"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "completed_one", Identity: systemTask("rebuild_index", variantSole), Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "failed_one", Identity: libraryTask("scan_library", 1, variantSole), Total: 1, Terminal: "failed", FailError: "boom"})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=completed", nil)
 	rec := httptest.NewRecorder()
@@ -2681,9 +2681,9 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_10", Type: "scan_series", Total: 1, Terminal: "completed"})
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_11", Type: "scan_series", Total: 1, Terminal: "completed"})
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_11", Type: "scan_library", Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_10", Identity: seriesTask("scan_series", 10, variantSole), Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_11", Identity: seriesTask("scan_series", 11, variantSole), Total: 1, Terminal: "completed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_11", Identity: libraryTask("scan_library", 11, variantSole), Total: 1, Terminal: "completed"})
 	// 清理走 DeleteTasks 删 DB 记录，而终态是异步落盘的：先刷盘让已完成任务进了 DB 才删得掉。
 	controller.taskEngine.flushTaskPersist()
 
@@ -2730,7 +2730,7 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 1, CanCancel: true})
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 1, CanCancel: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
@@ -2767,7 +2767,7 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 10, CanCancel: true, CanPause: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
@@ -2978,7 +2978,7 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scrape_library_7"
-	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scrape", Total: 3, CanCancel: true, CanPause: true})
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scrape", 7, variantScrapeOneLibrary), Total: 3, CanCancel: true, CanPause: true})
 	progress.Advance(1, 3, "task.msg.scrape.queueing_review", map[string]string{"name": "Foo"})
 	progress.Phase("queueing_review", "", nil)
 	progress.Report(taskrun.Frame{
@@ -3147,7 +3147,7 @@ func TestPauseTaskRejectsNonPausableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/pause", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3162,7 +3162,7 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scan_library_42"
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 10, CanCancel: true, CanPause: true})
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 10, CanCancel: true, CanPause: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
@@ -3203,7 +3203,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "rebuild_index", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/cancel", nil, "taskKey", taskKey)
 	rec := httptest.NewRecorder()
@@ -3245,7 +3245,7 @@ func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 
 	const seededFailCode = "seed.scan_series.failed"
 	seedTask(t, controller.taskEngine, taskSeed{
-		Key: "scan_series_999", Type: "scan_series", Total: 1,
+		Key: "scan_series_999", Identity: seriesTask("scan_series", 999, variantSole), Total: 1,
 		Terminal: "failed", TerminalCode: seededFailCode,
 	})
 
@@ -3289,7 +3289,7 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 		t.Fatalf("CreateLibrary failed: %v", err)
 	}
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_" + strconv.FormatInt(lib.ID, 10), Type: "scan_library", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_" + strconv.FormatInt(lib.ID, 10), Identity: libraryTask("scan_library", lib.ID, variantSole), Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/scan", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
@@ -4573,7 +4573,7 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
-	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Type: "scan_library", Total: 100})
+	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Identity: libraryTask("scan_library", 5, variantSole), Total: 100})
 	progress.Advance(42, 100, "", nil)
 
 	// listTaskStatuses 必须立即反映内存里的最新进度，而不是尚未刷盘、还滞后的 DB 记录。
@@ -4623,7 +4623,7 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	}
 
 	// 运行中的任务 -> 409
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Type: "scan_series", Total: 1})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Identity: seriesTask("scan_series", 5, variantSole), Total: 1})
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_series_5"))
 	if rec.Code != http.StatusConflict {
@@ -4631,7 +4631,7 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	}
 
 	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500，不得混进 409。
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_77777", Type: "scan_library", Total: 1, Terminal: "failed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_77777", Identity: libraryTask("scan_library", 77777, variantSole), Total: 1, Terminal: "failed"})
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_library_77777"))
 	if rec.Code != http.StatusInternalServerError {
@@ -4639,18 +4639,22 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	}
 }
 
-func TestIsRetryableTaskTypeDerivedFromRegistry(t *testing.T) {
+func TestIsRetryableTaskDerivedFromRegistry(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	if len(controller.taskEngine.relaunchers) == 0 {
 		t.Fatal("expected registered relaunchers")
 	}
-	for taskType := range controller.taskEngine.relaunchers {
-		if !controller.taskEngine.isRetryableTaskType(taskType) {
-			t.Fatalf("registered type %q should be retryable", taskType)
+	for dispatch := range controller.taskEngine.relaunchers {
+		if !controller.taskEngine.isRetryableTask(dispatch.Type, dispatch.Variant) {
+			t.Fatalf("registered %q/%q should be retryable", dispatch.Type, dispatch.Variant)
 		}
 	}
-	if controller.taskEngine.isRetryableTaskType("nonexistent_type") {
+	if controller.taskEngine.isRetryableTask("nonexistent_type", variantSole) {
 		t.Fatal("unregistered type should not be retryable")
+	}
+	// 同一个类型的另一个**变体**没注册就不可重试：按类型分发时这一条恒真，因此它守的是分发键真的带上了变体。
+	if controller.taskEngine.isRetryableTask("scan_library", "no_such_variant") {
+		t.Fatal("unregistered variant of a registered type should not be retryable")
 	}
 }
 
@@ -4659,7 +4663,7 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 
 	// i18n 路径：**终态**文案落成 message_code + message_params，并清空 Message。
 	seedTask(t, controller.taskEngine, taskSeed{
-		Key: "scan_library_9", Type: "scan_library", Total: 1,
+		Key: "scan_library_9", Identity: libraryTask("scan_library", 9, variantSole), Total: 1,
 		Terminal: "completed", TerminalCode: "task.msg.scan_library.complete",
 		TerminalParams: map[string]string{"name": "Lib A"},
 	})

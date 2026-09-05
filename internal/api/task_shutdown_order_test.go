@@ -30,7 +30,7 @@ func TestStopAllRuntimesCancelsBeforeResuming(t *testing.T) {
 			keys := make([]string, 0, tc.tasks)
 			for i := range tc.tasks {
 				key := fmt.Sprintf("scan_library_%d", i+1)
-				seedTask(t, engine, taskSeed{Key: key, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+				seedTask(t, engine, taskSeed{Key: key, Identity: libraryTask("scan_library", int64(i+1), variantSole), Total: 100, CanCancel: true, CanPause: true})
 				if err := engine.pause(key); err != nil {
 					t.Fatalf("暂停 %q 失败: %v", key, err)
 				}

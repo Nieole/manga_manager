@@ -59,7 +59,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		controller, store, _, rootDir := newTestController(t)
 		seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-		seedTask(t, controller.taskEngine, taskSeed{Key: "scrape_all_series", Type: "scrape", Total: 1})
+		seedTask(t, controller.taskEngine, taskSeed{Key: "scrape_all_series", Identity: systemTask("scrape", variantScrapeAllLibraries), Total: 1})
 
 		rec := httptest.NewRecorder()
 		controller.batchScrapeAllSeries(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/scrape/all", bytes.NewBufferString(`{}`)))
@@ -111,7 +111,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
 		taskKey := "scrape_library_" + strconv.FormatInt(lib.ID, 10)
-		seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scrape", Total: 1})
+		seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scrape", lib.ID, variantScrapeOneLibrary), Total: 1})
 
 		rec := httptest.NewRecorder()
 		controller.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/scrape", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))

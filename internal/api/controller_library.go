@@ -284,7 +284,6 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 
 	spec := TaskSpec{
 		Key:         fmt.Sprintf("scan_library_%d", lib.ID),
-		Type:        "scan_library",
 		StartCode:   "task.msg.scan_library.start",
 		StartParams: map[string]string{"name": lib.Name},
 		CanCancel:   true,
@@ -304,7 +303,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 		FailCode:     "task.msg.scan_library.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scan_library", lib.ID, variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
 		// 把**任务句柄**包成**扫描观察者**一起交出去：扫描器的报文不带身份，
 		// 「这次扫描的进度写到哪」由这次交出的是谁回答。
@@ -370,7 +369,6 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 
 	spec := TaskSpec{
 		Key:         fmt.Sprintf("scan_series_%d", seriesID),
-		Type:        "scan_series",
 		StartCode:   "task.msg.scan_series.start",
 		StartParams: idParams,
 		CanCancel:   true,
@@ -390,7 +388,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 		FailCode:     "task.msg.scan_series.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(seriesTask("scan_series", seriesID, variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
 		if err := c.scanner.ScanSeries(ctx, seriesID, force, newTaskScanObserver(tp)); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -456,7 +454,6 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
 
 	spec := TaskSpec{
 		Key:          fmt.Sprintf("cleanup_library_%d", libraryID),
-		Type:         "cleanup_library",
 		StartCode:    "task.msg.cleanup_library.start",
 		StartParams:  idParams,
 		Total:        1,
@@ -465,7 +462,7 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
 		FailCode:     "task.msg.cleanup_library.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("cleanup_library", libraryID, variantSole), spec, func(_ context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		tp.Phase("scanning_records", "task.msg.cleanup_library.scanning_records", idParams)
 		// 刻意不用任务体的 ctx：本任务不可取消，而停机会取消所有任务 ctx——用了它，
 		// 一次关服就会把这个没人取消过的任务写成**已取消**。改动前先读本函数的 doc。

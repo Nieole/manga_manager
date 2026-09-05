@@ -59,7 +59,7 @@ func TestDeleteLibraryCancelsScopedTask(t *testing.T) {
 	}
 
 	taskKey := "scan_library_" + strconv.FormatInt(lib.ID, 10)
-	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Type: "scan_library", Total: 100, CanCancel: true, CanPause: true})
+	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", lib.ID, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
 	req := requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()

@@ -782,7 +782,6 @@ func (h koreaderReconcileHandle) Advance(current, total int) {
 func (c *Controller) launchRebuildBookHashesTask() error {
 	spec := TaskSpec{
 		Key:          rebuildBookHashesTaskKey,
-		Type:         "rebuild_book_hashes",
 		StartCode:    "task.msg.koreader_rebuild_hashes.start",
 		CanCancel:    true,
 		CanPause:     true,
@@ -792,7 +791,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildForeground), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
 		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, koreaderFingerprintHandle{Handle: tp})
 		if err != nil {
@@ -809,7 +808,6 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 func (c *Controller) launchReconcileKOReaderProgressTask() error {
 	spec := TaskSpec{
 		Key:          "reconcile_koreader_progress",
-		Type:         "reconcile_koreader_progress",
 		StartCode:    "task.msg.reconcile_koreader_progress.start",
 		CanCancel:    true,
 		CanPause:     true,
@@ -819,7 +817,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 		FailCode:     "task.msg.reconcile_koreader_progress.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("reconcile_koreader_progress", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, koreaderReconcileHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
@@ -841,7 +839,6 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 	spec := TaskSpec{
 		Key:          "refresh_koreader_matching",
-		Type:         "refresh_koreader_matching",
 		StartCode:    "task.msg.refresh_koreader_matching.start",
 		Total:        2,
 		CanCancel:    true,
@@ -852,7 +849,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		FailCode:     "task.msg.refresh_koreader_matching.failed",
 	}
 
-	return c.taskEngine.Run(spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("refresh_koreader_matching", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
 		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts,
