@@ -694,7 +694,13 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (TaskStat
 		return task, nil
 	}
 
-	records, err := e.store.ListTasks(ctx, database.TaskFilters{Query: key, Limit: 20})
+	// DB 这一支是按**任务键**的身份查找，不是搜索：内存表是有上限的缓存（pruneTasksLocked），
+	// 重启后更是空的，而**中断**任务恰恰只在库里。TaskFilters 在键上只有 LIKE 一种谓词，
+	// 因此这里不设 Limit——任务键互为子串（`scan_series_1` ⊂ `scan_series_1xx`，
+	// `scan_library_` / `cleanup_library_` 同型），设了的话目标会被更新的同族键挤出那一页，
+	// 用户看着列表里那条「中断，可重试」点重试却得到 404。命中量由 key 是主键约束住：
+	// 一个任务键在库里只有一行，回来的只是那几条含它作子串的兄弟键。
+	records, err := e.store.ListTasks(ctx, database.TaskFilters{Query: key})
 	if err != nil {
 		return TaskStatus{}, err
 	}
