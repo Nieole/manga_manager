@@ -422,6 +422,11 @@ func isAdminOnlyPath(p string) bool {
 	if strings.HasPrefix(p, "/api/libraries/") && strings.Contains(p, "/external-libraries/") {
 		return true
 	}
+	// 重复文件工作流同理：列表页要按绝对路径 + 体积 + file_hash 判断留哪一份，界面本就只给管理员，
+	// 其写侧 /api/books/remove（删记录、移文件进回收站）也早已是管理员专属。
+	if p == "/api/books/duplicates" {
+		return true
+	}
 	return p == "/api/browse-dirs"
 }
 
@@ -502,6 +507,11 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), userCtxKey, user)
 		ctx = context.WithValue(ctx, sessionCtxKey, sess)
+		// 只有管理员的响应带上这层标记，jsonResponse 据此保留宿主机绝对路径；
+		// 其余分支（Mihon、公开端点、首启直通、鉴权失败）都不带，于是一律按普通用户净化。
+		if user.IsAdmin() {
+			w = &adminResponseWriter{ResponseWriter: w}
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

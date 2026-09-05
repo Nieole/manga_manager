@@ -829,10 +829,15 @@ func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
 	xmlResponse(w, feed)
 }
 
-// opdsLibraries 资源库列表
+// opdsLibraries 资源库列表。
+//
+// 每个条目的 content 是给人看的描述，填系列数而不是 lib.Path：OPDS 只有阅读这一种用法，
+// 任何站点账号都能打开这张列表，宿主机绝对路径对读者没有用处，却把服务器目录结构全交了出去。
+// 系列数对管理员同样是这张列表上最有用的信息，因此两种角色不分叉。
 func (c *Controller) opdsLibraries(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	locale := requestLocale(r)
-	libs, err := c.store.ListLibraries(r.Context())
+	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -841,11 +846,15 @@ func (c *Controller) opdsLibraries(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Format(time.RFC3339)
 	entries := make([]OPDSEntry, 0, len(libs))
 	for _, lib := range libs {
+		seriesCount, err := c.store.CountSeriesByLibrary(ctx, lib.ID)
+		if err != nil {
+			slog.Error("OPDS: count series for library failed", "library_id", lib.ID, "error", err)
+		}
 		entries = append(entries, OPDSEntry{
 			Title:   lib.Name,
 			ID:      fmt.Sprintf("urn:manga-manager:opds:library:%d", lib.ID),
 			Updated: now,
-			Content: lib.Path,
+			Content: opdsSeriesCountText(locale, seriesCount),
 			Links: []OPDSLink{
 				{Href: fmt.Sprintf("/opds/v1.2/libraries/%d", lib.ID), Type: "application/atom+xml;profile=opds-catalog;kind=acquisition"},
 			},

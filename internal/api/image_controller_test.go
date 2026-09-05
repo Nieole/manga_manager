@@ -586,7 +586,8 @@ func TestPageCacheStatsAndClear(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.getPageCacheStats(rec, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
+	// 管理员专属端点，直接调处理器要自带角色标记，否则 jsonResponse 会按普通用户裁掉缓存目录路径。
+	controller.getPageCacheStats(&adminResponseWriter{ResponseWriter: rec}, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected stats 200, got %d body=%s", rec.Code, rec.Body.String())
 	}

@@ -293,7 +293,9 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/system/config", nil)
 	getRec := httptest.NewRecorder()
-	controller.getSystemConfig(getRec, getReq)
+	// /api/system/config 是管理员专属端点；直接调处理器拿不到 authGate 的角色标记，
+	// jsonResponse 会按普通用户把配置里的路径裁掉（见 redactHostPaths），故显式补上标记。
+	controller.getSystemConfig(&adminResponseWriter{ResponseWriter: getRec}, getReq)
 
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", getRec.Code)

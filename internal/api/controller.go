@@ -873,7 +873,12 @@ func (c *Controller) serveThumbnailImage(w http.ResponseWriter, r *http.Request)
 	http.ServeFile(w, r, fullPath)
 }
 
+// jsonResponse 是 JSON API 的唯一出口，也是宿主机绝对路径按角色净化的唯一落点：
+// 非管理员的响应一律先过 redactHostPaths，新增端点因此默认就是安全的，无需逐个记得裁。
 func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
+	if !responseKeepsHostPaths(w) {
+		data = redactHostPaths(data)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	// 响应头已 WriteHeader 发出，此时若编码/写出失败（多为客户端已断开）已无可挽救的动作，显式忽略。
@@ -885,10 +890,8 @@ func jsonError(w http.ResponseWriter, status int, message string) {
 }
 
 // getLibraries 返回资料库列表。整条端点对已登录用户开放——普通用户的侧栏、仪表盘与整理页
-// 都靠它拿 id 与 name。但 path 是**宿主机绝对路径**，只有管理员的编辑弹窗用得到（新建/编辑
-// 资料库本就是管理写），普通用户界面一处都不读，因此按角色裁掉：字段留着但置空，
-// 前端契约不变。取不到用户（首启尚无账户、直接调处理器的单元测试）时按普通用户处理，
-// 宁可少发不可错发——与 serveEvents 同口径。
+// 都靠它拿 id 与 name；响应里的宿主机绝对路径由 jsonResponse 按角色统一裁掉（见 redactHostPaths），
+// 只有管理员的编辑弹窗拿得到真值。
 func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libs, err := c.store.ListLibraries(ctx)
@@ -899,11 +902,6 @@ func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 
 	if libs == nil {
 		libs = []database.Library{} // 保证 JSON 数组非 null
-	}
-	if user, ok := userFromContext(ctx); !ok || !user.IsAdmin() {
-		for i := range libs {
-			libs[i].Path = ""
-		}
 	}
 	jsonResponse(w, http.StatusOK, libs)
 }
