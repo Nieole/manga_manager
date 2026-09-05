@@ -1,7 +1,7 @@
 /**
- * 守卫英文词条的复数形态：凡是带 {{count}} 的 en-US 词条都必须写成 `one=…|other=…`，
- * 例外只能来自下面两张有名有姓的清单——新增词条漏写模板会在这里变红，而不是等到界面上
- * 出现「1 books」才被用户发现。中文无复数变形，反向守卫它不许出现复数模板。
+ * 守卫英文词条在 n=1 时的渲染：判据是渲染结果里有没有「1 <可数名词复数>」，与变量叫不叫 count
+ * 无关，新词条无论用什么变量名都默认落进来。带 {{count}} 的另有一层更强的整条模板要求。
+ * 两种例外都只能来自本文件里有名有姓的清单。中文反向守卫不许出现任何变形语法。
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -108,6 +108,10 @@ describe('zh-CN 不写复数模板', () => {
     const templated = Object.keys(zhCN).filter((key) => parsePluralForms(zhCN[key]) !== null);
     expect(templated).toEqual([]);
   });
+  it('行内的 `{{名字#one=…}}` 变形同样不该出现在中文里', () => {
+    const inflected = Object.keys(zhCN).filter((key) => /\{\{[^}]*#/.test(zhCN[key]));
+    expect(inflected).toEqual([]);
+  });
 });
 
 describe('n=1 时的真实渲染', () => {
@@ -135,9 +139,87 @@ describe('n=1 时的真实渲染', () => {
     expect(translateInLocale('en-US', 'home.selection.markReadSuccess', { count: 1 })).toBe('Marked 1 book read');
   });
 
+  it('资料库卡片上只有一本书的系列不说 1 books', () => {
+    expect(translateInLocale('en-US', 'home.seriesCountsBooksOnly', { books: 1 })).toBe('1 book');
+    expect(translateInLocale('en-US', 'home.seriesCountsBooksOnly', { books: 4 })).toBe('4 books');
+    expect(translateInLocale('en-US', 'home.seriesCountsWithVolumes', { volumes: 1, books: 1 })).toBe('1 vol · 1 book');
+  });
+
+  it('一条文案里的两个计数各自变形', () => {
+    expect(translateInLocale('en-US', 'dedup.summary', { groups: 1, books: 1 })).toBe('1 group, 1 book total');
+    expect(translateInLocale('en-US', 'dedup.summary', { groups: 2, books: 5 })).toBe('2 groups, 5 books total');
+    expect(translateInLocale('en-US', 'series.header.volumeSummary', { books: 1, pages: 30 })).toBe('1 book · 30 pages');
+  });
+
+  it('比值按分母定形态，分母是格式化后的字符串也算得出来', () => {
+    expect(translateInLocale('en-US', 'dashboard.readingProgress.summary', { read: 0, total: 1 })).toBe('Read 0 / 1 book');
+    expect(translateInLocale('en-US', 'dashboard.readingProgress.summary', { read: 1, total: 5 })).toBe('Read 1 / 5 books');
+    expect(translateInLocale('en-US', 'dashboard.readingProgress.pages', { pages: '1' })).toBe('1 page in total');
+    expect(translateInLocale('en-US', 'dashboard.readingProgress.pages', { pages: '1,024' })).toBe('1,024 pages in total');
+    expect(translateInLocale('en-US', 'series.continue.resume', { volume: 'Vol.1', page: 1, total: '?' }))
+      .toBe('Resume: Vol.1 (1 / ? pages)');
+  });
+
   it('n>1 时照旧是复数', () => {
     expect(translateInLocale('en-US', 'common.books', { count: 2 })).toBe('2 books');
     expect(translateInLocale('en-US', 'stats.streak.longest', { count: 0 })).toBe('Longest streak 0 days');
     expect(translateInLocale('en-US', 'dashboard.stats.activeDays7', { count: 7 })).toBe('Active 7 days in the last 7');
+  });
+});
+
+// 以 s 结尾却不是「被计数的名词」的词：series 单复数同形，其余是不可数名词、限定词或第三人称动词。
+// 这是通用的英语事实，不针对某条词条，所以按词收在这里而不是按 key 登记。
+const NOT_A_COUNTED_NOUN = new Set(['series', 'progress', 'status', 'this', 'was', 'is', 'has', 'needs']);
+
+// 渲染出「1 …s」却不该改的词条：填 1 的那个变量根本不是计数。每条都要写清为什么。
+const RENDERED_PLURAL_EXEMPTIONS: Record<string, string> = {
+  'task.hint.rebuild_book_hashes': '{{label}} 是 KOReader 索引方式的名字，不是计数',
+};
+
+function interpolationNames(template: string) {
+  return [...template.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)].map((match) => match[1].split('#')[0].trim());
+}
+
+// 交给真的渲染器，守卫才不会和 LocaleProvider 的实现走岔；count 一并填上以选中模板的 one 段。
+function renderWithOnes(key: string) {
+  const params: Record<string, number> = { count: 1 };
+  for (const name of interpolationNames(enUS[key])) {
+    params[name] = 1;
+  }
+  return translateInLocale('en-US', key, params);
+}
+
+// 只认字面的 1 后面最多三个词，遇到标点或另一个数字就停：「1 progress records」这种插了定语的也算。
+function pluralAfterCount(text: string) {
+  for (const match of text.matchAll(/\b1\s+([A-Za-z][A-Za-z\s]*)/g)) {
+    for (const word of match[1].trim().split(/\s+/).slice(0, 3)) {
+      const lower = word.toLowerCase();
+      if (NOT_A_COUNTED_NOUN.has(lower)) {
+        continue;
+      }
+      if (/[^s]s$/.test(lower)) {
+        return word;
+      }
+    }
+  }
+  return null;
+}
+
+describe('en-US 词条在 n=1 时的渲染', () => {
+  beforeAll(async () => {
+    await loadLocaleMessages('en-US');
+  });
+
+  it('把所有插值变量填 1 之后不会渲染出「1 <复数名词>」', () => {
+    const hits = Object.keys(enUS)
+      .filter((key) => pluralAfterCount(renderWithOnes(key)) !== null)
+      .map((key) => `${key} => ${renderWithOnes(key)}`);
+    const registered = Object.keys(RENDERED_PLURAL_EXEMPTIONS).map((key) => `${key} => ${renderWithOnes(key)}`);
+    expect(hits.sort()).toEqual(registered.sort());
+  });
+
+  it.each(Object.keys(RENDERED_PLURAL_EXEMPTIONS))('登记过的 %s 仍存在且仍会命中', (key) => {
+    expect(enUS[key], `${key} 已不在词条表里，请从登记清单删掉`).toBeTruthy();
+    expect(pluralAfterCount(renderWithOnes(key)), `${key} 不再命中，请从登记清单删掉`).not.toBeNull();
   });
 });

@@ -99,14 +99,42 @@ function selectPluralForm(locale: AppLocale, template: string, params?: Translat
   return picked.text;
 }
 
+// 占位符写成 `{{名字#one=…/other=…}}` 时渲染成「值 + 按这个变量单独选出的形态」：一条文案里可以有
+// 多个各自变形的计数，而 `one=…|other=…` 整条模板只认 count 一个。段间用 `/` 分隔，避开模板的 `|`。
+// 值可能是 formatNumber 之后的千分位串或 '?' 这类占位，取出其中的数字再判，取不出就按 other 走。
+function selectInlineForm(locale: AppLocale, spec: string, value: string) {
+  const forms = new Map<string, string>();
+  for (const segment of spec.split('/')) {
+    const prefix = PLURAL_FORM_PREFIX.exec(segment);
+    if (!prefix) {
+      return null;
+    }
+    forms.set(prefix[1], segment.slice(prefix[0].length));
+  }
+  const digits = value.replace(/[^\d.-]/g, '');
+  const numeric = digits === '' ? Number.NaN : Number(digits);
+  const category = Number.isFinite(numeric) ? pluralRulesFor(locale).select(numeric) : 'other';
+  return forms.get(category) ?? forms.get('other') ?? null;
+}
+
 function fillTemplate(locale: AppLocale, template: string, params?: TranslationParams) {
   const form = selectPluralForm(locale, template, params);
   if (!params) {
     return form;
   }
-  return form.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, key: string) => {
-    const value = params[key.trim()];
-    return value == null ? '' : String(value);
+  return form.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, token: string) => {
+    const marker = token.indexOf('#');
+    const name = (marker < 0 ? token : token.slice(0, marker)).trim();
+    const value = params[name];
+    if (value == null) {
+      return '';
+    }
+    const text = String(value);
+    if (marker < 0) {
+      return text;
+    }
+    const word = selectInlineForm(locale, token.slice(marker + 1), text);
+    return word == null ? text : `${text} ${word}`;
   });
 }
 

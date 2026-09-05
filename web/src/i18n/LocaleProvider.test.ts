@@ -224,9 +224,42 @@ describe('复数模板的分段解析', () => {
   });
 });
 
+describe('行内的按变量变形', () => {
+  it('`{{名字#one=…/other=…}}` 渲染成值加该变量自己选出的形态', () => {
+    expect(translateInLocale('en-US', '{{books#one=book/other=books}}', { books: 1 })).toBe('1 book');
+    expect(translateInLocale('en-US', '{{books#one=book/other=books}}', { books: 3 })).toBe('3 books');
+  });
+
+  it('同一条里的两个计数互不影响，整条模板的 count 也管不到它们', () => {
+    expect(translateInLocale('en-US', '{{a#one=group/other=groups}}, {{b#one=book/other=books}}', { a: 1, b: 2, count: 9 }))
+      .toBe('1 group, 2 books');
+  });
+
+  it('取不出数字的值按 other 走，段名写错则整个占位符退回原值', () => {
+    expect(translateInLocale('en-US', '{{n#one=page/other=pages}}', { n: '?' })).toBe('? pages');
+    expect(translateInLocale('en-US', '{{n#one=page/other=pages}}', { n: '1,024' })).toBe('1,024 pages');
+    expect(translateInLocale('en-US', '{{n#page/pages}}', { n: 1 })).toBe('1');
+  });
+
+  it('中文不写变形段，同一个变量名照常渲染', () => {
+    expect(translateInLocale('zh-CN', '{{books}} 话', { books: 1 })).toBe('1 话');
+  });
+});
+
 describe('两份词条表的 key 集合', () => {
   // 复数形态写在词条值里而不是 key 后缀，正是为了让这条约束不受影响。
   it('zh-CN 与 en-US 完全一致', () => {
     expect(Object.keys(enUSMessages).sort()).toEqual(Object.keys(zhCNMessages).sort());
+  });
+
+  // 变形段只写在英文侧，比对的是 `#` 前面的变量名：调用点一份参数要同时喂饱两种语言。
+  it('每条词条的插值变量名两边一致', () => {
+    const names = (template: string) => [
+      ...new Set([...template.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)].map((match) => match[1].split('#')[0].trim())),
+    ].sort();
+    const mismatched = Object.keys(enUSMessages).filter(
+      (key) => names(enUSMessages[key]).join() !== names(zhCNMessages[key] ?? '').join(),
+    );
+    expect(mismatched).toEqual([]);
   });
 });
