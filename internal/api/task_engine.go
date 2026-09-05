@@ -21,7 +21,6 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
-	"manga-manager/internal/taskcontrol"
 )
 
 // 任务控制（暂停/恢复/取消）与重试查找的哨兵错误。引擎只表达「为什么不行」，
@@ -891,29 +890,32 @@ func (e *taskEngine) cancel(key string) error {
 	return nil
 }
 
-// stopAllRuntimes 在停机时放行所有暂停闸门并取消所有任务 ctx。
+// stopAllRuntimes 在停机时逐个取消任务 ctx 并放行它的**暂停闸门**，顺序与单任务 cancel 一致。
 // 先在锁内收集句柄再在锁外调用：Cancel/Resume 会唤醒任务体，而任务体的进度回调要拿同一把锁。
+//
+// 取消与放行按**每个任务**成对做，而不是先放行全部再取消全部：后者的两段之间有一个窗口，
+// 被放行的**已暂停**任务拿着尚未取消的 ctx 回去干活——过可中断点、取**存储令牌**、跑完一整个任务体。
+// 任务越多窗口越宽。
+//
+// 放行本身不能省：**暂停闸门**的等待有一条不带 ctx 的分支（只等放行），而 Cancel 是个可空字段，
+// 只取消 ctx 唤不醒这两种等待者。放在自己的取消之后，放行就只剩「让它去看一眼已经取消的 ctx」。
 func (e *taskEngine) stopAllRuntimes() {
 	e.mutex.Lock()
-	cancels := make([]context.CancelFunc, 0, len(e.runtimes))
-	pauses := make([]*taskcontrol.PauseGate, 0, len(e.runtimes))
+	runtimes := make([]*TaskRuntime, 0, len(e.runtimes))
 	for _, runtime := range e.runtimes {
 		if runtime == nil {
 			continue
 		}
-		if runtime.PauseGate != nil {
-			pauses = append(pauses, runtime.PauseGate)
-		}
-		if runtime.Cancel != nil {
-			cancels = append(cancels, runtime.Cancel)
-		}
+		runtimes = append(runtimes, runtime)
 	}
 	e.mutex.Unlock()
 
-	for _, gate := range pauses {
-		gate.Resume()
-	}
-	for _, cancel := range cancels {
-		cancel()
+	for _, runtime := range runtimes {
+		if runtime.Cancel != nil {
+			runtime.Cancel()
+		}
+		if runtime.PauseGate != nil {
+			runtime.PauseGate.Resume()
+		}
 	}
 }
