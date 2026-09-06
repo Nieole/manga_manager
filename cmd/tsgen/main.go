@@ -21,7 +21,9 @@ import (
 var targets = []reflect.Type{
 	reflect.TypeOf(api.TaskLimits{}),
 	reflect.TypeOf(api.RunStatus{}),
+	reflect.TypeOf(api.RunLiveSummary{}),
 	reflect.TypeOf(api.RunLive{}),
+	reflect.TypeOf(api.RunPush{}),
 	reflect.TypeOf(api.TaskSummary{}),
 	reflect.TypeOf(config.ValidationIssue{}),
 	reflect.TypeOf(config.ValidationResult{}),
@@ -75,6 +77,15 @@ func main() {
 
 func emitInterface(t reflect.Type, known map[string]bool, usedNulls map[string]bool, b *strings.Builder) {
 	fmt.Fprintf(b, "export interface %s {\n", t.Name())
+	emitFields(t, known, usedNulls, b)
+	b.WriteString("}\n\n")
+}
+
+// emitFields 逐字段写出，**内嵌的匿名结构体按 encoding/json 的规则摊平**。
+//
+// 摊平是必需的：Go 那边写成内嵌是为了让同一组字段只有一处定义，而它在 JSON 里与外层字段平级。
+// 照着字段名生成一层嵌套的话，前端按生成类型写出来的代码在运行期一个值都读不到。
+func emitFields(t reflect.Type, known map[string]bool, usedNulls map[string]bool, b *strings.Builder) {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
@@ -82,6 +93,10 @@ func emitInterface(t reflect.Type, known map[string]bool, usedNulls map[string]b
 		}
 		tag := f.Tag.Get("json")
 		if tag == "-" {
+			continue
+		}
+		if f.Anonymous && tag == "" && f.Type.Kind() == reflect.Struct {
+			emitFields(f.Type, known, usedNulls, b)
 			continue
 		}
 		parts := strings.Split(tag, ",")
@@ -103,7 +118,6 @@ func emitInterface(t reflect.Type, known map[string]bool, usedNulls map[string]b
 		}
 		fmt.Fprintf(b, "  %s%s: %s;\n", name, opt, tsT)
 	}
-	b.WriteString("}\n\n")
 }
 
 func tsType(t reflect.Type, known map[string]bool, usedNulls map[string]bool) string {

@@ -87,6 +87,12 @@ type Config struct {
 	// Publish 把一帧快照交给订阅者；为 nil 时不投递。它只收领域快照，
 	// 事件名与序列化属于传输层。
 	Publish func(Snapshot)
+	// PublishLive 把一帧**实况汇总**交给订阅者；为 nil 时整条汇总通道不接（引擎连数都不数）。
+	//
+	// 它与 Publish 分开，因为两者答的不是同一个问题：一帧快照说「这一次运行跑到哪了」，
+	// 一帧汇总说「盘上此刻总共有几件事、还剩几个槽位」。后者在没有任何一条运行跃迁时也会变——
+	// 上限刚被调大、或者「全部暂停」按在了一条运行都没有的时候。
+	PublishLive func(Live)
 	// RunBackground 开一个受停机管辖的 goroutine，不得为 nil。任务体必须经这项能力启动：
 	// 外部替引擎开 goroutine 再反向伸手改运行，会多套一层调度，停机竞态下运行被静默丢弃。
 	// 测试注入同步执行版即可确定性地断言**终态**，不必等待真实 goroutine。
@@ -134,6 +140,7 @@ type Config struct {
 type Engine struct {
 	store         Store
 	publish       func(Snapshot)
+	publishLive   func(Live)
 	runBackground func(func())
 	diskWork      *diskwork.Runner
 	decorate      func(context.Context, Run) context.Context
@@ -159,6 +166,9 @@ type Engine struct {
 	queued map[int64]queuedRun
 	// gates 是每条运行的投递水位。
 	gates map[int64]publishGate
+	// lastLive 是上一帧**实况汇总**（序号留空），用来判断这一次跃迁有没有真的改变那几个数。
+	// 没变就不投：一条运行从 3 报到 4 不改变盘上有几件事，跟着投等于把汇总也变成一路噪音。
+	lastLive Live
 	// settled 按运行 id 存着「等这条运行收尾」的通知通道，收尾时一并关掉。见 Await。
 	settled map[int64][]chan struct{}
 }
@@ -175,6 +185,7 @@ func New(cfg Config) *Engine {
 	e := &Engine{
 		store:         cfg.Store,
 		publish:       cfg.Publish,
+		publishLive:   cfg.PublishLive,
 		runBackground: cfg.RunBackground,
 		diskWork:      cfg.DiskWork,
 		decorate:      cfg.DecorateRunContext,
@@ -251,6 +262,10 @@ func (e *Engine) restoredSequence() int64 {
 
 // nextSequenceLocked 发一个新序号。每一次会被用户看见的变化都要取一个：
 // 序号是任务中心的主排序键，不取就等于这次变化不改变它在列表里的位置。
+//
+// 一帧**实况汇总**同样取一个，尽管它不落在任何一条运行上：序号同时是推送通道认「有没有漏帧」
+// 的凭据，汇总不取号的话，丢掉的那一帧前端发现不了。运行行上的序号因此会有空档，无妨——
+// 它只被用来定序。
 func (e *Engine) nextSequenceLocked() int64 {
 	e.seq++
 	return e.seq
@@ -313,13 +328,14 @@ func (e *Engine) snapshotLocked(run Run) Snapshot {
 	return snapshot
 }
 
-// publishLocked 无条件投递一帧。状态跃迁走它：启动、终态、暂停/恢复/取消是用户在等的变化，
-// 吞掉哪怕一条都会让界面停在错误的状态上。调用方持锁。
+// publishLocked 无条件投递一帧，并顺手看一眼**实况汇总**变了没有。状态跃迁走它：启动、终态、
+// 暂停/恢复/取消是用户在等的变化，吞掉哪怕一条都会让界面停在错误的状态上。调用方持锁。
+//
+// 汇总跟在这里而不是跟在 publishSnapshotLocked 上：改变「盘上有几件事」的只有状态跃迁，
+// 而计数推进走的正是另一条。挂错地方的代价是每个投递窗口白查一次库。
 func (e *Engine) publishLocked(run Run) {
-	if e.publish == nil {
-		return
-	}
-	e.publish(e.snapshotLocked(run))
+	e.publishSnapshotLocked(run)
+	e.refreshLiveLocked()
 }
 
 // publishProgressLocked 是**计数推进**专用的投递入口，带节流。调用方持锁。
@@ -336,7 +352,15 @@ func (e *Engine) publishProgressLocked(run Run) {
 		phase:       run.Phase,
 		messageCode: run.MessageCode,
 	}
-	e.publishLocked(run)
+	e.publishSnapshotLocked(run)
+}
+
+// publishSnapshotLocked 把一帧运行快照交给订阅者，不做任何判断。调用方持锁。
+func (e *Engine) publishSnapshotLocked(run Run) {
+	if e.publish == nil {
+		return
+	}
+	e.publish(e.snapshotLocked(run))
 }
 
 // saveLocked 把一条运行写回落盘端口。写失败只告警不回滚：内存里没有第二份真相可以回退到，

@@ -42,13 +42,22 @@ const (
 	taskInterruptedMessageCode = "task.msg.control.interrupted"
 )
 
+// 推送通道上那两种帧的事件名。两种都只投给管理员：任务快照带着宿主机路径，而**实况汇总**
+// 说的是「这台机器此刻在干几件事」——任务列表接口对普通用户是 403，事件流不按同一把尺子过滤，
+// 那条 403 就等于没有。
+const (
+	runSnapshotEventPrefix = "run_snapshot:"
+	runLiveEventPrefix     = "run_live:"
+)
+
 // taskEngineConfig 是任务引擎的全部外部依赖，一次性在装配期交齐。
 //
 // 收成结构体而不是位置参数：这几项里有三个都是函数，接反了不会有编译错误。
 type taskEngineConfig struct {
 	// Store 是任务与运行的落盘端口，不得为 nil：准入判据在它那里。
 	Store task.Store
-	// Publish 把一帧任务快照投给 SSE 订阅者；为 nil 时不投递。
+	// Publish 是推送通道本身：一帧已经序列化好的事件（运行快照与**实况汇总**都走它）。
+	// 为 nil 时整条通道不接。
 	Publish func(string)
 	// RunBackground 开一个受停机管辖的 goroutine，不得为 nil。
 	RunBackground func(func())
@@ -113,6 +122,11 @@ type taskEngine struct {
 
 	// ---- 受 mutex 保护的状态 ----
 
+	// pushMutex 与 lastPushed 是**投递链**：上一帧推出去的序号，供下一帧填 Prev。
+	// 单独一把锁的理由见 linkPush。
+	pushMutex  sync.Mutex
+	lastPushed int64
+
 	mutex sync.Mutex
 	// identities 是任务 id -> **身份**的进程内缓存。
 	//
@@ -139,6 +153,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 	e.engine = task.New(task.Config{
 		Store:              cfg.Store,
 		Publish:            e.publisher(cfg.Publish),
+		PublishLive:        e.livePublisher(cfg.Publish),
 		RunBackground:      func(fn func()) { e.runBackground(fn) },
 		DiskWork:           cfg.DiskWork,
 		DecorateRunContext: decorateRunContext,
@@ -206,14 +221,46 @@ func (e *taskEngine) publisher(publish func(string)) func(task.Snapshot) {
 	}
 	return func(snapshot task.Snapshot) {
 		status := e.runStatusFrom(snapshot, e.cachedIdentity(snapshot.Run.TaskID))
-		payload, err := json.Marshal(status)
-		if err != nil {
-			slog.Warn("Failed to marshal task status", "task_key", status.Key, "error", err)
-			return
-		}
-		// 统一经 sseBroker 投递（非阻塞、buffer 满则丢弃并告警）。
-		publish("run_snapshot:" + string(payload))
+		e.push(publish, runSnapshotEventPrefix, RunPush{Sequence: status.Sequence, Run: &status})
 	}
+}
+
+// livePublisher 把一帧领域的**实况汇总**翻成对外形状并交给 SSE。publish 为 nil 时整条通道不接。
+func (e *taskEngine) livePublisher(publish func(string)) func(task.Live) {
+	if publish == nil {
+		return nil
+	}
+	return func(live task.Live) {
+		summary := runLiveSummaryFrom(live)
+		e.push(publish, runLiveEventPrefix, RunPush{Sequence: live.Sequence, Live: &summary})
+	}
+}
+
+// push 把一帧接到**投递链**上再交给 SSE：补齐 Prev、序列化、带上事件名投出去。
+//
+// 统一经 sseBroker 投递（非阻塞、buffer 满则丢弃并告警）——丢帧靠序号链让前端自己发现，
+// 不在这里改成阻塞：投递方此刻在引擎的临界区里，堵在这里等于把整个任务子域堵住。
+func (e *taskEngine) push(publish func(string), event string, frame RunPush) {
+	frame.Prev = e.linkPush(frame.Sequence)
+	payload, err := json.Marshal(frame)
+	if err != nil {
+		slog.Warn("Failed to marshal a task push frame", "event", event, "error", err)
+		return
+	}
+	publish(event + string(payload))
+}
+
+// linkPush 记下这一帧的序号，交回上一帧的。首帧交回 0。
+//
+// 单独一把锁而不是复用 taskEngine.mutex：那把锁在同一条投递路径上已经被身份缓存取过一次
+// （见 cachedIdentity），共用就得在这里改成「持锁版本」，而那点省下来的开销换不回来。
+// 领域引擎在自己的临界区里逐帧调投递，因此编号与入队本就是串行的——这把锁挡的是日后多一个投递方。
+func (e *taskEngine) linkPush(sequence int64) int64 {
+	e.pushMutex.Lock()
+	defer e.pushMutex.Unlock()
+	prev := e.lastPushed
+	e.lastPushed = sequence
+	return prev
 }
 
 // ---- 身份缓存 ----
@@ -316,18 +363,13 @@ func (e *taskEngine) live(ctx context.Context) (RunLive, error) {
 	if err != nil {
 		return RunLive{}, err
 	}
-	frame := RunLive{Slots: e.engine.Slots(), PausedAll: e.engine.PausedAll(), Runs: runs}
-	for _, run := range runs {
-		if taskIsActive(run.Status) {
-			frame.Active++
-		} else {
-			frame.Queued++
-		}
-		if run.Status == string(task.StatusPaused) {
-			frame.Paused = true
-		}
+	// 汇总交给领域去数，本层不自己再数一遍：推送那条路数的是同一件事，各写一遍的话，
+	// 两边只要错开一次，界面上的「槽位 2/2」就会配着三张运行卡片。
+	domainRuns := make([]task.Run, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		domainRuns = append(domainRuns, snapshot.Run)
 	}
-	return frame, nil
+	return RunLive{RunLiveSummary: runLiveSummaryFrom(e.engine.Summarize(domainRuns)), Runs: runs}, nil
 }
 
 // awaitRunOutcome 等这条运行收尾，把它的**终态**翻成调用方看得懂的一个错误：

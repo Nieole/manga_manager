@@ -19,6 +19,7 @@ import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
 import { useTaskBubbles } from './layout/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
 import { useServerEvents } from './layout/useServerEvents';
+import { parseRunPush } from '../utils/runPush';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -291,13 +292,16 @@ export default function Layout() {
                 // 不调用 fetchLibraries()：避免闭包捕获过期路由状态导致页面跳转，
                 // 且侧边栏资料库列表无需因扫描而刷新。
                 setRefreshTrigger((prev) => prev + 1);
-            } else if (data.startsWith('run_snapshot:')) {
-                try {
-                    const progress = JSON.parse(data.slice('run_snapshot:'.length));
-                    window.dispatchEvent(new CustomEvent('manga-manager:task-progress', { detail: progress }));
-                    ingestTaskProgress(progress);
-                } catch (e) {
-                    console.warn('Failed to parse task progress SSE:', e);
+            } else {
+                // 推送通道上的帧统一在这里解开再转成自定义事件：这条 EventSource 是全站唯一一条，
+                // 序号与上一帧的序号因此也只有它读得到——任务中心据此判自己漏没漏帧（见 runPush.ts）。
+                const frame = parseRunPush(data);
+                if (!frame) return;
+                window.dispatchEvent(new CustomEvent('manga-manager:run-push', { detail: frame }));
+                if (frame.run) {
+                    // 任务气泡与外部库那条路只要运行快照本身，不关心投递链，因此仍收这个事件。
+                    window.dispatchEvent(new CustomEvent('manga-manager:task-progress', { detail: frame.run }));
+                    ingestTaskProgress(frame.run);
                 }
             }
         },

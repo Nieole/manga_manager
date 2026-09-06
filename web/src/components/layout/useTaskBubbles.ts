@@ -25,7 +25,7 @@ export function useTaskBubbles() {
   const [entries, setEntries] = useState<Record<string, TaskBubbleEntry>>({});
   const cleanupTimers = useRef<Map<string, number>>(new Map());
 
-  // ingestProgress 接入一条 SSE run_snapshot 载荷：新增/更新对应气泡，并为终态气泡安排延时移除
+  // ingestProgress 接入一帧运行快照（由 Layout 从推送帧里取出）：新增/更新对应气泡，并为终态气泡安排延时移除
   //（完成 8s、其余终态 20s）；再次收到同 key 会先取消旧的延时定时器。
   const ingestProgress = useCallback((progress: TaskProgressPayload) => {
     if (!progress.key) return;

@@ -22,7 +22,12 @@ func newThrottleTestEngine(t testing.TB, clock *fakeClock) (*taskEngine, *[]stri
 	var mu sync.Mutex
 	e := newTaskEngine(taskEngineConfig{
 		Store: newTaskTestStore(t),
+		// 只数运行快照那一种帧：**实况汇总**走同一条通道，但节流水位管不着它——
+		// 它只在状态跃迁改变了槽位占用时才出去，数进来会让「这一帧被吞了没有」答非所问。
 		Publish: func(payload string) {
+			if !strings.HasPrefix(payload, runSnapshotEventPrefix) {
+				return
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			published = append(published, payload)

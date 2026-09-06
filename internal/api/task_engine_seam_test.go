@@ -107,14 +107,16 @@ func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Run
 	var published []RunStatus
 	e := newTaskEngine(taskEngineConfig{
 		Store: newTaskTestStore(t),
+		// 只收运行快照那一种帧：**实况汇总**走同一条通道，但它一条运行都不带，
+		// 攒进来只会让「这个任务键被投递了几条」多出几条不属于任何任务键的东西。
 		Publish: func(payload string) {
-			var status RunStatus
-			if err := json.Unmarshal([]byte(strings.TrimPrefix(payload, "run_snapshot:")), &status); err != nil {
+			frame, ok := decodePushFrame(payload, runSnapshotEventPrefix)
+			if !ok || frame.Run == nil {
 				return
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			published = append(published, status)
+			published = append(published, *frame.Run)
 		},
 		RunBackground: run,
 		DiskWork:      diskWork,
@@ -129,6 +131,20 @@ func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Run
 
 // runTaskBodySynchronously 是「同步执行」版的后台能力：任务体在启动调用返回前就跑完。
 func runTaskBodySynchronously(fn func()) { fn() }
+
+// decodePushFrame 把一条 SSE 载荷解回**推送信封**；事件名不匹配或解不出即 false。
+//
+// 用例读的是信封而不是裸快照：序号与上一帧的序号在信封上，而**实况汇总**与运行快照共用它。
+func decodePushFrame(payload, event string) (RunPush, bool) {
+	if !strings.HasPrefix(payload, event) {
+		return RunPush{}, false
+	}
+	var frame RunPush
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(payload, event)), &frame); err != nil {
+		return RunPush{}, false
+	}
+	return frame, true
+}
 
 // currentTask 取这个**任务键**最近那一次运行的对外快照，供用例断言状态。
 //

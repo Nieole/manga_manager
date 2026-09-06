@@ -179,9 +179,14 @@ func (e *Engine) PauseAll(ctx context.Context) (int, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.pausedAll = true
-	return e.controlEachLocked(ctx, StatusRunning, func(run Run) error {
+	paused, err := e.controlEachLocked(ctx, StatusRunning, func(run Run) error {
 		return e.pauseLocked(run, PauseReasonPauseAll)
 	})
+	// 一条也没按下时同样要投一帧**实况汇总**：闸门刚刚关上，而那是汇总里的一个数。
+	// 没有任何一条运行跃迁的话（队列里全是排队中的运行，或者盘上本来就是空的），
+	// 前端拿不到「闸门关着」这件事，「全部恢复」会灰在唯一能重新放开队列的位置上。
+	e.refreshLiveLocked()
+	return paused, err
 }
 
 // pauseLocked 按下一条运行的闸门并落定**已暂停**。调用方持锁。
@@ -234,6 +239,8 @@ func (e *Engine) ResumeAll(ctx context.Context) (int, error) {
 	e.pausedAll = false
 	resumed, err := e.controlEachLocked(ctx, StatusPaused, e.resumeLocked)
 	launch := e.releaseQueuedLocked()
+	// 理由同 PauseAll：开闸门这件事本身要发出去，哪怕一条运行都没被放行。
+	e.refreshLiveLocked()
 	e.mu.Unlock()
 	if launch != nil {
 		launch()

@@ -57,6 +57,14 @@ export interface RunStatus {
   finished_at?: string;
 }
 
+export interface RunLiveSummary {
+  active: number;
+  queued: number;
+  slots: number;
+  paused: boolean;
+  paused_all: boolean;
+}
+
 export interface RunLive {
   active: number;
   queued: number;
@@ -64,6 +72,13 @@ export interface RunLive {
   paused: boolean;
   paused_all: boolean;
   runs: RunStatus[];
+}
+
+export interface RunPush {
+  sequence: number;
+  prev: number;
+  run?: RunStatus;
+  live?: RunLiveSummary;
 }
 
 export interface TaskSummary {

@@ -8,9 +8,11 @@ import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
 import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskRunHistory, type TaskTarget, type RunLive, type RunStatus, type TaskSummary } from '../components/tasks/TaskCenter';
+import type { RunPush } from '../api/generated';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
-import { applyRunToLive } from '../utils/runLive';
+import { applyLiveSummary, applyRunToLive } from '../utils/runLive';
+import { trackRunPush } from '../utils/runPush';
 import { isLiveRunStatus } from '../utils/runStatus';
 
 const TASK_TYPE_OPTIONS = [
@@ -65,6 +67,8 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const [bulkPauseBusy, setBulkPauseBusy] = useState(false);
   const taskRequestIDRef = useRef(0);
   const historyRequestIDRef = useRef(0);
+  // pushCursorRef 是上一帧推送帧的序号；null 表示手上还没有可比的上一号（刚进页面，或刚重拉过）。
+  const pushCursorRef = useRef<number | null>(null);
   const { showToast } = useToast();
 
   // taskFilters 是输入框的当前值（含还没提交的半截关键词）。
@@ -157,35 +161,51 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   }, [fetchLive, fetchTasks, taskReloadToken]);
 
   useEffect(() => {
-    // 复用 Layout 中已挂载的全局 EventSource：它接收 run_snapshot 后会
-    // dispatch 'manga-manager:task-progress' 自定义事件。这里只监听自定义事件，
+    // 复用 Layout 中已挂载的全局 EventSource：它把推送通道上的帧解开之后
+    // dispatch 'manga-manager:run-push' 自定义事件。这里只监听自定义事件，
     // 避免对同一 origin 再开第二条 SSE 长连接占用浏览器并发额度。
     const handler = (event: Event) => {
-      const run = (event as CustomEvent<RunStatus>).detail;
-      if (!run || typeof run !== 'object') return;
-      // 谁还留在实况区、三个汇总各是多少，判据只有 applyRunToLive 一处——它与后端同形。
-      setLive((prev) => applyRunToLive(prev, run));
-      // 清单那一行的「上次结果」跟着走：推出来的帧只属于仍会变化的运行，而那正是它所属任务
-      // 最近的那一次。不跟的话，用户要等下一轮轮询才看得到刚发起的那条落在哪个任务下面。
-      setTasks((prev) => prev.map((item) => (item.task_id === run.task_id ? { ...item, last_run: run } : item)));
-      // 展开着的那一行同理：已在里面的按运行标识替换，新起的那一条补到最前。
-      setHistory((prev) => {
-        if (!prev?.runs || prev.taskId !== run.task_id) return prev;
-        const runs = prev.runs.some((item) => item.run_id === run.run_id)
-          ? prev.runs.map((item) => (item.run_id === run.run_id ? run : item))
-          : [run, ...prev.runs];
-        return { ...prev, runs };
-      });
-    };
-    window.addEventListener('manga-manager:task-progress', handler as EventListener);
-    return () => window.removeEventListener('manga-manager:task-progress', handler as EventListener);
-  }, []);
+      const frame = (event as CustomEvent<RunPush>).detail;
+      if (!frame || typeof frame !== 'object') return;
+      const tracked = trackRunPush(pushCursorRef.current, frame);
+      pushCursorRef.current = tracked.cursor;
 
+      const { live: summary, run } = frame;
+      // 那几个汇总数由后端数好了发过来，不从运行列表里现算：这份列表本身可能正缺着一条。
+      if (summary) setLive((prev) => applyLiveSummary(prev, summary));
+      if (run) {
+        // 谁还留在实况区，判据只有 applyRunToLive 一处——它的定序与后端同形。
+        setLive((prev) => applyRunToLive(prev, run));
+        // 清单那一行的「上次结果」跟着走：推出来的帧只属于仍会变化的运行，而那正是它所属任务
+        // 最近的那一次。不跟的话，用户要等下一轮轮询才看得到刚发起的那条落在哪个任务下面。
+        setTasks((prev) => prev.map((item) => (item.task_id === run.task_id ? { ...item, last_run: run } : item)));
+        // 展开着的那一行同理：已在里面的按运行标识替换，新起的那一条补到最前。
+        setHistory((prev) => {
+          if (!prev?.runs || prev.taskId !== run.task_id) return prev;
+          const runs = prev.runs.some((item) => item.run_id === run.run_id)
+            ? prev.runs.map((item) => (item.run_id === run.run_id ? run : item))
+            : [run, ...prev.runs];
+          return { ...prev, runs };
+        });
+      }
+      // 接不上上一帧：中间掉了东西，而掉的那一帧若恰好是终态，界面会一直停在过期的进度上。
+      // 缺了什么只有库知道，因此整份重拉，而不是猜着补。
+      if (tracked.gap) {
+        fetchTasks();
+        fetchLive();
+      }
+    };
+    window.addEventListener('manga-manager:run-push', handler as EventListener);
+    return () => window.removeEventListener('manga-manager:run-push', handler as EventListener);
+  }, [fetchLive, fetchTasks]);
+
+  // 轮询只是兜底：真正把丢帧补回来的是上面那条序号缺口判定，它在下一帧就纠正，
+  // 而不必等这个定时器。因此这里放到 60s——一分钟一次的两个请求，代价可以忽略。
   useEffect(() => {
     const poll = window.setInterval(() => {
       fetchTasks();
       fetchLive();
-    }, 15000);
+    }, 60000);
     return () => window.clearInterval(poll);
   }, [fetchLive, fetchTasks]);
 

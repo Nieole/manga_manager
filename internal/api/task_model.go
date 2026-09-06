@@ -20,6 +20,18 @@ func taskIsActive(status string) bool {
 	return task.RunStatus(status).IsActive()
 }
 
+// runLiveSummaryFrom 把领域的**实况汇总**搬成对外形状。序号不搬：它属于推送信封（见 RunPush），
+// 而整份实况帧是拉回来的，链上没有它的位置。
+func runLiveSummaryFrom(live task.Live) RunLiveSummary {
+	return RunLiveSummary{
+		Active:    live.Active,
+		Queued:    live.Queued,
+		Slots:     live.Slots,
+		Paused:    live.Paused,
+		PausedAll: live.PausedAll,
+	}
+}
+
 // ---- 身份四要素在两侧的互转 ----
 
 // domain 把 api 侧的身份翻成领域侧的。

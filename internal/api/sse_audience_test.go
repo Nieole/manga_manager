@@ -237,15 +237,20 @@ func TestServerEventsFiltersTaskFramesByRole(t *testing.T) {
 			rig.runFailingTask(t, secretPath)
 			frames := stream.collectUntilSentinel(t, rig.controller)
 
-			var sawRefresh, sawTask bool
+			var sawRefresh, sawTask, sawLive bool
 			for _, frame := range frames {
 				switch {
 				case frame == "refresh":
 					sawRefresh = true
-				case strings.HasPrefix(frame, "run_snapshot:"):
+				case strings.HasPrefix(frame, runSnapshotEventPrefix):
 					sawTask = true
 					if !tc.wantTaskFrame {
 						t.Errorf("普通用户收到了任务快照: %s", frame)
+					}
+				case strings.HasPrefix(frame, runLiveEventPrefix):
+					sawLive = true
+					if !tc.wantTaskFrame {
+						t.Errorf("普通用户收到了实况汇总: %s", frame)
 					}
 				}
 				if !tc.wantTaskFrame && strings.Contains(frame, secretPath) {
@@ -257,6 +262,11 @@ func TestServerEventsFiltersTaskFramesByRole(t *testing.T) {
 			}
 			if sawTask != tc.wantTaskFrame {
 				t.Errorf("任务快照送达情况 = %v，期望 %v", sawTask, tc.wantTaskFrame)
+			}
+			// **实况汇总**按同一把尺子过滤：它说的是「这台机器此刻在干几件事」，
+			// 而任务列表接口对普通用户是 403。
+			if sawLive != tc.wantTaskFrame {
+				t.Errorf("实况汇总送达情况 = %v，期望 %v", sawLive, tc.wantTaskFrame)
 			}
 		})
 	}
