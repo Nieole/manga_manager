@@ -232,7 +232,7 @@ func writeRebuildThumbProgress(snap rebuildThumbSnapshot, frame runhandle.Frame)
 }
 
 // rebuildThumbProgressFromMetrics 把「重建缩略图」的进度算成单阶段：归档处理
-// （processed+skipped / discovered）。封面生成不再拼进这个分母——它是**另一条运行**，
+// （processed+skipped / discovered）。分母只含归档处理——封面生成是**另一条运行**，
 // 有自己的进度条，拼进来只会让两件事共用一根条子，而其中一件早已跑完。
 //
 // 还没有分母时返回 known=false：此刻一条**计数推进**也报不出来，调用方应当干脆不报，

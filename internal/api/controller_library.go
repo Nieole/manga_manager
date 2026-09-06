@@ -64,6 +64,9 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 //
 // 取消不掉的（不可取消、进程里没有句柄）一律不阻塞删库：库行删掉之后，外键约束会挡住任何回写。
 func (c *Controller) cancelLibraryScopedTasks(libraryID int64) {
+	// 还没被任何一条运行认领的封面批也要丢掉：库都没了，那些封面不必再生成，
+	// 而挂着的批不会有人来认领——取消运行带不走它们。
+	c.discardCoverBatches(libraryID)
 	cancelled, err := c.taskEngine.cancelRunsForScope(task.ScopeLibrary, libraryID)
 	if err != nil {
 		slog.Warn("Failed to cancel runs for deleted library", "library_id", libraryID, "error", err)

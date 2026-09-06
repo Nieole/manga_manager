@@ -991,7 +991,9 @@ func TestStorageIOCoverRateComesFromTheCoverRun(t *testing.T) {
 	coverProgress := seedTask(t, controller.taskEngine, taskSeed{
 		Key: "generate_covers_42", Identity: libraryTask("generate_covers", 42, variantSole), Total: 1,
 	})
-	(&coverRunSink{progress: coverProgress, libraryName: "A", accepting: true}).Progress(scanner.CoverProgressReport{
+	coverObserver := newCoverRunObserver(coverProgress, "A")
+	coverObserver.begin()
+	coverObserver.Progress(scanner.CoverProgressReport{
 		Queued: 6, Generated: 6, OpenedArchives: 6, ThumbnailWriteMillis: 50,
 	})
 

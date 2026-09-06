@@ -13,6 +13,7 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/taskcontrol"
 )
 
 // heldCoverBatches 是一个「接手但先不跑」的封面运行发起方：用例据此在扫描返回的那一刻
@@ -206,6 +207,48 @@ func TestCancelledCoverRunLeavesTheScanAlone(t *testing.T) {
 	}
 	if scanCtx.Err() != nil {
 		t.Fatalf("取消封面把扫描的上下文也取消了: %v", scanCtx.Err())
+	}
+}
+
+// TestPausedCoverRunStopsDispatching 守暂停按在**派发**这一侧：闸门关着时 Drain 一张都不派，
+// 因此不会有作业躺在共享队列里等它——那样一条被按下的封面运行会把整个 worker 池占住，
+// 另一个库的封面跟着一起停。
+func TestPausedCoverRunStopsDispatching(t *testing.T) {
+	s, store, lib, libraryPath := newCoverRunTestLibrary(t)
+	held := &heldCoverBatches{}
+	s.SetCoverRunLauncher(held.launch)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.ScanLibrary(ctx, lib.ID, libraryPath, true, nil); err != nil {
+		t.Fatalf("ScanLibrary: %v", err)
+	}
+
+	gate := taskcontrol.NewPauseGate()
+	gate.Pause()
+	done := make(chan error, 1)
+	go func() { done <- held.only(t).Drain(taskcontrol.WithPauseGate(ctx, gate), nil) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("闸门关着，这一批却已经跑完了: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := booksWithCover(t, store, lib.ID); got != 0 {
+		t.Fatalf("暂停期间生成了 %d 张封面", got)
+	}
+
+	gate.Resume()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("恢复之后 Drain 出错: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("恢复之后这一批没有跑完 —— 唤醒丢了")
+	}
+	if got := booksWithCover(t, store, lib.ID); got != 2 {
+		t.Fatalf("恢复之后有 %d 本带封面, want 2", got)
 	}
 }
 

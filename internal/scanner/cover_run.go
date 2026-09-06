@@ -29,8 +29,9 @@ type CoverObserver interface {
 // 它与扫描的报文一样不带身份：一份报文属于哪一次运行，由收下它的 CoverObserver 回答。
 type CoverProgressReport struct {
 	CurrentItem string
-	// Queued 是这一批至今排进来的总数；Generated 与 Failed 是其中已经有结果的那两半，
-	// 两者之和加上 Remaining 才是 Queued——被取消时剩下的那些一个都不会有结果。
+	// Queued 是这一批至今排进来的总数，Remaining 是其中还没有结果的那些；
+	// **已结算的那些是 Queued 减 Remaining**，不是 Generated 加 Failed——
+	// 还有第三种出口：这本书在封面生成期间已经有了封面，那既不是新增一张也不是故障。
 	Queued    int64
 	Generated int64
 	Failed    int64
@@ -102,6 +103,15 @@ func (s *Scanner) QueueMissingCovers(ctx context.Context, libraryID int64) (*Cov
 // coverReportInterval 是封面推进的投递水位：每生成一张就报一次的话，一次首扫要写几万次运行行。
 const coverReportInterval = 250 * time.Millisecond
 
+// coverDispatchWindow 是**一批**封面同时在飞的上限。
+//
+// 不封上限的后果是暂停按不住：Drain 会一口气把上千个作业塞进共享队列，worker 取到之后才发现
+// 这条运行的**暂停闸门**关着，于是一条被按下的封面运行占满整个池子，另一个库的封面跟着一起停。
+// 闸门因此只在**派发前**问，而派发受这个窗口约束——暂停在几张封面之内生效，
+// 且一条运行最多占住这么多个 worker。取值比 worker 池的上限（4）宽一档，
+// 池子才不会为了等下一次派发而空转。
+const coverDispatchWindow = 8
+
 // CoverBatch 是一次发起排进封面队列的**那一批**封面作业，也是它自己的记账处。
 //
 // 计数按批而不是全局：一条封面运行要回答的是「我这一批还剩几张」，而 worker 池是共享的，
@@ -134,6 +144,9 @@ type CoverBatch struct {
 	pausedMillis         atomic.Int64
 	thumbnailWriteMillis atomic.Int64
 
+	// window 是在飞名额的信号量：派发前占一个，作业结束时归还。inflight 只回答
+	// 「还有没有在飞的」，两者一起构成 awaitInflight 等的那件事。
+	window   chan struct{}
 	inflight sync.WaitGroup
 	throttle reportThrottle
 }
@@ -144,6 +157,7 @@ func (s *Scanner) newCoverBatch(libraryID int64) *CoverBatch {
 		scanner:   s,
 		libraryID: libraryID,
 		wake:      make(chan struct{}, 1),
+		window:    make(chan struct{}, coverDispatchWindow),
 		throttle:  reportThrottle{interval: coverReportInterval},
 	}
 }
@@ -194,17 +208,7 @@ func (b *CoverBatch) attach() {
 // 它答不出别人接手的那些——那些批的剩余量归各自那条封面运行（CoverBatch.Remaining），
 // 进程级的「封面排空了没有」在按批计数之后不再是一个有意义的问题。
 func (s *Scanner) waitForCoverQueue(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		s.selfDrained.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return awaitWaitGroup(ctx, &s.selfDrained)
 }
 
 // close 声明「扫描不再往这一批里加了」。Drain 据此知道抽干就是抽完。
@@ -222,14 +226,14 @@ func (b *CoverBatch) signal() {
 	}
 }
 
-// take 取下一个待派发的作业，并顺带交回「这一批还会不会再有新的」。
-func (b *CoverBatch) take() (coverJob, bool, bool) {
+// take 取下一个待派发的作业：ok 说这次有没有取到，closed 说这一批还会不会再有新的。
+func (b *CoverBatch) take() (job coverJob, ok bool, closed bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.pending) == 0 {
 		return coverJob{}, false, b.closed
 	}
-	job := b.pending[0]
+	job = b.pending[0]
 	b.pending[0] = coverJob{}
 	b.pending = b.pending[1:]
 	return job, true, b.closed
@@ -277,11 +281,37 @@ func (b *CoverBatch) Drain(ctx context.Context, observer CoverObserver) error {
 	return nil
 }
 
+// reserve 占一个在飞名额，窗口满时等着；ctx 结束即放弃。
+func (b *CoverBatch) reserve(ctx context.Context) error {
+	select {
+	case b.window <- struct{}{}:
+		b.inflight.Add(1)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// release 归还一个在飞名额。派出去的每一个作业都要经它，否则窗口会一格格漏光、
+// 这一批从此一张也派不出去。
+func (b *CoverBatch) release() {
+	<-b.window
+	b.inflight.Done()
+}
+
 // awaitInflight 等已派出去的那些跑完；ctx 结束时不等——它们自己也会在下一个检查点退出。
 func (b *CoverBatch) awaitInflight(ctx context.Context) error {
+	return awaitWaitGroup(ctx, &b.inflight)
+}
+
+// awaitWaitGroup 等一个 WaitGroup 归零，ctx 先结束即交回它的错误。
+//
+// `sync.WaitGroup.Wait` 等不了 ctx，因此这里必须多起一条 goroutine；它在 WaitGroup 归零时
+// 自己退出，等待方走不走得掉都一样。
+func awaitWaitGroup(ctx context.Context, wg *sync.WaitGroup) error {
 	done := make(chan struct{})
 	go func() {
-		b.inflight.Wait()
+		wg.Wait()
 		close(done)
 	}()
 	select {

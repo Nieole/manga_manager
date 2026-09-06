@@ -1562,12 +1562,14 @@ func (s *Scanner) dispatchCover(ctx context.Context, batch *CoverBatch, job cove
 	s.startCoverWorkers()
 	job.ctx = ctx
 	job.batch = batch
-	batch.inflight.Add(1)
+	if err := batch.reserve(ctx); err != nil {
+		return err
+	}
 	select {
 	case s.coverQueue <- job:
 		return nil
 	case <-ctx.Done():
-		batch.inflight.Done()
+		batch.release()
 		return ctx.Err()
 	}
 }
@@ -1605,16 +1607,19 @@ func (s *Scanner) startCoverWorkers() {
 
 // runCoverJob 生成一张封面，并把结果记进它自带的那一批。
 //
-// 每条出口都要经 batch.settle：漏一条那一批的剩余量就永远归不了零，等它排空的那条封面运行
-// 会一直挂着，而界面上写着「还剩 N 张」。
+// 每条出口都要经 batch 的三条结算之一：漏一条那一批的剩余量就永远归不了零，等它排空的那条
+// 封面运行会一直挂着，而界面上写着「还剩 N 张」。
+//
+// 这里只看取消，不问**暂停闸门**：闸门在派发前问过了（见 CoverBatch.Drain），
+// 而 worker 是共享的——在这里等下去，一条被按下的封面运行会把整个池子占住。
 func (s *Scanner) runCoverJob(job coverJob) {
 	batch := job.batch
 	ctx := job.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	defer batch.inflight.Done()
-	if err := taskcontrol.Wait(ctx); err != nil {
+	defer batch.release()
+	if ctx.Err() != nil {
 		batch.settleSkipped()
 		return
 	}

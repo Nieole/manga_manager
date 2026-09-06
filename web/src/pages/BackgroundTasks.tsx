@@ -19,6 +19,7 @@ const TASK_TYPE_OPTIONS = [
   'scan_library',
   'scan_external_library',
   'scan_series',
+  'generate_covers',
   'cleanup_library',
   'rebuild_index',
   'rebuild_thumbnails',
