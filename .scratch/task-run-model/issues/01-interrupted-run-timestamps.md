@@ -6,7 +6,7 @@
 
 **Blocked by:** 无 —— 可立即开始
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 为什么这条今天是坏的
 
@@ -28,9 +28,26 @@
 
 ## 验收
 
-- [ ] 标中断的那笔 UPDATE 不再改写 `updated_at`；`finished_at` 取原 `updated_at`
-- [ ] 进度派生不再对中断状态整体短路；中断运行显示耗时与速率
-- [ ] 从未上报过进度的中断运行仍不发速率，有一条用例守着
-- [ ] 一条用例覆盖「停机一夜」的场景：耗时等于最后心跳减开始，而不是重启时刻减开始
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] 标中断的那笔 UPDATE 不再改写 `updated_at`；`finished_at` 取原 `updated_at`
+      —— **票 07 已做**：新表把三个时刻分列，`MarkInterrupted` 取 `finished_at = 原 updated_at`。
+      `updated_at` 仍被写成重启时刻，但它在新模型里是行的改动时刻、不再是速率的分母，
+      心跳原样留在 `finished_at` 里（见「与票据的差距」）。
+- [x] 进度派生不再对中断状态整体短路；中断运行显示耗时与速率
+- [x] 从未上报过进度的中断运行仍不发速率，有一条用例守着
+      （`TestNeverReportedInterruptedRunOmitsRate`）
+- [x] 一条用例覆盖「停机一夜」的场景：耗时等于最后心跳减开始，而不是重启时刻减开始
+      （`TestInterruptedRunReportsRateFromLastHeartbeat`）
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+
+## 与票据的差距（票据写于旧模型下）
+
+票据的两半在排期上被票 07 拆开了：**时间戳那一半票 07 已经做掉**，本票只剩拆闸门那一半，
+外加把「从未上报过进度」这条边界钉下来。
+
+- 票据说「不再改写 `updated_at`」，是因为旧模型里心跳只有那一列可住。新表有 `finished_at`
+  这一列，票 07 把心跳搬了进去，`updated_at` 回到它的本义——这一行最后一次被写的时刻。
+  两者在其余三种终态下相等，中断这一种不相等，因为那笔转写确实发生在重启时刻。
+  界面上那行「最后更新」因此在中断运行上显示重启时刻，挂在 D46。
+- 票据说「若写入格式需要统一，在这一票里顺手统一」：不必了，票 07 把三个时刻改成
+  INTEGER 毫秒，写入方只剩 `taskstore` 一个。排序键仍是序号，本票未动。

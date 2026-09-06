@@ -186,9 +186,15 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 // 以为它还在跑；对可重试的**中断**任务尤其误导。终态要看的是已经做完了多少（计数与百分比）
 // 与花了多久（详情面板的开始 / 结束时刻），这两样都不经 ETA 这条通道。
 //
-// 速率只算给分母可信的状态，**中断**一个都不发，理由见函数内那道闸门。分母里还要扣掉**暂停**：
-// 那几段时间里任务一条都没处理，引擎逐段记下过（RunStatus.ControlPausedMillis），不扣的话
-// 一次午饭时长的暂停就能把速率打到七分之一，并一路带进终态。
+// 速率的分母是运行真正在干活的那一段。活动态量到此刻，**终态**量到引擎盖上的结束时刻——
+// **中断**也不例外：那一笔批量转写把结束时刻取成运行原有的心跳（见 task.Engine.MarkInterrupted），
+// 整段停机时长因此落在分母之外，中断运行报出的是它断掉前那一刻的速率，而不是被一夜停机稀释过的数。
+// 分母里还要扣掉**暂停**：那几段时间里任务一条都没处理，引擎逐段记下过
+// （RunStatus.ControlPausedMillis），不扣的话一次午饭时长的暂停就能把速率打到七分之一，
+// 并一路带进终态。
+//
+// 从未上报过进度的运行仍然算不出速率：心跳还停在开始时刻，分母是零，计数也还是零——
+// 函数末尾那道守卫一并挡住。那是真的没有数据，不是按状态把它藏起来。
 func enrichTaskProgress(task *RunStatus) {
 	if task == nil {
 		return
@@ -203,13 +209,6 @@ func enrichTaskProgress(task *RunStatus) {
 			percent = 100
 		}
 		task.Percent = &percent
-	}
-	// **中断**任务不发速率。它当年立起来的理由——中断那一笔 UPDATE 把 finished_at 与
-	// updated_at 一起盖成重启时刻，分母里因此整段停机时长都算成了在干活——在新模型里
-	// 已经不成立：收尾时刻取的是那行原有的心跳。**拆掉它是一次用户可见的行为变化**，
-	// 因此不随接线顺手做。
-	if task.Status == "interrupted" {
-		return
 	}
 	now := time.Now()
 	elapsed := now.Sub(task.StartedAt)

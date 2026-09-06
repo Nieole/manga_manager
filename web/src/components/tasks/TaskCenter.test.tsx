@@ -55,10 +55,17 @@ describe('任务中心的处理速率', () => {
     expect(screen.getByText('60/min')).toBeTruthy();
   });
 
-  it('中断任务没有速率这一项，也不回落成 0/min', () => {
+  it('后端没发速率就整格不显示，也不回落成 0/min', () => {
     renderTasks([makeTask({ key: 'scan_library_2', status: 'interrupted', rate_per_minute: undefined })]);
     expect(screen.queryByText('0/min')).toBeNull();
     expect(screen.queryAllByText(/\/min$/)).toHaveLength(0);
+  });
+
+  // 中断的运行照样有速率：它的收尾时刻取的是断掉前那次心跳，分母还原得出来。
+  // 前端不得按状态自己判一遍——判据一旦与后端不同步，这一格就会凭空少掉。
+  it('中断任务发了速率也照常显示', () => {
+    renderTasks([makeTask({ key: 'scan_library_2', status: 'interrupted', rate_per_minute: 60 })]);
+    expect(screen.getByText('60/min')).toBeTruthy();
   });
 
   it('同一屏里一个有速率一个没有，只显示有的那个', () => {

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
 )
@@ -121,24 +122,94 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 	}
 }
 
-// TestInterruptedTaskOmitsRate 钉住**中断**运行一个处理速率都不发。
+// TestInterruptedRunReportsRateFromLastHeartbeat 钉住停机一夜之后的那条**中断**记录带着真实
+// 的耗时与速率：分母是「最后一次心跳减开始时刻」，不是「重启时刻减开始时刻」。
 //
-// 那道闸门当年立起来的理由（批量转中断的那笔 UPDATE 把 finished_at 与 updated_at 一起盖成重启
-// 时刻，分母里整段停机时长都算成在干活）在新模型里已经不成立——收尾时刻取的是那行原有的心跳。
-// 但拆掉它是一次用户可见的行为变化，因此这条用例守的是它**没被顺手改掉**。
-func TestInterruptedTaskOmitsRate(t *testing.T) {
+// 这是唯一一种分母不由此刻、也不由引擎当场盖的结束时刻给出的状态——重启时的批量转写把结束时刻
+// 取成运行原有的心跳（见 task.Engine.MarkInterrupted），整段停机时长因此落在分母之外。
+// 破了的表现是一个跑了 10 分钟的扫描被算成跑了 8 小时 10 分钟，速率被稀释到四十九分之一。
+func TestInterruptedRunReportsRateFromLastHeartbeat(t *testing.T) {
+	const (
+		ranFor      = 10 * time.Minute
+		downFor     = 8 * time.Hour
+		wantRate    = 60.0
+		rateEpsilon = 1.0
+	)
+
 	controller, store, _, tempDir := newTestController(t)
 
 	const key = "scan_library_1"
 	handle := seedTask(t, controller.taskEngine, taskSeed{
 		Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10000,
 	})
-	// 任务体只跑了 10 分钟就随进程一起没了：600 条 / 10 分钟，真实速率 60/min。
-	backdateTaskStart(t, controller.taskEngine, key, 10*time.Minute)
+	// 任务体跑了 10 分钟、处理了 600 条就随进程一起没了：真实速率 60/min。
 	current := 600
 	handle.Report(runhandle.Frame{Current: &current})
+	backdateSeededRun(t, controller.taskEngine, key, ranFor, downFor)
 
-	reloaded := restartController(t, controller, store, tempDir)
+	tasks, body := interruptedTaskList(t, controller, store, tempDir)
+	if diff := tasks[0].RatePerMinute - wantRate; diff > rateEpsilon || diff < -rateEpsilon {
+		t.Fatalf("停机 %v 之后中断运行的速率为 %.2f/min, want 约 %.0f/min —— 分母把整段停机时长算成了在干活",
+			downFor, tasks[0].RatePerMinute, wantRate)
+	}
+	if !strings.Contains(body, "rate_per_minute") {
+		t.Fatalf("载荷里没有 rate_per_minute，中断记录仍然是残废的: %s", body)
+	}
+	// 同一帧里其它派生字段不受牵连：「做完了多少」仍要答得出。
+	if tasks[0].Current != 600 || tasks[0].Percent == nil || *tasks[0].Percent != 6 {
+		t.Fatalf("中断运行的计数 / 百分比为 %d / %v, want 600 / 6", tasks[0].Current, tasks[0].Percent)
+	}
+}
+
+// TestNeverReportedInterruptedRunOmitsRate 守住边界：一帧进度都没报过的运行仍然不发速率。
+//
+// 它的心跳还停在开始时刻，分母是零、分子也是零——那是真的没有数据，不该凭空造一个数出来。
+// 这与被拆掉的那道「**中断**一律不发」是两回事：那道闸门按状态一刀切，这里挡住的是没有数据。
+//
+// 分母的两端也一并钉住。批量转写只要改成拿重启时刻收尾，这条运行就会凭空多出一夜的分母——
+// 眼下分子是零，看不出差别，但那正是本票要修的那个 bug，它不该从这条路上悄悄溜回来。
+func TestNeverReportedInterruptedRunOmitsRate(t *testing.T) {
+	controller, store, _, tempDir := newTestController(t)
+
+	const key = "scan_library_1"
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10000,
+	})
+	// 一帧都没报过就停机一夜：开始时刻与心跳仍然重合。
+	backdateSeededRun(t, controller.taskEngine, key, 0, 8*time.Hour)
+
+	tasks, body := interruptedTaskList(t, controller, store, tempDir)
+	if tasks[0].RatePerMinute != 0 {
+		t.Fatalf("从未上报过进度的中断运行下发了 %.2f/min —— 它一条都没处理过，速率无从谈起", tasks[0].RatePerMinute)
+	}
+	if strings.Contains(body, "rate_per_minute") {
+		t.Fatalf("载荷里还留着 rate_per_minute: %s", body)
+	}
+	if tasks[0].FinishedAt == nil || !tasks[0].FinishedAt.Equal(tasks[0].StartedAt) {
+		t.Fatalf("结束时刻为 %v, want 与开始时刻 %v 相等 —— 心跳一次都没动过，收尾时刻就该停在那里",
+			tasks[0].FinishedAt, tasks[0].StartedAt)
+	}
+}
+
+// backdateSeededRun 把一条已播种的运行整体挪进过去：开始时刻落在 ran+down 之前、最后心跳落在
+// down 之前，于是它「跑了 ran 就随进程一起没了，机器又停了 down 才被重新拉起来」。
+//
+// 两个时刻必须一起挪。只挪开始时刻的话心跳还停在此刻，停机那一段根本不存在，用例于是分不出
+// 「结束时刻取心跳」与「结束时刻取重启时刻」这两种写法——而那正是它要守的区别。
+func backdateSeededRun(t testing.TB, e *taskEngine, key string, ran, down time.Duration) {
+	t.Helper()
+	now := time.Now()
+	mutateSeededRun(t, e, key, func(run *task.Run) {
+		run.StartedAt = now.Add(-down - ran)
+		run.UpdatedAt = now.Add(-down)
+	})
+}
+
+// interruptedTaskList 模拟一次进程重启、把上一轮留下的活动运行转成**中断**，再按前端的真实请求
+// 把任务列表读回来，解析结果与原始载荷一起交出——「这个字段在不在」只有载荷答得出。
+func interruptedTaskList(t *testing.T, prev *Controller, store database.Store, tempDir string) ([]RunStatus, string) {
+	t.Helper()
+	reloaded := restartController(t, prev, store, tempDir)
 	reloaded.taskEngine.markInterrupted(context.Background())
 
 	rec := httptest.NewRecorder()
@@ -155,22 +226,16 @@ func TestInterruptedTaskOmitsRate(t *testing.T) {
 	if len(tasks) != 1 || tasks[0].Status != "interrupted" {
 		t.Fatalf("读回 %+v, want 一条 interrupted 运行", tasks)
 	}
-	if tasks[0].RatePerMinute != 0 {
-		t.Fatalf("中断运行下发了 %.2f/min —— 那道闸门被顺手改掉了，而拆它是一次单独的行为变更", tasks[0].RatePerMinute)
-	}
-	if strings.Contains(body, "rate_per_minute") {
-		t.Fatalf("载荷里还留着 rate_per_minute: %s", body)
-	}
-	// 同一帧里其它派生字段不受牵连：「做完了多少」仍要答得出。
-	if tasks[0].Current != 600 || tasks[0].Percent == nil || *tasks[0].Percent != 6 {
-		t.Fatalf("中断运行的计数 / 百分比为 %d / %v, want 600 / 6", tasks[0].Current, tasks[0].Percent)
-	}
+	return tasks, body
 }
 
-// TestTaskRateSurvivesEveryStatusButInterrupted 守住那道收敛只掐掉**中断**一种：另外六种状态的
-// 分母都还原得出来——活动态量到此刻，其余三种终态由引擎在任务体返回的那一刻盖上 finished_at，
-// 而其中的**暂停**时长引擎逐段记下过，扣掉即可（见 TestPausedTimeStaysOutOfTheRateDenominator）。
-func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
+// TestTaskRateSurvivesEveryStatus 守分母在每一种状态下都还原得出来：三种活动态量到此刻，
+// 三种终态由引擎在任务体返回的那一刻盖上 finished_at，而其中的**暂停**时长引擎逐段记下过、
+// 扣掉即可（见 TestPausedTimeStaysOutOfTheRateDenominator）。
+//
+// 第七种状态**中断**的 finished_at 来自另一条路——重启时的批量转写，因此它自己一条用例，
+// 见 TestInterruptedRunReportsRateFromLastHeartbeat。
+func TestTaskRateSurvivesEveryStatus(t *testing.T) {
 	activeCases := []struct {
 		name    string
 		status  string
