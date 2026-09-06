@@ -344,9 +344,11 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		DiskWork:      c.diskWork,
 		Slots:         c.taskSlots,
 		Backoff:       c.taskBackoffPolicy,
+		ResumeEnabled: c.taskResumeEnabled,
 	})
-	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTask 查表）之前完成。
-	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
+	// 构建「再发起一次」的注册表：它同时是可重试与**可续跑**两条判据的来源，因此必须在任何运行
+	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
+	c.taskEngine.dispatch = c.buildTaskDispatch()
 
 	return c
 }
@@ -451,6 +453,16 @@ func (c *Controller) currentConfig() config.Config {
 // 引擎只在准入与放行时读它。
 func (c *Controller) taskSlots() int {
 	return c.currentConfig().Tasks.RunSlots
+}
+
+// taskResumeEnabled 读**可续跑**的全局开关，理由同 taskSlots：设置里可改，现读一遍。
+//
+// 配置里没写（nil）按**开着**算：归一化本该已经把它补上，这里再收一道是因为算错方向的代价
+// 不对称——多恢复一条白名单内的工作只是多跑一次扫描，少恢复一条就是无人值守的机器重启后
+// 什么也不做，而那正是这一票要修的。
+func (c *Controller) taskResumeEnabled() bool {
+	resume := c.currentConfig().Tasks.ResumeAfterRestart
+	return resume == nil || *resume
 }
 
 func (c *Controller) protocolEnabled(protocol string) bool {

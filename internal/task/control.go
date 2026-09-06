@@ -355,23 +355,43 @@ func (e *Engine) commitControlLocked(run *Run, now time.Time) {
 	e.publishLocked(*run)
 }
 
-// MarkInterrupted 把仍会变化的运行（**活动态**与**排队中**）全部转入**中断**，返回转写的条数。
+// MarkInterrupted 把仍会变化的运行（**活动态**与**排队中**）全部转入**中断**，并交回其中该
+// 自己接着跑的那几条（见 Interruption）。
 //
-// 它属于装配期：进程里此刻不该有任何任务体在飞。**中断**不是失败——任务体没有出错，
-// 只是没跑完，因此可重试；哪些类型可以自己接着跑属于**可续跑**白名单，不在本包。
+// 它属于装配期：进程里此刻不该有任何任务体在飞。**中断**不是失败——任务体没有出错，只是没跑完，
+// 因此可重试；而**可续跑**比可重试严格，谁能自动重排队由白名单说了算（见 ResumePolicy）。
+//
+// **重新发起那一步不在本包**：任务体是个闭包，落不了盘，重启之后只有装配方拼得回来。本包交出
+// 该续跑的那几条，它们回到 Start 就与别的发起没有区别——因此照样受槽位上限与队列约束。
 //
 // 结束时刻取的是运行原来的 UpdatedAt 而不是此刻：进度落盘本来每隔一小段就刷一次，
 // 那个字段本身就是心跳。盖成重启时刻的话，整段停机时长都会被算成在干活，速率随之作废。
-func (e *Engine) MarkInterrupted(ctx context.Context) (int, error) {
+func (e *Engine) MarkInterrupted(ctx context.Context) (Interruption, error) {
+	marked, err := e.markInterrupted(ctx)
+	outcome := Interruption{Marked: len(marked)}
+	if err != nil {
+		return outcome, err
+	}
+	// 挑续跑那一步在锁外：它要批量取身份与侧数据，而此刻已经没有任何一条运行还会变化。
+	resume, err := e.resumable(ctx, e.resumePolicy(), marked)
+	if err != nil {
+		return outcome, err
+	}
+	outcome.Resume = resume
+	return outcome, nil
+}
+
+// markInterrupted 是转写本身，交回被它转写的那些运行（转写之后的样子）。
+func (e *Engine) markInterrupted(ctx context.Context) ([]Run, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	runs, err := e.store.ListRuns(ctx, RunFilter{Statuses: liveStatuses, Order: OrderSequenceAsc})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	now := e.clock()
-	marked := 0
+	marked := make([]Run, 0, len(runs))
 	for _, run := range runs {
 		heartbeat := run.UpdatedAt
 		run.Status = StatusInterrupted
@@ -387,7 +407,7 @@ func (e *Engine) MarkInterrupted(ctx context.Context) (int, error) {
 		delete(e.gates, run.ID)
 		e.saveLocked(run)
 		e.publishLocked(run)
-		marked++
+		marked = append(marked, run)
 	}
 	return marked, nil
 }

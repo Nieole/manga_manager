@@ -63,6 +63,44 @@ func TestNormalizeConfigDefaultsLogLevel(t *testing.T) {
 	}
 }
 
+// TestNormalizeConfigDefaultsResumeAfterRestartToOn 守**可续跑**的全局开关默认**开着**，
+// 而明确关掉的那份配置不会被归一化重新打开。
+//
+// 布尔值的默认为真只能靠指针表达：配置文件里没写与写了 false 都是零值，两者混一起的话，
+// 升级上来的每一份老配置都会被当成「用户关掉了续跑」。
+func TestNormalizeConfigDefaultsResumeAfterRestartToOn(t *testing.T) {
+	cfg := &Config{}
+	NormalizeConfig(cfg)
+	if cfg.Tasks.ResumeAfterRestart == nil || !*cfg.Tasks.ResumeAfterRestart {
+		t.Fatalf("配置文件里没写时的续跑开关为 %v, want 开着", cfg.Tasks.ResumeAfterRestart)
+	}
+
+	off := false
+	closed := &Config{}
+	closed.Tasks.ResumeAfterRestart = &off
+	NormalizeConfig(closed)
+	if closed.Tasks.ResumeAfterRestart == nil || *closed.Tasks.ResumeAfterRestart {
+		t.Fatalf("明确关掉的续跑开关被归一化成了 %v", closed.Tasks.ResumeAfterRestart)
+	}
+}
+
+// TestCloneConfigCopiesTheResumeSwitch 守深拷贝把那个指针也复制一份：只复制指针的话，
+// 两份「独立」快照写的是同一个布尔值。
+func TestCloneConfigCopiesTheResumeSwitch(t *testing.T) {
+	on := true
+	cfg := Config{}
+	cfg.Tasks.ResumeAfterRestart = &on
+
+	clone := CloneConfig(cfg)
+	if clone.Tasks.ResumeAfterRestart == cfg.Tasks.ResumeAfterRestart {
+		t.Fatal("克隆出来的续跑开关与原件是同一个指针")
+	}
+	*clone.Tasks.ResumeAfterRestart = false
+	if !*cfg.Tasks.ResumeAfterRestart {
+		t.Fatal("改克隆改到了原件上")
+	}
+}
+
 // TestNormalizeConfigRejectsNonPositiveRunSlots 守负数与 0 一样被改写成默认值。
 func TestNormalizeConfigRejectsNonPositiveRunSlots(t *testing.T) {
 	cfg := &Config{}

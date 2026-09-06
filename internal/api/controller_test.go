@@ -31,6 +31,7 @@ import (
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/task"
 	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
@@ -2574,8 +2575,11 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 	seeded, store, _, tempDir := newTestController(t)
 	// 上一个进程留下的现场：一条还写着活动态的运行，而它的任务体随进程一起没了。
+	//
+	// 类型取**不可续跑**的那一类：这条用例守的是转写本身，而白名单内的类型重启后还会被自动
+	// 重排队，那时列表里就不止一条了（续跑另有用例，见 task_resume_test.go）。
 	seedTask(t, seeded.taskEngine, taskSeed{
-		Key: "scan_series_55", Identity: seriesTask("scan_series", 55, variantSole), Total: 1,
+		Key: "cleanup_library_55", Identity: libraryTask("cleanup_library", 55, variantSole), Total: 1,
 	})
 
 	cfg := &config.Config{}
@@ -2592,7 +2596,7 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 	controller := NewController(store, scanner.NewScanner(store, cfgManager), cfgManager, filepath.Join(tempDir, "config.yaml"))
 	t.Cleanup(controller.Close)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=55", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=library&scope_id=55", nil)
 	rec := httptest.NewRecorder()
 	controller.listTasks(rec, req)
 	if rec.Code != http.StatusOK {
@@ -2984,7 +2988,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 		}
 	}
 
-	if err := controller.launchLibraryScrapeTask(context.Background(), lib.ID, "test"); err != nil {
+	if err := controller.launchLibraryScrapeTask(context.Background(), lib.ID, "test", task.TriggerManual); err != nil {
 		t.Fatalf("launch library scrape failed: %v", err)
 	}
 	taskKey := "scrape_library_" + strconv.FormatInt(lib.ID, 10)
@@ -3123,7 +3127,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if err := controller.launchRebuildThumbnailsTask(); err != nil {
+	if err := controller.launchRebuildThumbnailsTask(task.TriggerManual); err != nil {
 		t.Fatalf("launch rebuild thumbnails failed: %v", err)
 	}
 
@@ -4534,10 +4538,10 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 
 func TestIsRetryableTaskDerivedFromRegistry(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	if len(controller.taskEngine.relaunchers) == 0 {
+	if len(controller.taskEngine.dispatch) == 0 {
 		t.Fatal("expected registered relaunchers")
 	}
-	for dispatch := range controller.taskEngine.relaunchers {
+	for dispatch := range controller.taskEngine.dispatch {
 		if !controller.taskEngine.isRetryableTask(dispatch.Type, dispatch.Variant) {
 			t.Fatalf("registered %q/%q should be retryable", dispatch.Type, dispatch.Variant)
 		}

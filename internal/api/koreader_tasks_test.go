@@ -21,6 +21,7 @@ import (
 	"manga-manager/internal/diskwork"
 	ksvc "manga-manager/internal/koreader"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/task"
 )
 
 // koreaderTaskStore 只实现三个 KOReader 任务体真正会调到的那几个方法。其余方法留给内嵌的
@@ -165,7 +166,7 @@ func TestRefreshMatchingNamesTheFailedStage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, snapshots := newKOReaderTaskRig(t, tc.store)
 
-			if err := c.launchRefreshKOReaderMatchingTask(); err != nil {
+			if err := c.launchRefreshKOReaderMatchingTask(task.TriggerManual); err != nil {
 				t.Fatalf("启动匹配刷新失败: %v", err)
 			}
 
@@ -198,7 +199,7 @@ func TestRefreshMatchingCancellationSharesOneCode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, snapshots := newKOReaderTaskRig(t, tc.store)
 
-			if err := c.launchRefreshKOReaderMatchingTask(); err != nil {
+			if err := c.launchRefreshKOReaderMatchingTask(task.TriggerManual); err != nil {
 				t.Fatalf("启动匹配刷新失败: %v", err)
 			}
 
@@ -220,7 +221,7 @@ func TestRefreshMatchingWalksBothPhases(t *testing.T) {
 	store := &koreaderTaskStore{candidates: seedKOReaderCandidates(2), unmatched: seedUnmatchedProgress(2)}
 	c, snapshots := newKOReaderTaskRig(t, store)
 
-	if err := c.launchRefreshKOReaderMatchingTask(); err != nil {
+	if err := c.launchRefreshKOReaderMatchingTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动匹配刷新失败: %v", err)
 	}
 	const key = "refresh_koreader_matching"
@@ -278,9 +279,13 @@ func TestKOReaderTasksCarryMatchConfigMetadata(t *testing.T) {
 		key    string
 		launch func(*Controller) error
 	}{
-		{"指纹重建", "rebuild_book_hashes", (*Controller).launchRebuildBookHashesTask},
-		{"进度对账", "reconcile_koreader_progress", (*Controller).launchReconcileKOReaderProgressTask},
-		{"匹配刷新", "refresh_koreader_matching", (*Controller).launchRefreshKOReaderMatchingTask},
+		{"指纹重建", "rebuild_book_hashes", func(c *Controller) error { return c.launchRebuildBookHashesTask(task.TriggerManual) }},
+		{"进度对账", "reconcile_koreader_progress", func(c *Controller) error {
+			return c.launchReconcileKOReaderProgressTask(task.TriggerManual)
+		}},
+		{"匹配刷新", "refresh_koreader_matching", func(c *Controller) error {
+			return c.launchRefreshKOReaderMatchingTask(task.TriggerManual)
+		}},
 	}
 
 	for _, tc := range cases {
@@ -309,7 +314,7 @@ func TestRebuildBookHashesFrameIsPublishedWhole(t *testing.T) {
 	store := &koreaderTaskStore{candidates: seedKOReaderCandidates(2)}
 	c, snapshots := newKOReaderTaskRig(t, store)
 
-	if err := c.launchRebuildBookHashesTask(); err != nil {
+	if err := c.launchRebuildBookHashesTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动**指纹**重建失败: %v", err)
 	}
 	const key = "rebuild_book_hashes"
@@ -348,7 +353,7 @@ func TestRebuildBookHashesReportsDiskWorkIO(t *testing.T) {
 	store := &koreaderTaskStore{candidates: []database.BookIdentityCandidate{{ID: 1, Path: bookPath}}}
 	c, snapshots := newKOReaderTaskRigWithMode(t, store, config.KOReaderMatchModeBinaryHash)
 
-	if err := c.launchRebuildBookHashesTask(); err != nil {
+	if err := c.launchRebuildBookHashesTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动**指纹**重建失败: %v", err)
 	}
 
@@ -367,7 +372,7 @@ func TestReconcileProgressCompletesWithCounts(t *testing.T) {
 	store := &koreaderTaskStore{unmatched: seedUnmatchedProgress(3)}
 	c, snapshots := newKOReaderTaskRig(t, store)
 
-	if err := c.launchReconcileKOReaderProgressTask(); err != nil {
+	if err := c.launchReconcileKOReaderProgressTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动进度对账失败: %v", err)
 	}
 	const key = "reconcile_koreader_progress"
@@ -394,7 +399,7 @@ func TestReconcileProgressCompletesWithCounts(t *testing.T) {
 func TestRebuildBookHashesCancellationLandsCancelled(t *testing.T) {
 	c, snapshots := newKOReaderTaskRig(t, &koreaderTaskStore{listIdentityErr: context.Canceled})
 
-	if err := c.launchRebuildBookHashesTask(); err != nil {
+	if err := c.launchRebuildBookHashesTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动**指纹**重建失败: %v", err)
 	}
 

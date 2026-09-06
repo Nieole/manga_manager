@@ -147,6 +147,17 @@ type Config struct {
 		BackoffMaxHours int `yaml:"backoff_max_hours" json:"backoff_max_hours"`
 		// BackoffStopAfter 是停发阈值：连败到这个次数就不再自动发起，界面上标红等人来修。
 		BackoffStopAfter int `yaml:"backoff_stop_after" json:"backoff_stop_after"`
+
+		// ResumeAfterRestart 是**可续跑**的全局开关：服务重启后，白名单内的工作自己接着跑，
+		// **发起方**记恢复。**默认开**——它防的是「无人值守的机器重启后要有人登录去点重试」。
+		//
+		// 关掉之后仍会变化的运行照样全部转**中断**，只是一条都不自动重排队。
+		// 它只是开关：哪些类型进白名单不可配（判据是「会不会改磁盘内容、会不会花钱」，
+		// 见 task.ResumePolicy），把它做成一份可配清单等于把那条判据交给配置文件。
+		//
+		// 指针是为了分开「配置文件里没写」（nil，归一化成开着）与「明确关掉」（false）——
+		// 一个默认为真的布尔值用零值表达不出前者。新增指针字段必须同时补 CloneConfig。
+		ResumeAfterRestart *bool `yaml:"resume_after_restart" json:"resume_after_restart"`
 	} `yaml:"tasks" json:"tasks"`
 	Ollama struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"`
@@ -217,6 +228,10 @@ const (
 	DefaultBackoffFactor    = 2
 	DefaultBackoffMaxHours  = 24
 	DefaultBackoffStopAfter = 6
+
+	// DefaultResumeAfterRestart 是**可续跑**全局开关的默认值：开着。
+	// 配置文件里没写这一项就是它，见 Config.Tasks.ResumeAfterRestart。
+	DefaultResumeAfterRestart = true
 
 	KOReaderPathMatchDepth = 2
 	LogLevelDebug          = "debug"
@@ -492,6 +507,11 @@ func NormalizeConfig(cfg *Config) {
 	}
 	if cfg.Tasks.BackoffStopAfter < 1 {
 		cfg.Tasks.BackoffStopAfter = DefaultBackoffStopAfter
+	}
+	// 没写就是开着：无人值守的机器重启后不该等人登录去点重试（规格用户故事 19）。
+	if cfg.Tasks.ResumeAfterRestart == nil {
+		resume := DefaultResumeAfterRestart
+		cfg.Tasks.ResumeAfterRestart = &resume
 	}
 	normalizeLLMConfig(cfg)
 	basePath := strings.TrimSpace(cfg.KOReader.BasePath)

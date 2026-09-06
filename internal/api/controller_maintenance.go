@@ -127,7 +127,7 @@ func (c *Controller) runGlobalScan(ctx context.Context, tp *runhandle.Handle, fo
 //
 // 两步重灌各有专属失败文案码：技术错误串两步长得一样，只报一句「重建索引失败」的话，
 // 用户不知道该去查系列索引还是书籍索引。
-func (c *Controller) launchRebuildIndexTask() error {
+func (c *Controller) launchRebuildIndexTask(trigger task.Trigger) error {
 	spec := RunSpec{
 		Key:          "rebuild_index",
 		StartCode:    "task.msg.rebuild_index.start",
@@ -137,7 +137,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 		FailCode:     "task.msg.rebuild_index.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), task.TriggerManual, spec, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), trigger, spec, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
 		if err := c.store.RebuildSeriesSearchIndex(ctx); err != nil {
 			return taskFailure("task.msg.rebuild_index.series_failed", err), err
 		}
@@ -153,7 +153,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 }
 
 func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
-	if err := c.launchRebuildIndexTask(); err != nil {
+	if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A search index rebuild is already running", "Failed to rebuild search index")
 		return
 	}
@@ -164,7 +164,7 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 //
 // 任务体开工第一件事是把运行句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
 // 之外写入，所有权模型见那里。
-func (c *Controller) launchRebuildThumbnailsTask() error {
+func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 	cfg := c.currentConfig()
 	policy := config.ResolveStoragePolicy(cfg, "")
 	thumbDir := config.ThumbnailDir(cfg)
@@ -185,7 +185,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		FailCode:     "task.msg.rebuild_thumbnails.failed",
 	}
 
-	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		c.initRebuildThumbAggregator(tp, 0)
 		defer c.releaseRebuildThumbAggregator()
 
@@ -222,7 +222,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 }
 
 func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
-	if err := c.launchRebuildThumbnailsTask(); err != nil {
+	if err := c.launchRebuildThumbnailsTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A thumbnail rebuild is already running", "Failed to start thumbnail rebuild")
 		return
 	}
@@ -230,7 +230,7 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 }
 
 // launchCleanupThumbnailsTask 是缩略图清理任务的启动点，走引擎的启动入口。
-func (c *Controller) launchCleanupThumbnailsTask() error {
+func (c *Controller) launchCleanupThumbnailsTask(trigger task.Trigger) error {
 	spec := RunSpec{
 		Key:          "cleanup_thumbnails",
 		StartCode:    "task.msg.cleanup_thumbnails.start",
@@ -241,7 +241,7 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
 		tp.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
 		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
@@ -255,7 +255,7 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 }
 
 func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
-	if err := c.launchCleanupThumbnailsTask(); err != nil {
+	if err := c.launchCleanupThumbnailsTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A thumbnail cleanup is already running", "Failed to start thumbnail cleanup")
 		return
 	}
@@ -263,7 +263,7 @@ func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 }
 
 // launchRebuildFileIdentitiesTask 是文件身份重建任务的启动点，走引擎的启动入口。
-func (c *Controller) launchRebuildFileIdentitiesTask() error {
+func (c *Controller) launchRebuildFileIdentitiesTask(trigger task.Trigger) error {
 	spec := RunSpec{
 		Key:          "rebuild_file_identities",
 		StartCode:    "task.msg.rebuild_file_identities.start",
@@ -275,7 +275,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.runRebuildFileIdentities(ctx, 500,
 			hashingFrameHandle{Handle: tp, code: "task.msg.rebuild_file_identities.progress"})
 		if err != nil {
@@ -456,7 +456,7 @@ func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit
 }
 
 func (c *Controller) rebuildFileIdentities(w http.ResponseWriter, r *http.Request) {
-	if err := c.launchRebuildFileIdentitiesTask(); err != nil {
+	if err := c.launchRebuildFileIdentitiesTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A file identity rebuild is already running", "Failed to start file identity rebuild")
 		return
 	}

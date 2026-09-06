@@ -68,6 +68,9 @@ tasks:
     backoff_factor: 2
     backoff_max_hours: 24
     backoff_stop_after: 6
+    # 重启后自己接着跑：扫描这类可续跑的工作自动重排队，改磁盘内容或花钱的那些停在中断等人裁决。
+    # 不写就是开着
+    resume_after_restart: true
 ollama:
     endpoint: ""
     model: ""

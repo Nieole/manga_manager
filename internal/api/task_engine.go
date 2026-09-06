@@ -62,6 +62,9 @@ type taskEngineConfig struct {
 	// Backoff 读**退避**的三个阈值，同样是函数而不是值，理由同 Slots。
 	// 为 nil 时领域引擎取它的默认值（task.DefaultBackoff）。
 	Backoff func() task.BackoffPolicy
+	// ResumeEnabled 读**可续跑**的全局开关（默认开），为 nil 即开着。
+	// 它只管开关：哪些类型可续跑由重启函数注册表那一列说了算。
+	ResumeEnabled func() bool
 }
 
 // taskEngine 是领域引擎的适配器：两侧的翻译、按**任务键**寻址的那几个入口，与一份身份缓存。
@@ -98,11 +101,15 @@ type taskEngine struct {
 	now           func() time.Time
 	slots         func() int
 	backoff       func() task.BackoffPolicy
+	// resumeEnabled 读**可续跑**的全局开关；为 nil 即开着（默认开）。
+	// 白名单本身不从这里来，它由 dispatch 那一列派生，见 resumePolicy。
+	resumeEnabled func() bool
 
-	// relaunchers 是任务重试的注册表（(类型, **变体**) -> 重启函数），也是「可重试」的唯一事实来源。
+	// dispatch 是「再发起一次」的注册表（(类型, **变体**) -> 重启函数与**可续跑**），
+	// 也是「可重试」与「可续跑」两条判据的唯一事实来源。
 	// 在 newControllerCore 中一次性填好（重启函数要调 Controller 的领域方法，故由 Controller 构建），
 	// 此后只读，不需要持锁。
-	relaunchers map[taskDispatchKey]taskRelauncher
+	dispatch map[taskDispatchKey]taskDispatch
 
 	// ---- 受 mutex 保护的状态 ----
 
@@ -126,6 +133,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		now:           cfg.Now,
 		slots:         cfg.Slots,
 		backoff:       cfg.Backoff,
+		resumeEnabled: cfg.ResumeEnabled,
 		identities:    make(map[int64]TaskIdentity),
 	}
 	e.engine = task.New(task.Config{
@@ -137,6 +145,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		Now:                e.clock,
 		Slots:              e.slotLimit,
 		Backoff:            e.backoffPolicy,
+		Resume:             e.resumePolicy,
 		ControlCodes: task.ControlCodes{
 			Paused:      "task.msg.control.paused",
 			Resumed:     "task.msg.control.resumed",
@@ -240,9 +249,9 @@ func (e *taskEngine) resolveIdentities(ctx context.Context, taskIDs []int64) (ma
 	return identities, nil
 }
 
-// ---- 可重试 ----
+// ---- 可重试与可续跑 ----
 
-// isRetryableTask 由注册表派生：注册了 relauncher 的（类型，**变体**）即可重试。
+// isRetryableTask 由注册表派生：注册了**重启函数**的（类型，**变体**）即可重试。
 // 「哪些可重试」不得另立第二份清单——两份清单一旦不同步，界面上的重试按钮会指向一个没人能重启的任务。
 func (e *taskEngine) isRetryableTask(taskType string, variant TaskVariant) bool {
 	_, ok := e.relauncherFor(taskType, variant)
@@ -251,8 +260,28 @@ func (e *taskEngine) isRetryableTask(taskType string, variant TaskVariant) bool 
 
 // relauncherFor 返回这个（类型，**变体**）的重启函数；未注册即不可重试。
 func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRelauncher, bool) {
-	relaunch, ok := e.relaunchers[taskDispatchKey{Type: taskType, Variant: variant}]
-	return relaunch, ok
+	entry, ok := e.dispatch[taskDispatchKey{Type: taskType, Variant: variant}]
+	if !ok || entry.Relaunch == nil {
+		return nil, false
+	}
+	return entry.Relaunch, true
+}
+
+// resumePolicy 把注册表里那一列**可续跑**翻成领域侧的白名单，配上全局开关。
+//
+// 白名单同样只有注册表一份事实来源：在这里另抄一份类型名清单的话，两份不同步时，
+// 界面上说着不可续跑的类型会在重启后自己跑起来——而那正是这条白名单要挡住的事。
+func (e *taskEngine) resumePolicy() task.ResumePolicy {
+	policy := task.ResumePolicy{
+		Disabled: e.resumeEnabled != nil && !e.resumeEnabled(),
+		Types:    make(map[task.ResumeKey]struct{}, len(e.dispatch)),
+	}
+	for key, entry := range e.dispatch {
+		if entry.Resumable {
+			policy.Types[task.ResumeKey{Type: task.Type(key.Type), Variant: task.Variant(key.Variant)}] = struct{}{}
+		}
+	}
+	return policy
 }
 
 // ---- 查询 ----
@@ -592,13 +621,49 @@ func (e *taskEngine) markInterrupted(ctx context.Context) {
 		}
 	}
 
-	count, err := e.engine.MarkInterrupted(ctx)
+	outcome, err := e.engine.MarkInterrupted(ctx)
 	if err != nil {
 		slog.Warn("Failed to recover interrupted runs", "error", err)
+	}
+	if outcome.Marked > 0 {
+		slog.Info("Recovered interrupted runs", "count", outcome.Marked)
+	}
+	e.resumeRuns(ctx, outcome.Resume)
+}
+
+// resumeRuns 把**可续跑**白名单挑出来的那几条中断运行重新发起一次，**发起方记恢复**。
+//
+// 恢复出来的是**新一次运行**：原来那条留在**中断**，不改回运行中——「上一次断在哪」是用户要的答案。
+// 重排队走的是同一个启动入口，因此槽位上限照样管着它们：一次重启恢复出十条也不会同时开跑。
+//
+// **一条失败不拖累其余**：库被删了、路径没了都会让某个重启函数当场出错，而这一切发生在开机那一刻、
+// 用户还没登录。整批中断的话，剩下那些既不会跑，也没有人知道它们本该跑。
+func (e *taskEngine) resumeRuns(ctx context.Context, snapshots []task.Snapshot) {
+	if len(snapshots) == 0 {
 		return
 	}
-	if count > 0 {
-		slog.Info("Recovered interrupted runs", "count", count)
+	runs, err := e.statusesFrom(ctx, snapshots)
+	if err != nil {
+		slog.Warn("Failed to resolve runs for resume", "error", err)
+		return
+	}
+	resumed := 0
+	for _, run := range runs {
+		relaunch, ok := e.relauncherFor(run.Type, run.Variant)
+		// 白名单与重启函数同出一张注册表，因此走不到这里；留着是因为「白名单里有、却没人发得起」
+		// 的类型只会静默什么都不做，而那种漏配值得留一行日志。
+		if !ok {
+			slog.Warn("Resumable run has no relauncher", "task_key", run.Key, "task_type", run.Type)
+			continue
+		}
+		if err := relaunch(ctx, run, task.TriggerResumed); err != nil {
+			slog.Warn("Failed to resume interrupted run", "task_key", run.Key, "task_type", run.Type, "error", err)
+			continue
+		}
+		resumed++
+	}
+	if resumed > 0 {
+		slog.Info("Resumed interrupted runs", "count", resumed)
 	}
 }
 

@@ -1378,6 +1378,8 @@ export const messages: MessageCatalog = {
     'settings.library.backoffStopAfter': '停发阈值（次）',
     'settings.library.backoffStopAfterHint': '连败到这个次数就不再自动发起，任务清单上标红。',
     'settings.library.backoffHint': '退避只约束定时与监听发起的工作：手动发起始终可用，正在跑的运行也不会被它打断。手动发起一次或成功一次即把连败与退避清零。三个数都至少为 1。',
+    'settings.library.resumeAfterRestart': '重启后自己接着跑',
+    'settings.library.resumeAfterRestartHint': '服务重启时中断的扫描、封面与索引类工作自动重排队，发起方记「恢复」，无人值守的机器不必等人登录去点重试。改磁盘内容或花钱的那些（外部库传输、ComicInfo 回写、刮削、AI 分组、清理资料库）永远不会自己重跑，只停在中断等你裁决。关掉之后全部只标中断。',
     'settings.library.supportedFormats': '当前支持的扫描格式',
     'settings.library.storageTitle': '存储 IO 策略',
     'settings.library.storageProfile': '默认存储介质',

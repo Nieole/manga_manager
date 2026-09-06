@@ -358,7 +358,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 //
 // 存储画像与并发上限来自系列所属的**资料库**，因此任务声明要先查两跳（系列 → 资料库）才能拼齐；
 // 查不到就按「没有上限可报」落地，见下。
-func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
+func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger task.Trigger) error {
 	idParams := map[string]string{"id": strconv.FormatInt(seriesID, 10)}
 	scopeName := ""
 	storagePolicy := config.ResolvedStoragePolicy{}
@@ -397,7 +397,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 		FailCode:     "task.msg.scan_series.failed",
 	}
 
-	return c.taskEngine.Run(seriesTask("scan_series", seriesID, variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(seriesTask("scan_series", seriesID, variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
 		if err := c.scanner.ScanSeries(ctx, seriesID, force, newTaskScanObserver(tp)); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -423,7 +423,7 @@ func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	if err := c.launchSeriesScanTask(seriesID, isForce); err != nil {
+	if err := c.launchSeriesScanTask(seriesID, isForce, task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A series scan is already running", "Failed to start series scan")
 		return
 	}

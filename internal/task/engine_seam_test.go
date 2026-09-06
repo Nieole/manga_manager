@@ -61,6 +61,9 @@ type testEngine struct {
 	engine *Engine
 	store  *memStore
 	clock  *fakeClock
+	// resume 是**可续跑**白名单，构造之后仍可换掉：引擎收的是一个读它的闭包。
+	// 零值即空白名单，也就是「一条都不续跑」——续跑的用例自己填。
+	resume ResumePolicy
 
 	mu        sync.Mutex
 	published []Snapshot
@@ -103,6 +106,7 @@ func newHarness(t *testing.T, run func(func()), slots func() int, stepping bool)
 		RunBackground: run,
 		Now:           now,
 		Slots:         slots,
+		Resume:        func() ResumePolicy { return harness.resume },
 		ControlCodes: ControlCodes{
 			Paused:     "task.msg.control.paused",
 			Resumed:    "task.msg.control.resumed",

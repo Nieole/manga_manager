@@ -45,11 +45,20 @@ func (m *Manager) Replace(cfg *Config) {
 // 新增切片 / map / 指针字段时**必须**在这里补上对应的复制，
 // 否则又会退回「值拷贝看着独立、底层却共享」的状态。
 func CloneConfig(cfg Config) Config {
+	cfg.Tasks.ResumeAfterRestart = cloneBool(cfg.Tasks.ResumeAfterRestart)
 	cfg.Server.AllowedOrigins = cloneStrings(cfg.Server.AllowedOrigins)
 	cfg.Server.TrustedProxies = cloneStrings(cfg.Server.TrustedProxies)
 	cfg.Library.Paths = cloneStrings(cfg.Library.Paths)
 	cfg.Library.StoragePolicies = cloneStoragePolicies(cfg.Library.StoragePolicies)
 	return cfg
+}
+
+func cloneBool(src *bool) *bool {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
 }
 
 func cloneStrings(src []string) []string {

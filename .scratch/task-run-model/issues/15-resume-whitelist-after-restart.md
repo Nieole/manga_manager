@@ -5,7 +5,7 @@
 
 **Blocked by:** 11
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 白名单
 
@@ -33,11 +33,11 @@
 
 ## 验收
 
-- [ ] 白名单内的类型在重启后自动重排队，发起方为恢复
-- [ ] 白名单外的类型只标中断，不自动发起
-- [ ] 可续跑与可重试是两个独立判据，有用例证明存在「可重试但不可续跑」的类型
-- [ ] 恢复产生新一次运行，原中断记录仍在
-- [ ] 恢复的运行受槽位上限约束，不绕过队列
-- [ ] 全局开关可关，关掉后全部只标中断
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `cd web && npm run test && npm run lint && npm run build` 全绿
+- [x] 白名单内的类型在重启后自动重排队，发起方为恢复
+- [x] 白名单外的类型只标中断，不自动发起
+- [x] 可续跑与可重试是两个独立判据，有用例证明存在「可重试但不可续跑」的类型
+- [x] 恢复产生新一次运行，原中断记录仍在
+- [x] 恢复的运行受槽位上限约束，不绕过队列
+- [x] 全局开关可关，关掉后全部只标中断
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `cd web && npm run test && npm run lint && npm run build` 全绿

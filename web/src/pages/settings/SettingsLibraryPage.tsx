@@ -283,6 +283,24 @@ export function SettingsLibraryPage() {
         </div>
         <p className="text-xs text-gray-500">{t('settings.library.backoffHint')}</p>
 
+        {/* 重启续跑：白名单内的工作重启后自己接着跑。白名单本身不可配——改磁盘内容与花钱的那些
+            永远不进，那是判据不是口味。 */}
+        <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+          <label className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-white">{t('settings.library.resumeAfterRestart')}</p>
+              <p className="mt-1 text-xs text-gray-500">{t('settings.library.resumeAfterRestartHint')}</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={config.tasks.resume_after_restart}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, resume_after_restart: e.target.checked } })}
+              className="h-5 w-5 rounded-sm border-gray-700 bg-gray-900 text-komgaPrimary"
+            />
+          </label>
+          <FieldErrors messages={fieldErrors('tasks.resume_after_restart')} />
+        </div>
+
         <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4 text-sm text-gray-300">
           <p className="font-medium text-white">{t('settings.library.supportedFormats')}</p>
           <p className="mt-1">{capabilities?.default_scan_formats || 'zip,cbz,rar,cbr'}</p>

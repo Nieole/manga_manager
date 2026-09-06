@@ -16,6 +16,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/task"
 )
 
 // scrapeTaskStore 只实现两个刮削启动点真正会调到的那几个方法。其余方法留给内嵌的 nil 接口——
@@ -123,13 +124,17 @@ var scrapeScopes = []struct {
 	{
 		name: "全库", key: "scrape_all_series", variant: variantScrapeAllLibraries,
 		scope: taskScopeSystem, scopeName: "全库",
-		launch:       func(c *Controller) error { return c.launchBatchScrapeAllSeriesTask(context.Background(), "test") },
+		launch: func(c *Controller) error {
+			return c.launchBatchScrapeAllSeriesTask(context.Background(), "test", task.TriggerManual)
+		},
 		completeCode: "task.msg.scrape.complete_all", cancelCode: "task.msg.scrape.cancelled_all",
 	},
 	{
 		name: "单库", key: "scrape_library_7", variant: variantScrapeOneLibrary,
 		scope: taskScopeLibrary, scopeID: int64Ptr(7), scopeName: "Library A",
-		launch:       func(c *Controller) error { return c.launchLibraryScrapeTask(context.Background(), 7, "test") },
+		launch: func(c *Controller) error {
+			return c.launchLibraryScrapeTask(context.Background(), 7, "test", task.TriggerManual)
+		},
 		completeCode: "task.msg.scrape.complete_library", cancelCode: "task.msg.scrape.cancelled_library",
 	},
 }
@@ -249,7 +254,7 @@ func TestScrapeTaskDeclarationLandsWhole(t *testing.T) {
 func TestScrapeFrameIsPublishedWhole(t *testing.T) {
 	c, snapshots := newScrapeTaskRig(t, &scrapeTestProvider{fetchErr: errors.New("provider offline")})
 
-	if err := c.launchBatchScrapeAllSeriesTask(context.Background(), "test"); err != nil {
+	if err := c.launchBatchScrapeAllSeriesTask(context.Background(), "test", task.TriggerManual); err != nil {
 		t.Fatalf("启动全库刮削失败: %v", err)
 	}
 
@@ -293,11 +298,11 @@ func TestScrapeRetryReadsProviderFromTaskParams(t *testing.T) {
 				t.Fatalf("重试之前任务停在 %q, want completed", done.Status)
 			}
 
-			relaunch, ok := c.buildTaskRelaunchers()[taskDispatchKey{Type: "scrape", Variant: tc.variant}]
+			entry, ok := c.buildTaskDispatch()[taskDispatchKey{Type: "scrape", Variant: tc.variant}]
 			if !ok {
 				t.Fatalf("注册表里没有 scrape/%q 的重启函数 —— 这条作用域的重试按钮点下去是 400", tc.variant)
 			}
-			if err := relaunch(context.Background(), done); err != nil {
+			if err := entry.Relaunch(context.Background(), done, task.TriggerManual); err != nil {
 				t.Fatalf("重试刮削失败: %v", err)
 			}
 

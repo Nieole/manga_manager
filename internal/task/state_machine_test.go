@@ -161,12 +161,12 @@ func TestRestartMovesLiveRunsToInterrupted(t *testing.T) {
 	heartbeat := h.load(t, active.ID).UpdatedAt
 	h.clock.advance(8 * time.Hour)
 
-	marked, err := h.engine.MarkInterrupted(context.Background())
+	outcome, err := h.engine.MarkInterrupted(context.Background())
 	if err != nil {
 		t.Fatalf("批量转中断失败: %v", err)
 	}
-	if marked != 2 {
-		t.Fatalf("转中断的条数为 %d, want 2（活动态与排队中各一条）", marked)
+	if outcome.Marked != 2 {
+		t.Fatalf("转中断的条数为 %d, want 2（活动态与排队中各一条）", outcome.Marked)
 	}
 
 	for _, id := range []int64{active.ID, queued.ID} {

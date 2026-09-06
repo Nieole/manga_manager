@@ -479,7 +479,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *runhandle.Handle, pr
 	return TaskResult{Params: map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)}}, nil
 }
 
-func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, providerKey string) error {
+func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, providerKey string, trigger task.Trigger) error {
 	provider := c.getProvider(providerKey)
 	locale := metadata.LocaleFromContext(ctx)
 	libs, err := c.store.ListLibraries(ctx)
@@ -524,7 +524,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		FailCode:     "task.msg.scrape.failed_all",
 	}
 
-	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), task.TriggerManual, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), trigger, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping series metadata", allSeries)
 	})
 }
@@ -537,7 +537,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 	}
 	_ = json.NewDecoder(r.Body).Decode(&reqBody)
 
-	if err := c.launchBatchScrapeAllSeriesTask(ctx, reqBody.Provider); err != nil {
+	if err := c.launchBatchScrapeAllSeriesTask(ctx, reqBody.Provider, task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A batch scrape task is already running", "Failed to list libraries")
 		return
 	}
@@ -552,7 +552,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 
 // launchLibraryScrapeTask 是单库刮削任务的启动点，走引擎的启动入口。
 // 它只收缺基础元数据的系列——已有简介或出版社的跳过，因此 entries 可能为空。
-func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int64, providerKey string) error {
+func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int64, providerKey string, trigger task.Trigger) error {
 	provider := c.getProvider(providerKey)
 	locale := metadata.LocaleFromContext(ctx)
 
@@ -599,7 +599,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		FailCode:     "task.msg.scrape.failed_library",
 	}
 
-	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), task.TriggerManual, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), trigger, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping library series metadata", allSeries)
 	})
 }
@@ -617,7 +617,7 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&reqBody)
 
-	if err := c.launchLibraryScrapeTask(ctx, libraryID, reqBody.Provider); err != nil {
+	if err := c.launchLibraryScrapeTask(ctx, libraryID, reqBody.Provider, task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A library scrape task is already running", "Failed to list series in library")
 		return
 	}

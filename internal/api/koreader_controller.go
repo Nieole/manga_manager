@@ -661,7 +661,7 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 }
 
 func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Request) {
-	if err := c.launchRebuildBookHashesTask(); err != nil {
+	if err := c.launchRebuildBookHashesTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A KOReader index rebuild is already running", "Failed to start KOReader index rebuild")
 		return
 	}
@@ -669,7 +669,7 @@ func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Request) {
-	if err := c.launchRefreshKOReaderMatchingTask(); err != nil {
+	if err := c.launchRefreshKOReaderMatchingTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A KOReader matching refresh is already running", "Failed to start KOReader matching refresh")
 		return
 	}
@@ -677,7 +677,7 @@ func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Request) {
-	if err := c.launchReconcileKOReaderProgressTask(); err != nil {
+	if err := c.launchReconcileKOReaderProgressTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A KOReader progress reconciliation is already running", "Failed to start KOReader progress reconciliation")
 		return
 	}
@@ -780,7 +780,7 @@ func (h koreaderReconcileHandle) Advance(current, total int) {
 }
 
 // launchRebuildBookHashesTask 是书籍**指纹**重建任务的启动点，走引擎的启动入口。
-func (c *Controller) launchRebuildBookHashesTask() error {
+func (c *Controller) launchRebuildBookHashesTask(trigger task.Trigger) error {
 	spec := RunSpec{
 		Key:          rebuildBookHashesTaskKey,
 		StartCode:    "task.msg.koreader_rebuild_hashes.start",
@@ -792,7 +792,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildForeground), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildForeground), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
 		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, koreaderFingerprintHandle{Handle: tp})
 		if err != nil {
@@ -806,7 +806,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 //
 // 它只重算已落库记录的归属，不读书文件，没有哪个并发上限管得住它，因此 Limits 留零值
 // （零值的语义见 RunSpec.Limits）。
-func (c *Controller) launchReconcileKOReaderProgressTask() error {
+func (c *Controller) launchReconcileKOReaderProgressTask(trigger task.Trigger) error {
 	spec := RunSpec{
 		Key:          "reconcile_koreader_progress",
 		StartCode:    "task.msg.reconcile_koreader_progress.start",
@@ -818,7 +818,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 		FailCode:     "task.msg.reconcile_koreader_progress.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("reconcile_koreader_progress", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("reconcile_koreader_progress", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, koreaderReconcileHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
@@ -837,7 +837,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 //
 // 任务声明里那条默认失败码今天走不到（两步的失败各被覆盖、取消走取消码）。留着是因为
 // FailCode 留空会让将来任何一条未覆盖的失败路径把**起始**文案原样渲染成失败态的文案。
-func (c *Controller) launchRefreshKOReaderMatchingTask() error {
+func (c *Controller) launchRefreshKOReaderMatchingTask(trigger task.Trigger) error {
 	spec := RunSpec{
 		Key:          "refresh_koreader_matching",
 		StartCode:    "task.msg.refresh_koreader_matching.start",
@@ -850,7 +850,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		FailCode:     "task.msg.refresh_koreader_matching.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("refresh_koreader_matching", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("refresh_koreader_matching", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts,

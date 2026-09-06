@@ -1378,6 +1378,8 @@ export const messages: MessageCatalog = {
     'settings.library.backoffStopAfter': 'Stop after (failures)',
     'settings.library.backoffStopAfterHint': 'Once this many failures happen in a row, automatic launches stop and the task list flags it in red.',
     'settings.library.backoffHint': 'Backoff only holds back scheduled and watcher launches: starting a task by hand always works, and a run already in flight is never interrupted. One manual launch or one success clears the streak and the backoff. Each value is at least 1.',
+    'settings.library.resumeAfterRestart': 'Pick work back up after a restart',
+    'settings.library.resumeAfterRestartHint': 'Scans, covers and index work interrupted by a restart are queued again on their own, marked as resumed, so an unattended machine needs nobody to log in and press retry. Work that changes files on disk or costs money (external library transfers, ComicInfo write-back, scraping, AI grouping, library cleanup) never goes again by itself; it stays interrupted until you decide. Turn this off and everything simply stays interrupted.',
     'settings.library.supportedFormats': 'Supported scan formats',
     'settings.library.storageTitle': 'Storage I/O policy',
     'settings.library.storageProfile': 'Default storage medium',

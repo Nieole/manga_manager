@@ -32,6 +32,7 @@ export interface Config {
     backoff_factor: number;
     backoff_max_hours: number;
     backoff_stop_after: number;
+    resume_after_restart: boolean;
   };
   llm: {
     provider: string;

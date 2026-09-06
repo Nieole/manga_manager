@@ -166,7 +166,7 @@ func TestRebuildIndexNamesTheFailedIndex(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, snapshots, _ := newMaintenanceRig(t, tc.store)
 
-			if err := c.launchRebuildIndexTask(); err != nil {
+			if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
 				t.Fatalf("启动索引重建失败: %v", err)
 			}
 
@@ -190,7 +190,7 @@ func TestRebuildIndexNamesTheFailedIndex(t *testing.T) {
 func TestRebuildIndexCancellationOutranksTheStepCode(t *testing.T) {
 	c, snapshots, _ := newMaintenanceRig(t, &maintenanceStore{seriesIndexErr: context.Canceled})
 
-	if err := c.launchRebuildIndexTask(); err != nil {
+	if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动索引重建失败: %v", err)
 	}
 
@@ -207,15 +207,15 @@ func TestRebuildIndexCancellationOutranksTheStepCode(t *testing.T) {
 func TestRebuildIndexCompletes(t *testing.T) {
 	c, snapshots, _ := newMaintenanceRig(t, &maintenanceStore{})
 
-	if err := c.launchRebuildIndexTask(); err != nil {
+	if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动索引重建失败: %v", err)
 	}
 
-	task := lastPublishedTask(t, snapshots(), "rebuild_index")
-	if task.Status != "completed" || task.MessageCode != "task.msg.rebuild_index.complete" {
-		t.Fatalf("终态为 %q / %q, want completed + ...rebuild_index.complete", task.Status, task.MessageCode)
+	run := lastPublishedTask(t, snapshots(), "rebuild_index")
+	if run.Status != "completed" || run.MessageCode != "task.msg.rebuild_index.complete" {
+		t.Fatalf("终态为 %q / %q, want completed + ...rebuild_index.complete", run.Status, run.MessageCode)
 	}
-	if err := c.launchRebuildIndexTask(); err != nil {
+	if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
 		t.Fatalf("落定终态之后同一任务键起不来了: %v", err)
 	}
 }
@@ -235,7 +235,7 @@ func TestCleanupThumbnailsReportsPhaseThenCounts(t *testing.T) {
 		}
 	}
 
-	if err := c.launchCleanupThumbnailsTask(); err != nil {
+	if err := c.launchCleanupThumbnailsTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动缩略图清理失败: %v", err)
 	}
 
@@ -305,7 +305,7 @@ func TestRebuildFileIdentitiesCompletesWithCounts(t *testing.T) {
 	store := &maintenanceStore{candidates: seedIdentityCandidates(t, 2)}
 	c, snapshots, _ := newMaintenanceRig(t, store)
 
-	if err := c.launchRebuildFileIdentitiesTask(); err != nil {
+	if err := c.launchRebuildFileIdentitiesTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动文件身份重建失败: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestRebuildFileIdentitiesCompletesWithCounts(t *testing.T) {
 func TestRebuildFileIdentitiesCancellationLandsCancelled(t *testing.T) {
 	c, snapshots, _ := newMaintenanceRig(t, &maintenanceStore{listErr: context.Canceled})
 
-	if err := c.launchRebuildFileIdentitiesTask(); err != nil {
+	if err := c.launchRebuildFileIdentitiesTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动文件身份重建失败: %v", err)
 	}
 

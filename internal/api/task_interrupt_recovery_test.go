@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
 )
@@ -52,6 +53,7 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)
 func restartAndListInterrupted(t *testing.T, prev *Controller, store database.Store, tempDir string) ([]RunStatus, string) {
 	t.Helper()
 	reloaded := restartController(t, prev, store, tempDir)
+	disableResume(reloaded)
 	reloaded.taskEngine.markInterrupted(context.Background())
 
 	rec := httptest.NewRecorder()
@@ -69,6 +71,17 @@ func restartAndListInterrupted(t *testing.T, prev *Controller, store database.St
 		t.Fatalf("读回 %+v, want 一条 interrupted 运行", tasks)
 	}
 	return tasks, body
+}
+
+// disableResume 关掉这个 Controller 的**可续跑**全局开关。
+//
+// 本文件的用例只管重启那一笔**转写**，而资料库扫描正在白名单里：开着的话它还会被自动重排队，
+// 列表里就不止那一条了。续跑本身有它自己的用例，见 task_resume_test.go。
+func disableResume(c *Controller) {
+	cfg := c.currentConfig()
+	off := false
+	cfg.Tasks.ResumeAfterRestart = &off
+	c.config = config.NewManager(&cfg)
 }
 
 // lastActiveFrame 是一条扫描运行被按下暂停之前报出的最后一帧：进度、阶段、当前条目与累计指标。
@@ -144,6 +157,7 @@ func TestInterruptedRunIsNotListedTwice(t *testing.T) {
 	})
 
 	reloaded := restartController(t, controller, store, tempDir)
+	disableResume(reloaded)
 	reloaded.taskEngine.markInterrupted(context.Background())
 
 	tasks, err := reloaded.taskEngine.listRunStatuses(context.Background(), taskFilters{})

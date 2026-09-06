@@ -114,6 +114,9 @@ type Config struct {
 	//
 	// 与落盘端口同一条约束：它会在引擎的临界区内被调用，因此**不得回调进引擎**，也不得长时间阻塞。
 	Backoff func() BackoffPolicy
+	// Resume 读**可续跑**白名单与它的全局开关，重启转**中断**时读一遍。为 nil 时一条都不续跑：
+	// 白名单的内容属于装配方（本包不认识具体有哪些类型），没交出来就没有哪个类型被允许自己重跑。
+	Resume func() ResumePolicy
 	// ControlCodes 是引擎自己发出的控制文案码。
 	ControlCodes ControlCodes
 }
@@ -134,6 +137,7 @@ type Engine struct {
 	now           func() time.Time
 	slots         func() int
 	backoff       func() BackoffPolicy
+	resume        func() ResumePolicy
 	codes         ControlCodes
 
 	mu sync.Mutex
@@ -174,6 +178,7 @@ func New(cfg Config) *Engine {
 		now:           cfg.Now,
 		slots:         cfg.Slots,
 		backoff:       cfg.Backoff,
+		resume:        cfg.Resume,
 		codes:         cfg.ControlCodes,
 		runtimes:      make(map[int64]*taskRuntime),
 		queued:        make(map[int64]queuedRun),

@@ -163,7 +163,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 //
 // 它的**完成**分支有三个（生成了审阅单 / 全都已分组 / 没产出可审阅的合集），失败分支有三个，
 // 取消分支只有一个：都由任务体经 TaskResult 覆盖任务声明里的默认码表达。
-func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
+func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger task.Trigger) error {
 	scopeName := c.libraryScopeName(libID)
 
 	spec := RunSpec{
@@ -181,7 +181,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		FailCode:     "task.msg.ai_grouping.fail_generate",
 	}
 
-	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), task.TriggerManual, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), trigger, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		ctx := metadata.WithLocale(taskCtx, locale)
 
 		tp.Phase("collecting_series", "task.msg.ai_grouping.collecting_series", nil)
@@ -269,7 +269,7 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
-	if err := c.launchAIGroupingTask(libID, requestLocale(r)); err != nil {
+	if err := c.launchAIGroupingTask(libID, requestLocale(r), task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "An AI grouping task is already running for this library", "Failed to start AI grouping")
 		return
 	}

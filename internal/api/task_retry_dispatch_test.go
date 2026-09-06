@@ -27,7 +27,7 @@ func newHashRebuildRetryRig(t *testing.T) (*Controller, func() []RunStatus) {
 	cfg.KOReader.Enabled = true
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
 	c.config = config.NewManager(&cfg)
-	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
+	c.taskEngine.dispatch = c.buildTaskDispatch()
 	return c, snapshots
 }
 

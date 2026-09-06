@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/task"
 )
 
 // TestExternalLibraryTasksDeclareTheirLibraryScope 钉住外部库扫描与传输都落在**资料库**作用域
@@ -69,7 +70,7 @@ func TestAIGroupingDeclaresItsLibraryScope(t *testing.T) {
 		store:      &externalTaskStore{lib: database.Library{ID: libraryID, Name: "Library C"}},
 	}
 
-	if err := c.launchAIGroupingTask(libraryID, "zh-CN"); err != nil {
+	if err := c.launchAIGroupingTask(libraryID, "zh-CN", task.TriggerManual); err != nil {
 		t.Fatalf("启动 AI 分组失败: %v", err)
 	}
 
@@ -143,7 +144,7 @@ func TestBackfillRetryDispatchesByVariantNotKey(t *testing.T) {
 	if !ok {
 		t.Fatal("低优先级回填没有重启函数 —— 界面上那个重试按钮点下去是 400")
 	}
-	if err := relaunch(t.Context(), done); err != nil {
+	if err := relaunch(t.Context(), done, task.TriggerManual); err != nil {
 		t.Fatalf("重启低优先级回填失败: %v", err)
 	}
 
