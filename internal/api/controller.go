@@ -204,12 +204,19 @@ type TaskSummary struct {
 	// ScopeName 取自最近一次运行：显示名是**过渡期**字段，落在运行上而不是身份上
 	// （见 task.Run.ScopeName）。一次都没跑过的任务因此没有显示名，界面回落到作用域加 id。
 	ScopeName string `json:"scope_name,omitempty"`
-	// Disabled / FailStreak / BackoffUntil 是**退避**与禁用那一组长期属性，写入方尚未存在，
-	// 因此今天恒为零值。界面据此整块不显示，而不是画一个「连败 0」。
+	// Disabled / FailStreak / BackoffUntil 是**退避**与禁用那一组长期属性。
+	// 连败为 0 时界面整格不显示，而不是画一个「连败 0」。
 	Disabled      bool       `json:"disabled"`
 	FailStreak    int        `json:"fail_streak"`
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
 	BackoffUntil  *time.Time `json:"backoff_until,omitempty"`
+	// StallReason 是这个任务此刻**停发**的原因（人工禁用 / 连败到阈值 / 退避未到期），
+	// 空串表示自动发起照常。界面按它标红并写明为什么。
+	//
+	// 它是**派生**出来的一个封闭枚举，不是上面那三个字段的重复：判定要那三个数、还要三个阈值
+	// 与此刻的时间，而阈值在设置里可改。前端自己拿三个字段推一遍就等于把策略抄到浏览器里，
+	// 改完设置之后两边立刻对不上。
+	StallReason string `json:"stall_reason,omitempty"`
 	// LastRun 是「上次跑成什么样」。一次运行都没有的任务为 nil。
 	LastRun *RunStatus `json:"last_run,omitempty"`
 }
@@ -336,6 +343,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		RunBackground: c.runBackground,
 		DiskWork:      c.diskWork,
 		Slots:         c.taskSlots,
+		Backoff:       c.taskBackoffPolicy,
 	})
 	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTask 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
@@ -634,7 +642,8 @@ func (c *Controller) startDaemon() {
 //
 // 撞上手动扫描不再静默跳过：那次发起进**排队中**，手动扫描收尾后由引擎放行，用户在任务中心
 // 看得见它排在那里。已经排着一条时本次被**合并**进去——守护扫描要的只是「确保扫过」。
-// 两者都不是错误，因此这里只在**真的发不起来**时才记一笔。
+// 这个库被**停发**挡下时则一条运行都不建，那正是「不再每小时白转一遍盘」。
+// 三者都不是错误，因此这里只在**真的发不起来**时才记一笔。
 func (c *Controller) dispatchScheduledScans(ctx context.Context, now time.Time, lastScan map[int64]time.Time) {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
@@ -654,7 +663,9 @@ func (c *Controller) dispatchScheduledScans(ctx context.Context, now time.Time, 
 			continue
 		}
 		lastScan[lib.ID] = now
-		slog.InfoContext(ctx, "Triggering auto-scan for library from Daemon", "library_id", lib.ID, "path", lib.Path)
+		// 说的是「到点了」而不是「已经发起」：这次发起可能被**停发**挡下（那时一条运行都不建），
+		// 落地成什么由启动入口那一处记（见 taskEngine.start）。
+		slog.InfoContext(ctx, "Library reached its scan interval", "library_id", lib.ID, "path", lib.Path)
 		if err := c.launchLibraryScanTask(lib, false, task.TriggerScheduled); err != nil {
 			slog.ErrorContext(ctx, "Auto-scan could not be started", "library_id", lib.ID, "error", err)
 		}
@@ -816,10 +827,14 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/tasks/summary", c.listTaskSummaries)
 		r.Post("/system/tasks/pause-all", c.pauseAllTasks)
 		r.Post("/system/tasks/resume-all", c.resumeAllTasks)
-		// 重试作用在**任务**上（再发起一次同一件事），因此仍按**任务键**寻址；
+		// 重试与禁用作用在**任务**上（前者再发起一次同一件事，后者关掉它的自动发起）：
+		// 重试仍按**过渡期**的**任务键**寻址，禁用按任务 id——禁用是身份上的长期属性，
+		// 而外部库那两类的键带着会话 id，同一身份的两次运行键并不相同。
 		// 暂停 / 恢复 / 取消作用在**运行**上，按运行 id 寻址——同一个键此刻可以有两条仍会变化的
 		// 运行（一条在跑、一条排队），按键寻址答不出用户按的是哪一条。
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
+		r.Post("/system/tasks/{taskID}/disable", c.disableTask)
+		r.Post("/system/tasks/{taskID}/enable", c.enableTask)
 		r.Post("/system/runs/{runID}/pause", c.pauseRun)
 		r.Post("/system/runs/{runID}/resume", c.resumeRun)
 		r.Post("/system/runs/{runID}/cancel", c.cancelRun)

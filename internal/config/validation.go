@@ -134,6 +134,15 @@ func ValidateConfigValues(cfg *Config) ValidationResult {
 	if cfg.Tasks.RetainSampleDays < 1 {
 		issues = append(issues, ValidationIssue{Field: "tasks.retain_sample_days", Message: "采样的保留天数至少为 1。", Severity: "error"})
 	}
+	if cfg.Tasks.BackoffFactor < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.backoff_factor", Message: "退避倍率至少为 1。", Severity: "error"})
+	}
+	if cfg.Tasks.BackoffMaxHours < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.backoff_max_hours", Message: "退避封顶至少为 1 小时。", Severity: "error"})
+	}
+	if cfg.Tasks.BackoffStopAfter < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.backoff_stop_after", Message: "停发阈值至少为 1 次。", Severity: "error"})
+	}
 
 	if !isSupportedStorageProfile(cfg.Library.StorageProfile) {
 		issues = append(issues, ValidationIssue{Field: "library.storage_profile", Message: "存储介质策略必须是 auto、ssd、hdd_external、network 或 custom。", Severity: "error"})

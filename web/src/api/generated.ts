@@ -77,6 +77,7 @@ export interface TaskSummary {
   fail_streak: number;
   last_success_at?: string;
   backoff_until?: string;
+  stall_reason?: string;
   last_run?: RunStatus;
 }
 

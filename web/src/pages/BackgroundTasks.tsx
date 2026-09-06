@@ -210,6 +210,23 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     }
   };
 
+  // 人工禁用作用在**任务**上，因此按 task_id 寻址，而不是像三个控制动作那样按运行 id。
+  // 它只关掉自动发起：手动发起（重试）在禁用期间照旧可用，那条出口是刻意留着的。
+  const toggleTaskAuto = async (task: TaskSummary) => {
+    const action = task.disabled ? 'enable' : 'disable';
+    setTaskActionKey(`${task.task_id}:auto`);
+    try {
+      await apiClient.post(`/api/system/tasks/${task.task_id}/${action}`);
+      showToast(t(`settings.maintenance.taskAction.${action}Success`));
+      await fetchTasks();
+    } catch (error) {
+      console.error(error);
+      showToast(t(`settings.maintenance.taskAction.${action}Failed`), 'error');
+    } finally {
+      setTaskActionKey(null);
+    }
+  };
+
   // 全部暂停 / 全部恢复：后端把每条运行逐个按下或放行，这里只负责发一次请求再重取。
   const runBulkPause = async (action: 'pause-all' | 'resume-all') => {
     setBulkPauseBusy(true);
@@ -311,6 +328,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
         onClearTasks={clearTasks}
         onOpenTaskTarget={openTaskTarget}
         onViewTaskLogs={onViewTaskLogs}
+        onToggleTaskAuto={toggleTaskAuto}
       />
     </div>
   );

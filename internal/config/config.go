@@ -137,6 +137,16 @@ type Config struct {
 		RetainTerminalRunDays int `yaml:"retain_terminal_run_days" json:"retain_terminal_run_days"`
 		// RetainSampleDays 是**采样**点的最长保留天数。它比运行本身短：运行还在，曲线没了。
 		RetainSampleDays int `yaml:"retain_sample_days" json:"retain_sample_days"`
+
+		// **退避**的三个阈值。它们只约束**自动发起**（定时与监听）：手动发起、以及已经在跑的
+		// 运行都不受影响。小于 1 的值一律归一化为默认值，逐项失效的方式见 task.BackoffPolicy.orDefault。
+
+		// BackoffFactor 是倍率：每多连败一次，自动发起的间隔乘以它。
+		BackoffFactor int `yaml:"backoff_factor" json:"backoff_factor"`
+		// BackoffMaxHours 是封顶：间隔再怎么翻也不超过这么多小时。
+		BackoffMaxHours int `yaml:"backoff_max_hours" json:"backoff_max_hours"`
+		// BackoffStopAfter 是停发阈值：连败到这个次数就不再自动发起，界面上标红等人来修。
+		BackoffStopAfter int `yaml:"backoff_stop_after" json:"backoff_stop_after"`
 	} `yaml:"tasks" json:"tasks"`
 	Ollama struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"`
@@ -198,6 +208,15 @@ const (
 	DefaultRetainRunsPerTask     = 20
 	DefaultRetainTerminalRunDays = 90
 	DefaultRetainSampleDays      = 7
+
+	// DefaultBackoff* 是**退避**三个阈值的默认值：连败后按 ×2 拉长自动发起的间隔、
+	// 封顶 24 小时、连败 6 次停发。
+	//
+	// 它们必须与 `internal/task` 的 DefaultBackoff 相等，理由同 DefaultRunSlots。
+	// `TestConfigDefaultBackoffMatchesTheEngineDefault` 守着这条相等。
+	DefaultBackoffFactor    = 2
+	DefaultBackoffMaxHours  = 24
+	DefaultBackoffStopAfter = 6
 
 	KOReaderPathMatchDepth = 2
 	LogLevelDebug          = "debug"
@@ -463,6 +482,16 @@ func NormalizeConfig(cfg *Config) {
 	}
 	if cfg.Tasks.RetainSampleDays < 1 {
 		cfg.Tasks.RetainSampleDays = DefaultRetainSampleDays
+	}
+	// 退避的三个数同理。「不要退避」的表达是把停发阈值调大、把封顶调小，不是把某个数填成 0。
+	if cfg.Tasks.BackoffFactor < 1 {
+		cfg.Tasks.BackoffFactor = DefaultBackoffFactor
+	}
+	if cfg.Tasks.BackoffMaxHours < 1 {
+		cfg.Tasks.BackoffMaxHours = DefaultBackoffMaxHours
+	}
+	if cfg.Tasks.BackoffStopAfter < 1 {
+		cfg.Tasks.BackoffStopAfter = DefaultBackoffStopAfter
 	}
 	normalizeLLMConfig(cfg)
 	basePath := strings.TrimSpace(cfg.KOReader.BasePath)

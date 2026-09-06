@@ -109,6 +109,11 @@ type Config struct {
 	// 与落盘端口同一条约束：它会在引擎的临界区内被调用，因此**不得回调进引擎**，也不得长时间阻塞。
 	// 读一份配置快照正合适；在它里面等一次网络或一把会被引擎持有的锁不行。
 	Slots func() int
+	// Backoff 读**退避**的三个阈值。它是一个**函数**而不是一份值，理由同 Slots：三个数在设置里
+	// 可改，改了要对**下一次自动发起**生效，而不是等进程重启。为 nil 时取 DefaultBackoff()。
+	//
+	// 与落盘端口同一条约束：它会在引擎的临界区内被调用，因此**不得回调进引擎**，也不得长时间阻塞。
+	Backoff func() BackoffPolicy
 	// ControlCodes 是引擎自己发出的控制文案码。
 	ControlCodes ControlCodes
 }
@@ -128,6 +133,7 @@ type Engine struct {
 	decorate      func(context.Context, Run) context.Context
 	now           func() time.Time
 	slots         func() int
+	backoff       func() BackoffPolicy
 	codes         ControlCodes
 
 	mu sync.Mutex
@@ -167,6 +173,7 @@ func New(cfg Config) *Engine {
 		decorate:      cfg.DecorateRunContext,
 		now:           cfg.Now,
 		slots:         cfg.Slots,
+		backoff:       cfg.Backoff,
 		codes:         cfg.ControlCodes,
 		runtimes:      make(map[int64]*taskRuntime),
 		queued:        make(map[int64]queuedRun),
@@ -190,6 +197,17 @@ func (e *Engine) Slots() int {
 		return limit
 	}
 	return DefaultSlots
+}
+
+// Backoff 返回此刻生效的**退避**三个阈值，不合法的逐项换成默认值（见 BackoffPolicy.orDefault）。
+//
+// 每次判定都现读一遍，因此改设置对**下一次自动发起**生效：正在退避的任务不会被重新计时，
+// 到期时刻在它上一次失败时就已经写死了。
+func (e *Engine) Backoff() BackoffPolicy {
+	if e.backoff == nil {
+		return DefaultBackoff()
+	}
+	return e.backoff().orDefault()
 }
 
 // PausedAll 回答「全部暂停的闸门此刻关着吗」。

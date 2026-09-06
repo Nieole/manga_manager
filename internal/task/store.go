@@ -16,6 +16,9 @@ var (
 	ErrRunAlreadyActive = errors.New("task already has an active run")
 	ErrRunAlreadyQueued = errors.New("task already has a queued run")
 	ErrRunNotFound      = errors.New("run not found")
+	// ErrTaskNotFound 是按 id 找一个任务却找不到时的哨兵错误。按 id 寻址的入口只有人工禁用
+	// 那一条（见 Engine.SetTaskDisabled）——其余路径都先经 EnsureTask 拿到身份。
+	ErrTaskNotFound = errors.New("task not found")
 )
 
 // RunOrder 是列表的定序方式。序号是唯一的排序主键，时间列不是。

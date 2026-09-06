@@ -515,11 +515,14 @@ func (c *Controller) runWatchedLibraryCleanup(ctx context.Context, libraryID int
 
 // awaitWatchedRun 等这次发起的运行收尾，把结果讲给监听器听。
 //
-// 被**合并**掉的那次不等：它的任务体不会执行（排在前面那条跑的是同一件事），而那条还没跑完——
-// 交出 ErrScanCoalesced，监听器据此不接着清理，并把这轮清理重新排期。
+// 两种「没有运行可等」各交出自己的哨兵，监听器据此都不接着清理，但后续处置不同（见那两个符号）：
+// 被**合并**掉的那次任务体不会执行，而排在前面那条还没跑完；被**停发**挡下的那次连运行都没建。
 func (c *Controller) awaitWatchedRun(ctx context.Context, launched task.Launched, launchErr error) error {
 	if launchErr != nil {
 		return launchErr
+	}
+	if launched.Stalled != task.StallNone {
+		return scanner.ErrScanSuppressed
 	}
 	if launched.Coalesced {
 		return scanner.ErrScanCoalesced

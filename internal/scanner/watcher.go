@@ -116,6 +116,13 @@ func defaultWatcherTimings() watcherTimings {
 // 判定的结果讲给监听器听：被合并掉的那次扫描**还没跑完**，跟在它后面的清理因此必须重新排期。
 var ErrScanCoalesced = errors.New("scanner: scan was coalesced into a queued run")
 
+// ErrScanSuppressed 是 WatcherHooks.ScanLibrary 的另一条约定出口：这个库的自动发起被**停发**
+// 挡下了（连败到阈值、**退避**没到期，或者用户人工禁用），因此本次没有扫。
+//
+// 它与 ErrScanCoalesced 的区别在于**要不要重排**：被合并的那次还有人替它扫，重排一次清理即可；
+// 被停发挡下的这次没有人扫，而条件也不会因为再等一个去抖窗口就变——重排只会每隔几秒再被挡一次。
+var ErrScanSuppressed = errors.New("scanner: automatic scan is suppressed for this library")
+
 // WatcherHooks 是监听器派生工作的三个出口。监听器自己**不调用扫描器**：它只知道
 // 「这个库该扫了」「这个库该清了」，去哪儿扫、这次扫描算作谁的一次**运行**，由装配方回答。
 //
@@ -404,6 +411,12 @@ func (fw *FileWatcher) dispatchDueLocked(now time.Time, publishEvent func(string
 			switch {
 			case errors.Is(err, context.Canceled):
 				// 停机取消，不是故障。
+			case errors.Is(err, ErrScanSuppressed):
+				// 这个库的自动发起被停发挡下：本轮不扫，跟在后面的清理也一并放弃——
+				// 清理只有跟在一次成功的扫描之后才安全，而这次扫描根本没发生。
+				// 不重排：条件不会因为再等一个去抖窗口而改变，重排就是每隔几秒再被挡一次。
+				slog.Info("Hot reload scan suppressed by task backoff or disable", "library_id", id)
+				return
 			case errors.Is(err, ErrScanCoalesced):
 				// 这个库上已经排着一次等价的扫描，本次被**合并**进去了：那一次会看到这批新文件，
 				// 无需重试也不必报错。它还没跑完，因此下面那条清理仍要重新排期。
@@ -448,11 +461,14 @@ func (fw *FileWatcher) dispatchDueLocked(now time.Time, publishEvent func(string
 
 // cleanupLibraryNow 跑一次库清理并按结果记一笔。
 //
-// 停机取消与被**合并**都不是故障：合并意味着这个库上已经排着一条等价的清理，那一条会做同一件事。
-// 两个派发点共用它，「什么算故障」因此只有一处答案——否则同一件事在一处记 Error、另一处不记。
+// 停机取消、被**合并**与被**停发**挡下都不是故障：合并意味着这个库上已经排着一条等价的清理，
+// 停发意味着用户或退避不要它自己跑。两个派发点共用它，「什么算故障」因此只有一处答案——
+// 否则同一件事在一处记 Error、另一处不记。
 func (fw *FileWatcher) cleanupLibraryNow(libraryID int64) {
 	switch err := fw.cleanupLibrary(fw.baseCtx, libraryID); {
 	case err == nil, errors.Is(err, context.Canceled):
+	case errors.Is(err, ErrScanSuppressed):
+		slog.Info("Watcher-triggered cleanup suppressed by task backoff or disable", "library_id", libraryID)
 	case errors.Is(err, ErrScanCoalesced):
 		slog.Info("Watcher-triggered cleanup coalesced into a queued cleanup", "library_id", libraryID)
 	default:

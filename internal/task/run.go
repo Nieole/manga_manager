@@ -75,6 +75,13 @@ const (
 	TriggerResumed   Trigger = "resumed"
 )
 
+// IsAutomatic 判断这个**发起方**是不是「系统自己按节拍叫来的」：**定时**与**监听**两种。
+// 只有这两种受**退避**与人工禁用约束（见 BackoffPolicy.Stall）。
+//
+// **串联**与**恢复**不算：串联是上一件事带出来的收尾工作，恢复每次重启至多发一次，
+// 两者都形不成「每小时白转一遍盘」那个循环。**手动**更不算——退避与禁用都必须留着手动这条出口。
+func (t Trigger) IsAutomatic() bool { return t == TriggerScheduled || t == TriggerWatch }
+
 // PauseReason 是一次**已暂停**的原因：用户按的是这条运行自己的暂停键，还是「全部暂停」。
 // 它是一个**封闭枚举**，取值就是落盘那一列的取值。
 //

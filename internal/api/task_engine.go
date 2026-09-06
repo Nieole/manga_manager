@@ -59,6 +59,9 @@ type taskEngineConfig struct {
 	// Slots 读**运行槽位**上限。它是函数而不是数：上限在设置里可改，改了要对**新的放行**生效，
 	// 而不打断已经在跑的。为 nil 时领域引擎取它的默认值（task.DefaultSlots）。
 	Slots func() int
+	// Backoff 读**退避**的三个阈值，同样是函数而不是值，理由同 Slots。
+	// 为 nil 时领域引擎取它的默认值（task.DefaultBackoff）。
+	Backoff func() task.BackoffPolicy
 }
 
 // taskEngine 是领域引擎的适配器：两侧的翻译、按**任务键**寻址的那几个入口，与一份身份缓存。
@@ -94,6 +97,7 @@ type taskEngine struct {
 	runBackground func(func())
 	now           func() time.Time
 	slots         func() int
+	backoff       func() task.BackoffPolicy
 
 	// relaunchers 是任务重试的注册表（(类型, **变体**) -> 重启函数），也是「可重试」的唯一事实来源。
 	// 在 newControllerCore 中一次性填好（重启函数要调 Controller 的领域方法，故由 Controller 构建），
@@ -121,6 +125,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		runBackground: cfg.RunBackground,
 		now:           cfg.Now,
 		slots:         cfg.Slots,
+		backoff:       cfg.Backoff,
 		identities:    make(map[int64]TaskIdentity),
 	}
 	e.engine = task.New(task.Config{
@@ -131,6 +136,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		DecorateRunContext: decorateRunContext,
 		Now:                e.clock,
 		Slots:              e.slotLimit,
+		Backoff:            e.backoffPolicy,
 		ControlCodes: task.ControlCodes{
 			Paused:      "task.msg.control.paused",
 			Resumed:     "task.msg.control.resumed",
@@ -152,6 +158,16 @@ func (e *taskEngine) slotLimit() int {
 		return 0
 	}
 	return e.slots()
+}
+
+// backoffPolicy 读此刻的**退避**三个阈值。领域引擎收的是这个方法而不是 cfg.Backoff，
+// 理由同 slotLimit：构造之后换掉仍然生效，而不合法的取值一律交给领域引擎兜底——
+// 在这里也判一遍，等于让「三个数该是几」有两个答案。
+func (e *taskEngine) backoffPolicy() task.BackoffPolicy {
+	if e.backoff == nil {
+		return task.BackoffPolicy{}
+	}
+	return e.backoff()
 }
 
 // clock 返回当前时刻（测试可经 now 字段注入）。领域引擎收的是这个方法而不是 cfg.Now，
@@ -333,6 +349,9 @@ func (e *taskEngine) listTaskSummaries(ctx context.Context, filters taskFilters)
 			FailStreak:    owner.FailStreak,
 			LastSuccessAt: owner.LastSuccessAt,
 			BackoffUntil:  owner.BackoffUntil,
+			// **停发**由领域按同一份阈值判，本层不拿那三个字段自己再推一遍：推错的后果是
+			// 界面上的红点与真正被挡下的那次发起各说各话。
+			StallReason: string(e.engine.StallOf(owner.TaskAttributes)),
 		}
 		if snapshot, ok := latest[owner.ID]; ok {
 			run := e.runStatusFrom(snapshot, identity)
@@ -456,6 +475,13 @@ func (e *taskEngine) pruneHistory(ctx context.Context, policy task.RetentionPoli
 	return e.engine.PruneHistory(ctx, policy)
 }
 
+// setTaskDisabled 翻转人工禁用开关，**按任务 id 寻址**（规格关键决定 15：禁用作用在**任务**上）。
+// 它一条运行都不动——禁用一个正在跑的任务，那次运行照常跑到底。
+func (e *taskEngine) setTaskDisabled(ctx context.Context, taskID int64, disabled bool) error {
+	_, err := e.engine.SetTaskDisabled(ctx, taskID, disabled)
+	return taskControlError(err)
+}
+
 // pauseRun / resumeRun / cancelRun 是三个控制动作，**按运行 id 寻址**。
 //
 // 不按**任务键**：队列出现之后，同一个键此刻可以有两条仍会变化的运行（一条在跑、一条排队），
@@ -529,7 +555,7 @@ func taskControlError(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, task.ErrRunNotFound):
+	case errors.Is(err, task.ErrRunNotFound), errors.Is(err, task.ErrTaskNotFound):
 		return errTaskNotFound
 	case errors.Is(err, task.ErrRunNotRunning):
 		return errTaskNotRunning

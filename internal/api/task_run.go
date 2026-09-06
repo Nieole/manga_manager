@@ -10,6 +10,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"manga-manager/internal/runhandle"
@@ -154,9 +155,10 @@ type taskBody func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error
 // 它也不该有默认值：半夜转盘的那条运行到底是定时叫来的还是监听叫来的，正是用户要的答案，
 // 猜错比不填更糟。
 //
-// 返回 nil 即这次发起已经落地，但**落成哪一种要看闸门**：槽位有空且这个身份没有活动运行时它
-// 当场开跑，否则进**排队中**等放行；这个身份已经排着一条时，本次发起被**合并**进那一条，
-// 交出去的任务体不会执行。三种都不是错误——冲突不再被丢弃。
+// 返回 nil **不等于**建出了一条运行，落成哪一种要看闸门：槽位有空且这个身份没有活动运行时它
+// 当场开跑，否则进**排队中**等放行；这个身份已经排着一条时，本次发起被**合并**进那一条；
+// 而**自动**发起（定时 / 监听）撞上**停发**时一条运行都不建。后三种交出去的任务体都不会执行，
+// 四种也都不是错误——冲突不再被丢弃，被自己的设置挡下更不是故障。要分辨落成了哪一种，用 start。
 // **判据是身份而不是任务键**：键只管寻址，而「同一件事不会同时跑两遍」由库上那条部分唯一索引保证。
 //
 // 刻意保留的不变量：准入**同步**执行、任务体**异步**执行。Run 返回时运行已在库里、
@@ -210,6 +212,11 @@ func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec Run
 	// 而不是一个 500。
 	if errors.Is(err, task.ErrRunAlreadyActive) || errors.Is(err, task.ErrRunAlreadyQueued) {
 		return task.Launched{}, errTaskAlreadyRunning
+	}
+	// 被**停发**挡下的那次自动发起在这里留一行，且**只在这里留**：十七个启动点各写一句的话，
+	// 绝大多数不会写。它不是错误——挡下它的正是用户自己的设置，因此记 Info 不记 Warn。
+	if launched.Stalled != task.StallNone {
+		slog.Info("Automatic launch suppressed", "task_key", spec.Key, "trigger", trigger, "reason", launched.Stalled)
 	}
 	return launched, err
 }

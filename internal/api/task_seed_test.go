@@ -26,6 +26,13 @@ import (
 // 启动入口返回 nil。用例要断言的是「重复播种没有变出第二条在跑的任务」，这个哨兵正是那句话。
 var errSeededRunQueued = errors.New("seeded run is queued")
 
+// errSeededRunStalled 表示这次播种被**停发**挡下了：这个任务此刻正在**退避**、连败到了阈值、
+// 或者被人工禁用，而播下的**发起方**是自动的（定时 / 监听）。
+//
+// 与排队那条不同，这一次**一条运行都没有落地**，任务体也永远不会执行。不在这里交出错误的话，
+// 播种会停在一个等不到的任务体上，用例只表现为超时。
+var errSeededRunStalled = errors.New("seeded run is stalled")
+
 // taskSeed 描述一条要播下的任务。零值即「不可取消不可暂停、停在运行中」。
 //
 // 前半段字段刻意平铺而不是内嵌 RunSpec：内嵌能保证任务声明加字段时播种自动跟上，代价是
@@ -167,13 +174,17 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*runhandle.Handle,
 			fn()
 		}()
 	}
-	err := e.Run(seed.Identity, seed.trigger(), spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	launched, err := e.start(seed.Identity, seed.trigger(), spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		started <- seededBody{ctx: ctx, handle: handle}
 		return result, <-run.finish
 	})
 	e.runBackground = restore
 	if err != nil {
 		return nil, err
+	}
+	// 被**停发**挡下：没有运行、也没有任务体。备好的那个错误没人来取，直接扔掉即可。
+	if launched.Stalled != task.StallNone {
+		return nil, errSeededRunStalled
 	}
 	// 播种被闸门拦在了**排队中**：运行落地了，任务体却还没起，因此没有句柄可交。
 	//
@@ -239,6 +250,29 @@ func TestSeedTaskGoesThroughTheAdmissionGate(t *testing.T) {
 	// 上一条播种落下的那条排队运行在收尾时被放行、当场收尾，因此这里播下的又是一条全新的活动运行。
 	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); err != nil {
 		t.Fatalf("落定终态之后同一身份播不下去了: %v", err)
+	}
+}
+
+// TestSeedTaskGoesThroughTheStallGate 守卫脚手架也没有绕开**停发**那道闸门。
+//
+// 它与准入那道是两回事：准入判「这件事是不是已经在跑」，停发判「这活还该不该自动发起」。
+// 绕开它的话，退避与禁用在整片测试里失去覆盖——而一条自动发起的播种会停在一个永远不会执行的
+// 任务体上，用例只表现为超时。
+func TestSeedTaskGoesThroughTheStallGate(t *testing.T) {
+	e, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
+
+	const key = "scan_library_1"
+	identity := libraryTask("scan_library", 1, variantSole)
+	seedTask(t, e, taskSeed{Key: key, Identity: identity, Total: 1, Terminal: "failed", FailError: "boom"})
+
+	if _, err := trySeedTask(t, e, taskSeed{
+		Key: key, Identity: identity, Trigger: task.TriggerScheduled, Total: 1, Terminal: "failed",
+	}); !errors.Is(err, errSeededRunStalled) {
+		t.Fatalf("退避期内播一条定时发起返回 %v, want errSeededRunStalled —— 脚手架绕过了停发闸门", err)
+	}
+	// 手动发起不受停发约束，照播不误。
+	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: identity, Total: 1, Terminal: "completed"}); err != nil {
+		t.Fatalf("退避期内手动播种失败: %v", err)
 	}
 }
 

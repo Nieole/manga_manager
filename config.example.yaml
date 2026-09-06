@@ -64,6 +64,10 @@ tasks:
     retain_runs_per_task: 20
     retain_terminal_run_days: 90
     retain_sample_days: 7
+    # 自动发起的退避：连败后间隔按倍率拉长、封顶多少小时、连败几次停发。三个数都至少为 1
+    backoff_factor: 2
+    backoff_max_hours: 24
+    backoff_stop_after: 6
 ollama:
     endpoint: ""
     model: ""

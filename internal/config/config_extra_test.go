@@ -313,6 +313,9 @@ func validBaseConfig(t *testing.T) *Config {
 	cfg.Tasks.RetainRunsPerTask = DefaultRetainRunsPerTask
 	cfg.Tasks.RetainTerminalRunDays = DefaultRetainTerminalRunDays
 	cfg.Tasks.RetainSampleDays = DefaultRetainSampleDays
+	cfg.Tasks.BackoffFactor = DefaultBackoffFactor
+	cfg.Tasks.BackoffMaxHours = DefaultBackoffMaxHours
+	cfg.Tasks.BackoffStopAfter = DefaultBackoffStopAfter
 	cfg.Library.StorageProfile = StorageProfileAuto
 	cfg.LLM.Provider = "ollama"
 	cfg.LLM.BaseURL = "http://localhost:11434"
@@ -363,6 +366,11 @@ func TestValidateConfigRejectsFieldByField(t *testing.T) {
 		{"no-runs-retained", func(c *Config) { c.Tasks.RetainRunsPerTask = 0 }, "tasks.retain_runs_per_task"},
 		{"negative-terminal-days", func(c *Config) { c.Tasks.RetainTerminalRunDays = -1 }, "tasks.retain_terminal_run_days"},
 		{"negative-sample-days", func(c *Config) { c.Tasks.RetainSampleDays = -1 }, "tasks.retain_sample_days"},
+		// 退避三个数同理：倍率 0 让曲线停在起点、封顶 0 等于没有退避、停发阈值 0 会让每个任务
+		// 从第一天起就停发——设置页给这三格画了错误位，静默改回默认等于那三格永远是空的。
+		{"no-backoff-factor", func(c *Config) { c.Tasks.BackoffFactor = 0 }, "tasks.backoff_factor"},
+		{"no-backoff-cap", func(c *Config) { c.Tasks.BackoffMaxHours = 0 }, "tasks.backoff_max_hours"},
+		{"no-backoff-stop-after", func(c *Config) { c.Tasks.BackoffStopAfter = -1 }, "tasks.backoff_stop_after"},
 		{"openai-bad-api-mode", func(c *Config) {
 			c.LLM.Provider = "openai"
 			c.LLM.BaseURL = "https://api.openai.com"

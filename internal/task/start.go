@@ -102,6 +102,12 @@ type Launched struct {
 	// Coalesced 为真表示本次发起被合并进了 Run 那一条已经排着的运行：
 	// 它跑的是同一件事，本次交出的任务体不会执行。
 	Coalesced bool
+	// Stalled 非空表示这次**自动**发起被**停发**挡下：一条运行都没建（Run 是零值），
+	// 交出的任务体不会执行，而它就是挡下的原因。
+	//
+	// 它不是错误：连败到停发、退避没到期、人工禁用，三者都是系统按用户的设置正常工作。
+	// 调用方要么什么都不做（守护扫描），要么据此不接着做下一步（监听器的清理）。
+	Stalled StallReason
 }
 
 // Start 是往库里放一条运行的**唯一入口**。
@@ -112,6 +118,10 @@ type Launched struct {
 // 这个任务已经有一条排队中的运行时，本次发起**合并**进那一条：不新建，只把它的合并计数加一，
 // 返回的正是那条排队运行。守护扫描要的只是「确保扫过」，合并与各排一条效果相同，
 // 而后者会堆成一串一模一样的运行。被合并掉的那份任务体不会执行——排在前面的那条跑的是同一件事。
+//
+// **自动**发起（定时、监听）还要多过一道**停发**闸门：连败到阈值、**退避**没到期、或者
+// 人工禁用了这个任务，本次就一条运行都不建，交回的 Launched.Stalled 说明为什么。手动发起
+// 从不经过那道闸门，反而在那里把连败与退避清零。
 //
 // 刻意保留的不变量：槽位闸门**同步**执行、任务体**异步**执行。Start 返回时运行已在列表里、
 // 而任务体尚未开跑，HTTP 层才能立即返回而不被任务体阻塞。
@@ -129,8 +139,14 @@ func (e *Engine) Start(ctx context.Context, spec RunSpec, body Body) (Launched, 
 	if err != nil {
 		return Launched{}, err
 	}
-
+	// 停发闸门与准入在**同一个临界区**里：那一行长期属性另有一个写入方（收尾那一侧），
+	// 分成两段就会有一次复位与一次失败计数互相覆盖。
 	e.mu.Lock()
+	stalled := e.gateLaunchLocked(ctx, &owner, spec.Trigger)
+	if stalled != StallNone {
+		e.mu.Unlock()
+		return Launched{Stalled: stalled}, nil
+	}
 	launched, launch, err := e.admitLocked(ctx, owner, spec, body)
 	e.mu.Unlock()
 	if err != nil {
@@ -427,6 +443,9 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 	delete(e.queued, runID)
 	// 终态丢掉水位：这条运行不会再有帧，留着只是泄漏。
 	delete(e.gates, runID)
+	// 连败与**退避**记在**任务**上，而这里是四条终态里唯一由任务体裁决的三条汇合处：
+	// 记在别处就得在每条分支上各记一遍，而漏掉「失败」那一条不会有任何编译错误。
+	e.recordOutcomeLocked(ctx, run.TaskID, status, now)
 	e.saveLocked(run)
 	e.publishLocked(run)
 	// 等这条运行收尾的人在落盘**之后**才被叫醒：他们醒来第一件事就是把它读回来。

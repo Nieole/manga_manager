@@ -207,12 +207,63 @@ describe('还没有值的那几个展示位', () => {
     expect(screen.queryByText('logs.taskCenter.stalled')).toBeNull();
   });
 
-  it('连败与停发一旦有值就标出来', () => {
+  it('连败与停发一旦有值就标出来，并写明为什么', () => {
     renderCenter({
-      tasks: [makeSummary({ fail_streak: 6, disabled: true, last_run: makeRun({ status: 'failed' }) })],
+      tasks: [makeSummary({
+        fail_streak: 6,
+        stall_reason: 'fail_limit',
+        last_run: makeRun({ status: 'failed', error: 'drive is unplugged' }),
+      })],
     });
     expect(screen.getByText('logs.taskCenter.failStreak')).toBeTruthy();
     expect(screen.getByText('logs.taskCenter.stalled')).toBeTruthy();
+    // 「写明原因」那半句：光标红答不出「我该去修什么」。
+    expect(screen.getByText(/logs\.taskCenter\.stallReason\.fail_limit/)).toBeTruthy();
+    expect(screen.getByText(/logs\.taskCenter\.lastError/)).toBeTruthy();
+  });
+
+  // 退避会自己走完，因此它不标红——每失败一次就红一次只是噪音，而红色要留给「不会自己恢复」。
+  it('退避中的任务不标停发，只写还要等到什么时候', () => {
+    renderCenter({
+      tasks: [makeSummary({ fail_streak: 1, stall_reason: 'backoff', backoff_until: '2026-09-01T02:00:00Z', last_run: makeRun({ status: 'failed' }) })],
+    });
+    expect(screen.queryByText('logs.taskCenter.stalled')).toBeNull();
+    expect(screen.getByText('logs.taskCenter.backingOff')).toBeTruthy();
+    expect(screen.getByText(/logs\.taskCenter\.stallReason\.backoff/)).toBeTruthy();
+  });
+
+  // 停发的判据只有后端一处：前端拿 disabled / backoff_until 自己再推一遍的话，
+  // 改完设置里那三个阈值，界面上的红点与真正被挡下的那次发起会各说各话。
+  it('后端没判停发时，光有 disabled 也不标红', () => {
+    renderCenter({ tasks: [makeSummary({ disabled: true, last_run: makeRun({ status: 'completed' }) })] });
+    expect(screen.queryByText('logs.taskCenter.stalled')).toBeNull();
+  });
+
+  // 标红对应的是票据里那一条「连败 ≥6 次停发并标红」。用户自己关掉的自动发起不是故障，
+  // 画成红色只会让红色贬值成「这一行有点什么」。
+  it('人工禁用画的是中性徽章而不是停发标红', () => {
+    renderCenter({
+      tasks: [makeSummary({ disabled: true, stall_reason: 'disabled', last_run: makeRun({ status: 'completed' }) })],
+    });
+    expect(screen.queryByText('logs.taskCenter.stalled')).toBeNull();
+    expect(screen.getByText('logs.taskCenter.autoDisabled')).toBeTruthy();
+    expect(screen.getByText(/logs\.taskCenter\.stallReason\.disabled/)).toBeTruthy();
+  });
+
+  it('禁用开关按任务交出去，而不是按运行', () => {
+    const onToggleTaskAuto = vi.fn();
+    const task = makeSummary({ last_run: makeRun({ status: 'completed' }) });
+    renderCenter({ tasks: [task], onToggleTaskAuto });
+    fireEvent.click(screen.getByText('logs.taskCenter.disableAuto'));
+    expect(onToggleTaskAuto).toHaveBeenCalledWith(task);
+  });
+
+  it('已禁用的任务上那个按钮写的是恢复', () => {
+    renderCenter({
+      tasks: [makeSummary({ disabled: true, stall_reason: 'disabled', last_run: makeRun({ status: 'completed' }) })],
+      onToggleTaskAuto: vi.fn(),
+    });
+    expect(screen.getByText('logs.taskCenter.enableAuto')).toBeTruthy();
   });
 
   it('后端没发发起方就整格不显示', () => {

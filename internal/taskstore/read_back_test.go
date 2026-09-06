@@ -5,7 +5,9 @@ package taskstore
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"manga-manager/internal/task"
 )
@@ -272,4 +274,76 @@ func TestTaskKeyColumnSurvivesTheRoundTrip(t *testing.T) {
 	if readBack.Key != "scan_library_1" || readBack.ScopeName != "Main" {
 		t.Fatalf("过渡期的两列读回来是 %q / %q", readBack.Key, readBack.ScopeName)
 	}
+}
+
+// TestTaskAttributesSurviveTheRoundTrip 守**退避**与禁用那四列写得进去也读得回来。
+//
+// 只有 SQL 答得出：两个可空的时刻列存的是 epoch 毫秒，而「没有值」与「1970 年」在那一列里
+// 长得一样。读回来落成零值时刻的话，一个从没成功过的任务会显示成「1970 年成功过一次」，
+// 而一条到期时刻被读丢的退避会当场失效——那块坏盘原封不动地每小时再转一遍。
+func TestTaskAttributesSurviveTheRoundTrip(t *testing.T) {
+	store := newStoreForTest(t)
+	ctx := context.Background()
+
+	fresh := ensureTask(t, store, 1)
+	written := ensureTask(t, store, 2)
+	if owner := loadTask(t, store, fresh); owner.Disabled || owner.FailStreak != 0 ||
+		owner.LastSuccessAt != nil || owner.BackoffUntil != nil {
+		t.Fatalf("新建的身份带着值出生了：%+v", owner.TaskAttributes)
+	}
+
+	// 毫秒之下的精度存不下，用例因此按毫秒对齐——断言的是「这一列没丢」，不是「纳秒也保住了」。
+	succeeded := time.UnixMilli(1_700_000_000_123).UTC()
+	until := succeeded.Add(2 * time.Hour)
+	attrs := task.TaskAttributes{Disabled: true, LastSuccessAt: &succeeded, FailStreak: 3, BackoffUntil: &until}
+	if err := store.SaveTaskAttributes(ctx, written, attrs); err != nil {
+		t.Fatalf("写长期属性失败: %v", err)
+	}
+
+	owner := loadTask(t, store, written)
+	if !owner.Disabled || owner.FailStreak != 3 {
+		t.Fatalf("读回的开关与连败是 %v / %d, want true / 3", owner.Disabled, owner.FailStreak)
+	}
+	if owner.LastSuccessAt == nil || !owner.LastSuccessAt.Equal(succeeded) {
+		t.Fatalf("读回的上次成功时刻是 %v, want %v", owner.LastSuccessAt, succeeded)
+	}
+	if owner.BackoffUntil == nil || !owner.BackoffUntil.Equal(until) {
+		t.Fatalf("读回的退避到期时刻是 %v, want %v", owner.BackoffUntil, until)
+	}
+	// 另一条身份一个字段都没被带上：属性是按 id 写的，写串了两个库会共用一份退避。
+	if other := loadTask(t, store, fresh); other.Disabled || other.FailStreak != 0 {
+		t.Fatalf("写属性时波及了别的身份：%+v", other.TaskAttributes)
+	}
+
+	// 清回去也要读得回来：复位写的正是这一步，两个可空列都得重新变成「没有值」。
+	if err := store.SaveTaskAttributes(ctx, written, task.TaskAttributes{}); err != nil {
+		t.Fatalf("复位长期属性失败: %v", err)
+	}
+	if reset := loadTask(t, store, written); reset.Disabled || reset.FailStreak != 0 ||
+		reset.LastSuccessAt != nil || reset.BackoffUntil != nil {
+		t.Fatalf("复位之后读回的仍是 %+v", reset.TaskAttributes)
+	}
+}
+
+// TestSaveTaskAttributesReportsMissingTask 守按 id 写一个不存在的身份是**错误**而不是无操作：
+// 静默吞掉的话，禁用一个已删的库只会得到一个什么也没发生的 202。
+func TestSaveTaskAttributesReportsMissingTask(t *testing.T) {
+	store := newStoreForTest(t)
+	if err := store.SaveTaskAttributes(context.Background(), 4242, task.TaskAttributes{Disabled: true}); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("写不存在的身份返回 %v, want ErrTaskNotFound", err)
+	}
+}
+
+// loadTask 按 id 读回一条身份；读不到即 t.Fatal。
+func loadTask(t *testing.T, store *Store, taskID int64) task.Task {
+	t.Helper()
+	owners, err := store.LoadTasks(context.Background(), []int64{taskID})
+	if err != nil {
+		t.Fatalf("读回身份失败: %v", err)
+	}
+	owner, ok := owners[taskID]
+	if !ok {
+		t.Fatalf("身份 %d 读不回来", taskID)
+	}
+	return owner
 }

@@ -241,6 +241,48 @@ export function SettingsLibraryPage() {
         </div>
         <p className="text-xs text-gray-500">{t('settings.library.retentionHint')}</p>
 
+        {/* 退避：三个数决定连败之后还自动发起几次、各隔多久。它们只约束**自动**发起——
+            手动发起与已经在跑的运行都不受影响，因此调错了不会让人按不动任何东西。 */}
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.backoffFactor')}</label>
+            <input
+              type="number"
+              min={1}
+              value={config.tasks.backoff_factor}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, backoff_factor: Number(e.target.value) || 2 } })}
+              className={inputClassName}
+            />
+            <p className="mt-1 text-xs text-gray-500">{t('settings.library.backoffFactorHint')}</p>
+            <FieldErrors messages={fieldErrors('tasks.backoff_factor')} />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.backoffMaxHours')}</label>
+            <input
+              type="number"
+              min={1}
+              value={config.tasks.backoff_max_hours}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, backoff_max_hours: Number(e.target.value) || 24 } })}
+              className={inputClassName}
+            />
+            <p className="mt-1 text-xs text-gray-500">{t('settings.library.backoffMaxHoursHint')}</p>
+            <FieldErrors messages={fieldErrors('tasks.backoff_max_hours')} />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.backoffStopAfter')}</label>
+            <input
+              type="number"
+              min={1}
+              value={config.tasks.backoff_stop_after}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, backoff_stop_after: Number(e.target.value) || 6 } })}
+              className={inputClassName}
+            />
+            <p className="mt-1 text-xs text-gray-500">{t('settings.library.backoffStopAfterHint')}</p>
+            <FieldErrors messages={fieldErrors('tasks.backoff_stop_after')} />
+          </div>
+        </div>
+        <p className="text-xs text-gray-500">{t('settings.library.backoffHint')}</p>
+
         <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4 text-sm text-gray-300">
           <p className="font-medium text-white">{t('settings.library.supportedFormats')}</p>
           <p className="mt-1">{capabilities?.default_scan_formats || 'zip,cbz,rar,cbr'}</p>

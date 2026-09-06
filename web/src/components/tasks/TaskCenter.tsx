@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import { Activity, ChevronDown, ExternalLink, FileText, ListTree, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
+import { Activity, Ban, ChevronDown, ExternalLink, FileText, ListTree, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
 import { isActiveRunStatus, isLiveRunStatus } from '../../utils/runStatus';
@@ -17,6 +17,13 @@ import type { RunLive, RunStatus, TaskSummary } from '../../api/generated';
 
 // 运行上的动作作用在**运行**上，重试作用在**任务**上（它重新发起一次，不改动被重试的那一条）。
 export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
+
+// **停发**的三条原因各画各的，因为用户要做的事不同：连败到阈值是「去修那块盘」，标红；
+// 人工禁用是他自己按下的，画中性色即可；退避会自己走完，只写「还要等到什么时候」。
+// 红色因此只对应票据里那一条「连败 ≥6 次停发并标红」，不至于贬值成「这一行有点什么」。
+const STALL_FAIL_LIMIT = 'fail_limit';
+const STALL_DISABLED = 'disabled';
+const STALL_BACKOFF = 'backoff';
 
 export interface TaskCenterFilters {
   status: string;
@@ -66,6 +73,8 @@ interface TaskCenterProps {
   onClearTasks?: (status?: 'completed' | 'failed', useCurrentFilters?: boolean) => void;
   onOpenTaskTarget?: (target: TaskTarget) => void;
   onViewTaskLogs?: (run: RunStatus) => void;
+  // 人工禁用那条开关作用在**任务**上，因此它收的是任务而不是运行。不给即不画那个按钮。
+  onToggleTaskAuto?: (task: TaskSummary) => void;
 }
 
 const taskMetricKeys = [
@@ -700,6 +709,13 @@ function LiveSection({
   );
 }
 
+// stallColorClass 把**停发**原因翻成那一行说明文字的颜色，与上面三个徽章同一套口径。
+function stallColorClass(reason: string) {
+  if (reason === STALL_FAIL_LIMIT) return 'text-red-200/80';
+  if (reason === STALL_BACKOFF) return 'text-amber-500/80';
+  return 'text-white/50';
+}
+
 /**
  * TaskRow 是下半层的一行：一个**任务**，写着上次结果、连败与停发，展开看它的历次运行。
  *
@@ -713,6 +729,7 @@ function TaskRow({
   onTaskAction,
   onOpenTaskTarget,
   onViewTaskLogs,
+  onToggleTaskAuto,
 }: {
   task: TaskSummary;
   // history 只在这一行正是展开着的那一行时给出。
@@ -722,12 +739,15 @@ function TaskRow({
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
   onOpenTaskTarget?: (target: TaskTarget) => void;
   onViewTaskLogs?: (run: RunStatus) => void;
+  onToggleTaskAuto?: (task: TaskSummary) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const lastRun = task.last_run;
   const expanded = Boolean(history);
-  // 停发是**退避**与禁用那一组的对外说法：任一为真就标红。今天没有写入方，因此不会出现。
-  const stalled = task.disabled || Boolean(task.backoff_until && new Date(task.backoff_until).getTime() > Date.now());
+  // **停发的判据只有后端一处**：它要三个阈值、三个字段与此刻的时间，而阈值在设置里可改——
+  // 在这里拿 disabled / backoff_until 自己再推一遍，改完设置两边立刻对不上。
+  const stallReason = task.stall_reason || '';
+  const stalled = stallReason === STALL_FAIL_LIMIT;
   const timestamp = lastRun ? runTimestamp(lastRun) : '';
 
   return (
@@ -757,8 +777,30 @@ function TaskRow({
               {t('logs.taskCenter.stalled')}
             </span>
           )}
+          {stallReason === STALL_DISABLED && (
+            <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] text-white/60">
+              {t('logs.taskCenter.autoDisabled')}
+            </span>
+          )}
+          {stallReason === STALL_BACKOFF && (
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-500">
+              {t('logs.taskCenter.backingOff')}
+            </span>
+          )}
         </button>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {/* 禁用作用在**任务**上，与重试并排：它关掉的是自动发起，手动发起（重试）照旧可用。 */}
+          {onToggleTaskAuto && (
+            <button
+              type="button"
+              onClick={() => onToggleTaskAuto(task)}
+              disabled={taskActionKey === `${task.task_id}:auto`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-50"
+            >
+              {task.disabled ? <Play className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
+              {t(task.disabled ? 'logs.taskCenter.enableAuto' : 'logs.taskCenter.disableAuto')}
+            </button>
+          )}
           {/* 重试作用在**任务**上：它新起一次运行，被重试的那一条原样留着。因此这个按钮一个任务只有一个，
               而不是每条历次运行各画一个。 */}
           {lastRun?.retryable && !isActiveRunStatus(lastRun.status) && (
@@ -775,6 +817,17 @@ function TaskRow({
           )}
         </div>
       </div>
+      {/* 「写明原因」那半句：光标红答不出「我该去修什么」，因此连败几次、还要等多久、
+          以及最后一次的错误都写在这里。 */}
+      {stallReason && (
+        <p className={`px-4 pb-3 text-xs ${stallColorClass(stallReason)}`}>
+          {t(`logs.taskCenter.stallReason.${stallReason}`, {
+            count: task.fail_streak,
+            until: task.backoff_until ? formatDateTime(task.backoff_until) : '',
+          })}
+          {lastRun?.error && ` · ${t('logs.taskCenter.lastError', { error: lastRun.error })}`}
+        </p>
+      )}
       {lastRun && <p className="px-4 pb-3 text-xs text-white/45">{getTaskMessage(lastRun, t)}</p>}
       <p className="px-4 pb-4 text-xs text-white/35">{getTaskActionHint({ type: task.type, params: lastRun?.params }, t)}</p>
       {expanded && (
@@ -813,6 +866,7 @@ export function TaskCenter({
   onClearTasks,
   onOpenTaskTarget,
   onViewTaskLogs,
+  onToggleTaskAuto,
 }: TaskCenterProps) {
   const { t } = useI18n();
 
@@ -865,6 +919,7 @@ export function TaskCenter({
                   onTaskAction={onTaskAction}
                   onOpenTaskTarget={onOpenTaskTarget}
                   onViewTaskLogs={onViewTaskLogs}
+                  onToggleTaskAuto={onToggleTaskAuto}
                 />
               ))}
             </div>

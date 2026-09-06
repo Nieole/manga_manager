@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/config"
+	"manga-manager/internal/task"
 )
 
 // taskSummaries 打一次任务清单接口。
@@ -73,9 +74,13 @@ func TestTaskSummaryIsOneRowPerTaskWithItsLastRun(t *testing.T) {
 	if summary.LastRun.Status != "failed" {
 		t.Fatalf("上次结果为 %q, want failed（最近那一次是失败）", summary.LastRun.Status)
 	}
-	// 长期属性今天没有写入方，行上因此恒为零值——界面据此整块不显示，而不是画一个「连败 0」。
-	if summary.Disabled || summary.FailStreak != 0 || summary.BackoffUntil != nil {
-		t.Fatalf("停发那一组属性凭空有了值: %+v", summary)
+	// 长期属性由**收尾**写入：最近那一次是失败，因此连败为 1、已进**退避**，而人工禁用那条
+	// 开关不受它影响——两者是两条独立的开关。
+	if summary.Disabled || summary.FailStreak != 1 || summary.BackoffUntil == nil {
+		t.Fatalf("停发那一组属性是 %+v, want 未禁用、连败 1、退避中", summary)
+	}
+	if summary.StallReason != string(task.StallBackoff) {
+		t.Fatalf("停发原因为 %q, want backoff", summary.StallReason)
 	}
 }
 
