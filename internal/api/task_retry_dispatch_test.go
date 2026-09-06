@@ -1,4 +1,4 @@
-// 守**重启函数**把任务重启回它自己那条跑法，以及重试准入认的是**活动态**而不只是运行中。
+// 守**重启函数**把任务重启回它自己那条跑法，以及重试撞上**活动态**时那件事只会排队、不会被起两遍。
 //
 // 一个任务类型下可以有多个**变体**（哈希重建有前台与低优先级回填两个），只按类型分发会把回填
 // 重启成前台档：原来那条仍停在终态，任务中心里多出一条同名任务，用的是它刻意避开的抢盘跑法。
@@ -6,6 +6,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -102,9 +103,12 @@ func TestRetryRestartsTheSameVariant(t *testing.T) {
 	}
 }
 
-// TestRetryRejectsActiveTask 钉住重试准入认的是**活动态**：**取消中**同样占着运行槽位，
-// 此时放行会让同一件事被起两遍。
-func TestRetryRejectsActiveTask(t *testing.T) {
+// TestRetryOfAnActiveTaskQueues 钉住重试撞上**活动态**时那件事不会被起两遍——它进**排队中**，
+// 等在跑的那条收尾。**取消中**同样占着运行槽位，因此同样只能排队。
+//
+// 「不会被起两遍」如今由准入那一处保证（撞上活动运行即排队），而不是由端点自己再判一次：
+// 判两次的话，「什么叫已经在跑」就有两个答案，而其中一个会把这次重试整个丢掉。
+func TestRetryOfAnActiveTaskQueues(t *testing.T) {
 	cases := []struct {
 		name    string
 		status  string
@@ -117,7 +121,7 @@ func TestRetryRejectsActiveTask(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c, snapshots := newHashRebuildRetryRig(t)
+			c, _ := newHashRebuildRetryRig(t)
 			// 后台能力只登记不执行：任务体一旦跑起来就会收尾，活动态无从观察。
 			c.taskEngine.runBackground = func(func()) {}
 
@@ -126,14 +130,26 @@ func TestRetryRejectsActiveTask(t *testing.T) {
 			if err := tc.control(c.taskEngine, key); err != nil {
 				t.Fatalf("把任务转入 %q 失败: %v", tc.status, err)
 			}
-			before := publishedCountFor(snapshots(), key)
+			activeID := currentTask(t, c.taskEngine, key).RunID
 
 			rec := retryTaskByKey(t, c, key)
-			if rec.Code != http.StatusConflict {
-				t.Fatalf("重试一个 %q 的任务返回 %d, want 409, body=%s", tc.status, rec.Code, rec.Body.String())
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("重试一个 %q 的任务返回 %d, want 202, body=%s", tc.status, rec.Code, rec.Body.String())
 			}
-			if got := publishedCountFor(snapshots(), key); got != before {
-				t.Fatalf("重试一个 %q 的任务又投递了 %d 条载荷 —— 它被重新起了一遍", tc.status, got-before)
+			queued := currentTask(t, c.taskEngine, key)
+			if queued.Status != "queued" {
+				t.Fatalf("重试一个 %q 的任务落成了 %q, want queued", tc.status, queued.Status)
+			}
+			if queued.RunID == activeID {
+				t.Fatalf("重试并进了那条 %q 的运行 —— 合并只发生在排队中的运行上", tc.status)
+			}
+			// 在跑的那条一动不动：它没有被重新起过，也没有被这次重试改掉状态。
+			active, err := c.taskEngine.engine.RunSnapshot(context.Background(), activeID)
+			if err != nil {
+				t.Fatalf("取回那条 %q 的运行失败: %v", tc.status, err)
+			}
+			if string(active.Run.Status) != tc.status {
+				t.Fatalf("重试之后那条运行的状态变成了 %q, want %q", active.Run.Status, tc.status)
 			}
 		})
 	}

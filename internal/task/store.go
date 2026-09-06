@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// 准入与查找的哨兵错误。适配器把数据库那两条部分唯一约束的违例翻成前两个，
-// 引擎据此分辨「已有活动运行」与「已有排队运行」——这是**准入只剩一处**的落点。
+// 准入与查找的哨兵错误。适配器把数据库那两条部分唯一约束的违例翻成前两个——
+// 这是**准入只剩一处**的落点：引擎撞上「已有排队运行」就把这次发起**合并**进那一条，
+// 撞上「已有活动运行」则说明它刚刚判定的状态已经过时（同一件事不会同时跑两遍）。
 var (
 	ErrRunAlreadyActive = errors.New("task already has an active run")
 	ErrRunAlreadyQueued = errors.New("task already has a queued run")

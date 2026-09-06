@@ -244,29 +244,33 @@ func TestSlotLimitHoldsWhileAQueuedRunWaits(t *testing.T) {
 	}
 }
 
-// TestSlotLimitIsReadPerAdmission 守上限**每次判定现读一遍**：改配置对新的放行生效，
-// 而不打断已经在跑的。收成构造期的一个数的话，调大上限要重启进程才算数。
+// TestSlotLimitIsReadPerAdmission 守上限**每次判定现读一遍**：调大之后队列就该往前走，
+// 而不必等到某条正在跑的运行收尾——收成构造期的一个数的话，改上限要重启进程才算数。
+//
+// 放行仍**按序**：先排上的那条先拿到腾出来的槽位。
 func TestSlotLimitIsReadPerAdmission(t *testing.T) {
 	slots := 1
 	h := newSlotTunableTestEngine(t, registerOnly, &slots)
 
 	h.start(t, libraryScanSpec(1), idleBody)
-	blocked := h.start(t, libraryScanSpec(2), idleBody)
-	if blocked.Status != StatusQueued {
-		t.Fatalf("上限为 1 时第二条的状态为 %q, want queued", blocked.Status)
+	earlier := h.start(t, libraryScanSpec(2), idleBody)
+	later := h.start(t, libraryScanSpec(3), idleBody)
+	if earlier.Status != StatusQueued || later.Status != StatusQueued {
+		t.Fatalf("上限为 1 时后两条的状态为 %q 与 %q, want 都是 queued", earlier.Status, later.Status)
 	}
 
-	slots = 3
-	if got := h.engine.Slots(); got != 3 {
-		t.Fatalf("改上限之后引擎报出 %d, want 3", got)
+	slots = 2
+	if got := h.engine.Slots(); got != 2 {
+		t.Fatalf("改上限之后引擎报出 %d, want 2", got)
 	}
-	admitted := h.start(t, libraryScanSpec(3), idleBody)
-	if admitted.Status != StatusRunning {
-		t.Fatalf("上限调大之后新发起的状态为 %q, want running", admitted.Status)
+	h.engine.ReleaseQueued()
+
+	if got := h.load(t, earlier.ID).Status; got != StatusRunning {
+		t.Fatalf("上限调大之后先排上的那条状态为 %q, want running", got)
 	}
-	// 已经排上的那条不受打断，也不会被这次发起挤掉：它等的是一次放行，而放行只在收尾时发生。
-	if got := h.load(t, blocked.ID).Status; got != StatusQueued {
-		t.Fatalf("调大上限动了已经排上的那条：状态为 %q", got)
+	// 只多了一个槽位，就只放行一条：后排上的那条继续等。
+	if got := h.load(t, later.ID).Status; got != StatusQueued {
+		t.Fatalf("一个槽位放行了两条运行，后排上的那条状态为 %q", got)
 	}
 }
 

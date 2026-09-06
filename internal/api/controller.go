@@ -430,13 +430,13 @@ func (c *Controller) currentConfig() config.Config {
 	return c.config.Snapshot()
 }
 
-// taskSlots 读此刻生效的全局并发上限。
+// taskSlots 读此刻生效的**运行槽位**上限。
 //
 // 每次判定现读一遍配置快照，不在装配期取一个数收进引擎：上限在设置里可改，而改完要对
 // **新的放行**生效——收成一个数的话，调大上限要重启进程才算数。已经在跑的不受影响：
 // 引擎只在准入与放行时读它。
 func (c *Controller) taskSlots() int {
-	return c.currentConfig().Tasks.MaxConcurrentRuns
+	return c.currentConfig().Tasks.RunSlots
 }
 
 func (c *Controller) protocolEnabled(protocol string) bool {
@@ -527,6 +527,11 @@ func (c *Controller) persistConfig(cfg *config.Config) error {
 	// archive_pool_size / max_ai_concurrency 立即生效，不依赖文件监听回环（监听器失效时也能生效）。
 	if err := runtimecfg.Apply(cfg); err != nil {
 		return err
+	}
+	// 并发上限也在这份配置里，而它是**现读**的：调小无须做什么（在跑的不打断，占用自然降下来），
+	// 调大则要催一次队列放行——此刻没有任何运行收尾，队列却已经可以往前走。
+	if c.taskEngine != nil {
+		c.taskEngine.releaseQueued()
 	}
 	return nil
 }
@@ -811,7 +816,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/tasks/resume-all", c.resumeAllTasks)
 		// 重试作用在**任务**上（再发起一次同一件事），因此仍按**任务键**寻址；
 		// 暂停 / 恢复 / 取消作用在**运行**上，按运行 id 寻址——同一个键此刻可以有两条仍会变化的
-		// 运行（一条在跑、一条排队），按键寻址答不出用户按的是哪一条（关键决定 15）。
+		// 运行（一条在跑、一条排队），按键寻址答不出用户按的是哪一条。
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
 		r.Post("/system/runs/{runID}/pause", c.pauseRun)
 		r.Post("/system/runs/{runID}/resume", c.resumeRun)

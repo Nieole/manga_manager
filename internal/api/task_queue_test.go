@@ -35,7 +35,7 @@ func scanSeed(libraryID int64) taskSeed {
 func setSlots(t testing.TB, c *Controller, slots int) {
 	t.Helper()
 	cfg := c.currentConfig()
-	cfg.Tasks.MaxConcurrentRuns = slots
+	cfg.Tasks.RunSlots = slots
 	c.config.Replace(&cfg)
 }
 
@@ -44,8 +44,8 @@ func setSlots(t testing.TB, c *Controller, slots int) {
 //
 // config 位于 task 的依赖下游，因此那边引用不了这个常数，只能在这里对一次。
 func TestConfigDefaultSlotsMatchTheEngineDefault(t *testing.T) {
-	if config.DefaultMaxConcurrentRuns != task.DefaultSlots {
-		t.Fatalf("配置默认槽位 %d 与领域默认 %d 不一致", config.DefaultMaxConcurrentRuns, task.DefaultSlots)
+	if config.DefaultRunSlots != task.DefaultSlots {
+		t.Fatalf("配置默认槽位 %d 与领域默认 %d 不一致", config.DefaultRunSlots, task.DefaultSlots)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestConfigDefaultSlotsMatchTheEngineDefault(t *testing.T) {
 func TestSlotLimitComesFromTheRuntimeConfig(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if got := liveFrame(t, controller).Slots; got != config.DefaultMaxConcurrentRuns {
-		t.Fatalf("默认配置下实况帧报出的槽位上限为 %d, want %d", got, config.DefaultMaxConcurrentRuns)
+	if got := liveFrame(t, controller).Slots; got != config.DefaultRunSlots {
+		t.Fatalf("默认配置下实况帧报出的槽位上限为 %d, want %d", got, config.DefaultRunSlots)
 	}
 
 	setSlots(t, controller, 5)
@@ -110,6 +110,33 @@ func TestRaisingTheSlotLimitAdmitsTheNextRun(t *testing.T) {
 	}
 	if got := currentTask(t, controller.taskEngine, blocked.Key).Status; got != "queued" {
 		t.Fatalf("调大上限动了已经排上的那条：状态为 %q", got)
+	}
+}
+
+// TestSavingASmallerThenLargerLimitDrainsTheQueue 守调大上限那一刻队列真的往前走。
+//
+// 平时放行由收尾触发，而调大上限的那一刻没有任何运行收尾：不催一下的话，用户把上限从 2 调到 5
+// 之后界面上什么都不会变，那条排队要等到某条正在跑的运行结束——可能是几小时之后。
+func TestSavingASmallerThenLargerLimitDrainsTheQueue(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+	setSlots(t, controller, 1)
+
+	seedTask(t, controller.taskEngine, scanSeed(1))
+	blocked := scanSeed(2)
+	if _, err := trySeedTask(t, controller.taskEngine, blocked); err != errSeededRunQueued {
+		t.Fatalf("上限为 1 时第二条发起返回 %v, want 停在排队中", err)
+	}
+
+	cfg := controller.currentConfig()
+	cfg.Tasks.RunSlots = 3
+	if err := controller.persistConfig(&cfg); err != nil {
+		t.Fatalf("保存配置失败: %v", err)
+	}
+
+	// 断言「不再排队」而不是「正在跑」：放行是同步的（状态在锁内就写成了运行中），
+	// 而它的任务体在另一条 goroutine 上，读到的可能已经是收尾之后的终态。
+	if got := currentTask(t, controller.taskEngine, blocked.Key).Status; got == "queued" {
+		t.Fatal("上限调大之后队列没往前走 —— 那条排队要等到某条在跑的运行结束才轮得到")
 	}
 }
 

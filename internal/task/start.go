@@ -196,7 +196,7 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 // 三条各自的理由不同，但答案相同——都是「现在还不能开跑，但这次发起不该被丢掉」：
 //   - 「全部暂停」的闸门关着：放它进去等于用户按下的那一下没按住盘。
 //   - 同一个任务已有活动运行：同一件事不会同时跑两遍，这是准入索引那条约束的正面表达。
-//   - 槽位已满：全局同时运行数的上限（关键决定 5，按单一数字而不是按卷）。
+//   - 槽位已满：全局同时运行数的上限（按单一数字而不是按磁盘卷，ADR 0005）。
 //
 // 这里判的是「该写哪个状态」，不是准入本身：真正拦下第二条活动运行与第二条排队运行的是
 // 数据库那两条部分唯一索引，判据只有那一处。
@@ -419,6 +419,20 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 	e.saveLocked(run)
 	e.publishLocked(run)
 	return e.releaseQueuedLocked()
+}
+
+// ReleaseQueued 在槽位有空余时放行**排队中**的运行。
+//
+// 收尾时引擎自己会放行，这个入口是给「上限刚被调大」那一刻用的：此刻没有任何运行收尾，
+// 队列却已经可以往前走。不催这一下的话，用户把上限从 2 调到 5 之后什么也不会发生——
+// 要等到某条正在跑的运行结束，而那可能是几小时之后。
+func (e *Engine) ReleaseQueued() {
+	e.mu.Lock()
+	launch := e.releaseQueuedLocked()
+	e.mu.Unlock()
+	if launch != nil {
+		launch()
+	}
 }
 
 // releaseQueuedLocked 在槽位有空余时按序放行**排队中**的运行，交回启动它们的闭包。

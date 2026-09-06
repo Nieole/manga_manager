@@ -1,6 +1,6 @@
-// 任务子域在 api 这一侧的**适配层**：把控制端点（六个按**任务键**寻址，全部暂停 / 全部恢复作用在
-// 全体运行上）、对外那份 RunStatus 形状与**重启函数**注册表，接到 `internal/task` 的领域引擎与
-// `internal/taskstore` 的落盘上。
+// 任务子域在 api 这一侧的**适配层**：把控制端点（暂停 / 恢复 / 取消按**运行 id** 寻址，
+// 重试与清除仍按**任务键**，全部暂停 / 全部恢复作用在全体运行上）、对外那份 RunStatus 形状与
+// **重启函数**注册表，接到 `internal/task` 的领域引擎与 `internal/taskstore` 的落盘上。
 // **事实来源只有库，这一层不留任务表**（去留的论证见 taskEngine 的符号 doc）。
 // 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
 
@@ -55,7 +55,7 @@ type taskEngineConfig struct {
 	DiskWork *diskwork.Runner
 	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
 	Now func() time.Time
-	// Slots 读全局并发上限。它是函数而不是数：上限在设置里可改，改了要对**新的放行**生效，
+	// Slots 读**运行槽位**上限。它是函数而不是数：上限在设置里可改，改了要对**新的放行**生效，
 	// 而不打断已经在跑的。为 nil 时领域引擎取它的默认值（task.DefaultSlots）。
 	Slots func() int
 }
@@ -89,6 +89,7 @@ type taskEngine struct {
 	//
 	// slots 同理转一道：它在生产里读的是配置快照（因此改设置当场生效），而要观察「八条运行同时
 	// 在跑」的用例得先把上限抬上去——领域引擎在构造期就把这个函数收进去了，不转一道就换不掉。
+	// 归一化不在这里做：小于 1 与 nil 一样交给领域引擎兜底，判据因此只有一处。
 	runBackground func(func())
 	now           func() time.Time
 	slots         func() int
@@ -140,11 +141,14 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 	return e
 }
 
-// slotLimit 读此刻的槽位上限。领域引擎收的是这个方法而不是 cfg.Slots，好让构造之后换掉仍然生效。
-// 装配期没给就交回领域引擎自己的默认值。
+// slotLimit 读此刻的**运行槽位**上限。领域引擎收的是这个方法而不是 cfg.Slots，
+// 好让构造之后换掉仍然生效。
+//
+// 装配期没给就交回 0，由领域引擎按它的默认值兜底——在这里也写一遍那个默认值，
+// 等于让「没人说上限时该是几」有两个答案。
 func (e *taskEngine) slotLimit() int {
 	if e.slots == nil {
-		return task.DefaultSlots
+		return 0
 	}
 	return e.slots()
 }
@@ -373,8 +377,11 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (RunStatu
 	return items[0], nil
 }
 
-// latestTaskByTypes 返回给定类型中最近活动的那一次运行；无匹配返回 nil。
+// latestTaskByTypes 返回给定类型中最近**开跑过**的那一次运行；无匹配返回 nil。
 // 供存储 IO 面板估算扫描/封面速率。
+//
+// **排队中**的运行不算：它没有开始时刻，那几个速率一个都答不出，而它的序号恰恰是最新的
+// （入队与每次**合并**都取一个），不排除的话它会顶掉真正在跑的那条，面板上的数静默变成 0。
 func (e *taskEngine) latestTaskByTypes(types ...string) *RunStatus {
 	ctx := context.Background()
 	domainTypes := make([]task.Type, 0, len(types))
@@ -382,9 +389,10 @@ func (e *taskEngine) latestTaskByTypes(types ...string) *RunStatus {
 		domainTypes = append(domainTypes, task.Type(taskType))
 	}
 	snapshots, err := e.engine.ListSnapshots(ctx, task.RunFilter{
-		Types: domainTypes,
-		Order: task.OrderSequenceDesc,
-		Limit: 1,
+		Types:    domainTypes,
+		Statuses: task.StartedStatuses(),
+		Order:    task.OrderSequenceDesc,
+		Limit:    1,
 	})
 	if err != nil || len(snapshots) == 0 {
 		if err != nil {
@@ -470,6 +478,14 @@ func (e *taskEngine) pauseAll(ctx context.Context) (int, error) {
 
 func (e *taskEngine) resumeAll(ctx context.Context) (int, error) {
 	return e.engine.ResumeAll(ctx)
+}
+
+// releaseQueued 催一次队列放行，供**运行槽位**上限刚被调大之后调用。
+//
+// 平时不必催：收尾时引擎自己会放行。但调大上限的那一刻没有任何运行收尾，队列却已经可以往前走——
+// 不催的话，用户把上限从 2 调到 5 之后什么也不会发生，要等到某条正在跑的运行结束。
+func (e *taskEngine) releaseQueued() {
+	e.engine.ReleaseQueued()
 }
 
 // taskControlError 把领域的控制哨兵翻成本层的哨兵。

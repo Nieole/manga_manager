@@ -302,12 +302,9 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "Failed to load task")
 		return
 	}
-	// 判据是**活动态**而不只是运行中：**取消中**与**已暂停**同样占着运行槽位，此时重启等于让同一件事
-	// 跑两遍。下游启动入口的**任务键**闸门只在重启函数回到同一条键时才兜得住，一类多键的类型上兜不住。
-	if taskIsActive(task.Status) {
-		jsonError(w, http.StatusConflict, "Task is already running")
-		return
-	}
+	// 这里**不再判一次「是不是已经在跑」**：准入只剩一处，而那一处如今的答案不是拒绝而是排队——
+	// 重启函数回到同一个**身份**上，撞上活动运行就进**排队中**，撞上排队的就被**合并**进去。
+	// 在这里补一道 409 等于让「什么叫已经在跑」重新有两个答案，而其中一个还会把这次重试丢掉。
 	if !task.Retryable {
 		jsonError(w, http.StatusConflict, "Task is not retryable")
 		return

@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { Activity, ChevronDown, ExternalLink, FileText, ListTree, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
-import { isActiveRunStatus } from '../../utils/runStatus';
+import { isActiveRunStatus, isLiveRunStatus } from '../../utils/runStatus';
 
 // TaskLimits / RunStatus / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
 // （单一事实源，见 api/generated.ts），此处再导出以保持既有 import 路径不变。
@@ -360,7 +360,9 @@ function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunStatu
           {t('settings.maintenance.resumeTask')}
         </button>
       )}
-      {run.can_cancel && isActiveRunStatus(run.status) && (
+      {/* 判据是「还会不会变」而不是「是不是活动态」：**排队中**的运行也取消得掉——它从未开跑，
+          按下去当场进已取消，用户不必等它开跑再停它。按活动态判的话那张卡片上一个按钮都没有。 */}
+      {run.can_cancel && isLiveRunStatus(run.status) && (
         <button type="button" onClick={() => onTaskAction(run, 'cancel')} disabled={taskActionKey === `${run.run_id}:cancel` || run.status === 'cancelling'} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50">
           <XCircle className="h-3.5 w-3.5" />
           {t('common.cancel')}

@@ -192,12 +192,12 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   // 同一个任务键此刻可以有两条仍会变化的运行（一条在跑、一条排队），按键发控制请求就答不出
   // 用户按的是哪一张卡片上的按钮。忙碌标记同理按运行分，否则一条排队会把在跑那条的按钮一起灰掉。
   const runTaskAction = async (run: RunStatus, action: TaskAction) => {
-    setTaskActionKey(action === 'retry' ? `${run.key}:retry` : `${run.run_id}:${action}`);
+    const onTask = action === 'retry';
+    setTaskActionKey(onTask ? `${run.key}:${action}` : `${run.run_id}:${action}`);
     try {
-      const path = action === 'retry'
-        ? `/api/system/tasks/${encodeURIComponent(run.key)}/retry`
-        : `/api/system/runs/${run.run_id}/${action}`;
-      await apiClient.post(path);
+      await apiClient.post(onTask
+        ? `/api/system/tasks/${encodeURIComponent(run.key)}/${action}`
+        : `/api/system/runs/${run.run_id}/${action}`);
       showToast(t(`settings.maintenance.taskAction.${action}Success`));
       await Promise.all([fetchTasks(), fetchLive()]);
       if (history) await fetchTaskRuns(history.taskId);

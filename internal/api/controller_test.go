@@ -4512,12 +4512,15 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 		t.Fatalf("nonexistent task: expected 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	// 运行中的任务 -> 409
+	// 运行中的任务 -> 接受，那次重试进**排队中**：准入只剩一处，而那一处不再拒绝，只是让它排队。
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Identity: seriesTask("scan_series", 5, variantSole), Total: 1})
 	rec = httptest.NewRecorder()
 	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_series_5"))
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("running task: expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("running task retry: expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := currentTask(t, controller.taskEngine, "scan_series_5").Status; got != "queued" {
+		t.Fatalf("运行中的任务被重试后，最近那条运行的状态为 %q, want queued", got)
 	}
 
 	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500，不得混进 409。

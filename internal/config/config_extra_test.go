@@ -294,7 +294,7 @@ func validBaseConfig(t *testing.T) *Config {
 	cfg.Scanner.ArchivePoolSize = 5
 	cfg.Scanner.MaxAiConcurrency = 3
 	cfg.Scanner.ThumbnailFormat = "webp"
-	cfg.Tasks.MaxConcurrentRuns = DefaultMaxConcurrentRuns
+	cfg.Tasks.RunSlots = DefaultRunSlots
 	cfg.Library.StorageProfile = StorageProfileAuto
 	cfg.LLM.Provider = "ollama"
 	cfg.LLM.BaseURL = "http://localhost:11434"
@@ -340,7 +340,7 @@ func TestValidateConfigRejectsFieldByField(t *testing.T) {
 		{"bad-base-path", func(c *Config) { c.KOReader.BasePath = "koreader" }, "koreader.base_path"},
 		{"bad-scan-profile", func(c *Config) { c.Scanner.ScanProfile = "turbo" }, "scanner.scan_profile"},
 		// 0 不是「不限」而是「一条都不许跑」：照它办事整台机器的后台工作都会卡在排队里。
-		{"no-run-slots", func(c *Config) { c.Tasks.MaxConcurrentRuns = 0 }, "tasks.max_concurrent_runs"},
+		{"no-run-slots", func(c *Config) { c.Tasks.RunSlots = 0 }, "tasks.run_slots"},
 		{"openai-bad-api-mode", func(c *Config) {
 			c.LLM.Provider = "openai"
 			c.LLM.BaseURL = "https://api.openai.com"

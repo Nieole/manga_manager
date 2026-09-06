@@ -58,6 +58,8 @@ scanner:
     realcugan_path: ""
     archive_pool_size: 5
     max_ai_concurrency: 3
+tasks:
+    run_slots: 2
 ollama:
     endpoint: ""
     model: ""

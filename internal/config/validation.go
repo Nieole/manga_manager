@@ -122,8 +122,8 @@ func ValidateConfigValues(cfg *Config) ValidationResult {
 	if cfg.Scanner.MaxAiConcurrency < 1 {
 		issues = append(issues, ValidationIssue{Field: "scanner.max_ai_concurrency", Message: "AI 并发数至少为 1。", Severity: "error"})
 	}
-	if cfg.Tasks.MaxConcurrentRuns < 1 {
-		issues = append(issues, ValidationIssue{Field: "tasks.max_concurrent_runs", Message: "后台运行槽位至少为 1。", Severity: "error"})
+	if cfg.Tasks.RunSlots < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.run_slots", Message: "后台运行槽位至少为 1。", Severity: "error"})
 	}
 
 	if !isSupportedStorageProfile(cfg.Library.StorageProfile) {

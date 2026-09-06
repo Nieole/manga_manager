@@ -362,6 +362,27 @@ describe('顶部的全部暂停 / 全部恢复', () => {
   });
 });
 
+describe('排队中的运行', () => {
+  // 它从未开跑、也从未占过槽位，按下去当场进已取消——用户不必等它开跑再停它。
+  it('排队中的运行也画得出取消键', () => {
+    const onTaskAction = vi.fn();
+    renderCenter({
+      live: makeLive({ queued: 1, runs: [makeRun({ status: 'queued', can_pause: false, can_cancel: true })] }),
+      onTaskAction,
+    });
+
+    fireEvent.click(screen.getByText('common.cancel'));
+    expect(onTaskAction).toHaveBeenCalledTimes(1);
+    expect(onTaskAction.mock.calls[0][1]).toBe('cancel');
+  });
+
+  it('排队中不画暂停键，也不写「不可暂停」——它还没开跑，没有闸门可按', () => {
+    renderCenter({ live: makeLive({ queued: 1, runs: [makeRun({ status: 'queued', can_pause: false })] }) });
+    expect(screen.queryByText('settings.maintenance.pauseTask')).toBeNull();
+    expect(screen.queryByText('settings.maintenance.taskNotPausable')).toBeNull();
+  });
+});
+
 describe('不可暂停的运行', () => {
   it('运行中却不可暂停的那条明说它不可暂停，而不是画一个暂停键', () => {
     renderLiveRuns([makeRun({ can_pause: false })]);

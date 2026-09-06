@@ -24,7 +24,7 @@ export interface Config {
     archive_pool_size: number;
     max_ai_concurrency: number;
   };
-  tasks: { max_concurrent_runs: number };
+  tasks: { run_slots: number };
   llm: {
     provider: string;
     api_mode: string;
