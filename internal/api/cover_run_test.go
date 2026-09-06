@@ -5,9 +5,11 @@ package api
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -67,6 +69,42 @@ func TestCoverBatchBecomesItsOwnChainedRun(t *testing.T) {
 	}
 	if run.ScopeName != lib.Name {
 		t.Fatalf("封面运行的作用域名为 %q, want %q", run.ScopeName, lib.Name)
+	}
+}
+
+// TestScanningALibraryLaunchesItsCoverRun 守装配那一跳：扫描器排出去的封面批确实接到了
+// `dispatchCoverBatch` 上。两头各有用例（扫描排出一批、一批换成一条运行），
+// 而中间这根线接没接上，只有走一次真扫描才答得出——漏接的表现是封面照生成，任务中心一片空白。
+//
+// 只断言那条运行**已经落地**：启动入口的准入是同步的，扫描返回时它已经在库里，
+// 而任务体在另一条 goroutine 上。它跑到完成由 TestCoverBatchBecomesItsOwnChainedRun 守。
+func TestScanningALibraryLaunchesItsCoverRun(t *testing.T) {
+	controller, store, _, rootDir := newTestController(t)
+	libraryPath := filepath.Join(rootDir, "Cover Library")
+	seriesPath := filepath.Join(libraryPath, "Series Alpha")
+	if err := os.MkdirAll(seriesPath, 0o755); err != nil {
+		t.Fatalf("mkdir series failed: %v", err)
+	}
+	if err := writeTestCBZ(filepath.Join(seriesPath, "Alpha 01.cbz"), map[string][]byte{"001.png": png1x1}); err != nil {
+		t.Fatalf("write test cbz failed: %v", err)
+	}
+	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{
+		Name: "Cover Library", Path: libraryPath, ScanMode: "manual", ScanInterval: 60,
+		ScanFormats: config.DefaultScanFormatsCSV,
+	})
+	if err != nil {
+		t.Fatalf("建资料库失败: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := controller.scanner.ScanLibrary(ctx, lib.ID, libraryPath, true, nil); err != nil {
+		t.Fatalf("ScanLibrary: %v", err)
+	}
+
+	run := currentTask(t, controller.taskEngine, coverRunKey(lib.ID))
+	if run.Type != "generate_covers" || run.Trigger != string(task.TriggerChained) {
+		t.Fatalf("扫描没有带起一条串联的封面运行：type=%q trigger=%q", run.Type, run.Trigger)
 	}
 }
 
