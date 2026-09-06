@@ -187,6 +187,15 @@ type Store interface {
 	// 顺序是这条读取面的全部要求：阶段那一段的耗时由相邻两条相减得出，乱序读回的时间线会出现
 	// 负的段长。它只服务详情页那一处（一次一条运行），因此不做批量——列表页一条事件都不取。
 	ListRunEvents(ctx context.Context, runID int64, limit int) ([]Event, error)
+	// ListRunSamples 按时刻升序取一条运行的**采样**点；limit 大于 0 时只交回**最近的**那几个，
+	// 仍按升序排列。
+	//
+	// 截的是**尾巴那一段**，与 ListRunEvents 截头部正好相反，理由也正好相反：曲线答的是
+	// 「它此刻是不是卡住了」，掐掉最近的一段等于把唯一答得出这个问题的部分丢掉。
+	//
+	// 它只服务详情页那条吞吐曲线。**任何判断都不得读它**——进度、终态与速率显示的事实来源
+	// 始终是运行行本身，采样丢一个点只该让曲线少一段，不该让别的数跟着错。
+	ListRunSamples(ctx context.Context, runID int64, limit int) ([]Sample, error)
 
 	// DeleteRuns 按谓词删除运行，返回删掉的条数。事件、采样与四张侧表随之级联删除。
 	//

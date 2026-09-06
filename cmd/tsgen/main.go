@@ -28,6 +28,8 @@ var targets = []reflect.Type{
 	reflect.TypeOf(api.RunEvent{}),
 	reflect.TypeOf(api.RunPhaseSpan{}),
 	reflect.TypeOf(api.RunEventsResponse{}),
+	reflect.TypeOf(api.RunSample{}),
+	reflect.TypeOf(api.RunSamplesResponse{}),
 	reflect.TypeOf(config.ValidationIssue{}),
 	reflect.TypeOf(config.ValidationResult{}),
 	reflect.TypeOf(api.SystemCapabilitiesResponse{}),

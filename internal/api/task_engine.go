@@ -71,6 +71,9 @@ type taskEngineConfig struct {
 	// Backoff 读**退避**的三个阈值，同样是函数而不是值，理由同 Slots。
 	// 为 nil 时领域引擎取它的默认值（task.DefaultBackoff）。
 	Backoff func() task.BackoffPolicy
+	// SampleInterval 读**采样**的取点间隔，同样是函数而不是值，理由同 Slots。
+	// 为 nil 时领域引擎取它的默认值（task.DefaultSampleInterval）。
+	SampleInterval func() time.Duration
 	// ResumeEnabled 读**可续跑**的全局开关（默认开），为 nil 即开着。
 	// 它只管开关：哪些类型可续跑由重启函数注册表那一列说了算。
 	ResumeEnabled func() bool
@@ -106,10 +109,11 @@ type taskEngine struct {
 	// slots 同理转一道：它在生产里读的是配置快照（因此改设置当场生效），而要观察「八条运行同时
 	// 在跑」的用例得先把上限抬上去——领域引擎在构造期就把这个函数收进去了，不转一道就换不掉。
 	// 归一化不在这里做：小于 1 与 nil 一样交给领域引擎兜底，判据因此只有一处。
-	runBackground func(func())
-	now           func() time.Time
-	slots         func() int
-	backoff       func() task.BackoffPolicy
+	runBackground  func(func())
+	now            func() time.Time
+	slots          func() int
+	backoff        func() task.BackoffPolicy
+	sampleInterval func() time.Duration
 	// resumeEnabled 读**可续跑**的全局开关；为 nil 即开着（默认开）。
 	// 白名单本身不从这里来，它由 dispatch 那一列派生，见 buildResumePolicy。
 	resumeEnabled func() bool
@@ -143,13 +147,14 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		panic("api: taskEngineConfig.RunBackground 不得为 nil")
 	}
 	e := &taskEngine{
-		runStore:      cfg.Store,
-		runBackground: cfg.RunBackground,
-		now:           cfg.Now,
-		slots:         cfg.Slots,
-		backoff:       cfg.Backoff,
-		resumeEnabled: cfg.ResumeEnabled,
-		identities:    make(map[int64]TaskIdentity),
+		runStore:       cfg.Store,
+		runBackground:  cfg.RunBackground,
+		now:            cfg.Now,
+		slots:          cfg.Slots,
+		backoff:        cfg.Backoff,
+		sampleInterval: cfg.SampleInterval,
+		resumeEnabled:  cfg.ResumeEnabled,
+		identities:     make(map[int64]TaskIdentity),
 	}
 	e.engine = task.New(task.Config{
 		Store:              cfg.Store,
@@ -161,6 +166,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		Now:                e.clock,
 		Slots:              e.slotLimit,
 		Backoff:            e.backoffPolicy,
+		SampleInterval:     e.samplingInterval,
 		Resume:             e.buildResumePolicy,
 		ControlCodes: task.ControlCodes{
 			Paused:      "task.msg.control.paused",
@@ -193,6 +199,16 @@ func (e *taskEngine) backoffPolicy() task.BackoffPolicy {
 		return task.BackoffPolicy{}
 	}
 	return e.backoff()
+}
+
+// samplingInterval 读此刻的**采样**取点间隔。领域引擎收的是这个方法而不是 cfg.SampleInterval，
+// 理由同 slotLimit：构造之后换掉仍然生效，而非正数一律交给领域引擎兜底——
+// 在这里也判一遍，等于让「没人说间隔时该是多久」有两个答案。
+func (e *taskEngine) samplingInterval() time.Duration {
+	if e.sampleInterval == nil {
+		return 0
+	}
+	return e.sampleInterval()
 }
 
 // clock 返回当前时刻（测试可经 now 字段注入）。领域引擎收的是这个方法而不是 cfg.Now，

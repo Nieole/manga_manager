@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"manga-manager/internal/task"
@@ -144,6 +145,45 @@ func (s *Store) AppendRunSamples(ctx context.Context, runID int64, samples []tas
 	}
 	return s.execRows(ctx,
 		`INSERT INTO `+tableRunSamples+` (run_id, at, current, rate_per_minute) VALUES (?, ?, ?, ?)`, rows)
+}
+
+// ListRunSamples 按时刻升序取一条运行的**采样**点；limit 大于 0 时只取**最近的**那几个。
+//
+// 取最近的一段是先用 `ORDER BY id DESC LIMIT ?` 选出来、再倒回时间顺序：曲线要按时刻画，
+// 而截断该留的是最新的那一段——掐掉最近的一段等于把「它此刻是不是卡住了」这个问题掐掉。
+//
+// 定序按自增主键而不是 at：同一毫秒里落下的两个点用 at 分不出先后，而 at 落盘就是毫秒。
+func (s *Store) ListRunSamples(ctx context.Context, runID int64, limit int) ([]task.Sample, error) {
+	const columns = `SELECT at, current, rate_per_minute FROM ` + tableRunSamples + ` WHERE run_id = ? `
+	query, args := columns+`ORDER BY id ASC`, []any{runID}
+	if limit > 0 {
+		query, args = columns+`ORDER BY id DESC LIMIT ?`, []any{runID, limit}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var samples []task.Sample
+	for rows.Next() {
+		var (
+			at     sql.NullInt64
+			sample task.Sample
+		)
+		if err := rows.Scan(&at, &sample.Current, &sample.RatePerMinute); err != nil {
+			return nil, err
+		}
+		sample.At = timeFromMillis(at)
+		samples = append(samples, sample)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if limit > 0 {
+		slices.Reverse(samples)
+	}
+	return samples, nil
 }
 
 // LoadRunSideData 批量读回这批运行的侧数据：三张键值表各一句查询，上限那张再一句。

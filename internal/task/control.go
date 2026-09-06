@@ -426,6 +426,7 @@ func (e *Engine) markInterrupted(ctx context.Context) (marked int, candidates []
 		delete(e.runtimes, run.ID)
 		delete(e.queued, run.ID)
 		delete(e.gates, run.ID)
+		delete(e.samples, run.ID)
 		e.flushOmittedItemFailuresLocked(run.ID)
 		e.saveLocked(run)
 		e.publishLocked(run)

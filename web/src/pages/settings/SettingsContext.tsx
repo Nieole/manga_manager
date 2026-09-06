@@ -29,6 +29,7 @@ export interface Config {
     retain_runs_per_task: number;
     retain_terminal_run_days: number;
     retain_sample_days: number;
+    sample_interval_seconds: number;
     backoff_factor: number;
     backoff_max_hours: number;
     backoff_stop_after: number;

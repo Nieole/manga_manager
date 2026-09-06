@@ -13,8 +13,8 @@ import { isActiveRunStatus, isLiveRunStatus } from '../../utils/runStatus';
 
 // TaskLimits / RunStatus / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
 // （单一事实源，见 api/generated.ts），此处再导出以保持既有 import 路径不变。
-export type { TaskLimits, RunStatus, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse } from '../../api/generated';
-import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunStatus, TaskSummary } from '../../api/generated';
+export type { TaskLimits, RunStatus, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse, RunSample, RunSamplesResponse } from '../../api/generated';
+import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunSample, RunSamplesResponse, RunStatus, TaskSummary } from '../../api/generated';
 
 // 运行上的动作作用在**运行**上，重试作用在**任务**上（它重新发起一次，不改动被重试的那一条）。
 export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
@@ -52,17 +52,21 @@ export interface TaskRunHistory {
 }
 
 /**
- * RunEventsView 是**打开着事件流的那一张运行卡片**与它的**运行事件**。
+ * RunDetailView 是**打开着详情面板的那一张运行卡片**与它按需拉回来的两份东西：
+ * **运行事件**与**采样**。
+ *
+ * 两份收在一份视图里而不是两个各自可空的 prop：它们一起打开、一起关掉，只给其中一个不是一种
+ * 有意义的状态。各自仍可缺席——取失败的那一份为 undefined，另一份照画。
  *
  * 认的是卡片而不是运行：同一条运行会同时出现在实况区与展开着的历次运行里，按运行认的话
  * 两张卡片下面各画一份，用户会以为那是两条运行各自的失败。cardId 由 runCardId 拼出。
  *
- * 一次只留一张：事件按需拉（它不进推送通道），留着上一张的话再点开会先闪一眼别人的事件流。
- * data 为 undefined 表示还没取回来。
+ * 一次只留一张：两份都按需拉（它们不进推送通道），留着上一张的话再点开会先闪一眼别人的东西。
  */
-export interface RunEventsView {
+export interface RunDetailView {
   cardId: string;
-  data?: RunEventsResponse;
+  events?: RunEventsResponse;
+  samples?: RunSamplesResponse;
   loading?: boolean;
 }
 
@@ -88,12 +92,13 @@ interface TaskCenterProps {
   onFilterChange?: (patch: Partial<TaskCenterFilters>) => void;
   onClearTasks?: (status?: 'completed' | 'failed', useCurrentFilters?: boolean) => void;
   onOpenTaskTarget?: (target: TaskTarget) => void;
-  // 「查看日志」打开的是**这次运行自己的事件流**；「原始日志」才是按运行过滤的那份全局日志。
-  // 两个入口并排：事件流答「这次出了什么事」，原始日志答「那一刻还发生了什么」。
-  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  // 「查看日志」打开的是**这次运行自己的详情面板**（吞吐曲线与事件流）；「原始日志」才是按运行
+  // 过滤的那份全局日志。两个入口并排：详情答「这次出了什么事、卡在哪」，原始日志答「那一刻还
+  // 发生了什么」。
+  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
   onViewRawLogs?: (run: RunStatus) => void;
-  // events 是当前打开着事件流的那一条运行；不给即一条都没打开。
-  events?: RunEventsView;
+  // detail 是当前打开着详情面板的那一张卡片；不给即一张都没打开。
+  detail?: RunDetailView;
   // 人工禁用那条开关作用在**任务**上，因此它收的是任务而不是运行。不给即不画那个按钮。
   onToggleTaskAuto?: (task: TaskSummary) => void;
 }
@@ -613,23 +618,137 @@ function runEventClass(kind: string) {
   return 'text-white/60';
 }
 
+// 曲线画布的坐标系。它只是一套内部坐标：SVG 按 viewBox 缩放到容器宽度，
+// 因此这两个数不是像素，改它们不改变界面上的大小。
+const CURVE_WIDTH = 600;
+const CURVE_HEIGHT = 120;
+
+// 相邻两点隔了超过这么多个取点间隔，就当中间漏了点，曲线在那里断开。
+//
+// 二倍而不是一倍：取点的节拍与它的水位各读一次时钟，正常节奏下也会偶尔隔出一个多间隔，
+// 按一倍判会把一条连续的曲线切成一串碎段。间隔本身由后端随载荷发来，这里只定「隔多远算漏」。
+const SAMPLE_GAP_FACTOR = 2;
+
 /**
- * RunEventStream 是「查看日志」现在打开的东西：这**一次运行**自己的事件流，
+ * curveSegments 把采样点切成若干段连续的点：**有点就连线，没点就断开**。
+ *
+ * 断口只留给「这一段我们一个观测都没有」——丢点、过保留期、以及重启前后。连过去就是画一段
+ * 根本没发生过的数据，而这条曲线存在的理由恰恰是不让用户猜。
+ *
+ * **暂停不断**：暂停是**活动态**，采样照取，那几个点的吞吐是真实的零，曲线在那里是平的。
+ * 平的说的是「它没在产出」，断的说的是「这一段我们不知道」，两件事不能画成一个样子。
+ */
+function curveSegments(samples: RunSample[], intervalSeconds: number) {
+  const maxGapMs = Math.max(1, intervalSeconds) * 1000 * SAMPLE_GAP_FACTOR;
+  const segments: RunSample[][] = [];
+  let segment: RunSample[] = [];
+  for (const sample of samples) {
+    const previous = segment[segment.length - 1];
+    if (previous && new Date(sample.at).getTime() - new Date(previous.at).getTime() > maxGapMs) {
+      segments.push(segment);
+      segment = [];
+    }
+    segment.push(sample);
+  }
+  if (segment.length > 0) segments.push(segment);
+  return segments;
+}
+
+/**
+ * RunThroughputCurve 画这一次运行的吞吐曲线：横轴是时刻，纵轴是每分钟处理了多少条。
+ * 它答的是用户故事 12 那一句——「它是不是卡住了」不用靠猜，卡住的那一段自己贴着零走。
+ *
+ * **一段连续的点画成一条 <polyline>，不是一个点一个元素。** 一次跑一夜的运行有几千个点，
+ * 逐点画等于把它们全塞进 DOM；折线的点集是一个属性，浏览器画一次。零长的那一段（只剩一个点）
+ * 靠圆头线帽画成一个点，因此不必为它另开一条渲染路径。
+ *
+ * 纵轴按这一次运行自己的峰值归一，不设固定刻度：不同任务的量级差着几个数量级，
+ * 而这条曲线要回答的是「现在比刚才慢了多少」，不是「它比别的运行快不快」。
+ */
+function RunThroughputCurve({ data }: { data: RunSamplesResponse }) {
+  const { t, formatDateTime } = useI18n();
+  const samples = data.samples || [];
+  const retentionDays = data.retention_days;
+
+  if (samples.length === 0) {
+    // 一个点都没有分两种情况，说的话完全不同：过了保留期是「曲线没了」（运行还在，这是设计），
+    // 没过就是「还没攒够第一个点」。含糊过去、或者画一条空轴，都是在让用户猜。
+    return (
+      <p className="text-xs text-white/40">
+        {data.expired && retentionDays > 0
+          ? t('logs.task.samplesGone', { days: retentionDays })
+          : t('logs.task.noSamples')}
+      </p>
+    );
+  }
+
+  const from = new Date(samples[0].at).getTime();
+  const to = new Date(samples[samples.length - 1].at).getTime();
+  // 单点（或同一毫秒里的几个点）跨度为零：夹到 1 只是别让除法炸掉，画出来仍是最左边一个点。
+  const span = Math.max(1, to - from);
+  const peak = samples.reduce((max, sample) => Math.max(max, sample.rate_per_minute), 0);
+  const pointsOf = (segment: RunSample[]) => segment
+    .map((sample) => {
+      const x = ((new Date(sample.at).getTime() - from) / span) * CURVE_WIDTH;
+      const y = CURVE_HEIGHT - (peak > 0 ? (sample.rate_per_minute / peak) * CURVE_HEIGHT : 0);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+
+  return (
+    <div className="space-y-1.5" data-testid="run-throughput-curve">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.throughput')}</p>
+        <span className="text-[11px] text-white/40">{t('logs.task.throughputPeak', { rate: formatRate(peak) })}</span>
+      </div>
+      <svg
+        viewBox={`0 0 ${CURVE_WIDTH} ${CURVE_HEIGHT}`}
+        preserveAspectRatio="none"
+        className="h-28 w-full rounded-lg border border-white/10 bg-black/30"
+        role="img"
+        aria-label={t('logs.task.throughput')}
+      >
+        {curveSegments(samples, data.interval_seconds).map((segment, index) => (
+          <polyline
+            key={`${segment[0].at}-${index}`}
+            points={pointsOf(segment)}
+            fill="none"
+            className="stroke-komgaPrimary"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-[11px] text-white/35">
+        <span>{formatDateTime(samples[0].at)}</span>
+        <span>{t('logs.task.throughputPoints', { count: samples.length })}</span>
+        <span>{formatDateTime(samples[samples.length - 1].at)}</span>
+      </div>
+      {/* 两句都是「这条曲线不完整」，但缺的那一段各有出处，因此各说各的。 */}
+      {data.expired && retentionDays > 0 && (
+        <p className="text-[11px] text-amber-500">{t('logs.task.samplesExpired', { days: retentionDays })}</p>
+      )}
+      {data.truncated && <p className="text-[11px] text-amber-500">{t('logs.task.samplesTruncated')}</p>}
+    </div>
+  );
+}
+
+/**
+ * RunEventStream 是「查看日志」打开的第二块：这**一次运行**自己的事件流，
  * 而不是在全局日志里 grep 一个子串。
  *
  * 三块自上而下：阶段时间线答「慢在哪一段」，失败明细答「哪些文件、为什么」，
- * 整条事件流答「中间还发生过什么」。
+ * 整条事件流答「中间还发生过什么」。第一块是它上面那条吞吐曲线，答「它是不是卡住了」。
  */
-function RunEventStream({ view }: { view: RunEventsView }) {
+function RunEventStream({ data }: { data: RunEventsResponse }) {
   const { t, formatDateTime } = useI18n();
-  if (view.loading || !view.data) {
-    return <p className="text-xs text-white/40">{t('common.loading')}</p>;
-  }
-  const { events, phases, truncated } = view.data;
+  const { events, phases, truncated } = data;
   const failures = events.filter((event) => event.kind === 'item');
   // 「还有多少条没列出」由后端那一格回答，不在事件流里自己找：运行还在跑时那条告警根本还没落，
   // 而事件多到被截断时，最后落下的恰好就是它。
-  const omitted = view.data.omitted_failures || 0;
+  const omitted = data.omitted_failures || 0;
 
   if (events.length === 0) {
     return <p className="text-xs text-white/40">{t('logs.task.noEvents')}</p>;
@@ -655,6 +774,26 @@ function RunEventStream({ view }: { view: RunEventsView }) {
 }
 
 /**
+ * RunDetailPanel 是「查看日志」打开的整块：上面是吞吐曲线（**它是不是卡住了**），
+ * 下面是事件流（**这次出了什么事**）。
+ *
+ * 两份各自可能缺席（取失败的那一份没交进来），缺的那份整块不画——其余照旧。
+ * 加载态判在这里而不是判在两块里各一次：它们一起开、一起关，各判一次只会闪两回。
+ */
+function RunDetailPanel({ view }: { view: RunDetailView }) {
+  const { t } = useI18n();
+  if (view.loading) {
+    return <p className="text-xs text-white/40">{t('common.loading')}</p>;
+  }
+  return (
+    <div className="space-y-3">
+      {view.samples && <RunThroughputCurve data={view.samples} />}
+      {view.events && <RunEventStream data={view.events} />}
+    </div>
+  );
+}
+
+/**
  * RunCard 是一次**运行**的卡片，实况区与展开后的历次运行共用它。
  *
  * 它只画这一次运行的事：状态、**发起方**、进度与控制动作。任务层面的东西（重试、打开页面、
@@ -665,10 +804,10 @@ function RunCard({
   cardId,
   expanded,
   taskActionKey,
-  events,
+  detail,
   onToggleExpanded,
   onTaskAction,
-  onViewRunEvents,
+  onViewRunDetail,
   onViewRawLogs,
 }: {
   run: RunStatus;
@@ -676,10 +815,10 @@ function RunCard({
   cardId: string;
   expanded: boolean;
   taskActionKey: string | null;
-  events?: RunEventsView;
+  detail?: RunDetailView;
   onToggleExpanded: () => void;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
-  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
   onViewRawLogs?: (run: RunStatus) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
@@ -717,13 +856,13 @@ function RunCard({
           <RunControlButtons run={run} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
           {/* 每条运行各有自己的两个入口：历次运行里点开的必须是**那一次**的事件流与日志，
               而不是这个任务最近那一次的。 */}
-          {onViewRunEvents && (
-            <button type="button" onClick={() => onViewRunEvents(run, cardId)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+          {onViewRunDetail && (
+            <button type="button" onClick={() => onViewRunDetail(run, cardId)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
               <FileText className="h-3.5 w-3.5" />
               {t('logs.task.viewLogs')}
             </button>
           )}
-          {/* 原始日志留在事件流旁边：事件是「用户该知道的」，日志是「排障要的」，同一件事不写两处。 */}
+          {/* 原始日志留在详情面板旁边：事件是「用户该知道的」，日志是「排障要的」，同一件事不写两处。 */}
           {onViewRawLogs && (
             <button type="button" onClick={() => onViewRawLogs(run)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/45 hover:bg-white/10 hover:text-white">
               <Terminal className="h-3.5 w-3.5" />
@@ -751,9 +890,9 @@ function RunCard({
           <RunDetailDrawer run={run} />
         </div>
       )}
-      {events?.cardId === cardId && (
+      {detail?.cardId === cardId && (
         <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-          <RunEventStream view={events} />
+          <RunDetailPanel view={detail} />
         </div>
       )}
     </div>
@@ -765,18 +904,18 @@ function RunCardList({
   runs,
   origin,
   taskActionKey,
-  events,
+  detail,
   onTaskAction,
-  onViewRunEvents,
+  onViewRunDetail,
   onViewRawLogs,
 }: {
   runs: RunStatus[];
   // origin 是这一组卡片画在哪一区（实况区 / 展开着的历次运行），与运行标识一起拼出卡片身份。
   origin: string;
   taskActionKey: string | null;
-  events?: RunEventsView;
+  detail?: RunDetailView;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
-  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
   onViewRawLogs?: (run: RunStatus) => void;
 }) {
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
@@ -789,10 +928,10 @@ function RunCardList({
           cardId={runCardId(origin, run.run_id)}
           expanded={expandedRunId === run.run_id}
           taskActionKey={taskActionKey}
-          events={events}
+          detail={detail}
           onToggleExpanded={() => setExpandedRunId((current) => (current === run.run_id ? null : run.run_id))}
           onTaskAction={onTaskAction}
-          onViewRunEvents={onViewRunEvents}
+          onViewRunDetail={onViewRunDetail}
           onViewRawLogs={onViewRawLogs}
         />
       ))}
@@ -813,8 +952,8 @@ function LiveSection({
   onTaskAction,
   onPauseAll,
   onResumeAll,
-  events,
-  onViewRunEvents,
+  detail,
+  onViewRunDetail,
   onViewRawLogs,
 }: {
   live: RunLive;
@@ -823,8 +962,8 @@ function LiveSection({
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
   onPauseAll?: () => void;
   onResumeAll?: () => void;
-  events?: RunEventsView;
-  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  detail?: RunDetailView;
+  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
   onViewRawLogs?: (run: RunStatus) => void;
 }) {
   const { t } = useI18n();
@@ -888,7 +1027,7 @@ function LiveSection({
 
       {live.runs.length === 0
         ? <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('logs.taskCenter.noLiveRuns')}</p>
-        : <RunCardList runs={live.runs} origin="live" taskActionKey={taskActionKey} events={events} onTaskAction={onTaskAction} onViewRunEvents={onViewRunEvents} onViewRawLogs={onViewRawLogs} />}
+        : <RunCardList runs={live.runs} origin="live" taskActionKey={taskActionKey} detail={detail} onTaskAction={onTaskAction} onViewRunDetail={onViewRunDetail} onViewRawLogs={onViewRawLogs} />}
     </section>
   );
 }
@@ -912,8 +1051,8 @@ function TaskRow({
   onToggle,
   onTaskAction,
   onOpenTaskTarget,
-  events,
-  onViewRunEvents,
+  detail,
+  onViewRunDetail,
   onViewRawLogs,
   onToggleTaskAuto,
 }: {
@@ -924,13 +1063,13 @@ function TaskRow({
   onToggle?: () => void;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
   onOpenTaskTarget?: (target: TaskTarget) => void;
-  // 「查看日志」打开的是**这次运行自己的事件流**；「原始日志」才是按运行过滤的那份全局日志。
-  // 两个入口并排：事件流答「这次出了什么事」，原始日志答「那一刻还发生了什么」。
-  // 前者带上卡片身份：同一条运行可以同时出现在两区，页面据此只让被点的那张画事件。
-  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  // 「查看日志」打开的是**这次运行自己的详情面板**（吞吐曲线与事件流）；「原始日志」才是按运行
+  // 过滤的那份全局日志。两个入口并排：详情答「这次出了什么事、卡在哪」，原始日志答「那一刻还
+  // 发生了什么」。前者带上卡片身份：同一条运行可以同时出现在两区，页面据此只让被点的那张画。
+  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
   onViewRawLogs?: (run: RunStatus) => void;
-  // events 是当前打开着事件流的那一张卡片；不给即一张都没打开。
-  events?: RunEventsView;
+  // detail 是当前打开着详情面板的那一张卡片；不给即一张都没打开。
+  detail?: RunDetailView;
   onToggleTaskAuto?: (task: TaskSummary) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
@@ -1031,7 +1170,7 @@ function TaskRow({
           {history?.loading && <p className="text-sm text-white/50">{t('common.loading')}</p>}
           {!history?.loading && history?.runs?.length === 0 && <p className="text-sm text-white/50">{t('logs.taskCenter.noRunHistory')}</p>}
           {!history?.loading && history?.runs && history.runs.length > 0 && (
-            <RunCardList runs={history.runs} origin="history" taskActionKey={taskActionKey} events={events} onTaskAction={onTaskAction} onViewRunEvents={onViewRunEvents} onViewRawLogs={onViewRawLogs} />
+            <RunCardList runs={history.runs} origin="history" taskActionKey={taskActionKey} detail={detail} onTaskAction={onTaskAction} onViewRunDetail={onViewRunDetail} onViewRawLogs={onViewRawLogs} />
           )}
         </div>
       )}
@@ -1057,8 +1196,8 @@ export function TaskCenter({
   onFilterChange,
   onClearTasks,
   onOpenTaskTarget,
-  events,
-  onViewRunEvents,
+  detail,
+  onViewRunDetail,
   onViewRawLogs,
   onToggleTaskAuto,
 }: TaskCenterProps) {
@@ -1084,8 +1223,8 @@ export function TaskCenter({
         onTaskAction={onTaskAction}
         onPauseAll={onPauseAll}
         onResumeAll={onResumeAll}
-        events={events}
-        onViewRunEvents={onViewRunEvents}
+        detail={detail}
+        onViewRunDetail={onViewRunDetail}
         onViewRawLogs={onViewRawLogs}
       />
 
@@ -1114,8 +1253,8 @@ export function TaskCenter({
                   onToggle={onToggleTask ? () => onToggleTask(task.task_id) : undefined}
                   onTaskAction={onTaskAction}
                   onOpenTaskTarget={onOpenTaskTarget}
-                  events={events}
-                  onViewRunEvents={onViewRunEvents}
+                  detail={detail}
+                  onViewRunDetail={onViewRunDetail}
                   onViewRawLogs={onViewRawLogs}
                   onToggleTaskAuto={onToggleTaskAuto}
                 />

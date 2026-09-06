@@ -134,6 +134,9 @@ func ValidateConfigValues(cfg *Config) ValidationResult {
 	if cfg.Tasks.RetainSampleDays < 1 {
 		issues = append(issues, ValidationIssue{Field: "tasks.retain_sample_days", Message: "采样的保留天数至少为 1。", Severity: "error"})
 	}
+	if cfg.Tasks.SampleIntervalSeconds < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.sample_interval_seconds", Message: "采样的取点间隔至少为 1 秒。", Severity: "error"})
+	}
 	if cfg.Tasks.BackoffFactor < 1 {
 		issues = append(issues, ValidationIssue{Field: "tasks.backoff_factor", Message: "退避倍率至少为 1。", Severity: "error"})
 	}

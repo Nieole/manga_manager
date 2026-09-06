@@ -5,7 +5,7 @@
 
 **Blocked by:** 16
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 采样只用来看趋势
 
@@ -21,10 +21,10 @@
 
 ## 验收
 
-- [ ] 每 10s 对活动态运行采一个点（计数 + 速率），排队中与终态不采
-- [ ] 详情页画出吞吐曲线，能看出停滞段
-- [ ] 曲线缺失（超过保留期）时界面明说，不画一条假的
-- [ ] 没有任何判断依赖采样表
-- [ ] 采样间隔可配
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `cd web && npm run test && npm run lint && npm run build` 全绿
+- [x] 每 10s 对活动态运行采一个点（计数 + 速率），排队中与终态不采
+- [x] 详情页画出吞吐曲线，能看出停滞段
+- [x] 曲线缺失（超过保留期）时界面明说，不画一条假的
+- [x] 没有任何判断依赖采样表
+- [x] 采样间隔可配
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `cd web && npm run test && npm run lint && npm run build` 全绿

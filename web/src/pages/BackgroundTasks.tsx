@@ -7,8 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
-import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskRunHistory, type TaskTarget, type RunEventsView, type RunLive, type RunStatus, type TaskSummary } from '../components/tasks/TaskCenter';
-import type { RunEventsResponse, RunPush } from '../api/generated';
+import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskRunHistory, type TaskTarget, type RunDetailView, type RunLive, type RunStatus, type TaskSummary } from '../components/tasks/TaskCenter';
+import type { RunEventsResponse, RunPush, RunSamplesResponse } from '../api/generated';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
 import { applyLiveSummary, applyRunToLive } from '../utils/runLive';
@@ -40,8 +40,8 @@ const EMPTY_LIVE: RunLive = { active: 0, queued: 0, slots: 0, paused: false, pau
 
 interface BackgroundTasksProps {
   embedded?: boolean;
-  // onViewRawLogs 是「原始日志」那个入口：按**这一次运行**过滤全局日志。事件流不走它——
-  // 那是这条运行自己的东西，本页按需取回后交给任务中心渲染。
+  // onViewRawLogs 是「原始日志」那个入口：按**这一次运行**过滤全局日志。详情面板不走它——
+  // 曲线与事件流是这条运行自己的东西，本页按需取回后交给任务中心渲染。
   onViewRawLogs?: (run: RunStatus) => void;
 }
 
@@ -55,9 +55,9 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
   // 展开的那一行与它的历次运行：只留展开中的那一份，收起时连同它一起丢掉——
   // 留着的话再展开会先闪一眼过期的历史。
   const [history, setHistory] = useState<TaskRunHistory | undefined>(undefined);
-  // 打开着事件流的那一条运行。事件**不进推送通道**，因此它是纯按需取回的一份，
-  // 只留一条：留着上一条的话，再点开会先闪一眼别人的事件流。
-  const [events, setEvents] = useState<RunEventsView | undefined>(undefined);
+  // 打开着详情面板的那一张卡片。事件与**采样**都**不进推送通道**，因此两份都是纯按需取回的，
+  // 只留一张：留着上一张的话，再点开会先闪一眼别人的曲线。
+  const [detail, setDetail] = useState<RunDetailView | undefined>(undefined);
   const [runStatusFilter, setRunStatusFilter] = useState('ALL');
   const [taskScopeFilter, setTaskScopeFilter] = useState('ALL');
   const [taskTypeFilter, setTaskTypeFilter] = useState('ALL');
@@ -73,7 +73,7 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
   const [bulkPauseBusy, setBulkPauseBusy] = useState(false);
   const taskRequestIDRef = useRef(0);
   const historyRequestIDRef = useRef(0);
-  const eventsRequestIDRef = useRef(0);
+  const detailRequestIDRef = useRef(0);
   // lastPushSequenceRef 是上一帧推送帧的序号；null 表示手上还没有可比的号（刚进页面，或 SSE 刚重连上）。
   const lastPushSequenceRef = useRef<number | null>(null);
   const { showToast } = useToast();
@@ -145,34 +145,45 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
     }
   }, [showToast, t]);
 
-  // 事件流按需取：一条运行的事件可能上千条，列表接口一条都不带回来，点开哪一条才去问哪一条。
-  // 世代号与另外两条同理：慢网下「点开 A、关掉、点开 B」会让 A 的响应后到，对不上就整份丢弃。
-  const fetchRunEvents = useCallback(async (runID: number, cardId: string) => {
-    const requestID = eventsRequestIDRef.current + 1;
-    eventsRequestIDRef.current = requestID;
-    setEvents({ cardId, loading: true });
-    try {
-      const res = await apiClient.get<RunEventsResponse>(`/api/system/runs/${runID}/events`);
-      if (requestID !== eventsRequestIDRef.current) return;
-      setEvents({ cardId, data: res.data });
-    } catch (error) {
-      if (requestID !== eventsRequestIDRef.current) return;
-      console.error(error);
-      setEvents(undefined);
+  // 详情面板的两份都按需取：一条运行的事件可能上千条、采样点可能上千个，列表接口一份都不带
+  // 回来，点开哪一条才去问哪一条。
+  //
+  // 两条请求**并发发出、各自成败**：其中一条 500 不该把另一条已经拿到的东西一起抹掉——
+  // 用户点开的那一刻，曲线与事件流各自答着一个问题，能答一个总好过一个都不答。
+  // 世代号与另外两条取数同理：慢网下「点开 A、关掉、点开 B」会让 A 的响应后到，对不上就整份丢弃。
+  const fetchRunDetail = useCallback(async (runID: number, cardId: string) => {
+    const requestID = detailRequestIDRef.current + 1;
+    detailRequestIDRef.current = requestID;
+    setDetail({ cardId, loading: true });
+    const [events, samples] = await Promise.all([
+      apiClient.get<RunEventsResponse>(`/api/system/runs/${runID}/events`).then((res) => res.data).catch((error) => {
+        console.error(error);
+        return undefined;
+      }),
+      apiClient.get<RunSamplesResponse>(`/api/system/runs/${runID}/samples`).then((res) => res.data).catch((error) => {
+        console.error(error);
+        return undefined;
+      }),
+    ]);
+    if (requestID !== detailRequestIDRef.current) return;
+    if (!events && !samples) {
+      setDetail(undefined);
       showToast(t('settings.maintenance.taskCenterLoadFailed'), 'error');
+      return;
     }
+    setDetail({ cardId, events, samples });
   }, [showToast, t]);
 
   // 再点一次同一张卡片就是关掉它，并让在途的响应作废。认卡片而不是认运行：同一条运行会同时
   // 出现在实况区与展开着的历次运行里，认运行的话两张卡片下面各画一份。
-  const toggleRunEvents = useCallback((run: RunStatus, cardId: string) => {
-    if (events?.cardId === cardId) {
-      eventsRequestIDRef.current += 1;
-      setEvents(undefined);
+  const toggleRunDetail = useCallback((run: RunStatus, cardId: string) => {
+    if (detail?.cardId === cardId) {
+      detailRequestIDRef.current += 1;
+      setDetail(undefined);
       return;
     }
-    void fetchRunEvents(run.run_id, cardId);
-  }, [events, fetchRunEvents]);
+    void fetchRunDetail(run.run_id, cardId);
+  }, [detail, fetchRunDetail]);
 
   // 收起就是把那一份丢掉，并让在途的响应作废——它回来时那一行已经不展开了。
   const toggleTask = useCallback((taskId: number) => {
@@ -383,8 +394,8 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
         onFilterChange={updateTaskFilters}
         onClearTasks={clearTasks}
         onOpenTaskTarget={openTaskTarget}
-        events={events}
-        onViewRunEvents={toggleRunEvents}
+        detail={detail}
+        onViewRunDetail={toggleRunDetail}
         onViewRawLogs={onViewRawLogs}
         onToggleTaskAuto={toggleTaskAuto}
       />

@@ -120,6 +120,12 @@ type Config struct {
 	//
 	// 与落盘端口同一条约束：它会在引擎的临界区内被调用，因此**不得回调进引擎**，也不得长时间阻塞。
 	Backoff func() BackoffPolicy
+	// SampleInterval 读**采样**的取点间隔。它是一个**函数**而不是一个数，理由同 Slots：
+	// 间隔在设置里可改，改了要对**下一个点**生效，而不是等进程重启。
+	// 为 nil 或读回非正数时取 DefaultSampleInterval。
+	//
+	// 与落盘端口同一条约束：它会在引擎的临界区内被调用，因此**不得回调进引擎**，也不得长时间阻塞。
+	SampleInterval func() time.Duration
 	// Resume 读**可续跑**白名单与它的全局开关，重启转**中断**时读一遍。为 nil 时一条都不续跑：
 	// 白名单的内容属于装配方（本包不认识具体有哪些类型），没交出来就没有哪个类型被允许自己重跑。
 	//
@@ -138,17 +144,18 @@ type Config struct {
 //   - 名字带 Locked 后缀的方法要求调用方已持锁；其余方法自行加解锁。
 //   - 落盘端口在临界区内被调用，因此实现方不得回调进引擎。
 type Engine struct {
-	store         Store
-	publish       func(Snapshot)
-	publishLive   func(Live)
-	runBackground func(func())
-	diskWork      *diskwork.Runner
-	decorate      func(context.Context, Run) context.Context
-	now           func() time.Time
-	slots         func() int
-	backoff       func() BackoffPolicy
-	resume        func() ResumePolicy
-	codes         ControlCodes
+	store          Store
+	publish        func(Snapshot)
+	publishLive    func(Live)
+	runBackground  func(func())
+	diskWork       *diskwork.Runner
+	decorate       func(context.Context, Run) context.Context
+	now            func() time.Time
+	slots          func() int
+	backoff        func() BackoffPolicy
+	sampleInterval func() time.Duration
+	resume         func() ResumePolicy
+	codes          ControlCodes
 
 	mu sync.Mutex
 	// seq 是运行的单调序号，装配期从库里已用掉的最大值接上，因此跨重启单调。
@@ -168,6 +175,8 @@ type Engine struct {
 	gates map[int64]publishGate
 	// itemFailures 是每条运行的条目失败计账：写下去了几条、被上限挡掉了几条。见 itemFailureTally。
 	itemFailures map[int64]itemFailureTally
+	// samples 是每条运行的**采样**取点水位：上一个点的时刻与当时的计数。见 sampleGate。
+	samples map[int64]sampleGate
 	// lastLive 是上一帧**实况汇总**（序号留空），用来判断这一次跃迁有没有真的改变那几个数。
 	// 没变就不投：一条运行从 3 报到 4 不改变盘上有几件事，跟着投等于把汇总也变成一路噪音。
 	lastLive Live
@@ -187,22 +196,24 @@ func New(cfg Config) *Engine {
 		panic("task: Config.RunBackground 不得为 nil")
 	}
 	e := &Engine{
-		store:         cfg.Store,
-		publish:       cfg.Publish,
-		publishLive:   cfg.PublishLive,
-		runBackground: cfg.RunBackground,
-		diskWork:      cfg.DiskWork,
-		decorate:      cfg.DecorateRunContext,
-		now:           cfg.Now,
-		slots:         cfg.Slots,
-		backoff:       cfg.Backoff,
-		resume:        cfg.Resume,
-		codes:         cfg.ControlCodes,
-		runtimes:      make(map[int64]*taskRuntime),
-		queued:        make(map[int64]queuedRun),
-		gates:         make(map[int64]publishGate),
-		itemFailures:  make(map[int64]itemFailureTally),
-		settled:       make(map[int64][]chan struct{}),
+		store:          cfg.Store,
+		publish:        cfg.Publish,
+		publishLive:    cfg.PublishLive,
+		runBackground:  cfg.RunBackground,
+		diskWork:       cfg.DiskWork,
+		decorate:       cfg.DecorateRunContext,
+		now:            cfg.Now,
+		slots:          cfg.Slots,
+		backoff:        cfg.Backoff,
+		sampleInterval: cfg.SampleInterval,
+		resume:         cfg.Resume,
+		codes:          cfg.ControlCodes,
+		runtimes:       make(map[int64]*taskRuntime),
+		queued:         make(map[int64]queuedRun),
+		gates:          make(map[int64]publishGate),
+		itemFailures:   make(map[int64]itemFailureTally),
+		samples:        make(map[int64]sampleGate),
+		settled:        make(map[int64][]chan struct{}),
 	}
 	e.seq = e.restoredSequence()
 	return e

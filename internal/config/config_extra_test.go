@@ -105,10 +105,13 @@ func TestNormalizeConfigDefaultsAndClamps(t *testing.T) {
 		retention.Tasks.RetainRunsPerTask = threshold
 		retention.Tasks.RetainTerminalRunDays = threshold
 		retention.Tasks.RetainSampleDays = threshold
+		// 取点间隔走同一条路：0 是「配置文件里没写」，负数是手写文件的笔误，两者都不是「更细的曲线」。
+		retention.Tasks.SampleIntervalSeconds = threshold
 		NormalizeConfig(retention)
 		if retention.Tasks.RetainRunsPerTask != DefaultRetainRunsPerTask ||
 			retention.Tasks.RetainTerminalRunDays != DefaultRetainTerminalRunDays ||
-			retention.Tasks.RetainSampleDays != DefaultRetainSampleDays {
+			retention.Tasks.RetainSampleDays != DefaultRetainSampleDays ||
+			retention.Tasks.SampleIntervalSeconds != DefaultSampleIntervalSeconds {
 			t.Fatalf("阈值 %d 没有回落到默认值：%+v", threshold, retention.Tasks)
 		}
 	}
@@ -313,6 +316,7 @@ func validBaseConfig(t *testing.T) *Config {
 	cfg.Tasks.RetainRunsPerTask = DefaultRetainRunsPerTask
 	cfg.Tasks.RetainTerminalRunDays = DefaultRetainTerminalRunDays
 	cfg.Tasks.RetainSampleDays = DefaultRetainSampleDays
+	cfg.Tasks.SampleIntervalSeconds = DefaultSampleIntervalSeconds
 	cfg.Tasks.BackoffFactor = DefaultBackoffFactor
 	cfg.Tasks.BackoffMaxHours = DefaultBackoffMaxHours
 	cfg.Tasks.BackoffStopAfter = DefaultBackoffStopAfter
@@ -366,6 +370,8 @@ func TestValidateConfigRejectsFieldByField(t *testing.T) {
 		{"no-runs-retained", func(c *Config) { c.Tasks.RetainRunsPerTask = 0 }, "tasks.retain_runs_per_task"},
 		{"negative-terminal-days", func(c *Config) { c.Tasks.RetainTerminalRunDays = -1 }, "tasks.retain_terminal_run_days"},
 		{"negative-sample-days", func(c *Config) { c.Tasks.RetainSampleDays = -1 }, "tasks.retain_sample_days"},
+		// 取点间隔小于 1 秒不是「更细的曲线」而是「每一帧都落一行」，那正是采样要避开的写入量。
+		{"no-sample-interval", func(c *Config) { c.Tasks.SampleIntervalSeconds = 0 }, "tasks.sample_interval_seconds"},
 		// 退避三个数同理：倍率 0 让曲线停在起点、封顶 0 等于没有退避、停发阈值 0 会让每个任务
 		// 从第一天起就停发——设置页给这三格画了错误位，静默改回默认等于那三格永远是空的。
 		{"no-backoff-factor", func(c *Config) { c.Tasks.BackoffFactor = 0 }, "tasks.backoff_factor"},

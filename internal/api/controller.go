@@ -375,13 +375,14 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// 任务快照只投给管理员：它带着作用域显示名、重启入参与失败原因，与任务列表接口
 	// （对普通用户 403）是同一份数据，两条路口径不同就等于那条 403 不存在。
 	c.taskEngine = newTaskEngine(taskEngineConfig{
-		Store:         taskstore.New(store.DB()),
-		Publish:       c.sse.publishAdmin,
-		RunBackground: c.runBackground,
-		DiskWork:      c.diskWork,
-		Slots:         c.taskSlots,
-		Backoff:       c.taskBackoffPolicy,
-		ResumeEnabled: c.taskResumeEnabled,
+		Store:          taskstore.New(store.DB()),
+		Publish:        c.sse.publishAdmin,
+		RunBackground:  c.runBackground,
+		DiskWork:       c.diskWork,
+		Slots:          c.taskSlots,
+		Backoff:        c.taskBackoffPolicy,
+		SampleInterval: c.runSampleInterval,
+		ResumeEnabled:  c.taskResumeEnabled,
 	})
 	// 构建「再发起一次」的注册表：它同时是可重试与**可续跑**两条判据的来源，因此必须在任何运行
 	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
@@ -400,6 +401,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	c.runBackground(c.startPageCacheJanitor)
 	c.runBackground(c.startSessionJanitor)
 	c.runBackground(c.startRunHistoryJanitor)
+	c.runBackground(c.startRunSampler)
 
 	// 初始化文件系统监控。派生出去的扫描与清理各建一条**发起方**为「监听」的运行：
 	// 监听器自己不碰扫描器，它只知道「这个库该扫了」。
@@ -887,8 +889,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/runs/{runID}/pause", c.pauseRun)
 		r.Post("/system/runs/{runID}/resume", c.resumeRun)
 		r.Post("/system/runs/{runID}/cancel", c.cancelRun)
-		// 事件流按**运行**寻址，且**不进推送通道**：详情页打开时才来问这一条。
+		// 事件流与**采样**都按**运行**寻址，且**不进推送通道**：详情页打开时才来问这两条。
 		r.Get("/system/runs/{runID}/events", c.getRunEvents)
+		r.Get("/system/runs/{runID}/samples", c.getRunSamples)
 		r.Get("/system/koreader", c.getKOReaderSettings)
 		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
 		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)

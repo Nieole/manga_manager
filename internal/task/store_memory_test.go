@@ -26,9 +26,11 @@ type memStore struct {
 	metrics  map[int64]map[string]int64
 	events   map[int64][]Event
 	// loadRuns 数 LoadRun 被调用了多少次，见 loadRunCalls。
-	loadRuns  int
-	samples   map[int64][]Sample
-	createErr error
+	loadRuns int
+	samples  map[int64][]Sample
+	// sampleReads 数 ListRunSamples 被调用了多少次，见 sampleReadCalls。
+	sampleReads int
+	createErr   error
 }
 
 func newMemStore() *memStore {
@@ -211,12 +213,23 @@ func (s *memStore) LoadRun(_ context.Context, runID int64) (Run, error) {
 
 // loadRunCalls 数至今问过多少次「这条运行现在什么样」。
 //
-// 它是这份桩上唯一的调用计数，专给一条用例用：条目失败的上限之外必须**一次库都不查**，
-// 而那条路的正确性只有「有没有查」能证明——查回来的答案在两种实现下完全一样。
+// 它与 sampleReadCalls 是这份桩上仅有的两个调用计数，各自专给一条用例用：条目失败的上限之外
+// 必须**一次库都不查**，而那条路的正确性只有「有没有查」能证明——查回来的答案在两种实现下
+// 完全一样。
 func (s *memStore) loadRunCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loadRuns
+}
+
+// sampleReadCalls 数至今读过多少次**采样**表。
+//
+// 它守的是本票那条硬约束：**计数的事实来源是运行行本身，不是采样点**。一整轮运行下来
+// 这个数必须是零——采样只被详情页那条按需拉取读，任何判断读了它，这个计数就不是零了。
+func (s *memStore) sampleReadCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sampleReads
 }
 
 func (s *memStore) ListRuns(_ context.Context, filter RunFilter) ([]Run, error) {
@@ -353,6 +366,20 @@ func (s *memStore) AppendRunSamples(_ context.Context, runID int64, samples []Sa
 	defer s.mu.Unlock()
 	s.samples[runID] = append(s.samples[runID], samples...)
 	return nil
+}
+
+// ListRunSamples 交回插入顺序（也就是时刻升序），limit 截的是**最近的**那一段——与生产同一条口径。
+//
+// 它顺手数一次被读了几次：**没有任何判断依赖采样表**这条约束，用例断言的正是这个计数为零。
+func (s *memStore) ListRunSamples(_ context.Context, runID int64, limit int) ([]Sample, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sampleReads++
+	samples := append([]Sample(nil), s.samples[runID]...)
+	if limit > 0 && len(samples) > limit {
+		samples = samples[len(samples)-limit:]
+	}
+	return samples, nil
 }
 
 func (s *memStore) LoadRunSideData(_ context.Context, runIDs []int64) (map[int64]SideData, error) {

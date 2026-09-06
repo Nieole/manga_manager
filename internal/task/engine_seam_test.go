@@ -64,6 +64,9 @@ type testEngine struct {
 	// resume 是**可续跑**白名单，构造之后仍可换掉：引擎收的是一个读它的闭包。
 	// 零值即空白名单，也就是「一条都不续跑」——续跑的用例自己填。
 	resume ResumePolicy
+	// sampleInterval 是**采样**的取点间隔，构造之后仍可换掉，理由同 resume。
+	// 零值交给领域引擎兜底（DefaultSampleInterval），改间隔的那条用例自己填。
+	sampleInterval time.Duration
 
 	mu        sync.Mutex
 	published []Snapshot
@@ -101,12 +104,13 @@ func newHarness(t *testing.T, run func(func()), slots func() int, stepping bool)
 		now = (&steppingClock{clock: harness.clock, step: PublishInterval}).Now
 	}
 	harness.engine = New(Config{
-		Store:         harness.store,
-		Publish:       harness.record,
-		RunBackground: run,
-		Now:           now,
-		Slots:         slots,
-		Resume:        func() ResumePolicy { return harness.resume },
+		Store:          harness.store,
+		Publish:        harness.record,
+		RunBackground:  run,
+		Now:            now,
+		Slots:          slots,
+		Resume:         func() ResumePolicy { return harness.resume },
+		SampleInterval: func() time.Duration { return harness.sampleInterval },
 		ControlCodes: ControlCodes{
 			Paused:     "task.msg.control.paused",
 			Resumed:    "task.msg.control.resumed",

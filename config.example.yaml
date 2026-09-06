@@ -64,6 +64,8 @@ tasks:
     retain_runs_per_task: 20
     retain_terminal_run_days: 90
     retain_sample_days: 7
+    # 吞吐曲线的取点间隔（秒），至少为 1。只影响曲线的疏密，不影响进度与速率那几个数
+    sample_interval_seconds: 10
     # 自动发起的退避：连败后间隔按倍率拉长、封顶多少小时、连败几次停发。三个数都至少为 1
     backoff_factor: 2
     backoff_max_hours: 24

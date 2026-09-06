@@ -238,6 +238,19 @@ export function SettingsLibraryPage() {
             <p className="mt-1 text-xs text-gray-500">{t('settings.library.retainSampleDaysHint')}</p>
             <FieldErrors messages={fieldErrors('tasks.retain_sample_days')} />
           </div>
+          {/* 取点间隔与上面三个阈值不同：它一行都不删，只决定曲线画得多密。 */}
+          <div>
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.sampleInterval')}</label>
+            <input
+              type="number"
+              min={1}
+              value={config.tasks.sample_interval_seconds}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, sample_interval_seconds: Number(e.target.value) || 10 } })}
+              className={inputClassName}
+            />
+            <p className="mt-1 text-xs text-gray-500">{t('settings.library.sampleIntervalHint')}</p>
+            <FieldErrors messages={fieldErrors('tasks.sample_interval_seconds')} />
+          </div>
         </div>
         <p className="text-xs text-gray-500">{t('settings.library.retentionHint')}</p>
 

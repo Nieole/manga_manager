@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { TaskCenter, type RunEventsResponse, type RunLive, type RunStatus, type TaskSummary } from './TaskCenter';
+import { TaskCenter, type RunEventsResponse, type RunLive, type RunSample, type RunSamplesResponse, type RunStatus, type TaskSummary } from './TaskCenter';
 import { runCardId } from '../../utils/runCard';
 
 // 词条只要能渲染出来即可：本文件断言的是某一格在不在、按钮调了谁，与译文无关。
@@ -460,14 +460,14 @@ describe('日志入口按运行给', () => {
     onToggleTask: vi.fn(),
   };
 
-  it('「查看日志」打开的是这一次运行自己的事件流', () => {
-    const onViewRunEvents = vi.fn();
-    renderCenter({ ...twoRuns, onViewRunEvents });
+  it('「查看日志」打开的是这一次运行自己的详情面板', () => {
+    const onViewRunDetail = vi.fn();
+    renderCenter({ ...twoRuns, onViewRunDetail });
 
     const entries = screen.getAllByText('logs.task.viewLogs');
     expect(entries).toHaveLength(2);
     fireEvent.click(entries[1]);
-    expect(onViewRunEvents).toHaveBeenCalledWith(expect.objectContaining({ run_id: 2 }), runCardId('history', 2));
+    expect(onViewRunDetail).toHaveBeenCalledWith(expect.objectContaining({ run_id: 2 }), runCardId('history', 2));
   });
 
   it('旁边留着「原始日志」，按的也是这一次运行', () => {
@@ -484,7 +484,7 @@ describe('日志入口按运行给', () => {
 describe('事件流', () => {
   const runWithEvents = (events: RunEventsResponse) => ({
     live: makeLive({ active: 1, runs: [makeRun({ run_id: 3 })] }),
-    events: { cardId: runCardId('live', 3), data: events },
+    detail: { cardId: runCardId('live', 3), events },
   });
 
   it('阶段时间线一段一行，写着每段跑了多久', () => {
@@ -525,9 +525,9 @@ describe('事件流', () => {
   it('事件只画在被点开的那一条运行上', () => {
     renderCenter({
       live: makeLive({ active: 2, runs: [makeRun({ run_id: 3 }), makeRun({ run_id: 4 })] }),
-      events: {
+      detail: {
         cardId: runCardId('live', 4),
-        data: { run_id: 4, events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
+        events: { run_id: 4, events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
       },
     });
 
@@ -544,13 +544,101 @@ describe('事件流', () => {
       tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3 }) })],
       history: { taskId: 7, runs: [makeRun({ run_id: 3 })] },
       onToggleTask: vi.fn(),
-      events: {
+      detail: {
         cardId: runCardId('history', 3),
-        data: { run_id: 3, events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
+        events: { run_id: 3, events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
       },
     });
 
     expect(screen.getAllByText('logs.task.eventStream')).toHaveLength(1);
+  });
+});
+
+describe('吞吐曲线', () => {
+  // 每 10 秒一个点，第 n 个点比前一个多处理 step 条；step 为 0 就是一段停滞。
+  function makeSamples(rates: number[]): RunSample[] {
+    const base = Date.parse('2026-08-31T00:00:00Z');
+    return rates.map((rate, index) => ({
+      at: new Date(base + (index + 1) * 10_000).toISOString(),
+      current: 100 * (index + 1),
+      rate_per_minute: rate,
+    }));
+  }
+
+  const runWithSamples = (samples: RunSamplesResponse) => ({
+    live: makeLive({ active: 1, runs: [makeRun({ run_id: 3 })] }),
+    detail: { cardId: runCardId('live', 3), samples },
+  });
+
+  function polylines() {
+    return Array.from(document.querySelectorAll('[data-testid="run-throughput-curve"] polyline'));
+  }
+
+  it('有点就画一条折线，而不是一个点一个元素', () => {
+    renderCenter(runWithSamples({
+      run_id: 3, interval_seconds: 10, retention_days: 7, samples: makeSamples([600, 0, 0, 300]),
+    }));
+
+    expect(screen.getByText('logs.task.throughput')).toBeTruthy();
+    const lines = polylines();
+    expect(lines).toHaveLength(1);
+    // 四个点连成一条线，DOM 上只有这一个元素——几千个点的长跑运行靠的就是这一条。
+    expect(lines[0].getAttribute('points')?.trim().split(/\s+/)).toHaveLength(4);
+  });
+
+  // 暂停与停滞都是「没在产出」，我们观测得清清楚楚，因此曲线在那里是**平的**；
+  // 断口只留给「这一段一个观测都没有」。两件事画成一个样子，用户就分不出来了。
+  it('停滞段照样连着画，只有漏了点的地方才断开', () => {
+    const samples = makeSamples([600, 0, 0, 300]);
+    // 第三个点之后隔了五分钟才有下一个：中间那段没有任何观测，连过去就是编数据。
+    samples[3] = { ...samples[3], at: new Date(Date.parse(samples[2].at) + 300_000).toISOString() };
+    renderCenter(runWithSamples({
+      run_id: 3, interval_seconds: 10, retention_days: 7, samples,
+    }));
+
+    const lines = polylines();
+    expect(lines).toHaveLength(2);
+    expect(lines[0].getAttribute('points')?.trim().split(/\s+/)).toHaveLength(3);
+    expect(lines[1].getAttribute('points')?.trim().split(/\s+/)).toHaveLength(1);
+  });
+
+  it('过了保留期就明说曲线没了，不画一条假的', () => {
+    renderCenter(runWithSamples({
+      run_id: 3, interval_seconds: 10, retention_days: 7, samples: [], expired: true,
+    }));
+
+    expect(screen.getByText('logs.task.samplesGone')).toBeTruthy();
+    expect(polylines()).toHaveLength(0);
+  });
+
+  it('还没攒够第一个点与过了保留期说的不是同一句话', () => {
+    renderCenter(runWithSamples({ run_id: 3, interval_seconds: 10, retention_days: 7, samples: [] }));
+
+    expect(screen.getByText('logs.task.noSamples')).toBeTruthy();
+    expect(screen.queryByText('logs.task.samplesGone')).toBeNull();
+  });
+
+  it('曲线不完整与只画了最近一段都要说出来', () => {
+    renderCenter(runWithSamples({
+      run_id: 3, interval_seconds: 10, retention_days: 7, samples: makeSamples([600, 300]),
+      expired: true, truncated: true,
+    }));
+
+    expect(screen.getByText('logs.task.samplesExpired')).toBeTruthy();
+    expect(screen.getByText('logs.task.samplesTruncated')).toBeTruthy();
+    expect(polylines()).toHaveLength(1);
+  });
+
+  it('曲线只画在被点开的那一张卡片下面', () => {
+    renderCenter({
+      live: makeLive({ active: 2, runs: [makeRun({ run_id: 3 }), makeRun({ run_id: 4 })] }),
+      detail: {
+        cardId: runCardId('live', 4),
+        samples: { run_id: 4, interval_seconds: 10, retention_days: 7, samples: makeSamples([600]) },
+      },
+    });
+
+    expect(screen.getAllByTestId('run-throughput-curve')).toHaveLength(1);
   });
 });
 

@@ -56,6 +56,8 @@ const NO_INFLECTION_KEYS = [
   'settings.media.aiConcurrency',
   'settings.connections.requests.slow',
   'logs.perf.archiveOpens',
+  // 计数在括号里、名词在它前面（Failed items (3)）：那个数不决定任何词的形态。
+  'logs.task.failedItems',
 ];
 
 const EXEMPT_KEYS = new Set([...INVARIANT_NOUN_KEYS, ...NO_INFLECTION_KEYS]);

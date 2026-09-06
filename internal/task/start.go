@@ -450,8 +450,9 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 
 	delete(e.runtimes, runID)
 	delete(e.queued, runID)
-	// 终态丢掉水位：这条运行不会再有帧，留着只是泄漏。
+	// 终态丢掉两道水位：这条运行不会再有帧、也不会再取到点，留着只是泄漏。
 	delete(e.gates, runID)
+	delete(e.samples, runID)
 	// 被上限挡掉的那些条目失败在这里结账：落一条「还有 N 条未列出」，并丢掉计账。
 	e.flushOmittedItemFailuresLocked(runID)
 	// 连败与**退避**记在**任务**上，而这里是四条终态里唯一由任务体裁决的三条汇合处：

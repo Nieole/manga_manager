@@ -123,6 +123,21 @@ export interface RunEventsResponse {
   truncated?: boolean;
 }
 
+export interface RunSample {
+  at: string;
+  current: number;
+  rate_per_minute: number;
+}
+
+export interface RunSamplesResponse {
+  run_id: number;
+  samples: RunSample[];
+  interval_seconds: number;
+  retention_days: number;
+  expired?: boolean;
+  truncated?: boolean;
+}
+
 export interface ValidationIssue {
   field: string;
   message: string;

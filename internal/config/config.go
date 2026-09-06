@@ -138,6 +138,14 @@ type Config struct {
 		// RetainSampleDays 是**采样**点的最长保留天数。它比运行本身短：运行还在，曲线没了。
 		RetainSampleDays int `yaml:"retain_sample_days" json:"retain_sample_days"`
 
+		// SampleIntervalSeconds 是**采样**的取点间隔（秒）：每隔这么久对每条**活动态**运行
+		// 记一次计数与吞吐，连起来就是运行详情页那条吞吐曲线。小于 1 的值归一化为默认值。
+		//
+		// 调小看得更细，代价是每条运行每天多落几倍的行，而它们受 RetainSampleDays 约束；
+		// 调大省行，代价是短一些的停滞看不出来。**它只影响曲线的疏密**——进度、终态与速率
+		// 一个都不读采样，把它调成多少都不会改变那几个数。
+		SampleIntervalSeconds int `yaml:"sample_interval_seconds" json:"sample_interval_seconds"`
+
 		// **退避**的三个阈值。它们只约束**自动发起**（定时与监听）：手动发起、以及已经在跑的
 		// 运行都不受影响。小于 1 的值一律归一化为默认值，逐项失效的方式见 task.BackoffPolicy.orDefault。
 
@@ -219,6 +227,12 @@ const (
 	DefaultRetainRunsPerTask     = 20
 	DefaultRetainTerminalRunDays = 90
 	DefaultRetainSampleDays      = 7
+
+	// DefaultSampleIntervalSeconds 是**采样**取点间隔的默认值：10 秒一个点。
+	//
+	// 它必须与 `internal/task` 的 DefaultSampleInterval 相等，理由同 DefaultRunSlots。
+	// `TestConfigDefaultSampleIntervalMatchesTheEngineDefault` 守着这条相等。
+	DefaultSampleIntervalSeconds = 10
 
 	// DefaultBackoff* 是**退避**三个阈值的默认值：连败后按 ×2 拉长自动发起的间隔、
 	// 封顶 24 小时、连败 6 次停发。
@@ -497,6 +511,10 @@ func NormalizeConfig(cfg *Config) {
 	}
 	if cfg.Tasks.RetainSampleDays < 1 {
 		cfg.Tasks.RetainSampleDays = DefaultRetainSampleDays
+	}
+	// 取点间隔同理：小于 1 秒不是「更细的曲线」而是「每一帧都落一行」，那正是采样要避开的写入量。
+	if cfg.Tasks.SampleIntervalSeconds < 1 {
+		cfg.Tasks.SampleIntervalSeconds = DefaultSampleIntervalSeconds
 	}
 	// 退避的三个数同理。「不要退避」的表达是把停发阈值调大、把封顶调小，不是把某个数填成 0。
 	if cfg.Tasks.BackoffFactor < 1 {
