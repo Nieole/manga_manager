@@ -193,7 +193,7 @@ func TestScrapeCancellationCodeSplitsByScope(t *testing.T) {
 			provider := &scrapeTestProvider{}
 			c, snapshots := newScrapeTaskRig(t, provider)
 			// 第一条请求刚发出就按下取消：第二轮循环的**暂停闸门**因此返回取消错误。
-			provider.onFetch = func(string) { _ = c.taskEngine.cancel(tc.key) }
+			provider.onFetch = func(string) { _ = cancelByKey(c.taskEngine, tc.key) }
 
 			if err := tc.launch(c); err != nil {
 				t.Fatalf("启动刮削失败: %v", err)

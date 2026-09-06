@@ -124,8 +124,9 @@ func taskArchiveOpenRate(task *RunStatus) float64 {
 		return 0
 	}
 	durationMillis := taskMetricValue(task, "duration_ms")
-	if durationMillis <= 0 && !task.StartedAt.IsZero() {
-		durationMillis = time.Since(task.StartedAt).Milliseconds()
+	// 开始时刻为 nil 就是「还没开跑」（**排队中**）：它没有可以量的那一段。
+	if durationMillis <= 0 && task.StartedAt != nil {
+		durationMillis = time.Since(*task.StartedAt).Milliseconds()
 	}
 	if durationMillis <= 0 {
 		return 0

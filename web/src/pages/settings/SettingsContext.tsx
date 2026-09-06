@@ -24,6 +24,7 @@ export interface Config {
     archive_pool_size: number;
     max_ai_concurrency: number;
   };
+  tasks: { max_concurrent_runs: number };
   llm: {
     provider: string;
     api_mode: string;
@@ -280,6 +281,8 @@ const SECTION_FIELD_PATHS: Record<ConfigSectionKey, string[]> = {
     'scanner.workers',
     'scanner.scan_profile',
     'scanner.archive_pool_size',
+    // 后台运行槽位与上面那几个并发数是同一排问题（「一次并行多少」），因此同属这个分区。
+    'tasks',
   ],
   media: [
     'cache',

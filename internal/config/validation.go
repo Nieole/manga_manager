@@ -122,6 +122,9 @@ func ValidateConfigValues(cfg *Config) ValidationResult {
 	if cfg.Scanner.MaxAiConcurrency < 1 {
 		issues = append(issues, ValidationIssue{Field: "scanner.max_ai_concurrency", Message: "AI 并发数至少为 1。", Severity: "error"})
 	}
+	if cfg.Tasks.MaxConcurrentRuns < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.max_concurrent_runs", Message: "后台运行槽位至少为 1。", Severity: "error"})
+	}
 
 	if !isSupportedStorageProfile(cfg.Library.StorageProfile) {
 		issues = append(issues, ValidationIssue{Field: "library.storage_profile", Message: "存储介质策略必须是 auto、ssd、hdd_external、network 或 custom。", Severity: "error"})

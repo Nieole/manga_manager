@@ -129,7 +129,7 @@ func TestWriteComicInfoDeclarationLandsWhole(t *testing.T) {
 	if !task.CanCancel || task.CanPause {
 		t.Fatalf("控制能力为 cancel=%v pause=%v, want 可取消、不可暂停", task.CanCancel, task.CanPause)
 	}
-	if err := c.taskEngine.pause(key); !errors.Is(err, errTaskNotPausable) {
+	if err := pauseByKey(c.taskEngine, key); !errors.Is(err, errTaskNotPausable) {
 		t.Fatalf("暂停这个不可暂停的任务返回 %v, want errTaskNotPausable", err)
 	}
 }
@@ -228,7 +228,7 @@ func TestWriteComicInfoCancellationLandsCancelled(t *testing.T) {
 	if err := c.launchWriteSeriesComicInfoTask(comicInfoSeries(), books, nil, nil); err != nil {
 		t.Fatalf("启动 ComicInfo 回写失败: %v", err)
 	}
-	if err := c.taskEngine.cancel(key); err != nil {
+	if err := cancelByKey(c.taskEngine, key); err != nil {
 		t.Fatalf("取消回写失败: %v", err)
 	}
 	body()
@@ -242,9 +242,9 @@ func TestWriteComicInfoCancellationLandsCancelled(t *testing.T) {
 	}
 }
 
-// TestWriteComicInfoRejectsSecondLaunchOnSameKey 守**任务键**闸门仍然生效，且返回的是哨兵错误
-// ——HTTP 层据此才分得清 409 与 500。
-func TestWriteComicInfoRejectsSecondLaunchOnSameKey(t *testing.T) {
+// TestWriteComicInfoQueuesSecondLaunchOnSameKey 守准入闸门仍然生效——同一个身份不会同时
+// 回写两遍。「拦下」如今写作**排队中**：那次发起排在第一次之后，不再被丢掉。
+func TestWriteComicInfoQueuesSecondLaunchOnSameKey(t *testing.T) {
 	c, _ := newComicInfoRig(t, frozenClock(), func(func()) {})
 	dir := t.TempDir()
 	books := []database.Book{writableBook(t, dir, 1, "vol01.cbz")}
@@ -252,7 +252,10 @@ func TestWriteComicInfoRejectsSecondLaunchOnSameKey(t *testing.T) {
 	if err := c.launchWriteSeriesComicInfoTask(comicInfoSeries(), books, nil, nil); err != nil {
 		t.Fatalf("启动 ComicInfo 回写失败: %v", err)
 	}
-	if err := c.launchWriteSeriesComicInfoTask(comicInfoSeries(), books, nil, nil); !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("同一任务键再次启动返回 %v, want errTaskAlreadyRunning", err)
+	if err := c.launchWriteSeriesComicInfoTask(comicInfoSeries(), books, nil, nil); err != nil {
+		t.Fatalf("同一任务键再次启动返回 %v, want 进排队", err)
+	}
+	if got := currentTask(t, c.taskEngine, writeComicInfoTaskKey(comicInfoSeriesID)).Status; got != "queued" {
+		t.Fatalf("同键第二次回写的状态为 %q, want queued", got)
 	}
 }

@@ -112,6 +112,16 @@ type Config struct {
 		ArchivePoolSize  int    `yaml:"archive_pool_size" json:"archive_pool_size"`
 		MaxAiConcurrency int    `yaml:"max_ai_concurrency" json:"max_ai_concurrency"`
 	} `yaml:"scanner" json:"scanner"`
+	// Tasks 是后台**运行**这一侧的设置。
+	Tasks struct {
+		// MaxConcurrentRuns 是全局同时运行数的上限，也就是任务中心那格「槽位 n/N」的分母。
+		// 超出上限的运行留在**排队中**等放行。0（未设置）归一化为默认值。
+		//
+		// 它是**单一全局数字**而不是按卷键限（ADR 0005 的知情取舍）：按卷更贴近真实瓶颈——
+		// 两个库在两块盘上本可以并行——但一个数字更好解释、界面上也画得出。代价是多盘用户
+		// 会看到一条运行在排队，而它要等的那块盘是空的。
+		MaxConcurrentRuns int `yaml:"max_concurrent_runs" json:"max_concurrent_runs"`
+	} `yaml:"tasks" json:"tasks"`
 	Ollama struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"`
 		Model    string `yaml:"model" json:"model"`
@@ -155,11 +165,18 @@ const (
 	KOReaderMatchModeFilePath   = "file_path"
 	// DefaultPageDiskCacheMaxBytes 磁盘页缓存默认容量上限（2 GiB）。
 	DefaultPageDiskCacheMaxBytes = 2 << 30
-	KOReaderPathMatchDepth       = 2
-	LogLevelDebug                = "debug"
-	LogLevelInfo                 = "info"
-	LogLevelWarn                 = "warn"
-	LogLevelError                = "error"
+	// DefaultMaxConcurrentRuns 是后台运行槽位的默认上限。
+	//
+	// 它必须与 `internal/task` 的 DefaultSlots 相等：那一个是「装配方什么都没说」时的兜底，
+	// 这一个是「配置文件里没写」时的默认，两者错开会让默认部署与默认引擎给出两个不同的分母。
+	// 本包不能引用它——config 位于 task 的依赖下游，反向引用会成环。
+	// `TestConfigDefaultSlotsMatchTheEngineDefault` 守着这条相等。
+	DefaultMaxConcurrentRuns = 2
+	KOReaderPathMatchDepth   = 2
+	LogLevelDebug            = "debug"
+	LogLevelInfo             = "info"
+	LogLevelWarn             = "warn"
+	LogLevelError            = "error"
 
 	// CookieSecure* 是 server.cookie_secure 的取值：会话 Cookie 的 Secure 标志由谁说了算。
 	//   auto   —— 按连接实际情况判定（直连 TLS，或**可信**代理声明的 X-Forwarded-Proto: https）
@@ -405,6 +422,10 @@ func NormalizeConfig(cfg *Config) {
 	}
 	if cfg.Scanner.MaxAiConcurrency == 0 {
 		cfg.Scanner.MaxAiConcurrency = 3
+	}
+	// 小于 1 的上限不是「不限」而是「一条都不许跑」，照它办事等于把整台机器的后台工作卡死。
+	if cfg.Tasks.MaxConcurrentRuns < 1 {
+		cfg.Tasks.MaxConcurrentRuns = DefaultMaxConcurrentRuns
 	}
 	normalizeLLMConfig(cfg)
 	basePath := strings.TrimSpace(cfg.KOReader.BasePath)

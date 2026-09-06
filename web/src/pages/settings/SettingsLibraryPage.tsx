@@ -184,6 +184,20 @@ export function SettingsLibraryPage() {
             <p className="mt-1 text-xs text-gray-500">{t('settings.library.archivePoolHint')}</p>
             <FieldErrors messages={fieldErrors('scanner.archive_pool_size')} />
           </div>
+          {/* 后台**运行**槽位：任务中心那格「槽位 n/N」的分母。改它对新的放行生效，不打断在跑的。 */}
+          <div>
+            <label className="mb-1 block text-sm text-gray-400">{t('settings.library.maxConcurrentRuns', { count: config.tasks.max_concurrent_runs })}</label>
+            <input
+              type="range"
+              min="1"
+              max="16"
+              value={config.tasks.max_concurrent_runs}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, max_concurrent_runs: Number(e.target.value) || 1 } })}
+              className="w-full accent-komgaPrimary"
+            />
+            <p className="mt-1 text-xs text-gray-500">{t('settings.library.maxConcurrentRunsHint')}</p>
+            <FieldErrors messages={fieldErrors('tasks.max_concurrent_runs')} />
+          </div>
         </div>
 
         <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4 text-sm text-gray-300">

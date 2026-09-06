@@ -111,7 +111,7 @@ func TestPauseAllReportsWhoPressedIt(t *testing.T) {
 		Key: singleKey, Identity: libraryTask("scan_library", 2, variantSole), Total: 100, CanPause: true,
 	})
 
-	if err := controller.taskEngine.pause(singleKey); err != nil {
+	if err := pauseByKey(controller.taskEngine, singleKey); err != nil {
 		t.Fatalf("单条暂停失败: %v", err)
 	}
 	bulkControl(t, controller.pauseAllTasks, "/api/system/tasks/pause-all", "paused")

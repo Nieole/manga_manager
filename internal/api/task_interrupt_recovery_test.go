@@ -37,7 +37,7 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)
 		CanPause:  true,
 	})
 	prepare(handle)
-	if err := controller.taskEngine.pause("scan_library_1"); err != nil {
+	if err := pauseByKey(controller.taskEngine, "scan_library_1"); err != nil {
 		t.Fatalf("暂停失败: %v", err)
 	}
 

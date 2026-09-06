@@ -178,9 +178,11 @@ func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 	}
 }
 
-// TestRunRejectsDuplicateActiveKey 钉住闸门：同一任务键已有**活动态**任务时，启动入口返回
-// 「同类任务已在运行」哨兵错误，**且第二个任务体一步都不执行**——那正是重复扫描会造成的损害。
-func TestRunRejectsDuplicateActiveKey(t *testing.T) {
+// TestRunQueuesDuplicateActiveKey 钉住闸门：同一任务键已有**活动态**任务时，第二次发起进
+// **排队中**，**且它的任务体此刻一步都不执行**——同时跑起来正是重复扫描会造成的损害。
+//
+// 「拦下」不再写作一个错误：那次发起要的事仍然会发生，只是排在第一次之后。
+func TestRunQueuesDuplicateActiveKey(t *testing.T) {
 	// 后台能力只登记不执行：第一个任务因此一直停在 running，占着这个任务键。
 	var handedOff int
 	e, _ := newBackgroundTestEngine(t, func(func()) { handedOff++ }, nil)
@@ -197,20 +199,23 @@ func TestRunRejectsDuplicateActiveKey(t *testing.T) {
 		secondBodyRan = true
 		return TaskResult{}, nil
 	})
-	if !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("同键重复启动返回 %v, want errTaskAlreadyRunning —— 拒绝的原因在门口丢失了", err)
+	if err != nil {
+		t.Fatalf("同键重复启动返回 %v, want 进排队", err)
+	}
+	if got := currentTask(t, e, key).Status; got != "queued" {
+		t.Fatalf("第二次发起的状态为 %q, want queued", got)
 	}
 	if secondBodyRan {
-		t.Fatal("闸门拒绝了启动，第二个任务体却还是跑了 —— 同一个库会被并发扫描两遍")
+		t.Fatal("排队中的任务体跑起来了 —— 同一个库会被并发扫描两遍")
 	}
 	if handedOff != 1 {
-		t.Fatalf("后台能力被交付 %d 次，应为 1 —— 被拒绝的任务也占用了一个 goroutine", handedOff)
+		t.Fatalf("后台能力被交付 %d 次，应为 1 —— 排队中的运行还没过槽位闸门", handedOff)
 	}
 }
 
-// TestRunRejectsWhileCancelling 钉住「**取消中**属于**活动态**」：取消已请求但任务体尚未收尾时，
-// 同一任务键不得再次启动，否则新旧两个任务体会同时在跑。
-func TestRunRejectsWhileCancelling(t *testing.T) {
+// TestRunQueuesWhileCancelling 钉住「**取消中**属于**活动态**」：取消已请求但任务体尚未收尾时，
+// 同一任务键的下一次发起只能排队，放它进来新旧两个任务体会同时在跑。
+func TestRunQueuesWhileCancelling(t *testing.T) {
 	var deferred []func()
 	e, _ := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 
@@ -220,14 +225,17 @@ func TestRunRejectsWhileCancelling(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("第一次启动返回了 %v，应为 nil", err)
 	}
-	if err := e.cancel(key); err != nil {
+	if err := cancelByKey(e, key); err != nil {
 		t.Fatalf("取消失败: %v", err)
 	}
 
 	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
-	}); !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("取消中的任务键被再次启动，返回 %v, want errTaskAlreadyRunning", err)
+	}); err != nil {
+		t.Fatalf("取消中的任务键再次发起返回 %v, want 进排队", err)
+	}
+	if got := currentTask(t, e, key).Status; got != "queued" {
+		t.Fatalf("取消中期间的第二次发起状态为 %q, want queued", got)
 	}
 	if len(deferred) != 1 {
 		t.Fatalf("后台能力被交付 %d 次，应为 1", len(deferred))
@@ -456,12 +464,12 @@ func TestTaskHandleChannelsShareOneAdmissionRule(t *testing.T) {
 	}{
 		{"运行中", true, func(*testing.T, *taskEngine, string) {}},
 		{"已暂停", true, func(t *testing.T, e *taskEngine, key string) {
-			if err := e.pause(key); err != nil {
+			if err := pauseByKey(e, key); err != nil {
 				t.Fatalf("暂停失败: %v", err)
 			}
 		}},
 		{"取消中", true, func(t *testing.T, e *taskEngine, key string) {
-			if err := e.cancel(key); err != nil {
+			if err := cancelByKey(e, key); err != nil {
 				t.Fatalf("取消失败: %v", err)
 			}
 		}},
@@ -534,25 +542,27 @@ func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
 	}
 }
 
-// TestRejectedLaunchLeavesTheRunningTaskControllable 钉住**运行时句柄**与任务行同生：
-// 被**任务键**闸门挡下的那次启动一步都不得往前走。抢在闸门之前建句柄的话，第二次启动会把
-// 正在跑的那个任务的 ctx 与**暂停闸门**换成一份没人持有的，那个任务从此暂停不了也取消不了。
-func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
+// TestQueuedLaunchLeavesTheRunningRunControllable 钉住**运行时句柄**与任务行同生：
+// 被闸门拦进**排队中**的那次发起一步都不得往前走。抢在闸门之前建句柄的话，第二次发起会把
+// 正在跑的那条运行的 ctx 与**暂停闸门**换成一份没人持有的，它从此暂停不了也取消不了。
+func TestQueuedLaunchLeavesTheRunningRunControllable(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true})
 	running := seededTaskContext(t, e, key)
+	activeRunID := currentTask(t, e, key).RunID
 
-	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true}); !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("同键第二次启动返回 %v, want errTaskAlreadyRunning", err)
+	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true}); !errors.Is(err, errSeededRunQueued) {
+		t.Fatalf("同键第二次启动返回 %v, want errSeededRunQueued", err)
 	}
 
 	if seededTaskContext(t, e, key) != running {
-		t.Fatal("被闸门挡下的那次启动换掉了在跑任务的运行时句柄")
+		t.Fatal("被闸门拦下的那次发起换掉了在跑运行的运行时句柄")
 	}
-	if err := e.cancel(key); err != nil {
-		t.Fatalf("在跑的任务取消不了了: %v", err)
+	// 按运行 id 取消那条**在跑的**：键此刻指着两条仍会变化的运行，只有 id 说得清是哪一条。
+	if err := e.cancelRun(activeRunID); err != nil {
+		t.Fatalf("在跑的运行取消不了了: %v", err)
 	}
 }
 
@@ -565,7 +575,7 @@ func TestFailedTaskDropsPauseReason(t *testing.T) {
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10, CanCancel: true, CanPause: true})
-	if err := e.pause(key); err != nil {
+	if err := pauseByKey(e, key); err != nil {
 		t.Fatalf("暂停失败: %v", err)
 	}
 

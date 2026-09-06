@@ -358,15 +358,18 @@ func writeTaskControlError(w http.ResponseWriter, err error) {
 	jsonError(w, http.StatusInternalServerError, "Task control failed")
 }
 
-// taskControlHandler 生成暂停/恢复/取消三个端点：它们只在「调哪个引擎方法」和「成功文案」上不同。
-func (c *Controller) taskControlHandler(control func(*taskEngine, string) error, okMessage string) http.HandlerFunc {
+// runControlHandler 生成暂停/恢复/取消三个端点：它们只在「调哪个引擎方法」和「成功文案」上不同。
+//
+// 寻址用**运行 id** 而不是**任务键**：队列出现之后，同一个键此刻可以有两条仍会变化的运行
+// （一条在跑、一条排队），按键寻址就答不出用户按的是哪一张卡片上的按钮（见 taskEngine.pauseRun）。
+func (c *Controller) runControlHandler(control func(*taskEngine, int64) error, okMessage string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		taskKey := chi.URLParam(r, "taskKey")
-		if taskKey == "" {
-			jsonError(w, http.StatusBadRequest, "Missing task key")
+		runID, err := parseID(r, "runID")
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, "Invalid run ID")
 			return
 		}
-		if err := control(c.taskEngine, taskKey); err != nil {
+		if err := control(c.taskEngine, runID); err != nil {
 			writeTaskControlError(w, err)
 			return
 		}
@@ -374,16 +377,16 @@ func (c *Controller) taskControlHandler(control func(*taskEngine, string) error,
 	}
 }
 
-func (c *Controller) pauseTask(w http.ResponseWriter, r *http.Request) {
-	c.taskControlHandler((*taskEngine).pause, "Task pause requested")(w, r)
+func (c *Controller) pauseRun(w http.ResponseWriter, r *http.Request) {
+	c.runControlHandler((*taskEngine).pauseRun, "Run pause requested")(w, r)
 }
 
-func (c *Controller) resumeTask(w http.ResponseWriter, r *http.Request) {
-	c.taskControlHandler((*taskEngine).resume, "Task resumed")(w, r)
+func (c *Controller) resumeRun(w http.ResponseWriter, r *http.Request) {
+	c.runControlHandler((*taskEngine).resumeRun, "Run resumed")(w, r)
 }
 
-func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
-	c.taskControlHandler((*taskEngine).cancel, "Task cancellation requested")(w, r)
+func (c *Controller) cancelRun(w http.ResponseWriter, r *http.Request) {
+	c.runControlHandler((*taskEngine).cancelRun, "Run cancellation requested")(w, r)
 }
 
 // pauseAllTasks 与 resumeAllTasks 是任务中心顶部那对按钮：**全部暂停就是逐个按下暂停闸门**，

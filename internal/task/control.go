@@ -102,16 +102,26 @@ func (e *Engine) Pause(runID int64) error {
 	return e.pauseLocked(run, PauseReasonManual)
 }
 
-// PauseAll 是「全部暂停」：把每条运行中的运行逐个按下**暂停闸门**，返回按下的条数。
+// PauseAll 是「全部暂停」：关上放行闸门，并把每条运行中的运行逐个按下**暂停闸门**，
+// 返回按下的条数。
 //
-// 它不是第二套机制，只是逐个按下同一个闸门——因此**不可暂停的运行不受影响**（它们没有可中断点，
-// ComicInfo 回写那类每本书都是一次原子替换），而被按下的运行状态如实写作**已暂停**。
+// 逐个按下这一半不是第二套机制，只是同一个闸门按了很多次——因此**不可暂停的运行不受影响**
+// （它们没有可中断点，ComicInfo 回写那类每本书都是一次原子替换），而被按下的运行状态
+// 如实写作**已暂停**。
+//
+// 关闸门那一半管的是按不下的那些：**排队中**的运行还没起任务体，没有闸门可按，只能拦住放行；
+// 此后新发起的运行同样先进排队。少了这一半，用户按下全部暂停之后队列里的东西照样一条条接上去，
+// 盘一刻也没安静。返回的条数只数真正被按下的运行——闸门不是一条运行，报进去会让用户以为
+// 有一条他没见过的东西被暂停了。
 //
 // 按下与写状态按**每条运行**成对做（都在 pauseLocked 里），而不是先按下全部闸门再统一写状态：
 // 后者的两段之间界面会读到一批闸门已按下、状态却还写着运行中的运行。理由与停机时逐个取消并放行
 // 相同（见 StopAll）。
 func (e *Engine) PauseAll(ctx context.Context) (int, error) {
-	return e.controlEach(ctx, StatusRunning, func(run Run) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.pausedAll = true
+	return e.controlEachLocked(ctx, StatusRunning, func(run Run) error {
 		return e.pauseLocked(run, PauseReasonPauseAll)
 	})
 }
@@ -153,12 +163,24 @@ func (e *Engine) Resume(runID int64) error {
 	return e.resumeLocked(run)
 }
 
-// ResumeAll 是「全部恢复」：把每条**已暂停**的运行逐个放行，返回放行的条数。
+// ResumeAll 是「全部恢复」：打开放行闸门，把每条**已暂停**的运行逐个放行，并把排队里
+// 等着的一并放开，返回放行的**运行**条数。
 //
 // 它认状态而不认**暂停原因**：一条被单独按下的运行同样会被它放行。判据只留一处——按原因分拣的话，
 // 用户按下「全部恢复」之后界面上还剩着几条已暂停，而那个按钮已经灰掉了。
+//
+// 开闸门在放行之前：反过来的话，恢复出来的那几条会先把槽位占满，队列要等下一次收尾才动。
+// 逐个放行出错也照样放队列——闸门此刻已经开了，而队列的放行不依赖任何一条被恢复的运行。
 func (e *Engine) ResumeAll(ctx context.Context) (int, error) {
-	return e.controlEach(ctx, StatusPaused, e.resumeLocked)
+	e.mu.Lock()
+	e.pausedAll = false
+	resumed, err := e.controlEachLocked(ctx, StatusPaused, e.resumeLocked)
+	launch := e.releaseQueuedLocked()
+	e.mu.Unlock()
+	if launch != nil {
+		launch()
+	}
+	return resumed, err
 }
 
 // controlEach 把某个状态下的每条运行逐个交给 control，返回真正动到的条数。
@@ -169,10 +191,10 @@ func (e *Engine) ResumeAll(ctx context.Context) (int, error) {
 // 单条被拒不中断整批，但只有控制哨兵才算「拒」：不可暂停的运行、以及进程里没有句柄的那些
 // （上一轮留在库里的活动运行）本来就该跳过。其余错误（落盘故障之类）整批中止并上报——
 // 一律吞掉的话，端点会拿着「按下了 0 条」回一个 202，用户看不出是没得按还是根本没按成。
-func (e *Engine) controlEach(ctx context.Context, status RunStatus, control func(Run) error) (int, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
+//
+// 调用方持锁：两个调用点都还要在同一个临界区里动放行闸门，取到锁再放开就等于把闸门与这一批
+// 运行分成了两段，中间那段正是「闸门已关、队列却还在放行」。
+func (e *Engine) controlEachLocked(ctx context.Context, status RunStatus, control func(Run) error) (int, error) {
 	runs, err := e.store.ListRuns(ctx, RunFilter{Statuses: []RunStatus{status}, Order: OrderSequenceAsc})
 	if err != nil {
 		return 0, err

@@ -103,8 +103,8 @@ func TestTerminalAndControlPublishesAreNeverThrottled(t *testing.T) {
 		// 完成与失败经引擎的终态裁决处落定，与任务体正常返回 / 返回错误时走的是同一条路。
 		{"完成", func(e *taskEngine, key string) { settleSeededTask(t, e, key, nil) }},
 		{"失败", func(e *taskEngine, key string) { settleSeededTask(t, e, key, errors.New("boom")) }},
-		{"取消", func(e *taskEngine, key string) { _ = e.cancel(key) }},
-		{"暂停", func(e *taskEngine, key string) { _ = e.pause(key) }},
+		{"取消", func(e *taskEngine, key string) { _ = cancelByKey(e, key) }},
+		{"暂停", func(e *taskEngine, key string) { _ = pauseByKey(e, key) }},
 	}
 
 	for _, tc := range cases {

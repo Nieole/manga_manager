@@ -57,6 +57,22 @@ func TestNormalizeConfigDefaultsLogLevel(t *testing.T) {
 	if cfg.Library.StorageProfile != StorageProfileAuto {
 		t.Fatalf("expected default storage profile %q, got %q", StorageProfileAuto, cfg.Library.StorageProfile)
 	}
+	// 没写就是默认 2，不是 0：0 会让每一条后台运行都排在队里等一个永远不会空出来的槽位。
+	if cfg.Tasks.MaxConcurrentRuns != DefaultMaxConcurrentRuns {
+		t.Fatalf("expected default run slots %d, got %d", DefaultMaxConcurrentRuns, cfg.Tasks.MaxConcurrentRuns)
+	}
+}
+
+// TestNormalizeConfigRejectsNonPositiveRunSlots 守负数与 0 一样被改写成默认值。
+func TestNormalizeConfigRejectsNonPositiveRunSlots(t *testing.T) {
+	cfg := &Config{}
+	cfg.Tasks.MaxConcurrentRuns = -3
+
+	NormalizeConfig(cfg)
+
+	if cfg.Tasks.MaxConcurrentRuns != DefaultMaxConcurrentRuns {
+		t.Fatalf("expected negative run slots normalized to %d, got %d", DefaultMaxConcurrentRuns, cfg.Tasks.MaxConcurrentRuns)
+	}
 }
 
 func TestNormalizeConfigCleansAllowedOrigins(t *testing.T) {

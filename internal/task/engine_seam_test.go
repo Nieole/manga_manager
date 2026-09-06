@@ -70,20 +70,27 @@ type testEngine struct {
 // run 决定任务体何时、乃至是否执行；slots 为 0 时取默认槽位数。
 func newTestEngine(t *testing.T, run func(func()), slots int) *testEngine {
 	t.Helper()
-	return newHarness(t, run, slots, false)
+	return newHarness(t, run, func() int { return slots }, false)
 }
 
 // newSteppingTestEngine 造一台时钟每读一次就跨过一个投递窗口的引擎：每一帧都该被放行。
 func newSteppingTestEngine(t *testing.T, run func(func()), slots int) *testEngine {
 	t.Helper()
-	return newHarness(t, run, slots, true)
+	return newHarness(t, run, func() int { return slots }, true)
+}
+
+// newSlotTunableTestEngine 造一台上限随时可改的引擎，供「改配置对新的放行生效」那条用例驱动。
+// 上限收在一个指针后面而不是重建引擎：重建等于重启进程，那条用例要证的恰恰是不必重启。
+func newSlotTunableTestEngine(t *testing.T, run func(func()), slots *int) *testEngine {
+	t.Helper()
+	return newHarness(t, run, func() int { return *slots }, false)
 }
 
 // newHarness 是两个构造点的共同实现。
 //
 // **磁盘作业**入口一律留 nil：本包的契约用例一次盘都不读。要读盘的用例必须自己交出真 runner，
 // 留 nil 的后果见 runhandle.New。
-func newHarness(t *testing.T, run func(func()), slots int, stepping bool) *testEngine {
+func newHarness(t *testing.T, run func(func()), slots func() int, stepping bool) *testEngine {
 	t.Helper()
 	harness := &testEngine{store: newMemStore(), clock: newFakeClock()}
 	now := harness.clock.Now

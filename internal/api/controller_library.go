@@ -59,19 +59,19 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 // 而 interval 守护扫描、watcher 触发的扫描、以及全库重扫都是拿 context.Background()
 // 直接调 scanner 的，既没有任务条目也无从取消——删库对它们无效，只能靠外键约束兜底
 // （它们会空转刷一阵错误日志，但不会重建被删的行）。让扫描器自己感知库消失属于扫描器边界的改动。
+// 取消的是这些键下**每一条**仍会变化的运行，不只是最近那一条：库都没了，它排在队里的那次扫描
+// 同样不该在几分钟后开跑。取消不掉的（不可取消、进程里没有句柄）一律不阻塞删库——
+// 库行删掉之后，外键约束会挡住任何回写。
 func (c *Controller) cancelLibraryScopedTasks(libraryID int64) {
 	for _, prefix := range []string{"scan_library_", "scrape_library_", "ai_grouping_library_"} {
 		key := prefix + strconv.FormatInt(libraryID, 10)
-		err := c.taskEngine.cancel(key)
-		switch {
-		case err == nil:
-			slog.Info("Cancelled task for deleted library", "task_key", key, "library_id", libraryID)
-		case errors.Is(err, errTaskNotFound), errors.Is(err, errTaskNotRunning),
-			errors.Is(err, errTaskNotCancelable), errors.Is(err, errTaskCancelUnavailable):
-			// 没有这个任务、已经结束、或还没登记好 runtime（启动与注册 runtime 之间有个窗口）。
-			// 取消失败一律不阻塞删库：库行删掉之后，外键约束会挡住任何回写。
-		default:
-			slog.Warn("Failed to cancel task for deleted library", "task_key", key, "error", err)
+		cancelled, err := c.taskEngine.cancelRunsForKey(key)
+		if err != nil {
+			slog.Warn("Failed to cancel runs for deleted library", "task_key", key, "error", err)
+			continue
+		}
+		if cancelled > 0 {
+			slog.Info("Cancelled runs for deleted library", "task_key", key, "library_id", libraryID, "count", cancelled)
 		}
 	}
 }

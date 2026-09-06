@@ -46,6 +46,7 @@ const NO_INFLECTION_KEYS = [
   'franchise.graph.truncated',
   'settings.library.scanWorkers',
   'settings.library.archivePoolSize',
+  'settings.library.maxConcurrentRuns',
   'settings.library.archiveOpenConcurrency',
   'settings.library.coverConcurrency',
   'settings.library.hashConcurrency',

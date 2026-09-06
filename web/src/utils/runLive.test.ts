@@ -30,7 +30,7 @@ function run(overrides: Partial<RunStatus>): RunStatus {
   };
 }
 
-const empty: RunLive = { active: 0, queued: 0, slots: 0, paused: false, runs: [] };
+const empty: RunLive = { active: 0, queued: 0, slots: 2, paused: false, paused_all: false, runs: [] };
 
 describe('applyRunToLive', () => {
   it('新的一帧进实况区，活动数跟着变', () => {

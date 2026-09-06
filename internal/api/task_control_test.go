@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -49,19 +50,19 @@ func TestTaskControlErrorMapping(t *testing.T) {
 	}
 }
 
-// TestTaskControlEndpointsRejectUnknownTask 覆盖三个端点在任务不存在时的 404。
-func TestTaskControlEndpointsRejectUnknownTask(t *testing.T) {
+// TestRunControlEndpointsRejectUnknownRun 覆盖三个端点在运行不存在时的 404。
+func TestRunControlEndpointsRejectUnknownRun(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	endpoints := map[string]http.HandlerFunc{
-		"pause":  controller.pauseTask,
-		"resume": controller.resumeTask,
-		"cancel": controller.cancelTask,
+		"pause":  controller.pauseRun,
+		"resume": controller.resumeRun,
+		"cancel": controller.cancelRun,
 	}
 
 	for name, handler := range endpoints {
 		t.Run(name, func(t *testing.T) {
-			req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/nope/"+name, nil, "taskKey", "nope")
+			req := requestWithRouteParam(http.MethodPost, "/api/system/runs/4242/"+name, nil, "runID", "4242")
 			rec := httptest.NewRecorder()
 			handler(rec, req)
 
@@ -72,36 +73,38 @@ func TestTaskControlEndpointsRejectUnknownTask(t *testing.T) {
 	}
 }
 
-// TestResumeTaskRejectsRunningTask 覆盖 errTaskNotPaused 这条唯一属于 resume 的分支：
-// 对着一个正在跑的任务调 resume 必须是 409，而不是把它当成幂等的空操作。
-func TestResumeTaskRejectsRunningTask(t *testing.T) {
+// TestResumeRunRejectsRunningRun 覆盖 errTaskNotPaused 这条唯一属于 resume 的分支：
+// 对着一条正在跑的运行调 resume 必须是 409，而不是把它当成幂等的空操作。
+func TestResumeRunRejectsRunningRun(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "rebuild_index"
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1, CanCancel: true, CanPause: true})
+	runID := currentTask(t, controller.taskEngine, taskKey).RunID
 
-	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/resume", nil, "taskKey", taskKey)
+	req := requestWithRouteParam(http.MethodPost, "/api/system/runs/1/resume", nil, "runID", strconv.FormatInt(runID, 10))
 	rec := httptest.NewRecorder()
-	controller.resumeTask(rec, req)
+	controller.resumeRun(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
 	}
 }
 
-// TestMissingTaskKeyIsBadRequest 保证三个端点在缺少路由参数时仍是 400 而非落进控制错误映射。
-func TestMissingTaskKeyIsBadRequest(t *testing.T) {
+// TestMissingRunIDIsBadRequest 保证三个端点在路由参数不是一个运行 id 时仍是 400，
+// 而不是落进控制错误映射。
+func TestMissingRunIDIsBadRequest(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	endpoints := map[string]http.HandlerFunc{
-		"pause":  controller.pauseTask,
-		"resume": controller.resumeTask,
-		"cancel": controller.cancelTask,
+		"pause":  controller.pauseRun,
+		"resume": controller.resumeRun,
+		"cancel": controller.cancelRun,
 	}
 
 	for name, handler := range endpoints {
 		t.Run(name, func(t *testing.T) {
-			req := requestWithRouteParam(http.MethodPost, "/api/system/tasks//"+name, nil, "taskKey", "")
+			req := requestWithRouteParam(http.MethodPost, "/api/system/runs//"+name, nil, "runID", "")
 			rec := httptest.NewRecorder()
 			handler(rec, req)
 

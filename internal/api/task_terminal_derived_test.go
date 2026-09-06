@@ -86,8 +86,8 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 		control func(e *taskEngine, key string) error
 	}{
 		{"运行中", "running", func(*taskEngine, string) error { return nil }},
-		{"已暂停", "paused", func(e *taskEngine, key string) error { return e.pause(key) }},
-		{"取消中", "cancelling", func(e *taskEngine, key string) error { return e.cancel(key) }},
+		{"已暂停", "paused", func(e *taskEngine, key string) error { return pauseByKey(e, key) }},
+		{"取消中", "cancelling", func(e *taskEngine, key string) error { return cancelByKey(e, key) }},
 	}
 
 	for _, tc := range cases {
@@ -180,7 +180,10 @@ func TestNeverReportedInterruptedRunOmitsRate(t *testing.T) {
 	if strings.Contains(body, "rate_per_minute") {
 		t.Fatalf("载荷里还留着 rate_per_minute: %s", body)
 	}
-	if tasks[0].FinishedAt == nil || !tasks[0].FinishedAt.Equal(tasks[0].StartedAt) {
+	if tasks[0].StartedAt == nil {
+		t.Fatal("中断的运行没有开始时刻 —— 它开跑过，只是没跑完")
+	}
+	if tasks[0].FinishedAt == nil || !tasks[0].FinishedAt.Equal(*tasks[0].StartedAt) {
 		t.Fatalf("结束时刻为 %v, want 与开始时刻 %v 相等 —— 一帧都没报过，收尾时刻就该停在那里",
 			tasks[0].FinishedAt, tasks[0].StartedAt)
 	}
@@ -213,8 +216,8 @@ func TestTaskRateSurvivesActiveAndSettledStatuses(t *testing.T) {
 		control func(e *taskEngine, key string) error
 	}{
 		{"运行中", "running", func(*taskEngine, string) error { return nil }},
-		{"已暂停", "paused", func(e *taskEngine, key string) error { return e.pause(key) }},
-		{"取消中", "cancelling", func(e *taskEngine, key string) error { return e.cancel(key) }},
+		{"已暂停", "paused", func(e *taskEngine, key string) error { return pauseByKey(e, key) }},
+		{"取消中", "cancelling", func(e *taskEngine, key string) error { return cancelByKey(e, key) }},
 	}
 	for _, tc := range activeCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -343,7 +346,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 			wantStatus: "running",
 			wantEta:    true,
 			after: func(t *testing.T, e *taskEngine, key string) {
-				if err := e.resume(key); err != nil {
+				if err := resumeByKey(e, key); err != nil {
 					t.Fatalf("恢复失败: %v", err)
 				}
 			},
@@ -352,7 +355,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 			name:       "恢复之后被取消",
 			wantStatus: "cancelled",
 			after: func(t *testing.T, e *taskEngine, key string) {
-				if err := e.resume(key); err != nil {
+				if err := resumeByKey(e, key); err != nil {
 					t.Fatalf("恢复失败: %v", err)
 				}
 				settleSeededTask(t, e, key, context.Canceled)
@@ -362,7 +365,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 			name:       "暂停中直接取消",
 			wantStatus: "cancelled",
 			after: func(t *testing.T, e *taskEngine, key string) {
-				if err := e.cancel(key); err != nil {
+				if err := cancelByKey(e, key); err != nil {
 					t.Fatalf("取消失败: %v", err)
 				}
 				settleSeededTask(t, e, key, context.Canceled)
@@ -380,7 +383,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 			backdateTaskStart(t, e, key, workedFor)
 			current := 600
 			handle.Report(runhandle.Frame{Current: &current})
-			if err := e.pause(key); err != nil {
+			if err := pauseByKey(e, key); err != nil {
 				t.Fatalf("暂停失败: %v", err)
 			}
 			backdateTaskPause(t, e, key, pausedFor)

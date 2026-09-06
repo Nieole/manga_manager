@@ -9,7 +9,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -277,7 +276,7 @@ func TestExternalTransferCancellationLandsCancelled(t *testing.T) {
 	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
 		t.Fatalf("启动传输失败: %v", err)
 	}
-	if err := rig.c.taskEngine.cancel(key); err != nil {
+	if err := cancelByKey(rig.c.taskEngine, key); err != nil {
 		t.Fatalf("取消传输: %v", err)
 	}
 	body()
@@ -348,26 +347,34 @@ func TestExternalScanEmptyNamesItsOwnVariant(t *testing.T) {
 	}
 }
 
-// TestExternalTasksRejectSecondLaunchOnSameKey 守**任务键**闸门在这两条路径上仍然生效，
-// 且第二次启动返回的是哨兵错误——HTTP 层据此才分得清 409 与 500。
-func TestExternalTasksRejectSecondLaunchOnSameKey(t *testing.T) {
+// TestExternalTasksQueueSecondLaunchOnSameKey 守准入闸门在这两条路径上仍然生效——只是
+// 「拦下」如今写作**排队中**而不是一个错误：撞车的那次发起排在第一次之后，不再被丢掉。
+func TestExternalTasksQueueSecondLaunchOnSameKey(t *testing.T) {
 	var body func()
 	rig := newExternalRig(t, 1, frozenClock(), func(fn func()) { body = fn })
 	sessionID := rig.readySession(t)
 	plan := rig.plan(t, sessionID)
 
+	transferKey := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
 	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
 		t.Fatalf("首次启动传输失败: %v", err)
 	}
-	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("同键第二次启动返回 %v, want errTaskAlreadyRunning", err)
+	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
+		t.Fatalf("同键第二次启动返回 %v, want 进排队", err)
+	}
+	if got := currentTask(t, rig.c.taskEngine, transferKey).Status; got != "queued" {
+		t.Fatalf("同键第二次传输的状态为 %q, want queued", got)
 	}
 	body()
 
+	scanKey := externalLibraryScanTaskKey(rig.libraryID, sessionID)
 	if err := rig.c.launchExternalLibraryScanTask(rig.libraryID, sessionID); err != nil {
 		t.Fatalf("首次启动扫描失败: %v", err)
 	}
-	if err := rig.c.launchExternalLibraryScanTask(rig.libraryID, sessionID); !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("同键第二次启动返回 %v, want errTaskAlreadyRunning", err)
+	if err := rig.c.launchExternalLibraryScanTask(rig.libraryID, sessionID); err != nil {
+		t.Fatalf("同键第二次启动返回 %v, want 进排队", err)
+	}
+	if got := currentTask(t, rig.c.taskEngine, scanKey).Status; got != "queued" {
+		t.Fatalf("同键第二次扫描的状态为 %q, want queued", got)
 	}
 }

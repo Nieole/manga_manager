@@ -102,8 +102,10 @@ type Config struct {
 	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
 	// 节流的正确性只能靠时序断言证明——固定 sleep 的用例既慢，又杀不掉「水位只写一次」这类错误实现。
 	Now func() time.Time
-	// Slots 是运行槽位上限；小于 1 时取 DefaultSlots。
-	Slots int
+	// Slots 读运行槽位上限。它是一个**函数**而不是一个数：上限从运行时配置来，改了配置要对
+	// **新的放行**生效，而不打断已经在跑的——收成构造期的一个数，改上限就得重启进程。
+	// 为 nil 或读回小于 1 时取 DefaultSlots。
+	Slots func() int
 	// ControlCodes 是引擎自己发出的控制文案码。
 	ControlCodes ControlCodes
 }
@@ -122,12 +124,19 @@ type Engine struct {
 	diskWork      *diskwork.Runner
 	decorate      func(context.Context, Run) context.Context
 	now           func() time.Time
-	slots         int
+	slots         func() int
 	codes         ControlCodes
 
 	mu sync.Mutex
 	// seq 是运行的单调序号，装配期从库里已用掉的最大值接上，因此跨重启单调。
 	seq int64
+	// pausedAll 是「全部暂停」的闸门：关着时队列不放行，新发起的运行一律先进**排队中**。
+	//
+	// 它必须是**引擎的一个状态**而不是「有没有运行正被暂停」的派生值：全部暂停按下时队列里
+	// 那些还没开跑的运行没有闸门可按（它们连任务体都还没起），只按得住运行中的那几条。
+	// 不拦住放行的话，用户按下全部暂停之后队列里的东西照样一条条接上去跑——与「让盘安静下来」
+	// 正好相反。它随进程消失：重启之后活动运行本来就全部转**中断**，没有什么可以被它继续拦着。
+	pausedAll bool
 	// runtimes 按运行 id 登记活动运行的可控性；一条运行进入终态即删除。
 	runtimes map[int64]*taskRuntime
 	// queued 按运行 id 存住**排队中**运行的声明与任务体，等槽位放行时取回。
@@ -145,10 +154,6 @@ func New(cfg Config) *Engine {
 	if cfg.RunBackground == nil {
 		panic("task: Config.RunBackground 不得为 nil")
 	}
-	slots := cfg.Slots
-	if slots < 1 {
-		slots = DefaultSlots
-	}
 	e := &Engine{
 		store:         cfg.Store,
 		publish:       cfg.Publish,
@@ -156,7 +161,7 @@ func New(cfg Config) *Engine {
 		diskWork:      cfg.DiskWork,
 		decorate:      cfg.DecorateRunContext,
 		now:           cfg.Now,
-		slots:         slots,
+		slots:         cfg.Slots,
 		codes:         cfg.ControlCodes,
 		runtimes:      make(map[int64]*taskRuntime),
 		queued:        make(map[int64]queuedRun),
@@ -166,8 +171,31 @@ func New(cfg Config) *Engine {
 	return e
 }
 
-// Slots 返回运行槽位上限，供界面画出「槽位 n/N」。
-func (e *Engine) Slots() int { return e.slots }
+// Slots 返回此刻的运行槽位上限，供界面画出「槽位 n/N」。
+//
+// 每次判定都现读一遍，因此改配置对**新的放行**生效：调小之后已经在跑的一条都不会被打断，
+// 只是要等占用降到新上限之下才再放行。读回一个小于 1 的数按 DefaultSlots 处理——
+// 0 不是一个合法的上限，照它办事等于把整台机器的后台工作永久卡死。
+func (e *Engine) Slots() int {
+	if e.slots == nil {
+		return DefaultSlots
+	}
+	if limit := e.slots(); limit >= 1 {
+		return limit
+	}
+	return DefaultSlots
+}
+
+// PausedAll 回答「全部暂停的闸门此刻关着吗」。
+//
+// 它必须发到界面上：闸门关着而队列里还有运行时，能重新放开它的只有「全部恢复」那个按钮，
+// 而那个按钮今天按「有没有运行被暂停」决定可不可按——被暂停的那几条一旦被取消或跑完，
+// 按钮就灰了，闸门却还关着，队列从此永远出不来。
+func (e *Engine) PausedAll() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.pausedAll
+}
 
 // clock 返回当前时刻（测试可经 Config.Now 注入）。
 func (e *Engine) clock() time.Time {

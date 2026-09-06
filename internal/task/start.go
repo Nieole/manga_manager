@@ -95,8 +95,12 @@ type Body func(ctx context.Context, handle *runhandle.Handle) (Result, error)
 
 // Start 是往库里放一条运行的**唯一入口**。
 //
-// 返回的运行可能是运行中，也可能是**排队中**——槽位满时它先排队，槽位一释放就由引擎放行。
-// 同一个任务已有**活动态**运行时返回 ErrRunAlreadyActive，此时任务体一步都不会执行。
+// 返回的运行可能是运行中，也可能是**排队中**——槽位满、同一个任务已有活动运行、或者
+// 「全部暂停」的闸门关着，这次发起就先排队，条件一满足由引擎放行。**冲突不再被丢弃**。
+//
+// 这个任务已经有一条排队中的运行时，本次发起**合并**进那一条：不新建，只把它的合并计数加一，
+// 返回的正是那条排队运行。守护扫描要的只是「确保扫过」，合并与各排一条效果相同，
+// 而后者会堆成一串一模一样的运行。被合并掉的那份任务体不会执行——排在前面的那条跑的是同一件事。
 //
 // 刻意保留的不变量：槽位闸门**同步**执行、任务体**异步**执行。Start 返回时运行已在列表里、
 // 而任务体尚未开跑，HTTP 层才能立即返回而不被任务体阻塞。
@@ -134,20 +138,13 @@ func (e *Engine) Start(ctx context.Context, spec RunSpec, body Body) (Run, error
 // 这几步漏掉任何一步都不会有编译错误，后果各不相同——漏投递则界面上运行不出现，
 // 漏落盘则重启后运行凭空消失，漏建句柄则那条运行暂停不了也取消不了。
 func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body Body) (Run, func(), error) {
-	active, err := e.store.CountRuns(ctx, RunFilter{TaskID: owner.ID, Statuses: activeStatuses})
-	if err != nil {
-		return Run{}, nil, err
-	}
-	if active > 0 {
-		return Run{}, nil, ErrRunAlreadyActive
-	}
 	// 「第几次」取最大值加一而不是行数加一：保留裁剪删掉旧运行之后，按行数算会撞上一个
 	// 已经用过的编号，而用户看到的「第几次」会倒着走。
 	highest, err := e.store.MaxNthRun(ctx, owner.ID)
 	if err != nil {
 		return Run{}, nil, err
 	}
-	used, err := e.activeRunCountLocked(ctx)
+	wait, err := e.mustQueueLocked(ctx, owner.ID)
 	if err != nil {
 		return Run{}, nil, err
 	}
@@ -166,14 +163,19 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 		Sequence:  e.nextSequenceLocked(),
 	}
 	applyMessage(&run, Result{Code: spec.StartCode, Params: spec.StartParams})
-	// 超过槽位上限的留在**排队中**：它不占槽位，却仍会开跑。开始时刻要等真的开跑才写，
+	// 还轮不到它的留在**排队中**：它不占槽位，却仍会开跑。开始时刻要等真的开跑才写，
 	// 否则排队那段时长会被算进速率的分母。
-	if used >= e.slots {
+	if wait {
 		run.Status = StatusQueued
 		run.StartedAt = time.Time{}
 	}
 
 	created, err := e.store.CreateRun(ctx, run)
+	// 「最多一条排队中的运行」这条约束由**数据库**说了算，不在内存里再判一次：
+	// 撞上它就是「这个任务已经排着了」，本次发起合并进那一条。
+	if errors.Is(err, ErrRunAlreadyQueued) {
+		return e.coalesceLocked(ctx, owner.ID)
+	}
 	if err != nil {
 		return Run{}, nil, err
 	}
@@ -187,6 +189,65 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 	launch := e.beginLocked(created, spec, body)
 	e.publishLocked(created)
 	return created, launch, nil
+}
+
+// mustQueueLocked 判这次发起该不该先进**排队中**。调用方持锁。
+//
+// 三条各自的理由不同，但答案相同——都是「现在还不能开跑，但这次发起不该被丢掉」：
+//   - 「全部暂停」的闸门关着：放它进去等于用户按下的那一下没按住盘。
+//   - 同一个任务已有活动运行：同一件事不会同时跑两遍，这是准入索引那条约束的正面表达。
+//   - 槽位已满：全局同时运行数的上限（关键决定 5，按单一数字而不是按卷）。
+//
+// 这里判的是「该写哪个状态」，不是准入本身：真正拦下第二条活动运行与第二条排队运行的是
+// 数据库那两条部分唯一索引，判据只有那一处。
+func (e *Engine) mustQueueLocked(ctx context.Context, taskID int64) (bool, error) {
+	if e.pausedAll {
+		return true, nil
+	}
+	active, err := e.store.CountRuns(ctx, RunFilter{TaskID: taskID, Statuses: activeStatuses})
+	if err != nil {
+		return false, err
+	}
+	if active > 0 {
+		return true, nil
+	}
+	used, err := e.activeRunCountLocked(ctx)
+	if err != nil {
+		return false, err
+	}
+	return used >= e.Slots(), nil
+}
+
+// coalesceLocked 把这一次发起**合并**进这个任务已有的那条排队运行：不新建，只把计数加一。
+// 调用方持锁。
+//
+// 合并掉的是**这一次的声明与任务体**：排在前面那条跑的是同一件事，再排一条只会让列表里堆出
+// 一串一模一样的运行。计数必须落盘且发得出去——否则用户看到的是一条孤零零的排队，
+// 不知道它代表了几次发起。
+//
+// 序号要重取一个：合并是一次用户看得见的变化，不取的话那条排队在任务中心里一动不动。
+func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Run, func(), error) {
+	queue, err := e.store.ListRuns(ctx, RunFilter{
+		TaskID:   taskID,
+		Statuses: []RunStatus{StatusQueued},
+		Order:    OrderSequenceAsc,
+		Limit:    1,
+	})
+	if err != nil {
+		return Run{}, nil, err
+	}
+	// 索引说有、查回来却没有：把准入哨兵原样交出去，调用方至少知道这次发起没有落地。
+	if len(queue) == 0 {
+		return Run{}, nil, ErrRunAlreadyQueued
+	}
+
+	run := queue[0]
+	run.CoalescedCount++
+	run.UpdatedAt = e.clock()
+	run.Sequence = e.nextSequenceLocked()
+	e.saveLocked(run)
+	e.publishLocked(run)
+	return run, nil, nil
 }
 
 // writeSideDataLocked 把运行声明里不属于运行行的那几样交给各自的侧表。调用方持锁。
@@ -365,14 +426,21 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 //
 // 定序取序号升序：先排上的先跑。任务体没法落盘（它是个闭包），因此重启后留在库里的排队运行
 // 在这里放不出去——把它们重新发起来是**恢复**那条路的事。
+//
+// 「全部暂停」期间一条都不放：那几条排队运行没有闸门可按（任务体还没起），拦住放行是唯一
+// 按得住它们的地方。闸门由「全部恢复」打开，并在那里一并放开。
 func (e *Engine) releaseQueuedLocked() func() {
+	if e.pausedAll {
+		return nil
+	}
 	ctx := context.Background()
 	used, err := e.activeRunCountLocked(ctx)
 	if err != nil {
 		slog.Warn("Failed to count active runs", "error", err)
 		return nil
 	}
-	if used >= e.slots {
+	slots := e.Slots()
+	if used >= slots {
 		return nil
 	}
 	queue, err := e.store.ListRuns(ctx, RunFilter{Statuses: []RunStatus{StatusQueued}, Order: OrderSequenceAsc})
@@ -385,7 +453,7 @@ func (e *Engine) releaseQueuedLocked() func() {
 	// 同一个任务同一时刻只能有一次活动运行，因此一轮里最多放行它的一条。
 	claimed := make(map[int64]bool, len(queue))
 	for _, run := range queue {
-		if used >= e.slots {
+		if used >= slots {
 			break
 		}
 		entry, ok := e.queued[run.ID]

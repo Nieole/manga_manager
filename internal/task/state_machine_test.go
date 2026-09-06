@@ -111,6 +111,8 @@ func TestCancelFromPausedReleasesTheGate(t *testing.T) {
 
 // TestCancellingIsStillActive 守**取消中**属于活动态：任务体尚未收尾，
 // 此刻放同一个任务的下一次发起进来，两条运行会同时动同一批文件。
+//
+// 「不放进来」如今写作**排队中**而不是一个错误：那次发起不再被丢弃，它等着上一条收完尾。
 func TestCancellingIsStillActive(t *testing.T) {
 	h := newTestEngine(t, registerOnly, 0)
 	run := h.start(t, libraryScanSpec(1), idleBody)
@@ -118,8 +120,9 @@ func TestCancellingIsStillActive(t *testing.T) {
 		t.Fatalf("取消失败: %v", err)
 	}
 
-	if _, err := h.engine.Start(context.Background(), libraryScanSpec(1), idleBody); err != ErrRunAlreadyActive {
-		t.Fatalf("取消中的任务放行了第二次发起：err = %v", err)
+	next := h.start(t, libraryScanSpec(1), idleBody)
+	if next.Status != StatusQueued {
+		t.Fatalf("取消中的任务放行了第二次发起：第二条的状态为 %q, want queued", next.Status)
 	}
 }
 

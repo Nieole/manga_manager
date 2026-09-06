@@ -45,13 +45,14 @@ export interface RunStatus {
   retryable: boolean;
   paused_at?: string;
   pause_reason?: string;
+  coalesced_count?: number;
   phase?: string;
   current_item?: string;
   effective_limit?: TaskLimits;
   metrics?: Record<string, number>;
   labels?: Record<string, string>;
   params?: Record<string, string>;
-  started_at: string;
+  started_at?: string;
   updated_at: string;
   finished_at?: string;
 }
@@ -61,6 +62,7 @@ export interface RunLive {
   queued: number;
   slots: number;
   paused: boolean;
+  paused_all: boolean;
   runs: RunStatus[];
 }
 

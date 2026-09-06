@@ -32,7 +32,7 @@ const TASK_TYPE_OPTIONS = [
 
 // 实况帧取不回来时的兜底：一条运行都没有、也没有上限可报。它不是「系统闲着」的断言，
 // 只是「这一刻没有可显示的实况」——界面因此画空区，而不是画一个凭空的槽位占用。
-const EMPTY_LIVE: RunLive = { active: 0, queued: 0, slots: 0, paused: false, runs: [] };
+const EMPTY_LIVE: RunLive = { active: 0, queued: 0, slots: 0, paused: false, paused_all: false, runs: [] };
 
 interface BackgroundTasksProps {
   embedded?: boolean;
@@ -188,10 +188,16 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     return () => window.clearInterval(poll);
   }, [fetchLive, fetchTasks]);
 
+  // 三个控制动作作用在**运行**上，按运行 id 寻址；重试作用在**任务**上，仍按**任务键**。
+  // 同一个任务键此刻可以有两条仍会变化的运行（一条在跑、一条排队），按键发控制请求就答不出
+  // 用户按的是哪一张卡片上的按钮。忙碌标记同理按运行分，否则一条排队会把在跑那条的按钮一起灰掉。
   const runTaskAction = async (run: RunStatus, action: TaskAction) => {
-    setTaskActionKey(`${run.key}:${action}`);
+    setTaskActionKey(action === 'retry' ? `${run.key}:retry` : `${run.run_id}:${action}`);
     try {
-      await apiClient.post(`/api/system/tasks/${encodeURIComponent(run.key)}/${action}`);
+      const path = action === 'retry'
+        ? `/api/system/tasks/${encodeURIComponent(run.key)}/retry`
+        : `/api/system/runs/${run.run_id}/${action}`;
+      await apiClient.post(path);
       showToast(t(`settings.maintenance.taskAction.${action}Success`));
       await Promise.all([fetchTasks(), fetchLive()]);
       if (history) await fetchTaskRuns(history.taskId);

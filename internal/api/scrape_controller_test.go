@@ -55,7 +55,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("batch scrape returns conflict when task already running", func(t *testing.T) {
+	t.Run("batch scrape queues when task already running", func(t *testing.T) {
 		controller, store, _, rootDir := newTestController(t)
 		seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
@@ -64,8 +64,12 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		rec := httptest.NewRecorder()
 		controller.batchScrapeAllSeries(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/scrape/all", bytes.NewBufferString(`{}`)))
 
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("expected 409, got %d", rec.Code)
+		// 冲突不再被丢弃：撞上活动运行的那次发起进**排队中**，接口据此仍然接受它。
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected duplicate batch scrape to be accepted, got %d", rec.Code)
+		}
+		if got := currentTask(t, controller.taskEngine, "scrape_all_series").Status; got != "queued" {
+			t.Fatalf("duplicate batch scrape status = %q, want queued", got)
 		}
 	})
 
@@ -106,7 +110,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("scrape library returns conflict when task already running", func(t *testing.T) {
+	t.Run("scrape library queues when task already running", func(t *testing.T) {
 		controller, store, _, rootDir := newTestController(t)
 		lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
@@ -116,8 +120,11 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		rec := httptest.NewRecorder()
 		controller.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/scrape", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("expected 409, got %d", rec.Code)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected duplicate library scrape to be accepted, got %d", rec.Code)
+		}
+		if got := currentTask(t, controller.taskEngine, taskKey).Status; got != "queued" {
+			t.Fatalf("duplicate library scrape status = %q, want queued", got)
 		}
 	})
 }

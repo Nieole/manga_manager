@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 
@@ -42,13 +41,6 @@ const (
 	taskInterruptedMessageCode = "task.msg.control.interrupted"
 )
 
-// taskSlotsUnlimited 关掉领域引擎自带的运行槽位。
-//
-// 上限、界面上的「槽位 2/2」与**排队中**的展示是一整块，要一起落地：只放开这个常数而界面跟不上，
-// 推出去的是一个前端不认识的 `queued` 状态，用户看到的是第三个后台任务莫名其妙地不动。
-// 数值取一个大到不可能撞上的常数，而不是给领域开一个「不限」的特例。
-const taskSlotsUnlimited = math.MaxInt32
-
 // taskEngineConfig 是任务引擎的全部外部依赖，一次性在装配期交齐。
 //
 // 收成结构体而不是位置参数：这几项里有三个都是函数，接反了不会有编译错误。
@@ -63,6 +55,9 @@ type taskEngineConfig struct {
 	DiskWork *diskwork.Runner
 	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
 	Now func() time.Time
+	// Slots 读全局并发上限。它是函数而不是数：上限在设置里可改，改了要对**新的放行**生效，
+	// 而不打断已经在跑的。为 nil 时领域引擎取它的默认值（task.DefaultSlots）。
+	Slots func() int
 }
 
 // taskEngine 是领域引擎的适配器：两侧的翻译、按**任务键**寻址的那几个入口，与一份身份缓存。
@@ -91,8 +86,12 @@ type taskEngine struct {
 	//
 	// **调用约束**：换的时机只能是测试自己的 goroutine 上、且此刻没有任何任务体在飞。
 	// 它们属于「装配期注入、之后只读」的那组，不受 mutex 保护。
+	//
+	// slots 同理转一道：它在生产里读的是配置快照（因此改设置当场生效），而要观察「八条运行同时
+	// 在跑」的用例得先把上限抬上去——领域引擎在构造期就把这个函数收进去了，不转一道就换不掉。
 	runBackground func(func())
 	now           func() time.Time
+	slots         func() int
 
 	// relaunchers 是任务重试的注册表（(类型, **变体**) -> 重启函数），也是「可重试」的唯一事实来源。
 	// 在 newControllerCore 中一次性填好（重启函数要调 Controller 的领域方法，故由 Controller 构建），
@@ -119,6 +118,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		runStore:      cfg.Store,
 		runBackground: cfg.RunBackground,
 		now:           cfg.Now,
+		slots:         cfg.Slots,
 		identities:    make(map[int64]TaskIdentity),
 	}
 	e.engine = task.New(task.Config{
@@ -128,7 +128,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		DiskWork:           cfg.DiskWork,
 		DecorateRunContext: decorateRunContext,
 		Now:                e.clock,
-		Slots:              taskSlotsUnlimited,
+		Slots:              e.slotLimit,
 		ControlCodes: task.ControlCodes{
 			Paused:      "task.msg.control.paused",
 			Resumed:     "task.msg.control.resumed",
@@ -138,6 +138,15 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		},
 	})
 	return e
+}
+
+// slotLimit 读此刻的槽位上限。领域引擎收的是这个方法而不是 cfg.Slots，好让构造之后换掉仍然生效。
+// 装配期没给就交回领域引擎自己的默认值。
+func (e *taskEngine) slotLimit() int {
+	if e.slots == nil {
+		return task.DefaultSlots
+	}
+	return e.slots()
 }
 
 // clock 返回当前时刻（测试可经 now 字段注入）。领域引擎收的是这个方法而不是 cfg.Now，
@@ -253,7 +262,7 @@ func (e *taskEngine) live(ctx context.Context) (RunLive, error) {
 	if err != nil {
 		return RunLive{}, err
 	}
-	frame := RunLive{Slots: e.slotLimit(), Runs: runs}
+	frame := RunLive{Slots: e.engine.Slots(), PausedAll: e.engine.PausedAll(), Runs: runs}
 	for _, run := range runs {
 		if taskIsActive(run.Status) {
 			frame.Active++
@@ -265,18 +274,6 @@ func (e *taskEngine) live(ctx context.Context) (RunLive, error) {
 		}
 	}
 	return frame, nil
-}
-
-// slotLimit 是实况区那格「槽位占用」的分母，0 表示没有上限可报。
-//
-// 槽位今天由 taskSlotsUnlimited 关着，把那个数原样发出去只会在界面上画出一个天文数字的分母，
-// 而用户读得懂的「几分之几」需要一个真的会被撞上的上限。上限一旦真的生效，这里自然报出它。
-func (e *taskEngine) slotLimit() int {
-	limit := e.engine.Slots()
-	if limit >= taskSlotsUnlimited {
-		return 0
-	}
-	return limit
 }
 
 // listTaskSummaries 取任务清单：一个任务一行，行上带它最近一次运行。
@@ -418,12 +415,51 @@ func (e *taskEngine) clear(ctx context.Context, filters taskFilters) (int64, err
 	return e.runStore.DeleteRuns(ctx, runFilterFrom(filters, task.OrderSequenceDesc))
 }
 
-func (e *taskEngine) pause(key string) error {
-	return e.control(key, e.engine.Pause)
+// pauseRun / resumeRun / cancelRun 是三个控制动作，**按运行 id 寻址**。
+//
+// 不按**任务键**：队列出现之后，同一个键此刻可以有两条仍会变化的运行（一条在跑、一条排队），
+// 而「这个键最近的那一次」在两者之间来回跳——序号每有一帧就换一次主人。用户按下的是排队那条
+// 卡片上的取消，动到的却可能是正在跑的那条。运行 id 是界面上那张卡片自己带着的（RunStatus.RunID），
+// 按它寻址就没有第二种解释（关键决定 15：暂停 / 恢复 / 取消作用在**运行**上）。
+//
+// 「这次运行还能不能接受这个动作」一律由领域裁决，本层不预判：预判等于把状态机抄第二遍，
+// 而两份判据只要错开一次，界面上按钮的可用性就与按下去的结果对不上。
+func (e *taskEngine) pauseRun(runID int64) error {
+	return taskControlError(e.engine.Pause(runID))
 }
 
-func (e *taskEngine) resume(key string) error {
-	return e.control(key, e.engine.Resume)
+func (e *taskEngine) resumeRun(runID int64) error {
+	return taskControlError(e.engine.Resume(runID))
+}
+
+func (e *taskEngine) cancelRun(runID int64) error {
+	return taskControlError(e.engine.Cancel(runID))
+}
+
+// cancelRunsForKey 取消这个**任务键**下**每一条**仍会变化的运行，返回真正取消掉的条数。
+//
+// 删库那条路径要的正是这个语义：库都没了，它排在队里的那次扫描同样不该在几分钟后开跑。
+// 只取消「最近那一条」会漏掉另一条——同一个键此刻最多有一条活动加一条排队。
+//
+// 单条取消不了（不可取消、进程里没有句柄）不阻断其余那些：删库不因为一条取消不掉就半途而废。
+func (e *taskEngine) cancelRunsForKey(key string) (int, error) {
+	runs, err := e.runStore.ListRuns(context.Background(), task.RunFilter{
+		Key:      key,
+		Statuses: task.LiveStatuses(),
+		Order:    task.OrderSequenceAsc,
+	})
+	if err != nil {
+		return 0, err
+	}
+	cancelled := 0
+	for _, run := range runs {
+		if err := e.cancelRun(run.ID); err != nil {
+			slog.Debug("Skipped cancelling a live run", "task_key", key, "run_id", run.ID, "error", err)
+			continue
+		}
+		cancelled++
+	}
+	return cancelled, nil
 }
 
 // pauseAll 与 resumeAll 是「全部暂停 / 全部恢复」：领域引擎把每条运行逐个按下或放行，
@@ -434,22 +470,6 @@ func (e *taskEngine) pauseAll(ctx context.Context) (int, error) {
 
 func (e *taskEngine) resumeAll(ctx context.Context) (int, error) {
 	return e.engine.ResumeAll(ctx)
-}
-
-func (e *taskEngine) cancel(key string) error {
-	return e.control(key, e.engine.Cancel)
-}
-
-// control 把按**任务键**寻址的控制动作转成按运行寻址：取这个键最近的那一次运行，交给领域引擎。
-//
-// 「这次运行还能不能接受这个动作」一律由领域裁决，本层不预判：预判等于把状态机抄第二遍，
-// 而两份判据只要错开一次，界面上按钮的可用性就与按下去的结果对不上。
-func (e *taskEngine) control(key string, action func(int64) error) error {
-	run, err := e.latestRunByKey(context.Background(), key)
-	if err != nil {
-		return err
-	}
-	return taskControlError(action(run.ID))
 }
 
 // taskControlError 把领域的控制哨兵翻成本层的哨兵。

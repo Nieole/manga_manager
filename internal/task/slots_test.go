@@ -43,12 +43,83 @@ func (r *deferredRunner) drain() {
 	}
 }
 
-func TestSecondRunOfTheSameTaskIsRejected(t *testing.T) {
+// TestSecondRunOfTheSameTaskIsQueued 守**冲突进队列**：同一个任务已有活动运行时，
+// 后来的那次发起进**排队中**，而不是被拒。被拒等于那次发起凭空消失——守护扫描撞上手动扫描时
+// 整轮跳过，用户永远不知道它没跑。
+func TestSecondRunOfTheSameTaskIsQueued(t *testing.T) {
+	h := newTestEngine(t, registerOnly, 0)
+	active := h.start(t, libraryScanSpec(1), idleBody)
+	queued := h.start(t, libraryScanSpec(1), idleBody)
+
+	if queued.Status != StatusQueued {
+		t.Fatalf("撞上活动运行的那次发起状态为 %q, want queued", queued.Status)
+	}
+	if queued.ID == active.ID {
+		t.Fatal("第二次发起被并进了那条活动运行 —— 合并只发生在排队中的运行上")
+	}
+	if got := h.load(t, active.ID).Status; got != StatusRunning {
+		t.Fatalf("排队把活动运行也动了：状态为 %q", got)
+	}
+}
+
+// TestRepeatedStartsCoalesceIntoTheQueuedRun 守**合并**：已经有一条排队中的运行时，
+// 再来的不新建，并进那一条并计数。各排一条与合并的效果相同（守护扫描要的只是「确保扫过」），
+// 而各排一条会在列表里堆出一串一模一样的运行。
+func TestRepeatedStartsCoalesceIntoTheQueuedRun(t *testing.T) {
 	h := newTestEngine(t, registerOnly, 0)
 	h.start(t, libraryScanSpec(1), idleBody)
+	queued := h.start(t, libraryScanSpec(1), idleBody)
 
-	if _, err := h.engine.Start(context.Background(), libraryScanSpec(1), idleBody); err != ErrRunAlreadyActive {
-		t.Fatalf("同一个任务的第二次发起返回 %v, want ErrRunAlreadyActive", err)
+	second := h.start(t, libraryScanSpec(1), idleBody)
+	third := h.start(t, libraryScanSpec(1), idleBody)
+
+	if second.ID != queued.ID || third.ID != queued.ID {
+		t.Fatalf("重复发起建出了新运行：%d 与 %d, want 都是 %d", second.ID, third.ID, queued.ID)
+	}
+	if got := h.load(t, queued.ID).CoalescedCount; got != 2 {
+		t.Fatalf("合并计数为 %d, want 2 —— 用户据此知道那条排队代表了几次发起", got)
+	}
+	runs, err := h.store.ListRuns(context.Background(), RunFilter{TaskID: queued.TaskID})
+	if err != nil {
+		t.Fatalf("取运行失败: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("这个任务下有 %d 条运行, want 2（一条在跑、一条排队）", len(runs))
+	}
+}
+
+// TestCoalescedRunOnlyRunsOnce 守合并掉的那几次发起不会各跑一遍：排在前面的那条跑的是同一件事。
+func TestCoalescedRunOnlyRunsOnce(t *testing.T) {
+	runner := &deferredRunner{}
+	h := newTestEngine(t, runner.run, 0)
+
+	bodies := 0
+	countingBody := func(context.Context, *runhandle.Handle) (Result, error) {
+		bodies++
+		return Result{}, nil
+	}
+	h.start(t, libraryScanSpec(1), countingBody)
+	h.start(t, libraryScanSpec(1), countingBody)
+	h.start(t, libraryScanSpec(1), countingBody)
+
+	runner.drain()
+
+	if bodies != 2 {
+		t.Fatalf("任务体跑了 %d 遍, want 2（活动那条 + 排队那条，第三次被合并掉）", bodies)
+	}
+}
+
+// TestCoalescingIsDecidedByTheStore 守合并的判据是**数据库那条部分唯一索引**，不是内存里再判一次：
+// 落盘端口拒绝第二条排队运行，引擎据此并进已有的那一条。
+func TestCoalescingIsDecidedByTheStore(t *testing.T) {
+	h := newTestEngine(t, registerOnly, 0)
+	h.start(t, libraryScanSpec(1), idleBody)
+	queued := h.start(t, libraryScanSpec(1), idleBody)
+
+	// 直接问落盘端口：它必须拒绝第二条排队运行，否则合并只是引擎的一厢情愿。
+	_, err := h.store.CreateRun(context.Background(), Run{TaskID: queued.TaskID, Status: StatusQueued})
+	if err != ErrRunAlreadyQueued {
+		t.Fatalf("落盘端口收下了第二条排队运行：err = %v, want ErrRunAlreadyQueued", err)
 	}
 }
 
@@ -173,15 +244,43 @@ func TestSlotLimitHoldsWhileAQueuedRunWaits(t *testing.T) {
 	}
 }
 
-// TestQueuedRunOfTheSameTaskIsRejectedByTheStore 守「最多一条排队」这条约束由落盘端口兜底，
-// 而不是靠内存表判定——判据下沉之后，「什么叫已经在排队」只有一个答案。
-func TestQueuedRunOfTheSameTaskIsRejectedByTheStore(t *testing.T) {
-	h := newTestEngine(t, registerOnly, 1)
-	h.start(t, libraryScanSpec(1), idleBody)
-	h.start(t, libraryScanSpec(2), idleBody)
+// TestSlotLimitIsReadPerAdmission 守上限**每次判定现读一遍**：改配置对新的放行生效，
+// 而不打断已经在跑的。收成构造期的一个数的话，调大上限要重启进程才算数。
+func TestSlotLimitIsReadPerAdmission(t *testing.T) {
+	slots := 1
+	h := newSlotTunableTestEngine(t, registerOnly, &slots)
 
-	if _, err := h.engine.Start(context.Background(), libraryScanSpec(2), idleBody); err != ErrRunAlreadyQueued {
-		t.Fatalf("同一个任务的第二条排队返回 %v, want ErrRunAlreadyQueued", err)
+	h.start(t, libraryScanSpec(1), idleBody)
+	blocked := h.start(t, libraryScanSpec(2), idleBody)
+	if blocked.Status != StatusQueued {
+		t.Fatalf("上限为 1 时第二条的状态为 %q, want queued", blocked.Status)
+	}
+
+	slots = 3
+	if got := h.engine.Slots(); got != 3 {
+		t.Fatalf("改上限之后引擎报出 %d, want 3", got)
+	}
+	admitted := h.start(t, libraryScanSpec(3), idleBody)
+	if admitted.Status != StatusRunning {
+		t.Fatalf("上限调大之后新发起的状态为 %q, want running", admitted.Status)
+	}
+	// 已经排上的那条不受打断，也不会被这次发起挤掉：它等的是一次放行，而放行只在收尾时发生。
+	if got := h.load(t, blocked.ID).Status; got != StatusQueued {
+		t.Fatalf("调大上限动了已经排上的那条：状态为 %q", got)
+	}
+}
+
+// TestNonPositiveSlotLimitFallsBackToTheDefault 守读回 0 不当作「一条都不许跑」：
+// 照它办事整台机器的后台工作会全部卡在排队里，而 0 从来不是一个有人想要的上限。
+func TestNonPositiveSlotLimitFallsBackToTheDefault(t *testing.T) {
+	slots := 0
+	h := newSlotTunableTestEngine(t, registerOnly, &slots)
+
+	if got := h.engine.Slots(); got != DefaultSlots {
+		t.Fatalf("上限读回 0 时引擎报出 %d, want %d", got, DefaultSlots)
+	}
+	if run := h.start(t, libraryScanSpec(1), idleBody); run.Status != StatusRunning {
+		t.Fatalf("上限读回 0 时第一条运行的状态为 %q, want running", run.Status)
 	}
 }
 

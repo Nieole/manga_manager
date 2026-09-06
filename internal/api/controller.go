@@ -150,17 +150,23 @@ type RunStatus struct {
 	// 它与重启入参里的 `paused_ms` 不是一回事：那个是**磁盘作业**为阅读让路而等掉的时长，
 	// 期间任务本身仍在跑。累计只属于这一次**运行**——重试是新一次运行，分母从它自己的开始时刻重新计。
 	// 不进 JSON：前端不显示它，它是运行行上的一列。
-	ControlPausedMillis int64             `json:"-"`
-	Phase               string            `json:"phase,omitempty"`
-	CurrentItem         string            `json:"current_item,omitempty"`
-	EffectiveLimit      *TaskLimits       `json:"effective_limit,omitempty"`
-	Metrics             map[string]int64  `json:"metrics,omitempty"`
-	Labels              map[string]string `json:"labels,omitempty"`
-	Params              map[string]string `json:"params,omitempty"`
-	StartedAt           time.Time         `json:"started_at"`
-	UpdatedAt           time.Time         `json:"updated_at"`
-	FinishedAt          *time.Time        `json:"finished_at,omitempty"`
-	Sequence            int64             `json:"-"`
+	ControlPausedMillis int64 `json:"-"`
+	// CoalescedCount 是**合并**进这条**排队中**运行的额外发起次数：同一件事被反复发起时不新建
+	// 运行，只把这个数加一。它要发出去，否则用户看到的是一条孤零零的排队，不知道它代表了几次发起。
+	CoalescedCount int               `json:"coalesced_count,omitempty"`
+	Phase          string            `json:"phase,omitempty"`
+	CurrentItem    string            `json:"current_item,omitempty"`
+	EffectiveLimit *TaskLimits       `json:"effective_limit,omitempty"`
+	Metrics        map[string]int64  `json:"metrics,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	Params         map[string]string `json:"params,omitempty"`
+	// StartedAt 是这次运行**进入运行中**的时刻。**排队中**的运行还没开跑，因此它是 nil 而不是
+	// 一个零值时刻——发零值出去的话，界面上那格「开始时间」会写着它公元 1 年就开始了。
+	// 入队时刻不是开始时刻：排了一小时队的运行会被算成跑了一小时，速率与 ETA 一路失真。
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Sequence   int64      `json:"-"`
 }
 
 // RunLive 是任务中心**实况区**的一帧：此刻仍会变化的那些运行，加上它们的汇总。
@@ -171,11 +177,16 @@ type RunLive struct {
 	// Active 是**活动态**运行数，也就是占着运行槽位的那些；Queued 是**排队中**的条数。
 	Active int `json:"active"`
 	Queued int `json:"queued"`
-	// Slots 是运行槽位上限，0 表示**没有上限可报**（见 taskEngine.slotLimit）。
-	// 界面据此只画占用数、不画分母——一个天文数字的分母不是「槽位 2/2」，是噪音。
+	// Slots 是运行槽位上限，界面据此画出「槽位 n/N」。它恒为一个真的会被撞上的数——
+	// 领域引擎把小于 1 的配置值改写成默认值，因此 0 不会发出去。
 	Slots int `json:"slots"`
-	// Paused 回答「有没有运行被暂停」：顶部那个「全部恢复」按它决定可不可按。
-	Paused bool `json:"paused"`
+	// Paused 回答「有没有运行被暂停」，PausedAll 回答「全部暂停的闸门还关着吗」。
+	//
+	// 两个都要发，因为它们答的不是同一个问题：闸门关着而被暂停的那几条已经被取消或跑完时，
+	// 前者是 false 而后者仍是 true，此时队列还被拦着——只按前者决定「全部恢复」的可按性，
+	// 那个按钮会灰在唯一能重新放开队列的位置上。
+	Paused    bool `json:"paused"`
+	PausedAll bool `json:"paused_all"`
 	// Runs 是常驻置顶的那批运行：**活动态**与**排队中**，仍会变化的都在里面。
 	Runs []RunStatus `json:"runs"`
 }
@@ -324,6 +335,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		Publish:       c.sse.publishAdmin,
 		RunBackground: c.runBackground,
 		DiskWork:      c.diskWork,
+		Slots:         c.taskSlots,
 	})
 	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTask 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
@@ -416,6 +428,15 @@ func (c *Controller) currentConfig() config.Config {
 		return config.Config{}
 	}
 	return c.config.Snapshot()
+}
+
+// taskSlots 读此刻生效的全局并发上限。
+//
+// 每次判定现读一遍配置快照，不在装配期取一个数收进引擎：上限在设置里可改，而改完要对
+// **新的放行**生效——收成一个数的话，调大上限要重启进程才算数。已经在跑的不受影响：
+// 引擎只在准入与放行时读它。
+func (c *Controller) taskSlots() int {
+	return c.currentConfig().Tasks.MaxConcurrentRuns
 }
 
 func (c *Controller) protocolEnabled(protocol string) bool {
@@ -788,10 +809,13 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/tasks/summary", c.listTaskSummaries)
 		r.Post("/system/tasks/pause-all", c.pauseAllTasks)
 		r.Post("/system/tasks/resume-all", c.resumeAllTasks)
+		// 重试作用在**任务**上（再发起一次同一件事），因此仍按**任务键**寻址；
+		// 暂停 / 恢复 / 取消作用在**运行**上，按运行 id 寻址——同一个键此刻可以有两条仍会变化的
+		// 运行（一条在跑、一条排队），按键寻址答不出用户按的是哪一条（关键决定 15）。
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
-		r.Post("/system/tasks/{taskKey}/pause", c.pauseTask)
-		r.Post("/system/tasks/{taskKey}/resume", c.resumeTask)
-		r.Post("/system/tasks/{taskKey}/cancel", c.cancelTask)
+		r.Post("/system/runs/{runID}/pause", c.pauseRun)
+		r.Post("/system/runs/{runID}/resume", c.resumeRun)
+		r.Post("/system/runs/{runID}/cancel", c.cancelRun)
 		r.Get("/system/koreader", c.getKOReaderSettings)
 		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
 		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)

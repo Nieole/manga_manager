@@ -2120,22 +2120,32 @@ func TestDeleteLibraryAndValidationHandlers(t *testing.T) {
 	}
 }
 
-func TestTaskConflictHandlers(t *testing.T) {
+// TestDuplicateLaunchQueuesAndBadIDsAreRejected 守**冲突进队列**这条对外行为：撞上活动运行的
+// 那次发起不再收到 409，它进**排队中**等放行。路由参数非法仍然是 400——那是另一回事。
+func TestDuplicateLaunchQueuesAndBadIDsAreRejected(t *testing.T) {
 	controller, store, _, rootDir := newTestController(t)
 	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_" + strconv.FormatInt(series.ID, 10), Identity: seriesTask("scan_series", series.ID, variantSole), Total: 1})
+	seriesKey := "scan_series_" + strconv.FormatInt(series.ID, 10)
+	seedTask(t, controller.taskEngine, taskSeed{Key: seriesKey, Identity: seriesTask("scan_series", series.ID, variantSole), Total: 1})
 	scanSeriesRec := httptest.NewRecorder()
 	controller.scanSeries(scanSeriesRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scan", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
-	if scanSeriesRec.Code != http.StatusConflict {
-		t.Fatalf("expected duplicate scan series 409, got %d", scanSeriesRec.Code)
+	if scanSeriesRec.Code != http.StatusOK {
+		t.Fatalf("expected duplicate scan series to be accepted, got %d", scanSeriesRec.Code)
+	}
+	if got := currentTask(t, controller.taskEngine, seriesKey).Status; got != "queued" {
+		t.Fatalf("duplicate series scan status = %q, want queued", got)
 	}
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "cleanup_library_" + strconv.FormatInt(lib.ID, 10), Identity: libraryTask("cleanup_library", lib.ID, variantSole), Total: 1})
+	cleanupKey := "cleanup_library_" + strconv.FormatInt(lib.ID, 10)
+	seedTask(t, controller.taskEngine, taskSeed{Key: cleanupKey, Identity: libraryTask("cleanup_library", lib.ID, variantSole), Total: 1})
 	cleanupRec := httptest.NewRecorder()
 	controller.cleanupLibrary(cleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/cleanup", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
-	if cleanupRec.Code != http.StatusConflict {
-		t.Fatalf("expected duplicate cleanup 409, got %d", cleanupRec.Code)
+	if cleanupRec.Code != http.StatusOK {
+		t.Fatalf("expected duplicate cleanup to be accepted, got %d", cleanupRec.Code)
+	}
+	if got := currentTask(t, controller.taskEngine, cleanupKey).Status; got != "queued" {
+		t.Fatalf("duplicate cleanup status = %q, want queued", got)
 	}
 
 	invalidScanRec := httptest.NewRecorder()
@@ -2681,10 +2691,7 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 1, CanCancel: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
-	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
-	rec := httptest.NewRecorder()
-	controller.cancelTask(rec, req)
-
+	rec := runControlRequest(t, controller, controller.cancelRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2716,9 +2723,7 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 10, CanCancel: true, CanPause: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
-	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
-	rec := httptest.NewRecorder()
-	controller.pauseTask(rec, req)
+	rec := runControlRequest(t, controller, controller.pauseRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2738,9 +2743,7 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	req = requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/resume", nil, "taskKey", taskKey)
-	rec = httptest.NewRecorder()
-	controller.resumeTask(rec, req)
+	rec = runControlRequest(t, controller, controller.resumeRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected resume 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2991,9 +2994,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 		t.Fatalf("expected first provider request Alpha, got %q", first)
 	}
 
-	pauseReq := requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+taskKey+"/pause", nil, "taskKey", taskKey)
-	pauseRec := httptest.NewRecorder()
-	controller.pauseTask(pauseRec, pauseReq)
+	pauseRec := runControlRequest(t, controller, controller.pauseRun, taskKey)
 	if pauseRec.Code != http.StatusAccepted {
 		t.Fatalf("expected pause 202, got %d body=%s", pauseRec.Code, pauseRec.Body.String())
 	}
@@ -3006,9 +3007,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 		t.Fatalf("expected paused scrape after first request, got %+v", paused)
 	}
 
-	resumeReq := requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+taskKey+"/resume", nil, "taskKey", taskKey)
-	resumeRec := httptest.NewRecorder()
-	controller.resumeTask(resumeRec, resumeReq)
+	resumeRec := runControlRequest(t, controller, controller.resumeRun, taskKey)
 	if resumeRec.Code != http.StatusAccepted {
 		t.Fatalf("expected resume 202, got %d body=%s", resumeRec.Code, resumeRec.Body.String())
 	}
@@ -3066,10 +3065,7 @@ func TestPauseTaskRejectsNonPausableTask(t *testing.T) {
 	taskKey := "rebuild_index"
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1})
 
-	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/pause", nil, "taskKey", taskKey)
-	rec := httptest.NewRecorder()
-	controller.pauseTask(rec, req)
-
+	rec := runControlRequest(t, controller, controller.pauseRun, taskKey)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3082,9 +3078,7 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 10, CanCancel: true, CanPause: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
-	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/pause", nil, "taskKey", taskKey)
-	rec := httptest.NewRecorder()
-	controller.pauseTask(rec, req)
+	rec := runControlRequest(t, controller, controller.pauseRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3099,9 +3093,7 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	req = requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_library_42/cancel", nil, "taskKey", taskKey)
-	rec = httptest.NewRecorder()
-	controller.cancelTask(rec, req)
+	rec = runControlRequest(t, controller, controller.cancelRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected cancel 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3122,10 +3114,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 	taskKey := "rebuild_index"
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1})
 
-	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/rebuild_index/cancel", nil, "taskKey", taskKey)
-	rec := httptest.NewRecorder()
-	controller.cancelTask(rec, req)
-
+	rec := runControlRequest(t, controller, controller.cancelRun, taskKey)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3182,7 +3171,8 @@ func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	}
 }
 
-func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
+// TestScanLibraryQueuesDuplicateTask 守资料库扫描撞上自己时也进队列，而不是整轮被丢掉。
+func TestScanLibraryQueuesDuplicateTask(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 
 	libPath := filepath.Join(t.TempDir(), "library")
@@ -3202,14 +3192,18 @@ func TestScanLibraryRejectsDuplicateTask(t *testing.T) {
 		t.Fatalf("CreateLibrary failed: %v", err)
 	}
 
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_" + strconv.FormatInt(lib.ID, 10), Identity: libraryTask("scan_library", lib.ID, variantSole), Total: 1})
+	key := "scan_library_" + strconv.FormatInt(lib.ID, 10)
+	seedTask(t, controller.taskEngine, taskSeed{Key: key, Identity: libraryTask("scan_library", lib.ID, variantSole), Total: 1})
 
 	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/scan", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
 	controller.scanLibrary(rec, req)
 
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("expected 409 for duplicate scan task, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected duplicate scan task to be accepted, got %d", rec.Code)
+	}
+	if got := currentTask(t, controller.taskEngine, key).Status; got != "queued" {
+		t.Fatalf("duplicate library scan status = %q, want queued", got)
 	}
 }
 

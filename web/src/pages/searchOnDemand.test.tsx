@@ -63,7 +63,7 @@ function taskSummary(taskId: number, message: string) {
   };
 }
 
-const emptyLive = { active: 0, queued: 0, slots: 0, paused: false, runs: [] };
+const emptyLive = { active: 0, queued: 0, slots: 2, paused: false, paused_all: false, runs: [] };
 
 // 搜索框驱动的是任务清单那条取数：实况帧不带筛选，因此不该数进来。
 function taskRequests() {

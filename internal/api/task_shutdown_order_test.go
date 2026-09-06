@@ -16,12 +16,15 @@ import (
 func TestStopAllRuntimesReachesTheTaskBody(t *testing.T) {
 	// 后台能力只登记不执行：任务体一旦跑起来就会收尾，**已暂停**无从观察。
 	engine, _ := newBackgroundTestEngine(t, func(func()) {}, nil)
+	// 本用例要的是八条**同时活着**的运行：默认槽位只放行两条，其余六条会停在**排队中**，
+	// 而排队中的运行没有 ctx 也没有闸门，这条断言就无从谈起。
+	engine.slots = func() int { return 8 }
 
 	keys := make([]string, 0, 8)
 	for i := range 8 {
 		key := fmt.Sprintf("scan_library_%d", i+1)
 		seedTask(t, engine, taskSeed{Key: key, Identity: libraryTask("scan_library", int64(i+1), variantSole), Total: 100, CanCancel: true, CanPause: true})
-		if err := engine.pause(key); err != nil {
+		if err := pauseByKey(engine, key); err != nil {
 			t.Fatalf("暂停 %q 失败: %v", key, err)
 		}
 		keys = append(keys, key)

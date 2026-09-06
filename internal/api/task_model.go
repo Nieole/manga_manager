@@ -145,15 +145,21 @@ func (e *taskEngine) runStatusFrom(snapshot task.Snapshot, identity TaskIdentity
 		PausedAt:            run.PausedAt,
 		PauseReason:         string(run.PauseReason),
 		ControlPausedMillis: run.ControlPausedMillis,
+		CoalescedCount:      run.CoalescedCount,
 		Phase:               run.Phase,
 		CurrentItem:         run.CurrentItem,
 		Metrics:             snapshot.Side.Metrics,
 		Labels:              snapshot.Side.Labels,
 		Params:              snapshot.Side.Args,
-		StartedAt:           run.StartedAt,
 		UpdatedAt:           run.UpdatedAt,
 		FinishedAt:          run.FinishedAt,
 		Sequence:            run.Sequence,
+	}
+	// 零值时刻在契约里是「还没开跑」，不是公元 1 年：领域侧把**排队中**运行的开始时刻留作零值，
+	// 等它真的进入运行中才补写（那一段排队不属于速率的分母）。翻译只在这一处做。
+	if !run.StartedAt.IsZero() {
+		startedAt := run.StartedAt
+		status.StartedAt = &startedAt
 	}
 	if snapshot.Side.Limits != nil {
 		status.EffectiveLimit = taskLimitsFromDomain(*snapshot.Side.Limits)
@@ -221,7 +227,8 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 // 一次午饭时长的暂停就能把速率打到七分之一，并一路带进终态。
 //
 // 速率的缺席只由数据决定，不得由状态决定：分母非正或计数为零就不发。从未上报过进度的运行
-// 两条都占——它最后一次上报的时刻仍是开始时刻。
+// 两条都占——它最后一次上报的时刻仍是开始时刻。**排队中**的运行连开始时刻都还没有，
+// 它的分母无从谈起，因此百分比之外的两个数一律不发。
 func enrichTaskProgress(task *RunStatus) {
 	if task == nil {
 		return
@@ -237,10 +244,13 @@ func enrichTaskProgress(task *RunStatus) {
 		}
 		task.Percent = &percent
 	}
+	if task.StartedAt == nil {
+		return
+	}
 	now := time.Now()
-	elapsed := now.Sub(task.StartedAt)
+	elapsed := now.Sub(*task.StartedAt)
 	if !taskIsActive(task.Status) && task.FinishedAt != nil {
-		elapsed = task.FinishedAt.Sub(task.StartedAt)
+		elapsed = task.FinishedAt.Sub(*task.StartedAt)
 	}
 	// 扣掉**暂停**：那段时间里任务一条都没处理，留在分母里等于把「等用户回来」算成了在干活。
 	elapsed -= taskPausedSoFar(*task, now)

@@ -342,7 +342,7 @@ function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunStatu
   return (
     <div className="flex flex-wrap gap-2">
       {run.can_pause && run.status === 'running' && (
-        <button type="button" onClick={() => onTaskAction(run, 'pause')} disabled={taskActionKey === `${run.key}:pause`} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-500 hover:bg-amber-500/10 disabled:opacity-50">
+        <button type="button" onClick={() => onTaskAction(run, 'pause')} disabled={taskActionKey === `${run.run_id}:pause`} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-500 hover:bg-amber-500/10 disabled:opacity-50">
           <Pause className="h-3.5 w-3.5" />
           {t('settings.maintenance.pauseTask')}
         </button>
@@ -355,13 +355,13 @@ function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunStatu
         </span>
       )}
       {run.can_resume && run.status === 'paused' && (
-        <button type="button" onClick={() => onTaskAction(run, 'resume')} disabled={taskActionKey === `${run.key}:resume`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-500 hover:bg-emerald-500/10 disabled:opacity-50">
+        <button type="button" onClick={() => onTaskAction(run, 'resume')} disabled={taskActionKey === `${run.run_id}:resume`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-500 hover:bg-emerald-500/10 disabled:opacity-50">
           <Play className="h-3.5 w-3.5" />
           {t('settings.maintenance.resumeTask')}
         </button>
       )}
       {run.can_cancel && isActiveRunStatus(run.status) && (
-        <button type="button" onClick={() => onTaskAction(run, 'cancel')} disabled={taskActionKey === `${run.key}:cancel` || run.status === 'cancelling'} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50">
+        <button type="button" onClick={() => onTaskAction(run, 'cancel')} disabled={taskActionKey === `${run.run_id}:cancel` || run.status === 'cancelling'} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50">
           <XCircle className="h-3.5 w-3.5" />
           {t('common.cancel')}
         </button>
@@ -531,6 +531,12 @@ function RunCard({
                 {t(`logs.task.trigger.${run.trigger}`, undefined, run.trigger)}
               </span>
             )}
+            {/* **合并**计数：这条排队代表了几次发起。没合并过就整格不显示，而不是写一个「已合并 0 次」。 */}
+            {Boolean(run.coalesced_count) && (
+              <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-300">
+                {t('logs.task.coalesced', { count: run.coalesced_count || 0 })}
+              </span>
+            )}
           </div>
           <p className="mt-2 truncate text-sm text-white/70" title={run.current_item || getTaskMessage(run, t)}>{getTaskMessage(run, t)}</p>
           <p className="mt-1 truncate text-xs text-white/35" title={run.current_item || undefined}>
@@ -634,16 +640,22 @@ function LiveSection({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <h4 className="text-sm font-semibold text-white">{t('logs.taskCenter.liveTitle')}</h4>
-          {/* 槽位上限为 0 表示今天没有上限可报，那就只写占用数——「2/2147483647」不是「槽位 2/2」。 */}
+          {/* 后端恒发一个真的会被撞上的上限；报 0 只可能是它没答上来，那就退回只写占用数。 */}
           <span className="rounded-full border border-white/10 bg-white/4 px-2.5 py-1 text-xs text-white/60">
             {live.slots > 0
               ? t('logs.taskCenter.slots', { active: live.active, slots: live.slots })
               : t('logs.taskCenter.activeRuns', { active: live.active })}
           </span>
-          {/* 排队中今天不会产生（槽位实质关着）：一条都没有时整格不显示，而不是写一个「排队 0」。 */}
+          {/* 排队中一条都没有时整格不显示，而不是写一个「排队 0」。 */}
           {live.queued > 0 && (
             <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-xs text-sky-300">
               {t('logs.taskCenter.queued', { count: live.queued })}
+            </span>
+          )}
+          {/* 全部暂停的闸门关着时说出来：否则用户看到的是一条排队一动不动，而队列正被这个闸门拦着。 */}
+          {live.paused_all && (
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-500">
+              {t('logs.taskCenter.pausedAll')}
             </span>
           )}
         </div>
@@ -660,11 +672,13 @@ function LiveSection({
               <Pause className="h-4 w-4" />
               {t('settings.maintenance.pauseAllRuns')}
             </button>
-            {/* 一条都没暂停时「全部恢复」按下去什么也不会发生，因此按实况帧那个全局答案禁用它。 */}
+            {/* 一条都没暂停、闸门也开着时「全部恢复」按下去什么也不会发生，因此按实况帧那两个
+                全局答案禁用它。**两个都要看**：被暂停的那几条被取消或跑完之后 paused 就回到 false，
+                而闸门仍关着拦住队列——只看 paused 的话，这个按钮会灰在唯一能重新放开队列的位置上。 */}
             <button
               type="button"
               onClick={onResumeAll}
-              disabled={bulkPauseBusy || !live.paused}
+              disabled={bulkPauseBusy || (!live.paused && !live.paused_all)}
               className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-500 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Play className="h-4 w-4" />

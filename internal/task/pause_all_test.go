@@ -158,3 +158,78 @@ func TestPauseReasonDoesNotSurviveTheRun(t *testing.T) {
 		t.Fatalf("终态仍带着暂停原因 %q", settled.PauseReason)
 	}
 }
+
+// TestPauseAllHoldsTheQueue 守全部暂停也**按得住排队中的运行**。
+//
+// 排队中的运行没有开跑、没有闸门可按，逐个按下那一半够不着它们；不拦住放行的话，用户按下
+// 全部暂停之后队列里的东西照样一条条接上去跑——与「让盘安静下来」正好相反。
+func TestPauseAllHoldsTheQueue(t *testing.T) {
+	runner := &deferredRunner{}
+	h := newTestEngine(t, runner.run, 1)
+
+	active := h.start(t, libraryScanSpec(1), idleBody)
+	queued := h.start(t, libraryScanSpec(2), idleBody)
+	if queued.Status != StatusQueued {
+		t.Fatalf("第二条的状态为 %q, want queued", queued.Status)
+	}
+
+	if _, err := h.engine.PauseAll(context.Background()); err != nil {
+		t.Fatalf("全部暂停失败: %v", err)
+	}
+	if !h.engine.PausedAll() {
+		t.Fatal("全部暂停之后闸门没关上 —— 界面因此看不出队列被谁拦着")
+	}
+	// 唯一那条活动运行收尾，槽位空出来：闸门关着，队列一条都不该放行。
+	h.engine.finalize(active.ID, StatusCancelled, Result{}, "")
+	runner.drain()
+
+	if got := h.load(t, queued.ID).Status; got != StatusQueued {
+		t.Fatalf("全部暂停期间队列放行了，排队那条的状态为 %q", got)
+	}
+
+	if _, err := h.engine.ResumeAll(context.Background()); err != nil {
+		t.Fatalf("全部恢复失败: %v", err)
+	}
+	runner.drain()
+
+	if h.engine.PausedAll() {
+		t.Fatal("全部恢复之后闸门还关着")
+	}
+	if got := h.load(t, queued.ID).Status; got != StatusCompleted {
+		t.Fatalf("全部恢复没把排队那条放开，状态为 %q", got)
+	}
+}
+
+// TestStartWhilePausedAllIsQueued 守全部暂停期间新发起的运行进**排队中**：
+// 闸门只拦已经排上的那些的话，一次新发起就能绕过它，盘照样转起来。
+func TestStartWhilePausedAllIsQueued(t *testing.T) {
+	h := newTestEngine(t, registerOnly, 0)
+	if _, err := h.engine.PauseAll(context.Background()); err != nil {
+		t.Fatalf("全部暂停失败: %v", err)
+	}
+
+	run := h.start(t, libraryScanSpec(1), idleBody)
+	if run.Status != StatusQueued {
+		t.Fatalf("全部暂停期间发起的运行状态为 %q, want queued", run.Status)
+	}
+	if !run.StartedAt.IsZero() {
+		t.Fatalf("还没开跑的运行带上了开始时刻 %v", run.StartedAt)
+	}
+}
+
+// TestPauseAllReportsOnlyPressedRuns 守返回的条数只数真正被按下的运行：闸门不是一条运行，
+// 报进去会让用户以为有一条他没见过的东西被暂停了。
+func TestPauseAllReportsOnlyPressedRuns(t *testing.T) {
+	h := newTestEngine(t, registerOnly, 0)
+
+	pressed, err := h.engine.PauseAll(context.Background())
+	if err != nil {
+		t.Fatalf("全部暂停失败: %v", err)
+	}
+	if pressed != 0 {
+		t.Fatalf("一条运行都没有时按下了 %d 条", pressed)
+	}
+	if !h.engine.PausedAll() {
+		t.Fatal("没有运行可按就不关闸门 —— 此后发起的运行会直接开跑")
+	}
+}

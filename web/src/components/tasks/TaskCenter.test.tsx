@@ -55,7 +55,7 @@ function makeSummary(overrides: Partial<TaskSummary>): TaskSummary {
 }
 
 function makeLive(overrides: Partial<RunLive> = {}): RunLive {
-  return { active: 0, queued: 0, slots: 0, paused: false, runs: [], ...overrides };
+  return { active: 0, queued: 0, slots: 0, paused: false, paused_all: false, runs: [], ...overrides };
 }
 
 function renderCenter(props: Partial<Parameters<typeof TaskCenter>[0]> = {}) {
@@ -188,6 +188,17 @@ describe('还没有值的那几个展示位', () => {
     });
     expect(screen.getByText('logs.taskCenter.queued')).toBeTruthy();
     expect(screen.getByText('logs.taskStatus.queued')).toBeTruthy();
+  });
+
+  // 没合并过就整格不显示，而不是写一个「已合并 0 次」。
+  it('没合并过的运行不画合并计数', () => {
+    renderLiveRuns([makeRun({ status: 'queued', coalesced_count: 0 })]);
+    expect(screen.queryByText('logs.task.coalesced')).toBeNull();
+  });
+
+  it('合并过的排队项写出它代表了几次发起', () => {
+    renderLiveRuns([makeRun({ status: 'queued', coalesced_count: 2 })]);
+    expect(screen.getByText('logs.task.coalesced')).toBeTruthy();
   });
 
   it('连败为零、没被停发时那两个徽章都不出现', () => {
@@ -328,6 +339,26 @@ describe('顶部的全部暂停 / 全部恢复', () => {
 
     fireEvent.click(screen.getByText('settings.maintenance.resumeAllRuns'));
     expect(onResumeAll).not.toHaveBeenCalled();
+  });
+
+  // 被暂停的那几条被取消或跑完之后 paused 回到 false，而全部暂停的闸门仍关着拦住队列。
+  // 只看 paused 的话，这个按钮会灰在唯一能重新放开队列的位置上。
+  it('一条都没暂停但闸门还关着时，全部恢复仍然按得下去', () => {
+    const onResumeAll = vi.fn();
+    renderCenter({ live: makeLive({ paused: false, paused_all: true, queued: 1 }), onPauseAll: vi.fn(), onResumeAll });
+
+    fireEvent.click(screen.getByText('settings.maintenance.resumeAllRuns'));
+    expect(onResumeAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('闸门关着时实况区说出来，开着时那一格不出现', () => {
+    renderCenter({ live: makeLive({ paused_all: true }), onPauseAll: vi.fn(), onResumeAll: vi.fn() });
+    expect(screen.getByText('logs.taskCenter.pausedAll')).toBeTruthy();
+  });
+
+  it('没人按过全部暂停时不画那一格', () => {
+    renderCenter({ live: makeLive({ paused_all: false }), onPauseAll: vi.fn(), onResumeAll: vi.fn() });
+    expect(screen.queryByText('logs.taskCenter.pausedAll')).toBeNull();
   });
 });
 

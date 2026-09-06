@@ -111,8 +111,8 @@ func TestRetryRejectsActiveTask(t *testing.T) {
 		control func(e *taskEngine, key string) error
 	}{
 		{"运行中", "running", func(*taskEngine, string) error { return nil }},
-		{"已暂停", "paused", func(e *taskEngine, key string) error { return e.pause(key) }},
-		{"取消中", "cancelling", func(e *taskEngine, key string) error { return e.cancel(key) }},
+		{"已暂停", "paused", func(e *taskEngine, key string) error { return pauseByKey(e, key) }},
+		{"取消中", "cancelling", func(e *taskEngine, key string) error { return cancelByKey(e, key) }},
 	}
 
 	for _, tc := range cases {

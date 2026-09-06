@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+
+	"manga-manager/internal/config"
 )
 
 // taskSummaries 打一次任务清单接口。
@@ -166,8 +168,11 @@ func TestLiveFrameIgnoresListFilters(t *testing.T) {
 	if frame.Active != 1 || frame.Queued != 0 {
 		t.Fatalf("实况汇总为 active=%d queued=%d, want 1/0", frame.Active, frame.Queued)
 	}
-	// 槽位今天由 taskSlotsUnlimited 关着：报 0 表示没有分母可画，而不是「上限为 0」。
-	if frame.Slots != 0 {
-		t.Fatalf("槽位上限为 %d, want 0（没有上限可报）", frame.Slots)
+	// 槽位上限恒是一个真的会被撞上的数：界面上那格「槽位 n/N」的分母就是它。
+	if frame.Slots != config.DefaultMaxConcurrentRuns {
+		t.Fatalf("槽位上限为 %d, want %d", frame.Slots, config.DefaultMaxConcurrentRuns)
+	}
+	if frame.PausedAll {
+		t.Fatal("没人按过全部暂停，闸门却报着关上")
 	}
 }

@@ -40,7 +40,7 @@ func TestHistoryDoesNotDisplaceActiveRuns(t *testing.T) {
 			name: "paused 运行不被历史淹没",
 			setup: func(t *testing.T, e *taskEngine, key string) *runhandle.Handle {
 				progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
-				if err := e.pause(key); err != nil {
+				if err := pauseByKey(e, key); err != nil {
 					t.Fatalf("pause: %v", err)
 				}
 				return progress
@@ -84,7 +84,7 @@ func TestClearTasksKeepsPausedTask(t *testing.T) {
 
 	const key = "scan_library_7"
 	seedTask(t, engine, taskSeed{Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
-	if err := engine.pause(key); err != nil {
+	if err := pauseByKey(engine, key); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestClearTasksKeepsPausedTask(t *testing.T) {
 	if !taskExists(t, engine, key) {
 		t.Fatal("clear 删掉了暂停中的运行 —— resume 会变成 404，任务体永远卡在暂停闸门上")
 	}
-	if err := engine.resume(key); err != nil {
+	if err := resumeByKey(engine, key); err != nil {
 		t.Fatalf("clear 之后 resume 失败: %v", err)
 	}
 }

@@ -9,11 +9,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 
 	"manga-manager/internal/runhandle"
 )
+
+// errSeededRunQueued 表示这次播种被准入闸门拦在了**排队中**：运行确实落地了（脚手架没有绕开
+// 闸门），但任务体还没起，因此没有**运行句柄**可交。
+//
+// 它是脚手架自己的哨兵，不是生产错误：生产那边「撞上活动运行」如今是一次正常的排队，
+// 启动入口返回 nil。用例要断言的是「重复播种没有变出第二条在跑的任务」，这个哨兵正是那句话。
+var errSeededRunQueued = errors.New("seeded run is queued")
 
 // taskSeed 描述一条要播下的任务。零值即「不可取消不可暂停、停在运行中」。
 //
@@ -152,6 +162,14 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*runhandle.Handle,
 	if err != nil {
 		return nil, err
 	}
+	// 播种被闸门拦在了**排队中**：运行落地了，任务体却还没起，因此没有句柄可交。
+	//
+	// 顺手把收尾用的错误备好：万一后续动作腾出了槽位把它放行，那个任务体会当场收尾，
+	// 而不是卡在一个永远等不到的 finish 上，把放行它的那次调用连同用例一起吊死。
+	if queued, lookupErr := e.latestRunByKey(context.Background(), seed.Key); lookupErr == nil && queued.Status == "queued" {
+		run.once.Do(func() { run.finish <- context.Canceled })
+		return nil, errSeededRunQueued
+	}
 
 	run.body = <-started
 	if seed.Terminal != "" {
@@ -191,17 +209,21 @@ func seededTaskContext(t testing.TB, e *taskEngine, key string) context.Context 
 }
 
 // TestSeedTaskGoesThroughTheAdmissionGate 守卫脚手架没有绕开准入闸门。
+//
+// 闸门如今的表现是**排队中**而不是一个错误：重复播种落下的是一条排着队、任务体没起的运行。
+// 脚手架据此交出 errSeededRunQueued——它拿不到句柄，因为那条运行还没开跑。
 func TestSeedTaskGoesThroughTheAdmissionGate(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100})
 
-	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("同一身份重复播种返回 %v, want errTaskAlreadyRunning —— 脚手架绕过了闸门，整片测试就此失去这条覆盖", err)
+	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); !errors.Is(err, errSeededRunQueued) {
+		t.Fatalf("同一身份重复播种返回 %v, want errSeededRunQueued —— 脚手架绕过了闸门，整片测试就此失去这条覆盖", err)
 	}
 
 	settleSeededTask(t, e, key, errors.New("done"))
+	// 上一条播种落下的那条排队运行在收尾时被放行、当场收尾，因此这里播下的又是一条全新的活动运行。
 	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); err != nil {
 		t.Fatalf("落定终态之后同一身份播不下去了: %v", err)
 	}
@@ -215,13 +237,13 @@ func TestSeededActiveTaskIsControllable(t *testing.T) {
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
-	if err := e.pause(key); err != nil {
+	if err := pauseByKey(e, key); err != nil {
 		t.Fatalf("暂停播下的任务失败: %v", err)
 	}
-	if err := e.resume(key); err != nil {
+	if err := resumeByKey(e, key); err != nil {
 		t.Fatalf("恢复播下的任务失败: %v", err)
 	}
-	if err := e.cancel(key); err != nil {
+	if err := cancelByKey(e, key); err != nil {
 		t.Fatalf("取消播下的任务失败: %v", err)
 	}
 }
@@ -299,4 +321,38 @@ func TestSeededRunCarriesItsRunID(t *testing.T) {
 	if first.RunID == second.RunID {
 		t.Fatalf("同一个任务键的两次运行拿到了同一个运行标识 %d —— 重试又把上一次盖掉了", first.RunID)
 	}
+}
+
+// ---- 按**任务键**寻址的控制动作（仅用例） ----
+//
+// 生产按**运行 id** 寻址（见 taskEngine.pauseRun）：同一个键此刻可以有两条仍会变化的运行，
+// 键答不出用例按的是哪一条。而用例手里往往只有键，因此在这里补一道解析：取这个键最近的那一次
+// 运行再控制它——正是这三个方法从生产里搬走之前的口径。要指名道姓控制某一条的用例，
+// 直接调 pauseRun / resumeRun / cancelRun。
+
+func controlByKey(e *taskEngine, key string, action func(int64) error) error {
+	run, err := e.latestRunByKey(context.Background(), key)
+	if err != nil {
+		return err
+	}
+	return action(run.ID)
+}
+
+func pauseByKey(e *taskEngine, key string) error  { return controlByKey(e, key, e.pauseRun) }
+func resumeByKey(e *taskEngine, key string) error { return controlByKey(e, key, e.resumeRun) }
+func cancelByKey(e *taskEngine, key string) error { return controlByKey(e, key, e.cancelRun) }
+
+// runControlRequest 向暂停 / 恢复 / 取消三个端点之一发一次请求，寻址用这个**任务键**最近那次
+// 运行的 id——端点按运行 id 寻址（见 Controller.pauseRun），而用例手里往往只有键。
+func runControlRequest(t testing.TB, c *Controller, handler http.HandlerFunc, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	run, err := c.taskEngine.latestRunByKey(context.Background(), key)
+	if err != nil {
+		t.Fatalf("任务键 %q 取不到运行: %v", key, err)
+	}
+	runID := strconv.FormatInt(run.ID, 10)
+	req := requestWithRouteParam(http.MethodPost, "/api/system/runs/"+runID+"/control", nil, "runID", runID)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	return rec
 }
