@@ -623,11 +623,29 @@ function runEventClass(kind: string) {
 const CURVE_WIDTH = 600;
 const CURVE_HEIGHT = 120;
 
-// 相邻两点隔了超过这么多个取点间隔，就当中间漏了点，曲线在那里断开。
+// 相邻两点隔了超过这么多个「正常间距」，就当中间漏了点，曲线在那里断开。
 //
 // 二倍而不是一倍：取点的节拍与它的水位各读一次时钟，正常节奏下也会偶尔隔出一个多间隔，
-// 按一倍判会把一条连续的曲线切成一串碎段。间隔本身由后端随载荷发来，这里只定「隔多远算漏」。
+// 按一倍判会把一条连续的曲线切成一串碎段。
 const SAMPLE_GAP_FACTOR = 2;
+
+/**
+ * typicalGapMs 是这一条曲线**自己的**取点间距：全部相邻间距取中位数。
+ *
+ * 不读「此刻设置里的间隔」：取点间隔是可配的，而这些点是**当时**那个节奏留下的。
+ * 拿现在的间隔去量过去的点，把 60 秒改成 10 秒之后，每一条老曲线都会被判成处处漏点、
+ * 碎成一串圆点。中位数而不是最小值：一次时钟抖动就能挤出一个极小的间距。
+ *
+ * 少于两个点时没有间距可量，交回 0——那种情况下也无从断开。
+ */
+function typicalGapMs(samples: RunSample[]) {
+  if (samples.length < 2) return 0;
+  const gaps = samples
+    .slice(1)
+    .map((sample, index) => new Date(sample.at).getTime() - new Date(samples[index].at).getTime())
+    .sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)];
+}
 
 /**
  * curveSegments 把采样点切成若干段连续的点：**有点就连线，没点就断开**。
@@ -638,8 +656,10 @@ const SAMPLE_GAP_FACTOR = 2;
  * **暂停不断**：暂停是**活动态**，采样照取，那几个点的吞吐是真实的零，曲线在那里是平的。
  * 平的说的是「它没在产出」，断的说的是「这一段我们不知道」，两件事不能画成一个样子。
  */
-function curveSegments(samples: RunSample[], intervalSeconds: number) {
-  const maxGapMs = Math.max(1, intervalSeconds) * 1000 * SAMPLE_GAP_FACTOR;
+function curveSegments(samples: RunSample[]) {
+  const typical = typicalGapMs(samples);
+  if (typical <= 0) return samples.length > 0 ? [samples] : [];
+  const maxGapMs = typical * SAMPLE_GAP_FACTOR;
   const segments: RunSample[][] = [];
   let segment: RunSample[] = [];
   for (const sample of samples) {
@@ -708,7 +728,7 @@ function RunThroughputCurve({ data }: { data: RunSamplesResponse }) {
         role="img"
         aria-label={t('logs.task.throughput')}
       >
-        {curveSegments(samples, data.interval_seconds).map((segment, index) => (
+        {curveSegments(samples).map((segment, index) => (
           <polyline
             key={`${segment[0].at}-${index}`}
             points={pointsOf(segment)}

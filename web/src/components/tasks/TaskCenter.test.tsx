@@ -576,7 +576,7 @@ describe('吞吐曲线', () => {
 
   it('有点就画一条折线，而不是一个点一个元素', () => {
     renderCenter(runWithSamples({
-      run_id: 3, interval_seconds: 10, retention_days: 7, samples: makeSamples([600, 0, 0, 300]),
+      run_id: 3, retention_days: 7, samples: makeSamples([600, 0, 0, 300]),
     }));
 
     expect(screen.getByText('logs.task.throughput')).toBeTruthy();
@@ -589,22 +589,42 @@ describe('吞吐曲线', () => {
   // 暂停与停滞都是「没在产出」，我们观测得清清楚楚，因此曲线在那里是**平的**；
   // 断口只留给「这一段一个观测都没有」。两件事画成一个样子，用户就分不出来了。
   it('停滞段照样连着画，只有漏了点的地方才断开', () => {
-    const samples = makeSamples([600, 0, 0, 300]);
+    const samples = makeSamples([600, 0, 0, 300, 300, 300]);
     // 第三个点之后隔了五分钟才有下一个：中间那段没有任何观测，连过去就是编数据。
-    samples[3] = { ...samples[3], at: new Date(Date.parse(samples[2].at) + 300_000).toISOString() };
+    const shift = 300_000 - 10_000;
+    for (let i = 3; i < samples.length; i += 1) {
+      samples[i] = { ...samples[i], at: new Date(Date.parse(samples[i].at) + shift).toISOString() };
+    }
     renderCenter(runWithSamples({
-      run_id: 3, interval_seconds: 10, retention_days: 7, samples,
+      run_id: 3, retention_days: 7, samples,
     }));
 
     const lines = polylines();
     expect(lines).toHaveLength(2);
     expect(lines[0].getAttribute('points')?.trim().split(/\s+/)).toHaveLength(3);
-    expect(lines[1].getAttribute('points')?.trim().split(/\s+/)).toHaveLength(1);
+    expect(lines[1].getAttribute('points')?.trim().split(/\s+/)).toHaveLength(3);
+  });
+
+  // 取点间隔可配：拿「此刻的间隔」去量过去的点，把 60 秒改成 10 秒之后，
+  // 每一条老曲线都会被判成处处漏点、碎成一串圆点。判据因此取这条曲线自己的间距。
+  it('间隔改过之后，老曲线不会碎成一串点', () => {
+    const base = Date.parse('2026-08-31T00:00:00Z');
+    // 这条运行当时是每 60 秒一个点，而设置此刻已经改成了 10 秒。
+    const samples: RunSample[] = [0, 1, 2, 3].map((index) => ({
+      at: new Date(base + index * 60_000).toISOString(),
+      current: 100 * (index + 1),
+      rate_per_minute: 300,
+    }));
+    renderCenter(runWithSamples({ run_id: 3, retention_days: 7, samples }));
+
+    const lines = polylines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0].getAttribute('points')?.trim().split(/\s+/)).toHaveLength(4);
   });
 
   it('过了保留期就明说曲线没了，不画一条假的', () => {
     renderCenter(runWithSamples({
-      run_id: 3, interval_seconds: 10, retention_days: 7, samples: [], expired: true,
+      run_id: 3, retention_days: 7, samples: [], expired: true,
     }));
 
     expect(screen.getByText('logs.task.samplesGone')).toBeTruthy();
@@ -612,7 +632,7 @@ describe('吞吐曲线', () => {
   });
 
   it('还没攒够第一个点与过了保留期说的不是同一句话', () => {
-    renderCenter(runWithSamples({ run_id: 3, interval_seconds: 10, retention_days: 7, samples: [] }));
+    renderCenter(runWithSamples({ run_id: 3, retention_days: 7, samples: [] }));
 
     expect(screen.getByText('logs.task.noSamples')).toBeTruthy();
     expect(screen.queryByText('logs.task.samplesGone')).toBeNull();
@@ -620,7 +640,7 @@ describe('吞吐曲线', () => {
 
   it('曲线不完整与只画了最近一段都要说出来', () => {
     renderCenter(runWithSamples({
-      run_id: 3, interval_seconds: 10, retention_days: 7, samples: makeSamples([600, 300]),
+      run_id: 3, retention_days: 7, samples: makeSamples([600, 300]),
       expired: true, truncated: true,
     }));
 
@@ -634,7 +654,7 @@ describe('吞吐曲线', () => {
       live: makeLive({ active: 2, runs: [makeRun({ run_id: 3 }), makeRun({ run_id: 4 })] }),
       detail: {
         cardId: runCardId('live', 4),
-        samples: { run_id: 4, interval_seconds: 10, retention_days: 7, samples: makeSamples([600]) },
+        samples: { run_id: 4, retention_days: 7, samples: makeSamples([600]) },
       },
     });
 

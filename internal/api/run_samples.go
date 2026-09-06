@@ -47,10 +47,6 @@ type RunSample struct {
 type RunSamplesResponse struct {
 	RunID   int64       `json:"run_id"`
 	Samples []RunSample `json:"samples"`
-	// IntervalSeconds 是这一刻生效的取点间隔。界面据它判断相邻两点之间是不是漏了点——
-	// **漏了就断开，不连线**：没观测过的那一段连过去就是编一段没发生过的数据。
-	// 「隔多远才算漏」由画曲线的那一侧定（见 web 的 runSamples），这里只把间隔如实交出去。
-	IntervalSeconds int `json:"interval_seconds"`
 	// RetentionDays 是**采样**的保留天数。它比运行本身短，因此「运行还在、曲线没了」是设计
 	// 而不是缺陷——界面要能把这句话说出来，就得知道是几天。
 	RetentionDays int `json:"retention_days"`
@@ -78,7 +74,7 @@ func (c *Controller) startRunSampler() {
 		case <-c.lifecycleDone():
 			return
 		case <-ticker.C:
-			c.taskEngine.engine.SampleActiveRuns(context.Background())
+			c.taskEngine.sampleActiveRuns(context.Background())
 			ticker.Reset(c.runSampleInterval())
 		}
 	}
@@ -91,7 +87,10 @@ func (c *Controller) runSampleInterval() time.Duration {
 
 // sampleIntervalOf 把设置里的秒数翻成间隔：非正数交给领域引擎的默认值，大到会溢出的按上限收。
 //
-// 归一化本该已经把非正数补成默认值，这里再收一道是因为它同时服务节拍——一个零间隔的
+// 它只服务两处，且两处交出的是**同一个数**：装配期交给领域引擎的那个读间隔闭包，与取点的节拍。
+// 读取面不走它——那一处问引擎要（见 runSamples），因此「此刻的间隔是多久」只有一个答案。
+//
+// 归一化本该已经把非正数补成默认值，这里再收一道是因为节拍容不下零：一个零间隔的
 // time.Ticker 会当场 panic，而配置一路来自手写的文件。
 func sampleIntervalOf(cfg config.Config) time.Duration {
 	seconds := cfg.Tasks.SampleIntervalSeconds
@@ -111,9 +110,7 @@ func (c *Controller) getRunSamples(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid run ID")
 		return
 	}
-	cfg := c.currentConfig()
-	response, err := c.taskEngine.runSamples(r.Context(), runID,
-		sampleIntervalOf(cfg), cfg.Tasks.RetainSampleDays)
+	response, err := c.taskEngine.runSamples(r.Context(), runID, c.currentConfig().Tasks.RetainSampleDays)
 	if err != nil {
 		if errors.Is(err, task.ErrRunNotFound) {
 			jsonError(w, http.StatusNotFound, "Run not found")
@@ -128,9 +125,12 @@ func (c *Controller) getRunSamples(w http.ResponseWriter, r *http.Request) {
 // runSamples 取这条运行的采样点，并把界面用来说实话的那三样一起交出去：取点间隔、保留天数，
 // 以及「早期那一段是不是已经过了保留期」。
 //
+// 间隔问的是**领域引擎**而不是再算一遍配置：取点的水位读的就是它，而这里拿它判断
+// 「一个点都没有」该不该算作被清走。各算各的话，改一次设置就会让这句话说反。
+//
 // 先取运行行再取采样：过期与否判的是**运行的开跑时刻**，而那只有运行行答得出。
 // 运行不存在时把哨兵原样交出去，端点据此回 404。
-func (e *taskEngine) runSamples(ctx context.Context, runID int64, interval time.Duration, retentionDays int) (RunSamplesResponse, error) {
+func (e *taskEngine) runSamples(ctx context.Context, runID int64, retentionDays int) (RunSamplesResponse, error) {
 	run, err := e.runStore.LoadRun(ctx, runID)
 	if err != nil {
 		return RunSamplesResponse{}, err
@@ -154,24 +154,50 @@ func (e *taskEngine) runSamples(ctx context.Context, runID int64, interval time.
 			RatePerMinute: sample.RatePerMinute,
 		})
 	}
+	// 截断时一律不提过期：头上那一刀是**我们自己截的**，与保留期无关，而界面另有一句话说它。
+	// 不挡这一下的话，每一条长跑运行都会同时被说成「被清理过」。
+	expired := !truncated && samplesExpired(run, earliestSampleAt(samples),
+		e.engine.SampleInterval(), retentionDays, e.clock())
 	return RunSamplesResponse{
-		RunID:           runID,
-		Samples:         points,
-		IntervalSeconds: int(interval.Seconds()),
-		RetentionDays:   retentionDays,
-		Expired:         samplesExpired(run, retentionDays, e.clock()),
-		Truncated:       truncated,
+		RunID:         runID,
+		Samples:       points,
+		RetentionDays: retentionDays,
+		Expired:       expired,
+		Truncated:     truncated,
 	}, nil
 }
 
-// samplesExpired 判这条运行早期的那段曲线是不是已经被保留期清走了：开跑时刻落在截止时刻之前
-// 就是。**排队中**的运行还没开跑（没有开跑时刻），谈不上过期。
+// earliestSampleAt 取手上最早那个点的时刻；一个点都没有时交回零值。
+func earliestSampleAt(samples []task.Sample) time.Time {
+	if len(samples) == 0 {
+		return time.Time{}
+	}
+	return samples[0].At
+}
+
+// samplesExpired 判这条运行早期的那段曲线是不是**真的**被保留期清走了。
 //
-// 判据取开跑时刻而不是「第一个点离开跑有多远」：后者在一条刚起步、还没攒够一个间隔的运行上
-// 同样成立，而那不是过期。保留天数非正表示这一层不裁剪，因此也不会过期。
-func samplesExpired(run task.Run, retentionDays int, now time.Time) bool {
+// 判据照抄裁剪那一刀本身（票 18：`DELETE FROM run_samples WHERE at < 截止时刻`），
+// 而不是「这条运行有多老」：
+//   - 开跑于截止时刻**之后** → 它的点一个都够不着那一刀。
+//   - 手上最早的点已经落在截止时刻**之后**，而运行开跑于它之前 → 中间那一段正是被那一刀切掉的。
+//   - 一个点都没有 → 跑够一个取点间隔的运行本该留下点，没有就是整条被清走了；
+//     跑不够一个间隔的运行本来就没有点可清，那不是过期，界面该说的是另一句话。
+//
+// 光看开跑时刻不行：清理**每天才跑一次**，一条开跑于第 8 天、采样点一个没少的运行会被说成
+// 「早于 7 天的采样已被清理」——那是为一条完整的曲线说了一句谎，而本票要的恰恰是不说谎。
+//
+// **排队中**的运行还没开跑，谈不上过期；保留天数非正表示这一层不裁剪，同样不会过期。
+func samplesExpired(run task.Run, earliest time.Time, interval time.Duration, retentionDays int, now time.Time) bool {
 	if retentionDays <= 0 || run.StartedAt.IsZero() {
 		return false
 	}
-	return run.StartedAt.Before(now.Add(-retentionAge(retentionDays)))
+	cutoff := now.Add(-retentionAge(retentionDays))
+	if !run.StartedAt.Before(cutoff) {
+		return false
+	}
+	if earliest.IsZero() {
+		return runEndOf(run, now).Sub(run.StartedAt) >= interval
+	}
+	return !earliest.Before(cutoff)
 }

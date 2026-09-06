@@ -132,7 +132,6 @@ export interface RunSample {
 export interface RunSamplesResponse {
   run_id: number;
   samples: RunSample[];
-  interval_seconds: number;
   retention_days: number;
   expired?: boolean;
   truncated?: boolean;

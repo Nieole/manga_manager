@@ -1371,7 +1371,7 @@ export const messages: MessageCatalog = {
     'settings.library.retainSampleDays': 'Days throughput samples are kept',
     'settings.library.retainSampleDaysHint': 'How long the throughput curve keeps its sample points. It is shorter than the run itself: once they expire the run is still there, the curve is not.',
     'settings.library.sampleInterval': 'Throughput sampling interval (seconds)',
-    'settings.library.sampleIntervalHint': 'How often a throughput point is recorded for a running job. A smaller value draws a finer curve and writes more rows; it only changes how dense the curve is, never the progress or rate figures.',
+    'settings.library.sampleIntervalHint': 'How often a throughput point is recorded for an active run. A smaller value draws a finer curve and writes more rows; it only changes how dense the curve is, never the progress or rate figures.',
     'settings.library.retentionHint': 'The cleanup goes once a day and shows up in the task center with how much it removed. Runs that are active or queued are never taken by it. Each value is at least 1, and lowering one deletes the history that falls outside it, which cannot be undone.',
     'settings.library.backoffFactor': 'Backoff factor',
     'settings.library.backoffFactorHint': 'Each further failure in a row multiplies the automatic launch interval by this.',

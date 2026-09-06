@@ -80,44 +80,72 @@ func TestRunSamplesDrawTheThroughputOfThisRun(t *testing.T) {
 				i+1, got.Current, got.RatePerMinute, expected.current, expected.rate)
 		}
 	}
-	// 间隔要随载荷发出去：界面据它判断相邻两点之间是不是漏了点，漏了就断开而不是连成直线。
-	if payload.IntervalSeconds != int(task.DefaultSampleInterval.Seconds()) {
-		t.Errorf("载荷上的取点间隔为 %d 秒，想要 %d 秒",
-			payload.IntervalSeconds, int(task.DefaultSampleInterval.Seconds()))
-	}
 }
 
-// TestRunSamplesSayWhenTheEarlyCurveHasExpired 守「曲线缺失时界面明说，不画一条假的」。
+// TestRunSamplesSayWhenTheEarlyCurveHasExpired 守「曲线缺失时界面明说，不画一条假的」，
+// 以及它的反面：**曲线没缺的时候不许说它缺了**。
 //
-// 判据是**运行的开跑时刻**落在保留期之外，不是「点少不少」：一条刚起步的运行同样没几个点，
-// 而那不是过期。这两件事在界面上要说的话完全不同。
+// 判据照抄裁剪那一刀（`at < 截止时刻`），不是「运行有多老」。清理每天才跑一次，因此
+// 「开跑于保留期之外」与「早期的点真的没了」是两回事——前者当判据会为一条完整的曲线说谎。
 func TestRunSamplesSayWhenTheEarlyCurveHasExpired(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	const retentionDays = 7
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	interval := task.DefaultSampleInterval
+	longAgo := now.Add(-8 * 24 * time.Hour)
 
 	cases := []struct {
-		name string
-		run  task.Run
-		want bool
+		name     string
+		run      task.Run
+		earliest time.Time
+		want     bool
 	}{
-		{"开跑于保留期之外", task.Run{StartedAt: now.Add(-8 * 24 * time.Hour)}, true},
-		{"开跑于保留期之内", task.Run{StartedAt: now.Add(-6 * 24 * time.Hour)}, false},
-		{"还没开跑的排队运行", task.Run{}, false},
+		{
+			"早期的点已经在截止时刻之外被切掉",
+			task.Run{StartedAt: longAgo, Status: task.StatusRunning},
+			cutoff.Add(time.Hour),
+			true,
+		},
+		{
+			// 这一条是本票要挡的谎：运行够老了，但清理还没跑，点一个没少。
+			"运行够老、点却一个没少",
+			task.Run{StartedAt: longAgo, Status: task.StatusRunning},
+			longAgo.Add(time.Minute),
+			false,
+		},
+		{
+			"整条曲线都没了：跑够一个间隔却一个点都没有",
+			task.Run{StartedAt: longAgo, Status: task.StatusCompleted, FinishedAt: ptrTime(longAgo.Add(time.Hour))},
+			time.Time{},
+			true,
+		},
+		{
+			// 跑不满一个取点间隔的运行本来就没有点可清，界面该说的是「还没有采样点」。
+			"太短、本来就没有点可清",
+			task.Run{StartedAt: longAgo, Status: task.StatusCompleted, FinishedAt: ptrTime(longAgo.Add(time.Second))},
+			time.Time{},
+			false,
+		},
+		{"开跑于保留期之内", task.Run{StartedAt: now.Add(-6 * 24 * time.Hour)}, time.Time{}, false},
+		{"还没开跑的排队运行", task.Run{}, time.Time{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := samplesExpired(tc.run, retentionDays, now); got != tc.want {
+			if got := samplesExpired(tc.run, tc.earliest, interval, retentionDays, now); got != tc.want {
 				t.Fatalf("过期判定为 %v, want %v", got, tc.want)
 			}
 		})
 	}
 
 	t.Run("这一层不裁剪时不会过期", func(t *testing.T) {
-		if samplesExpired(task.Run{StartedAt: now.Add(-10 * 365 * 24 * time.Hour)}, 0, now) {
+		ancient := task.Run{StartedAt: now.Add(-10 * 365 * 24 * time.Hour)}
+		if samplesExpired(ancient, time.Time{}, interval, 0, now) {
 			t.Fatal("保留天数是「这一层不裁剪」，却报了过期")
 		}
 	})
 }
+
+func ptrTime(at time.Time) *time.Time { return &at }
 
 // TestRunSamplesCarryTheRetentionWindow 守保留天数随载荷发出去：界面要说得出
 // 「一周之后运行还在、曲线没了」，就得知道是几天。

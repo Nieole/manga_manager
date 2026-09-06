@@ -211,6 +211,14 @@ func (e *taskEngine) samplingInterval() time.Duration {
 	return e.sampleInterval()
 }
 
+// sampleActiveRuns 催领域引擎给每条活动运行取一个**采样**点。
+//
+// 节拍在 Controller 那边（startRunSampler），但它经这道门面下来而不是自己伸手抓 e.engine：
+// 「谁能碰领域引擎」这件事，本层是唯一的答案，绕过去一次就多一条谁也没在看的路。
+func (e *taskEngine) sampleActiveRuns(ctx context.Context) {
+	e.engine.SampleActiveRuns(ctx)
+}
+
 // clock 返回当前时刻（测试可经 now 字段注入）。领域引擎收的是这个方法而不是 cfg.Now，
 // 好让构造之后换掉时钟仍然生效。
 func (e *taskEngine) clock() time.Time {
