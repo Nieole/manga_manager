@@ -53,12 +53,27 @@ func (e *Engine) summarizeLocked(runs []Run) Live {
 	return live
 }
 
+// deferLiveLocked 把这一段里的**实况汇总**攒到收尾时算一次，交回收尾那一步。调用方持锁，
+// 且**必须**调用交回的函数（`defer` 最稳），否则这一段之后的汇总变化一帧都出不去。
+//
+// 批量控制（全部暂停 / 全部恢复 / 重启转**中断**）逐条跃迁，每条都算一遍等于把同一个答案查 N 遍，
+// 而中间那 N-1 个答案没有一个会被投出去——汇总没变则不投，变了也会被下一条盖掉。
+//
+// 计数而不是布尔：这几段会互相套（全部恢复里既有逐条放行，又有队列放行）。
+func (e *Engine) deferLiveLocked() func() {
+	e.liveDeferrals++
+	return func() {
+		e.liveDeferrals--
+		e.refreshLiveLocked()
+	}
+}
+
 // refreshLiveLocked 在**实况汇总**变了的时候投一帧，没变则一帧不投。调用方持锁。
 //
 // 只在**状态跃迁**之后调，不跟着**计数推进**走：纯计数推进动不了这几个数，跟着算一遍等于
 // 每个投递窗口白查一次库。汇总没变时也不投——一条运行从 3 报到 4 不改变盘上有几件事。
 func (e *Engine) refreshLiveLocked() {
-	if e.publishLive == nil {
+	if e.publishLive == nil || e.liveDeferrals > 0 {
 		return
 	}
 	runs, err := e.store.ListRuns(context.Background(), RunFilter{Statuses: liveStatuses})

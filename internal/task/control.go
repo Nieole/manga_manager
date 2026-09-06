@@ -178,15 +178,15 @@ func (e *Engine) Pause(runID int64) error {
 func (e *Engine) PauseAll(ctx context.Context) (int, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// 整批只算一次**实况汇总**，而且一条也没按下时照样要算：闸门刚刚关上，那是汇总里的一个数。
+	// 没有任何一条运行跃迁的话（队列里全是排队中的运行，或者盘上本来就是空的），前端拿不到
+	// 「闸门关着」这件事，「全部恢复」会灰在唯一能重新放开队列的位置上。
+	flushLive := e.deferLiveLocked()
+	defer flushLive()
 	e.pausedAll = true
-	paused, err := e.controlEachLocked(ctx, StatusRunning, func(run Run) error {
+	return e.controlEachLocked(ctx, StatusRunning, func(run Run) error {
 		return e.pauseLocked(run, PauseReasonPauseAll)
 	})
-	// 一条也没按下时同样要投一帧**实况汇总**：闸门刚刚关上，而那是汇总里的一个数。
-	// 没有任何一条运行跃迁的话（队列里全是排队中的运行，或者盘上本来就是空的），
-	// 前端拿不到「闸门关着」这件事，「全部恢复」会灰在唯一能重新放开队列的位置上。
-	e.refreshLiveLocked()
-	return paused, err
 }
 
 // pauseLocked 按下一条运行的闸门并落定**已暂停**。调用方持锁。
@@ -236,11 +236,12 @@ func (e *Engine) Resume(runID int64) error {
 // 逐个放行出错也照样放队列——闸门此刻已经开了，而队列的放行不依赖任何一条被恢复的运行。
 func (e *Engine) ResumeAll(ctx context.Context) (int, error) {
 	e.mu.Lock()
+	// 理由同 PauseAll：整批只算一次汇总，而开闸门这件事本身要发出去，哪怕一条运行都没被放行。
+	flushLive := e.deferLiveLocked()
 	e.pausedAll = false
 	resumed, err := e.controlEachLocked(ctx, StatusPaused, e.resumeLocked)
 	launch := e.releaseQueuedLocked()
-	// 理由同 PauseAll：开闸门这件事本身要发出去，哪怕一条运行都没被放行。
-	e.refreshLiveLocked()
+	flushLive()
 	e.mu.Unlock()
 	if launch != nil {
 		launch()
@@ -397,6 +398,9 @@ func (e *Engine) MarkInterrupted(ctx context.Context) (Interruption, error) {
 func (e *Engine) markInterrupted(ctx context.Context) (marked int, candidates []Run, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// 一次重启可能转写几十条，整批只算一次**实况汇总**：中间那些答案没有一个会被投出去。
+	flushLive := e.deferLiveLocked()
+	defer flushLive()
 
 	runs, err := e.store.ListRuns(ctx, RunFilter{Statuses: liveStatuses, Order: OrderSequenceAsc})
 	if err != nil {

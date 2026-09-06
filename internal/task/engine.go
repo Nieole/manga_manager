@@ -169,6 +169,8 @@ type Engine struct {
 	// lastLive 是上一帧**实况汇总**（序号留空），用来判断这一次跃迁有没有真的改变那几个数。
 	// 没变就不投：一条运行从 3 报到 4 不改变盘上有几件事，跟着投等于把汇总也变成一路噪音。
 	lastLive Live
+	// liveDeferrals 大于 0 时汇总一次都不算，等这一段收尾时统一算一次。见 deferLiveLocked。
+	liveDeferrals int
 	// settled 按运行 id 存着「等这条运行收尾」的通知通道，收尾时一并关掉。见 Await。
 	settled map[int64][]chan struct{}
 }
@@ -208,6 +210,10 @@ func New(cfg Config) *Engine {
 // 每次判定都现读一遍，因此改配置对**新的放行**生效：调小之后已经在跑的一条都不会被打断，
 // 只是要等占用降到新上限之下才再放行。读回一个小于 1 的数按 DefaultSlots 处理——
 // 0 不是一个合法的上限，照它办事等于把整台机器的后台工作永久卡死。
+//
+// **它不加锁，也不得加锁**：队列放行与**实况汇总**都在临界区里读它，加了锁当场死锁。
+// 它读的 slots 属于「装配期注入、之后只读」的那组，因此本来也不需要（对比 PausedAll，
+// 那个读的是引擎状态，所以它加锁、也因此不能在临界区里调）。
 func (e *Engine) Slots() int {
 	if e.slots == nil {
 		return DefaultSlots

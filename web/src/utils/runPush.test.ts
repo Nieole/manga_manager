@@ -38,8 +38,8 @@ describe('parseRunPush', () => {
 });
 
 describe('trackRunPush', () => {
-  it('接得上上一帧就不是缺口，游标走到这一帧', () => {
-    expect(trackRunPush(811, frame(814, 811))).toEqual({ gap: false, cursor: 814 });
+  it('接得上手上那一号就不是缺口，手上那一号走到这一帧', () => {
+    expect(trackRunPush(811, frame(814, 811))).toEqual({ gap: false, sequence: 814 });
   });
 
   // 这一条是本模块存在的理由：节流吞掉的帧取走了 812、813，送达的序号因此跳了两号，
@@ -49,19 +49,19 @@ describe('trackRunPush', () => {
   });
 
   it('prev 对不上手里那一号就是缺口', () => {
-    expect(trackRunPush(811, frame(815, 814))).toEqual({ gap: true, cursor: 815 });
+    expect(trackRunPush(811, frame(815, 814))).toEqual({ gap: true, sequence: 815 });
   });
 
-  // 刚进页面或刚重拉过：手上没有可比的上一号，拿这一帧当新的起点。
-  it('游标为空时不判缺口，只把起点定下来', () => {
-    expect(trackRunPush(null, frame(814, 811))).toEqual({ gap: false, cursor: 814 });
+  // 刚进页面或 SSE 刚重连上：手上没有可比的号，拿这一帧当新的起点。
+  it('手上还没有号时不判缺口，只把起点定下来', () => {
+    expect(trackRunPush(null, frame(814, 811))).toEqual({ gap: false, sequence: 814 });
   });
 
-  // 判出缺口之后游标要走到这一帧：不走的话，此后每一帧都会再判一次缺口，重拉一路刷下去。
+  // 判出缺口之后手上那一号要走到这一帧：不走的话，此后每一帧都会再判一次缺口，重拉一路刷下去。
   it('判出缺口之后下一帧接得上，不再重复重拉', () => {
     const first = trackRunPush(811, frame(815, 814));
     expect(first.gap).toBe(true);
-    expect(trackRunPush(first.cursor, frame(816, 815)).gap).toBe(false);
+    expect(trackRunPush(first.sequence, frame(816, 815)).gap).toBe(false);
   });
 
   // 服务端重启之后序号从库里已用掉的最大值接上，可能比手里那一号小：链一样对不上，一样重拉。

@@ -67,8 +67,8 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const [bulkPauseBusy, setBulkPauseBusy] = useState(false);
   const taskRequestIDRef = useRef(0);
   const historyRequestIDRef = useRef(0);
-  // pushCursorRef 是上一帧推送帧的序号；null 表示手上还没有可比的上一号（刚进页面，或刚重拉过）。
-  const pushCursorRef = useRef<number | null>(null);
+  // lastPushSequenceRef 是上一帧推送帧的序号；null 表示手上还没有可比的号（刚进页面，或 SSE 刚重连上）。
+  const lastPushSequenceRef = useRef<number | null>(null);
   const { showToast } = useToast();
 
   // taskFilters 是输入框的当前值（含还没提交的半截关键词）。
@@ -167,8 +167,8 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     const handler = (event: Event) => {
       const frame = (event as CustomEvent<RunPush>).detail;
       if (!frame || typeof frame !== 'object') return;
-      const tracked = trackRunPush(pushCursorRef.current, frame);
-      pushCursorRef.current = tracked.cursor;
+      const tracked = trackRunPush(lastPushSequenceRef.current, frame);
+      lastPushSequenceRef.current = tracked.sequence;
 
       const { live: summary, run } = frame;
       // 那几个汇总数由后端数好了发过来，不从运行列表里现算：这份列表本身可能正缺着一条。

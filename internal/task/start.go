@@ -460,10 +460,12 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 // 要等到某条正在跑的运行结束，而那可能是几小时之后。
 func (e *Engine) ReleaseQueued() {
 	e.mu.Lock()
-	launch := e.releaseQueuedLocked()
 	// 一条也放不出去是常态（队列可能是空的），但**运行槽位**上限本身就是**实况汇总**里的一个数：
 	// 不投这一帧，用户把上限从 2 调到 5 之后界面上仍写着「槽位 0/2」，直到下一次状态跃迁。
-	e.refreshLiveLocked()
+	// 放出去几条就算几遍也没意义，因此整批只算一次。
+	flushLive := e.deferLiveLocked()
+	launch := e.releaseQueuedLocked()
+	flushLive()
 	e.mu.Unlock()
 	if launch != nil {
 		launch()

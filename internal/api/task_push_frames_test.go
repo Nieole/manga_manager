@@ -202,6 +202,38 @@ func TestLiveFramePublishedWhenPauseAllHasNothingToPause(t *testing.T) {
 	}
 }
 
+// TestLiveFrameSummarizedOncePerBatch 守批量控制整批只算一次**实况汇总**。
+//
+// 「全部暂停」逐条按下，每条都是一次状态跃迁；每条都算一遍等于把同一个答案在锁内查 N 遍，
+// 而中间那 N-1 个答案没有一个会被投出去——汇总变了也会被下一条盖掉。
+func TestLiveFrameSummarizedOncePerBatch(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(1700000000, 0)}
+	e, collect := newPushTestEngine(t, clock)
+	e.slots = func() int { return 4 }
+
+	for id := int64(1); id <= 3; id++ {
+		seedTask(t, e, scanSeed(id))
+	}
+	before := len(liveFramesOf(collect()))
+
+	paused, err := e.pauseAll(context.Background())
+	if err != nil {
+		t.Fatalf("全部暂停失败: %v", err)
+	}
+	if paused != 3 {
+		t.Fatalf("按下的条数为 %d, want 3", paused)
+	}
+
+	live := liveFramesOf(collect())
+	if got := len(live) - before; got != 1 {
+		t.Fatalf("三条运行的全部暂停投了 %d 帧汇总, want 1", got)
+	}
+	last := *live[len(live)-1].Live
+	if last.Active != 3 || !last.Paused || !last.PausedAll {
+		t.Errorf("整批收尾那一帧汇总没说清最终态: %+v", last)
+	}
+}
+
 // TestLiveFramePublishedWhenSlotLimitChanges 守调大**运行槽位**上限之后界面上那个 N 会动。
 // 队列是空的时候没有任何一条运行会跃迁，不单独投这一帧的话，「槽位 0/2」会一直挂到下一次跃迁。
 func TestLiveFramePublishedWhenSlotLimitChanges(t *testing.T) {

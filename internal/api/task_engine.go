@@ -120,12 +120,13 @@ type taskEngine struct {
 	// 此后只读，不需要持锁。
 	dispatch map[taskDispatchKey]taskDispatch
 
-	// ---- 受 mutex 保护的状态 ----
+	// ---- 受 pushMutex 保护的状态 ----
 
-	// pushMutex 与 lastPushed 是**投递链**：上一帧推出去的序号，供下一帧填 Prev。
-	// 单独一把锁的理由见 linkPush。
+	// lastPushed 是**投递链**上一帧推出去的序号，供下一帧填 Prev。它自己一把锁，理由见 linkPush。
 	pushMutex  sync.Mutex
 	lastPushed int64
+
+	// ---- 受 mutex 保护的状态 ----
 
 	mutex sync.Mutex
 	// identities 是任务 id -> **身份**的进程内缓存。
@@ -240,6 +241,9 @@ func (e *taskEngine) livePublisher(publish func(string)) func(task.Live) {
 //
 // 统一经 sseBroker 投递（非阻塞、buffer 满则丢弃并告警）——丢帧靠序号链让前端自己发现，
 // 不在这里改成阻塞：投递方此刻在引擎的临界区里，堵在这里等于把整个任务子域堵住。
+//
+// 接链在序列化**之前**：序列化炸了这一帧就没了，而链已经往前走，于是下一帧接不上、
+// 前端整份重拉一次——那正是对的。反过来（炸了就不接链）会让这次丢帧无声无息。
 func (e *taskEngine) push(publish func(string), event string, frame RunPush) {
 	frame.Prev = e.linkPush(frame.Sequence)
 	payload, err := json.Marshal(frame)
@@ -252,9 +256,12 @@ func (e *taskEngine) push(publish func(string), event string, frame RunPush) {
 
 // linkPush 记下这一帧的序号，交回上一帧的。首帧交回 0。
 //
-// 单独一把锁而不是复用 taskEngine.mutex：那把锁在同一条投递路径上已经被身份缓存取过一次
-// （见 cachedIdentity），共用就得在这里改成「持锁版本」，而那点省下来的开销换不回来。
-// 领域引擎在自己的临界区里逐帧调投递，因此编号与入队本就是串行的——这把锁挡的是日后多一个投递方。
+// **这把锁只保证这个字段自己读写安全，不保证链的次序。** 次序来自另一把锁：投递一律发生在领域
+// 引擎的临界区里，因此「先编号的先入队」是那把锁的结论，不是这里的。真出现第二个不走领域引擎的
+// 投递方时，两帧仍可能编号有序而入队乱序——那时要动的是投递口，不是把这里换成更大的锁。
+//
+// 它不与 taskEngine.mutex 合并，是因为那把锁护的是身份缓存：两样东西的生命周期与访问路径都不同，
+// 合成一把之后，任何一处想在持锁时做点别的都得先想清楚另一处。
 func (e *taskEngine) linkPush(sequence int64) int64 {
 	e.pushMutex.Lock()
 	defer e.pushMutex.Unlock()

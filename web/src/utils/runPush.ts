@@ -26,12 +26,13 @@ export function parseRunPush(data: string): RunPush | null {
 }
 
 /**
- * trackRunPush 判断这一帧接不接得上上一帧：接不上就是中间掉了东西，调用方据此整份重拉。
+ * trackRunPush 判断这一帧接不接得上手上那一号：接不上就是中间掉了东西，调用方据此整份重拉。
+ * 交回的 sequence 是收下这一帧之后手上的那一号。
  *
- * 游标为 null（刚连上，或上一次刚重拉过）时一律接得上：此刻手上没有可比的上一号，
- * 拿这一帧当新的起点即可。判出缺口之后游标同样走到这一帧——这一帧本身是收到了的，缺的是它
- * 前面那些；不往前走的话，此后每一帧都会再判一次缺口，重拉从此一路刷下去。
+ * 手上还没有号（刚进页面、或 SSE 刚重连上）时一律算接得上：没有可比的，拿这一帧当起点即可。
+ * 判出缺口之后同样往前走到这一帧——它本身是收到了的，缺的是它前面那些；不往前走的话，
+ * 此后每一帧都会再判一次缺口，重拉从此一路刷下去。
  */
-export function trackRunPush(cursor: number | null, frame: RunPush): { gap: boolean; cursor: number } {
-  return { gap: cursor !== null && frame.prev !== cursor, cursor: frame.sequence };
+export function trackRunPush(lastSequence: number | null, frame: RunPush): { gap: boolean; sequence: number } {
+  return { gap: lastSequence !== null && frame.prev !== lastSequence, sequence: frame.sequence };
 }
