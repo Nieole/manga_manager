@@ -70,6 +70,87 @@ func (s *memStore) LoadTasks(_ context.Context, taskIDs []int64) (map[int64]Task
 	return owners, nil
 }
 
+func (s *memStore) ListTasks(ctx context.Context, filter TaskFilter) ([]Task, error) {
+	s.mu.Lock()
+	owners := make([]Task, 0, len(s.tasks))
+	for _, owner := range s.tasks {
+		owners = append(owners, *owner)
+	}
+	s.mu.Unlock()
+
+	taskIDs := make([]int64, 0, len(owners))
+	for _, owner := range owners {
+		taskIDs = append(taskIDs, owner.ID)
+	}
+	latest, err := s.LatestRuns(ctx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	matched := make([]Task, 0, len(owners))
+	for _, owner := range owners {
+		if matchesTaskFilter(owner, latest[owner.ID], filter) {
+			matched = append(matched, owner)
+		}
+	}
+	// 定序与生产一致：末次运行的序号降序，一次都没跑过的排在最后（序号为零）。
+	sort.Slice(matched, func(i, j int) bool {
+		left, right := latest[matched[i].ID].Sequence, latest[matched[j].ID].Sequence
+		if left != right {
+			return left > right
+		}
+		return matched[i].ID > matched[j].ID
+	})
+	if filter.Limit > 0 && len(matched) > filter.Limit {
+		matched = matched[:filter.Limit]
+	}
+	return matched, nil
+}
+
+func (s *memStore) LatestRuns(_ context.Context, taskIDs []int64) (map[int64]Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	wanted := make(map[int64]bool, len(taskIDs))
+	for _, id := range taskIDs {
+		wanted[id] = true
+	}
+	latest := make(map[int64]Run, len(taskIDs))
+	for _, run := range s.runs {
+		if !wanted[run.TaskID] {
+			continue
+		}
+		if best, ok := latest[run.TaskID]; ok && (best.Sequence > run.Sequence || (best.Sequence == run.Sequence && best.ID > run.ID)) {
+			continue
+		}
+		latest[run.TaskID] = cloneRun(run)
+	}
+	return latest, nil
+}
+
+// matchesTaskFilter 判一个任务是否满足清单谓词。末次两项判在 latest 上，
+// 零值的 latest 表示这个任务一次都没跑过——它因此不满足任何一条末次谓词。
+func matchesTaskFilter(owner Task, latest Run, filter TaskFilter) bool {
+	if len(filter.Types) > 0 && !slices.Contains(filter.Types, owner.Type) {
+		return false
+	}
+	if filter.Scope != "" && owner.Scope != filter.Scope {
+		return false
+	}
+	if filter.ScopeID != nil && owner.ScopeID != *filter.ScopeID {
+		return false
+	}
+	if len(filter.LastRunStatuses) > 0 && !slices.Contains(filter.LastRunStatuses, latest.Status) {
+		return false
+	}
+	if filter.LastRunQuery != "" {
+		haystack := strings.ToLower(latest.Key + " " + latest.MessageCode + " " + latest.Error)
+		if latest.ID == 0 || !strings.Contains(haystack, strings.ToLower(filter.LastRunQuery)) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *memStore) SaveTaskAttributes(_ context.Context, taskID int64, attrs TaskAttributes) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

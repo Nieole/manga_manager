@@ -1,14 +1,21 @@
-import { useMemo, useState } from 'react';
-import { Activity, ChevronDown, ExternalLink, FileText, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
+/**
+ * 任务中心的两层结构：上半**实况区**是仍会变化的那些**运行**，常驻置顶、不受筛选影响；
+ * 下半**任务清单**一个**任务**一行，写着上次结果，展开才按需取它的历次运行。
+ * 本组件不取数——两层各自的数据由页面交进来，展开哪一行也由页面决定（它要据此发请求）。
+ */
+
+import { useState } from 'react';
+import { Activity, ChevronDown, ExternalLink, FileText, ListTree, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
 import { isActiveRunStatus } from '../../utils/runStatus';
 
-// TaskLimits / RunStatus 由 cmd/tsgen 从 Go 后端响应结构体生成（单一事实源，见 api/generated.ts），
-// 此处再导出以保持既有 import 路径不变；本组件本地用到的 RunStatus 另行 import。
-export type { TaskLimits, RunStatus } from '../../api/generated';
-import type { RunStatus } from '../../api/generated';
+// TaskLimits / RunStatus / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
+// （单一事实源，见 api/generated.ts），此处再导出以保持既有 import 路径不变。
+export type { TaskLimits, RunStatus, RunLive, TaskSummary } from '../../api/generated';
+import type { RunLive, RunStatus, TaskSummary } from '../../api/generated';
 
+// 运行上的动作作用在**运行**上，重试作用在**任务**上（它重新发起一次，不改动被重试的那一条）。
 export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
 
 export interface TaskCenterFilters {
@@ -19,26 +26,37 @@ export interface TaskCenterFilters {
   query: string;
 }
 
+/** TaskTarget 是「打开这个任务对着的那个页面」要的最小形状：作用域与它的 id。 */
+export interface TaskTarget {
+  scope: string;
+  scope_id?: number;
+}
+
 interface TaskCenterProps {
-  tasks: RunStatus[];
+  // live 是实况区那一帧：在跑的与**排队中**的运行，加上槽位占用与全局暂停。
+  live: RunLive;
+  // tasks 是任务清单，一个任务一行；历次运行不在里面，由 expandedTaskId 那一行单独取。
+  tasks: TaskSummary[];
   loading: boolean;
-  // anyRunPaused 是全局答案（有没有运行被暂停），由后端回答，「全部恢复」按它决定可不可按。
-  // 不从 tasks 里数：那一页带着用户的筛选与条数上限，答不了全局的问题。
-  anyRunPaused?: boolean;
-  bulkPauseBusy?: boolean;
   taskActionKey: string | null;
+  // expandedTaskId 是此刻展开的那一行；taskRuns 是它的历次运行，undefined 表示还没取回来。
+  expandedTaskId?: number | null;
+  taskRuns?: RunStatus[];
+  taskRunsLoading?: boolean;
+  bulkPauseBusy?: boolean;
   filters?: TaskCenterFilters;
   typeOptions?: string[];
   currentFilterCanClear?: boolean;
   onRefresh: () => void;
-  onTaskAction: (task: RunStatus, action: TaskAction) => void;
+  onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onToggleTask?: (taskId: number) => void;
   // 全部暂停 / 全部恢复。两者都给了才画那个按钮。
   onPauseAll?: () => void;
   onResumeAll?: () => void;
   onFilterChange?: (patch: Partial<TaskCenterFilters>) => void;
   onClearTasks?: (status?: 'completed' | 'failed', useCurrentFilters?: boolean) => void;
-  onOpenTaskTarget?: (task: RunStatus) => void;
-  onViewTaskLogs?: (task: RunStatus) => void;
+  onOpenTaskTarget?: (target: TaskTarget) => void;
+  onViewTaskLogs?: (run: RunStatus) => void;
 }
 
 const taskMetricKeys = [
@@ -98,6 +116,8 @@ function taskBadgeClass(status: string) {
   switch (status) {
     case 'running':
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500';
+    case 'queued':
+      return 'border-sky-500/30 bg-sky-500/10 text-sky-300';
     case 'paused':
       return 'border-amber-500/30 bg-amber-500/10 text-amber-500';
     case 'cancelling':
@@ -138,6 +158,17 @@ function isInterruptedTask(task: RunStatus) {
   return task.status === 'interrupted' || (task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart')));
 }
 
+/**
+ * runTimestamp 取这条运行「最后一次有动静」的时刻：仍在动的读最后一次上报，停了的读收尾时刻。
+ *
+ * 两者只在**中断**上不同——那一笔批量转写把这一行的最后写入时刻记成了重启时刻，
+ * 照它显示的话，一条八小时前就没动静的中断运行在重启后写着「刚刚」。
+ */
+function runTimestamp(run: RunStatus) {
+  if (!isActiveRunStatus(run.status) && run.finished_at) return run.finished_at;
+  return run.updated_at;
+}
+
 function hasTaskDetails(task: RunStatus) {
   return Boolean(
     task.error
@@ -157,26 +188,12 @@ function hasInlineTelemetry(task: RunStatus) {
   );
 }
 
-function TaskSummaryStrip({ tasks }: { tasks: RunStatus[] }) {
-  const { t } = useI18n();
-  const items = [
-    [t('settings.maintenance.activeTasks'), tasks.filter((task) => isActiveRunStatus(task.status)).length],
-    [t('settings.maintenance.pausedTasks'), tasks.filter((task) => task.status === 'paused').length],
-    [t('settings.maintenance.failedTasks'), tasks.filter((task) => task.status === 'failed').length],
-    [t('logs.metric.completedTasks'), tasks.filter((task) => task.status === 'completed').length],
-    [t('logs.metric.interruptedTasks'), tasks.filter(isInterruptedTask).length],
-  ] as const;
+type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>, defaultValue?: string) => string;
 
-  return (
-    <div className="grid gap-3 md:grid-cols-5">
-      {items.map(([label, value]) => (
-        <div key={label} className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-white/40">{label}</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
-        </div>
-      ))}
-    </div>
-  );
+/** scopeLabel 是作用域在界面上的说法：有显示名用显示名，没有就回落到作用域加 id。 */
+function scopeLabel(target: { scope: string; scope_id?: number; scope_name?: string }, t: Translate) {
+  const name = target.scope_name || t(`task.scope.${target.scope}`, undefined, target.scope);
+  return target.scope_id ? `${name} #${target.scope_id}` : name;
 }
 
 function TaskFilters({
@@ -198,6 +215,9 @@ function TaskFilters({
 
   return (
     <div className="space-y-3 rounded-xl border border-white/10 bg-gray-950/40 p-3">
+      {/* 筛的是任务还是运行必须写出来：同一排筛选器里三条判身份、两条判它最近一次运行，
+          而下面那排清理按钮删的是运行记录。不写清楚，用户按下「按当前筛选清理」时不知道会删掉什么。 */}
+      <p className="text-xs text-white/40">{t('logs.taskFilterScopeHint')}</p>
       <div className="flex flex-wrap gap-2">
         {onClearTasks && (
           <>
@@ -226,6 +246,7 @@ function TaskFilters({
       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
         <select value={filters.status} onChange={(event) => onFilterChange({ status: event.target.value })} className="rounded-lg border border-white/10 bg-gray-950 px-3 py-2 text-xs text-white">
           <option value="ALL">{t('logs.taskStatus.all')}</option>
+          <option value="queued">{t('logs.taskStatus.queued')}</option>
           <option value="running">{t('logs.taskStatus.running')}</option>
           <option value="paused">{t('logs.taskStatus.paused')}</option>
           <option value="cancelling">{t('logs.taskStatus.cancelling')}</option>
@@ -306,39 +327,34 @@ function TaskProgressBar({ task }: { task: RunStatus }) {
   );
 }
 
-function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: RunStatus; taskActionKey: string | null; onTaskAction: (task: RunStatus, action: TaskAction) => void }) {
+/** RunControlButtons 是作用在**运行**上的那几个动作。重试不在其中：它作用在任务上，画在任务行上。 */
+function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunStatus; taskActionKey: string | null; onTaskAction: (run: RunStatus, action: TaskAction) => void }) {
   const { t } = useI18n();
   return (
     <div className="flex flex-wrap gap-2">
-      {task.can_pause && task.status === 'running' && (
-        <button type="button" onClick={() => onTaskAction(task, 'pause')} disabled={taskActionKey === `${task.key}:pause`} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-500 hover:bg-amber-500/10 disabled:opacity-50">
+      {run.can_pause && run.status === 'running' && (
+        <button type="button" onClick={() => onTaskAction(run, 'pause')} disabled={taskActionKey === `${run.key}:pause`} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-500 hover:bg-amber-500/10 disabled:opacity-50">
           <Pause className="h-3.5 w-3.5" />
           {t('settings.maintenance.pauseTask')}
         </button>
       )}
       {/* 不可暂停的运行要**明说**，否则用户按下全部暂停后看到它还在跑，会以为暂停失灵了。 */}
-      {!task.can_pause && task.status === 'running' && (
+      {!run.can_pause && run.status === 'running' && (
         <span title={t('settings.maintenance.taskNotPausableHint')} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/45">
           <PauseCircle className="h-3.5 w-3.5" />
           {t('settings.maintenance.taskNotPausable')}
         </span>
       )}
-      {task.can_resume && task.status === 'paused' && (
-        <button type="button" onClick={() => onTaskAction(task, 'resume')} disabled={taskActionKey === `${task.key}:resume`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-500 hover:bg-emerald-500/10 disabled:opacity-50">
+      {run.can_resume && run.status === 'paused' && (
+        <button type="button" onClick={() => onTaskAction(run, 'resume')} disabled={taskActionKey === `${run.key}:resume`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-500 hover:bg-emerald-500/10 disabled:opacity-50">
           <Play className="h-3.5 w-3.5" />
           {t('settings.maintenance.resumeTask')}
         </button>
       )}
-      {task.can_cancel && isActiveRunStatus(task.status) && (
-        <button type="button" onClick={() => onTaskAction(task, 'cancel')} disabled={taskActionKey === `${task.key}:cancel` || task.status === 'cancelling'} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50">
+      {run.can_cancel && isActiveRunStatus(run.status) && (
+        <button type="button" onClick={() => onTaskAction(run, 'cancel')} disabled={taskActionKey === `${run.key}:cancel` || run.status === 'cancelling'} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50">
           <XCircle className="h-3.5 w-3.5" />
           {t('common.cancel')}
-        </button>
-      )}
-      {task.retryable && !isActiveRunStatus(task.status) && (
-        <button type="button" onClick={() => onTaskAction(task, 'retry')} disabled={taskActionKey === `${task.key}:retry`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-50">
-          <RotateCcw className={`h-3.5 w-3.5 ${taskActionKey === `${task.key}:retry` ? 'animate-spin' : ''}`} />
-          {t('common.retry')}
         </button>
       )}
     </div>
@@ -400,7 +416,7 @@ function TaskDetailDrawer({ task }: { task: RunStatus }) {
       {ioParams.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {ioParams.map(([key, value]) => (
-            <span key={`${task.key}-io-${key}`} className="rounded-md border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-[11px] text-komgaPrimary">
+            <span key={`${task.run_id}-io-${key}`} className="rounded-md border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-[11px] text-komgaPrimary">
               {t(`logs.task.io.${key}`)}: {value}
             </span>
           ))}
@@ -429,7 +445,7 @@ function TaskDetailDrawer({ task }: { task: RunStatus }) {
           <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.params')}</p>
           <div className="flex flex-wrap gap-2">
             {Object.entries(task.params).map(([key, value]) => (
-              <span key={`${task.key}-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
+              <span key={`${task.run_id}-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
                 {key}: {value}
               </span>
             ))}
@@ -441,7 +457,7 @@ function TaskDetailDrawer({ task }: { task: RunStatus }) {
           <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">{t('settings.maintenance.taskLabels')}</p>
           <div className="flex flex-wrap gap-2">
             {Object.entries(task.labels).map(([key, value]) => (
-              <span key={`${task.key}-label-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
+              <span key={`${task.run_id}-label-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
                 {key}: {value}
               </span>
             ))}
@@ -467,57 +483,53 @@ function TaskInlineTelemetry({ task }: { task: RunStatus }) {
   );
 }
 
-function TaskCard({
-  task,
+/**
+ * RunCard 是一次**运行**的卡片，实况区与展开后的历次运行共用它。
+ *
+ * 它只画这一次运行的事：状态、**发起方**、进度与控制动作。任务层面的东西（重试、打开页面、
+ * 连败与停发）画在任务行上——同一个按钮在两层各画一份，用户就分不清它作用在哪个对象上。
+ */
+function RunCard({
+  run,
   expanded,
   taskActionKey,
   onToggleExpanded,
   onTaskAction,
-  onOpenTaskTarget,
-  onViewTaskLogs,
 }: {
-  task: RunStatus;
+  run: RunStatus;
   expanded: boolean;
   taskActionKey: string | null;
   onToggleExpanded: () => void;
-  onTaskAction: (task: RunStatus, action: TaskAction) => void;
-  onOpenTaskTarget?: (task: RunStatus) => void;
-  onViewTaskLogs?: (task: RunStatus) => void;
+  onTaskAction: (run: RunStatus, action: TaskAction) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
-  const statusLabel = t(`logs.taskStatus.${task.status}`);
-  const updatedAt = task.updated_at ? `${formatRelativeTime(task.updated_at)} - ${formatDateTime(task.updated_at)}` : '';
+  const statusLabel = t(`logs.taskStatus.${run.status}`);
+  const timestamp = runTimestamp(run);
 
   return (
     <div className="rounded-xl border border-white/10 bg-gray-950/50 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full border px-2.5 py-1 text-xs ${taskBadgeClass(task.status)}`}>{statusLabel}</span>
-            <p className="text-sm font-semibold text-white">{getTaskTypeLabel(task, t)}</p>
-            <span className="text-xs text-white/40">{task.scope_name || t(`task.scope.${task.scope}`, undefined, task.scope)}{task.scope_id ? ` #${task.scope_id}` : ''}</span>
+            <span className={`rounded-full border px-2.5 py-1 text-xs ${taskBadgeClass(run.status)}`}>{statusLabel}</span>
+            <p className="text-sm font-semibold text-white">{getTaskTypeLabel(run, t)}</p>
+            <span className="text-xs text-white/40">{scopeLabel(run, t)}</span>
+            {/* **发起方**：半夜转盘的那条究竟是谁叫来的。后端不发就整格不显示。 */}
+            {run.trigger && (
+              <span className="rounded-full border border-white/10 bg-white/4 px-2 py-0.5 text-[11px] text-white/50">
+                {t(`logs.task.trigger.${run.trigger}`, undefined, run.trigger)}
+              </span>
+            )}
           </div>
-          <p className="mt-2 truncate text-sm text-white/70" title={task.current_item || getTaskMessage(task, t)}>{getTaskMessage(task, t)}</p>
-          <p className="mt-1 truncate text-xs text-white/35" title={task.current_item || undefined}>
-            {task.phase ? t(`settings.maintenance.taskPhase.${task.phase}`) : '-'}{task.current_item ? ` - ${task.current_item}` : ''}
+          <p className="mt-2 truncate text-sm text-white/70" title={run.current_item || getTaskMessage(run, t)}>{getTaskMessage(run, t)}</p>
+          <p className="mt-1 truncate text-xs text-white/35" title={run.current_item || undefined}>
+            {run.phase ? t(`settings.maintenance.taskPhase.${run.phase}`) : '-'}{run.current_item ? ` - ${run.current_item}` : ''}
           </p>
-          {updatedAt && <p className="mt-1 text-xs text-white/35">{updatedAt}</p>}
+          {timestamp && <p className="mt-1 text-xs text-white/35">{formatRelativeTime(timestamp)} - {formatDateTime(timestamp)}</p>}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <TaskActionButtons task={task} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
-          {onOpenTaskTarget && (
-            <button type="button" onClick={() => onOpenTaskTarget(task)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
-              <ExternalLink className="h-3.5 w-3.5" />
-              {t('logs.task.openPage')}
-            </button>
-          )}
-          {onViewTaskLogs && (
-            <button type="button" onClick={() => onViewTaskLogs(task)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
-              <FileText className="h-3.5 w-3.5" />
-              {t('logs.task.viewLogs')}
-            </button>
-          )}
-          {hasTaskDetails(task) && (
+          <RunControlButtons run={run} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
+          {hasTaskDetails(run) && (
             <button type="button" onClick={onToggleExpanded} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
               <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
               {expanded ? t('common.collapseDetails') : t('common.viewDetails')}
@@ -525,73 +537,238 @@ function TaskCard({
           )}
         </div>
       </div>
-      <TaskProgressBar task={task} />
-      {hasInlineTelemetry(task) && <TaskInlineTelemetry task={task} />}
-      {isInterruptedTask(task) && (
+      <TaskProgressBar task={run} />
+      {hasInlineTelemetry(run) && <TaskInlineTelemetry task={run} />}
+      {isInterruptedTask(run) && (
         <p className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">{t('logs.task.interruptedHint')}</p>
       )}
-      {task.error && !expanded && (
-        <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-400">{task.error}</p>
+      {run.error && !expanded && (
+        <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-400">{run.error}</p>
       )}
-      <p className="mt-3 text-xs text-white/35">{getTaskActionHint(task, t)}</p>
       {expanded && (
         <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-          <TaskDetailDrawer task={task} />
+          <TaskDetailDrawer task={run} />
         </div>
       )}
     </div>
   );
 }
 
-function TaskList({
-  tasks,
+/** RunCardList 画一组运行卡片，并自己记住哪一张展开着详情。去重键是**运行标识**——同一个任务键有多条运行。 */
+function RunCardList({ runs, taskActionKey, onTaskAction }: { runs: RunStatus[]; taskActionKey: string | null; onTaskAction: (run: RunStatus, action: TaskAction) => void }) {
+  const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
+  return (
+    <div className="space-y-3">
+      {runs.map((run) => (
+        <RunCard
+          key={run.run_id}
+          run={run}
+          expanded={expandedRunId === run.run_id}
+          taskActionKey={taskActionKey}
+          onToggleExpanded={() => setExpandedRunId((current) => (current === run.run_id ? null : run.run_id))}
+          onTaskAction={onTaskAction}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * LiveSection 是上半层**现在**：在跑的与排队中的运行常驻置顶，带槽位占用与全部暂停。
+ *
+ * 它不受下半层那排筛选影响：这里答的是「我的盘现在在干什么」，而那是个全局问题——
+ * 顶部那对全部暂停 / 全部恢复同样作用于全体运行。
+ */
+function LiveSection({
+  live,
+  bulkPauseBusy,
   taskActionKey,
+  onTaskAction,
+  onPauseAll,
+  onResumeAll,
+}: {
+  live: RunLive;
+  bulkPauseBusy?: boolean;
+  taskActionKey: string | null;
+  onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onPauseAll?: () => void;
+  onResumeAll?: () => void;
+}) {
+  const { t } = useI18n();
+  const bulkPause = onPauseAll && onResumeAll;
+
+  return (
+    <section className="space-y-3 rounded-xl border border-white/10 bg-gray-950/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h4 className="text-sm font-semibold text-white">{t('logs.taskCenter.liveTitle')}</h4>
+          {/* 槽位上限为 0 表示今天没有上限可报，那就只写占用数——「2/2147483647」不是「槽位 2/2」。 */}
+          <span className="rounded-full border border-white/10 bg-white/4 px-2.5 py-1 text-xs text-white/60">
+            {live.slots > 0
+              ? t('logs.taskCenter.slots', { active: live.active, slots: live.slots })
+              : t('logs.taskCenter.activeRuns', { active: live.active })}
+          </span>
+          {/* 排队中今天不会产生（槽位实质关着）：一条都没有时整格不显示，而不是写一个「排队 0」。 */}
+          {live.queued > 0 && (
+            <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-xs text-sky-300">
+              {t('logs.taskCenter.queued', { count: live.queued })}
+            </span>
+          )}
+        </div>
+        {/* 两个按钮并排，不是一个按状态翻面的开关：一条已暂停、三条还在跑时，翻面的那个只剩
+            「全部恢复」，想让盘安静下来的用户得先恢复再暂停——那与他按下去的意图正好相反。 */}
+        {bulkPause && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onPauseAll}
+              disabled={bulkPauseBusy}
+              className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-500 hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Pause className="h-4 w-4" />
+              {t('settings.maintenance.pauseAllRuns')}
+            </button>
+            {/* 一条都没暂停时「全部恢复」按下去什么也不会发生，因此按实况帧那个全局答案禁用它。 */}
+            <button
+              type="button"
+              onClick={onResumeAll}
+              disabled={bulkPauseBusy || !live.paused}
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-500 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Play className="h-4 w-4" />
+              {t('settings.maintenance.resumeAllRuns')}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 这句话写在按钮旁边而不是只挂在 title 上：理由同 RunControlButtons 里那条说明。 */}
+      {bulkPause && <p className="text-xs text-white/40">{t('settings.maintenance.pauseAllHint')}</p>}
+
+      {live.runs.length === 0
+        ? <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('logs.taskCenter.noLiveRuns')}</p>
+        : <RunCardList runs={live.runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />}
+    </section>
+  );
+}
+
+/**
+ * TaskRow 是下半层的一行：一个**任务**，写着上次结果、连败与停发，展开看它的历次运行。
+ *
+ * 历次运行由页面按需取回（taskRuns 为 undefined 即还没取回来），列表接口一条都不带。
+ */
+function TaskRow({
+  task,
+  expanded,
+  runs,
+  runsLoading,
+  taskActionKey,
+  onToggle,
   onTaskAction,
   onOpenTaskTarget,
   onViewTaskLogs,
 }: {
-  tasks: RunStatus[];
+  task: TaskSummary;
+  expanded: boolean;
+  runs?: RunStatus[];
+  runsLoading?: boolean;
   taskActionKey: string | null;
-  onTaskAction: (task: RunStatus, action: TaskAction) => void;
-  onOpenTaskTarget?: (task: RunStatus) => void;
-  onViewTaskLogs?: (task: RunStatus) => void;
+  onToggle?: () => void;
+  onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onOpenTaskTarget?: (target: TaskTarget) => void;
+  onViewTaskLogs?: (run: RunStatus) => void;
 }) {
-  const { t } = useI18n();
-  const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
-
-  if (tasks.length === 0) {
-    return <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('settings.maintenance.noTasks')}</p>;
-  }
+  const { t, formatDateTime, formatRelativeTime } = useI18n();
+  const lastRun = task.last_run;
+  // 停发是**退避**与禁用那一组的对外说法：任一为真就标红。今天没有写入方，因此不会出现。
+  const stalled = task.disabled || Boolean(task.backoff_until && new Date(task.backoff_until).getTime() > Date.now());
+  const timestamp = lastRun ? runTimestamp(lastRun) : '';
 
   return (
-    <>
-      {tasks.map((task) => (
-        <TaskCard
-          key={task.key}
-          task={task}
-          expanded={expandedTaskKey === task.key}
-          taskActionKey={taskActionKey}
-          onToggleExpanded={() => setExpandedTaskKey((current) => (current === task.key ? null : task.key))}
-          onTaskAction={onTaskAction}
-          onOpenTaskTarget={onOpenTaskTarget}
-          onViewTaskLogs={onViewTaskLogs}
-        />
-      ))}
-    </>
+    <div className={`rounded-xl border bg-gray-950/50 ${stalled ? 'border-red-500/30' : 'border-white/10'}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3 p-4">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-left"
+        >
+          <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-white/45 transition-transform ${expanded ? 'rotate-180' : '-rotate-90'}`} />
+          <span className={`rounded-full border px-2.5 py-1 text-xs ${lastRun ? taskBadgeClass(lastRun.status) : taskBadgeClass('')}`}>
+            {lastRun ? t(`logs.taskStatus.${lastRun.status}`) : t('logs.taskCenter.neverRun')}
+          </span>
+          <span className="text-sm font-semibold text-white">{getTaskTypeLabel({ type: task.type, params: lastRun?.params }, t)}</span>
+          <span className="text-xs text-white/40">{scopeLabel(task, t)}</span>
+          {timestamp && <span className="text-xs text-white/35" title={formatDateTime(timestamp)}>{formatRelativeTime(timestamp)}</span>}
+          {/* 连败与停发在无数据时整格不显示：画一个「连败 0」只是替一个还没有写入方的字段占位。 */}
+          {task.fail_streak > 0 && (
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-500">
+              {t('logs.taskCenter.failStreak', { count: task.fail_streak })}
+            </span>
+          )}
+          {stalled && (
+            <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-200">
+              {t('logs.taskCenter.stalled')}
+            </span>
+          )}
+        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {/* 重试作用在**任务**上：它新起一次运行，被重试的那一条原样留着。因此这个按钮一个任务只有一个，
+              而不是每条历次运行各画一个。 */}
+          {lastRun?.retryable && !isActiveRunStatus(lastRun.status) && (
+            <button type="button" onClick={() => onTaskAction(lastRun, 'retry')} disabled={taskActionKey === `${lastRun.key}:retry`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-50">
+              <RotateCcw className={`h-3.5 w-3.5 ${taskActionKey === `${lastRun.key}:retry` ? 'animate-spin' : ''}`} />
+              {t('common.retry')}
+            </button>
+          )}
+          {onOpenTaskTarget && (
+            <button type="button" onClick={() => onOpenTaskTarget(task)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+              <ExternalLink className="h-3.5 w-3.5" />
+              {t('logs.task.openPage')}
+            </button>
+          )}
+          {onViewTaskLogs && lastRun && (
+            <button type="button" onClick={() => onViewTaskLogs(lastRun)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+              <FileText className="h-3.5 w-3.5" />
+              {t('logs.task.viewLogs')}
+            </button>
+          )}
+        </div>
+      </div>
+      {lastRun && <p className="px-4 pb-3 text-xs text-white/45">{getTaskMessage(lastRun, t)}</p>}
+      <p className="px-4 pb-4 text-xs text-white/35">{getTaskActionHint({ type: task.type, params: lastRun?.params }, t)}</p>
+      {expanded && (
+        <div className="border-t border-white/10 p-4">
+          <p className="mb-3 inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.16em] text-white/35">
+            <ListTree className="h-3.5 w-3.5" />
+            {t('logs.taskCenter.runHistory')}
+          </p>
+          {runsLoading && <p className="text-sm text-white/50">{t('common.loading')}</p>}
+          {!runsLoading && runs && runs.length === 0 && <p className="text-sm text-white/50">{t('logs.taskCenter.noRunHistory')}</p>}
+          {!runsLoading && runs && runs.length > 0 && (
+            <RunCardList runs={runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
 export function TaskCenter({
+  live,
   tasks,
   loading,
-  anyRunPaused,
-  bulkPauseBusy,
   taskActionKey,
+  expandedTaskId,
+  taskRuns,
+  taskRunsLoading,
+  bulkPauseBusy,
   filters,
   typeOptions = [],
   currentFilterCanClear,
   onRefresh,
   onTaskAction,
+  onToggleTask,
   onPauseAll,
   onResumeAll,
   onFilterChange,
@@ -600,8 +777,6 @@ export function TaskCenter({
   onViewTaskLogs,
 }: TaskCenterProps) {
   const { t } = useI18n();
-  const visibleTasks = useMemo(() => tasks.slice(0, 50), [tasks]);
-  const bulkPause = onPauseAll && onResumeAll;
 
   return (
     <section className="rounded-xl border border-white/10 bg-gray-900/70 p-5 space-y-4">
@@ -610,58 +785,54 @@ export function TaskCenter({
           <Activity className="h-5 w-5" />
           <h3 className="text-lg font-semibold text-white">{t('settings.maintenance.taskCenterTitle')}</h3>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* 两个按钮并排，不是一个按状态翻面的开关：一条已暂停、三条还在跑时，翻面的那个只剩
-              「全部恢复」，想让盘安静下来的用户得先恢复再暂停——那与他按下去的意图正好相反。 */}
-          {bulkPause && (
-            <>
-              <button
-                type="button"
-                onClick={onPauseAll}
-                disabled={bulkPauseBusy}
-                className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-500 hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Pause className="h-4 w-4" />
-                {t('settings.maintenance.pauseAllRuns')}
-              </button>
-              {/* 一条都没暂停时「全部恢复」按下去什么也不会发生，因此按全局那个答案禁用它。 */}
-              <button
-                type="button"
-                onClick={onResumeAll}
-                disabled={bulkPauseBusy || !anyRunPaused}
-                className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-500 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Play className="h-4 w-4" />
-                {t('settings.maintenance.resumeAllRuns')}
-              </button>
-            </>
+        <button type="button" onClick={onRefresh} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          {t('settings.maintenance.refreshTasks')}
+        </button>
+      </div>
+
+      <LiveSection
+        live={live}
+        bulkPauseBusy={bulkPauseBusy}
+        taskActionKey={taskActionKey}
+        onTaskAction={onTaskAction}
+        onPauseAll={onPauseAll}
+        onResumeAll={onResumeAll}
+      />
+
+      <section className="space-y-3 rounded-xl border border-white/10 bg-gray-950/40 p-4">
+        <h4 className="text-sm font-semibold text-white">{t('logs.taskCenter.taskListTitle')}</h4>
+        {filters && onFilterChange && (
+          <TaskFilters
+            filters={filters}
+            typeOptions={typeOptions}
+            currentFilterCanClear={currentFilterCanClear}
+            onFilterChange={onFilterChange}
+            onClearTasks={onClearTasks}
+            onRefresh={onRefresh}
+          />
+        )}
+        {tasks.length === 0
+          ? <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('settings.maintenance.noTasks')}</p>
+          : (
+            <div className="space-y-3">
+              {tasks.map((task) => (
+                <TaskRow
+                  key={task.task_id}
+                  task={task}
+                  expanded={expandedTaskId === task.task_id}
+                  runs={expandedTaskId === task.task_id ? taskRuns : undefined}
+                  runsLoading={expandedTaskId === task.task_id && taskRunsLoading}
+                  taskActionKey={taskActionKey}
+                  onToggle={onToggleTask ? () => onToggleTask(task.task_id) : undefined}
+                  onTaskAction={onTaskAction}
+                  onOpenTaskTarget={onOpenTaskTarget}
+                  onViewTaskLogs={onViewTaskLogs}
+                />
+              ))}
+            </div>
           )}
-          <button type="button" onClick={onRefresh} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            {t('settings.maintenance.refreshTasks')}
-          </button>
-        </div>
-      </div>
-
-      {/* 这句话写在按钮旁边而不是只挂在 title 上：理由同 TaskActionButtons 里那条说明。 */}
-      {bulkPause && <p className="text-xs text-white/40">{t('settings.maintenance.pauseAllHint')}</p>}
-
-      <TaskSummaryStrip tasks={tasks} />
-
-      {filters && onFilterChange && (
-        <TaskFilters
-          filters={filters}
-          typeOptions={typeOptions}
-          currentFilterCanClear={currentFilterCanClear}
-          onFilterChange={onFilterChange}
-          onClearTasks={onClearTasks}
-          onRefresh={onRefresh}
-        />
-      )}
-
-      <div className="space-y-3">
-        <TaskList tasks={visibleTasks} taskActionKey={taskActionKey} onTaskAction={onTaskAction} onOpenTaskTarget={onOpenTaskTarget} onViewTaskLogs={onViewTaskLogs} />
-      </div>
+      </section>
     </section>
   );
 }

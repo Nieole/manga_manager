@@ -1,10 +1,16 @@
+/**
+ * 任务中心页：取两层各自的数据，展开某一行时再按需取它的历次运行。
+ * 三条取数路径分明——实况帧不带筛选，任务清单带筛选，历次运行按 task_id 单独取。
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
-import { TaskCenter, type TaskAction, type TaskCenterFilters, type RunStatus } from '../components/tasks/TaskCenter';
+import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskTarget, type RunLive, type RunStatus, type TaskSummary } from '../components/tasks/TaskCenter';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
+import { isTerminalRunStatus } from '../utils/runStatus';
 
 const TASK_TYPE_OPTIONS = [
   'scan_library',
@@ -23,36 +29,39 @@ const TASK_TYPE_OPTIONS = [
   'transfer_external_library',
 ];
 
-// 诊断接口今天只被这里用来问一件事：**有没有运行被暂停**。这个答案是全局的，
-// 而列表那一页带着筛选与条数上限，答不了它。
-interface StorageIODiagnostics {
-  paused: boolean;
-}
+// 实况帧取不回来时的兜底：一条运行都没有、也没有上限可报。它不是「系统闲着」的断言，
+// 只是「这一刻没有可显示的实况」——界面因此画空区，而不是画一个凭空的槽位占用。
+const EMPTY_LIVE: RunLive = { active: 0, queued: 0, slots: 0, paused: false, runs: [] };
 
 interface BackgroundTasksProps {
   embedded?: boolean;
-  onViewTaskLogs?: (task: RunStatus) => void;
+  onViewTaskLogs?: (run: RunStatus) => void;
 }
 
 export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: BackgroundTasksProps = {}) {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState<RunStatus[]>([]);
+  const [live, setLive] = useState<RunLive>(EMPTY_LIVE);
+  const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [taskActionKey, setTaskActionKey] = useState<string | null>(null);
+  // 展开的那一行与它的历次运行：只留展开中的那一份，收起时连同它一起丢掉——
+  // 留着的话再展开会先闪一眼过期的历史。
+  const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
+  const [taskRuns, setTaskRuns] = useState<RunStatus[] | undefined>(undefined);
+  const [taskRunsLoading, setTaskRunsLoading] = useState(false);
   const [runStatusFilter, setRunStatusFilter] = useState('ALL');
   const [taskScopeFilter, setTaskScopeFilter] = useState('ALL');
   const [taskTypeFilter, setTaskTypeFilter] = useState('ALL');
   const [taskScopeIdFilter, setTaskScopeIdFilter] = useState('');
   const [taskQuery, setTaskQuery] = useState('');
   // 两个文本框（搜索、目标 ID）都配了回车与「查询」按钮，本意就是打完再查。已提交的那一份
-  // 单独存：绑到请求参数上的是它，不是正在打的字。否则每敲一个字符发一次 /api/system/tasks，
-  // 且 fetchTasks 的身份跟着变，15s 轮询的定时器被反复重建，打字期间永远不到点。
+  // 单独存：绑到请求参数上的是它，不是正在打的字。否则每敲一个字符发一次请求，
+  // 且 fetchTasks 的身份跟着变，轮询的定时器被反复重建，打字期间永远不到点。
   const [appliedTaskQuery, setAppliedTaskQuery] = useState('');
   const [appliedTaskScopeId, setAppliedTaskScopeId] = useState('');
   // 提交同一份条件时也要重取一次，靠它把 effect 推一下。
   const [taskReloadToken, setTaskReloadToken] = useState(0);
-  const [storageIO, setStorageIO] = useState<StorageIODiagnostics | null>(null);
   const [bulkPauseBusy, setBulkPauseBusy] = useState(false);
   const taskRequestIDRef = useRef(0);
   const { showToast } = useToast();
@@ -66,19 +75,9 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     query: taskQuery,
   }), [taskQuery, taskScopeFilter, taskScopeIdFilter, runStatusFilter, taskTypeFilter]);
 
-  // SSE 增量帧按**已提交**的条件判去留：与列表里那批任务是同一把尺子。
-  const appliedTaskFilters = useMemo<TaskCenterFilters>(() => ({
-    status: runStatusFilter,
-    scope: taskScopeFilter,
-    type: taskTypeFilter,
-    scopeId: appliedTaskScopeId,
-    query: appliedTaskQuery,
-  }), [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, runStatusFilter, taskTypeFilter]);
-
-  const buildTaskParams = useCallback((status?: string) => {
+  const buildTaskParams = useCallback(() => {
     const params = new URLSearchParams({ limit: '50' });
-    if (status) params.set('status', status);
-    if (!status && runStatusFilter !== 'ALL') params.set('status', runStatusFilter);
+    if (runStatusFilter !== 'ALL') params.set('status', runStatusFilter);
     if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
     if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
     if (appliedTaskScopeId.trim()) params.set('scope_id', appliedTaskScopeId.trim());
@@ -86,10 +85,11 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     return params;
   }, [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, runStatusFilter, taskTypeFilter]);
 
-  const fetchStorageIO = useCallback(async () => {
+  const fetchLive = useCallback(async () => {
     try {
-      const res = await apiClient.get<StorageIODiagnostics>('/api/system/storage-io');
-      setStorageIO(res.data);
+      const res = await apiClient.get<RunLive>('/api/system/tasks/live');
+      // 认不出形状就当作没有实况可显示：画一片空区，而不是让一份残缺的载荷把整页拖倒。
+      setLive(Array.isArray(res.data?.runs) ? res.data : EMPTY_LIVE);
     } catch (error) {
       console.error(error);
     }
@@ -101,15 +101,9 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     taskRequestIDRef.current = requestID;
     setLoadingTasks(true);
     try {
-      const res = await apiClient.get<RunStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`);
+      const res = await apiClient.get<TaskSummary[]>(`/api/system/tasks/summary?${buildTaskParams().toString()}`);
       if (requestID !== taskRequestIDRef.current) return;
-      const items = Array.isArray(res.data) ? res.data : [];
-      const seen = new Set<string>();
-      setTasks(items.filter((task) => {
-        if (seen.has(task.key)) return false;
-        seen.add(task.key);
-        return true;
-      }).slice(0, 50));
+      setTasks(Array.isArray(res.data) ? res.data : []);
     } catch (error) {
       if (requestID !== taskRequestIDRef.current) return;
       console.error(error);
@@ -119,7 +113,34 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     }
   }, [buildTaskParams, showToast, t]);
 
-  // 回车 / 「查询」/「刷新」都走这里：把输入框里的内容提交为生效条件，并重取一次。
+  // 历次运行按需取：清单接口一条运行都不带回来，展开哪一行才去问哪一个任务。
+  const fetchTaskRuns = useCallback(async (taskId: number) => {
+    setTaskRunsLoading(true);
+    try {
+      const res = await apiClient.get<RunStatus[]>(`/api/system/tasks?task_id=${taskId}&limit=20`);
+      setTaskRuns(Array.isArray(res.data) ? res.data : []);
+    } catch (error) {
+      console.error(error);
+      setTaskRuns([]);
+      showToast(t('settings.maintenance.taskCenterLoadFailed'), 'error');
+    } finally {
+      setTaskRunsLoading(false);
+    }
+  }, [showToast, t]);
+
+  const toggleTask = useCallback((taskId: number) => {
+    setExpandedTaskId((current) => {
+      if (current === taskId) {
+        setTaskRuns(undefined);
+        return null;
+      }
+      setTaskRuns(undefined);
+      void fetchTaskRuns(taskId);
+      return taskId;
+    });
+  }, [fetchTaskRuns]);
+
+  // 回车 /「查询」/「刷新」都走这里：把输入框里的内容提交为生效条件，并重取一次。
   const applyTaskFilters = useCallback(() => {
     setAppliedTaskQuery(taskQuery);
     setAppliedTaskScopeId(taskScopeIdFilter);
@@ -128,59 +149,60 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
 
   useEffect(() => {
     fetchTasks();
-    fetchStorageIO();
-  }, [fetchStorageIO, fetchTasks, taskReloadToken]);
+    fetchLive();
+  }, [fetchLive, fetchTasks, taskReloadToken]);
 
   useEffect(() => {
     // 复用 Layout 中已挂载的全局 EventSource：它接收 run_snapshot 后会
     // dispatch 'manga-manager:task-progress' 自定义事件。这里只监听自定义事件，
     // 避免对同一 origin 再开第二条 SSE 长连接占用浏览器并发额度。
     const handler = (event: Event) => {
-      const task = (event as CustomEvent<RunStatus>).detail;
-      if (!task || typeof task !== 'object') return;
-      setTasks((prev) => {
-        const matchesStatus = appliedTaskFilters.status === 'ALL' || task.status === appliedTaskFilters.status;
-        const matchesScope = appliedTaskFilters.scope === 'ALL' || task.scope === appliedTaskFilters.scope;
-        const matchesType = appliedTaskFilters.type === 'ALL' || task.type === appliedTaskFilters.type;
-        const matchesScopeId = !appliedTaskFilters.scopeId.trim() || String(task.scope_id || '') === appliedTaskFilters.scopeId.trim();
-        const q = appliedTaskFilters.query.trim().toLowerCase();
-        const matchesQuery = !q || [
-          task.key,
-          task.type,
-          task.scope,
-          task.scope_name,
-          task.message,
-          task.error,
-          task.current_item,
-        ].some((value) => String(value || '').toLowerCase().includes(q));
-        const nextWithoutTask = prev.filter((item) => item.key !== task.key);
-        if (!matchesStatus || !matchesScope || !matchesType || !matchesScopeId || !matchesQuery) {
-          return nextWithoutTask;
+      const run = (event as CustomEvent<RunStatus>).detail;
+      if (!run || typeof run !== 'object') return;
+      // 去重键是**运行标识**而不是任务键：同一个任务键如今有多条运行，按键去重会让新一次运行的
+      // 每一帧把上一次那条从界面上摘掉。进了**终态**的运行离开实况区——它不再会变。
+      setLive((prev) => {
+        const withoutRun = prev.runs.filter((item) => item.run_id !== run.run_id);
+        const runs = isTerminalRunStatus(run.status) ? withoutRun : [run, ...withoutRun];
+        return {
+          ...prev,
+          runs,
+          active: runs.filter((item) => !isTerminalRunStatus(item.status) && item.status !== 'queued').length,
+          queued: runs.filter((item) => item.status === 'queued').length,
+          paused: runs.some((item) => item.status === 'paused'),
+        };
+      });
+      // 清单那一行的「上次结果」跟着走：推出来的帧只属于仍会变化的运行，而那正是它所属任务
+      // 最近的那一次。不跟的话，用户要等下一轮轮询才看得到刚发起的那条落在哪个任务下面。
+      setTasks((prev) => prev.map((item) => (item.task_id === run.task_id ? { ...item, last_run: run } : item)));
+      // 展开着的那一行同理：已在里面的按运行标识替换，新起的那一条补到最前。
+      setTaskRuns((prev) => {
+        if (!prev || run.task_id !== expandedTaskId) return prev;
+        if (prev.some((item) => item.run_id === run.run_id)) {
+          return prev.map((item) => (item.run_id === run.run_id ? run : item));
         }
-        return [task, ...nextWithoutTask].slice(0, 50);
+        return [run, ...prev];
       });
     };
     window.addEventListener('manga-manager:task-progress', handler as EventListener);
     return () => window.removeEventListener('manga-manager:task-progress', handler as EventListener);
-  }, [appliedTaskFilters]);
+  }, [expandedTaskId]);
 
   useEffect(() => {
     const poll = window.setInterval(() => {
       fetchTasks();
-      fetchStorageIO();
+      fetchLive();
     }, 15000);
     return () => window.clearInterval(poll);
-  }, [fetchStorageIO, fetchTasks]);
+  }, [fetchLive, fetchTasks]);
 
-  const runTaskAction = async (task: RunStatus, action: TaskAction) => {
-    setTaskActionKey(`${task.key}:${action}`);
+  const runTaskAction = async (run: RunStatus, action: TaskAction) => {
+    setTaskActionKey(`${run.key}:${action}`);
     try {
-      await apiClient.post(`/api/system/tasks/${encodeURIComponent(task.key)}/${action}`);
+      await apiClient.post(`/api/system/tasks/${encodeURIComponent(run.key)}/${action}`);
       showToast(t(`settings.maintenance.taskAction.${action}Success`));
-      await fetchTasks();
-      if (action === 'pause' || action === 'resume') {
-        await fetchStorageIO();
-      }
+      await Promise.all([fetchTasks(), fetchLive()]);
+      if (expandedTaskId !== null) await fetchTaskRuns(expandedTaskId);
     } catch (error) {
       console.error(error);
       showToast(t(`settings.maintenance.taskAction.${action}Failed`), 'error');
@@ -195,8 +217,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     try {
       await apiClient.post(`/api/system/tasks/${action}`);
       showToast(t(action === 'pause-all' ? 'settings.maintenance.pauseAllSuccess' : 'settings.maintenance.resumeAllSuccess'));
-      await fetchTasks();
-      await fetchStorageIO();
+      await Promise.all([fetchTasks(), fetchLive()]);
     } catch (error) {
       console.error(error);
       showToast(t(action === 'pause-all' ? 'settings.maintenance.pauseAllFailed' : 'settings.maintenance.resumeAllFailed'), 'error');
@@ -205,7 +226,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     }
   };
 
-  const currentTaskFilterCanClear = !['ALL', 'running', 'paused', 'cancelling'].includes(runStatusFilter);
+  const currentTaskFilterCanClear = !['ALL', 'queued', 'running', 'paused', 'cancelling'].includes(runStatusFilter);
 
   const updateTaskFilters = (patch: Partial<TaskCenterFilters>) => {
     if (patch.status !== undefined) setRunStatusFilter(patch.status);
@@ -224,25 +245,25 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
         params.set('status', runStatusFilter);
       }
       if (useCurrentFilters) {
-        if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
         if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
+        if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
         if (appliedTaskScopeId.trim()) params.set('scope_id', appliedTaskScopeId.trim());
       }
       await apiClient.delete(`/api/system/tasks?${params.toString()}`);
-      await fetchTasks();
+      await Promise.all([fetchTasks(), fetchLive()]);
     } catch (error) {
       console.error(error);
       showToast(t('organize.toast.actionFailed'), 'error');
     }
   };
 
-  const openTaskTarget = (task: RunStatus) => {
-    if (task.scope === 'series' && task.scope_id) {
-      navigate(`/series/${task.scope_id}`);
+  const openTaskTarget = (target: TaskTarget) => {
+    if (target.scope === 'series' && target.scope_id) {
+      navigate(`/series/${target.scope_id}`);
       return;
     }
-    if (task.scope === 'library' && task.scope_id) {
-      navigate(`/library/${task.scope_id}`);
+    if (target.scope === 'library' && target.scope_id) {
+      navigate(`/library/${target.scope_id}`);
       return;
     }
     navigate('/ops?tab=tasks');
@@ -272,16 +293,20 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
       )}
 
       <TaskCenter
+        live={live}
         tasks={tasks}
         loading={loadingTasks}
-        anyRunPaused={storageIO?.paused}
         bulkPauseBusy={bulkPauseBusy}
         taskActionKey={taskActionKey}
+        expandedTaskId={expandedTaskId}
+        taskRuns={taskRuns}
+        taskRunsLoading={taskRunsLoading}
         filters={taskFilters}
         typeOptions={TASK_TYPE_OPTIONS}
         currentFilterCanClear={currentTaskFilterCanClear}
         onRefresh={applyTaskFilters}
         onTaskAction={runTaskAction}
+        onToggleTask={toggleTask}
         onPauseAll={() => runBulkPause('pause-all')}
         onResumeAll={() => runBulkPause('resume-all')}
         onFilterChange={updateTaskFilters}

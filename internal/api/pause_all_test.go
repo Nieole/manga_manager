@@ -1,6 +1,6 @@
-// 守顶部那对按钮的端点契约与诊断接口那个暂停字段的**语义**：全部暂停作用在**运行**上，
+// 守顶部那对按钮的端点契约与实况帧那个暂停字段的**语义**：全部暂停作用在**运行**上，
 // 因此不按**任务键**寻址、没有 404；而 `paused` 回答的是「有没有运行被暂停」，
-// 不再是 `storageio` 后台暂停那个开关。
+// 不是 `storageio` 后台暂停那个开关。
 
 package api
 
@@ -26,19 +26,19 @@ func bulkControl(t *testing.T, handler http.HandlerFunc, path, countField string
 	return payload[countField]
 }
 
-// diagnosticsPaused 取诊断接口那个暂停字段。
-func diagnosticsPaused(t *testing.T, controller *Controller) bool {
+// liveFrame 取实况帧。
+func liveFrame(t *testing.T, controller *Controller) RunLive {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.getStorageIODiagnostics(rec, httptest.NewRequest(http.MethodGet, "/api/system/storage-io", nil))
+	controller.getTaskCenterLive(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("诊断接口的状态码为 %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+		t.Fatalf("实况接口的状态码为 %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
-	var response StorageIODiagnosticsResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("解诊断响应失败: %v (raw=%s)", err, rec.Body.String())
+	var frame RunLive
+	if err := json.Unmarshal(rec.Body.Bytes(), &frame); err != nil {
+		t.Fatalf("解实况帧失败: %v (raw=%s)", err, rec.Body.String())
 	}
-	return response.Paused
+	return frame
 }
 
 // TestPauseAllTurnsRunningIntoPaused 守按下全部暂停之后状态**如实**变成已暂停，
@@ -54,8 +54,8 @@ func TestPauseAllTurnsRunningIntoPaused(t *testing.T) {
 		Key: stubbornKey, Identity: libraryTask("write_comicinfo", 2, variantSole), Total: 100,
 	})
 
-	if diagnosticsPaused(t, controller) {
-		t.Fatal("一条都没暂停时诊断接口就说有运行被暂停了")
+	if liveFrame(t, controller).Paused {
+		t.Fatal("一条都没暂停时实况帧就说有运行被暂停了")
 	}
 
 	paused := bulkControl(t, controller.pauseAllTasks, "/api/system/tasks/pause-all", "paused")
@@ -69,8 +69,8 @@ func TestPauseAllTurnsRunningIntoPaused(t *testing.T) {
 	if got := currentTask(t, controller.taskEngine, stubbornKey); got.Status != "running" {
 		t.Fatalf("不可暂停的运行状态为 %q, want running", got.Status)
 	}
-	if !diagnosticsPaused(t, controller) {
-		t.Fatal("有运行被暂停，诊断接口的暂停字段却说没有")
+	if !liveFrame(t, controller).Paused {
+		t.Fatal("有运行被暂停，实况帧的暂停字段却说没有")
 	}
 
 	resumed := bulkControl(t, controller.resumeAllTasks, "/api/system/tasks/resume-all", "resumed")
@@ -80,8 +80,8 @@ func TestPauseAllTurnsRunningIntoPaused(t *testing.T) {
 	if got := currentTask(t, controller.taskEngine, pausableKey); got.Status != "running" {
 		t.Fatalf("恢复后状态为 %q, want running", got.Status)
 	}
-	if diagnosticsPaused(t, controller) {
-		t.Fatal("全部恢复之后诊断接口仍说有运行被暂停")
+	if liveFrame(t, controller).Paused {
+		t.Fatal("全部恢复之后实况帧仍说有运行被暂停")
 	}
 }
 

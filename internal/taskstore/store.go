@@ -75,7 +75,7 @@ func (s *Store) LoadTasks(ctx context.Context, taskIDs []int64) (map[int64]task.
 	placeholders, args := int64Placeholders(taskIDs)
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, type, scope, scope_id, variant, disabled, last_success_at, fail_streak, backoff_until
+		SELECT `+taskSelectColumns("")+`
 		FROM `+tableTasks+` WHERE id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -83,25 +83,10 @@ func (s *Store) LoadTasks(ctx context.Context, taskIDs []int64) (map[int64]task.
 	defer rows.Close()
 
 	for rows.Next() {
-		var (
-			owner         task.Task
-			taskType      string
-			scope         string
-			variant       string
-			disabled      int
-			lastSuccessAt sql.NullInt64
-			backoffUntil  sql.NullInt64
-		)
-		if err := rows.Scan(&owner.ID, &taskType, &scope, &owner.ScopeID, &variant, &disabled,
-			&lastSuccessAt, &owner.FailStreak, &backoffUntil); err != nil {
+		owner, err := scanTask(rows)
+		if err != nil {
 			return nil, err
 		}
-		owner.Type = task.Type(taskType)
-		owner.Scope = task.Scope(scope)
-		owner.Variant = task.Variant(variant)
-		owner.Disabled = disabled != 0
-		owner.LastSuccessAt = timePtrFromMillis(lastSuccessAt)
-		owner.BackoffUntil = timePtrFromMillis(backoffUntil)
 		owners[owner.ID] = owner
 	}
 	return owners, rows.Err()

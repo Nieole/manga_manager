@@ -215,7 +215,7 @@ func (c *Controller) taskLimitsForPath(path string) TaskLimits {
 
 // ---- HTTP 端点 ----
 
-// taskFiltersFromQuery 解析六个任务端点共用的过滤参数。无法解析的 scope_id/limit 按「不过滤」处理。
+// taskFiltersFromQuery 解析任务端点共用的过滤参数。无法解析的 scope_id/task_id/limit 按「不过滤」处理。
 func taskFiltersFromQuery(r *http.Request) taskFilters {
 	query := r.URL.Query()
 	filters := taskFilters{
@@ -229,6 +229,11 @@ func taskFiltersFromQuery(r *http.Request) taskFilters {
 			filters.ScopeID = &parsed
 		}
 	}
+	if raw := strings.TrimSpace(query.Get("task_id")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			filters.TaskID = parsed
+		}
+	}
 	if raw := query.Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 			filters.Limit = parsed
@@ -237,6 +242,7 @@ func taskFiltersFromQuery(r *http.Request) taskFilters {
 	return filters
 }
 
+// listTasks 取一页**运行**。任务中心展开某一行时带上 task_id，取回的就是那个任务的历次运行。
 func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 	items, err := c.taskEngine.listRunStatuses(r.Context(), taskFiltersFromQuery(r))
 	if err != nil {
@@ -244,6 +250,26 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, items)
+}
+
+// listTaskSummaries 取**任务清单**：一个任务一行，带它最近一次运行，不带历次运行。
+func (c *Controller) listTaskSummaries(w http.ResponseWriter, r *http.Request) {
+	items, err := c.taskEngine.listTaskSummaries(r.Context(), taskFiltersFromQuery(r))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to list tasks")
+		return
+	}
+	jsonResponse(w, http.StatusOK, items)
+}
+
+// getTaskCenterLive 取**实况区**那一帧：仍会变化的运行与它们的汇总。它不看筛选参数，理由见 RunLive。
+func (c *Controller) getTaskCenterLive(w http.ResponseWriter, r *http.Request) {
+	frame, err := c.taskEngine.live(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to load live runs")
+		return
+	}
+	jsonResponse(w, http.StatusOK, frame)
 }
 
 func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {

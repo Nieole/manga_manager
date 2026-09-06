@@ -239,6 +239,85 @@ func (e *taskEngine) listRunStatuses(ctx context.Context, filters taskFilters) (
 	return e.statusesFrom(ctx, snapshots)
 }
 
+// live 取实况区那一帧：仍会变化的全部运行，加上由它们数出来的汇总。
+//
+// 汇总从同一批运行数出来而不是另发几句 COUNT：两条路各查一次，中间的一次状态跃迁就能让
+// 「活动 2」配着三张运行卡片。仍会变化的运行任何时刻都只有个位数（准入索引限死每任务至多两条），
+// 全取回来不比数一遍贵。
+func (e *taskEngine) live(ctx context.Context) (RunLive, error) {
+	snapshots, err := e.engine.ListSnapshots(ctx, task.RunFilter{Statuses: task.LiveStatuses(), Order: task.OrderLiveFirst})
+	if err != nil {
+		return RunLive{}, err
+	}
+	runs, err := e.statusesFrom(ctx, snapshots)
+	if err != nil {
+		return RunLive{}, err
+	}
+	frame := RunLive{Slots: e.slotLimit(), Runs: runs}
+	for _, run := range runs {
+		if taskIsActive(run.Status) {
+			frame.Active++
+		} else {
+			frame.Queued++
+		}
+		if run.Status == string(task.StatusPaused) {
+			frame.Paused = true
+		}
+	}
+	return frame, nil
+}
+
+// slotLimit 是实况区那格「槽位占用」的分母，0 表示没有上限可报。
+//
+// 槽位今天由 taskSlotsUnlimited 关着，把那个数原样发出去只会在界面上画出一个天文数字的分母，
+// 而用户读得懂的「几分之几」需要一个真的会被撞上的上限。上限一旦真的生效，这里自然报出它。
+func (e *taskEngine) slotLimit() int {
+	limit := e.engine.Slots()
+	if limit >= taskSlotsUnlimited {
+		return 0
+	}
+	return limit
+}
+
+// listTaskSummaries 取任务清单：一个任务一行，行上带它最近一次运行。
+func (e *taskEngine) listTaskSummaries(ctx context.Context, filters taskFilters) ([]TaskSummary, error) {
+	owners, err := e.runStore.ListTasks(ctx, taskListFilterFrom(filters))
+	if err != nil {
+		return nil, err
+	}
+	taskIDs := make([]int64, 0, len(owners))
+	for _, owner := range owners {
+		taskIDs = append(taskIDs, owner.ID)
+	}
+	latest, err := e.engine.LatestSnapshots(ctx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]TaskSummary, 0, len(owners))
+	for _, owner := range owners {
+		identity := taskIdentityFromDomain(owner.Identity)
+		summary := TaskSummary{
+			TaskID:        owner.ID,
+			Type:          identity.taskType,
+			Scope:         identity.scope,
+			ScopeID:       identity.scopeID,
+			Variant:       identity.variant,
+			Disabled:      owner.Disabled,
+			FailStreak:    owner.FailStreak,
+			LastSuccessAt: owner.LastSuccessAt,
+			BackoffUntil:  owner.BackoffUntil,
+		}
+		if snapshot, ok := latest[owner.ID]; ok {
+			run := e.runStatusFrom(snapshot, identity)
+			summary.ScopeName = run.ScopeName
+			summary.LastRun = &run
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
 // statusesFrom 把一批领域快照翻成对外形状，身份一次批量取回。
 func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot) ([]RunStatus, error) {
 	taskIDs := make([]int64, 0, len(snapshots))
@@ -355,17 +434,6 @@ func (e *taskEngine) pauseAll(ctx context.Context) (int, error) {
 
 func (e *taskEngine) resumeAll(ctx context.Context) (int, error) {
 	return e.engine.ResumeAll(ctx)
-}
-
-// anyRunPaused 回答「此刻有没有运行被暂停」，供诊断接口的暂停字段与前端顶部那个按钮取向。
-//
-// 问的是库而不是列表接口取回的那一页：那一页带着用户的筛选与条数上限，回答不了全局的问题。
-func (e *taskEngine) anyRunPaused(ctx context.Context) (bool, error) {
-	count, err := e.runStore.CountRuns(ctx, task.RunFilter{Statuses: []task.RunStatus{task.StatusPaused}})
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }
 
 func (e *taskEngine) cancel(key string) error {

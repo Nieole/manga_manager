@@ -62,6 +62,28 @@ type RunFilter struct {
 	Limit int
 }
 
+// TaskFilter 是**任务清单**的谓词。零值表示不筛：全部任务、不限条数。
+//
+// 前三项判在任务行上，后两项判在这个任务**最近一次运行**上——清单那一栏「上次结果」说的就是它。
+// 两类谓词收在同一个结构体里是刻意的：界面上它们是同一排筛选器，而「筛的是任务还是运行」
+// 这个问题必须在这里就答死，留给每个调用方各自解释就会长出两套口径。
+type TaskFilter struct {
+	// Types 为空表示不按任务类型筛；给多个即取并集。
+	Types []Type
+	// Scope 为空表示不按作用域筛。
+	Scope Scope
+	// ScopeID 为 nil 表示不按作用域 id 筛，理由同 RunFilter.ScopeID。
+	ScopeID *int64
+
+	// LastRunStatuses 判在最近一次运行的状态上；为空表示不筛。
+	// 一次运行都没有的任务不满足其中任何一条——它没有「上次」。
+	LastRunStatuses []RunStatus
+	// LastRunQuery 同样判在最近一次运行上：对**任务键**、文案码与错误串做大小写无关的子串匹配。
+	LastRunQuery string
+
+	Limit int
+}
+
 // RetentionPolicy 是分层保留的三个阈值。**活动态**与**排队中**的运行永不被裁剪带走，
 // 这条不是策略而是前提，因此不在这里配。
 type RetentionPolicy struct {
@@ -95,6 +117,14 @@ type Store interface {
 	LoadTasks(ctx context.Context, taskIDs []int64) (map[int64]Task, error)
 	// SaveTaskAttributes 写回身份的长期属性。**退避**与禁用的规则不在本包实现，只经这里落盘。
 	SaveTaskAttributes(ctx context.Context, taskID int64, attrs TaskAttributes) error
+	// ListTasks 按谓词取任务清单，「最近有过动静的」排在前（末次运行的序号降序），
+	// 一次运行都没有的排在最后。
+	//
+	// 它与 ListRuns 是任务中心两层结构各自的取数：这一条一个任务一行，那一条一次运行一行。
+	ListTasks(ctx context.Context, filter TaskFilter) ([]Task, error)
+	// LatestRuns 批量取这批任务各自**最近一次运行**，一次运行都没有的任务不出现在结果里。
+	// 「最近」判的是序号，与列表定序同一把尺子。批量的理由同 LoadTasks。
+	LatestRuns(ctx context.Context, taskIDs []int64) (map[int64]Run, error)
 
 	// CreateRun 落一条新运行并回填它的 id。
 	//

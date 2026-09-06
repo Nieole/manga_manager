@@ -103,7 +103,10 @@ type Controller struct {
 type RunStatus struct {
 	// RunID 是这一条**运行**的标识：同一个任务键在列表里可以出现多条，各是一次运行，
 	// 而键只认得出「哪件事」，认不出「哪一次」。重试从此不再抹掉上一次，因此它是必需的。
-	RunID   int64  `json:"run_id"`
+	RunID int64 `json:"run_id"`
+	// TaskID 是这次运行属于哪个**任务**：任务中心的两层要靠它对上——一帧推过来的运行属于清单里
+	// 哪一行、展开的历次运行里该不该多出这一条，都只有这个字段答得出。
+	TaskID  int64  `json:"task_id"`
 	Key     string `json:"key"`
 	Type    string `json:"type"`
 	Scope   string `json:"scope"`
@@ -113,8 +116,11 @@ type RunStatus struct {
 	// 四项一起是身份行上那条唯一约束的四列。
 	Variant   TaskVariant `json:"variant,omitempty"`
 	ScopeName string      `json:"scope_name,omitempty"`
-	Status    string      `json:"status"`
-	Message   string      `json:"message"`
+	// Trigger 是**发起方**：这次运行是被什么叫来的（见 task.Trigger）。它不改变运行怎么跑，
+	// 只回答「这活是谁叫来的」——半夜转盘的那条究竟是定时守护还是用户自己点的。
+	Trigger string `json:"trigger,omitempty"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 	// MessageCode/MessageParams 承载可本地化的任务消息：后端只发稳定 i18n 键 + 占位参数，由前端按当前
 	// 语言渲染，Go 里因此不出现面向用户的文案字面量。
 	//
@@ -155,6 +161,46 @@ type RunStatus struct {
 	UpdatedAt           time.Time         `json:"updated_at"`
 	FinishedAt          *time.Time        `json:"finished_at,omitempty"`
 	Sequence            int64             `json:"-"`
+}
+
+// RunLive 是任务中心**实况区**的一帧：此刻仍会变化的那些运行，加上它们的汇总。
+//
+// 它不受列表筛选影响。实况区答的是「我的盘现在在干什么」——那是个全局问题，
+// 而顶部那对全部暂停 / 全部恢复同样作用于全体运行，按筛选给出的答案会与按钮动到的那批对不上。
+type RunLive struct {
+	// Active 是**活动态**运行数，也就是占着运行槽位的那些；Queued 是**排队中**的条数。
+	Active int `json:"active"`
+	Queued int `json:"queued"`
+	// Slots 是运行槽位上限，0 表示**没有上限可报**（见 taskEngine.slotLimit）。
+	// 界面据此只画占用数、不画分母——一个天文数字的分母不是「槽位 2/2」，是噪音。
+	Slots int `json:"slots"`
+	// Paused 回答「有没有运行被暂停」：顶部那个「全部恢复」按它决定可不可按。
+	Paused bool `json:"paused"`
+	// Runs 是常驻置顶的那批运行：**活动态**与**排队中**，仍会变化的都在里面。
+	Runs []RunStatus `json:"runs"`
+}
+
+// TaskSummary 是**任务清单**上的一行：一个任务的身份、它的长期属性，与它最近一次运行。
+//
+// 历次运行不在这里：一屏几十个任务、每个几十次运行，一次全带回来是几千条。
+// 展开某一行时按 task_id 单独取（见 taskFilters.TaskID）。
+type TaskSummary struct {
+	TaskID  int64       `json:"task_id"`
+	Type    string      `json:"type"`
+	Scope   string      `json:"scope"`
+	ScopeID *int64      `json:"scope_id,omitempty"`
+	Variant TaskVariant `json:"variant,omitempty"`
+	// ScopeName 取自最近一次运行：显示名是**过渡期**字段，落在运行上而不是身份上
+	// （见 task.Run.ScopeName）。一次都没跑过的任务因此没有显示名，界面回落到作用域加 id。
+	ScopeName string `json:"scope_name,omitempty"`
+	// Disabled / FailStreak / BackoffUntil 是**退避**与禁用那一组长期属性，写入方尚未存在，
+	// 因此今天恒为零值。界面据此整块不显示，而不是画一个「连败 0」。
+	Disabled      bool       `json:"disabled"`
+	FailStreak    int        `json:"fail_streak"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	BackoffUntil  *time.Time `json:"backoff_until,omitempty"`
+	// LastRun 是「上次跑成什么样」。一次运行都没有的任务为 nil。
+	LastRun *RunStatus `json:"last_run,omitempty"`
 }
 
 type TaskRuntime struct {
@@ -738,6 +784,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Delete("/system/page-cache", c.clearPageCache)
 		r.Get("/system/tasks", c.listTasks)
 		r.Delete("/system/tasks", c.clearTasks)
+		r.Get("/system/tasks/live", c.getTaskCenterLive)
+		r.Get("/system/tasks/summary", c.listTaskSummaries)
 		r.Post("/system/tasks/pause-all", c.pauseAllTasks)
 		r.Post("/system/tasks/resume-all", c.resumeAllTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)

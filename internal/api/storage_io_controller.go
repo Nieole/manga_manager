@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -16,10 +15,9 @@ type StorageIODiagnosticsResponse struct {
 	Libraries      []StorageIOLibraryResponse `json:"libraries"`
 	SameDiskCaches int                        `json:"same_disk_caches"`
 	Scheduler      []StorageIOSchedulerState  `json:"scheduler"`
-	// Paused 回答的是**有没有运行被暂停**——用户面前的暂停只有这一个概念（全部暂停把每条运行
-	// 逐个按下**暂停闸门**）。它与 StorageIOSchedulerState.BackgroundPaused 是两件事：
-	// 那个是 `storageio` 的内部开关，按卷报，没有任何用户端点驱动它。
-	Paused                     bool    `json:"paused"`
+	// 「有没有运行被暂停」不在这里：那是一个关于**运行**的事实，归任务中心的实况帧（RunLive.Paused）。
+	// 本响应只答存储侧的事，其中 StorageIOSchedulerState.BackgroundPaused 是 `storageio`
+	// 自己那个按卷的内部开关，与用户面前的暂停不是一回事。
 	RecentScanArchiveOpenRate  float64 `json:"recent_scan_archive_open_rate"`
 	RecentCoverArchiveOpenRate float64 `json:"recent_cover_archive_open_rate"`
 	RecentThumbnailWriteMillis int64   `json:"recent_thumbnail_write_ms"`
@@ -56,13 +54,6 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 		Libraries:   []StorageIOLibraryResponse{},
 		Scheduler:   []StorageIOSchedulerState{},
 	}
-	// 读不到暂停态不挡整份诊断：这一个布尔值决定的只是任务中心顶部那个按钮的取向，
-	// 而它旁边那几十项容量与限流的数与它无关。
-	paused, err := c.taskEngine.anyRunPaused(r.Context())
-	if err != nil {
-		slog.Warn("Failed to count paused runs", "error", err)
-	}
-	response.Paused = paused
 	response.RecentScanArchiveOpenRate, response.RecentCoverArchiveOpenRate, response.RecentThumbnailWriteMillis = c.recentStorageIOTaskRates()
 
 	libraries, err := c.store.ListLibraries(r.Context())

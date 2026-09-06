@@ -21,6 +21,8 @@ import (
 var targets = []reflect.Type{
 	reflect.TypeOf(api.TaskLimits{}),
 	reflect.TypeOf(api.RunStatus{}),
+	reflect.TypeOf(api.RunLive{}),
+	reflect.TypeOf(api.TaskSummary{}),
 	reflect.TypeOf(config.ValidationIssue{}),
 	reflect.TypeOf(config.ValidationResult{}),
 	reflect.TypeOf(api.SystemCapabilitiesResponse{}),

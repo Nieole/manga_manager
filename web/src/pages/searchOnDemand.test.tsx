@@ -30,28 +30,46 @@ vi.mock('../api/client', () => ({
   getApiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
-function task(key: string, message: string) {
+// 任务清单一行：搜索框筛的就是它，行上那句文案取自这个任务最近一次运行。
+function taskSummary(taskId: number, message: string) {
   return {
-    key,
+    task_id: taskId,
     type: 'scan_library',
     scope: 'library',
     scope_id: 1,
     scope_name: '主库',
-    status: 'completed',
-    message,
-    error: '',
-    current_item: '',
-    processed: 1,
-    total: 1,
-    started_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    disabled: false,
+    fail_streak: 0,
+    last_run: {
+      run_id: taskId,
+      task_id: taskId,
+      key: `scan_library_${taskId}`,
+      type: 'scan_library',
+      scope: 'library',
+      scope_id: 1,
+      scope_name: '主库',
+      status: 'completed',
+      message,
+      error: '',
+      current: 1,
+      total: 1,
+      can_cancel: false,
+      can_pause: false,
+      can_resume: false,
+      retryable: false,
+      started_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    },
   };
 }
 
+const emptyLive = { active: 0, queued: 0, slots: 0, paused: false, runs: [] };
+
+// 搜索框驱动的是任务清单那条取数：实况帧不带筛选，因此不该数进来。
 function taskRequests() {
   return mocks.get.mock.calls
     .map((call) => String(call[0]))
-    .filter((url) => url.startsWith('/api/system/tasks'));
+    .filter((url) => url.startsWith('/api/system/tasks/summary'));
 }
 
 function logRequests() {
@@ -79,8 +97,9 @@ afterEach(() => {
 describe('任务中心的搜索框', () => {
   it('逐字符打字不发请求，回车才发一次并带上关键词', async () => {
     mocks.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/system/tasks/live')) return Promise.resolve({ data: emptyLive });
       if (url.startsWith('/api/system/tasks')) return Promise.resolve({ data: [] });
-      return Promise.resolve({ data: { paused: false } });
+      return Promise.resolve({ data: null });
     });
 
     wrap(<BackgroundTasks />);
@@ -101,16 +120,17 @@ describe('任务中心的搜索框', () => {
   it('慢网下先提交的关键词响应后到，不会盖掉后提交那一次的结果', async () => {
     let releaseSca: (() => void) | null = null;
     mocks.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/system/tasks/live')) return Promise.resolve({ data: emptyLive });
       if (url.startsWith('/api/system/tasks')) {
         if (url.includes('q=sca&') || url.endsWith('q=sca')) {
           return new Promise((resolve) => {
-            releaseSca = () => resolve({ data: [task('scan_library_1', '过期的 sca 结果')] });
+            releaseSca = () => resolve({ data: [taskSummary(1, '过期的 sca 结果')] });
           });
         }
-        if (url.includes('q=scan')) return Promise.resolve({ data: [task('scan_library_2', '最新的 scan 结果')] });
+        if (url.includes('q=scan')) return Promise.resolve({ data: [taskSummary(2, '最新的 scan 结果')] });
         return Promise.resolve({ data: [] });
       }
-      return Promise.resolve({ data: { paused: false } });
+      return Promise.resolve({ data: null });
     });
 
     wrap(<BackgroundTasks />);

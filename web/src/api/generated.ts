@@ -21,12 +21,14 @@ export interface TaskLimits {
 
 export interface RunStatus {
   run_id: number;
+  task_id: number;
   key: string;
   type: string;
   scope: string;
   scope_id?: number;
   variant?: string;
   scope_name?: string;
+  trigger?: string;
   status: string;
   message: string;
   message_code?: string;
@@ -52,6 +54,28 @@ export interface RunStatus {
   started_at: string;
   updated_at: string;
   finished_at?: string;
+}
+
+export interface RunLive {
+  active: number;
+  queued: number;
+  slots: number;
+  paused: boolean;
+  runs: RunStatus[];
+}
+
+export interface TaskSummary {
+  task_id: number;
+  type: string;
+  scope: string;
+  scope_id?: number;
+  variant?: string;
+  scope_name?: string;
+  disabled: boolean;
+  fail_streak: number;
+  last_success_at?: string;
+  backoff_until?: string;
+  last_run?: RunStatus;
 }
 
 export interface ValidationIssue {

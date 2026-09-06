@@ -54,25 +54,30 @@ func taskIdentityFromDomain(identity task.Identity) TaskIdentity {
 
 // ---- 列表谓词 ----
 
-// taskFilters 是六个任务端点共用的过滤参数，由 taskFiltersFromQuery 从查询串解析而来。
+// taskFilters 是任务端点共用的过滤参数，由 taskFiltersFromQuery 从查询串解析而来。
 //
-// 它是 HTTP 侧的形状，不是落盘侧的形状：进库之前一律先经 runFilterFrom 翻成 task.RunFilter。
+// 它是 HTTP 侧的形状，不是落盘侧的形状：进库之前一律先翻成落盘侧的谓词——列表与清除走
+// runFilterFrom（一次运行一行），任务清单走 taskListFilterFrom（一个任务一行）。
 // 空串与零值一律表示「这一条不过滤」。
 type taskFilters struct {
-	Status  string
-	Scope   string
-	Type    string
+	Status string
+	Scope  string
+	Type   string
+	// TaskID 是任务中心展开某一行时用的谓词：只要这个任务的历次运行。
+	// 展开按需取，因此清单接口本身一条运行都不带回来。
+	TaskID  int64
 	ScopeID *int64
 	Query   string
 	Limit   int
 }
 
-// runFilterFrom 把六个任务端点共用的过滤参数翻成运行查询的谓词。
+// runFilterFrom 把任务端点共用的过滤参数翻成**运行**查询的谓词。
 //
 // 五条谓词整条下推到落盘侧，不再取回内存里过一遍：旧引擎必须在内存里判，因为它要先把内存表盖在
 // 库记录上；现在只有一个来源，下推之后 Limit 截断的才是过滤**之后**的那一页。
 func runFilterFrom(filters taskFilters, order task.RunOrder) task.RunFilter {
 	filter := task.RunFilter{
+		TaskID:  filters.TaskID,
 		Scope:   task.Scope(strings.TrimSpace(filters.Scope)),
 		ScopeID: filters.ScopeID,
 		Query:   strings.TrimSpace(filters.Query),
@@ -81,6 +86,27 @@ func runFilterFrom(filters taskFilters, order task.RunOrder) task.RunFilter {
 	}
 	if status := strings.TrimSpace(filters.Status); status != "" {
 		filter.Statuses = []task.RunStatus{task.RunStatus(status)}
+	}
+	if taskType := strings.TrimSpace(filters.Type); taskType != "" {
+		filter.Types = []task.Type{task.Type(taskType)}
+	}
+	return filter
+}
+
+// taskListFilterFrom 把同一份过滤参数翻成**任务清单**的谓词。
+//
+// 分工在这里定死：类型、作用域与作用域 id 是任务身份上的列，状态与关键词判在这个任务
+// **最近一次运行**上——也就是清单那一栏「上次结果」。同一排筛选器因此只有一个语义，
+// 而不是三条筛任务、两条筛运行。条数上限对两层是同一个数：清单一行就是一个任务。
+func taskListFilterFrom(filters taskFilters) task.TaskFilter {
+	filter := task.TaskFilter{
+		Scope:        task.Scope(strings.TrimSpace(filters.Scope)),
+		ScopeID:      filters.ScopeID,
+		LastRunQuery: strings.TrimSpace(filters.Query),
+		Limit:        filters.Limit,
+	}
+	if status := strings.TrimSpace(filters.Status); status != "" {
+		filter.LastRunStatuses = []task.RunStatus{task.RunStatus(status)}
 	}
 	if taskType := strings.TrimSpace(filters.Type); taskType != "" {
 		filter.Types = []task.Type{task.Type(taskType)}
@@ -98,12 +124,14 @@ func (e *taskEngine) runStatusFrom(snapshot task.Snapshot, identity TaskIdentity
 	run := snapshot.Run
 	status := RunStatus{
 		RunID:               run.ID,
+		TaskID:              run.TaskID,
 		Key:                 run.Key,
 		Type:                identity.taskType,
 		Scope:               identity.scope,
 		ScopeID:             identity.scopeID,
 		Variant:             identity.variant,
 		ScopeName:           run.ScopeName,
+		Trigger:             string(run.Trigger),
 		Status:              string(run.Status),
 		MessageCode:         run.MessageCode,
 		MessageParams:       run.MessageParams,

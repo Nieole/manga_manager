@@ -37,6 +37,37 @@ func (e *Engine) ListSnapshots(ctx context.Context, filter RunFilter) ([]Snapsho
 	if err != nil {
 		return nil, err
 	}
+	return e.snapshotsOf(ctx, runs)
+}
+
+// LatestSnapshots 取这批任务各自**最近一次运行**的快照；一次运行都没有的任务不出现在结果里。
+//
+// 任务清单那一层的取数：一个任务一行，行上写的是「上次跑成什么样」。
+// 历次运行不走这里——那是展开某一行时按任务单独取的，一次全带回来是几千条。
+func (e *Engine) LatestSnapshots(ctx context.Context, taskIDs []int64) (map[int64]Snapshot, error) {
+	latest, err := e.store.LatestRuns(ctx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	runs := make([]Run, 0, len(latest))
+	for _, run := range latest {
+		runs = append(runs, run)
+	}
+	snapshots, err := e.snapshotsOf(ctx, runs)
+	if err != nil {
+		return nil, err
+	}
+	byTask := make(map[int64]Snapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		byTask[snapshot.Run.TaskID] = snapshot
+	}
+	return byTask, nil
+}
+
+// snapshotsOf 给一批运行配上控制能力与侧数据。
+//
+// 侧数据一次批量取回，不是逐条运行走 snapshotLocked：一页有几十条运行，逐条取就是几十轮查询。
+func (e *Engine) snapshotsOf(ctx context.Context, runs []Run) ([]Snapshot, error) {
 	runIDs := make([]int64, 0, len(runs))
 	for _, run := range runs {
 		runIDs = append(runIDs, run.ID)
