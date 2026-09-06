@@ -6,6 +6,8 @@ package taskstore
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strconv"
 
 	"manga-manager/internal/task"
 )
@@ -66,9 +68,9 @@ func (s *Store) AppendRunSamples(ctx context.Context, runID int64, samples []tas
 		`INSERT INTO `+tableRunSamples+` (run_id, at, current, rate_per_minute) VALUES (?, ?, ?, ?)`, rows)
 }
 
-// LoadRunSideData 批量读回这批运行的侧数据：入参、标签、指标与上限各一句查询。
+// LoadRunSideData 批量读回这批运行的侧数据：三张键值表各一句查询，上限那张再一句。
 //
-// 四句而不是一句连表：四张表与运行是一对多，连成一句会把行数乘起来，读回时还要自己去重。
+// 四句而不是一句连表：侧表与运行是一对多，连成一句会把行数乘起来，读回时还要自己去重。
 // 一页运行走四句是常数次查询，逐条运行取四样才是 N+1。
 func (s *Store) LoadRunSideData(ctx context.Context, runIDs []int64) (map[int64]task.SideData, error) {
 	side := make(map[int64]task.SideData, len(runIDs))
@@ -77,29 +79,40 @@ func (s *Store) LoadRunSideData(ctx context.Context, runIDs []int64) (map[int64]
 	}
 	placeholders, args := int64Placeholders(runIDs)
 
+	// 三张键值表的取数形状完全相同，只差「这一格放进侧数据的哪个字段」。
 	for _, source := range []struct {
 		table  string
-		assign func(data *task.SideData, key, value string)
+		assign func(data *task.SideData, key, value string) error
 	}{
-		{tableRunArgs, func(data *task.SideData, key, value string) {
+		{tableRunArgs, func(data *task.SideData, key, value string) error {
 			if data.Args == nil {
 				data.Args = map[string]string{}
 			}
 			data.Args[key] = value
+			return nil
 		}},
-		{tableRunLabels, func(data *task.SideData, key, value string) {
+		{tableRunLabels, func(data *task.SideData, key, value string) error {
 			if data.Labels == nil {
 				data.Labels = map[string]string{}
 			}
 			data.Labels[key] = value
+			return nil
+		}},
+		{tableRunMetrics, func(data *task.SideData, key, value string) error {
+			parsed, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return fmt.Errorf("taskstore: 指标 %q 不是整数: %w", key, err)
+			}
+			if data.Metrics == nil {
+				data.Metrics = map[string]int64{}
+			}
+			data.Metrics[key] = parsed
+			return nil
 		}},
 	} {
 		if err := s.scanKeyValues(ctx, source.table, placeholders, args, side, source.assign); err != nil {
 			return nil, err
 		}
-	}
-	if err := s.scanMetrics(ctx, placeholders, args, side); err != nil {
-		return nil, err
 	}
 	if err := s.scanLimits(ctx, placeholders, args, side); err != nil {
 		return nil, err
@@ -107,8 +120,12 @@ func (s *Store) LoadRunSideData(ctx context.Context, runIDs []int64) (map[int64]
 	return side, nil
 }
 
+// scanKeyValues 把一张 (run_id, key, value) 侧表读进这批运行的侧数据，值怎么落由调用方给出。
+//
+// 值一律扫成字符串、由 assign 决定怎么解释：三张表在 SQL 那一侧长得一模一样，差别只在指标那张
+// 要把它解析成整数。分开写三份的话，加一张侧表就是再抄一遍同样的循环。
 func (s *Store) scanKeyValues(ctx context.Context, table, placeholders string, args []any,
-	side map[int64]task.SideData, assign func(*task.SideData, string, string)) error {
+	side map[int64]task.SideData, assign func(*task.SideData, string, string) error) error {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT run_id, key, value FROM `+table+` WHERE run_id IN (`+placeholders+`)`, args...)
 	if err != nil {
@@ -126,34 +143,9 @@ func (s *Store) scanKeyValues(ctx context.Context, table, placeholders string, a
 			return err
 		}
 		data := side[runID]
-		assign(&data, key, value)
-		side[runID] = data
-	}
-	return rows.Err()
-}
-
-func (s *Store) scanMetrics(ctx context.Context, placeholders string, args []any, side map[int64]task.SideData) error {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT run_id, key, value FROM `+tableRunMetrics+` WHERE run_id IN (`+placeholders+`)`, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var (
-			runID int64
-			key   string
-			value int64
-		)
-		if err := rows.Scan(&runID, &key, &value); err != nil {
+		if err := assign(&data, key, value); err != nil {
 			return err
 		}
-		data := side[runID]
-		if data.Metrics == nil {
-			data.Metrics = map[string]int64{}
-		}
-		data.Metrics[key] = value
 		side[runID] = data
 	}
 	return rows.Err()

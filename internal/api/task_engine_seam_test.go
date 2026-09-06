@@ -91,7 +91,7 @@ func newTaskTestStore(t testing.TB) task.Store {
 
 // newBackgroundTestEngine 造一个后台能力可控的引擎：run 决定任务体何时、乃至是否执行。
 //
-// diskWork 是交给**任务句柄**的**磁盘作业**入口，与生产同样在构造期收下：多数用例的任务体一次盘
+// diskWork 是交给**运行句柄**的**磁盘作业**入口，与生产同样在构造期收下：多数用例的任务体一次盘
 // 都不读，传 nil 即可；要读盘的用例必须在这里交出真 runner，留 nil 的后果见 taskrun.New。
 func newBackgroundTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner) (*taskEngine, func() []TaskStatus) {
 	return newClockedTestEngine(t, run, diskWork, nil)

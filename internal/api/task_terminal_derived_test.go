@@ -123,9 +123,9 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 
 // TestInterruptedTaskOmitsRate 钉住**中断**运行一个处理速率都不发。
 //
-// 这道闸门是票 01 的对象，本票原样留着：它当年立起来的理由（那笔批量 UPDATE 把 finished_at 与
-// updated_at 一起盖成重启时刻，分母里整段停机时长都算成在干活）在新模型里已经不成立——收尾时刻
-// 取的是那行原有的心跳。拆掉它是一次用户可见的行为变化，归票 01，本票只守住它没被顺手改掉。
+// 那道闸门当年立起来的理由（批量转中断的那笔 UPDATE 把 finished_at 与 updated_at 一起盖成重启
+// 时刻，分母里整段停机时长都算成在干活）在新模型里已经不成立——收尾时刻取的是那行原有的心跳。
+// 但拆掉它是一次用户可见的行为变化，因此这条用例守的是它**没被顺手改掉**。
 func TestInterruptedTaskOmitsRate(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 
@@ -156,7 +156,7 @@ func TestInterruptedTaskOmitsRate(t *testing.T) {
 		t.Fatalf("读回 %+v, want 一条 interrupted 运行", tasks)
 	}
 	if tasks[0].RatePerMinute != 0 {
-		t.Fatalf("中断运行下发了 %.2f/min —— 那道闸门被顺手改掉了，而拆它归票 01", tasks[0].RatePerMinute)
+		t.Fatalf("中断运行下发了 %.2f/min —— 那道闸门被顺手改掉了，而拆它是一次单独的行为变更", tasks[0].RatePerMinute)
 	}
 	if strings.Contains(body, "rate_per_minute") {
 		t.Fatalf("载荷里还留着 rate_per_minute: %s", body)

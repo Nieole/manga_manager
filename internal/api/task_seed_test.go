@@ -50,7 +50,7 @@ type taskSeed struct {
 	FailError      string
 }
 
-// seededBody 是播下的任务体停在可控点上时交出来的两样：它自己的 ctx 与**任务句柄**。
+// seededBody 是播下的任务体停在可控点上时交出来的两样：它自己的 ctx 与**运行句柄**。
 type seededBody struct {
 	ctx    context.Context
 	handle *taskrun.Handle
@@ -82,7 +82,7 @@ type seedRef struct {
 	key    string
 }
 
-// seedTask 播下一条任务并返回它的**任务句柄**；被准入闸门拒绝即 t.Fatal。
+// seedTask 播下一条任务并返回它的**运行句柄**；被准入闸门拒绝即 t.Fatal。
 func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *taskrun.Handle {
 	t.Helper()
 	handle, err := trySeedTask(t, e, seed)

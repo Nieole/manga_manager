@@ -1,5 +1,5 @@
 // 守「查看日志」按钮点开有内容：任务体沿途的日志经任务 ctx 自动带上**任务键**，按它过滤拿得到非空结果。
-// 破了的表现是那个按钮对绝大多数任务返回空列表——而这正是它在本票之前的样子。
+// 破了的表现是那个按钮对绝大多数任务返回空列表。
 // 另一半是边界：不属于任何任务的扫描（守护 / watcher / 首扫）日志不带任务键，那是对的。
 
 package api
@@ -25,7 +25,7 @@ import (
 // scanFailingStore 让资料库扫描在「加载已入库文件快照」那一步失败。
 //
 // 挑这一步是因为它在扫描器内部、而且返回错误就直接中止整次扫描：任务因此真的以**失败**收尾，
-// 同时那条 slog.WarnContext 是从任务体深处而不是启动点发出的——本票要守的正是这段路。
+// 同时那条 slog.WarnContext 是从任务体深处而不是启动点发出的——要守的正是这段路。
 type scanFailingStore struct {
 	database.Store
 	err error
@@ -115,7 +115,7 @@ func TestFailedLibraryScanLogsAreFilterableByTaskKey(t *testing.T) {
 	}
 }
 
-// TestUnattributedLibraryScanLogsCarryNoTaskKey 守本票的已知边界：守护扫描、watcher 派生扫描与
+// TestUnattributedLibraryScanLogsCarryNoTaskKey 守一条已知边界：守护扫描、watcher 派生扫描与
 // 建库首扫今天不属于任何任务，它们的 ctx 里没有任务键，日志因此不带——同一段扫描器代码，
 // 带不带只由跑在谁的 ctx 上决定。
 func TestUnattributedLibraryScanLogsCarryNoTaskKey(t *testing.T) {

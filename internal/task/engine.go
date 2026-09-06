@@ -236,9 +236,12 @@ func (e *Engine) capabilitiesLocked(run Run) Capabilities {
 
 // snapshotLocked 把一条运行装成一帧：运行行、控制能力与侧数据。调用方持锁。
 //
-// 侧数据每次现取而不是在引擎里存一份镜像：它的事实来源是那四张侧表，而**累加**类指标的
-// 累加发生在落盘侧——在引擎里再累一遍，两份数只要错开一次就再也对不回去。
-// 取的代价由投递水位兜住：逐条目进度每 200ms 才出去一帧。
+// 侧数据每次现取而不是在引擎里存一份镜像：它的事实来源是那几张侧表，而**累加**类指标的累加
+// 发生在落盘侧——在引擎里再累一遍，两份数只要错开一次就再也对不回去。
+//
+// 代价说清楚：**这是在临界区内同步查库**。逐条目进度那一路由投递水位兜着（每 200ms 一帧），
+// 控制动作与**终态**那一路不受水位约束，但它们本来就稀疏。落盘端口若压着任务 API，
+// 攒批与缓存归适配器，不得靠在这里存一份镜像换掉——那等于把两份数的风险换回来。
 func (e *Engine) snapshotLocked(run Run) Snapshot {
 	snapshot := Snapshot{Run: cloneRun(run), Capabilities: e.capabilitiesLocked(run)}
 	side, err := e.store.LoadRunSideData(context.Background(), []int64{run.ID})

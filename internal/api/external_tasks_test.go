@@ -130,7 +130,7 @@ func (r *externalRig) plan(t *testing.T, sessionID string) external.TransferPlan
 
 const transferItemCode = "task.msg.transfer_external_library.transferring"
 
-// TestExternalTransferProgressObeysEngineWaterLevelOnly 是本票的核心断言：这条路径上的投递
+// TestExternalTransferProgressObeysEngineWaterLevelOnly 的核心断言：这条路径上的投递
 // 节奏只由引擎水位决定，任务体里没有第二层节流。
 //
 // 两个时钟跑同一段传输：不动的时钟只放行首帧（其余帧展示态一字不差，该被吞掉），每读一次就跨过

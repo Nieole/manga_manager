@@ -6,7 +6,7 @@
 
 **Blocked by:** 04, 05, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 这一票是整批的接线点
 
@@ -33,12 +33,12 @@
 
 ## 验收
 
-- [ ] 运行落进新表；旧 `tasks` 表不再被写入，也未被删除
-- [ ] 重试产生新一次运行，上一次的记录仍在，有一条用例守着
-- [ ] 对外 JSON 形状未变；前端未改动即可正常显示
-- [ ] 日志带上运行标识，与任务键走同一个 handler
-- [ ] 任务身份按四要素懒建，重复发起不会建出第二条身份
-- [ ] 内存表的去留有明确结论并写进包 doc；不存在两处真相
-- [ ] 既有的终态、文案码、筛选、定序、准入用例全部继续绿
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] 运行落进新表；旧 `tasks` 表不再被写入，也未被删除
+- [x] 重试产生新一次运行，上一次的记录仍在，有一条用例守着
+- [x] 对外 JSON 形状未变；前端未改动即可正常显示
+- [x] 日志带上运行标识，与任务键走同一个 handler
+- [x] 任务身份按四要素懒建，重复发起不会建出第二条身份
+- [x] 内存表的去留有明确结论并写进包 doc；不存在两处真相
+- [x] 既有的终态、文案码、筛选、定序、准入用例全部继续绿
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过

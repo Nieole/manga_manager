@@ -1,6 +1,6 @@
 // 任务引擎对外的**唯一启动入口**：调用方提交一份**身份**、一份任务声明（TaskSpec）与一个任务体，
 // 准入、上下文与**运行时句柄**、后台 goroutine、四条终态分支全部由 `internal/task` 的领域引擎承担。
-// 任务体只做两件事——干活，以及经交给它的**任务句柄**（taskrun.Handle）上报；它不接触**任务键**、
+// 任务体只做两件事——干活，以及经交给它的**运行句柄**（taskrun.Handle）上报；它不接触**任务键**、
 // 不自己判断**终态**、不自己起 goroutine。
 //
 // 本文件不含状态：翻译完就把整份声明交给领域引擎，准入的判据在数据库那两条部分唯一索引上。
@@ -87,7 +87,7 @@ type TaskSpec struct {
 	// Key 是这个任务的**任务键**：日志、URL 与六个控制端点都按它寻址，也随运行一起落盘。
 	// 它由启动点自己拼，与身份的四项**不互相推导**——身份不从它反解，它也不由身份生成。
 	//
-	// 它是**过渡期**的寻址方式：票 15 把控制端点改成按对象（运行、任务）寻址之后整块消失。
+	// 它是**过渡期**的寻址方式：控制端点改成按对象（运行、任务）寻址之后整块消失。
 	Key string
 
 	// StartCode 与 StartParams 是起始文案的 i18n 码与占位参数。消息词汇只有 i18n 码一种。
@@ -163,8 +163,8 @@ func (e *taskEngine) Run(identity TaskIdentity, spec TaskSpec, fn func(ctx conte
 
 	runSpec := task.RunSpec{
 		Identity: identity.domain(),
-		// 本票的 17 个启动点都是有人（或某个前台动作）当场叫起来的。定时、监听与串联那几种
-		// **发起方**要等票 12 把自动发起的工作也纳进来，那时才有第二个取值。
+		// 今天这 17 个启动点都是有人（或某个前台动作）当场叫起来的。定时、监听与串联那几种
+		// **发起方**要等定时守护扫描、watcher 派生扫描与串联的工作也建运行，那时才有第二个取值。
 		Trigger:      task.TriggerManual,
 		Key:          spec.Key,
 		ScopeName:    strings.TrimSpace(spec.ScopeName),
@@ -188,7 +188,7 @@ func (e *taskEngine) Run(identity TaskIdentity, spec TaskSpec, fn func(ctx conte
 		return task.Result{Code: result.Code, Params: result.Params}, err
 	})
 	// 已有活动运行与已有排队运行在本层是同一个答案：调用方要知道的只是「这件事已经在跑了」。
-	// 排队本票开不出来（槽位不设上限），但准入哨兵两条都翻，免得票 11 放开槽位时这里静默变成 500。
+	// 今天排队开不出来（槽位不设上限），但准入哨兵两条都翻：将来放开槽位时这里不会静默变成 500。
 	if errors.Is(err, task.ErrRunAlreadyActive) || errors.Is(err, task.ErrRunAlreadyQueued) {
 		return errTaskAlreadyRunning
 	}

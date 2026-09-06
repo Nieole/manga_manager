@@ -191,10 +191,10 @@ func enrichTaskProgress(task *TaskStatus) {
 		}
 		task.Percent = &percent
 	}
-	// **中断**任务不发速率：这道闸门是票 01 的对象，本票原样留着。它当年立起来的理由——
-	// 中断那一笔 UPDATE 把 finished_at 与 updated_at 一起盖成重启时刻，分母里因此整段停机
-	// 时长都算成了在干活——在新模型里已经不成立（收尾时刻取的是那行原有的心跳），
-	// 但拆掉它是一次用户可见的行为变化，归票 01。
+	// **中断**任务不发速率。它当年立起来的理由——中断那一笔 UPDATE 把 finished_at 与
+	// updated_at 一起盖成重启时刻，分母里因此整段停机时长都算成了在干活——在新模型里
+	// 已经不成立：收尾时刻取的是那行原有的心跳。**拆掉它是一次用户可见的行为变化**，
+	// 因此不随接线顺手做。
 	if task.Status == "interrupted" {
 		return
 	}

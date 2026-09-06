@@ -71,8 +71,9 @@ type Controller struct {
 	// 其余等待者复用同一结果，避免重复 CPU 转码与重复归档读取。
 	pageTranscodeGroup singleflight.Group
 
-	// taskEngine 收敛后台任务引擎的全部内存状态（任务表、运行时、序号、异步落盘集合与唤醒信号、重试注册表）。
-	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 访问这些状态（定义见 controller_tasks.go）。
+	// taskEngine 是任务子域的适配层：把启动入口、六个控制端点与**重启函数**注册表接到
+	// internal/task 的领域引擎与 internal/taskstore 的落盘上（它自己不留任务表，理由见它的符号 doc）。
+	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 走（端点定义见 controller_tasks.go）。
 	taskEngine *taskEngine
 
 	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
@@ -109,16 +110,16 @@ type TaskStatus struct {
 	ScopeID *int64 `json:"scope_id,omitempty"`
 	// Variant 是身份四要素的第四项（见 TaskIdentity），引擎用它把**重启函数**按（类型，变体）分发。
 	// 它与另外三项一样进 JSON：四要素分两处走的话，任何按快照判身份的地方都要再从别处补一项。
-	// 落盘与读回则走任务参数 `variant`——老表没有这一列。
+	// 四项一起是身份行上那条唯一约束的四列。
 	Variant   TaskVariant `json:"variant,omitempty"`
 	ScopeName string      `json:"scope_name,omitempty"`
 	Status    string      `json:"status"`
 	Message   string      `json:"message"`
 	// MessageCode/MessageParams 承载可本地化的任务消息：后端只发稳定 i18n 键 + 占位参数，由前端按当前
-	// 语言渲染，Go 里因此不出现面向用户的文案字面量。任务引擎写下的每一帧都走这条通道，Message 恒为空。
+	// 语言渲染，Go 里因此不出现面向用户的文案字面量。
 	//
-	// Message 只剩一个来源：服务重启把活动态任务转成**中断**时直接写进落盘记录的那句已渲染文案。
-	// 前端按 message_code 优先、Message 作缺键兜底，因此设了码就必须清空 Message。
+	// Message **没有任何来源**，恒为空：文案只有 i18n 码一种，连**中断**那句也是码。它留在契约里
+	// 只为前端那条「码缺失时的兜底」还在——一句写死在 Go 里的文案没有任何地方能翻译它。
 	MessageCode   string            `json:"message_code,omitempty"`
 	MessageParams map[string]string `json:"message_params,omitempty"`
 	Error         string            `json:"error,omitempty"`
@@ -137,9 +138,9 @@ type TaskStatus struct {
 	// （恢复、取消、收尾）时把那一段折进来。它只有一个用途：从速率与 ETA 的分母里扣掉——
 	// 暂停期间任务一条都没处理，把那段时长算成在干活会让两个数一路失真到终态。
 	//
-	// 它与任务参数里的 `paused_ms` 不是一回事：那个是**磁盘作业**为阅读让路而等掉的时长，
-	// 期间任务本身仍在跑。累计只属于这一轮任务——重试是另一次启动，分母从新的开始时刻重新计。
-	// 不进 JSON：前端不显示它，落盘与读回走任务参数 `control_paused_ms`。
+	// 它与重启入参里的 `paused_ms` 不是一回事：那个是**磁盘作业**为阅读让路而等掉的时长，
+	// 期间任务本身仍在跑。累计只属于这一次**运行**——重试是新一次运行，分母从它自己的开始时刻重新计。
+	// 不进 JSON：前端不显示它，它是运行行上的一列。
 	ControlPausedMillis int64             `json:"-"`
 	Phase               string            `json:"phase,omitempty"`
 	CurrentItem         string            `json:"current_item,omitempty"`

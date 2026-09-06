@@ -44,9 +44,9 @@ const (
 
 // taskSlotsUnlimited 关掉领域引擎自带的运行槽位。
 //
-// 槽位、队列与**合并**是票 11 的整体：上限、界面上的「槽位 2/2」与**排队中**的展示一起落地。
-// 本票只做接线，提前半截生效只会把前端不认识的 `queued` 状态推出去，而用户会看到第三个后台
-// 任务莫名其妙地不动。数值取一个大到不可能撞上的常数，而不是给领域开一个「不限」的特例。
+// 上限、界面上的「槽位 2/2」与**排队中**的展示是一整块，要一起落地：只放开这个常数而界面跟不上，
+// 推出去的是一个前端不认识的 `queued` 状态，用户看到的是第三个后台任务莫名其妙地不动。
+// 数值取一个大到不可能撞上的常数，而不是给领域开一个「不限」的特例。
 const taskSlotsUnlimited = math.MaxInt32
 
 // taskEngineConfig 是任务引擎的全部外部依赖，一次性在装配期交齐。
@@ -59,7 +59,7 @@ type taskEngineConfig struct {
 	Publish func(string)
 	// RunBackground 开一个受停机管辖的 goroutine，不得为 nil。
 	RunBackground func(func())
-	// DiskWork 是交给**任务句柄**的**磁盘作业**入口，留 nil 的后果见 taskrun.New。
+	// DiskWork 是交给**运行句柄**的**磁盘作业**入口，留 nil 的后果见 taskrun.New。
 	DiskWork *diskwork.Runner
 	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
 	Now func() time.Time
@@ -110,6 +110,11 @@ type taskEngine struct {
 }
 
 func newTaskEngine(cfg taskEngineConfig) *taskEngine {
+	// 领域引擎自己也拦这一道，但它收到的是本层那个转发闭包——非 nil，于是拦不住。
+	// 不在这里补一句，装配期漏掉后台能力就要等到第一个任务体启动时才炸。
+	if cfg.RunBackground == nil {
+		panic("api: taskEngineConfig.RunBackground 不得为 nil")
+	}
 	e := &taskEngine{
 		runStore:      cfg.Store,
 		runBackground: cfg.RunBackground,
@@ -210,7 +215,7 @@ func (e *taskEngine) resolveIdentities(ctx context.Context, taskIDs []int64) (ma
 // isRetryableTask 由注册表派生：注册了 relauncher 的（类型，**变体**）即可重试。
 // 「哪些可重试」不得另立第二份清单——两份清单一旦不同步，界面上的重试按钮会指向一个没人能重启的任务。
 func (e *taskEngine) isRetryableTask(taskType string, variant TaskVariant) bool {
-	_, ok := e.relaunchers[taskDispatchKey{Type: taskType, Variant: variant}]
+	_, ok := e.relauncherFor(taskType, variant)
 	return ok
 }
 
@@ -251,23 +256,26 @@ func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot
 	return items, nil
 }
 
-// latestRunByKey 取这个**任务键**最近的那一次运行。
+// latestRunFilterFor 是「这个**任务键**最近的那一次运行」的谓词。
 //
 // 「最近」判的是序号而不是时间列：序号由引擎在临界区里单调发放，而每一次会被用户看见的变化都取一个，
-// 因此同一个键上活着的那一条恒排在它自己的历史之前。查不到即 errTaskNotFound。
-func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Snapshot, error) {
-	snapshots, err := e.engine.ListSnapshots(ctx, task.RunFilter{
-		Key:   key,
-		Order: task.OrderSequenceDesc,
-		Limit: 1,
-	})
+// 因此同一个键上活着的那一条恒排在它自己的历史之前。
+func latestRunFilterFor(key string) task.RunFilter {
+	return task.RunFilter{Key: key, Order: task.OrderSequenceDesc, Limit: 1}
+}
+
+// latestRunByKey 取这个任务键最近的那一次运行；查不到即 errTaskNotFound。
+//
+// 只取运行行，不装快照：控制动作要的只是一个运行 id，而装快照要连带把四张侧表读一遍。
+func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Run, error) {
+	runs, err := e.runStore.ListRuns(ctx, latestRunFilterFor(key))
 	if err != nil {
-		return task.Snapshot{}, err
+		return task.Run{}, err
 	}
-	if len(snapshots) == 0 {
-		return task.Snapshot{}, errTaskNotFound
+	if len(runs) == 0 {
+		return task.Run{}, errTaskNotFound
 	}
-	return snapshots[0], nil
+	return runs[0], nil
 }
 
 // snapshotForRetry 取回任务快照供重试：按**任务键**取它最近的那一次运行。
@@ -275,15 +283,18 @@ func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Snaps
 // 旧引擎在这里要先查内存表再退回查库，因为内存表是有上限的缓存、重启后更是空的，而**中断**任务
 // 恰恰只在库里。现在只有库一个来源，这条分岔随之消失。
 func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (TaskStatus, error) {
-	snapshot, err := e.latestRunByKey(ctx, key)
+	snapshots, err := e.engine.ListSnapshots(ctx, latestRunFilterFor(key))
 	if err != nil {
 		return TaskStatus{}, err
 	}
-	identities, err := e.resolveIdentities(ctx, []int64{snapshot.Run.TaskID})
+	if len(snapshots) == 0 {
+		return TaskStatus{}, errTaskNotFound
+	}
+	items, err := e.statusesFrom(ctx, snapshots)
 	if err != nil {
 		return TaskStatus{}, err
 	}
-	return e.taskStatusFrom(snapshot, identities[snapshot.Run.TaskID]), nil
+	return items[0], nil
 }
 
 // latestTaskByTypes 返回给定类型中最近活动的那一次运行；无匹配返回 nil。
@@ -345,11 +356,11 @@ func (e *taskEngine) cancel(key string) error {
 // 「这次运行还能不能接受这个动作」一律由领域裁决，本层不预判：预判等于把状态机抄第二遍，
 // 而两份判据只要错开一次，界面上按钮的可用性就与按下去的结果对不上。
 func (e *taskEngine) control(key string, action func(int64) error) error {
-	snapshot, err := e.latestRunByKey(context.Background(), key)
+	run, err := e.latestRunByKey(context.Background(), key)
 	if err != nil {
 		return err
 	}
-	return taskControlError(action(snapshot.Run.ID))
+	return taskControlError(action(run.ID))
 }
 
 // taskControlError 把领域的控制哨兵翻成本层的哨兵。

@@ -6,6 +6,7 @@ package task
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -325,7 +326,7 @@ func (s *memStore) matchesFilterLocked(run Run, filter RunFilter) bool {
 			return false
 		}
 	}
-	if len(filter.Statuses) > 0 && !containsStatus(filter.Statuses, run.Status) {
+	if len(filter.Statuses) > 0 && !slices.Contains(filter.Statuses, run.Status) {
 		return false
 	}
 	return s.matchesIdentityLocked(run.TaskID, filter)
@@ -339,7 +340,7 @@ func (s *memStore) matchesIdentityLocked(taskID int64, filter RunFilter) bool {
 		if owner.ID != taskID {
 			continue
 		}
-		if len(filter.Types) > 0 && !containsType(filter.Types, id.Type) {
+		if len(filter.Types) > 0 && !slices.Contains(filter.Types, id.Type) {
 			return false
 		}
 		if filter.Scope != "" && id.Scope != filter.Scope {
@@ -349,24 +350,6 @@ func (s *memStore) matchesIdentityLocked(taskID int64, filter RunFilter) bool {
 			return false
 		}
 		return true
-	}
-	return false
-}
-
-func containsStatus(statuses []RunStatus, want RunStatus) bool {
-	for _, status := range statuses {
-		if status == want {
-			return true
-		}
-	}
-	return false
-}
-
-func containsType(types []Type, want Type) bool {
-	for _, taskType := range types {
-		if taskType == want {
-			return true
-		}
 	}
 	return false
 }

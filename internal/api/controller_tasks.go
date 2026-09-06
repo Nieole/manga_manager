@@ -2,8 +2,8 @@
 // 任务重试注册表（taskType -> 重启函数），以及任务面板上报的 IO 实况（帧指标与任务参数两条通道）
 // 与有效并发数推导。
 //
-// 引擎自身的可变状态与状态机在 task_engine.go，TaskStatus 的纯转换函数在 task_model.go；
-// 本文件只经 c.taskEngine 的方法操作任务表，出现 taskEngine.mutex 即说明状态逻辑漏到了这里。
+// 引擎的适配层在 task_engine.go（状态机与落盘在 internal/task 与 internal/taskstore），
+// 纯转换函数在 task_model.go；本文件只经 c.taskEngine 的方法操作运行，不碰它的字段。
 
 package api
 
@@ -248,12 +248,9 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
-	filters := taskFiltersFromQuery(r)
-	// 清理不接受 q / limit：这两个只用于列表展示，用它们做删除条件会让「删了什么」不可预期。
-	filters.Query = ""
-	filters.Limit = 0
-
-	removed, err := c.taskEngine.clear(r.Context(), filters)
+	// 关键词与条数由引擎自己丢掉（它们只用于列表展示，用来做删除条件会让「删了什么」不可预期）：
+	// 判据只留一处，别的调用方绕不过去。
+	removed, err := c.taskEngine.clear(r.Context(), taskFiltersFromQuery(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to clear tasks")
 		return
