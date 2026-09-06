@@ -125,6 +125,19 @@ type Config struct {
 		// 两个库在两块盘上本可以并行——但一个数字更好解释、界面上也画得出。代价是多盘用户
 		// 会看到一条运行在排队，而它要等的那块盘是空的。
 		RunSlots int `yaml:"run_slots" json:"run_slots"`
+
+		// 分层保留的三个阈值。三层各自独立，**取负数表示这一层不清理**（永久保留）；
+		// 0（未设置）归一化为默认值，因此一份全新的配置文件拿到的是默认策略而不是「不清理」。
+		//
+		// 它们会**删数据**：调小之后，下一次清理就把落在阈值之外的历史删掉，删掉回不来。
+		// 活动态与排队中的运行不受这三个数影响——那不是策略而是前提，见 task.RetentionPolicy。
+
+		// RetainRunsPerTask 是每个任务保留的最近**终态**运行条数。
+		RetainRunsPerTask int `yaml:"retain_runs_per_task" json:"retain_runs_per_task"`
+		// RetainTerminalRunDays 是终态运行的最长保留天数，与 RetainRunsPerTask 取先到者。
+		RetainTerminalRunDays int `yaml:"retain_terminal_run_days" json:"retain_terminal_run_days"`
+		// RetainSampleDays 是**采样**点的最长保留天数。它比运行本身短：运行还在，曲线没了。
+		RetainSampleDays int `yaml:"retain_sample_days" json:"retain_sample_days"`
 	} `yaml:"tasks" json:"tasks"`
 	Ollama struct {
 		Endpoint string `yaml:"endpoint" json:"endpoint"`
@@ -175,7 +188,18 @@ const (
 	// 这一个是「配置文件里没写」时的默认，两者错开会让默认部署与默认引擎给出两个不同的分母。
 	// 本包不能引用它——config 位于 task 的依赖下游，反向引用会成环。
 	// `TestConfigDefaultSlotsMatchTheEngineDefault` 守着这条相等。
-	DefaultRunSlots        = 2
+	DefaultRunSlots = 2
+
+	// DefaultRetain* 是**分层保留**三个阈值的默认值：每任务留最近 20 次终态运行、
+	// 终态运行 ≤90 天（两者取先到者）、**采样** ≤7 天。
+	//
+	// 它们必须与 `internal/task` 的 DefaultRetention 相等，理由同 DefaultRunSlots：
+	// 那一个是「装配方什么都没说」时的兜底，这一个是「配置文件里没写」时的默认。
+	// `TestConfigDefaultRetentionMatchesTheEngineDefault` 守着这条相等。
+	DefaultRetainRunsPerTask     = 20
+	DefaultRetainTerminalRunDays = 90
+	DefaultRetainSampleDays      = 7
+
 	KOReaderPathMatchDepth = 2
 	LogLevelDebug          = "debug"
 	LogLevelInfo           = "info"
@@ -430,6 +454,17 @@ func NormalizeConfig(cfg *Config) {
 	// 小于 1 的上限不是「不限」而是「一条都不许跑」，照它办事等于把整台机器的后台工作卡死。
 	if cfg.Tasks.RunSlots < 1 {
 		cfg.Tasks.RunSlots = DefaultRunSlots
+	}
+	// 保留阈值只把 0（未设置）补成默认值：负数是「这一层不清理」，是用户显式选的永久保留，
+	// 补成默认等于替他把历史删了。
+	if cfg.Tasks.RetainRunsPerTask == 0 {
+		cfg.Tasks.RetainRunsPerTask = DefaultRetainRunsPerTask
+	}
+	if cfg.Tasks.RetainTerminalRunDays == 0 {
+		cfg.Tasks.RetainTerminalRunDays = DefaultRetainTerminalRunDays
+	}
+	if cfg.Tasks.RetainSampleDays == 0 {
+		cfg.Tasks.RetainSampleDays = DefaultRetainSampleDays
 	}
 	normalizeLLMConfig(cfg)
 	basePath := strings.TrimSpace(cfg.KOReader.BasePath)

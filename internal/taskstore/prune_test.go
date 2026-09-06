@@ -208,24 +208,50 @@ func TestPruneSampleAgeLeavesTheRunInPlace(t *testing.T) {
 	}
 }
 
-// 阈值为零表示这一层不裁剪，别把它当成「一条都不留」。
-func TestPruneWithZeroPolicyRemovesNothing(t *testing.T) {
-	ctx := context.Background()
-	store := newStoreForTest(t)
-	taskID := ensureTask(t, store, 1)
-	for i := 1; i <= 3; i++ {
-		finishRun(t, store, createRun(t, store, taskID, task.StatusRunning, int64(i)),
-			task.StatusCompleted, time.Now().Add(-365*24*time.Hour))
+// 零与负数的阈值都表示这一层不裁剪，别把它当成「一条都不留」。
+//
+// 负数那几档是这里最要紧的一格：照面值算的话，「留 -1 条」让排名谓词选中全部终态运行，
+// 负的时长把截止时刻推到未来，同样一条不剩——而设置里那三个数填得进负值。
+func TestPruneWithNonPositivePolicyRemovesNothing(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy task.RetentionPolicy
+	}{
+		{name: "三个阈值全为零", policy: task.RetentionPolicy{}},
+		{name: "条数为负", policy: task.RetentionPolicy{RunsPerTask: -1}},
+		{name: "终态时长为负", policy: task.RetentionPolicy{TerminalAge: -24 * time.Hour}},
+		{name: "采样时长为负", policy: task.RetentionPolicy{SampleAge: -24 * time.Hour}},
 	}
 
-	result, err := store.PruneRuns(ctx, task.RetentionPolicy{})
-	if err != nil {
-		t.Fatalf("prune failed: %v", err)
-	}
-	if result != (task.PruneResult{}) {
-		t.Fatalf("result=%+v want zero", result)
-	}
-	if got := countRows(t, store, tableRuns); got != 3 {
-		t.Fatalf("runs=%d want 3", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newStoreForTest(t)
+			taskID := ensureTask(t, store, 1)
+			ancient := time.Now().Add(-365 * 24 * time.Hour)
+			for i := 1; i <= 3; i++ {
+				run := finishRun(t, store, createRun(t, store, taskID, task.StatusRunning, int64(i)),
+					task.StatusCompleted, ancient)
+				if err := store.AppendRunSamples(ctx, run.ID, []task.Sample{
+					{At: ancient, Current: 1, RatePerMinute: 60},
+				}); err != nil {
+					t.Fatalf("append samples failed: %v", err)
+				}
+			}
+
+			result, err := store.PruneRuns(ctx, tc.policy)
+			if err != nil {
+				t.Fatalf("prune failed: %v", err)
+			}
+			if result != (task.PruneResult{}) {
+				t.Fatalf("result=%+v want zero", result)
+			}
+			if got := countRows(t, store, tableRuns); got != 3 {
+				t.Fatalf("runs=%d want 3", got)
+			}
+			if got := countRows(t, store, tableRunSamples); got != 3 {
+				t.Fatalf("samples=%d want 3", got)
+			}
+		})
 	}
 }

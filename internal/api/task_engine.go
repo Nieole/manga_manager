@@ -448,6 +448,14 @@ func (e *taskEngine) clear(ctx context.Context, filters taskFilters) (int64, err
 	return e.runStore.DeleteRuns(ctx, runFilterFrom(filters, task.OrderSequenceDesc))
 }
 
+// pruneHistory 按**分层保留**裁剪历史，返回各层清掉的行数。
+//
+// 它经领域引擎而不是直接问落盘端口：「活动态与排队中的运行永不被带走」是领域的不变量，
+// 而清理运行不清掉自己这一条，靠的正是裁剪发生在它自己那条运行还活着的时候（见 task.Engine.PruneHistory）。
+func (e *taskEngine) pruneHistory(ctx context.Context, policy task.RetentionPolicy) (task.PruneResult, error) {
+	return e.engine.PruneHistory(ctx, policy)
+}
+
 // pauseRun / resumeRun / cancelRun 是三个控制动作，**按运行 id 寻址**。
 //
 // 不按**任务键**：队列出现之后，同一个键此刻可以有两条仍会变化的运行（一条在跑、一条排队），

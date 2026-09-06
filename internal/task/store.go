@@ -93,6 +93,10 @@ type TaskFilter struct {
 
 // RetentionPolicy 是分层保留的三个阈值。**活动态**与**排队中**的运行永不被裁剪带走，
 // 这条不是策略而是前提，因此不在这里配。
+//
+// 三个阈值各自独立：**取零或负数表示这一层不裁剪**。负数必须与零同义而不是「按面值算」——
+// 一个负的条数阈值照面值算是「留 -1 条」，一个负的时长阈值把截止时刻推到未来，
+// 两者都会选中全部**终态**运行。设置里那三个数是可以填负的，判据只能在这里就定死。
 type RetentionPolicy struct {
 	// RunsPerTask 是每个任务保留的最近**终态**运行条数。
 	RunsPerTask int
@@ -182,6 +186,6 @@ type Store interface {
 	DeleteRuns(ctx context.Context, filter RunFilter) (int64, error)
 
 	// PruneRuns 按分层保留裁剪历史，返回各层清掉的行数。
-	// **活动态与排队中的运行永不被选中**，实现方不得让它可配。
+	// **活动态与排队中的运行永不被选中**，实现方不得让它可配；零或负数的阈值一律是「这一层不裁剪」。
 	PruneRuns(ctx context.Context, policy RetentionPolicy) (PruneResult, error)
 }

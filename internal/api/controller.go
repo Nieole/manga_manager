@@ -352,6 +352,7 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	c.runBackground(c.startDaemon)
 	c.runBackground(c.startPageCacheJanitor)
 	c.runBackground(c.startSessionJanitor)
+	c.runBackground(c.startRunHistoryJanitor)
 
 	// 初始化文件系统监控。派生出去的扫描与清理各建一条**发起方**为「监听」的运行：
 	// 监听器自己不碰扫描器，它只知道「这个库该扫了」。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 12
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 为什么这不是优化
 
@@ -37,11 +37,11 @@
 
 ## 验收
 
-- [ ] 三层保留按阈值执行，SQL 侧的选中集合用例见票 06
-- [ ] 活动态与排队中的运行永不被清
-- [ ] 清理是一条可见运行，每天一次，发起方串联
-- [ ] 清理不清掉自己正在跑的那一条
-- [ ] 三个阈值可配，改配置下一次清理即生效
-- [ ] 清理运行报出清了多少（运行数、事件数、采样数）
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `cd web && npm run test && npm run lint && npm run build` 全绿
+- [x] 三层保留按阈值执行，SQL 侧的选中集合用例见票 06
+- [x] 活动态与排队中的运行永不被清
+- [x] 清理是一条可见运行，每天一次，发起方串联
+- [x] 清理不清掉自己正在跑的那一条
+- [x] 三个阈值可配，改配置下一次清理即生效
+- [x] 清理运行报出清了多少（运行数、事件数、采样数）
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `cd web && npm run test && npm run lint && npm run build` 全绿

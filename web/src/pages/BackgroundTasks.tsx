@@ -21,6 +21,7 @@ const TASK_TYPE_OPTIONS = [
   'rebuild_index',
   'rebuild_thumbnails',
   'cleanup_thumbnails',
+  'cleanup_run_history',
   'rebuild_file_identities',
   'scrape',
   'ai_grouping',

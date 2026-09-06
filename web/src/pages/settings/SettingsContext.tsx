@@ -24,7 +24,12 @@ export interface Config {
     archive_pool_size: number;
     max_ai_concurrency: number;
   };
-  tasks: { run_slots: number };
+  tasks: {
+    run_slots: number;
+    retain_runs_per_task: number;
+    retain_terminal_run_days: number;
+    retain_sample_days: number;
+  };
   llm: {
     provider: string;
     api_mode: string;

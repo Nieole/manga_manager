@@ -60,6 +60,11 @@ scanner:
     max_ai_concurrency: 3
 tasks:
     run_slots: 2
+    # 运行历史的分层保留：每任务留最近几次运行、已结束的运行留几天、吞吐采样留几天。
+    # 取 -1 表示这一层永久保留 / -1 keeps that tier forever
+    retain_runs_per_task: 20
+    retain_terminal_run_days: 90
+    retain_sample_days: 7
 ollama:
     endpoint: ""
     model: ""

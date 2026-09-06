@@ -16,7 +16,9 @@ import (
 // 最后单独清**采样**——采样比运行留得短，因此运行还在、曲线没了。前两层删的是运行行本身，
 // 事件与采样随外键级联而去，因此调用方的连接必须开着 foreign_keys（Migrate 已拦过一道）。
 //
-// 阈值为零表示这一层不裁剪。策略里没有「要不要保护活动运行」这一项：那不是策略而是前提。
+// 阈值取零或负数表示这一层不裁剪：负数照面值算会让谓词选中全部终态运行（留 -1 条、
+// 截止时刻落在未来），而设置里那三个数填得进负值。策略里没有「要不要保护活动运行」这一项：
+// 那不是策略而是前提。
 func (s *Store) PruneRuns(ctx context.Context, policy task.RetentionPolicy) (task.PruneResult, error) {
 	notLive := `status NOT IN (` + quotedStatuses(task.LiveStatuses()) + `)`
 	// 排名按序号倒序：序号是唯一的排序主键，时间列不是。
