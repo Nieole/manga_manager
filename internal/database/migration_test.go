@@ -836,94 +836,103 @@ func TestMigrateClearsStaleFieldLockSnapshots(t *testing.T) {
 	}
 }
 
-// TestMigrateDropsLegacyTasksTableAndKeepsSchemaVersion 走一遍真实的升级路径：
-// 一个已经建起旧 tasks 表、user_version 停在当前值的存量库，升级后那张表必须消失。
+// TestMigrateDropsLegacyTasksTable 走一遍真实的升级路径：一个只有旧 tasks 表、
+// 任务与运行那几张表还没建起的存量库，升级后旧表必须消失、新表必须建起。
 //
-// 顺带钉住这次丢弃**不推 user_version**：那个版本号门控的是随库规模线性增长的全量回填
-// （系列首字母、统计、标签计数、来源、FTS 重建），为一句 DROP 推一版会让每个存量库白算一遍。
-func TestMigrateDropsLegacyTasksTableAndKeepsSchemaVersion(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy-tasks.db")
-	if err := Migrate(dbPath); err != nil {
-		t.Fatalf("首次 Migrate 失败: %v", err)
-	}
+// 两个起始版本各跑一遍，钉住这一句 DROP **不在 user_version 门控之内**——库版本已经是最新
+// （回填那道门关着）时它照样得执行。挪进那道门里不会有编译错误，只会让老库悄悄留着那张表。
+func TestMigrateDropsLegacyTasksTable(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		userVersion int
+	}{
+		{"回填那道门开着（老库版本落后）", 0},
+		{"回填那道门关着（库版本已是最新）", currentSchemaVersion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "legacy-tasks.db")
+			if err := Migrate(dbPath); err != nil {
+				t.Fatalf("首次 Migrate 失败: %v", err)
+			}
 
-	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	// 把库退回升级前的样子：旧任务表连同它的三条索引，外加一行历史记录。
-	if _, err := db.Exec(`
-		CREATE TABLE tasks (
-			key TEXT PRIMARY KEY,
-			type TEXT NOT NULL,
-			scope TEXT NOT NULL DEFAULT 'system',
-			scope_id INTEGER,
-			scope_name TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL,
-			message TEXT NOT NULL DEFAULT '',
-			error TEXT NOT NULL DEFAULT '',
-			current INTEGER NOT NULL DEFAULT 0,
-			total INTEGER NOT NULL DEFAULT 0,
-			can_cancel BOOLEAN NOT NULL DEFAULT FALSE,
-			retryable BOOLEAN NOT NULL DEFAULT FALSE,
-			params TEXT NOT NULL DEFAULT '',
-			started_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			finished_at DATETIME,
-			sequence INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE INDEX idx_tasks_updated_at ON tasks(updated_at);
-		CREATE INDEX idx_tasks_status ON tasks(status);
-		CREATE INDEX idx_tasks_scope ON tasks(scope, scope_id);
-		INSERT INTO tasks (key, type, scope, status, started_at, updated_at)
-		VALUES ('scan_library_1', 'scan_library', 'library', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-	`); err != nil {
-		t.Fatalf("重建旧任务表失败: %v", err)
-	}
-	var before int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&before); err != nil {
-		t.Fatalf("读 user_version: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
+			db, err := sql.Open("sqlite", sqliteDSN(dbPath))
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			// 把库退回升级前的样子：任务与运行那几张表还没建起，只有旧任务表、它的三条索引和一行历史记录。
+			if _, err := db.Exec(`
+				DROP TABLE IF EXISTS run_labels;
+				DROP TABLE IF EXISTS run_args;
+				DROP TABLE IF EXISTS run_limits;
+				DROP TABLE IF EXISTS run_metrics;
+				DROP TABLE IF EXISTS run_samples;
+				DROP TABLE IF EXISTS run_events;
+				DROP TABLE IF EXISTS runs;
+				DROP TABLE IF EXISTS task_identities;
+				CREATE TABLE tasks (
+					key TEXT PRIMARY KEY,
+					type TEXT NOT NULL,
+					scope TEXT NOT NULL DEFAULT 'system',
+					scope_id INTEGER,
+					scope_name TEXT NOT NULL DEFAULT '',
+					status TEXT NOT NULL,
+					message TEXT NOT NULL DEFAULT '',
+					error TEXT NOT NULL DEFAULT '',
+					current INTEGER NOT NULL DEFAULT 0,
+					total INTEGER NOT NULL DEFAULT 0,
+					can_cancel BOOLEAN NOT NULL DEFAULT FALSE,
+					retryable BOOLEAN NOT NULL DEFAULT FALSE,
+					params TEXT NOT NULL DEFAULT '',
+					started_at DATETIME NOT NULL,
+					updated_at DATETIME NOT NULL,
+					finished_at DATETIME,
+					sequence INTEGER NOT NULL DEFAULT 0
+				);
+				CREATE INDEX idx_tasks_updated_at ON tasks(updated_at);
+				CREATE INDEX idx_tasks_status ON tasks(status);
+				CREATE INDEX idx_tasks_scope ON tasks(scope, scope_id);
+				INSERT INTO tasks (key, type, scope, status, started_at, updated_at)
+				VALUES ('scan_library_1', 'scan_library', 'library', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+			`); err != nil {
+				t.Fatalf("重建旧任务表失败: %v", err)
+			}
+			if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, tc.userVersion)); err != nil {
+				t.Fatalf("退回 user_version: %v", err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
 
-	// 跑两次：这一句每次启动都会执行，必须幂等。
-	for i := 1; i <= 2; i++ {
-		if err := Migrate(dbPath); err != nil {
-			t.Fatalf("第 %d 次升级失败: %v", i, err)
-		}
-	}
+			// 跑两次：这一句每次启动都会执行，必须幂等。
+			for i := 1; i <= 2; i++ {
+				if err := Migrate(dbPath); err != nil {
+					t.Fatalf("第 %d 次升级失败: %v", i, err)
+				}
+			}
 
-	db, err = sql.Open("sqlite", sqliteDSN(dbPath))
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer db.Close()
+			db, err = sql.Open("sqlite", sqliteDSN(dbPath))
+			if err != nil {
+				t.Fatalf("reopen: %v", err)
+			}
+			defer db.Close()
 
-	var leftovers int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('tasks', 'idx_tasks_updated_at', 'idx_tasks_status', 'idx_tasks_scope')`,
-	).Scan(&leftovers); err != nil {
-		t.Fatalf("读 sqlite_master: %v", err)
-	}
-	if leftovers != 0 {
-		t.Errorf("旧任务表或它的索引还剩 %d 个对象在库里", leftovers)
-	}
+			var leftovers int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('tasks', 'idx_tasks_updated_at', 'idx_tasks_status', 'idx_tasks_scope')`,
+			).Scan(&leftovers); err != nil {
+				t.Fatalf("读 sqlite_master: %v", err)
+			}
+			if leftovers != 0 {
+				t.Errorf("旧任务表或它的索引还剩 %d 个对象在库里", leftovers)
+			}
 
-	// 新表一个都不能被牵连。
-	for _, table := range []string{"task_identities", "runs", "run_events", "run_samples", "run_metrics", "run_limits", "run_args", "run_labels"} {
-		var name string
-		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
-			t.Fatalf("表 %s 在丢弃旧表之后不见了: %v", table, err)
-		}
-	}
-
-	var after int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&after); err != nil {
-		t.Fatalf("读回 user_version: %v", err)
-	}
-	if after != before {
-		t.Errorf("user_version 从 %d 变成了 %d：丢弃旧表不该触发全量回填", before, after)
+			// 新表一个都不能少：DROP 与建表在同一次迁移里，顺序错了这里当场变红。
+			for _, table := range []string{"task_identities", "runs", "run_events", "run_samples", "run_metrics", "run_limits", "run_args", "run_labels"} {
+				var name string
+				if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
+					t.Fatalf("表 %s 在丢弃旧表之后不见了: %v", table, err)
+				}
+			}
+		})
 	}
 }

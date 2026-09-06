@@ -368,7 +368,8 @@
   C 另立一个「结构变更代」的版本号与回填代分开，代价是本票为一句 DROP 引入一套新机制
 - **不处理会怎样：** 已按 A 落地，验收那一条按「表删掉了、版本号不推」记的账。
   **A 是可逆的那一侧**：将来真有需要回填的变更时推一版即可；B 一旦发布就在用户库上跑过了。
-  `TestMigrateDropsLegacyTasksTableAndKeepsSchemaVersion` 把「不推」钉住。
+  `TestMigrateDropsLegacyTasksTable` 拿两个起始版本各跑一遍，钉住的是**这一句不在门控之内**
+  ——「常量本身没被推」是一次性的事实，没有用例守得住，只有 code review 拦得下。
 - **状态：** open
 
 ## D32 · 票 08 · 健康报告的「最近一次任务键」改从运行表取
@@ -389,9 +390,9 @@
 - **问：** 删掉 `UpsertTask` / `ListTasks` / `DeleteTasks` / `MaxTaskSequence` 与 `TaskRecord`
   之后，`internal/database/tasks.go` 只剩一个 `TaskFilters`——而它早已不是数据访问层的东西，
   是六个任务端点共用的查询串形状，唯一的去处是 `runFilterFrom`。
-- **选项：** A 搬进 `internal/api` 作 `taskFilters`，`tasks.go` 整份删除（已落地，调用点 12 处，
-  全是机械替换）｜ B 留在 `internal/database`，代价是那个包里留一个自己一行代码都不用的 HTTP DTO，
-  而文件头会开始说谎
+- **选项：** A 搬进 `internal/api` 作 `taskFilters`，`tasks.go` 整份删除（已落地，调用点全在
+  `internal/api` 内，全是机械替换）｜ B 留在 `internal/database`，代价是那个包里留一个自己一行
+  代码都不用的 HTTP DTO，而文件头会开始说谎
 - **不处理会怎样：** 已按 A 落地。它与票 09 的 `TaskStatus` → `RunStatus` 那批改名不冲突——
   换的是所在的包，不是概念名；票 09 若要连它一起改名，改的是同一个符号的一处声明。
 - **状态：** open

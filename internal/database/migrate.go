@@ -318,9 +318,7 @@ func Migrate(dbPath string) error {
 	// 而那段代码只跑一次却要连测试一起维护。丢掉的只是「上次成功是什么时候」——资料库的扫描模式
 	// 与间隔不在这张表里，第一个守护 tick 就会把身份重新建出来。
 	//
-	// 不挂在 user_version 门控后面、也不推那个版本号：这一句幂等，而那个版本号门控的是随库规模
-	// 线性增长的全量回填，为一句 DROP 推一版会让每个存量库在升级后的首启白算一遍。
-	// 索引随表一起消失，不必单独 DROP。
+	// 幂等，因此不经 user_version 门控、也不推它（判据见 currentSchemaVersion）。索引随表消失。
 	if _, err := db.Exec(`DROP TABLE IF EXISTS tasks`); err != nil {
 		return err
 	}

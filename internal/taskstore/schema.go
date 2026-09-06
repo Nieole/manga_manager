@@ -173,6 +173,9 @@ var indexStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_run_events_run_kind ON ` + tableRunEvents + `(run_id, kind, id)`,
 	`CREATE INDEX IF NOT EXISTS idx_run_samples_run ON ` + tableRunSamples + `(run_id, id)`,
 	`CREATE INDEX IF NOT EXISTS idx_run_samples_at ON ` + tableRunSamples + `(at)`,
+	// 身份表的唯一约束以 type 打头，按作用域找身份用不上它；LastRunKeysForScopes 正是这么找的，
+	// 而它服务的是一条一次问上千个作用域的路径。
+	`CREATE INDEX IF NOT EXISTS idx_task_identities_scope ON ` + tableTasks + `(scope, scope_id)`,
 }
 
 // Migrate 建起任务与运行的表与索引。语句幂等，每次启动重放即可。

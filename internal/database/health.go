@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"manga-manager/internal/task"
 	"manga-manager/internal/taskstore"
 )
 
@@ -103,23 +104,28 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 	return report, nil
 }
 
+// scopeRefsForIssue 列出一条健康问题可能挂上任务键的作用域，**系列在前**：
+// 一条问题若同时落在系列与资料库上，用户想看的是那个系列自己的那次运行。
+func scopeRefsForIssue(issue HealthIssue) []taskstore.ScopeRef {
+	refs := make([]taskstore.ScopeRef, 0, 2)
+	if issue.SeriesID != nil {
+		refs = append(refs, taskstore.ScopeRef{Scope: task.ScopeSeries, ScopeID: *issue.SeriesID})
+	}
+	if issue.LibraryID != 0 {
+		refs = append(refs, taskstore.ScopeRef{Scope: task.ScopeLibrary, ScopeID: issue.LibraryID})
+	}
+	return refs
+}
+
 // attachLastTaskKeys 给每条健康问题挂上它所在作用域最近那次运行的**任务键**，界面据此跳到日志。
 //
-// 作用域先去重再一次查完，而不是每条问题单独发一条：健康报告一次最多带回上千条问题，
-// 逐条单查会打出上千条单行 SQL——光是往返开销就让 /api/health/report 变成秒级请求。
-//
-// 系列优先于资料库：一条问题若同时落在两者上，用户想看的是那个系列自己的那次运行。
+// 作用域先去重再整批问一次，而不是每条问题单独发一条查询：一份报告能带回上千条问题，
+// 而它们绝大多数指向同一批资料库。
 func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue) error {
-	if len(issues) == 0 {
-		return nil
-	}
 	wanted := make(map[taskstore.ScopeRef]struct{})
 	for _, issue := range issues {
-		if issue.SeriesID != nil {
-			wanted[taskstore.ScopeRef{Scope: "series", ScopeID: *issue.SeriesID}] = struct{}{}
-		}
-		if issue.LibraryID != 0 {
-			wanted[taskstore.ScopeRef{Scope: "library", ScopeID: issue.LibraryID}] = struct{}{}
+		for _, ref := range scopeRefsForIssue(issue) {
+			wanted[ref] = struct{}{}
 		}
 	}
 	if len(wanted) == 0 {
@@ -136,15 +142,10 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 
 	for i := range issues {
 		issue := &issues[i]
-		if issue.SeriesID != nil {
-			if k, ok := latest[taskstore.ScopeRef{Scope: "series", ScopeID: *issue.SeriesID}]; ok {
-				issue.LastTaskKey = k
-				continue
-			}
-		}
-		if issue.LibraryID != 0 {
-			if k, ok := latest[taskstore.ScopeRef{Scope: "library", ScopeID: issue.LibraryID}]; ok {
-				issue.LastTaskKey = k
+		for _, ref := range scopeRefsForIssue(*issue) {
+			if key, ok := latest[ref]; ok {
+				issue.LastTaskKey = key
+				break
 			}
 		}
 	}
