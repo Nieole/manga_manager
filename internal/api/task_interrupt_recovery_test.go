@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
 )
 
@@ -40,7 +41,17 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)
 		t.Fatalf("暂停失败: %v", err)
 	}
 
-	reloaded := restartController(t, controller, store, tempDir)
+	tasks, _ := restartAndListInterrupted(t, controller, store, tempDir)
+	return tasks[0]
+}
+
+// restartAndListInterrupted 另起一个 Controller、把上一轮留下的活动运行转成**中断**，再按前端的
+// 真实请求把任务列表读回来。解析结果与原始载荷一起交出：某个字段在不在，只有载荷答得出。
+//
+// 断言库里此刻只剩那一条运行：多出来的那条会让调用方的下标断言落在别的运行上，而它们都只看 [0]。
+func restartAndListInterrupted(t *testing.T, prev *Controller, store database.Store, tempDir string) ([]RunStatus, string) {
+	t.Helper()
+	reloaded := restartController(t, prev, store, tempDir)
 	reloaded.taskEngine.markInterrupted(context.Background())
 
 	rec := httptest.NewRecorder()
@@ -48,14 +59,16 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("列任务返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
+	body := rec.Body.String()
+
 	var tasks []RunStatus
-	if err := json.Unmarshal(rec.Body.Bytes(), &tasks); err != nil {
+	if err := json.Unmarshal([]byte(body), &tasks); err != nil {
 		t.Fatalf("解析任务列表失败: %v", err)
 	}
 	if len(tasks) != 1 || tasks[0].Status != "interrupted" {
 		t.Fatalf("读回 %+v, want 一条 interrupted 运行", tasks)
 	}
-	return tasks[0]
+	return tasks, body
 }
 
 // lastActiveFrame 是一条扫描运行被按下暂停之前报出的最后一帧：进度、阶段、当前条目与累计指标。

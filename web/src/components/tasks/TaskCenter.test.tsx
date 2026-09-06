@@ -55,24 +55,23 @@ describe('任务中心的处理速率', () => {
     expect(screen.getByText('60/min')).toBeTruthy();
   });
 
+  // 一帧都没报过的运行后端算不出速率。夹具用它而不用某个状态：这一格的有无只跟着后端的
+  // 那个字段走，前端不得自己按状态判一遍——判据一旦与后端不同步，这一格就会多出或少掉一个数。
+  const neverReported = { key: 'scan_library_2', current: 0, percent: 0, rate_per_minute: undefined };
+
   it('后端没发速率就整格不显示，也不回落成 0/min', () => {
-    renderTasks([makeTask({ key: 'scan_library_2', status: 'interrupted', rate_per_minute: undefined })]);
+    renderTasks([makeTask(neverReported)]);
     expect(screen.queryByText('0/min')).toBeNull();
     expect(screen.queryAllByText(/\/min$/)).toHaveLength(0);
   });
 
-  // 中断的运行照样有速率：它的收尾时刻取的是断掉前那次心跳，分母还原得出来。
-  // 前端不得按状态自己判一遍——判据一旦与后端不同步，这一格就会凭空少掉。
   it('中断任务发了速率也照常显示', () => {
     renderTasks([makeTask({ key: 'scan_library_2', status: 'interrupted', rate_per_minute: 60 })]);
     expect(screen.getByText('60/min')).toBeTruthy();
   });
 
   it('同一屏里一个有速率一个没有，只显示有的那个', () => {
-    renderTasks([
-      makeTask({ rate_per_minute: 60 }),
-      makeTask({ key: 'scan_library_2', status: 'interrupted', rate_per_minute: undefined }),
-    ]);
+    renderTasks([makeTask({ rate_per_minute: 60 }), makeTask(neverReported)]);
     expect(screen.queryAllByText(/\/min$/)).toHaveLength(1);
     expect(screen.getByText('60/min')).toBeTruthy();
   });

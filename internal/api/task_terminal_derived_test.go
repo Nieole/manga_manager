@@ -1,21 +1,17 @@
 // 守**派生字段**跟得上刚写进任务表的那一帧：percent 由当帧计数算出，ETA 只属于**活动态**，
-// 速率只算给分母可信的那些状态、且分母里不含任务没在干活的那些时段。破了的表现是终态任务显示
-// 上一帧的陈值（`2 / 2` 配 `50.0%`）、一个已经停了的任务还挂着「预计剩余时间」、**中断**任务的
-// 速率被整段停机时长稀释，以及**暂停**过的任务被那段等人回来的时间稀释。
+// 速率的分母里不含任务没在干活的那些时段。破了的表现是终态任务显示上一帧的陈值（`2 / 2` 配
+// `50.0%`）、一个已经停了的任务还挂着「预计剩余时间」、**中断**任务的速率被整段停机时长稀释，
+// 以及**暂停**过的任务被那段等人回来的时间稀释。
 
 package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
 )
@@ -122,12 +118,11 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 	}
 }
 
-// TestInterruptedRunReportsRateFromLastHeartbeat 钉住停机一夜之后的那条**中断**记录带着真实
-// 的耗时与速率：分母是「最后一次心跳减开始时刻」，不是「重启时刻减开始时刻」。
+// TestInterruptedRunReportsRateFromLastHeartbeat 守**中断**运行的分母是「最后一次上报减开始
+// 时刻」，不是「重启时刻减开始时刻」——停机的那一段里任务一条都没处理。
 //
-// 这是唯一一种分母不由此刻、也不由引擎当场盖的结束时刻给出的状态——重启时的批量转写把结束时刻
-// 取成运行原有的心跳（见 task.Engine.MarkInterrupted），整段停机时长因此落在分母之外。
-// 破了的表现是一个跑了 10 分钟的扫描被算成跑了 8 小时 10 分钟，速率被稀释到四十九分之一。
+// 它是唯一一种收尾时刻不由引擎当场盖上的状态，因此单独守一条：破了的表现是一个跑了 10 分钟的
+// 扫描被算成跑了 8 小时 10 分钟，速率稀释到四十九分之一，而停得越久这个数越离谱。
 func TestInterruptedRunReportsRateFromLastHeartbeat(t *testing.T) {
 	const (
 		ranFor      = 10 * time.Minute
@@ -147,7 +142,7 @@ func TestInterruptedRunReportsRateFromLastHeartbeat(t *testing.T) {
 	handle.Report(runhandle.Frame{Current: &current})
 	backdateSeededRun(t, controller.taskEngine, key, ranFor, downFor)
 
-	tasks, body := interruptedTaskList(t, controller, store, tempDir)
+	tasks, body := restartAndListInterrupted(t, controller, store, tempDir)
 	if diff := tasks[0].RatePerMinute - wantRate; diff > rateEpsilon || diff < -rateEpsilon {
 		t.Fatalf("停机 %v 之后中断运行的速率为 %.2f/min, want 约 %.0f/min —— 分母把整段停机时长算成了在干活",
 			downFor, tasks[0].RatePerMinute, wantRate)
@@ -161,24 +156,24 @@ func TestInterruptedRunReportsRateFromLastHeartbeat(t *testing.T) {
 	}
 }
 
-// TestNeverReportedInterruptedRunOmitsRate 守住边界：一帧进度都没报过的运行仍然不发速率。
+// TestNeverReportedInterruptedRunOmitsRate 守边界：速率的缺席只由数据决定，不由状态决定。
+// 一帧进度都没报过的**中断**运行分子分母都是零，仍然不发——那是真的没有数据。
 //
-// 它的心跳还停在开始时刻，分母是零、分子也是零——那是真的没有数据，不该凭空造一个数出来。
-// 这与被拆掉的那道「**中断**一律不发」是两回事：那道闸门按状态一刀切，这里挡住的是没有数据。
-//
-// 分母的两端也一并钉住。批量转写只要改成拿重启时刻收尾，这条运行就会凭空多出一夜的分母——
-// 眼下分子是零，看不出差别，但那正是本票要修的那个 bug，它不该从这条路上悄悄溜回来。
+// 分母的两端一并钉住：收尾时刻必须停在最后一次上报处，而不是滑到重启时刻。眼下分子为零，
+// 滑不滑都算不出速率，但一条运行的耗时不得随它停机多久而变长，这条路上也不例外。
 func TestNeverReportedInterruptedRunOmitsRate(t *testing.T) {
+	const downFor = 8 * time.Hour
+
 	controller, store, _, tempDir := newTestController(t)
 
 	const key = "scan_library_1"
 	seedTask(t, controller.taskEngine, taskSeed{
 		Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10000,
 	})
-	// 一帧都没报过就停机一夜：开始时刻与心跳仍然重合。
-	backdateSeededRun(t, controller.taskEngine, key, 0, 8*time.Hour)
+	// 一帧都没报过就停机一夜：最后一次上报的时刻与开始时刻仍然重合。
+	backdateSeededRun(t, controller.taskEngine, key, 0, downFor)
 
-	tasks, body := interruptedTaskList(t, controller, store, tempDir)
+	tasks, body := restartAndListInterrupted(t, controller, store, tempDir)
 	if tasks[0].RatePerMinute != 0 {
 		t.Fatalf("从未上报过进度的中断运行下发了 %.2f/min —— 它一条都没处理过，速率无从谈起", tasks[0].RatePerMinute)
 	}
@@ -186,7 +181,7 @@ func TestNeverReportedInterruptedRunOmitsRate(t *testing.T) {
 		t.Fatalf("载荷里还留着 rate_per_minute: %s", body)
 	}
 	if tasks[0].FinishedAt == nil || !tasks[0].FinishedAt.Equal(tasks[0].StartedAt) {
-		t.Fatalf("结束时刻为 %v, want 与开始时刻 %v 相等 —— 心跳一次都没动过，收尾时刻就该停在那里",
+		t.Fatalf("结束时刻为 %v, want 与开始时刻 %v 相等 —— 一帧都没报过，收尾时刻就该停在那里",
 			tasks[0].FinishedAt, tasks[0].StartedAt)
 	}
 }
@@ -205,37 +200,13 @@ func backdateSeededRun(t testing.TB, e *taskEngine, key string, ran, down time.D
 	})
 }
 
-// interruptedTaskList 模拟一次进程重启、把上一轮留下的活动运行转成**中断**，再按前端的真实请求
-// 把任务列表读回来，解析结果与原始载荷一起交出——「这个字段在不在」只有载荷答得出。
-func interruptedTaskList(t *testing.T, prev *Controller, store database.Store, tempDir string) ([]RunStatus, string) {
-	t.Helper()
-	reloaded := restartController(t, prev, store, tempDir)
-	reloaded.taskEngine.markInterrupted(context.Background())
-
-	rec := httptest.NewRecorder()
-	reloaded.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("列任务返回 %d, body=%s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-
-	var tasks []RunStatus
-	if err := json.Unmarshal([]byte(body), &tasks); err != nil {
-		t.Fatalf("解析任务列表失败: %v", err)
-	}
-	if len(tasks) != 1 || tasks[0].Status != "interrupted" {
-		t.Fatalf("读回 %+v, want 一条 interrupted 运行", tasks)
-	}
-	return tasks, body
-}
-
-// TestTaskRateSurvivesEveryStatus 守分母在每一种状态下都还原得出来：三种活动态量到此刻，
-// 三种终态由引擎在任务体返回的那一刻盖上 finished_at，而其中的**暂停**时长引擎逐段记下过、
-// 扣掉即可（见 TestPausedTimeStaysOutOfTheRateDenominator）。
+// TestTaskRateSurvivesActiveAndSettledStatuses 守分母在引擎当场收尾的六种状态下都还原得出来：
+// 三种活动态量到此刻，三种终态量到任务体返回那一刻盖上的 finished_at，而其中的**暂停**时长
+// 引擎逐段记下过、扣掉即可（见 TestPausedTimeStaysOutOfTheRateDenominator）。
 //
-// 第七种状态**中断**的 finished_at 来自另一条路——重启时的批量转写，因此它自己一条用例，
-// 见 TestInterruptedRunReportsRateFromLastHeartbeat。
-func TestTaskRateSurvivesEveryStatus(t *testing.T) {
+// 第七种状态**中断**的 finished_at 由重启时的批量转写盖上，见
+// TestInterruptedRunReportsRateFromLastHeartbeat。
+func TestTaskRateSurvivesActiveAndSettledStatuses(t *testing.T) {
 	activeCases := []struct {
 		name    string
 		status  string

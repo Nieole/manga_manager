@@ -297,11 +297,8 @@ function TaskProgressBar({ task }: { task: RunStatus }) {
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/45">
         <span>{task.current} / {task.total}</span>
         <span>{percent.toFixed(1)}%</span>
-        {/* 速率与 ETA 有没有，都由后端决定：ETA 只算给**活动态**；速率算给分母还原得出来的运行，
-            **中断**的也在内——它的收尾时刻取的是断掉前那次心跳，停机时长不进分母。真正算不出的
-            只剩从未上报过进度的那些。缺了就整个不显示——`0/min` 是另一种谎，它看着像
-            「一分钟一条都没跑」。
-            前端不得在这里自己按状态判一遍：两处判据一旦不同步，界面上就会出现一个后端根本没算的数。 */}
+        {/* 有没有由后端决定，缺了就整格不显示——`0/min` 是另一种谎，它看着像「一分钟一条都没跑」。
+            前端不得自己按状态判一遍：判据一旦与后端不同步，这一格就会多出一个它没算的数、或少掉一个。 */}
         {task.rate_per_minute !== undefined && <span>{formatRate(task.rate_per_minute)}</span>}
         {task.eta_seconds !== undefined && <span>ETA {formatDuration(task.eta_seconds)}</span>}
       </div>
