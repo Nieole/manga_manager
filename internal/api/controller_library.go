@@ -55,27 +55,22 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-// cancelLibraryScopedTasks 取消该库范围内、经任务引擎启动的在跑任务。
+// cancelLibraryScopedTasks 取消挂在这个库上、仍会变化的每一条运行。
 //
-// 覆盖边界必须说清楚：清单里的这四类是今天会在一个库上留下**仍会变化的运行**的全部。
-// 守护扫描与监听器派生的扫描如今也建运行，且用的就是 scan_library_ 这个键，因此一并被取消；
-// 逃出这张清单的只剩「重建索引 / 重建缩略图」那趟逐库强扫——它挂在系统作用域上，
-// 删掉一个库不该把整趟重建停掉。取消不掉的（不可取消、进程里没有句柄）一律不阻塞删库——
-// 库行删掉之后，外键约束会挡住任何回写。
+// 判据是**作用域**而不是任务键前缀：库级的工作种类会随功能增加（扫描、清理、刮削、AI 分组、
+// 封面生成……），而一份前缀清单漏补不会有编译错误，只会表现成删库几分钟后队列里那条运行
+// 自己开跑。逃出去的只剩「重建索引 / 重建缩略图」那趟逐库强扫——它挂在系统作用域上，
+// 删掉一个库不该把整趟重建停掉。
 //
-// 取消的是这些键下**每一条**仍会变化的运行，不只是最近那一条：库都没了，它排在队里的那次扫描
-// 同样不该在几分钟后开跑。
+// 取消不掉的（不可取消、进程里没有句柄）一律不阻塞删库：库行删掉之后，外键约束会挡住任何回写。
 func (c *Controller) cancelLibraryScopedTasks(libraryID int64) {
-	for _, prefix := range []string{"scan_library_", "cleanup_library_", "scrape_library_", "ai_grouping_library_"} {
-		key := prefix + strconv.FormatInt(libraryID, 10)
-		cancelled, err := c.taskEngine.cancelRunsForKey(key)
-		if err != nil {
-			slog.Warn("Failed to cancel runs for deleted library", "task_key", key, "error", err)
-			continue
-		}
-		if cancelled > 0 {
-			slog.Info("Cancelled runs for deleted library", "task_key", key, "library_id", libraryID, "count", cancelled)
-		}
+	cancelled, err := c.taskEngine.cancelRunsForScope(task.ScopeLibrary, libraryID)
+	if err != nil {
+		slog.Warn("Failed to cancel runs for deleted library", "library_id", libraryID, "error", err)
+		return
+	}
+	if cancelled > 0 {
+		slog.Info("Cancelled runs for deleted library", "library_id", libraryID, "count", cancelled)
 	}
 }
 

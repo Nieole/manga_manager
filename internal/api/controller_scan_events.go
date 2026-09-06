@@ -57,14 +57,12 @@ func (o *taskScanObserver) Metrics(report scanner.ScanMetricsReport) {
 		"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
 		"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
 		"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
-		"generated_covers":         strconv.FormatInt(report.GeneratedCovers, 10),
 		"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
 		"rehomed_books":            strconv.FormatInt(report.RehomedBooks, 10),
 		"stale_series_stats":       strconv.FormatInt(report.StaleSeriesStats, 10),
 		"format_filtered_archives": strconv.FormatInt(report.FormatFilteredArchives, 10),
 		"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
 		"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
-		"thumbnail_write_ms":       strconv.FormatInt(report.ThumbnailWriteMillis, 10),
 		"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
 	})
 }
@@ -113,9 +111,6 @@ func (l *rebuildThumbLibrary) Progress(report scanner.ScanProgressReport) {
 	var code string
 	var msgParams map[string]string
 	switch {
-	case phase == "queueing_covers" && displayName != "":
-		code = "task.msg.rebuild_thumbnails.generating_cover"
-		msgParams = map[string]string{"item": displayName, "generated": strconv.FormatInt(snap.Metrics["generated_covers"], 10)}
 	case currentItem == "" && currentLibName != "":
 		code = "task.msg.rebuild_thumbnails.rebuilding_library_progress"
 		msgParams = map[string]string{"lib": currentLibName, "done": strconv.Itoa(doneLibs + 1), "total": strconv.Itoa(totalLibs)}
@@ -155,11 +150,9 @@ func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
 		"opened_archives":     report.OpenedArchives,
 		"hashed_files":        report.HashedFiles,
 		"queued_covers":       report.QueuedCovers,
-		"generated_covers":    report.GeneratedCovers,
 		"failed_archives":     report.FailedArchives,
 		"io_wait_ms":          report.IOWaitMillis,
 		"paused_ms":           report.PausedMillis,
-		"thumbnail_write_ms":  report.ThumbnailWriteMillis,
 		"duration_ms":         report.DurationMillis,
 	}, map[string]string{
 		"storage_profile":          report.StorageProfile,
@@ -174,8 +167,8 @@ func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
 		code = "task.msg.rebuild_thumbnails.libraries_completed"
 		msgParams = map[string]string{"done": strconv.Itoa(snap.DoneLibraries), "total": strconv.Itoa(snap.TotalLibraries)}
 	}
+	// 不动**阶段**：这一帧说的是「又完成一个库」，而此刻正在做什么由下一个库的首帧接着说。
 	writeRebuildThumbProgress(snap, runhandle.Frame{
-		Phase:  "queueing_covers",
 		Code:   code,
 		Params: msgParams,
 	})
@@ -222,22 +215,8 @@ func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library)
 	})
 }
 
-// refreshRebuildThumbTaskMessage 在阶段切换（如等待封面队列收尾）时刷新任务消息和阶段，
-// 但保留聚合器累计的 current/total——用占位 total 覆盖会把进度条重置成 100%。
-func (c *Controller) refreshRebuildThumbTaskMessage(code string, params map[string]string, phase string) {
-	snap := c.rebuildThumbAgg.snapshot()
-	if snap.Progress == nil {
-		return
-	}
-	writeRebuildThumbProgress(snap, runhandle.Frame{
-		Phase:  phase,
-		Code:   code,
-		Params: params,
-	})
-}
-
 // writeRebuildThumbProgress 把一份聚合快照连同本次事件的展示信息写成**一帧**任务进度：
-// 累计指标与两阶段计数由快照补齐，其余字段由调用方按本次事件填好。
+// 累计指标与计数由快照补齐，其余字段由调用方按本次事件填好。
 //
 // 外部写入点都走它，「一份快照怎么翻成一帧进度」因此只有一份实现。经 runhandle.Handle.Report
 // 一次报完，理由见那里——拆开报会撕帧。
@@ -252,11 +231,11 @@ func writeRebuildThumbProgress(snap rebuildThumbSnapshot, frame runhandle.Frame)
 	snap.Progress.Report(frame)
 }
 
-// rebuildThumbProgressFromMetrics 把"重建缩略图"任务的进度展开成两阶段：
-// 归档处理 (processed+skipped/discovered) 和封面生成 (generated/queued)，分别贡献分子分母。
-// 这样归档全部入队时进度只走到 ~50%，cover queue 异步生成时进度继续推进，避免视觉上"过早 100%"。
+// rebuildThumbProgressFromMetrics 把「重建缩略图」的进度算成单阶段：归档处理
+// （processed+skipped / discovered）。封面生成不再拼进这个分母——它是**另一条运行**，
+// 有自己的进度条，拼进来只会让两件事共用一根条子，而其中一件早已跑完。
 //
-// 两阶段都还没有分母时返回 known=false：此刻一条**计数推进**也报不出来，调用方应当干脆不报，
+// 还没有分母时返回 known=false：此刻一条**计数推进**也报不出来，调用方应当干脆不报，
 // 而不是把总数按 0 写下去。「别动总数」因此由「不调用计数推进」表达，不需要哨兵值。
 func rebuildThumbProgressFromMetrics(merged map[string]int64) (current int, total int, known bool) {
 	processedArchives := merged["processed_archives"] + merged["skipped_archives"]
@@ -264,16 +243,8 @@ func rebuildThumbProgressFromMetrics(merged map[string]int64) (current int, tota
 	if discoveredArchives < processedArchives {
 		discoveredArchives = processedArchives
 	}
-	generatedCovers := merged["generated_covers"]
-	queuedCovers := merged["queued_covers"]
-	if queuedCovers < generatedCovers {
-		queuedCovers = generatedCovers
-	}
-	current = int(processedArchives + generatedCovers)
-	total = int(discoveredArchives + queuedCovers)
-	if total < current {
-		total = current
-	}
+	current = int(processedArchives)
+	total = int(discoveredArchives)
 	if total <= 0 {
 		return 0, 0, false
 	}

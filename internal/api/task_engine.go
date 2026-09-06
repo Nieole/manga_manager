@@ -582,15 +582,17 @@ func (e *taskEngine) cancelRun(runID int64) error {
 	return taskControlError(e.engine.Cancel(runID))
 }
 
-// cancelRunsForKey 取消这个**任务键**下**每一条**仍会变化的运行，返回真正取消掉的条数。
+// cancelRunsForScope 取消挂在这个**作用域**对象上、仍会变化的每一条运行，返回真正取消掉的条数。
 //
-// 删库那条路径要的正是这个语义：库都没了，它排在队里的那次扫描同样不该在几分钟后开跑。
-// 只取消「最近那一条」会漏掉另一条——同一个键此刻最多有一条活动加一条排队。
+// 判据是作用域列而不是一串**任务键**前缀：一份前缀清单说的是「今天有哪几类工作会挂在库上」，
+// 而那个答案每加一个库级任务类型就变一次，漏补不会有编译错误，只会表现成删库几分钟后
+// 队列里那条运行自己开跑。作用域是身份上的真列，这句话因此不必随类型清单一起维护。
 //
 // 单条取消不了（不可取消、进程里没有句柄）不阻断其余那些：删库不因为一条取消不掉就半途而废。
-func (e *taskEngine) cancelRunsForKey(key string) (int, error) {
+func (e *taskEngine) cancelRunsForScope(scope task.Scope, scopeID int64) (int, error) {
 	runs, err := e.runStore.ListRuns(context.Background(), task.RunFilter{
-		Key:      key,
+		Scope:    scope,
+		ScopeID:  &scopeID,
 		Statuses: task.LiveStatuses(),
 		Order:    task.OrderSequenceAsc,
 	})
@@ -600,7 +602,7 @@ func (e *taskEngine) cancelRunsForKey(key string) (int, error) {
 	cancelled := 0
 	for _, run := range runs {
 		if err := e.cancelRun(run.ID); err != nil {
-			slog.Debug("Skipped cancelling a live run", "task_key", key, "run_id", run.ID, "error", err)
+			slog.Debug("Skipped cancelling a live run", "run_id", run.ID, "error", err)
 			continue
 		}
 		cancelled++

@@ -87,6 +87,8 @@ const taskMetricKeys = [
   'hashed_files',
   'queued_covers',
   'generated_covers',
+  'failed_covers',
+  'remaining_covers',
   'processed_books',
   'processed_progress',
   'scanned_files',

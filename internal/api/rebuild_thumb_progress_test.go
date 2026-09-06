@@ -76,14 +76,13 @@ func TestRebuildThumbProgressFlowsThroughHandedOverHandle(t *testing.T) {
 			"discovered_archives": 10,
 			"processed_archives":  4,
 			"queued_covers":       6,
-			"generated_covers":    2,
 		},
 	})
 
 	task := lastPublishedTask(t, snapshots(), rebuildThumbTestKey)
-	// 两阶段进度：归档 4/10 加封面 2/6。
-	if task.Current != 6 || task.Total != 16 {
-		t.Fatalf("**计数推进**为 %d/%d, want 6/16", task.Current, task.Total)
+	// 单阶段进度：归档 4/10。封面是**另一条运行**，不拼进这个分母。
+	if task.Current != 4 || task.Total != 10 {
+		t.Fatalf("**计数推进**为 %d/%d, want 4/10", task.Current, task.Total)
 	}
 	if task.Phase != "reading_metadata" {
 		t.Fatalf("**阶段**为 %q, want reading_metadata", task.Phase)
@@ -91,7 +90,7 @@ func TestRebuildThumbProgressFlowsThroughHandedOverHandle(t *testing.T) {
 	if task.CurrentItem != "/srv/main/vol01.cbz" {
 		t.Fatalf("当前条目为 %q, want /srv/main/vol01.cbz", task.CurrentItem)
 	}
-	if task.Metrics["discovered_archives"] != 10 || task.Metrics["generated_covers"] != 2 {
+	if task.Metrics["discovered_archives"] != 10 || task.Metrics["queued_covers"] != 6 {
 		t.Fatalf("指标没有随快照落地：%v", task.Metrics)
 	}
 	if task.Labels["current_library"] != "Main" {
@@ -108,8 +107,8 @@ func TestRebuildThumbMetricsReportAccumulatesThroughHandle(t *testing.T) {
 	c, snapshots, clock := startedRebuildThumbRig(t, 2)
 
 	for i, report := range []scanner.ScanMetricsReport{
-		{OpenedArchives: 3, ThumbnailWriteMillis: 40, DurationMillis: 60000},
-		{OpenedArchives: 2, ThumbnailWriteMillis: 10, DurationMillis: 30000},
+		{OpenedArchives: 3, IOWaitMillis: 40, DurationMillis: 60000},
+		{OpenedArchives: 2, IOWaitMillis: 10, DurationMillis: 30000},
 	} {
 		lib := database.Library{ID: int64(7 + i), Name: fmt.Sprintf("Lib%d", i), Path: fmt.Sprintf("/srv/lib%d", i)}
 		observer := beginTestLibrary(t, c, lib, 2)
@@ -120,7 +119,7 @@ func TestRebuildThumbMetricsReportAccumulatesThroughHandle(t *testing.T) {
 	}
 
 	task := lastPublishedTask(t, snapshots(), rebuildThumbTestKey)
-	if task.Metrics["opened_archives"] != 5 || task.Metrics["thumbnail_write_ms"] != 50 {
+	if task.Metrics["opened_archives"] != 5 || task.Metrics["io_wait_ms"] != 50 {
 		t.Fatalf("跨库指标没有累加：%v", task.Metrics)
 	}
 	// duration_ms 不在聚合器的 baseline 里，只有累加这条通道会写它；存储 IO 面板按指标名读它。
@@ -167,7 +166,6 @@ func TestRebuildThumbWritersAreInertWithoutHandle(t *testing.T) {
 		t.Fatal("没拿到句柄却造出了扫描观察者 —— 写入资格漏出去了")
 	}
 	c.refreshRebuildThumbTaskFromAggregator(lib)
-	c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
 
 	if got := publishedCountFor(snapshots(), rebuildThumbTestKey) - before; got != 0 {
 		t.Fatalf("没拿到句柄却投递了 %d 条 —— 写入资格又回到了「谁会拼那个任务键」", got)
@@ -179,7 +177,7 @@ func TestRebuildThumbWritersAreInertWithoutHandle(t *testing.T) {
 }
 
 // TestRebuildThumbFramesArePublishedWholeAndOnce 守一份扫描器报文只投递一条载荷，
-// 且那条载荷内部自洽：指标、两阶段计数与当前条目都来自同一个事件。
+// 且那条载荷内部自洽：指标、计数与当前条目都来自同一个事件。
 //
 // 拆成几次报就会破——投递水位放行其中一条中间态、又吞掉后面补齐的那条，
 // 于是同一份载荷里指标已经走到第 N 条、进度条还停在第 N-1 条。
@@ -238,7 +236,7 @@ func TestRebuildThumbPhaseTransitionsSurviveThrottle(t *testing.T) {
 	}
 }
 
-// TestRebuildThumbCountsHoldStillBeforeAnyDenominator 守两阶段进度都还没有分母时不乱报总数：
+// TestRebuildThumbCountsHoldStillBeforeAnyDenominator 守还没有分母时不乱报总数：
 // 「别动总数」由「干脆不报**计数推进**」表达，写下一个 0 会把进度条按 0/0 重置。
 func TestRebuildThumbCountsHoldStillBeforeAnyDenominator(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
@@ -251,13 +249,13 @@ func TestRebuildThumbCountsHoldStillBeforeAnyDenominator(t *testing.T) {
 	c.initRebuildThumbAggregator(progress, 1)
 	t.Cleanup(c.releaseRebuildThumbAggregator)
 
-	c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
+	c.refreshRebuildThumbTaskFromAggregator(rebuildThumbTestLibrary())
 
 	task := lastPublishedTask(t, snapshots(), rebuildThumbTestKey)
 	if task.Total != 120 || task.Current != 0 {
 		t.Fatalf("无分母时的一帧改动了计数：current=%d total=%d, want 0/120", task.Current, task.Total)
 	}
-	if task.Phase != "queueing_covers" {
+	if task.Phase != "reading_metadata" {
 		t.Fatalf("**阶段**没有播报出去：%q", task.Phase)
 	}
 }

@@ -103,8 +103,7 @@ func taskParam(run RunStatus, key string) string {
 // 会在重启后自己跑起来。
 //
 // **可续跑白名单**（规格关键决定 7）：资料库扫描、系列扫描、封面生成、重建缩略图、清理缩略图、
-// 书哈希重建与低优先级回填、文件身份重建、KOReader 进度对账与匹配刷新。封面生成还没有自己的
-// 运行，它随那一条落地时在这里加一行。
+// 书哈希重建与低优先级回填、文件身份重建、KOReader 进度对账与匹配刷新。
 //
 // **不可续跑**的那几个（清理资料库、外部库扫描与传输、ComicInfo 回写、刮削、AI 分组）
 // 各自的理由都写在它那一行上：要么改磁盘内容、要么花钱。它们照样可重试——那是用户按下的那一下。
@@ -131,6 +130,15 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 			// 启动入口本就返回「同类任务已在运行」哨兵错误，重启函数原样透传即可，
 			// 不必再把一个布尔值转换回哨兵错误。
 			return c.launchLibraryScanTask(lib, forceParam(run), trigger)
+		}},
+		// 封面生成的重启函数不认领任何批（进程里那一批随重启一起没了），
+		// 而是把这个库里还缺封面的书重新排一遍，见 launchCoverRun。
+		{Type: "generate_covers", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+			id, err := libraryID(run)
+			if err != nil {
+				return err
+			}
+			return c.launchCoverRun(id, trigger, true)
 		}},
 		{Type: "scan_series", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
 			if run.ScopeID == nil {

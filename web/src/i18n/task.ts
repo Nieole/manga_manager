@@ -50,6 +50,7 @@ export function getTaskActionHint(task: TaskWithParams, t: Translator) {
     case 'refresh_koreader_matching':
       return t('task.hint.refresh_koreader_matching', { label: formatKOReaderIndexLabel(task.params, t) });
     case 'scan_library':
+    case 'generate_covers':
     case 'scan_external_library':
     case 'rebuild_index':
     case 'rebuild_thumbnails':

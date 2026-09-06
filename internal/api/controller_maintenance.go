@@ -163,7 +163,8 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 // launchRebuildThumbnailsTask 是缩略图重建任务的启动点，走引擎的启动入口。
 //
 // 任务体开工第一件事是把运行句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
-// 之外写入，所有权模型见那里。
+// 之外写入，所有权模型见那里。它到逐库强扫跑完就完成——重建出来的封面归每个库
+// 自己那条**封面运行**，在任务中心各占一条。
 func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 	cfg := c.currentConfig()
 	policy := config.ResolveStoragePolicy(cfg, "")
@@ -207,10 +208,6 @@ func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 		if err := c.runGlobalScan(ctx, tp, true, true, /* 重建缩略图必须看得见全部已入库的书 */
 			c.beginRebuildThumbLibrary); err != nil {
 			return TaskResult{}, err
-		}
-		c.refreshRebuildThumbTaskMessage("task.msg.rebuild_thumbnails.waiting_cover_queue", nil, "queueing_covers")
-		if err := c.scanner.WaitForCoverQueue(ctx); err != nil {
-			return taskFailure("task.msg.rebuild_thumbnails.wait_queue_failed", err), err
 		}
 		c.warmDashboardStatsCacheAsync("rebuild_thumbnails_completed")
 		return TaskResult{}, nil

@@ -38,7 +38,11 @@ type Scanner struct {
 	openArchive func(string) (parser.Archive, error)
 	coverOnce   sync.Once
 	coverQueue  chan coverJob
-	coverWG     sync.WaitGroup
+	// coverRuns 是**封面运行**的发起口，装配期注册（见 SetCoverRunLauncher）。
+	// 留 nil 的进程里封面照样生成，只是不建运行、无处可报。
+	coverRuns CoverRunLauncher
+	// selfDrained 数的是没有发起方接手、由扫描器自己跑完的那些批，见 waitForCoverQueue。
+	selfDrained sync.WaitGroup
 	mu          sync.Mutex
 	// scanningLibraries 是**正在扫描中**的资料库计数（库 id -> 在飞的整库扫描数）。
 	//
@@ -84,10 +88,9 @@ func (s *Scanner) SetBatchCallback(cb func(string)) {
 // 「这份报文属于谁」因此由交出者回答，报文自己不带身份。传 nil 表示这次扫描的进度与指标无处可报
 // （调用方自己另有进度口径，例如重建索引那趟逐库强扫），此时两个方法都不会被调用。
 //
-// 它的寿命**超出**那次扫描调用：封面生成是异步的，ScanLibrary 返回之后封面队列仍会经同一个
-// 观察者推进 generated_covers。缩略图重建正靠这一段，因此不设撤销机制（见
-// docs/adr/0002-scan-observer-outlives-the-call.md）；扫描任务那一侧的迟到帧由任务引擎的
-// 终态守卫丢弃。实现方须自行保证并发安全——两个方法会被扫描 worker 与封面 worker 并发调用。
+// 它只管扫描本身，寿命与那次调用一致：异步生成的封面归**封面运行**，报文经封面作业自带的
+// CoverObserver 走（ADR 0005）。实现方仍须自行保证并发安全——两个方法会被多个扫描 worker
+// 并发调用。
 type ScanObserver interface {
 	// Progress 报告一次扫描进行中的计数、**阶段**与当前条目。
 	Progress(ScanProgressReport)
@@ -166,7 +169,6 @@ type scanMetrics struct {
 	openedArchives     atomic.Int64
 	hashedFiles        atomic.Int64
 	queuedCovers       atomic.Int64
-	generatedCovers    atomic.Int64
 	failedArchives     atomic.Int64
 	// rehomedBooks 统计本次扫描把多少条已入库记录按改名重连到了新路径。
 	// 这是会改动用户数据的行为，必须可观测——否则「书怎么没变多」只能靠翻日志猜。
@@ -179,7 +181,6 @@ type scanMetrics struct {
 	formatFilteredArchives atomic.Int64
 	ioWaitMillis           atomic.Int64
 	pausedMillis           atomic.Int64
-	thumbnailWriteMillis   atomic.Int64
 }
 
 // absorbDiskWork 把一次**磁盘作业**的等待与暂停耗时折进扫描指标。
@@ -203,14 +204,12 @@ type scanMetricsSnapshot struct {
 	openedArchives         int64
 	hashedFiles            int64
 	queuedCovers           int64
-	generatedCovers        int64
 	failedArchives         int64
 	rehomedBooks           int64
 	staleSeriesStats       int64
 	formatFilteredArchives int64
 	ioWaitMillis           int64
 	pausedMillis           int64
-	thumbnailWriteMillis   int64
 }
 
 // ScanMetricsReport 是一次扫描收尾时的全量指标。
@@ -227,14 +226,12 @@ type ScanMetricsReport struct {
 	OpenedArchives         int64
 	HashedFiles            int64
 	QueuedCovers           int64
-	GeneratedCovers        int64
 	FailedArchives         int64
 	RehomedBooks           int64
 	StaleSeriesStats       int64
 	FormatFilteredArchives int64
 	IOWaitMillis           int64
 	PausedMillis           int64
-	ThumbnailWriteMillis   int64
 	DurationMillis         int64
 }
 
@@ -249,27 +246,20 @@ type ScanProgressReport struct {
 type scanProgressReporter struct {
 	metrics  *scanMetrics
 	observer ScanObserver
-
-	mu       sync.Mutex
-	lastSent time.Time
+	throttle reportThrottle
 }
 
 func newScanProgressReporter(metrics *scanMetrics, observer ScanObserver) *scanProgressReporter {
-	return &scanProgressReporter{metrics: metrics, observer: observer}
+	return &scanProgressReporter{metrics: metrics, observer: observer, throttle: reportThrottle{interval: scanReportInterval}}
 }
 
+// scanReportInterval 是扫描进度的投递水位，与封面推进那一条同一个道理，见 coverReportInterval。
+const scanReportInterval = 250 * time.Millisecond
+
 func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
-	if r == nil || r.observer == nil {
+	if r == nil || r.observer == nil || !r.throttle.allow(force) {
 		return
 	}
-	now := time.Now()
-	r.mu.Lock()
-	if !force && now.Sub(r.lastSent) < 250*time.Millisecond {
-		r.mu.Unlock()
-		return
-	}
-	r.lastSent = now
-	r.mu.Unlock()
 
 	snapshot := r.metrics.snapshot()
 	current := snapshot.skippedArchives + snapshot.processedArchives
@@ -290,14 +280,12 @@ func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
 			"opened_archives":          snapshot.openedArchives,
 			"hashed_files":             snapshot.hashedFiles,
 			"queued_covers":            snapshot.queuedCovers,
-			"generated_covers":         snapshot.generatedCovers,
 			"failed_archives":          snapshot.failedArchives,
 			"rehomed_books":            snapshot.rehomedBooks,
 			"stale_series_stats":       snapshot.staleSeriesStats,
 			"format_filtered_archives": snapshot.formatFilteredArchives,
 			"io_wait_ms":               snapshot.ioWaitMillis,
 			"paused_ms":                snapshot.pausedMillis,
-			"thumbnail_write_ms":       snapshot.thumbnailWriteMillis,
 		},
 	})
 }
@@ -313,14 +301,12 @@ func (m *scanMetrics) snapshot() scanMetricsSnapshot {
 		openedArchives:         m.openedArchives.Load(),
 		hashedFiles:            m.hashedFiles.Load(),
 		queuedCovers:           m.queuedCovers.Load(),
-		generatedCovers:        m.generatedCovers.Load(),
 		failedArchives:         m.failedArchives.Load(),
 		rehomedBooks:           m.rehomedBooks.Load(),
 		staleSeriesStats:       m.staleSeriesStats.Load(),
 		formatFilteredArchives: m.formatFilteredArchives.Load(),
 		ioWaitMillis:           m.ioWaitMillis.Load(),
 		pausedMillis:           m.pausedMillis.Load(),
-		thumbnailWriteMillis:   m.thumbnailWriteMillis.Load(),
 	}
 }
 
@@ -459,6 +445,8 @@ type scanResult struct {
 	rehome *bookRehome
 }
 
+// coverCandidate 是一张待生成封面的来源。pageName 为空表示「这一页由封面构建自己挑」——
+// 续跑那条路只从库里读得到书行，读不到归档里的页目录。
 type coverCandidate struct {
 	path      string
 	pageName  string
@@ -466,14 +454,18 @@ type coverCandidate struct {
 	bookHash  string
 }
 
+// coverJob 是一本书的一次封面构建。它**自带去处**：batch 说的就是「这张封面属于哪一次
+// 封面运行」，报文因此不必回头按身份反查（ADR 0005）。
+//
+// batch 与 ctx 由派发那一刻（CoverBatch.Drain）补齐，排进批里的时候还是空的——
+// 一批要派给哪条运行，在扫描把它排进来时并不知道。
 type coverJob struct {
 	ctx       context.Context
+	batch     *CoverBatch
 	bookID    int64
 	seriesID  int64
 	libraryID int64
 	candidate coverCandidate
-	metrics   *scanMetrics
-	progress  *scanProgressReporter
 }
 
 // ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
@@ -512,6 +504,10 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	metrics := &scanMetrics{}
 	progress := newScanProgressReporter(metrics, observer)
 	progress.publish("loading_existing_books", "", true)
+
+	// 这一批封面的寿命超出本次调用：扫描收尾只关批，剩下的由那条**封面运行**接着跑。
+	covers := s.newCoverBatch(libraryID)
+	defer covers.close()
 
 	// 库级格式过滤是**发现阶段**的过滤，只决定导入哪些文件；已入库的书不受影响——
 	// CleanupLibrary 只按「文件是否还在磁盘上」删行，与格式无关。
@@ -560,7 +556,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, libraryID, results, metrics, progress, renames)
+		s.ingestResults(ctx, libraryID, results, metrics, progress, renames, covers)
 	}()
 
 	// 第 1 阶段：文件发现。
@@ -651,6 +647,9 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 	metrics := &scanMetrics{}
 	progress := newScanProgressReporter(metrics, observer)
 	progress.publish("loading_existing_books", "", true)
+	// 封面按库归属：系列扫描排出来的封面进的也是这个库那条**封面运行**。
+	covers := s.newCoverBatch(series.LibraryID)
+	defer covers.close()
 	// 与 ScanLibrary 同口径的格式过滤；library 行在上面已经取过，零额外查询。
 	// 系列扫描与库扫描必须同口径，否则「单系列重扫」会把库扫描刚过滤掉的文件重新灌进来。
 	formats := config.NewScanFormatSet(library.ScanFormats)
@@ -685,7 +684,7 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 	ingestWg.Add(1)
 	go func() {
 		defer ingestWg.Done()
-		s.ingestResults(ctx, series.LibraryID, results, metrics, progress, renames)
+		s.ingestResults(ctx, series.LibraryID, results, metrics, progress, renames, covers)
 	}()
 
 	var walkErr error
@@ -915,14 +914,12 @@ func (s *Scanner) logScanCompleted(ctx context.Context, scope string, id int64, 
 		"opened_archives", snapshot.openedArchives,
 		"hashed_files", snapshot.hashedFiles,
 		"queued_covers", snapshot.queuedCovers,
-		"generated_covers", snapshot.generatedCovers,
 		"failed_archives", snapshot.failedArchives,
 		"rehomed_books", snapshot.rehomedBooks,
 		"stale_series_stats", snapshot.staleSeriesStats,
 		"format_filtered_archives", snapshot.formatFilteredArchives,
 		"io_wait_ms", snapshot.ioWaitMillis,
 		"paused_ms", snapshot.pausedMillis,
-		"thumbnail_write_ms", snapshot.thumbnailWriteMillis,
 		"duration_ms", duration.Milliseconds(),
 	}
 	switch scope {
@@ -956,14 +953,12 @@ func publishScanMetrics(observer ScanObserver, policy config.ResolvedStoragePoli
 		OpenedArchives:         snapshot.openedArchives,
 		HashedFiles:            snapshot.hashedFiles,
 		QueuedCovers:           snapshot.queuedCovers,
-		GeneratedCovers:        snapshot.generatedCovers,
 		FailedArchives:         snapshot.failedArchives,
 		RehomedBooks:           snapshot.rehomedBooks,
 		StaleSeriesStats:       snapshot.staleSeriesStats,
 		FormatFilteredArchives: snapshot.formatFilteredArchives,
 		IOWaitMillis:           snapshot.ioWaitMillis,
 		PausedMillis:           snapshot.pausedMillis,
-		ThumbnailWriteMillis:   snapshot.thumbnailWriteMillis,
 		DurationMillis:         duration.Milliseconds(),
 	})
 }
@@ -1025,9 +1020,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		}
 	}
 
-	// 基于路径、修改时间和大小生成复合哈希，确保文件内容变动时缩略图强制刷新
-	hashSource := fmt.Sprintf("%s|%d|%d", job.path, job.info.ModTime().Unix(), job.info.Size())
-	bookHash := fmt.Sprintf("%x", sha1.Sum([]byte(hashSource)))
+	bookHash := bookCoverHash(job.path, job.info.ModTime(), job.info.Size())
 	baseName := filepath.Base(job.path)
 	bookTitle := sql.NullString{
 		String: strings.TrimSuffix(baseName, filepath.Ext(baseName)),
@@ -1162,7 +1155,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 
 // ingestResults 是唯一的写入协程。renames 为本次扫描的改名重连索引（可为 nil，表示不做重连）：
 // 认领在这里而不是解析 worker 里做，因为「一条旧记录只能被认领一次」在单写入方下天然成立。
-func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics, progress *scanProgressReporter, renames *renameIndex) {
+func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-chan scanResult, metrics *scanMetrics, progress *scanProgressReporter, renames *renameIndex, covers *CoverBatch) {
 	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
 	seriesCache := make(map[string]database.Series)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
@@ -1378,13 +1371,10 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				}
 				if res.coverCandidate != nil && (!actualBook.CoverPath.Valid || actualBook.CoverPath.String == "") {
 					coverJobs = append(coverJobs, coverJob{
-						ctx:       ctx,
 						bookID:    actualBook.ID,
 						seriesID:  actualBook.SeriesID,
 						libraryID: libIDInt,
 						candidate: *res.coverCandidate,
-						metrics:   metrics,
-						progress:  progress,
 					})
 				}
 
@@ -1409,7 +1399,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				s.onBatchIngested("batch_inserted")
 			}
 			progress.publish("queueing_covers", "", true)
-			s.enqueueCoverJobs(ctx, coverJobs)
+			s.enqueueCoverJobs(covers, metrics, coverJobs)
 		}
 
 		batch = batch[:0]
@@ -1549,25 +1539,36 @@ func existingThumbnailPath(cfg config.Config, bookHash string) sql.NullString {
 	return sql.NullString{}
 }
 
-func (s *Scanner) enqueueCoverJobs(ctx context.Context, jobs []coverJob) {
-	if len(jobs) == 0 {
+// enqueueCoverJobs 把一批封面作业排进这次扫描那一批里，并确保有一条封面运行去跑它。
+//
+// 排队本身不阻塞、不过闸门：这一批的寿命超出扫描调用，扫描不该被它按住——「扫描完成」
+// 从此只说扫描本身（ADR 0005）。派发、暂停与取消都是那条封面运行的事，见 CoverBatch.Drain。
+func (s *Scanner) enqueueCoverJobs(covers *CoverBatch, metrics *scanMetrics, jobs []coverJob) {
+	if covers == nil || len(jobs) == 0 {
 		return
 	}
+	covers.add(jobs)
+	if metrics != nil {
+		metrics.queuedCovers.Add(int64(len(jobs)))
+	}
+	covers.attach()
+}
+
+// dispatchCover 把一个封面作业派进共享的 worker 池，并把它记进那一批的在飞数。
+//
+// 池是共享的：两个库的封面运行会在里面交错推进，这是预期行为——限住并发的是池的大小与
+// **存储令牌**，而不是运行的条数。
+func (s *Scanner) dispatchCover(ctx context.Context, batch *CoverBatch, job coverJob) error {
 	s.startCoverWorkers()
-	for _, job := range jobs {
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return
-		}
-		s.coverWG.Add(1)
-		select {
-		case s.coverQueue <- job:
-			if job.metrics != nil {
-				job.metrics.queuedCovers.Add(1)
-			}
-		case <-ctx.Done():
-			s.coverWG.Done()
-			return
-		}
+	job.ctx = ctx
+	job.batch = batch
+	batch.inflight.Add(1)
+	select {
+	case s.coverQueue <- job:
+		return nil
+	case <-ctx.Done():
+		batch.inflight.Done()
+		return ctx.Err()
 	}
 }
 
@@ -1596,29 +1597,37 @@ func (s *Scanner) startCoverWorkers() {
 			go func() {
 				for job := range s.coverQueue {
 					s.runCoverJob(job)
-					s.coverWG.Done()
 				}
 			}()
 		}
 	})
 }
 
+// runCoverJob 生成一张封面，并把结果记进它自带的那一批。
+//
+// 每条出口都要经 batch.settle：漏一条那一批的剩余量就永远归不了零，等它排空的那条封面运行
+// 会一直挂着，而界面上写着「还剩 N 张」。
 func (s *Scanner) runCoverJob(job coverJob) {
+	batch := job.batch
 	ctx := job.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	defer batch.inflight.Done()
 	if err := taskcontrol.Wait(ctx); err != nil {
+		batch.settleSkipped()
 		return
 	}
 
 	cfg := s.currentConfig()
-	coverPath, err := s.generateBookThumbnail(ctx, job.candidate, cfg, job.metrics)
+	coverPath, err := s.generateBookThumbnail(ctx, job.candidate, cfg, batch)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to generate queued thumbnail", "book_id", job.bookID, "path", job.candidate.path, "error", err)
+		batch.settleFailed()
 		return
 	}
 	if !coverPath.Valid || coverPath.String == "" {
+		batch.settleFailed()
 		return
 	}
 
@@ -1629,17 +1638,17 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	if err != nil {
 		removeGeneratedThumbnail(cfg, coverPath.String)
 		slog.WarnContext(ctx, "Failed to update queued thumbnail cover path", "book_id", job.bookID, "error", err)
+		batch.settleFailed()
 		return
 	}
 	if rowsAffected == 0 {
+		// 这本书在封面生成期间已经有了封面（用户自己设了一张，或另一次扫描抢先写下）：
+		// 不是故障，也没有新增一张。
+		batch.settleSkipped()
 		return
 	}
-	if job.metrics != nil {
-		job.metrics.generatedCovers.Add(1)
-	}
-	if job.progress != nil {
-		job.progress.publish("queueing_covers", job.candidate.path, false)
-	}
+	batch.settleGenerated()
+	batch.report(job.candidate.path, false)
 	// 只刷新封面那两列，而不是跑完整的 RefreshSeriesStats。
 	//
 	// 后者含 9 个相关子查询（已读页数求和、已读/读完计数、最近阅读、标签与作者串……），
@@ -1659,13 +1668,16 @@ func (s *Scanner) runCoverJob(job coverJob) {
 // slowThumbnailWrite 是缩略图这一趟慢得该被看见的阈值：落盘或等令牌任一超过它就留一条记录。
 const slowThumbnailWrite = 250 * time.Millisecond
 
-func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config, metrics *scanMetrics) (sql.NullString, error) {
+// generateBookThumbnail 生成一张封面并落盘，交回它的相对路径。这一趟的等待与落盘耗时
+// 折进 batch——封面归**封面运行**记账，与发起它的那次扫描无关。
+func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCandidate, cfg config.Config, batch *CoverBatch) (sql.NullString, error) {
 	if existing := existingThumbnailPath(cfg, candidate.bookHash); existing.Valid {
 		return existing, nil
 	}
 
 	// 令牌只覆盖归档 IO：紧随其后的图片转码是纯 CPU 的，圈进持有区间只会虚占归档打开的并发额度。
 	var pageData []byte
+	mediaType := candidate.mediaType
 	coverWork := diskwork.Work{Kind: storageio.WorkKindCoverBuild, Path: candidate.path}
 	stats, err := s.diskWork.Do(ctx, coverWork, func() error {
 		arc, err := s.openArchive(candidate.path)
@@ -1673,10 +1685,23 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 			return err
 		}
 		defer arc.Close()
-		pageData, err = arc.ReadPage(candidate.pageName)
+		batch.countOpenedArchive()
+		pageName := candidate.pageName
+		if pageName == "" {
+			// 续跑那条路只从库里读得到书行，页目录得在这里现读一遍。
+			pages, err := arc.GetPages()
+			if err != nil {
+				return err
+			}
+			if len(pages) == 0 {
+				return fmt.Errorf("archive %q has no pages to use as a cover", candidate.path)
+			}
+			pageName, mediaType = pages[0].Name, pages[0].MediaType
+		}
+		pageData, err = arc.ReadPage(pageName)
 		return err
 	})
-	metrics.absorbDiskWork(stats)
+	batch.absorbDiskWork(stats)
 	if err != nil {
 		return sql.NullString{}, err
 	}
@@ -1686,12 +1711,12 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 		targetFormat = "webp"
 	}
 
-	processed, contentType, err := images.ProcessImage(ctx, pageData, candidate.mediaType, images.ProcessOptions{
+	processed, contentType, err := images.ProcessImage(ctx, pageData, mediaType, images.ProcessOptions{
 		Width: 400, Quality: 82, Format: targetFormat,
 	})
 	if err != nil || len(processed) == 0 {
 		slog.WarnContext(ctx, "Primary thumbnail format generation failed, falling back to jpeg", "format", targetFormat, "path", candidate.path, "error", err)
-		processed, contentType, err = images.ProcessImage(ctx, pageData, candidate.mediaType, images.ProcessOptions{
+		processed, contentType, err = images.ProcessImage(ctx, pageData, mediaType, images.ProcessOptions{
 			Width: 400, Quality: 82, Format: "jpeg",
 		})
 		if err != nil {
@@ -1714,10 +1739,8 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 		writeDuration, err = writeThumbnailFile(thumbDir, fullPath, processed)
 		return err
 	})
-	metrics.absorbDiskWork(writeStats)
-	if metrics != nil && writeDuration > 0 {
-		metrics.thumbnailWriteMillis.Add(writeDuration.Milliseconds())
-	}
+	batch.absorbDiskWork(writeStats)
+	batch.countThumbnailWrite(writeDuration)
 	if err != nil {
 		return sql.NullString{}, err
 	}
@@ -1833,24 +1856,6 @@ func writeThumbnailFile(thumbDir, fullPath string, data []byte) (time.Duration, 
 		return time.Since(started), err
 	}
 	return time.Since(started), nil
-}
-
-func (s *Scanner) waitForCoverQueue(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		s.coverWG.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Scanner) WaitForCoverQueue(ctx context.Context) error {
-	return s.waitForCoverQueue(ctx)
 }
 
 func extensionFromContentType(contentType, fallbackFormat string) string {

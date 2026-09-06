@@ -52,11 +52,6 @@ type rebuildThumbLibrary struct {
 
 	// pending 是该库尚未定版的最新 metrics 快照，定版后清空。
 	pending map[string]int64
-	// finalized 表示该库的扫描主流程已结束、最终 metrics 已计入 baseline。
-	// 此后封面队列仍会异步推进 generated_covers，那些帧只补增量（见 absorbProgress）。
-	finalized bool
-	// coverSeen 是定版后已计入 baseline 的 generated_covers 最大值，用于只补增量、不双计。
-	coverSeen int64
 }
 
 // rebuildThumbSnapshot 是聚合器对外暴露的只读视图，也是运行句柄的交付方式。
@@ -89,8 +84,8 @@ func (a *rebuildThumbAggregator) begin(progress *runhandle.Handle, totalLibrarie
 
 // end 结束本轮聚合并交回运行句柄；之后的更新都是无操作，直到下一次 begin。
 //
-// 已交出去的每库观察者不会被收回——它们可能还握在封面队列手里。交回句柄之后，
-// 它们的写入全部退化为无操作，这正是「重建不在进行中」应有的表现。
+// 已交出去的每库观察者不会被收回：交回句柄之后它们的写入全部退化为无操作，
+// 这正是「重建不在进行中」应有的表现。
 func (a *rebuildThumbAggregator) end() {
 	if a == nil {
 		return
@@ -146,27 +141,17 @@ func (l *rebuildThumbLibrary) absorbProgress(report scanner.ScanProgressReport) 
 		return rebuildThumbSnapshot{}
 	}
 
-	if l.finalized {
-		// 定版时已把当时的 generated_covers 计入 baseline。这里只把新增的那部分补回去，
-		// 其余指标不再变更——报文带的是本库的全量快照，整份相加就会与 baseline 双计。
-		if seen := report.Metrics["generated_covers"]; seen > l.coverSeen {
-			l.agg.baseline["generated_covers"] += seen - l.coverSeen
-			l.coverSeen = seen
-		}
-	} else {
-		snapshot := make(map[string]int64, len(report.Metrics))
-		for k, v := range report.Metrics {
-			snapshot[k] = v
-		}
-		l.pending = snapshot
+	snapshot := make(map[string]int64, len(report.Metrics))
+	for k, v := range report.Metrics {
+		snapshot[k] = v
 	}
+	l.pending = snapshot
 	return l.agg.snapshotLocked()
 }
 
-// fixate 在本库扫描「主流程」完成时把最终 metrics 计入 baseline，返回定版后的快照。
+// fixate 在本库扫描完成时把最终 metrics 计入 baseline，返回定版后的快照。
 //
-// 此刻封面队列仍可能在异步生成，之后还会有本库的进度报文带着同一份 metrics 的更新值到来；
-// 定版后由 absorbProgress 走 finalized 分支只补增量，避免双计。
+// 扫描完成就是这个库这一趟的全部：它排出去的封面归**封面运行**，之后不会再有本库的扫描报文到来。
 func (l *rebuildThumbLibrary) fixate(report scanner.ScanMetricsReport) rebuildThumbSnapshot {
 	if l == nil || l.agg == nil {
 		return rebuildThumbSnapshot{}
@@ -178,8 +163,6 @@ func (l *rebuildThumbLibrary) fixate(report scanner.ScanMetricsReport) rebuildTh
 	}
 
 	l.pending = nil
-	l.finalized = true
-	l.coverSeen = report.GeneratedCovers
 	l.agg.doneLibraries++
 	base := l.agg.baseline
 	base["discovered_archives"] += report.DiscoveredArchives
@@ -188,11 +171,9 @@ func (l *rebuildThumbLibrary) fixate(report scanner.ScanMetricsReport) rebuildTh
 	base["opened_archives"] += report.OpenedArchives
 	base["hashed_files"] += report.HashedFiles
 	base["queued_covers"] += report.QueuedCovers
-	base["generated_covers"] += report.GeneratedCovers
 	base["failed_archives"] += report.FailedArchives
 	base["io_wait_ms"] += report.IOWaitMillis
 	base["paused_ms"] += report.PausedMillis
-	base["thumbnail_write_ms"] += report.ThumbnailWriteMillis
 	return l.agg.snapshotLocked()
 }
 

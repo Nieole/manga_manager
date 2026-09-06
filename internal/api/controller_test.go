@@ -943,23 +943,21 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	libA := database.Library{ID: 42, Name: "A", Path: filepath.Join(t.TempDir(), "a")}
 	libB := database.Library{ID: 43, Name: "B", Path: filepath.Join(t.TempDir(), "b")}
 	reportA := scanner.ScanMetricsReport{
-		StorageProfile:       config.StorageProfileHDDExternal,
-		VolumeKey:            "e:",
-		OpenedArchives:       3,
-		IOWaitMillis:         120,
-		PausedMillis:         80,
-		ThumbnailWriteMillis: 40,
-		DurationMillis:       60000,
+		StorageProfile: config.StorageProfileHDDExternal,
+		VolumeKey:      "e:",
+		OpenedArchives: 3,
+		IOWaitMillis:   120,
+		PausedMillis:   80,
+		DurationMillis: 60000,
 	}
 	controller.beginRebuildThumbLibrary(libA, 2).Metrics(reportA)
 	controller.beginRebuildThumbLibrary(libB, 2).Metrics(scanner.ScanMetricsReport{
-		StorageProfile:       config.StorageProfileHDDExternal,
-		VolumeKey:            "e:",
-		OpenedArchives:       2,
-		IOWaitMillis:         30,
-		PausedMillis:         20,
-		ThumbnailWriteMillis: 10,
-		DurationMillis:       30000,
+		StorageProfile: config.StorageProfileHDDExternal,
+		VolumeKey:      "e:",
+		OpenedArchives: 2,
+		IOWaitMillis:   30,
+		PausedMillis:   20,
+		DurationMillis: 30000,
 	})
 
 	// 存储 IO 面板的扫描速率读的是扫描任务自己的指标，与重建任务各写各的。
@@ -967,10 +965,35 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	newTaskScanObserver(scanProgress).Metrics(reportA)
 
 	task := currentTask(t, controller.taskEngine, "rebuild_thumbnails")
-	if task.Metrics["opened_archives"] != 5 || task.Metrics["io_wait_ms"] != 150 ||
-		task.Metrics["paused_ms"] != 100 || task.Metrics["thumbnail_write_ms"] != 50 {
+	if task.Metrics["opened_archives"] != 5 || task.Metrics["io_wait_ms"] != 150 || task.Metrics["paused_ms"] != 100 {
 		t.Fatalf("expected aggregated thumbnail metrics, got %+v", task.Metrics)
 	}
+	// 封面那一格读的是**封面运行**：缩略图重建自己不再生成封面，它的指标里也就没有缩略图落盘耗时。
+	if _, ok := task.Metrics["thumbnail_write_ms"]; ok {
+		t.Fatalf("重建任务报出了缩略图落盘耗时，而那是封面运行的账：%+v", task.Metrics)
+	}
+}
+
+// TestStorageIOCoverRateComesFromTheCoverRun 守存储 IO 面板那两格各读各的运行：
+// 扫描速率读扫描运行，封面速率与缩略图落盘耗时读**封面运行**。
+//
+// 读错运行的后果是面板上那一格永远是 0——封面既不由扫描运行生成，也不再由缩略图重建生成。
+func TestStorageIOCoverRateComesFromTheCoverRun(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
+
+	scanProgress := seedTask(t, controller.taskEngine, taskSeed{
+		Key: "scan_library_42", Identity: libraryTask("scan_library", 42, variantSole), Total: 1,
+	})
+	newTaskScanObserver(scanProgress).Metrics(scanner.ScanMetricsReport{
+		OpenedArchives: 3, DurationMillis: 60000,
+	})
+
+	coverProgress := seedTask(t, controller.taskEngine, taskSeed{
+		Key: "generate_covers_42", Identity: libraryTask("generate_covers", 42, variantSole), Total: 1,
+	})
+	(&coverRunSink{progress: coverProgress, libraryName: "A", accepting: true}).Progress(scanner.CoverProgressReport{
+		Queued: 6, Generated: 6, OpenedArchives: 6, ThumbnailWriteMillis: 50,
+	})
 
 	scanRate, coverRate, thumbnailWriteMillis := controller.recentStorageIOTaskRates()
 	if scanRate <= 0 || coverRate <= 0 || thumbnailWriteMillis != 50 {
