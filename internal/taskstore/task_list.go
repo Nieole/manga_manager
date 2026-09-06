@@ -1,5 +1,5 @@
 // 任务清单那一半的取数：一个任务一行，外加「这个任务最近一次运行」这句相关子查询。
-// 一次执行一行的那一半在 runs.go，身份的读写在 store.go。
+// 一次运行一行的那一半在 runs.go，身份的读写在 store.go。
 
 package taskstore
 
@@ -104,12 +104,9 @@ func taskFilterClause(filter task.TaskFilter) (string, []any) {
 	clauses := make([]string, 0, 5)
 	args := make([]any, 0, len(filter.Types)+len(filter.LastRunStatuses)+3)
 	if len(filter.Types) > 0 {
-		placeholders := make([]string, 0, len(filter.Types))
-		for _, taskType := range filter.Types {
-			placeholders = append(placeholders, "?")
-			args = append(args, string(taskType))
-		}
-		clauses = append(clauses, `t.type IN (`+strings.Join(placeholders, ", ")+`)`)
+		placeholders, typeArgs := stringPlaceholders(filter.Types)
+		clauses = append(clauses, `t.type IN (`+placeholders+`)`)
+		args = append(args, typeArgs...)
 	}
 	if filter.Scope != "" {
 		clauses = append(clauses, `t.scope = ?`)
@@ -120,12 +117,9 @@ func taskFilterClause(filter task.TaskFilter) (string, []any) {
 		args = append(args, *filter.ScopeID)
 	}
 	if len(filter.LastRunStatuses) > 0 {
-		placeholders := make([]string, 0, len(filter.LastRunStatuses))
-		for _, status := range filter.LastRunStatuses {
-			placeholders = append(placeholders, "?")
-			args = append(args, string(status))
-		}
-		clauses = append(clauses, `r.status IN (`+strings.Join(placeholders, ", ")+`)`)
+		placeholders, statusArgs := stringPlaceholders(filter.LastRunStatuses)
+		clauses = append(clauses, `r.status IN (`+placeholders+`)`)
+		args = append(args, statusArgs...)
 	}
 	if filter.LastRunQuery != "" {
 		// 与运行列表同口径：键、文案码与错误串接起来做大小写无关的子串匹配。

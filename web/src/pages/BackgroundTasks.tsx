@@ -7,10 +7,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
-import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskTarget, type RunLive, type RunStatus, type TaskSummary } from '../components/tasks/TaskCenter';
+import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskRunHistory, type TaskTarget, type RunLive, type RunStatus, type TaskSummary } from '../components/tasks/TaskCenter';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
-import { isTerminalRunStatus } from '../utils/runStatus';
+import { applyRunToLive } from '../utils/runLive';
+import { isLiveRunStatus } from '../utils/runStatus';
 
 const TASK_TYPE_OPTIONS = [
   'scan_library',
@@ -47,9 +48,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const [taskActionKey, setTaskActionKey] = useState<string | null>(null);
   // 展开的那一行与它的历次运行：只留展开中的那一份，收起时连同它一起丢掉——
   // 留着的话再展开会先闪一眼过期的历史。
-  const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
-  const [taskRuns, setTaskRuns] = useState<RunStatus[] | undefined>(undefined);
-  const [taskRunsLoading, setTaskRunsLoading] = useState(false);
+  const [history, setHistory] = useState<TaskRunHistory | undefined>(undefined);
   const [runStatusFilter, setRunStatusFilter] = useState('ALL');
   const [taskScopeFilter, setTaskScopeFilter] = useState('ALL');
   const [taskTypeFilter, setTaskTypeFilter] = useState('ALL');
@@ -64,6 +63,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   const [taskReloadToken, setTaskReloadToken] = useState(0);
   const [bulkPauseBusy, setBulkPauseBusy] = useState(false);
   const taskRequestIDRef = useRef(0);
+  const historyRequestIDRef = useRef(0);
   const { showToast } = useToast();
 
   // taskFilters 是输入框的当前值（含还没提交的半截关键词）。
@@ -114,31 +114,34 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   }, [buildTaskParams, showToast, t]);
 
   // 历次运行按需取：清单接口一条运行都不带回来，展开哪一行才去问哪一个任务。
+  //
+  // 世代号与清单那条同理：慢网下「展开 A、收起、展开 B」会让 A 的响应后到，而它一到就会把
+  // A 的历次运行画在 B 底下。对不上就整份丢弃。
   const fetchTaskRuns = useCallback(async (taskId: number) => {
-    setTaskRunsLoading(true);
+    const requestID = historyRequestIDRef.current + 1;
+    historyRequestIDRef.current = requestID;
+    setHistory({ taskId, loading: true });
     try {
       const res = await apiClient.get<RunStatus[]>(`/api/system/tasks?task_id=${taskId}&limit=20`);
-      setTaskRuns(Array.isArray(res.data) ? res.data : []);
+      if (requestID !== historyRequestIDRef.current) return;
+      setHistory({ taskId, runs: Array.isArray(res.data) ? res.data : [] });
     } catch (error) {
+      if (requestID !== historyRequestIDRef.current) return;
       console.error(error);
-      setTaskRuns([]);
+      setHistory({ taskId, runs: [] });
       showToast(t('settings.maintenance.taskCenterLoadFailed'), 'error');
-    } finally {
-      setTaskRunsLoading(false);
     }
   }, [showToast, t]);
 
+  // 收起就是把那一份丢掉，并让在途的响应作废——它回来时那一行已经不展开了。
   const toggleTask = useCallback((taskId: number) => {
-    setExpandedTaskId((current) => {
-      if (current === taskId) {
-        setTaskRuns(undefined);
-        return null;
-      }
-      setTaskRuns(undefined);
-      void fetchTaskRuns(taskId);
-      return taskId;
-    });
-  }, [fetchTaskRuns]);
+    if (history?.taskId === taskId) {
+      historyRequestIDRef.current += 1;
+      setHistory(undefined);
+      return;
+    }
+    void fetchTaskRuns(taskId);
+  }, [fetchTaskRuns, history]);
 
   // 回车 /「查询」/「刷新」都走这里：把输入框里的内容提交为生效条件，并重取一次。
   const applyTaskFilters = useCallback(() => {
@@ -159,34 +162,23 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     const handler = (event: Event) => {
       const run = (event as CustomEvent<RunStatus>).detail;
       if (!run || typeof run !== 'object') return;
-      // 去重键是**运行标识**而不是任务键：同一个任务键如今有多条运行，按键去重会让新一次运行的
-      // 每一帧把上一次那条从界面上摘掉。进了**终态**的运行离开实况区——它不再会变。
-      setLive((prev) => {
-        const withoutRun = prev.runs.filter((item) => item.run_id !== run.run_id);
-        const runs = isTerminalRunStatus(run.status) ? withoutRun : [run, ...withoutRun];
-        return {
-          ...prev,
-          runs,
-          active: runs.filter((item) => !isTerminalRunStatus(item.status) && item.status !== 'queued').length,
-          queued: runs.filter((item) => item.status === 'queued').length,
-          paused: runs.some((item) => item.status === 'paused'),
-        };
-      });
+      // 谁还留在实况区、三个汇总各是多少，判据只有 applyRunToLive 一处——它与后端同形。
+      setLive((prev) => applyRunToLive(prev, run));
       // 清单那一行的「上次结果」跟着走：推出来的帧只属于仍会变化的运行，而那正是它所属任务
       // 最近的那一次。不跟的话，用户要等下一轮轮询才看得到刚发起的那条落在哪个任务下面。
       setTasks((prev) => prev.map((item) => (item.task_id === run.task_id ? { ...item, last_run: run } : item)));
       // 展开着的那一行同理：已在里面的按运行标识替换，新起的那一条补到最前。
-      setTaskRuns((prev) => {
-        if (!prev || run.task_id !== expandedTaskId) return prev;
-        if (prev.some((item) => item.run_id === run.run_id)) {
-          return prev.map((item) => (item.run_id === run.run_id ? run : item));
-        }
-        return [run, ...prev];
+      setHistory((prev) => {
+        if (!prev?.runs || prev.taskId !== run.task_id) return prev;
+        const runs = prev.runs.some((item) => item.run_id === run.run_id)
+          ? prev.runs.map((item) => (item.run_id === run.run_id ? run : item))
+          : [run, ...prev.runs];
+        return { ...prev, runs };
       });
     };
     window.addEventListener('manga-manager:task-progress', handler as EventListener);
     return () => window.removeEventListener('manga-manager:task-progress', handler as EventListener);
-  }, [expandedTaskId]);
+  }, []);
 
   useEffect(() => {
     const poll = window.setInterval(() => {
@@ -202,7 +194,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
       await apiClient.post(`/api/system/tasks/${encodeURIComponent(run.key)}/${action}`);
       showToast(t(`settings.maintenance.taskAction.${action}Success`));
       await Promise.all([fetchTasks(), fetchLive()]);
-      if (expandedTaskId !== null) await fetchTaskRuns(expandedTaskId);
+      if (history) await fetchTaskRuns(history.taskId);
     } catch (error) {
       console.error(error);
       showToast(t(`settings.maintenance.taskAction.${action}Failed`), 'error');
@@ -226,7 +218,8 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     }
   };
 
-  const currentTaskFilterCanClear = !['ALL', 'queued', 'running', 'paused', 'cancelling'].includes(runStatusFilter);
+  // 仍会变化的运行永不被清除，因此选中那几种状态时「按当前筛选清理」一条都删不掉。
+  const currentTaskFilterCanClear = runStatusFilter !== 'ALL' && !isLiveRunStatus(runStatusFilter);
 
   const updateTaskFilters = (patch: Partial<TaskCenterFilters>) => {
     if (patch.status !== undefined) setRunStatusFilter(patch.status);
@@ -298,9 +291,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
         loading={loadingTasks}
         bulkPauseBusy={bulkPauseBusy}
         taskActionKey={taskActionKey}
-        expandedTaskId={expandedTaskId}
-        taskRuns={taskRuns}
-        taskRunsLoading={taskRunsLoading}
+        history={history}
         filters={taskFilters}
         typeOptions={TASK_TYPE_OPTIONS}
         currentFilterCanClear={currentTaskFilterCanClear}

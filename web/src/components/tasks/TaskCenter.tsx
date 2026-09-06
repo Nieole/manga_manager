@@ -32,17 +32,26 @@ export interface TaskTarget {
   scope_id?: number;
 }
 
+/**
+ * TaskRunHistory 是展开着的那一行与它的**历次运行**：三样总是一起出现、一起消失，
+ * 因此收成一个类型而不是三个各自可空的 prop——只给其中两个不是一种有意义的状态。
+ */
+export interface TaskRunHistory {
+  taskId: number;
+  /** runs 为 undefined 表示还没取回来；空数组表示这个任务确实没留下运行记录。 */
+  runs?: RunStatus[];
+  loading?: boolean;
+}
+
 interface TaskCenterProps {
   // live 是实况区那一帧：在跑的与**排队中**的运行，加上槽位占用与全局暂停。
   live: RunLive;
-  // tasks 是任务清单，一个任务一行；历次运行不在里面，由 expandedTaskId 那一行单独取。
+  // tasks 是任务清单，一个任务一行；历次运行不在里面，由展开的那一行经 history 单独交进来。
   tasks: TaskSummary[];
   loading: boolean;
   taskActionKey: string | null;
-  // expandedTaskId 是此刻展开的那一行；taskRuns 是它的历次运行，undefined 表示还没取回来。
-  expandedTaskId?: number | null;
-  taskRuns?: RunStatus[];
-  taskRunsLoading?: boolean;
+  // history 是展开着的那一行与它的历次运行；不给即一行都没展开。
+  history?: TaskRunHistory;
   bulkPauseBusy?: boolean;
   filters?: TaskCenterFilters;
   typeOptions?: string[];
@@ -112,7 +121,7 @@ function formatDuration(seconds?: number) {
   return `${hours}h ${minutes % 60}m`;
 }
 
-function taskBadgeClass(status: string) {
+function runBadgeClass(status: string) {
   switch (status) {
     case 'running':
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500';
@@ -135,27 +144,27 @@ function taskBadgeClass(status: string) {
   }
 }
 
-function taskProgressPercent(task: RunStatus) {
-  if (Number.isFinite(task.percent)) return Math.max(0, Math.min(100, task.percent || 0));
-  if (task.total > 0) return Math.max(0, Math.min(100, (task.current / task.total) * 100));
+function runProgressPercent(run: RunStatus) {
+  if (Number.isFinite(run.percent)) return Math.max(0, Math.min(100, run.percent || 0));
+  if (run.total > 0) return Math.max(0, Math.min(100, (run.current / run.total) * 100));
   return 0;
 }
 
-function taskMetric(task: RunStatus, key: string) {
-  const direct = task.metrics?.[key];
+function runMetric(run: RunStatus, key: string) {
+  const direct = run.metrics?.[key];
   if (Number.isFinite(direct)) return direct || 0;
-  const raw = task.params?.[key] || task.params?.[`metric.${key}`];
+  const raw = run.params?.[key] || run.params?.[`metric.${key}`];
   const parsed = raw ? Number(raw) : 0;
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function taskIOParams(task: RunStatus) {
-  return Object.entries(task.params || {}).filter(([key, value]) => taskIOParamKeys.includes(key) && value !== '' && value !== '0');
+function runIOParams(run: RunStatus) {
+  return Object.entries(run.params || {}).filter(([key, value]) => taskIOParamKeys.includes(key) && value !== '' && value !== '0');
 }
 
-function isInterruptedTask(task: RunStatus) {
-  const error = task.error || '';
-  return task.status === 'interrupted' || (task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart')));
+function isInterruptedRun(run: RunStatus) {
+  const error = run.error || '';
+  return run.status === 'interrupted' || (run.status === 'failed' && run.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart')));
 }
 
 /**
@@ -169,22 +178,22 @@ function runTimestamp(run: RunStatus) {
   return run.updated_at;
 }
 
-function hasTaskDetails(task: RunStatus) {
+function hasRunDetails(run: RunStatus) {
   return Boolean(
-    task.error
-    || task.started_at
-    || task.finished_at
-    || (task.params && Object.keys(task.params).length > 0)
-    || (task.labels && Object.keys(task.labels).length > 0),
+    run.error
+    || run.started_at
+    || run.finished_at
+    || (run.params && Object.keys(run.params).length > 0)
+    || (run.labels && Object.keys(run.labels).length > 0),
   );
 }
 
-function hasInlineTelemetry(task: RunStatus) {
-  const provider = task.labels?.provider_name || task.labels?.provider || task.params?.provider;
+function hasRunTelemetry(run: RunStatus) {
+  const provider = run.labels?.provider_name || run.labels?.provider || run.params?.provider;
   return Boolean(
-    task.effective_limit
+    run.effective_limit
     || provider
-    || taskMetricKeys.some((key) => taskMetric(task, key) > 0),
+    || taskMetricKeys.some((key) => runMetric(run, key) > 0),
   );
 }
 
@@ -295,12 +304,12 @@ function TaskFilters({
   );
 }
 
-function TaskProgressBar({ task }: { task: RunStatus }) {
-  const percent = taskProgressPercent(task);
-  if (task.total <= 0) {
+function RunProgressBar({ run }: { run: RunStatus }) {
+  const percent = runProgressPercent(run);
+  if (run.total <= 0) {
     // 总数未知：只有还在动的任务才画那条来回跑的不定进度条。停了的任务画它，看着像还在跑，
     // 而这条进度条一个数字都答不出——它连「做完了多少」都不知道。
-    if (!isActiveRunStatus(task.status)) {
+    if (!isActiveRunStatus(run.status)) {
       return null;
     }
     return (
@@ -316,12 +325,12 @@ function TaskProgressBar({ task }: { task: RunStatus }) {
         <div className="h-full rounded-full bg-komgaPrimary transition-all" style={{ width: `${percent}%` }} />
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/45">
-        <span>{task.current} / {task.total}</span>
+        <span>{run.current} / {run.total}</span>
         <span>{percent.toFixed(1)}%</span>
         {/* 有没有由后端决定，缺了就整格不显示——`0/min` 是另一种谎，它看着像「一分钟一条都没跑」。
             前端不得自己按状态判一遍：判据一旦与后端不同步，这一格就会多出一个它没算的数、或少掉一个。 */}
-        {task.rate_per_minute !== undefined && <span>{formatRate(task.rate_per_minute)}</span>}
-        {task.eta_seconds !== undefined && <span>ETA {formatDuration(task.eta_seconds)}</span>}
+        {run.rate_per_minute !== undefined && <span>{formatRate(run.rate_per_minute)}</span>}
+        {run.eta_seconds !== undefined && <span>ETA {formatDuration(run.eta_seconds)}</span>}
       </div>
     </div>
   );
@@ -361,10 +370,10 @@ function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunStatu
   );
 }
 
-function TaskLimitBadges({ task }: { task: RunStatus }) {
+function RunLimitBadges({ run }: { run: RunStatus }) {
   const { t } = useI18n();
-  const limit = task.effective_limit;
-  const provider = task.labels?.provider_name || task.labels?.provider || task.params?.provider;
+  const limit = run.effective_limit;
+  const provider = run.labels?.provider_name || run.labels?.provider || run.params?.provider;
   return (
     <>
       {limit && (
@@ -392,14 +401,14 @@ function TaskLimitBadges({ task }: { task: RunStatus }) {
   );
 }
 
-function TaskMetricsGrid({ task }: { task: RunStatus }) {
+function RunMetricsGrid({ run }: { run: RunStatus }) {
   const { t } = useI18n();
   return (
     <>
       {taskMetricKeys.map((key) => (
-        taskMetric(task, key) > 0 && (
+        runMetric(run, key) > 0 && (
           <p key={key} className="rounded-lg border border-white/10 bg-white/3 px-3 py-2 text-white/55">
-            {t(`settings.maintenance.taskMetric.${key}`)}<span className="mt-1 block text-white">{key.endsWith('_ms') ? `${taskMetric(task, key)} ms` : taskMetric(task, key)}</span>
+            {t(`settings.maintenance.taskMetric.${key}`)}<span className="mt-1 block text-white">{key.endsWith('_ms') ? `${runMetric(run, key)} ms` : runMetric(run, key)}</span>
           </p>
         )
       ))}
@@ -407,78 +416,78 @@ function TaskMetricsGrid({ task }: { task: RunStatus }) {
   );
 }
 
-function TaskDetailDrawer({ task }: { task: RunStatus }) {
+function RunDetailDrawer({ run }: { run: RunStatus }) {
   const { t, formatDateTime } = useI18n();
-  const ioParams = taskIOParams(task);
+  const ioParams = runIOParams(run);
 
   return (
     <div className="mt-3 space-y-3">
       {ioParams.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {ioParams.map(([key, value]) => (
-            <span key={`${task.run_id}-io-${key}`} className="rounded-md border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-[11px] text-komgaPrimary">
+            <span key={`${run.run_id}-io-${key}`} className="rounded-md border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-[11px] text-komgaPrimary">
               {t(`logs.task.io.${key}`)}: {value}
             </span>
           ))}
         </div>
       )}
       {/* 暂停的来由只在暂停期间有话说：它答的是「谁把它按下的」，单条暂停还是全部暂停。 */}
-      {task.pause_reason && (
+      {run.pause_reason && (
         <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-          {t('logs.task.pauseReason')}: {t(`logs.task.pauseReason.${task.pause_reason}`)}
+          {t('logs.task.pauseReason')}: {t(`logs.task.pauseReason.${run.pause_reason}`)}
         </p>
       )}
-      {(task.started_at || task.finished_at) && (
+      {(run.started_at || run.finished_at) && (
         <div className="grid gap-2 text-xs sm:grid-cols-2">
           <div className="rounded-lg border border-white/10 bg-white/3 px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.startedAt')}</p>
-            <p className="mt-1 text-white/65">{task.started_at ? formatDateTime(task.started_at) : '-'}</p>
+            <p className="mt-1 text-white/65">{run.started_at ? formatDateTime(run.started_at) : '-'}</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/3 px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.finishedAt')}</p>
-            <p className="mt-1 text-white/65">{task.finished_at ? formatDateTime(task.finished_at) : t('logs.task.runningNow')}</p>
+            <p className="mt-1 text-white/65">{run.finished_at ? formatDateTime(run.finished_at) : t('logs.task.runningNow')}</p>
           </div>
         </div>
       )}
-      {task.params && Object.keys(task.params).length > 0 && (
+      {run.params && Object.keys(run.params).length > 0 && (
         <div>
           <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.params')}</p>
           <div className="flex flex-wrap gap-2">
-            {Object.entries(task.params).map(([key, value]) => (
-              <span key={`${task.run_id}-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
+            {Object.entries(run.params).map(([key, value]) => (
+              <span key={`${run.run_id}-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
                 {key}: {value}
               </span>
             ))}
           </div>
         </div>
       )}
-      {task.labels && Object.keys(task.labels).length > 0 && (
+      {run.labels && Object.keys(run.labels).length > 0 && (
         <div>
           <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">{t('settings.maintenance.taskLabels')}</p>
           <div className="flex flex-wrap gap-2">
-            {Object.entries(task.labels).map(([key, value]) => (
-              <span key={`${task.run_id}-label-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
+            {Object.entries(run.labels).map(([key, value]) => (
+              <span key={`${run.run_id}-label-${key}`} className="rounded-full border border-white/10 bg-gray-950 px-2.5 py-1 text-xs text-white/45">
                 {key}: {value}
               </span>
             ))}
           </div>
         </div>
       )}
-      {task.error && (
+      {run.error && (
         <div>
           <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.errorDetails')}</p>
-          <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs whitespace-pre-wrap wrap-break-word text-red-400">{task.error}</pre>
+          <pre className="overflow-auto rounded-lg border border-red-500/20 bg-black/30 p-3 text-xs whitespace-pre-wrap wrap-break-word text-red-400">{run.error}</pre>
         </div>
       )}
     </div>
   );
 }
 
-function TaskInlineTelemetry({ task }: { task: RunStatus }) {
+function RunTelemetry({ run }: { run: RunStatus }) {
   return (
     <div className="mt-3 grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-4">
-      <TaskLimitBadges task={task} />
-      <TaskMetricsGrid task={task} />
+      <RunLimitBadges run={run} />
+      <RunMetricsGrid run={run} />
     </div>
   );
 }
@@ -495,12 +504,14 @@ function RunCard({
   taskActionKey,
   onToggleExpanded,
   onTaskAction,
+  onViewTaskLogs,
 }: {
   run: RunStatus;
   expanded: boolean;
   taskActionKey: string | null;
   onToggleExpanded: () => void;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onViewTaskLogs?: (run: RunStatus) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const statusLabel = t(`logs.taskStatus.${run.status}`);
@@ -511,7 +522,7 @@ function RunCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full border px-2.5 py-1 text-xs ${taskBadgeClass(run.status)}`}>{statusLabel}</span>
+            <span className={`rounded-full border px-2.5 py-1 text-xs ${runBadgeClass(run.status)}`}>{statusLabel}</span>
             <p className="text-sm font-semibold text-white">{getTaskTypeLabel(run, t)}</p>
             <span className="text-xs text-white/40">{scopeLabel(run, t)}</span>
             {/* **发起方**：半夜转盘的那条究竟是谁叫来的。后端不发就整格不显示。 */}
@@ -529,7 +540,15 @@ function RunCard({
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <RunControlButtons run={run} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
-          {hasTaskDetails(run) && (
+          {/* 每条运行各有一个日志入口：历次运行里点开的必须是**那一次**的日志，
+              而不是这个任务最近那一次的。 */}
+          {onViewTaskLogs && (
+            <button type="button" onClick={() => onViewTaskLogs(run)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+              <FileText className="h-3.5 w-3.5" />
+              {t('logs.task.viewLogs')}
+            </button>
+          )}
+          {hasRunDetails(run) && (
             <button type="button" onClick={onToggleExpanded} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
               <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
               {expanded ? t('common.collapseDetails') : t('common.viewDetails')}
@@ -537,9 +556,9 @@ function RunCard({
           )}
         </div>
       </div>
-      <TaskProgressBar task={run} />
-      {hasInlineTelemetry(run) && <TaskInlineTelemetry task={run} />}
-      {isInterruptedTask(run) && (
+      <RunProgressBar run={run} />
+      {hasRunTelemetry(run) && <RunTelemetry run={run} />}
+      {isInterruptedRun(run) && (
         <p className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">{t('logs.task.interruptedHint')}</p>
       )}
       {run.error && !expanded && (
@@ -547,7 +566,7 @@ function RunCard({
       )}
       {expanded && (
         <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-          <TaskDetailDrawer task={run} />
+          <RunDetailDrawer run={run} />
         </div>
       )}
     </div>
@@ -555,7 +574,17 @@ function RunCard({
 }
 
 /** RunCardList 画一组运行卡片，并自己记住哪一张展开着详情。去重键是**运行标识**——同一个任务键有多条运行。 */
-function RunCardList({ runs, taskActionKey, onTaskAction }: { runs: RunStatus[]; taskActionKey: string | null; onTaskAction: (run: RunStatus, action: TaskAction) => void }) {
+function RunCardList({
+  runs,
+  taskActionKey,
+  onTaskAction,
+  onViewTaskLogs,
+}: {
+  runs: RunStatus[];
+  taskActionKey: string | null;
+  onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onViewTaskLogs?: (run: RunStatus) => void;
+}) {
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   return (
     <div className="space-y-3">
@@ -567,6 +596,7 @@ function RunCardList({ runs, taskActionKey, onTaskAction }: { runs: RunStatus[];
           taskActionKey={taskActionKey}
           onToggleExpanded={() => setExpandedRunId((current) => (current === run.run_id ? null : run.run_id))}
           onTaskAction={onTaskAction}
+          onViewTaskLogs={onViewTaskLogs}
         />
       ))}
     </div>
@@ -586,6 +616,7 @@ function LiveSection({
   onTaskAction,
   onPauseAll,
   onResumeAll,
+  onViewTaskLogs,
 }: {
   live: RunLive;
   bulkPauseBusy?: boolean;
@@ -593,6 +624,7 @@ function LiveSection({
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
   onPauseAll?: () => void;
   onResumeAll?: () => void;
+  onViewTaskLogs?: (run: RunStatus) => void;
 }) {
   const { t } = useI18n();
   const bulkPause = onPauseAll && onResumeAll;
@@ -647,7 +679,7 @@ function LiveSection({
 
       {live.runs.length === 0
         ? <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('logs.taskCenter.noLiveRuns')}</p>
-        : <RunCardList runs={live.runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />}
+        : <RunCardList runs={live.runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} onViewTaskLogs={onViewTaskLogs} />}
     </section>
   );
 }
@@ -659,9 +691,7 @@ function LiveSection({
  */
 function TaskRow({
   task,
-  expanded,
-  runs,
-  runsLoading,
+  history,
   taskActionKey,
   onToggle,
   onTaskAction,
@@ -669,9 +699,8 @@ function TaskRow({
   onViewTaskLogs,
 }: {
   task: TaskSummary;
-  expanded: boolean;
-  runs?: RunStatus[];
-  runsLoading?: boolean;
+  // history 只在这一行正是展开着的那一行时给出。
+  history?: TaskRunHistory;
   taskActionKey: string | null;
   onToggle?: () => void;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
@@ -680,6 +709,7 @@ function TaskRow({
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const lastRun = task.last_run;
+  const expanded = Boolean(history);
   // 停发是**退避**与禁用那一组的对外说法：任一为真就标红。今天没有写入方，因此不会出现。
   const stalled = task.disabled || Boolean(task.backoff_until && new Date(task.backoff_until).getTime() > Date.now());
   const timestamp = lastRun ? runTimestamp(lastRun) : '';
@@ -694,7 +724,7 @@ function TaskRow({
           className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-left"
         >
           <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-white/45 transition-transform ${expanded ? 'rotate-180' : '-rotate-90'}`} />
-          <span className={`rounded-full border px-2.5 py-1 text-xs ${lastRun ? taskBadgeClass(lastRun.status) : taskBadgeClass('')}`}>
+          <span className={`rounded-full border px-2.5 py-1 text-xs ${lastRun ? runBadgeClass(lastRun.status) : runBadgeClass('')}`}>
             {lastRun ? t(`logs.taskStatus.${lastRun.status}`) : t('logs.taskCenter.neverRun')}
           </span>
           <span className="text-sm font-semibold text-white">{getTaskTypeLabel({ type: task.type, params: lastRun?.params }, t)}</span>
@@ -727,12 +757,6 @@ function TaskRow({
               {t('logs.task.openPage')}
             </button>
           )}
-          {onViewTaskLogs && lastRun && (
-            <button type="button" onClick={() => onViewTaskLogs(lastRun)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
-              <FileText className="h-3.5 w-3.5" />
-              {t('logs.task.viewLogs')}
-            </button>
-          )}
         </div>
       </div>
       {lastRun && <p className="px-4 pb-3 text-xs text-white/45">{getTaskMessage(lastRun, t)}</p>}
@@ -743,10 +767,10 @@ function TaskRow({
             <ListTree className="h-3.5 w-3.5" />
             {t('logs.taskCenter.runHistory')}
           </p>
-          {runsLoading && <p className="text-sm text-white/50">{t('common.loading')}</p>}
-          {!runsLoading && runs && runs.length === 0 && <p className="text-sm text-white/50">{t('logs.taskCenter.noRunHistory')}</p>}
-          {!runsLoading && runs && runs.length > 0 && (
-            <RunCardList runs={runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
+          {history?.loading && <p className="text-sm text-white/50">{t('common.loading')}</p>}
+          {!history?.loading && history?.runs?.length === 0 && <p className="text-sm text-white/50">{t('logs.taskCenter.noRunHistory')}</p>}
+          {!history?.loading && history?.runs && history.runs.length > 0 && (
+            <RunCardList runs={history.runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} onViewTaskLogs={onViewTaskLogs} />
           )}
         </div>
       )}
@@ -759,9 +783,7 @@ export function TaskCenter({
   tasks,
   loading,
   taskActionKey,
-  expandedTaskId,
-  taskRuns,
-  taskRunsLoading,
+  history,
   bulkPauseBusy,
   filters,
   typeOptions = [],
@@ -798,6 +820,7 @@ export function TaskCenter({
         onTaskAction={onTaskAction}
         onPauseAll={onPauseAll}
         onResumeAll={onResumeAll}
+        onViewTaskLogs={onViewTaskLogs}
       />
 
       <section className="space-y-3 rounded-xl border border-white/10 bg-gray-950/40 p-4">
@@ -820,9 +843,7 @@ export function TaskCenter({
                 <TaskRow
                   key={task.task_id}
                   task={task}
-                  expanded={expandedTaskId === task.task_id}
-                  runs={expandedTaskId === task.task_id ? taskRuns : undefined}
-                  runsLoading={expandedTaskId === task.task_id && taskRunsLoading}
+                  history={history?.taskId === task.task_id ? history : undefined}
                   taskActionKey={taskActionKey}
                   onToggle={onToggleTask ? () => onToggleTask(task.task_id) : undefined}
                   onTaskAction={onTaskAction}

@@ -129,11 +129,13 @@ describe('任务清单的折叠与展开', () => {
   it('展开之后列出这个任务的历次运行', () => {
     renderCenter({
       tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 2, status: 'completed' }) })],
-      expandedTaskId: 7,
-      taskRuns: [
-        makeRun({ run_id: 2, status: 'completed', message_code: 'run.two' }),
-        makeRun({ run_id: 1, status: 'failed', message_code: 'run.one' }),
-      ],
+      history: {
+        taskId: 7,
+        runs: [
+          makeRun({ run_id: 2, status: 'completed', message_code: 'run.two' }),
+          makeRun({ run_id: 1, status: 'failed', message_code: 'run.one' }),
+        ],
+      },
       onToggleTask: vi.fn(),
     });
 
@@ -145,8 +147,7 @@ describe('任务清单的折叠与展开', () => {
   it('历史为空时明说没有留下记录，而不是画一片空白', () => {
     renderCenter({
       tasks: [makeSummary({ task_id: 7 })],
-      expandedTaskId: 7,
-      taskRuns: [],
+      history: { taskId: 7, runs: [] },
       onToggleTask: vi.fn(),
     });
     expect(screen.getByText('logs.taskCenter.noRunHistory')).toBeTruthy();
@@ -155,8 +156,7 @@ describe('任务清单的折叠与展开', () => {
   it('还在取的时候写加载中，不先说一句「没有记录」', () => {
     renderCenter({
       tasks: [makeSummary({ task_id: 7 })],
-      expandedTaskId: 7,
-      taskRunsLoading: true,
+      history: { taskId: 7, loading: true },
       onToggleTask: vi.fn(),
     });
     expect(screen.getByText('common.loading')).toBeTruthy();
@@ -234,8 +234,7 @@ describe('任务中心的处理速率', () => {
   it('中断运行发了速率也照常显示', () => {
     renderCenter({
       tasks: [makeSummary({ last_run: makeRun({ status: 'interrupted', rate_per_minute: 60 }) })],
-      expandedTaskId: 1,
-      taskRuns: [makeRun({ status: 'interrupted', rate_per_minute: 60 })],
+      history: { taskId: 1, runs: [makeRun({ status: 'interrupted', rate_per_minute: 60 })] },
       onToggleTask: vi.fn(),
     });
     expect(screen.getByText('60/min')).toBeTruthy();
@@ -262,8 +261,7 @@ describe('总数未知的运行的不定进度条', () => {
       cleanup();
       renderCenter({
         tasks: [makeSummary({ task_id: 1 })],
-        expandedTaskId: 1,
-        taskRuns: [makeRun({ status, total: 0, percent: undefined, rate_per_minute: undefined })],
+        history: { taskId: 1, runs: [makeRun({ status, total: 0, percent: undefined, rate_per_minute: undefined })] },
         onToggleTask: vi.fn(),
       });
       expect(indeterminate(), `${status} 的运行还在跑不定进度条动画`).toHaveLength(0);
@@ -278,8 +276,7 @@ describe('最后一次有动静的时刻', () => {
   it('终态读收尾时刻，不读那一行最后被写的时刻', () => {
     renderCenter({
       tasks: [makeSummary({ task_id: 1 })],
-      expandedTaskId: 1,
-      taskRuns: [makeRun({ status: 'interrupted', ...timestamps })],
+      history: { taskId: 1, runs: [makeRun({ status: 'interrupted', ...timestamps })] },
       onToggleTask: vi.fn(),
     });
     expect(screen.getByText(/最后一次上报/)).toBeTruthy();
@@ -348,16 +345,38 @@ describe('不可暂停的运行', () => {
   });
 });
 
+describe('日志入口按运行给', () => {
+  it('历次运行每条一个入口，点开的是那一次而不是最近那一次', () => {
+    const onViewTaskLogs = vi.fn();
+    renderCenter({
+      tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3 }) })],
+      history: {
+        taskId: 7,
+        runs: [makeRun({ run_id: 3, key: 'scan_library_1' }), makeRun({ run_id: 2, key: 'scan_library_1' })],
+      },
+      onToggleTask: vi.fn(),
+      onViewTaskLogs,
+    });
+
+    const entries = screen.getAllByText('logs.task.viewLogs');
+    expect(entries).toHaveLength(2);
+    fireEvent.click(entries[1]);
+    expect(onViewTaskLogs).toHaveBeenCalledWith(expect.objectContaining({ run_id: 2 }));
+  });
+});
+
 describe('重试作用在任务上', () => {
   it('重试键画在任务行上，一个任务只有一个', () => {
     const onTaskAction = vi.fn();
     renderCenter({
       tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3, status: 'failed', retryable: true }) })],
-      expandedTaskId: 7,
-      taskRuns: [
-        makeRun({ run_id: 3, status: 'failed', retryable: true }),
-        makeRun({ run_id: 2, status: 'failed', retryable: true }),
-      ],
+      history: {
+        taskId: 7,
+        runs: [
+          makeRun({ run_id: 3, status: 'failed', retryable: true }),
+          makeRun({ run_id: 2, status: 'failed', retryable: true }),
+        ],
+      },
       onToggleTask: vi.fn(),
       onTaskAction,
     });

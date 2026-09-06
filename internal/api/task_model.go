@@ -73,8 +73,8 @@ type taskFilters struct {
 
 // runFilterFrom 把任务端点共用的过滤参数翻成**运行**查询的谓词。
 //
-// 五条谓词整条下推到落盘侧，不再取回内存里过一遍：旧引擎必须在内存里判，因为它要先把内存表盖在
-// 库记录上；现在只有一个来源，下推之后 Limit 截断的才是过滤**之后**的那一页。
+// 谓词整条下推到落盘侧，不取回内存里过一遍：只有一个来源，下推之后 Limit 截断的才是
+// 过滤**之后**的那一页。
 func runFilterFrom(filters taskFilters, order task.RunOrder) task.RunFilter {
 	filter := task.RunFilter{
 		TaskID:  filters.TaskID,

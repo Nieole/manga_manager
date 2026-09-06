@@ -98,7 +98,22 @@ func int64Placeholders(ids []int64) (string, []any) {
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	return strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", "), args
+	return questionMarks(len(ids)), args
+}
+
+// stringPlaceholders 同上，但收的是本仓那几个字符串枚举（任务类型、运行状态）。
+// 类型参数收在 `~string` 上：枚举值直接进来，调用点不必先摊一遍再转换。
+func stringPlaceholders[T ~string](values []T) (string, []any) {
+	args := make([]any, 0, len(values))
+	for _, value := range values {
+		args = append(args, string(value))
+	}
+	return questionMarks(len(values)), args
+}
+
+// questionMarks 给出 n 个逗号分隔的占位符。
+func questionMarks(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?, ", n), ", ")
 }
 
 // ErrTaskNotFound 是身份行不存在时的哨兵错误。

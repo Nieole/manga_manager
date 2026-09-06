@@ -210,12 +210,9 @@ func runFilterClause(filter task.RunFilter) (string, []any) {
 		args = append(args, filter.TaskID)
 	}
 	if len(filter.Statuses) > 0 {
-		placeholders := make([]string, 0, len(filter.Statuses))
-		for _, status := range filter.Statuses {
-			placeholders = append(placeholders, "?")
-			args = append(args, string(status))
-		}
-		clauses = append(clauses, `status IN (`+strings.Join(placeholders, ", ")+`)`)
+		placeholders, statusArgs := stringPlaceholders(filter.Statuses)
+		clauses = append(clauses, `status IN (`+placeholders+`)`)
+		args = append(args, statusArgs...)
 	}
 	if filter.Key != "" {
 		clauses = append(clauses, `task_key = ?`)
@@ -242,12 +239,9 @@ func identityClause(filter task.RunFilter) (string, []any) {
 	clauses := make([]string, 0, 3)
 	args := make([]any, 0, len(filter.Types)+2)
 	if len(filter.Types) > 0 {
-		placeholders := make([]string, 0, len(filter.Types))
-		for _, taskType := range filter.Types {
-			placeholders = append(placeholders, "?")
-			args = append(args, string(taskType))
-		}
-		clauses = append(clauses, `type IN (`+strings.Join(placeholders, ", ")+`)`)
+		placeholders, typeArgs := stringPlaceholders(filter.Types)
+		clauses = append(clauses, `type IN (`+placeholders+`)`)
+		args = append(args, typeArgs...)
 	}
 	if filter.Scope != "" {
 		clauses = append(clauses, `scope = ?`)
