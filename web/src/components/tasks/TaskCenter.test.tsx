@@ -11,7 +11,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 
-import { TaskCenter, type TaskStatus } from './TaskCenter';
+import { TaskCenter, type RunStatus } from './TaskCenter';
 
 // 词条只要能渲染出来即可：本文件断言的是速率那一格在不在，与译文无关。
 vi.mock('../../i18n/LocaleProvider', () => ({
@@ -23,7 +23,7 @@ vi.mock('../../i18n/LocaleProvider', () => ({
   }),
 }));
 
-function makeTask(overrides: Partial<TaskStatus>): TaskStatus {
+function makeTask(overrides: Partial<RunStatus>): RunStatus {
   return {
     key: 'scan_library_1',
     type: 'scan_library',
@@ -43,7 +43,7 @@ function makeTask(overrides: Partial<TaskStatus>): TaskStatus {
   };
 }
 
-function renderTasks(tasks: TaskStatus[]) {
+function renderTasks(tasks: RunStatus[]) {
   return render(
     <TaskCenter tasks={tasks} loading={false} taskActionKey={null} onRefresh={vi.fn()} onTaskAction={vi.fn()} />,
   );

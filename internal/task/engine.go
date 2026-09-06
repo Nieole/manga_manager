@@ -91,7 +91,7 @@ type Config struct {
 	// 外部替引擎开 goroutine 再反向伸手改运行，会多套一层调度，停机竞态下运行被静默丢弃。
 	// 测试注入同步执行版即可确定性地断言**终态**，不必等待真实 goroutine。
 	RunBackground func(func())
-	// DiskWork 是交给**运行句柄**的**磁盘作业**入口，留 nil 的后果见 taskrun.New。
+	// DiskWork 是交给**运行句柄**的**磁盘作业**入口，留 nil 的后果见 runhandle.New。
 	DiskWork *diskwork.Runner
 	// DecorateRunContext 在任务体的 ctx 建好之后再加一层，为 nil 时不加。
 	//

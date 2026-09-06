@@ -14,7 +14,7 @@ import (
 	"sync"
 
 	"manga-manager/internal/external"
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -223,16 +223,16 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// externalScanHandle 是**外部库**传输扫描收下的**任务句柄**：只有**计数推进**换成本包的
+// externalScanHandle 是**外部库**传输扫描收下的**运行句柄**：只有**计数推进**换成本包的
 // 帧构造，扫描报两个数字，i18n 码与**阶段**留在这一侧（遮蔽内嵌方法的写法同 proposalDB.ExecTx）。
 type externalScanHandle struct {
-	*taskrun.Handle
+	*runhandle.Handle
 }
 
 // Advance 遮蔽内嵌句柄的同名方法：扫描只认收窄后的这个形状。
 // 一份报文一整帧：计数、指标与占位参数同时变，拆开报会被投递水位撕断。
 func (h externalScanHandle) Advance(current, total int) {
-	h.Report(taskrun.Frame{
+	h.Report(runhandle.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "discovering",
@@ -245,7 +245,7 @@ func (h externalScanHandle) Advance(current, total int) {
 // launchExternalLibraryScanTask 起**外部库**扫描任务。**作用域**显示名取自资料库，
 // 取不到就留空——会话本身不依赖它，为一次读库失败挡下整个扫描不划算。
 func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID string) error {
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:          externalLibraryScanTaskKey(libraryID, sessionID),
 		StartCode:    "task.msg.scan_external_library.start",
 		CanCancel:    true,
@@ -257,7 +257,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
@@ -285,7 +285,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 // 循环结束后补的那一帧不是可选的：终态不动指标，少了它 transferred_files 会永远停在倒数第二本上。
 func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, plan external.TransferPlan) error {
 	total := len(plan.Operations)
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:       externalLibraryTransferTaskKey(libraryID, sessionID),
 		StartCode: "task.msg.transfer_external_library.start",
 		Total:     total,
@@ -301,7 +301,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		if err := ctx.Err(); err != nil {
 			return TaskResult{}, err
 		}
@@ -322,7 +322,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			// 帧报的是**已完成**数，因此在拷贝之前报：单本几百 MB 要拷几分钟，
 			// 这段时间里用户要看到的是正在传的那本书，而不是上一本传完时的旧帧。
 			done := index
-			tp.Report(taskrun.Frame{
+			tp.Report(runhandle.Frame{
 				Current: &done,
 				Total:   &total,
 				Phase:   "transferring_files",
@@ -347,7 +347,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		// 收尾这一帧的计数与指标回答的是两个问题：Current 是「走完了几本」（失败的也走过了），
 		// transferred_files 是「传成了几本」。
 		transferred := total - len(failures)
-		tp.Report(taskrun.Frame{
+		tp.Report(runhandle.Frame{
 			Current: &total,
 			Total:   &total,
 			Code:    "task.msg.transfer_external_library.progress",

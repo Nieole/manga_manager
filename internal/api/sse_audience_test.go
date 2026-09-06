@@ -19,7 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"manga-manager/internal/database"
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // sseProbeEvent 用于确认连接已进入 broker 的订阅表，sseSentinelEvent 用于收口一轮断言。
@@ -183,11 +183,11 @@ func (r *sseAudienceRig) loginClient(t *testing.T, username string) *http.Client
 func (r *sseAudienceRig) runFailingTask(t *testing.T, secretPath string) {
 	t.Helper()
 	const key = "scan_library_7"
-	err := r.controller.taskEngine.Run(libraryTask("scan_library", 7, variantSole), TaskSpec{
+	err := r.controller.taskEngine.Run(libraryTask("scan_library", 7, variantSole), RunSpec{
 		Key:       key,
 		ScopeName: "资料库A",
 		Metadata:  map[string]string{"library_path": secretPath},
-	}, func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	}, func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{}, &taskTestError{msg: secretPath + ": permission denied"}
 	})
 	if err != nil {
@@ -196,7 +196,7 @@ func (r *sseAudienceRig) runFailingTask(t *testing.T, secretPath string) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		ok := taskExists(t, r.controller.taskEngine, key)
-		var task TaskStatus
+		var task RunStatus
 		if ok {
 			task = currentTask(t, r.controller.taskEngine, key)
 		}
@@ -241,7 +241,7 @@ func TestServerEventsFiltersTaskFramesByRole(t *testing.T) {
 				switch {
 				case frame == "refresh":
 					sawRefresh = true
-				case strings.HasPrefix(frame, "task_progress:"):
+				case strings.HasPrefix(frame, "run_snapshot:"):
 					sawTask = true
 					if !tc.wantTaskFrame {
 						t.Errorf("普通用户收到了任务快照: %s", frame)

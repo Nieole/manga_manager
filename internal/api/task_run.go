@@ -1,6 +1,6 @@
-// 任务引擎对外的**唯一启动入口**：调用方提交一份**身份**、一份任务声明（TaskSpec）与一个任务体，
+// 任务引擎对外的**唯一启动入口**：调用方提交一份**身份**、一份运行声明（RunSpec）与一个任务体，
 // 准入、上下文与**运行时句柄**、后台 goroutine、四条终态分支全部由 `internal/task` 的领域引擎承担。
-// 任务体只做两件事——干活，以及经交给它的**运行句柄**（taskrun.Handle）上报；它不接触**任务键**、
+// 任务体只做两件事——干活，以及经交给它的**运行句柄**（runhandle.Handle）上报；它不接触**任务键**、
 // 不自己判断**终态**、不自己起 goroutine。
 //
 // 本文件不含状态：翻译完就把整份声明交给领域引擎，准入的判据在数据库那两条部分唯一索引上。
@@ -12,8 +12,8 @@ import (
 	"errors"
 	"strings"
 
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
-	"manga-manager/internal/taskrun"
 )
 
 // TaskVariant 是**变体**：同一类工作在同一个作用域上的第二个身份。
@@ -75,7 +75,7 @@ func seriesTask(taskType string, seriesID int64, variant TaskVariant) TaskIdenti
 	return TaskIdentity{taskType: taskType, scope: taskScopeSeries, scopeID: &seriesID, variant: variant}
 }
 
-// TaskSpec 是一份任务声明：「这个任务怎么跑、怎么显示」的完整描述，与身份一起一次性交给引擎。
+// RunSpec 是一份运行声明：「这一次运行怎么跑、怎么显示」的完整描述，与身份一起一次性交给引擎。
 //
 // 身份不在这里而是启动入口的**第一个位置参数**（TaskIdentity）：它是一份声明里唯一「漏了就必须
 // 有编译错误」的部分，而结构体字面量漏一个字段只会得到零值——那等于把从任务键反解作用域的猜测
@@ -83,7 +83,7 @@ func seriesTask(taskType string, seriesID int64, variant TaskVariant) TaskIdenti
 //
 // 整份声明必须原子落地。拆成启动之后的多次补写，会留下一个「任务已经出现在列表里、却还没有
 // 作用域名」的窗口——那是任务列表接口能观察到的，而补写的那几帧还会被首帧刚写下的节流水位吞掉。
-type TaskSpec struct {
+type RunSpec struct {
 	// Key 是这个任务的**任务键**：日志、URL 与六个控制端点都按它寻址，也随运行一起落盘。
 	// 它由启动点自己拼，与身份的四项**不互相推导**——身份不从它反解，它也不由身份生成。
 	//
@@ -109,7 +109,7 @@ type TaskSpec struct {
 	// Labels 是启动时就已知、整个任务期间不变的展示标签（刮削源名等），落进它自己那张侧表。
 	//
 	// 它与 Metadata 从此是两张表而不是一个命名空间里的两组前缀键：接反的后果因此从「读不回来」
-	// 变成「显示在了另一处」。开跑之后才变的标签走 taskrun.Frame.Labels，两条路都是按键合并。
+	// 变成「显示在了另一处」。开跑之后才变的标签走 runhandle.Frame.Labels，两条路都是按键合并。
 	Labels map[string]string
 
 	// Limits 是该任务实际生效的并发上限。只有真被某个并发上限管住的任务才填它——顺序逐本处理的
@@ -151,7 +151,7 @@ func taskFailure(code string, err error) TaskResult {
 //
 // 刻意保留的不变量：准入**同步**执行、任务体**异步**执行。Run 返回时运行已在库里、
 // 而任务体尚未开跑，HTTP 层才能立即返回 202 而不被任务体阻塞。
-func (e *taskEngine) Run(identity TaskIdentity, spec TaskSpec, fn func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error)) error {
+func (e *taskEngine) Run(identity TaskIdentity, spec RunSpec, fn func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error)) error {
 	ctx := context.Background()
 	// 先把身份取出来（不存在就建一条）：投递首帧那一刻在领域引擎的临界区里，补不了身份，
 	// 而首帧要带着类型与作用域出去——它是任务在界面上诞生的那一帧。
@@ -183,7 +183,7 @@ func (e *taskEngine) Run(identity TaskIdentity, spec TaskSpec, fn func(ctx conte
 		runSpec.Limits = spec.Limits.domain()
 	}
 
-	_, err = e.engine.Start(ctx, runSpec, func(runCtx context.Context, handle *taskrun.Handle) (task.Result, error) {
+	_, err = e.engine.Start(ctx, runSpec, func(runCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		result, err := fn(runCtx, handle)
 		return task.Result{Code: result.Code, Params: result.Params}, err
 	})

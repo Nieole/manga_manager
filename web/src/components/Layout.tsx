@@ -291,9 +291,9 @@ export default function Layout() {
                 // 不调用 fetchLibraries()：避免闭包捕获过期路由状态导致页面跳转，
                 // 且侧边栏资料库列表无需因扫描而刷新。
                 setRefreshTrigger((prev) => prev + 1);
-            } else if (data.startsWith('task_progress:')) {
+            } else if (data.startsWith('run_snapshot:')) {
                 try {
-                    const progress = JSON.parse(data.slice('task_progress:'.length));
+                    const progress = JSON.parse(data.slice('run_snapshot:'.length));
                     window.dispatchEvent(new CustomEvent('manga-manager:task-progress', { detail: progress }));
                     ingestTaskProgress(progress);
                 } catch (e) {

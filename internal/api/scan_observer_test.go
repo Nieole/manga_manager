@@ -16,7 +16,7 @@ import (
 // newScanEventsTestController 手工拼装这条链路唯一需要的组件：任务引擎。
 // 引擎仍经它唯一的 seam（newTaskEngine）构造，扫描报文的转译处不碰任何 Controller 字段，
 // 因此这里不需要数据库、配置管理器或扫描器。
-func newScanEventsTestController(t testing.TB, clock *fakeClock) (*Controller, func() []TaskStatus) {
+func newScanEventsTestController(t testing.TB, clock *fakeClock) (*Controller, func() []RunStatus) {
 	t.Helper()
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	e.now = clock.Now
@@ -24,7 +24,7 @@ func newScanEventsTestController(t testing.TB, clock *fakeClock) (*Controller, f
 }
 
 // startedScanRig 造一条「扫描任务已启动、观察者已交出」的现场，即多数用例的起点。
-func startedScanRig(t *testing.T, key string, identity TaskIdentity) (scanner.ScanObserver, func() []TaskStatus, *fakeClock) {
+func startedScanRig(t *testing.T, key string, identity TaskIdentity) (scanner.ScanObserver, func() []RunStatus, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	c, snapshots := newScanEventsTestController(t, clock)
@@ -34,7 +34,7 @@ func startedScanRig(t *testing.T, key string, identity TaskIdentity) (scanner.Sc
 	return newTaskScanObserver(progress), snapshots, clock
 }
 
-// TestScanProgressFlowsThroughHandedOverObserver 走完一整条交接：启动任务拿到**任务句柄**、
+// TestScanProgressFlowsThroughHandedOverObserver 走完一整条交接：启动任务拿到**运行句柄**、
 // 包成观察者交给扫描器、由扫描器一侧驱动、断言投递出去的载荷。
 //
 // 驱动用的是扫描器真正会调的那两个方法——报文里没有身份，那一侧没有任何办法拼出任务键。

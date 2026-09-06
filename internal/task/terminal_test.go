@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 func TestBodyErrorDecidesTerminalState(t *testing.T) {
@@ -32,7 +32,7 @@ func TestBodyErrorDecidesTerminalState(t *testing.T) {
 			spec.CancelCode = "task.msg.scan.cancelled"
 			spec.FailCode = "task.msg.scan.failed"
 
-			run := h.start(t, spec, func(context.Context, *taskrun.Handle) (Result, error) {
+			run := h.start(t, spec, func(context.Context, *runhandle.Handle) (Result, error) {
 				return Result{}, tc.bodyErr
 			})
 
@@ -57,7 +57,7 @@ func TestResultOnlyOverridesTheText(t *testing.T) {
 	spec := libraryScanSpec(1)
 	spec.FailCode = "task.msg.scan.failed"
 
-	run := h.start(t, spec, func(context.Context, *taskrun.Handle) (Result, error) {
+	run := h.start(t, spec, func(context.Context, *runhandle.Handle) (Result, error) {
 		return Result{Code: "task.msg.scan.partial"}, errors.New("half of it failed")
 	})
 
@@ -85,7 +85,7 @@ func TestOnlyCompletedFillsTheCount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newTestEngine(t, runBodySynchronously, 0)
-			run := h.start(t, libraryScanSpec(1), func(context.Context, *taskrun.Handle) (Result, error) {
+			run := h.start(t, libraryScanSpec(1), func(context.Context, *runhandle.Handle) (Result, error) {
 				return Result{}, tc.bodyErr
 			})
 
@@ -100,7 +100,7 @@ func TestOnlyCompletedFillsTheCount(t *testing.T) {
 func TestFailedTerminalKeepsTheErrorOthersClearIt(t *testing.T) {
 	h := newTestEngine(t, runBodySynchronously, 0)
 
-	failed := h.start(t, libraryScanSpec(1), func(context.Context, *taskrun.Handle) (Result, error) {
+	failed := h.start(t, libraryScanSpec(1), func(context.Context, *runhandle.Handle) (Result, error) {
 		return Result{}, errors.New("archive is broken")
 	})
 	if got := h.load(t, failed.ID).Error; got != "archive is broken" {
@@ -118,7 +118,7 @@ func TestFailedTerminalKeepsTheErrorOthersClearIt(t *testing.T) {
 func TestPanicBecomesAnExplicitFailure(t *testing.T) {
 	h := newTestEngine(t, runBodySynchronously, 0)
 
-	run, err := h.engine.Start(context.Background(), libraryScanSpec(1), func(context.Context, *taskrun.Handle) (Result, error) {
+	run, err := h.engine.Start(context.Background(), libraryScanSpec(1), func(context.Context, *runhandle.Handle) (Result, error) {
 		panic("scanner blew up")
 	})
 	if err != nil {
@@ -142,8 +142,8 @@ func TestPanicBecomesAnExplicitFailure(t *testing.T) {
 func TestLateFramesDoNotReviveATerminalRun(t *testing.T) {
 	h := newTestEngine(t, runBodySynchronously, 0)
 
-	var late *taskrun.Handle
-	run := h.start(t, libraryScanSpec(1), func(_ context.Context, handle *taskrun.Handle) (Result, error) {
+	var late *runhandle.Handle
+	run := h.start(t, libraryScanSpec(1), func(_ context.Context, handle *runhandle.Handle) (Result, error) {
 		late = handle
 		return Result{}, nil
 	})

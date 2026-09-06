@@ -1,6 +1,6 @@
 // 守「投递与列表交出去的那份快照，与仍在被写入的那份不是同一批 map」。Params/Metrics/Labels/
 // MessageParams 都是 map，而结构体拷贝共享同一 map header：进度上报在引擎的临界区里写，
-// listTaskStatuses 交出去的快照则在锁外被 json.Marshal 遍历。共享一份就会撞成
+// listRunStatuses 交出去的快照则在锁外被 json.Marshal 遍历。共享一份就会撞成
 // `fatal error: concurrent map read and map write`——runtime throw，recover 拦不住，整个进程退出。
 
 package api
@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // TestTaskSnapshotsAreClonedAcrossCriticalSection 并发跑「进度更新」与「落盘 + 列表」，
@@ -27,7 +27,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	var writer, readers sync.WaitGroup
 
 	// 写侧：模拟扫描器的高频进度回调（真实场景每 250ms 一次，回填任务每本书两次——
-	// **任务句柄**一次、任务参数一次，两次都在锁内原地写同一批 map）。
+	// **运行句柄**一次、任务参数一次，两次都在锁内原地写同一批 map）。
 	// 持续到读侧跑完为止，保证读写窗口充分重叠。
 	writer.Add(1)
 	go func() {
@@ -39,9 +39,9 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 			default:
 			}
 			progress.Advance(i, 1000, "task.msg.scan_library.progress", map[string]string{"current": strconv.Itoa(i)})
-			progress.Report(taskrun.Frame{Item: "item"})
-			progress.Report(taskrun.Frame{Metrics: map[string]int64{"processed": int64(i)}})
-			progress.Report(taskrun.Frame{Labels: map[string]string{"library": "alpha"}})
+			progress.Report(runhandle.Frame{Item: "item"})
+			progress.Report(runhandle.Frame{Metrics: map[string]int64{"processed": int64(i)}})
+			progress.Report(runhandle.Frame{Labels: map[string]string{"library": "alpha"}})
 			progress.MergeParams(map[string]string{"library": "alpha"})
 		}
 	}()
@@ -51,7 +51,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	go func() {
 		defer readers.Done()
 		for range 200 {
-			items, err := controller.taskEngine.listTaskStatuses(context.Background(), taskFilters{Limit: 50})
+			items, err := controller.taskEngine.listRunStatuses(context.Background(), taskFilters{Limit: 50})
 			if err != nil {
 				continue
 			}

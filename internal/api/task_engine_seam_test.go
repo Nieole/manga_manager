@@ -92,24 +92,24 @@ func newTaskTestStore(t testing.TB) task.Store {
 // newBackgroundTestEngine 造一个后台能力可控的引擎：run 决定任务体何时、乃至是否执行。
 //
 // diskWork 是交给**运行句柄**的**磁盘作业**入口，与生产同样在构造期收下：多数用例的任务体一次盘
-// 都不读，传 nil 即可；要读盘的用例必须在这里交出真 runner，留 nil 的后果见 taskrun.New。
-func newBackgroundTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner) (*taskEngine, func() []TaskStatus) {
+// 都不读，传 nil 即可；要读盘的用例必须在这里交出真 runner，留 nil 的后果见 runhandle.New。
+func newBackgroundTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner) (*taskEngine, func() []RunStatus) {
 	return newClockedTestEngine(t, run, diskWork, nil)
 }
 
 // newClockedTestEngine 与 newBackgroundTestEngine 相同，另外注入一个可控时钟。
 //
 // 时钟必须在构造期交出去：领域引擎的投递水位读的就是它，而水位在首帧就已写下。
-func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner, now func() time.Time) (*taskEngine, func() []TaskStatus) {
+func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner, now func() time.Time) (*taskEngine, func() []RunStatus) {
 	t.Helper()
 
 	var mu sync.Mutex
-	var published []TaskStatus
+	var published []RunStatus
 	e := newTaskEngine(taskEngineConfig{
 		Store: newTaskTestStore(t),
 		Publish: func(payload string) {
-			var status TaskStatus
-			if err := json.Unmarshal([]byte(strings.TrimPrefix(payload, "task_progress:")), &status); err != nil {
+			var status RunStatus
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(payload, "run_snapshot:")), &status); err != nil {
 				return
 			}
 			mu.Lock()
@@ -120,10 +120,10 @@ func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Run
 		DiskWork:      diskWork,
 		Now:           now,
 	})
-	return e, func() []TaskStatus {
+	return e, func() []RunStatus {
 		mu.Lock()
 		defer mu.Unlock()
-		return append([]TaskStatus(nil), published...)
+		return append([]RunStatus(nil), published...)
 	}
 }
 
@@ -135,7 +135,7 @@ func runTaskBodySynchronously(fn func()) { fn() }
 // 它走的是生产的读取路径（库），不是引擎内部的某个字段：任务与运行的事实来源只有库，
 // 断言绕开它就等于断言一份不存在的真相。查不到即 t.Fatal——用例想断言的状态不会出现在
 // 一条不存在的运行上。
-func currentTask(t testing.TB, e *taskEngine, key string) TaskStatus {
+func currentTask(t testing.TB, e *taskEngine, key string) RunStatus {
 	t.Helper()
 	status, err := e.snapshotForRetry(context.Background(), key)
 	if err != nil {
@@ -158,7 +158,7 @@ func taskExists(t testing.TB, e *taskEngine, key string) bool {
 }
 
 // lastPublishedTask 返回该任务键最后一条被投递出去的快照。
-func lastPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskStatus {
+func lastPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatus {
 	t.Helper()
 	for i := len(snapshots) - 1; i >= 0; i-- {
 		if snapshots[i].Key == key {
@@ -166,12 +166,12 @@ func lastPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskSta
 		}
 	}
 	t.Fatalf("任务 %q 一条快照都没被投递出去", key)
-	return TaskStatus{}
+	return RunStatus{}
 }
 
 // publishedCountFor 数一数该任务键被投递出去的快照条数，供「该不该投递这一条」的用例断言
 // 投递次数本身——节流吞掉与句柄没交出去都表现为一条也不多。
-func publishedCountFor(snapshots []TaskStatus, key string) int {
+func publishedCountFor(snapshots []RunStatus, key string) int {
 	count := 0
 	for _, snapshot := range snapshots {
 		if snapshot.Key == key {
@@ -184,8 +184,8 @@ func publishedCountFor(snapshots []TaskStatus, key string) int {
 // publishedTasksWithCode 按投递顺序取出该任务键带指定文案码的全部载荷。终态会改掉文案码，
 // 所以中途那些帧只能这样取——lastPublishedTask 拿到的永远是收尾那一条。
 // 「这一帧该不该出去」那类断言数的就是它的长度：节流吞掉与句柄没交出去都表现为一条也不多。
-func publishedTasksWithCode(snapshots []TaskStatus, key, code string) []TaskStatus {
-	var matched []TaskStatus
+func publishedTasksWithCode(snapshots []RunStatus, key, code string) []RunStatus {
+	var matched []RunStatus
 	for _, snapshot := range snapshots {
 		if snapshot.Key == key && snapshot.MessageCode == code {
 			matched = append(matched, snapshot)
@@ -195,19 +195,19 @@ func publishedTasksWithCode(snapshots []TaskStatus, key, code string) []TaskStat
 }
 
 // publishedTaskWithCode 返回该任务键带指定文案码的最后一条快照；一条都没有即 t.Fatal。
-func publishedTaskWithCode(t *testing.T, snapshots []TaskStatus, key, code string) TaskStatus {
+func publishedTaskWithCode(t *testing.T, snapshots []RunStatus, key, code string) RunStatus {
 	t.Helper()
 	matched := publishedTasksWithCode(snapshots, key, code)
 	if len(matched) == 0 {
 		t.Fatalf("任务 %q 没有投递过任何带文案码 %q 的载荷", key, code)
-		return TaskStatus{}
+		return RunStatus{}
 	}
 	return matched[len(matched)-1]
 }
 
 // firstPublishedTask 返回该任务键**第一条**被投递出去的快照，用于断言任务诞生那一刻就已带齐
 // 作用域、元数据与并发上限，不得拆成启动之后的多次独立写入、中间留下可被观察到的空窗。
-func firstPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskStatus {
+func firstPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatus {
 	t.Helper()
 	for _, snapshot := range snapshots {
 		if snapshot.Key == key {
@@ -215,5 +215,5 @@ func firstPublishedTask(t *testing.T, snapshots []TaskStatus, key string) TaskSt
 		}
 	}
 	t.Fatalf("任务 %q 一条快照都没被投递出去", key)
-	return TaskStatus{}
+	return RunStatus{}
 }

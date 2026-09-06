@@ -18,15 +18,15 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
 
 // taskRelauncher 用原任务的作用域与任务参数重新发起同一个任务。返回 errTaskAlreadyRunning 表示
 // 同一任务已在运行（映射为 409），返回其它错误视为内部错误（映射为 500）。
-type taskRelauncher func(ctx context.Context, task TaskStatus) error
+type taskRelauncher func(ctx context.Context, task RunStatus) error
 
 // taskDispatchKey 是**重启函数**注册表的键：身份四要素里决定「怎么跑」的那两项。
 //
@@ -70,7 +70,7 @@ func (c *Controller) libraryScopeName(libraryID int64) string {
 // taskParam 读一个**任务参数**，缺了给空串。**重启函数**靠它读回原始入参：一个任务重试时
 // 除了作用域就只剩这些参数，读丢了不会有编译错误，后果是重试静默换了跑法（换成默认刮削源、
 // 换个语种、丢掉发起理由）。
-func taskParam(task TaskStatus, key string) string {
+func taskParam(task RunStatus, key string) string {
 	if task.Params == nil {
 		return ""
 	}
@@ -79,17 +79,17 @@ func taskParam(task TaskStatus, key string) string {
 
 // buildTaskRelaunchers 注册（类型，**变体**）-> 重启函数，是重试分发与「可重试」的唯一事实来源。
 func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
-	libraryID := func(task TaskStatus) (int64, error) {
+	libraryID := func(task RunStatus) (int64, error) {
 		if task.ScopeID == nil {
 			return 0, fmt.Errorf("task %q missing library id", task.Key)
 		}
 		return *task.ScopeID, nil
 	}
-	forceParam := func(task TaskStatus) bool {
+	forceParam := func(task RunStatus) bool {
 		return taskParam(task, "force") == "true"
 	}
 	return map[taskDispatchKey]taskRelauncher{
-		{Type: "scan_library", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
+		{Type: "scan_library", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
@@ -102,36 +102,36 @@ func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
 			// 不必再把一个布尔值转换回哨兵错误。
 			return c.launchLibraryScanTask(lib, forceParam(task))
 		},
-		{Type: "scan_series", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
+		{Type: "scan_series", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
 			if task.ScopeID == nil {
 				return fmt.Errorf("task %q missing series id", task.Key)
 			}
 			return c.launchSeriesScanTask(*task.ScopeID, forceParam(task))
 		},
-		{Type: "cleanup_library", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
+		{Type: "cleanup_library", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
 			}
 			return c.launchCleanupLibraryTask(id)
 		},
-		{Type: "rebuild_index", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
+		{Type: "rebuild_index", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildIndexTask()
 		},
-		{Type: "rebuild_thumbnails", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
+		{Type: "rebuild_thumbnails", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildThumbnailsTask()
 		},
-		{Type: "scrape", Variant: variantScrapeAllLibraries}: func(ctx context.Context, task TaskStatus) error {
+		{Type: "scrape", Variant: variantScrapeAllLibraries}: func(ctx context.Context, task RunStatus) error {
 			return c.launchBatchScrapeAllSeriesTask(ctx, taskParam(task, "provider"))
 		},
-		{Type: "scrape", Variant: variantScrapeOneLibrary}: func(ctx context.Context, task TaskStatus) error {
+		{Type: "scrape", Variant: variantScrapeOneLibrary}: func(ctx context.Context, task RunStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
 			}
 			return c.launchLibraryScrapeTask(ctx, id, taskParam(task, "provider"))
 		},
-		{Type: "ai_grouping", Variant: variantSole}: func(ctx context.Context, task TaskStatus) error {
+		{Type: "ai_grouping", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
 			id, err := libraryID(task)
 			if err != nil {
 				return err
@@ -140,20 +140,20 @@ func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
 			locale := firstNonEmptyTaskValue(taskParam(task, "locale"), metadata.LocaleFromContext(ctx))
 			return c.launchAIGroupingTask(id, firstNonEmptyTaskValue(locale, "zh-CN"))
 		},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: func(ctx context.Context, _ TaskStatus) error {
+		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildBookHashesTask()
 		},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: func(ctx context.Context, task TaskStatus) error {
+		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: func(ctx context.Context, task RunStatus) error {
 			// 发起理由是这个变体的原始入参，重试要沿用而不是另编一个。
 			return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(taskParam(task, "reason"), "manual_retry"))
 		},
-		{Type: "rebuild_file_identities", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
+		{Type: "rebuild_file_identities", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildFileIdentitiesTask()
 		},
-		{Type: "reconcile_koreader_progress", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
+		{Type: "reconcile_koreader_progress", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchReconcileKOReaderProgressTask()
 		},
-		{Type: "refresh_koreader_matching", Variant: variantSole}: func(ctx context.Context, _ TaskStatus) error {
+		{Type: "refresh_koreader_matching", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRefreshKOReaderMatchingTask()
 		},
 	}
@@ -161,9 +161,9 @@ func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
 
 // ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----
 
-// taskIOFrameMetrics 是**任务句柄**的 IO 实况在**一帧**里的那几个键。
+// taskIOFrameMetrics 是**运行句柄**的 IO 实况在**一帧**里的那几个键。
 // reportHashProgress 与 koreaderFingerprintFrame 共用一份，键名不会各自漂移。
-func taskIOFrameMetrics(handleIO taskrun.IOMetrics) map[string]int64 {
+func taskIOFrameMetrics(handleIO runhandle.IOMetrics) map[string]int64 {
 	return map[string]int64{
 		"hashed_files": handleIO.HashedFiles,
 		"io_wait_ms":   handleIO.IOWaitMillis,
@@ -173,7 +173,7 @@ func taskIOFrameMetrics(handleIO taskrun.IOMetrics) map[string]int64 {
 
 // taskIOMetricsParams 是同一份实况在**任务参数**那条通道里的形状：存储 IO 面板按参数名读它。
 // 空的档位与卷键滤掉不写，理由见 koreaderFingerprintFrame。
-func taskIOMetricsParams(handleIO taskrun.IOMetrics) map[string]string {
+func taskIOMetricsParams(handleIO runhandle.IOMetrics) map[string]string {
 	params := map[string]string{
 		"io_wait_ms":   strconv.FormatInt(handleIO.IOWaitMillis, 10),
 		"paused_ms":    strconv.FormatInt(handleIO.PausedMillis, 10),
@@ -238,7 +238,7 @@ func taskFiltersFromQuery(r *http.Request) taskFilters {
 }
 
 func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
-	items, err := c.taskEngine.listTaskStatuses(r.Context(), taskFiltersFromQuery(r))
+	items, err := c.taskEngine.listRunStatuses(r.Context(), taskFiltersFromQuery(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list tasks")
 		return

@@ -837,7 +837,7 @@ func TestMigrateClearsStaleFieldLockSnapshots(t *testing.T) {
 }
 
 // TestMigrateDropsLegacyTasksTable 走一遍真实的升级路径：一个只有旧 tasks 表、
-// 任务与运行那几张表还没建起的存量库，升级后旧表必须消失、新表必须建起。
+// 任务与运行那几张表还没建起的存量库，升级后旧表必须让位给同名的身份表、新表必须建起。
 //
 // 两个起始版本各跑一遍，钉住这一句 DROP **不在 user_version 门控之内**——库版本已经是最新
 // （回填那道门关着）时它照样得执行。挪进那道门里不会有编译错误，只会让老库悄悄留着那张表。
@@ -868,7 +868,7 @@ func TestMigrateDropsLegacyTasksTable(t *testing.T) {
 				DROP TABLE IF EXISTS run_samples;
 				DROP TABLE IF EXISTS run_events;
 				DROP TABLE IF EXISTS runs;
-				DROP TABLE IF EXISTS task_identities;
+				DROP TABLE IF EXISTS tasks;
 				CREATE TABLE tasks (
 					key TEXT PRIMARY KEY,
 					type TEXT NOT NULL,
@@ -918,20 +918,174 @@ func TestMigrateDropsLegacyTasksTable(t *testing.T) {
 
 			var leftovers int
 			if err := db.QueryRow(
-				`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('tasks', 'idx_tasks_updated_at', 'idx_tasks_status', 'idx_tasks_scope')`,
+				`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('idx_tasks_updated_at', 'idx_tasks_status')`,
 			).Scan(&leftovers); err != nil {
 				t.Fatalf("读 sqlite_master: %v", err)
 			}
 			if leftovers != 0 {
-				t.Errorf("旧任务表或它的索引还剩 %d 个对象在库里", leftovers)
+				t.Errorf("旧任务表的索引还剩 %d 个对象在库里", leftovers)
+			}
+
+			// 表名腾给了身份表，因此「旧表没了」要认形状：旧表的主键是**任务键**那一列，
+			// 身份表没有它、有的是**变体**。旧表那一行历史记录随表一起消失。
+			assertIdentityTableShape(t, db)
+			var rows int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM tasks`).Scan(&rows); err != nil {
+				t.Fatalf("读 tasks 行数: %v", err)
+			}
+			if rows != 0 {
+				t.Errorf("旧表的 %d 行历史记录被留了下来", rows)
 			}
 
 			// 新表一个都不能少：DROP 与建表在同一次迁移里，顺序错了这里当场变红。
-			for _, table := range []string{"task_identities", "runs", "run_events", "run_samples", "run_metrics", "run_limits", "run_args", "run_labels"} {
+			for _, table := range []string{"tasks", "runs", "run_events", "run_samples", "run_metrics", "run_limits", "run_args", "run_labels"} {
 				var name string
 				if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 					t.Fatalf("表 %s 在丢弃旧表之后不见了: %v", table, err)
 				}
+			}
+		})
+	}
+}
+
+// assertIdentityTableShape 断言库里那张 tasks 是**身份**表而不是旧任务表。
+//
+// 认形状而不是认名字：两者同名，只查 sqlite_master 里有没有这个名字答不出是哪一张。
+// 判据取两列——旧表的主键是**任务键**那一列，身份表没有它；**变体**是身份四要素之一，旧表没有它。
+func assertIdentityTableShape(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, tc := range []struct {
+		column string
+		want   bool
+	}{
+		{"variant", true},
+		{"key", false},
+	} {
+		var present int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name = ?`, tc.column).Scan(&present); err != nil {
+			t.Fatalf("读 tasks 的列: %v", err)
+		}
+		if (present > 0) != tc.want {
+			t.Fatalf("tasks 的列 %q 存在=%v，期望 %v —— 库里那张不是身份表", tc.column, present > 0, tc.want)
+		}
+	}
+}
+
+// TestMigrateRenamesIdentityTableToTasks 走一遍身份表改名的升级路径：一个身份表还叫
+// task_identities 的存量库，升级后它必须叫 tasks，行、外键与索引都跟着过来。
+//
+// 三种起点各跑一遍。两个 `user_version` 的理由同 TestMigrateDropsLegacyTasksTable：这一段不在
+// 那道门控之内。第三种是**两张表并存**——旧任务表还没丢、身份表已经建起，这是新旧引擎并存那段
+// 时间里的真实库形状，丢弃旧表与改名的先后顺序在这里才被钉住。连跑两次则钉住丢弃旧表那一句
+// 认的是形状：只认名字的话，第二次启动会把刚改名过来的身份表连同它的全部**运行**一起丢掉。
+func TestMigrateRenamesIdentityTableToTasks(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		userVersion int
+		withLegacy  bool
+	}{
+		{"回填那道门开着（老库版本落后）", 0, false},
+		{"回填那道门关着（库版本已是最新）", currentSchemaVersion, false},
+		{"旧任务表与身份表并存", currentSchemaVersion, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "identity-rename.db")
+			if err := Migrate(dbPath); err != nil {
+				t.Fatalf("首次 Migrate 失败: %v", err)
+			}
+
+			db, err := sql.Open("sqlite", sqliteDSN(dbPath))
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			// 把库退回改名之前的样子。RENAME 是这一步唯一忠实的写法：它连 runs 上那条外键一起
+			// 改回去，正是存量库里那几张表的真实形状；手抄一份 DDL 只会另建一张形状可能已经漂了的表。
+			if _, err := db.Exec(`
+				ALTER TABLE tasks RENAME TO task_identities;
+				DROP INDEX IF EXISTS idx_tasks_scope;
+				CREATE INDEX idx_task_identities_scope ON task_identities(scope, scope_id);
+				INSERT INTO task_identities (id, type, scope, scope_id, variant)
+				VALUES (7, 'scan_library', 'library', 1, '');
+				INSERT INTO runs (id, task_id, task_key, trigger, status, updated_at)
+				VALUES (11, 7, 'scan_library_1', 'manual', 'completed', 1700000000000);
+			`); err != nil {
+				t.Fatalf("退回改名前的形状失败: %v", err)
+			}
+			if tc.withLegacy {
+				// 旧任务表的形状照抄 TestMigrateDropsLegacyTasksTable 那份存量 DDL 的判别列：
+				// 主键那一列是**任务键**，丢弃旧表正是按它认表的。
+				if _, err := db.Exec(`
+					CREATE TABLE tasks (
+						key TEXT PRIMARY KEY,
+						type TEXT NOT NULL,
+						status TEXT NOT NULL,
+						params TEXT NOT NULL DEFAULT '',
+						started_at DATETIME NOT NULL,
+						updated_at DATETIME NOT NULL
+					);
+					INSERT INTO tasks (key, type, status, started_at, updated_at)
+					VALUES ('scan_library_1', 'scan_library', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+				`); err != nil {
+					t.Fatalf("重建旧任务表失败: %v", err)
+				}
+			}
+			if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, tc.userVersion)); err != nil {
+				t.Fatalf("退回 user_version: %v", err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+
+			// 跑两次：第二次启动时身份表已经叫 tasks，丢弃旧表那一句必须放过它。
+			for i := 1; i <= 2; i++ {
+				if err := Migrate(dbPath); err != nil {
+					t.Fatalf("第 %d 次升级失败: %v", i, err)
+				}
+			}
+
+			db, err = sql.Open("sqlite", sqliteDSN(dbPath))
+			if err != nil {
+				t.Fatalf("reopen: %v", err)
+			}
+			defer db.Close()
+
+			assertIdentityTableShape(t, db)
+			var leftover int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('task_identities', 'idx_task_identities_scope')`,
+			).Scan(&leftover); err != nil {
+				t.Fatalf("读 sqlite_master: %v", err)
+			}
+			if leftover != 0 {
+				t.Errorf("过渡期的表名或索引还剩 %d 个对象在库里", leftover)
+			}
+
+			var identityType string
+			if err := db.QueryRow(`SELECT type FROM tasks WHERE id = 7`).Scan(&identityType); err != nil {
+				t.Fatalf("改名之后身份行读不回来了: %v", err)
+			}
+			if identityType != "scan_library" {
+				t.Errorf("身份行的类型变成了 %q", identityType)
+			}
+			var runKey string
+			if err := db.QueryRow(`SELECT task_key FROM runs WHERE id = 11`).Scan(&runKey); err != nil {
+				t.Fatalf("改名之后运行行读不回来了: %v", err)
+			}
+			if runKey != "scan_library_1" {
+				t.Errorf("运行行的任务键变成了 %q", runKey)
+			}
+
+			// 外键必须跟着改名走：删掉身份行时运行行要被级联带走。指着一张空表的外键在这里变红。
+			if _, err := db.Exec(`DELETE FROM tasks WHERE id = 7`); err != nil {
+				t.Fatalf("删身份行: %v", err)
+			}
+			var orphans int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM runs WHERE id = 11`).Scan(&orphans); err != nil {
+				t.Fatalf("读 runs: %v", err)
+			}
+			if orphans != 0 {
+				t.Errorf("身份行删掉之后还剩 %d 条运行 —— 外键没跟着改名走", orphans)
 			}
 		})
 	}

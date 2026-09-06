@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // deferredRunner 是「先登记、按需执行」版的后台能力：用例因此能决定哪一条任务体何时开跑，
@@ -211,7 +211,7 @@ func TestQueuedRunGetsTheHandleOnlyAfterItIsReleased(t *testing.T) {
 	h := newTestEngine(t, runner.run, 1)
 
 	h.start(t, libraryScanSpec(1), idleBody)
-	queued := h.start(t, libraryScanSpec(2), func(_ context.Context, handle *taskrun.Handle) (Result, error) {
+	queued := h.start(t, libraryScanSpec(2), func(_ context.Context, handle *runhandle.Handle) (Result, error) {
 		handle.Advance(42, 100, "", nil)
 		return Result{}, nil
 	})

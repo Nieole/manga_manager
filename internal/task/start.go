@@ -11,8 +11,8 @@ import (
 	"runtime/debug"
 	"time"
 
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/taskcontrol"
-	"manga-manager/internal/taskrun"
 )
 
 // ErrInvalidRunSpec 是运行声明填不齐时的哨兵错误。
@@ -47,7 +47,7 @@ type RunSpec struct {
 	// Args 是重启入参：**重启函数**从这里读回这次运行是拿什么参数发起的。
 	Args map[string]string
 	// Labels 是启动时就已知、整次运行不变的展示标签（刮削源名等）。
-	// 开跑之后才变的标签走 taskrun.Frame.Labels，两条都是按键合并。
+	// 开跑之后才变的标签走 runhandle.Frame.Labels，两条都是按键合并。
 	Labels map[string]string
 	// Limits 是这次运行实际生效的并发上限。零值表示没有上限可报（多数维护类工作如此），
 	// 引擎不会为它凭空落一份全零的上限。
@@ -91,7 +91,7 @@ func (r Result) orDefault(code string) Result {
 
 // Body 是任务体：干活，以及经交给它的**运行句柄**上报。
 // 它不自己判**终态**、不自己起 goroutine、也不接触自己那条运行的 id。
-type Body func(ctx context.Context, handle *taskrun.Handle) (Result, error)
+type Body func(ctx context.Context, handle *runhandle.Handle) (Result, error)
 
 // Start 是往库里放一条运行的**唯一入口**。
 //
@@ -247,7 +247,7 @@ func (e *Engine) beginLocked(run Run, spec RunSpec, body Body) func() {
 // 判据是「引擎此刻登记着它的运行时句柄」而不是「库里有这条运行」：登记只发生在 beginLocked，
 // 也就是刚过完准入闸门的那一刻。因此拿得到句柄仍然等价于「这次运行是经启动入口来的、且还在跑」，
 // 而不是「谁猜对了一个运行 id 谁就能往里写」。终态与重启之后的运行一律拿不到。
-func (e *Engine) Handle(runID int64) (*taskrun.Handle, bool) {
+func (e *Engine) Handle(runID int64) (*runhandle.Handle, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if _, err := e.controlHandleLocked(runID); err != nil {
@@ -260,9 +260,9 @@ func (e *Engine) Handle(runID int64) (*taskrun.Handle, bool) {
 //
 // 运行 id 在这里一次性绑定，此后不出现在句柄上：给句柄开一个 id 形参等于把「谁有资格写
 // 由谁拿到句柄决定」这条结构约束重新打开。
-func (e *Engine) newHandle(runID int64) *taskrun.Handle {
-	return taskrun.New(
-		func(frame taskrun.Frame) { e.report(runID, frame) },
+func (e *Engine) newHandle(runID int64) *runhandle.Handle {
+	return runhandle.New(
+		func(frame runhandle.Frame) { e.report(runID, frame) },
 		func(args map[string]string) { e.mergeArgs(runID, args) },
 		func(increments map[string]int64, args map[string]string) { e.addMetrics(runID, increments, args) },
 		e.diskWork,

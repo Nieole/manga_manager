@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // floodFinishedRuns 灌入 n 条已完成的运行，把历史堆到比任务中心一页还多。
@@ -28,17 +28,17 @@ func floodFinishedRuns(t *testing.T, engine *taskEngine, n int) {
 func TestHistoryDoesNotDisplaceActiveRuns(t *testing.T) {
 	cases := []struct {
 		name  string
-		setup func(t *testing.T, e *taskEngine, key string) *taskrun.Handle
+		setup func(t *testing.T, e *taskEngine, key string) *runhandle.Handle
 	}{
 		{
 			name: "running 运行不被历史淹没",
-			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
+			setup: func(t *testing.T, e *taskEngine, key string) *runhandle.Handle {
 				return seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 			},
 		},
 		{
 			name: "paused 运行不被历史淹没",
-			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
+			setup: func(t *testing.T, e *taskEngine, key string) *runhandle.Handle {
 				progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 				if err := e.pause(key); err != nil {
 					t.Fatalf("pause: %v", err)

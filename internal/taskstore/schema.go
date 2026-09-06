@@ -18,11 +18,11 @@ const (
 	indexRunsOneQueuedPerTask = "idx_runs_one_queued_per_task"
 )
 
-// 表名。身份表在库里叫 task_identities，规格的表形状里写的却是 tasks——对不上是已知的。
-// 要改齐**不得**只动这个常量：`CREATE TABLE IF NOT EXISTS` 会在存量库旁边另建一张空表，
-// 而 tableRuns 的外键仍指着原来那张。改名要走一次自己的迁移语句。
+// 表名。改这几个常量**不得**只改常量：`CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，
+// 于是存量库旁边会另建一张空表，而外键仍指着原来那张。改名要另配一条 ALTER TABLE，
+// legacyIdentityTable 那一段是先例。
 const (
-	tableTasks      = "task_identities"
+	tableTasks      = "tasks"
 	tableRuns       = "runs"
 	tableRunEvents  = "run_events"
 	tableRunSamples = "run_samples"
@@ -175,7 +175,7 @@ var indexStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_run_samples_at ON ` + tableRunSamples + `(at)`,
 	// 身份表的唯一约束以 type 打头，按作用域找身份用不上它；LastRunKeysForScopes 正是这么找的，
 	// 而它服务的是一条一次问上千个作用域的路径。
-	`CREATE INDEX IF NOT EXISTS idx_task_identities_scope ON ` + tableTasks + `(scope, scope_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON ` + tableTasks + `(scope, scope_id)`,
 }
 
 // Migrate 建起任务与运行的表与索引。语句幂等，每次启动重放即可。
@@ -199,6 +199,11 @@ func Migrate(db *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// 改名排在建表之前：反过来的话 `CREATE TABLE IF NOT EXISTS tasks` 会先建出一张空表，
+	// 改名随即撞名失败，而那张空表已经把身份行挡在外面了。
+	if err := renameLegacyIdentityTable(tx); err != nil {
+		return err
+	}
 	for _, stmt := range createStatements {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("taskstore: 执行迁移语句失败: %w", err)
@@ -216,6 +221,54 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// legacyIdentityTable 是身份表在存量库里可能还用着的名字。见到它就得改名过来：
+// 库里的表名与规格的表形状、ADR 0004 和领域类型 task.Task 得是同一个字。
+const legacyIdentityTable = "task_identities"
+
+// legacyIdentityScopeIndex 是那个名字下的作用域索引。`ALTER TABLE RENAME` 不动索引名，
+// 留着它就会与按新名建起的那条重复，因此改名之后要显式丢弃。
+const legacyIdentityScopeIndex = "idx_task_identities_scope"
+
+// renameLegacyIdentityTable 把身份表从 legacyIdentityTable 改名成 tableTasks，没有那张表就什么都不做。
+//
+// 走 RENAME 而不是「建一张空的 tasks 再把行搬过去」：`ALTER TABLE ... RENAME TO` 会一并改写
+// 别的表 REFERENCES 子句里的表名（前提是没开 legacy_alter_table），runs 那条外键因此自己跟过来。
+// 目标名已经被占时报错而不是静默跳过——那意味着调用方还没丢掉旧表，此刻改名会让两份身份并存。
+func renameLegacyIdentityTable(tx *sql.Tx) error {
+	present, err := tableExists(tx, legacyIdentityTable)
+	if err != nil || !present {
+		return err
+	}
+	occupied, err := tableExists(tx, tableTasks)
+	if err != nil {
+		return err
+	}
+	if occupied {
+		return fmt.Errorf("taskstore: %s 与 %s 同时存在，改名前须先丢弃旧表", legacyIdentityTable, tableTasks)
+	}
+	if _, err := tx.Exec(`ALTER TABLE ` + legacyIdentityTable + ` RENAME TO ` + tableTasks); err != nil {
+		return fmt.Errorf("taskstore: 把 %s 改名为 %s 失败: %w", legacyIdentityTable, tableTasks, err)
+	}
+	// 索引不随表改名，留着它会与随后按新名建起的那条索引重复。
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS ` + legacyIdentityScopeIndex); err != nil {
+		return fmt.Errorf("taskstore: 丢弃索引 %s 失败: %w", legacyIdentityScopeIndex, err)
+	}
+	return nil
+}
+
+// tableExists 回答库里有没有这张表。
+func tableExists(tx *sql.Tx, table string) (bool, error) {
+	var name string
+	err := tx.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("taskstore: 查表 %s 是否存在失败: %w", table, err)
+	}
+	return true, nil
 }
 
 // ensureColumn 给已存在的表补一列，已经有了就什么都不做。

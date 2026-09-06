@@ -12,14 +12,14 @@ import (
 	"sync"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // taskSeed 描述一条要播下的任务。零值即「不可取消不可暂停、停在运行中」。
 //
-// 前半段字段刻意平铺而不是内嵌 TaskSpec：内嵌能保证任务声明加字段时播种自动跟上，代价是
-// 每个播种点都要多写一层 `TaskSpec{...}`，而播种点有几十处，可读性是这里更值钱的东西。
-// 代价则是 TaskSpec 新增字段时本结构不会有编译错误提醒——加字段的人要顺手看一眼这里。
+// 前半段字段刻意平铺而不是内嵌 RunSpec：内嵌能保证任务声明加字段时播种自动跟上，代价是
+// 每个播种点都要多写一层 `RunSpec{...}`，而播种点有几十处，可读性是这里更值钱的东西。
+// 代价则是 RunSpec 新增字段时本结构不会有编译错误提醒——加字段的人要顺手看一眼这里。
 type taskSeed struct {
 	Key string
 
@@ -44,7 +44,7 @@ type taskSeed struct {
 	// 可播报进度。否则取 completed / cancelled / failed 之一，播种返回时该**终态**已经落定。
 	Terminal string
 
-	// TerminalCode 与 TerminalParams 是终态文案；FailError 只在失败终态下生效，落进 TaskStatus.Error。
+	// TerminalCode 与 TerminalParams 是终态文案；FailError 只在失败终态下生效，落进 RunStatus.Error。
 	TerminalCode   string
 	TerminalParams map[string]string
 	FailError      string
@@ -53,7 +53,7 @@ type taskSeed struct {
 // seededBody 是播下的任务体停在可控点上时交出来的两样：它自己的 ctx 与**运行句柄**。
 type seededBody struct {
 	ctx    context.Context
-	handle *taskrun.Handle
+	handle *runhandle.Handle
 }
 
 // seededRun 是一条播下的任务在脚手架这一侧的把手：任务体停在哪、怎么让它收尾、收尾完了没有。
@@ -83,7 +83,7 @@ type seedRef struct {
 }
 
 // seedTask 播下一条任务并返回它的**运行句柄**；被准入闸门拒绝即 t.Fatal。
-func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *taskrun.Handle {
+func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *runhandle.Handle {
 	t.Helper()
 	handle, err := trySeedTask(t, e, seed)
 	if err != nil {
@@ -100,7 +100,7 @@ func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *taskrun.Handle {
 //
 // **调用约束**：只能在测试自己的 goroutine 上、且此刻没有任何任务体在飞时调用。runBackground
 // 属于引擎「装配期注入、之后只读」的那组字段，不受 mutex 保护，这里的换入换出因此不是并发安全的。
-func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*taskrun.Handle, error) {
+func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*runhandle.Handle, error) {
 	t.Helper()
 
 	// 这张表是终态裁决的逆：那边把任务体返回的错误翻成终态，这边把想要的终态翻回错误，
@@ -116,7 +116,7 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*taskrun.Handle, e
 		return nil, fmt.Errorf("未知的终态 %q，可用：completed / cancelled / failed", seed.Terminal)
 	}
 
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:         seed.Key,
 		StartCode:   seed.StartCode,
 		StartParams: seed.StartParams,
@@ -144,7 +144,7 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*taskrun.Handle, e
 			fn()
 		}()
 	}
-	err := e.Run(seed.Identity, spec, func(ctx context.Context, handle *taskrun.Handle) (TaskResult, error) {
+	err := e.Run(seed.Identity, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		started <- seededBody{ctx: ctx, handle: handle}
 		return result, <-run.finish
 	})

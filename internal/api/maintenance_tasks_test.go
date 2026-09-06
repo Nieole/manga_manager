@@ -17,9 +17,9 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
 	ksvc "manga-manager/internal/koreader"
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
-	"manga-manager/internal/taskrun"
 )
 
 // maintenanceStore 只实现维护任务体真正会调到的那几个方法。其余方法留给内嵌的 nil 接口——
@@ -98,7 +98,7 @@ func (s *maintenanceStore) UpdateBookIdentity(_ context.Context, arg database.Up
 // 同步执行版）、存储与配置。扫描器按需另装，只有缩略图清理会用到。
 // newMaintenanceRig 拼出维护任务体需要的那几样。tune 可改写配置——全量哈希回填是否跟着配置里的
 // 匹配模式走，只有把它改掉才看得出来。
-func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*Controller, func() []TaskStatus, *fakeClock) {
+func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*Controller, func() []RunStatus, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 
@@ -111,7 +111,7 @@ func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.
 
 	manager := config.NewManager(cfg)
 	c := &Controller{store: store, config: manager}
-	// 两处哈希回填走**磁盘作业**入口，引擎交给任务体的**任务句柄**用的是同一个：
+	// 两处哈希回填走**磁盘作业**入口，引擎交给任务体的**运行句柄**用的是同一个：
 	// 全量哈希回填的每一本书都经它读。调度器**必须**新建而不能用包级实例：后者按卷计数，
 	// 用例之间会经它互相污染。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
@@ -124,13 +124,13 @@ func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.
 	return c, snapshots, clock
 }
 
-// recordingTaskHandle 是两处哈希回填的批循环收下的**任务句柄**的用例替身：上报的三条通道都
+// recordingTaskHandle 是两处哈希回填的批循环收下的**运行句柄**的用例替身：上报的三条通道都
 // 接空，只记下**计数推进**来过几次以及那一刻的 IO 实况；**磁盘作业**交给内嵌的真句柄，
 // 「已哈希文件数」这条计数规则因此在用例里真的走了一遍。
 type recordingTaskHandle struct {
-	*taskrun.Handle
+	*runhandle.Handle
 	advances int
-	lastIO   taskrun.IOMetrics
+	lastIO   runhandle.IOMetrics
 }
 
 func (h *recordingTaskHandle) Advance(current, total int) {
@@ -141,8 +141,8 @@ func (h *recordingTaskHandle) Advance(current, total int) {
 // newRecordingTaskHandle 造一个不挂在任何任务上的句柄：它不经启动入口，因此写不进任务表，
 // 上报去向空处；给那些只关心批循环本身、不关心上报的用例用。
 func newRecordingTaskHandle(disk *diskwork.Runner) *recordingTaskHandle {
-	return &recordingTaskHandle{Handle: taskrun.New(
-		func(taskrun.Frame) {},
+	return &recordingTaskHandle{Handle: runhandle.New(
+		func(runhandle.Frame) {},
 		func(map[string]string) {},
 		func(map[string]int64, map[string]string) {},
 		disk,
@@ -262,13 +262,13 @@ func TestCleanupThumbnailsReportsPhaseThenCounts(t *testing.T) {
 
 // TestHashProgressFrameIsPublishedWhole 守一次哈希进度只投递一条载荷，且那条载荷内部自洽：
 // 计数、阶段、指标与标签都来自同一本书。拆成 Advance / Phase / Metrics / Labels 四次分报即变红
-// （撕开之后是什么样见 taskrun.Handle.Report）。
+// （撕开之后是什么样见 runhandle.Handle.Report）。
 func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 	c, snapshots, clock := newMaintenanceRig(t, &maintenanceStore{})
 	const key = "rebuild_file_identities"
 	progress := seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: systemTask(key, variantSole), CanCancel: true, CanPause: true})
 
-	metrics := taskrun.IOMetrics{StorageProfile: "hdd_external", VolumeKey: "/srv", IOWaitMillis: 120, PausedMillis: 30, HashedFiles: 7}
+	metrics := runhandle.IOMetrics{StorageProfile: "hdd_external", VolumeKey: "/srv", IOWaitMillis: 120, PausedMillis: 30, HashedFiles: 7}
 	before := publishedCountFor(snapshots(), key)
 	reportHashProgress(progress, 7, 40, "task.msg.rebuild_file_identities.progress", metrics)
 
@@ -289,7 +289,7 @@ func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 		t.Fatalf("存储画像标签没落地：%v", task.Labels)
 	}
 
-	// IO 参数走的是另一条通道（TaskStatus.Params），存储 IO 面板按参数名读它；
+	// IO 参数走的是另一条通道（RunStatus.Params），存储 IO 面板按参数名读它；
 	// 它与上面那一帧各自投递一次，因此要推过节流窗口才看得见。
 	clock.advance(taskProgressPublishInterval * 2)
 	reportHashProgress(progress, 8, 40, "task.msg.rebuild_file_identities.progress", metrics)
@@ -379,7 +379,7 @@ func TestHashBackfillStartsFromInsideATaskBody(t *testing.T) {
 	c.config = config.NewManager(&cfg)
 
 	var chainErr error
-	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), TaskSpec{Key: "scan_library_1"}, func(context.Context, *taskrun.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), RunSpec{Key: "scan_library_1"}, func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		chainErr = c.launchLowPriorityBookHashBackfillTask("scan_library")
 		return TaskResult{}, nil
 	}); err != nil {

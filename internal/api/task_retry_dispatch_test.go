@@ -18,7 +18,7 @@ import (
 //
 // 注册表在生产由 newControllerCore 填，而这套装配只建任务引擎，因此要在这里补上——
 // 任务的 Retryable 在落地那一刻由注册表派生，它必须先于播种就位。
-func newHashRebuildRetryRig(t *testing.T) (*Controller, func() []TaskStatus) {
+func newHashRebuildRetryRig(t *testing.T) (*Controller, func() []RunStatus) {
 	t.Helper()
 	store := &maintenanceStore{candidates: seedIdentityCandidates(t, 1)}
 	c, snapshots, _ := newMaintenanceRig(t, store)

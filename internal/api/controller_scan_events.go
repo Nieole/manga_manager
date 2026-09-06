@@ -11,8 +11,8 @@ import (
 	"strconv"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/taskrun"
 )
 
 func (c *Controller) handleScannerBatchEvent(action string) {
@@ -23,17 +23,17 @@ func (c *Controller) handleScannerBatchEvent(action string) {
 	c.PublishEvent(action)
 }
 
-// taskScanObserver 把一次扫描的报文写进它所属任务的**任务句柄**。
+// taskScanObserver 把一次扫描的报文写进它所属任务的**运行句柄**。
 //
 // 它只是句柄的一层翻译，不持有任何状态：谁有资格写这个任务，由「谁拿到了这个句柄」回答，
-// 与句柄本身的所有权模型一致（见 taskrun.Handle）。
+// 与句柄本身的所有权模型一致（见 runhandle.Handle）。
 type taskScanObserver struct {
-	progress *taskrun.Handle
+	progress *runhandle.Handle
 }
 
-// newTaskScanObserver 把任务句柄包成一个扫描观察者；句柄为 nil 时返回 nil 接口值，
+// newTaskScanObserver 把运行句柄包成一个扫描观察者；句柄为 nil 时返回 nil 接口值，
 // 于是「这次扫描不属于任何任务」在扫描器那边与其余无归属扫描是同一个形状。
-func newTaskScanObserver(progress *taskrun.Handle) scanner.ScanObserver {
+func newTaskScanObserver(progress *runhandle.Handle) scanner.ScanObserver {
 	if progress == nil {
 		return nil
 	}
@@ -70,15 +70,15 @@ func (o *taskScanObserver) Metrics(report scanner.ScanMetricsReport) {
 
 // scanProgressFrame 把扫描器的一份进度报文翻成**一帧**任务进度。
 //
-// 一份报文里计数、阶段、当前条目与指标同时变，只能整帧报（理由见 taskrun.Handle.Report）。
-func scanProgressFrame(report scanner.ScanProgressReport) taskrun.Frame {
+// 一份报文里计数、阶段、当前条目与指标同时变，只能整帧报（理由见 runhandle.Handle.Report）。
+func scanProgressFrame(report scanner.ScanProgressReport) runhandle.Frame {
 	metrics := make(map[string]int64, len(report.Metrics))
 	for key, value := range report.Metrics {
 		metrics[key] = value
 	}
 	current := int(report.Current)
 	total := int(report.Total)
-	frame := taskrun.Frame{
+	frame := runhandle.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   report.Phase,
@@ -130,7 +130,7 @@ func (l *rebuildThumbLibrary) Progress(report scanner.ScanProgressReport) {
 	if currentItem == "" {
 		currentItem = snap.CurrentLibPath
 	}
-	writeRebuildThumbProgress(snap, taskrun.Frame{
+	writeRebuildThumbProgress(snap, runhandle.Frame{
 		Phase:  phase,
 		Item:   currentItem,
 		Code:   code,
@@ -173,14 +173,14 @@ func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
 		code = "task.msg.rebuild_thumbnails.libraries_completed"
 		msgParams = map[string]string{"done": strconv.Itoa(snap.DoneLibraries), "total": strconv.Itoa(snap.TotalLibraries)}
 	}
-	writeRebuildThumbProgress(snap, taskrun.Frame{
+	writeRebuildThumbProgress(snap, runhandle.Frame{
 		Phase:  "queueing_covers",
 		Code:   code,
 		Params: msgParams,
 	})
 }
 
-func (c *Controller) initRebuildThumbAggregator(progress *taskrun.Handle, totalLibraries int) {
+func (c *Controller) initRebuildThumbAggregator(progress *runhandle.Handle, totalLibraries int) {
 	c.rebuildThumbAgg.begin(progress, totalLibraries)
 }
 
@@ -212,7 +212,7 @@ func (c *Controller) refreshRebuildThumbTaskFromAggregator(lib database.Library)
 		code = "task.msg.rebuild_thumbnails.rebuilding_library_progress"
 		msgParams = map[string]string{"lib": lib.Name, "done": strconv.Itoa(snap.DoneLibraries + 1), "total": strconv.Itoa(snap.TotalLibraries)}
 	}
-	writeRebuildThumbProgress(snap, taskrun.Frame{
+	writeRebuildThumbProgress(snap, runhandle.Frame{
 		Phase:  "reading_metadata",
 		Item:   lib.Path,
 		Code:   code,
@@ -228,7 +228,7 @@ func (c *Controller) refreshRebuildThumbTaskMessage(code string, params map[stri
 	if snap.Progress == nil {
 		return
 	}
-	writeRebuildThumbProgress(snap, taskrun.Frame{
+	writeRebuildThumbProgress(snap, runhandle.Frame{
 		Phase:  phase,
 		Code:   code,
 		Params: params,
@@ -238,9 +238,9 @@ func (c *Controller) refreshRebuildThumbTaskMessage(code string, params map[stri
 // writeRebuildThumbProgress 把一份聚合快照连同本次事件的展示信息写成**一帧**任务进度：
 // 累计指标与两阶段计数由快照补齐，其余字段由调用方按本次事件填好。
 //
-// 外部写入点都走它，「一份快照怎么翻成一帧进度」因此只有一份实现。经 taskrun.Handle.Report
+// 外部写入点都走它，「一份快照怎么翻成一帧进度」因此只有一份实现。经 runhandle.Handle.Report
 // 一次报完，理由见那里——拆开报会撕帧。
-func writeRebuildThumbProgress(snap rebuildThumbSnapshot, frame taskrun.Frame) {
+func writeRebuildThumbProgress(snap rebuildThumbSnapshot, frame runhandle.Frame) {
 	if snap.Progress == nil {
 		return
 	}

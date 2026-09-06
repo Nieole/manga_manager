@@ -19,7 +19,7 @@ export interface TaskLimits {
   disable_same_disk_page_cache: boolean;
 }
 
-export interface TaskStatus {
+export interface RunStatus {
   run_id: number;
   key: string;
   type: string;

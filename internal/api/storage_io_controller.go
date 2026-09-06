@@ -114,7 +114,7 @@ func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
 // 写成**重启入参**里的一批字符串。上一版看不出差别，因为累加值当时还被镜像成一份字符串塞回
 // params；镜像随 params 堆一起没了，而把扫描那条改道是一次用户可见的搬家（数字会从参数面板
 // 挪进指标面板），因此没有随接线一起做。前端的 taskMetric 早就是同一个口径：先看 metrics，再退回 params。
-func taskArchiveOpenRate(task *TaskStatus) float64 {
+func taskArchiveOpenRate(task *RunStatus) float64 {
 	if task == nil {
 		return 0
 	}
@@ -133,7 +133,7 @@ func taskArchiveOpenRate(task *TaskStatus) float64 {
 }
 
 // taskMetricValue 取一个累计指标：先看指标那张表，再退回任务参数里那份字符串。
-func taskMetricValue(task *TaskStatus, key string) int64 {
+func taskMetricValue(task *RunStatus, key string) int64 {
 	if value, ok := task.Metrics[key]; ok {
 		return value
 	}

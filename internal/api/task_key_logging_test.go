@@ -18,8 +18,8 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/logger"
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/taskrun"
 )
 
 // scanFailingStore 让资料库扫描在「加载已入库文件快照」那一步失败。
@@ -157,7 +157,7 @@ func TestTaskBodyContextCarriesTaskKey(t *testing.T) {
 
 			var seen string
 			var seenRunID int64
-			err := engine.Run(tc.identity, TaskSpec{Key: tc.key}, func(ctx context.Context, _ *taskrun.Handle) (TaskResult, error) {
+			err := engine.Run(tc.identity, RunSpec{Key: tc.key}, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
 				seen = logger.TaskKeyFrom(ctx)
 				seenRunID = logger.RunIDFrom(ctx)
 				return TaskResult{}, nil

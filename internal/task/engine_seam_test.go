@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // fakeClock 让节流的时序断言可控。固定 sleep 的用例既慢，又杀不掉
@@ -82,7 +82,7 @@ func newSteppingTestEngine(t *testing.T, run func(func()), slots int) *testEngin
 // newHarness 是两个构造点的共同实现。
 //
 // **磁盘作业**入口一律留 nil：本包的契约用例一次盘都不读。要读盘的用例必须自己交出真 runner，
-// 留 nil 的后果见 taskrun.New。
+// 留 nil 的后果见 runhandle.New。
 func newHarness(t *testing.T, run func(func()), slots int, stepping bool) *testEngine {
 	t.Helper()
 	harness := &testEngine{store: newMemStore(), clock: newFakeClock()}
@@ -140,7 +140,7 @@ func (h *testEngine) load(t *testing.T, runID int64) Run {
 }
 
 // idleBody 是什么都不做、正常返回的任务体。
-func idleBody(context.Context, *taskrun.Handle) (Result, error) { return Result{}, nil }
+func idleBody(context.Context, *runhandle.Handle) (Result, error) { return Result{}, nil }
 
 // libraryScanSpec 是一份最小可用的运行声明：库级作用域、手动发起、可暂停可取消。
 func libraryScanSpec(libraryID int64) RunSpec {

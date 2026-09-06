@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
-	"manga-manager/internal/taskrun"
 )
 
 // TestTerminalTaskDerivedFieldsFollowFinalCount 钉住经引擎收尾的三种终态：percent 与终帧计数
@@ -42,7 +42,7 @@ func TestTerminalTaskDerivedFieldsFollowFinalCount(t *testing.T) {
 			const key = "refresh_koreader_matching"
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("refresh_koreader_matching", variantSole), Total: tc.total, CanCancel: true})
 			current := tc.reported
-			handle.Report(taskrun.Frame{Current: &current})
+			handle.Report(runhandle.Frame{Current: &current})
 			settleSeededTask(t, e, key, tc.bodyErr)
 
 			task := lastPublishedTask(t, snapshots(), key)
@@ -66,10 +66,10 @@ func TestTerminalTaskDerivedFieldsFollowFinalCount(t *testing.T) {
 // TestInterruptedTaskHasNoEta 钉住第四种终态：**中断**由服务重启时的批量转写产生，
 // 任务中心读回它时同样不该算出 ETA——它是可重试的，一个「预计剩余时间」会让用户以为它还在跑。
 func TestInterruptedTaskHasNoEta(t *testing.T) {
-	task := interruptRecoveredTask(t, func(handle *taskrun.Handle) {
+	task := interruptRecoveredTask(t, func(handle *runhandle.Handle) {
 		current := 30
 		total := 1000
-		handle.Report(taskrun.Frame{Current: &current, Total: &total})
+		handle.Report(runhandle.Frame{Current: &current, Total: &total})
 	})
 
 	if task.Percent == nil || *task.Percent != 3 {
@@ -102,7 +102,7 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 1000, CanCancel: true, CanPause: true})
 			backdateTaskStart(t, e, key, time.Minute)
 			current := 30
-			handle.Report(taskrun.Frame{Current: &current})
+			handle.Report(runhandle.Frame{Current: &current})
 			if err := tc.control(e, key); err != nil {
 				t.Fatalf("把任务转入 %q 失败: %v", tc.status, err)
 			}
@@ -136,7 +136,7 @@ func TestInterruptedTaskOmitsRate(t *testing.T) {
 	// 任务体只跑了 10 分钟就随进程一起没了：600 条 / 10 分钟，真实速率 60/min。
 	backdateTaskStart(t, controller.taskEngine, key, 10*time.Minute)
 	current := 600
-	handle.Report(taskrun.Frame{Current: &current})
+	handle.Report(runhandle.Frame{Current: &current})
 
 	reloaded := restartController(t, controller, store, tempDir)
 	reloaded.taskEngine.markInterrupted(context.Background())
@@ -148,7 +148,7 @@ func TestInterruptedTaskOmitsRate(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.Unmarshal([]byte(body), &tasks); err != nil {
 		t.Fatalf("解析任务列表失败: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 1000, CanCancel: true, CanPause: true})
 			backdateTaskStart(t, e, key, time.Minute)
 			current := 30
-			handle.Report(taskrun.Frame{Current: &current})
+			handle.Report(runhandle.Frame{Current: &current})
 			if err := tc.control(e, key); err != nil {
 				t.Fatalf("把任务转入 %q 失败: %v", tc.status, err)
 			}
@@ -221,7 +221,7 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("refresh_koreader_matching", variantSole), Total: 1000, CanCancel: true})
 			backdateTaskStart(t, e, key, time.Minute)
 			current := 30
-			handle.Report(taskrun.Frame{Current: &current})
+			handle.Report(runhandle.Frame{Current: &current})
 			settleSeededTask(t, e, key, tc.bodyErr)
 
 			task := lastPublishedTask(t, snapshots(), key)
@@ -343,7 +343,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10000, CanCancel: true, CanPause: true})
 			backdateTaskStart(t, e, key, workedFor)
 			current := 600
-			handle.Report(taskrun.Frame{Current: &current})
+			handle.Report(runhandle.Frame{Current: &current})
 			if err := e.pause(key); err != nil {
 				t.Fatalf("暂停失败: %v", err)
 			}

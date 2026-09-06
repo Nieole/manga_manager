@@ -15,14 +15,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // interruptRecoveredTask 起一条活动态运行、模拟一次进程重启，再从任务列表接口读回它。
 //
 // 「重启」是拿同一份存储另起一个 Controller：**运行时句柄**不跨实例，新实例只能从库里读回那条
 // 还写着活动态的运行——正是重启恢复要处置的东西。
-func interruptRecoveredTask(t *testing.T, prepare func(handle *taskrun.Handle)) TaskStatus {
+func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)) RunStatus {
 	t.Helper()
 	controller, store, _, tempDir := newTestController(t)
 
@@ -48,7 +48,7 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *taskrun.Handle)) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("列任务返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.Unmarshal(rec.Body.Bytes(), &tasks); err != nil {
 		t.Fatalf("解析任务列表失败: %v", err)
 	}
@@ -59,10 +59,10 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *taskrun.Handle)) 
 }
 
 // lastActiveFrame 是一条扫描运行被按下暂停之前报出的最后一帧：进度、阶段、当前条目与累计指标。
-func lastActiveFrame(handle *taskrun.Handle) {
+func lastActiveFrame(handle *runhandle.Handle) {
 	current := 600
 	total := 10000
-	handle.Report(taskrun.Frame{
+	handle.Report(runhandle.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "hashing",
@@ -133,7 +133,7 @@ func TestInterruptedRunIsNotListedTwice(t *testing.T) {
 	reloaded := restartController(t, controller, store, tempDir)
 	reloaded.taskEngine.markInterrupted(context.Background())
 
-	tasks, err := reloaded.taskEngine.listTaskStatuses(context.Background(), taskFilters{})
+	tasks, err := reloaded.taskEngine.listRunStatuses(context.Background(), taskFilters{})
 	if err != nil {
 		t.Fatalf("列任务失败: %v", err)
 	}

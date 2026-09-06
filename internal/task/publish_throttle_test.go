@@ -7,12 +7,12 @@ import (
 	"context"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // advancingBody 报 count 次同样展示态的**计数推进**，然后正常返回。
 func advancingBody(count int) Body {
-	return func(_ context.Context, handle *taskrun.Handle) (Result, error) {
+	return func(_ context.Context, handle *runhandle.Handle) (Result, error) {
 		for i := 1; i <= count; i++ {
 			handle.Advance(i, count, "task.msg.scan.progress", nil)
 		}
@@ -49,7 +49,7 @@ func TestSteppingClockLetsEveryFrameThrough(t *testing.T) {
 // TestPhaseChangeIsNeverSwallowed 守**阶段**跃迁无条件放行：它是用户正在等的语义变化。
 func TestPhaseChangeIsNeverSwallowed(t *testing.T) {
 	h := newTestEngine(t, runBodySynchronously, 0)
-	run := h.start(t, libraryScanSpec(1), func(_ context.Context, handle *taskrun.Handle) (Result, error) {
+	run := h.start(t, libraryScanSpec(1), func(_ context.Context, handle *runhandle.Handle) (Result, error) {
 		handle.Advance(1, 3, "task.msg.scan.progress", nil)
 		handle.Advance(2, 3, "task.msg.scan.progress", nil)
 		handle.Phase("covers", "task.msg.scan.covers", nil)

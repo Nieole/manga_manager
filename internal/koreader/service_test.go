@@ -44,7 +44,7 @@ func newTestService(t *testing.T, matchMode string) (*Service, database.Store, s
 }
 
 // fakeTaskHandle 是 TaskHandle 的手写假体：批循环干活所需的三样资格全在这里，用例据此
-// 单独摆布其中任何一样。生产实现是**任务句柄**，它的闸门与令牌语义由 internal/taskrun
+// 单独摆布其中任何一样。生产实现是**运行句柄**，它的闸门与令牌语义由 internal/runhandle
 // 与 internal/diskwork 自己的用例守，本包不重测。
 type fakeTaskHandle struct {
 	// diskErr 非 nil 时 Disk 直接回绝、闭包一步不执行——那正是**暂停闸门**或**存储令牌**

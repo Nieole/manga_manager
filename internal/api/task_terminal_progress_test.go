@@ -12,7 +12,7 @@ import (
 	"errors"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // TestTerminalStateAdvanceCount 钉住经引擎收尾的三种终态：完成补齐，已取消与失败保留实数。
@@ -40,7 +40,7 @@ func TestTerminalStateAdvanceCount(t *testing.T) {
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: tc.total, CanCancel: true})
 			if tc.reported != noAdvance {
 				current := tc.reported
-				handle.Report(taskrun.Frame{Current: &current})
+				handle.Report(runhandle.Frame{Current: &current})
 			}
 			settleSeededTask(t, e, key, tc.bodyErr)
 
@@ -56,10 +56,10 @@ func TestTerminalStateAdvanceCount(t *testing.T) {
 // TestInterruptedTaskKeepsAdvanceCount 钉住第四种终态：服务重启把仍会变化的运行转成**中断**时
 // 只改状态，计数留在重启前那一刻——中断的运行可重试，把它显示成满格会让用户以为没什么可重试的。
 func TestInterruptedTaskKeepsAdvanceCount(t *testing.T) {
-	task := interruptRecoveredTask(t, func(handle *taskrun.Handle) {
+	task := interruptRecoveredTask(t, func(handle *runhandle.Handle) {
 		current := 30
 		total := 1000
-		handle.Report(taskrun.Frame{Current: &current, Total: &total})
+		handle.Report(runhandle.Frame{Current: &current, Total: &total})
 	})
 
 	if task.Status != "interrupted" {

@@ -1,4 +1,4 @@
-// 任务子域在 api 这一侧的**适配层**：把按**任务键**寻址的六个控制端点、对外那份 TaskStatus 形状与
+// 任务子域在 api 这一侧的**适配层**：把按**任务键**寻址的六个控制端点、对外那份 RunStatus 形状与
 // **重启函数**注册表，接到 `internal/task` 的领域引擎与 `internal/taskstore` 的落盘上。
 // **事实来源只有库，这一层不留任务表**（去留的论证见 taskEngine 的符号 doc）。
 // 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
@@ -58,7 +58,7 @@ type taskEngineConfig struct {
 	Publish func(string)
 	// RunBackground 开一个受停机管辖的 goroutine，不得为 nil。
 	RunBackground func(func())
-	// DiskWork 是交给**运行句柄**的**磁盘作业**入口，留 nil 的后果见 taskrun.New。
+	// DiskWork 是交给**运行句柄**的**磁盘作业**入口，留 nil 的后果见 runhandle.New。
 	DiskWork *diskwork.Runner
 	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
 	Now func() time.Time
@@ -165,14 +165,14 @@ func (e *taskEngine) publisher(publish func(string)) func(task.Snapshot) {
 		return nil
 	}
 	return func(snapshot task.Snapshot) {
-		status := e.taskStatusFrom(snapshot, e.cachedIdentity(snapshot.Run.TaskID))
+		status := e.runStatusFrom(snapshot, e.cachedIdentity(snapshot.Run.TaskID))
 		payload, err := json.Marshal(status)
 		if err != nil {
 			slog.Warn("Failed to marshal task status", "task_key", status.Key, "error", err)
 			return
 		}
 		// 统一经 sseBroker 投递（非阻塞、buffer 满则丢弃并告警）。
-		publish("task_progress:" + string(payload))
+		publish("run_snapshot:" + string(payload))
 	}
 }
 
@@ -226,11 +226,11 @@ func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRe
 
 // ---- 查询 ----
 
-// listTaskStatuses 按谓词取一页运行。
+// listRunStatuses 按谓词取一页运行。
 //
 // 只有一个来源——库。旧引擎在这里要把内存表盖在库记录上，因此筛选谓词必须在合并之后判；
 // 现在筛选整条下推到 SQL，Limit 截断的就是过滤之后的那一页。
-func (e *taskEngine) listTaskStatuses(ctx context.Context, filters taskFilters) ([]TaskStatus, error) {
+func (e *taskEngine) listRunStatuses(ctx context.Context, filters taskFilters) ([]RunStatus, error) {
 	snapshots, err := e.engine.ListSnapshots(ctx, runFilterFrom(filters, task.OrderLiveFirst))
 	if err != nil {
 		return nil, err
@@ -239,7 +239,7 @@ func (e *taskEngine) listTaskStatuses(ctx context.Context, filters taskFilters) 
 }
 
 // statusesFrom 把一批领域快照翻成对外形状，身份一次批量取回。
-func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot) ([]TaskStatus, error) {
+func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot) ([]RunStatus, error) {
 	taskIDs := make([]int64, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		taskIDs = append(taskIDs, snapshot.Run.TaskID)
@@ -248,9 +248,9 @@ func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot
 	if err != nil {
 		return nil, err
 	}
-	items := make([]TaskStatus, 0, len(snapshots))
+	items := make([]RunStatus, 0, len(snapshots))
 	for _, snapshot := range snapshots {
-		items = append(items, e.taskStatusFrom(snapshot, identities[snapshot.Run.TaskID]))
+		items = append(items, e.runStatusFrom(snapshot, identities[snapshot.Run.TaskID]))
 	}
 	return items, nil
 }
@@ -281,24 +281,24 @@ func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Run, 
 //
 // 旧引擎在这里要先查内存表再退回查库，因为内存表是有上限的缓存、重启后更是空的，而**中断**任务
 // 恰恰只在库里。现在只有库一个来源，这条分岔随之消失。
-func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (TaskStatus, error) {
+func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (RunStatus, error) {
 	snapshots, err := e.engine.ListSnapshots(ctx, latestRunFilterFor(key))
 	if err != nil {
-		return TaskStatus{}, err
+		return RunStatus{}, err
 	}
 	if len(snapshots) == 0 {
-		return TaskStatus{}, errTaskNotFound
+		return RunStatus{}, errTaskNotFound
 	}
 	items, err := e.statusesFrom(ctx, snapshots)
 	if err != nil {
-		return TaskStatus{}, err
+		return RunStatus{}, err
 	}
 	return items[0], nil
 }
 
 // latestTaskByTypes 返回给定类型中最近活动的那一次运行；无匹配返回 nil。
 // 供存储 IO 面板估算扫描/封面速率。
-func (e *taskEngine) latestTaskByTypes(types ...string) *TaskStatus {
+func (e *taskEngine) latestTaskByTypes(types ...string) *RunStatus {
 	ctx := context.Background()
 	domainTypes := make([]task.Type, 0, len(types))
 	for _, taskType := range types {

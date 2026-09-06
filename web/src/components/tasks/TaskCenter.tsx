@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react';
 import { Activity, ChevronDown, ExternalLink, FileText, Pause, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
-import { isActiveTaskStatus } from '../../utils/taskStatus';
+import { isActiveRunStatus } from '../../utils/runStatus';
 
-// TaskLimits / TaskStatus 由 cmd/tsgen 从 Go 后端响应结构体生成（单一事实源，见 api/generated.ts），
-// 此处再导出以保持既有 import 路径不变；本组件本地用到的 TaskStatus 另行 import。
-export type { TaskLimits, TaskStatus } from '../../api/generated';
-import type { TaskStatus } from '../../api/generated';
+// TaskLimits / RunStatus 由 cmd/tsgen 从 Go 后端响应结构体生成（单一事实源，见 api/generated.ts），
+// 此处再导出以保持既有 import 路径不变；本组件本地用到的 RunStatus 另行 import。
+export type { TaskLimits, RunStatus } from '../../api/generated';
+import type { RunStatus } from '../../api/generated';
 
 export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
 
@@ -20,7 +20,7 @@ export interface TaskCenterFilters {
 }
 
 interface TaskCenterProps {
-  tasks: TaskStatus[];
+  tasks: RunStatus[];
   loading: boolean;
   backgroundPaused?: boolean;
   taskActionKey: string | null;
@@ -28,11 +28,11 @@ interface TaskCenterProps {
   typeOptions?: string[];
   currentFilterCanClear?: boolean;
   onRefresh: () => void;
-  onTaskAction: (task: TaskStatus, action: TaskAction) => void;
+  onTaskAction: (task: RunStatus, action: TaskAction) => void;
   onFilterChange?: (patch: Partial<TaskCenterFilters>) => void;
   onClearTasks?: (status?: 'completed' | 'failed', useCurrentFilters?: boolean) => void;
-  onOpenTaskTarget?: (task: TaskStatus) => void;
-  onViewTaskLogs?: (task: TaskStatus) => void;
+  onOpenTaskTarget?: (task: RunStatus) => void;
+  onViewTaskLogs?: (task: RunStatus) => void;
 }
 
 const taskMetricKeys = [
@@ -110,13 +110,13 @@ function taskBadgeClass(status: string) {
   }
 }
 
-function taskProgressPercent(task: TaskStatus) {
+function taskProgressPercent(task: RunStatus) {
   if (Number.isFinite(task.percent)) return Math.max(0, Math.min(100, task.percent || 0));
   if (task.total > 0) return Math.max(0, Math.min(100, (task.current / task.total) * 100));
   return 0;
 }
 
-function taskMetric(task: TaskStatus, key: string) {
+function taskMetric(task: RunStatus, key: string) {
   const direct = task.metrics?.[key];
   if (Number.isFinite(direct)) return direct || 0;
   const raw = task.params?.[key] || task.params?.[`metric.${key}`];
@@ -124,16 +124,16 @@ function taskMetric(task: TaskStatus, key: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function taskIOParams(task: TaskStatus) {
+function taskIOParams(task: RunStatus) {
   return Object.entries(task.params || {}).filter(([key, value]) => taskIOParamKeys.includes(key) && value !== '' && value !== '0');
 }
 
-function isInterruptedTask(task: TaskStatus) {
+function isInterruptedTask(task: RunStatus) {
   const error = task.error || '';
   return task.status === 'interrupted' || (task.status === 'failed' && task.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart')));
 }
 
-function hasTaskDetails(task: TaskStatus) {
+function hasTaskDetails(task: RunStatus) {
   return Boolean(
     task.error
     || task.started_at
@@ -143,7 +143,7 @@ function hasTaskDetails(task: TaskStatus) {
   );
 }
 
-function hasInlineTelemetry(task: TaskStatus) {
+function hasInlineTelemetry(task: RunStatus) {
   const provider = task.labels?.provider_name || task.labels?.provider || task.params?.provider;
   return Boolean(
     task.effective_limit
@@ -152,10 +152,10 @@ function hasInlineTelemetry(task: TaskStatus) {
   );
 }
 
-function TaskSummaryStrip({ tasks, backgroundPaused }: { tasks: TaskStatus[]; backgroundPaused?: boolean }) {
+function TaskSummaryStrip({ tasks, backgroundPaused }: { tasks: RunStatus[]; backgroundPaused?: boolean }) {
   const { t } = useI18n();
   const items = [
-    [t('settings.maintenance.activeTasks'), tasks.filter((task) => isActiveTaskStatus(task.status)).length],
+    [t('settings.maintenance.activeTasks'), tasks.filter((task) => isActiveRunStatus(task.status)).length],
     [t('settings.maintenance.pausedTasks'), tasks.filter((task) => task.status === 'paused').length],
     [t('settings.maintenance.failedTasks'), tasks.filter((task) => task.status === 'failed').length],
     [t('logs.metric.completedTasks'), tasks.filter((task) => task.status === 'completed').length],
@@ -277,12 +277,12 @@ function TaskFilters({
   );
 }
 
-function TaskProgressBar({ task }: { task: TaskStatus }) {
+function TaskProgressBar({ task }: { task: RunStatus }) {
   const percent = taskProgressPercent(task);
   if (task.total <= 0) {
     // 总数未知：只有还在动的任务才画那条来回跑的不定进度条。停了的任务画它，看着像还在跑，
     // 而这条进度条一个数字都答不出——它连「做完了多少」都不知道。
-    if (!isActiveTaskStatus(task.status)) {
+    if (!isActiveRunStatus(task.status)) {
       return null;
     }
     return (
@@ -311,7 +311,7 @@ function TaskProgressBar({ task }: { task: TaskStatus }) {
   );
 }
 
-function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: TaskStatus; taskActionKey: string | null; onTaskAction: (task: TaskStatus, action: TaskAction) => void }) {
+function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: RunStatus; taskActionKey: string | null; onTaskAction: (task: RunStatus, action: TaskAction) => void }) {
   const { t } = useI18n();
   return (
     <div className="flex flex-wrap gap-2">
@@ -327,13 +327,13 @@ function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: TaskSt
           {t('settings.maintenance.resumeTask')}
         </button>
       )}
-      {task.can_cancel && isActiveTaskStatus(task.status) && (
+      {task.can_cancel && isActiveRunStatus(task.status) && (
         <button type="button" onClick={() => onTaskAction(task, 'cancel')} disabled={taskActionKey === `${task.key}:cancel` || task.status === 'cancelling'} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-50">
           <XCircle className="h-3.5 w-3.5" />
           {t('common.cancel')}
         </button>
       )}
-      {task.retryable && !isActiveTaskStatus(task.status) && (
+      {task.retryable && !isActiveRunStatus(task.status) && (
         <button type="button" onClick={() => onTaskAction(task, 'retry')} disabled={taskActionKey === `${task.key}:retry`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-50">
           <RotateCcw className={`h-3.5 w-3.5 ${taskActionKey === `${task.key}:retry` ? 'animate-spin' : ''}`} />
           {t('common.retry')}
@@ -343,7 +343,7 @@ function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: TaskSt
   );
 }
 
-function TaskLimitBadges({ task }: { task: TaskStatus }) {
+function TaskLimitBadges({ task }: { task: RunStatus }) {
   const { t } = useI18n();
   const limit = task.effective_limit;
   const provider = task.labels?.provider_name || task.labels?.provider || task.params?.provider;
@@ -374,7 +374,7 @@ function TaskLimitBadges({ task }: { task: TaskStatus }) {
   );
 }
 
-function TaskMetricsGrid({ task }: { task: TaskStatus }) {
+function TaskMetricsGrid({ task }: { task: RunStatus }) {
   const { t } = useI18n();
   return (
     <>
@@ -389,7 +389,7 @@ function TaskMetricsGrid({ task }: { task: TaskStatus }) {
   );
 }
 
-function TaskDetailDrawer({ task }: { task: TaskStatus }) {
+function TaskDetailDrawer({ task }: { task: RunStatus }) {
   const { t, formatDateTime } = useI18n();
   const ioParams = taskIOParams(task);
 
@@ -450,7 +450,7 @@ function TaskDetailDrawer({ task }: { task: TaskStatus }) {
   );
 }
 
-function TaskInlineTelemetry({ task }: { task: TaskStatus }) {
+function TaskInlineTelemetry({ task }: { task: RunStatus }) {
   return (
     <div className="mt-3 grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-4">
       <TaskLimitBadges task={task} />
@@ -468,13 +468,13 @@ function TaskCard({
   onOpenTaskTarget,
   onViewTaskLogs,
 }: {
-  task: TaskStatus;
+  task: RunStatus;
   expanded: boolean;
   taskActionKey: string | null;
   onToggleExpanded: () => void;
-  onTaskAction: (task: TaskStatus, action: TaskAction) => void;
-  onOpenTaskTarget?: (task: TaskStatus) => void;
-  onViewTaskLogs?: (task: TaskStatus) => void;
+  onTaskAction: (task: RunStatus, action: TaskAction) => void;
+  onOpenTaskTarget?: (task: RunStatus) => void;
+  onViewTaskLogs?: (task: RunStatus) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const statusLabel = t(`logs.taskStatus.${task.status}`);
@@ -542,11 +542,11 @@ function TaskList({
   onOpenTaskTarget,
   onViewTaskLogs,
 }: {
-  tasks: TaskStatus[];
+  tasks: RunStatus[];
   taskActionKey: string | null;
-  onTaskAction: (task: TaskStatus, action: TaskAction) => void;
-  onOpenTaskTarget?: (task: TaskStatus) => void;
-  onViewTaskLogs?: (task: TaskStatus) => void;
+  onTaskAction: (task: RunStatus, action: TaskAction) => void;
+  onOpenTaskTarget?: (task: RunStatus) => void;
+  onViewTaskLogs?: (task: RunStatus) => void;
 }) {
   const { t } = useI18n();
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);

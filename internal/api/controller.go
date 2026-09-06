@@ -54,7 +54,7 @@ type Controller struct {
 	scanner *scanner.Scanner
 	config  *config.Manager
 	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
-	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**任务句柄**。
+	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**运行句柄**。
 	diskWork   *diskwork.Runner
 	koreader   *koreader.Service
 	external   *external.Manager
@@ -100,7 +100,7 @@ type Controller struct {
 	franchiseRebuilder *franchiseRebuilder
 }
 
-type TaskStatus struct {
+type RunStatus struct {
 	// RunID 是这一条**运行**的标识：同一个任务键在列表里可以出现多条，各是一次运行，
 	// 而键只认得出「哪件事」，认不出「哪一次」。重试从此不再抹掉上一次，因此它是必需的。
 	RunID   int64  `json:"run_id"`

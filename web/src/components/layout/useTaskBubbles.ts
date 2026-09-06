@@ -6,7 +6,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { TaskBubbleEntry } from '../SidebarTaskBubble';
-import { isTerminalTaskStatus } from '../../utils/taskStatus';
+import { isTerminalRunStatus } from '../../utils/runStatus';
 
 interface TaskProgressPayload {
   key?: string;
@@ -25,7 +25,7 @@ export function useTaskBubbles() {
   const [entries, setEntries] = useState<Record<string, TaskBubbleEntry>>({});
   const cleanupTimers = useRef<Map<string, number>>(new Map());
 
-  // ingestProgress 接入一条 SSE task_progress 载荷：新增/更新对应气泡，并为终态气泡安排延时移除
+  // ingestProgress 接入一条 SSE run_snapshot 载荷：新增/更新对应气泡，并为终态气泡安排延时移除
   //（完成 8s、其余终态 20s）；再次收到同 key 会先取消旧的延时定时器。
   const ingestProgress = useCallback((progress: TaskProgressPayload) => {
     if (!progress.key) return;
@@ -49,7 +49,7 @@ export function useTaskBubbles() {
       clearTimeout(existingTimer);
       cleanupTimers.current.delete(key);
     }
-    if (isTerminalTaskStatus(entry.status)) {
+    if (isTerminalRunStatus(entry.status)) {
       const timer = window.setTimeout(() => {
         setEntries((prev) => {
           if (!prev[key]) return prev;
@@ -81,7 +81,7 @@ export function useTaskBubbles() {
     setEntries((prev) => {
       const next: Record<string, TaskBubbleEntry> = {};
       for (const [key, entry] of Object.entries(prev)) {
-        if (!isTerminalTaskStatus(entry.status)) {
+        if (!isTerminalRunStatus(entry.status)) {
           next[key] = entry;
         } else {
           const timer = cleanupTimers.current.get(key);

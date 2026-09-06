@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 	"net/http"
 	"strconv"
 )
@@ -165,7 +165,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 	scopeName := c.libraryScopeName(libID)
 
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:       fmt.Sprintf("ai_grouping_library_%d", libID),
 		StartCode: "task.msg.ai_grouping.start",
 		Total:     1,
@@ -180,7 +180,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		FailCode:     "task.msg.ai_grouping.fail_generate",
 	}
 
-	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), spec, func(taskCtx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		ctx := metadata.WithLocale(taskCtx, locale)
 
 		tp.Phase("collecting_series", "task.msg.ai_grouping.collecting_series", nil)
@@ -223,7 +223,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 
 		cfg := c.currentConfig()
 		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
-		tp.Report(taskrun.Frame{
+		tp.Report(runhandle.Frame{
 			Phase:   "requesting_provider",
 			Code:    "task.msg.ai_grouping.requesting_provider",
 			Metrics: map[string]int64{"candidate_series": int64(len(candidates))},
@@ -238,7 +238,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		}
 
 		done := 1
-		tp.Report(taskrun.Frame{
+		tp.Report(runhandle.Frame{
 			Current: &done,
 			Phase:   "queueing_review",
 			Code:    "task.msg.ai_grouping.queueing_review",

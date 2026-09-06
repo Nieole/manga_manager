@@ -97,14 +97,14 @@ func (s *koreaderTaskStore) advancePublishWindow() {
 //
 // 匹配模式取**路径**而非二进制哈希：那条路只拼字符串、不读书文件，多数用例因此不必造临时文件，
 // 而任务引擎这一侧走的是同一条路径。顺带让元数据断言看到一组非默认取值。
-func newKOReaderTaskRig(t *testing.T, store *koreaderTaskStore) (*Controller, func() []TaskStatus) {
+func newKOReaderTaskRig(t *testing.T, store *koreaderTaskStore) (*Controller, func() []RunStatus) {
 	t.Helper()
 	return newKOReaderTaskRigWithMode(t, store, config.KOReaderMatchModeFilePath)
 }
 
 // newKOReaderTaskRigWithMode 是同一套装置，但由用例挑匹配模式：二进制哈希那条路要逐本读书文件，
 // 只有它会走到**磁盘作业**。
-func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMode string) (*Controller, func() []TaskStatus) {
+func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMode string) (*Controller, func() []RunStatus) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	store.clock = clock
@@ -116,7 +116,7 @@ func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMod
 	config.NormalizeConfig(cfg)
 	manager := config.NewManager(cfg)
 
-	// 引擎交给任务体的**任务句柄**要能发起**磁盘作业**：二进制哈希模式下每本书都经它读。
+	// 引擎交给任务体的**运行句柄**要能发起**磁盘作业**：二进制哈希模式下每本书都经它读。
 	// 调度器新建而非取包级实例：包级实例会让用例经由按卷计数的限流器互相污染。
 	diskWork := diskwork.NewRunner(manager.Snapshot, storageio.NewScheduler())
 
@@ -304,7 +304,7 @@ func TestKOReaderTasksCarryMatchConfigMetadata(t *testing.T) {
 
 // TestRebuildBookHashesFrameIsPublishedWhole 守一次进度回调只投递一条载荷，且那条载荷内部自洽：
 // 计数、指标与占位参数都来自同一本书。拆成 Advance / Metrics 两次分报即变红——后一次会被投递
-// 水位吞掉（阶段与文案码一字未变），载荷里的指标就此停在上一本（撕开的样子见 taskrun.Handle.Report）。
+// 水位吞掉（阶段与文案码一字未变），载荷里的指标就此停在上一本（撕开的样子见 runhandle.Handle.Report）。
 func TestRebuildBookHashesFrameIsPublishedWhole(t *testing.T) {
 	store := &koreaderTaskStore{candidates: seedKOReaderCandidates(2)}
 	c, snapshots := newKOReaderTaskRig(t, store)

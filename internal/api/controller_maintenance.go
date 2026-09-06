@@ -11,9 +11,9 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
-	"manga-manager/internal/taskrun"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -95,8 +95,8 @@ func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
 // observerFor 为每个资料库要一个**扫描观察者**；返回 nil 即该库这次扫描不属于任何任务。
 // 调用它本身就是库切换的边界——没有第二条「现在换库了」的通知，两者一旦分家就会有
 // 「观察者已经在收报文、界面上还是上一个库名」的窗口。
-// tp 是发起这次扫描的任务的**任务句柄**，库与库之间的可中断点经它过**暂停闸门**；不得为 nil。
-func (c *Controller) runGlobalScan(ctx context.Context, tp *taskrun.Handle, force bool, ignoreFormatFilter bool, observerFor func(lib database.Library, total int) scanner.ScanObserver) error {
+// tp 是发起这次扫描的任务的**运行句柄**，库与库之间的可中断点经它过**暂停闸门**；不得为 nil。
+func (c *Controller) runGlobalScan(ctx context.Context, tp *runhandle.Handle, force bool, ignoreFormatFilter bool, observerFor func(lib database.Library, total int) scanner.ScanObserver) error {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (c *Controller) runGlobalScan(ctx context.Context, tp *taskrun.Handle, forc
 // 两步重灌各有专属失败文案码：技术错误串两步长得一样，只报一句「重建索引失败」的话，
 // 用户不知道该去查系列索引还是书籍索引。
 func (c *Controller) launchRebuildIndexTask() error {
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:          "rebuild_index",
 		StartCode:    "task.msg.rebuild_index.start",
 		Total:        1,
@@ -136,7 +136,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 		FailCode:     "task.msg.rebuild_index.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), spec, func(ctx context.Context, _ *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), spec, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
 		if err := c.store.RebuildSeriesSearchIndex(ctx); err != nil {
 			return taskFailure("task.msg.rebuild_index.series_failed", err), err
 		}
@@ -161,14 +161,14 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 
 // launchRebuildThumbnailsTask 是缩略图重建任务的启动点，走引擎的启动入口。
 //
-// 任务体开工第一件事是把任务句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
+// 任务体开工第一件事是把运行句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
 // 之外写入，所有权模型见那里。
 func (c *Controller) launchRebuildThumbnailsTask() error {
 	cfg := c.currentConfig()
 	policy := config.ResolveStoragePolicy(cfg, "")
 	thumbDir := config.ThumbnailDir(cfg)
 
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:       "rebuild_thumbnails",
 		StartCode: "task.msg.rebuild_thumbnails.start",
 		CanCancel: true,
@@ -184,11 +184,11 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		FailCode:     "task.msg.rebuild_thumbnails.failed",
 	}
 
-	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		c.initRebuildThumbAggregator(tp, 0)
 		defer c.releaseRebuildThumbAggregator()
 
-		tp.Report(taskrun.Frame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
+		tp.Report(runhandle.Frame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
 		if err := c.clearThumbnailDir(thumbDir); err != nil {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
@@ -230,7 +230,7 @@ func (c *Controller) rebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 
 // launchCleanupThumbnailsTask 是缩略图清理任务的启动点，走引擎的启动入口。
 func (c *Controller) launchCleanupThumbnailsTask() error {
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:          "cleanup_thumbnails",
 		StartCode:    "task.msg.cleanup_thumbnails.start",
 		CanCancel:    true,
@@ -240,7 +240,7 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
 		tp.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
 		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
@@ -263,7 +263,7 @@ func (c *Controller) cleanupThumbnails(w http.ResponseWriter, r *http.Request) {
 
 // launchRebuildFileIdentitiesTask 是文件身份重建任务的启动点，走引擎的启动入口。
 func (c *Controller) launchRebuildFileIdentitiesTask() error {
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:          "rebuild_file_identities",
 		StartCode:    "task.msg.rebuild_file_identities.start",
 		CanCancel:    true,
@@ -274,7 +274,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.runRebuildFileIdentities(ctx, 500,
 			hashingFrameHandle{Handle: tp, code: "task.msg.rebuild_file_identities.progress"})
 		if err != nil {
@@ -287,10 +287,10 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 // reportHashProgress 把一次哈希进度上报成**一帧**，外加**任务参数**那一条通道。
 //
 // 文件身份重建与低优先级哈希回填除文案码外完全同形，共用一份实现，免得两处各自漂移。
-// 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 taskrun.Handle.Report）。
+// 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 runhandle.Handle.Report）。
 // IO 参数走的是另一条通道（存储 IO 面板按参数名读，见 taskArchiveOpenRate），只能单独一次。
-func reportHashProgress(tp *taskrun.Handle, current, total int, code string, handleIO taskrun.IOMetrics) {
-	tp.Report(taskrun.Frame{
+func reportHashProgress(tp *runhandle.Handle, current, total int, code string, handleIO runhandle.IOMetrics) {
+	tp.Report(runhandle.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "hashing",
@@ -305,11 +305,11 @@ func reportHashProgress(tp *taskrun.Handle, current, total int, code string, han
 	tp.MergeParams(taskIOMetricsParams(handleIO))
 }
 
-// hashingFrameHandle 是两处哈希回填的批循环共同收下的**任务句柄**，分工同
+// hashingFrameHandle 是两处哈希回填的批循环共同收下的**运行句柄**，分工同
 // koreaderFingerprintHandle：只有**计数推进**换成 reportHashProgress 那一帧，
 // 其余能力由内嵌的句柄原样白拿。
 type hashingFrameHandle struct {
-	*taskrun.Handle
+	*runhandle.Handle
 	// code 是这个任务的文案码。两处的帧除它之外同形，因此它是构造期唯一要填的差异。
 	code string
 }
@@ -398,7 +398,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 		return nil
 	}
 
-	spec := TaskSpec{
+	spec := RunSpec{
 		Key:       lowPriorityBookHashTaskKey,
 		StartCode: "task.msg.book_hash_backfill.start",
 		Total:     int(missingCount),
@@ -414,7 +414,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 		FailCode:     "task.msg.book_hash_backfill.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), spec, func(ctx context.Context, tp *taskrun.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap,
 			hashingFrameHandle{Handle: tp, code: "task.msg.book_hash_backfill.progress"})
 		if err != nil {

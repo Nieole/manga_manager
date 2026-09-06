@@ -29,10 +29,10 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/proposal"
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
-	"manga-manager/internal/taskrun"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -964,7 +964,7 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 
 func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
-	// 写重建任务的资格来自任务体交给聚合器的**任务句柄**：聚合器据此为每个库造一个
+	// 写重建任务的资格来自任务体交给聚合器的**运行句柄**：聚合器据此为每个库造一个
 	// **扫描观察者**，交不出句柄时造不出观察者，报文就无处可落。
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Identity: systemTask("rebuild_thumbnails", variantSole), Total: 1})
 	controller.initRebuildThumbAggregator(progress, 0)
@@ -2492,7 +2492,7 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode tasks failed: %v", err)
 	}
@@ -2518,7 +2518,7 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode filtered tasks failed: %v", err)
 	}
@@ -2541,7 +2541,7 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode filtered tasks failed: %v", err)
 	}
@@ -2574,7 +2574,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode persisted tasks failed: %v", err)
 	}
@@ -2621,7 +2621,7 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode tasks failed: %v", err)
 	}
@@ -2690,7 +2690,7 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected list 200, got %d", rec.Code)
 	}
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode tasks failed: %v", err)
 	}
@@ -2807,7 +2807,7 @@ func TestRunDisplayStateRoundTripsThroughStore(t *testing.T) {
 		Limits: TaskLimits{ScannerWorkersEffective: 1, StorageProfile: "hdd_external", VolumeKey: "e:"},
 	})
 	current := 5
-	progress.Report(taskrun.Frame{
+	progress.Report(runhandle.Frame{
 		Current: &current,
 		Phase:   "reading_metadata",
 		Item:    "book.cbz",
@@ -2933,14 +2933,14 @@ func TestScanTaskEffectiveLimitsFollowScannedPath(t *testing.T) {
 	}
 }
 
-func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
+func TestRunStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scrape_library_7"
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scrape", 7, variantScrapeOneLibrary), Total: 3, CanCancel: true, CanPause: true})
 	progress.Advance(1, 3, "task.msg.scrape.queueing_review", map[string]string{"name": "Foo"})
 	progress.Phase("queueing_review", "", nil)
-	progress.Report(taskrun.Frame{
+	progress.Report(runhandle.Frame{
 		Item: "Foo",
 		Metrics: map[string]int64{
 			"total_series":         3,
@@ -3050,7 +3050,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 		t.Fatalf("expected second provider request Beta after resume, got %q", second)
 	}
 	provider.release <- struct{}{}
-	waitForTaskStatus(t, controller, taskKey, "completed")
+	waitForRunStatus(t, controller, taskKey, "completed")
 
 	done := currentTask(t, controller.taskEngine, taskKey)
 	if done.Metrics["provider_requests"] != 2 || done.Metrics["processed_series"] != 2 {
@@ -3078,7 +3078,7 @@ func assertNoProviderRequest(t testing.TB, requests <-chan string, duration time
 	}
 }
 
-func waitForTaskStatus(t testing.TB, controller *Controller, taskKey, status string) {
+func waitForRunStatus(t testing.TB, controller *Controller, taskKey, status string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -3171,7 +3171,7 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	var task TaskStatus
+	var task RunStatus
 	for time.Now().Before(deadline) {
 		task = currentTask(t, controller.taskEngine, "rebuild_thumbnails")
 		if task.Status != "running" {
@@ -4525,11 +4525,11 @@ func TestRunProgressIsVisibleImmediately(t *testing.T) {
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Identity: libraryTask("scan_library", 5, variantSole), Total: 100})
 	progress.Advance(42, 100, "", nil)
 
-	tasks, err := controller.taskEngine.listTaskStatuses(context.Background(), taskFilters{})
+	tasks, err := controller.taskEngine.listRunStatuses(context.Background(), taskFilters{})
 	if err != nil {
-		t.Fatalf("listTaskStatuses failed: %v", err)
+		t.Fatalf("listRunStatuses failed: %v", err)
 	}
-	var listed *TaskStatus
+	var listed *RunStatus
 	for i := range tasks {
 		if tasks[i].Key == "scan_library_5" {
 			listed = &tasks[i]

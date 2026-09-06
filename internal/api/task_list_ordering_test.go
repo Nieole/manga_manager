@@ -40,7 +40,7 @@ func taskCenterFirstPage(t *testing.T, c *Controller) []string {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("任务列表返回 %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var tasks []TaskStatus
+	var tasks []RunStatus
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("解析任务列表失败: %v", err)
 	}

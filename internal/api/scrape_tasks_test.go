@@ -90,7 +90,7 @@ func (p *scrapeTestProvider) SearchMetadata(context.Context, string, int, int) (
 
 // newScrapeTaskRig 拼出两个刮削任务体需要的那几样：任务引擎（仍经它唯一的 seam 构造，后台能力
 // 换成同步执行版）、存储与刮削源工厂。
-func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, func() []TaskStatus) {
+func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, func() []RunStatus) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	provider.clock = clock
@@ -245,7 +245,7 @@ func TestScrapeTaskDeclarationLandsWhole(t *testing.T) {
 // TestScrapeFrameIsPublishedWhole 守一次上报只投递一条载荷，且那条载荷内部自洽：计数、指标、
 // 当前条目与占位参数都来自同一个系列。拆成 Advance / Metrics / Item / Labels 四次分报即变红——
 // 后三次会被投递水位吞掉（**阶段**与文案码一字未变），载荷里的指标就此停在上一个系列
-// （撕开的样子见 taskrun.Handle.Report）。
+// （撕开的样子见 runhandle.Handle.Report）。
 func TestScrapeFrameIsPublishedWhole(t *testing.T) {
 	c, snapshots := newScrapeTaskRig(t, &scrapeTestProvider{fetchErr: errors.New("provider offline")})
 

@@ -1,7 +1,7 @@
-// 本文件是任务子域的**模型层**：领域的**运行**快照与对外 TaskStatus 之间的翻译、列表谓词的翻译、
+// 本文件是任务子域的**模型层**：领域的**运行**快照与对外 RunStatus 之间的翻译、列表谓词的翻译、
 // 身份四要素在两侧的互转，以及进度派生字段（percent/rate/eta）的计算。
 //
-// 这里的函数不碰可变状态、不加锁、不做 IO。唯一的例外是 taskStatusFrom 这个方法：它要问一句
+// 这里的函数不碰可变状态、不加锁、不做 IO。唯一的例外是 runStatusFrom 这个方法：它要问一句
 // 「这个（类型，**变体**）注册了**重启函数**吗」，而那张注册表是装配期填好、此后只读的。
 // 一旦某个函数需要读写 taskEngine 受锁保护的字段，它就该搬到 task_engine.go 去。
 
@@ -90,13 +90,13 @@ func runFilterFrom(filters taskFilters, order task.RunOrder) task.RunFilter {
 
 // ---- 快照翻译 ----
 
-// taskStatusFrom 把一帧领域快照翻成对外的任务快照。
+// runStatusFrom 把一帧领域快照翻成对外的运行快照。
 //
 // 三处来源各司其职：运行行给展示态与计数，控制能力由引擎按运行的活性**派生**（不是库里的列——
 // 落成列的话重启后那几个布尔值会集体说谎），侧数据给指标、标签、重启入参与并发上限。
-func (e *taskEngine) taskStatusFrom(snapshot task.Snapshot, identity TaskIdentity) TaskStatus {
+func (e *taskEngine) runStatusFrom(snapshot task.Snapshot, identity TaskIdentity) RunStatus {
 	run := snapshot.Run
-	status := TaskStatus{
+	status := RunStatus{
 		RunID:               run.ID,
 		Key:                 run.Key,
 		Type:                identity.taskType,
@@ -186,9 +186,9 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 // 与花了多久（详情面板的开始 / 结束时刻），这两样都不经 ETA 这条通道。
 //
 // 速率只算给分母可信的状态，**中断**一个都不发，理由见函数内那道闸门。分母里还要扣掉**暂停**：
-// 那几段时间里任务一条都没处理，引擎逐段记下过（TaskStatus.ControlPausedMillis），不扣的话
+// 那几段时间里任务一条都没处理，引擎逐段记下过（RunStatus.ControlPausedMillis），不扣的话
 // 一次午饭时长的暂停就能把速率打到七分之一，并一路带进终态。
-func enrichTaskProgress(task *TaskStatus) {
+func enrichTaskProgress(task *RunStatus) {
 	if task == nil {
 		return
 	}
@@ -232,7 +232,7 @@ func enrichTaskProgress(task *TaskStatus) {
 //
 // 仍在进行的那一段只在**已暂停**下计入：**取消中**的任务已被放行、正在收尾，它的 PausedAt
 // 由 cancel 那一刻折进累计后清掉；**终态**同理由收尾清掉。
-func taskPausedSoFar(task TaskStatus, now time.Time) time.Duration {
+func taskPausedSoFar(task RunStatus, now time.Time) time.Duration {
 	total := time.Duration(task.ControlPausedMillis) * time.Millisecond
 	if task.Status == "paused" && task.PausedAt != nil {
 		if ongoing := now.Sub(*task.PausedAt); ongoing > 0 {

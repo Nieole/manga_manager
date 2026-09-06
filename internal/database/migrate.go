@@ -313,13 +313,13 @@ func Migrate(dbPath string) error {
 		return err
 	}
 
-	// 任务与运行由 taskstore 那套表承载，这张同名旧表没有任何读写方，整表丢弃。
-	// **不得**为它补一段转换：那张表一个任务键只有一行，转过来只是给每个任务留一条孤零零的运行，
-	// 而那段代码只跑一次却要连测试一起维护。丢掉的只是「上次成功是什么时候」——资料库的扫描模式
-	// 与间隔不在这张表里，第一个守护 tick 就会把身份重新建出来。
+	// 旧任务表没有任何读写方，整表丢弃。**不得**为它补一段转换：那张表一个任务键只有一行，
+	// 转过来只是给每个任务留一条孤零零的运行，而那段代码只跑一次却要连测试一起维护。
+	// 丢掉的只是「上次成功是什么时候」——资料库的扫描模式与间隔不在这张表里，
+	// 第一个守护 tick 就会把身份重新建出来。
 	//
 	// 幂等，因此不经 user_version 门控、也不推它（判据见 currentSchemaVersion）。索引随表消失。
-	if _, err := db.Exec(`DROP TABLE IF EXISTS tasks`); err != nil {
+	if err := dropLegacyTasksTable(db); err != nil {
 		return err
 	}
 
@@ -868,6 +868,19 @@ func purgeOrphanUserScopedRows(db *sql.DB) error {
 		`DELETE FROM koreader_accounts WHERE user_id != 0 AND user_id NOT IN (SELECT id FROM users)`,
 		`DELETE FROM reading_bookmarks WHERE user_id != 0 AND user_id NOT IN (SELECT id FROM users)`,
 	})
+}
+
+// dropLegacyTasksTable 丢弃旧任务表，认的是形状而不是名字。
+//
+// 判据是它有 `key` 列——旧表的主键正是**任务键**，而 taskstore 的身份表没有这一列。
+// 身份表自己也叫 tasks：只认名字的话，改名落地之后的每一次启动都会把它连同全部运行一起丢掉。
+func dropLegacyTasksTable(db *sql.DB) error {
+	legacy, err := tableHasColumn(db, "tasks", "key")
+	if err != nil || !legacy {
+		return err
+	}
+	_, err = db.Exec(`DROP TABLE IF EXISTS tasks`)
+	return err
 }
 
 // tableHasColumn 报告某表是否已有指定列；表不存在时返回 false。

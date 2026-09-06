@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, CircleAlert, Loader2, PauseCircle, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskMessage } from '../i18n/task';
-import { isActiveTaskStatus, isTerminalTaskStatus } from '../utils/taskStatus';
+import { isActiveRunStatus, isTerminalRunStatus } from '../utils/runStatus';
 
 export interface TaskBubbleEntry {
   key: string;
@@ -38,7 +38,7 @@ interface TaskBubbleProps {
 function statusIcon(status: string, size = 'h-3.5 w-3.5') {
   if (status === 'completed') return <CheckCircle2 className={`${size} text-emerald-400`} />;
   if (status === 'interrupted') return <CircleAlert className={`${size} text-amber-400`} />;
-  if (isTerminalTaskStatus(status)) return <XCircle className={`${size} text-red-400`} />;
+  if (isTerminalRunStatus(status)) return <XCircle className={`${size} text-red-400`} />;
   if (status === 'paused') return <PauseCircle className={`${size} text-amber-400`} />;
   return <Loader2 className={`${size} text-komgaPrimary animate-spin`} />;
 }
@@ -54,7 +54,7 @@ const TERMINAL_SUMMARY_ORDER = ['failed', 'interrupted', 'cancelled', 'completed
  * 是用户在等的），否则按严重度从剩下的终态里挑一个；活动态里没有推进中的（全被暂停）时画暂停符。
  */
 function summarizeStatus(tasks: TaskBubbleEntry[]) {
-  const active = tasks.filter((task) => isActiveTaskStatus(task.status));
+  const active = tasks.filter((task) => isActiveRunStatus(task.status));
   if (active.length > 0) {
     const advancing = active.some((task) => task.status !== 'paused');
     return { kind: 'active' as const, status: advancing ? 'running' : 'paused', count: active.length };
@@ -89,8 +89,8 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
 
   const sorted = useMemo(() => {
     return [...tasks].sort((a, b) => {
-      const ra = isActiveTaskStatus(a.status) ? 0 : 1;
-      const rb = isActiveTaskStatus(b.status) ? 0 : 1;
+      const ra = isActiveRunStatus(a.status) ? 0 : 1;
+      const rb = isActiveRunStatus(b.status) ? 0 : 1;
       if (ra !== rb) return ra - rb;
       return b.updatedAt - a.updatedAt;
     });
@@ -98,7 +98,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
 
   const summary = useMemo(() => summarizeStatus(sorted), [sorted]);
   const activeCount = summary?.kind === 'active' ? summary.count : 0;
-  const finishedCount = sorted.length - sorted.filter((t) => isActiveTaskStatus(t.status)).length;
+  const finishedCount = sorted.length - sorted.filter((t) => isActiveRunStatus(t.status)).length;
   const primary = sorted[0];
 
   useEffect(() => {
@@ -139,7 +139,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
           <ul className="divide-y divide-gray-800">
             {sorted.map((task) => {
               const percent = progressPercent(task);
-              const finished = isTerminalTaskStatus(task.status);
+              const finished = isTerminalRunStatus(task.status);
               return (
                 <li key={task.key} className="flex flex-col gap-1 px-3 py-2 hover:bg-gray-900/50">
                   <div className="flex items-center justify-between gap-2">

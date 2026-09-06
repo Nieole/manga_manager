@@ -7,14 +7,14 @@ import (
 	"context"
 	"log/slog"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 // report 把一帧上报写进运行行并按节流水位投递。
 //
 // 运行进入**终态**后一律忽略：**扫描观察者**不在任务体的调用栈上，晚一拍很常见，
 // 放行会把一条已经收尾的运行在界面上拽回运行中。**排队中**同样忽略——它还没开跑。
-func (e *Engine) report(runID int64, frame taskrun.Frame) {
+func (e *Engine) report(runID int64, frame runhandle.Frame) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

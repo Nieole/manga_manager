@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
-import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskStatus } from '../components/tasks/TaskCenter';
+import { TaskCenter, type TaskAction, type TaskCenterFilters, type RunStatus } from '../components/tasks/TaskCenter';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
 
@@ -29,16 +29,16 @@ interface StorageIODiagnostics {
 
 interface BackgroundTasksProps {
   embedded?: boolean;
-  onViewTaskLogs?: (task: TaskStatus) => void;
+  onViewTaskLogs?: (task: RunStatus) => void;
 }
 
 export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: BackgroundTasksProps = {}) {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState<TaskStatus[]>([]);
+  const [tasks, setTasks] = useState<RunStatus[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [taskActionKey, setTaskActionKey] = useState<string | null>(null);
-  const [taskStatusFilter, setTaskStatusFilter] = useState('ALL');
+  const [runStatusFilter, setRunStatusFilter] = useState('ALL');
   const [taskScopeFilter, setTaskScopeFilter] = useState('ALL');
   const [taskTypeFilter, setTaskTypeFilter] = useState('ALL');
   const [taskScopeIdFilter, setTaskScopeIdFilter] = useState('');
@@ -56,32 +56,32 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
 
   // taskFilters 是输入框的当前值（含还没提交的半截关键词）。
   const taskFilters = useMemo<TaskCenterFilters>(() => ({
-    status: taskStatusFilter,
+    status: runStatusFilter,
     scope: taskScopeFilter,
     type: taskTypeFilter,
     scopeId: taskScopeIdFilter,
     query: taskQuery,
-  }), [taskQuery, taskScopeFilter, taskScopeIdFilter, taskStatusFilter, taskTypeFilter]);
+  }), [taskQuery, taskScopeFilter, taskScopeIdFilter, runStatusFilter, taskTypeFilter]);
 
   // SSE 增量帧按**已提交**的条件判去留：与列表里那批任务是同一把尺子。
   const appliedTaskFilters = useMemo<TaskCenterFilters>(() => ({
-    status: taskStatusFilter,
+    status: runStatusFilter,
     scope: taskScopeFilter,
     type: taskTypeFilter,
     scopeId: appliedTaskScopeId,
     query: appliedTaskQuery,
-  }), [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, taskStatusFilter, taskTypeFilter]);
+  }), [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, runStatusFilter, taskTypeFilter]);
 
   const buildTaskParams = useCallback((status?: string) => {
     const params = new URLSearchParams({ limit: '50' });
     if (status) params.set('status', status);
-    if (!status && taskStatusFilter !== 'ALL') params.set('status', taskStatusFilter);
+    if (!status && runStatusFilter !== 'ALL') params.set('status', runStatusFilter);
     if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
     if (taskTypeFilter !== 'ALL') params.set('type', taskTypeFilter);
     if (appliedTaskScopeId.trim()) params.set('scope_id', appliedTaskScopeId.trim());
     if (appliedTaskQuery.trim()) params.set('q', appliedTaskQuery.trim());
     return params;
-  }, [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, taskStatusFilter, taskTypeFilter]);
+  }, [appliedTaskQuery, appliedTaskScopeId, taskScopeFilter, runStatusFilter, taskTypeFilter]);
 
   const fetchStorageIO = useCallback(async () => {
     try {
@@ -98,7 +98,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     taskRequestIDRef.current = requestID;
     setLoadingTasks(true);
     try {
-      const res = await apiClient.get<TaskStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`);
+      const res = await apiClient.get<RunStatus[]>(`/api/system/tasks?${buildTaskParams().toString()}`);
       if (requestID !== taskRequestIDRef.current) return;
       const items = Array.isArray(res.data) ? res.data : [];
       const seen = new Set<string>();
@@ -129,11 +129,11 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   }, [fetchStorageIO, fetchTasks, taskReloadToken]);
 
   useEffect(() => {
-    // 复用 Layout 中已挂载的全局 EventSource：它接收 task_progress 后会
+    // 复用 Layout 中已挂载的全局 EventSource：它接收 run_snapshot 后会
     // dispatch 'manga-manager:task-progress' 自定义事件。这里只监听自定义事件，
     // 避免对同一 origin 再开第二条 SSE 长连接占用浏览器并发额度。
     const handler = (event: Event) => {
-      const task = (event as CustomEvent<TaskStatus>).detail;
+      const task = (event as CustomEvent<RunStatus>).detail;
       if (!task || typeof task !== 'object') return;
       setTasks((prev) => {
         const matchesStatus = appliedTaskFilters.status === 'ALL' || task.status === appliedTaskFilters.status;
@@ -169,7 +169,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     return () => window.clearInterval(poll);
   }, [fetchStorageIO, fetchTasks]);
 
-  const runTaskAction = async (task: TaskStatus, action: TaskAction) => {
+  const runTaskAction = async (task: RunStatus, action: TaskAction) => {
     setTaskActionKey(`${task.key}:${action}`);
     try {
       await apiClient.post(`/api/system/tasks/${encodeURIComponent(task.key)}/${action}`);
@@ -186,10 +186,10 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     }
   };
 
-  const currentTaskFilterCanClear = !['ALL', 'running', 'paused', 'cancelling'].includes(taskStatusFilter);
+  const currentTaskFilterCanClear = !['ALL', 'running', 'paused', 'cancelling'].includes(runStatusFilter);
 
   const updateTaskFilters = (patch: Partial<TaskCenterFilters>) => {
-    if (patch.status !== undefined) setTaskStatusFilter(patch.status);
+    if (patch.status !== undefined) setRunStatusFilter(patch.status);
     if (patch.scope !== undefined) setTaskScopeFilter(patch.scope);
     if (patch.type !== undefined) setTaskTypeFilter(patch.type);
     if (patch.scopeId !== undefined) setTaskScopeIdFilter(patch.scopeId);
@@ -201,8 +201,8 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
       const params = new URLSearchParams();
       if (status) {
         params.set('status', status);
-      } else if (useCurrentFilters && taskStatusFilter !== 'ALL') {
-        params.set('status', taskStatusFilter);
+      } else if (useCurrentFilters && runStatusFilter !== 'ALL') {
+        params.set('status', runStatusFilter);
       }
       if (useCurrentFilters) {
         if (taskScopeFilter !== 'ALL') params.set('scope', taskScopeFilter);
@@ -217,7 +217,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     }
   };
 
-  const openTaskTarget = (task: TaskStatus) => {
+  const openTaskTarget = (task: RunStatus) => {
     if (task.scope === 'series' && task.scope_id) {
       navigate(`/series/${task.scope_id}`);
       return;

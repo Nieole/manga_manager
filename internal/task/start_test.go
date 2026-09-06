@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"manga-manager/internal/taskrun"
+	"manga-manager/internal/runhandle"
 )
 
 func TestIdentityMustBeCompleteAndConsistent(t *testing.T) {
@@ -138,9 +138,9 @@ func TestZeroLimitsAreNotPersisted(t *testing.T) {
 func TestHandleChannelsLandInTheirOwnPlaces(t *testing.T) {
 	h := newTestEngine(t, runBodySynchronously, 0)
 
-	run := h.start(t, libraryScanSpec(1), func(_ context.Context, handle *taskrun.Handle) (Result, error) {
+	run := h.start(t, libraryScanSpec(1), func(_ context.Context, handle *runhandle.Handle) (Result, error) {
 		handle.Phase("hashing", "task.msg.scan.hashing", nil)
-		handle.Report(taskrun.Frame{Item: "vol-01.cbz", Metrics: map[string]int64{"books": 12}})
+		handle.Report(runhandle.Frame{Item: "vol-01.cbz", Metrics: map[string]int64{"books": 12}})
 		handle.MergeParams(map[string]string{"mode": "quick"})
 		handle.AddMetrics(map[string]int64{"io_wait_ms": 30}, map[string]string{"volume": "disk-1"})
 		handle.AddMetrics(map[string]int64{"io_wait_ms": 12}, nil)
