@@ -6,7 +6,7 @@
 
 **Blocked by:** 无 —— 可立即开始
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 边界（ADR 0006）
 
@@ -44,11 +44,11 @@
 
 ## 验收
 
-- [ ] 新包不 import 任何 SQL/数据库包，落盘端口在本包定义
-- [ ] 状态机覆盖排队中、活动三态与四条终态；排队中被取消进已取消
-- [ ] 终态裁决只有一条路径，由任务体返回的错误决定
-- [ ] 槽位放行按单一全局数字，超限的留在排队中
-- [ ] 契约用例在纯内存下跑，不需要数据库、配置或扫描器；后台执行注入同步版，终态在调用返回时已落定
-- [ ] 时钟可注入，节流与时序断言不靠 sleep
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] 新包不 import 任何 SQL/数据库包，落盘端口在本包定义
+- [x] 状态机覆盖排队中、活动三态与四条终态；排队中被取消进已取消
+- [x] 终态裁决只有一条路径，由任务体返回的错误决定
+- [x] 槽位放行按单一全局数字，超限的留在排队中
+- [x] 契约用例在纯内存下跑，不需要数据库、配置或扫描器；后台执行注入同步版，终态在调用返回时已落定
+- [x] 时钟可注入，节流与时序断言不靠 sleep
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过

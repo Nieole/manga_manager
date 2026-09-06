@@ -38,7 +38,7 @@
 
 - [x] 任务 ctx 携带任务键，日志 handler 从 ctx 取出并附加为属性
 - [x] 资料库扫描、重建缩略图、刮削三类任务体走到的日志带 `task_key`，且键不在任何一个调用点手写
-  ——`internal/database`、`internal/parser` 与 `internal/koreader` 上那几处不在本票范围内，见挂账 D5
+  ——`internal/database`、`internal/parser` 与 `internal/koreader` 上那几处不在本票范围内，见挂账 D20
 - [x] 一次失败的资料库扫描之后，按该任务键过滤日志能拿到非空结果，有一条用例守着
 - [x] 无归属的扫描（守护 / watcher / 首扫）日志不带任务键，这是本票的已知边界而非缺陷
 - [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
