@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { useLatestRequest } from '../hooks/useLatestRequest';
 import { getApiErrorMessage } from '../api/client';
@@ -135,7 +135,12 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
   const markedCount = markedEntries.length;
   const hasMore = items.length < total;
 
-  useEffect(() => {
+  // 这两个 ref 是「屏幕上那份列表」的影子，且正是下一次翻页的输入（offset 与还有没有下一页）。
+  // 必须用 layout effect 在同一次提交里落地：passive effect 与提交之间隔着一个任务，浏览器完全
+  // 可能在这个缝里把哨兵的 IntersectionObserver 回调派发出去——那一刻 ref 还是上一页的值，
+  // 于是「加载更多」拿着上一页的 offset 重发已经加载过的那一页，取回的条目被去重整份丢掉，
+  // 条数不变、哨兵仍在视口里因而不会再次触发，无限滚动就此静悄悄地停在原地。
+  useLayoutEffect(() => {
     itemsLengthRef.current = items.length;
     hasMoreRef.current = hasMore;
   }, [hasMore, items.length]);
@@ -233,7 +238,9 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     void loadReviews(true);
   }, [libraryId, status, refreshTrigger, loadReviews]);
 
-  useEffect(() => {
+  // 同理用 layout effect 挂哨兵：哨兵一进 DOM 就得被观察上。挂在 passive effect 里的话，
+  // 从列表提交到观察器建立之间有一段没人盯着的空窗，这段时间里哨兵的可见性变化没人接得住。
+  useLayoutEffect(() => {
     const node = loadMoreRef.current;
     const root = listScrollRef.current;
     if (!node || !root) return;

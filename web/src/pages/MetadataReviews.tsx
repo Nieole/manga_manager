@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { useLatestRequest } from '../hooks/useLatestRequest';
 import { getApiErrorMessage } from '../api/client';
@@ -86,7 +86,11 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   const markedCount = markedEntries.length;
   const hasMore = items.length < total;
 
-  useEffect(() => {
+  // 与 AIGroupingReviews 同型的无限滚动，同一处时序坑：这两个 ref 是屏幕上那份列表的影子，
+  // 又是下一次翻页的 offset 与「还有没有下一页」。挂在 passive effect 上，提交与副作用之间的
+  // 那个任务缝里派发的哨兵回调就会读到上一页的游标，重发已经加载过的那一页、取回的条目被去重
+  // 整份丢掉，条数不变、哨兵仍在视口里因而不再触发，无限滚动静悄悄地停在原地。
+  useLayoutEffect(() => {
     itemsLengthRef.current = items.length;
     hasMoreRef.current = hasMore;
   }, [hasMore, items.length]);
@@ -146,7 +150,8 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
     void loadReviews(true);
   }, [libraryId, provider, appliedQuery, refreshTrigger, loadReviews]);
 
-  useEffect(() => {
+  // 同理：哨兵一进 DOM 就得被观察上，不留「已渲染但还没人盯着」的空窗。
+  useLayoutEffect(() => {
     const node = loadMoreRef.current;
     const root = listScrollRef.current;
     if (!node || !root) return;

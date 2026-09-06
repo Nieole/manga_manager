@@ -153,7 +153,7 @@ class FakeIntersectionObserver {
   observe() {}
   unobserve() {}
   // 摘掉自己那份回调：组件每次重渲染都会换一个 observer，只增不减的话数组末尾可能是
-  // 已经被丢弃的那一个，触发它什么也不会发生——这正是这条用例在慢机器上偶发变红的原因。
+  // 已经被丢弃的那一个，触发它什么也不会发生。
   disconnect() {
     const at = observerCallbacks.indexOf(this.callback);
     if (at >= 0) {
@@ -177,6 +177,9 @@ function activeReviewTitle(container: HTMLElement) {
 
 // scrollForMore 让哨兵进入视口。触发所有仍存活的 observer 而不只是最后一个：
 // 哪一个绑在当前这次渲染的哨兵上取决于渲染时序，挑一个就会看机器快慢的脸色。
+// 本文件在 DOM 一提交就往下走，不等 React 把 passive effect 跑完——真实浏览器同样可能在这个
+// 缝里派发哨兵回调，因此哨兵的观察器与翻页游标必须在提交的那一刻就已就位（AIGroupingReviews
+// 里的两处 useLayoutEffect 保证了这一点）。
 async function scrollForMore() {
   const live = [...observerCallbacks];
   await act(async () => {
