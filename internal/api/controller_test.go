@@ -2666,7 +2666,6 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_10", Identity: seriesTask("scan_series", 10, variantSole), Total: 1, Terminal: "completed"})
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_11", Identity: seriesTask("scan_series", 11, variantSole), Total: 1, Terminal: "completed"})
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_11", Identity: libraryTask("scan_library", 11, variantSole), Total: 1, Terminal: "completed"})
-	// 清理走 DeleteTasks 删 DB 记录，而终态是异步落盘的：先刷盘让已完成任务进了 DB 才删得掉。
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
 	rec := httptest.NewRecorder()
@@ -4526,7 +4525,7 @@ func TestRunProgressIsVisibleImmediately(t *testing.T) {
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Identity: libraryTask("scan_library", 5, variantSole), Total: 100})
 	progress.Advance(42, 100, "", nil)
 
-	tasks, err := controller.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{})
+	tasks, err := controller.taskEngine.listTaskStatuses(context.Background(), taskFilters{})
 	if err != nil {
 		t.Fatalf("listTaskStatuses failed: %v", err)
 	}

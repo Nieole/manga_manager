@@ -80,7 +80,6 @@ type Querier interface {
 	GetConnectedSeriesRelations(ctx context.Context, startSeriesID int64) ([]GetConnectedSeriesRelationsRow, error)
 	GetContinueReadingSequels(ctx context.Context) ([]GetContinueReadingSequelsRow, error)
 	GetDashboardCoreStats(ctx context.Context, sinceDate string) (GetDashboardCoreStatsRow, error)
-	GetLastTaskKeyForScope(ctx context.Context, arg GetLastTaskKeyForScopeParams) (string, error)
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetMetadataReview(ctx context.Context, id int64) (MetadataReview, error)
@@ -174,9 +173,6 @@ type Querier interface {
 	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) (int64, error)
 	MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error
 	MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error
-	// The params filter drops the last active frame's display state; what stays and
-	// why is documented on the caller (api.Controller.recoverInterruptedTasks).
-	MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error)
 	RefreshSeriesCover(ctx context.Context, id int64) error
 	RefreshSeriesStats(ctx context.Context, id int64) error
 	RehomeBookPath(ctx context.Context, arg RehomeBookPathParams) (int64, error)
@@ -231,7 +227,6 @@ type Querier interface {
 	UpsertSeriesMetadataProvenance(ctx context.Context, arg UpsertSeriesMetadataProvenanceParams) (SeriesMetadataProvenance, error)
 	UpsertSmartFilter(ctx context.Context, arg UpsertSmartFilterParams) (SmartFilter, error)
 	UpsertTag(ctx context.Context, name string) (Tag, error)
-	UpsertTaskRecord(ctx context.Context, arg UpsertTaskRecordParams) error
 }
 
 var _ Querier = (*Queries)(nil)

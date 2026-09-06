@@ -1514,57 +1514,6 @@ GROUP BY s.id
 ORDER BY score DESC
 LIMIT ?;
 
--- name: UpsertTaskRecord :exec
-INSERT INTO tasks (
-    key, type, scope, scope_id, scope_name, status, message, error,
-    current, total, can_cancel, retryable, params,
-    started_at, updated_at, finished_at, sequence
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(key) DO UPDATE SET
-    type = excluded.type,
-    scope = excluded.scope,
-    scope_id = excluded.scope_id,
-    scope_name = excluded.scope_name,
-    status = excluded.status,
-    message = excluded.message,
-    error = excluded.error,
-    current = excluded.current,
-    total = excluded.total,
-    can_cancel = excluded.can_cancel,
-    retryable = excluded.retryable,
-    params = excluded.params,
-    started_at = excluded.started_at,
-    updated_at = excluded.updated_at,
-    finished_at = excluded.finished_at,
-    sequence = excluded.sequence;
-
--- name: MarkInterruptedTasks :execrows
--- The params filter drops the last active frame's display state; what stays and
--- why is documented on the caller (api.Controller.recoverInterruptedTasks).
-UPDATE tasks
-SET status = 'interrupted',
-    message = ?,
-    error = ?,
-    can_cancel = FALSE,
-    params = CASE
-        WHEN json_valid(params) THEN (
-            SELECT json_group_object(entry.key, entry.value)
-            FROM json_each(tasks.params) AS entry
-            WHERE entry.key NOT IN ('message_code', 'pause_reason', 'paused_at', 'can_pause', 'can_resume')
-              AND entry.key NOT LIKE 'msgparam.%'
-        )
-        ELSE params
-    END,
-    updated_at = CURRENT_TIMESTAMP,
-    finished_at = CURRENT_TIMESTAMP
-WHERE status IN ('running', 'paused', 'cancelling');
-
--- name: GetLastTaskKeyForScope :one
-SELECT key FROM tasks
-WHERE scope = ? AND scope_id = ?
-ORDER BY updated_at DESC
-LIMIT 1;
-
 -- name: CountHealthEmptyPages :one
 SELECT COUNT(*)
 FROM books b

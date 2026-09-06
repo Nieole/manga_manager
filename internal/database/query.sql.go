@@ -1570,25 +1570,6 @@ func (q *Queries) GetDashboardCoreStats(ctx context.Context, sinceDate string) (
 	return i, err
 }
 
-const getLastTaskKeyForScope = `-- name: GetLastTaskKeyForScope :one
-SELECT key FROM tasks
-WHERE scope = ? AND scope_id = ?
-ORDER BY updated_at DESC
-LIMIT 1
-`
-
-type GetLastTaskKeyForScopeParams struct {
-	Scope   string        `json:"scope"`
-	ScopeID sql.NullInt64 `json:"scope_id"`
-}
-
-func (q *Queries) GetLastTaskKeyForScope(ctx context.Context, arg GetLastTaskKeyForScopeParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getLastTaskKeyForScope, arg.Scope, arg.ScopeID)
-	var key string
-	err := row.Scan(&key)
-	return key, err
-}
-
 const getLibrary = `-- name: GetLibrary :one
 SELECT id, name, path, scan_mode, koreader_sync_enabled, scan_interval, scan_formats, created_at FROM libraries WHERE id = ? LIMIT 1
 `
@@ -5515,41 +5496,6 @@ func (q *Queries) MarkAIGroupingReviewCollectionsRejected(ctx context.Context, r
 	return err
 }
 
-const markInterruptedTasks = `-- name: MarkInterruptedTasks :execrows
-UPDATE tasks
-SET status = 'interrupted',
-    message = ?,
-    error = ?,
-    can_cancel = FALSE,
-    params = CASE
-        WHEN json_valid(params) THEN (
-            SELECT json_group_object(entry.key, entry.value)
-            FROM json_each(tasks.params) AS entry
-            WHERE entry.key NOT IN ('message_code', 'pause_reason', 'paused_at', 'can_pause', 'can_resume')
-              AND entry.key NOT LIKE 'msgparam.%'
-        )
-        ELSE params
-    END,
-    updated_at = CURRENT_TIMESTAMP,
-    finished_at = CURRENT_TIMESTAMP
-WHERE status IN ('running', 'paused', 'cancelling')
-`
-
-type MarkInterruptedTasksParams struct {
-	Message string `json:"message"`
-	Error   string `json:"error"`
-}
-
-// The params filter drops the last active frame's display state; what stays and
-// why is documented on the caller (api.Controller.recoverInterruptedTasks).
-func (q *Queries) MarkInterruptedTasks(ctx context.Context, arg MarkInterruptedTasksParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markInterruptedTasks, arg.Message, arg.Error)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const refreshSeriesCover = `-- name: RefreshSeriesCover :exec
 INSERT INTO series_stats (series_id, cover_path, cover_book_id, updated_at)
 SELECT
@@ -6750,72 +6696,4 @@ func (q *Queries) UpsertTag(ctx context.Context, name string) (Tag, error) {
 		&i.SeriesCount,
 	)
 	return i, err
-}
-
-const upsertTaskRecord = `-- name: UpsertTaskRecord :exec
-INSERT INTO tasks (
-    key, type, scope, scope_id, scope_name, status, message, error,
-    current, total, can_cancel, retryable, params,
-    started_at, updated_at, finished_at, sequence
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(key) DO UPDATE SET
-    type = excluded.type,
-    scope = excluded.scope,
-    scope_id = excluded.scope_id,
-    scope_name = excluded.scope_name,
-    status = excluded.status,
-    message = excluded.message,
-    error = excluded.error,
-    current = excluded.current,
-    total = excluded.total,
-    can_cancel = excluded.can_cancel,
-    retryable = excluded.retryable,
-    params = excluded.params,
-    started_at = excluded.started_at,
-    updated_at = excluded.updated_at,
-    finished_at = excluded.finished_at,
-    sequence = excluded.sequence
-`
-
-type UpsertTaskRecordParams struct {
-	Key        string        `json:"key"`
-	Type       string        `json:"type"`
-	Scope      string        `json:"scope"`
-	ScopeID    sql.NullInt64 `json:"scope_id"`
-	ScopeName  string        `json:"scope_name"`
-	Status     string        `json:"status"`
-	Message    string        `json:"message"`
-	Error      string        `json:"error"`
-	Current    int64         `json:"current"`
-	Total      int64         `json:"total"`
-	CanCancel  bool          `json:"can_cancel"`
-	Retryable  bool          `json:"retryable"`
-	Params     string        `json:"params"`
-	StartedAt  time.Time     `json:"started_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
-	FinishedAt sql.NullTime  `json:"finished_at"`
-	Sequence   int64         `json:"sequence"`
-}
-
-func (q *Queries) UpsertTaskRecord(ctx context.Context, arg UpsertTaskRecordParams) error {
-	_, err := q.db.ExecContext(ctx, upsertTaskRecord,
-		arg.Key,
-		arg.Type,
-		arg.Scope,
-		arg.ScopeID,
-		arg.ScopeName,
-		arg.Status,
-		arg.Message,
-		arg.Error,
-		arg.Current,
-		arg.Total,
-		arg.CanCancel,
-		arg.Retryable,
-		arg.Params,
-		arg.StartedAt,
-		arg.UpdatedAt,
-		arg.FinishedAt,
-		arg.Sequence,
-	)
-	return err
 }

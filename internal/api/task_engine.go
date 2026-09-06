@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/task"
@@ -231,7 +230,7 @@ func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRe
 //
 // 只有一个来源——库。旧引擎在这里要把内存表盖在库记录上，因此筛选谓词必须在合并之后判；
 // 现在筛选整条下推到 SQL，Limit 截断的就是过滤之后的那一页。
-func (e *taskEngine) listTaskStatuses(ctx context.Context, filters database.TaskFilters) ([]TaskStatus, error) {
+func (e *taskEngine) listTaskStatuses(ctx context.Context, filters taskFilters) ([]TaskStatus, error) {
 	snapshots, err := e.engine.ListSnapshots(ctx, runFilterFrom(filters, task.OrderLiveFirst))
 	if err != nil {
 		return nil, err
@@ -332,7 +331,7 @@ func (e *taskEngine) latestTaskByTypes(types ...string) *TaskStatus {
 //
 // 旧引擎在这里要先清内存、再等一批在途落盘写完才敢删库，否则删掉的行会被写回来。落盘只剩一处
 // 之后那条串行没有了对象：这一句 DELETE 与写入方走的是同一个库。
-func (e *taskEngine) clear(ctx context.Context, filters database.TaskFilters) (int64, error) {
+func (e *taskEngine) clear(ctx context.Context, filters taskFilters) (int64, error) {
 	// 清理不接受关键词与条数：它们只用于列表展示，用它们做删除条件会让「删了什么」不可预期。
 	filters.Query = ""
 	filters.Limit = 0

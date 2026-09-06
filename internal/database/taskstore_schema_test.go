@@ -1,5 +1,5 @@
-// 本文件守的是任务与运行的新表确实随 Migrate 一起落地，且旧 tasks 表在此期间一列不变。
-// 破了意味着新引擎接线时表不在，或者旧引擎在过渡期里读写一张被改过形状的表。
+// 本文件守的是任务与运行的表确实随 Migrate 一起落地，且旧任务表已被整表丢弃。
+// 破了意味着引擎启动时表不在，或者那张没有任何读写方的旧表还占着库。
 
 package database
 
@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestMigrateCreatesTaskRunTablesAndKeepsLegacyTasks(t *testing.T) {
+func TestMigrateCreatesTaskRunTablesAndDropsLegacyTasks(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "taskrun.db")
 	if err := Migrate(dbPath); err != nil {
 		t.Fatalf("migrate failed: %v", err)
@@ -40,16 +40,14 @@ func TestMigrateCreatesTaskRunTablesAndKeepsLegacyTasks(t *testing.T) {
 		}
 	}
 
-	// 旧引擎此刻仍在读写这张表，它的主键必须还是任务键。
-	var legacy string
-	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'`).Scan(&legacy); err != nil {
-		t.Fatalf("legacy tasks table missing: %v", err)
+	// 旧任务表没有任何读写方了，全新库上也不该再被建出来。
+	var legacy int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'tasks'`,
+	).Scan(&legacy); err != nil {
+		t.Fatalf("read sqlite_master failed: %v", err)
 	}
-	var pkColumn string
-	if err := db.QueryRow(`SELECT name FROM pragma_table_info('tasks') WHERE pk = 1`).Scan(&pkColumn); err != nil {
-		t.Fatalf("read legacy primary key failed: %v", err)
-	}
-	if pkColumn != "key" {
-		t.Fatalf("legacy tasks primary key=%q want \"key\"", pkColumn)
+	if legacy != 0 {
+		t.Fatalf("legacy tasks table still exists after migrate")
 	}
 }

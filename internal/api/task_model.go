@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/task"
 )
 
@@ -55,11 +54,24 @@ func taskIdentityFromDomain(identity task.Identity) TaskIdentity {
 
 // ---- 列表谓词 ----
 
+// taskFilters 是六个任务端点共用的过滤参数，由 taskFiltersFromQuery 从查询串解析而来。
+//
+// 它是 HTTP 侧的形状，不是落盘侧的形状：进库之前一律先经 runFilterFrom 翻成 task.RunFilter。
+// 空串与零值一律表示「这一条不过滤」。
+type taskFilters struct {
+	Status  string
+	Scope   string
+	Type    string
+	ScopeID *int64
+	Query   string
+	Limit   int
+}
+
 // runFilterFrom 把六个任务端点共用的过滤参数翻成运行查询的谓词。
 //
 // 五条谓词整条下推到落盘侧，不再取回内存里过一遍：旧引擎必须在内存里判，因为它要先把内存表盖在
 // 库记录上；现在只有一个来源，下推之后 Limit 截断的才是过滤**之后**的那一页。
-func runFilterFrom(filters database.TaskFilters, order task.RunOrder) task.RunFilter {
+func runFilterFrom(filters taskFilters, order task.RunOrder) task.RunFilter {
 	filter := task.RunFilter{
 		Scope:   task.Scope(strings.TrimSpace(filters.Scope)),
 		ScopeID: filters.ScopeID,

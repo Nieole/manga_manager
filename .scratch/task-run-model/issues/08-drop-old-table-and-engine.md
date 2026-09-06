@@ -5,7 +5,7 @@
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 迁移就是丢弃（ADR 0004 关键决定）
 
@@ -21,11 +21,23 @@
 - 旧的任务表、待落盘集合、落盘 goroutine 与它那把串行锁（若票 07 已判定不再需要）
 - 旧的记录与状态之间的双向转换
 
+## 落地记录
+
+**票 07 已提前完成的**：旧引擎的内存表、异步落盘 goroutine 与它的串行锁、`params` 的编解码函数、
+记录与状态的双向转换——`unused` 是门禁的一部分，接线一让它们失去调用方就必须在同一次提交里删掉
+（见 D29）。本票只核对了无残留调用点。
+
+**票据正文没有点名、但丢表绕不过去的一件事**：健康报告的 `attachLastTaskKeys` 此前直接查旧
+`tasks` 表，不改就没法丢表。查询整条搬进 `taskstore.LastRunKeysForScopes`，见 D32。
+
 ## 验收
 
-- [ ] `tasks` 表经迁移删除，`user_version` 递增
-- [ ] 旧引擎的内存表、落盘链路与 `params` 编解码全部删除，无残留调用点
-- [ ] `CHANGELOG.md` 记一条：升级后任务清单从空开始，第一个守护 tick 后自动长回
-- [ ] 全量用例继续绿，无任何行为变化
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] `tasks` 表经迁移删除（`DROP TABLE IF EXISTS`，每次启动幂等重放，索引随表消失）。
+      **`user_version` 未递增**，见 D31：本仓那个版本号门控的是随库规模线性增长的全量回填，
+      为一句 DROP 推一版会让每个存量库在升级后的首启白算一遍；不推是可逆的那一侧。
+- [x] 旧引擎的内存表、落盘链路与 `params` 编解码全部删除，无残留调用点（票 07 提前完成，本票核对）
+- [x] `CHANGELOG.md` 记一条：升级后任务清单从空开始，第一个守护 tick 后自动长回
+      （票 07 已写下，本票把「旧表还在」那半句改成实际发生的丢弃）
+- [x] 全量用例继续绿，无任何行为变化
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过

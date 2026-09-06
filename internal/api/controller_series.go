@@ -584,7 +584,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		metadataReview = emptyMetadataReviewResponse()
 	}
 
-	failedTasks, err := c.taskEngine.listTaskStatuses(ctx, database.TaskFilters{
+	failedTasks, err := c.taskEngine.listTaskStatuses(ctx, taskFilters{
 		Status:  "failed",
 		Scope:   taskScopeSeries,
 		ScopeID: &seriesID,

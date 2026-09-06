@@ -338,23 +338,3 @@ type Tag struct {
 	CreatedAt   sql.NullTime `json:"created_at"`
 	SeriesCount int64        `json:"series_count"`
 }
-
-type Task struct {
-	Key        string        `json:"key"`
-	Type       string        `json:"type"`
-	Scope      string        `json:"scope"`
-	ScopeID    sql.NullInt64 `json:"scope_id"`
-	ScopeName  string        `json:"scope_name"`
-	Status     string        `json:"status"`
-	Message    string        `json:"message"`
-	Error      string        `json:"error"`
-	Current    int64         `json:"current"`
-	Total      int64         `json:"total"`
-	CanCancel  bool          `json:"can_cancel"`
-	Retryable  bool          `json:"retryable"`
-	Params     string        `json:"params"`
-	StartedAt  time.Time     `json:"started_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
-	FinishedAt sql.NullTime  `json:"finished_at"`
-	Sequence   int64         `json:"sequence"`
-}

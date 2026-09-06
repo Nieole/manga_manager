@@ -11,7 +11,6 @@ import (
 	"sync"
 	"testing"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/taskrun"
 )
 
@@ -52,7 +51,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	go func() {
 		defer readers.Done()
 		for range 200 {
-			items, err := controller.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{Limit: 50})
+			items, err := controller.taskEngine.listTaskStatuses(context.Background(), taskFilters{Limit: 50})
 			if err != nil {
 				continue
 			}

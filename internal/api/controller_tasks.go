@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"manga-manager/internal/config"
-	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/taskrun"
@@ -217,9 +216,9 @@ func (c *Controller) taskLimitsForPath(path string) TaskLimits {
 // ---- HTTP 端点 ----
 
 // taskFiltersFromQuery 解析六个任务端点共用的过滤参数。无法解析的 scope_id/limit 按「不过滤」处理。
-func taskFiltersFromQuery(r *http.Request) database.TaskFilters {
+func taskFiltersFromQuery(r *http.Request) taskFilters {
 	query := r.URL.Query()
-	filters := database.TaskFilters{
+	filters := taskFilters{
 		Status: strings.TrimSpace(query.Get("status")),
 		Scope:  strings.TrimSpace(query.Get("scope")),
 		Type:   strings.TrimSpace(query.Get("type")),

@@ -15,7 +15,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/taskrun"
 )
 
@@ -134,7 +133,7 @@ func TestInterruptedRunIsNotListedTwice(t *testing.T) {
 	reloaded := restartController(t, controller, store, tempDir)
 	reloaded.taskEngine.markInterrupted(context.Background())
 
-	tasks, err := reloaded.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{})
+	tasks, err := reloaded.taskEngine.listTaskStatuses(context.Background(), taskFilters{})
 	if err != nil {
 		t.Fatalf("列任务失败: %v", err)
 	}

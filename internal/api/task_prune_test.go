@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"testing"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/taskrun"
 )
 
@@ -89,7 +88,7 @@ func TestClearTasksKeepsPausedTask(t *testing.T) {
 		t.Fatalf("pause: %v", err)
 	}
 
-	if _, err := engine.clear(context.Background(), database.TaskFilters{}); err != nil {
+	if _, err := engine.clear(context.Background(), taskFilters{}); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 

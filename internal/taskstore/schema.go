@@ -18,7 +18,9 @@ const (
 	indexRunsOneQueuedPerTask = "idx_runs_one_queued_per_task"
 )
 
-// 表名。身份表刻意不叫 tasks：旧引擎那张同名表此刻仍在被读写，两者要并存到旧表被丢弃为止。
+// 表名。身份表在库里叫 task_identities，规格的表形状里写的却是 tasks——对不上是已知的。
+// 要改齐**不得**只动这个常量：`CREATE TABLE IF NOT EXISTS` 会在存量库旁边另建一张空表，
+// 而 tableRuns 的外键仍指着原来那张。改名要走一次自己的迁移语句。
 const (
 	tableTasks      = "task_identities"
 	tableRuns       = "runs"
@@ -173,7 +175,7 @@ var indexStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_run_samples_at ON ` + tableRunSamples + `(at)`,
 }
 
-// Migrate 建起任务与运行的表与索引。语句幂等，每次启动重放即可；旧引擎那张 tasks 表不在其列。
+// Migrate 建起任务与运行的表与索引。语句幂等，每次启动重放即可。
 //
 // `CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，因此将来给这几张表**加列**要另走一条
 // `ALTER TABLE`（`internal/database` 的 ensureColumn 是先例），改这里的建表语句对存量库不生效。

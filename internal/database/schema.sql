@@ -463,30 +463,6 @@ CREATE TABLE IF NOT EXISTS reading_bookmarks (
 CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_book_id ON reading_bookmarks(book_id);
 CREATE INDEX IF NOT EXISTS idx_reading_bookmarks_user_book ON reading_bookmarks(user_id, book_id, page);
 
-CREATE TABLE IF NOT EXISTS tasks (
-    key TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    scope TEXT NOT NULL DEFAULT 'system',
-    scope_id INTEGER,
-    scope_name TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL,
-    message TEXT NOT NULL DEFAULT '',
-    error TEXT NOT NULL DEFAULT '',
-    current INTEGER NOT NULL DEFAULT 0,
-    total INTEGER NOT NULL DEFAULT 0,
-    can_cancel BOOLEAN NOT NULL DEFAULT FALSE,
-    retryable BOOLEAN NOT NULL DEFAULT FALSE,
-    params TEXT NOT NULL DEFAULT '',
-    started_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
-    finished_at DATETIME,
-    sequence INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id);
-
 CREATE TABLE IF NOT EXISTS koreader_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     username TEXT NOT NULL DEFAULT '',

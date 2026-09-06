@@ -11,14 +11,13 @@ import (
 	"net/http"
 	"testing"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/task"
 )
 
 // runsForKey 取这个**任务键**名下的全部运行，由新到旧。
 func runsForKey(t *testing.T, c *Controller, key string) []TaskStatus {
 	t.Helper()
-	items, err := c.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{})
+	items, err := c.taskEngine.listTaskStatuses(context.Background(), taskFilters{})
 	if err != nil {
 		t.Fatalf("列任务失败: %v", err)
 	}

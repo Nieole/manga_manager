@@ -2,8 +2,9 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"strings"
+
+	"manga-manager/internal/taskstore"
 )
 
 type HealthIssueSummary struct {
@@ -102,97 +103,33 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 	return report, nil
 }
 
-// scopeKey 标识一个健康问题所归属的任务作用域。
-type scopeKey struct {
-	scope string
-	id    int64
-}
-
-// lastTaskKeysForScopes 批量取每个 (scope, scope_id) 下最近一次任务的 key。
+// attachLastTaskKeys 给每条健康问题挂上它所在作用域最近那次运行的**任务键**，界面据此跳到日志。
 //
-// 用窗口函数在一条 SQL 里分组取最新，避免 N 次单行查询。排序末位跟 ListTasks 一致收在
-// sequence 与主键 key 上：updated_at 只有秒精度，同一秒内的多条任务少了它就由查询计划挑一行。
-// scopeKey 数量由调用方去重后传入，通常在几十到上千之间；这里按批切分占位符，
-// 免得撞上 SQLite 的变量数上限（32766）。
-func (s *SqlStore) lastTaskKeysForScopes(ctx context.Context, wanted map[scopeKey]struct{}) (map[scopeKey]string, error) {
-	latest := make(map[scopeKey]string, len(wanted))
-	if len(wanted) == 0 {
-		return latest, nil
-	}
-
-	keys := make([]scopeKey, 0, len(wanted))
-	for key := range wanted {
-		keys = append(keys, key)
-	}
-
-	// 每个 key 占 2 个占位符（scope + scope_id），留足余量按 400 个 key 一批。
-	const batchSize = 400
-	for start := 0; start < len(keys); start += batchSize {
-		end := min(start+batchSize, len(keys))
-		batch := keys[start:end]
-
-		conditions := make([]string, 0, len(batch))
-		args := make([]any, 0, len(batch)*2)
-		for _, key := range batch {
-			conditions = append(conditions, "(scope = ? AND scope_id = ?)")
-			args = append(args, key.scope, key.id)
-		}
-
-		query := `
-			SELECT scope, scope_id, key FROM (
-				SELECT scope, scope_id, key,
-					ROW_NUMBER() OVER (PARTITION BY scope, scope_id ORDER BY updated_at DESC, sequence DESC, key DESC) AS rn
-				FROM tasks
-				WHERE ` + strings.Join(conditions, " OR ") + `
-			) WHERE rn = 1`
-
-		rows, err := s.db.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var (
-				scope   string
-				scopeID sql.NullInt64
-				taskKey string
-			)
-			if err := rows.Scan(&scope, &scopeID, &taskKey); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			if !scopeID.Valid {
-				continue
-			}
-			latest[scopeKey{scope: scope, id: scopeID.Int64}] = taskKey
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-	}
-	return latest, nil
-}
-
+// 作用域先去重再一次查完，而不是每条问题单独发一条：健康报告一次最多带回上千条问题，
+// 逐条单查会打出上千条单行 SQL——光是往返开销就让 /api/health/report 变成秒级请求。
+//
+// 系列优先于资料库：一条问题若同时落在两者上，用户想看的是那个系列自己的那次运行。
 func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue) error {
 	if len(issues) == 0 {
 		return nil
 	}
-	wanted := make(map[scopeKey]struct{})
+	wanted := make(map[taskstore.ScopeRef]struct{})
 	for _, issue := range issues {
 		if issue.SeriesID != nil {
-			wanted[scopeKey{"series", *issue.SeriesID}] = struct{}{}
+			wanted[taskstore.ScopeRef{Scope: "series", ScopeID: *issue.SeriesID}] = struct{}{}
 		}
 		if issue.LibraryID != 0 {
-			wanted[scopeKey{"library", issue.LibraryID}] = struct{}{}
+			wanted[taskstore.ScopeRef{Scope: "library", ScopeID: issue.LibraryID}] = struct{}{}
 		}
 	}
 	if len(wanted) == 0 {
 		return nil
 	}
-	// 一次查完，而不是每个 (scope, scope_id) 单独发一条。
-	// 健康报告一次最多带回上千条 issue，逐条单查会打出上千条单行 SQL——
-	// 光是往返开销就让 /api/health/report 变成秒级请求。
-	latest, err := s.lastTaskKeysForScopes(ctx, wanted)
+	scopes := make([]taskstore.ScopeRef, 0, len(wanted))
+	for scope := range wanted {
+		scopes = append(scopes, scope)
+	}
+	latest, err := taskstore.New(s.db).LastRunKeysForScopes(ctx, scopes)
 	if err != nil {
 		return err
 	}
@@ -200,13 +137,13 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 	for i := range issues {
 		issue := &issues[i]
 		if issue.SeriesID != nil {
-			if k, ok := latest[scopeKey{"series", *issue.SeriesID}]; ok {
+			if k, ok := latest[taskstore.ScopeRef{Scope: "series", ScopeID: *issue.SeriesID}]; ok {
 				issue.LastTaskKey = k
 				continue
 			}
 		}
 		if issue.LibraryID != 0 {
-			if k, ok := latest[scopeKey{"library", issue.LibraryID}]; ok {
+			if k, ok := latest[taskstore.ScopeRef{Scope: "library", ScopeID: issue.LibraryID}]; ok {
 				issue.LastTaskKey = k
 			}
 		}

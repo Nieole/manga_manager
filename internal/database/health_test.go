@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"manga-manager/internal/task"
+	"manga-manager/internal/taskstore"
 )
 
 func TestGetHealthReport(t *testing.T) {
@@ -130,4 +133,51 @@ func healthSummaryMap(items []HealthIssueSummary) map[string]int64 {
 		result[item.Type] = item.Count
 	}
 	return result
+}
+
+// TestAttachLastTaskKeysReadsRunsTable 守健康报告那个「查看日志」按钮的数据来源确实是运行表。
+//
+// 破了意味着旧任务表被丢弃之后按钮一律不出现（或者整个 /api/health/report 直接报错）。
+// 系列优先于资料库：一条问题同时落在两者上时，用户想看的是那个系列自己的那次运行。
+func TestAttachLastTaskKeysReadsRunsTable(t *testing.T) {
+	store := newHealthTestStore(t)
+	ctx := context.Background()
+
+	runs := taskstore.New(store.db)
+	seed := func(identity task.Identity, key string, sequence int64) {
+		t.Helper()
+		owner, err := runs.EnsureTask(ctx, identity)
+		if err != nil {
+			t.Fatalf("建身份失败: %v", err)
+		}
+		finishedAt := time.Now()
+		if _, err := runs.CreateRun(ctx, task.Run{
+			TaskID: owner.ID, Key: key, Trigger: task.TriggerManual, NthRun: int(sequence),
+			Status: task.StatusCompleted, StartedAt: finishedAt.Add(-time.Minute),
+			UpdatedAt: finishedAt, FinishedAt: &finishedAt, Sequence: sequence,
+		}); err != nil {
+			t.Fatalf("落一条运行失败: %v", err)
+		}
+	}
+	seed(task.Identity{Type: "scan_library", Scope: task.ScopeLibrary, ScopeID: 7}, "scan_library_7", 1)
+	seed(task.Identity{Type: "scrape_series", Scope: task.ScopeSeries, ScopeID: 42}, "scrape_series_42", 2)
+
+	seriesID := int64(42)
+	issues := []HealthIssue{
+		{Type: "empty_pages", LibraryID: 7},
+		{Type: "missing_metadata", LibraryID: 7, SeriesID: &seriesID},
+		{Type: "empty_pages", LibraryID: 8},
+	}
+	if err := store.attachLastTaskKeys(ctx, issues); err != nil {
+		t.Fatalf("挂任务键失败: %v", err)
+	}
+	if issues[0].LastTaskKey != "scan_library_7" {
+		t.Errorf("库级问题拿到 %q，想要 scan_library_7", issues[0].LastTaskKey)
+	}
+	if issues[1].LastTaskKey != "scrape_series_42" {
+		t.Errorf("系列级问题拿到 %q：系列自己的运行该优先于它所在的库", issues[1].LastTaskKey)
+	}
+	if issues[2].LastTaskKey != "" {
+		t.Errorf("没跑过任何任务的库拿到了 %q", issues[2].LastTaskKey)
+	}
 }

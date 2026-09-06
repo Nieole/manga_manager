@@ -1,48 +1,37 @@
-// 守任务列表的筛选谓词对**两个来源**一视同仁：库记录与盖在它上面的内存快照。
+// 守任务列表的四条筛选谓词真的生效：状态、关键词、类型与作用域一路下推到落盘侧，
+// 而不是被当成「没填」整条丢掉。
 //
-// 同键同时存在于内存与库时取内存版（进度要新），而那一版的状态可能已经不满足筛选条件——
-// 按「已完成」筛出一条 running 的任务，用户看到的是筛选坏了。
+// 破了意味着任务中心的筛选器形同虚设——按「已完成」筛，返回的却是一条正在跑的任务。
 
 package api
 
 import (
 	"context"
 	"testing"
-
-	"manga-manager/internal/database"
 )
 
-// TestTaskListFiltersApplyToMemoryOverride 钉住内存覆盖那一支同样过筛选。
-func TestTaskListFiltersApplyToMemoryOverride(t *testing.T) {
+// TestTaskListFiltersArePushedDown 钉住每一条谓词都参与判定。
+//
+// 每个用例只播一条正在运行、无错误的任务：谓词若被忽略，这一条会照样返回，
+// 于是那几个 want=false 的用例当场变红。
+func TestTaskListFiltersArePushedDown(t *testing.T) {
 	const key = "scan_library_7"
 
 	cases := []struct {
 		name    string
-		filters database.TaskFilters
+		filters taskFilters
 		want    bool
 	}{
-		{"按状态筛：库里那行是已完成，内存里正在跑", database.TaskFilters{Status: "completed"}, false},
-		{"按关键词筛：错误串只留在库里那行上", database.TaskFilters{Query: "disk full"}, false},
-		{"按类型筛：内存版类型不变，照常返回", database.TaskFilters{Type: "scan_library"}, true},
-		{"内存版仍满足条件时照常返回", database.TaskFilters{Status: "running"}, true},
+		{"按状态筛：这一条正在跑，不该出现在已完成里", taskFilters{Status: "completed"}, false},
+		{"按关键词筛：这一条没有错误，搜不到那个词", taskFilters{Query: "disk full"}, false},
+		{"按类型筛：类型对得上，照常返回", taskFilters{Type: "scan_library"}, true},
+		{"按状态筛：状态对得上，照常返回", taskFilters{Status: "running"}, true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			controller, store, _, _ := newTestController(t)
+			controller, _, _, _ := newTestController(t)
 
-			// 库里那行是上一轮留下的：已完成、带着当时的失败线索。
-			if err := store.UpsertTask(context.Background(), database.TaskRecord{
-				Key:      key,
-				Type:     "scan_library",
-				Scope:    "library",
-				Status:   "completed",
-				Error:    "disk full",
-				Sequence: 1,
-			}); err != nil {
-				t.Fatalf("落一条历史任务失败: %v", err)
-			}
-			// 内存里是同一条键新起的那次：正在跑，没有错误。
 			seedTask(t, controller.taskEngine, taskSeed{Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
 			items, err := controller.taskEngine.listTaskStatuses(context.Background(), tc.filters)
@@ -57,10 +46,10 @@ func TestTaskListFiltersApplyToMemoryOverride(t *testing.T) {
 				}
 			}
 			if tc.want && found == nil {
-				t.Fatalf("筛选 %+v 把内存里那条任务整个滤掉了：它明明满足条件", tc.filters)
+				t.Fatalf("筛选 %+v 把那条任务整个滤掉了：它明明满足条件", tc.filters)
 			}
 			if !tc.want && found != nil {
-				t.Fatalf("筛选 %+v 返回了一条状态为 %q、错误为 %q 的任务：筛选对内存覆盖那一支没生效",
+				t.Fatalf("筛选 %+v 返回了一条状态为 %q、错误为 %q 的任务：这一条谓词没生效",
 					tc.filters, found.Status, found.Error)
 			}
 		})

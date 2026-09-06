@@ -354,3 +354,57 @@
 - **不处理会怎样：** 已按 A 落地。三条不变量里前两条如今是结构性的（只有一个写入方、没有那一列），
   第三条换了地方仍然有人守。
 - **状态：** open
+
+## D31 · 票 08 · 丢弃旧表不推 `currentSchemaVersion`（D29 的处置）
+
+- **问：** 票 08 的验收写着「`tasks` 表经迁移删除，`user_version` 递增」。而本仓的
+  `internal/database.currentSchemaVersion` 不是「schema 版本」，它门控的是随库规模线性增长的
+  全量回填（系列首字母、统计、标签计数、来源、FTS 重建）——常量自己的注释就写着
+  「新增需要全量回填的 schema 变更时才 +1」。为一句 `DROP TABLE IF EXISTS` 推一版，
+  每个存量库都会在升级后的首启白算一遍 FTS 重建。
+- **选项：** A 不推，`DROP TABLE IF EXISTS tasks` 每次启动无条件重放（推荐，与 D12 同一条口径，
+  也与那个常量自己的注释一致；语句幂等，存量库照样掉表）｜ B 按验收字面推到 4，
+  代价是全体存量库在升级后的首启多跑一轮全量回填，而它换来的只是一个记号｜
+  C 另立一个「结构变更代」的版本号与回填代分开，代价是本票为一句 DROP 引入一套新机制
+- **不处理会怎样：** 已按 A 落地，验收那一条按「表删掉了、版本号不推」记的账。
+  **A 是可逆的那一侧**：将来真有需要回填的变更时推一版即可；B 一旦发布就在用户库上跑过了。
+  `TestMigrateDropsLegacyTasksTableAndKeepsSchemaVersion` 把「不推」钉住。
+- **状态：** open
+
+## D32 · 票 08 · 健康报告的「最近一次任务键」改从运行表取
+
+- **问：** `attachLastTaskKeys` 给每条健康问题挂一个「去看这个库/系列最近那次任务的日志」的按钮，
+  它此前查的正是旧 `tasks` 表——不改就没法丢表。查询整条搬进 `taskstore.LastRunKeysForScopes`
+  （按 `task_identities` 的作用域分组、取 `runs.sequence` 最大的那条的 `task_key`），
+  表名因此仍归 taskstore 自己，而不是让 `internal/database` 手抄别的包的表名。
+- **选项：** A 搬进 taskstore（已落地，表名不外泄；定序换成 `sequence`，比旧的秒精度文本时间列更稳）｜
+  B 留在 `internal/database` 里改表名，代价是身份表将来改名（D9）时这条 SQL 只会在运行期炸｜
+  C 判定这个按钮随旧表一起作废，代价是 Organize 页少一个今天在用的入口
+- **不处理会怎样：** 已按 A 落地。副作用是 `runs.task_key` 这条**过渡期**列多了一个读者：
+  **票 10/16 把控制端点改成按运行寻址、准备删掉那一列时，要连这里一起改成按运行标识跳转。**
+- **状态：** open
+
+## D33 · 票 08 · `TaskFilters` 随旧表方法一起搬出 `internal/database`
+
+- **问：** 删掉 `UpsertTask` / `ListTasks` / `DeleteTasks` / `MaxTaskSequence` 与 `TaskRecord`
+  之后，`internal/database/tasks.go` 只剩一个 `TaskFilters`——而它早已不是数据访问层的东西，
+  是六个任务端点共用的查询串形状，唯一的去处是 `runFilterFrom`。
+- **选项：** A 搬进 `internal/api` 作 `taskFilters`，`tasks.go` 整份删除（已落地，调用点 12 处，
+  全是机械替换）｜ B 留在 `internal/database`，代价是那个包里留一个自己一行代码都不用的 HTTP DTO，
+  而文件头会开始说谎
+- **不处理会怎样：** 已按 A 落地。它与票 09 的 `TaskStatus` → `RunStatus` 那批改名不冲突——
+  换的是所在的包，不是概念名；票 09 若要连它一起改名，改的是同一个符号的一处声明。
+- **状态：** open
+
+## D34 · 票 08 · 身份表改名（D9）本票没有做
+
+- **问：** D9 的推荐做法是「票 08 丢弃旧表时顺手 `ALTER TABLE task_identities RENAME TO tasks`」。
+  本票没有做：改名要在存量库上先认出那张表再 RENAME，而认错的后果是 `runs` 的外键指向一张
+  空表——这属于「一旦发出去就在用户库上跑过了」的那一类，而本票的边界是零行为变化。
+- **选项：** A 留到一张自己的票，带着形状探测与升级路径用例（推荐，窗口还开着：这几张表尚未随版本
+  发布，改名此刻仍然免费）｜ B 就此定为永久叫 `task_identities`，代价是库里的表名与规格、
+  ADR 0004 与领域类型 `task.Task` 都对不上｜ C 本票顺手改，代价见上
+- **不处理会怎样：** 表形状、四列唯一约束与两条部分唯一索引在两种选择下完全一样，
+  差的只是一个名字。`taskstore/schema.go` 的 `tableTasks` 附近记着「不得只改这个常量」的陷阱。
+  **发布之后再改名就要多带一段存量库的探测**，越晚越贵。
+- **状态：** open

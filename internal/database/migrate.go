@@ -173,9 +173,6 @@ func Migrate(dbPath string) error {
 		// 都要扫一遍 koreader_sync_events（该表带保留上限，仍可达万行量级）。
 		`CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_user_created ON koreader_sync_events(username, created_at DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_user_doc ON koreader_sync_events(username, document)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope, scope_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_smart_filters_library_id ON smart_filters(library_id, updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_series_relations_target ON series_relations(target_series_id)`,
 		`CREATE TRIGGER IF NOT EXISTS trg_series_tags_ai AFTER INSERT ON series_tags BEGIN UPDATE tags SET series_count = series_count + 1 WHERE id = NEW.tag_id; END`,
@@ -313,6 +310,18 @@ func Migrate(dbPath string) error {
 	// 锁定字段根本不入队，这一列因此恒为 0。老库里可能留着 1，清掉——留着它，下一个读到
 	// 的人会把陈旧数据当成一条裁决规则。语句幂等，代价与待裁决提案的字段行数同阶。
 	if _, err := db.Exec(`UPDATE metadata_review_fields SET locked = 0 WHERE locked != 0`); err != nil {
+		return err
+	}
+
+	// 任务与运行由 taskstore 那套表承载，这张同名旧表没有任何读写方，整表丢弃。
+	// **不得**为它补一段转换：那张表一个任务键只有一行，转过来只是给每个任务留一条孤零零的运行，
+	// 而那段代码只跑一次却要连测试一起维护。丢掉的只是「上次成功是什么时候」——资料库的扫描模式
+	// 与间隔不在这张表里，第一个守护 tick 就会把身份重新建出来。
+	//
+	// 不挂在 user_version 门控后面、也不推那个版本号：这一句幂等，而那个版本号门控的是随库规模
+	// 线性增长的全量回填，为一句 DROP 推一版会让每个存量库在升级后的首启白算一遍。
+	// 索引随表一起消失，不必单独 DROP。
+	if _, err := db.Exec(`DROP TABLE IF EXISTS tasks`); err != nil {
 		return err
 	}
 
