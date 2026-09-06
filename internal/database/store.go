@@ -29,6 +29,10 @@ var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 type Store interface {
 	Querier
 	Close() error
+	// DB 交出底层库句柄。它在接口上而不只在 SqlStore 上，是因为任务与运行那几张表由
+	// internal/taskstore 直接持句柄读写（它们没有 sqlc 查询，见 taskstore 的包 doc），
+	// 而装配期只拿得到这个接口。包装 Store 的测试替身经内嵌自动转发，不必各写一遍。
+	DB() *sql.DB
 	// PingContext 校验底层数据库连接可用，供健康检查等存活/就绪探测使用。
 	PingContext(ctx context.Context) error
 	// Store 是 sqlc 生成查询之上的领域边界：Controller 和 Scanner 只依赖这里暴露的业务操作。

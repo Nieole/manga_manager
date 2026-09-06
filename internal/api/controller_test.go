@@ -956,9 +956,7 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 		DurationMillis:         456,
 	})
 
-	controller.taskEngine.mutex.Lock()
-	task := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	task := currentTask(t, controller.taskEngine, taskKey)
 	if task.Params["opened_archives"] != "5" || task.Params["hashed_files"] != "2" || task.Params["io_wait_ms"] != "123" {
 		t.Fatalf("expected scanner metrics params, got %+v", task.Params)
 	}
@@ -995,15 +993,14 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		DurationMillis:       30000,
 	})
 
-	// 存储 IO 面板的扫描速率读的是扫描任务自己的参数，与重建任务各写各的。
+	// 存储 IO 面板的扫描速率读的是扫描任务自己的指标，与重建任务各写各的。
 	scanProgress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_42", Identity: libraryTask("scan_library", 42, variantSole), Total: 1})
 	newTaskScanObserver(scanProgress).Metrics(reportA)
 
-	controller.taskEngine.mutex.Lock()
-	task := controller.taskEngine.tasks["rebuild_thumbnails"]
-	controller.taskEngine.mutex.Unlock()
-	if task.Params["opened_archives"] != "5" || task.Params["io_wait_ms"] != "150" || task.Params["paused_ms"] != "100" || task.Params["thumbnail_write_ms"] != "50" {
-		t.Fatalf("expected aggregated thumbnail metrics, got %+v", task.Params)
+	task := currentTask(t, controller.taskEngine, "rebuild_thumbnails")
+	if task.Metrics["opened_archives"] != 5 || task.Metrics["io_wait_ms"] != 150 ||
+		task.Metrics["paused_ms"] != 100 || task.Metrics["thumbnail_write_ms"] != 50 {
+		t.Fatalf("expected aggregated thumbnail metrics, got %+v", task.Metrics)
 	}
 
 	scanRate, coverRate, thumbnailWriteMillis := controller.recentStorageIOTaskRates()
@@ -2562,7 +2559,6 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		Terminal: "failed", FailError: "archive error",
 	})
 	// 进度与终态是异步落盘的：显式刷一次模拟优雅关闭，再由新实例读回。
-	controller.taskEngine.flushTaskPersist()
 
 	// 用同一份装配另起一个实例，模拟「进程重启后从库里读回任务」。
 	cfg := controller.config
@@ -2598,24 +2594,11 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 }
 
 func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
-	_, store, _, tempDir := newTestController(t)
-	now := time.Now().Add(-time.Minute)
-	scopeID := int64(55)
-	if err := store.UpsertTask(context.Background(), database.TaskRecord{
-		Key:       "scan_series_55",
-		Type:      "scan_series",
-		Scope:     "series",
-		ScopeID:   &scopeID,
-		Status:    "running",
-		Message:   "running before restart",
-		Total:     1,
-		Retryable: true,
-		StartedAt: now,
-		UpdatedAt: now,
-		Sequence:  42,
-	}); err != nil {
-		t.Fatalf("upsert running task failed: %v", err)
-	}
+	seeded, store, _, tempDir := newTestController(t)
+	// 上一个进程留下的现场：一条还写着活动态的运行，而它的任务体随进程一起没了。
+	seedTask(t, seeded.taskEngine, taskSeed{
+		Key: "scan_series_55", Identity: seriesTask("scan_series", 55, variantSole), Total: 1,
+	})
 
 	cfg := &config.Config{}
 	cfg.Database.Path = filepath.Join(tempDir, "test.db")
@@ -2627,6 +2610,7 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 	cfg.LLM.Model = "qwen2.5"
 	config.NormalizeConfig(cfg)
 	cfgManager := config.NewManager(cfg)
+	// 走生产装配：重启恢复挂在 NewController 上，白盒装配（newControllerCore）不跑它。
 	controller := NewController(store, scanner.NewScanner(store, cfgManager), cfgManager, filepath.Join(tempDir, "config.yaml"))
 	t.Cleanup(controller.Close)
 
@@ -2644,8 +2628,8 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 	if len(tasks) != 1 {
 		t.Fatalf("expected one task, got %+v", tasks)
 	}
-	if tasks[0].Status != "interrupted" || tasks[0].Error == "" {
-		t.Fatalf("expected interrupted task status with error, got %+v", tasks[0])
+	if tasks[0].Status != "interrupted" || tasks[0].MessageCode != taskInterruptedMessageCode {
+		t.Fatalf("expected interrupted task with the interrupted message code, got %+v", tasks[0])
 	}
 	if !tasks[0].Retryable {
 		t.Fatalf("expected interrupted task to remain retryable")
@@ -2666,10 +2650,8 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	controller.taskEngine.mutex.Lock()
-	_, completedExists := controller.taskEngine.tasks["completed_one"]
-	_, failedExists := controller.taskEngine.tasks["failed_one"]
-	controller.taskEngine.mutex.Unlock()
+	completedExists := taskExists(t, controller.taskEngine, "completed_one")
+	failedExists := taskExists(t, controller.taskEngine, "failed_one")
 	if completedExists {
 		t.Fatal("expected completed task to be removed")
 	}
@@ -2685,7 +2667,6 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_11", Identity: seriesTask("scan_series", 11, variantSole), Total: 1, Terminal: "completed"})
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_11", Identity: libraryTask("scan_library", 11, variantSole), Total: 1, Terminal: "completed"})
 	// 清理走 DeleteTasks 删 DB 记录，而终态是异步落盘的：先刷盘让已完成任务进了 DB 才删得掉。
-	controller.taskEngine.flushTaskPersist()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
 	rec := httptest.NewRecorder()
@@ -2747,9 +2728,7 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 		t.Fatal("expected task context to be cancelled")
 	}
 
-	controller.taskEngine.mutex.Lock()
-	task := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	task := currentTask(t, controller.taskEngine, taskKey)
 	if task.CanCancel {
 		t.Fatalf("expected task to be marked non-cancellable after cancel request: %+v", task)
 	}
@@ -2777,9 +2756,7 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	controller.taskEngine.mutex.Lock()
-	paused := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	paused := currentTask(t, controller.taskEngine, taskKey)
 	if paused.Status != "paused" || !paused.CanResume || paused.CanPause {
 		t.Fatalf("expected paused resumable task, got %+v", paused)
 	}
@@ -2809,65 +2786,48 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 		t.Fatal("expected checkpoint to unblock after resume")
 	}
 
-	controller.taskEngine.mutex.Lock()
-	resumed := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	resumed := currentTask(t, controller.taskEngine, taskKey)
 	if resumed.Status != "running" || resumed.CanResume || !resumed.CanPause {
 		t.Fatalf("expected running pausable task, got %+v", resumed)
 	}
 }
 
-func TestTaskStatusHydratesDerivedFieldsFromParams(t *testing.T) {
-	pausedAt := time.Now().UTC().Truncate(time.Second)
-	record := database.TaskRecord{
-		Key:       "scan_library_7",
-		Type:      "scan_library",
-		Scope:     "library",
-		Status:    "paused",
-		Message:   "paused",
-		Current:   5,
-		Total:     10,
-		StartedAt: time.Now().Add(-time.Minute),
-		UpdatedAt: time.Now(),
-		Params: map[string]string{
-			"phase":                               "reading_metadata",
-			"current_item":                        "book.cbz",
-			"can_pause":                           "false",
-			"can_resume":                          "true",
-			"paused_at":                           pausedAt.Format(time.RFC3339Nano),
-			"pause_reason":                        "manual_pause",
-			"metric.opened_archives":              "5",
-			"label.current_library":               "Main",
-			"limit.scanner_workers_effective":     "1",
-			"limit.storage_profile":               "hdd_external",
-			"limit.archive_open_concurrency":      "1",
-			"limit.pause_background_when_reading": "true",
-			"limit.disable_same_disk_page_cache":  "true",
-			"limit.idle_only_heavy_tasks":         "true",
-			"limit.scan_profile":                  "metadata_scan",
-			"limit.scanner_workers_configured":    "0",
-			"limit.scan_concurrency":              "1",
-			"limit.cover_concurrency":             "1",
-			"limit.hash_concurrency":              "1",
-			"limit.volume_key":                    "e:",
-		},
-	}
+// TestRunDisplayStateRoundTripsThroughStore 守展示态经落盘往返之后一字不少。
+//
+// 它取代的是上一版那个「把展示态从 params 堆里解码回来」的用例：那堆五类语义挤在一个 TEXT 列里的
+// 编解码已经没有了，阶段与当前条目是运行行的真列，指标、标签与并发上限各有自己的侧表。
+// 往返仍要守——落盘漏一样不会有编译错误，后果是那个字段写得进库、读不回来。
+func TestRunDisplayStateRoundTripsThroughStore(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
 
-	task := taskStatusFromRecord(record)
+	const key = "scan_library_7"
+	progress := seedTask(t, controller.taskEngine, taskSeed{
+		Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 10,
+		CanCancel: true, CanPause: true,
+		Labels: map[string]string{"current_library": "Main"},
+		Limits: TaskLimits{ScannerWorkersEffective: 1, StorageProfile: "hdd_external", VolumeKey: "e:"},
+	})
+	current := 5
+	progress.Report(taskrun.Frame{
+		Current: &current,
+		Phase:   "reading_metadata",
+		Item:    "book.cbz",
+		Metrics: map[string]int64{"opened_archives": 5},
+	})
+
+	task := currentTask(t, controller.taskEngine, key)
 	if task.Phase != "reading_metadata" || task.CurrentItem != "book.cbz" {
-		t.Fatalf("expected derived phase/current item, got %+v", task)
-	}
-	if task.PausedAt == nil || !task.CanResume || task.CanPause || task.PauseReason != "manual_pause" {
-		t.Fatalf("expected pause fields to hydrate, got %+v", task)
+		t.Fatalf("阶段与当前条目没读回来: %+v", task)
 	}
 	if task.Metrics["opened_archives"] != 5 || task.Labels["current_library"] != "Main" {
-		t.Fatalf("expected metrics and labels to hydrate, got %+v", task)
+		t.Fatalf("指标与标签没读回来: metrics=%v labels=%v", task.Metrics, task.Labels)
 	}
-	if task.EffectiveLimit == nil || task.EffectiveLimit.ScannerWorkersEffective != 1 || task.EffectiveLimit.StorageProfile != "hdd_external" {
-		t.Fatalf("expected effective limit to hydrate, got %+v", task.EffectiveLimit)
+	if task.EffectiveLimit == nil || task.EffectiveLimit.ScannerWorkersEffective != 1 ||
+		task.EffectiveLimit.StorageProfile != "hdd_external" || task.EffectiveLimit.VolumeKey != "e:" {
+		t.Fatalf("并发上限没读回来: %+v", task.EffectiveLimit)
 	}
 	if task.Percent == nil || *task.Percent != 50 {
-		t.Fatalf("expected percent from current/total, got %+v", task.Percent)
+		t.Fatalf("百分比该由计数与总数派生出来, got %+v", task.Percent)
 	}
 }
 
@@ -3002,9 +2962,7 @@ func TestTaskStatusTracksScrapeMetricsAndLabels(t *testing.T) {
 		},
 	})
 
-	controller.taskEngine.mutex.Lock()
-	task := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	task := currentTask(t, controller.taskEngine, taskKey)
 	if task.Phase != "queueing_review" || task.CurrentItem != "Foo" {
 		t.Fatalf("expected scrape phase/current item, got %+v", task)
 	}
@@ -3076,9 +3034,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 	provider.release <- struct{}{}
 	assertNoProviderRequest(t, provider.requests, 150*time.Millisecond)
 
-	controller.taskEngine.mutex.Lock()
-	paused := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	paused := currentTask(t, controller.taskEngine, taskKey)
 	if paused.Status != "paused" || paused.Metrics["provider_requests"] != 1 {
 		t.Fatalf("expected paused scrape after first request, got %+v", paused)
 	}
@@ -3097,9 +3053,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 	provider.release <- struct{}{}
 	waitForTaskStatus(t, controller, taskKey, "completed")
 
-	controller.taskEngine.mutex.Lock()
-	done := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	done := currentTask(t, controller.taskEngine, taskKey)
 	if done.Metrics["provider_requests"] != 2 || done.Metrics["processed_series"] != 2 {
 		t.Fatalf("expected completed scrape metrics, got %+v", done.Metrics)
 	}
@@ -3129,17 +3083,13 @@ func waitForTaskStatus(t testing.TB, controller *Controller, taskKey, status str
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		controller.taskEngine.mutex.Lock()
-		task := controller.taskEngine.tasks[taskKey]
-		controller.taskEngine.mutex.Unlock()
+		task := currentTask(t, controller.taskEngine, taskKey)
 		if task.Status == status {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	controller.taskEngine.mutex.Lock()
-	task := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	task := currentTask(t, controller.taskEngine, taskKey)
 	t.Fatalf("timed out waiting for task %s status %s, got %+v", taskKey, status, task)
 }
 
@@ -3224,9 +3174,7 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var task TaskStatus
 	for time.Now().Before(deadline) {
-		controller.taskEngine.mutex.Lock()
-		task = controller.taskEngine.tasks["rebuild_thumbnails"]
-		controller.taskEngine.mutex.Unlock()
+		task = currentTask(t, controller.taskEngine, "rebuild_thumbnails")
 		if task.Status != "running" {
 			break
 		}
@@ -3258,9 +3206,7 @@ func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 	}
 
 	time.Sleep(20 * time.Millisecond)
-	controller.taskEngine.mutex.Lock()
-	task := controller.taskEngine.tasks["scan_series_999"]
-	controller.taskEngine.mutex.Unlock()
+	task := currentTask(t, controller.taskEngine, "scan_series_999")
 	if task.Status == "running" {
 		t.Fatalf("expected retried task to finish quickly, got %+v", task)
 	}
@@ -4570,45 +4516,28 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 	}
 }
 
-func TestTaskProgressAsyncPersistMemoryWins(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
+// TestRunProgressIsVisibleImmediately 守一帧进度上报之后，列表接口当场就能看到它。
+//
+// 上一版这里守的是「内存快照压过尚未刷盘的库记录」——那条约束连同异步落盘一起没有了：
+// 进度直接写进运行行，列表读的就是那一行，两处真相因此不再存在。
+func TestRunProgressIsVisibleImmediately(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
 
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Identity: libraryTask("scan_library", 5, variantSole), Total: 100})
 	progress.Advance(42, 100, "", nil)
 
-	// listTaskStatuses 必须立即反映内存里的最新进度，而不是尚未刷盘、还滞后的 DB 记录。
 	tasks, err := controller.taskEngine.listTaskStatuses(context.Background(), database.TaskFilters{})
 	if err != nil {
 		t.Fatalf("listTaskStatuses failed: %v", err)
 	}
-	var mem *TaskStatus
+	var listed *TaskStatus
 	for i := range tasks {
 		if tasks[i].Key == "scan_library_5" {
-			mem = &tasks[i]
+			listed = &tasks[i]
 		}
 	}
-	if mem == nil || mem.Current != 42 {
-		t.Fatalf("expected in-memory current 42 before flush, got %+v", mem)
-	}
-
-	// 刷盘后 DB 记录也应带上该进度。
-	controller.taskEngine.flushTaskPersist()
-	records, err := store.ListTasks(context.Background(), database.TaskFilters{})
-	if err != nil {
-		t.Fatalf("ListTasks failed: %v", err)
-	}
-	persisted := false
-	for _, r := range records {
-		ts := taskStatusFromRecord(r)
-		if ts.Key == "scan_library_5" {
-			persisted = true
-			if ts.Current != 42 {
-				t.Fatalf("expected persisted current 42, got %d", ts.Current)
-			}
-		}
-	}
-	if !persisted {
-		t.Fatal("expected task persisted to DB after flush")
+	if listed == nil || listed.Current != 42 {
+		t.Fatalf("列表里没有刚上报的那 42 条进度: %+v", listed)
 	}
 }
 
@@ -4667,9 +4596,7 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 		Terminal: "completed", TerminalCode: "task.msg.scan_library.complete",
 		TerminalParams: map[string]string{"name": "Lib A"},
 	})
-	controller.taskEngine.mutex.Lock()
-	coded := controller.taskEngine.tasks["scan_library_9"]
-	controller.taskEngine.mutex.Unlock()
+	coded := currentTask(t, controller.taskEngine, "scan_library_9")
 	if coded.MessageCode != "task.msg.scan_library.complete" {
 		t.Fatalf("expected message_code set, got %q", coded.MessageCode)
 	}
@@ -4683,33 +4610,27 @@ func TestTaskMessageCodeEmission(t *testing.T) {
 		t.Fatalf("expected status completed, got %q", coded.Status)
 	}
 
-	// Message 与 MessageCode 的互斥是模型层纯函数的职责，不依赖任何引擎路径。
-	// 这里的 Message 取的是它今天唯一的来源形状——从**落盘记录**读回的一句已渲染文案。
-	restored := TaskStatus{Message: "任务因服务重启而中断，可重试"}
-	applyTaskMessage(&restored, "task.msg.scan_library.complete", map[string]string{"name": "Lib A"})
-	if restored.MessageCode != "task.msg.scan_library.complete" || restored.Message != "" {
-		t.Fatalf("消息码没有清掉落盘记录里那句直接文案：msg=%q code=%q", restored.Message, restored.MessageCode)
-	}
-
-	// 空码是无操作：一帧进度不带文案时不得把任务上已有的文案抹掉。
-	unchanged := TaskStatus{MessageCode: "task.msg.scan_library.complete", MessageParams: map[string]string{"name": "Lib A"}}
-	applyTaskMessage(&unchanged, "", nil)
-	if unchanged.MessageCode != "task.msg.scan_library.complete" || unchanged.MessageParams["name"] != "Lib A" {
-		t.Fatalf("空码把已有文案抹掉了：code=%q params=%v", unchanged.MessageCode, unchanged.MessageParams)
+	// Message 从此没有任何来源：文案只有 i18n 码一种，连**中断**那句也是码。
+	// 上一版这里还守着「设了码就必须清空 Message」，那条互斥的另一半（重启时写进落盘记录的
+	// 一句已渲染中文）随本次接线消失了，英文用户不会再在那里读到中文。
+	if coded.Message != "" {
+		t.Fatalf("Message 又有来源了：%q", coded.Message)
 	}
 }
 
+// TestTaskMessageCodePersistRoundTrip 守终态文案经落盘往返之后仍在。
+// 少了它，已完成的任务从库里读回来只剩一个任务类型名，用户看不到「扫描完成，新增 12 本」。
 func TestTaskMessageCodePersistRoundTrip(t *testing.T) {
-	// 编码任务的 message_code/params 需经 Params 往返 DB 记录，否则已完成任务读回后丢失文案。
-	task := TaskStatus{
-		Key:           "scan_library_3",
-		Type:          "scan_library",
-		Status:        "completed",
-		MessageCode:   "task.msg.scan_library.complete",
-		MessageParams: map[string]string{"name": "Alpha"},
-	}
-	record := taskRecordFromStatus(task)
-	restored := taskStatusFromRecord(record)
+	controller, _, _, _ := newTestController(t)
+
+	const key = "scan_library_3"
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: key, Identity: libraryTask("scan_library", 3, variantSole),
+		Terminal: "completed", TerminalCode: "task.msg.scan_library.complete",
+		TerminalParams: map[string]string{"name": "Alpha"},
+	})
+
+	restored := currentTask(t, controller.taskEngine, key)
 	if restored.MessageCode != "task.msg.scan_library.complete" {
 		t.Fatalf("message_code lost across persistence, got %q", restored.MessageCode)
 	}

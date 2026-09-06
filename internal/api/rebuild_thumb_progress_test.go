@@ -18,8 +18,9 @@ import (
 // newRebuildThumbTestController 手工拼装出这条链路需要的两个组件：任务引擎与聚合器。
 // 引擎仍经它唯一的 seam（newTaskEngine）构造，扫描事件转译处不碰其余任何 Controller 字段，
 // 因此这里不需要数据库、配置管理器或扫描器。
-func newRebuildThumbTestController(clock *fakeClock) (*Controller, func() []TaskStatus) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+func newRebuildThumbTestController(t testing.TB, clock *fakeClock) (*Controller, func() []TaskStatus) {
+	t.Helper()
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	e.now = clock.Now
 	return &Controller{taskEngine: e, rebuildThumbAgg: newRebuildThumbAggregator()}, snapshots
 }
@@ -29,7 +30,7 @@ func newRebuildThumbTestController(clock *fakeClock) (*Controller, func() []Task
 func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*Controller, func() []TaskStatus, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	c, snapshots := newRebuildThumbTestController(clock)
+	c, snapshots := newRebuildThumbTestController(t, clock)
 	c.initRebuildThumbAggregator(seedRebuildThumbTask(t, c), totalLibraries)
 	t.Cleanup(c.releaseRebuildThumbAggregator)
 	return c, snapshots, clock
@@ -122,9 +123,9 @@ func TestRebuildThumbMetricsReportAccumulatesThroughHandle(t *testing.T) {
 	if task.Metrics["opened_archives"] != 5 || task.Metrics["thumbnail_write_ms"] != 50 {
 		t.Fatalf("跨库指标没有累加：%v", task.Metrics)
 	}
-	// duration_ms 不在聚合器的 baseline 里，只有累加这条通道会写它；存储 IO 面板按参数名读它。
-	if task.Params["duration_ms"] != "90000" || task.Params["opened_archives"] != "5" {
-		t.Fatalf("累计值没有落进任务参数：%v", task.Params)
+	// duration_ms 不在聚合器的 baseline 里，只有累加这条通道会写它；存储 IO 面板按指标名读它。
+	if task.Metrics["duration_ms"] != 90000 {
+		t.Fatalf("累计值没有落进指标：%v", task.Metrics)
 	}
 }
 
@@ -155,7 +156,7 @@ func TestRebuildThumbCountsLibrariesByFixation(t *testing.T) {
 // 这个判定本身：任务确实在跑、任务键也人尽皆知，但句柄没交出去，外部写入点就都写不进去。
 func TestRebuildThumbWritersAreInertWithoutHandle(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	c, snapshots := newRebuildThumbTestController(clock)
+	c, snapshots := newRebuildThumbTestController(t, clock)
 
 	seedRebuildThumbTask(t, c)
 	lib := rebuildThumbTestLibrary()
@@ -241,7 +242,7 @@ func TestRebuildThumbPhaseTransitionsSurviveThrottle(t *testing.T) {
 // 「别动总数」由「干脆不报**计数推进**」表达，写下一个 0 会把进度条按 0/0 重置。
 func TestRebuildThumbCountsHoldStillBeforeAnyDenominator(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	c, snapshots := newRebuildThumbTestController(clock)
+	c, snapshots := newRebuildThumbTestController(t, clock)
 
 	progress := seedTask(t, c.taskEngine, taskSeed{
 		Key: rebuildThumbTestKey, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 120,

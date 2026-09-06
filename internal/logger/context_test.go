@@ -49,6 +49,51 @@ func TestContextHandlerAttachesTaskKeyFromContext(t *testing.T) {
 	}
 }
 
+// TestContextHandlerAttachesRunIDFromContext 守运行标识与任务键各走各的：
+// 同一个库连着扫三次，只按任务键过滤会把三次的日志混在一起，而排障要的恰恰是其中一次。
+func TestContextHandlerAttachesRunIDFromContext(t *testing.T) {
+	cases := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{"ctx 带运行标识就附上", WithRunID(context.Background(), 42), RunIDAttr + "=42"},
+		{"非正数按不带处理", WithRunID(context.Background(), 0), ""},
+		{"ctx 不带就一字不改", context.Background(), ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			log, buf := newCapturingLogger()
+			log.InfoContext(tc.ctx, "scan step")
+
+			line := buf.String()
+			if tc.want == "" {
+				if strings.Contains(line, RunIDAttr+"=") {
+					t.Fatalf("这行本不该带运行标识: %q", line)
+				}
+				return
+			}
+			if !strings.Contains(line, tc.want) {
+				t.Fatalf("日志行缺少 %s: %q", tc.want, line)
+			}
+		})
+	}
+}
+
+// TestContextHandlerAttachesBothKeyAndRunID 守两样同时在时一起附上：只带其中一样的话，
+// 「查看日志」按任务键过滤得到的是三次运行混在一起的流水。
+func TestContextHandlerAttachesBothKeyAndRunID(t *testing.T) {
+	ctx := WithRunID(WithTaskKey(context.Background(), "scan_library_1"), 7)
+	log, buf := newCapturingLogger()
+	log.InfoContext(ctx, "scan step")
+
+	line := buf.String()
+	if !strings.Contains(line, TaskKeyAttr+"=scan_library_1") || !strings.Contains(line, RunIDAttr+"=7") {
+		t.Fatalf("日志行没有同时带上任务键与运行标识: %q", line)
+	}
+}
+
 // TestContextHandlerSurvivesWithAttrs 守派生出来的 logger 照样带任务键。
 // 破了是静默的：slog.With 一句话就把这层剥掉，之后那个 logger 写的日志一行都不带。
 func TestContextHandlerSurvivesWithAttrs(t *testing.T) {

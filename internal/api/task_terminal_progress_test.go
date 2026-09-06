@@ -11,9 +11,7 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/taskrun"
 )
 
@@ -36,7 +34,7 @@ func TestTerminalStateAdvanceCount(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: tc.total, CanCancel: true})
@@ -44,7 +42,7 @@ func TestTerminalStateAdvanceCount(t *testing.T) {
 				current := tc.reported
 				handle.Report(taskrun.Frame{Current: &current})
 			}
-			settleSeededTask(e, key, tc.bodyErr)
+			settleSeededTask(t, e, key, tc.bodyErr)
 
 			task := lastPublishedTask(t, snapshots(), key)
 			if task.Current != tc.wantCurrent || task.Total != tc.total {
@@ -55,41 +53,19 @@ func TestTerminalStateAdvanceCount(t *testing.T) {
 	}
 }
 
-// TestInterruptedTaskKeepsAdvanceCount 钉住第四种终态：服务重启把活动态任务转成**中断**时
-// 只改状态，计数留在重启前那一刻——中断的任务可重试，把它显示成满格会让用户以为没什么可重试的。
+// TestInterruptedTaskKeepsAdvanceCount 钉住第四种终态：服务重启把仍会变化的运行转成**中断**时
+// 只改状态，计数留在重启前那一刻——中断的运行可重试，把它显示成满格会让用户以为没什么可重试的。
 func TestInterruptedTaskKeepsAdvanceCount(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	ctx := context.Background()
-	now := time.Now().Add(-time.Minute)
+	task := interruptRecoveredTask(t, func(handle *taskrun.Handle) {
+		current := 30
+		total := 1000
+		handle.Report(taskrun.Frame{Current: &current, Total: &total})
+	})
 
-	if err := store.UpsertTask(ctx, database.TaskRecord{
-		Key:       "scan_library_1",
-		Type:      "scan_library",
-		Scope:     "library",
-		Status:    "running",
-		Current:   30,
-		Total:     1000,
-		Retryable: true,
-		StartedAt: now,
-		UpdatedAt: now,
-		Sequence:  1,
-	}); err != nil {
-		t.Fatalf("落一条运行中的任务失败: %v", err)
+	if task.Status != "interrupted" {
+		t.Fatalf("运行状态为 %q, want interrupted", task.Status)
 	}
-
-	controller.recoverInterruptedTasks()
-
-	records, err := store.ListTasks(ctx, database.TaskFilters{})
-	if err != nil {
-		t.Fatalf("读回任务失败: %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("读回 %d 条任务, want 1", len(records))
-	}
-	if records[0].Status != "interrupted" {
-		t.Fatalf("任务状态为 %q, want interrupted", records[0].Status)
-	}
-	if records[0].Current != 30 {
-		t.Fatalf("中断任务的计数为 %d, want 30 —— 转入中断时不该动计数", records[0].Current)
+	if task.Current != 30 {
+		t.Fatalf("中断运行的计数为 %d, want 30 —— 转入中断时不该动计数", task.Current)
 	}
 }

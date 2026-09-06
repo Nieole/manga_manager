@@ -1970,6 +1970,7 @@ export const messages: MessageCatalog = {
     'task.msg.control.paused': '任务已暂停，等待继续执行',
     'task.msg.control.resumed': '任务已继续执行',
     'task.msg.control.cancelling': '正在取消任务...',
+    'task.msg.control.interrupted': '任务因服务重启而中断，可重试',
     'task.msg.control.panicked': '任务因未预期的内部错误失败',
     'task.scope.system': '系统',
     'task.scope.library': '资料库',

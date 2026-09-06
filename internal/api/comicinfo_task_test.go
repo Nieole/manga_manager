@@ -37,7 +37,7 @@ func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Con
 	// 调度器**必须**新建而不能用包级实例：后者按卷计数，用例之间会经它互相污染。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.NewScheduler())
 
-	e, snapshots := newBackgroundTestEngine(run, c.diskWork)
+	e, snapshots := newBackgroundTestEngine(t, run, c.diskWork)
 	e.now = now
 	c.taskEngine = e
 	return c, snapshots

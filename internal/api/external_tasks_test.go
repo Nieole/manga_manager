@@ -85,7 +85,7 @@ func newExternalRig(t *testing.T, books int, now func() time.Time, run func(func
 		})
 	}
 
-	engine, snapshots := newBackgroundTestEngine(run, nil)
+	engine, snapshots := newBackgroundTestEngine(t, run, nil)
 	engine.now = now
 
 	return &externalRig{

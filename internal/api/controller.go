@@ -33,6 +33,7 @@ import (
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
+	"manga-manager/internal/taskstore"
 
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -99,6 +100,9 @@ type Controller struct {
 }
 
 type TaskStatus struct {
+	// RunID 是这一条**运行**的标识：同一个任务键在列表里可以出现多条，各是一次运行，
+	// 而键只认得出「哪件事」，认不出「哪一次」。重试从此不再抹掉上一次，因此它是必需的。
+	RunID   int64  `json:"run_id"`
 	Key     string `json:"key"`
 	Type    string `json:"type"`
 	Scope   string `json:"scope"`
@@ -200,8 +204,6 @@ type SearchHit struct {
 	Fields map[string]interface{} `json:"fields,omitempty"`
 }
 
-const maxRetainedTasks = 200
-
 const (
 	// rebuildBookHashesTaskKey 与 lowPriorityBookHashTaskKey 是 rebuild_book_hashes 这个任务类型
 	// 下两个**变体**的**任务键**：前者是用户在维护页发起的前台重建，后者是**资料库扫描**收尾串联的
@@ -264,10 +266,15 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
 	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
 
-	// taskEngine 依赖 c 的 SSE 投递、生命周期信号与后台运行能力，同样须在 c 构造完成后建立。
-	// 任务快照只投给管理员：它带着作用域显示名、任务参数与失败原因，与任务列表接口
+	// taskEngine 依赖 c 的 SSE 投递与后台运行能力，同样须在 c 构造完成后建立。
+	// 任务快照只投给管理员：它带着作用域显示名、重启入参与失败原因，与任务列表接口
 	// （对普通用户 403）是同一份数据，两条路口径不同就等于那条 403 不存在。
-	c.taskEngine = newTaskEngine(store, c.sse.publishAdmin, c.lifecycleDone, c.runBackground, c.diskWork)
+	c.taskEngine = newTaskEngine(taskEngineConfig{
+		Store:         taskstore.New(store.DB()),
+		Publish:       c.sse.publishAdmin,
+		RunBackground: c.runBackground,
+		DiskWork:      c.diskWork,
+	})
 	// 构建任务重试注册表：必须在任何任务创建（admitTaskLocked 会经 isRetryableTask 查表）之前完成。
 	c.taskEngine.relaunchers = c.buildTaskRelaunchers()
 
@@ -277,12 +284,11 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
 	c := newControllerCore(store, scan, cfg, cfgPath, defaultControllerCacheSizes())
 
-	c.recoverInterruptedTasks()
+	c.taskEngine.markInterrupted(context.Background())
 
 	c.runBackground(func() { c.sse.run(c.lifecycleDone()) })
 	c.runBackground(c.startDaemon)
 	c.runBackground(c.startPageCacheJanitor)
-	c.runBackground(c.taskEngine.startTaskPersister)
 	c.runBackground(c.startSessionJanitor)
 
 	// 初始化文件系统监控
@@ -353,36 +359,6 @@ func (c *Controller) Close() {
 		c.taskEngine.stopAllRuntimes()
 	})
 	c.backgroundWG.Wait()
-}
-
-// recoverInterruptedTasks 把上次运行留下的**活动态**任务转成**中断**：任务体随进程一起没了，
-// 库里那行却还停在活动态。它必须在装配期跑，早于任何新任务落地。
-//
-// 转态同时要清掉上一轮的展示态，那是**中断**唯一说得出口的一句话的前提：
-//   - `message_code` 与 `msgparam.*`：前端码优先，留着的话「任务因服务重启而中断，可重试」
-//     一次都不会出现，用户看到的是任务停下前那句「已暂停」或「正在扫描 vol01.zip」。
-//     它同时破了 TaskStatus.Message 字段 doc 写死的互斥——设了码就必须清空 Message。
-//   - `pause_reason`、`paused_at`、`can_pause`、`can_resume` 与 can_cancel 列：中断的任务已经
-//     不占运行槽位，暂停与恢复都无从谈起，详情面板却会照着渲染出「暂停原因：手动暂停」。
-//
-// 其余任务参数一概留着：**中断**是可重试的终态，用户要看它断在哪（进度、**阶段**、当前条目与
-// 累计指标），**重启函数**要读回原始入参（force、locale、provider、match_mode 这些）。
-// 一并清掉的话，重试会静默回落到默认参数——那不是重试，是另起一个任务。
-func (c *Controller) recoverInterruptedTasks() {
-	if c.store == nil {
-		return
-	}
-	count, err := c.store.MarkInterruptedTasks(context.Background(), database.MarkInterruptedTasksParams{
-		Message: "任务因服务重启而中断，可重试",
-		Error:   "任务因服务重启而中断，可重试",
-	})
-	if err != nil {
-		slog.Warn("Failed to recover interrupted tasks", "error", err)
-		return
-	}
-	if count > 0 {
-		slog.Info("Recovered interrupted tasks", "count", count)
-	}
 }
 
 func (c *Controller) currentConfig() config.Config {

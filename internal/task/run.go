@@ -72,6 +72,19 @@ type Run struct {
 	ID     int64
 	TaskID int64
 
+	// Key 是**过渡期**字段：今天的六个控制端点、重试查找与对外契约仍按**任务键**寻址，
+	// 而新模型按运行 id 与身份四要素寻址。键**怎么拼**仍归 api，本包只原样携带它。
+	//
+	// 它落在运行上而不是任务上：外部库那两类的键带着会话 id，同一身份的两次运行键并不相同。
+	// 随票 15 把控制端点改成按对象寻址、票 08 丢掉旧契约之后，本字段连同它那一列一起删。
+	Key string
+	// ScopeName 是作用域在界面上的显示名，同样是**过渡期**字段，本包不解释它。
+	//
+	// 它落在运行上是因为今天没有别的地方放得下：多数取值是资料库名（可由作用域 id 解析），
+	// 但刮削全库那条写的是「全库」——一个挂在系统作用域上的字面量，解析不出来。
+	// 最终归属（身份行上的一列，还是渲染时按作用域解析）由票 10 的任务清单决定。
+	ScopeName string
+
 	Trigger Trigger
 	// NthRun 是这个任务的第几次运行，从 1 起。
 	NthRun int
@@ -157,6 +170,21 @@ type Sample struct {
 	RatePerMinute float64
 }
 
+// SideData 是一次运行的侧数据读回来的形状：四张键值侧表各占一格。
+//
+// 读回面合成一个结构体而不是四个方法，是因为它的四个消费方（任务列表、运行详情、**重启函数**、
+// 存储 IO 面板）要的从来都是全套——分成四次调用只会让列表接口对着一页运行发出四倍的查询。
+// 写入面仍是分开的：那几条各有各的合并语义（设 / 累加 / 按键合并），合成一条会把它们抹平。
+type SideData struct {
+	// Args 是**重启函数**读回的原始入参，Labels 是展示标签。
+	Args   map[string]string
+	Labels map[string]string
+	// Metrics 是累计指标。
+	Metrics map[string]int64
+	// Limits 为 nil 表示这次运行没有上限可报，不是「上限全为 0」。
+	Limits *Limits
+}
+
 // Capabilities 是一次运行此刻能接受哪些控制动作。
 //
 // 它由引擎按运行的活性派生，不是运行行上的列：一次运行能不能暂停取决于它的**暂停闸门**
@@ -167,10 +195,14 @@ type Capabilities struct {
 	CanCancel bool
 }
 
-// Snapshot 是投递出去的一帧：运行行加上它此刻的控制能力。
+// Snapshot 是投递出去的一帧：运行行、它此刻的控制能力，加上挂在它上面的侧数据。
+//
+// 侧数据必须随帧一起出去，不能让订阅方自己回头去取：一帧是一份**全量**快照，缺了指标与上限的
+// 那几帧会把订阅方已经显示出来的数字抹掉，直到下一次整表轮询才长回来。
 type Snapshot struct {
 	Run          Run
 	Capabilities Capabilities
+	Side         SideData
 }
 
 func cloneStrings(src map[string]string) map[string]string {

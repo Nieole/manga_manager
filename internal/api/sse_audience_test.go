@@ -195,9 +195,11 @@ func (r *sseAudienceRig) runFailingTask(t *testing.T, secretPath string) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		r.controller.taskEngine.mutex.Lock()
-		task, ok := r.controller.taskEngine.tasks[key]
-		r.controller.taskEngine.mutex.Unlock()
+		ok := taskExists(t, r.controller.taskEngine, key)
+		var task TaskStatus
+		if ok {
+			task = currentTask(t, r.controller.taskEngine, key)
+		}
 		if ok && !taskIsActive(task.Status) {
 			return
 		}

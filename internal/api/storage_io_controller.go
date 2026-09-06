@@ -102,21 +102,27 @@ func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
 	scanRate := taskArchiveOpenRate(latestScan)
 	coverRate := taskArchiveOpenRate(latestCover)
 	var thumbnailWriteMillis int64
-	if latestCover != nil && latestCover.Params != nil {
-		thumbnailWriteMillis, _ = parseTaskInt64(latestCover.Params["thumbnail_write_ms"])
+	if latestCover != nil {
+		thumbnailWriteMillis = taskMetricValue(latestCover, "thumbnail_write_ms")
 	}
 	return scanRate, coverRate, thumbnailWriteMillis
 }
 
+// taskArchiveOpenRate 估这条运行的归档打开速率。
+//
+// 指标优先、任务参数兜底：上报侧今天有两条通道——跨库的重建走**累加指标**，单库扫描把整份报文
+// 写成**重启入参**里的一批字符串。上一版看不出差别，因为累加值当时还被镜像成一份字符串塞回
+// params；镜像随 params 堆一起没了，而把扫描那条改道是一次用户可见的搬家（数字会从参数面板
+// 挪进指标面板），不属于本票。前端的 taskMetric 早就是同一个口径：先看 metrics，再退回 params。
 func taskArchiveOpenRate(task *TaskStatus) float64 {
-	if task == nil || task.Params == nil {
+	if task == nil {
 		return 0
 	}
-	opened, _ := parseTaskInt64(task.Params["opened_archives"])
+	opened := taskMetricValue(task, "opened_archives")
 	if opened <= 0 {
 		return 0
 	}
-	durationMillis, _ := parseTaskInt64(task.Params["duration_ms"])
+	durationMillis := taskMetricValue(task, "duration_ms")
 	if durationMillis <= 0 && !task.StartedAt.IsZero() {
 		durationMillis = time.Since(task.StartedAt).Milliseconds()
 	}
@@ -124,6 +130,15 @@ func taskArchiveOpenRate(task *TaskStatus) float64 {
 		return 0
 	}
 	return float64(opened) * 60000 / float64(durationMillis)
+}
+
+// taskMetricValue 取一个累计指标：先看指标那张表，再退回任务参数里那份字符串。
+func taskMetricValue(task *TaskStatus, key string) int64 {
+	if value, ok := task.Metrics[key]; ok {
+		return value
+	}
+	value, _ := parseTaskInt64(task.Params[key])
+	return value
 }
 
 func parseTaskInt64(raw string) (int64, error) {

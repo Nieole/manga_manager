@@ -8,7 +8,6 @@ package api
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"manga-manager/internal/database"
 )
@@ -64,7 +63,7 @@ func TestExternalLibraryTasksDeclareTheirLibraryScope(t *testing.T) {
 // 恰好是库 id。后台能力只登记不执行——观测的是任务诞生那一帧，任务体（要调 LLM）跑不跑无关。
 func TestAIGroupingDeclaresItsLibraryScope(t *testing.T) {
 	const libraryID = int64(3)
-	engine, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+	engine, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 	c := &Controller{
 		taskEngine: engine,
 		store:      &externalTaskStore{lib: database.Library{ID: libraryID, Name: "Library C"}},
@@ -86,7 +85,7 @@ func TestAIGroupingDeclaresItsLibraryScope(t *testing.T) {
 // TestSeededTaskCarriesDeclaredIdentity 守播种脚手架把整份**身份**交下去，而不是只挑其中几项。
 // 漏掉哪一项都不会有编译错误，后果是消费方以别的理由变红——按作用域筛选的用例首当其冲。
 func TestSeededTaskCarriesDeclaredIdentity(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+	e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 	const key = "background_book_hash_backfill"
 	seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_book_hashes", variantHashRebuildBackfill), Total: 1})
@@ -100,57 +99,29 @@ func TestSeededTaskCarriesDeclaredIdentity(t *testing.T) {
 	}
 }
 
-// TestHistoricRecordWithoutVariantIsNotOfferedForRetry 守一条读不回**变体**的落盘记录不会挂上
-// 重试按钮。
+// TestVariantSurvivesTheRoundTripThroughTheStore 守**变体**读得回来。
 //
-// 落盘的 retryable 列是写它的那个进程按当时的注册表算出来的；注册表的键此后含了变体，而变体只随
-// 任务参数走，早于这条约定的行读回是空变体。照抄那一列就会让用户点一个必然落进「不支持的重试
-// 类型」的按钮——正是 isRetryableTask 的 doc 里不许出现的那种「第二份清单」。
-func TestHistoricRecordWithoutVariantIsNotOfferedForRetry(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
+// 它上一版守的是「变体只随任务参数走、要能从那个 TEXT 堆里解回来」。变体如今是身份行上的真列，
+// 往返仍要守：**中断**的运行重启之后只剩库里那一行，读不回变体就等于回到按类型分发——
+// 用户对低优先级回填按下的重试会起出一条前台档。
+//
+// 上一版另有一条守「落盘的 retryable 列不得照抄」的用例，随本次接线删除：那一列不存在了，
+// 可重试从来只由注册表派生（见 isRetryableTask），结构上已经没有第二份清单可抄。
+func TestVariantSurvivesTheRoundTripThroughTheStore(t *testing.T) {
+	e, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "background_book_hash_backfill"
-	// 一条没有 variant 参数的历史行：retryable 列写着 true，多变体类型却认不出它是哪个变体。
-	if err := store.UpsertTask(t.Context(), database.TaskRecord{
-		Key:       key,
-		Type:      "rebuild_book_hashes",
-		Scope:     taskScopeSystem,
-		Status:    "interrupted",
-		Retryable: true,
-		StartedAt: time.Unix(1700000000, 0),
-		UpdatedAt: time.Unix(1700000000, 0),
-	}); err != nil {
-		t.Fatalf("落一条历史任务失败: %v", err)
-	}
+	seedTask(t, e, taskSeed{
+		Key: key, Identity: systemTask("rebuild_book_hashes", variantHashRebuildBackfill),
+		Terminal: "failed",
+	})
 
-	task, err := controller.taskEngine.snapshotForRetry(t.Context(), key)
-	if err != nil {
-		t.Fatalf("取重试快照失败: %v", err)
-	}
-	if task.Retryable {
-		t.Fatal("这条行仍被标成可重试 —— 界面上会画出一个必然 400 的重试按钮")
-	}
-}
-
-// TestVariantSurvivesTheRoundTripThroughTaskParams 守**变体**读得回来。
-//
-// 它是身份四要素里唯一没有落盘列的那项。**中断**任务重启之后只剩库里那一行，读不回变体就等于
-// 回到按类型分发：用户对低优先级回填按下的重试会起出一条前台档。
-func TestVariantSurvivesTheRoundTripThroughTaskParams(t *testing.T) {
-	now := time.Unix(1700000000, 0)
-	original := TaskStatus{
-		Key:       "background_book_hash_backfill",
-		Type:      "rebuild_book_hashes",
-		Scope:     taskScopeSystem,
-		Variant:   variantHashRebuildBackfill,
-		Status:    "interrupted",
-		StartedAt: now,
-		UpdatedAt: now,
-	}
-
-	readBack := taskStatusFromRecord(taskRecordFromStatus(original))
+	readBack := currentTask(t, e, key)
 	if readBack.Variant != variantHashRebuildBackfill {
 		t.Fatalf("读回的变体为 %q, want %q", readBack.Variant, variantHashRebuildBackfill)
+	}
+	if readBack.Type != "rebuild_book_hashes" || readBack.Scope != taskScopeSystem || readBack.ScopeID != nil {
+		t.Fatalf("读回的另外三项不对：type=%q scope=%q id=%v", readBack.Type, readBack.Scope, readBack.ScopeID)
 	}
 }
 

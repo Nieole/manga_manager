@@ -1,8 +1,8 @@
-// 守重试取快照时的 DB 回退是**按任务键的身份查找**，而不是「搜一把再从前几条里挑」。
+// 守重试取快照按**任务键**精确命中，而不是「搜一把再从前几条里挑」。
 //
-// 内存表是有上限的缓存，重启后更是空的，而**中断**任务恰恰只在库里。任务键互为子串
-// （`scan_series_1` ⊂ `scan_series_1xx`），靠 LIKE 取一页挑的话，目标会被更新的同族键挤到页外：
-// 用户看着任务中心里那条「中断，可重试」，点重试却被告知任务不存在。
+// 任务键互为子串（`scan_series_1` ⊂ `scan_series_1xx`），靠 LIKE 取一页挑的话，目标会被更新的
+// 同族键挤到页外：用户看着任务中心里那条「中断，可重试」，点重试却被告知任务不存在。
+// 接线之后这条谓词是落盘侧的一句 `task_key = ?`，同族键再多也挤不掉它——本用例守它没退回去。
 
 package api
 
@@ -10,38 +10,10 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
-
-	"manga-manager/internal/database"
 )
 
-// upsertHistoricTaskRecord 只往库里落一条历史任务，不碰内存表——重启之后的现场就是这样：
-// 任务只剩库里那一行。**身份**与生产同源：调用方把它整份交进来，落盘记录照抄。
-func upsertHistoricTaskRecord(t *testing.T, store database.Store, key string, identity TaskIdentity, status string, sequence int64) {
-	t.Helper()
-	now := time.Now()
-	if err := store.UpsertTask(context.Background(), database.TaskRecord{
-		Key:        key,
-		Type:       identity.taskType,
-		Scope:      identity.scope,
-		ScopeID:    identity.scopeID,
-		Status:     status,
-		Message:    "任务因服务重启而中断，可重试",
-		Retryable:  true,
-		Current:    3,
-		Total:      10,
-		Params:     map[string]string{"force": "true", "variant": string(identity.variant)},
-		StartedAt:  now.Add(-time.Hour),
-		UpdatedAt:  now,
-		FinishedAt: &now,
-		Sequence:   sequence,
-	}); err != nil {
-		t.Fatalf("落一条历史任务 %q 失败: %v", key, err)
-	}
-}
-
 // TestRetrySnapshotFindsTaskCrowdedOutByKinKeys 钉住同族键再多也挤不掉目标那一条。
-// 重启后满屏中断任务正是高发场景：同一个类型下每个库/系列各一条，键互为前缀。
+// 重启后满屏中断运行正是高发场景：同一个类型下每个库/系列各一条，键互为前缀。
 func TestRetrySnapshotFindsTaskCrowdedOutByKinKeys(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -65,14 +37,18 @@ func TestRetrySnapshotFindsTaskCrowdedOutByKinKeys(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			controller, store, _, _ := newTestController(t)
+			controller, _, _, _ := newTestController(t)
 
-			// 目标：重启时被转成**中断**的那条，序号最旧。
-			upsertHistoricTaskRecord(t, store, tc.key, tc.identity, "interrupted", 1)
-			// 同族键各占一行、序号都比它新：按序号倒序取时先取到的全是它们。
+			// 目标：失败在先，序号最旧。
+			seedTask(t, controller.taskEngine, taskSeed{
+				Key: tc.key, Identity: tc.identity, Total: 10,
+				Metadata: map[string]string{"force": "true"},
+				Terminal: "failed",
+			})
+			// 同族键各占一条运行、序号都比它新：按序号倒序取时先取到的全是它们。
 			for i := range 30 {
 				kinKey, kinIdentity := tc.kin(i)
-				upsertHistoricTaskRecord(t, store, kinKey, kinIdentity, "interrupted", int64(i+2))
+				seedTask(t, controller.taskEngine, taskSeed{Key: kinKey, Identity: kinIdentity, Total: 10, Terminal: "failed"})
 			}
 
 			task, err := controller.taskEngine.snapshotForRetry(context.Background(), tc.key)
@@ -82,26 +58,38 @@ func TestRetrySnapshotFindsTaskCrowdedOutByKinKeys(t *testing.T) {
 			if task.Key != tc.key {
 				t.Fatalf("取回的是 %q, want %q —— 重试会去重启另一条任务", task.Key, tc.key)
 			}
-			if task.Status != "interrupted" || task.Params["force"] != "true" {
-				t.Fatalf("取回的 %q 状态为 %q、入参为 %v, want interrupted + force=true", task.Key, task.Status, task.Params)
+			if task.Status != "failed" || task.Params["force"] != "true" {
+				t.Fatalf("取回的 %q 状态为 %q、入参为 %v, want failed + force=true", task.Key, task.Status, task.Params)
 			}
 		})
 	}
 }
 
-// TestRetrySnapshotPrefersMemoryOverStore 守内存命中时不查库：活动任务的进度只在内存里是最新的。
-func TestRetrySnapshotPrefersMemoryOverStore(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
+// TestRetrySnapshotPrefersTheNewestRun 守同一个任务键有多次运行时，重试拿的是**最近那一次**。
+//
+// 重试从此不再抹掉上一次，于是同一个键上会堆着一串历史。拿错一条的后果是重试按着一份过时的
+// 入参重来——用户以为在重跑刚才失败的那次，实际重跑的是上礼拜那次。
+func TestRetrySnapshotPrefersTheNewestRun(t *testing.T) {
+	controller, _, _, _ := newTestController(t)
 
 	const key = "scan_library_7"
-	upsertHistoricTaskRecord(t, store, key, libraryTask("scan_library", 7, variantSole), "failed", 1)
-	seedTask(t, controller.taskEngine, taskSeed{Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true})
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100,
+		Metadata: map[string]string{"force": "false"}, Terminal: "failed",
+	})
+	seedTask(t, controller.taskEngine, taskSeed{
+		Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 100,
+		Metadata: map[string]string{"force": "true"}, CanCancel: true,
+	})
 
 	task, err := controller.taskEngine.snapshotForRetry(context.Background(), key)
 	if err != nil {
 		t.Fatalf("取 %q 的重试快照失败: %v", key, err)
 	}
 	if task.Status != "running" {
-		t.Fatalf("取回的状态为 %q, want running —— 拿的是滞后的库记录，重试会放行一个正在跑的任务", task.Status)
+		t.Fatalf("取回的状态为 %q, want running —— 拿的是上一次运行，重试会放行一个正在跑的任务", task.Status)
+	}
+	if task.Params["force"] != "true" {
+		t.Fatalf("取回的入参为 %v —— 拿的是上一次运行那份，重试会换一套参数重来", task.Params)
 	}
 }

@@ -1,8 +1,8 @@
-// 守「内存任务表的淘汰与清理都不会打掉还在跑的任务」（running / paused / cancelling 一视同仁）。
+// 守「历史再多也不会打掉还在跑的运行」（running / paused / cancelling 一视同仁）。
 //
-// 内存里的这份是活动任务的唯一可写副本：applyTaskProgress 等一律「tasks[key] 查不到就 return」。
-// 一个仍在跑的任务被裁掉之后，它后续的全部进度乃至终态更新都会静默失效——任务面板上
-// 永远停在最后一次进度，也再不会变成「完成」，而日志里不会有任何迹象。
+// 上一版这里守的是内存任务表的淘汰：那张表当年是活动任务的唯一可写副本，一个仍在跑的任务被裁掉
+// 之后，它后续的全部进度乃至终态更新都会静默失效。表没有了，但它防的那件事还在——现在换成
+// 两条：清除不得带走仍会变化的运行（判据写死在落盘侧），以及历史再多也不把活动运行挤出第一页。
 
 package api
 
@@ -15,27 +15,30 @@ import (
 	"manga-manager/internal/taskrun"
 )
 
-// floodFinishedTasks 灌入 n 个已完成任务，把内存表推过 maxRetainedTasks。
-func floodFinishedTasks(t *testing.T, engine *taskEngine, n int) {
+// floodFinishedRuns 灌入 n 条已完成的运行，把历史堆到比任务中心一页还多。
+func floodFinishedRuns(t *testing.T, engine *taskEngine, n int) {
 	t.Helper()
 	for i := range n {
-		seedTask(t, engine, taskSeed{Key: fmt.Sprintf("filler_%d", i), Identity: systemTask("filler", variantSole), Total: 1, Terminal: "completed"})
+		seedTask(t, engine, taskSeed{
+			Key: fmt.Sprintf("filler_%d", i), Identity: seriesTask("filler", int64(i+1), variantSole),
+			Total: 1, Terminal: "completed",
+		})
 	}
 }
 
-func TestPruneKeepsActiveTasks(t *testing.T) {
+func TestHistoryDoesNotDisplaceActiveRuns(t *testing.T) {
 	cases := []struct {
 		name  string
 		setup func(t *testing.T, e *taskEngine, key string) *taskrun.Handle
 	}{
 		{
-			name: "running 任务不被淘汰",
+			name: "running 运行不被历史淹没",
 			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
 				return seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 			},
 		},
 		{
-			name: "paused 任务不被淘汰",
+			name: "paused 运行不被历史淹没",
 			setup: func(t *testing.T, e *taskEngine, key string) *taskrun.Handle {
 				progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
 				if err := e.pause(key); err != nil {
@@ -54,37 +57,28 @@ func TestPruneKeepsActiveTasks(t *testing.T) {
 			const activeKey = "scan_library_1"
 			progress := tc.setup(t, engine, activeKey)
 
-			// 关键点：活动任务先启动，它的 Sequence 因此最小。淘汰若只按「最近活动」排序，
-			// 它必然排在最后被裁掉——真实场景里一个长时间无进度上报的大库扫描正是如此。
-			floodFinishedTasks(t, engine, maxRetainedTasks+50)
+			// 关键点：活动运行先起，它的序号因此最小。定序若只看序号，它必然排在最后——
+			// 真实场景里一个长时间无进度上报的大库扫描正是如此。
+			floodFinishedRuns(t, engine, taskCenterPageSize+10)
 
-			engine.mutex.Lock()
-			task, stillThere := engine.tasks[activeKey]
-			total := len(engine.tasks)
-			engine.mutex.Unlock()
-
-			if !stillThere {
-				t.Fatalf("活动任务被淘汰了（表内剩 %d 条）——它后续的所有状态更新都会静默失效", total)
-			}
-			if total > maxRetainedTasks {
-				t.Fatalf("淘汰后仍有 %d 条，超过上限 %d", total, maxRetainedTasks)
+			keys := taskCenterFirstPage(t, controller)
+			if indexOfKey(keys, activeKey) < 0 {
+				t.Fatalf("活动运行被历史挤出了第一页（页首三条：%v）—— 用户看不到自己刚发起的那一条",
+					keys[:min(3, len(keys))])
 			}
 
-			// 更新仍然生效，说明它确实还是那份可写副本。
+			// 更新仍然生效，说明那条运行还在、还认得它的**运行句柄**。
 			progress.Advance(42, 100, "", nil)
-			engine.mutex.Lock()
-			updated := engine.tasks[activeKey]
-			engine.mutex.Unlock()
-			if updated.Current != 42 {
-				t.Fatalf("活动任务的进度更新没生效：Current = %d, want 42（原状态 %q）", updated.Current, task.Status)
+			if updated := currentTask(t, engine, activeKey); updated.Current != 42 {
+				t.Fatalf("活动运行的进度更新没生效：Current = %d, want 42（状态 %q）", updated.Current, updated.Status)
 			}
 		})
 	}
 }
 
-// TestClearTasksKeepsPausedTask 守卫 clear 的判活。
-// paused/cancelling 与 running 一样，内存里这份是唯一可写副本：删掉之后 resume 变成 404，
-// 而任务体仍卡在 PauseGate 上永远等不到放行。
+// TestClearTasksKeepsPausedTask 守卫清除的判活。
+// paused/cancelling 与 running 一样仍会变化：删掉之后 resume 变成 404，
+// 而任务体仍卡在**暂停闸门**上永远等不到放行。这条判据写死在落盘侧，不经调用方。
 func TestClearTasksKeepsPausedTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	engine := controller.taskEngine
@@ -99,11 +93,8 @@ func TestClearTasksKeepsPausedTask(t *testing.T) {
 		t.Fatalf("clear: %v", err)
 	}
 
-	engine.mutex.Lock()
-	_, stillThere := engine.tasks[key]
-	engine.mutex.Unlock()
-	if !stillThere {
-		t.Fatal("clear 删掉了暂停中的任务 —— resume 会变成 404，任务体永远卡在 PauseGate 上")
+	if !taskExists(t, engine, key) {
+		t.Fatal("clear 删掉了暂停中的运行 —— resume 会变成 404，任务体永远卡在暂停闸门上")
 	}
 	if err := engine.resume(key); err != nil {
 		t.Fatalf("clear 之后 resume 失败: %v", err)

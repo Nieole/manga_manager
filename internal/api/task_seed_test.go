@@ -1,7 +1,7 @@
-// 守「往任务表里放一条任务」这件事只能经启动入口发生，以及这套播种脚手架本身。
-//
-// 直接写内存任务表也能让消费方跑绿，但「同一**任务键**同时只能有一个**活动态**任务」这道闸门
-// 会就此在整片测试里失去覆盖——而它是同一个资料库不会被并发扫描两遍的唯一原因。
+// 守「往库里放一条**运行**」这件事只能经启动入口发生，以及这套播种脚手架本身。直接插一行也能让
+// 消费方跑绿，但准入闸门会就此在整片测试里失去覆盖——它如今是库上那两条部分唯一索引，因此播种
+// 必须**同时穿过领域层与落盘层**。播种也不开第二条终态路径：**终态只有一处裁决**——任务体返回的
+// 错误，所以播下的活动态任务是一个真的在跑、停在可控点上的任务体。
 
 package api
 
@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"manga-manager/internal/taskrun"
@@ -30,8 +31,7 @@ type taskSeed struct {
 	CanCancel bool
 	CanPause  bool
 
-	// Metadata 落进任务参数（**重启函数**从这里读回原始入参），Labels 落进展示标签，
-	// ScopeName 是作用域的显示名。
+	// Metadata 落进重启入参，Labels 落进展示标签，ScopeName 是作用域的显示名。
 	Metadata  map[string]string
 	Labels    map[string]string
 	ScopeName string
@@ -40,8 +40,8 @@ type taskSeed struct {
 	StartCode   string
 	StartParams map[string]string
 
-	// Terminal 为空表示任务停在**活动态**：**运行时句柄**已登记，可暂停、可取消、可播报进度。
-	// 否则取 completed / cancelled / failed 之一，播种返回时该**终态**已经落定。
+	// Terminal 为空表示任务停在**活动态**：任务体真的在跑、停在可控点上，可暂停、可取消、
+	// 可播报进度。否则取 completed / cancelled / failed 之一，播种返回时该**终态**已经落定。
 	Terminal string
 
 	// TerminalCode 与 TerminalParams 是终态文案；FailError 只在失败终态下生效，落进 TaskStatus.Error。
@@ -50,27 +50,60 @@ type taskSeed struct {
 	FailError      string
 }
 
-// seedTask 播下一条任务并返回它的**任务句柄**；被**任务键**闸门拒绝即 t.Fatal。
+// seededBody 是播下的任务体停在可控点上时交出来的两样：它自己的 ctx 与**任务句柄**。
+type seededBody struct {
+	ctx    context.Context
+	handle *taskrun.Handle
+}
+
+// seededRun 是一条播下的任务在脚手架这一侧的把手：任务体停在哪、怎么让它收尾、收尾完了没有。
+type seededRun struct {
+	body seededBody
+	// finish 让任务体带着送进来的错误返回。收尾只有这一条路，与生产同源。
+	finish chan error
+	// settled 在任务体返回、引擎写完终态之后关闭。
+	settled chan struct{}
+	once    sync.Once
+}
+
+// settle 让任务体带着 err 返回，并等引擎写完终态。重复调用是无操作。
+func (r *seededRun) settle(err error) {
+	r.once.Do(func() { r.finish <- err })
+	<-r.settled
+}
+
+// seededRuns 按（引擎，任务键）记住播下的那些把手，供 settleSeededTask 与 seededTaskContext 取用。
+//
+// 每个用例各建一个引擎，因此键不会跨用例撞上。
+var seededRuns sync.Map
+
+type seedRef struct {
+	engine *taskEngine
+	key    string
+}
+
+// seedTask 播下一条任务并返回它的**任务句柄**；被准入闸门拒绝即 t.Fatal。
 func seedTask(t testing.TB, e *taskEngine, seed taskSeed) *taskrun.Handle {
 	t.Helper()
-	progress, err := trySeedTask(e, seed)
+	handle, err := trySeedTask(t, e, seed)
 	if err != nil {
 		t.Fatalf("播种任务 %q 失败: %v", seed.Key, err)
 	}
-	return progress
+	return handle
 }
 
-// trySeedTask 与 seedTask 相同，但把闸门的拒绝作为错误返回，供「同键重复播种」这类用例断言。
+// trySeedTask 与 seedTask 相同，但把闸门的拒绝作为错误返回，供「同一身份重复播种」这类用例断言。
 //
-// 它临时换掉引擎注入的后台运行能力，好在这一刻决定任务体何时执行：活动态播种要的是
-// 「任务行已落地、任务体不跑」，终态播种要的是「任务体同步跑完并收尾」。这正是把「开一个
-// 受停机管辖的 goroutine」做成注入依赖所买到的确定性——不必 sleep 或轮询去等一个真实 goroutine。
+// 它临时换掉引擎注入的后台运行能力，好在这一刻决定任务体跑在哪条 goroutine 上。这正是把
+// 「开一个受停机管辖的 goroutine」做成注入依赖所买到的确定性：播种返回时任务体一定已经开跑并停在
+// 可控点上（活动态），或者已经收尾完毕（终态）——不必 sleep 或轮询去等。
 //
 // **调用约束**：只能在测试自己的 goroutine 上、且此刻没有任何任务体在飞时调用。runBackground
-// 属于引擎「装配期注入、之后只读」的那组字段，不受 mutex 保护，这里的换入换出因此不是并发安全的；
-// 与并发启动的任务撞上时 -race 也未必抓得到（那要恰好两条 goroutine 同时摸到这个字段）。
-func trySeedTask(e *taskEngine, seed taskSeed) (*taskrun.Handle, error) {
-	// 这张表是 settleTask 的逆：那边把任务体返回的错误翻成终态，这边把想要的终态翻回错误，
+// 属于引擎「装配期注入、之后只读」的那组字段，不受 mutex 保护，这里的换入换出因此不是并发安全的。
+func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*taskrun.Handle, error) {
+	t.Helper()
+
+	// 这张表是终态裁决的逆：那边把任务体返回的错误翻成终态，这边把想要的终态翻回错误，
 	// 好让播种和生产落进同一处裁决。改动任一侧都要照着另一侧看一眼——两边都不会有编译错误。
 	var bodyErr error
 	switch seed.Terminal {
@@ -97,66 +130,87 @@ func trySeedTask(e *taskEngine, seed taskSeed) (*taskrun.Handle, error) {
 	}
 	result := TaskResult{Code: seed.TerminalCode, Params: seed.TerminalParams}
 
-	var body func()
-	restore := e.runBackground
-	defer func() { e.runBackground = restore }()
-	e.runBackground = func(fn func()) { body = fn }
+	run := &seededRun{finish: make(chan error, 1), settled: make(chan struct{})}
+	started := make(chan seededBody, 1)
+	// 终态播种：让任务体一进来就拿到它该返回的错误，于是播种返回时终态已经落定。
+	if seed.Terminal != "" {
+		run.once.Do(func() { run.finish <- bodyErr })
+	}
 
-	if err := e.Run(seed.Identity, spec, func(context.Context, *taskrun.Handle) (TaskResult, error) {
-		return result, bodyErr
-	}); err != nil {
+	restore := e.runBackground
+	e.runBackground = func(fn func()) {
+		go func() {
+			defer close(run.settled)
+			fn()
+		}()
+	}
+	err := e.Run(seed.Identity, spec, func(ctx context.Context, handle *taskrun.Handle) (TaskResult, error) {
+		started <- seededBody{ctx: ctx, handle: handle}
+		return result, <-run.finish
+	})
+	e.runBackground = restore
+	if err != nil {
 		return nil, err
 	}
+
+	run.body = <-started
 	if seed.Terminal != "" {
-		body()
+		<-run.settled
+		return run.body.handle, nil
 	}
-	// 与启动入口交给任务体的那个句柄同源：两处都走 newTaskHandle，键在闭包里绑定。
-	return e.newTaskHandle(seed.Key), nil
+	seededRuns.Store(seedRef{engine: e, key: seed.Key}, run)
+	// 用例结束时必须让任务体退出，否则它连同它的 goroutine 一起留到进程结束。
+	t.Cleanup(func() { run.settle(context.Canceled) })
+	return run.body.handle, nil
+}
+
+// seededRunFor 取回这条任务键的把手；没有即 t.Fatal。
+func seededRunFor(t testing.TB, e *taskEngine, key string) *seededRun {
+	t.Helper()
+	stored, ok := seededRuns.Load(seedRef{engine: e, key: key})
+	if !ok {
+		t.Fatalf("任务 %q 没有播下的任务体 —— 它没经启动入口播种，或播下时就是终态", key)
+		return nil
+	}
+	return stored.(*seededRun)
 }
 
 // settleSeededTask 让一条 seedTask 播下、仍停在**活动态**的任务按「任务体返回了 err」收尾，
 // 与生产共用同一处终态裁决。终态本身可以直接由 taskSeed.Terminal 播出来，这个函数是给那些
 // 「收尾就是被测行为」的用例用的——它们要在播种与收尾之间插进别的动作。
-func settleSeededTask(e *taskEngine, key string, err error) {
-	e.settleTask(TaskSpec{Key: key}, TaskResult{}, err)
+func settleSeededTask(t testing.TB, e *taskEngine, key string, err error) {
+	t.Helper()
+	seededRunFor(t, e, key).settle(err)
 }
 
-// seededTaskContext 取出启动入口本该交给任务体的那个 ctx：可取消，且带**暂停闸门**。
-// 供那些要断言「取消真的传到了任务体」「暂停真的挡住了可中断点」的用例使用。
+// seededTaskContext 取出启动入口交给任务体的那个 ctx：可取消，带**暂停闸门**，并带着**任务键**
+// 与运行标识。供那些要断言「取消真的传到了任务体」「暂停真的挡住了可中断点」的用例使用。
 func seededTaskContext(t testing.TB, e *taskEngine, key string) context.Context {
 	t.Helper()
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	runtime := e.runtimes[key]
-	if runtime == nil {
-		t.Fatalf("任务 %q 没有运行时句柄 —— 它没经启动入口播种，或已经进入终态", key)
-		return nil
-	}
-	return runtime.Context
+	return seededRunFor(t, e, key).body.ctx
 }
 
-// TestSeedTaskGoesThroughTheTaskKeyGate 守卫脚手架没有绕开**任务键**闸门。
-func TestSeedTaskGoesThroughTheTaskKeyGate(t *testing.T) {
-	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+// TestSeedTaskGoesThroughTheAdmissionGate 守卫脚手架没有绕开准入闸门。
+func TestSeedTaskGoesThroughTheAdmissionGate(t *testing.T) {
+	e, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100})
 
-	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); !errors.Is(err, errTaskAlreadyRunning) {
-		t.Fatalf("同键重复播种返回 %v, want errTaskAlreadyRunning —— 脚手架绕过了闸门，整片测试就此失去这条覆盖", err)
+	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); !errors.Is(err, errTaskAlreadyRunning) {
+		t.Fatalf("同一身份重复播种返回 %v, want errTaskAlreadyRunning —— 脚手架绕过了闸门，整片测试就此失去这条覆盖", err)
 	}
 
-	settleSeededTask(e, key, nil)
-	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); err != nil {
-		t.Fatalf("落定终态之后同一任务键播不下去了: %v", err)
+	settleSeededTask(t, e, key, errors.New("done"))
+	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole)}); err != nil {
+		t.Fatalf("落定终态之后同一身份播不下去了: %v", err)
 	}
 }
 
 // TestSeededActiveTaskIsControllable 守卫播下的活动态任务确实可控：启动入口登记了**运行时句柄**，
 // 暂停与取消才有 ctx 与**暂停闸门**可操作。漏掉这一步的话，消费方拿到的是一条 pause 一律 409 的假任务。
 func TestSeededActiveTaskIsControllable(t *testing.T) {
-	// 后台能力只登记不执行：播种之外的任何任务体都不该在本用例里跑起来。
-	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
+	e, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
@@ -188,7 +242,7 @@ func TestSeedTaskLandsRequestedShape(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_7"
 			seedTask(t, e, taskSeed{
@@ -221,9 +275,28 @@ func TestSeedTaskLandsRequestedShape(t *testing.T) {
 // TestSeedTaskRejectsUnknownTerminal 守卫拼错终态名不会被当成「留在活动态」静默放过——
 // 那会让消费方对着一条还在跑的任务断言它已经结束。
 func TestSeedTaskRejectsUnknownTerminal(t *testing.T) {
-	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
-	if _, err := trySeedTask(e, taskSeed{Key: "scan_library_1", Identity: libraryTask("scan_library", 1, variantSole), Terminal: "done"}); err == nil {
+	if _, err := trySeedTask(t, e, taskSeed{Key: "scan_library_1", Identity: libraryTask("scan_library", 1, variantSole), Terminal: "done"}); err == nil {
 		t.Fatal("未知的终态名被静默接受了")
+	}
+}
+
+// TestSeededRunCarriesItsRunID 守卫播下的运行在对外快照上带着**运行标识**：
+// 同一个任务键从此可以有多条运行，只认键的消费方分不出「哪一次」。
+func TestSeededRunCarriesItsRunID(t *testing.T) {
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
+
+	const key = "scan_library_1"
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Terminal: "completed"})
+	first := lastPublishedTask(t, snapshots(), key)
+	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Terminal: "completed"})
+	second := lastPublishedTask(t, snapshots(), key)
+
+	if first.RunID <= 0 || second.RunID <= 0 {
+		t.Fatalf("运行标识没发出来：first=%d second=%d", first.RunID, second.RunID)
+	}
+	if first.RunID == second.RunID {
+		t.Fatalf("同一个任务键的两次运行拿到了同一个运行标识 %d —— 重试又把上一次盖掉了", first.RunID)
 	}
 }

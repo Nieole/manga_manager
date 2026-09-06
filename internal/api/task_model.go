@@ -1,280 +1,160 @@
-// 本文件是任务子域的**模型层**，只放纯函数——TaskStatus 与数据库 TaskRecord 之间的双向
-// 转换、派生字段（percent/rate/eta、phase/metrics/labels/limit 的 params 编解码）、消息码与
-// 直接消息的互斥规则，以及快照深拷贝。这里的函数不碰共享状态、不加锁、不做 IO，因此可被
-// 引擎（task_engine.go）与 HTTP 层（controller_tasks.go）同时调用而无需考虑时序；一旦某个
-// 函数需要读写 taskEngine 的字段，它就该搬到 task_engine.go 去。
+// 本文件是任务子域的**模型层**：领域的**运行**快照与对外 TaskStatus 之间的翻译、列表谓词的翻译、
+// 身份四要素在两侧的互转，以及进度派生字段（percent/rate/eta）的计算。
+//
+// 这里的函数不碰可变状态、不加锁、不做 IO。唯一的例外是 taskStatusFrom 这个方法：它要问一句
+// 「这个（类型，**变体**）注册了**重启函数**吗」，而那张注册表是装配期填好、此后只读的。
+// 一旦某个函数需要读写 taskEngine 受锁保护的字段，它就该搬到 task_engine.go 去。
 
 package api
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/task"
 )
 
 // taskIsActive 判断任务是否处于「仍在占用运行槽位」的状态。
-// cancelling 也算活动态：取消已请求但任务体尚未收尾，此时不应允许同 key 再次启动。
+// cancelling 也算活动态：取消已请求但任务体尚未收尾，此时不应允许同一个任务再次发起。
 func taskIsActive(status string) bool {
-	return status == "running" || status == "paused" || status == "cancelling"
+	return task.RunStatus(status).IsActive()
 }
 
-// applyTaskMessage 在任务上设置显示消息。消息词汇只有 i18n 码一种，因此它只收码与占位参数；
-// 空码是无操作，用于「这一帧不改文案」。
+// ---- 身份四要素在两侧的互转 ----
+
+// domain 把 api 侧的身份翻成领域侧的。
 //
-// 清空 Message 不是可省的防御：它与 MessageCode 必须互斥，理由见 TaskStatus.Message 的字段 doc。
-func applyTaskMessage(task *TaskStatus, code string, params map[string]string) {
-	if code == "" {
-		return
+// 作用域 id 由 `*int64` 变成 `int64`，nil 落成 0：身份的唯一约束要比较这一列，而 SQL 里
+// NULL 不等于 NULL——留 NULL 的话同一个系统级身份会被建出任意多条（见 task.Identity）。
+func (id TaskIdentity) domain() task.Identity {
+	identity := task.Identity{
+		Type:    task.Type(id.taskType),
+		Scope:   task.Scope(id.scope),
+		Variant: task.Variant(id.variant),
 	}
-	task.MessageCode = code
-	// 克隆而不是存下调用方那份：任务上的每个可变 map 都归引擎所有，没有例外——
-	// 「这几个归引擎、那个不归」是记不住的，而记错一次的后果见 taskEngine 的符号 doc。
-	task.MessageParams = cloneStringMap(params)
-	task.Message = ""
+	if id.scopeID != nil {
+		identity.ScopeID = *id.scopeID
+	}
+	return identity
 }
 
-// cloneTaskStatus 返回 task 的深拷贝：**每一个**引用类型字段都要复制，不只是那几个 map。
-// 任何会让快照逃出 taskEngine.mutex 临界区的路径（异步落盘、HTTP 序列化、重试取值）都必须先克隆，
-// 否则调用方读到的是仍在被写入的活 map。
+// taskIdentityFromDomain 是 domain 的逆：0 号作用域 id 还原成 nil，好让它在 JSON 里 omitempty。
+func taskIdentityFromDomain(identity task.Identity) TaskIdentity {
+	converted := TaskIdentity{
+		taskType: string(identity.Type),
+		scope:    string(identity.Scope),
+		variant:  TaskVariant(identity.Variant),
+	}
+	if identity.ScopeID != 0 {
+		scopeID := identity.ScopeID
+		converted.scopeID = &scopeID
+	}
+	return converted
+}
+
+// ---- 列表谓词 ----
+
+// runFilterFrom 把六个任务端点共用的过滤参数翻成运行查询的谓词。
 //
-// 给 TaskStatus 加引用类型字段的人必须顺手加到这里——漏掉不会有编译错误，后果是那个字段
-// 在锁外被读、同时被持锁的进度回调写。EffectiveLimit 就是这样一个非 map 的引用字段
-// （hydrateTaskStatusDerivedFields 会经 applyTaskLimitParam 穿过这个指针写）。
-func cloneTaskStatus(task TaskStatus) TaskStatus {
-	task.MessageParams = cloneStringMap(task.MessageParams)
-	task.Labels = cloneStringMap(task.Labels)
-	task.Params = cloneStringMap(task.Params)
-	if task.Metrics != nil {
-		metrics := make(map[string]int64, len(task.Metrics))
-		for k, v := range task.Metrics {
-			metrics[k] = v
-		}
-		task.Metrics = metrics
+// 五条谓词整条下推到落盘侧，不再取回内存里过一遍：旧引擎必须在内存里判，因为它要先把内存表盖在
+// 库记录上；现在只有一个来源，下推之后 Limit 截断的才是过滤**之后**的那一页。
+func runFilterFrom(filters database.TaskFilters, order task.RunOrder) task.RunFilter {
+	filter := task.RunFilter{
+		Scope:   task.Scope(strings.TrimSpace(filters.Scope)),
+		ScopeID: filters.ScopeID,
+		Query:   strings.TrimSpace(filters.Query),
+		Order:   order,
+		Limit:   filters.Limit,
 	}
-	if task.EffectiveLimit != nil {
-		limits := *task.EffectiveLimit
-		task.EffectiveLimit = &limits
+	if status := strings.TrimSpace(filters.Status); status != "" {
+		filter.Statuses = []task.RunStatus{task.RunStatus(status)}
 	}
-	return task
+	if taskType := strings.TrimSpace(filters.Type); taskType != "" {
+		filter.Types = []task.Type{task.Type(taskType)}
+	}
+	return filter
 }
 
-func cloneStringMap(src map[string]string) map[string]string {
-	if src == nil {
-		return nil
+// ---- 快照翻译 ----
+
+// taskStatusFrom 把一帧领域快照翻成对外的任务快照。
+//
+// 三处来源各司其职：运行行给展示态与计数，控制能力由引擎按运行的活性**派生**（不是库里的列——
+// 落成列的话重启后那几个布尔值会集体说谎），侧数据给指标、标签、重启入参与并发上限。
+func (e *taskEngine) taskStatusFrom(snapshot task.Snapshot, identity TaskIdentity) TaskStatus {
+	run := snapshot.Run
+	status := TaskStatus{
+		RunID:               run.ID,
+		Key:                 run.Key,
+		Type:                identity.taskType,
+		Scope:               identity.scope,
+		ScopeID:             identity.scopeID,
+		Variant:             identity.variant,
+		ScopeName:           run.ScopeName,
+		Status:              string(run.Status),
+		MessageCode:         run.MessageCode,
+		MessageParams:       run.MessageParams,
+		Error:               run.Error,
+		Current:             run.Current,
+		Total:               run.Total,
+		CanCancel:           snapshot.Capabilities.CanCancel,
+		CanPause:            snapshot.Capabilities.CanPause,
+		CanResume:           snapshot.Capabilities.CanResume,
+		Retryable:           e.isRetryableTask(identity.taskType, identity.variant),
+		PausedAt:            run.PausedAt,
+		ControlPausedMillis: run.ControlPausedMillis,
+		Phase:               run.Phase,
+		CurrentItem:         run.CurrentItem,
+		Metrics:             snapshot.Side.Metrics,
+		Labels:              snapshot.Side.Labels,
+		Params:              snapshot.Side.Args,
+		StartedAt:           run.StartedAt,
+		UpdatedAt:           run.UpdatedAt,
+		FinishedAt:          run.FinishedAt,
+		Sequence:            run.Sequence,
 	}
-	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
+	if snapshot.Side.Limits != nil {
+		status.EffectiveLimit = taskLimitsFromDomain(*snapshot.Side.Limits)
 	}
-	return dst
+	enrichTaskProgress(&status)
+	return status
 }
 
-func taskStatusFromRecord(record database.TaskRecord) TaskStatus {
-	task := TaskStatus{
-		Key:        record.Key,
-		Type:       record.Type,
-		Scope:      record.Scope,
-		ScopeID:    record.ScopeID,
-		ScopeName:  record.ScopeName,
-		Status:     record.Status,
-		Message:    record.Message,
-		Error:      record.Error,
-		Current:    record.Current,
-		Total:      record.Total,
-		CanCancel:  record.CanCancel,
-		Retryable:  record.Retryable,
-		Params:     record.Params,
-		StartedAt:  record.StartedAt,
-		UpdatedAt:  record.UpdatedAt,
-		FinishedAt: record.FinishedAt,
-		Sequence:   record.Sequence,
-	}
-	hydrateTaskStatusDerivedFields(&task)
-	return task
-}
-
-func taskRecordFromStatus(task TaskStatus) database.TaskRecord {
-	task.Params = taskParamsWithDerivedFields(task)
-	return database.TaskRecord{
-		Key:        task.Key,
-		Type:       task.Type,
-		Scope:      task.Scope,
-		ScopeID:    task.ScopeID,
-		ScopeName:  task.ScopeName,
-		Status:     task.Status,
-		Message:    task.Message,
-		Error:      task.Error,
-		Current:    task.Current,
-		Total:      task.Total,
-		CanCancel:  task.CanCancel,
-		Retryable:  task.Retryable,
-		Params:     task.Params,
-		StartedAt:  task.StartedAt,
-		UpdatedAt:  task.UpdatedAt,
-		FinishedAt: task.FinishedAt,
-		Sequence:   task.Sequence,
-	}
-}
-
-// hydrateTaskStatusDerivedFields 是**从落盘记录读回**任务时的补全入口：先把编码进任务参数的
-// 展示字段解码回来，再重算进度派生字段。
-func hydrateTaskStatusDerivedFields(task *TaskStatus) {
-	decodeTaskParams(task)
-	enrichTaskProgress(task)
-}
-
-// decodeTaskParams 是 taskParamsWithDerivedFields 的逆：把编码进任务参数的展示字段解码回任务上。
-// 两处必须成对改——只加一侧不会有编译错误，后果是那个字段写得进库、读不回来。
-func decodeTaskParams(task *TaskStatus) {
-	if task == nil || task.Params == nil {
-		return
-	}
-	task.Phase = firstNonEmptyTaskValue(task.Phase, task.Params["phase"])
-	task.CurrentItem = firstNonEmptyTaskValue(task.CurrentItem, task.Params["current_item"])
-	task.PauseReason = firstNonEmptyTaskValue(task.PauseReason, task.Params["pause_reason"])
-	task.MessageCode = firstNonEmptyTaskValue(task.MessageCode, task.Params["message_code"])
-	task.Variant = TaskVariant(firstNonEmptyTaskValue(string(task.Variant), task.Params["variant"]))
-	if raw := strings.TrimSpace(task.Params["can_pause"]); raw != "" {
-		task.CanPause, _ = strconv.ParseBool(raw)
-	}
-	if raw := strings.TrimSpace(task.Params["can_resume"]); raw != "" {
-		task.CanResume, _ = strconv.ParseBool(raw)
-	}
-	if pausedAt := strings.TrimSpace(task.Params["paused_at"]); task.PausedAt == nil && pausedAt != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, pausedAt); err == nil {
-			task.PausedAt = &parsed
-		}
-	}
-	if raw := strings.TrimSpace(task.Params["control_paused_ms"]); task.ControlPausedMillis == 0 && raw != "" {
-		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			task.ControlPausedMillis = parsed
-		}
-	}
-
-	for key, value := range task.Params {
-		switch {
-		case strings.HasPrefix(key, "metric."):
-			if task.Metrics == nil {
-				task.Metrics = make(map[string]int64)
-			}
-			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
-				task.Metrics[strings.TrimPrefix(key, "metric.")] = parsed
-			}
-		case strings.HasPrefix(key, "label."):
-			if task.Labels == nil {
-				task.Labels = make(map[string]string)
-			}
-			task.Labels[strings.TrimPrefix(key, "label.")] = value
-		case strings.HasPrefix(key, "msgparam."):
-			if task.MessageParams == nil {
-				task.MessageParams = make(map[string]string)
-			}
-			task.MessageParams[strings.TrimPrefix(key, "msgparam.")] = value
-		case strings.HasPrefix(key, "limit."):
-			applyTaskLimitParam(task, strings.TrimPrefix(key, "limit."), value)
-		}
+// taskLimitsFromDomain 与 domain 是一对：并发上限在两侧是同一组真列，逐个搬。
+func taskLimitsFromDomain(limits task.Limits) *TaskLimits {
+	return &TaskLimits{
+		ScanProfile:                limits.ScanProfile,
+		ScannerWorkersConfigured:   limits.ScannerWorkersConfigured,
+		ScannerWorkersEffective:    limits.ScannerWorkersEffective,
+		StorageProfile:             limits.StorageProfile,
+		VolumeKey:                  limits.VolumeKey,
+		ScanConcurrency:            limits.ScanConcurrency,
+		ArchiveOpenConcurrency:     limits.ArchiveOpenConcurrency,
+		CoverConcurrency:           limits.CoverConcurrency,
+		HashConcurrency:            limits.HashConcurrency,
+		PauseBackgroundWhenReading: limits.PauseBackgroundWhenReading,
+		IdleOnlyHeavyTasks:         limits.IdleOnlyHeavyTasks,
+		DisableSameDiskPageCache:   limits.DisableSameDiskPageCache,
 	}
 }
 
-func applyTaskLimitParam(task *TaskStatus, key, value string) {
-	if task.EffectiveLimit == nil {
-		task.EffectiveLimit = &TaskLimits{}
+// domain 把 api 侧的并发上限翻成领域侧的。
+func (limits TaskLimits) domain() task.Limits {
+	return task.Limits{
+		ScanProfile:                limits.ScanProfile,
+		ScannerWorkersConfigured:   limits.ScannerWorkersConfigured,
+		ScannerWorkersEffective:    limits.ScannerWorkersEffective,
+		StorageProfile:             limits.StorageProfile,
+		VolumeKey:                  limits.VolumeKey,
+		ScanConcurrency:            limits.ScanConcurrency,
+		ArchiveOpenConcurrency:     limits.ArchiveOpenConcurrency,
+		CoverConcurrency:           limits.CoverConcurrency,
+		HashConcurrency:            limits.HashConcurrency,
+		PauseBackgroundWhenReading: limits.PauseBackgroundWhenReading,
+		IdleOnlyHeavyTasks:         limits.IdleOnlyHeavyTasks,
+		DisableSameDiskPageCache:   limits.DisableSameDiskPageCache,
 	}
-	parseInt := func() int {
-		parsed, _ := strconv.Atoi(value)
-		return parsed
-	}
-	parseBool := func() bool {
-		parsed, _ := strconv.ParseBool(value)
-		return parsed
-	}
-	switch key {
-	case "scan_profile":
-		task.EffectiveLimit.ScanProfile = value
-	case "scanner_workers_configured":
-		task.EffectiveLimit.ScannerWorkersConfigured = parseInt()
-	case "scanner_workers_effective":
-		task.EffectiveLimit.ScannerWorkersEffective = parseInt()
-	case "storage_profile":
-		task.EffectiveLimit.StorageProfile = value
-	case "volume_key":
-		task.EffectiveLimit.VolumeKey = value
-	case "scan_concurrency":
-		task.EffectiveLimit.ScanConcurrency = parseInt()
-	case "archive_open_concurrency":
-		task.EffectiveLimit.ArchiveOpenConcurrency = parseInt()
-	case "cover_concurrency":
-		task.EffectiveLimit.CoverConcurrency = parseInt()
-	case "hash_concurrency":
-		task.EffectiveLimit.HashConcurrency = parseInt()
-	case "pause_background_when_reading":
-		task.EffectiveLimit.PauseBackgroundWhenReading = parseBool()
-	case "idle_only_heavy_tasks":
-		task.EffectiveLimit.IdleOnlyHeavyTasks = parseBool()
-	case "disable_same_disk_page_cache":
-		task.EffectiveLimit.DisableSameDiskPageCache = parseBool()
-	}
-}
-
-func taskParamsWithDerivedFields(task TaskStatus) map[string]string {
-	params := make(map[string]string, len(task.Params)+24)
-	for k, v := range task.Params {
-		params[k] = v
-	}
-	put := func(key, value string) {
-		if strings.TrimSpace(value) != "" {
-			params[key] = value
-		}
-	}
-	// **变体**是身份四要素里唯一没有落盘列的那项，只能随任务参数走：**重启函数**按（类型，变体）
-	// 分发，而**中断**任务重启之后只剩库里那一行，读不回变体就分发不到它自己那条跑法。
-	// 早于这条约定写下的行没有这个键，读回是 variantSole；重试资格因此不照抄落盘那一列，
-	// 由 taskStatusFromRecordLive 按当前注册表重算。
-	put("variant", string(task.Variant))
-	put("phase", task.Phase)
-	put("current_item", task.CurrentItem)
-	put("pause_reason", task.PauseReason)
-	// 把可本地化消息码/参数一并落进 params，使已完成任务从 DB 读回后仍能本地化渲染
-	// （Message 对编码任务为空，若不持久化 code，读回后只会剩任务类型名）。
-	put("message_code", task.MessageCode)
-	for key, value := range task.MessageParams {
-		put("msgparam."+key, value)
-	}
-	params["can_pause"] = strconv.FormatBool(task.CanPause)
-	params["can_resume"] = strconv.FormatBool(task.CanResume)
-	if task.PausedAt != nil {
-		params["paused_at"] = task.PausedAt.Format(time.RFC3339Nano)
-	}
-	if task.ControlPausedMillis > 0 {
-		params["control_paused_ms"] = strconv.FormatInt(task.ControlPausedMillis, 10)
-	}
-	for key, value := range task.Metrics {
-		params["metric."+key] = strconv.FormatInt(value, 10)
-	}
-	for key, value := range task.Labels {
-		put("label."+key, value)
-	}
-	if task.EffectiveLimit != nil {
-		limit := task.EffectiveLimit
-		put("limit.scan_profile", limit.ScanProfile)
-		params["limit.scanner_workers_configured"] = strconv.Itoa(limit.ScannerWorkersConfigured)
-		params["limit.scanner_workers_effective"] = strconv.Itoa(limit.ScannerWorkersEffective)
-		put("limit.storage_profile", limit.StorageProfile)
-		put("limit.volume_key", limit.VolumeKey)
-		params["limit.scan_concurrency"] = strconv.Itoa(limit.ScanConcurrency)
-		params["limit.archive_open_concurrency"] = strconv.Itoa(limit.ArchiveOpenConcurrency)
-		params["limit.cover_concurrency"] = strconv.Itoa(limit.CoverConcurrency)
-		params["limit.hash_concurrency"] = strconv.Itoa(limit.HashConcurrency)
-		params["limit.pause_background_when_reading"] = strconv.FormatBool(limit.PauseBackgroundWhenReading)
-		params["limit.idle_only_heavy_tasks"] = strconv.FormatBool(limit.IdleOnlyHeavyTasks)
-		params["limit.disable_same_disk_page_cache"] = strconv.FormatBool(limit.DisableSameDiskPageCache)
-	}
-	if len(params) == 0 {
-		return nil
-	}
-	return params
 }
 
 func firstNonEmptyTaskValue(preferred, fallback string) string {
@@ -311,11 +191,10 @@ func enrichTaskProgress(task *TaskStatus) {
 		}
 		task.Percent = &percent
 	}
-	// **中断**任务不发速率：它的 finished_at 是服务下次启动时由 MarkInterruptedTasks 批量盖的章，
-	// 不是任务停下的时刻，分母里因此整段停机时长都算成了在干活——停一夜再启动，一个跑了 10 分钟
-	// 的任务会被算成跑了 10 小时。库里也换不出第二个分母：那一笔 UPDATE 连 updated_at 一起盖成了
-	// 重启时刻，而任务究竟停在哪一秒，进程被 kill 的那一刻就没有任何地方记下过。
-	// 算不准的数宁可不发，也好过让用户照着一个编出来的速率判断这台机器快不快。
+	// **中断**任务不发速率：这道闸门是票 01 的对象，本票原样留着。它当年立起来的理由——
+	// 中断那一笔 UPDATE 把 finished_at 与 updated_at 一起盖成重启时刻，分母里因此整段停机
+	// 时长都算成了在干活——在新模型里已经不成立（收尾时刻取的是那行原有的心跳），
+	// 但拆掉它是一次用户可见的行为变化，归票 01。
 	if task.Status == "interrupted" {
 		return
 	}

@@ -25,7 +25,7 @@ const sqliteConstraintUnique = 2067
 // 三条路各抄一遍列名的话，漏一列不会有编译错误，后果是那个字段静默丢在写入或读回的路上。
 // runValues 与 scanRun 必须按同样的次序排列，两者与本表一起改。
 var runWriteColumns = []string{
-	"task_id", "trigger", "nth_run", "status", "phase", "current_item", "current", "total",
+	"task_id", "task_key", "scope_name", "trigger", "nth_run", "status", "phase", "current_item", "current", "total",
 	"paused_at", "control_paused_ms", "coalesced_count", "message_code", "message_params",
 	"error", "started_at", "updated_at", "finished_at", "sequence",
 }
@@ -40,7 +40,7 @@ var (
 // runValues 把一条运行摊成与 runWriteColumns 同序的实参。
 func runValues(run task.Run, messageParams string) []any {
 	return []any{
-		run.TaskID, string(run.Trigger), run.NthRun, string(run.Status), run.Phase, run.CurrentItem,
+		run.TaskID, run.Key, run.ScopeName, string(run.Trigger), run.NthRun, string(run.Status), run.Phase, run.CurrentItem,
 		run.Current, run.Total, millisFromTimePtr(run.PausedAt), run.ControlPausedMillis,
 		run.CoalescedCount, run.MessageCode, messageParams, run.Error, millisFromTime(run.StartedAt),
 		millisFromTime(run.UpdatedAt), millisFromTimePtr(run.FinishedAt), run.Sequence,
@@ -113,8 +113,7 @@ func (s *Store) LoadRun(ctx context.Context, runID int64) (task.Run, error) {
 // 历史行，没有兜底键时它们在两次查询之间的相对次序是 SQLite 说了算。
 func (s *Store) ListRuns(ctx context.Context, filter task.RunFilter) ([]task.Run, error) {
 	where, args := runFilterClause(filter)
-	query := `SELECT ` + runSelectColumns + ` FROM ` + tableRuns + where + ` ORDER BY sequence ` +
-		sortDirection(filter.Order) + `, id ` + sortDirection(filter.Order)
+	query := `SELECT ` + runSelectColumns + ` FROM ` + tableRuns + where + orderClause(filter.Order)
 	if filter.Limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, filter.Limit)
@@ -178,7 +177,7 @@ func scanRun(row rowScanner) (task.Run, error) {
 		updatedAt  sql.NullInt64
 		finishedAt sql.NullInt64
 	)
-	err := row.Scan(&run.ID, &run.TaskID, &trigger, &run.NthRun, &status, &run.Phase, &run.CurrentItem,
+	err := row.Scan(&run.ID, &run.TaskID, &run.Key, &run.ScopeName, &trigger, &run.NthRun, &status, &run.Phase, &run.CurrentItem,
 		&run.Current, &run.Total, &pausedAt, &run.ControlPausedMillis, &run.CoalescedCount,
 		&run.MessageCode, &params, &run.Error, &startedAt, &updatedAt, &finishedAt, &run.Sequence)
 	if err != nil {
@@ -198,9 +197,12 @@ func scanRun(row rowScanner) (task.Run, error) {
 }
 
 // runFilterClause 把谓词拼成 WHERE 子句。零值谓词不筛，因此返回空串。
+//
+// 身份那三项判在一句 `task_id IN (SELECT …)` 里而不是连表：ListRuns、CountRuns 与 DeleteRuns
+// 共用这一份谓词，其中 DELETE 在 SQLite 里根本连不了表。子查询命中的是身份表那条四列唯一索引。
 func runFilterClause(filter task.RunFilter) (string, []any) {
-	clauses := make([]string, 0, 2)
-	args := make([]any, 0, len(filter.Statuses)+1)
+	clauses := make([]string, 0, 5)
+	args := make([]any, 0, len(filter.Statuses)+len(filter.Types)+4)
 	if filter.TaskID != 0 {
 		clauses = append(clauses, `task_id = ?`)
 		args = append(args, filter.TaskID)
@@ -213,17 +215,82 @@ func runFilterClause(filter task.RunFilter) (string, []any) {
 		}
 		clauses = append(clauses, `status IN (`+strings.Join(placeholders, ", ")+`)`)
 	}
+	if filter.Key != "" {
+		clauses = append(clauses, `task_key = ?`)
+		args = append(args, filter.Key)
+	}
+	if filter.Query != "" {
+		// 与旧引擎同口径：键、文案码与错误串接起来做大小写无关的子串匹配。
+		// LOWER 只作用于 ASCII，而这三样都是本仓自己生成的标识串，不含大小写敏感的非 ASCII。
+		clauses = append(clauses, `LOWER(task_key || ' ' || message_code || ' ' || error) LIKE ?`)
+		args = append(args, "%"+strings.ToLower(filter.Query)+"%")
+	}
+	if identity, identityArgs := identityClause(filter); identity != "" {
+		clauses = append(clauses, identity)
+		args = append(args, identityArgs...)
+	}
 	if len(clauses) == 0 {
 		return "", args
 	}
 	return ` WHERE ` + strings.Join(clauses, " AND "), args
 }
 
-func sortDirection(order task.RunOrder) string {
-	if order == task.OrderSequenceDesc {
-		return "DESC"
+// identityClause 把身份那三项谓词拼成一句对身份表的子查询；一项都没给时返回空串。
+func identityClause(filter task.RunFilter) (string, []any) {
+	clauses := make([]string, 0, 3)
+	args := make([]any, 0, len(filter.Types)+2)
+	if len(filter.Types) > 0 {
+		placeholders := make([]string, 0, len(filter.Types))
+		for _, taskType := range filter.Types {
+			placeholders = append(placeholders, "?")
+			args = append(args, string(taskType))
+		}
+		clauses = append(clauses, `type IN (`+strings.Join(placeholders, ", ")+`)`)
 	}
-	return "ASC"
+	if filter.Scope != "" {
+		clauses = append(clauses, `scope = ?`)
+		args = append(args, string(filter.Scope))
+	}
+	if filter.ScopeID != nil {
+		clauses = append(clauses, `scope_id = ?`)
+		args = append(args, *filter.ScopeID)
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return `task_id IN (SELECT id FROM ` + tableTasks + ` WHERE ` + strings.Join(clauses, " AND ") + `)`, args
+}
+
+// orderClause 给出定序。序号相等时按 id 兜底，理由见 ListRuns。
+func orderClause(order task.RunOrder) string {
+	switch order {
+	case task.OrderLiveFirst:
+		// 仍会变化的排在最前，其后与 OrderSequenceDesc 一致。CASE 而不是 `status IN (…) DESC`：
+		// 后者在 SQLite 里也成立，但把「1 在前」这件事写明白，读的人不必去想布尔怎么排。
+		return ` ORDER BY CASE WHEN status IN (` + quotedStatuses(task.LiveStatuses()) +
+			`) THEN 0 ELSE 1 END, sequence DESC, id DESC`
+	case task.OrderSequenceDesc:
+		return ` ORDER BY sequence DESC, id DESC`
+	default:
+		return ` ORDER BY sequence ASC, id ASC`
+	}
+}
+
+// DeleteRuns 按谓词删除运行；**仍会变化的运行永不被删**，这一条写死在谓词里，不经调用方。
+func (s *Store) DeleteRuns(ctx context.Context, filter task.RunFilter) (int64, error) {
+	where, args := runFilterClause(filter)
+	if where == "" {
+		where = ` WHERE `
+	} else {
+		where += ` AND `
+	}
+	where += `status NOT IN (` + quotedStatuses(task.LiveStatuses()) + `)`
+
+	outcome, err := s.db.ExecContext(ctx, `DELETE FROM `+tableRuns+where, args...)
+	if err != nil {
+		return 0, err
+	}
+	return outcome.RowsAffected()
 }
 
 // admissionError 把唯一约束的违例翻成领域的准入哨兵。

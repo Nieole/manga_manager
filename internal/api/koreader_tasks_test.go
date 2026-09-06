@@ -120,7 +120,7 @@ func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMod
 	// 调度器新建而非取包级实例：包级实例会让用例经由按卷计数的限流器互相污染。
 	diskWork := diskwork.NewRunner(manager.Snapshot, storageio.NewScheduler())
 
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, diskWork)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, diskWork)
 	e.now = clock.Now
 
 	return &Controller{

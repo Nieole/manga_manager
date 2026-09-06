@@ -99,9 +99,7 @@ func TestFailedLibraryScanLogsAreFilterableByTaskKey(t *testing.T) {
 	}
 
 	const key = "scan_library_7"
-	controller.taskEngine.mutex.Lock()
-	status := controller.taskEngine.tasks[key].Status
-	controller.taskEngine.mutex.Unlock()
+	status := currentTask(t, controller.taskEngine, key).Status
 	if status != "failed" {
 		t.Fatalf("扫描任务终态为 %q, want failed —— 这个用例要守的是一次**失败**的扫描", status)
 	}
@@ -155,11 +153,13 @@ func TestTaskBodyContextCarriesTaskKey(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			engine, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			engine, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			var seen string
+			var seenRunID int64
 			err := engine.Run(tc.identity, TaskSpec{Key: tc.key}, func(ctx context.Context, _ *taskrun.Handle) (TaskResult, error) {
 				seen = logger.TaskKeyFrom(ctx)
+				seenRunID = logger.RunIDFrom(ctx)
 				return TaskResult{}, nil
 			})
 			if err != nil {
@@ -167,6 +167,10 @@ func TestTaskBodyContextCarriesTaskKey(t *testing.T) {
 			}
 			if seen != tc.key {
 				t.Fatalf("任务体的 ctx 里任务键为 %q, want %q", seen, tc.key)
+			}
+			// 运行标识与任务键走同一个 handler：同一个任务连着跑三次，只按键过滤会把三次混在一起。
+			if seenRunID <= 0 {
+				t.Fatalf("任务体的 ctx 里没有运行标识（%d）—— 按运行过滤原始日志就无从谈起", seenRunID)
 			}
 		})
 	}

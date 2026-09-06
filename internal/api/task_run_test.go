@@ -57,7 +57,7 @@ func TestRunSettlesByBodyError(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
 			if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -102,7 +102,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
 			tc.result.Params = map[string]string{"written": "3"}
@@ -126,7 +126,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 // TestRunKeepsSpecCodeWhenResultCodeEmpty 钉住零值语义：`TaskResult{}` 表示「用声明里的默认码」，
 // 而不是「把文案清空」。绝大多数任务体走的正是这条路。
 func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -148,7 +148,7 @@ func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
 // 槽位闸门同步、任务体异步。启动入口返回时任务已在列表里且任务体尚未开跑，HTTP 层才能立即返回 202。
 func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 	var deferred []func()
-	e, snapshots := newBackgroundTestEngine(func(fn func()) { deferred = append(deferred, fn) }, nil)
+	e, snapshots := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
 	bodyRan := false
@@ -183,7 +183,7 @@ func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 func TestRunRejectsDuplicateActiveKey(t *testing.T) {
 	// 后台能力只登记不执行：第一个任务因此一直停在 running，占着这个任务键。
 	var handedOff int
-	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ }, nil)
+	e, _ := newBackgroundTestEngine(t, func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -212,7 +212,7 @@ func TestRunRejectsDuplicateActiveKey(t *testing.T) {
 // 同一任务键不得再次启动，否则新旧两个任务体会同时在跑。
 func TestRunRejectsWhileCancelling(t *testing.T) {
 	var deferred []func()
-	e, _ := newBackgroundTestEngine(func(fn func()) { deferred = append(deferred, fn) }, nil)
+	e, _ := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -249,18 +249,16 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
 			if err := e.Run(identityForTest(), specForTest(key), tc.body); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
 			}
 
-			e.mutex.Lock()
-			leaked := len(e.runtimes)
-			e.mutex.Unlock()
-			if leaked != 0 {
-				t.Fatalf("退出路径「%s」上残留了 %d 个运行时句柄", tc.name, leaked)
+			settled := lastPublishedTask(t, snapshots(), key)
+			if _, leaked := e.engine.Handle(settled.RunID); leaked {
+				t.Fatalf("退出路径「%s」上残留了运行时句柄 —— 一份 ctx 与暂停闸门就此泄漏", tc.name)
 			}
 			if err := e.Run(identityForTest(), specForTest(key), tc.body); err != nil {
 				t.Fatalf("退出路径「%s」之后同一任务键再也起不来：%v", tc.name, err)
@@ -272,7 +270,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 // TestRunPanicStillMarksTaskFailed 钉住启动入口没有把 panic 兜底吃掉：任务体在收尾之前 panic 时，
 // 任务仍必须落到失败态，而不是停在 running 让那个任务键恒定返回 409。
 func TestRunPanicStillMarksTaskFailed(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -295,7 +293,7 @@ func TestRunPanicStillMarksTaskFailed(t *testing.T) {
 // 还会被首帧刚写下的节流水位吞掉。
 func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	// 后台能力只登记不执行：观测的是任务**诞生那一刻**的首帧，任务体跑不跑无关。
-	e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+	e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 	const key = "scan_library_7"
 	spec := specForTest(key)
@@ -340,7 +338,7 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 // TestRunLeavesLimitUnsetWhenSpecOmitsIt 钉住零值语义：没有并发上限可报的任务（多数维护任务如此）
 // 不该凭空多出一份全零的上限，否则任务面板会显示一组「0 并发」的假数据。
 func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *taskrun.Handle) (TaskResult, error) {
@@ -358,7 +356,7 @@ func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
 // 「做完了多少」，**阶段**只回答「在做什么」，条目名/指标/标签各管各的字段，谁都不许越界改别人的。
 func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	e.now = clock.Now
 
 	const key = "scan_library_1"
@@ -404,7 +402,7 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 // TestTaskProgressIgnoredAfterTerminal 钉住**任务句柄**的失效边界：任务已进入**终态**之后
 // 迟到的进度回调（扫描器的 goroutine 不在任务体调用栈上，晚一拍很常见）不得把它拽回运行中。
 func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
 	var handle *taskrun.Handle
@@ -468,7 +466,7 @@ func TestTaskHandleChannelsShareOneAdmissionRule(t *testing.T) {
 			}
 		}},
 		{"已取消", false, func(t *testing.T, e *taskEngine, key string) {
-			settleSeededTask(e, key, context.Canceled)
+			settleSeededTask(t, e, key, context.Canceled)
 		}},
 	}
 
@@ -476,7 +474,7 @@ func TestTaskHandleChannelsShareOneAdmissionRule(t *testing.T) {
 		for _, state := range states {
 			t.Run(channel.name+"/"+state.name, func(t *testing.T) {
 				// 后台能力只登记不执行：任务体一旦跑起来就会收尾，活动态无从观察。
-				e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+				e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 				const key = "rebuild_thumbnails"
 				handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 10, CanCancel: true, CanPause: true})
@@ -499,7 +497,7 @@ func TestTaskHandleChannelsShareOneAdmissionRule(t *testing.T) {
 // 破了就是 taskEngine 符号 doc 写的那种 fatal error——runtime throw，拦不住。
 func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
 	// 后台能力只登记不执行：任务停在活动态，进度写得进去。
-	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
+	e, _ := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 	metadata := map[string]string{"provider": "anilist"}
 	labels := map[string]string{"provider_name": "AniList"}
@@ -515,23 +513,24 @@ func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
 	handle.Report(taskrun.Frame{Labels: map[string]string{"current_series": "Beta"}})
 	handle.Report(taskrun.Frame{Code: "progress.scanning", Params: frameParams})
 
-	// 从引擎那侧写一笔：调用方那几份跟着变，就说明存的是同一个 map header。
-	e.mutex.Lock()
-	stored := e.tasks["scan_library_1"]
-	stored.Params["probe"] = "1"
-	stored.Labels["probe"] = "1"
-	stored.MessageParams["probe"] = "1"
-	e.mutex.Unlock()
+	// 从调用方那侧写一笔：引擎报出来的值跟着变，就说明它存的是同一个 map header。
+	metadata["provider"] = "tampered"
+	labels["provider_name"] = "tampered"
+	startParams["name"] = "tampered"
+	frameParams["count"] = "tampered"
 
-	for name, callerOwned := range map[string]map[string]string{
-		"任务声明的 Metadata":    metadata,
-		"任务声明的 Labels":      labels,
-		"任务声明的 StartParams": startParams,
-		"某一帧的 Params":       frameParams,
+	task := currentTask(t, e, "scan_library_1")
+	for name, got := range map[string]string{
+		"任务声明的 Metadata": task.Params["provider"],
+		"任务声明的 Labels":   task.Labels["provider_name"],
+		"某一帧的 Params":    task.MessageParams["count"],
 	} {
-		if _, leaked := callerOwned["probe"]; leaked {
-			t.Fatalf("引擎存下了调用方那份 map（%s）：%v", name, callerOwned)
+		if got == "tampered" {
+			t.Fatalf("引擎存下了调用方那份 map（%s）：调用方改一笔，引擎报出来的就变了", name)
 		}
+	}
+	if task.Params["scanned_series"] != "7" || task.Labels["current_series"] != "Beta" {
+		t.Fatalf("句柄写进去的那几笔没落到运行上：params=%v labels=%v", task.Params, task.Labels)
 	}
 }
 
@@ -539,13 +538,13 @@ func TestTaskMapsAreOwnedByTheEngine(t *testing.T) {
 // 被**任务键**闸门挡下的那次启动一步都不得往前走。抢在闸门之前建句柄的话，第二次启动会把
 // 正在跑的那个任务的 ctx 与**暂停闸门**换成一份没人持有的，那个任务从此暂停不了也取消不了。
 func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
-	e, _ := newBackgroundTestEngine(func(func()) {}, nil)
+	e, _ := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true})
 	running := seededTaskContext(t, e, key)
 
-	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true}); !errors.Is(err, errTaskAlreadyRunning) {
+	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), CanCancel: true, CanPause: true}); !errors.Is(err, errTaskAlreadyRunning) {
 		t.Fatalf("同键第二次启动返回 %v, want errTaskAlreadyRunning", err)
 	}
 
@@ -562,7 +561,7 @@ func TestRejectedLaunchLeavesTheRunningTaskControllable(t *testing.T) {
 // 任务中心把 pause_reason 渲染成一行「暂停原因：手动暂停」，而它对一条已经失败的任务毫无意义
 // ——用户看到的是一条自称「手动暂停」的失败任务。同一处的另外三个控制字段本就已经清掉了。
 func TestFailedTaskDropsPauseReason(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+	e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 	const key = "scan_library_1"
 	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10, CanCancel: true, CanPause: true})
@@ -570,7 +569,7 @@ func TestFailedTaskDropsPauseReason(t *testing.T) {
 		t.Fatalf("暂停失败: %v", err)
 	}
 
-	settleSeededTask(e, key, errors.New("disk on fire"))
+	settleSeededTask(t, e, key, errors.New("disk on fire"))
 
 	task := lastPublishedTask(t, snapshots(), key)
 	if task.Status != "failed" {

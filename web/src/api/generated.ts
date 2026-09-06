@@ -20,6 +20,7 @@ export interface TaskLimits {
 }
 
 export interface TaskStatus {
+  run_id: number;
   key: string;
   type: string;
   scope: string;

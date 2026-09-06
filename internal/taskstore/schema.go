@@ -57,10 +57,16 @@ var createStatements = []string{
 	// scope_id 是 NOT NULL DEFAULT 0 而不是可空：唯一约束要比较这一列，而 SQL 里 NULL 不等于
 	// NULL——留空的话同一个系统级身份会被建出任意多条。0 就是「系统级，没有作用域对象」。
 	//
+	// task_key 是**过渡期**列：六个控制端点与对外契约今天仍按**任务键**寻址，见 task.Run.Key。
+	// 它落在运行上而不是身份上——外部库那两类的键带着会话 id，同一身份的两次运行键并不相同。
+	// 票 15 把控制端点改成按对象寻址之后，这一列连同它的索引一起删。
+	//
 	// started_at 可空：**排队中**的运行还没开跑，写入队时刻会让排了一小时队的运行被算成跑了一小时。
 	`CREATE TABLE IF NOT EXISTS ` + tableRuns + ` (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		task_id INTEGER NOT NULL REFERENCES ` + tableTasks + `(id) ON DELETE CASCADE,
+		task_key TEXT NOT NULL DEFAULT '',
+		scope_name TEXT NOT NULL DEFAULT '',
 		trigger TEXT NOT NULL,
 		nth_run INTEGER NOT NULL DEFAULT 1,
 		status TEXT NOT NULL,
@@ -145,9 +151,20 @@ var admissionStatements = []string{
 		` ON ` + tableRuns + `(task_id) WHERE status = '` + string(task.StatusQueued) + `'`,
 }
 
+// addedColumns 是建表语句写下之后才追加的列。
+//
+// `CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，因此**改建表语句对存量库不生效**——
+// 加列必须另走一条 `ALTER TABLE`（`internal/database` 的 ensureColumn 是先例）。这几张表还没有
+// 随版本发布过，但开发机上早已按上一版建起，少了这一条它们会停在缺列的形状上。
+var addedColumns = []struct{ table, column, definition string }{
+	{tableRuns, "task_key", `TEXT NOT NULL DEFAULT ''`},
+	{tableRuns, "scope_name", `TEXT NOT NULL DEFAULT ''`},
+}
+
 // indexStatements 是取数用的索引，谓词不参与准入，因此建过就不必再动。
 var indexStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_runs_sequence ON ` + tableRuns + `(sequence)`,
+	`CREATE INDEX IF NOT EXISTS idx_runs_task_key ON ` + tableRuns + `(task_key)`,
 	`CREATE INDEX IF NOT EXISTS idx_runs_task_sequence ON ` + tableRuns + `(task_id, sequence)`,
 	`CREATE INDEX IF NOT EXISTS idx_runs_status_sequence ON ` + tableRuns + `(status, sequence)`,
 	`CREATE INDEX IF NOT EXISTS idx_run_events_run ON ` + tableRunEvents + `(run_id, id)`,
@@ -171,23 +188,54 @@ func Migrate(db *sql.DB) error {
 		return ErrForeignKeysDisabled
 	}
 
-	statements := make([]string, 0, len(createStatements)+len(admissionStatements)+len(indexStatements))
-	statements = append(statements, createStatements...)
-	statements = append(statements, admissionStatements...)
-	statements = append(statements, indexStatements...)
-
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	for _, stmt := range statements {
+	for _, stmt := range createStatements {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("taskstore: 执行迁移语句失败: %w", err)
+		}
+	}
+	// 补列排在建表之后、建索引之前：索引可能就建在刚补上的那一列上。
+	for _, added := range addedColumns {
+		if err := ensureColumn(tx, added.table, added.column, added.definition); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range append(append([]string{}, admissionStatements...), indexStatements...) {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("taskstore: 执行迁移语句失败: %w", err)
 		}
 	}
 	return tx.Commit()
+}
+
+// ensureColumn 给已存在的表补一列，已经有了就什么都不做。
+//
+// 先查后加而不是靠 `ALTER TABLE` 报错再吞：吞错误会把「列名拼错」这类真问题一起吞掉。
+func ensureColumn(tx *sql.Tx, table, column, definition string) error {
+	rows, err := tx.Query(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
+	}
+	present := rows.Next()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
+	}
+	if present {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition); err != nil {
+		return fmt.Errorf("taskstore: 给 %s 补列 %s 失败: %w", table, column, err)
+	}
+	return nil
 }
 
 // quotedStatuses 把一组状态拼成 SQL 的 IN 列表。状态取值是本仓自己的封闭枚举，不含引号。

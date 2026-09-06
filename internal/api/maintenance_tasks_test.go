@@ -118,7 +118,7 @@ func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.
 	// 全量哈希回填走的是 KOReader 那套**指纹**重建，两者共用同一个仓储。
 	c.koreader = ksvc.NewService(store, manager)
 
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, c.diskWork)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, c.diskWork)
 	e.now = clock.Now
 	c.taskEngine = e
 	return c, snapshots, clock

@@ -16,8 +16,9 @@ import (
 // newScanEventsTestController 手工拼装这条链路唯一需要的组件：任务引擎。
 // 引擎仍经它唯一的 seam（newTaskEngine）构造，扫描报文的转译处不碰任何 Controller 字段，
 // 因此这里不需要数据库、配置管理器或扫描器。
-func newScanEventsTestController(clock *fakeClock) (*Controller, func() []TaskStatus) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+func newScanEventsTestController(t testing.TB, clock *fakeClock) (*Controller, func() []TaskStatus) {
+	t.Helper()
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	e.now = clock.Now
 	return &Controller{taskEngine: e}, snapshots
 }
@@ -26,7 +27,7 @@ func newScanEventsTestController(clock *fakeClock) (*Controller, func() []TaskSt
 func startedScanRig(t *testing.T, key string, identity TaskIdentity) (scanner.ScanObserver, func() []TaskStatus, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	c, snapshots := newScanEventsTestController(clock)
+	c, snapshots := newScanEventsTestController(t, clock)
 	progress := seedTask(t, c.taskEngine, taskSeed{
 		Key: key, Identity: identity, CanCancel: true, CanPause: true,
 	})

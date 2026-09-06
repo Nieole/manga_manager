@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"manga-manager/internal/task"
@@ -61,6 +62,58 @@ func (s *Store) EnsureTask(ctx context.Context, id task.Identity) (task.Task, er
 	owner.LastSuccessAt = timePtrFromMillis(lastSuccessAt)
 	owner.BackoffUntil = timePtrFromMillis(backoffUntil)
 	return owner, nil
+}
+
+// LoadTasks 按 id 批量取回任务，查不到的 id 不出现在结果里。
+//
+// 一句 IN 而不是逐条查：任务中心一页有几十条运行，而它们绝大多数指向同一批任务。
+func (s *Store) LoadTasks(ctx context.Context, taskIDs []int64) (map[int64]task.Task, error) {
+	owners := make(map[int64]task.Task, len(taskIDs))
+	if len(taskIDs) == 0 {
+		return owners, nil
+	}
+	placeholders, args := int64Placeholders(taskIDs)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, type, scope, scope_id, variant, disabled, last_success_at, fail_streak, backoff_until
+		FROM `+tableTasks+` WHERE id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			owner         task.Task
+			taskType      string
+			scope         string
+			variant       string
+			disabled      int
+			lastSuccessAt sql.NullInt64
+			backoffUntil  sql.NullInt64
+		)
+		if err := rows.Scan(&owner.ID, &taskType, &scope, &owner.ScopeID, &variant, &disabled,
+			&lastSuccessAt, &owner.FailStreak, &backoffUntil); err != nil {
+			return nil, err
+		}
+		owner.Type = task.Type(taskType)
+		owner.Scope = task.Scope(scope)
+		owner.Variant = task.Variant(variant)
+		owner.Disabled = disabled != 0
+		owner.LastSuccessAt = timePtrFromMillis(lastSuccessAt)
+		owner.BackoffUntil = timePtrFromMillis(backoffUntil)
+		owners[owner.ID] = owner
+	}
+	return owners, rows.Err()
+}
+
+// int64Placeholders 把一批 id 摊成 `?, ?, …` 与同序的实参。
+func int64Placeholders(ids []int64) (string, []any) {
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	return strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", "), args
 }
 
 // ErrTaskNotFound 是身份行不存在时的哨兵错误。

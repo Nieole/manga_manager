@@ -26,20 +26,35 @@ func (e *Engine) RunSnapshot(ctx context.Context, runID int64) (Snapshot, error)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return Snapshot{Run: run, Capabilities: e.capabilitiesLocked(run)}, nil
+	return e.snapshotLocked(run), nil
 }
 
 // ListSnapshots 按谓词取一批运行的快照。
+//
+// 侧数据一次批量取回，不是逐条运行走 snapshotLocked：一页有几十条运行，逐条取就是几十轮查询。
 func (e *Engine) ListSnapshots(ctx context.Context, filter RunFilter) ([]Snapshot, error) {
 	runs, err := e.store.ListRuns(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
+	runIDs := make([]int64, 0, len(runs))
+	for _, run := range runs {
+		runIDs = append(runIDs, run.ID)
+	}
+	side, err := e.store.LoadRunSideData(ctx, runIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	snapshots := make([]Snapshot, 0, len(runs))
 	for _, run := range runs {
-		snapshots = append(snapshots, Snapshot{Run: run, Capabilities: e.capabilitiesLocked(run)})
+		snapshots = append(snapshots, Snapshot{
+			Run:          run,
+			Capabilities: e.capabilitiesLocked(run),
+			Side:         side[run.ID],
+		})
 	}
 	return snapshots, nil
 }
@@ -188,6 +203,9 @@ func (e *Engine) MarkInterrupted(ctx context.Context) (int, error) {
 	for _, run := range runs {
 		heartbeat := run.UpdatedAt
 		run.Status = StatusInterrupted
+		// 上一轮那次暂停就此结账：不折进累计的话，速率的分母里会凭空少掉那一段。
+		absorbPause(&run, heartbeat)
+		applyMessage(&run, Result{Code: e.codes.Interrupted})
 		run.PausedAt = nil
 		run.FinishedAt = &heartbeat
 		run.UpdatedAt = now

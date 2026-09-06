@@ -1,7 +1,6 @@
-// 守「TaskStatus 快照跨出临界区之前必须先克隆」，新增的逃逸点也要在这里挂上。
-//
-// Params/Metrics/Labels/MessageParams 都是 map，结构体拷贝共享同一 map header：进度回调持锁原地
-// 写它们，而 flushTaskPersist 与 listTaskStatuses 交出去的快照都在锁外被遍历。共享一份就会撞成
+// 守「投递与列表交出去的那份快照，与仍在被写入的那份不是同一批 map」。Params/Metrics/Labels/
+// MessageParams 都是 map，而结构体拷贝共享同一 map header：进度上报在引擎的临界区里写，
+// listTaskStatuses 交出去的快照则在锁外被 json.Marshal 遍历。共享一份就会撞成
 // `fatal error: concurrent map read and map write`——runtime throw，recover 拦不住，整个进程退出。
 
 package api
@@ -44,20 +43,11 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 			progress.Report(taskrun.Frame{Item: "item"})
 			progress.Report(taskrun.Frame{Metrics: map[string]int64{"processed": int64(i)}})
 			progress.Report(taskrun.Frame{Labels: map[string]string{"library": "alpha"}})
-			controller.taskEngine.mergeTaskParams(taskKey, map[string]string{"library": "alpha"})
+			progress.MergeParams(map[string]string{"library": "alpha"})
 		}
 	}()
 
-	// 读侧一：异步落盘，锁外遍历 persistPending 里的快照。
-	readers.Add(1)
-	go func() {
-		defer readers.Done()
-		for range 200 {
-			controller.taskEngine.flushTaskPersist()
-		}
-	}()
-
-	// 读侧二：任务列表接口，锁外由 json.Marshal 遍历返回的快照。
+	// 读侧：任务列表接口，锁外由 json.Marshal 遍历返回的快照。
 	readers.Add(1)
 	go func() {
 		defer readers.Done()
@@ -85,5 +75,5 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	readers.Wait()
 	close(stop)
 	writer.Wait()
-	settleSeededTask(controller.taskEngine, taskKey, nil)
+	settleSeededTask(t, controller.taskEngine, taskKey, nil)
 }

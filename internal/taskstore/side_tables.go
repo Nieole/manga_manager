@@ -66,6 +66,137 @@ func (s *Store) AppendRunSamples(ctx context.Context, runID int64, samples []tas
 		`INSERT INTO `+tableRunSamples+` (run_id, at, current, rate_per_minute) VALUES (?, ?, ?, ?)`, rows)
 }
 
+// LoadRunSideData 批量读回这批运行的侧数据：入参、标签、指标与上限各一句查询。
+//
+// 四句而不是一句连表：四张表与运行是一对多，连成一句会把行数乘起来，读回时还要自己去重。
+// 一页运行走四句是常数次查询，逐条运行取四样才是 N+1。
+func (s *Store) LoadRunSideData(ctx context.Context, runIDs []int64) (map[int64]task.SideData, error) {
+	side := make(map[int64]task.SideData, len(runIDs))
+	if len(runIDs) == 0 {
+		return side, nil
+	}
+	placeholders, args := int64Placeholders(runIDs)
+
+	for _, source := range []struct {
+		table  string
+		assign func(data *task.SideData, key, value string)
+	}{
+		{tableRunArgs, func(data *task.SideData, key, value string) {
+			if data.Args == nil {
+				data.Args = map[string]string{}
+			}
+			data.Args[key] = value
+		}},
+		{tableRunLabels, func(data *task.SideData, key, value string) {
+			if data.Labels == nil {
+				data.Labels = map[string]string{}
+			}
+			data.Labels[key] = value
+		}},
+	} {
+		if err := s.scanKeyValues(ctx, source.table, placeholders, args, side, source.assign); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.scanMetrics(ctx, placeholders, args, side); err != nil {
+		return nil, err
+	}
+	if err := s.scanLimits(ctx, placeholders, args, side); err != nil {
+		return nil, err
+	}
+	return side, nil
+}
+
+func (s *Store) scanKeyValues(ctx context.Context, table, placeholders string, args []any,
+	side map[int64]task.SideData, assign func(*task.SideData, string, string)) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT run_id, key, value FROM `+table+` WHERE run_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			runID int64
+			key   string
+			value string
+		)
+		if err := rows.Scan(&runID, &key, &value); err != nil {
+			return err
+		}
+		data := side[runID]
+		assign(&data, key, value)
+		side[runID] = data
+	}
+	return rows.Err()
+}
+
+func (s *Store) scanMetrics(ctx context.Context, placeholders string, args []any, side map[int64]task.SideData) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT run_id, key, value FROM `+tableRunMetrics+` WHERE run_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			runID int64
+			key   string
+			value int64
+		)
+		if err := rows.Scan(&runID, &key, &value); err != nil {
+			return err
+		}
+		data := side[runID]
+		if data.Metrics == nil {
+			data.Metrics = map[string]int64{}
+		}
+		data.Metrics[key] = value
+		side[runID] = data
+	}
+	return rows.Err()
+}
+
+func (s *Store) scanLimits(ctx context.Context, placeholders string, args []any, side map[int64]task.SideData) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT run_id, scan_profile, scanner_workers_configured, scanner_workers_effective,
+			storage_profile, volume_key, scan_concurrency, archive_open_concurrency,
+			cover_concurrency, hash_concurrency, pause_background_when_reading,
+			idle_only_heavy_tasks, disable_same_disk_page_cache
+		FROM `+tableRunLimits+` WHERE run_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			runID          int64
+			limits         task.Limits
+			pauseOnReading int
+			idleOnly       int
+			disableCache   int
+		)
+		if err := rows.Scan(&runID, &limits.ScanProfile, &limits.ScannerWorkersConfigured,
+			&limits.ScannerWorkersEffective, &limits.StorageProfile, &limits.VolumeKey,
+			&limits.ScanConcurrency, &limits.ArchiveOpenConcurrency, &limits.CoverConcurrency,
+			&limits.HashConcurrency, &pauseOnReading, &idleOnly, &disableCache); err != nil {
+			return err
+		}
+		limits.PauseBackgroundWhenReading = pauseOnReading != 0
+		limits.IdleOnlyHeavyTasks = idleOnly != 0
+		limits.DisableSameDiskPageCache = disableCache != 0
+		data := side[runID]
+		// 取本轮这一份的地址：直接 &limits 在循环变量共享的写法下会让每一格都指向最后一行。
+		stored := limits
+		data.Limits = &stored
+		side[runID] = data
+	}
+	return rows.Err()
+}
+
 // mergeKeyValues 按键写进一张 (run_id, key, value) 侧表，已有的键改值、没有的键新增。
 func (s *Store) mergeKeyValues(ctx context.Context, table string, runID int64, values map[string]string) error {
 	rows := make([][]any, 0, len(values))

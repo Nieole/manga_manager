@@ -20,11 +20,10 @@ import (
 // taskCenterPageSize 与前端 BackgroundTasks 页固定发出的 limit 一致。
 const taskCenterPageSize = 50
 
-// restartController 用同一份存储另起一个 Controller，模拟进程重启：先刷盘（优雅关闭会做的事），
-// 再走与生产同源的装配。任务表的内存副本不跨实例，新实例只能从库里读回历史。
+// restartController 用同一份存储另起一个 Controller，模拟进程重启：走与生产同源的装配。
+// **运行时句柄**不跨实例，新实例只能从库里读回历史——运行本身早已落盘，不需要先刷一遍。
 func restartController(t *testing.T, prev *Controller, store database.Store, tempDir string) *Controller {
 	t.Helper()
-	prev.taskEngine.flushTaskPersist()
 	cfg := prev.config
 	return newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
 		filepath.Join(tempDir, "config.yaml"), controllerCacheSizes{
@@ -55,12 +54,14 @@ func taskCenterFirstPage(t *testing.T, c *Controller) []string {
 	return keys
 }
 
-// seedFinishedHistory 灌入 n 条已完成的历史任务，键为 scan_series_<i>。
+// seedFinishedHistory 灌入 n 条已完成的历史运行，键为 scan_series_<i>。
+// 作用域 id 从 1 起：系列级身份没有 0 号系列，四要素的自洽校验会当场拒了它。
 func seedFinishedHistory(t *testing.T, c *Controller, n int) {
 	t.Helper()
 	for i := range n {
 		seedTask(t, c.taskEngine, taskSeed{
-			Key: fmt.Sprintf("scan_series_%d", i), Identity: seriesTask("scan_series", int64(i), variantSole), Total: 1, Terminal: "completed",
+			Key: fmt.Sprintf("scan_series_%d", i+1), Identity: seriesTask("scan_series", int64(i+1), variantSole),
+			Total: 1, Terminal: "completed",
 		})
 	}
 }
@@ -101,7 +102,6 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 		// 活动任务先启动，序号因此最小；之后大量短任务跑完。真实场景是大库扫描的哈希阶段
 		// 长时间不上报进度，被后来的短任务全部超过。
 		seedFinishedHistory(t, controller, taskCenterPageSize+10)
-		controller.taskEngine.flushTaskPersist()
 
 		keys := taskCenterFirstPage(t, controller)
 		if indexOfKey(keys, activeKey) < 0 {
@@ -124,7 +124,7 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 			}
 		}
 		want := make([]string, 0, len(history))
-		for i := taskCenterPageSize + 9; i > taskCenterPageSize+9-len(history); i-- {
+		for i := taskCenterPageSize + 10; i > taskCenterPageSize+10-len(history); i-- {
 			want = append(want, fmt.Sprintf("scan_series_%d", i))
 		}
 		for i := range history {

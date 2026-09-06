@@ -16,22 +16,27 @@ import (
 )
 
 // newThrottleTestEngine 造一个只统计投递条数的引擎，时钟由 fakeClock 注入。
-func newThrottleTestEngine(clock *fakeClock) (*taskEngine, *[]string) {
+func newThrottleTestEngine(t testing.TB, clock *fakeClock) (*taskEngine, *[]string) {
+	t.Helper()
 	var published []string
 	var mu sync.Mutex
-	e := newTaskEngine(nil, func(payload string) {
-		mu.Lock()
-		defer mu.Unlock()
-		published = append(published, payload)
+	e := newTaskEngine(taskEngineConfig{
+		Store: newTaskTestStore(t),
+		Publish: func(payload string) {
+			mu.Lock()
+			defer mu.Unlock()
+			published = append(published, payload)
+		},
 		// 后台能力取同步执行版：本文件不启动任务体，只是不留 nil 给后来者踩。
-	}, nil, func(fn func()) { fn() }, nil)
-	e.now = clock.Now
+		RunBackground: func(fn func()) { fn() },
+		Now:           clock.Now,
+	})
 	return e, &published
 }
 
 func TestTaskProgressPublishThrottle(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	e, published := newThrottleTestEngine(clock)
+	e, published := newThrottleTestEngine(t, clock)
 
 	const key = "rebuild_file_identities"
 	progress := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_file_identities", variantSole), Total: 1000})
@@ -54,12 +59,9 @@ func TestTaskProgressPublishThrottle(t *testing.T) {
 		t.Fatalf("窗口内的纯计数推进应当被吞，实际投递 %d 条", got)
 	}
 
-	// 但内存状态必须是最新的——节流跳过的是投递，不是状态更新。
-	e.mutex.Lock()
-	current := e.tasks[key].Current
-	e.mutex.Unlock()
-	if current != 50 {
-		t.Fatalf("被节流期间内存进度停在 %d，应为 50 —— 节流不该跳过状态更新", current)
+	// 但落盘的进度必须是最新的——节流跳过的是投递，不是状态更新。
+	if current := currentTask(t, e, key).Current; current != 50 {
+		t.Fatalf("被节流期间落盘进度停在 %d，应为 50 —— 节流不该跳过状态更新", current)
 	}
 
 	// 越过窗口：放行一条，且必须带上累积后的最新值（载荷是全量快照）。
@@ -77,7 +79,7 @@ func TestTaskProgressPublishThrottle(t *testing.T) {
 // 阶段名是用户在等的语义变化，被计数器节流吞掉会让气泡长时间停在过期阶段上。
 func TestTaskProgressPublishesOnDisplayChange(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	e, published := newThrottleTestEngine(clock)
+	e, published := newThrottleTestEngine(t, clock)
 
 	const key = "rebuild_thumbnails"
 	progress := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 100})
@@ -99,8 +101,8 @@ func TestTerminalAndControlPublishesAreNeverThrottled(t *testing.T) {
 		finish func(e *taskEngine, key string)
 	}{
 		// 完成与失败经引擎的终态裁决处落定，与任务体正常返回 / 返回错误时走的是同一条路。
-		{"完成", func(e *taskEngine, key string) { settleSeededTask(e, key, nil) }},
-		{"失败", func(e *taskEngine, key string) { settleSeededTask(e, key, errors.New("boom")) }},
+		{"完成", func(e *taskEngine, key string) { settleSeededTask(t, e, key, nil) }},
+		{"失败", func(e *taskEngine, key string) { settleSeededTask(t, e, key, errors.New("boom")) }},
 		{"取消", func(e *taskEngine, key string) { _ = e.cancel(key) }},
 		{"暂停", func(e *taskEngine, key string) { _ = e.pause(key) }},
 	}
@@ -108,7 +110,7 @@ func TestTerminalAndControlPublishesAreNeverThrottled(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			clock := &fakeClock{now: time.Unix(1700000000, 0)}
-			e, published := newThrottleTestEngine(clock)
+			e, published := newThrottleTestEngine(t, clock)
 
 			const key = "scan_library_1"
 			progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100, CanCancel: true, CanPause: true})
@@ -128,21 +130,15 @@ func TestTerminalAndControlPublishesAreNeverThrottled(t *testing.T) {
 // TestPublishGateClearedOnTerminal 守卫同名任务重跑：首帧不能被上一轮的残留水位吞掉。
 func TestPublishGateClearedOnTerminal(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	e, published := newThrottleTestEngine(clock)
+	e, published := newThrottleTestEngine(t, clock)
 
 	const key = "scan_library_1"
 	progress := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100})
 	progress.Phase("scanning", "", nil)
-	settleSeededTask(e, key, nil)
+	settleSeededTask(t, e, key, nil)
 
-	e.mutex.Lock()
-	_, stillGated := e.publishGates[key]
-	e.mutex.Unlock()
-	if stillGated {
-		t.Fatal("终态后水位没被清掉 —— 同名任务重跑时首帧会被上一轮的水位吞掉")
-	}
-
-	// 时钟不动，同 key 重跑：首帧必须放行。
+	// 水位清没清掉只从行为上判：时钟不动、同一个任务键重跑，启动帧与首帧都必须放行。
+	// 直接去翻引擎内部那张水位表等于断言字段布局——而水位如今归领域引擎所有。
 	before := len(*published)
 	rerun := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 100})
 	rerun.Phase("scanning", "", nil)
@@ -158,7 +154,7 @@ func TestPublishGateClearedOnTerminal(t *testing.T) {
 // 会把所有后续帧都放行，节流形同虚设，而单靠「窗口内被吞」的用例是抓不到的。
 func TestTaskProgressThrottleIsSlidingWindow(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
-	e, published := newThrottleTestEngine(clock)
+	e, published := newThrottleTestEngine(t, clock)
 
 	const key = "rebuild_book_hashes"
 	progress := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_book_hashes", variantHashRebuildForeground), Total: 10000})

@@ -29,6 +29,10 @@ type RunSpec struct {
 	// Trigger 是**发起方**：谁叫来的。
 	Trigger Trigger
 
+	// Key 与 ScopeName 是**过渡期**字段，原样落到运行上，本包不解释它们。见 Run.Key。
+	Key       string
+	ScopeName string
+
 	// StartCode 与 StartParams 是起始文案的 i18n 码与占位参数。
 	//
 	// 名字必须与 Args 拉开距离：这一路落进运行行的文案占位参数，Args 那一路落进重启入参。
@@ -151,6 +155,8 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 	now := e.clock()
 	run := Run{
 		TaskID:    owner.ID,
+		Key:       spec.Key,
+		ScopeName: spec.ScopeName,
 		Trigger:   spec.Trigger,
 		NthRun:    highest + 1,
 		Status:    StatusRunning,
@@ -211,6 +217,9 @@ func (e *Engine) beginLocked(run Run, spec RunSpec, body Body) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	gate := taskcontrol.NewPauseGate()
 	runCtx := taskcontrol.WithPauseGate(ctx, gate)
+	if e.decorate != nil {
+		runCtx = e.decorate(runCtx, run)
+	}
 	e.runtimes[run.ID] = &taskRuntime{
 		ctx:       runCtx,
 		cancel:    cancel,
@@ -231,6 +240,20 @@ func (e *Engine) beginLocked(run Run, spec RunSpec, body Body) func() {
 			e.settle(runID, spec, result, err)
 		})
 	}
+}
+
+// Handle 交出一条**仍活着**的运行的**运行句柄**；这条运行没有运行时句柄时返回 false。
+//
+// 判据是「引擎此刻登记着它的运行时句柄」而不是「库里有这条运行」：登记只发生在 beginLocked，
+// 也就是刚过完准入闸门的那一刻。因此拿得到句柄仍然等价于「这次运行是经启动入口来的、且还在跑」，
+// 而不是「谁猜对了一个运行 id 谁就能往里写」。终态与重启之后的运行一律拿不到。
+func (e *Engine) Handle(runID int64) (*taskrun.Handle, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, err := e.controlHandleLocked(runID); err != nil {
+		return nil, false
+	}
+	return e.newHandle(runID), true
 }
 
 // newHandle 把这条运行的三条写入通道包成闭包，交出它的**运行句柄**。

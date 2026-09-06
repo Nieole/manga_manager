@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -50,6 +51,22 @@ func (s *memStore) EnsureTask(_ context.Context, id Identity) (Task, error) {
 	created := &Task{ID: s.nextTask, Identity: id}
 	s.tasks[id] = created
 	return *created, nil
+}
+
+func (s *memStore) LoadTasks(_ context.Context, taskIDs []int64) (map[int64]Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	wanted := make(map[int64]bool, len(taskIDs))
+	for _, id := range taskIDs {
+		wanted[id] = true
+	}
+	owners := make(map[int64]Task, len(taskIDs))
+	for _, owner := range s.tasks {
+		if wanted[owner.ID] {
+			owners[owner.ID] = *owner
+		}
+	}
+	return owners, nil
 }
 
 func (s *memStore) SaveTaskAttributes(_ context.Context, taskID int64, attrs TaskAttributes) error {
@@ -112,7 +129,7 @@ func (s *memStore) ListRuns(_ context.Context, filter RunFilter) ([]Run, error) 
 	defer s.mu.Unlock()
 	matched := make([]Run, 0, len(s.runs))
 	for _, run := range s.runs {
-		if matchesFilter(run, filter) {
+		if s.matchesFilterLocked(run, filter) {
 			matched = append(matched, cloneRun(run))
 		}
 	}
@@ -217,6 +234,45 @@ func (s *memStore) AppendRunSamples(_ context.Context, runID int64, samples []Sa
 	return nil
 }
 
+func (s *memStore) LoadRunSideData(_ context.Context, runIDs []int64) (map[int64]SideData, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	side := make(map[int64]SideData, len(runIDs))
+	for _, runID := range runIDs {
+		data := SideData{
+			Args:   cloneStrings(s.args[runID]),
+			Labels: cloneStrings(s.labels[runID]),
+		}
+		if len(s.metrics[runID]) > 0 {
+			data.Metrics = make(map[string]int64, len(s.metrics[runID]))
+			for key, value := range s.metrics[runID] {
+				data.Metrics[key] = value
+			}
+		}
+		if limits, ok := s.limits[runID]; ok {
+			stored := limits
+			data.Limits = &stored
+		}
+		side[runID] = data
+	}
+	return side, nil
+}
+
+// DeleteRuns 守着与生产同一条前提：仍会变化的运行永不被删。
+func (s *memStore) DeleteRuns(_ context.Context, filter RunFilter) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var removed int64
+	for id, run := range s.runs {
+		if run.Status.IsLive() || !s.matchesFilterLocked(run, filter) {
+			continue
+		}
+		delete(s.runs, id)
+		removed++
+	}
+	return removed, nil
+}
+
 // PruneRuns 只实现「每任务留最近 N 次**终态**运行」与「**活动态**和**排队中**永不被选中」。
 // 按时长裁剪与级联删除的选中集合由 SQL 回答，契约用例不在这里重复一遍近似实现。
 func (s *memStore) PruneRuns(_ context.Context, policy RetentionPolicy) (PruneResult, error) {
@@ -255,15 +311,60 @@ func mergeInto(target map[int64]map[string]string, runID int64, values map[strin
 	}
 }
 
-func matchesFilter(run Run, filter RunFilter) bool {
+// matchesFilterLocked 判一条运行是否满足谓词。调用方持锁——身份那几项要回头查任务表。
+func (s *memStore) matchesFilterLocked(run Run, filter RunFilter) bool {
 	if filter.TaskID != 0 && run.TaskID != filter.TaskID {
 		return false
 	}
-	if len(filter.Statuses) == 0 {
+	if filter.Key != "" && run.Key != filter.Key {
+		return false
+	}
+	if filter.Query != "" {
+		haystack := strings.ToLower(run.Key + " " + run.MessageCode + " " + run.Error)
+		if !strings.Contains(haystack, strings.ToLower(filter.Query)) {
+			return false
+		}
+	}
+	if len(filter.Statuses) > 0 && !containsStatus(filter.Statuses, run.Status) {
+		return false
+	}
+	return s.matchesIdentityLocked(run.TaskID, filter)
+}
+
+func (s *memStore) matchesIdentityLocked(taskID int64, filter RunFilter) bool {
+	if len(filter.Types) == 0 && filter.Scope == "" && filter.ScopeID == nil {
 		return true
 	}
-	for _, status := range filter.Statuses {
-		if run.Status == status {
+	for id, owner := range s.tasks {
+		if owner.ID != taskID {
+			continue
+		}
+		if len(filter.Types) > 0 && !containsType(filter.Types, id.Type) {
+			return false
+		}
+		if filter.Scope != "" && id.Scope != filter.Scope {
+			return false
+		}
+		if filter.ScopeID != nil && id.ScopeID != *filter.ScopeID {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func containsStatus(statuses []RunStatus, want RunStatus) bool {
+	for _, status := range statuses {
+		if status == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsType(types []Type, want Type) bool {
+	for _, taskType := range types {
+		if taskType == want {
 			return true
 		}
 	}

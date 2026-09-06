@@ -25,16 +25,41 @@ const (
 	OrderSequenceAsc RunOrder = "sequence_asc"
 	// OrderSequenceDesc 由新到旧，任务中心的列表按它取最近活动的那一页。
 	OrderSequenceDesc RunOrder = "sequence_desc"
+	// OrderLiveFirst 是任务中心第一页的定序：仍会变化的运行（**活动态**与**排队中**）在前，
+	// 其后按序号降序。
+	//
+	// 它不是展示偏好而是可用性下限：序号只在有更新时才递增，一个长时间不上报进度的大库扫描
+	// 会被后来的大量短任务超过，而前端只取第一页——只按序号排的话，用户正等着看的那一条
+	// 恰好会掉出第一页，而它是唯一一个还能变的。
+	OrderLiveFirst RunOrder = "live_first"
 )
 
 // RunFilter 是运行查询的谓词。零值表示不筛：全部任务、全部状态、不限条数。
+//
+// 身份那几项（类型、作用域、作用域 id）判的是运行所属**任务**行上的列，实现方因此要连上身份表；
+// 它们不是运行行上的列，这正是**作用域是列而不是从任务键里猜出来的**那条要求的落点。
 type RunFilter struct {
 	// TaskID 为 0 表示不按任务筛。
 	TaskID int64
 	// Statuses 为空表示不按状态筛。
 	Statuses []RunStatus
-	Order    RunOrder
-	Limit    int
+
+	// Types 为空表示不按任务类型筛；给多个即取并集。
+	Types []Type
+	// Scope 为空表示不按作用域筛。
+	Scope Scope
+	// ScopeID 为 nil 表示不按作用域 id 筛。它是指针而不是 0 值哨兵：系统级身份的作用域 id
+	// **就是** 0，用 0 表示「不筛」会让「只看系统级」这条筛选无从表达。
+	ScopeID *int64
+
+	// Key 是**过渡期**谓词：按**任务键**精确匹配。控制端点与重试今天按它寻址，见 Run.Key。
+	Key string
+	// Query 是任务中心搜索框那条谓词：对键、文案码与错误串做大小写无关的子串匹配。
+	// 它判在落盘侧而不是取回内存再滤，否则 Limit 截断的会是过滤前的那一页。
+	Query string
+
+	Order RunOrder
+	Limit int
 }
 
 // RetentionPolicy 是分层保留的三个阈值。**活动态**与**排队中**的运行永不被裁剪带走，
@@ -63,6 +88,11 @@ type PruneResult struct {
 type Store interface {
 	// EnsureTask 按身份四要素取回任务，不存在就建一条。重复发起不会建出第二条身份。
 	EnsureTask(ctx context.Context, id Identity) (Task, error)
+	// LoadTasks 按 id 批量取回任务，查不到的 id 不出现在结果里。
+	//
+	// 批量而不是逐条：任务中心一页有几十条运行，逐条取身份就是几十次查询，而它们绝大多数
+	// 指向同一批任务。
+	LoadTasks(ctx context.Context, taskIDs []int64) (map[int64]Task, error)
 	// SaveTaskAttributes 写回身份的长期属性。**退避**与禁用的规则不在本包实现，只经这里落盘。
 	SaveTaskAttributes(ctx context.Context, taskID int64, attrs TaskAttributes) error
 
@@ -103,6 +133,16 @@ type Store interface {
 	AppendRunEvents(ctx context.Context, runID int64, events []Event) error
 	// AppendRunSamples 追加**采样**点。
 	AppendRunSamples(ctx context.Context, runID int64, samples []Sample) error
+
+	// LoadRunSideData 批量读回这批运行的侧数据，一条侧数据都没有的运行不出现在结果里。
+	// 批量的理由同 LoadTasks。
+	LoadRunSideData(ctx context.Context, runIDs []int64) (map[int64]SideData, error)
+
+	// DeleteRuns 按谓词删除运行，返回删掉的条数。事件、采样与四张侧表随之级联删除。
+	//
+	// **仍会变化的运行（活动态与排队中）永不被删**，与 PruneRuns 同理：删掉一条还在跑的运行，
+	// 它后续的每一次上报都会落空，而任务体仍在动磁盘。这条不是策略，实现方不得让它可配。
+	DeleteRuns(ctx context.Context, filter RunFilter) (int64, error)
 
 	// PruneRuns 按分层保留裁剪历史，返回各层清掉的行数。
 	// **活动态与排队中的运行永不被选中**，实现方不得让它可配。

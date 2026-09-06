@@ -1,27 +1,38 @@
-// 守「任务体 panic → 该任务置为失败态」这条兜底，以及 panic 之后任务键与运行时句柄都回到干净状态。
-//
-// 破了是用户可观察的：panic 的任务体走不到任何收尾，任务永远停在 running；而活动任务既不被
-// pruneTasksLocked 淘汰、也不被 clearTasks 删除，那个**任务键**从此恒定返回 409「已在运行」，
-// 同类任务在进程重启前再也发不起来，同时每次 panic 泄漏一份 ctx 与暂停闸门。
+// 守「任务体 panic → 那次**运行**置为失败态」这条兜底经启动入口也成立，以及 panic 之后
+// **运行时句柄**与准入闸门都回到干净状态。破了的话，panic 的运行永远停在 running，
+// 既占着准入闸门又泄漏一份 ctx 与**暂停闸门**，那件事在进程重启前再也发不起来。
+// 兜底本身的裁决（进哪条终态、文案码是什么）由 internal/task 的契约用例守。
 
 package api
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"manga-manager/internal/taskrun"
 )
 
+// runPanickingTask 经启动入口起一个当场 panic 的任务体。
+func runPanickingTask(t *testing.T, e *taskEngine, identity TaskIdentity, key string) {
+	t.Helper()
+	err := e.Run(identity, TaskSpec{Key: key, Total: 100}, func(context.Context, *taskrun.Handle) (TaskResult, error) {
+		panic("boom")
+	})
+	if err != nil {
+		t.Fatalf("起 panic 任务失败: %v", err)
+	}
+}
+
 func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "rebuild_thumbnails"
-	seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole), Total: 100})
-
-	e.runTaskGoroutine(key, func() { panic("boom") })
+	runPanickingTask(t, e, systemTask("rebuild_thumbnails", variantSole), key)
 
 	task := lastPublishedTask(t, snapshots(), key)
 	if task.Status != "failed" {
-		t.Fatalf("任务体 panic 后任务停在 %q，应为 failed —— 该任务键会从此恒定返回 409", task.Status)
+		t.Fatalf("任务体 panic 后运行停在 %q，应为 failed —— 那个任务会从此恒定返回 409", task.Status)
 	}
 	if !strings.Contains(task.Error, "boom") {
 		t.Fatalf("失败原因里没有带上 panic 值，用户看不到原因：%q", task.Error)
@@ -30,19 +41,17 @@ func TestTaskBodyPanicMarksTaskFailed(t *testing.T) {
 		t.Fatal("失败态没有落 FinishedAt")
 	}
 	if task.CanCancel || task.CanPause || task.CanResume {
-		t.Fatalf("已终结的任务仍带着控制能力：cancel=%v pause=%v resume=%v", task.CanCancel, task.CanPause, task.CanResume)
+		t.Fatalf("已终结的运行仍带着控制能力：cancel=%v pause=%v resume=%v", task.CanCancel, task.CanPause, task.CanResume)
 	}
 }
 
 // TestTaskPanicSpeaksInMessageCode 守「消息词汇只有 i18n 码一种」在引擎自己下发的那句文案上
 // 也成立（理由见 taskPanicMessageCode）。破了，非英文用户在任务中心看到的是一句谁都翻译不了的话。
 func TestTaskPanicSpeaksInMessageCode(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "rebuild_thumbnails"
-	seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_thumbnails", variantSole)})
-
-	e.runTaskGoroutine(key, func() { panic("boom") })
+	runPanickingTask(t, e, systemTask("rebuild_thumbnails", variantSole), key)
 
 	task := lastPublishedTask(t, snapshots(), key)
 	if task.MessageCode != taskPanicMessageCode {
@@ -53,24 +62,21 @@ func TestTaskPanicSpeaksInMessageCode(t *testing.T) {
 	}
 }
 
-// TestTaskPanicReleasesKeyAndRuntime 断言 panic 之后任务键与运行时句柄都回到干净状态：
-// 同一任务键可以再次启动（这是上一条用例保护的行为的用户可见面），且运行时句柄不泄漏在内存里。
-func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
-	e, _ := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+// TestTaskPanicReleasesAdmissionAndRuntime 断言 panic 之后准入闸门与**运行时句柄**都回到干净状态：
+// 同一个身份可以再次发起，且运行时句柄不泄漏在内存里。
+func TestTaskPanicReleasesAdmissionAndRuntime(t *testing.T) {
+	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "rebuild_index"
-	seedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_index", variantSole)})
-	e.runTaskGoroutine(key, func() { panic("boom") })
+	runPanickingTask(t, e, systemTask("rebuild_index", variantSole), key)
 
-	e.mutex.Lock()
-	_, leaked := e.runtimes[key]
-	e.mutex.Unlock()
-	if leaked {
-		t.Fatal("panic 后运行时句柄仍留在表里 —— 每个 panic 的任务都会泄漏一份 ctx 与暂停闸门")
+	failed := lastPublishedTask(t, snapshots(), key)
+	if _, live := e.engine.Handle(failed.RunID); live {
+		t.Fatal("panic 后运行时句柄仍留在表里 —— 每个 panic 的运行都会泄漏一份 ctx 与暂停闸门")
 	}
 
-	if _, err := trySeedTask(e, taskSeed{Key: key, Identity: systemTask("rebuild_index", variantSole)}); err != nil {
-		t.Fatalf("panic 之后同一任务键再也起不来（%v）—— 用户要重启进程才能重试", err)
+	if _, err := trySeedTask(t, e, taskSeed{Key: key, Identity: systemTask("rebuild_index", variantSole)}); err != nil {
+		t.Fatalf("panic 之后同一个身份再也起不来（%v）—— 用户要重启进程才能重试", err)
 	}
 }
 
@@ -79,13 +85,18 @@ func TestTaskPanicReleasesKeyAndRuntime(t *testing.T) {
 func TestTaskBodyRunsThroughInjectedBackgroundCapability(t *testing.T) {
 	var handedOff int
 	// 这个后台能力登记了请求却不执行任务体，模拟「控制器已关闭，拒绝新任务」。
-	e, _ := newBackgroundTestEngine(func(func()) { handedOff++ }, nil)
+	e, snapshots := newBackgroundTestEngine(t, func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10})
-
 	bodyRan := false
-	e.runTaskGoroutine(key, func() { bodyRan = true })
+	err := e.Run(libraryTask("scan_library", 1, variantSole), TaskSpec{Key: key, Total: 10},
+		func(context.Context, *taskrun.Handle) (TaskResult, error) {
+			bodyRan = true
+			return TaskResult{}, nil
+		})
+	if err != nil {
+		t.Fatalf("起任务失败: %v", err)
+	}
 
 	if handedOff != 1 {
 		t.Fatalf("任务体交给注入的后台能力 %d 次，应为 1 —— 引擎绕开了停机管辖", handedOff)
@@ -93,19 +104,8 @@ func TestTaskBodyRunsThroughInjectedBackgroundCapability(t *testing.T) {
 	if bodyRan {
 		t.Fatal("后台能力拒绝执行，任务体却还是跑起来了")
 	}
-}
-
-// TestTaskGoroutineOnlyGuardsPanics 划出 runTaskGoroutine 的职责边界：它只接管 panic，
-// 正常返回的任务一个字段都不该被它动过。这条与「引擎决定终态」并不冲突——那由启动入口
-// 包在任务体外侧的一层承担，而不是由这个 goroutine 启动器代劳，否则会双重收尾。
-func TestTaskGoroutineOnlyGuardsPanics(t *testing.T) {
-	e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
-
-	const key = "scan_library_1"
-	seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10})
-	e.runTaskGoroutine(key, func() {})
-
+	// 运行行照样落地并投递：准入是同步的，只有任务体是异步的。
 	if task := lastPublishedTask(t, snapshots(), key); task.Status != "running" {
-		t.Fatalf("任务体正常返回后引擎把任务改成了 %q，应仍为 running", task.Status)
+		t.Fatalf("任务体没跑，运行却是 %q，应为 running", task.Status)
 	}
 }

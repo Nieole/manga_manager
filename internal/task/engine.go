@@ -73,6 +73,11 @@ type ControlCodes struct {
 	// Panicked 是任务体 panic 时的失败文案码。panic 兜底是引擎唯一直接对用户说话的地方，
 	// 因此它也只用码——写死一句英文没有任何地方能翻译它。
 	Panicked string
+	// Interrupted 是重启时批量转**中断**的文案码。
+	//
+	// 它必须盖掉上一轮留下的展示态：留着的话，用户看到的是任务停下前那句「已暂停」或
+	// 「正在扫描 vol01.zip」，而**中断**唯一说得出口的那句话一次都不会出现。
+	Interrupted string
 }
 
 // Config 是引擎的全部外部依赖，一次性在装配期交齐。
@@ -88,6 +93,12 @@ type Config struct {
 	RunBackground func(func())
 	// DiskWork 是交给**运行句柄**的**磁盘作业**入口，留 nil 的后果见 taskrun.New。
 	DiskWork *diskwork.Runner
+	// DecorateRunContext 在任务体的 ctx 建好之后再加一层，为 nil 时不加。
+	//
+	// 它存在的唯一理由是日志：这条 ctx 上跑出来的每一行日志要带上运行标识与**任务键**，
+	// 而那两样的属性名与注入方式属于日志层，不属于本包。调用点手写等于绝大多数调用点都不会带，
+	// 所以只能在这里一次性套上。
+	DecorateRunContext func(context.Context, Run) context.Context
 	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
 	// 节流的正确性只能靠时序断言证明——固定 sleep 的用例既慢，又杀不掉「水位只写一次」这类错误实现。
 	Now func() time.Time
@@ -109,6 +120,7 @@ type Engine struct {
 	publish       func(Snapshot)
 	runBackground func(func())
 	diskWork      *diskwork.Runner
+	decorate      func(context.Context, Run) context.Context
 	now           func() time.Time
 	slots         int
 	codes         ControlCodes
@@ -142,6 +154,7 @@ func New(cfg Config) *Engine {
 		publish:       cfg.Publish,
 		runBackground: cfg.RunBackground,
 		diskWork:      cfg.DiskWork,
+		decorate:      cfg.DecorateRunContext,
 		now:           cfg.Now,
 		slots:         slots,
 		codes:         cfg.ControlCodes,
@@ -221,13 +234,29 @@ func (e *Engine) capabilitiesLocked(run Run) Capabilities {
 	}
 }
 
+// snapshotLocked 把一条运行装成一帧：运行行、控制能力与侧数据。调用方持锁。
+//
+// 侧数据每次现取而不是在引擎里存一份镜像：它的事实来源是那四张侧表，而**累加**类指标的
+// 累加发生在落盘侧——在引擎里再累一遍，两份数只要错开一次就再也对不回去。
+// 取的代价由投递水位兜住：逐条目进度每 200ms 才出去一帧。
+func (e *Engine) snapshotLocked(run Run) Snapshot {
+	snapshot := Snapshot{Run: cloneRun(run), Capabilities: e.capabilitiesLocked(run)}
+	side, err := e.store.LoadRunSideData(context.Background(), []int64{run.ID})
+	if err != nil {
+		slog.Warn("Failed to load run side data", "run_id", run.ID, "error", err)
+		return snapshot
+	}
+	snapshot.Side = side[run.ID]
+	return snapshot
+}
+
 // publishLocked 无条件投递一帧。状态跃迁走它：启动、终态、暂停/恢复/取消是用户在等的变化，
 // 吞掉哪怕一条都会让界面停在错误的状态上。调用方持锁。
 func (e *Engine) publishLocked(run Run) {
 	if e.publish == nil {
 		return
 	}
-	e.publish(Snapshot{Run: cloneRun(run), Capabilities: e.capabilitiesLocked(run)})
+	e.publish(e.snapshotLocked(run))
 }
 
 // publishProgressLocked 是**计数推进**专用的投递入口，带节流。调用方持锁。

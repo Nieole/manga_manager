@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"manga-manager/internal/database"
+	"manga-manager/internal/task"
 	"manga-manager/internal/taskrun"
 )
 
@@ -37,13 +37,13 @@ func TestTerminalTaskDerivedFieldsFollowFinalCount(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "refresh_koreader_matching"
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("refresh_koreader_matching", variantSole), Total: tc.total, CanCancel: true})
 			current := tc.reported
 			handle.Report(taskrun.Frame{Current: &current})
-			settleSeededTask(e, key, tc.bodyErr)
+			settleSeededTask(t, e, key, tc.bodyErr)
 
 			task := lastPublishedTask(t, snapshots(), key)
 			if task.Current != tc.wantCurrent {
@@ -63,30 +63,20 @@ func TestTerminalTaskDerivedFieldsFollowFinalCount(t *testing.T) {
 	}
 }
 
-// TestInterruptedTaskHasNoEta 钉住第四种终态：**中断**由服务重启时的落盘记录转入，任务中心
-// 从库里读回它时同样不该算出 ETA——它是可重试的，一个「预计剩余时间」会让用户以为它还在跑。
+// TestInterruptedTaskHasNoEta 钉住第四种终态：**中断**由服务重启时的批量转写产生，
+// 任务中心读回它时同样不该算出 ETA——它是可重试的，一个「预计剩余时间」会让用户以为它还在跑。
 func TestInterruptedTaskHasNoEta(t *testing.T) {
-	startedAt := time.Now().Add(-10 * time.Minute)
-	finishedAt := startedAt.Add(5 * time.Minute)
-
-	task := taskStatusFromRecord(database.TaskRecord{
-		Key:        "scan_library_1",
-		Type:       "scan_library",
-		Scope:      "library",
-		Status:     "interrupted",
-		Current:    30,
-		Total:      1000,
-		Retryable:  true,
-		StartedAt:  startedAt,
-		UpdatedAt:  finishedAt,
-		FinishedAt: &finishedAt,
+	task := interruptRecoveredTask(t, func(handle *taskrun.Handle) {
+		current := 30
+		total := 1000
+		handle.Report(taskrun.Frame{Current: &current, Total: &total})
 	})
 
 	if task.Percent == nil || *task.Percent != 3 {
-		t.Fatalf("中断任务的百分比为 %v, want 3", task.Percent)
+		t.Fatalf("中断运行的百分比为 %v, want 3", task.Percent)
 	}
 	if task.EtaSeconds != nil {
-		t.Fatalf("中断任务还挂着 %d 秒的 ETA —— 它已经停了，用户要看的是能不能重试", *task.EtaSeconds)
+		t.Fatalf("中断运行还挂着 %d 秒的 ETA —— 它已经停了，用户要看的是能不能重试", *task.EtaSeconds)
 	}
 }
 
@@ -106,11 +96,11 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// 后台能力只登记不执行：任务体一旦跑起来就会收尾，活动态无从观察。
-			e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+			e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 			const key = "scan_library_1"
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 1000, CanCancel: true, CanPause: true})
-			backdateTaskStart(e, key, time.Minute)
+			backdateTaskStart(t, e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
 			if err := tc.control(e, key); err != nil {
@@ -131,37 +121,28 @@ func TestActiveTaskKeepsPercentAndEta(t *testing.T) {
 	}
 }
 
-// TestInterruptedTaskOmitsRate 钉住**中断**任务一个处理速率都不发。
+// TestInterruptedTaskOmitsRate 钉住**中断**运行一个处理速率都不发。
 //
-// 它走真库与真 SQL：MarkInterruptedTasks 在服务下次启动时才把 finished_at 盖成重启时刻，
-// 于是「跑了 10 分钟、停机 9 小时 50 分」的任务被按 10 小时算分母，速率掉到实际的六十分之一。
+// 这道闸门是票 01 的对象，本票原样留着：它当年立起来的理由（那笔批量 UPDATE 把 finished_at 与
+// updated_at 一起盖成重启时刻，分母里整段停机时长都算成在干活）在新模型里已经不成立——收尾时刻
+// 取的是那行原有的心跳。拆掉它是一次用户可见的行为变化，归票 01，本票只守住它没被顺手改掉。
 func TestInterruptedTaskOmitsRate(t *testing.T) {
-	controller, store, _, _ := newTestController(t)
-	ctx := context.Background()
+	controller, store, _, tempDir := newTestController(t)
 
-	startedAt := time.Now().Add(-10 * time.Hour)
+	const key = "scan_library_1"
+	handle := seedTask(t, controller.taskEngine, taskSeed{
+		Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10000,
+	})
 	// 任务体只跑了 10 分钟就随进程一起没了：600 条 / 10 分钟，真实速率 60/min。
-	lastFrameAt := startedAt.Add(10 * time.Minute)
-	if err := store.UpsertTask(ctx, database.TaskRecord{
-		Key:       "scan_library_1",
-		Type:      "scan_library",
-		Scope:     "library",
-		Status:    "running",
-		Current:   600,
-		Total:     10000,
-		Retryable: true,
-		StartedAt: startedAt,
-		UpdatedAt: lastFrameAt,
-		Sequence:  1,
-	}); err != nil {
-		t.Fatalf("落一条运行中的任务失败: %v", err)
-	}
+	backdateTaskStart(t, controller.taskEngine, key, 10*time.Minute)
+	current := 600
+	handle.Report(taskrun.Frame{Current: &current})
 
-	controller.recoverInterruptedTasks()
+	reloaded := restartController(t, controller, store, tempDir)
+	reloaded.taskEngine.markInterrupted(context.Background())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
 	rec := httptest.NewRecorder()
-	controller.listTasks(rec, req)
+	reloaded.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("列任务返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -172,18 +153,17 @@ func TestInterruptedTaskOmitsRate(t *testing.T) {
 		t.Fatalf("解析任务列表失败: %v", err)
 	}
 	if len(tasks) != 1 || tasks[0].Status != "interrupted" {
-		t.Fatalf("读回 %+v, want 一条 interrupted 任务", tasks)
+		t.Fatalf("读回 %+v, want 一条 interrupted 运行", tasks)
 	}
 	if tasks[0].RatePerMinute != 0 {
-		t.Fatalf("中断任务下发了 %.2f/min，真实速率是 60/min —— 分母从开始时刻一路量到重启时刻，"+
-			"整段停机时长都被算成了在干活", tasks[0].RatePerMinute)
+		t.Fatalf("中断运行下发了 %.2f/min —— 那道闸门被顺手改掉了，而拆它归票 01", tasks[0].RatePerMinute)
 	}
 	if strings.Contains(body, "rate_per_minute") {
-		t.Fatalf("载荷里还留着 rate_per_minute —— 那一刻没人知道任务停在哪一秒，这个数只能是编的: %s", body)
+		t.Fatalf("载荷里还留着 rate_per_minute: %s", body)
 	}
 	// 同一帧里其它派生字段不受牵连：「做完了多少」仍要答得出。
 	if tasks[0].Current != 600 || tasks[0].Percent == nil || *tasks[0].Percent != 6 {
-		t.Fatalf("中断任务的计数 / 百分比为 %d / %v, want 600 / 6", tasks[0].Current, tasks[0].Percent)
+		t.Fatalf("中断运行的计数 / 百分比为 %d / %v, want 600 / 6", tasks[0].Current, tasks[0].Percent)
 	}
 }
 
@@ -203,11 +183,11 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 	for _, tc := range activeCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// 后台能力只登记不执行：任务体一旦跑起来就会收尾，活动态无从观察。
-			e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+			e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 			const key = "scan_library_1"
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 1000, CanCancel: true, CanPause: true})
-			backdateTaskStart(e, key, time.Minute)
+			backdateTaskStart(t, e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
 			if err := tc.control(e, key); err != nil {
@@ -235,14 +215,14 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 	}
 	for _, tc := range terminalCases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, snapshots := newBackgroundTestEngine(runTaskBodySynchronously, nil)
+			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "refresh_koreader_matching"
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: systemTask("refresh_koreader_matching", variantSole), Total: 1000, CanCancel: true})
-			backdateTaskStart(e, key, time.Minute)
+			backdateTaskStart(t, e, key, time.Minute)
 			current := 30
 			handle.Report(taskrun.Frame{Current: &current})
-			settleSeededTask(e, key, tc.bodyErr)
+			settleSeededTask(t, e, key, tc.bodyErr)
 
 			task := lastPublishedTask(t, snapshots(), key)
 			if task.Status != tc.status {
@@ -261,32 +241,42 @@ func TestTaskRateSurvivesEveryStatusButInterrupted(t *testing.T) {
 // 时钟粒度约 15.6ms，同一个时间片内 time.Since 返回 0，enrichTaskProgress 的 elapsed <= 0
 // 守卫会把速率与 ETA 一并掐掉——用例于是在 Windows 上红、在别处绿。真实任务从启动到上报进度
 // 远不止一个时间片，这道守卫本身是对的，该确定下来的是用例的分母。
-func backdateTaskStart(e *taskEngine, key string, d time.Duration) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	task, ok := e.tasks[key]
-	if !ok {
-		return
+func backdateTaskStart(t testing.TB, e *taskEngine, key string, d time.Duration) {
+	t.Helper()
+	mutateSeededRun(t, e, key, func(run *task.Run) { run.StartedAt = run.StartedAt.Add(-d) })
+}
+
+// mutateSeededRun 绕到落盘那一侧改一条运行的时刻列。
+//
+// 引擎每次动一条运行都先从库里读回它，因此改库就等于改了引擎下一步看到的东西——这条路不引入
+// 第二份真相，只是把墙上时钟往前拨。注入时钟做不到：这几条用例要的是「开始时刻在十分钟前」，
+// 而时钟一拨，落盘时刻与断言时刻会一起动。
+func mutateSeededRun(t testing.TB, e *taskEngine, key string, mutate func(*task.Run)) {
+	t.Helper()
+	status := currentTask(t, e, key)
+	run, err := e.runStore.LoadRun(context.Background(), status.RunID)
+	if err != nil {
+		t.Fatalf("读回运行 %d 失败: %v", status.RunID, err)
 	}
-	task.StartedAt = task.StartedAt.Add(-d)
-	e.tasks[key] = task
+	mutate(&run)
+	if err := e.runStore.SaveRun(context.Background(), run); err != nil {
+		t.Fatalf("写回运行 %d 失败: %v", run.ID, err)
+	}
 }
 
 // backdateTaskPause 模拟「这次暂停已经持续了 d」：把暂停开始时刻往前挪，同时把任务开始时刻挪
 // 同样的距离——暂停的这段时间里墙上时钟一样在走，两处只挪一处就等于凭空多出或少掉一段时长。
 func backdateTaskPause(t *testing.T, e *taskEngine, key string, d time.Duration) {
 	t.Helper()
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	task, ok := e.tasks[key]
-	if !ok || task.PausedAt == nil {
-		t.Fatalf("任务 %q 不在暂停中，挪不动暂停开始时刻", key)
-		return
-	}
-	pausedAt := task.PausedAt.Add(-d)
-	task.PausedAt = &pausedAt
-	task.StartedAt = task.StartedAt.Add(-d)
-	e.tasks[key] = task
+	mutateSeededRun(t, e, key, func(run *task.Run) {
+		if run.PausedAt == nil {
+			t.Fatalf("任务 %q 不在暂停中，挪不动暂停开始时刻", key)
+			return
+		}
+		pausedAt := run.PausedAt.Add(-d)
+		run.PausedAt = &pausedAt
+		run.StartedAt = run.StartedAt.Add(-d)
+	})
 }
 
 // TestPausedTimeStaysOutOfTheRateDenominator 钉住**暂停**时长不进速率与 ETA 的分母。
@@ -329,7 +319,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 				if err := e.resume(key); err != nil {
 					t.Fatalf("恢复失败: %v", err)
 				}
-				settleSeededTask(e, key, context.Canceled)
+				settleSeededTask(t, e, key, context.Canceled)
 			},
 		},
 		{
@@ -339,7 +329,7 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 				if err := e.cancel(key); err != nil {
 					t.Fatalf("取消失败: %v", err)
 				}
-				settleSeededTask(e, key, context.Canceled)
+				settleSeededTask(t, e, key, context.Canceled)
 			},
 		},
 	}
@@ -347,11 +337,11 @@ func TestPausedTimeStaysOutOfTheRateDenominator(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// 后台能力只登记不执行：任务体何时收尾由用例自己决定。
-			e, snapshots := newBackgroundTestEngine(func(func()) {}, nil)
+			e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 			const key = "scan_library_1"
 			handle := seedTask(t, e, taskSeed{Key: key, Identity: libraryTask("scan_library", 1, variantSole), Total: 10000, CanCancel: true, CanPause: true})
-			backdateTaskStart(e, key, workedFor)
+			backdateTaskStart(t, e, key, workedFor)
 			current := 600
 			handle.Report(taskrun.Frame{Current: &current})
 			if err := e.pause(key); err != nil {

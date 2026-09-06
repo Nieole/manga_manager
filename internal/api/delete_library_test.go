@@ -69,9 +69,7 @@ func TestDeleteLibraryCancelsScopedTask(t *testing.T) {
 		t.Fatalf("deleteLibrary = %d, body=%s", rec.Code, rec.Body.String())
 	}
 
-	controller.taskEngine.mutex.Lock()
-	task := controller.taskEngine.tasks[taskKey]
-	controller.taskEngine.mutex.Unlock()
+	task := currentTask(t, controller.taskEngine, taskKey)
 	if task.Status != "cancelling" {
 		t.Fatalf("该库的扫描任务状态 = %q, want cancelling（删库应先请求取消，缩短往已删库写入的窗口）", task.Status)
 	}
