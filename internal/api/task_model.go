@@ -115,6 +115,7 @@ func (e *taskEngine) runStatusFrom(snapshot task.Snapshot, identity TaskIdentity
 		CanResume:           snapshot.Capabilities.CanResume,
 		Retryable:           e.isRetryableTask(identity.taskType, identity.variant),
 		PausedAt:            run.PausedAt,
+		PauseReason:         string(run.PauseReason),
 		ControlPausedMillis: run.ControlPausedMillis,
 		Phase:               run.Phase,
 		CurrentItem:         run.CurrentItem,

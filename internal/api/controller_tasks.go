@@ -1,6 +1,6 @@
-// 本文件是任务子域的 HTTP 层与装配层：任务列表/清理/重试/暂停/恢复/取消六个端点、
-// 任务重试注册表（taskType -> 重启函数），以及任务面板上报的 IO 实况（帧指标与任务参数两条通道）
-// 与有效并发数推导。
+// 本文件是任务子域的 HTTP 层与装配层：八个端点（六个按**任务键**寻址，全部暂停 / 全部恢复作用在
+// 全体运行上）、任务重试注册表（taskType -> 重启函数），以及任务面板上报的 IO 实况
+// （帧指标与任务参数两条通道）与有效并发数推导。
 //
 // 引擎的适配层在 task_engine.go（状态机与落盘在 internal/task 与 internal/taskstore），
 // 纯转换函数在 task_model.go；本文件只经 c.taskEngine 的方法操作运行，不碰它的字段。
@@ -358,4 +358,30 @@ func (c *Controller) resumeTask(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) cancelTask(w http.ResponseWriter, r *http.Request) {
 	c.taskControlHandler((*taskEngine).cancel, "Task cancellation requested")(w, r)
+}
+
+// pauseAllTasks 与 resumeAllTasks 是任务中心顶部那对按钮：**全部暂停就是逐个按下暂停闸门**，
+// 不是第二套机制。它们按对象作用在**运行**上，因此不按**任务键**寻址，也没有 404 这条分支。
+//
+// 响应里回的是真正动到的条数：不可暂停的运行被跳过（界面上另有说明），
+// 而「一条都没动到」与「按下了三条」对用户不是同一件事。
+func (c *Controller) pauseAllTasks(w http.ResponseWriter, r *http.Request) {
+	c.bulkControlHandler((*taskEngine).pauseAll, "paused", "Failed to pause runs")(w, r)
+}
+
+func (c *Controller) resumeAllTasks(w http.ResponseWriter, r *http.Request) {
+	c.bulkControlHandler((*taskEngine).resumeAll, "resumed", "Failed to resume runs")(w, r)
+}
+
+// bulkControlHandler 生成全部暂停 / 全部恢复两个端点：它们只在「调哪个引擎方法」、
+// 计数字段名与失败文案上不同。
+func (c *Controller) bulkControlHandler(control func(*taskEngine, context.Context) (int, error), countField, failure string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		affected, err := control(c.taskEngine, r.Context())
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, failure)
+			return
+		}
+		jsonResponse(w, http.StatusAccepted, map[string]int{countField: affected})
+	}
 }

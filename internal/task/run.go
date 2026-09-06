@@ -64,6 +64,22 @@ const (
 	TriggerResumed   Trigger = "resumed"
 )
 
+// PauseReason 是一次**已暂停**的原因：用户按的是这条运行自己的暂停键，还是「全部暂停」。
+// 它是一个**封闭枚举**，取值就是落盘那一列的取值。
+//
+// 它回答的是「谁把它按下的」，因此只在暂停期间有话说：恢复、取消与收尾各自那条出口都要把它
+// 连同 PausedAt 一起清掉，否则一条早已跑完的运行会一路带着「因全部暂停而停」显示到终态。
+type PauseReason string
+
+const (
+	// PauseReasonNone 是「此刻没有暂停」。
+	PauseReasonNone PauseReason = ""
+	// PauseReasonManual 是用户按下这条运行自己的暂停键。
+	PauseReasonManual PauseReason = "manual"
+	// PauseReasonPauseAll 是用户按下「全部暂停」，这条运行是被逐个按下的其中之一。
+	PauseReasonPauseAll PauseReason = "pause_all"
+)
+
 // Run 是一次**运行**：库里的一行，一次执行一行，重试是同一个任务的新一行而不是覆盖上一行。
 //
 // 展示态（阶段、当前条目、计数）必须是这一行的真列，不得编码进一个通用的键值堆；累计指标、
@@ -97,6 +113,8 @@ type Run struct {
 
 	// PausedAt 是当前这一次**已暂停**的起点，离开暂停时折进 ControlPausedMillis 后清掉。
 	PausedAt *time.Time
+	// PauseReason 是这一次暂停原因，只在**已暂停**期间非空，随 PausedAt 一起清掉。
+	PauseReason PauseReason
 	// ControlPausedMillis 是这次运行至今在已暂停里待过的累计毫秒数。它只有一个用途：
 	// 从速率与 ETA 的分母里扣掉——暂停期间一条都没处理，算成在干活会让两个数一路失真到终态。
 	ControlPausedMillis int64
@@ -225,7 +243,7 @@ func applyMessage(run *Run, message Result) {
 	run.MessageParams = cloneStrings(message.Params)
 }
 
-// absorbPause 把「这一次暂停」折进累计并清掉起点，供离开**已暂停**的每条出口调用：
+// absorbPause 把「这一次暂停」折进累计，并清掉起点与原因，供离开**已暂停**的每条出口调用：
 // 恢复、取消，以及暂停中直接收尾。
 //
 // 累计值只有一个消费者——速率与 ETA 的分母。少调一处不会有编译错误，后果是那条出口之后的
@@ -238,6 +256,7 @@ func absorbPause(run *Run, now time.Time) {
 		run.ControlPausedMillis += paused.Milliseconds()
 	}
 	run.PausedAt = nil
+	run.PauseReason = PauseReasonNone
 }
 
 // cloneRun 深拷贝一条运行：引用类型字段一个都不能漏，否则调用方读到的是仍在被写入的活 map。

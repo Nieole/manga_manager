@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,15 +11,18 @@ import (
 )
 
 type StorageIODiagnosticsResponse struct {
-	CacheDir                   string                     `json:"cache_dir"`
-	CacheVolume                string                     `json:"cache_volume"`
-	Libraries                  []StorageIOLibraryResponse `json:"libraries"`
-	SameDiskCaches             int                        `json:"same_disk_caches"`
-	Scheduler                  []StorageIOSchedulerState  `json:"scheduler"`
-	Paused                     bool                       `json:"paused"`
-	RecentScanArchiveOpenRate  float64                    `json:"recent_scan_archive_open_rate"`
-	RecentCoverArchiveOpenRate float64                    `json:"recent_cover_archive_open_rate"`
-	RecentThumbnailWriteMillis int64                      `json:"recent_thumbnail_write_ms"`
+	CacheDir       string                     `json:"cache_dir"`
+	CacheVolume    string                     `json:"cache_volume"`
+	Libraries      []StorageIOLibraryResponse `json:"libraries"`
+	SameDiskCaches int                        `json:"same_disk_caches"`
+	Scheduler      []StorageIOSchedulerState  `json:"scheduler"`
+	// Paused 回答的是**有没有运行被暂停**——用户面前的暂停只有这一个概念（全部暂停把每条运行
+	// 逐个按下**暂停闸门**）。它与 StorageIOSchedulerState.BackgroundPaused 是两件事：
+	// 那个是 `storageio` 的内部开关，按卷报，没有任何用户端点驱动它。
+	Paused                     bool    `json:"paused"`
+	RecentScanArchiveOpenRate  float64 `json:"recent_scan_archive_open_rate"`
+	RecentCoverArchiveOpenRate float64 `json:"recent_cover_archive_open_rate"`
+	RecentThumbnailWriteMillis int64   `json:"recent_thumbnail_write_ms"`
 }
 
 type StorageIOSchedulerState struct {
@@ -51,8 +55,14 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 		CacheVolume: config.VolumeKey(cfg.Cache.Dir),
 		Libraries:   []StorageIOLibraryResponse{},
 		Scheduler:   []StorageIOSchedulerState{},
-		Paused:      storageio.Default.BackgroundPaused(),
 	}
+	// 读不到暂停态不挡整份诊断：这一个布尔值决定的只是任务中心顶部那个按钮的取向，
+	// 而它旁边那几十项容量与限流的数与它无关。
+	paused, err := c.taskEngine.anyRunPaused(r.Context())
+	if err != nil {
+		slog.Warn("Failed to count paused runs", "error", err)
+	}
+	response.Paused = paused
 	response.RecentScanArchiveOpenRate, response.RecentCoverArchiveOpenRate, response.RecentThumbnailWriteMillis = c.recentStorageIOTaskRates()
 
 	libraries, err := c.store.ListLibraries(r.Context())
@@ -143,16 +153,6 @@ func taskMetricValue(task *RunStatus, key string) int64 {
 
 func parseTaskInt64(raw string) (int64, error) {
 	return strconv.ParseInt(raw, 10, 64)
-}
-
-func (c *Controller) pauseStorageIO(w http.ResponseWriter, r *http.Request) {
-	storageio.Default.PauseBackground()
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Background storage IO paused"})
-}
-
-func (c *Controller) resumeStorageIO(w http.ResponseWriter, r *http.Request) {
-	storageio.Default.ResumeBackground()
-	jsonResponse(w, http.StatusAccepted, map[string]string{"message": "Background storage IO resumed"})
 }
 
 func storageIODiagnosticsConcurrency(policy config.StorageIOPolicy) int {

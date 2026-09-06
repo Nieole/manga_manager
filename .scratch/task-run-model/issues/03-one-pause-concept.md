@@ -6,7 +6,7 @@
 
 **Blocked by:** 无 —— 可立即开始
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 两套暂停今天的样子
 
@@ -30,11 +30,11 @@
 
 ## 验收
 
-- [ ] 全部暂停后，每条可暂停的活动任务状态变为已暂停，界面不再出现「运行中但不动」
-- [ ] 不可暂停的任务不受影响，界面上有明确说明
-- [ ] `storageio` 的后台暂停不再由用户端点驱动；「阅读时降载」行为逐字不变
-- [ ] 诊断接口的暂停字段语义改为「有活动任务被暂停」，前端顶部改为全部暂停 / 全部恢复
-- [ ] 取消时放行闸门的既有顺序未被改动，既有用例继续绿
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `cd web && npm run test && npm run lint && npm run build` 全绿
-- [ ] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过
+- [x] 全部暂停后，每条可暂停的活动任务状态变为已暂停，界面不再出现「运行中但不动」
+- [x] 不可暂停的任务不受影响，界面上有明确说明
+- [x] `storageio` 的后台暂停不再由用户端点驱动；「阅读时降载」行为逐字不变
+- [x] 诊断接口的暂停字段语义改为「有活动任务被暂停」，前端顶部改为全部暂停 / 全部恢复
+- [x] 取消时放行闸门的既有顺序未被改动，既有用例继续绿
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `cd web && npm run test && npm run lint && npm run build` 全绿
+- [x] `go vet ./...`、`golangci-lint run` 无 issue、`gofmt -l` 干净、`check-doc-style.sh` 通过

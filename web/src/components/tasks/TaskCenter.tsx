@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Activity, ChevronDown, ExternalLink, FileText, Pause, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
+import { Activity, ChevronDown, ExternalLink, FileText, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
 import { isActiveRunStatus } from '../../utils/runStatus';
@@ -22,13 +22,19 @@ export interface TaskCenterFilters {
 interface TaskCenterProps {
   tasks: RunStatus[];
   loading: boolean;
-  backgroundPaused?: boolean;
+  // anyRunPaused 是全局答案（有没有运行被暂停），由后端回答，「全部恢复」按它决定可不可按。
+  // 不从 tasks 里数：那一页带着用户的筛选与条数上限，答不了全局的问题。
+  anyRunPaused?: boolean;
+  bulkPauseBusy?: boolean;
   taskActionKey: string | null;
   filters?: TaskCenterFilters;
   typeOptions?: string[];
   currentFilterCanClear?: boolean;
   onRefresh: () => void;
   onTaskAction: (task: RunStatus, action: TaskAction) => void;
+  // 全部暂停 / 全部恢复。两者都给了才画那个按钮。
+  onPauseAll?: () => void;
+  onResumeAll?: () => void;
   onFilterChange?: (patch: Partial<TaskCenterFilters>) => void;
   onClearTasks?: (status?: 'completed' | 'failed', useCurrentFilters?: boolean) => void;
   onOpenTaskTarget?: (task: RunStatus) => void;
@@ -71,7 +77,6 @@ const taskIOParamKeys = [
   'paused_ms',
   'thumbnail_write_ms',
   'duration_ms',
-  'pause_reason',
 ];
 
 function formatRate(value: number) {
@@ -152,7 +157,7 @@ function hasInlineTelemetry(task: RunStatus) {
   );
 }
 
-function TaskSummaryStrip({ tasks, backgroundPaused }: { tasks: RunStatus[]; backgroundPaused?: boolean }) {
+function TaskSummaryStrip({ tasks }: { tasks: RunStatus[] }) {
   const { t } = useI18n();
   const items = [
     [t('settings.maintenance.activeTasks'), tasks.filter((task) => isActiveRunStatus(task.status)).length],
@@ -163,21 +168,13 @@ function TaskSummaryStrip({ tasks, backgroundPaused }: { tasks: RunStatus[]; bac
   ] as const;
 
   return (
-    <div className={`grid gap-3 ${backgroundPaused === undefined ? 'md:grid-cols-5' : 'md:grid-cols-3 xl:grid-cols-6'}`}>
+    <div className="grid gap-3 md:grid-cols-5">
       {items.map(([label, value]) => (
         <div key={label} className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
           <p className="text-xs uppercase tracking-wide text-white/40">{label}</p>
           <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
         </div>
       ))}
-      {backgroundPaused !== undefined && (
-        <div className="rounded-xl border border-white/10 bg-white/3 px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-white/40">{t('settings.maintenance.backgroundIO')}</p>
-          <p className={`mt-2 text-sm font-semibold ${backgroundPaused ? 'text-amber-500' : 'text-emerald-500'}`}>
-            {backgroundPaused ? t('settings.maintenance.backgroundPaused') : t('settings.maintenance.backgroundRunning')}
-          </p>
-        </div>
-      )}
     </div>
   );
 }
@@ -321,6 +318,13 @@ function TaskActionButtons({ task, taskActionKey, onTaskAction }: { task: RunSta
           {t('settings.maintenance.pauseTask')}
         </button>
       )}
+      {/* 不可暂停的运行要**明说**，否则用户按下全部暂停后看到它还在跑，会以为暂停失灵了。 */}
+      {!task.can_pause && task.status === 'running' && (
+        <span title={t('settings.maintenance.taskNotPausableHint')} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/45">
+          <PauseCircle className="h-3.5 w-3.5" />
+          {t('settings.maintenance.taskNotPausable')}
+        </span>
+      )}
       {task.can_resume && task.status === 'paused' && (
         <button type="button" onClick={() => onTaskAction(task, 'resume')} disabled={taskActionKey === `${task.key}:resume`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-500 hover:bg-emerald-500/10 disabled:opacity-50">
           <Play className="h-3.5 w-3.5" />
@@ -399,10 +403,16 @@ function TaskDetailDrawer({ task }: { task: RunStatus }) {
         <div className="flex flex-wrap gap-1.5">
           {ioParams.map(([key, value]) => (
             <span key={`${task.key}-io-${key}`} className="rounded-md border border-komgaPrimary/20 bg-komgaPrimary/10 px-2 py-1 text-[11px] text-komgaPrimary">
-              {t(`logs.task.io.${key}`)}: {key === 'pause_reason' ? t(`logs.task.pauseReason.${value}`) : value}
+              {t(`logs.task.io.${key}`)}: {value}
             </span>
           ))}
         </div>
+      )}
+      {/* 暂停的来由只在暂停期间有话说：它答的是「谁把它按下的」，单条暂停还是全部暂停。 */}
+      {task.pause_reason && (
+        <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+          {t('logs.task.pauseReason')}: {t(`logs.task.pauseReason.${task.pause_reason}`)}
+        </p>
       )}
       {(task.started_at || task.finished_at) && (
         <div className="grid gap-2 text-xs sm:grid-cols-2">
@@ -576,13 +586,16 @@ function TaskList({
 export function TaskCenter({
   tasks,
   loading,
-  backgroundPaused,
+  anyRunPaused,
+  bulkPauseBusy,
   taskActionKey,
   filters,
   typeOptions = [],
   currentFilterCanClear,
   onRefresh,
   onTaskAction,
+  onPauseAll,
+  onResumeAll,
   onFilterChange,
   onClearTasks,
   onOpenTaskTarget,
@@ -590,6 +603,7 @@ export function TaskCenter({
 }: TaskCenterProps) {
   const { t } = useI18n();
   const visibleTasks = useMemo(() => tasks.slice(0, 50), [tasks]);
+  const bulkPause = onPauseAll && onResumeAll;
 
   return (
     <section className="rounded-xl border border-white/10 bg-gray-900/70 p-5 space-y-4">
@@ -598,13 +612,43 @@ export function TaskCenter({
           <Activity className="h-5 w-5" />
           <h3 className="text-lg font-semibold text-white">{t('settings.maintenance.taskCenterTitle')}</h3>
         </div>
-        <button type="button" onClick={onRefresh} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          {t('settings.maintenance.refreshTasks')}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 两个按钮并排，不是一个按状态翻面的开关：一条已暂停、三条还在跑时，翻面的那个只剩
+              「全部恢复」，想让盘安静下来的用户得先恢复再暂停——那与他按下去的意图正好相反。 */}
+          {bulkPause && (
+            <>
+              <button
+                type="button"
+                onClick={onPauseAll}
+                disabled={bulkPauseBusy}
+                className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-500 hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Pause className="h-4 w-4" />
+                {t('settings.maintenance.pauseAllRuns')}
+              </button>
+              {/* 一条都没暂停时「全部恢复」按下去什么也不会发生，因此按全局那个答案禁用它。 */}
+              <button
+                type="button"
+                onClick={onResumeAll}
+                disabled={bulkPauseBusy || !anyRunPaused}
+                className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-500 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Play className="h-4 w-4" />
+                {t('settings.maintenance.resumeAllRuns')}
+              </button>
+            </>
+          )}
+          <button type="button" onClick={onRefresh} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            {t('settings.maintenance.refreshTasks')}
+          </button>
+        </div>
       </div>
 
-      <TaskSummaryStrip tasks={tasks} backgroundPaused={backgroundPaused} />
+      {/* 这句话写在按钮旁边而不是只挂在 title 上：理由同 TaskActionButtons 里那条说明。 */}
+      {bulkPause && <p className="text-xs text-white/40">{t('settings.maintenance.pauseAllHint')}</p>}
+
+      <TaskSummaryStrip tasks={tasks} />
 
       {filters && onFilterChange && (
         <TaskFilters

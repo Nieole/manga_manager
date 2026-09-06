@@ -26,7 +26,7 @@ const sqliteConstraintUnique = 2067
 // runValues 与 scanRun 必须按同样的次序排列，两者与本表一起改。
 var runWriteColumns = []string{
 	"task_id", "task_key", "scope_name", "trigger", "nth_run", "status", "phase", "current_item", "current", "total",
-	"paused_at", "control_paused_ms", "coalesced_count", "message_code", "message_params",
+	"paused_at", "pause_reason", "control_paused_ms", "coalesced_count", "message_code", "message_params",
 	"error", "started_at", "updated_at", "finished_at", "sequence",
 }
 
@@ -41,7 +41,7 @@ var (
 func runValues(run task.Run, messageParams string) []any {
 	return []any{
 		run.TaskID, run.Key, run.ScopeName, string(run.Trigger), run.NthRun, string(run.Status), run.Phase, run.CurrentItem,
-		run.Current, run.Total, millisFromTimePtr(run.PausedAt), run.ControlPausedMillis,
+		run.Current, run.Total, millisFromTimePtr(run.PausedAt), string(run.PauseReason), run.ControlPausedMillis,
 		run.CoalescedCount, run.MessageCode, messageParams, run.Error, millisFromTime(run.StartedAt),
 		millisFromTime(run.UpdatedAt), millisFromTimePtr(run.FinishedAt), run.Sequence,
 	}
@@ -168,23 +168,25 @@ type rowScanner interface {
 
 func scanRun(row rowScanner) (task.Run, error) {
 	var (
-		run        task.Run
-		trigger    string
-		status     string
-		params     string
-		pausedAt   sql.NullInt64
-		startedAt  sql.NullInt64
-		updatedAt  sql.NullInt64
-		finishedAt sql.NullInt64
+		run         task.Run
+		trigger     string
+		status      string
+		pauseReason string
+		params      string
+		pausedAt    sql.NullInt64
+		startedAt   sql.NullInt64
+		updatedAt   sql.NullInt64
+		finishedAt  sql.NullInt64
 	)
 	err := row.Scan(&run.ID, &run.TaskID, &run.Key, &run.ScopeName, &trigger, &run.NthRun, &status, &run.Phase, &run.CurrentItem,
-		&run.Current, &run.Total, &pausedAt, &run.ControlPausedMillis, &run.CoalescedCount,
+		&run.Current, &run.Total, &pausedAt, &pauseReason, &run.ControlPausedMillis, &run.CoalescedCount,
 		&run.MessageCode, &params, &run.Error, &startedAt, &updatedAt, &finishedAt, &run.Sequence)
 	if err != nil {
 		return task.Run{}, err
 	}
 	run.Trigger = task.Trigger(trigger)
 	run.Status = task.RunStatus(status)
+	run.PauseReason = task.PauseReason(pauseReason)
 	run.MessageParams, err = decodeMessageParams(params)
 	if err != nil {
 		return task.Run{}, err

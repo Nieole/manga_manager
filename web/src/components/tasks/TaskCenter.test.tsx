@@ -1,19 +1,17 @@
 /**
  * @vitest-environment jsdom
  *
- * 守卫进度条那行只显示后端真算出来的速率：**中断**任务的速率后端不发（它停在哪一秒没有
- * 任何地方记下过），界面就整个不显示这一项，而不是回落成 `0/min`——那看着像「一分钟一条
- * 都没跑」，是另一种谎。活动态与其余终态照常显示。
- *
- * 同一条底线也管着总数未知的那种任务：不定进度条只属于还在动的任务，停了还在跑动画同样是谎。
+ * 守界面不说谎：速率与不定进度条只在后端真算得出时出现（`0/min` 是另一种谎），
+ * 而顶部那对全部暂停 / 全部恢复必须明说不可暂停的运行不受它影响——否则用户按下之后
+ * 看到还有运行在跑，会以为暂停失灵了。
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { TaskCenter, type RunStatus } from './TaskCenter';
 
-// 词条只要能渲染出来即可：本文件断言的是速率那一格在不在，与译文无关。
+// 词条只要能渲染出来即可：本文件断言的是某一格在不在、按钮调了谁，与译文无关。
 vi.mock('../../i18n/LocaleProvider', () => ({
   useI18n: () => ({
     t: (key: string) => key,
@@ -88,5 +86,88 @@ describe('总数未知的任务的不定进度条', () => {
       renderTasks([makeTask({ status, total: 0, percent: undefined, rate_per_minute: undefined })]);
       expect(indeterminate(), `${status} 的任务还在跑不定进度条动画`).toHaveLength(0);
     }
+  });
+});
+
+describe('顶部的全部暂停 / 全部恢复', () => {
+  function renderCenter(props: Partial<Parameters<typeof TaskCenter>[0]>) {
+    return render(
+      <TaskCenter
+        tasks={[]}
+        loading={false}
+        taskActionKey={null}
+        onRefresh={vi.fn()}
+        onTaskAction={vi.fn()}
+        {...props}
+      />,
+    );
+  }
+
+  it('没给这对回调时不画那个按钮，也不写那句说明', () => {
+    renderCenter({});
+    expect(screen.queryByText('settings.maintenance.pauseAllRuns')).toBeNull();
+    expect(screen.queryByText('settings.maintenance.pauseAllHint')).toBeNull();
+  });
+
+  it('两个按钮并排，各调各的；不可暂停的运行不受影响这句话写在旁边', () => {
+    const onPauseAll = vi.fn();
+    const onResumeAll = vi.fn();
+    renderCenter({ anyRunPaused: true, onPauseAll, onResumeAll });
+
+    fireEvent.click(screen.getByText('settings.maintenance.pauseAllRuns'));
+    expect(onPauseAll).toHaveBeenCalledTimes(1);
+    expect(onResumeAll).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('settings.maintenance.resumeAllRuns'));
+    expect(onResumeAll).toHaveBeenCalledTimes(1);
+    // 这句话必须写出来，而不是只藏在 title 里。
+    expect(screen.getByText('settings.maintenance.pauseAllHint')).toBeTruthy();
+  });
+
+  // 一条已暂停、三条还在跑时，翻面的开关只剩「全部恢复」，想让盘安静下来的用户得先恢复再暂停。
+  it('已经有运行被暂停时，全部暂停仍然按得下去', () => {
+    const onPauseAll = vi.fn();
+    renderCenter({ anyRunPaused: true, onPauseAll, onResumeAll: vi.fn() });
+
+    const pauseAll = screen.getByText('settings.maintenance.pauseAllRuns').closest('button');
+    expect(pauseAll?.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByText('settings.maintenance.pauseAllRuns'));
+    expect(onPauseAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('一条都没暂停时全部恢复按不下去——按下去什么也不会发生', () => {
+    const onResumeAll = vi.fn();
+    renderCenter({ anyRunPaused: false, onPauseAll: vi.fn(), onResumeAll });
+
+    fireEvent.click(screen.getByText('settings.maintenance.resumeAllRuns'));
+    expect(onResumeAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('不可暂停的运行', () => {
+  it('运行中却不可暂停的那条明说它不可暂停，而不是画一个暂停键', () => {
+    renderTasks([makeTask({ can_pause: false })]);
+    expect(screen.getByText('settings.maintenance.taskNotPausable')).toBeTruthy();
+    expect(screen.queryByText('settings.maintenance.pauseTask')).toBeNull();
+  });
+
+  it('可暂停的那条画暂停键，不写那句说明', () => {
+    renderTasks([makeTask({ can_pause: true })]);
+    expect(screen.getByText('settings.maintenance.pauseTask')).toBeTruthy();
+    expect(screen.queryByText('settings.maintenance.taskNotPausable')).toBeNull();
+  });
+});
+
+describe('暂停的来由', () => {
+  it('展开后写着这条运行是被谁按下的', () => {
+    renderTasks([makeTask({ status: 'paused', can_pause: false, can_resume: true, pause_reason: 'pause_all' })]);
+    fireEvent.click(screen.getByText('common.viewDetails'));
+    expect(screen.getByText(/logs\.task\.pauseReason\.pause_all/)).toBeTruthy();
+  });
+
+  it('没暂停的运行不写这一行', () => {
+    renderTasks([makeTask({ status: 'running' })]);
+    fireEvent.click(screen.getByText('common.viewDetails'));
+    expect(screen.queryByText(/logs\.task\.pauseReason/)).toBeNull();
   });
 });

@@ -77,6 +77,7 @@ var createStatements = []string{
 		current INTEGER NOT NULL DEFAULT 0,
 		total INTEGER NOT NULL DEFAULT 0,
 		paused_at INTEGER,
+		pause_reason TEXT NOT NULL DEFAULT '',
 		control_paused_ms INTEGER NOT NULL DEFAULT 0,
 		coalesced_count INTEGER NOT NULL DEFAULT 0,
 		message_code TEXT NOT NULL DEFAULT '',
@@ -161,6 +162,7 @@ var admissionStatements = []string{
 var addedColumns = []struct{ table, column, definition string }{
 	{tableRuns, "task_key", `TEXT NOT NULL DEFAULT ''`},
 	{tableRuns, "scope_name", `TEXT NOT NULL DEFAULT ''`},
+	{tableRuns, "pause_reason", `TEXT NOT NULL DEFAULT ''`},
 }
 
 // indexStatements 是取数用的索引，谓词不参与准入，因此建过就不必再动。

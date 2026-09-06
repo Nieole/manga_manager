@@ -1,5 +1,6 @@
-// 任务子域在 api 这一侧的**适配层**：把按**任务键**寻址的六个控制端点、对外那份 RunStatus 形状与
-// **重启函数**注册表，接到 `internal/task` 的领域引擎与 `internal/taskstore` 的落盘上。
+// 任务子域在 api 这一侧的**适配层**：把控制端点（六个按**任务键**寻址，全部暂停 / 全部恢复作用在
+// 全体运行上）、对外那份 RunStatus 形状与**重启函数**注册表，接到 `internal/task` 的领域引擎与
+// `internal/taskstore` 的落盘上。
 // **事实来源只有库，这一层不留任务表**（去留的论证见 taskEngine 的符号 doc）。
 // 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
 
@@ -344,6 +345,27 @@ func (e *taskEngine) pause(key string) error {
 
 func (e *taskEngine) resume(key string) error {
 	return e.control(key, e.engine.Resume)
+}
+
+// pauseAll 与 resumeAll 是「全部暂停 / 全部恢复」：领域引擎把每条运行逐个按下或放行，
+// 返回真正动到的条数。本层不预筛「哪些能暂停」——那份判据在领域，抄第二遍就会与按钮对不上。
+func (e *taskEngine) pauseAll(ctx context.Context) (int, error) {
+	return e.engine.PauseAll(ctx)
+}
+
+func (e *taskEngine) resumeAll(ctx context.Context) (int, error) {
+	return e.engine.ResumeAll(ctx)
+}
+
+// anyRunPaused 回答「此刻有没有运行被暂停」，供诊断接口的暂停字段与前端顶部那个按钮取向。
+//
+// 问的是库而不是列表接口取回的那一页：那一页带着用户的筛选与条数上限，回答不了全局的问题。
+func (e *taskEngine) anyRunPaused(ctx context.Context) (bool, error) {
+	count, err := e.runStore.CountRuns(ctx, task.RunFilter{Statuses: []task.RunStatus{task.StatusPaused}})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (e *taskEngine) cancel(key string) error {

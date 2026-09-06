@@ -71,7 +71,7 @@ type Controller struct {
 	// 其余等待者复用同一结果，避免重复 CPU 转码与重复归档读取。
 	pageTranscodeGroup singleflight.Group
 
-	// taskEngine 是任务子域的适配层：把启动入口、六个控制端点与**重启函数**注册表接到
+	// taskEngine 是任务子域的适配层：把启动入口、控制端点与**重启函数**注册表接到
 	// internal/task 的领域引擎与 internal/taskstore 的落盘上（它自己不留任务表，理由见它的符号 doc）。
 	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 走（端点定义见 controller_tasks.go）。
 	taskEngine *taskEngine
@@ -133,7 +133,10 @@ type RunStatus struct {
 	CanResume     bool              `json:"can_resume"`
 	Retryable     bool              `json:"retryable"`
 	PausedAt      *time.Time        `json:"paused_at,omitempty"`
-	PauseReason   string            `json:"pause_reason,omitempty"`
+	// PauseReason 是这一次暂停原因（见 task.PauseReason）：用户按的是这条运行自己的暂停键，
+	// 还是「全部暂停」。只在**已暂停**期间非空——它回答的是「谁把它按下的」，
+	// 一条早已跑完的运行带着这句话只会误导。
+	PauseReason string `json:"pause_reason,omitempty"`
 	// ControlPausedMillis 是这个任务至今在**已暂停**里待过的累计毫秒数，由引擎在每次离开暂停
 	// （恢复、取消、收尾）时把那一段折进来。它只有一个用途：从速率与 ETA 的分母里扣掉——
 	// 暂停期间任务一条都没处理，把那段时长算成在干活会让两个数一路失真到终态。
@@ -729,14 +732,14 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/client-connections", c.getClientConnections)
 		r.Get("/system/performance", c.getSystemPerformance)
 		r.Get("/system/storage-io", c.getStorageIODiagnostics)
-		r.Post("/system/storage-io/pause", c.pauseStorageIO)
-		r.Post("/system/storage-io/resume", c.resumeStorageIO)
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Get("/system/logs", c.getSystemLogs)
 		r.Get("/system/page-cache", c.getPageCacheStats)
 		r.Delete("/system/page-cache", c.clearPageCache)
 		r.Get("/system/tasks", c.listTasks)
 		r.Delete("/system/tasks", c.clearTasks)
+		r.Post("/system/tasks/pause-all", c.pauseAllTasks)
+		r.Post("/system/tasks/resume-all", c.resumeAllTasks)
 		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
 		r.Post("/system/tasks/{taskKey}/pause", c.pauseTask)
 		r.Post("/system/tasks/{taskKey}/resume", c.resumeTask)

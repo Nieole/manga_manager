@@ -60,21 +60,39 @@ func (e *Engine) ListSnapshots(ctx context.Context, filter RunFilter) ([]Snapsho
 }
 
 // Pause 按下这条运行的**暂停闸门**：任务体停在下一个可中断点，状态如实写作**已暂停**。
-//
-// 「全部暂停」是把每条活动运行逐个经这里按下，不是第二套机制——因此不可暂停的运行不受影响。
 func (e *Engine) Pause(runID int64) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	ctx := context.Background()
-	run, err := e.store.LoadRun(ctx, runID)
+	run, err := e.store.LoadRun(context.Background(), runID)
 	if err != nil {
 		return err
 	}
+	return e.pauseLocked(run, PauseReasonManual)
+}
+
+// PauseAll 是「全部暂停」：把每条运行中的运行逐个按下**暂停闸门**，返回按下的条数。
+//
+// 它不是第二套机制，只是逐个按下同一个闸门——因此**不可暂停的运行不受影响**（它们没有可中断点，
+// ComicInfo 回写那类每本书都是一次原子替换），而被按下的运行状态如实写作**已暂停**。
+//
+// 按下与写状态按**每条运行**成对做（都在 pauseLocked 里），而不是先按下全部闸门再统一写状态：
+// 后者的两段之间界面会读到一批闸门已按下、状态却还写着运行中的运行。理由与停机时逐个取消并放行
+// 相同（见 StopAll）。
+func (e *Engine) PauseAll(ctx context.Context) (int, error) {
+	return e.controlEach(ctx, StatusRunning, func(run Run) error {
+		return e.pauseLocked(run, PauseReasonPauseAll)
+	})
+}
+
+// pauseLocked 按下一条运行的闸门并落定**已暂停**。调用方持锁。
+//
+// 闸门与状态在同一次调用里成对落下：这两半分开做，就等于让界面在中间那段时间里说谎。
+func (e *Engine) pauseLocked(run Run, reason PauseReason) error {
 	if run.Status != StatusRunning {
 		return ErrRunNotRunning
 	}
-	rt, err := e.controlHandleLocked(runID)
+	rt, err := e.controlHandleLocked(run.ID)
 	if err != nil {
 		return err
 	}
@@ -86,6 +104,7 @@ func (e *Engine) Pause(runID int64) error {
 	rt.gate.Pause()
 	run.Status = StatusPaused
 	run.PausedAt = &now
+	run.PauseReason = reason
 	applyMessage(&run, Result{Code: e.codes.Paused})
 	e.commitControlLocked(&run, now)
 	return nil
@@ -96,15 +115,57 @@ func (e *Engine) Resume(runID int64) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	ctx := context.Background()
-	run, err := e.store.LoadRun(ctx, runID)
+	run, err := e.store.LoadRun(context.Background(), runID)
 	if err != nil {
 		return err
 	}
+	return e.resumeLocked(run)
+}
+
+// ResumeAll 是「全部恢复」：把每条**已暂停**的运行逐个放行，返回放行的条数。
+//
+// 它认状态而不认**暂停原因**：一条被单独按下的运行同样会被它放行。判据只留一处——按原因分拣的话，
+// 用户按下「全部恢复」之后界面上还剩着几条已暂停，而那个按钮已经灰掉了。
+func (e *Engine) ResumeAll(ctx context.Context) (int, error) {
+	return e.controlEach(ctx, StatusPaused, e.resumeLocked)
+}
+
+// controlEach 把某个状态下的每条运行逐个交给 control，返回真正动到的条数。
+//
+// **逐个**是它的全部意义：每一条的闸门与状态在同一次 control 调用里一起落下，而不是先把全部闸门
+// 按下（或放行）再统一改状态——那两段之间界面读到的是一批说着谎的运行。
+//
+// 单条被拒不中断整批，但只有控制哨兵才算「拒」：不可暂停的运行、以及进程里没有句柄的那些
+// （上一轮留在库里的活动运行）本来就该跳过。其余错误（落盘故障之类）整批中止并上报——
+// 一律吞掉的话，端点会拿着「按下了 0 条」回一个 202，用户看不出是没得按还是根本没按成。
+func (e *Engine) controlEach(ctx context.Context, status RunStatus, control func(Run) error) (int, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	runs, err := e.store.ListRuns(ctx, RunFilter{Statuses: []RunStatus{status}, Order: OrderSequenceAsc})
+	if err != nil {
+		return 0, err
+	}
+	affected := 0
+	for _, run := range runs {
+		switch err := control(run); {
+		case err == nil:
+			affected++
+		case errors.Is(err, ErrRunNotRunning), errors.Is(err, ErrRunNotPaused),
+			errors.Is(err, ErrRunNotPausable), errors.Is(err, ErrRunNotControllable):
+		default:
+			return affected, err
+		}
+	}
+	return affected, nil
+}
+
+// resumeLocked 放行一条运行的闸门并落定运行中。调用方持锁。
+func (e *Engine) resumeLocked(run Run) error {
 	if run.Status != StatusPaused {
 		return ErrRunNotPaused
 	}
-	rt, err := e.controlHandleLocked(runID)
+	rt, err := e.controlHandleLocked(run.ID)
 	if err != nil {
 		return err
 	}

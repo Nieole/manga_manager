@@ -31,7 +31,6 @@ import (
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
@@ -902,37 +901,6 @@ func TestGetStorageIODiagnostics(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected diagnostics for library %d, got %+v", lib.ID, response.Libraries)
-	}
-}
-
-func TestPauseAndResumeStorageIO(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
-	storageio.Default.ResumeBackground()
-	t.Cleanup(storageio.Default.ResumeBackground)
-
-	pauseRec := httptest.NewRecorder()
-	controller.pauseStorageIO(pauseRec, httptest.NewRequest(http.MethodPost, "/api/system/storage-io/pause", nil))
-	if pauseRec.Code != http.StatusAccepted {
-		t.Fatalf("expected pause 202, got %d", pauseRec.Code)
-	}
-
-	getRec := httptest.NewRecorder()
-	controller.getStorageIODiagnostics(getRec, httptest.NewRequest(http.MethodGet, "/api/system/storage-io", nil))
-	var response StorageIODiagnosticsResponse
-	if err := json.NewDecoder(getRec.Body).Decode(&response); err != nil {
-		t.Fatalf("decode diagnostics failed: %v", err)
-	}
-	if !response.Paused {
-		t.Fatalf("expected paused diagnostics, got %+v", response)
-	}
-
-	resumeRec := httptest.NewRecorder()
-	controller.resumeStorageIO(resumeRec, httptest.NewRequest(http.MethodPost, "/api/system/storage-io/resume", nil))
-	if resumeRec.Code != http.StatusAccepted {
-		t.Fatalf("expected resume 202, got %d", resumeRec.Code)
-	}
-	if storageio.Default.BackgroundPaused() {
-		t.Fatal("expected storage IO scheduler to be resumed")
 	}
 }
 

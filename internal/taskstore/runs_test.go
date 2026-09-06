@@ -30,6 +30,7 @@ func TestRunRoundTripsEveryColumn(t *testing.T) {
 		Current:             12,
 		Total:               40,
 		PausedAt:            &pausedAt,
+		PauseReason:         task.PauseReasonPauseAll,
 		ControlPausedMillis: 4200,
 		CoalescedCount:      2,
 		MessageCode:         "task.scan.failed",

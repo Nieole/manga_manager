@@ -16,7 +16,6 @@ interface StorageIODiagnostics {
   cache_dir: string;
   cache_volume: string;
   same_disk_caches: number;
-  paused: boolean;
   recent_scan_archive_open_rate: number;
   recent_cover_archive_open_rate: number;
   recent_thumbnail_write_ms: number;
@@ -115,17 +114,6 @@ export function SettingsMaintenancePage() {
     }
   }, [fetchPageCacheStats, showToast, t]);
 
-  const setStorageIOPaused = useCallback(async (paused: boolean) => {
-    try {
-      await apiClient.post(`/api/system/storage-io/${paused ? 'pause' : 'resume'}`);
-      showToast(t(paused ? 'settings.maintenance.storageIOPaused' : 'settings.maintenance.storageIOResumed'), 'success');
-      await fetchStorageIO();
-    } catch (error) {
-      console.error(error);
-      showToast(t('settings.maintenance.storageIOPauseFailed'), 'error');
-    }
-  }, [fetchStorageIO, showToast, t]);
-
   const handleRiskyAction = useCallback((url: string, successMessage: string, errorMessage: string, confirmMessage: string) => {
     setConfirmDialogState({ open: true, message: confirmMessage, url, successMessage, errorMessage });
   }, []);
@@ -185,13 +173,6 @@ export function SettingsMaintenancePage() {
           >
             <RefreshCw className={`h-4 w-4 ${loadingStorageIO ? 'animate-spin' : ''}`} />
             {t('settings.maintenance.refreshStorageIO')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setStorageIOPaused(!storageIO?.paused)}
-            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${storageIO?.paused ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15' : 'border-amber-500/30 bg-amber-500/10 text-amber-500 hover:bg-amber-500/15'}`}
-          >
-            {storageIO?.paused ? t('settings.maintenance.resumeStorageIO') : t('settings.maintenance.pauseStorageIO')}
           </button>
         </div>
 

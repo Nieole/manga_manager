@@ -23,6 +23,8 @@ const TASK_TYPE_OPTIONS = [
   'transfer_external_library',
 ];
 
+// 诊断接口今天只被这里用来问一件事：**有没有运行被暂停**。这个答案是全局的，
+// 而列表那一页带着筛选与条数上限，答不了它。
 interface StorageIODiagnostics {
   paused: boolean;
 }
@@ -51,6 +53,7 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
   // 提交同一份条件时也要重取一次，靠它把 effect 推一下。
   const [taskReloadToken, setTaskReloadToken] = useState(0);
   const [storageIO, setStorageIO] = useState<StorageIODiagnostics | null>(null);
+  const [bulkPauseBusy, setBulkPauseBusy] = useState(false);
   const taskRequestIDRef = useRef(0);
   const { showToast } = useToast();
 
@@ -186,6 +189,22 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
     }
   };
 
+  // 全部暂停 / 全部恢复：后端把每条运行逐个按下或放行，这里只负责发一次请求再重取。
+  const runBulkPause = async (action: 'pause-all' | 'resume-all') => {
+    setBulkPauseBusy(true);
+    try {
+      await apiClient.post(`/api/system/tasks/${action}`);
+      showToast(t(action === 'pause-all' ? 'settings.maintenance.pauseAllSuccess' : 'settings.maintenance.resumeAllSuccess'));
+      await fetchTasks();
+      await fetchStorageIO();
+    } catch (error) {
+      console.error(error);
+      showToast(t(action === 'pause-all' ? 'settings.maintenance.pauseAllFailed' : 'settings.maintenance.resumeAllFailed'), 'error');
+    } finally {
+      setBulkPauseBusy(false);
+    }
+  };
+
   const currentTaskFilterCanClear = !['ALL', 'running', 'paused', 'cancelling'].includes(runStatusFilter);
 
   const updateTaskFilters = (patch: Partial<TaskCenterFilters>) => {
@@ -255,13 +274,16 @@ export default function BackgroundTasks({ embedded = false, onViewTaskLogs }: Ba
       <TaskCenter
         tasks={tasks}
         loading={loadingTasks}
-        backgroundPaused={storageIO?.paused}
+        anyRunPaused={storageIO?.paused}
+        bulkPauseBusy={bulkPauseBusy}
         taskActionKey={taskActionKey}
         filters={taskFilters}
         typeOptions={TASK_TYPE_OPTIONS}
         currentFilterCanClear={currentTaskFilterCanClear}
         onRefresh={applyTaskFilters}
         onTaskAction={runTaskAction}
+        onPauseAll={() => runBulkPause('pause-all')}
+        onResumeAll={() => runBulkPause('resume-all')}
         onFilterChange={updateTaskFilters}
         onClearTasks={clearTasks}
         onOpenTaskTarget={openTaskTarget}
