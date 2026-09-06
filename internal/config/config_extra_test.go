@@ -98,6 +98,21 @@ func TestNormalizeConfigDefaultsAndClamps(t *testing.T) {
 		t.Fatalf("negative page cache bytes should be preserved as unlimited, got %d", neg.Cache.PageDiskCacheMaxBytes)
 	}
 
+	// 保留阈值小于 1 一律回落到默认值：「一条都不留 / 一天都不留」不是任何人想要的意思，
+	// 而照它办事下一次清理会把运行历史删光。零（配置文件里没写）与负数走同一条路。
+	for _, threshold := range []int{0, -1} {
+		retention := &Config{}
+		retention.Tasks.RetainRunsPerTask = threshold
+		retention.Tasks.RetainTerminalRunDays = threshold
+		retention.Tasks.RetainSampleDays = threshold
+		NormalizeConfig(retention)
+		if retention.Tasks.RetainRunsPerTask != DefaultRetainRunsPerTask ||
+			retention.Tasks.RetainTerminalRunDays != DefaultRetainTerminalRunDays ||
+			retention.Tasks.RetainSampleDays != DefaultRetainSampleDays {
+			t.Fatalf("阈值 %d 没有回落到默认值：%+v", threshold, retention.Tasks)
+		}
+	}
+
 	// 非法日志级别回退 info。
 	bad := &Config{}
 	bad.Logging.Level = "verbose"
@@ -295,6 +310,9 @@ func validBaseConfig(t *testing.T) *Config {
 	cfg.Scanner.MaxAiConcurrency = 3
 	cfg.Scanner.ThumbnailFormat = "webp"
 	cfg.Tasks.RunSlots = DefaultRunSlots
+	cfg.Tasks.RetainRunsPerTask = DefaultRetainRunsPerTask
+	cfg.Tasks.RetainTerminalRunDays = DefaultRetainTerminalRunDays
+	cfg.Tasks.RetainSampleDays = DefaultRetainSampleDays
 	cfg.Library.StorageProfile = StorageProfileAuto
 	cfg.LLM.Provider = "ollama"
 	cfg.LLM.BaseURL = "http://localhost:11434"
@@ -341,6 +359,10 @@ func TestValidateConfigRejectsFieldByField(t *testing.T) {
 		{"bad-scan-profile", func(c *Config) { c.Scanner.ScanProfile = "turbo" }, "scanner.scan_profile"},
 		// 0 不是「不限」而是「一条都不许跑」：照它办事整台机器的后台工作都会卡在排队里。
 		{"no-run-slots", func(c *Config) { c.Tasks.RunSlots = 0 }, "tasks.run_slots"},
+		// 保留阈值同理：小于 1 是「一条都不留」，那会把运行历史当场删光。
+		{"no-runs-retained", func(c *Config) { c.Tasks.RetainRunsPerTask = 0 }, "tasks.retain_runs_per_task"},
+		{"negative-terminal-days", func(c *Config) { c.Tasks.RetainTerminalRunDays = -1 }, "tasks.retain_terminal_run_days"},
+		{"negative-sample-days", func(c *Config) { c.Tasks.RetainSampleDays = -1 }, "tasks.retain_sample_days"},
 		{"openai-bad-api-mode", func(c *Config) {
 			c.LLM.Provider = "openai"
 			c.LLM.BaseURL = "https://api.openai.com"

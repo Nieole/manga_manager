@@ -14,8 +14,8 @@ import (
 // 它是「装配方什么都没说」时的兜底。同一组数字在配置那边另有一份默认（配置位于本包的依赖下游，
 // 引用不了这里），两份必须相等，`TestConfigDefaultRetentionMatchesTheEngineDefault` 守着这条。
 //
-// 数字的依据是量级而不是口味：5 个库、每小时一次守护扫描，运行每年约 4.4 万行、事件约 44 万行、
-// 采样若不清理约 260 万行。这是个单机 SQLite，不裁剪的话这套设计跑不过一年。
+// 数字的依据是量级而不是口味：运行、**运行事件**与**采样**都只增不减，而这是个单机 SQLite。
+// 不裁剪的话，这套「凡动磁盘的工作都建一次运行」的设计跑不过一年。
 func DefaultRetention() RetentionPolicy {
 	return RetentionPolicy{
 		RunsPerTask: 20,

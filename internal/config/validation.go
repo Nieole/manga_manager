@@ -125,6 +125,15 @@ func ValidateConfigValues(cfg *Config) ValidationResult {
 	if cfg.Tasks.RunSlots < 1 {
 		issues = append(issues, ValidationIssue{Field: "tasks.run_slots", Message: "后台运行槽位至少为 1。", Severity: "error"})
 	}
+	if cfg.Tasks.RetainRunsPerTask < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.retain_runs_per_task", Message: "每个任务保留的运行数至少为 1。", Severity: "error"})
+	}
+	if cfg.Tasks.RetainTerminalRunDays < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.retain_terminal_run_days", Message: "终态运行的保留天数至少为 1。", Severity: "error"})
+	}
+	if cfg.Tasks.RetainSampleDays < 1 {
+		issues = append(issues, ValidationIssue{Field: "tasks.retain_sample_days", Message: "采样的保留天数至少为 1。", Severity: "error"})
+	}
 
 	if !isSupportedStorageProfile(cfg.Library.StorageProfile) {
 		issues = append(issues, ValidationIssue{Field: "library.storage_profile", Message: "存储介质策略必须是 auto、ssd、hdd_external、network 或 custom。", Severity: "error"})

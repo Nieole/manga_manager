@@ -126,13 +126,12 @@ type Config struct {
 		// 会看到一条运行在排队，而它要等的那块盘是空的。
 		RunSlots int `yaml:"run_slots" json:"run_slots"`
 
-		// 分层保留的三个阈值。三层各自独立，**取负数表示这一层不清理**（永久保留）；
-		// 0（未设置）归一化为默认值，因此一份全新的配置文件拿到的是默认策略而不是「不清理」。
+		// RetainRunsPerTask 是每个任务保留的最近**终态**运行条数，也是**分层保留**三个阈值的头一个。
 		//
-		// 它们会**删数据**：调小之后，下一次清理就把落在阈值之外的历史删掉，删掉回不来。
-		// 活动态与排队中的运行不受这三个数影响——那不是策略而是前提，见 task.RetentionPolicy。
-
-		// RetainRunsPerTask 是每个任务保留的最近**终态**运行条数。
+		// 三个阈值都会**删数据**：调小之后下一次清理就把落在阈值之外的历史删掉，删掉回不来。
+		// 小于 1 的值一律归一化为默认值——「一条都不留」不是任何人想要的意思，而 0 是「配置文件里
+		// 没写」。要留得久就把数字调大，本仓不为「永久保留」另设一个哨兵值。
+		// **活动态与排队中的运行不受这三个数影响**，那不是策略而是前提（见 task.RetentionPolicy）。
 		RetainRunsPerTask int `yaml:"retain_runs_per_task" json:"retain_runs_per_task"`
 		// RetainTerminalRunDays 是终态运行的最长保留天数，与 RetainRunsPerTask 取先到者。
 		RetainTerminalRunDays int `yaml:"retain_terminal_run_days" json:"retain_terminal_run_days"`
@@ -455,15 +454,14 @@ func NormalizeConfig(cfg *Config) {
 	if cfg.Tasks.RunSlots < 1 {
 		cfg.Tasks.RunSlots = DefaultRunSlots
 	}
-	// 保留阈值只把 0（未设置）补成默认值：负数是「这一层不清理」，是用户显式选的永久保留，
-	// 补成默认等于替他把历史删了。
-	if cfg.Tasks.RetainRunsPerTask == 0 {
+	// 保留阈值同理：小于 1 是「一条都不留 / 一天都不留」，照它办事等于把历史当场删光。
+	if cfg.Tasks.RetainRunsPerTask < 1 {
 		cfg.Tasks.RetainRunsPerTask = DefaultRetainRunsPerTask
 	}
-	if cfg.Tasks.RetainTerminalRunDays == 0 {
+	if cfg.Tasks.RetainTerminalRunDays < 1 {
 		cfg.Tasks.RetainTerminalRunDays = DefaultRetainTerminalRunDays
 	}
-	if cfg.Tasks.RetainSampleDays == 0 {
+	if cfg.Tasks.RetainSampleDays < 1 {
 		cfg.Tasks.RetainSampleDays = DefaultRetainSampleDays
 	}
 	normalizeLLMConfig(cfg)

@@ -211,7 +211,7 @@ func TestPruneSampleAgeLeavesTheRunInPlace(t *testing.T) {
 // 零与负数的阈值都表示这一层不裁剪，别把它当成「一条都不留」。
 //
 // 负数那几档是这里最要紧的一格：照面值算的话，「留 -1 条」让排名谓词选中全部终态运行，
-// 负的时长把截止时刻推到未来，同样一条不剩——而设置里那三个数填得进负值。
+// 负的时长把截止时刻推到未来，同样一条不剩——而阈值一路来自手写的配置文件。
 func TestPruneWithNonPositivePolicyRemovesNothing(t *testing.T) {
 	cases := []struct {
 		name   string

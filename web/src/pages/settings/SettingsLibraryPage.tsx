@@ -17,13 +17,6 @@ function normalizeStorageIOPolicy(policy?: Partial<StorageIOPolicy>): StorageIOP
   return { ...defaultStorageIOPolicy, ...(policy || {}) };
 }
 
-// 保留阈值的输入解析：空框与非数字按 0 交出去（后端把 0 归一化成默认值），负数原样保留——
-// 那是「永久保留」而不是笔误，替用户改成默认值等于替他把历史删了。
-function retentionValue(raw: string) {
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
-}
-
 export function SettingsLibraryPage() {
   const { t } = useI18n();
   const { config, setConfig, fieldErrors, capabilities, saving, saveConfig } = useSettings();
@@ -207,16 +200,15 @@ export function SettingsLibraryPage() {
           </div>
         </div>
 
-        {/* 分层保留：三个阈值决定运行历史留多久。它们会删数据，因此整块带一句说明，
-            并且用可以填 -1（永久保留）的数字框而不是滑块——滑块表达不出「不清理」。 */}
+        {/* 分层保留：三个阈值决定运行历史留多久。它们会删数据，因此整块带一句说明。 */}
         <div className="grid gap-4 md:grid-cols-3">
           <div>
             <label className="mb-1 block text-sm text-gray-400">{t('settings.library.retainRunsPerTask')}</label>
             <input
               type="number"
-              min={-1}
+              min={1}
               value={config.tasks.retain_runs_per_task}
-              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, retain_runs_per_task: retentionValue(e.target.value) } })}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, retain_runs_per_task: Number(e.target.value) || 20 } })}
               className={inputClassName}
             />
             <p className="mt-1 text-xs text-gray-500">{t('settings.library.retainRunsPerTaskHint')}</p>
@@ -226,9 +218,9 @@ export function SettingsLibraryPage() {
             <label className="mb-1 block text-sm text-gray-400">{t('settings.library.retainTerminalRunDays')}</label>
             <input
               type="number"
-              min={-1}
+              min={1}
               value={config.tasks.retain_terminal_run_days}
-              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, retain_terminal_run_days: retentionValue(e.target.value) } })}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, retain_terminal_run_days: Number(e.target.value) || 90 } })}
               className={inputClassName}
             />
             <p className="mt-1 text-xs text-gray-500">{t('settings.library.retainTerminalRunDaysHint')}</p>
@@ -238,9 +230,9 @@ export function SettingsLibraryPage() {
             <label className="mb-1 block text-sm text-gray-400">{t('settings.library.retainSampleDays')}</label>
             <input
               type="number"
-              min={-1}
+              min={1}
               value={config.tasks.retain_sample_days}
-              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, retain_sample_days: retentionValue(e.target.value) } })}
+              onChange={(e) => setConfig({ ...config, tasks: { ...config.tasks, retain_sample_days: Number(e.target.value) || 7 } })}
               className={inputClassName}
             />
             <p className="mt-1 text-xs text-gray-500">{t('settings.library.retainSampleDaysHint')}</p>

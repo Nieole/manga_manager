@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
 )
@@ -19,15 +20,15 @@ const (
 
 	// runHistoryCleanupInterval 是清理的节拍：每天一次。
 	//
-	// 一天一次而不是更密：它删的是 90 天与 20 次之外的历史，早一小时晚一小时没有区别，
+	// 一天一次而不是更密：它删的是阈值之外的那些历史，早一小时晚一小时没有区别，
 	// 而每跑一次它自己也要占一个**运行槽位**、在任务中心留一行。
 	runHistoryCleanupInterval = 24 * time.Hour
 
 	// maxRetentionDays 是保留天数的上限（100 年），用来挡住溢出而不是表达策略。
 	//
-	// 天数是配置里的一个整数，乘成 time.Duration 会在约 106751 天处溢出 int64——绕回来的那个数
-	// 可能是个很小的正数，那等于把全部历史当场删光。要「永久保留」有专门的表达（负数），
-	// 不必靠一个大到溢出的天数。
+	// 天数是配置里的一个整数，乘成 time.Duration 会在十万天量级溢出 int64——绕回来的那个数
+	// 可能是个很小的正数，那等于把全部历史当场删光。两个方向的溢出都要挡：负得足够多同样绕得回来，
+	// 而配置文件是手写的。
 	maxRetentionDays = 36500
 )
 
@@ -52,25 +53,28 @@ func (c *Controller) startRunHistoryJanitor() {
 	}
 }
 
-// runRetention 读此刻生效的**分层保留**三个阈值。
+// retentionPolicyOf 把设置里的三个数翻成**分层保留**策略。
 //
-// 每次现读一遍配置快照，不在装配期取一份收起来：阈值在设置里可改，改完要对**下一次清理**生效
-// （理由同 taskSlots）。天数为负即这一层不清理，原样交给落盘端口——那里认的就是「零或负数不裁剪」。
-func (c *Controller) runRetention() task.RetentionPolicy {
-	tasks := c.currentConfig().Tasks
+// 收的是一份配置快照而不是自己去读：调用方还要按同一份快照报出「这次按什么口径清的」，
+// 各读各的会让报出来的阈值与真正生效的那份对不上。阈值在设置里可改，因此调用方每次现读一遍——
+// 改完对**下一次清理**生效，不必重启（理由同 taskSlots）。
+//
+// 非正数一律交出 0，也就是「这一层不裁剪」（端口认的就是这条）。归一化本该已经把它们补成默认值，
+// 这里再收一道是因为算错方向的代价不对称：多留一批历史只是占地方，少留一批是把用户的记录删了。
+func retentionPolicyOf(cfg config.Config) task.RetentionPolicy {
 	return task.RetentionPolicy{
-		RunsPerTask: tasks.RetainRunsPerTask,
-		TerminalAge: retentionDays(tasks.RetainTerminalRunDays),
-		SampleAge:   retentionDays(tasks.RetainSampleDays),
+		RunsPerTask: max(cfg.Tasks.RetainRunsPerTask, 0),
+		TerminalAge: retentionAge(cfg.Tasks.RetainTerminalRunDays),
+		SampleAge:   retentionAge(cfg.Tasks.RetainSampleDays),
 	}
 }
 
-// retentionDays 把配置里的天数翻成时长，超出 maxRetentionDays 的按上限收。
-func retentionDays(days int) time.Duration {
+// retentionAge 把配置里的天数翻成时长：非正数交出 0，大到会溢出的按 maxRetentionDays 收。
+func retentionAge(days int) time.Duration {
 	if days > maxRetentionDays {
 		days = maxRetentionDays
 	}
-	return time.Duration(days) * 24 * time.Hour
+	return time.Duration(max(days, 0)) * 24 * time.Hour
 }
 
 // launchCleanupRunHistoryTask 是清理运行历史的启动点，走引擎的启动入口。
@@ -80,17 +84,20 @@ func retentionDays(days int) time.Duration {
 //
 // 不可暂停、不可取消：整个裁剪是一笔事务，中间没有可中断点，报一个按不动的按钮比没有按钮更糟。
 func (c *Controller) launchCleanupRunHistoryTask() error {
-	policy := c.runRetention()
+	cfg := c.currentConfig()
+	policy := retentionPolicyOf(cfg)
 	spec := RunSpec{
 		Key:       cleanupRunHistoryTaskKey,
 		StartCode: "task.msg.cleanup_run_history.start",
 		Total:     1,
-		// 这次清理实际生效的三个阈值。它们随运行落盘，因此「这一次是按什么口径清的」
-		// 在事后仍答得出——阈值改过之后再回头看那条运行，看到的是当时那一份。
-		Metadata: map[string]string{
-			"runs_per_task":     strconv.Itoa(policy.RunsPerTask),
-			"terminal_run_days": strconv.Itoa(int(policy.TerminalAge / (24 * time.Hour))),
-			"sample_days":       strconv.Itoa(int(policy.SampleAge / (24 * time.Hour))),
+		// 这次清理实际生效的三个阈值，走**展示标签**那条通道：它们启动时就已知、整次运行不变，
+		// 而且没有任何**重启函数**会去读它们——那是重启入参那一格的用途。
+		// 落了它们，「这一次是按什么口径清的」在事后仍答得出：阈值改过之后再回头看这条运行，
+		// 看到的是当时那一份。
+		Labels: map[string]string{
+			"runs_per_task":     strconv.Itoa(cfg.Tasks.RetainRunsPerTask),
+			"terminal_run_days": strconv.Itoa(cfg.Tasks.RetainTerminalRunDays),
+			"sample_days":       strconv.Itoa(cfg.Tasks.RetainSampleDays),
 		},
 		CompleteCode: "task.msg.cleanup_run_history.complete",
 		CancelCode:   "task.msg.cleanup_run_history.cancelled",
