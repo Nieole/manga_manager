@@ -8,7 +8,6 @@ import (
 	"crypto/sha1"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -41,10 +40,14 @@ type Scanner struct {
 	coverQueue  chan coverJob
 	coverWG     sync.WaitGroup
 	mu          sync.Mutex
-	active      struct {
-		libraries map[int64]struct{}
-		series    map[int64]struct{}
-	}
+	// scanningLibraries 是**正在扫描中**的资料库计数（库 id -> 在飞的整库扫描数）。
+	//
+	// 它不是准入闸门——「同一件事不会同时跑两遍」由任务那一处的准入回答（ADR 0005）。
+	// 它只回答文件监听器那个问题：这个库此刻有没有扫描在跑。改名重连写在扫描**末尾**，
+	// 扫描没结束就等于重连没落地，此刻清理会把旧行当成「文件已消失」删掉。
+	// 计数而不是集合：同一个库上可能有两次扫描同时在跑（重建缩略图的逐库强扫挂在系统作用域上，
+	// 与库扫描是两个身份，任务那一处的准入不会拦它们）。
+	scanningLibraries map[int64]int
 	// 批量插入结束后的回调播送机制。
 	//
 	// 它刻意仍是装配期注册的进程级回调，与**扫描观察者**分属两件事：这几条事件从入库批次
@@ -66,8 +69,7 @@ func NewScanner(store database.Store, cfg *config.Manager) *Scanner {
 		openArchive:          parser.OpenArchive,
 		dirtyRefreshInterval: defaultDirtyRefreshInterval,
 	}
-	s.active.libraries = make(map[int64]struct{})
-	s.active.series = make(map[int64]struct{})
+	s.scanningLibraries = make(map[int64]int)
 	s.diskWork = diskwork.NewRunner(s.currentConfig, storageio.Default)
 	return s
 }
@@ -79,8 +81,8 @@ func (s *Scanner) SetBatchCallback(cb func(string)) {
 
 // ScanObserver 是一次扫描把**计数推进**与收尾指标交给的对象，由发起方在调用扫描时交出。
 //
-// 「这份报文属于谁」因此由交出者回答，报文自己不带身份。传 nil 表示这次扫描不属于任何任务
-// （守护扫描、watcher 派生的扫描与建库后的首扫都是如此），此时两个方法都不会被调用。
+// 「这份报文属于谁」因此由交出者回答，报文自己不带身份。传 nil 表示这次扫描的进度与指标无处可报
+// （调用方自己另有进度口径，例如重建索引那趟逐库强扫），此时两个方法都不会被调用。
 //
 // 它的寿命**超出**那次扫描调用：封面生成是异步的，ScanLibrary 返回之后封面队列仍会经同一个
 // 观察者推进 generated_covers。缩略图重建正靠这一段，因此不设撤销机制（见
@@ -124,45 +126,32 @@ func (s *Scanner) libraryScanFormats(ctx context.Context, libraryID int64) confi
 	return config.NewScanFormatSet(lib.ScanFormats)
 }
 
-func (s *Scanner) beginLibraryScan(libraryID int64) bool {
+// enterLibraryScan / leaveLibraryScan 记一次整库扫描的进出。它们**不拒绝**任何调用：
+// 记账用，不是闸门。
+func (s *Scanner) enterLibraryScan(libraryID int64) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.active.libraries[libraryID]; exists {
-		return false
-	}
-	s.active.libraries[libraryID] = struct{}{}
-	return true
+	s.scanningLibraries[libraryID]++
+	s.mu.Unlock()
 }
 
-// libraryScanActive 报告该库此刻是否有整库扫描在跑，**不区分发起方**。
+func (s *Scanner) leaveLibraryScan(libraryID int64) {
+	s.mu.Lock()
+	if s.scanningLibraries[libraryID] <= 1 {
+		delete(s.scanningLibraries, libraryID)
+	} else {
+		s.scanningLibraries[libraryID]--
+	}
+	s.mu.Unlock()
+}
+
+// LibraryScanActive 报告该库此刻是否有整库扫描在跑，**不区分发起方**。
+//
 // 文件监听器用它决定敢不敢清理：任何一次扫描的改名重连都写在末尾，扫描没结束就等于重连没落地。
-func (s *Scanner) libraryScanActive(libraryID int64) bool {
+// 它看得见的是**真的进到扫描里**的那些，含不经任务发起的（重建缩略图与重建索引的逐库强扫）。
+func (s *Scanner) LibraryScanActive(libraryID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.active.libraries[libraryID]
-	return ok
-}
-
-func (s *Scanner) endLibraryScan(libraryID int64) {
-	s.mu.Lock()
-	delete(s.active.libraries, libraryID)
-	s.mu.Unlock()
-}
-
-func (s *Scanner) beginSeriesScan(seriesID int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.active.series[seriesID]; exists {
-		return false
-	}
-	s.active.series[seriesID] = struct{}{}
-	return true
-}
-
-func (s *Scanner) endSeriesScan(seriesID int64) {
-	s.mu.Lock()
-	delete(s.active.series, seriesID)
-	s.mu.Unlock()
+	return s.scanningLibraries[libraryID] > 0
 }
 
 type scanJob struct {
@@ -487,14 +476,6 @@ type coverJob struct {
 	progress  *scanProgressReporter
 }
 
-// ErrScanAlreadyRunning 表示同一资料库/系列上已有扫描在跑，本次调用被跳过。
-//
-// 调用方必须显式判定此错误：等待重试，或让任务以失败收尾并提示「该库正被其它扫描占用」。
-// 把它当成功处理的代价——任务面板会在零点几秒内谎报「扫描完成」；更糟的是重建缩略图任务
-// 已经 RemoveAll 了整个缩略图目录并清空 cover_path，却把被跳过的库当作成功，用户于是面对
-// 一整库无封面的书，要等下一次扫描才重建（fast 档位补不出封面，那次得先改档位）。
-var ErrScanAlreadyRunning = errors.New("scanner: a scan is already running for this target")
-
 // ScanLibrary 递归扫描库目录查找漫画包，采用“发现文件 -> 解析归档 -> 批量入库”的三阶段流水线。
 // 业务上它需要同时保证增量扫描够快、强制修复能重建封面和索引、任务进度能实时反馈给前端。
 // LibraryScanOptions 是整库扫描的可选行为。
@@ -512,7 +493,7 @@ type LibraryScanOptions struct {
 
 // ScanLibrary 按默认选项扫描整库（尊重库的 scan_formats）。
 //
-// observer 为 nil 表示这次扫描不属于任何任务，进度与指标无处可报。
+// observer 为 nil 表示这次扫描的进度与指标无处可报，见 ScanObserver。
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool, observer ScanObserver) error {
 	return s.ScanLibraryWithOptions(ctx, libraryID, rootPath, LibraryScanOptions{Force: force}, observer)
 }
@@ -523,11 +504,8 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 // 而且结构体字段可以漏填——漏填与「故意不报进度」长得一模一样，都不会有编译错误。
 func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions, observer ScanObserver) error {
 	force := scanOpts.Force
-	if !s.beginLibraryScan(libraryID) {
-		slog.InfoContext(ctx, "Library scan skipped because another scan is already running", "library_id", libraryID)
-		return ErrScanAlreadyRunning
-	}
-	defer s.endLibraryScan(libraryID)
+	s.enterLibraryScan(libraryID)
+	defer s.leaveLibraryScan(libraryID)
 
 	opts := s.scanOptions(force)
 	started := time.Now()
@@ -658,12 +636,6 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 
 // ScanSeries 扫描单一系列目录，将新的卷添加到数据库中
 func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, observer ScanObserver) error {
-	if !s.beginSeriesScan(seriesID) {
-		slog.InfoContext(ctx, "Series scan skipped because another scan is already running", "series_id", seriesID)
-		return ErrScanAlreadyRunning
-	}
-	defer s.endSeriesScan(seriesID)
-
 	series, err := s.store.GetSeries(ctx, seriesID)
 	if err != nil {
 		return fmt.Errorf("failed to get series: %w", err)

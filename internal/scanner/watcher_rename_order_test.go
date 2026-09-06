@@ -25,7 +25,7 @@ func TestCleanupWaitsForSameLibraryScan(t *testing.T) {
 	cleanupStarted := make(chan struct{}, 1)
 	scanGate := make(chan struct{})
 
-	fw.scanLibrary = func(ctx context.Context, _ int64, _ string, _ bool) error {
+	fw.scanLibrary = func(ctx context.Context, _ int64) error {
 		scanStarted <- struct{}{}
 		select {
 		case <-scanGate:
@@ -80,7 +80,7 @@ func TestCleanupSkippedWhenSameLibraryScanFails(t *testing.T) {
 	scanStarted := make(chan struct{}, 1)
 	cleanupStarted := make(chan struct{}, 1)
 
-	fw.scanLibrary = func(_ context.Context, _ int64, _ string, _ bool) error {
+	fw.scanLibrary = func(_ context.Context, _ int64) error {
 		select {
 		case scanStarted <- struct{}{}:
 		default:
@@ -178,7 +178,7 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 		fw.timings.cleanupMaxDeferral = time.Hour // 本条只验「不抢跑」，别让推迟上限插手
 
 		cleanupStarted := make(chan struct{}, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64, _ string, _ bool) error { return nil }
+		fw.scanLibrary = func(_ context.Context, _ int64) error { return nil }
 		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
 			select {
 			case cleanupStarted <- struct{}{}:
@@ -220,7 +220,7 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 
 		var scanReturned atomic.Bool
 		cleanupSawScan := make(chan bool, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64, _ string, _ bool) error {
+		fw.scanLibrary = func(_ context.Context, _ int64) error {
 			time.Sleep(30 * time.Millisecond)
 			scanReturned.Store(true)
 			return nil
@@ -265,7 +265,7 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 		var scanReturned atomic.Bool
 		cleanupSawScan := make(chan bool, 1)
 
-		fw.scanLibrary = func(ctx context.Context, _ int64, _ string, _ bool) error {
+		fw.scanLibrary = func(ctx context.Context, _ int64) error {
 			select {
 			case scanStarted <- struct{}{}:
 			default:
@@ -332,7 +332,7 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 		fw.libraryScanRunning = func(int64) bool { return elsewhere.Load() }
 
 		cleanupStarted := make(chan struct{}, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64, _ string, _ bool) error { return nil }
+		fw.scanLibrary = func(_ context.Context, _ int64) error { return nil }
 		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
 			select {
 			case cleanupStarted <- struct{}{}:
@@ -371,7 +371,7 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 
 		var scans atomic.Int64
 		cleanupStarted := make(chan struct{}, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64, _ string, _ bool) error {
+		fw.scanLibrary = func(_ context.Context, _ int64) error {
 			scans.Add(1)
 			return errors.New("scan failed")
 		}
@@ -411,7 +411,7 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 
 		var scanReturned atomic.Bool
 		cleanupSawScan := make(chan bool, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64, _ string, _ bool) error {
+		fw.scanLibrary = func(_ context.Context, _ int64) error {
 			scanReturned.Store(true)
 			return nil
 		}

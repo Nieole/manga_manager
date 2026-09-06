@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -32,6 +31,7 @@ import (
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/task"
 	"manga-manager/internal/taskcontrol"
 	"manga-manager/internal/taskstore"
 
@@ -353,8 +353,13 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	c.runBackground(c.startPageCacheJanitor)
 	c.runBackground(c.startSessionJanitor)
 
-	// 初始化文件系统监控
-	fw, err := scanner.NewFileWatcher(scan)
+	// 初始化文件系统监控。派生出去的扫描与清理各建一条**发起方**为「监听」的运行：
+	// 监听器自己不碰扫描器，它只知道「这个库该扫了」。
+	fw, err := scanner.NewFileWatcher(scanner.WatcherHooks{
+		ScanLibrary:        c.runWatchedLibraryScan,
+		CleanupLibrary:     c.runWatchedLibraryCleanup,
+		LibraryScanRunning: scan.LibraryScanActive,
+	})
 	if err != nil {
 		slog.Warn("Failed to create file watcher", "error", err)
 	} else {
@@ -605,6 +610,8 @@ func (c *Controller) startPageCacheJanitor() {
 	}
 }
 
+// startDaemon 每分钟看一眼有没有资料库到了它自己的扫描间隔，到了就发起一次**发起方**为
+// 「定时」的扫描运行。节拍每分钟一次，触发与否由每个库的间隔决定。
 func (c *Controller) startDaemon() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -618,43 +625,37 @@ func (c *Controller) startDaemon() {
 			return
 		case <-ticker.C:
 		}
+		c.dispatchScheduledScans(context.Background(), time.Now(), lastScan)
+	}
+}
 
-		libs, err := c.store.ListLibraries(context.Background())
-		if err != nil {
-			slog.Error("Daemon failed to fetch libraries", "error", err)
+// dispatchScheduledScans 为每个到了间隔的资料库发起一次守护扫描，并把这一轮的时刻记进 lastScan。
+//
+// 撞上手动扫描不再静默跳过：那次发起进**排队中**，手动扫描收尾后由引擎放行，用户在任务中心
+// 看得见它排在那里。已经排着一条时本次被**合并**进去——守护扫描要的只是「确保扫过」。
+// 两者都不是错误，因此这里只在**真的发不起来**时才记一笔。
+func (c *Controller) dispatchScheduledScans(ctx context.Context, now time.Time, lastScan map[int64]time.Time) {
+	libs, err := c.store.ListLibraries(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "Daemon failed to fetch libraries", "error", err)
+		return
+	}
+
+	for _, lib := range libs {
+		if lib.ScanMode != "interval" {
 			continue
 		}
 
-		now := time.Now()
-		for _, lib := range libs {
-			if lib.ScanMode != "interval" {
-				continue
-			}
-
-			interval := time.Duration(lib.ScanInterval) * time.Minute
-			last, ok := lastScan[lib.ID]
-			// 如果从未记录（或刚启动），则在首次 Tick 时也会直接触发，或者也可选择不直接触发。目前假定超过间隔就触发。
-			if !ok || now.Sub(last) >= interval {
-				lastScan[lib.ID] = now
-				slog.Info("Triggering auto-scan for library from Daemon", "library_id", lib.ID, "path", lib.Path)
-				c.runBackground(func() {
-					id, path := lib.ID, lib.Path
-					defer c.purgeReadingPathCaches()
-					err := c.scanner.ScanLibrary(context.Background(), id, path, false, nil)
-					// 「已有扫描在跑」不是故障：定时守护与手动扫描本就可能撞车，
-					// 下一个 tick 会再试，不必按错误刷屏。
-					if errors.Is(err, scanner.ErrScanAlreadyRunning) {
-						slog.Info("Auto-scan skipped, another scan is in progress", "library_id", id)
-						return
-					}
-					if err != nil {
-						slog.Error("Auto-scan failed", "library_id", id, "error", err)
-						c.invalidateDashboardStatsCache("auto_scan_failed")
-						return
-					}
-					c.warmDashboardStatsCacheAsync("auto_scan_completed")
-				})
-			}
+		interval := time.Duration(lib.ScanInterval) * time.Minute
+		last, ok := lastScan[lib.ID]
+		// 从未记录（或刚启动）时首个 tick 就触发一次。
+		if ok && now.Sub(last) < interval {
+			continue
+		}
+		lastScan[lib.ID] = now
+		slog.InfoContext(ctx, "Triggering auto-scan for library from Daemon", "library_id", lib.ID, "path", lib.Path)
+		if err := c.launchLibraryScanTask(lib, false, task.TriggerScheduled); err != nil {
+			slog.ErrorContext(ctx, "Auto-scan could not be started", "library_id", lib.ID, "error", err)
 		}
 	}
 }

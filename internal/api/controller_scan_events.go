@@ -1,8 +1,9 @@
 // scanner 报文在 api 侧的落点：把批次事件翻成缓存失效与 SSE，把进度与指标翻成任务更新。
 //
 // 这里定义两个**扫描观察者**——发起扫描的一方交出哪一个，就决定了这次扫描的报文写到哪：
-// 资料库/系列扫描任务交出 taskScanObserver，「重建缩略图」逐库交出 rebuildThumbLibrary。
-// 无归属的扫描（守护扫描、watcher 派生、建库后首扫）交出 nil，报文无处可报。
+// 资料库/系列扫描任务交出 taskScanObserver（守护扫描、监听器派生的扫描与建库首扫走的是同一条路，
+// 差别只在**发起方**），「重建缩略图」逐库交出 rebuildThumbLibrary。
+// 交出 nil 的只剩「重建索引」那趟逐库强扫：它归属重建索引那次运行，而那条运行的进度不按扫描的口径走。
 
 package api
 
@@ -32,7 +33,7 @@ type taskScanObserver struct {
 }
 
 // newTaskScanObserver 把运行句柄包成一个扫描观察者；句柄为 nil 时返回 nil 接口值，
-// 于是「这次扫描不属于任何任务」在扫描器那边与其余无归属扫描是同一个形状。
+// 于是「这次扫描的报文无处可报」在扫描器那边只有一个形状。
 func newTaskScanObserver(progress *runhandle.Handle) scanner.ScanObserver {
 	if progress == nil {
 		return nil

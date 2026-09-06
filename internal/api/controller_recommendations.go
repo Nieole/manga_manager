@@ -10,6 +10,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 	"net/http"
 	"strconv"
 )
@@ -180,7 +181,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string) error {
 		FailCode:     "task.msg.ai_grouping.fail_generate",
 	}
 
-	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), task.TriggerManual, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		ctx := metadata.WithLocale(taskCtx, locale)
 
 		tp.Phase("collecting_series", "task.msg.ai_grouping.collecting_series", nil)

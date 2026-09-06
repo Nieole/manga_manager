@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 )
 
 // errSeededRunQueued 表示这次播种被准入闸门拦在了**排队中**：运行确实落地了（脚手架没有绕开
@@ -36,6 +37,10 @@ type taskSeed struct {
 	// Identity 是这条任务的**身份**，与生产同源：播种也得把四要素说全，谁都不从**任务键**反解。
 	// 它没有可用的零值——不填就播下一条类型为空串的任务，消费方会以别的理由变红。
 	Identity TaskIdentity
+
+	// Trigger 是这条运行的**发起方**。生产那边它是位置参数（没有默认值），这里留空即**手动**：
+	// 绝大多数用例不关心是谁叫来的，而关心的那几个（实况区的手动优先定序）会显式写出来。
+	Trigger task.Trigger
 
 	Total     int
 	CanCancel bool
@@ -58,6 +63,14 @@ type taskSeed struct {
 	TerminalCode   string
 	TerminalParams map[string]string
 	FailError      string
+}
+
+// trigger 交出这条播种声明的**发起方**，留空即手动。
+func (s taskSeed) trigger() task.Trigger {
+	if s.Trigger == "" {
+		return task.TriggerManual
+	}
+	return s.Trigger
 }
 
 // seededBody 是播下的任务体停在可控点上时交出来的两样：它自己的 ctx 与**运行句柄**。
@@ -154,7 +167,7 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*runhandle.Handle,
 			fn()
 		}()
 	}
-	err := e.Run(seed.Identity, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	err := e.Run(seed.Identity, seed.trigger(), spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		started <- seededBody{ctx: ctx, handle: handle}
 		return result, <-run.finish
 	})

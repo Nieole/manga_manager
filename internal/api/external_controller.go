@@ -15,6 +15,7 @@ import (
 
 	"manga-manager/internal/external"
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -257,7 +258,7 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
@@ -301,7 +302,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		if err := ctx.Err(); err != nil {
 			return TaskResult{}, err
 		}

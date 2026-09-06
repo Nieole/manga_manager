@@ -13,13 +13,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/task"
 )
 
 // scanFailingStore 让资料库扫描在「加载已入库文件快照」那一步失败。
@@ -94,7 +98,7 @@ func TestFailedLibraryScanLogsAreFilterableByTaskKey(t *testing.T) {
 	controller, _ := newScanFailureRig(t)
 
 	lib := database.Library{ID: 7, Name: "Main", Path: filepath.Join(t.TempDir(), "main")}
-	if err := controller.launchLibraryScanTask(lib, true); err != nil {
+	if err := controller.launchLibraryScanTask(lib, true, task.TriggerManual); err != nil {
 		t.Fatalf("启动资料库扫描失败: %v", err)
 	}
 
@@ -115,15 +119,31 @@ func TestFailedLibraryScanLogsAreFilterableByTaskKey(t *testing.T) {
 	}
 }
 
-// TestUnattributedLibraryScanLogsCarryNoTaskKey 守一条已知边界：守护扫描、watcher 派生扫描与
-// 建库首扫今天不属于任何任务，它们的 ctx 里没有任务键，日志因此不带——同一段扫描器代码，
-// 带不带只由跑在谁的 ctx 上决定。
-func TestUnattributedLibraryScanLogsCarryNoTaskKey(t *testing.T) {
+// TestAutomaticScanLogsCarryTaskKeyAndRunID 守自动发起的扫描不再是「无归属」的那一类：
+// 守护扫描跑在它自己那条运行的 ctx 上，因此扫描器深处那行日志同样带着**任务键**与运行标识。
+//
+// 这是这段路唯一的判据。同一段扫描器代码，带不带只由跑在谁的 ctx 上决定——守护扫描退回
+// context.Background() 的话，用户半夜听见盘响，「查看日志」按运行过滤出来仍是空的。
+func TestAutomaticScanLogsCarryTaskKeyAndRunID(t *testing.T) {
 	controller, logPath := newScanFailureRig(t)
 
-	err := controller.scanner.ScanLibrary(context.Background(), 7, filepath.Join(t.TempDir(), "main"), true, nil)
-	if err == nil {
-		t.Fatal("这次扫描本该失败")
+	lib, err := controller.store.CreateLibrary(context.Background(), database.CreateLibraryParams{
+		Name:         "Main",
+		Path:         filepath.Join(t.TempDir(), "main"),
+		ScanMode:     "interval",
+		ScanInterval: 60,
+		ScanFormats:  config.DefaultScanFormatsCSV,
+	})
+	if err != nil {
+		t.Fatalf("建资料库失败: %v", err)
+	}
+
+	controller.dispatchScheduledScans(context.Background(), time.Now(), map[int64]time.Time{})
+
+	key := "scan_library_" + strconv.FormatInt(lib.ID, 10)
+	run := currentTask(t, controller.taskEngine, key)
+	if run.Trigger != string(task.TriggerScheduled) {
+		t.Fatalf("守护扫描的发起方为 %q, want scheduled", run.Trigger)
 	}
 
 	written, readErr := os.ReadFile(logPath)
@@ -133,8 +153,11 @@ func TestUnattributedLibraryScanLogsCarryNoTaskKey(t *testing.T) {
 	if !strings.Contains(string(written), "Failed to load existing books cache") {
 		t.Fatalf("扫描失败那条日志没落盘，用例什么也没守到:\n%s", written)
 	}
-	if strings.Contains(string(written), logger.TaskKeyAttr+"=") {
-		t.Fatalf("无归属的扫描日志带上了任务键:\n%s", written)
+	if !strings.Contains(string(written), logger.TaskKeyAttr+"="+key) {
+		t.Fatalf("守护扫描的日志不带任务键:\n%s", written)
+	}
+	if !strings.Contains(string(written), logger.RunIDAttr+"="+strconv.FormatInt(run.RunID, 10)) {
+		t.Fatalf("守护扫描的日志不带运行标识:\n%s", written)
 	}
 }
 
@@ -157,7 +180,7 @@ func TestTaskBodyContextCarriesTaskKey(t *testing.T) {
 
 			var seen string
 			var seenRunID int64
-			err := engine.Run(tc.identity, RunSpec{Key: tc.key}, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
+			err := engine.Run(tc.identity, task.TriggerManual, RunSpec{Key: tc.key}, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
 				seen = logger.TaskKeyFrom(ctx)
 				seenRunID = logger.RunIDFrom(ctx)
 				return TaskResult{}, nil

@@ -34,40 +34,6 @@ var testPNG1x1 = []byte{
 	0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 }
 
-func TestScannerPreventsDuplicateLibraryScans(t *testing.T) {
-	s := NewScanner(nil, config.NewManager(&config.Config{}))
-
-	if !s.beginLibraryScan(1) {
-		t.Fatal("expected first library scan to start")
-	}
-	if s.beginLibraryScan(1) {
-		t.Fatal("expected duplicate library scan to be rejected")
-	}
-
-	s.endLibraryScan(1)
-
-	if !s.beginLibraryScan(1) {
-		t.Fatal("expected library scan to be allowed after release")
-	}
-}
-
-func TestScannerPreventsDuplicateSeriesScans(t *testing.T) {
-	s := NewScanner(nil, config.NewManager(&config.Config{}))
-
-	if !s.beginSeriesScan(42) {
-		t.Fatal("expected first series scan to start")
-	}
-	if s.beginSeriesScan(42) {
-		t.Fatal("expected duplicate series scan to be rejected")
-	}
-
-	s.endSeriesScan(42)
-
-	if !s.beginSeriesScan(42) {
-		t.Fatal("expected series scan to be allowed after release")
-	}
-}
-
 func TestScanLibraryReturnsContextCancelled(t *testing.T) {
 	_, store, lib, libraryPath := newScannerTestLibrary(t)
 	cfg := &config.Config{}
@@ -938,37 +904,64 @@ func TestCleanupLibraryRemovesSeriesWhenFilesAreGone(t *testing.T) {
 	}
 }
 
-// TestScanLibraryReportsConflictInsteadOfSilentSuccess 锁住并发扫描守卫的错误语义。
+// TestScanLibraryIsNotRefusedWhileAnotherScanIsInFlight 守扫描器**不自判目标冲突**：
+// 「同一件事不会同时跑两遍」只由任务那一处的准入回答（ADR 0005）。
 //
-// 旧实现冲突时返回 nil，调用方无从区分「扫完了」和「压根没扫」：任务面板会在零点几秒内
-// 谎报「扫描完成」；更糟的是重建缩略图任务已经 RemoveAll 了缩略图目录并清空 cover_path，
-// 却把被跳过的库当作成功——而增量扫描只比对 mtime+size、不检查封面缺失，那批封面从此
-// 不会自愈，必须人工再跑一次 force 扫描。
-func TestScanLibraryReportsConflictInsteadOfSilentSuccess(t *testing.T) {
-	s := NewScanner(nil, config.NewManager(&config.Config{}))
+// 扫描器这边留下的只是记账，它必须是**计数**：写成集合的话，里层这次扫描收尾就把外层那次的
+// 记录一并抹掉，而文件监听器正靠这个记录判断敢不敢清理——抹早了就是把还没重连上的行
+// 当成「文件已消失」删掉。
+func TestScanLibraryIsNotRefusedWhileAnotherScanIsInFlight(t *testing.T) {
+	_, store, lib, libraryPath := newScannerTestLibrary(t)
+	s := NewScanner(store, config.NewManager(&config.Config{}))
 
-	if !s.beginLibraryScan(7) {
-		t.Fatal("expected to acquire the library scan guard")
+	// 假装这个库上已经有一次扫描在飞（重建缩略图的逐库强扫就是这么一次）。
+	s.enterLibraryScan(lib.ID)
+	defer s.leaveLibraryScan(lib.ID)
+
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, false, nil); err != nil {
+		t.Fatalf("同一个库上的第二次扫描被拒绝了: %v", err)
 	}
-	defer s.endLibraryScan(7)
-
-	err := s.ScanLibrary(context.Background(), 7, t.TempDir(), false, nil)
-	if !errors.Is(err, ErrScanAlreadyRunning) {
-		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
+	if !s.LibraryScanActive(lib.ID) {
+		t.Fatal("第二次扫描收尾把第一次的记账也抹掉了 —— 监听器会以为没人在扫，抢先删掉待重连的行")
 	}
 }
 
-func TestScanSeriesReportsConflictInsteadOfSilentSuccess(t *testing.T) {
-	s := NewScanner(nil, config.NewManager(&config.Config{}))
+// activeProbeObserver 是只做一件事的**扫描观察者**：在扫描进行中问一句记账，并把答案记下来。
+type activeProbeObserver struct {
+	active func() bool
+	saw    *atomic.Bool
+}
 
-	if !s.beginSeriesScan(42) {
-		t.Fatal("expected to acquire the series scan guard")
+func (o *activeProbeObserver) Progress(ScanProgressReport) {
+	if o.active() {
+		o.saw.Store(true)
 	}
-	defer s.endSeriesScan(42)
+}
 
-	err := s.ScanSeries(context.Background(), 42, false, nil)
-	if !errors.Is(err, ErrScanAlreadyRunning) {
-		t.Fatalf("expected ErrScanAlreadyRunning, got %v", err)
+func (o *activeProbeObserver) Metrics(ScanMetricsReport) {}
+
+// TestLibraryScanActiveTracksTheScanInFlight 守那笔记账在扫描**期间**为真、返回后为假：
+// 文件监听器按它决定敢不敢清理，答错任一头都是丢阅读进度。
+func TestLibraryScanActiveTracksTheScanInFlight(t *testing.T) {
+	_, store, lib, libraryPath := newScannerTestLibrary(t)
+	s := NewScanner(store, config.NewManager(&config.Config{}))
+
+	if s.LibraryScanActive(lib.ID) {
+		t.Fatal("一次扫描都还没发起，记账就说有扫描在跑")
+	}
+
+	// 观察点取**扫描进行中**的报文：它一定在扫描内部发出，不必依赖库里有没有归档。
+	var sawItselfActive atomic.Bool
+	probe := &activeProbeObserver{active: func() bool { return s.LibraryScanActive(lib.ID) }, saw: &sawItselfActive}
+	if err := s.ScanLibrary(context.Background(), lib.ID, libraryPath, true, probe); err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+
+	if !sawItselfActive.Load() {
+		t.Fatal("扫描进行中记账却说没有扫描在跑")
+	}
+	if s.LibraryScanActive(lib.ID) {
+		t.Fatal("扫描返回之后记账没有归零")
 	}
 }
 

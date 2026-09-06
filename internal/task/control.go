@@ -29,6 +29,64 @@ func (e *Engine) RunSnapshot(ctx context.Context, runID int64) (Snapshot, error)
 	return e.snapshotLocked(run), nil
 }
 
+// Await 等这条运行进**终态**，交回它收尾时的样子；运行已经收尾时立刻返回。
+//
+// 判据是**运行的状态**而不是「任务体返回了没有」：**排队中**被取消的运行任务体根本不会执行，
+// 只等任务体就是永远等下去。ctx 取消时交回 ctx.Err()——等待方因此不必自带超时，
+// 一条排在队里等几小时的运行也不会把调用方钉死到进程结束。
+//
+// 它给的是「等这件事干完」，不是「让我也来收尾」：终态仍只由 settle 那一处裁决。
+func (e *Engine) Await(ctx context.Context, runID int64) (Run, error) {
+	e.mu.Lock()
+	run, err := e.store.LoadRun(ctx, runID)
+	if err != nil {
+		e.mu.Unlock()
+		return Run{}, err
+	}
+	if run.Status.IsTerminal() {
+		e.mu.Unlock()
+		return run, nil
+	}
+	// 登记与「已经是终态了吗」必须在同一个临界区里：分开做的话，两者之间收尾的那条运行
+	// 谁也不会来关这个通道。
+	notify := make(chan struct{})
+	e.settled[runID] = append(e.settled[runID], notify)
+	e.mu.Unlock()
+
+	select {
+	case <-notify:
+	case <-ctx.Done():
+		e.dropWaiter(runID, notify)
+		return Run{}, ctx.Err()
+	}
+	return e.store.LoadRun(ctx, runID)
+}
+
+// dropWaiter 摘掉一个不再等待的通知通道，等待方半路走开时不留下它。
+func (e *Engine) dropWaiter(runID int64, notify chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	remaining := e.settled[runID][:0]
+	for _, waiting := range e.settled[runID] {
+		if waiting != notify {
+			remaining = append(remaining, waiting)
+		}
+	}
+	if len(remaining) == 0 {
+		delete(e.settled, runID)
+		return
+	}
+	e.settled[runID] = remaining
+}
+
+// releaseWaitersLocked 通知等这条运行收尾的人。调用方持锁。
+func (e *Engine) releaseWaitersLocked(runID int64) {
+	for _, notify := range e.settled[runID] {
+		close(notify)
+	}
+	delete(e.settled, runID)
+}
+
 // ListSnapshots 按谓词取一批运行的快照。
 //
 // 侧数据一次批量取回，不是逐条运行走 snapshotLocked：一页有几十条运行，逐条取就是几十轮查询。

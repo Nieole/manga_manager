@@ -20,7 +20,7 @@ import (
 // newLifecycleWatcher 造一个不挂真实 Scanner 的 watcher，扫描/清理走注入桩。
 func newLifecycleWatcher(t *testing.T) *FileWatcher {
 	t.Helper()
-	fw, err := NewFileWatcher(nil)
+	fw, err := NewFileWatcher(stubWatcherHooks())
 	if err != nil {
 		t.Fatalf("NewFileWatcher: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 	)
 
 	// 两个桩都阻塞到 ctx 被取消为止：ctx 若永不取消（旧行为），它们就永远不返回。
-	fw.scanLibrary = func(ctx context.Context, _ int64, _ string, _ bool) error {
+	fw.scanLibrary = func(ctx context.Context, _ int64) error {
 		select {
 		case scanStarted <- struct{}{}:
 		default:
@@ -138,7 +138,7 @@ func TestStopClosesDispatchBeforeWaiting(t *testing.T) {
 	t.Run("Stop 之后事件循环不再派活", func(t *testing.T) {
 		fw := newLifecycleWatcher(t)
 		var dispatched atomic.Int64
-		fw.scanLibrary = func(context.Context, int64, string, bool) error {
+		fw.scanLibrary = func(context.Context, int64) error {
 			dispatched.Add(1)
 			return nil
 		}
@@ -175,7 +175,7 @@ func TestStopClosesDispatchBeforeWaiting(t *testing.T) {
 				cleanupDebounce:    time.Millisecond,
 				cleanupMaxDeferral: time.Hour,
 			}
-			fw.scanLibrary = func(context.Context, int64, string, bool) error {
+			fw.scanLibrary = func(context.Context, int64) error {
 				time.Sleep(time.Millisecond)
 				return nil
 			}

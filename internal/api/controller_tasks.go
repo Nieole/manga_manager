@@ -20,13 +20,14 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/task"
 
 	"github.com/go-chi/chi/v5"
 )
 
 // taskRelauncher 用原任务的作用域与任务参数重新发起同一个任务。返回 errTaskAlreadyRunning 表示
 // 同一任务已在运行（映射为 409），返回其它错误视为内部错误（映射为 500）。
-type taskRelauncher func(ctx context.Context, task RunStatus) error
+type taskRelauncher func(ctx context.Context, run RunStatus) error
 
 // taskDispatchKey 是**重启函数**注册表的键：身份四要素里决定「怎么跑」的那两项。
 //
@@ -70,27 +71,27 @@ func (c *Controller) libraryScopeName(libraryID int64) string {
 // taskParam 读一个**任务参数**，缺了给空串。**重启函数**靠它读回原始入参：一个任务重试时
 // 除了作用域就只剩这些参数，读丢了不会有编译错误，后果是重试静默换了跑法（换成默认刮削源、
 // 换个语种、丢掉发起理由）。
-func taskParam(task RunStatus, key string) string {
-	if task.Params == nil {
+func taskParam(run RunStatus, key string) string {
+	if run.Params == nil {
 		return ""
 	}
-	return task.Params[key]
+	return run.Params[key]
 }
 
 // buildTaskRelaunchers 注册（类型，**变体**）-> 重启函数，是重试分发与「可重试」的唯一事实来源。
 func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
-	libraryID := func(task RunStatus) (int64, error) {
-		if task.ScopeID == nil {
-			return 0, fmt.Errorf("task %q missing library id", task.Key)
+	libraryID := func(run RunStatus) (int64, error) {
+		if run.ScopeID == nil {
+			return 0, fmt.Errorf("task %q missing library id", run.Key)
 		}
-		return *task.ScopeID, nil
+		return *run.ScopeID, nil
 	}
-	forceParam := func(task RunStatus) bool {
-		return taskParam(task, "force") == "true"
+	forceParam := func(run RunStatus) bool {
+		return taskParam(run, "force") == "true"
 	}
 	return map[taskDispatchKey]taskRelauncher{
-		{Type: "scan_library", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
-			id, err := libraryID(task)
+		{Type: "scan_library", Variant: variantSole}: func(ctx context.Context, run RunStatus) error {
+			id, err := libraryID(run)
 			if err != nil {
 				return err
 			}
@@ -100,20 +101,21 @@ func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
 			}
 			// 启动入口本就返回「同类任务已在运行」哨兵错误，重启函数原样透传即可，
 			// 不必再把一个布尔值转换回哨兵错误。
-			return c.launchLibraryScanTask(lib, forceParam(task))
+			// **发起方**是手动：重试是用户按下的那一下（重启后的自动续跑是另一条路）。
+			return c.launchLibraryScanTask(lib, forceParam(run), task.TriggerManual)
 		},
-		{Type: "scan_series", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
-			if task.ScopeID == nil {
-				return fmt.Errorf("task %q missing series id", task.Key)
+		{Type: "scan_series", Variant: variantSole}: func(ctx context.Context, run RunStatus) error {
+			if run.ScopeID == nil {
+				return fmt.Errorf("task %q missing series id", run.Key)
 			}
-			return c.launchSeriesScanTask(*task.ScopeID, forceParam(task))
+			return c.launchSeriesScanTask(*run.ScopeID, forceParam(run))
 		},
-		{Type: "cleanup_library", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
-			id, err := libraryID(task)
+		{Type: "cleanup_library", Variant: variantSole}: func(ctx context.Context, run RunStatus) error {
+			id, err := libraryID(run)
 			if err != nil {
 				return err
 			}
-			return c.launchCleanupLibraryTask(id)
+			return c.launchCleanupLibraryTask(id, task.TriggerManual)
 		},
 		{Type: "rebuild_index", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildIndexTask()
@@ -121,31 +123,31 @@ func (c *Controller) buildTaskRelaunchers() map[taskDispatchKey]taskRelauncher {
 		{Type: "rebuild_thumbnails", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildThumbnailsTask()
 		},
-		{Type: "scrape", Variant: variantScrapeAllLibraries}: func(ctx context.Context, task RunStatus) error {
-			return c.launchBatchScrapeAllSeriesTask(ctx, taskParam(task, "provider"))
+		{Type: "scrape", Variant: variantScrapeAllLibraries}: func(ctx context.Context, run RunStatus) error {
+			return c.launchBatchScrapeAllSeriesTask(ctx, taskParam(run, "provider"))
 		},
-		{Type: "scrape", Variant: variantScrapeOneLibrary}: func(ctx context.Context, task RunStatus) error {
-			id, err := libraryID(task)
+		{Type: "scrape", Variant: variantScrapeOneLibrary}: func(ctx context.Context, run RunStatus) error {
+			id, err := libraryID(run)
 			if err != nil {
 				return err
 			}
-			return c.launchLibraryScrapeTask(ctx, id, taskParam(task, "provider"))
+			return c.launchLibraryScrapeTask(ctx, id, taskParam(run, "provider"))
 		},
-		{Type: "ai_grouping", Variant: variantSole}: func(ctx context.Context, task RunStatus) error {
-			id, err := libraryID(task)
+		{Type: "ai_grouping", Variant: variantSole}: func(ctx context.Context, run RunStatus) error {
+			id, err := libraryID(run)
 			if err != nil {
 				return err
 			}
 			// locale 优先取任务持久化的原始值，其次取本次重试请求的语言（ctx 注入），最后回退 zh-CN。
-			locale := firstNonEmptyTaskValue(taskParam(task, "locale"), metadata.LocaleFromContext(ctx))
+			locale := firstNonEmptyTaskValue(taskParam(run, "locale"), metadata.LocaleFromContext(ctx))
 			return c.launchAIGroupingTask(id, firstNonEmptyTaskValue(locale, "zh-CN"))
 		},
 		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildBookHashesTask()
 		},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: func(ctx context.Context, task RunStatus) error {
+		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: func(ctx context.Context, run RunStatus) error {
 			// 发起理由是这个变体的原始入参，重试要沿用而不是另编一个。
-			return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(taskParam(task, "reason"), "manual_retry"))
+			return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(taskParam(run, "reason"), "manual_retry"), task.TriggerManual)
 		},
 		{Type: "rebuild_file_identities", Variant: variantSole}: func(ctx context.Context, _ RunStatus) error {
 			return c.launchRebuildFileIdentitiesTask()
@@ -293,7 +295,7 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := c.taskEngine.snapshotForRetry(r.Context(), taskKey)
+	run, err := c.taskEngine.snapshotForRetry(r.Context(), taskKey)
 	if err != nil {
 		if errors.Is(err, errTaskNotFound) {
 			jsonError(w, http.StatusNotFound, "Task not found")
@@ -305,12 +307,12 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 	// 这里**不再判一次「是不是已经在跑」**：准入只剩一处，而那一处如今的答案不是拒绝而是排队——
 	// 重启函数回到同一个**身份**上，撞上活动运行就进**排队中**，撞上排队的就被**合并**进去。
 	// 在这里补一道 409 等于让「什么叫已经在跑」重新有两个答案，而其中一个还会把这次重试丢掉。
-	if !task.Retryable {
+	if !run.Retryable {
 		jsonError(w, http.StatusConflict, "Task is not retryable")
 		return
 	}
 
-	relaunch, ok := c.taskEngine.relauncherFor(task.Type, task.Variant)
+	relaunch, ok := c.taskEngine.relauncherFor(run.Type, run.Variant)
 	if !ok {
 		jsonError(w, http.StatusBadRequest, "Unsupported retry type")
 		return
@@ -318,13 +320,13 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 
 	// 用本次重试请求自身的 Accept-Language 构造 ctx，供 relauncher（如 AI 分组）在无持久化
 	// locale 时恢复语言。
-	if err := relaunch(requestContextWithLocale(r), task); err != nil {
+	if err := relaunch(requestContextWithLocale(r), run); err != nil {
 		if errors.Is(err, errTaskAlreadyRunning) {
 			jsonError(w, http.StatusConflict, "Task is already running")
 			return
 		}
 		// 区分错误语义：仅"已在运行"是 409，其它（缺少 scope、GetLibrary 失败等内部错误）返回 500。
-		slog.Error("Task retry failed", "task_key", taskKey, "task_type", task.Type, "error", err)
+		slog.Error("Task retry failed", "task_key", taskKey, "task_type", run.Type, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retry task")
 		return
 	}

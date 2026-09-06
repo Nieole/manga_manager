@@ -265,6 +265,12 @@ func orderClause(order task.RunOrder) string {
 		// 后者在 SQLite 里也成立，但把「1 在前」这件事写明白，读的人不必去想布尔怎么排。
 		return ` ORDER BY CASE WHEN status IN (` + quotedStatuses(task.LiveStatuses()) +
 			`) THEN 0 ELSE 1 END, sequence DESC, id DESC`
+	case task.OrderManualFirst:
+		// **手动**发起的排在最前，其后与 OrderSequenceDesc 一致。发起方的取值同样来自领域，
+		// 不在这里另写一个字面量。
+		// 列名加引号：trigger 是 SQLite 的关键字，在表达式里裸写会撞上建触发器那条语法。
+		return ` ORDER BY CASE WHEN "trigger" = '` + string(task.TriggerManual) +
+			`' THEN 0 ELSE 1 END, sequence DESC, id DESC`
 	case task.OrderSequenceDesc:
 		return ` ORDER BY sequence DESC, id DESC`
 	default:

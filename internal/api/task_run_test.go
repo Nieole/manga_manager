@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 )
 
 // identityForTest 造一份最小可用的**身份**，与 specForTest 那把任务键 `scan_library_1` 相配。
@@ -60,7 +61,7 @@ func TestRunSettlesByBodyError(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
-			if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 				return TaskResult{}, tc.bodyErr
 			}); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -106,7 +107,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 
 			const key = "scan_library_1"
 			tc.result.Params = map[string]string{"written": "3"}
-			if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 				return tc.result, tc.bodyErr
 			}); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -129,7 +130,7 @@ func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{Params: map[string]string{"name": "Main"}}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -152,7 +153,7 @@ func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 
 	const key = "scan_library_1"
 	bodyRan := false
-	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		bodyRan = true
 		return TaskResult{}, nil
 	}); err != nil {
@@ -188,14 +189,14 @@ func TestRunQueuesDuplicateActiveKey(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("第一次启动返回了 %v，应为 nil", err)
 	}
 
 	secondBodyRan := false
-	err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		secondBodyRan = true
 		return TaskResult{}, nil
 	})
@@ -220,7 +221,7 @@ func TestRunQueuesWhileCancelling(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("第一次启动返回了 %v，应为 nil", err)
@@ -229,7 +230,7 @@ func TestRunQueuesWhileCancelling(t *testing.T) {
 		t.Fatalf("取消失败: %v", err)
 	}
 
-	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("取消中的任务键再次发起返回 %v, want 进排队", err)
@@ -260,7 +261,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
-			if err := e.Run(identityForTest(), specForTest(key), tc.body); err != nil {
+			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), tc.body); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
 			}
 
@@ -268,7 +269,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 			if _, leaked := e.engine.Handle(settled.RunID); leaked {
 				t.Fatalf("退出路径「%s」上残留了运行时句柄 —— 一份 ctx 与暂停闸门就此泄漏", tc.name)
 			}
-			if err := e.Run(identityForTest(), specForTest(key), tc.body); err != nil {
+			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), tc.body); err != nil {
 				t.Fatalf("退出路径「%s」之后同一任务键再也起不来：%v", tc.name, err)
 			}
 		})
@@ -281,7 +282,7 @@ func TestRunPanicStillMarksTaskFailed(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		panic("boom")
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -308,7 +309,7 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	spec.ScopeName = "Main Library"
 	spec.Metadata = map[string]string{"force": "true", "scan_profile": "balanced"}
 	spec.Limits = TaskLimits{ScanProfile: "balanced", ScanConcurrency: 4}
-	if err := e.Run(libraryTask("scan_library", 7, variantSole), spec, func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(libraryTask("scan_library", 7, variantSole), task.TriggerManual, spec, func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -349,7 +350,7 @@ func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -368,7 +369,7 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	e.now = clock.Now
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), specForTest(key), func(_ context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		tp.Advance(3, 20, "progress.scanning", map[string]string{"current": "3"})
 		if task := lastPublishedTask(t, snapshots(), key); task.Current != 3 || task.Total != 20 || task.Phase != "" {
 			t.Fatalf("计数推进之后 current=%d total=%d phase=%q，它不该碰阶段", task.Current, task.Total, task.Phase)
@@ -414,7 +415,7 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 
 	const key = "scan_library_1"
 	var handle *runhandle.Handle
-	if err := e.Run(identityForTest(), specForTest(key), func(_ context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		handle = tp
 		return TaskResult{}, nil
 	}); err != nil {

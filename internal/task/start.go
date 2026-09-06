@@ -93,6 +93,17 @@ func (r Result) orDefault(code string) Result {
 // 它不自己判**终态**、不自己起 goroutine、也不接触自己那条运行的 id。
 type Body func(ctx context.Context, handle *runhandle.Handle) (Result, error)
 
+// Launched 是一次发起落地成了什么：哪一条运行接住了它，以及本次交出的任务体会不会执行。
+//
+// 两者必须一起交出去。只交运行的话，调用方分不出「这条运行是本次建的」与「本次被**合并**进了
+// 一条别人排下的运行」——而后者的任务体不会执行，等在它身上的调用方会永远等下去。
+type Launched struct {
+	Run Run
+	// Coalesced 为真表示本次发起被合并进了 Run 那一条已经排着的运行：
+	// 它跑的是同一件事，本次交出的任务体不会执行。
+	Coalesced bool
+}
+
 // Start 是往库里放一条运行的**唯一入口**。
 //
 // 返回的运行可能是运行中，也可能是**排队中**——槽位满、同一个任务已有活动运行、或者
@@ -107,29 +118,29 @@ type Body func(ctx context.Context, handle *runhandle.Handle) (Result, error)
 //
 // ctx 只管这一次准入期间的落盘查询，不是任务体的 ctx：任务体那份由引擎另建，
 // 因此它活得比发起它的那个请求久。
-func (e *Engine) Start(ctx context.Context, spec RunSpec, body Body) (Run, error) {
+func (e *Engine) Start(ctx context.Context, spec RunSpec, body Body) (Launched, error) {
 	if err := spec.validate(); err != nil {
-		return Run{}, err
+		return Launched{}, err
 	}
 	if body == nil {
-		return Run{}, fmt.Errorf("%w: 缺少任务体", ErrInvalidRunSpec)
+		return Launched{}, fmt.Errorf("%w: 缺少任务体", ErrInvalidRunSpec)
 	}
 	owner, err := e.store.EnsureTask(ctx, spec.Identity)
 	if err != nil {
-		return Run{}, err
+		return Launched{}, err
 	}
 
 	e.mu.Lock()
-	run, launch, err := e.admitLocked(ctx, owner, spec, body)
+	launched, launch, err := e.admitLocked(ctx, owner, spec, body)
 	e.mu.Unlock()
 	if err != nil {
-		return Run{}, err
+		return Launched{}, err
 	}
 	// 放在锁外：注入同步执行版的测试装置会当场跑完任务体，而任务体的每一次上报都要这把锁。
 	if launch != nil {
 		launch()
 	}
-	return run, nil
+	return launched, nil
 }
 
 // admitLocked 是新运行落地的**唯一**机制：过任务闸门与槽位闸门，然后编号、落盘、写侧数据、
@@ -137,16 +148,16 @@ func (e *Engine) Start(ctx context.Context, spec RunSpec, body Body) (Run, error
 //
 // 这几步漏掉任何一步都不会有编译错误，后果各不相同——漏投递则界面上运行不出现，
 // 漏落盘则重启后运行凭空消失，漏建句柄则那条运行暂停不了也取消不了。
-func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body Body) (Run, func(), error) {
+func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body Body) (Launched, func(), error) {
 	// 「第几次」取最大值加一而不是行数加一：保留裁剪删掉旧运行之后，按行数算会撞上一个
 	// 已经用过的编号，而用户看到的「第几次」会倒着走。
 	highest, err := e.store.MaxNthRun(ctx, owner.ID)
 	if err != nil {
-		return Run{}, nil, err
+		return Launched{}, nil, err
 	}
 	wait, err := e.mustQueueLocked(ctx, owner.ID)
 	if err != nil {
-		return Run{}, nil, err
+		return Launched{}, nil, err
 	}
 
 	now := e.clock()
@@ -177,18 +188,18 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 		return e.coalesceLocked(ctx, owner.ID)
 	}
 	if err != nil {
-		return Run{}, nil, err
+		return Launched{}, nil, err
 	}
 	e.writeSideDataLocked(ctx, created.ID, spec)
 
 	if created.Status == StatusQueued {
 		e.queued[created.ID] = queuedRun{spec: spec, body: body}
 		e.publishLocked(created)
-		return created, nil, nil
+		return Launched{Run: created}, nil, nil
 	}
 	launch := e.beginLocked(created, spec, body)
 	e.publishLocked(created)
-	return created, launch, nil
+	return Launched{Run: created}, launch, nil
 }
 
 // mustQueueLocked 判这次发起该不该先进**排队中**。调用方持锁。
@@ -226,7 +237,7 @@ func (e *Engine) mustQueueLocked(ctx context.Context, taskID int64) (bool, error
 // 不知道它代表了几次发起。
 //
 // 序号要重取一个：合并是一次用户看得见的变化，不取的话那条排队在任务中心里一动不动。
-func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Run, func(), error) {
+func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Launched, func(), error) {
 	queue, err := e.store.ListRuns(ctx, RunFilter{
 		TaskID:   taskID,
 		Statuses: []RunStatus{StatusQueued},
@@ -234,11 +245,11 @@ func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Run, func(),
 		Limit:    1,
 	})
 	if err != nil {
-		return Run{}, nil, err
+		return Launched{}, nil, err
 	}
 	// 索引说有、查回来却没有：把准入哨兵原样交出去，调用方至少知道这次发起没有落地。
 	if len(queue) == 0 {
-		return Run{}, nil, ErrRunAlreadyQueued
+		return Launched{}, nil, ErrRunAlreadyQueued
 	}
 
 	run := queue[0]
@@ -247,7 +258,7 @@ func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Run, func(),
 	run.Sequence = e.nextSequenceLocked()
 	e.saveLocked(run)
 	e.publishLocked(run)
-	return run, nil, nil
+	return Launched{Run: run, Coalesced: true}, nil, nil
 }
 
 // writeSideDataLocked 把运行声明里不属于运行行的那几样交给各自的侧表。调用方持锁。
@@ -418,6 +429,8 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 	delete(e.gates, runID)
 	e.saveLocked(run)
 	e.publishLocked(run)
+	// 等这条运行收尾的人在落盘**之后**才被叫醒：他们醒来第一件事就是把它读回来。
+	e.releaseWaitersLocked(runID)
 	return e.releaseQueuedLocked()
 }
 

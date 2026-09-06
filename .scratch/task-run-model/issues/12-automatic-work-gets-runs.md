@@ -6,7 +6,7 @@
 
 **Blocked by:** 11
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## 今天的样子（ADR 0005 的起因）
 
@@ -32,11 +32,11 @@
 
 ## 验收
 
-- [ ] 守护扫描、watcher 派生扫描与清理、建库首扫均建运行并标出发起方
-- [ ] 这些运行可暂停、可取消，与手动发起的没有区别
-- [ ] `ErrScanAlreadyRunning` 已删除，`scanner` 不再自判目标冲突
-- [ ] 守护扫描撞上手动扫描时排队而不是静默跳过，有一条用例守着
-- [ ] 作品群重建与统计预热未建运行
-- [ ] 这些路径的日志带上任务键与运行标识（票 02 / 07 的 handler 自然覆盖，本票确认）
-- [ ] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
-- [ ] `cd web && npm run test && npm run lint && npm run build` 全绿
+- [x] 守护扫描、watcher 派生扫描与清理、建库首扫均建运行并标出发起方
+- [x] 这些运行可暂停、可取消，与手动发起的没有区别
+- [x] `ErrScanAlreadyRunning` 已删除，`scanner` 不再自判目标冲突
+- [x] 守护扫描撞上手动扫描时排队而不是静默跳过，有一条用例守着
+- [x] 作品群重建与统计预热未建运行
+- [x] 这些路径的日志带上任务键与运行标识（票 02 / 07 的 handler 自然覆盖，本票确认）
+- [x] `GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...` 全绿
+- [x] `cd web && npm run test && npm run lint && npm run build` 全绿

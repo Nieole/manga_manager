@@ -146,6 +146,8 @@ type Engine struct {
 	queued map[int64]queuedRun
 	// gates 是每条运行的投递水位。
 	gates map[int64]publishGate
+	// settled 按运行 id 存着「等这条运行收尾」的通知通道，收尾时一并关掉。见 Await。
+	settled map[int64][]chan struct{}
 }
 
 // New 建一个引擎。Store 与 RunBackground 缺一不可——两者都是装配期的编程错误，
@@ -169,6 +171,7 @@ func New(cfg Config) *Engine {
 		runtimes:      make(map[int64]*taskRuntime),
 		queued:        make(map[int64]queuedRun),
 		gates:         make(map[int64]publishGate),
+		settled:       make(map[int64][]chan struct{}),
 	}
 	e.seq = e.restoredSequence()
 	return e

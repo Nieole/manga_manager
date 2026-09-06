@@ -118,14 +118,14 @@ func TestFailedTerminalKeepsTheErrorOthersClearIt(t *testing.T) {
 func TestPanicBecomesAnExplicitFailure(t *testing.T) {
 	h := newTestEngine(t, runBodySynchronously, 0)
 
-	run, err := h.engine.Start(context.Background(), libraryScanSpec(1), func(context.Context, *runhandle.Handle) (Result, error) {
+	launched, err := h.engine.Start(context.Background(), libraryScanSpec(1), func(context.Context, *runhandle.Handle) (Result, error) {
 		panic("scanner blew up")
 	})
 	if err != nil {
 		t.Fatalf("发起运行失败: %v", err)
 	}
 
-	settled := h.load(t, run.ID)
+	settled := h.load(t, launched.Run.ID)
 	if settled.Status != StatusFailed {
 		t.Fatalf("panic 之后运行状态为 %q, want failed", settled.Status)
 	}

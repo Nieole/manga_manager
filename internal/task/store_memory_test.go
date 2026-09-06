@@ -216,6 +216,13 @@ func (s *memStore) ListRuns(_ context.Context, filter RunFilter) ([]Run, error) 
 		}
 	}
 	sort.Slice(matched, func(i, j int) bool {
+		// 与 taskstore 的 orderClause 同形：手动优先那一组先分，组内仍按序号。
+		if filter.Order == OrderManualFirst {
+			if left, right := manualFirstRank(matched[i]), manualFirstRank(matched[j]); left != right {
+				return left < right
+			}
+			return matched[i].Sequence > matched[j].Sequence
+		}
 		if filter.Order == OrderSequenceDesc {
 			return matched[i].Sequence > matched[j].Sequence
 		}
@@ -225,6 +232,14 @@ func (s *memStore) ListRuns(_ context.Context, filter RunFilter) ([]Run, error) 
 		matched = matched[:filter.Limit]
 	}
 	return matched, nil
+}
+
+// manualFirstRank 把一条运行分进「手动」与「其余」两组，手动为 0。
+func manualFirstRank(run Run) int {
+	if run.Trigger == TriggerManual {
+		return 0
+	}
+	return 1
 }
 
 func (s *memStore) CountRuns(ctx context.Context, filter RunFilter) (int, error) {

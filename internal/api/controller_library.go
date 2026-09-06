@@ -12,6 +12,8 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/scanner"
+	"manga-manager/internal/task"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,15 +57,16 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 
 // cancelLibraryScopedTasks 取消该库范围内、经任务引擎启动的在跑任务。
 //
-// 覆盖边界必须说清楚：只有这三类任务在引擎里有条目和可取消的 ctx。
-// 而 interval 守护扫描、watcher 触发的扫描、以及全库重扫都是拿 context.Background()
-// 直接调 scanner 的，既没有任务条目也无从取消——删库对它们无效，只能靠外键约束兜底
-// （它们会空转刷一阵错误日志，但不会重建被删的行）。让扫描器自己感知库消失属于扫描器边界的改动。
-// 取消的是这些键下**每一条**仍会变化的运行，不只是最近那一条：库都没了，它排在队里的那次扫描
-// 同样不该在几分钟后开跑。取消不掉的（不可取消、进程里没有句柄）一律不阻塞删库——
+// 覆盖边界必须说清楚：清单里的这四类是今天会在一个库上留下**仍会变化的运行**的全部。
+// 守护扫描与监听器派生的扫描如今也建运行，且用的就是 scan_library_ 这个键，因此一并被取消；
+// 逃出这张清单的只剩「重建索引 / 重建缩略图」那趟逐库强扫——它挂在系统作用域上，
+// 删掉一个库不该把整趟重建停掉。取消不掉的（不可取消、进程里没有句柄）一律不阻塞删库——
 // 库行删掉之后，外键约束会挡住任何回写。
+//
+// 取消的是这些键下**每一条**仍会变化的运行，不只是最近那一条：库都没了，它排在队里的那次扫描
+// 同样不该在几分钟后开跑。
 func (c *Controller) cancelLibraryScopedTasks(libraryID int64) {
-	for _, prefix := range []string{"scan_library_", "scrape_library_", "ai_grouping_library_"} {
+	for _, prefix := range []string{"scan_library_", "cleanup_library_", "scrape_library_", "ai_grouping_library_"} {
 		key := prefix + strconv.FormatInt(libraryID, 10)
 		cancelled, err := c.taskEngine.cancelRunsForKey(key)
 		if err != nil {
@@ -173,19 +176,12 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path, createdLib.ScanFormats)
 	}
 
-	// 触发异步扫描任务，不阻塞前端 API 响应
-	c.runBackground(func() {
-		// 使用独立 context 避免跟随请求自动取消，创建库默认全量
-		defer c.purgeReadingPathCaches()
-		err := c.scanner.ScanLibrary(context.Background(), createdLib.ID, req.Path, false, nil)
-		if err != nil {
-			// 在生产环境需要接入日志中心打印
-			_ = err
-			c.invalidateDashboardStatsCache("library_initial_scan_failed")
-			return
-		}
-		c.warmDashboardStatsCacheAsync("library_initial_scan_completed")
-	})
+	// 建库后的首扫是一条正常的扫描运行，因此在任务中心里看得见、也停得下来。
+	// **发起方**记手动：它是用户刚按下「添加资料库」的直接后果，用户正等着看它扫到哪了。
+	// 发起是同步的（准入落库那一下），任务体在后台跑，不阻塞这次响应。
+	if err := c.launchLibraryScanTask(createdLib, false, task.TriggerManual); err != nil {
+		slog.WarnContext(ctx, "Initial library scan could not be started", "library_id", createdLib.ID, "error", err)
+	}
 
 	jsonResponse(w, http.StatusCreated, createdLib)
 }
@@ -279,7 +275,19 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 // 启动仪式（槽位闸门、元数据、并发上限、可取消可暂停的上下文、后台 goroutine、三条终态分支、
 // panic 兜底）全部由引擎承担；这里只剩两样东西：一份任务声明，和一个任务体。
 // 任务体里保留的仍是**领域**动作——缓存失效、预热、串联后台哈希回填——这些不该由引擎代劳。
-func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) error {
+//
+// **发起方**由调用方给：同一份声明可以是用户点的、守护 tick 到的、或文件监听器叫的，
+// 三者跑法完全相同，差别只在任务中心那枚徽章上。
+func (c *Controller) launchLibraryScanTask(lib database.Library, force bool, trigger task.Trigger) error {
+	_, err := c.startLibraryScanRun(lib, force, trigger)
+	return err
+}
+
+// startLibraryScanRun 与 launchLibraryScanTask 是同一次发起，另外交回这次发起落地成了什么。
+//
+// 只有文件监听器需要它：它要等这次扫描跑完（见 runWatchedLibraryScan），而**合并**掉的那次
+// 发起任务体根本不会执行，等在它身上就是永远等下去。
+func (c *Controller) startLibraryScanRun(lib database.Library, force bool, trigger task.Trigger) (task.Launched, error) {
 	cfg := c.currentConfig()
 	storagePolicy := config.ResolveStoragePolicy(cfg, lib.Path)
 
@@ -304,7 +312,7 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool) err
 		FailCode:     "task.msg.scan_library.failed",
 	}
 
-	return c.taskEngine.Run(libraryTask("scan_library", lib.ID, variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.start(libraryTask("scan_library", lib.ID, variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
 		// 把**运行句柄**包成**扫描观察者**一起交出去：扫描器的报文不带身份，
 		// 「这次扫描的进度写到哪」由这次交出的是谁回答。
@@ -338,7 +346,7 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	if err := c.launchLibraryScanTask(lib, isForce); err != nil {
+	if err := c.launchLibraryScanTask(lib, isForce, task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A library scan is already running", "Failed to start library scan")
 		return
 	}
@@ -389,7 +397,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool) error {
 		FailCode:     "task.msg.scan_series.failed",
 	}
 
-	return c.taskEngine.Run(seriesTask("scan_series", seriesID, variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(seriesTask("scan_series", seriesID, variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		defer c.purgeReadingPathCaches()
 		if err := c.scanner.ScanSeries(ctx, seriesID, force, newTaskScanObserver(tp)); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -449,7 +457,14 @@ func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) 
 // 引擎裁决不出**已取消**这条分支。两者必须一起改：只换成任务体的 ctx 的话，
 // scanner.CleanupLibrary 会在可中断点返回 ctx.Err()，任务落进一条没有文案的已取消态，
 // 界面上停着上一句「正在清理」不动。
-func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
+func (c *Controller) launchCleanupLibraryTask(libraryID int64, trigger task.Trigger) error {
+	_, err := c.startCleanupLibraryRun(libraryID, trigger)
+	return err
+}
+
+// startCleanupLibraryRun 与 launchCleanupLibraryTask 是同一次发起，多交回的那样与
+// startLibraryScanRun 同理：文件监听器要等它跑完（Stop 的契约是派生出去的清理也已退出）。
+func (c *Controller) startCleanupLibraryRun(libraryID int64, trigger task.Trigger) (task.Launched, error) {
 	idParams := map[string]string{"id": strconv.FormatInt(libraryID, 10)}
 	scopeName := c.libraryScopeName(libraryID)
 
@@ -463,12 +478,12 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
 		FailCode:     "task.msg.cleanup_library.failed",
 	}
 
-	return c.taskEngine.Run(libraryTask("cleanup_library", libraryID, variantSole), spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.start(libraryTask("cleanup_library", libraryID, variantSole), trigger, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		tp.Phase("scanning_records", "task.msg.cleanup_library.scanning_records", idParams)
 		// 刻意不用任务体 ctx 的**取消**能力：本任务不可取消，而停机会取消所有任务 ctx——用了它，
 		// 一次关服就会把这个没人取消过的任务写成**已取消**。改动前先读本函数的 doc。
 		// 只把它携带的**任务键**转移到这条不可取消的 ctx 上，否则这个任务跑出的日志按任务键一条也过滤不到。
-		cleanupCtx := logger.WithTaskKey(context.Background(), logger.TaskKeyFrom(taskCtx))
+		cleanupCtx := logger.WithRunID(logger.WithTaskKey(context.Background(), logger.TaskKeyFrom(taskCtx)), logger.RunIDFrom(taskCtx))
 		if err := c.scanner.CleanupLibrary(cleanupCtx, libraryID); err != nil {
 			slog.ErrorContext(cleanupCtx, "Failed to cleanup library", "library_id", libraryID, "error", err)
 			return TaskResult{}, err
@@ -477,13 +492,48 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64) error {
 	})
 }
 
+// runWatchedLibraryScan / runWatchedLibraryCleanup 是交给文件监听器的两个出口
+// （见 scanner.WatcherHooks）：各建一条**发起方**为「监听」的运行，并等它跑完。
+//
+// **等**是契约的一部分**而不是**顺手为之：监听器按扫描的成败决定敢不敢接着清理——改名重连写在
+// 扫描末尾，抢在它前面清理就是把用户的阅读进度、书签与合集归属一起删掉。发起完就返回的话，
+// 那条清理会在扫描还排着队的时候跑起来。
+func (c *Controller) runWatchedLibraryScan(ctx context.Context, libraryID int64) error {
+	lib, err := c.store.GetLibrary(ctx, libraryID)
+	if err != nil {
+		return err
+	}
+	// 监听触发的是一次**增量**扫描：它要的只是「把这批新文件收进来」。
+	launched, err := c.startLibraryScanRun(lib, false, task.TriggerWatch)
+	return c.awaitWatchedRun(ctx, launched, err)
+}
+
+func (c *Controller) runWatchedLibraryCleanup(ctx context.Context, libraryID int64) error {
+	launched, err := c.startCleanupLibraryRun(libraryID, task.TriggerWatch)
+	return c.awaitWatchedRun(ctx, launched, err)
+}
+
+// awaitWatchedRun 等这次发起的运行收尾，把结果讲给监听器听。
+//
+// 被**合并**掉的那次不等：它的任务体不会执行（排在前面那条跑的是同一件事），而那条还没跑完——
+// 交出 ErrScanCoalesced，监听器据此不接着清理，并把这轮清理重新排期。
+func (c *Controller) awaitWatchedRun(ctx context.Context, launched task.Launched, launchErr error) error {
+	if launchErr != nil {
+		return launchErr
+	}
+	if launched.Coalesced {
+		return scanner.ErrScanCoalesced
+	}
+	return c.taskEngine.awaitRunOutcome(ctx, launched.Run.ID)
+}
+
 func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
-	if err := c.launchCleanupLibraryTask(libraryID); err != nil {
+	if err := c.launchCleanupLibraryTask(libraryID, task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A library cleanup is already running", "Failed to start library cleanup")
 		return
 	}

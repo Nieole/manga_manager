@@ -15,6 +15,7 @@ import (
 	"manga-manager/internal/database"
 	ksvc "manga-manager/internal/koreader"
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -791,7 +792,7 @@ func (c *Controller) launchRebuildBookHashesTask() error {
 		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildForeground), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildForeground), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
 		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, koreaderFingerprintHandle{Handle: tp})
 		if err != nil {
@@ -817,7 +818,7 @@ func (c *Controller) launchReconcileKOReaderProgressTask() error {
 		FailCode:     "task.msg.reconcile_koreader_progress.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("reconcile_koreader_progress", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("reconcile_koreader_progress", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, koreaderReconcileHandle{Handle: tp})
 		if err != nil {
 			return TaskResult{}, err
@@ -849,7 +850,7 @@ func (c *Controller) launchRefreshKOReaderMatchingTask() error {
 		FailCode:     "task.msg.refresh_koreader_matching.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("refresh_koreader_matching", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("refresh_koreader_matching", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts,

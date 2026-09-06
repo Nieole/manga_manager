@@ -24,7 +24,6 @@ import (
 
 // FileWatcher 监听库目录的文件变动，自动触发增量扫描
 type FileWatcher struct {
-	scanner *Scanner
 	watcher *fsnotify.Watcher
 	mu      sync.Mutex
 	// pending: 文件变动后按库排期，去抖（watcherTimings.scanDebounce）后触发一次增量扫描
@@ -55,8 +54,8 @@ type FileWatcher struct {
 	// inFlight 追踪派生出去的扫描/清理，Stop 会等它们退出。
 	inFlight sync.WaitGroup
 
-	// scanLibrary / cleanupLibrary / libraryScanRunning 供测试注入桩；生产留 nil 时走 fw.scanner。
-	scanLibrary    func(ctx context.Context, libraryID int64, rootPath string, force bool) error
+	// 派生工作的三个出口，装配期一次交齐（见 WatcherHooks），测试直接换掉其中某一个。
+	scanLibrary    func(ctx context.Context, libraryID int64) error
 	cleanupLibrary func(ctx context.Context, libraryID int64) error
 	// libraryScanRunning 报告该库此刻是否有扫描在跑，含**别处**发起的（任务面板的「扫描资料库」）。
 	// scansInFlight 只看得见本 watcher 派发的那些，而任何一次扫描的重连都写在末尾。
@@ -110,14 +109,51 @@ func defaultWatcherTimings() watcherTimings {
 	}
 }
 
-func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
+// ErrScanCoalesced 是 WatcherHooks.ScanLibrary 的一条约定出口：本次派发被**合并**进了
+// 这个库上已经排着的那次扫描，因此本次没有真的扫，也不必重试。
+//
+// 它不是闸门——判「这个库是不是已经在扫」的是任务那一处的准入（ADR 0005），这里只是把那个
+// 判定的结果讲给监听器听：被合并掉的那次扫描**还没跑完**，跟在它后面的清理因此必须重新排期。
+var ErrScanCoalesced = errors.New("scanner: scan was coalesced into a queued run")
+
+// WatcherHooks 是监听器派生工作的三个出口。监听器自己**不调用扫描器**：它只知道
+// 「这个库该扫了」「这个库该清了」，去哪儿扫、这次扫描算作谁的一次**运行**，由装配方回答。
+//
+// 三个都必须给。留一个 nil 就等于让派生的扫描退回「不属于任何任务」——用户听见盘响、
+// 任务中心一片空白，而那正是 ADR 0005 要消灭的东西。
+type WatcherHooks struct {
+	// ScanLibrary 扫这个库，**返回时这次扫描已经结束**：监听器按它的成败决定敢不敢接着清理。
+	//
+	// 参数只有库 id：扫哪条路径、按什么档位扫，是装配方从库行里读的，监听器不复述。
+	ScanLibrary func(ctx context.Context, libraryID int64) error
+	// CleanupLibrary 清这个库的幽灵记录，同样等它结束才返回。
+	CleanupLibrary func(ctx context.Context, libraryID int64) error
+	// LibraryScanRunning 报告这个库此刻有没有扫描在跑，含别处发起的。
+	LibraryScanRunning func(libraryID int64) bool
+}
+
+func (h WatcherHooks) validate() error {
+	switch {
+	case h.ScanLibrary == nil:
+		return errors.New("scanner: WatcherHooks.ScanLibrary 不得为 nil")
+	case h.CleanupLibrary == nil:
+		return errors.New("scanner: WatcherHooks.CleanupLibrary 不得为 nil")
+	case h.LibraryScanRunning == nil:
+		return errors.New("scanner: WatcherHooks.LibraryScanRunning 不得为 nil")
+	}
+	return nil
+}
+
+func NewFileWatcher(hooks WatcherHooks) (*FileWatcher, error) {
+	if err := hooks.validate(); err != nil {
+		return nil, err
+	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	fw := &FileWatcher{
-		scanner:        s,
 		watcher:        w,
 		pending:        make(map[int64]time.Time),
 		formats:        make(map[int64]config.ScanFormatSet),
@@ -129,9 +165,10 @@ func NewFileWatcher(s *Scanner) (*FileWatcher, error) {
 		baseCtx:        ctx,
 		cancelBase:     cancel,
 		timings:        defaultWatcherTimings(),
-	}
-	if s != nil {
-		fw.libraryScanRunning = s.libraryScanActive
+
+		scanLibrary:        hooks.ScanLibrary,
+		cleanupLibrary:     hooks.CleanupLibrary,
+		libraryScanRunning: hooks.LibraryScanRunning,
 	}
 	return fw, nil
 }
@@ -296,7 +333,7 @@ func (fw *FileWatcher) rehomeUnsettledLocked(libID int64) string {
 	if fw.scansInFlight[libID] > 0 {
 		return "scan_in_flight"
 	}
-	if fw.libraryScanRunning != nil && fw.libraryScanRunning(libID) {
+	if fw.libraryScanRunning(libID) {
 		return "scan_running_elsewhere"
 	}
 	return ""
@@ -359,19 +396,18 @@ func (fw *FileWatcher) dispatchDueLocked(now time.Time, publishEvent func(string
 		}
 		fw.scansInFlight[libID]++
 		fw.inFlight.Add(1)
-		go func(id int64, path string, cleanup bool) {
+		go func(id int64, cleanup bool) {
 			defer fw.inFlight.Done()
 			// 计数在**清理之后**才归零：多留这一会儿只会让别的清理更保守地多等一轮。
 			defer fw.scanFinished(id)
-			err := fw.runScanLibrary(fw.baseCtx, id, path, false)
+			err := fw.scanLibrary(fw.baseCtx, id)
 			switch {
 			case errors.Is(err, context.Canceled):
 				// 停机取消，不是故障。
-
-			case errors.Is(err, ErrScanAlreadyRunning):
-				// 文件变更去抖后触发的扫描与在跑的扫描撞车属正常情况：
-				// 正在跑的那次本就会看到这批新文件，无需重试也不必报错。
-				slog.Info("Hot reload scan skipped, another scan is in progress", "library_id", id)
+			case errors.Is(err, ErrScanCoalesced):
+				// 这个库上已经排着一次等价的扫描，本次被**合并**进去了：那一次会看到这批新文件，
+				// 无需重试也不必报错。它还没跑完，因此下面那条清理仍要重新排期。
+				slog.Info("Hot reload scan coalesced into a queued scan", "library_id", id)
 			case err != nil:
 				slog.Error("Hot reload scan failed", "library_id", id, "error", err)
 			}
@@ -384,10 +420,8 @@ func (fw *FileWatcher) dispatchDueLocked(now time.Time, publishEvent func(string
 				fw.requeueCleanupAfterFailedScan(id)
 				return
 			}
-			if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
-			}
-		}(libID, libPath, cleanupAfterScan)
+			fw.cleanupLibraryNow(id)
+		}(libID, cleanupAfterScan)
 	}
 
 	// 去抖后单独触发库清理，清除删除/重命名遗留的幽灵记录。同轮有扫描的已在上面被取走、
@@ -407,10 +441,22 @@ func (fw *FileWatcher) dispatchDueLocked(now time.Time, publishEvent func(string
 		fw.inFlight.Add(1)
 		go func(id int64) {
 			defer fw.inFlight.Done()
-			if err := fw.runCleanupLibrary(fw.baseCtx, id); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Error("Watcher-triggered cleanup failed", "library_id", id, "error", err)
-			}
+			fw.cleanupLibraryNow(id)
 		}(libID)
+	}
+}
+
+// cleanupLibraryNow 跑一次库清理并按结果记一笔。
+//
+// 停机取消与被**合并**都不是故障：合并意味着这个库上已经排着一条等价的清理，那一条会做同一件事。
+// 两个派发点共用它，「什么算故障」因此只有一处答案——否则同一件事在一处记 Error、另一处不记。
+func (fw *FileWatcher) cleanupLibraryNow(libraryID int64) {
+	switch err := fw.cleanupLibrary(fw.baseCtx, libraryID); {
+	case err == nil, errors.Is(err, context.Canceled):
+	case errors.Is(err, ErrScanCoalesced):
+		slog.Info("Watcher-triggered cleanup coalesced into a queued cleanup", "library_id", libraryID)
+	default:
+		slog.Error("Watcher-triggered cleanup failed", "library_id", libraryID, "error", err)
 	}
 }
 
@@ -502,22 +548,6 @@ func (fw *FileWatcher) Stop() {
 	fw.stopping = true
 	fw.mu.Unlock()
 	fw.inFlight.Wait()
-}
-
-// runScanLibrary / runCleanupLibrary 是可注入的间接层，生产走真实 scanner。
-func (fw *FileWatcher) runScanLibrary(ctx context.Context, libraryID int64, rootPath string, force bool) error {
-	if fw.scanLibrary != nil {
-		return fw.scanLibrary(ctx, libraryID, rootPath, force)
-	}
-	// watcher 派生的扫描不属于任何任务：它由文件系统事件触发，没有发起方可以承接进度。
-	return fw.scanner.ScanLibrary(ctx, libraryID, rootPath, force, nil)
-}
-
-func (fw *FileWatcher) runCleanupLibrary(ctx context.Context, libraryID int64) error {
-	if fw.cleanupLibrary != nil {
-		return fw.cleanupLibrary(ctx, libraryID)
-	}
-	return fw.scanner.CleanupLibrary(ctx, libraryID)
 }
 
 // WatchReport 汇报一次递归注册的结果。

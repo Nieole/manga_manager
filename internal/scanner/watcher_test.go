@@ -4,12 +4,23 @@
 package scanner
 
 import (
+	"context"
 	"manga-manager/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// stubWatcherHooks 是监听器派生工作的三个空出口。用例要观察哪一个就直接换掉对应的字段
+// （见 FileWatcher 的注入字段）——构造期必须交齐，是为了让生产漏掉一个时编译不过。
+func stubWatcherHooks() WatcherHooks {
+	return WatcherHooks{
+		ScanLibrary:        func(context.Context, int64) error { return nil },
+		CleanupLibrary:     func(context.Context, int64) error { return nil },
+		LibraryScanRunning: func(int64) bool { return false },
+	}
+}
 
 func TestWatchLibraryWatchesNestedDirectories(t *testing.T) {
 	root := t.TempDir()
@@ -18,7 +29,7 @@ func TestWatchLibraryWatchesNestedDirectories(t *testing.T) {
 		t.Fatalf("mkdir nested failed: %v", err)
 	}
 
-	fw, err := NewFileWatcher(nil)
+	fw, err := NewFileWatcher(stubWatcherHooks())
 	if err != nil {
 		t.Fatalf("NewFileWatcher failed: %v", err)
 	}
@@ -46,7 +57,7 @@ func TestUnwatchLibraryRemovesNestedDirectories(t *testing.T) {
 		t.Fatalf("mkdir nested failed: %v", err)
 	}
 
-	fw, err := NewFileWatcher(nil)
+	fw, err := NewFileWatcher(stubWatcherHooks())
 	if err != nil {
 		t.Fatalf("NewFileWatcher failed: %v", err)
 	}

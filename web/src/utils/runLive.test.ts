@@ -79,6 +79,23 @@ describe('applyRunToLive', () => {
     expect(applyRunToLive(paused, run({ run_id: 7, status: 'running' })).paused).toBe(false);
   });
 
+  // 实况区默认不被自动运行淹没：用户刚发起的那一条一眼能找到。
+  it('手动发起的排在自动发起的前面，哪怕自动那条更晚有动静', () => {
+    const withManual = applyRunToLive(empty, run({ run_id: 7, trigger: 'manual' }));
+    const withScheduled = applyRunToLive(withManual, run({ run_id: 8, trigger: 'scheduled' }));
+    expect(withScheduled.runs.map((item) => item.run_id)).toEqual([7, 8]);
+
+    // 自动那条又报了一帧：它仍然排在手动那条后面。
+    const nextFrame = applyRunToLive(withScheduled, run({ run_id: 8, trigger: 'scheduled', current: 9 }));
+    expect(nextFrame.runs.map((item) => item.run_id)).toEqual([7, 8]);
+  });
+
+  it('同一组里最近有动静的在最上面', () => {
+    const first = applyRunToLive(empty, run({ run_id: 7, trigger: 'scheduled' }));
+    const second = applyRunToLive(first, run({ run_id: 8, trigger: 'watch' }));
+    expect(second.runs.map((item) => item.run_id)).toEqual([8, 7]);
+  });
+
   it('槽位上限不由帧决定，原样带过去', () => {
     const live = applyRunToLive({ ...empty, slots: 2 }, run({ run_id: 7 }));
     expect(live.slots).toBe(2);

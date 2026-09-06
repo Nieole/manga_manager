@@ -14,6 +14,7 @@ import (
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/task"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -136,7 +137,7 @@ func (c *Controller) launchRebuildIndexTask() error {
 		FailCode:     "task.msg.rebuild_index.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), spec, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), task.TriggerManual, spec, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
 		if err := c.store.RebuildSeriesSearchIndex(ctx); err != nil {
 			return taskFailure("task.msg.rebuild_index.series_failed", err), err
 		}
@@ -184,7 +185,7 @@ func (c *Controller) launchRebuildThumbnailsTask() error {
 		FailCode:     "task.msg.rebuild_thumbnails.failed",
 	}
 
-	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		c.initRebuildThumbAggregator(tp, 0)
 		defer c.releaseRebuildThumbAggregator()
 
@@ -240,7 +241,7 @@ func (c *Controller) launchCleanupThumbnailsTask() error {
 		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
 		tp.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
 		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
@@ -274,7 +275,7 @@ func (c *Controller) launchRebuildFileIdentitiesTask() error {
 		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.runRebuildFileIdentities(ctx, 500,
 			hashingFrameHandle{Handle: tp, code: "task.msg.rebuild_file_identities.progress"})
 		if err != nil {
@@ -384,7 +385,7 @@ func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, ta
 // 返回 nil 表示没有该做而没做的事：任务已发起，或者按前置条件本就不该发起——KOReader 未启用、
 // 匹配模式不是二进制哈希、根本没有书缺哈希。被**任务键**闸门挡下时返回 errTaskAlreadyRunning，
 // 这在本路径上是常态而非异常：回填跑得久，后一次扫描收尾时撞上它很常见，调用方据此自行取舍。
-func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error {
+func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string, trigger task.Trigger) error {
 	cfg := c.currentConfig()
 	if !cfg.KOReader.Enabled || cfg.KOReader.MatchMode != config.KOReaderMatchModeBinaryHash {
 		return nil
@@ -414,7 +415,7 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 		FailCode:     "task.msg.book_hash_backfill.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap,
 			hashingFrameHandle{Handle: tp, code: "task.msg.book_hash_backfill.progress"})
 		if err != nil {
@@ -424,14 +425,15 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string) error 
 	})
 }
 
-// chainBookHashBackfill 是扫描任务体收尾时串联哈希回填的那一下：尽力而为，起不来不影响这次扫描。
+// chainBookHashBackfill 是扫描任务体收尾时**串联**哈希回填的那一下：尽力而为，起不来不影响这次扫描。
+// 它是「串联」这个**发起方**在今天唯一的落点——用户在任务中心看到的是「这条是被上一件事带起来的」。
 //
 // 「同类任务已在运行」在这里不记日志——回填跑得久，连着扫两个资料库时后一次必然撞上它，
 // 记下来只是噪音。其余错误要记：数不清缺口是真出了问题，而调用方是任务体，没有别的地方能报。
 //
 // ctx 是那个任务体的，只用来把它的**任务键**带到这条日志上；串起来的回填本身另起一份 ctx。
 func (c *Controller) chainBookHashBackfill(ctx context.Context, reason string) {
-	err := c.launchLowPriorityBookHashBackfillTask(reason)
+	err := c.launchLowPriorityBookHashBackfillTask(reason, task.TriggerChained)
 	if err != nil && !errors.Is(err, errTaskAlreadyRunning) {
 		slog.WarnContext(ctx, "Background book hash backfill not started", "reason", reason, "error", err)
 	}

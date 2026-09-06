@@ -58,7 +58,7 @@ func TestPathUnderRootWindowsCaseInsensitive(t *testing.T) {
 // TestHandleRemovalSchedulesOnlyOwningLibrary 是行为级判据：
 // 对当前的 HasPrefix 实现，map 迭代顺序随机，100 次里必然有若干次记到错误的库上。
 func TestHandleRemovalSchedulesOnlyOwningLibrary(t *testing.T) {
-	fw, err := NewFileWatcher(nil)
+	fw, err := NewFileWatcher(stubWatcherHooks())
 	if err != nil {
 		t.Fatalf("NewFileWatcher: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestHandleRemovalSchedulesOnlyOwningLibrary(t *testing.T) {
 // 一个库的根在另一个库之内时，两边共享同一棵子树，都需要清理幽灵记录。
 // 「找到一个就 break」会随机漏掉其中一个。
 func TestHandleRemovalSchedulesAllContainingLibraries(t *testing.T) {
-	fw, err := NewFileWatcher(nil)
+	fw, err := NewFileWatcher(stubWatcherHooks())
 	if err != nil {
 		t.Fatalf("NewFileWatcher: %v", err)
 	}

@@ -20,6 +20,7 @@ import (
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
+	"manga-manager/internal/task"
 )
 
 // maintenanceStore 只实现维护任务体真正会调到的那几个方法。其余方法留给内嵌的 nil 接口——
@@ -379,8 +380,8 @@ func TestHashBackfillStartsFromInsideATaskBody(t *testing.T) {
 	c.config = config.NewManager(&cfg)
 
 	var chainErr error
-	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), RunSpec{Key: "scan_library_1"}, func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		chainErr = c.launchLowPriorityBookHashBackfillTask("scan_library")
+	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), task.TriggerManual, RunSpec{Key: "scan_library_1"}, func(context.Context, *runhandle.Handle) (TaskResult, error) {
+		chainErr = c.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained)
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动资料库扫描失败: %v", err)
@@ -389,12 +390,16 @@ func TestHashBackfillStartsFromInsideATaskBody(t *testing.T) {
 	if chainErr != nil {
 		t.Fatalf("扫描任务体没能发起哈希回填（%v）—— 扫描完成后再也不会有人补算哈希", chainErr)
 	}
-	task := lastPublishedTask(t, snapshots(), lowPriorityBookHashTaskKey)
-	if task.Status != "completed" || task.MessageCode != "task.msg.book_hash_backfill.complete" {
-		t.Fatalf("回填终态为 %q / %q, want completed + ...book_hash_backfill.complete", task.Status, task.MessageCode)
+	backfill := lastPublishedTask(t, snapshots(), lowPriorityBookHashTaskKey)
+	if backfill.Status != "completed" || backfill.MessageCode != "task.msg.book_hash_backfill.complete" {
+		t.Fatalf("回填终态为 %q / %q, want completed + ...book_hash_backfill.complete", backfill.Status, backfill.MessageCode)
 	}
-	if task.Params["reason"] != "scan_library" {
-		t.Fatalf("发起理由没有落进任务参数：%v", task.Params)
+	if backfill.Params["reason"] != "scan_library" {
+		t.Fatalf("发起理由没有落进任务参数：%v", backfill.Params)
+	}
+	// **发起方**是串联：用户在任务中心看到的是「这条是被上一件事带起来的」，不是他点的。
+	if backfill.Trigger != string(task.TriggerChained) {
+		t.Fatalf("串联起来的回填发起方为 %q, want chained", backfill.Trigger)
 	}
 }
 
@@ -407,7 +412,7 @@ func TestHashBackfillStaysSilentWhenNothingIsMissing(t *testing.T) {
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
 	c.config = config.NewManager(&cfg)
 
-	if err := c.launchLowPriorityBookHashBackfillTask("scan_library"); err != nil {
+	if err := c.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained); err != nil {
 		t.Fatalf("没有书缺哈希不是错误，却返回了 %v", err)
 	}
 	if got := publishedCountFor(snapshots(), lowPriorityBookHashTaskKey); got != 0 {

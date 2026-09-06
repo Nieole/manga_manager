@@ -128,11 +128,11 @@ func (h *testEngine) snapshots() []Snapshot {
 // start 发起一次运行并要求它被接纳；被闸门挡下即 t.Fatal。
 func (h *testEngine) start(t *testing.T, spec RunSpec, body Body) Run {
 	t.Helper()
-	run, err := h.engine.Start(context.Background(), spec, body)
+	launched, err := h.engine.Start(context.Background(), spec, body)
 	if err != nil {
 		t.Fatalf("发起运行失败: %v", err)
 	}
-	return run
+	return launched.Run
 }
 
 // load 取回落盘端口里那条运行；取不到即 t.Fatal。断言状态时读它，而不是读发起时的返回值——

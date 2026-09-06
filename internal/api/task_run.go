@@ -1,7 +1,7 @@
-// 任务引擎对外的**唯一启动入口**：调用方提交一份**身份**、一份运行声明（RunSpec）与一个任务体，
-// 准入、上下文与**运行时句柄**、后台 goroutine、四条终态分支全部由 `internal/task` 的领域引擎承担。
-// 任务体只做两件事——干活，以及经交给它的**运行句柄**（runhandle.Handle）上报；它不接触**任务键**、
-// 不自己判断**终态**、不自己起 goroutine。
+// 任务引擎对外的**唯一启动入口**：调用方提交一份**身份**、一个**发起方**、一份运行声明（RunSpec）
+// 与一个任务体；准入、上下文与**运行时句柄**、后台 goroutine、四条终态分支全由领域引擎承担。
+// 任务体只做两件事——干活，以及经交给它的**运行句柄**上报；它不接触**任务键**、不判**终态**、
+// 不自己起 goroutine。
 //
 // 本文件不含状态：翻译完就把整份声明交给领域引擎，准入的判据在数据库那两条部分唯一索引上。
 
@@ -144,7 +144,15 @@ func taskFailure(code string, err error) TaskResult {
 	return TaskResult{Code: code}
 }
 
-// Run 是启动一个后台任务的唯一入口：一份**身份**、一份任务声明、一个任务体。
+// taskBody 是任务体：干活，以及经交给它的**运行句柄**上报。
+type taskBody func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error)
+
+// Run 是启动一个后台任务的唯一入口：一份**身份**、一个**发起方**、一份任务声明、一个任务体。
+//
+// 发起方与身份一样是**位置参数**而不是 RunSpec 的一个字段：结构体字面量漏一个字段只会得到
+// 零值，而一个零值发起方要到运行期才被声明校验拦下——那时启动点已经在生产里跑了。
+// 它也不该有默认值：半夜转盘的那条运行到底是定时叫来的还是监听叫来的，正是用户要的答案，
+// 猜错比不填更糟。
 //
 // 返回 nil 即这次发起已经落地，但**落成哪一种要看闸门**：槽位有空且这个身份没有活动运行时它
 // 当场开跑，否则进**排队中**等放行；这个身份已经排着一条时，本次发起被**合并**进那一条，
@@ -153,21 +161,28 @@ func taskFailure(code string, err error) TaskResult {
 //
 // 刻意保留的不变量：准入**同步**执行、任务体**异步**执行。Run 返回时运行已在库里、
 // 而任务体尚未开跑，HTTP 层才能立即返回 202 而不被任务体阻塞。
-func (e *taskEngine) Run(identity TaskIdentity, spec RunSpec, fn func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error)) error {
+func (e *taskEngine) Run(identity TaskIdentity, trigger task.Trigger, spec RunSpec, fn taskBody) error {
+	_, err := e.start(identity, trigger, spec, fn)
+	return err
+}
+
+// start 与 Run 是同一次发起，另外交回这次发起落地成了什么（见 task.Launched）。
+//
+// 只有「发起完还要等它跑完」的调用方需要它——文件监听器按扫描的成败决定敢不敢接着清理，
+// 而被**合并**掉的那次发起，任务体根本不会执行，等在它身上就是永远等下去。
+func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec RunSpec, fn taskBody) (task.Launched, error) {
 	ctx := context.Background()
 	// 先把身份取出来（不存在就建一条）：投递首帧那一刻在领域引擎的临界区里，补不了身份，
 	// 而首帧要带着类型与作用域出去——它是任务在界面上诞生的那一帧。
 	owner, err := e.runStore.EnsureTask(ctx, identity.domain())
 	if err != nil {
-		return err
+		return task.Launched{}, err
 	}
 	e.rememberIdentity(owner.ID, identity)
 
 	runSpec := task.RunSpec{
-		Identity: identity.domain(),
-		// 今天这 17 个启动点都是有人（或某个前台动作）当场叫起来的。定时、监听与串联那几种
-		// **发起方**要等定时守护扫描、watcher 派生扫描与串联的工作也建运行，那时才有第二个取值。
-		Trigger:      task.TriggerManual,
+		Identity:     identity.domain(),
+		Trigger:      trigger,
 		Key:          spec.Key,
 		ScopeName:    strings.TrimSpace(spec.ScopeName),
 		StartCode:    spec.StartCode,
@@ -185,7 +200,7 @@ func (e *taskEngine) Run(identity TaskIdentity, spec RunSpec, fn func(ctx contex
 		runSpec.Limits = spec.Limits.domain()
 	}
 
-	_, err = e.engine.Start(ctx, runSpec, func(runCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
+	launched, err := e.engine.Start(ctx, runSpec, func(runCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		result, err := fn(runCtx, handle)
 		return task.Result{Code: result.Code, Params: result.Params}, err
 	})
@@ -194,7 +209,7 @@ func (e *taskEngine) Run(identity TaskIdentity, spec RunSpec, fn func(ctx contex
 	// 状态就被落盘侧的索引否掉」的竞态——它对调用方仍然是同一个答案「这件事已经在跑了」，
 	// 而不是一个 500。
 	if errors.Is(err, task.ErrRunAlreadyActive) || errors.Is(err, task.ErrRunAlreadyQueued) {
-		return errTaskAlreadyRunning
+		return task.Launched{}, errTaskAlreadyRunning
 	}
-	return err
+	return launched, err
 }

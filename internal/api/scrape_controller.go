@@ -13,6 +13,7 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 )
 
 const scrapeRateLimitDelay = 500 * time.Millisecond
@@ -523,7 +524,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		FailCode:     "task.msg.scrape.failed_all",
 	}
 
-	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), task.TriggerManual, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping series metadata", allSeries)
 	})
 }
@@ -598,7 +599,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		FailCode:     "task.msg.scrape.failed_library",
 	}
 
-	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), task.TriggerManual, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping library series metadata", allSeries)
 	})
 }

@@ -305,7 +305,7 @@ func TestCoalescedRunKeepsTheFirstBody(t *testing.T) {
 	identity := libraryTask("scan_library", 1, variantSole)
 	spec := RunSpec{Key: "scan_library_1", Total: 1, CanCancel: true}
 	for i := 0; i < 4; i++ {
-		if err := e.Run(identity, spec, body); err != nil {
+		if err := e.Run(identity, task.TriggerManual, spec, body); err != nil {
 			t.Fatalf("第 %d 次发起失败: %v", i+1, err)
 		}
 	}

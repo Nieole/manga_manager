@@ -20,6 +20,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 )
 
 // sseProbeEvent 用于确认连接已进入 broker 的订阅表，sseSentinelEvent 用于收口一轮断言。
@@ -183,7 +184,7 @@ func (r *sseAudienceRig) loginClient(t *testing.T, username string) *http.Client
 func (r *sseAudienceRig) runFailingTask(t *testing.T, secretPath string) {
 	t.Helper()
 	const key = "scan_library_7"
-	err := r.controller.taskEngine.Run(libraryTask("scan_library", 7, variantSole), RunSpec{
+	err := r.controller.taskEngine.Run(libraryTask("scan_library", 7, variantSole), task.TriggerManual, RunSpec{
 		Key:       key,
 		ScopeName: "资料库A",
 		Metadata:  map[string]string{"library_path": secretPath},
