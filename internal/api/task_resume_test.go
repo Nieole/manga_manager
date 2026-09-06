@@ -157,8 +157,11 @@ func TestResumableIsStricterThanRetryable(t *testing.T) {
 	}
 }
 
-// 白名单的成员就是规格关键决定 7 那一份清单，一个不多一个不少：多一个就是无人值守时多一类
-// 自己跑起来的活，少一个就是重启后还得有人登录去点。
+// 白名单的成员就是规格关键决定 7 那一份清单里**今天已经有运行的那些**，一个不多一个不少：
+// 多一个就是无人值守时多一类自己跑起来的活，少一个就是重启后还得有人登录去点。
+//
+// 清单上的**封面生成**不在这里：它还不是自己的一条运行（票 13），因此没有类型名可写。
+// 票 13 建出那条运行时，这份 want 与注册表要一起补上（挂账 D87）。
 func TestResumeWhitelistMatchesTheSpec(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 

@@ -116,6 +116,9 @@ type Config struct {
 	Backoff func() BackoffPolicy
 	// Resume 读**可续跑**白名单与它的全局开关，重启转**中断**时读一遍。为 nil 时一条都不续跑：
 	// 白名单的内容属于装配方（本包不认识具体有哪些类型），没交出来就没有哪个类型被允许自己重跑。
+	//
+	// 与 Slots / Backoff 不同，它**在临界区之外**被调用：转写那一笔已经写完，此刻没有任何一条
+	// 运行还会变化。实现方因此可以查库，但仍不该回调进引擎——那会在同一次调用里再取一次锁。
 	Resume func() ResumePolicy
 	// ControlCodes 是引擎自己发出的控制文案码。
 	ControlCodes ControlCodes

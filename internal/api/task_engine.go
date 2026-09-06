@@ -102,7 +102,7 @@ type taskEngine struct {
 	slots         func() int
 	backoff       func() task.BackoffPolicy
 	// resumeEnabled 读**可续跑**的全局开关；为 nil 即开着（默认开）。
-	// 白名单本身不从这里来，它由 dispatch 那一列派生，见 resumePolicy。
+	// 白名单本身不从这里来，它由 dispatch 那一列派生，见 buildResumePolicy。
 	resumeEnabled func() bool
 
 	// dispatch 是「再发起一次」的注册表（(类型, **变体**) -> 重启函数与**可续跑**），
@@ -145,7 +145,7 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 		Now:                e.clock,
 		Slots:              e.slotLimit,
 		Backoff:            e.backoffPolicy,
-		Resume:             e.resumePolicy,
+		Resume:             e.buildResumePolicy,
 		ControlCodes: task.ControlCodes{
 			Paused:      "task.msg.control.paused",
 			Resumed:     "task.msg.control.resumed",
@@ -267,20 +267,21 @@ func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRe
 	return entry.Relaunch, true
 }
 
-// resumePolicy 把注册表里那一列**可续跑**翻成领域侧的白名单，配上全局开关。
+// buildResumePolicy 把注册表里那一列**可续跑**翻成领域侧的白名单，配上全局开关。
 //
 // 白名单同样只有注册表一份事实来源：在这里另抄一份类型名清单的话，两份不同步时，
 // 界面上说着不可续跑的类型会在重启后自己跑起来——而那正是这条白名单要挡住的事。
-func (e *taskEngine) resumePolicy() task.ResumePolicy {
-	policy := task.ResumePolicy{
-		Disabled: e.resumeEnabled != nil && !e.resumeEnabled(),
-		Types:    make(map[task.ResumeKey]struct{}, len(e.dispatch)),
-	}
+//
+// 装配期没给开关就按**开着**算，理由同 slotLimit：不合法与没给都交给领域侧兜底。
+func (e *taskEngine) buildResumePolicy() task.ResumePolicy {
+	keys := make([]task.ResumeKey, 0, len(e.dispatch))
 	for key, entry := range e.dispatch {
 		if entry.Resumable {
-			policy.Types[task.ResumeKey{Type: task.Type(key.Type), Variant: task.Variant(key.Variant)}] = struct{}{}
+			keys = append(keys, task.ResumeKey{Type: task.Type(key.Type), Variant: task.Variant(key.Variant)})
 		}
 	}
+	policy := task.NewResumePolicy(keys...)
+	policy.Disabled = e.resumeEnabled != nil && !e.resumeEnabled()
 	return policy
 }
 
@@ -601,8 +602,9 @@ func taskControlError(err error) error {
 	}
 }
 
-// markInterrupted 把上次运行留下的**活动态**与**排队中**运行全部转成**中断**：任务体随进程一起
-// 没了，库里那行却还停在活动态。它属于装配期，早于任何新运行落地。
+// markInterrupted 是重启恢复的整条路：把上次运行留下的**活动态**与**排队中**运行全部转成
+// **中断**（任务体随进程一起没了，库里那行却还停在活动态），再把**可续跑**的那几条重新发起一次。
+// 它属于装配期，因此那几条恢复运行就是本进程头几条落地的运行。
 //
 // 先把这批运行的身份读进缓存再转写：转写过程中每条都会投递一帧，而投递那一刻在领域引擎的
 // 临界区里，补不了身份。缓存不上不是失败，只是那几帧少了类型与作用域——它们发生在任何

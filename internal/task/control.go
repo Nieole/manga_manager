@@ -367,13 +367,13 @@ func (e *Engine) commitControlLocked(run *Run, now time.Time) {
 // 结束时刻取的是运行原来的 UpdatedAt 而不是此刻：进度落盘本来每隔一小段就刷一次，
 // 那个字段本身就是心跳。盖成重启时刻的话，整段停机时长都会被算成在干活，速率随之作废。
 func (e *Engine) MarkInterrupted(ctx context.Context) (Interruption, error) {
-	marked, err := e.markInterrupted(ctx)
-	outcome := Interruption{Marked: len(marked)}
+	marked, candidates, err := e.markInterrupted(ctx)
+	outcome := Interruption{Marked: marked}
 	if err != nil {
 		return outcome, err
 	}
 	// 挑续跑那一步在锁外：它要批量取身份与侧数据，而此刻已经没有任何一条运行还会变化。
-	resume, err := e.resumable(ctx, e.resumePolicy(), marked)
+	resume, err := e.resumable(ctx, e.resumePolicy(), candidates)
 	if err != nil {
 		return outcome, err
 	}
@@ -381,19 +381,25 @@ func (e *Engine) MarkInterrupted(ctx context.Context) (Interruption, error) {
 	return outcome, nil
 }
 
-// markInterrupted 是转写本身，交回被它转写的那些运行（转写之后的样子）。
-func (e *Engine) markInterrupted(ctx context.Context) ([]Run, error) {
+// markInterrupted 是转写本身：交回转写了几条，以及其中**重启前正在跑或排着队**的那些
+// （转写之后的样子）。
+//
+// 只有这两种状态谈得上自己接着跑。**已暂停**与**取消中**不谈：用户对它们的最后一次表态是
+// 「停下」，重启后自己跑起来正是他按那一下要避免的事——而**中断**这一笔照样要记，
+// 那是「上一次断在哪」。
+func (e *Engine) markInterrupted(ctx context.Context) (marked int, candidates []Run, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	runs, err := e.store.ListRuns(ctx, RunFilter{Statuses: liveStatuses, Order: OrderSequenceAsc})
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	now := e.clock()
-	marked := make([]Run, 0, len(runs))
+	candidates = make([]Run, 0, len(runs))
 	for _, run := range runs {
 		heartbeat := run.UpdatedAt
+		stopped := run.Status == StatusPaused || run.Status == StatusCancelling
 		run.Status = StatusInterrupted
 		// 上一轮那次暂停就此结账：不折进累计的话，速率的分母里会凭空少掉那一段。
 		absorbPause(&run, heartbeat)
@@ -407,9 +413,12 @@ func (e *Engine) markInterrupted(ctx context.Context) ([]Run, error) {
 		delete(e.gates, run.ID)
 		e.saveLocked(run)
 		e.publishLocked(run)
-		marked = append(marked, run)
+		marked++
+		if !stopped {
+			candidates = append(candidates, run)
+		}
 	}
-	return marked, nil
+	return marked, candidates, nil
 }
 
 // StopAll 在停机时逐个取消运行的 ctx 并放行它的**暂停闸门**，顺序与单条取消一致。

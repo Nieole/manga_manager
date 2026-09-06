@@ -25,10 +25,14 @@ const taskCenterPageSize = 50
 func restartController(t *testing.T, prev *Controller, store database.Store, tempDir string) *Controller {
 	t.Helper()
 	cfg := prev.config
-	return newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
+	reloaded := newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
 		filepath.Join(tempDir, "config.yaml"), controllerCacheSizes{
 			imageBytes: 8 << 10, page: 8, bookPageSource: 8, progressWrite: 8,
 		})
+	// 关掉它再让用例收尾：重启恢复会为**可续跑**的类型真的发起一次运行，而那条运行跑在后台
+	// goroutine 上。不等它停下，任务体会在存储已经关掉之后还在写。
+	t.Cleanup(reloaded.Close)
+	return reloaded
 }
 
 // taskCenterFirstPage 按前端的真实请求取任务中心第一页，返回任务键。

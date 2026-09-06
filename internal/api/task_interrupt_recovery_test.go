@@ -15,7 +15,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
 )
@@ -81,7 +80,7 @@ func disableResume(c *Controller) {
 	cfg := c.currentConfig()
 	off := false
 	cfg.Tasks.ResumeAfterRestart = &off
-	c.config = config.NewManager(&cfg)
+	c.config.Replace(&cfg)
 }
 
 // lastActiveFrame 是一条扫描运行被按下暂停之前报出的最后一帧：进度、阶段、当前条目与累计指标。

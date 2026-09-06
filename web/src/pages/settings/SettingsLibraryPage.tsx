@@ -298,7 +298,6 @@ export function SettingsLibraryPage() {
               className="h-5 w-5 rounded-sm border-gray-700 bg-gray-900 text-komgaPrimary"
             />
           </label>
-          <FieldErrors messages={fieldErrors('tasks.resume_after_restart')} />
         </div>
 
         <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-4 text-sm text-gray-300">

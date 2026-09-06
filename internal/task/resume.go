@@ -58,6 +58,9 @@ type Interruption struct {
 	Marked int
 	// Resume 是白名单挑出来、该由装配方重新发起的那些运行，每个任务至多一条。
 	// 快照而不是运行行：**重启函数**要读回的原始入参在侧数据里。
+	//
+	// 它只可能来自重启前**正在跑或排着队**的运行：用户按下暂停或取消的那几条同样转成中断，
+	// 但不在这里（见 markInterrupted）。
 	Resume []Snapshot
 }
 
@@ -79,8 +82,11 @@ func (e *Engine) resumePolicy() ResumePolicy {
 // **每个任务至多交出一条**：重启之前同一个任务可能既有一条活动运行、又有一条排着的，而它们跑的
 // 是同一件事。两条都重新发起的话，后一条必然当场被**合并**掉，用户看到的是一条凭空带着合并计数
 // 的恢复运行。
+//
+// 「续不续」只由 ResumePolicy.Allows 一处回答，全局开关关着也照样走一遍这段（一次批量取身份的
+// 查询，发生在开机那一刻）：在这里抢答一次等于把同一条判据写两遍。
 func (e *Engine) resumable(ctx context.Context, policy ResumePolicy, marked []Run) ([]Snapshot, error) {
-	if len(marked) == 0 || policy.Disabled || len(policy.Types) == 0 {
+	if len(marked) == 0 {
 		return nil, nil
 	}
 	taskIDs := make([]int64, 0, len(marked))

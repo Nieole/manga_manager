@@ -59,6 +59,36 @@ func TestRestartResumesWhitelistedTypesOnly(t *testing.T) {
 	}
 }
 
+// 用户按下暂停或取消之后断电，重启不该把它们又叫起来：对这两条运行，用户最后一次表态是「停下」。
+// 它们照样转**中断**——那一笔记的是「上一次断在哪」，与要不要自己接着跑是两件事。
+func TestPausedAndCancellingRunsAreNotResumed(t *testing.T) {
+	h := newTestEngine(t, registerOnly, 0)
+	h.resume = scanWhitelist()
+	paused := h.start(t, libraryScanSpec(1), idleBody)
+	cancelling := h.start(t, libraryScanSpec(2), idleBody)
+	if err := h.engine.Pause(paused.ID); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	if err := h.engine.Cancel(cancelling.ID); err != nil {
+		t.Fatalf("取消失败: %v", err)
+	}
+	if got := h.load(t, cancelling.ID).Status; got != StatusCancelling {
+		t.Fatalf("取消之后的状态为 %q, want cancelling（任务体没在跑，收不了尾）", got)
+	}
+
+	outcome, err := h.engine.MarkInterrupted(context.Background())
+	if err != nil {
+		t.Fatalf("批量转中断失败: %v", err)
+	}
+
+	if outcome.Marked != 2 {
+		t.Fatalf("转中断的条数为 %d, want 2 —— 暂停与取消中的运行照样要记这一笔", outcome.Marked)
+	}
+	if got := resumeIDs(outcome.Resume); len(got) != 0 {
+		t.Fatalf("待续跑的是 %v, want 空 —— 用户按下的那一下是「停」，重启不该把它推翻", got)
+	}
+}
+
 // 全局开关关掉之后一条都不续跑，而转**中断**照旧：开关关的是「自己接着跑」，不是「记不记这一笔」。
 func TestResumeSwitchOffMarksEverythingAndResumesNothing(t *testing.T) {
 	h := newTestEngine(t, registerOnly, 0)
