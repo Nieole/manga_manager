@@ -43,11 +43,13 @@ interface LogsPerformanceSummary {
 
 interface LogsProps {
   embedded?: boolean;
-  taskKey?: string;
-  onClearTaskKey?: () => void;
+  // runID 是「按这一次运行过滤」那条谓词：任务体的每一行日志都带着运行标识，
+  // 因此这条过滤指得到真东西。它是字符串——它一路来自查询串，后端也按串比。
+  runID?: string;
+  onClearRunID?: () => void;
 }
 
-export default function Logs({ embedded = false, taskKey, onClearTaskKey }: LogsProps = {}) {
+export default function Logs({ embedded = false, runID, onClearRunID }: LogsProps = {}) {
   const { t, formatDateTime } = useI18n();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [summary, setSummary] = useState<LogsResponse['summary']>({ total: 0, by_level: { DEBUG: 0, ERROR: 0, WARN: 0, INFO: 0 } });
@@ -73,7 +75,7 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
     try {
       const params = new URLSearchParams({ limit: '300', level: filterLevel });
       if (appliedQuery) params.set('q', appliedQuery);
-      if (taskKey) params.set('task_key', taskKey);
+      if (runID) params.set('run_id', runID);
       // 走 apiClient 而非裸 fetch：后者绕过 401 全局登出与 locale 头。
       const [logsResp, perfResp] = await Promise.all([
         apiClient.get<LogsResponse>(`/api/system/logs?${params.toString()}`),
@@ -94,7 +96,7 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
     } finally {
       if (requestID === requestIDRef.current) setLoading(false);
     }
-  }, [appliedQuery, filterLevel, taskKey, t]);
+  }, [appliedQuery, filterLevel, runID, t]);
 
   // 回车与刷新按钮都走这里：把输入框里的关键词提交为生效条件，并重取一次。
   const applyQuery = useCallback(() => {
@@ -166,13 +168,13 @@ export default function Logs({ embedded = false, taskKey, onClearTaskKey }: Logs
         <MetricCard label={t('logs.metric.warn')} value={summary.by_level.WARN || 0} tone="amber" />
       </div>
 
-      {taskKey && (
+      {runID && (
         <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-          <span className="font-mono text-xs">task_key = {taskKey}</span>
-          {onClearTaskKey && (
+          <span className="font-mono text-xs">run_id = {runID}</span>
+          {onClearRunID && (
             <button
               type="button"
-              onClick={onClearTaskKey}
+              onClick={onClearRunID}
               className="ml-auto rounded-sm border border-amber-500/40 px-2 py-0.5 text-xs hover:bg-amber-500/20"
             >
               {t('logs.taskFilter.clear')}

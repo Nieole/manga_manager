@@ -45,6 +45,19 @@ func (o *taskScanObserver) Progress(report scanner.ScanProgressReport) {
 	o.progress.Report(scanProgressFrame(report))
 }
 
+// ItemFailed 把一个条目的失败落成这条运行的**运行事件**：详情页的失败明细读的就是它。
+func (o *taskScanObserver) ItemFailed(failure scanner.ItemFailure) {
+	o.progress.ItemFailed(failure.Path, failure.Reason)
+}
+
+// Warn 把一次运行级告警落成这条运行的**运行事件**。
+//
+// 三项逐个搬过去，不把计数拼进补充说明：拼进去的话，详情页只能把一句英文错误串连同一个数字
+// 原样甩给用户，而「这一批有多少本」正是它唯一说得清的那部分。
+func (o *taskScanObserver) Warn(warning scanner.ScanWarning) {
+	o.progress.Warn(warning.Code, warning.Detail, warning.Count)
+}
+
 func (o *taskScanObserver) Metrics(report scanner.ScanMetricsReport) {
 	o.progress.MergeParams(map[string]string{
 		"storage_profile":          report.StorageProfile,
@@ -133,6 +146,20 @@ func (l *rebuildThumbLibrary) Progress(report scanner.ScanProgressReport) {
 		Params: msgParams,
 		Labels: map[string]string{"current_library": currentLibName},
 	})
+}
+
+// ItemFailed 与 Warn 直接落在重建任务那条运行上：跨库聚合的是计数，而失败明细与告警
+// 本来就带着自己的文件路径，聚合会把它们抹成一个数。
+func (l *rebuildThumbLibrary) ItemFailed(failure scanner.ItemFailure) {
+	if progress := l.agg.snapshot().Progress; progress != nil {
+		progress.ItemFailed(failure.Path, failure.Reason)
+	}
+}
+
+func (l *rebuildThumbLibrary) Warn(warning scanner.ScanWarning) {
+	if progress := l.agg.snapshot().Progress; progress != nil {
+		progress.Warn(warning.Code, warning.Detail, warning.Count)
+	}
 }
 
 // Metrics 在本库扫描主流程结束时定版它的指标，并把这份报文累加进重建任务。

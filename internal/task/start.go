@@ -270,6 +270,12 @@ func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Launched, fu
 
 	run := queue[0]
 	run.CoalescedCount++
+	// 事件只在**第一次**被合并时落一条：守护与监听扫描会在一次长扫期间反复撞上同一条排队运行，
+	// 每次落一条就能在一条还没起跑的运行上堆出几千行，而「一共被合并了几次」这件事
+	// CoalescedCount 已经记着、也已经发到界面上了。事件回答的是「它被合并过」。
+	if run.CoalescedCount == 1 {
+		e.emitControlLocked(run.ID, ControlCoalesced)
+	}
 	run.UpdatedAt = e.clock()
 	run.Sequence = e.nextSequenceLocked()
 	e.saveLocked(run)
@@ -349,12 +355,15 @@ func (e *Engine) Handle(runID int64) (*runhandle.Handle, bool) {
 // 运行 id 在这里一次性绑定，此后不出现在句柄上：给句柄开一个 id 形参等于把「谁有资格写
 // 由谁拿到句柄决定」这条结构约束重新打开。
 func (e *Engine) newHandle(runID int64) *runhandle.Handle {
-	return runhandle.New(
-		func(frame runhandle.Frame) { e.report(runID, frame) },
-		func(args map[string]string) { e.mergeArgs(runID, args) },
-		func(increments map[string]int64, args map[string]string) { e.addMetrics(runID, increments, args) },
-		e.diskWork,
-	)
+	return runhandle.New(runhandle.Writes{
+		Report:      func(frame runhandle.Frame) { e.report(runID, frame) },
+		MergeParams: func(args map[string]string) { e.mergeArgs(runID, args) },
+		AddMetrics: func(increments map[string]int64, args map[string]string) {
+			e.addMetrics(runID, increments, args)
+		},
+		ItemFailed: func(item, reason string) { e.failItem(runID, item, reason) },
+		Warn:       func(code, detail string, count int64) { e.warn(runID, code, detail, count) },
+	}, e.diskWork)
 }
 
 // runGoroutine 在受停机管辖的后台 goroutine 里执行任务体，并保证任务体一旦 panic，
@@ -443,6 +452,8 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 	delete(e.queued, runID)
 	// 终态丢掉水位：这条运行不会再有帧，留着只是泄漏。
 	delete(e.gates, runID)
+	// 被上限挡掉的那些条目失败在这里结账：落一条「还有 N 条未列出」，并丢掉计账。
+	e.flushOmittedItemFailuresLocked(runID)
 	// 连败与**退避**记在**任务**上，而这里是四条终态里唯一由任务体裁决的三条汇合处：
 	// 记在别处就得在每条分支上各记一遍，而漏掉「失败」那一条不会有任何编译错误。
 	e.recordOutcomeLocked(ctx, run.TaskID, status, now)

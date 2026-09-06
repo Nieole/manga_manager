@@ -31,7 +31,7 @@ interface HealthIssue {
   path?: string;
   detail?: string;
   count?: number;
-  last_task_key?: string;
+  last_run_id?: number;
 }
 
 interface HealthReport {
@@ -463,11 +463,13 @@ export default function Organize() {
 
                       {/* 行尾悬浮动作组 */}
                       <div className="flex shrink-0 flex-wrap gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        {isAdmin && issue.last_task_key && (
+                        {/* 跳到**那一次运行**自己的日志：同一个库连着扫三次共用一个任务键，按键跳过去
+                            看到的是三次混在一起的日志，而用户点这个按钮是想看最近那一次出了什么事。 */}
+                        {isAdmin && Boolean(issue.last_run_id) && (
                           <button
-                            onClick={() => navigate(`/ops?tab=logs&task_key=${encodeURIComponent(issue.last_task_key!)}`)}
+                            onClick={() => navigate(`/ops?tab=logs&run_id=${issue.last_run_id}`)}
                             className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-1.5 text-xs text-cyan-200/90 hover:bg-cyan-500/15 transition-colors"
-                            title={issue.last_task_key}
+                            title={`run_id = ${issue.last_run_id}`}
                           >
                             {t('organize.openSourceTask')}
                           </button>

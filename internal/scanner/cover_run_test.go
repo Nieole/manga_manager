@@ -41,14 +41,21 @@ func (h *heldCoverBatches) only(t *testing.T) *CoverBatch {
 
 // recordedCovers 收下一条封面运行的报文，供断言「报文确实走了自带的那条通道」。
 type recordedCovers struct {
-	mu      sync.Mutex
-	reports []CoverProgressReport
+	mu       sync.Mutex
+	reports  []CoverProgressReport
+	failures []ItemFailure
 }
 
 func (r *recordedCovers) Progress(report CoverProgressReport) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reports = append(r.reports, report)
+}
+
+func (r *recordedCovers) ItemFailed(failure ItemFailure) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failures = append(r.failures, failure)
 }
 
 func (r *recordedCovers) last(t *testing.T) CoverProgressReport {

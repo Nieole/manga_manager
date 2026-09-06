@@ -166,6 +166,8 @@ type Engine struct {
 	queued map[int64]queuedRun
 	// gates 是每条运行的投递水位。
 	gates map[int64]publishGate
+	// itemFailures 是每条运行的条目失败计账：写下去了几条、被上限挡掉了几条。见 itemFailureTally。
+	itemFailures map[int64]itemFailureTally
 	// lastLive 是上一帧**实况汇总**（序号留空），用来判断这一次跃迁有没有真的改变那几个数。
 	// 没变就不投：一条运行从 3 报到 4 不改变盘上有几件事，跟着投等于把汇总也变成一路噪音。
 	lastLive Live
@@ -199,6 +201,7 @@ func New(cfg Config) *Engine {
 		runtimes:      make(map[int64]*taskRuntime),
 		queued:        make(map[int64]queuedRun),
 		gates:         make(map[int64]publishGate),
+		itemFailures:  make(map[int64]itemFailureTally),
 		settled:       make(map[int64][]chan struct{}),
 	}
 	e.seq = e.restoredSequence()

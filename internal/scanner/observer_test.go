@@ -10,12 +10,14 @@ import (
 
 // spyObserver 记下一次扫描交给观察者的全部报文。
 //
-// 它自带一把锁：扫描 worker 与封面 worker 会并发调用两个方法，这正是 ScanObserver
+// 它自带一把锁：扫描 worker 与封面 worker 会并发调用这几个方法，这正是 ScanObserver
 // 对实现方的要求，探针不该是唯一违反它的那个。
 type spyObserver struct {
 	mu       sync.Mutex
 	progress []ScanProgressReport
 	metrics  []ScanMetricsReport
+	failures []ItemFailure
+	warnings []ScanWarning
 }
 
 func (s *spyObserver) Progress(report ScanProgressReport) {
@@ -28,6 +30,25 @@ func (s *spyObserver) Metrics(report ScanMetricsReport) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.metrics = append(s.metrics, report)
+}
+
+func (s *spyObserver) ItemFailed(failure ItemFailure) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failures = append(s.failures, failure)
+}
+
+func (s *spyObserver) Warn(warning ScanWarning) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.warnings = append(s.warnings, warning)
+}
+
+// itemFailures 返回至今收到的条目失败。
+func (s *spyObserver) itemFailures() []ItemFailure {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ItemFailure(nil), s.failures...)
 }
 
 // lastMetrics 返回收尾指标；一次扫描恰好报一次，没报过时返回零值。

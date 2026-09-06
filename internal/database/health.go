@@ -26,7 +26,9 @@ type HealthIssue struct {
 	Path        string `json:"path,omitempty"`
 	Detail      string `json:"detail,omitempty"`
 	Count       int64  `json:"count,omitempty"`
-	LastTaskKey string `json:"last_task_key,omitempty"`
+	// LastRunID 是这条问题所在作用域最近那次**运行**的标识，界面据此跳到按那一次过滤的原始日志。
+	// 零表示这个库/系列还没跑过任何东西，那个按钮因此不画。
+	LastRunID int64 `json:"last_run_id,omitempty"`
 }
 
 type HealthIssueFilters struct {
@@ -97,14 +99,14 @@ func (s *SqlStore) GetHealthReport(ctx context.Context, filters HealthIssueFilte
 		report.Issues = append(report.Issues, items...)
 	}
 
-	if err := s.attachLastTaskKeys(ctx, report.Issues); err != nil {
+	if err := s.attachLastRunIDs(ctx, report.Issues); err != nil {
 		return report, err
 	}
 
 	return report, nil
 }
 
-// scopeRefsForIssue 列出一条健康问题可能挂上任务键的作用域，**系列在前**：
+// scopeRefsForIssue 列出一条健康问题可能挂上运行标识的作用域，**系列在前**：
 // 一条问题若同时落在系列与资料库上，用户想看的是那个系列自己的那次运行。
 func scopeRefsForIssue(issue HealthIssue) []taskstore.ScopeRef {
 	refs := make([]taskstore.ScopeRef, 0, 2)
@@ -117,11 +119,15 @@ func scopeRefsForIssue(issue HealthIssue) []taskstore.ScopeRef {
 	return refs
 }
 
-// attachLastTaskKeys 给每条健康问题挂上它所在作用域最近那次运行的**任务键**，界面据此跳到日志。
+// attachLastRunIDs 给每条健康问题挂上它所在作用域最近那次**运行**的标识，界面据此跳到
+// 按那一次运行过滤的日志。
+//
+// 挂运行标识而不是**任务键**：同一个库连着扫三次共用一个键，按键跳过去看到的是三次混在一起的
+// 日志，而用户点这个按钮是想看**最近那一次**出了什么事。
 //
 // 作用域先去重再整批问一次，而不是每条问题单独发一条查询：一份报告能带回上千条问题，
 // 而它们绝大多数指向同一批资料库。
-func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue) error {
+func (s *SqlStore) attachLastRunIDs(ctx context.Context, issues []HealthIssue) error {
 	wanted := make(map[taskstore.ScopeRef]struct{})
 	for _, issue := range issues {
 		for _, ref := range scopeRefsForIssue(issue) {
@@ -135,7 +141,7 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 	for scope := range wanted {
 		scopes = append(scopes, scope)
 	}
-	latest, err := taskstore.New(s.db).LastRunKeysForScopes(ctx, scopes)
+	latest, err := taskstore.New(s.db).LastRunIDsForScopes(ctx, scopes)
 	if err != nil {
 		return err
 	}
@@ -143,8 +149,8 @@ func (s *SqlStore) attachLastTaskKeys(ctx context.Context, issues []HealthIssue)
 	for i := range issues {
 		issue := &issues[i]
 		for _, ref := range scopeRefsForIssue(*issue) {
-			if key, ok := latest[ref]; ok {
-				issue.LastTaskKey = key
+			if runID, ok := latest[ref]; ok {
+				issue.LastRunID = runID
 				break
 			}
 		}

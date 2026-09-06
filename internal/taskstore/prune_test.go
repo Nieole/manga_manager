@@ -131,8 +131,8 @@ func TestPruneCountsCascadedEventsAndSamples(t *testing.T) {
 		task.StatusCompleted, time.Now())
 	for _, run := range []task.Run{doomed, kept} {
 		if err := store.AppendRunEvents(ctx, run.ID, []task.Event{
-			{At: time.Now(), Kind: task.EventPhase, Payload: "scan"},
-			{At: time.Now(), Kind: task.EventItem, Payload: "broken.cbz"},
+			{At: time.Now(), Kind: task.EventPhase, Phase: "scan"},
+			{At: time.Now(), Kind: task.EventItem, Item: "broken.cbz", Reason: "corrupted"},
 		}); err != nil {
 			t.Fatalf("append events failed: %v", err)
 		}

@@ -265,6 +265,15 @@ func (o *coverRunObserver) Progress(report scanner.CoverProgressReport) {
 	})
 }
 
+// ItemFailed 把一本书的封面失败落成这条运行的**运行事件**：`failed_covers: 12` 答不出
+// 是哪 12 本，这一条才答得出。
+//
+// 它不受那扇「手上正跑着哪一批」的窗口约束：窗口挡的是会被重复累加的**合计**，
+// 而一条失败明细是一件独立发生过的事，迟到一拍照样属于这条运行。
+func (o *coverRunObserver) ItemFailed(failure scanner.ItemFailure) {
+	o.progress.ItemFailed(failure.Path, failure.Reason)
+}
+
 // absorb 收下手上这一批的最新值，交回这条运行至今的合计；窗口之外的报文即 false。
 func (o *coverRunObserver) absorb(latest coverRunTotals) (coverRunTotals, bool) {
 	o.mu.Lock()

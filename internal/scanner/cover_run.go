@@ -22,6 +22,9 @@ import (
 // 写进那条运行，不经扫描那一条（ADR 0005）。交出 nil 表示这一批的报文无处可报。
 type CoverObserver interface {
 	Progress(CoverProgressReport)
+	// ItemFailed 报告一本书的封面没生成成：哪个文件、为什么。
+	// `failed_covers: 12` 答不出是哪 12 本，这一条才答得出。
+	ItemFailed(ItemFailure)
 }
 
 // CoverProgressReport 是一条封面运行的一次推进报文。
@@ -369,9 +372,20 @@ func (b *CoverBatch) settleGenerated() {
 	b.settled.Add(1)
 }
 
-func (b *CoverBatch) settleFailed() {
+// settleFailed 结算一次失败，并把「哪个文件、为什么」交给观察者。
+//
+// 原因由调用方给：三条失败出口各有各的因由（缩略图生成失败、生成了却没有路径、写回封面路径失败），
+// 只报一句「封面生成失败」的话，详情页列出的是一串没有线索的文件名。
+func (b *CoverBatch) settleFailed(path, reason string) {
 	b.failed.Add(1)
 	b.settled.Add(1)
+	b.mu.Lock()
+	observer := b.observer
+	b.mu.Unlock()
+	if observer == nil {
+		return
+	}
+	observer.ItemFailed(ItemFailure{Path: path, Reason: reason})
 }
 
 func (b *CoverBatch) settleSkipped() { b.settled.Add(1) }

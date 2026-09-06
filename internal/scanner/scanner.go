@@ -89,14 +89,43 @@ func (s *Scanner) SetBatchCallback(cb func(string)) {
 // （调用方自己另有进度口径，例如重建索引那趟逐库强扫），此时两个方法都不会被调用。
 //
 // 它只管扫描本身，寿命与那次调用一致：异步生成的封面归**封面运行**，报文经封面作业自带的
-// CoverObserver 走（ADR 0005）。实现方仍须自行保证并发安全——两个方法会被多个扫描 worker
+// CoverObserver 走（ADR 0005）。实现方仍须自行保证并发安全——四个方法会被多个扫描 worker
 // 并发调用。
 type ScanObserver interface {
 	// Progress 报告一次扫描进行中的计数、**阶段**与当前条目。
 	Progress(ScanProgressReport)
 	// Metrics 报告一次扫描收尾时的全量指标，每次扫描恰好一次。
 	Metrics(ScanMetricsReport)
+	// ItemFailed 报告一个条目没处理成：哪个文件、为什么。它答的是详情页那个
+	// 「`failed_archives: 7` 到底是哪 7 个文件」——只有计数的话，那个数没有任何去处可查。
+	ItemFailed(ItemFailure)
+	// Warn 报告一次运行级告警：整批被丢掉、某项能力降级、某道护栏拦下了后续的东西。
+	// 它与 ItemFailed 的分界是「说的是某一个条目，还是整次扫描」。
+	Warn(ScanWarning)
 }
+
+// ItemFailure 是一个条目没处理成：哪个文件、为什么。扫描与封面两条通道共用它。
+//
+// Reason 是给人看的一句话（多半是底层错误串），不是错误码：这一条落进**运行事件**之后
+// 原样显示在详情页上，翻译它既没有稳定的取值集合，也会把真正的线索译丢。
+type ItemFailure struct {
+	Path   string
+	Reason string
+}
+
+// ScanWarning 是一次运行级告警。Code 是一个稳定的短码（由渲染方翻译），
+// Detail 是给排查用的补充说明，Count 是「这一条涉及多少个条目」，零表示不带计数。
+type ScanWarning struct {
+	Code   string
+	Detail string
+	Count  int64
+}
+
+// 扫描发出的运行级告警码。取值稳定：它们落进用户库里的历史事件行，改名等于把旧行读成一句空白。
+const (
+	// WarnBatchIngestDropped 是一整批入库事务失败、这一批书被丢掉。
+	WarnBatchIngestDropped = "batch_ingest_dropped"
+)
 
 func (s *Scanner) currentConfig() config.Config {
 	if s.config == nil {
@@ -255,6 +284,26 @@ func newScanProgressReporter(metrics *scanMetrics, observer ScanObserver) *scanP
 
 // scanReportInterval 是扫描进度的投递水位，与封面推进那一条同一个道理，见 coverReportInterval。
 const scanReportInterval = 250 * time.Millisecond
+
+// itemFailed 把一个条目的失败交给**扫描观察者**。它不受投递水位约束：水位管的是同一份展示态
+// 别重复投，而每一条失败都是一件**不同**的事，被节流吞掉就再也补不回来。
+//
+// 条数上限不在这里判：那属于收下它的那一侧（见 task.MaxItemFailureEvents），
+// 在这里也判一遍等于让「最多留多少条」有两个答案。
+func (r *scanProgressReporter) itemFailed(path, reason string) {
+	if r == nil || r.observer == nil {
+		return
+	}
+	r.observer.ItemFailed(ItemFailure{Path: path, Reason: reason})
+}
+
+// warn 把一次运行级告警交给**扫描观察者**，同样不受投递水位约束。
+func (r *scanProgressReporter) warn(warning ScanWarning) {
+	if r == nil || r.observer == nil {
+		return
+	}
+	r.observer.Warn(warning)
+}
 
 func (r *scanProgressReporter) publish(phase, currentItem string, force bool) {
 	if r == nil || r.observer == nil || !r.throttle.allow(force) {
@@ -988,6 +1037,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 					metrics.failedArchives.Add(1)
 				}
 				slog.WarnContext(ctx, "Failed to open archive (may be corrupted)", "path", job.path, "error", err)
+				progress.itemFailed(job.path, err.Error())
 				return err
 			}
 			defer arc.Close()
@@ -1002,6 +1052,7 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 					metrics.failedArchives.Add(1)
 				}
 				slog.WarnContext(ctx, "Failed to scan pages inside archive", "path", job.path, "error", err)
+				progress.itemFailed(job.path, err.Error())
 				return err
 			}
 
@@ -1389,6 +1440,9 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			// 否则任务会静默报成功，扫描完成日志与指标里看不出任何异常。
 			slog.ErrorContext(ctx, "Batch ingest transaction failed, dropping batch", "book_count", len(batch), "error", err)
 			metrics.failedArchives.Add(int64(len(batch)))
+			// 整批被丢掉是一条**运行级告警**而不是 N 条条目失败：用户要知道的是「这一批没进去」，
+			// 而逐本落一条会用同一个原因把失败明细那 500 条的额度一次占光。
+			progress.warn(ScanWarning{Code: WarnBatchIngestDropped, Detail: err.Error(), Count: int64(len(batch))})
 		} else {
 			slog.InfoContext(ctx, "Successfully ingested batch", "book_count", len(batch))
 			// 累积本批 touched 系列，待 refreshDirtySeries 节流刷新（不在批事务内逐系列全量重算）。
@@ -1628,11 +1682,11 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	coverPath, err := s.generateBookThumbnail(ctx, job.candidate, cfg, batch)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to generate queued thumbnail", "book_id", job.bookID, "path", job.candidate.path, "error", err)
-		batch.settleFailed()
+		batch.settleFailed(job.candidate.path, err.Error())
 		return
 	}
 	if !coverPath.Valid || coverPath.String == "" {
-		batch.settleFailed()
+		batch.settleFailed(job.candidate.path, "thumbnail generator produced no cover path")
 		return
 	}
 
@@ -1643,7 +1697,7 @@ func (s *Scanner) runCoverJob(job coverJob) {
 	if err != nil {
 		removeGeneratedThumbnail(cfg, coverPath.String)
 		slog.WarnContext(ctx, "Failed to update queued thumbnail cover path", "book_id", job.bookID, "error", err)
-		batch.settleFailed()
+		batch.settleFailed(job.candidate.path, err.Error())
 		return
 	}
 	if rowsAffected == 0 {

@@ -5,15 +5,16 @@
  */
 
 import { useState } from 'react';
-import { Activity, Ban, ChevronDown, ExternalLink, FileText, ListTree, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Trash2, XCircle } from 'lucide-react';
+import { Activity, Ban, ChevronDown, ExternalLink, FileText, ListTree, Pause, PauseCircle, Play, RefreshCw, RotateCcw, Search, Terminal, Trash2, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/task';
+import { runCardId } from '../../utils/runCard';
 import { isActiveRunStatus, isLiveRunStatus } from '../../utils/runStatus';
 
 // TaskLimits / RunStatus / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
 // （单一事实源，见 api/generated.ts），此处再导出以保持既有 import 路径不变。
-export type { TaskLimits, RunStatus, RunLive, TaskSummary } from '../../api/generated';
-import type { RunLive, RunStatus, TaskSummary } from '../../api/generated';
+export type { TaskLimits, RunStatus, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse } from '../../api/generated';
+import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunStatus, TaskSummary } from '../../api/generated';
 
 // 运行上的动作作用在**运行**上，重试作用在**任务**上（它重新发起一次，不改动被重试的那一条）。
 export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
@@ -50,6 +51,21 @@ export interface TaskRunHistory {
   loading?: boolean;
 }
 
+/**
+ * RunEventsView 是**打开着事件流的那一张运行卡片**与它的**运行事件**。
+ *
+ * 认的是卡片而不是运行：同一条运行会同时出现在实况区与展开着的历次运行里，按运行认的话
+ * 两张卡片下面各画一份，用户会以为那是两条运行各自的失败。cardId 由 runCardId 拼出。
+ *
+ * 一次只留一张：事件按需拉（它不进推送通道），留着上一张的话再点开会先闪一眼别人的事件流。
+ * data 为 undefined 表示还没取回来。
+ */
+export interface RunEventsView {
+  cardId: string;
+  data?: RunEventsResponse;
+  loading?: boolean;
+}
+
 interface TaskCenterProps {
   // live 是实况区那一帧：在跑的与**排队中**的运行，加上槽位占用与全局暂停。
   live: RunLive;
@@ -72,7 +88,12 @@ interface TaskCenterProps {
   onFilterChange?: (patch: Partial<TaskCenterFilters>) => void;
   onClearTasks?: (status?: 'completed' | 'failed', useCurrentFilters?: boolean) => void;
   onOpenTaskTarget?: (target: TaskTarget) => void;
-  onViewTaskLogs?: (run: RunStatus) => void;
+  // 「查看日志」打开的是**这次运行自己的事件流**；「原始日志」才是按运行过滤的那份全局日志。
+  // 两个入口并排：事件流答「这次出了什么事」，原始日志答「那一刻还发生了什么」。
+  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  onViewRawLogs?: (run: RunStatus) => void;
+  // events 是当前打开着事件流的那一条运行；不给即一条都没打开。
+  events?: RunEventsView;
   // 人工禁用那条开关作用在**任务**上，因此它收的是任务而不是运行。不给即不画那个按钮。
   onToggleTaskAuto?: (task: TaskSummary) => void;
 }
@@ -505,6 +526,134 @@ function RunTelemetry({ run }: { run: RunStatus }) {
   );
 }
 
+/** formatMillis 把一段耗时说成人话。它服务阶段时间线，因此秒以下也要说得出——有的段就是很短。 */
+function formatMillis(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return '0s';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return formatDuration(ms / 1000);
+}
+
+/**
+ * RunPhaseTimeline 画「慢在哪一段」：每个**阶段**一行，写着它跑了多久。
+ *
+ * 段长是后端由相邻两条阶段事件相减算出来的，前端不再自己减一遍——减出来的第二份一旦与
+ * 事件流里的时刻错开，界面就在自己打自己的脸。
+ */
+function RunPhaseTimeline({ phases }: { phases: RunPhaseSpan[] }) {
+  const { t } = useI18n();
+  const total = phases.reduce((sum, span) => sum + Math.max(0, span.duration_ms), 0);
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.phaseTimeline')}</p>
+      {phases.map((span, index) => (
+        <div key={`${span.phase}-${span.started_at}-${index}`} className="rounded-lg border border-white/10 bg-white/3 px-3 py-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+            <span className="text-white/70">
+              {t(`settings.maintenance.taskPhase.${span.phase}`, undefined, span.phase)}
+              {span.current && <span className="ml-2 text-emerald-400">{t('logs.task.phaseCurrent')}</span>}
+            </span>
+            <span className="text-white/50">{formatMillis(span.duration_ms)}</span>
+          </div>
+          {/* 一条按占比拉长的条子：读「40 分钟」要算，读一根长条不用算。 */}
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/5">
+            <div className="h-full rounded-full bg-komgaPrimary/70" style={{ width: `${total > 0 ? (span.duration_ms / total) * 100 : 0}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * RunFailureList 画「哪些文件失败了、为什么」。
+ *
+ * 上限之外的那些只有一个计数（后端每次运行最多留一批明细），因此列完之后要说出还有多少条——
+ * 不说的话，用户会以为失败就这么几个。
+ */
+function RunFailureList({ failures, omitted }: { failures: RunEvent[]; omitted: number }) {
+  const { t } = useI18n();
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.failedItems', { count: failures.length })}</p>
+      <div className="max-h-64 space-y-1.5 overflow-auto">
+        {failures.map((failure, index) => (
+          <div key={`${failure.item}-${index}`} className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
+            <p className="wrap-break-word text-xs text-white/70">{failure.item}</p>
+            {failure.reason && <p className="mt-1 wrap-break-word text-[11px] text-red-300/80">{failure.reason}</p>}
+          </div>
+        ))}
+      </div>
+      {omitted > 0 && (
+        <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+          {t('logs.task.failedItemsOmitted', { count: omitted })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** runEventLabel 是事件流里一行的说法：四类各念各的。 */
+function runEventLabel(event: RunEvent, t: Translate) {
+  switch (event.kind) {
+    case 'phase':
+      return t('logs.task.event.phase', { phase: t(`settings.maintenance.taskPhase.${event.phase}`, undefined, event.phase || '') });
+    case 'item':
+      return `${event.item}${event.reason ? ` - ${event.reason}` : ''}`;
+    case 'control':
+      return t(`logs.task.event.control.${event.action}`, undefined, event.action || '');
+    default:
+      return `${t(`logs.task.event.warn.${event.code}`, { count: event.count || 0 }, event.code || '')}${event.detail ? ` - ${event.detail}` : ''}`;
+  }
+}
+
+function runEventClass(kind: string) {
+  if (kind === 'item') return 'text-red-300/80';
+  if (kind === 'warn') return 'text-amber-400/90';
+  if (kind === 'control') return 'text-sky-300/80';
+  return 'text-white/60';
+}
+
+/**
+ * RunEventStream 是「查看日志」现在打开的东西：这**一次运行**自己的事件流，
+ * 而不是在全局日志里 grep 一个子串。
+ *
+ * 三块自上而下：阶段时间线答「慢在哪一段」，失败明细答「哪些文件、为什么」，
+ * 整条事件流答「中间还发生过什么」。
+ */
+function RunEventStream({ view }: { view: RunEventsView }) {
+  const { t, formatDateTime } = useI18n();
+  if (view.loading || !view.data) {
+    return <p className="text-xs text-white/40">{t('common.loading')}</p>;
+  }
+  const { events, phases, truncated } = view.data;
+  const failures = events.filter((event) => event.kind === 'item');
+  // 「还有多少条没列出」由后端那一格回答，不在事件流里自己找：运行还在跑时那条告警根本还没落，
+  // 而事件多到被截断时，最后落下的恰好就是它。
+  const omitted = view.data.omitted_failures || 0;
+
+  if (events.length === 0) {
+    return <p className="text-xs text-white/40">{t('logs.task.noEvents')}</p>;
+  }
+  return (
+    <div className="space-y-3">
+      {phases.length > 0 && <RunPhaseTimeline phases={phases} />}
+      {(failures.length > 0 || omitted > 0) && <RunFailureList failures={failures} omitted={omitted} />}
+      <div className="space-y-1">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">{t('logs.task.eventStream')}</p>
+        <div className="max-h-64 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/30 p-2">
+          {events.map((event, index) => (
+            <p key={`${event.at}-${index}`} className="flex gap-2 text-[11px]">
+              <span className="shrink-0 text-white/30">{formatDateTime(event.at)}</span>
+              <span className={`wrap-break-word ${runEventClass(event.kind)}`}>{runEventLabel(event, t)}</span>
+            </p>
+          ))}
+        </div>
+        {truncated && <p className="text-[11px] text-amber-500">{t('logs.task.eventsTruncated')}</p>}
+      </div>
+    </div>
+  );
+}
+
 /**
  * RunCard 是一次**运行**的卡片，实况区与展开后的历次运行共用它。
  *
@@ -513,18 +662,25 @@ function RunTelemetry({ run }: { run: RunStatus }) {
  */
 function RunCard({
   run,
+  cardId,
   expanded,
   taskActionKey,
+  events,
   onToggleExpanded,
   onTaskAction,
-  onViewTaskLogs,
+  onViewRunEvents,
+  onViewRawLogs,
 }: {
   run: RunStatus;
+  // cardId 是这张卡片在这一屏里的身份，见 runCardId：同一条运行可以同时出现在两区。
+  cardId: string;
   expanded: boolean;
   taskActionKey: string | null;
+  events?: RunEventsView;
   onToggleExpanded: () => void;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
-  onViewTaskLogs?: (run: RunStatus) => void;
+  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  onViewRawLogs?: (run: RunStatus) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
   const statusLabel = t(`logs.taskStatus.${run.status}`);
@@ -559,12 +715,19 @@ function RunCard({
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <RunControlButtons run={run} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
-          {/* 每条运行各有一个日志入口：历次运行里点开的必须是**那一次**的日志，
+          {/* 每条运行各有自己的两个入口：历次运行里点开的必须是**那一次**的事件流与日志，
               而不是这个任务最近那一次的。 */}
-          {onViewTaskLogs && (
-            <button type="button" onClick={() => onViewTaskLogs(run)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+          {onViewRunEvents && (
+            <button type="button" onClick={() => onViewRunEvents(run, cardId)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
               <FileText className="h-3.5 w-3.5" />
               {t('logs.task.viewLogs')}
+            </button>
+          )}
+          {/* 原始日志留在事件流旁边：事件是「用户该知道的」，日志是「排障要的」，同一件事不写两处。 */}
+          {onViewRawLogs && (
+            <button type="button" onClick={() => onViewRawLogs(run)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/45 hover:bg-white/10 hover:text-white">
+              <Terminal className="h-3.5 w-3.5" />
+              {t('logs.task.rawLogs')}
             </button>
           )}
           {hasRunDetails(run) && (
@@ -588,6 +751,11 @@ function RunCard({
           <RunDetailDrawer run={run} />
         </div>
       )}
+      {events?.cardId === cardId && (
+        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+          <RunEventStream view={events} />
+        </div>
+      )}
     </div>
   );
 }
@@ -595,14 +763,21 @@ function RunCard({
 /** RunCardList 画一组运行卡片，并自己记住哪一张展开着详情。去重键是**运行标识**——同一个任务键有多条运行。 */
 function RunCardList({
   runs,
+  origin,
   taskActionKey,
+  events,
   onTaskAction,
-  onViewTaskLogs,
+  onViewRunEvents,
+  onViewRawLogs,
 }: {
   runs: RunStatus[];
+  // origin 是这一组卡片画在哪一区（实况区 / 展开着的历次运行），与运行标识一起拼出卡片身份。
+  origin: string;
   taskActionKey: string | null;
+  events?: RunEventsView;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
-  onViewTaskLogs?: (run: RunStatus) => void;
+  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  onViewRawLogs?: (run: RunStatus) => void;
 }) {
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   return (
@@ -611,11 +786,14 @@ function RunCardList({
         <RunCard
           key={run.run_id}
           run={run}
+          cardId={runCardId(origin, run.run_id)}
           expanded={expandedRunId === run.run_id}
           taskActionKey={taskActionKey}
+          events={events}
           onToggleExpanded={() => setExpandedRunId((current) => (current === run.run_id ? null : run.run_id))}
           onTaskAction={onTaskAction}
-          onViewTaskLogs={onViewTaskLogs}
+          onViewRunEvents={onViewRunEvents}
+          onViewRawLogs={onViewRawLogs}
         />
       ))}
     </div>
@@ -635,7 +813,9 @@ function LiveSection({
   onTaskAction,
   onPauseAll,
   onResumeAll,
-  onViewTaskLogs,
+  events,
+  onViewRunEvents,
+  onViewRawLogs,
 }: {
   live: RunLive;
   bulkPauseBusy?: boolean;
@@ -643,7 +823,9 @@ function LiveSection({
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
   onPauseAll?: () => void;
   onResumeAll?: () => void;
-  onViewTaskLogs?: (run: RunStatus) => void;
+  events?: RunEventsView;
+  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  onViewRawLogs?: (run: RunStatus) => void;
 }) {
   const { t } = useI18n();
   const bulkPause = onPauseAll && onResumeAll;
@@ -706,7 +888,7 @@ function LiveSection({
 
       {live.runs.length === 0
         ? <p className="rounded-xl border border-white/10 bg-white/3 p-4 text-sm text-white/50">{t('logs.taskCenter.noLiveRuns')}</p>
-        : <RunCardList runs={live.runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} onViewTaskLogs={onViewTaskLogs} />}
+        : <RunCardList runs={live.runs} origin="live" taskActionKey={taskActionKey} events={events} onTaskAction={onTaskAction} onViewRunEvents={onViewRunEvents} onViewRawLogs={onViewRawLogs} />}
     </section>
   );
 }
@@ -730,7 +912,9 @@ function TaskRow({
   onToggle,
   onTaskAction,
   onOpenTaskTarget,
-  onViewTaskLogs,
+  events,
+  onViewRunEvents,
+  onViewRawLogs,
   onToggleTaskAuto,
 }: {
   task: TaskSummary;
@@ -740,7 +924,13 @@ function TaskRow({
   onToggle?: () => void;
   onTaskAction: (run: RunStatus, action: TaskAction) => void;
   onOpenTaskTarget?: (target: TaskTarget) => void;
-  onViewTaskLogs?: (run: RunStatus) => void;
+  // 「查看日志」打开的是**这次运行自己的事件流**；「原始日志」才是按运行过滤的那份全局日志。
+  // 两个入口并排：事件流答「这次出了什么事」，原始日志答「那一刻还发生了什么」。
+  // 前者带上卡片身份：同一条运行可以同时出现在两区，页面据此只让被点的那张画事件。
+  onViewRunEvents?: (run: RunStatus, cardId: string) => void;
+  onViewRawLogs?: (run: RunStatus) => void;
+  // events 是当前打开着事件流的那一张卡片；不给即一张都没打开。
+  events?: RunEventsView;
   onToggleTaskAuto?: (task: TaskSummary) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
@@ -841,7 +1031,7 @@ function TaskRow({
           {history?.loading && <p className="text-sm text-white/50">{t('common.loading')}</p>}
           {!history?.loading && history?.runs?.length === 0 && <p className="text-sm text-white/50">{t('logs.taskCenter.noRunHistory')}</p>}
           {!history?.loading && history?.runs && history.runs.length > 0 && (
-            <RunCardList runs={history.runs} taskActionKey={taskActionKey} onTaskAction={onTaskAction} onViewTaskLogs={onViewTaskLogs} />
+            <RunCardList runs={history.runs} origin="history" taskActionKey={taskActionKey} events={events} onTaskAction={onTaskAction} onViewRunEvents={onViewRunEvents} onViewRawLogs={onViewRawLogs} />
           )}
         </div>
       )}
@@ -867,7 +1057,9 @@ export function TaskCenter({
   onFilterChange,
   onClearTasks,
   onOpenTaskTarget,
-  onViewTaskLogs,
+  events,
+  onViewRunEvents,
+  onViewRawLogs,
   onToggleTaskAuto,
 }: TaskCenterProps) {
   const { t } = useI18n();
@@ -892,7 +1084,9 @@ export function TaskCenter({
         onTaskAction={onTaskAction}
         onPauseAll={onPauseAll}
         onResumeAll={onResumeAll}
-        onViewTaskLogs={onViewTaskLogs}
+        events={events}
+        onViewRunEvents={onViewRunEvents}
+        onViewRawLogs={onViewRawLogs}
       />
 
       <section className="space-y-3 rounded-xl border border-white/10 bg-gray-950/40 p-4">
@@ -920,7 +1114,9 @@ export function TaskCenter({
                   onToggle={onToggleTask ? () => onToggleTask(task.task_id) : undefined}
                   onTaskAction={onTaskAction}
                   onOpenTaskTarget={onOpenTaskTarget}
-                  onViewTaskLogs={onViewTaskLogs}
+                  events={events}
+                  onViewRunEvents={onViewRunEvents}
+                  onViewRawLogs={onViewRawLogs}
                   onToggleTaskAuto={onToggleTaskAuto}
                 />
               ))}

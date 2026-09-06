@@ -38,7 +38,7 @@ const ISSUE = {
   library_name: '主库',
   series_id: 7,
   series_name: '缺元数据的系列',
-  last_task_key: 'scrape_series_7',
+  last_run_id: 7,
 };
 
 function renderOrganize(isAdmin: boolean) {

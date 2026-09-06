@@ -19,18 +19,20 @@ export default function Ops() {
   const [activeTab, setActiveTab] = useState<TabKey>(
     VALID_TABS.includes(initialTab as TabKey) ? (initialTab as TabKey) : 'tasks',
   );
-  const [taskKey, setTaskKey] = useState<string>(() => searchParams.get('task_key') || '');
+  // 原始日志按**运行**过滤，不再按**任务键**：同一个库连着扫三次共用一个键，按键过滤把三次
+  // 混在一起，而排障要的恰恰是其中一次。
+  const [runID, setRunID] = useState<string>(() => searchParams.get('run_id') || '');
 
   useEffect(() => {
     const fromUrl = searchParams.get('tab');
     if (fromUrl && VALID_TABS.includes(fromUrl as TabKey) && fromUrl !== activeTab) {
       setActiveTab(fromUrl as TabKey);
     }
-    const taskKeyFromUrl = searchParams.get('task_key') || '';
-    if (taskKeyFromUrl !== taskKey) {
-      setTaskKey(taskKeyFromUrl);
+    const runIDFromUrl = searchParams.get('run_id') || '';
+    if (runIDFromUrl !== runID) {
+      setRunID(runIDFromUrl);
     }
-  }, [searchParams, activeTab, taskKey]);
+  }, [searchParams, activeTab, runID]);
 
   const setTab = (tab: TabKey) => {
     setActiveTab(tab);
@@ -39,19 +41,19 @@ export default function Ops() {
     setSearchParams(next, { replace: true });
   };
 
-  const viewTaskLogs = (task: RunStatus) => {
+  const viewRawLogs = (run: RunStatus) => {
     const next = new URLSearchParams(searchParams);
     next.set('tab', 'logs');
-    next.set('task_key', task.key);
+    next.set('run_id', String(run.run_id));
     setActiveTab('logs');
-    setTaskKey(task.key);
+    setRunID(String(run.run_id));
     setSearchParams(next, { replace: true });
   };
 
-  const clearTaskKey = () => {
-    setTaskKey('');
+  const clearRunID = () => {
+    setRunID('');
     const next = new URLSearchParams(searchParams);
-    next.delete('task_key');
+    next.delete('run_id');
     setSearchParams(next, { replace: true });
   };
 
@@ -97,8 +99,8 @@ export default function Ops() {
         }
       >
         {activeTab === 'tasks'
-          ? <BackgroundTasks embedded onViewTaskLogs={viewTaskLogs} />
-          : <Logs embedded taskKey={taskKey || undefined} onClearTaskKey={taskKey ? clearTaskKey : undefined} />}
+          ? <BackgroundTasks embedded onViewRawLogs={viewRawLogs} />
+          : <Logs embedded runID={runID || undefined} onClearRunID={runID ? clearRunID : undefined} />}
       </Suspense>
     </PageShell>
   );

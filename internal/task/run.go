@@ -190,12 +190,51 @@ const (
 	EventWarn EventKind = "warn"
 )
 
-// Event 是一次运行途中值得事后回看的一个瞬间。Payload 的内部形状由发出事件的那一方约定，
-// 本包只保证种类是封闭枚举。
+// ControlAction 是一次控制动作的种类，同样是**封闭枚举**：事件流里的控制那一格只有这四种取值。
+type ControlAction string
+
+const (
+	ControlPaused    ControlAction = "paused"
+	ControlResumed   ControlAction = "resumed"
+	ControlCancelled ControlAction = "cancelled"
+	// ControlCoalesced 是「本次发起被**合并**进这条排队运行」。它记在**被合并进的那一条**上，
+	// 因为发起方那一次根本没有自己的运行行——不记在这里，那次发起就无处可查。
+	ControlCoalesced ControlAction = "coalesced"
+)
+
+// MaxItemFailureEvents 是一次运行最多留下的条目失败事件条数。
+//
+// 超出的部分**只累加计数**，收尾时落一条「还有 N 条未列出」的告警（见 Engine 的失败计账）。
+// 一次大库扫描可能有几千个条目失败，全写进去既撑爆表也撑爆界面。
+const MaxItemFailureEvents = 500
+
+// EventCodeItemFailuresOmitted 是「还有 N 条未列出」那条告警的码，N 在 Event.Count 上。
+const EventCodeItemFailuresOmitted = "item_failures_omitted"
+
+// Event 是一次运行途中值得事后回看的一个瞬间。种类是封闭枚举，各种类只填自己那几格——
+// 落盘侧把有值的那几格编成一份 payload，本包不认识那个编码。
 type Event struct {
-	At      time.Time
-	Kind    EventKind
-	Payload string
+	At   time.Time
+	Kind EventKind
+
+	// Phase 是切换**之后**的阶段名，只有 EventPhase 填它。相邻两条相减即是那一段的耗时，
+	// 因此耗时不另存一列——多存一份就要维护它与事件的一致。
+	Phase string
+
+	// Item 与 Reason 是失败的条目与原因（哪个文件、为什么），只有 EventItem 填它们。
+	Item   string
+	Reason string
+
+	// Action 是控制动作，只有 EventControl 填它。
+	Action ControlAction
+
+	// Code 是告警的短码（由渲染方翻译），Detail 是给排查用的补充说明，只有 EventWarn 填它们。
+	Code   string
+	Detail string
+	// Count 是这条告警涉及多少个条目：「还有 N 条未列出」的 N、「一整批 N 本被丢掉」的 N。
+	// 零表示这条不带计数。它单独成一格而不是拼进 Detail——拼进去的话，渲染方只能把一句
+	// 技术错误串连同一个数字原样甩给用户。
+	Count int64
 }
 
 // Sample 是按固定间隔对一次运行的计数与速率取的一个点，连起来是吞吐曲线。

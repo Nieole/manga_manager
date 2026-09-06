@@ -182,6 +182,11 @@ type Store interface {
 	// LoadRunSideData 批量读回这批运行的侧数据，一条侧数据都没有的运行不出现在结果里。
 	// 批量的理由同 LoadTasks。
 	LoadRunSideData(ctx context.Context, runIDs []int64) (map[int64]SideData, error)
+	// ListRunEvents 按**发生顺序**取一条运行的**运行事件**；limit 小于等于 0 表示不限条数。
+	//
+	// 顺序是这条读取面的全部要求：阶段那一段的耗时由相邻两条相减得出，乱序读回的时间线会出现
+	// 负的段长。它只服务详情页那一处（一次一条运行），因此不做批量——列表页一条事件都不取。
+	ListRunEvents(ctx context.Context, runID int64, limit int) ([]Event, error)
 
 	// DeleteRuns 按谓词删除运行，返回删掉的条数。事件、采样与四张侧表随之级联删除。
 	//

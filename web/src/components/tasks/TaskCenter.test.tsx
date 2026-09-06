@@ -9,7 +9,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { TaskCenter, type RunLive, type RunStatus, type TaskSummary } from './TaskCenter';
+import { TaskCenter, type RunEventsResponse, type RunLive, type RunStatus, type TaskSummary } from './TaskCenter';
+import { runCardId } from '../../utils/runCard';
 
 // 词条只要能渲染出来即可：本文件断言的是某一格在不在、按钮调了谁，与译文无关。
 vi.mock('../../i18n/LocaleProvider', () => ({
@@ -449,22 +450,107 @@ describe('不可暂停的运行', () => {
 });
 
 describe('日志入口按运行给', () => {
-  it('历次运行每条一个入口，点开的是那一次而不是最近那一次', () => {
-    const onViewTaskLogs = vi.fn();
-    renderCenter({
-      tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3 }) })],
-      history: {
-        taskId: 7,
-        runs: [makeRun({ run_id: 3, key: 'scan_library_1' }), makeRun({ run_id: 2, key: 'scan_library_1' })],
-      },
-      onToggleTask: vi.fn(),
-      onViewTaskLogs,
-    });
+  // 两条运行两个入口，各自打开自己那一次——历次运行里点第二条，拿到的必须是第二条。
+  const twoRuns = {
+    tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3 }) })],
+    history: {
+      taskId: 7,
+      runs: [makeRun({ run_id: 3, key: 'scan_library_1' }), makeRun({ run_id: 2, key: 'scan_library_1' })],
+    },
+    onToggleTask: vi.fn(),
+  };
+
+  it('「查看日志」打开的是这一次运行自己的事件流', () => {
+    const onViewRunEvents = vi.fn();
+    renderCenter({ ...twoRuns, onViewRunEvents });
 
     const entries = screen.getAllByText('logs.task.viewLogs');
     expect(entries).toHaveLength(2);
     fireEvent.click(entries[1]);
-    expect(onViewTaskLogs).toHaveBeenCalledWith(expect.objectContaining({ run_id: 2 }));
+    expect(onViewRunEvents).toHaveBeenCalledWith(expect.objectContaining({ run_id: 2 }), runCardId('history', 2));
+  });
+
+  it('旁边留着「原始日志」，按的也是这一次运行', () => {
+    const onViewRawLogs = vi.fn();
+    renderCenter({ ...twoRuns, onViewRawLogs });
+
+    const entries = screen.getAllByText('logs.task.rawLogs');
+    expect(entries).toHaveLength(2);
+    fireEvent.click(entries[1]);
+    expect(onViewRawLogs).toHaveBeenCalledWith(expect.objectContaining({ run_id: 2 }));
+  });
+});
+
+describe('事件流', () => {
+  const runWithEvents = (events: RunEventsResponse) => ({
+    live: makeLive({ active: 1, runs: [makeRun({ run_id: 3 })] }),
+    events: { cardId: runCardId('live', 3), data: events },
+  });
+
+  it('阶段时间线一段一行，写着每段跑了多久', () => {
+    renderCenter(runWithEvents({
+      run_id: 3,
+      events: [{ at: '2026-08-31T00:00:00Z', kind: 'phase', phase: 'discovering' }],
+      phases: [
+        { phase: 'discovering', started_at: '2026-08-31T00:00:00Z', duration_ms: 90_000 },
+        { phase: 'reading_metadata', started_at: '2026-08-31T00:01:30Z', duration_ms: 1_800_000, current: true },
+      ],
+    }));
+
+    expect(screen.getByText('logs.task.phaseTimeline')).toBeTruthy();
+    expect(screen.getByText('1m 30s')).toBeTruthy();
+    expect(screen.getByText('30m 0s')).toBeTruthy();
+    expect(screen.getByText('logs.task.phaseCurrent')).toBeTruthy();
+  });
+
+  // 「还有多少条」读后端那一格，不在事件流里自己找：运行还在跑时那条告警根本还没落。
+  it('失败明细写出是哪个文件、为什么，并说出还有多少条没列出', () => {
+    renderCenter(runWithEvents({
+      run_id: 3,
+      events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/vol01.cbz', reason: 'zip: not a valid archive' }],
+      phases: [],
+      omitted_failures: 37,
+    }));
+
+    expect(screen.getByText('/lib/vol01.cbz')).toBeTruthy();
+    expect(screen.getByText('zip: not a valid archive')).toBeTruthy();
+    expect(screen.getByText('logs.task.failedItemsOmitted')).toBeTruthy();
+  });
+
+  it('一条事件都没有时说出来，而不是画一片空白', () => {
+    renderCenter(runWithEvents({ run_id: 3, events: [], phases: [] }));
+    expect(screen.getByText('logs.task.noEvents')).toBeTruthy();
+  });
+
+  it('事件只画在被点开的那一条运行上', () => {
+    renderCenter({
+      live: makeLive({ active: 2, runs: [makeRun({ run_id: 3 }), makeRun({ run_id: 4 })] }),
+      events: {
+        cardId: runCardId('live', 4),
+        data: { run_id: 4, events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
+      },
+    });
+
+    // 只有一块事件流面板：两张卡片都画一份的话，用户会以为两条运行失败在同一个文件上。
+    expect(screen.getAllByText('logs.task.eventStream')).toHaveLength(1);
+    expect(screen.getAllByText('/lib/only-mine.cbz').length).toBeGreaterThan(0);
+  });
+
+  // 同一条运行会同时出现在实况区与展开着的历次运行里：认运行的话两张卡片下面各画一份，
+  // 用户会以为那是两条运行各自的失败。
+  it('同一条运行在两区都出现时，事件只画在被点的那张卡片下面', () => {
+    renderCenter({
+      live: makeLive({ active: 1, runs: [makeRun({ run_id: 3 })] }),
+      tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3 }) })],
+      history: { taskId: 7, runs: [makeRun({ run_id: 3 })] },
+      onToggleTask: vi.fn(),
+      events: {
+        cardId: runCardId('history', 3),
+        data: { run_id: 3, events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
+      },
+    });
+
+    expect(screen.getAllByText('logs.task.eventStream')).toHaveLength(1);
   });
 });
 

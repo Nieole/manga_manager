@@ -887,6 +887,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/runs/{runID}/pause", c.pauseRun)
 		r.Post("/system/runs/{runID}/resume", c.resumeRun)
 		r.Post("/system/runs/{runID}/cancel", c.cancelRun)
+		// 事件流按**运行**寻址，且**不进推送通道**：详情页打开时才来问这一条。
+		r.Get("/system/runs/{runID}/events", c.getRunEvents)
 		r.Get("/system/koreader", c.getKOReaderSettings)
 		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
 		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)

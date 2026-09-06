@@ -39,6 +39,8 @@ type recorder struct {
 	params   []map[string]string
 	metrics  []map[string]int64
 	metricPs []map[string]string
+	failures [][2]string
+	warns    [][2]string
 }
 
 func (r *recorder) report(f Frame) {
@@ -60,6 +62,18 @@ func (r *recorder) addMetrics(inc map[string]int64, p map[string]string) {
 	r.metricPs = append(r.metricPs, p)
 }
 
+func (r *recorder) itemFailed(item, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failures = append(r.failures, [2]string{item, reason})
+}
+
+func (r *recorder) warn(code, detail string, _ int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.warns = append(r.warns, [2]string{code, detail})
+}
+
 func (r *recorder) lastFrame(t *testing.T) Frame {
 	t.Helper()
 	r.mu.Lock()
@@ -70,12 +84,18 @@ func (r *recorder) lastFrame(t *testing.T) Frame {
 	return r.frames[len(r.frames)-1]
 }
 
-// newHandle 建一个压在构造点上的句柄：三个记录桩 + 一个新建调度器上的 Runner。
+// newHandle 建一个压在构造点上的句柄：五条写入通道全接记录桩 + 一个新建调度器上的 Runner。
 func newHandle(policy config.StorageIOPolicy) (*Handle, *recorder, *storageio.Scheduler) {
 	rec := &recorder{}
 	sched := storageio.NewScheduler()
 	runner := diskwork.NewRunner(stubConfig(policy), sched)
-	return New(rec.report, rec.mergeParams, rec.addMetrics, runner), rec, sched
+	return New(Writes{
+		Report:      rec.report,
+		MergeParams: rec.mergeParams,
+		AddMetrics:  rec.addMetrics,
+		ItemFailed:  rec.itemFailed,
+		Warn:        rec.warn,
+	}, runner), rec, sched
 }
 
 // pausedContext 造一个闸门处于暂停态的上下文，并返回它的闸门。
@@ -245,7 +265,13 @@ func TestHandleAbsorbsTheLatestProfileAndVolume(t *testing.T) {
 		return c
 	}
 	rec := &recorder{}
-	h := New(rec.report, rec.mergeParams, rec.addMetrics, diskwork.NewRunner(cfg, storageio.NewScheduler()))
+	h := New(Writes{
+		Report:      rec.report,
+		MergeParams: rec.mergeParams,
+		AddMetrics:  rec.addMetrics,
+		ItemFailed:  rec.itemFailed,
+		Warn:        rec.warn,
+	}, diskwork.NewRunner(cfg, storageio.NewScheduler()))
 
 	for _, path := range []string{first, second} {
 		if err := h.Disk(context.Background(), diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: path}, func() error { return nil }); err != nil {

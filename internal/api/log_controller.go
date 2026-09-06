@@ -72,11 +72,10 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	searchQuery := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
-	taskKeyFilter := strings.TrimSpace(r.URL.Query().Get("task_key"))
-	taskKeyNeedle := ""
-	if taskKeyFilter != "" {
-		taskKeyNeedle = logger.TaskKeyAttr + "=" + taskKeyFilter
-	}
+	// **任务键**与运行标识是两条并列的谓词，不是一条的两种写法：同一个库连着扫三次，按键过滤
+	// 把三次混在一起，而排障要的恰恰是其中一次。给了两条就都要满足——「这个任务的这一次」。
+	taskKeyNeedle := logAttrNeedle(logger.TaskKeyAttr, r.URL.Query().Get("task_key"))
+	runIDNeedle := logAttrNeedle(logger.RunIDAttr, r.URL.Query().Get("run_id"))
 
 	// 优先使用 logger 实际写入的日志文件路径，避免查看侧与写入侧依据不同来源推导而分叉。
 	// 仅当 logger 未初始化文件日志（如测试环境）时，回退到按数据目录推导。
@@ -127,6 +126,9 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		if taskKeyNeedle != "" && !strings.Contains(entry.Raw, taskKeyNeedle) {
 			return
 		}
+		if runIDNeedle != "" && !strings.Contains(entry.Raw, runIDNeedle) {
+			return
+		}
 
 		summary.Total++
 		if len(matchedLogs) == limit {
@@ -151,6 +153,18 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 		Items:   matchedLogs,
 		Summary: summary,
 	})
+}
+
+// logAttrNeedle 拼一条按日志属性过滤的子串，值为空即「这一条不过滤」。
+//
+// 匹配的是属性本身而不是裸值：一个运行标识就是几位数字，裸着找会命中行里任何一处相同的数字
+// （书籍 id、页码、耗时毫秒），而那些行与这次运行毫无关系。
+func logAttrNeedle(attr, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return attr + "=" + value
 }
 
 // forEachLogLine 逐行回调日志内容；超过 maxLogLineBytes 的行截断并标注后，继续读余下的行。

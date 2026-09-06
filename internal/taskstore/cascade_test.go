@@ -37,7 +37,7 @@ func writeSideData(t *testing.T, store *Store, runID int64) {
 		t.Fatalf("set run metrics failed: %v", err)
 	}
 	if err := store.AppendRunEvents(ctx, runID, []task.Event{
-		{At: time.Now(), Kind: task.EventPhase, Payload: "covers"},
+		{At: time.Now(), Kind: task.EventPhase, Phase: "covers"},
 	}); err != nil {
 		t.Fatalf("append run events failed: %v", err)
 	}

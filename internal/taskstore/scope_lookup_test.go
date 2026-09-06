@@ -11,31 +11,33 @@ import (
 	"manga-manager/internal/task"
 )
 
-// keyedRun 落一条已收尾、带任务键的运行。
-func keyedRun(t *testing.T, store *Store, taskID int64, key string, sequence int64) {
+// finishedRun 落一条已收尾的运行，交回它的标识。
+func finishedRun(t *testing.T, store *Store, taskID int64, sequence int64) int64 {
 	t.Helper()
 
 	finishedAt := time.Now()
-	if _, err := store.CreateRun(context.Background(), task.Run{
-		TaskID: taskID, Key: key, Trigger: task.TriggerManual, NthRun: int(sequence),
+	created, err := store.CreateRun(context.Background(), task.Run{
+		TaskID: taskID, Trigger: task.TriggerManual, NthRun: int(sequence),
 		Status: task.StatusCompleted, StartedAt: finishedAt.Add(-time.Minute),
 		UpdatedAt: finishedAt, FinishedAt: &finishedAt, Sequence: sequence,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("落一条运行失败: %v", err)
 	}
+	return created.ID
 }
 
-func TestLastRunKeysForScopesTakesTheMostRecentRunPerScope(t *testing.T) {
+func TestLastRunIDsForScopesTakesTheMostRecentRunPerScope(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreForTest(t)
 
 	first := ensureTask(t, store, 1)
 	second := ensureTask(t, store, 2)
-	keyedRun(t, store, first, "scan_library_1", 1)
-	keyedRun(t, store, first, "scan_library_1_retry", 3)
-	keyedRun(t, store, second, "scan_library_2", 2)
+	finishedRun(t, store, first, 1)
+	newest := finishedRun(t, store, first, 3)
+	secondRun := finishedRun(t, store, second, 2)
 
-	latest, err := store.LastRunKeysForScopes(ctx, []ScopeRef{
+	latest, err := store.LastRunIDsForScopes(ctx, []ScopeRef{
 		{Scope: task.ScopeLibrary, ScopeID: 1},
 		{Scope: task.ScopeLibrary, ScopeID: 2},
 		{Scope: task.ScopeLibrary, ScopeID: 99},
@@ -43,31 +45,31 @@ func TestLastRunKeysForScopesTakesTheMostRecentRunPerScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("取最近运行失败: %v", err)
 	}
-	if got := latest[ScopeRef{Scope: task.ScopeLibrary, ScopeID: 1}]; got != "scan_library_1_retry" {
-		t.Errorf("库 1 取回 %q，想要序号最大的那次 scan_library_1_retry", got)
+	if got := latest[ScopeRef{Scope: task.ScopeLibrary, ScopeID: 1}]; got != newest {
+		t.Errorf("库 1 取回运行 %d，想要序号最大的那次 %d", got, newest)
 	}
-	if got := latest[ScopeRef{Scope: task.ScopeLibrary, ScopeID: 2}]; got != "scan_library_2" {
-		t.Errorf("库 2 取回 %q：另一个库的运行不该串过来", got)
+	if got := latest[ScopeRef{Scope: task.ScopeLibrary, ScopeID: 2}]; got != secondRun {
+		t.Errorf("库 2 取回运行 %d：另一个库的运行不该串过来", got)
 	}
 	if _, ok := latest[ScopeRef{Scope: task.ScopeLibrary, ScopeID: 99}]; ok {
 		t.Error("没跑过任何任务的库不该出现在结果里")
 	}
 }
 
-// 任务键是**过渡期**列，运行可以不带；取回一个空串只会让界面上多一个点不动的按钮。
-func TestLastRunKeysForScopesSkipsRunsWithoutKey(t *testing.T) {
+// 运行标识与**任务键**无关：不带键的运行照样跳得过去，而按键跳转的那条路正是这一票撤掉的。
+func TestLastRunIDsForScopesIgnoresTheTaskKey(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreForTest(t)
 
 	taskID := ensureTask(t, store, 1)
-	keyedRun(t, store, taskID, "scan_library_1", 1)
-	keyedRun(t, store, taskID, "", 2)
+	finishedRun(t, store, taskID, 1)
+	keyless := finishedRun(t, store, taskID, 2)
 
-	latest, err := store.LastRunKeysForScopes(ctx, []ScopeRef{{Scope: task.ScopeLibrary, ScopeID: 1}})
+	latest, err := store.LastRunIDsForScopes(ctx, []ScopeRef{{Scope: task.ScopeLibrary, ScopeID: 1}})
 	if err != nil {
 		t.Fatalf("取最近运行失败: %v", err)
 	}
-	if got := latest[ScopeRef{Scope: task.ScopeLibrary, ScopeID: 1}]; got != "scan_library_1" {
-		t.Errorf("取回 %q，想要那条带键的 scan_library_1", got)
+	if got := latest[ScopeRef{Scope: task.ScopeLibrary, ScopeID: 1}]; got != keyless {
+		t.Errorf("取回运行 %d，想要最近那次 %d", got, keyless)
 	}
 }

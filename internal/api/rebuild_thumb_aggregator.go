@@ -44,8 +44,8 @@ type rebuildThumbAggregator struct {
 // 它的三项状态由聚合器的 mu 保护，而不是自带一把锁：pending 与 baseline 的合并必须原子，
 // 分成两把锁就得规定加锁顺序，而这是记不住的。
 //
-// 两个 ScanObserver 方法（Progress / Metrics）实现在 controller_scan_events.go，
-// 本文件只放它的记账。
+// 四个 ScanObserver 方法（Progress / Metrics / ItemFailed / Warn）实现在
+// controller_scan_events.go，本文件只放它的记账。
 type rebuildThumbLibrary struct {
 	agg *rebuildThumbAggregator
 	lib database.Library

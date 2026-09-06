@@ -142,12 +142,13 @@ func (h *recordingTaskHandle) Advance(current, total int) {
 // newRecordingTaskHandle 造一个不挂在任何任务上的句柄：它不经启动入口，因此写不进任务表，
 // 上报去向空处；给那些只关心批循环本身、不关心上报的用例用。
 func newRecordingTaskHandle(disk *diskwork.Runner) *recordingTaskHandle {
-	return &recordingTaskHandle{Handle: runhandle.New(
-		func(runhandle.Frame) {},
-		func(map[string]string) {},
-		func(map[string]int64, map[string]string) {},
-		disk,
-	)}
+	return &recordingTaskHandle{Handle: runhandle.New(runhandle.Writes{
+		Report:      func(runhandle.Frame) {},
+		MergeParams: func(map[string]string) {},
+		AddMetrics:  func(map[string]int64, map[string]string) {},
+		ItemFailed:  func(string, string) {},
+		Warn:        func(string, string, int64) {},
+	}, disk)}
 }
 
 // TestRebuildIndexNamesTheFailedIndex 守两步索引重灌各自的失败文案码：只报一句「重建索引失败」

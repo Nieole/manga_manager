@@ -96,6 +96,33 @@ export interface TaskSummary {
   last_run?: RunStatus;
 }
 
+export interface RunEvent {
+  at: string;
+  kind: string;
+  phase?: string;
+  item?: string;
+  reason?: string;
+  action?: string;
+  code?: string;
+  detail?: string;
+  count?: number;
+}
+
+export interface RunPhaseSpan {
+  phase: string;
+  started_at: string;
+  duration_ms: number;
+  current?: boolean;
+}
+
+export interface RunEventsResponse {
+  run_id: number;
+  events: RunEvent[];
+  phases: RunPhaseSpan[];
+  omitted_failures?: number;
+  truncated?: boolean;
+}
+
 export interface ValidationIssue {
   field: string;
   message: string;

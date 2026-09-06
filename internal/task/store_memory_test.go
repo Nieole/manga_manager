@@ -16,15 +16,17 @@ import (
 type memStore struct {
 	mu sync.Mutex
 
-	tasks     map[Identity]*Task
-	nextTask  int64
-	runs      map[int64]Run
-	nextRun   int64
-	limits    map[int64]Limits
-	args      map[int64]map[string]string
-	labels    map[int64]map[string]string
-	metrics   map[int64]map[string]int64
-	events    map[int64][]Event
+	tasks    map[Identity]*Task
+	nextTask int64
+	runs     map[int64]Run
+	nextRun  int64
+	limits   map[int64]Limits
+	args     map[int64]map[string]string
+	labels   map[int64]map[string]string
+	metrics  map[int64]map[string]int64
+	events   map[int64][]Event
+	// loadRuns 数 LoadRun 被调用了多少次，见 loadRunCalls。
+	loadRuns  int
 	samples   map[int64][]Sample
 	createErr error
 }
@@ -199,11 +201,22 @@ func (s *memStore) SaveRun(_ context.Context, run Run) error {
 func (s *memStore) LoadRun(_ context.Context, runID int64) (Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.loadRuns++
 	run, ok := s.runs[runID]
 	if !ok {
 		return Run{}, ErrRunNotFound
 	}
 	return cloneRun(run), nil
+}
+
+// loadRunCalls 数至今问过多少次「这条运行现在什么样」。
+//
+// 它是这份桩上唯一的调用计数，专给一条用例用：条目失败的上限之外必须**一次库都不查**，
+// 而那条路的正确性只有「有没有查」能证明——查回来的答案在两种实现下完全一样。
+func (s *memStore) loadRunCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadRuns
 }
 
 func (s *memStore) ListRuns(_ context.Context, filter RunFilter) ([]Run, error) {
@@ -322,6 +335,17 @@ func (s *memStore) AppendRunEvents(_ context.Context, runID int64, events []Even
 	defer s.mu.Unlock()
 	s.events[runID] = append(s.events[runID], events...)
 	return nil
+}
+
+// ListRunEvents 交回插入顺序：那正是生产实现按自增主键定序拿到的顺序。
+func (s *memStore) ListRunEvents(_ context.Context, runID int64, limit int) ([]Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events := append([]Event(nil), s.events[runID]...)
+	if limit > 0 && len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
 }
 
 func (s *memStore) AppendRunSamples(_ context.Context, runID int64, samples []Sample) error {

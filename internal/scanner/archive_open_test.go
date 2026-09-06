@@ -91,6 +91,18 @@ func TestScanAccountsArchiveFailuresAndKeepsScanning(t *testing.T) {
 				t.Fatalf("已打开/失败归档数为 %d/%d, want %d/1: %+v",
 					metrics.OpenedArchives, metrics.FailedArchives, tc.openedArchives, metrics)
 			}
+			// 两条出口都要报出**是哪个文件、为什么**：只有一个计数的话，
+			// 「failed_archives: 1」在详情页上没有任何去处可查。
+			failures := observer.itemFailures()
+			if len(failures) != 1 {
+				t.Fatalf("条目失败报了 %d 条, want 1: %+v", len(failures), failures)
+			}
+			if failures[0].Path != filepath.Join(seriesPath, brokenName) {
+				t.Errorf("报的是 %q，want 那个坏档", failures[0].Path)
+			}
+			if failures[0].Reason == "" {
+				t.Error("报了文件却没报原因：只有文件名答不出「为什么」")
+			}
 			books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
 			if err != nil {
 				t.Fatalf("list books failed: %v", err)

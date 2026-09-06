@@ -6,7 +6,9 @@ package taskstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"manga-manager/internal/task"
@@ -48,14 +50,90 @@ func (s *Store) AddRunMetrics(ctx context.Context, runID int64, increments map[s
 	return s.writeMetrics(ctx, runID, increments, `value = `+tableRunMetrics+`.value + excluded.value`)
 }
 
+// eventPayload 是**运行事件**那几格有值字段在 payload 那一列里的编码。
+//
+// 编码归适配器，不归领域：领域那边是一组具名字段（哪个文件、什么原因、哪个动作），
+// 表这边只有一列 TEXT。字段名一律短且稳定——它写进的是用户库里的历史行，改名等于把
+// 已经落盘的那些事件读成空白。
+type eventPayload struct {
+	Phase  string `json:"phase,omitempty"`
+	Item   string `json:"item,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	Action string `json:"action,omitempty"`
+	Code   string `json:"code,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	Count  int64  `json:"count,omitempty"`
+}
+
 // AppendRunEvents 追加**运行事件**。
 func (s *Store) AppendRunEvents(ctx context.Context, runID int64, events []task.Event) error {
 	rows := make([][]any, 0, len(events))
 	for _, event := range events {
-		rows = append(rows, []any{runID, millisFromTime(event.At), string(event.Kind), event.Payload})
+		payload, err := json.Marshal(eventPayload{
+			Phase:  event.Phase,
+			Item:   event.Item,
+			Reason: event.Reason,
+			Action: string(event.Action),
+			Code:   event.Code,
+			Detail: event.Detail,
+			Count:  event.Count,
+		})
+		if err != nil {
+			return fmt.Errorf("taskstore: 编码运行事件失败: %w", err)
+		}
+		rows = append(rows, []any{runID, millisFromTime(event.At), string(event.Kind), string(payload)})
 	}
 	return s.execRows(ctx,
 		`INSERT INTO `+tableRunEvents+` (run_id, at, kind, payload) VALUES (?, ?, ?, ?)`, rows)
+}
+
+// ListRunEvents 按**发生顺序**取一条运行的运行事件；limit 小于等于 0 表示不限条数。
+//
+// 定序取自增主键而不是 at：同一毫秒里落下的两条事件在时间列上分不出先后，而阶段时间线正是
+// 靠相邻两条相减得出的——乱序读回会算出一段负的耗时。自增主键与插入顺序恒一致。
+//
+// 读不回的 payload 不中断整趟：那一条降级成只剩种类与时刻，别的照常交出去。
+// 整份报错的话，一行写坏的历史就能让详情页从此打不开。
+func (s *Store) ListRunEvents(ctx context.Context, runID int64, limit int) ([]task.Event, error) {
+	query := `SELECT at, kind, payload FROM ` + tableRunEvents + ` WHERE run_id = ? ORDER BY id ASC`
+	args := []any{runID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]task.Event, 0, 16)
+	for rows.Next() {
+		var (
+			at      sql.NullInt64
+			kind    string
+			payload string
+		)
+		if err := rows.Scan(&at, &kind, &payload); err != nil {
+			return nil, err
+		}
+		event := task.Event{At: timeFromMillis(at), Kind: task.EventKind(kind)}
+		var decoded eventPayload
+		if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+			slog.WarnContext(ctx, "Failed to decode a run event payload", "run_id", runID, "kind", kind, "error", err)
+			events = append(events, event)
+			continue
+		}
+		event.Phase = decoded.Phase
+		event.Item = decoded.Item
+		event.Reason = decoded.Reason
+		event.Action = task.ControlAction(decoded.Action)
+		event.Code = decoded.Code
+		event.Detail = decoded.Detail
+		event.Count = decoded.Count
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 // AppendRunSamples 追加**采样**点。

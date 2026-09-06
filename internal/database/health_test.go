@@ -135,32 +135,34 @@ func healthSummaryMap(items []HealthIssueSummary) map[string]int64 {
 	return result
 }
 
-// TestAttachLastTaskKeysReadsRunsTable 守健康报告那个「查看日志」按钮的数据来源确实是运行表。
+// TestAttachLastRunIDsReadsRunsTable 守健康报告那个「查看日志」按钮的数据来源确实是运行表，
+// 而且挂上去的是**运行标识**——按它跳到的是那一次运行自己的日志，不是这个任务历次运行的合集。
 //
-// 破了意味着旧任务表被丢弃之后按钮一律不出现（或者整个 /api/health/report 直接报错）。
 // 系列优先于资料库：一条问题同时落在两者上时，用户想看的是那个系列自己的那次运行。
-func TestAttachLastTaskKeysReadsRunsTable(t *testing.T) {
+func TestAttachLastRunIDsReadsRunsTable(t *testing.T) {
 	store := newHealthTestStore(t)
 	ctx := context.Background()
 
 	runs := taskstore.New(store.db)
-	seed := func(identity task.Identity, key string, sequence int64) {
+	seed := func(identity task.Identity, sequence int64) int64 {
 		t.Helper()
 		owner, err := runs.EnsureTask(ctx, identity)
 		if err != nil {
 			t.Fatalf("建身份失败: %v", err)
 		}
 		finishedAt := time.Now()
-		if _, err := runs.CreateRun(ctx, task.Run{
-			TaskID: owner.ID, Key: key, Trigger: task.TriggerManual, NthRun: int(sequence),
+		created, err := runs.CreateRun(ctx, task.Run{
+			TaskID: owner.ID, Trigger: task.TriggerManual, NthRun: int(sequence),
 			Status: task.StatusCompleted, StartedAt: finishedAt.Add(-time.Minute),
 			UpdatedAt: finishedAt, FinishedAt: &finishedAt, Sequence: sequence,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("落一条运行失败: %v", err)
 		}
+		return created.ID
 	}
-	seed(task.Identity{Type: "scan_library", Scope: task.ScopeLibrary, ScopeID: 7}, "scan_library_7", 1)
-	seed(task.Identity{Type: "scrape_series", Scope: task.ScopeSeries, ScopeID: 42}, "scrape_series_42", 2)
+	libraryRun := seed(task.Identity{Type: "scan_library", Scope: task.ScopeLibrary, ScopeID: 7}, 1)
+	seriesRun := seed(task.Identity{Type: "scrape_series", Scope: task.ScopeSeries, ScopeID: 42}, 2)
 
 	seriesID := int64(42)
 	issues := []HealthIssue{
@@ -168,16 +170,16 @@ func TestAttachLastTaskKeysReadsRunsTable(t *testing.T) {
 		{Type: "missing_metadata", LibraryID: 7, SeriesID: &seriesID},
 		{Type: "empty_pages", LibraryID: 8},
 	}
-	if err := store.attachLastTaskKeys(ctx, issues); err != nil {
-		t.Fatalf("挂任务键失败: %v", err)
+	if err := store.attachLastRunIDs(ctx, issues); err != nil {
+		t.Fatalf("挂运行标识失败: %v", err)
 	}
-	if issues[0].LastTaskKey != "scan_library_7" {
-		t.Errorf("库级问题拿到 %q，想要 scan_library_7", issues[0].LastTaskKey)
+	if issues[0].LastRunID != libraryRun {
+		t.Errorf("库级问题拿到运行 %d，想要 %d", issues[0].LastRunID, libraryRun)
 	}
-	if issues[1].LastTaskKey != "scrape_series_42" {
-		t.Errorf("系列级问题拿到 %q：系列自己的运行该优先于它所在的库", issues[1].LastTaskKey)
+	if issues[1].LastRunID != seriesRun {
+		t.Errorf("系列级问题拿到运行 %d：系列自己的运行该优先于它所在的库", issues[1].LastRunID)
 	}
-	if issues[2].LastTaskKey != "" {
-		t.Errorf("没跑过任何任务的库拿到了 %q", issues[2].LastTaskKey)
+	if issues[2].LastRunID != 0 {
+		t.Errorf("没跑过任何任务的库拿到了运行 %d", issues[2].LastRunID)
 	}
 }

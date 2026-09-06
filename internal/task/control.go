@@ -210,6 +210,7 @@ func (e *Engine) pauseLocked(run Run, reason PauseReason) error {
 	run.PausedAt = &now
 	run.PauseReason = reason
 	applyMessage(&run, Result{Code: e.codes.Paused})
+	e.emitControlLocked(run.ID, ControlPaused)
 	e.commitControlLocked(&run, now)
 	return nil
 }
@@ -294,6 +295,7 @@ func (e *Engine) resumeLocked(run Run) error {
 	run.Status = StatusRunning
 	absorbPause(&run, now)
 	applyMessage(&run, Result{Code: e.codes.Resumed})
+	e.emitControlLocked(run.ID, ControlResumed)
 	e.commitControlLocked(&run, now)
 	return nil
 }
@@ -326,6 +328,7 @@ func (e *Engine) cancelLocked(runID int64) (func(), error) {
 		if !ok || !entry.spec.CanCancel {
 			return nil, ErrRunNotCancelable
 		}
+		e.emitControlLocked(runID, ControlCancelled)
 		return e.finalizeLocked(runID, StatusCancelled, Result{Code: entry.spec.CancelCode}, ""), nil
 	}
 	if run.Status != StatusRunning && run.Status != StatusPaused {
@@ -348,6 +351,7 @@ func (e *Engine) cancelLocked(runID int64) (func(), error) {
 	// 留在分母里，一路带进已取消那一帧。
 	absorbPause(&run, now)
 	applyMessage(&run, Result{Code: e.codes.Cancelling})
+	e.emitControlLocked(runID, ControlCancelled)
 	e.commitControlLocked(&run, now)
 	return nil, nil
 }
@@ -422,6 +426,7 @@ func (e *Engine) markInterrupted(ctx context.Context) (marked int, candidates []
 		delete(e.runtimes, run.ID)
 		delete(e.queued, run.ID)
 		delete(e.gates, run.ID)
+		e.flushOmittedItemFailuresLocked(run.ID)
 		e.saveLocked(run)
 		e.publishLocked(run)
 		marked++

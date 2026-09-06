@@ -940,6 +940,10 @@ func (o *activeProbeObserver) Progress(ScanProgressReport) {
 
 func (o *activeProbeObserver) Metrics(ScanMetricsReport) {}
 
+func (o *activeProbeObserver) ItemFailed(ItemFailure) {}
+
+func (o *activeProbeObserver) Warn(ScanWarning) {}
+
 // TestLibraryScanActiveTracksTheScanInFlight 守那笔记账在扫描**期间**为真、返回后为假：
 // 文件监听器按它决定敢不敢清理，答错任一头都是丢阅读进度。
 func TestLibraryScanActiveTracksTheScanInFlight(t *testing.T) {

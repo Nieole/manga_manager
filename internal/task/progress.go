@@ -30,8 +30,12 @@ func (e *Engine) report(runID int64, frame runhandle.Frame) {
 		run.Total = *frame.Total
 	}
 	applyMessage(&run, Result{Code: frame.Code, Params: frame.Params})
-	if frame.Phase != "" {
+	// **阶段切换**落一条事件，相邻两条相减即是那一段的耗时。判据是「与上一条不同」而不是
+	// 「这一帧带了阶段」：扫描器每 250ms 报一次，报的多数是同一个阶段名，照单全收会让事件流
+	// 变成第二个日志，而时间线上会挤满零长的段。
+	if frame.Phase != "" && frame.Phase != run.Phase {
 		run.Phase = frame.Phase
+		e.emitEventLocked(runID, Event{Kind: EventPhase, Phase: frame.Phase})
 	}
 	if frame.Item != "" {
 		run.CurrentItem = frame.Item
