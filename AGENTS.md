@@ -13,7 +13,10 @@ GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...
 Use `./build.sh` for a full release-style build; it installs frontend dependencies, builds `web`, and cross-compiles binaries into `build/`. 升级前端依赖前读 `web/README.md`：两条 `npm audit` high 已确认不可达，`npm audit fix --force` 会把 `react-router-dom` 降级 7 个小版本。
 
 ## Coding Style & Naming Conventions
-Go code should stay `gofmt`-clean and package-oriented; keep handlers thin and push logic into `internal/*` services. React/TypeScript uses the existing Vite + ESLint setup, 2-space indentation, PascalCase for components (`SeriesHeader.tsx`), and `useX` for hooks (`useReaderPreferences.ts`). Prefer small, behavior-preserving refactors over broad rewrites.
+Go code should stay `gofmt`-clean and package-oriented; keep handlers thin and push logic into `internal/*` services. React/TypeScript uses the existing Vite + ESLint setup, 2-space indentation, PascalCase for components (`SeriesHeader.tsx`), and `useX` for hooks (`useReaderPreferences.ts`). Prefer small, behavior-preserving refactors over broad rewrites. 跑在任务里的代码写日志用带 ctx 的
+`slog.InfoContext(ctx, …)` 一族——运行标识与**任务键**由 ctx 注入的 handler 补上，包级函数拿不到它们，
+写成不带 ctx 的形式那一行就在「查看日志」里按运行过滤不到（不会变红，只会少一行）。请求处理与后台常驻
+那些不跑在任务里的代码不受此约束。
 
 ## Documentation & Comments
 注释与文档只写**当前的结果**；历史归 `CHANGELOG.md` 与 `docs/adr/`。每段内容有唯一**归属**，环境（`package.json`、`config.example.yaml`、`--help`）本身也是一处。引用代码写符号名——行号、出现次数、代码行数都会**腐坏**。分**层**写，每层只答一个问题，答不下就往下沉：Go 是 package doc → 文件头（≤5 行）→ 符号 doc → 行内，前端去掉 package doc 这层。文件头可选——说不出一句从文件名与 package doc 推不出来的话，就不写。

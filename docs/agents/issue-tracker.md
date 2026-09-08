@@ -10,6 +10,13 @@ Issues and specs (you may know a spec as a PRD) for this repo live as markdown f
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
+## 两份长期文件
+
+- `.scratch/GAPS.md` — **产品缺口清单**。跟着产品走，不随任何一批票关闭；`/settle` 把
+  「是产品缺口而不是实现期岔口」的条目挪到这里。
+- `.scratch/<effort>/deferred.md` — **挂账清单**，一个 effort 一份。装的是跑票时冒出来的
+  非阻塞岔口，由 `/settle` 一批批清空；清空后只留一行索引与去处。
+
 ## When a skill says "publish to the issue tracker"
 
 Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
