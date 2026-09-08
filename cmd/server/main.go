@@ -66,6 +66,9 @@ func main() {
 		fmt.Printf("Fatal: Logger init failed: %v\n", err)
 		os.Exit(1)
 	}
+	// 日志文件的句柄在这里登记归还：defer 最先登记因而最后执行，停机路径上所有收尾（含 store.Close）
+	// 写出的日志都还落得进文件。下面走 os.Exit 的致命分支会跳过它，那时句柄由进程退出交还给 OS。
+	defer func() { _ = logger.Close() }()
 	slog.Info("Starting Manga Manager...", "version", Version, "commit", Commit, "build_time", BuildTime,
 		"config", resolvedConfigPath, "data_dir", resolvedDataDir)
 

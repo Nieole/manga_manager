@@ -171,11 +171,7 @@ func TestTaskKeyFromToleratesNilContext(t *testing.T) {
 // TestInitInstallsContextHandler 守生产接线：Init 装上的默认 logger 就是这层 ctx handler。
 // 少了它，本文件其余用例自己包一层照样全绿，而进程真正写出去的日志一行都不带任务键。
 func TestInitInstallsContextHandler(t *testing.T) {
-	restoreLoggerGlobals(t)
-
-	if err := Init(t.TempDir(), "info"); err != nil {
-		t.Fatalf("Init 失败: %v", err)
-	}
+	initFileLoggingInTempDir(t)
 
 	slog.InfoContext(WithTaskKey(context.Background(), "scan_library_1"), "scan step")
 
@@ -186,19 +182,4 @@ func TestInitInstallsContextHandler(t *testing.T) {
 	if !strings.Contains(string(written), TaskKeyAttr+"=scan_library_1") {
 		t.Fatalf("Init 装的 handler 不认 ctx，任务键没落到日志上:\n%s", written)
 	}
-}
-
-// restoreLoggerGlobals 还原 Init 改掉的进程级状态：默认 logger、级别与包级日志文件路径。
-// 不还原的话，之后的用例读到的是一个已被删掉的临时目录。
-func restoreLoggerGlobals(t *testing.T) {
-	t.Helper()
-
-	previousLogger := slog.Default()
-	previousLevel := levelVar.Level()
-	previousPath := logFilePath
-	t.Cleanup(func() {
-		slog.SetDefault(previousLogger)
-		levelVar.Set(previousLevel)
-		logFilePath = previousPath
-	})
 }
