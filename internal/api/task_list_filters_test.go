@@ -57,14 +57,15 @@ func TestTaskListFiltersArePushedDown(t *testing.T) {
 			}
 
 			for _, key := range tc.want {
-				if !slices.ContainsFunc(items, func(item RunStatus) bool { return item.Key == key }) {
+				if !slices.ContainsFunc(items, func(item RunStatus) bool { return belongsToKey(t, item, key) }) {
 					t.Errorf("筛选 %+v 把 %s 滤掉了：它满足条件", tc.filters, key)
 				}
 			}
 			for _, item := range items {
-				if !slices.Contains(tc.want, item.Key) {
-					t.Errorf("筛选 %+v 返回了 %s（状态 %q、错误 %q）：这一条谓词没生效",
-						tc.filters, item.Key, item.Status, item.Error)
+				kept := slices.ContainsFunc(tc.want, func(key string) bool { return belongsToKey(t, item, key) })
+				if !kept {
+					t.Errorf("筛选 %+v 返回了 %+v（状态 %q、错误 %q）：这一条谓词没生效",
+						tc.filters, item, item.Status, item.Error)
 				}
 			}
 		})

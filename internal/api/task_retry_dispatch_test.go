@@ -86,7 +86,7 @@ func TestRetryRestartsTheSameVariant(t *testing.T) {
 				t.Fatalf("重试返回 %d, body=%s", rec.Code, rec.Body.String())
 			}
 
-			if got := publishedCountFor(snapshots(), tc.otherKey); got != 0 {
+			if got := publishedCountFor(t, snapshots(), tc.otherKey); got != 0 {
 				t.Fatalf("重试 %q 起了 %d 条 %q —— 任务中心里多出一条同名任务，原来那条还停在终态",
 					tc.key, got, tc.otherKey)
 			}

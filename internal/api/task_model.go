@@ -137,7 +137,6 @@ func (e *taskEngine) runStatusFrom(snapshot task.Snapshot, identity TaskIdentity
 	status := RunStatus{
 		RunID:               run.ID,
 		TaskID:              run.TaskID,
-		Key:                 run.Key,
 		Type:                identity.taskType,
 		Scope:               identity.scope,
 		ScopeID:             identity.scopeID,

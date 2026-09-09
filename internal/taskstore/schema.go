@@ -59,15 +59,10 @@ var createStatements = []string{
 	// scope_id 是 NOT NULL DEFAULT 0 而不是可空：唯一约束要比较这一列，而 SQL 里 NULL 不等于
 	// NULL——留空的话同一个系统级身份会被建出任意多条。0 就是「系统级，没有作用域对象」。
 	//
-	// task_key 是**过渡期**列：六个控制端点与对外契约今天仍按**任务键**寻址，见 task.Run.Key。
-	// 它落在运行上而不是身份上——外部库那两类的键带着会话 id，同一身份的两次运行键并不相同。
-	// 控制端点改成按运行与任务寻址、对外契约不再带任务键之后，这一列连同它的索引就没有读者了。
-	//
 	// started_at 可空：**排队中**的运行还没开跑，写入队时刻会让排了一小时队的运行被算成跑了一小时。
 	`CREATE TABLE IF NOT EXISTS ` + tableRuns + ` (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		task_id INTEGER NOT NULL REFERENCES ` + tableTasks + `(id) ON DELETE CASCADE,
-		task_key TEXT NOT NULL DEFAULT '',
 		scope_name TEXT NOT NULL DEFAULT '',
 		trigger TEXT NOT NULL,
 		nth_run INTEGER NOT NULL DEFAULT 1,
@@ -160,7 +155,6 @@ var admissionStatements = []string{
 // 加列必须另走一条 `ALTER TABLE`（`internal/database` 的 ensureColumn 是先例）。这几张表还没有
 // 随版本发布过，但开发机上早已按上一版建起，少了这一条它们会停在缺列的形状上。
 var addedColumns = []struct{ table, column, definition string }{
-	{tableRuns, "task_key", `TEXT NOT NULL DEFAULT ''`},
 	{tableRuns, "scope_name", `TEXT NOT NULL DEFAULT ''`},
 	{tableRuns, "pause_reason", `TEXT NOT NULL DEFAULT ''`},
 }
@@ -175,10 +169,25 @@ var renamedColumns = []struct{ table, from, to string }{
 	{tableRunSamples, "rate_per_minute", "throughput_per_minute"},
 }
 
+// droppedColumns 是建表语句写下之后又撤掉的列，以及那一列上要一并丢掉的索引。
+//
+// 与 addedColumns 同理、方向相反：`CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，
+// **从建表语句里删掉一列对存量库不生效**——撤列必须另走一条 `ALTER TABLE ... DROP COLUMN`，
+// 少了这一条，开发机与用户库上那一列会一直留着，而写入面早已不再写它。
+// 索引要随列一起给出：SQLite 不肯掉一个还被索引装着的列，而丢在别处会与掉列分家。
+var droppedColumns = []struct {
+	table, column string
+	indexes       []string
+}{
+	// **任务键**退出寻址（ADR 0007）：控制端点一律按**运行**与**任务**寻址，投递出去的运行快照
+	// 上也不再带它，关键词搜索改判在作用域显示名上——这一列因此一个读者都没有了。
+	// 键本身没退场：它留在每一行日志上，唯一的来源是启动点写下的 task.RunSpec.Key。
+	{tableRuns, "task_key", []string{"idx_runs_task_key"}},
+}
+
 // indexStatements 是取数用的索引，谓词不参与准入，因此建过就不必再动。
 var indexStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_runs_sequence ON ` + tableRuns + `(sequence)`,
-	`CREATE INDEX IF NOT EXISTS idx_runs_task_key ON ` + tableRuns + `(task_key)`,
 	`CREATE INDEX IF NOT EXISTS idx_runs_task_sequence ON ` + tableRuns + `(task_id, sequence)`,
 	`CREATE INDEX IF NOT EXISTS idx_runs_status_sequence ON ` + tableRuns + `(status, sequence)`,
 	`CREATE INDEX IF NOT EXISTS idx_run_events_run ON ` + tableRunEvents + `(run_id, id)`,
@@ -192,8 +201,9 @@ var indexStatements = []string{
 
 // Migrate 建起任务与运行的表与索引。语句幂等，每次启动重放即可。
 //
-// `CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，因此将来给这几张表**加列**或**改列名**
-// 都要另走一条 `ALTER TABLE`（见 addedColumns 与 renamedColumns），改这里的建表语句对存量库不生效。
+// `CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，因此将来给这几张表**加列**、**改列名**
+// 或**撤列**都要另走一条 `ALTER TABLE`（见 addedColumns、renamedColumns 与 droppedColumns），
+// 改这里的建表语句对存量库不生效。
 //
 // 前置条件：db 的连接必须开着 foreign_keys，否则返回 ErrForeignKeysDisabled。
 func Migrate(db *sql.DB) error {
@@ -230,6 +240,13 @@ func Migrate(db *sql.DB) error {
 	}
 	for _, added := range addedColumns {
 		if err := ensureColumn(tx, added.table, added.column, added.definition); err != nil {
+			return err
+		}
+	}
+	// 撤列排在补列之后、建索引之前：撤掉的那一列上可能还挂着索引（它自己先丢），
+	// 而排在建索引之后的话，刚建起的索引会在同一次迁移里被再丢一遍。
+	for _, dropped := range droppedColumns {
+		if err := dropColumnIfPresent(tx, dropped.table, dropped.column, dropped.indexes); err != nil {
 			return err
 		}
 	}
@@ -319,6 +336,29 @@ func ensureRenamedColumn(tx *sql.Tx, table, from, to string) error {
 	}
 	if _, err := tx.Exec(`ALTER TABLE ` + table + ` RENAME COLUMN ` + from + ` TO ` + to); err != nil {
 		return fmt.Errorf("taskstore: 把 %s 的列 %s 改名为 %s 失败: %w", table, from, to, err)
+	}
+	return nil
+}
+
+// dropColumnIfPresent 撤掉一列，已经不在了就什么都不做；那一列上的索引先丢。
+//
+// 索引必须先走：SQLite 拒绝掉一个还被索引装着的列，而报出来的是一句「error in index」，
+// 与「列名拼错」长得一样。
+// 走 `DROP COLUMN` 而不是「留着列、只是不写它」：留着的话每条新运行在那一格上都是空串，
+// 读到的人无从分辨那是「没人写」还是「本来就空」，而它还占着一条谁都不再维护的索引。
+// 先查后掉而不是靠报错再吞：吞错误会把「表名拼错」这类真问题一起吞掉。
+func dropColumnIfPresent(tx *sql.Tx, table, column string, indexes []string) error {
+	present, err := columnExists(tx, table, column)
+	if err != nil || !present {
+		return err
+	}
+	for _, index := range indexes {
+		if _, err := tx.Exec(`DROP INDEX IF EXISTS ` + index); err != nil {
+			return fmt.Errorf("taskstore: 丢弃索引 %s 失败: %w", index, err)
+		}
+	}
+	if _, err := tx.Exec(`ALTER TABLE ` + table + ` DROP COLUMN ` + column); err != nil {
+		return fmt.Errorf("taskstore: 撤掉 %s 的列 %s 失败: %w", table, column, err)
 	}
 	return nil
 }

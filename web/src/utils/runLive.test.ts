@@ -13,7 +13,6 @@ function run(overrides: Partial<RunStatus>): RunStatus {
   return {
     run_id: 1,
     task_id: 1,
-    key: 'scan_library_1',
     type: 'scan_library',
     scope: 'library',
     status: 'running',

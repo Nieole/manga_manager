@@ -1007,8 +1007,8 @@ func TestMigrateRenamesIdentityTableToTasks(t *testing.T) {
 				CREATE INDEX idx_task_identities_scope ON task_identities(scope, scope_id);
 				INSERT INTO task_identities (id, type, scope, scope_id, variant)
 				VALUES (7, 'scan_library', 'library', 1, '');
-				INSERT INTO runs (id, task_id, task_key, trigger, status, updated_at)
-				VALUES (11, 7, 'scan_library_1', 'manual', 'completed', 1700000000000);
+				INSERT INTO runs (id, task_id, trigger, status, updated_at)
+				VALUES (11, 7, 'manual', 'completed', 1700000000000);
 			`); err != nil {
 				t.Fatalf("退回改名前的形状失败: %v", err)
 			}
@@ -1068,12 +1068,12 @@ func TestMigrateRenamesIdentityTableToTasks(t *testing.T) {
 			if identityType != "scan_library" {
 				t.Errorf("身份行的类型变成了 %q", identityType)
 			}
-			var runKey string
-			if err := db.QueryRow(`SELECT task_key FROM runs WHERE id = 11`).Scan(&runKey); err != nil {
+			var runOwner int64
+			if err := db.QueryRow(`SELECT task_id FROM runs WHERE id = 11`).Scan(&runOwner); err != nil {
 				t.Fatalf("改名之后运行行读不回来了: %v", err)
 			}
-			if runKey != "scan_library_1" {
-				t.Errorf("运行行的任务键变成了 %q", runKey)
+			if runOwner != 7 {
+				t.Errorf("运行行挂到了身份 %d 上", runOwner)
 			}
 
 			// 外键必须跟着改名走：删掉身份行时运行行要被级联带走。指着一张空表的外键在这里变红。
@@ -1086,6 +1086,130 @@ func TestMigrateRenamesIdentityTableToTasks(t *testing.T) {
 			}
 			if orphans != 0 {
 				t.Errorf("身份行删掉之后还剩 %d 条运行 —— 外键没跟着改名走", orphans)
+			}
+		})
+	}
+}
+
+// TestMigrateDropsTheTaskKeyColumn 走一遍掉列的升级路径：一个 runs 上还带着**任务键**那一列
+// 与它那条索引的存量库，升级后列与索引都必须没了，而任务与运行的历史**一条不少**。
+//
+// 两个起始版本各跑一遍，钉住这一段**不在 user_version 门控之内**——库版本已经是最新（回填那道门
+// 关着）时它照样得执行。挪进那道门里不会有编译错误，只会让老库悄悄留着那一列。
+// 连跑两次则钉住掉列这一步认的是形状：只按名字发一句 DROP，第二次启动就会撞上「没有这一列」。
+func TestMigrateDropsTheTaskKeyColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		userVersion int
+	}{
+		{"回填那道门开着（老库版本落后）", 0},
+		{"回填那道门关着（库版本已是最新）", currentSchemaVersion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "drop-task-key.db")
+			if err := Migrate(dbPath); err != nil {
+				t.Fatalf("首次 Migrate 失败: %v", err)
+			}
+
+			db, err := sql.Open("sqlite", sqliteDSN(dbPath))
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			// 把库退回掉列之前的样子：那一列与它的索引补回来，再放进两条身份与三次运行的历史。
+			// 先查后补而不是直接 ALTER：这份 DDL 要在「列还在」的旧代码与「列已经没了」的新代码
+			// 下都立得住，否则本用例会因为一句 duplicate column 而红在无关的地方。
+			var columnPresent int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'task_key'`).Scan(&columnPresent); err != nil {
+				t.Fatalf("读 runs 的列: %v", err)
+			}
+			if columnPresent == 0 {
+				if _, err := db.Exec(`ALTER TABLE runs ADD COLUMN task_key TEXT NOT NULL DEFAULT ''`); err != nil {
+					t.Fatalf("补回任务键那一列失败: %v", err)
+				}
+			}
+			if _, err := db.Exec(`
+				CREATE INDEX IF NOT EXISTS idx_runs_task_key ON runs(task_key);
+				INSERT INTO tasks (id, type, scope, scope_id, variant) VALUES
+					(7, 'scan_library', 'library', 1, ''),
+					(8, 'rebuild_index', 'system', 0, '');
+				INSERT INTO runs (id, task_id, task_key, trigger, status, updated_at) VALUES
+					(11, 7, 'scan_library_1', 'manual', 'completed', 1700000000000),
+					(12, 7, 'scan_library_1', 'scheduled', 'failed', 1700000001000),
+					(13, 8, 'rebuild_index', 'manual', 'completed', 1700000002000);
+			`); err != nil {
+				t.Fatalf("退回掉列前的形状失败: %v", err)
+			}
+			if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, tc.userVersion)); err != nil {
+				t.Fatalf("退回 user_version: %v", err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+
+			// 跑两次：这一段每次启动都会执行，必须幂等。
+			for i := 1; i <= 2; i++ {
+				if err := Migrate(dbPath); err != nil {
+					t.Fatalf("第 %d 次升级失败: %v", i, err)
+				}
+			}
+
+			db, err = sql.Open("sqlite", sqliteDSN(dbPath))
+			if err != nil {
+				t.Fatalf("reopen: %v", err)
+			}
+			defer db.Close()
+
+			var leftoverColumn int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'task_key'`).Scan(&leftoverColumn); err != nil {
+				t.Fatalf("读 runs 的列: %v", err)
+			}
+			if leftoverColumn != 0 {
+				t.Errorf("runs 上的任务键那一列还在")
+			}
+			var leftoverIndex int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_runs_task_key'`).Scan(&leftoverIndex); err != nil {
+				t.Fatalf("读 sqlite_master: %v", err)
+			}
+			if leftoverIndex != 0 {
+				t.Errorf("任务键那条索引还在")
+			}
+
+			// 历史一条不少：掉一列是原地改表，SQLite 会把整张表重建一遍——搬漏了在这里变红。
+			for _, count := range []struct {
+				table string
+				want  int
+			}{{"tasks", 2}, {"runs", 3}} {
+				var got int
+				if err := db.QueryRow(`SELECT COUNT(*) FROM ` + count.table).Scan(&got); err != nil {
+					t.Fatalf("数 %s: %v", count.table, err)
+				}
+				if got != count.want {
+					t.Errorf("%s 升级后剩 %d 行, want %d —— 掉列把历史带走了", count.table, got, count.want)
+				}
+			}
+			// 运行行上其余的列必须原样留着，且仍挂在原来那条身份上。
+			var taskID int64
+			var status string
+			if err := db.QueryRow(`SELECT task_id, status FROM runs WHERE id = 12`).Scan(&taskID, &status); err != nil {
+				t.Fatalf("掉列之后运行行读不回来了: %v", err)
+			}
+			if taskID != 7 || status != "failed" {
+				t.Errorf("运行行变成了 task_id=%d status=%q", taskID, status)
+			}
+
+			// 外键必须活着：掉列重建表时丢了它的话，删身份行不再级联带走运行。
+			if _, err := db.Exec(`DELETE FROM tasks WHERE id = 7`); err != nil {
+				t.Fatalf("删身份行: %v", err)
+			}
+			var orphans int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM runs WHERE task_id = 7`).Scan(&orphans); err != nil {
+				t.Fatalf("读 runs: %v", err)
+			}
+			if orphans != 0 {
+				t.Errorf("身份行删掉之后还剩 %d 条运行 —— 掉列把外键弄丢了", orphans)
 			}
 		})
 	}

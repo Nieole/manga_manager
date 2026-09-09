@@ -271,10 +271,10 @@ func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 	progress := seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: systemTask(key, variantSole), CanCancel: true, CanPause: true})
 
 	metrics := runhandle.IOMetrics{StorageProfile: "hdd_external", VolumeKey: "/srv", IOWaitMillis: 120, PausedMillis: 30, HashedFiles: 7}
-	before := publishedCountFor(snapshots(), key)
+	before := publishedCountFor(t, snapshots(), key)
 	reportHashProgress(progress, 7, 40, "task.msg.rebuild_file_identities.progress", metrics)
 
-	if got := publishedCountFor(snapshots(), key) - before; got != 1 {
+	if got := publishedCountFor(t, snapshots(), key) - before; got != 1 {
 		t.Fatalf("一次哈希进度投递了 %d 条载荷, want 1", got)
 	}
 	task := lastPublishedTask(t, snapshots(), key)
@@ -416,7 +416,7 @@ func TestHashBackfillStaysSilentWhenNothingIsMissing(t *testing.T) {
 	if err := c.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained); err != nil {
 		t.Fatalf("没有书缺哈希不是错误，却返回了 %v", err)
 	}
-	if got := publishedCountFor(snapshots(), lowPriorityBookHashTaskKey); got != 0 {
+	if got := publishedCountFor(t, snapshots(), lowPriorityBookHashTaskKey); got != 0 {
 		t.Fatalf("没有书缺哈希却发起了回填任务，投递了 %d 条载荷", got)
 	}
 }

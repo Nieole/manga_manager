@@ -27,7 +27,7 @@ func TestExternalLibraryTasksDeclareTheirLibraryScope(t *testing.T) {
 				if err := rig.c.launchExternalLibraryScanTask(rig.libraryID, sessionID); err != nil {
 					t.Fatalf("启动外部库扫描失败: %v", err)
 				}
-				return externalLibraryScanTaskKey(rig.libraryID, sessionID)
+				return externalScanKey(rig.libraryID, sessionID)
 			},
 		},
 		{
@@ -37,7 +37,7 @@ func TestExternalLibraryTasksDeclareTheirLibraryScope(t *testing.T) {
 				if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, rig.plan(t, sessionID)); err != nil {
 					t.Fatalf("启动外部库传输失败: %v", err)
 				}
-				return externalLibraryTransferTaskKey(rig.libraryID, sessionID)
+				return externalTransferKey(rig.libraryID, sessionID)
 			},
 		},
 	}
@@ -74,7 +74,9 @@ func TestAIGroupingDeclaresItsLibraryScope(t *testing.T) {
 		t.Fatalf("启动 AI 分组失败: %v", err)
 	}
 
-	task := firstPublishedTask(t, snapshots(), fmt.Sprintf("ai_grouping_library_%d", libraryID))
+	aiGroupingKey := fmt.Sprintf("ai_grouping_library_%d", libraryID)
+	rememberTaskKey(aiGroupingKey, libraryTask("ai_grouping", libraryID, variantSole))
+	task := firstPublishedTask(t, snapshots(), aiGroupingKey)
 	if task.Scope != taskScopeLibrary || task.ScopeID == nil || *task.ScopeID != libraryID {
 		t.Fatalf("作用域为 %q / %v, want library + %d", task.Scope, task.ScopeID, libraryID)
 	}

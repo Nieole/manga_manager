@@ -35,8 +35,8 @@ func restartController(t *testing.T, prev *Controller, store database.Store, tem
 	return reloaded
 }
 
-// taskCenterFirstPage 按前端的真实请求取任务中心第一页，返回任务键。
-func taskCenterFirstPage(t *testing.T, c *Controller) []string {
+// taskCenterFirstPage 按前端的真实请求取任务中心第一页。
+func taskCenterFirstPage(t *testing.T, c *Controller) []RunStatus {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/system/tasks?limit=%d", taskCenterPageSize), nil)
 	rec := httptest.NewRecorder()
@@ -51,11 +51,7 @@ func taskCenterFirstPage(t *testing.T, c *Controller) []string {
 	if len(tasks) > taskCenterPageSize {
 		t.Fatalf("第一页返回 %d 条，超过 limit=%d", len(tasks), taskCenterPageSize)
 	}
-	keys := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		keys = append(keys, task.Key)
-	}
-	return keys
+	return tasks
 }
 
 // seedFinishedHistory 灌入 n 条已完成的历史运行，键为 scan_series_<i>。
@@ -70,13 +66,20 @@ func seedFinishedHistory(t *testing.T, c *Controller, n int) {
 	}
 }
 
-func indexOfKey(keys []string, want string) int {
-	for i, key := range keys {
-		if key == want {
+// indexOfKey 找出这一页里属于该**任务键**那条身份的运行排在第几位；不在这一页里即 -1。
+func indexOfKey(t *testing.T, page []RunStatus, want string) int {
+	t.Helper()
+	for i := range page {
+		if belongsToKey(t, page[i], want) {
 			return i
 		}
 	}
 	return -1
+}
+
+// firstOfPage 交出这一页最前面的几条，供断言失败时说清楚「页首是谁」。
+func firstOfPage(page []RunStatus, n int) []RunStatus {
+	return page[:min(n, len(page))]
 }
 
 // TestTaskCenterFirstPageOrdering 守任务中心第一页在「历史比一页还多」时仍然可用。
@@ -90,10 +93,10 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 		seedTask(t, reloaded.taskEngine, taskSeed{Key: "rebuild_index", Identity: systemTask("rebuild_index", variantSole), Total: 1, Terminal: "completed"})
 		seedTask(t, reloaded.taskEngine, taskSeed{Key: "scan_library_7", Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
-		keys := taskCenterFirstPage(t, reloaded)
+		page := taskCenterFirstPage(t, reloaded)
 		for _, want := range []string{"scan_library_7", "rebuild_index"} {
-			if indexOfKey(keys, want) < 0 {
-				t.Fatalf("重启后新起的任务 %q 不在第一页里（页首三条：%v）", want, keys[:min(3, len(keys))])
+			if indexOfKey(t, page, want) < 0 {
+				t.Fatalf("重启后新起的任务 %q 不在第一页里（页首三条：%+v）", want, firstOfPage(page, 3))
 			}
 		}
 	})
@@ -107,9 +110,9 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 		// 长时间不上报进度，被后来的短任务全部超过。
 		seedFinishedHistory(t, controller, taskCenterPageSize+10)
 
-		keys := taskCenterFirstPage(t, controller)
-		if indexOfKey(keys, activeKey) < 0 {
-			t.Fatalf("正在运行的任务 %q 被历史挤出了第一页（页首三条：%v）", activeKey, keys[:min(3, len(keys))])
+		page := taskCenterFirstPage(t, controller)
+		if indexOfKey(t, page, activeKey) < 0 {
+			t.Fatalf("正在运行的任务 %q 被历史挤出了第一页（页首三条：%+v）", activeKey, firstOfPage(page, 3))
 		}
 	})
 
@@ -119,21 +122,18 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 		reloaded := restartController(t, controller, store, tempDir)
 		seedTask(t, reloaded.taskEngine, taskSeed{Key: "scan_library_7", Identity: libraryTask("scan_library", 7, variantSole), Total: 100, CanCancel: true, CanPause: true})
 
-		keys := taskCenterFirstPage(t, reloaded)
+		page := taskCenterFirstPage(t, reloaded)
 		// 历史部分应当是最近完成的那批，且相对顺序为倒序（scan_series_59, 58, ...）。
-		history := make([]string, 0, len(keys))
-		for _, key := range keys {
-			if key != "scan_library_7" {
-				history = append(history, key)
+		history := make([]RunStatus, 0, len(page))
+		for _, run := range page {
+			if !belongsToKey(t, run, "scan_library_7") {
+				history = append(history, run)
 			}
 		}
-		want := make([]string, 0, len(history))
-		for i := taskCenterPageSize + 10; i > taskCenterPageSize+10-len(history); i-- {
-			want = append(want, fmt.Sprintf("scan_series_%d", i))
-		}
 		for i := range history {
-			if history[i] != want[i] {
-				t.Fatalf("历史任务顺序不对：第 %d 条为 %q, want %q（整页：%v）", i, history[i], want[i], keys)
+			want := fmt.Sprintf("scan_series_%d", taskCenterPageSize+10-i)
+			if !belongsToKey(t, history[i], want) {
+				t.Fatalf("历史任务顺序不对：第 %d 条为 %+v, want %q 那条（整页：%+v）", i, history[i], want, page)
 			}
 		}
 	})

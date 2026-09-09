@@ -83,7 +83,7 @@ type taskEngineConfig struct {
 	ResumeEnabled func() bool
 }
 
-// taskEngine 是领域引擎的适配器：两侧的翻译、按**任务键**寻址的那几个入口，与一份身份缓存。
+// taskEngine 是领域引擎的适配器：两侧的翻译、按**运行**与**任务**寻址的那几个入口，与一份身份缓存。
 //
 // **内存表的去留**：没有了。旧引擎那张表当年是活动任务的唯一可写副本，列表还要把它盖在库记录上，
 // 那正是「同一件事有两个答案」的来源——库里写着 running、内存里已经完成，于是筛选谓词必须在合并
@@ -237,8 +237,11 @@ func (e *taskEngine) clock() time.Time {
 // 两样都走同一个日志 handler：任务体沿途每一行带 ctx 的日志因此自动带上它们，不必在调用点手写。
 // 任务键回答「这行属于哪件事」，运行标识回答「属于那件事的第几次」——同一个库连着扫三次，
 // 只按任务键过滤会把三次混在一起，而排障要的恰恰是其中一次。
-func decorateRunContext(ctx context.Context, run task.Run) context.Context {
-	return logger.WithRunID(logger.WithTaskKey(ctx, run.Key), run.ID)
+//
+// 键取自**运行声明**而不是运行行：它不落盘（ADR 0007），而队列放行那条路上的运行是从库里
+// 读回来的。取运行行上的话，排过队的那些任务体日志会静静地少掉任务键那一格。
+func decorateRunContext(ctx context.Context, run task.Run, spec task.RunSpec) context.Context {
+	return logger.WithRunID(logger.WithTaskKey(ctx, spec.Key), run.ID)
 }
 
 // publisher 把领域快照翻成对外的任务快照并交给 SSE。publish 为 nil 时整条通道不接。
@@ -752,11 +755,11 @@ func (e *taskEngine) resumeRuns(ctx context.Context, snapshots []task.Snapshot) 
 		// 白名单与重启函数同出一张注册表，因此走不到这里；留着是因为「白名单里有、却没人发得起」
 		// 的类型只会静默什么都不做，而那种漏配值得留一行日志。
 		if !ok {
-			slog.Warn("Resumable run has no relauncher", "task_key", run.Key, "task_type", run.Type)
+			slog.Warn("Resumable run has no relauncher", "run_id", run.RunID, "task_id", run.TaskID, "task_type", run.Type)
 			continue
 		}
 		if err := relaunch(ctx, run, task.TriggerResumed); err != nil {
-			slog.Warn("Failed to resume interrupted run", "task_key", run.Key, "task_type", run.Type, "error", err)
+			slog.Warn("Failed to resume interrupted run", "run_id", run.RunID, "task_id", run.TaskID, "task_type", run.Type, "error", err)
 			continue
 		}
 		resumed++

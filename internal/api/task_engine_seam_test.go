@@ -149,9 +149,15 @@ func decodePushFrame(payload, event string) (RunPush, bool) {
 // latestStatusByKey 取这个**任务键**最近那一次运行的对外快照，**不挑状态**。
 //
 // 它与 snapshotForRetry 是两个问题：那边答的是「有什么可以重放」，因此只看**终态**；
-// 这边答的是「此刻这个键上最新的一条长什么样」，排队中与活动态正是用例要断言的东西。
-func latestStatusByKey(ctx context.Context, e *taskEngine, key string) (RunStatus, error) {
-	status, found, err := e.firstStatusFor(ctx, latestRunFilterFor(key))
+// 这边答的是「此刻这个任务上最新的一条长什么样」，排队中与活动态正是用例要断言的东西。
+// 键怎么落到身份上见 task_seed_test.go 的登记表。
+func latestStatusByKey(ctx context.Context, t testing.TB, e *taskEngine, key string) (RunStatus, error) {
+	t.Helper()
+	taskID, err := taskIDFor(ctx, e, identityForKey(t, key))
+	if err != nil {
+		return RunStatus{}, err
+	}
+	status, found, err := e.firstStatusFor(ctx, latestRunFilterForTask(taskID))
 	if err != nil {
 		return RunStatus{}, err
 	}
@@ -168,7 +174,7 @@ func latestStatusByKey(ctx context.Context, e *taskEngine, key string) (RunStatu
 // 一条不存在的运行上。
 func currentTask(t testing.TB, e *taskEngine, key string) RunStatus {
 	t.Helper()
-	status, err := latestStatusByKey(context.Background(), e, key)
+	status, err := latestStatusByKey(context.Background(), t, e, key)
 	if err != nil {
 		t.Fatalf("任务 %q 在库里找不到: %v", key, err)
 	}
@@ -178,7 +184,7 @@ func currentTask(t testing.TB, e *taskEngine, key string) RunStatus {
 // taskExists 回答「这个任务键在库里还有没有运行」，供「清除之后应当没了」这类断言使用。
 func taskExists(t testing.TB, e *taskEngine, key string) bool {
 	t.Helper()
-	_, err := latestStatusByKey(context.Background(), e, key)
+	_, err := latestStatusByKey(context.Background(), t, e, key)
 	if err == nil {
 		return true
 	}
@@ -188,11 +194,34 @@ func taskExists(t testing.TB, e *taskEngine, key string) bool {
 	return false
 }
 
+// snapshotBelongsTo 判一条投递出去的快照属不属于这个身份。
+//
+// 比的是身份四要素而不是**任务键**：契约上没有键那一格了（ADR 0007）。作用域 id 在契约上是
+// 指针（系统级留空），在身份上是 0，两侧对齐要显式判一次。
+func snapshotBelongsTo(snapshot RunStatus, identity task.Identity) bool {
+	if snapshot.Type != string(identity.Type) ||
+		snapshot.Scope != string(identity.Scope) ||
+		string(snapshot.Variant) != string(identity.Variant) {
+		return false
+	}
+	if snapshot.ScopeID == nil {
+		return identity.ScopeID == 0
+	}
+	return *snapshot.ScopeID == identity.ScopeID
+}
+
+// belongsToKey 判一条对外快照是不是这个**任务键**指的那一条，供列表接口的断言指认某一行。
+func belongsToKey(t testing.TB, snapshot RunStatus, key string) bool {
+	t.Helper()
+	return snapshotBelongsTo(snapshot, identityForKey(t, key))
+}
+
 // lastPublishedTask 返回该任务键最后一条被投递出去的快照。
 func lastPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatus {
 	t.Helper()
+	identity := identityForKey(t, key)
 	for i := len(snapshots) - 1; i >= 0; i-- {
-		if snapshots[i].Key == key {
+		if snapshotBelongsTo(snapshots[i], identity) {
 			return snapshots[i]
 		}
 	}
@@ -202,10 +231,15 @@ func lastPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatu
 
 // publishedCountFor 数一数该任务键被投递出去的快照条数，供「该不该投递这一条」的用例断言
 // 投递次数本身——节流吞掉与句柄没交出去都表现为一条也不多。
-func publishedCountFor(snapshots []RunStatus, key string) int {
+//
+// 漏登记同样 t.Fatal 而不是回 0：「一条都没投递出去」正是这类断言里最常见的期望，
+// 回 0 会让一次漏登记表现为一条假绿的用例。
+func publishedCountFor(t testing.TB, snapshots []RunStatus, key string) int {
+	t.Helper()
+	identity := identityForKey(t, key)
 	count := 0
 	for _, snapshot := range snapshots {
-		if snapshot.Key == key {
+		if snapshotBelongsTo(snapshot, identity) {
 			count++
 		}
 	}
@@ -215,10 +249,12 @@ func publishedCountFor(snapshots []RunStatus, key string) int {
 // publishedTasksWithCode 按投递顺序取出该任务键带指定文案码的全部载荷。终态会改掉文案码，
 // 所以中途那些帧只能这样取——lastPublishedTask 拿到的永远是收尾那一条。
 // 「这一帧该不该出去」那类断言数的就是它的长度：节流吞掉与句柄没交出去都表现为一条也不多。
-func publishedTasksWithCode(snapshots []RunStatus, key, code string) []RunStatus {
+func publishedTasksWithCode(t testing.TB, snapshots []RunStatus, key, code string) []RunStatus {
+	t.Helper()
+	identity := identityForKey(t, key)
 	var matched []RunStatus
 	for _, snapshot := range snapshots {
-		if snapshot.Key == key && snapshot.MessageCode == code {
+		if snapshotBelongsTo(snapshot, identity) && snapshot.MessageCode == code {
 			matched = append(matched, snapshot)
 		}
 	}
@@ -228,7 +264,7 @@ func publishedTasksWithCode(snapshots []RunStatus, key, code string) []RunStatus
 // publishedTaskWithCode 返回该任务键带指定文案码的最后一条快照；一条都没有即 t.Fatal。
 func publishedTaskWithCode(t *testing.T, snapshots []RunStatus, key, code string) RunStatus {
 	t.Helper()
-	matched := publishedTasksWithCode(snapshots, key, code)
+	matched := publishedTasksWithCode(t, snapshots, key, code)
 	if len(matched) == 0 {
 		t.Fatalf("任务 %q 没有投递过任何带文案码 %q 的载荷", key, code)
 		return RunStatus{}
@@ -240,8 +276,9 @@ func publishedTaskWithCode(t *testing.T, snapshots []RunStatus, key, code string
 // 作用域、元数据与并发上限，不得拆成启动之后的多次独立写入、中间留下可被观察到的空窗。
 func firstPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatus {
 	t.Helper()
+	identity := identityForKey(t, key)
 	for _, snapshot := range snapshots {
-		if snapshot.Key == key {
+		if snapshotBelongsTo(snapshot, identity) {
 			return snapshot
 		}
 	}

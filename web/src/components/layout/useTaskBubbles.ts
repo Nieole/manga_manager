@@ -9,7 +9,10 @@ import type { TaskBubbleEntry } from '../SidebarTaskBubble';
 import { isTerminalRunStatus } from '../../utils/runStatus';
 
 interface TaskProgressPayload {
-  key?: string;
+  // task_id 是气泡的身份：同一个**任务**的历次推送更新同一个气泡。
+  // 契约上不再有任务键（ADR 0007）——它认得出「哪件事」，认不出「哪一次」，而队列一开，
+  // 同一件事此刻可以有两条仍会变化的运行。
+  task_id?: number;
   type?: string;
   status?: string;
   message?: string;
@@ -22,16 +25,16 @@ interface TaskProgressPayload {
 }
 
 export function useTaskBubbles() {
-  const [entries, setEntries] = useState<Record<string, TaskBubbleEntry>>({});
-  const cleanupTimers = useRef<Map<string, number>>(new Map());
+  const [entries, setEntries] = useState<Record<number, TaskBubbleEntry>>({});
+  const cleanupTimers = useRef<Map<number, number>>(new Map());
 
   // ingestProgress 接入一帧运行快照（由 Layout 从推送帧里取出）：新增/更新对应气泡，并为终态气泡安排延时移除
-  //（完成 8s、其余终态 20s）；再次收到同 key 会先取消旧的延时定时器。
+  //（完成 8s、其余终态 20s）；再次收到同一个任务会先取消旧的延时定时器。
   const ingestProgress = useCallback((progress: TaskProgressPayload) => {
-    if (!progress.key) return;
-    const key = progress.key;
+    if (progress.task_id === undefined) return;
+    const key = progress.task_id;
     const entry: TaskBubbleEntry = {
-      key,
+      taskId: key,
       type: progress.type || '',
       status: progress.status || 'running',
       message: progress.message || '',
@@ -63,7 +66,7 @@ export function useTaskBubbles() {
     }
   }, []);
 
-  const dismiss = useCallback((key: string) => {
+  const dismiss = useCallback((key: number) => {
     setEntries((prev) => {
       if (!prev[key]) return prev;
       const next = { ...prev };
@@ -79,8 +82,9 @@ export function useTaskBubbles() {
 
   const clearFinished = useCallback(() => {
     setEntries((prev) => {
-      const next: Record<string, TaskBubbleEntry> = {};
-      for (const [key, entry] of Object.entries(prev)) {
+      const next: Record<number, TaskBubbleEntry> = {};
+      for (const [id, entry] of Object.entries(prev)) {
+        const key = Number(id);
         if (!isTerminalRunStatus(entry.status)) {
           next[key] = entry;
         } else {
@@ -102,8 +106,8 @@ export function useTaskBubbles() {
     const handleOverride = (event: Event) => {
       const customEvent = event as CustomEvent<TaskProgressPayload>;
       const detail = customEvent.detail;
-      if (!detail?.key) return;
-      const key = detail.key;
+      if (detail?.task_id === undefined) return;
+      const key = detail.task_id;
       setEntries((prev) => {
         const existing = prev[key];
         if (!existing) return prev;
